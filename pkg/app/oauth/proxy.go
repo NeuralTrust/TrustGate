@@ -17,11 +17,13 @@ package oauth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -300,6 +302,7 @@ func (p *authProxy) idpTokenCall(ctx context.Context, endpoint string, form url.
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	httpReq.Header.Set("Accept", "application/json")
 	res, err := p.client.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("oauth: IdP token call: %w", err)
@@ -309,9 +312,9 @@ func (p *authProxy) idpTokenCall(ctx context.Context, endpoint string, form url.
 	if err != nil {
 		return nil, fmt.Errorf("oauth: read IdP token response: %w", err)
 	}
-	var doc map[string]any
-	if err := json.Unmarshal(body, &doc); err != nil {
-		return nil, fmt.Errorf("oauth: IdP token response is not JSON (status %d)", res.StatusCode)
+	doc, err := decodeTokenResponse(body)
+	if err != nil {
+		return nil, fmt.Errorf("oauth: unparseable IdP token response (status %d)", res.StatusCode)
 	}
 	if res.StatusCode != http.StatusOK {
 		code, _ := doc["error"].(string)
@@ -320,6 +323,31 @@ func (p *authProxy) idpTokenCall(ctx context.Context, endpoint string, form url.
 			code = "server_error"
 		}
 		return nil, oauthErr(code, desc)
+	}
+	return doc, nil
+}
+
+// decodeTokenResponse parses an OAuth token endpoint response. RFC 6749 mandates
+// a JSON body, but some identity providers (notably GitHub) answer with
+// application/x-www-form-urlencoded unless asked otherwise, so fall back to form
+// decoding when the body is not JSON.
+func decodeTokenResponse(body []byte) (map[string]any, error) {
+	var doc map[string]any
+	if json.Unmarshal(body, &doc) == nil && doc != nil {
+		return doc, nil
+	}
+	values, err := url.ParseQuery(string(body))
+	if err != nil || values.Get("access_token") == "" && values.Get("error") == "" {
+		return nil, errors.New("oauth: token response is neither JSON nor form-encoded")
+	}
+	doc = make(map[string]any, len(values))
+	for key := range values {
+		doc[key] = values.Get(key)
+	}
+	if raw, ok := doc["expires_in"].(string); ok {
+		if seconds, convErr := strconv.Atoi(raw); convErr == nil {
+			doc["expires_in"] = seconds
+		}
 	}
 	return doc, nil
 }

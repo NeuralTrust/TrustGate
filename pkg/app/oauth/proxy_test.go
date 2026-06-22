@@ -668,6 +668,62 @@ func TestRefreshUsesResourceIndicator(t *testing.T) {
 	}
 }
 
+func TestDecodeTokenResponseFormEncoded(t *testing.T) {
+	t.Parallel()
+	doc, err := decodeTokenResponse([]byte("access_token=gho_abc&token_type=bearer&scope=&expires_in=3600"))
+	if err != nil {
+		t.Fatalf("decode form-encoded token: %v", err)
+	}
+	if doc["access_token"] != "gho_abc" || doc["token_type"] != "bearer" {
+		t.Fatalf("unexpected decoded token: %v", doc)
+	}
+	if doc["expires_in"] != 3600 {
+		t.Fatalf("expires_in must be numeric, got %T %v", doc["expires_in"], doc["expires_in"])
+	}
+}
+
+func TestDecodeTokenResponseRejectsGarbage(t *testing.T) {
+	t.Parallel()
+	if _, err := decodeTokenResponse([]byte("<html>nope</html>")); err == nil {
+		t.Fatal("expected error for a non-token body")
+	}
+}
+
+// GitHub's token endpoint replies with application/x-www-form-urlencoded unless
+// Accept: application/json is sent; the broker must still parse the token.
+func TestRefreshAcceptsFormEncodedIdP(t *testing.T) {
+	t.Parallel()
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issuer":                 srv.URL,
+				"authorization_endpoint": srv.URL + "/authorize",
+				"token_endpoint":         srv.URL + "/token",
+			})
+		case "/token":
+			w.Header().Set("Content-Type", "application/x-www-form-urlencoded")
+			_, _ = w.Write([]byte("access_token=gho_live&token_type=bearer&scope=mcp.access"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	proxy := newProxyUnderTest(t, srv.URL, newMemFlowStore())
+	token, err := proxy.Exchange(context.Background(), "http://gw.example.com", TokenRequest{
+		GrantType:    "refresh_token",
+		RefreshToken: "rt-1",
+	})
+	if err != nil {
+		t.Fatalf("refresh against form-encoded IdP: %v", err)
+	}
+	if token["access_token"] != "gho_live" {
+		t.Fatalf("expected form-decoded access token, got %v", token)
+	}
+}
+
 type fakeChainer struct {
 	url      string
 	calls    int
