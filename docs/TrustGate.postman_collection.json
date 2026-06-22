@@ -27,6 +27,11 @@
       "type": "string"
     },
     {
+      "key": "agentgateway_proxy_url",
+      "value": "http://localhost:8081",
+      "type": "string"
+    },
+    {
       "key": "trace_id",
       "value": "",
       "type": "string"
@@ -7889,9 +7894,9 @@
                   "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Hello from TrustGate\" }\n  ]\n}"
                 },
                 "url": {
-                  "raw": "{{proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
                   "host": [
-                    "{{proxy_url}}"
+                    "{{agentgateway_proxy_url}}"
                   ],
                   "path": [
                     "{{consumer_slug}}",
@@ -7944,9 +7949,9 @@
                   "raw": "{\n  \"model\": \"gpt-3.5-turbo\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Hello from TrustGate\" }\n  ]\n}"
                 },
                 "url": {
-                  "raw": "{{proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
                   "host": [
-                    "{{proxy_url}}"
+                    "{{agentgateway_proxy_url}}"
                   ],
                   "path": [
                     "{{consumer_slug}}",
@@ -8037,9 +8042,9 @@
                   "raw": "{\n  \"model\": \"gpt-3.5-turbo\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Hello from TrustGate\" }\n  ]\n}"
                 },
                 "url": {
-                  "raw": "{{proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
                   "host": [
-                    "{{proxy_url}}"
+                    "{{agentgateway_proxy_url}}"
                   ],
                   "path": [
                     "{{consumer_slug}}",
