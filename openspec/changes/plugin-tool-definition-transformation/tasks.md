@@ -87,15 +87,15 @@ churn because the phases are strictly dependent. Prefer the chain.)
 
 ## Phase 2: Transform & inject core (pure functions)
 
-- [ ] 2.1 Create `pkg/infra/plugins/tooltransform/transform.go`: `applyTransforms(tools
+- [x] 2.1 Create `pkg/infra/plugins/tooltransform/transform.go`: `applyTransforms(tools
       []adapter.CanonicalTool, entries []transformDef) (changed bool)` — tools-outer /
       entries-inner so ALL matching entries apply in declaration order; `schema_patch`
       via `mergePatch` (cumulative), `description_override` last-writer-wins; unmatched
       tools untouched.
-- [ ] 2.2 Add `matchToolPattern(pattern, name string) bool` to `transform.go` (stdlib
+- [x] 2.2 Add `matchToolPattern(pattern, name string) bool` to `transform.go` (stdlib
       `path.Match` with `/`→`\x00` sentinel, copied verbatim from
       `pertoolratelimit/plugin.go`).
-- [ ] 2.3 Create `pkg/infra/plugins/tooltransform/inject.go`: `injectOutcome` struct,
+- [x] 2.3 Create `pkg/infra/plugins/tooltransform/inject.go`: `injectOutcome` struct,
       outcome consts (`appended|replaced|dropped|rejected`), `indexOfTool`, and
       `applyInjections(tools []adapter.CanonicalTool, entries []injectDef, conflict
       string) ([]adapter.CanonicalTool, []injectOutcome, error)` mapping
@@ -103,25 +103,25 @@ churn because the phases are strictly dependent. Prefer the chain.)
       appending on no-collision and resolving collisions (vs surviving + already-injected
       names) by `gateway_wins` (replace in place), `client_wins` (drop), `reject`
       (short-circuit).
-- [ ] 2.4 Implement `rejectError(name string) error` returning
+- [x] 2.4 Implement `rejectError(name string) error` returning
       `*appplugins.PluginError{StatusCode:400, Type:"tool_name_reserved",
       Message:..., Body: json.Marshal(map{"error":{"type":...,"name":name}})}`.
 
 ### Phase 2 tests (`plugin_test.go`)
 
-- [ ] 2.5 `matchToolPattern` matrix: `search_*` vs `search_docs` (match) / `send_email`
+- [x] 2.5 `matchToolPattern` matrix: `search_*` vs `search_docs` (match) / `send_email`
       (no match); `?` single-char; `[abc]` class; `/`-containing name via sentinel.
-- [ ] 2.6 `applyTransforms`: single match patches schema + sets description
+- [x] 2.6 `applyTransforms`: single match patches schema + sets description
       (`changed==true`); no match untouched (`changed==false`); **cumulative** — `search_*`
       and `search_logs` both match `search_logs`, both patches accrue, last
       `description_override` wins; description-only (nil `SchemaPatch`) and schema-only
       (nil `DescriptionOverride`) entries.
-- [ ] 2.7 `applyInjections` on_conflict matrix: no-collision append; client-name
+- [x] 2.7 `applyInjections` on_conflict matrix: no-collision append; client-name
       collision under `gateway_wins` (replace in place, order preserved), `client_wins`
       (drop), `reject` (error); injected-vs-injected (same name twice) under each mode
       (`gateway_wins` keeps later, `client_wins` keeps earlier, `reject` 400 with the
       duplicated name); empty `on_conflict` behaves as `gateway_wins`.
-- [ ] 2.8 Reject-body byte-exactness: assert `StatusCode==400`, `Type=="tool_name_reserved"`,
+- [x] 2.8 Reject-body byte-exactness: assert `StatusCode==400`, `Type=="tool_name_reserved"`,
       and `Body` semantically equals `{"error":{"type":"tool_name_reserved","name":"safety_check"}}`
       — derive expected bytes by marshaling the same `map[string]any` (no hand-written
       key-ordered string) and assert deep-equal after `json.Unmarshal`.

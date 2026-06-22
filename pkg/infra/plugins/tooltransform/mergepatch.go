@@ -24,9 +24,13 @@ func mergePatch(target, patch map[string]interface{}) map[string]interface{} {
 			continue
 		}
 		patchObj, patchIsObj := v.(map[string]interface{})
-		targetObj, targetIsObj := target[k].(map[string]interface{})
-		if patchIsObj && targetIsObj {
-			target[k] = mergePatch(targetObj, patchObj)
+		if patchIsObj {
+			targetObj, targetIsObj := target[k].(map[string]interface{})
+			if targetIsObj {
+				target[k] = mergePatch(targetObj, patchObj)
+			} else {
+				target[k] = mergePatch(nil, patchObj)
+			}
 			continue
 		}
 		target[k] = v
