@@ -3,6 +3,7 @@
 package functional_test
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"testing"
@@ -14,14 +15,17 @@ import (
 
 // TestPluginE2E_SemanticCache exercises the semantic cache end to end. It needs a
 // real embedding provider (OPENAI_API_KEY) and a Redis Stack (RediSearch)
-// backing the vector store, so it is skipped when the key is absent, mirroring
-// the TrustGate-EE functional test.
+// backing the vector store, so it is skipped when either is unavailable.
 func TestPluginE2E_SemanticCache(t *testing.T) {
 	defer Track(t, "PluginSemanticCache")()
 
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
 		t.Skip("OPENAI_API_KEY not set, skipping semantic cache functional test")
+	}
+
+	if redisDB == nil || redisDB.Do(context.Background(), "FT._LIST").Err() != nil {
+		t.Skip("RediSearch (Redis Stack) not available, skipping semantic cache functional test")
 	}
 
 	settings := map[string]any{
