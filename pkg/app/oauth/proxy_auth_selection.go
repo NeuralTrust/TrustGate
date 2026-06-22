@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"net/url"
 
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
@@ -34,21 +35,32 @@ func (p *authProxy) authForResource(ctx context.Context, resource string) (*auth
 	// its own: fall back to the single IdP configured on that consumer's
 	// gateway instead of scanning every tenant on the platform.
 	if matched {
-		a, err := p.singleOAuth2AuthForGateway(ctx, gatewayID)
-		switch {
-		case errors.Is(err, ErrAmbiguousAuthorizationServer):
-			return nil, oauthErr("invalid_target",
-				"multiple identity providers configured for this gateway; attach a single oauth2 identity provider to the MCP consumer")
-		case errors.Is(err, ErrNoAuthorizationServer):
-			return nil, oauthErr("invalid_request",
-				"this MCP server has no oauth2 identity provider; interactive login requires an oauth2 auth with a pre-registered client at your identity provider")
-		}
-		return a, err
+		return p.gatewayScopedAuth(ctx, gatewayID)
+	}
+	// No usable resource indicator, but the request was still routed to a
+	// specific gateway (by subdomain or by the gateway-slug header). Scope the
+	// fallback to that gateway instead of treating every issuer on the platform
+	// as a candidate.
+	if gw, ok := appgateway.FromContext(ctx); ok {
+		return p.gatewayScopedAuth(ctx, gw.ID)
 	}
 	a, err := p.singleOAuth2Auth(ctx)
 	if errors.Is(err, ErrAmbiguousAuthorizationServer) {
 		return nil, oauthErr("invalid_target",
 			"multiple identity providers configured; send an RFC 8707 resource parameter identifying the MCP server")
+	}
+	return a, err
+}
+
+func (p *authProxy) gatewayScopedAuth(ctx context.Context, gatewayID ids.GatewayID) (*authdomain.Auth, error) {
+	a, err := p.singleOAuth2AuthForGateway(ctx, gatewayID)
+	switch {
+	case errors.Is(err, ErrAmbiguousAuthorizationServer):
+		return nil, oauthErr("invalid_target",
+			"multiple identity providers configured for this gateway; attach a single oauth2 identity provider to the MCP consumer")
+	case errors.Is(err, ErrNoAuthorizationServer):
+		return nil, oauthErr("invalid_request",
+			"this MCP server has no oauth2 identity provider; interactive login requires an oauth2 auth with a pre-registered client at your identity provider")
 	}
 	return a, err
 }

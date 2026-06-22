@@ -27,7 +27,9 @@ import (
 	"testing"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
@@ -594,6 +596,46 @@ func TestAuthorizeMultiIssuerRequiresResource(t *testing.T) {
 	var oe *OAuthError
 	if !errors.As(err, &oe) || oe.Code != "invalid_target" {
 		t.Fatalf("expected invalid_target, got %v", err)
+	}
+}
+
+// Without a resource indicator, the gateway addressed by the request (resolved
+// upstream from the subdomain or the gateway-slug header and carried on the
+// context) scopes IdP selection, so a single-issuer gateway resolves even when
+// other tenants run different IdPs across the platform.
+func TestAuthorizeFallsBackToContextGatewayWithoutResource(t *testing.T) {
+	t.Parallel()
+	idpGateway, _ := fakeIdP(t)
+	idpOther, capturedOther := fakeIdP(t)
+
+	gatewayID := ids.New[ids.GatewayKind]()
+	gatewayAuth := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: idpGateway.URL, ClientID: "client-gw"})
+	gatewayAuth.GatewayID = gatewayID
+	otherAuth := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: idpOther.URL, ClientID: "client-other"})
+
+	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{gatewayAuth, otherAuth}}
+	proxy := NewAuthProxy(finder, &fakePathResolver{}, http.DefaultClient, newMemFlowStore(), nil)
+
+	ctx := appgateway.WithGateway(context.Background(), &gatewaydomain.Gateway{ID: gatewayID, Slug: "acme"})
+	location, err := proxy.Authorize(ctx, "https://acme.mcp.example.com", AuthorizeRequest{
+		ResponseType:        "code",
+		ClientID:            "client-gw",
+		RedirectURI:         "cursor://anysphere.cursor-mcp/oauth/callback",
+		CodeChallenge:       s256("v"),
+		CodeChallengeMethod: "S256",
+	})
+	if err != nil {
+		t.Fatalf("authorize must resolve the context gateway's single IdP, got %v", err)
+	}
+	loc, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("parse redirect: %v", err)
+	}
+	if got := loc.Scheme + "://" + loc.Host; got != idpGateway.URL {
+		t.Fatalf("authorize must redirect to the context gateway IdP, got %s (want %s)", got, idpGateway.URL)
+	}
+	if len(*capturedOther) != 0 {
+		t.Fatalf("another tenant's IdP must never be contacted, got %v", *capturedOther)
 	}
 }
 
