@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/embedding"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/plugins/pluginutil"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 )
 
 const (

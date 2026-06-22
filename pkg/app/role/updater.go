@@ -20,9 +20,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
 type UpdateInput struct {

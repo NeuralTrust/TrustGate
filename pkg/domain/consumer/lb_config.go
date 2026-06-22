@@ -19,9 +19,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer/algorithm"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer/algorithm"
 )
 
 type LBPoolMember struct {

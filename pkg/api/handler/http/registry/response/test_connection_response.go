@@ -14,7 +14,7 @@
 
 package response
 
-import appregistry "github.com/NeuralTrust/AgentGateway/pkg/app/registry"
+import appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 
 type TestConnectionResponse struct {
 	OK         bool   `json:"ok"`

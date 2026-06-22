@@ -18,9 +18,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
 )
 
 func TestBaseFactory_CreateStrategy_KnownAlgorithms(t *testing.T) {

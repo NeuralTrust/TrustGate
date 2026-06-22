@@ -17,9 +17,9 @@ package response
 import (
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/common/secret"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 func TestFromRegistry_IncludesEnabled(t *testing.T) {

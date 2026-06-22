@@ -20,8 +20,8 @@ import (
 	"errors"
 	"fmt"
 
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 func (c *composer) ListResources(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Resource, error) {

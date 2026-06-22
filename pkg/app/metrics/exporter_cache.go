@@ -19,7 +19,7 @@ import (
 	"log/slog"
 	"sync"
 
-	telemetrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
+	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 )
 
 type ExporterCache struct {

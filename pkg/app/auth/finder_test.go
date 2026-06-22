@@ -19,11 +19,11 @@ import (
 	"errors"
 	"testing"
 
-	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/auth/mocks"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/stretchr/testify/mock"
 )
 

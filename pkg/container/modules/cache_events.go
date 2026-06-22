@@ -18,11 +18,11 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/container"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/channel"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/event"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/subscriber"
+	"github.com/NeuralTrust/TrustGate/pkg/container"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/subscriber"
 	"go.uber.org/dig"
 )
 

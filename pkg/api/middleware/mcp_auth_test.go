@@ -20,11 +20,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
-	identitydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	identitydomain "github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/require"
 )

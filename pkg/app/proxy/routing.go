@@ -19,16 +19,16 @@ import (
 	"log/slog"
 	"strings"
 
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	approuting "github.com/NeuralTrust/AgentGateway/pkg/app/routing"
-	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
-	routingdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/routing"
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
 type routedBackend struct {

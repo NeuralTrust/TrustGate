@@ -18,12 +18,12 @@ import (
 	"fmt"
 	"strings"
 
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
-	routingdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/routing"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 )
 
 const (

@@ -17,9 +17,9 @@ package response
 import (
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/common/secret"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 type AuthResponse struct {

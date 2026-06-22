@@ -22,11 +22,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/embedding"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/go-redis/redis/v8"
 )
 

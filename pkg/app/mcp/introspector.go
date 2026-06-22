@@ -18,8 +18,8 @@ import (
 	"context"
 	"fmt"
 
-	appregistry "github.com/NeuralTrust/AgentGateway/pkg/app/registry"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 type Introspector interface {

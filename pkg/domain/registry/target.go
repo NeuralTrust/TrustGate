@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/common/secret"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
 type AuthType string

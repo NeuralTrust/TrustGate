@@ -17,8 +17,8 @@ package role
 import (
 	"context"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 )
 
 type OIDCResolver interface {

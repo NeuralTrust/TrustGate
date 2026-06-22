@@ -17,7 +17,7 @@ package plugins
 import (
 	"sort"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 )
 
 // FieldType enumerates the settings field kinds the admin UI can render. It is a

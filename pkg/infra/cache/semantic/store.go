@@ -28,7 +28,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/embedding"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
 	"github.com/go-redis/redis/v8"
 )
 

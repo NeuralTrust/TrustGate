@@ -21,7 +21,7 @@ import (
 	"net/http"
 	"testing"
 
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 func TestBackendFailureStatus(t *testing.T) {

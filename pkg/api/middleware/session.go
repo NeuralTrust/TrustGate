@@ -19,10 +19,10 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	appgateway "github.com/NeuralTrust/AgentGateway/pkg/app/gateway"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 )

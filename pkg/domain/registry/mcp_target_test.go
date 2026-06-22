@@ -18,8 +18,8 @@ import (
 	"errors"
 	"testing"
 
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 func validMCPTarget() *MCPTarget {

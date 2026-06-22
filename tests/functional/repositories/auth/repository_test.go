@@ -9,14 +9,14 @@ import (
 	"testing"
 	"time"
 
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
-	_ "github.com/NeuralTrust/AgentGateway/pkg/infra/database/migrations"
-	repo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/auth"
-	gatewayrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/gateway"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
+	repo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/auth"
+	gatewayrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/gateway"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 

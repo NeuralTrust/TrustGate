@@ -5,9 +5,9 @@ package mocks
 import (
 	context "context"
 
-	proxy "github.com/NeuralTrust/AgentGateway/pkg/app/proxy"
-	registry "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
+	proxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
+	registry "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	mock "github.com/stretchr/testify/mock"
 )
 

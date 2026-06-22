@@ -19,19 +19,19 @@ import (
 	"errors"
 	"testing"
 
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	authmocks "github.com/NeuralTrust/AgentGateway/pkg/domain/auth/mocks"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer/mocks"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
-	policymocks "github.com/NeuralTrust/AgentGateway/pkg/domain/policy/mocks"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	backendmocks "github.com/NeuralTrust/AgentGateway/pkg/domain/registry/mocks"
-	roledomain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	authmocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/consumer/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	policymocks "github.com/NeuralTrust/TrustGate/pkg/domain/policy/mocks"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	backendmocks "github.com/NeuralTrust/TrustGate/pkg/domain/registry/mocks"
+	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/cachetest"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -54,7 +54,7 @@ type roleRepositoryStub struct {
 
 func (s *roleRepositoryStub) Save(context.Context, *roledomain.Role) error   { return nil }
 func (s *roleRepositoryStub) Update(context.Context, *roledomain.Role) error { return nil }
-func (s *roleRepositoryStub) Delete(context.Context, ids.RoleID) error       { return nil }
+func (s *roleRepositoryStub) Delete(context.Context, ids.GatewayID, ids.RoleID) error { return nil }
 func (s *roleRepositoryStub) FindByID(context.Context, ids.RoleID) (*roledomain.Role, error) {
 	if s.err != nil {
 		return nil, s.err

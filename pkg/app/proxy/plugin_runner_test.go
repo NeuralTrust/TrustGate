@@ -16,18 +16,19 @@ package proxy_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
-	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
-	appproxy "github.com/NeuralTrust/AgentGateway/pkg/app/proxy"
-	proxymocks "github.com/NeuralTrust/AgentGateway/pkg/app/proxy/mocks"
-	approuting "github.com/NeuralTrust/AgentGateway/pkg/app/routing"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
+	proxymocks "github.com/NeuralTrust/TrustGate/pkg/app/proxy/mocks"
+	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -39,6 +40,7 @@ type stubPlugin struct {
 	result *appplugins.Result
 	err    error
 	ran    chan policy.Stage
+	seen   chan appplugins.ExecInput
 }
 
 func (s *stubPlugin) Name() string                        { return s.name }
@@ -49,6 +51,9 @@ func (s *stubPlugin) ValidateConfig(map[string]any) error { return nil }
 func (s *stubPlugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	if s.ran != nil {
 		s.ran <- in.Stage
+	}
+	if s.seen != nil {
+		s.seen <- in
 	}
 	return s.result, s.err
 }
@@ -130,6 +135,51 @@ func TestForward_PreRequestStopUpstreamServesCache(t *testing.T) {
 	assert.Equal(t, []string{"HIT"}, res.Headers["X-Cache-Status"])
 }
 
+func TestForward_PreRequestSeesResolvedProvider(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	bk := backendFor(gatewayID, "openai")
+	rc := routableConsumerWith(gatewayID, bk)
+	rc.Policies = []*policy.Policy{{
+		ID:       ids.New[ids.PolicyKind](),
+		Name:     "pol",
+		Slug:     "token_rate_limiter",
+		Enabled:  true,
+		Priority: 1,
+		Stages:   []policy.Stage{policy.StagePreRequest},
+	}}
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil).
+		Once()
+
+	seen := make(chan appplugins.ExecInput, 1)
+	p := &stubPlugin{
+		name:   "token_rate_limiter",
+		stages: []policy.Stage{policy.StagePreRequest},
+		result: &appplugins.Result{StatusCode: 200},
+		seen:   seen,
+	}
+	fwd := forwarderWithPlugin(t, invoker, p)
+
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   &infracontext.RequestContext{Context: context.Background()},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 200, res.StatusCode)
+
+	select {
+	case in := <-seen:
+		require.NotNil(t, in.Request)
+		assert.Equal(t, "openai", in.Request.Provider)
+	case <-time.After(2 * time.Second):
+		t.Fatal("pre_request plugin did not run")
+	}
+}
+
 func TestForward_PreResponsePluginRejectsStream(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	bk := backendFor(gatewayID, "openai")
@@ -172,6 +222,44 @@ func TestForward_PreResponsePluginRejectsStream(t *testing.T) {
 	assert.Nil(t, res.Stream, "rejected stream must not be relayed to the client")
 	assert.Equal(t, 451, res.StatusCode)
 	assert.Contains(t, string(res.Body), "blocked")
+}
+
+func TestForward_PreResponseInfrastructureErrorBlocksEnforce(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	bk := backendFor(gatewayID, "openai")
+	rc := routableConsumerWith(gatewayID, bk)
+	rc.Policies = []*policy.Policy{{
+		ID:       ids.New[ids.PolicyKind](),
+		Name:     "pol",
+		Slug:     "guardrail",
+		Enabled:  true,
+		Priority: 1,
+		Stages:   []policy.Stage{policy.StagePreResponse},
+		Mode:     policy.ModeEnforce,
+	}}
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("unsafe upstream body")}, nil).
+		Once()
+
+	p := &stubPlugin{
+		name:   "guardrail",
+		stages: []policy.Stage{policy.StagePreResponse},
+		err:    errors.New("provider policy backend down"),
+	}
+	fwd := forwarderWithPlugin(t, invoker, p)
+
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   &infracontext.RequestContext{Context: context.Background()},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 502, res.StatusCode)
+	assert.NotContains(t, string(res.Body), "unsafe upstream body")
+	assert.Contains(t, string(res.Body), "pre_response plugin stage failed")
 }
 
 func TestForward_PostResponseRunsAfterSyncInvoke(t *testing.T) {

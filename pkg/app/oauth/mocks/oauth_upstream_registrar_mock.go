@@ -5,7 +5,7 @@ package mocks
 import (
 	context "context"
 
-	oauth "github.com/NeuralTrust/AgentGateway/pkg/app/oauth"
+	oauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	mock "github.com/stretchr/testify/mock"
 )
 

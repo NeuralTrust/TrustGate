@@ -19,9 +19,9 @@ import (
 	"testing"
 	"time"
 
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
 func TestBackend_New_HappyPath(t *testing.T) {

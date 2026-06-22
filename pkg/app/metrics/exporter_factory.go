@@ -14,7 +14,7 @@
 
 package metrics
 
-import telemetrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
+import telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 
 //go:generate mockery --name=ExporterFactory --dir=. --output=./mocks --filename=exporter_factory_mock.go --case=underscore --with-expecter
 type ExporterFactory interface {

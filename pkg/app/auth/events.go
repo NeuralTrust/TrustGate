@@ -18,9 +18,9 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/event"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 )
 
 // publishGatewayDataInvalidation is best-effort: a publish error is logged, never
@@ -31,8 +31,14 @@ func publishGatewayDataInvalidation(
 	logger *slog.Logger,
 	gatewayID ids.GatewayID,
 ) {
+	if publisher == nil {
+		return
+	}
 	evt := event.InvalidateGatewayDataEvent{GatewayID: gatewayID.String()}
 	if err := publisher.Publish(ctx, evt); err != nil {
+		if logger == nil {
+			return
+		}
 		logger.Warn("failed to publish gateway data invalidation",
 			slog.String("gateway_id", gatewayID.String()),
 			slog.String("error", err.Error()),

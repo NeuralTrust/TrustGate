@@ -7,12 +7,12 @@ APP_NAME      := trustgate
 VERSION       ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.0.0-dev")
 COMMIT        ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-MODULE        := github.com/NeuralTrust/AgentGateway
+MODULE        := github.com/NeuralTrust/TrustGate
 LDFLAGS       := -X $(MODULE)/pkg/version.Version=$(VERSION) \
                  -X $(MODULE)/pkg/version.Commit=$(COMMIT) \
                  -X $(MODULE)/pkg/version.BuildDate=$(BUILD_DATE)
 
-DOCKER_IMAGE  ?= ghcr.io/neuraltrust/agentgateway
+DOCKER_IMAGE  ?= ghcr.io/neuraltrust/trustgate
 DOCKER_TAG    ?= $(VERSION)
 
 M := $(shell printf "\033[34;1m▶\033[0m")
@@ -23,7 +23,7 @@ help: ## Show this help message
 	@echo 'Targets:'
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-build: ## Build the agentgateway binary into ./bin/
+build: ## Build the trustgate binary into ./bin/
 	@$(info $(M) Building $(APP_NAME) $(VERSION) ...)
 	@mkdir -p bin
 	go build -ldflags "$(LDFLAGS)" -o bin/$(APP_NAME) ./cmd/trustgate
@@ -57,16 +57,16 @@ local-dns: ## Point *.gw.neuraltrust.sandbox to 127.0.0.1 via dnsmasq (macOS, re
 run-servers: up ## Alias for 'up': start the full stack + admin & proxy in docker
 
 up: ## One command to bring up everything (infra + admin & proxy) in Docker
-	@$(info $(M) Bringing up the full AgentGateway stack ...)
+	@$(info $(M) Bringing up the full TrustGate stack ...)
 	docker compose -f docker-compose.yaml -f docker-compose.api.yaml up -d --build
 	@echo ""
-	@echo "  AgentGateway is up:"
+	@echo "  TrustGate is up:"
 	@echo "    Admin  -> http://localhost:8080  (healthz: /healthz)"
 	@echo "    Proxy  -> http://localhost:8081  (healthz: /healthz)"
 	@echo "  Tail logs with 'make logs', tear down with 'make down'."
 
 down: ## Tear down the full stack and remove volumes
-	@$(info $(M) Tearing down the full AgentGateway stack ...)
+	@$(info $(M) Tearing down the full TrustGate stack ...)
 	docker compose -f docker-compose.yaml -f docker-compose.api.yaml down -v
 
 logs: ## Tail logs from the full stack

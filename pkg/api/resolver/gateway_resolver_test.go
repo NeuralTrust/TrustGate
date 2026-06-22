@@ -20,9 +20,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
-	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -66,14 +66,14 @@ func TestParseGatewaySlugFromHost(t *testing.T) {
 
 func TestParseGatewaySlugFromHost_CustomBaseDomain(t *testing.T) {
 	t.Parallel()
-	got, err := parseGatewaySlugFromHost("acme.gw.agentgateway.sandbox:8081", "gw.agentgateway.sandbox")
+	got, err := parseGatewaySlugFromHost("acme.gw.trustgate.sandbox:8081", "gw.trustgate.sandbox")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got != "acme" {
 		t.Fatalf("slug = %q, want acme", got)
 	}
-	if _, err := parseGatewaySlugFromHost("acme.gw.neuraltrust.ai", "gw.agentgateway.sandbox"); err == nil {
+	if _, err := parseGatewaySlugFromHost("acme.gw.neuraltrust.ai", "gw.trustgate.sandbox"); err == nil {
 		t.Fatal("expected error for host outside the configured base domain")
 	}
 }

@@ -15,12 +15,12 @@
 package modules
 
 import (
-	policyhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/policy"
-	apppolicy "github.com/NeuralTrust/AgentGateway/pkg/app/policy"
-	"github.com/NeuralTrust/AgentGateway/pkg/container"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
-	policyrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/policy"
+	policyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy"
+	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/container"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	policyrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/policy"
 )
 
 func Policy(c *container.Container) error {

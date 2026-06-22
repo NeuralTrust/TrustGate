@@ -15,9 +15,9 @@
 package role
 
 import (
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
-	approle "github.com/NeuralTrust/AgentGateway/pkg/app/role"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	approle "github.com/NeuralTrust/TrustGate/pkg/app/role"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 

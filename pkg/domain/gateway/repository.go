@@ -17,7 +17,7 @@ package gateway
 import (
 	"context"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 type ListFilter struct {

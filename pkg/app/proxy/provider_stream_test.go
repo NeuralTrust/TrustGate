@@ -20,13 +20,13 @@ import (
 	"strings"
 	"testing"
 
-	appproxy "github.com/NeuralTrust/AgentGateway/pkg/app/proxy"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
-	factorymocks "github.com/NeuralTrust/AgentGateway/pkg/infra/providers/factory/mocks"
-	providermocks "github.com/NeuralTrust/AgentGateway/pkg/infra/providers/mocks"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
+	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	factorymocks "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory/mocks"
+	providermocks "github.com/NeuralTrust/TrustGate/pkg/infra/providers/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -190,6 +190,9 @@ func TestInvokeStream_UsageObserverRecordsFinalUsage(t *testing.T) {
 	assert.Equal(t, 10, usage.InputTokens)
 	assert.Equal(t, 5, usage.OutputTokens)
 	assert.Equal(t, 15, usage.TotalTokens)
+	metadataUsage, ok := req.Metadata[adapter.MetadataUsageKey].(*adapter.CanonicalUsage)
+	require.True(t, ok, "expected streamed usage to be available to post_response plugins")
+	assert.Equal(t, 15, metadataUsage.TotalTokens)
 
 	attrs, ok := span.LLMAttrsCopy()
 	require.True(t, ok)

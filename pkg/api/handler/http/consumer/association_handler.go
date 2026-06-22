@@ -17,12 +17,12 @@ package consumer
 import (
 	"fmt"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/consumer/request"
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer/request"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 

@@ -1,6 +1,6 @@
-# AgentGateway Dashboard
+# TrustGate Dashboard
 
-Admin dashboard for AgentGateway: manage registries, consumers, auth credentials and policies per gateway.
+Admin dashboard for TrustGate: manage registries, consumers, auth credentials and policies per gateway.
 
 Built with Next.js 16 (App Router), TypeScript, Tailwind CSS v4, Radix UI and TanStack Query.
 
@@ -13,7 +13,7 @@ The dashboard never talks to the admin API from the browser. Instead it uses a
 Browser ──▶ /api/admin/*  (Next.js route handler)
                 │  mints an HS256 JWT signed with SERVER_SECRET_KEY
                 ▼
-          AgentGateway admin API  (Authorization: Bearer <jwt>)
+          TrustGate admin API  (Authorization: Bearer <jwt>)
 ```
 
 - `src/lib/jwt.ts` — signs short-lived admin tokens with `jose`.

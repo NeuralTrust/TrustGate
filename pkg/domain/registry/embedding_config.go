@@ -19,7 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/common/secret"
+	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 )
 
 type EmbeddingConfig struct {

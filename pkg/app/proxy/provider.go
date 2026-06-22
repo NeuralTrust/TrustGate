@@ -24,12 +24,12 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/factory"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
 const (
@@ -44,7 +44,6 @@ const (
 var ErrInvalidRequestPayload = errors.New("invalid request payload")
 
 var ErrModelNotAllowed = errors.New("model not allowed")
-
 
 type ProviderResponse struct {
 	StatusCode int
@@ -198,7 +197,7 @@ func (p *providerInvoker) InvokeStream(
 		return nil, fmt.Errorf("provider completions stream: %w", err)
 	}
 
-	stream := adaptStream(seq, p.registry, prep.sourceFormat, prep.targetFormat, p.logger, p.streamObserver(ctx))
+	stream := adaptStream(seq, p.registry, prep.sourceFormat, prep.targetFormat, p.logger, p.streamObserver(ctx, req))
 
 	return &ProviderResponse{
 		StatusCode: http.StatusOK,
@@ -298,18 +297,28 @@ func injectPreviousResponseID(body []byte, targetFormat adapter.Format, previous
 	return merged
 }
 
-func (p *providerInvoker) streamObserver(ctx context.Context) func(*adapter.CanonicalStreamChunk) {
+func (p *providerInvoker) streamObserver(ctx context.Context, req *infracontext.RequestContext) func(*adapter.CanonicalStreamChunk) {
 	requestTrace := trace.FromContext(ctx)
 	return func(chunk *adapter.CanonicalStreamChunk) {
-		if chunk == nil || requestTrace == nil {
+		if chunk == nil {
 			return
 		}
-		requestTrace.ObserveLLMResult(chunk.Model, chunk.FinishReason)
-		requestTrace.ObserveLLMTurnID(chunk.ID)
+		if requestTrace != nil {
+			requestTrace.ObserveLLMResult(chunk.Model, chunk.FinishReason)
+			requestTrace.ObserveLLMTurnID(chunk.ID)
+		}
 		if chunk.Usage == nil {
 			return
 		}
-		requestTrace.ObserveLLMUsage(chunk.Usage)
+		if req != nil {
+			if req.Metadata == nil {
+				req.Metadata = map[string]interface{}{}
+			}
+			req.Metadata[adapter.MetadataUsageKey] = chunk.Usage
+		}
+		if requestTrace != nil {
+			requestTrace.ObserveLLMUsage(chunk.Usage)
+		}
 		p.logger.Debug("stream usage observed",
 			slog.Int("input_tokens", chunk.Usage.InputTokens),
 			slog.Int("output_tokens", chunk.Usage.OutputTokens),

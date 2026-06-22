@@ -15,9 +15,9 @@
 package registry
 
 import (
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
-	appregistry "github.com/NeuralTrust/AgentGateway/pkg/app/registry"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 

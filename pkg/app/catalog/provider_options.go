@@ -14,7 +14,7 @@
 
 package catalog
 
-import "github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
+import "github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 
 type OptionFieldType string
 

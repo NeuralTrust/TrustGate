@@ -18,9 +18,9 @@ import (
 	"context"
 	"log/slog"
 
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
 type CreateInput struct {
@@ -42,14 +42,16 @@ type creator struct {
 	repo        domain.Repository
 	memoryCache *cache.TTLMap
 	keyCache    *cache.TTLMap
+	publisher   cache.EventPublisher
 	logger      *slog.Logger
 }
 
-func NewCreator(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger) Creator {
+func NewCreator(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger) Creator {
 	return &creator{
 		repo:        repo,
 		memoryCache: manager.GetTTLMap(cache.AuthTTLName),
 		keyCache:    manager.GetTTLMap(cache.AuthKeyTTLName),
+		publisher:   publisher,
 		logger:      logger,
 	}
 }
@@ -69,6 +71,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Auth, err
 	if a.KeyHash != "" {
 		c.keyCache.Set(a.KeyHash, a)
 	}
+	publishGatewayDataInvalidation(ctx, c.publisher, c.logger, a.GatewayID)
 	return a, nil
 }
 

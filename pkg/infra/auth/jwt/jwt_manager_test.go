@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
 	jwtlib "github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 )

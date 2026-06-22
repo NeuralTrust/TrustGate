@@ -18,13 +18,13 @@ import (
 	"context"
 	"errors"
 
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	approle "github.com/NeuralTrust/AgentGateway/pkg/app/role"
-	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	identitydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	approle "github.com/NeuralTrust/TrustGate/pkg/app/role"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	identitydomain "github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 )
 
 var ErrNoRoleAccess = errors.New("mcp: no role grants MCP access for this identity")

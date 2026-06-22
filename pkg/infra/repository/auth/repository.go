@@ -20,9 +20,9 @@ import (
 	"errors"
 	"fmt"
 
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -80,9 +80,9 @@ func (r *Repository) Update(ctx context.Context, a *domain.Auth) error {
 		       config     = $5,
 		       key_hash   = $6,
 		       updated_at = $7
-		 WHERE id = $1`
+		 WHERE id = $1 AND gateway_id = $8`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
-		cmd, err := tx.Exec(ctx, query, a.ID, a.Name, string(a.Type), a.Enabled, configBytes, nullableString(a.KeyHash), a.UpdatedAt)
+		cmd, err := tx.Exec(ctx, query, a.ID, a.Name, string(a.Type), a.Enabled, configBytes, nullableString(a.KeyHash), a.UpdatedAt, a.GatewayID)
 		if err != nil {
 			return mapPgError(err)
 		}
@@ -93,10 +93,10 @@ func (r *Repository) Update(ctx context.Context, a *domain.Auth) error {
 	})
 }
 
-func (r *Repository) Delete(ctx context.Context, id ids.AuthID) error {
-	const query = `DELETE FROM auths WHERE id = $1`
+func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.AuthID) error {
+	const query = `DELETE FROM auths WHERE id = $1 AND gateway_id = $2`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
-		cmd, err := tx.Exec(ctx, query, id)
+		cmd, err := tx.Exec(ctx, query, id, gatewayID)
 		if err != nil {
 			return mapPgDeleteError(err)
 		}

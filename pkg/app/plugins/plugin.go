@@ -18,9 +18,9 @@ import (
 	"context"
 	"errors"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 )
 
 // Plugin is a single unit of request/response processing. Each plugin declares

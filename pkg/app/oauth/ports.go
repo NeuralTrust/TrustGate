@@ -19,7 +19,7 @@ import (
 	"errors"
 	"time"
 
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 type ProviderToken struct {

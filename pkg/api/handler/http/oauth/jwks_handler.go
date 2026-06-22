@@ -15,7 +15,7 @@
 package oauth
 
 import (
-	"github.com/NeuralTrust/AgentGateway/pkg/app/identity/sts"
+	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	"github.com/gofiber/fiber/v2"
 )
 

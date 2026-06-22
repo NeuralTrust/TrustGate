@@ -17,7 +17,7 @@ package oauth
 import (
 	"context"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 const CallbackPath = "/oauth/callback"

@@ -22,8 +22,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	playgroundhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/playground"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/events"
+	playgroundhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/playground"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

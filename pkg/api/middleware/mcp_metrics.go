@@ -18,12 +18,12 @@ import (
 	"context"
 	"time"
 
-	appmetrics "github.com/NeuralTrust/AgentGateway/pkg/app/metrics"
-	"github.com/NeuralTrust/AgentGateway/pkg/config"
-	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/events"
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
+	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 )

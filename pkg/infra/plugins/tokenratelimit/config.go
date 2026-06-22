@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/plugins/pluginutil"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 )
 
 type windowConfig struct {

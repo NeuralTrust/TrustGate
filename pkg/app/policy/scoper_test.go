@@ -19,11 +19,11 @@ import (
 	"errors"
 	"testing"
 
-	apppolicy "github.com/NeuralTrust/AgentGateway/pkg/app/policy"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
-	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/policy/mocks"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
+	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/policy/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/cachetest"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -35,7 +35,7 @@ func TestScoper_SetGlobal_Success(t *testing.T) {
 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-	repo.EXPECT().SetGlobal(mock.Anything, existing.ID, true).Return(nil).Once()
+	repo.EXPECT().SetGlobal(mock.Anything, gwID, existing.ID, true).Return(nil).Once()
 
 	scoper := apppolicy.NewScoper(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	got, err := scoper.SetGlobal(context.Background(), gwID, existing.ID)
@@ -91,7 +91,7 @@ func TestScoper_UnsetGlobal_Success(t *testing.T) {
 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-	repo.EXPECT().SetGlobal(mock.Anything, existing.ID, false).Return(nil).Once()
+	repo.EXPECT().SetGlobal(mock.Anything, gwID, existing.ID, false).Return(nil).Once()
 
 	scoper := apppolicy.NewScoper(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	got, err := scoper.UnsetGlobal(context.Background(), gwID, existing.ID)

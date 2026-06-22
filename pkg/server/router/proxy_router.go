@@ -15,9 +15,9 @@
 package router
 
 import (
-	apihandler "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http"
-	proxyhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/proxy"
-	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
+	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
+	proxyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/proxy"
+	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/gofiber/fiber/v2"
 )
 

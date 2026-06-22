@@ -25,7 +25,7 @@ import (
 	"sync"
 	"time"
 
-	appmcp "github.com/NeuralTrust/AgentGateway/pkg/app/mcp"
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 )
 
 const sessionIdleTTL = 30 * time.Minute

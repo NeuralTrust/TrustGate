@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 type Registry struct {

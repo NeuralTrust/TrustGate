@@ -19,10 +19,10 @@ import (
 	"errors"
 	"fmt"
 
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	vaultdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/vault"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 )
 
 var _ ConnectService = (*connectService)(nil)

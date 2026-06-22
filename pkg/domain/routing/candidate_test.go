@@ -19,9 +19,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 )
 
 func newTestRegistry(t *testing.T, provider string) *registrydomain.Registry {

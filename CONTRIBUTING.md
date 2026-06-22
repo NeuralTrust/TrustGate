@@ -1,4 +1,4 @@
-# Contributing to AgentGateway
+# Contributing to TrustGate
 
 We love your input! We want to make contributing to this project as easy and transparent as possible, whether it's:
 
@@ -63,9 +63,9 @@ make install-pre-commit
 
 In short, when you submit code changes, your submissions are understood to be under the same [Apache 2.0 License](LICENSE) that covers the project. Feel free to contact the maintainers if that's a concern.
 
-## Report bugs using GitHub's [issues](https://github.com/NeuralTrust/AgentGateway/issues)
+## Report bugs using GitHub's [issues](https://github.com/NeuralTrust/TrustGate/issues)
 
-We use GitHub issues to track public bugs. Report a bug by [opening a new issue](https://github.com/NeuralTrust/AgentGateway/issues/new); it's that easy!
+We use GitHub issues to track public bugs. Report a bug by [opening a new issue](https://github.com/NeuralTrust/TrustGate/issues/new); it's that easy!
 
 ## Write bug reports with detail, background, and sample code
 

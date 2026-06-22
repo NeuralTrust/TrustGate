@@ -20,9 +20,9 @@ import (
 	"errors"
 	"fmt"
 
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	appmcp "github.com/NeuralTrust/AgentGateway/pkg/app/mcp"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
 var ErrMethodNotFound = errors.New("mcp: method not found")

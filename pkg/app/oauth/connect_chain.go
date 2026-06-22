@@ -19,9 +19,9 @@ import (
 	"errors"
 	"net/url"
 
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	vaultdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/vault"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 )
 
 func (s *connectService) ChainURL(ctx context.Context, baseURL string, gatewayID ids.GatewayID, resource, principalSub, resumeURL string) (string, error) {

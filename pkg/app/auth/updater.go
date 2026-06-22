@@ -19,10 +19,10 @@ import (
 	"log/slog"
 	"time"
 
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
 type UpdateInput struct {

@@ -19,8 +19,8 @@ import (
 	"fmt"
 	"sort"
 
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/catalog"
-	mcpcatalog "github.com/NeuralTrust/AgentGateway/seed/mcp-catalog"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	mcpcatalog "github.com/NeuralTrust/TrustGate/seed/mcp-catalog"
 )
 
 type MCPServerCatalog interface {

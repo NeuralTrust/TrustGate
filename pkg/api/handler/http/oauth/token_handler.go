@@ -17,8 +17,8 @@ package oauth
 import (
 	"errors"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
-	appoauth "github.com/NeuralTrust/AgentGateway/pkg/app/oauth"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/gofiber/fiber/v2"
 )
 

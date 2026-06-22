@@ -17,7 +17,7 @@ package proxy
 import (
 	"time"
 
-	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 )
 
 type failoverBudget struct {

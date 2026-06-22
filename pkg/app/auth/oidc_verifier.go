@@ -17,7 +17,7 @@ package auth
 import (
 	"context"
 
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 )
 
 type TokenHints struct {

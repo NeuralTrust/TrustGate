@@ -19,10 +19,10 @@ import (
 	"fmt"
 	"strings"
 
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 )
 
 type CreateRoleRequest struct {

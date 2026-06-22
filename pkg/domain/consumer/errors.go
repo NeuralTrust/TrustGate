@@ -17,7 +17,7 @@ package consumer
 import (
 	"fmt"
 
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 )
 
 var (

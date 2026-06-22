@@ -15,12 +15,12 @@
 package modules
 
 import (
-	registryhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/registry"
-	appregistry "github.com/NeuralTrust/AgentGateway/pkg/app/registry"
-	"github.com/NeuralTrust/AgentGateway/pkg/container"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
-	registryrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/registry"
+	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
+	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/container"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	registryrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
 )
 
 func Registry(c *container.Container) error {

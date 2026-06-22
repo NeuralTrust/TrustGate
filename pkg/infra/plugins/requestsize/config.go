@@ -17,7 +17,7 @@ package requestsize
 import (
 	"fmt"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/plugins/pluginutil"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 )
 
 type sizeUnit string

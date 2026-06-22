@@ -15,10 +15,10 @@
 package modules
 
 import (
-	proxyhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/proxy"
-	appproxy "github.com/NeuralTrust/AgentGateway/pkg/app/proxy"
-	approuting "github.com/NeuralTrust/AgentGateway/pkg/app/routing"
-	"github.com/NeuralTrust/AgentGateway/pkg/container"
+	proxyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/proxy"
+	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
+	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/container"
 )
 
 func Proxy(c *container.Container) error {

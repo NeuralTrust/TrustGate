@@ -3,13 +3,13 @@
 package mocks
 
 import (
-	context "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
+	context "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 
-	telemetry "github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
+	telemetry "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 
 	time "time"
 
-	trace "github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
+	trace "github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	mock "github.com/stretchr/testify/mock"
 )
 

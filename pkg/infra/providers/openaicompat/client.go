@@ -25,8 +25,8 @@ import (
 	"iter"
 	"strings"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/openai"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
 )
 
 const completionsPath = "/chat/completions"

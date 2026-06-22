@@ -5,7 +5,7 @@ package mocks
 import (
 	context "context"
 
-	proxy "github.com/NeuralTrust/AgentGateway/pkg/app/proxy"
+	proxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	mock "github.com/stretchr/testify/mock"
 )
 

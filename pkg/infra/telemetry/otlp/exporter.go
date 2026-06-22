@@ -21,14 +21,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	appmetrics "github.com/NeuralTrust/AgentGateway/pkg/app/metrics"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/events"
+	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
 
 const (
-	loggerScope            = "github.com/NeuralTrust/AgentGateway/pkg/infra/telemetry/otlp"
+	loggerScope            = "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/otlp"
 	defaultShutdownTimeout = 5 * time.Second
 )
 

@@ -6,8 +6,8 @@ import (
 	context "context"
 	json "encoding/json"
 
-	consumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	mcp "github.com/NeuralTrust/AgentGateway/pkg/app/mcp"
+	consumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	mcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	mock "github.com/stretchr/testify/mock"
 )
 

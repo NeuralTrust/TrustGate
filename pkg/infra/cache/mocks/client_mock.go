@@ -6,8 +6,8 @@ import (
 	context "context"
 	time "time"
 
-	gateway "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
-	cache "github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
+	gateway "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	cache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	redis "github.com/go-redis/redis/v8"
 	mock "github.com/stretchr/testify/mock"
 )

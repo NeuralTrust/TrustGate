@@ -23,8 +23,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	appmcp "github.com/NeuralTrust/AgentGateway/pkg/app/mcp"
-	mcpclient "github.com/NeuralTrust/AgentGateway/pkg/infra/mcp/client"
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
+	mcpclient "github.com/NeuralTrust/TrustGate/pkg/infra/mcp/client"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

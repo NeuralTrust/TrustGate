@@ -23,9 +23,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
 const (

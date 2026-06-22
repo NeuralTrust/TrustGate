@@ -17,7 +17,7 @@ package migrations
 import (
 	"context"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/jackc/pgx/v5"
 )
 

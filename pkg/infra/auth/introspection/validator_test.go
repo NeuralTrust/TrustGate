@@ -23,9 +23,9 @@ import (
 	"testing"
 	"time"
 
-	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/introspection"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/introspection"
 )
 
 func stubEndpoint(t *testing.T, calls *atomic.Int64, response map[string]any) *httptest.Server {
@@ -78,7 +78,7 @@ func TestValidator_CachesUntilExpiry(t *testing.T) {
 		"exp":    time.Now().Add(time.Hour).Unix(),
 	})
 	v := introspection.NewValidator(nil)
-	cfg := &authdomain.OAuth2Config{Issuer: "x", IntrospectionURL: srv.URL}
+	cfg := &authdomain.OAuth2Config{IntrospectionURL: srv.URL}
 
 	for range 3 {
 		if _, err := v.Validate(context.Background(), "opaque-token", cfg); err != nil {
@@ -87,6 +87,37 @@ func TestValidator_CachesUntilExpiry(t *testing.T) {
 	}
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("expected 1 IdP call (cached), got %d", got)
+	}
+}
+
+func TestValidator_RejectsIssuerMismatch(t *testing.T) {
+	var calls atomic.Int64
+	srv := stubEndpoint(t, &calls, map[string]any{
+		"active": true,
+		"sub":    "service-7",
+		"iss":    "https://other-idp.example.com",
+		"exp":    time.Now().Add(time.Hour).Unix(),
+	})
+	v := introspection.NewValidator(nil)
+	cfg := &authdomain.OAuth2Config{Issuer: "https://idp.example.com", IntrospectionURL: srv.URL}
+
+	if _, err := v.Validate(context.Background(), "tok", cfg); err == nil {
+		t.Fatal("expected issuer rejection")
+	}
+}
+
+func TestValidator_AllowsMissingIssuerWhenNotConfigured(t *testing.T) {
+	var calls atomic.Int64
+	srv := stubEndpoint(t, &calls, map[string]any{
+		"active": true,
+		"sub":    "service-7",
+		"exp":    time.Now().Add(time.Hour).Unix(),
+	})
+	v := introspection.NewValidator(nil)
+	cfg := &authdomain.OAuth2Config{IntrospectionURL: srv.URL}
+
+	if _, err := v.Validate(context.Background(), "tok", cfg); err != nil {
+		t.Fatalf("validate: %v", err)
 	}
 }
 

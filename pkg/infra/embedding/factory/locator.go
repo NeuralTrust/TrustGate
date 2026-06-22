@@ -17,7 +17,7 @@ package factory
 import (
 	"fmt"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/embedding"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
 )
 
 const (

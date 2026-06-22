@@ -15,9 +15,9 @@
 package response
 
 import (
-	appcatalog "github.com/NeuralTrust/AgentGateway/pkg/app/catalog"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/catalog"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 type ProviderResponse struct {

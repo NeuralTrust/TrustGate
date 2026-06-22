@@ -17,7 +17,7 @@ package gateway
 import (
 	"fmt"
 
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 )
 
 // Sentinel errors for the gateway aggregate. They wrap the package-wide

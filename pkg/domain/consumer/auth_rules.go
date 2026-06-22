@@ -17,8 +17,8 @@ package consumer
 import (
 	"fmt"
 
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 )
 
 func ValidateAuthType(consType Type, mode RoutingMode, authType authdomain.Type) error {

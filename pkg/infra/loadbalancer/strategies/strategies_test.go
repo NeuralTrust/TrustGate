@@ -17,8 +17,8 @@ package strategies
 import (
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 func makeBackends(names ...string) []*registry.Registry {

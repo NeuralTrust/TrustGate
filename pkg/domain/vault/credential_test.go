@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 func TestNewCredential_HappyPath(t *testing.T) {

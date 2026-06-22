@@ -18,7 +18,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
 func (c *client) TestConnection(ctx context.Context, config *providers.Config) providers.ProbeResult {

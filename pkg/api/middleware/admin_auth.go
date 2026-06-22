@@ -18,9 +18,9 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/jwt"
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/gofiber/fiber/v2"
 )
 

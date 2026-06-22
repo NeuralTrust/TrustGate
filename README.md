@@ -1,18 +1,18 @@
-# AgentGateway
+# TrustGate
 
 <div align="center">
 
-<img src="assets/agentgateway-hero.png" alt="AgentGateway" width="100%"/>
+<img src="assets/trustgate-hero.png" alt="TrustGate" width="100%"/>
 
 *The high-performance data-plane gateway for LLM and agent traffic — built from scratch in Go*
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/NeuralTrust/AgentGateway.svg)](https://pkg.go.dev/github.com/NeuralTrust/AgentGateway)
-[![Go Report Card](https://goreportcard.com/badge/github.com/NeuralTrust/AgentGateway)](https://goreportcard.com/report/github.com/NeuralTrust/AgentGateway)
+[![Go Reference](https://pkg.go.dev/badge/github.com/NeuralTrust/TrustGate.svg)](https://pkg.go.dev/github.com/NeuralTrust/TrustGate)
+[![Go Report Card](https://goreportcard.com/badge/github.com/NeuralTrust/TrustGate)](https://goreportcard.com/report/github.com/NeuralTrust/TrustGate)
 [![Go Version](https://img.shields.io/badge/go-1.26-00ADD8.svg?logo=go)](go.mod)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Docker Pulls](https://img.shields.io/docker/pulls/neuraltrust/agentgateway.svg)](https://hub.docker.com/r/neuraltrust/agentgateway)
-[![CI](https://github.com/NeuralTrust/AgentGateway/actions/workflows/ci.yml/badge.svg)](https://github.com/NeuralTrust/AgentGateway/actions/workflows/ci.yml)
-[![Release](https://github.com/NeuralTrust/AgentGateway/actions/workflows/release.yml/badge.svg)](https://github.com/NeuralTrust/AgentGateway/actions/workflows/release.yml)
+[![Docker Pulls](https://img.shields.io/docker/pulls/neuraltrust/trustgate.svg)](https://hub.docker.com/r/neuraltrust/trustgate)
+[![CI](https://github.com/NeuralTrust/TrustGate/actions/workflows/ci.yml/badge.svg)](https://github.com/NeuralTrust/TrustGate/actions/workflows/ci.yml)
+[![Release](https://github.com/NeuralTrust/TrustGate/actions/workflows/release.yml/badge.svg)](https://github.com/NeuralTrust/TrustGate/actions/workflows/release.yml)
 
 [Documentation](https://docs.neuraltrust.ai) &nbsp;|&nbsp;
 [Quick Start](#-quick-start) &nbsp;|&nbsp;
@@ -43,7 +43,7 @@ Clones the repo, seeds `.env`, brings up the full stack in Docker and — when G
 is installed — compiles the `trustgate` binary and installs it on your `PATH`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/NeuralTrust/AgentGateway/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/NeuralTrust/TrustGate/main/scripts/install.sh | bash
 ```
 
 Requires `git`, `docker` and Docker Compose (plus Go to build the CLI). Re-running
@@ -58,8 +58,8 @@ updates the checkout and never overwrites your `.env`. Useful overrides:
 
 ```bash
 # Clone the repository
-git clone https://github.com/NeuralTrust/AgentGateway.git
-cd AgentGateway
+git clone https://github.com/NeuralTrust/TrustGate.git
+cd TrustGate
 
 # Copy the env template and adjust as needed
 cp .env.example .env
@@ -213,7 +213,7 @@ PY
 
 ## 🏗️ Architecture
 
-AgentGateway ships a **single binary** that boots **one** HTTP server, selected by `argv[1]`
+TrustGate ships a **single binary** that boots **one** HTTP server, selected by `argv[1]`
 (default: `proxy`). In production each pod runs one container with the appropriate argument,
 so the **Admin**, **Proxy** and **MCP** planes scale independently.
 
@@ -231,7 +231,7 @@ flowchart LR
         APP["Apps / SDKs / Agents"]
     end
 
-    subgraph AG["AgentGateway"]
+    subgraph AG["TrustGate"]
         direction TB
         ADMIN["Admin Plane :8080\nGateways · Registries · Consumers\nAuth · Policies · Catalog"]
         PROXY["Proxy Plane :8081\nRouting · Load Balancing\nPolicy Stages · Plugins"]
@@ -326,7 +326,7 @@ MCP_BASE_DOMAIN=mcp.neuraltrust.ai      # mcp plane host
 # Database (Postgres via pgx/pgxpool)
 DB_HOST=localhost
 DB_PORT=5432
-DB_NAME=agentgateway
+DB_NAME=trustgate
 
 # Redis & Kafka
 REDIS_HOST=localhost
@@ -334,7 +334,7 @@ KAFKA_BROKERS=localhost:9092
 
 # Telemetry & Metrics
 TELEMETRY_ENABLED=true
-TELEMETRY_KAFKA_TOPIC=agentgateway.requests
+TELEMETRY_KAFKA_TOPIC=trustgate.requests
 METRICS_ENABLED=true
 
 # OTLP exporter defaults (opt-in per gateway; per-gateway settings override these)
@@ -452,13 +452,13 @@ We love contributions! To get started:
 
 ## 📜 License
 
-AgentGateway is licensed under the Apache License 2.0 — see the [LICENSE](LICENSE) file for details.
+TrustGate is licensed under the Apache License 2.0 — see the [LICENSE](LICENSE) file for details.
 
 ## 📫 Community & Support
 
 - [Documentation](https://docs.neuraltrust.ai)
 - [Slack Community](https://join.slack.com/t/neuraltrustcommunity/shared_invite/zt-2xl47cag6-_HFNpltIULnA3wh4R6AqBg)
-- [GitHub Issues](https://github.com/NeuralTrust/AgentGateway/issues)
+- [GitHub Issues](https://github.com/NeuralTrust/TrustGate/issues)
 - [Twitter](https://twitter.com/neuraltrust)
 - [Blog](https://neuraltrust.ai/en/resources/blog)
 

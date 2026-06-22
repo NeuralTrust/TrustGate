@@ -24,8 +24,8 @@ import (
 	"strings"
 	"time"
 
-	appoauth "github.com/NeuralTrust/AgentGateway/pkg/app/oauth"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 var _ appoauth.ProviderClient = (*providerClient)(nil)

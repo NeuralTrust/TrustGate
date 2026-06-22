@@ -21,9 +21,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/vault"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/jackc/pgx/v5"
 )
 

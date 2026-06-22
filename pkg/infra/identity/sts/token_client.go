@@ -25,7 +25,7 @@ import (
 	"sync"
 	"time"
 
-	appsts "github.com/NeuralTrust/AgentGateway/pkg/app/identity/sts"
+	appsts "github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 )
 
 var _ appsts.IdPTokenClient = (*TokenClient)(nil)

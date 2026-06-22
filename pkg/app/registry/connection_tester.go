@@ -20,11 +20,11 @@ import (
 	"log/slog"
 	"time"
 
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/factory"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 )
 
 const probeTimeout = 10 * time.Second

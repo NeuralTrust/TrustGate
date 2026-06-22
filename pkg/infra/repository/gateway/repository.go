@@ -21,10 +21,10 @@ import (
 	"fmt"
 	"strings"
 
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )

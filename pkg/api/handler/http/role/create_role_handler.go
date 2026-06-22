@@ -17,11 +17,11 @@ package role
 import (
 	"fmt"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/role/request"
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/role/response"
-	approle "github.com/NeuralTrust/AgentGateway/pkg/app/role"
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/role/request"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/role/response"
+	approle "github.com/NeuralTrust/TrustGate/pkg/app/role"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/gofiber/fiber/v2"
 )
 

@@ -17,12 +17,12 @@ package registry
 import (
 	"fmt"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/registry/request"
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/registry/response"
-	appregistry "github.com/NeuralTrust/AgentGateway/pkg/app/registry"
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry/request"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry/response"
+	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 
