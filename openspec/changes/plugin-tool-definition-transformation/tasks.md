@@ -131,26 +131,26 @@ churn because the phases are strictly dependent. Prefer the chain.)
 
 ## Phase 3: Plugin orchestration + graft + observability
 
-- [ ] 3.1 Create `pkg/infra/plugins/tooltransform/data.go`: exported `ToolTransformData`,
+- [x] 3.1 Create `pkg/infra/plugins/tooltransform/data.go`: exported `ToolTransformData`,
       `TransformedTool`, `InjectedOutcome` (json tags per design); pure builder that
       diffs `before` vs final tools into `Transformed` flags and maps `outcomes` into
       `Injected`; `rejectData(...)` (minimal payload, outcome `rejected`); `setExtras`
       (nil-checks `in.Event`, calls `event.SetExtras`).
-- [ ] 3.2 Create `pkg/infra/plugins/tooltransform/plugin.go`: `PluginName` const,
+- [x] 3.2 Create `pkg/infra/plugins/tooltransform/plugin.go`: `PluginName` const,
       `var _ appplugins.Plugin = (*Plugin)(nil)`, `Plugin{registry *adapter.Registry}`,
       `New(registry *adapter.Registry) *Plugin`, and contract methods `Name`,
       `MandatoryStages`/`SupportedStages` (`pre_request`), `SupportedModes`
       (`enforce`), `ValidateConfig` (delegates to `parseConfig`).
-- [ ] 3.3 Implement `Execute`: nil-registry → `okResult()`; `parseConfig` (wrap err
+- [x] 3.3 Implement `Execute`: nil-registry → `okResult()`; `parseConfig` (wrap err
       `tool_definition_transformation: %w`); `in.Scope.Subject()` → no-op on err;
       dispatch `StagePreRequest`→`preRequest`, default→`okResult()`.
-- [ ] 3.4 Implement `preRequest`: early no-op on nil/empty body, empty `wireFormat`,
+- [x] 3.4 Implement `preRequest`: early no-op on nil/empty body, empty `wireFormat`,
       decode error/nil canonical, or `len(Tools)==0 && len(InjectTools)==0`;
       `before := cloneTools(canonical.Tools)`; `applyTransforms`; `applyInjections`
       (on err → `setExtras(rejectData)` + return wrapped err); set `canonical.Tools`;
       if `!transformed && len(outcomes)==0` → `okResult()`; else `setExtras(data)` +
       `encodeAndGraft`.
-- [ ] 3.5 Implement `encodeAndGraft` (baseline-with-`before` vs `encoded`-with-mutated
+- [x] 3.5 Implement `encodeAndGraft` (baseline-with-`before` vs `encoded`-with-mutated
       `EncodeRequest`, then `graftChangedFields(originalBody, baseline, encoded)` with
       fallback to `encoded` on graft error) and copy helpers `wireFormat`,
       `graftChangedFields`, `cloneTools`, `okResult` (verbatim from `pertoolratelimit`,
@@ -158,11 +158,11 @@ churn because the phases are strictly dependent. Prefer the chain.)
 
 ### Phase 3 tests (`plugin_test.go`) — smoke only (full matrix in Phase 4)
 
-- [ ] 3.6 Pipeline smoke: OpenAI completions body with one tool + a `search_*`
+- [x] 3.6 Pipeline smoke: OpenAI completions body with one tool + a `search_*`
       transform + a `safety_check` injection → `Result.RequestBody` decodes back to the
       transformed client tool plus the injected tool; assert event extras populated
       (`Transformed` flag + `Injected` outcome).
-- [ ] 3.7 No-op smoke: nil/empty body → `okResult()` with no `RequestBody`.
+- [x] 3.7 No-op smoke: nil/empty body → `okResult()` with no `RequestBody`.
 
 **Verify**: `go build ./... ; go vet ./pkg/infra/plugins/tooltransform/... ; go test -race ./pkg/infra/plugins/tooltransform/...`.
 **Rollback**: delete `plugin.go`, `data.go`, and their test rows; pure helpers from Phases 1–2 remain compilable as a library.

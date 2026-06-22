@@ -15,12 +15,15 @@
 package tooltransform
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"reflect"
 	"testing"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -567,5 +570,139 @@ func TestRejectErrorBodyExactness(t *testing.T) {
 	}
 	if !reflect.DeepEqual(gotMap, wantMap) {
 		t.Fatalf("reject body = %#v, want %#v", gotMap, wantMap)
+	}
+}
+
+func openAIReqBody(t *testing.T, toolName string) []byte {
+	t.Helper()
+	body := map[string]any{
+		"model":    "gpt",
+		"user":     "abc",
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+		"tools": []any{
+			map[string]any{
+				"type": "function",
+				"function": map[string]any{
+					"name":        toolName,
+					"description": "original",
+					"parameters":  map[string]any{"type": "object"},
+				},
+			},
+		},
+	}
+	b, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("json.Marshal(body) error = %v", err)
+	}
+	return b
+}
+
+func findTool(tools []adapter.CanonicalTool, name string) (adapter.CanonicalTool, bool) {
+	for i := range tools {
+		if tools[i].Name == name {
+			return tools[i], true
+		}
+	}
+	return adapter.CanonicalTool{}, false
+}
+
+func TestPluginPreRequestPipelineSmoke(t *testing.T) {
+	p := New(adapter.NewRegistry())
+	settings := map[string]any{
+		"transform_tools": []any{
+			map[string]any{
+				"tool":                 "search_*",
+				"schema_patch":         map[string]any{"title": "patched"},
+				"description_override": "overridden",
+			},
+		},
+		"inject_tools": []any{
+			map[string]any{
+				"type":     "function",
+				"function": map[string]any{"name": "safety_check", "description": "gateway"},
+			},
+		},
+	}
+	in := appplugins.ExecInput{
+		Stage:   policy.StagePreRequest,
+		Config:  policy.PluginConfig{ID: "tt-1", Slug: PluginName, Name: PluginName, Settings: settings},
+		Scope:   appplugins.RuntimeScope{ConsumerID: "c-1", GatewayID: "gw-1"},
+		Request: &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: openAIReqBody(t, "search_docs")},
+	}
+
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+	if res == nil || res.RequestBody == nil {
+		t.Fatalf("Execute() result = %#v, want non-nil RequestBody", res)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("StatusCode = %d, want %d", res.StatusCode, http.StatusOK)
+	}
+
+	decoded, err := adapter.NewRegistry().DecodeRequestFor(res.RequestBody, adapter.FormatOpenAI)
+	if err != nil {
+		t.Fatalf("DecodeRequestFor(RequestBody) error = %v", err)
+	}
+
+	transformed, ok := findTool(decoded.Tools, "search_docs")
+	if !ok {
+		t.Fatalf("decoded tools missing search_docs: %#v", decoded.Tools)
+	}
+	if transformed.Description != "overridden" {
+		t.Fatalf("search_docs description = %q, want %q", transformed.Description, "overridden")
+	}
+	if transformed.Schema["title"] != "patched" {
+		t.Fatalf("search_docs schema title = %v, want %q", transformed.Schema["title"], "patched")
+	}
+	if transformed.Schema["type"] != "object" {
+		t.Fatalf("search_docs schema type = %v, want %q", transformed.Schema["type"], "object")
+	}
+
+	if _, ok := findTool(decoded.Tools, "safety_check"); !ok {
+		t.Fatalf("decoded tools missing injected safety_check: %#v", decoded.Tools)
+	}
+}
+
+func TestPluginPreRequestNoOpSmoke(t *testing.T) {
+	p := New(adapter.NewRegistry())
+	settings := map[string]any{
+		"inject_tools": []any{
+			map[string]any{"type": "function", "function": map[string]any{"name": "safety_check"}},
+		},
+	}
+	mkInput := func(req *infracontext.RequestContext) appplugins.ExecInput {
+		return appplugins.ExecInput{
+			Stage:   policy.StagePreRequest,
+			Config:  policy.PluginConfig{ID: "tt-1", Slug: PluginName, Name: PluginName, Settings: settings},
+			Scope:   appplugins.RuntimeScope{ConsumerID: "c-1", GatewayID: "gw-1"},
+			Request: req,
+		}
+	}
+	cases := []struct {
+		name string
+		req  *infracontext.RequestContext
+	}{
+		{name: "nil request", req: nil},
+		{name: "nil body", req: &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: nil}},
+		{name: "empty body", req: &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: []byte{}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := p.Execute(context.Background(), mkInput(tc.req))
+			if err != nil {
+				t.Fatalf("Execute() error = %v, want nil", err)
+			}
+			if res == nil {
+				t.Fatalf("Execute() result = nil, want okResult")
+			}
+			if res.StatusCode != http.StatusOK {
+				t.Fatalf("StatusCode = %d, want %d", res.StatusCode, http.StatusOK)
+			}
+			if res.RequestBody != nil {
+				t.Fatalf("RequestBody = %q, want nil", res.RequestBody)
+			}
+		})
 	}
 }
