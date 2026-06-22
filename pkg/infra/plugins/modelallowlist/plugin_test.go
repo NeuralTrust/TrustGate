@@ -124,9 +124,11 @@ func TestPlugin_Execute(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, 200, res.StatusCode)
 				assert.False(t, res.StopUpstream)
-				model, mErr := adapter.ExtractModel(req.Body)
+				require.NotNil(t, res.RequestBody)
+				model, mErr := adapter.ExtractModel(res.RequestBody)
 				require.NoError(t, mErr)
 				assert.Equal(t, "gpt-5", model)
+				assert.JSONEq(t, `{"model":"gpt-3.5"}`, string(req.Body))
 			},
 		},
 		{
@@ -137,9 +139,11 @@ func TestPlugin_Execute(t *testing.T) {
 			check: func(t *testing.T, res *appplugins.Result, err error, req *infracontext.RequestContext) {
 				require.NoError(t, err)
 				assert.Equal(t, 200, res.StatusCode)
-				model, mErr := adapter.ExtractModel(req.Body)
+				require.NotNil(t, res.RequestBody)
+				model, mErr := adapter.ExtractModel(res.RequestBody)
 				require.NoError(t, mErr)
 				assert.Equal(t, "gpt-5", model)
+				assert.JSONEq(t, `{"messages":[]}`, string(req.Body))
 			},
 		},
 		{
@@ -219,7 +223,8 @@ func TestPlugin_Execute(t *testing.T) {
 			check: func(t *testing.T, res *appplugins.Result, err error, req *infracontext.RequestContext) {
 				require.NoError(t, err)
 				assert.Equal(t, 200, res.StatusCode)
-				model, mErr := adapter.ExtractModel(req.Body)
+				require.NotNil(t, res.RequestBody)
+				model, mErr := adapter.ExtractModel(res.RequestBody)
 				require.NoError(t, mErr)
 				assert.Equal(t, "gpt-5", model)
 			},

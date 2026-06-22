@@ -42,11 +42,11 @@ Chain strategy: pending
 
 ## Phase 2: Offender refactor to `Result` (behavior-preserving)
 
-- [ ] 2.1 `modelallowlist/plugin.go` (~76,109): replace `in.Request.Body = adapter.OverrideModel(...)` with `return &Result{StatusCode: 200, RequestBody: adapter.OverrideModel(in.Request.Body, cfg.DefaultModel)}`.
-- [ ] 2.2 `tokenratelimit/downgrade.go:64`: change `applyDowngrade` to return `(newModel string, body []byte, headers map[string][]string, ok bool)`; compute `body := adapter.OverrideModel(req.Body, newModel)` instead of assigning `req.Body`.
-- [ ] 2.3 Thread `downgradeBody` at call site `tokenratelimit/plugin.go:110` and assign `res.RequestBody = body` before return (~:130); set `RequestBody` on inline `Result` at `tokenratelimit/budget.go:263`.
-- [ ] 2.4 Update `modelallowlist/plugin_test.go` and `tokenratelimit/plugin_test.go` to assert `Result.RequestBody` (not `in.Request.Body`); override/downgrade still observable.
-- [ ] 2.5 Green-gate for `pkg/infra/plugins/{modelallowlist,tokenratelimit}/...`.
+- [x] 2.1 `modelallowlist/plugin.go` (~76,109): replace `in.Request.Body = adapter.OverrideModel(...)` with `return &Result{StatusCode: 200, RequestBody: adapter.OverrideModel(in.Request.Body, cfg.DefaultModel)}`.
+- [x] 2.2 `tokenratelimit/downgrade.go:64`: change `applyDowngrade` to return `(newModel string, body []byte, headers map[string][]string, ok bool)`; compute `body := adapter.OverrideModel(req.Body, newModel)` instead of assigning `req.Body`.
+- [x] 2.3 Thread `downgradeBody` at call site `tokenratelimit/plugin.go:110` and assign `res.RequestBody = body` before return (~:130); set `RequestBody` on inline `Result` at `tokenratelimit/budget.go:263`.
+- [x] 2.4 Update `modelallowlist/plugin_test.go` and `tokenratelimit/plugin_test.go` to assert `Result.RequestBody` (not `in.Request.Body`); override/downgrade still observable.
+- [x] 2.5 Green-gate for `pkg/infra/plugins/{modelallowlist,tokenratelimit}/...`.
 
 ## Phase 3: Planner + executor fold (core fix)
 

@@ -260,8 +260,8 @@ func (p *Plugin) handleExceeded(
 	case behaviorAlertOnly:
 		return &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}, nil
 	case behaviorDowngradeModel:
-		if _, hdr, ok := applyDowngrade(req, model, cfg.DowngradeTo); ok {
-			return &appplugins.Result{StatusCode: http.StatusOK, Headers: mergeHeaderValues(headers, hdr)}, nil
+		if _, body, hdr, ok := applyDowngrade(req, model, cfg.DowngradeTo); ok {
+			return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: body, Headers: mergeHeaderValues(headers, hdr)}, nil
 		}
 		return nil, budgetExceededError(cfg.Unit, scope, w.label, withBudgetMeta(headers, cfg.Unit, scope, w.label))
 	default:

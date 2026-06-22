@@ -79,13 +79,13 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 
 	if model == "" {
 		if cfg.DefaultModel != "" && blocks {
-			in.Request.Body = adapter.OverrideModel(in.Request.Body, cfg.DefaultModel)
+			body := adapter.OverrideModel(in.Request.Body, cfg.DefaultModel)
 			setExtras(in.Event, ModelAllowlistData{
 				Decision:        decisionDefaulted,
 				SubstitutedWith: cfg.DefaultModel,
 				Behavior:        string(cfg.Behavior),
 			})
-			return okResult(), nil
+			return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: body}, nil
 		}
 		setExtras(in.Event, ModelAllowlistData{Decision: decisionAllowed, Behavior: string(cfg.Behavior)})
 		return okResult(), nil
@@ -112,14 +112,14 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 	}
 
 	if cfg.Behavior == behaviorSubstitute {
-		in.Request.Body = adapter.OverrideModel(in.Request.Body, cfg.SubstituteWith)
+		body := adapter.OverrideModel(in.Request.Body, cfg.SubstituteWith)
 		setExtras(in.Event, ModelAllowlistData{
 			RequestedModel:  model,
 			Decision:        decisionSubstituted,
 			SubstitutedWith: cfg.SubstituteWith,
 			Behavior:        string(cfg.Behavior),
 		})
-		return okResult(), nil
+		return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: body}, nil
 	}
 
 	setExtras(in.Event, ModelAllowlistData{

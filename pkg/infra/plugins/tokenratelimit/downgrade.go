@@ -53,17 +53,17 @@ func modelAllowed(model string, allowed []string) bool {
 	return false
 }
 
-func applyDowngrade(req *infracontext.RequestContext, orig, target string) (string, map[string][]string, bool) {
+func applyDowngrade(req *infracontext.RequestContext, orig, target string) (string, []byte, map[string][]string, bool) {
 	if req == nil {
-		return "", nil, false
+		return "", nil, nil, false
 	}
 	newModel, ok := resolveDowngrade(req.Provider, target, req.AllowedModels)
 	if !ok {
-		return "", nil, false
+		return "", nil, nil, false
 	}
-	req.Body = adapter.OverrideModel(req.Body, newModel)
+	body := adapter.OverrideModel(req.Body, newModel)
 	headers := map[string][]string{
 		downgradeHeader: {orig + downgradeArrow + newModel},
 	}
-	return newModel, headers, true
+	return newModel, body, headers, true
 }
