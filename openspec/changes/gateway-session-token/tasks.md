@@ -167,26 +167,26 @@ unit paths unchanged.
 Goal: `grant_type=refresh_token` re-mints locally from the stored session and rotates the refresh token;
 full opaque-IdP flow + parity + Okta no-regression covered functionally.
 
-- [ ] **5.1** `pkg/app/oauth/proxy.go` `refresh`: first try `GetSession(ctx, req.RefreshToken)`. If a
+- [x] **5.1** `pkg/app/oauth/proxy.go` `refresh`: first try `GetSession(ctx, req.RefreshToken)`. If a
   `SessionRecord` exists → re-`mintSession` from it (no IdP call), rotate: generate a new `refresh_token`,
   `SaveSession(new → record)`, `DeleteSession(old)`, return `{access_token, token_type, expires_in:3600,
   refresh_token, scope}`. Preserve original subject + scopes (Resolution #3). If no session record →
   existing IdP `refresh_token` proxy path unchanged (Okta).
-- [ ] **5.2** `pkg/app/oauth/proxy_test.go`: session refresh re-mints from `GetSession` with **no** IdP
+- [x] **5.2** `pkg/app/oauth/proxy_test.go`: session refresh re-mints from `GetSession` with **no** IdP
   call, rotates (old refresh deleted, new returned, subject/scopes preserved); non-session refresh still
   proxies to the IdP token endpoint.
-- [ ] **5.3** Functional **AC#1** (opaque GitHub e2e): stub IdP (form-encoded token endpoint + a
+- [x] **5.3** Functional **AC#1** (opaque GitHub e2e): stub IdP (form-encoded token endpoint + a
   `https://api.github.com/user`-shaped userinfo returning numeric `id`); `SubjectClaim="id"`,
   `SessionMode=true`. Drive Authorize → Callback → Exchange and assert a minted session JWT is returned
   (verifiable against the gateway JWKS) and the consent detour fires with a non-empty subject.
-- [ ] **5.4** Functional **AC#2 / parity**: subject captured at `Callback` == `principal.Subject` on a
+- [x] **5.4** Functional **AC#2 / parity**: subject captured at `Callback` == `principal.Subject` on a
   follow-up MCP request through `resolveSession`; the vault row written at consent
   (`(gatewayID, subject, provider)`) is `Find`-able on the request path. Distinct subjects do not share
   credentials.
-- [ ] **5.5** Functional **AC#3** no-regression: existing Okta JWT gateway (`SessionMode=false`) → exchange
+- [x] **5.5** Functional **AC#3** no-regression: existing Okta JWT gateway (`SessionMode=false`) → exchange
   returns the IdP JWT verbatim; MCP request validates via `resolveJWT` against the IdP issuer; principal
   subject derives from the IdP token as today.
-- [ ] **5.6** Repo-wide gates: `go generate ./...` (mocks current), `go build ./...`,
+- [x] **5.6** Repo-wide gates: `go generate ./...` (mocks current), `go build ./...`,
   `go test -race ./...`, `go vet ./...`, `golangci-lint run`.
 
 **Acceptance:** all functional + unit suites green under `-race`; lint/vet clean; flag OFF reproduces

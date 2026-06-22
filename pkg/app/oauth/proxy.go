@@ -371,6 +371,13 @@ func (p *authProxy) refresh(ctx context.Context, req TokenRequest) (map[string]a
 	if req.RefreshToken == "" {
 		return nil, oauthErr("invalid_request", "refresh_token is required")
 	}
+	rec, err := p.store.GetSession(ctx, req.RefreshToken)
+	if err != nil {
+		return nil, fmt.Errorf("oauth: load session: %w", err)
+	}
+	if rec != nil {
+		return p.refreshSession(ctx, req.RefreshToken, *rec)
+	}
 	auth, err := p.authForResource(ctx, req.Resource)
 	if err != nil {
 		return nil, err
@@ -391,6 +398,31 @@ func (p *authProxy) refresh(ctx context.Context, req TokenRequest) (map[string]a
 		form.Set("scope", scope)
 	}
 	return p.idpTokenCall(ctx, endpoints.token, form)
+}
+
+func (p *authProxy) refreshSession(ctx context.Context, oldRefresh string, rec SessionRecord) (map[string]any, error) {
+	resp, err := p.mintSession(CodeGrant{
+		Subject:   rec.Subject,
+		Scopes:    rec.Scopes,
+		AuthID:    rec.AuthID,
+		GatewayID: rec.GatewayID,
+		Audiences: rec.Audiences,
+	})
+	if err != nil {
+		return nil, err
+	}
+	newRefresh, err := randomToken()
+	if err != nil {
+		return nil, err
+	}
+	if err := p.store.SaveSession(ctx, newRefresh, rec); err != nil {
+		return nil, fmt.Errorf("oauth: rotate session: %w", err)
+	}
+	if err := p.store.DeleteSession(ctx, oldRefresh); err != nil {
+		return nil, fmt.Errorf("oauth: revoke previous session: %w", err)
+	}
+	resp["refresh_token"] = newRefresh
+	return resp, nil
 }
 
 type idpEndpoints struct {

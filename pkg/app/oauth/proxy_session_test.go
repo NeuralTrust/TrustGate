@@ -19,6 +19,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"math/big"
@@ -30,6 +31,13 @@ import (
 	infrasts "github.com/NeuralTrust/TrustGate/pkg/infra/identity/sts"
 	"github.com/golang-jwt/jwt/v5"
 )
+
+type failingTransport struct{ t *testing.T }
+
+func (f failingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	f.t.Errorf("session refresh must not call the IdP, got request to %s", r.URL)
+	return nil, fmt.Errorf("no IdP calls allowed during session refresh")
+}
 
 type fakeUserInfo struct {
 	gotURL   string
@@ -225,6 +233,90 @@ func TestExchangeCodeSessionModeMintsSessionToken(t *testing.T) {
 	}
 	if rec.Subject != "user-42" || strings.Join(rec.Scopes, " ") != "mcp.access openid" {
 		t.Fatalf("session record mismatch: %+v", rec)
+	}
+}
+
+func TestRefreshSessionReMintsAndRotates(t *testing.T) {
+	t.Parallel()
+	store := newMemFlowStore()
+	signer := newTestSigner(t)
+	noIdP := &http.Client{Transport: failingTransport{t}}
+	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, noIdP, store, nil, signer, nil)
+	ctx := context.Background()
+
+	if err := store.SaveSession(ctx, "old-refresh", SessionRecord{
+		Subject:   "user-42",
+		Scopes:    []string{"mcp.access", "openid"},
+		GatewayID: "gw-1",
+		AuthID:    "auth-1",
+		Audiences: []string{"api://gw"},
+	}); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	resp, err := proxy.Exchange(ctx, "http://gw.example.com", TokenRequest{
+		GrantType:    "refresh_token",
+		RefreshToken: "old-refresh",
+	})
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if resp["token_type"] != "Bearer" || resp["expires_in"] != 3600 {
+		t.Fatalf("unexpected session envelope: %v", resp)
+	}
+	if resp["scope"] != "mcp.access openid" {
+		t.Fatalf("scopes must be preserved, got %v", resp["scope"])
+	}
+
+	newRefresh, _ := resp["refresh_token"].(string)
+	if newRefresh == "" || newRefresh == "old-refresh" {
+		t.Fatalf("refresh_token must be rotated, got %q", newRefresh)
+	}
+	if old, _ := store.GetSession(ctx, "old-refresh"); old != nil {
+		t.Fatal("old refresh_token must be revoked after rotation")
+	}
+	rotated, err := store.GetSession(ctx, newRefresh)
+	if err != nil || rotated == nil {
+		t.Fatalf("rotated session must be persisted: %v", err)
+	}
+	if rotated.Subject != "user-42" || strings.Join(rotated.Scopes, " ") != "mcp.access openid" {
+		t.Fatalf("rotated record must preserve subject/scopes, got %+v", rotated)
+	}
+
+	access, _ := resp["access_token"].(string)
+	claims := jwt.MapClaims{}
+	pub := signerPublicKey(t, signer)
+	parsed, err := jwt.ParseWithClaims(access, claims, func(tok *jwt.Token) (any, error) {
+		if tok.Method.Alg() != "RS256" {
+			t.Fatalf("unexpected alg %s", tok.Method.Alg())
+		}
+		return pub, nil
+	})
+	if err != nil || !parsed.Valid {
+		t.Fatalf("re-minted token must verify against the signer: %v", err)
+	}
+	if claims["sub"] != "user-42" || claims["token_use"] != "mcp_session" || claims["authid"] != "auth-1" {
+		t.Fatalf("unexpected re-minted claims: %v", claims)
+	}
+}
+
+func TestRefreshUnknownTokenFallsBackToIdP(t *testing.T) {
+	t.Parallel()
+	idp, captured := fakeIdP(t)
+	proxy := newProxyUnderTest(t, idp.URL, newMemFlowStore())
+
+	token, err := proxy.Exchange(context.Background(), "http://gw.example.com", TokenRequest{
+		GrantType:    "refresh_token",
+		RefreshToken: "not-a-session",
+	})
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if token["access_token"] != "idp-access-token" {
+		t.Fatalf("non-session refresh must proxy to the IdP, got %v", token)
+	}
+	if captured.Get("refresh_token") != "not-a-session" || captured.Get("grant_type") != "refresh_token" {
+		t.Fatalf("IdP refresh used wrong form: %v", *captured)
 	}
 }
 
