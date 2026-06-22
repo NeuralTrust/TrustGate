@@ -18,13 +18,25 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strings"
 )
 
-const roleSystem = "system"
+const (
+	roleSystem = "system"
+	roleUser   = "user"
+)
+
+var templateRefRe = regexp.MustCompile(`\{template://([\w.-]+)(?:@([\w.-]+))?\}`)
 
 type message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+}
+
+type templateRef struct {
+	name  string
+	label string
 }
 
 type requestBody struct {
@@ -170,6 +182,97 @@ func (rb *requestBody) marshal() ([]byte, error) {
 		return nil, fmt.Errorf("encode request body: %w", err)
 	}
 	return out, nil
+}
+
+func (rb *requestBody) clone() *requestBody {
+	fields := make(map[string]json.RawMessage, len(rb.fields))
+	for k, v := range rb.fields {
+		fields[k] = v
+	}
+	var messages []json.RawMessage
+	if rb.messages != nil {
+		messages = make([]json.RawMessage, len(rb.messages))
+		copy(messages, rb.messages)
+	}
+	return &requestBody{
+		fields:         fields,
+		system:         rb.system,
+		hasSystem:      rb.hasSystem,
+		systemDirty:    rb.systemDirty,
+		messages:       messages,
+		hasMessages:    rb.hasMessages,
+		messagesOpaque: rb.messagesOpaque,
+		messagesDirty:  rb.messagesDirty,
+	}
+}
+
+func (rb *requestBody) takeProperties() (map[string]any, bool) {
+	if rb.fields == nil {
+		return nil, false
+	}
+	raw, ok := rb.fields["properties"]
+	if !ok {
+		return nil, false
+	}
+	delete(rb.fields, "properties")
+	props := map[string]any{}
+	if err := json.Unmarshal(raw, &props); err != nil {
+		return nil, true
+	}
+	return props, true
+}
+
+func (rb *requestBody) findReferences() []templateRef {
+	var refs []templateRef
+	for i := range rb.messages {
+		var entry struct {
+			Content json.RawMessage `json:"content"`
+		}
+		if err := json.Unmarshal(rb.messages[i], &entry); err != nil {
+			continue
+		}
+		var content string
+		if err := json.Unmarshal(entry.Content, &content); err != nil {
+			continue
+		}
+		refs = append(refs, scanReferences(content)...)
+	}
+	return refs
+}
+
+func scanReferences(s string) []templateRef {
+	matches := templateRefRe.FindAllStringSubmatch(s, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	refs := make([]templateRef, 0, len(matches))
+	for _, m := range matches {
+		refs = append(refs, templateRef{name: m[1], label: m[2]})
+	}
+	return refs
+}
+
+func (rb *requestBody) replaceMessages(rendered string) error {
+	if strings.HasPrefix(strings.TrimSpace(rendered), "[") {
+		var msgs []json.RawMessage
+		if err := json.Unmarshal([]byte(rendered), &msgs); err != nil {
+			return fmt.Errorf("parse rendered messages fragment: %w", err)
+		}
+		rb.messages = msgs
+		rb.hasMessages = true
+		rb.messagesOpaque = false
+		rb.messagesDirty = true
+		return nil
+	}
+	entry, err := json.Marshal(message{Role: roleUser, Content: rendered})
+	if err != nil {
+		return fmt.Errorf("encode rendered message: %w", err)
+	}
+	rb.messages = []json.RawMessage{entry}
+	rb.hasMessages = true
+	rb.messagesOpaque = false
+	rb.messagesDirty = true
+	return nil
 }
 
 func mergeSystem(mode onExistingSystem, existing, content string) string {

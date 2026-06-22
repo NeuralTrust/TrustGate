@@ -32,6 +32,7 @@ const (
 	typeVariableInvalid    = "template_variable_invalid"
 	typeNotFound           = "template_not_found"
 	typeRequired           = "template_required"
+	typeRenderFailed       = "template_render_failed"
 )
 
 var _ appplugins.Plugin = (*Plugin)(nil)
@@ -69,31 +70,38 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 		return nil, fmt.Errorf("prompt_template: %w", err)
 	}
 
-	if len(cfg.InjectTemplates) == 0 {
-		return okResult(), nil
-	}
-
 	rb, err := decodeBody(in.Request.Body)
 	if err != nil {
 		return nil, fmt.Errorf("prompt_template: %w", err)
 	}
 
+	properties, hadProperties := rb.takeProperties()
+
+	modeA := len(cfg.InjectTemplates) > 0
+	modeB := len(cfg.NamedTemplates) > 0
 	ctxVars, _ := resolveContextVars(cfg, in.Request)
-	outcome := applyModeA(cfg, rb, ctxVars)
 
 	if !appplugins.Blocks(in.Mode) {
-		setExtras(in.Event, observeData(outcome))
+		aOutcome, bOutcome, _ := runModes(cfg, rb.clone(), properties, ctxVars, modeA, modeB)
+		setExtras(in.Event, observeData(aOutcome, bOutcome))
 		appplugins.SetDecision(in.Event, in.Mode)
+		return forwardOrNoOp(rb, hadProperties, false)
+	}
+
+	aOutcome, bOutcome, runErr := runModes(cfg, rb, properties, ctxVars, modeA, modeB)
+	if runErr != nil {
+		setExtras(in.Event, rejectionData(aOutcome, bOutcome))
+		return nil, runErr
+	}
+
+	setExtras(in.Event, enforceData(aOutcome, bOutcome))
+	return forwardOrNoOp(rb, hadProperties, rb.systemDirty || rb.messagesDirty)
+}
+
+func forwardOrNoOp(rb *requestBody, hadProperties, mutated bool) (*appplugins.Result, error) {
+	if !hadProperties && !mutated {
 		return okResult(), nil
 	}
-
-	if cfg.OnMissingContextVariable == onMissingContextError && len(outcome.unresolved) > 0 {
-		setExtras(in.Event, PromptTemplateData{Decision: decisionNoOp, UnresolvedIDs: outcome.unresolved})
-		return nil, reject(http.StatusInternalServerError, typeVariableUnresolved, "unresolved context variable")
-	}
-
-	setExtras(in.Event, enforceData(outcome))
-
 	out, err := rb.marshal()
 	if err != nil {
 		return nil, fmt.Errorf("prompt_template: %w", err)
@@ -101,28 +109,56 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 	return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: out}, nil
 }
 
-func enforceData(outcome modeAOutcome) PromptTemplateData {
-	decision := decisionNoOp
-	switch {
-	case outcome.changed:
-		decision = decisionInjected
-	case len(outcome.skipped) > 0:
-		decision = decisionSkipped
+func runModes(cfg *config, rb *requestBody, properties map[string]any, ctxVars map[string]string, modeA, modeB bool) (modeAOutcome, modeBResult, error) {
+	var bOutcome modeBResult
+	if modeB {
+		var err error
+		bOutcome, err = applyModeB(cfg, rb, properties, ctxVars)
+		if err != nil {
+			return modeAOutcome{}, bOutcome, err
+		}
 	}
+
+	var aOutcome modeAOutcome
+	if modeA {
+		aOutcome = applyModeA(cfg, rb, ctxVars)
+		if cfg.OnMissingContextVariable == onMissingContextError && len(aOutcome.unresolved) > 0 {
+			return aOutcome, bOutcome, reject(http.StatusInternalServerError, typeVariableUnresolved, "unresolved context variable")
+		}
+	}
+	return aOutcome, bOutcome, nil
+}
+
+func buildData(decision string, a modeAOutcome, b modeBResult) PromptTemplateData {
 	return PromptTemplateData{
-		Decision:    decision,
-		InjectedIDs: outcome.injected,
-		SkippedIDs:  outcome.skipped,
+		Decision:         decision,
+		InjectedIDs:      a.injected,
+		SkippedIDs:       a.skipped,
+		UnresolvedIDs:    a.unresolved,
+		ResolvedTemplate: b.resolvedTemplate,
+		ResolvedVersion:  b.resolvedVersion,
 	}
 }
 
-func observeData(outcome modeAOutcome) PromptTemplateData {
-	return PromptTemplateData{
-		Decision:      decisionObserved,
-		InjectedIDs:   outcome.injected,
-		SkippedIDs:    outcome.skipped,
-		UnresolvedIDs: outcome.unresolved,
+func enforceData(a modeAOutcome, b modeBResult) PromptTemplateData {
+	decision := decisionNoOp
+	switch {
+	case a.changed:
+		decision = decisionInjected
+	case b.changed:
+		decision = decisionRendered
+	case len(a.skipped) > 0:
+		decision = decisionSkipped
 	}
+	return buildData(decision, a, b)
+}
+
+func observeData(a modeAOutcome, b modeBResult) PromptTemplateData {
+	return buildData(decisionObserved, a, b)
+}
+
+func rejectionData(a modeAOutcome, b modeBResult) PromptTemplateData {
+	return buildData(decisionNoOp, a, b)
 }
 
 func reject(status int, errType, message string) error {

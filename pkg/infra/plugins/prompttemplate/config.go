@@ -15,6 +15,7 @@
 package prompttemplate
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -264,6 +265,9 @@ func validateVersions(nt namedTemplate, labels map[string]struct{}) error {
 		if err := validatePlaceholders(v.Content); err != nil {
 			return fmt.Errorf("prompt_template: named_templates[%q].versions[%q].content: %w", nt.Name, v.Version, err)
 		}
+		if err := validateVersionContent(v.Content); err != nil {
+			return fmt.Errorf("prompt_template: named_templates[%q].versions[%q].content: %w", nt.Name, v.Version, err)
+		}
 		if err := validateRequiredVars(nt, v); err != nil {
 			return err
 		}
@@ -285,6 +289,23 @@ func validateRequiredVars(nt namedTemplate, v templateVersion) error {
 			if strings.TrimSpace(e) == "" {
 				return fmt.Errorf("prompt_template: named_templates[%q].versions[%q].required_variables[%q] has a blank enum entry", nt.Name, v.Version, name)
 			}
+		}
+	}
+	return nil
+}
+
+func validateVersionContent(content string) error {
+	trimmed := strings.TrimSpace(content)
+	if !strings.HasPrefix(trimmed, "[") {
+		return nil
+	}
+	var elements []json.RawMessage
+	if err := json.Unmarshal([]byte(content), &elements); err != nil {
+		return fmt.Errorf("must be a valid JSON messages array or a bare string template: %w", err)
+	}
+	for _, element := range elements {
+		if !strings.HasPrefix(strings.TrimSpace(string(element)), "{") {
+			return fmt.Errorf("must be a JSON array of message objects")
 		}
 	}
 	return nil

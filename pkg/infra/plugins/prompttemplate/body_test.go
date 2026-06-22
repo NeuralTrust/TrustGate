@@ -209,3 +209,98 @@ func TestMarshalUntouchedBodyStable(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, string(raw), string(out))
 }
+
+func TestTakeProperties(t *testing.T) {
+	t.Run("strips properties and decodes map", func(t *testing.T) {
+		rb, err := decodeBody([]byte(`{"model":"gpt-4","properties":{"persona":"friendly","count":3},"messages":[{"role":"user","content":"hi"}]}`))
+		require.NoError(t, err)
+		props, ok := rb.takeProperties()
+		require.True(t, ok)
+		assert.Equal(t, "friendly", props["persona"])
+		assert.InEpsilon(t, float64(3), props["count"], 0.0001)
+		out, err := rb.marshal()
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`, string(out))
+	})
+
+	t.Run("absent properties returns false", func(t *testing.T) {
+		rb, err := decodeBody([]byte(`{"messages":[{"role":"user","content":"hi"}]}`))
+		require.NoError(t, err)
+		_, ok := rb.takeProperties()
+		assert.False(t, ok)
+	})
+
+	t.Run("non-object properties still stripped", func(t *testing.T) {
+		rb, err := decodeBody([]byte(`{"properties":"oops","messages":[{"role":"user","content":"hi"}]}`))
+		require.NoError(t, err)
+		_, ok := rb.takeProperties()
+		assert.True(t, ok)
+		out, err := rb.marshal()
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"messages":[{"role":"user","content":"hi"}]}`, string(out))
+	})
+}
+
+func TestFindReferences(t *testing.T) {
+	t.Run("scans message content", func(t *testing.T) {
+		rb, err := decodeBody([]byte(`{"messages":[{"role":"user","content":"{template://support-bot@stable}"}]}`))
+		require.NoError(t, err)
+		refs := rb.findReferences()
+		require.Len(t, refs, 1)
+		assert.Equal(t, "support-bot", refs[0].name)
+		assert.Equal(t, "stable", refs[0].label)
+	})
+
+	t.Run("ignores top-level system string", func(t *testing.T) {
+		rb, err := decodeBody([]byte(`{"system":"prefix {template://support-bot}","messages":[{"role":"user","content":"hi"}]}`))
+		require.NoError(t, err)
+		assert.Empty(t, rb.findReferences())
+	})
+
+	t.Run("multiple message references return all in order", func(t *testing.T) {
+		rb, err := decodeBody([]byte(`{"messages":[{"role":"user","content":"{template://first@a}"},{"role":"user","content":"{template://second@b}"}]}`))
+		require.NoError(t, err)
+		refs := rb.findReferences()
+		require.Len(t, refs, 2)
+		assert.Equal(t, "first", refs[0].name)
+		assert.Equal(t, "second", refs[1].name)
+	})
+
+	t.Run("no reference returns empty", func(t *testing.T) {
+		rb, err := decodeBody([]byte(`{"messages":[{"role":"user","content":"hello"}]}`))
+		require.NoError(t, err)
+		assert.Empty(t, rb.findReferences())
+	})
+
+	t.Run("ignores non-string content", func(t *testing.T) {
+		rb, err := decodeBody([]byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"{template://x}"}]}]}`))
+		require.NoError(t, err)
+		assert.Empty(t, rb.findReferences())
+	})
+}
+
+func TestReplaceMessages(t *testing.T) {
+	t.Run("json array fragment replaces messages", func(t *testing.T) {
+		rb, err := decodeBody([]byte(`{"model":"gpt-4","messages":[{"role":"user","content":"{template://x}"}]}`))
+		require.NoError(t, err)
+		require.NoError(t, rb.replaceMessages(`[{"role":"system","content":"You are a bot."},{"role":"user","content":"go"}]`))
+		out, err := rb.marshal()
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"model":"gpt-4","messages":[{"role":"system","content":"You are a bot."},{"role":"user","content":"go"}]}`, string(out))
+	})
+
+	t.Run("bare string wraps into single user message", func(t *testing.T) {
+		rb, err := decodeBody([]byte(`{"messages":[{"role":"user","content":"{template://x}"}]}`))
+		require.NoError(t, err)
+		require.NoError(t, rb.replaceMessages("You are a friendly bot."))
+		out, err := rb.marshal()
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"messages":[{"role":"user","content":"You are a friendly bot."}]}`, string(out))
+	})
+
+	t.Run("malformed array fragment errors", func(t *testing.T) {
+		rb, err := decodeBody([]byte(`{"messages":[{"role":"user","content":"x"}]}`))
+		require.NoError(t, err)
+		assert.Error(t, rb.replaceMessages(`[{"role":`))
+	})
+}

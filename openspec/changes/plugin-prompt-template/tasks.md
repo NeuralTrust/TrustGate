@@ -45,15 +45,15 @@ P4→7+8, P5→9).
 
 ## Phase 7: Body Mode B helpers + resolution/render/splice (PR7)
 
-- [ ] 7.1 Extend `body.go`: `takeProperties()` (decode + strip top-level `properties`), `findReferences` over `messages[].content` + top-level `system` (`templateRefRe`), `replaceMessages(fragment)` (JSON-array or bare-string→user msg).
-- [ ] 7.2 Create `modeb.go`: `resolveVersion(nt, label, defaultLabel)` (label → `default_label` fallback; unknown → `template_not_found` 400); render with `client > context` precedence; replace `messages`.
-- [ ] 7.3 Write `body_test.go` (Mode B scope) + `modeb_test.go` (resolution): reference scan in content + system; takeProperties strips; replace with array/bare-string; label + default_label resolve; unknown → `template_not_found` (spec "Mode B reference detection").
+- [x] 7.1 Extend `body.go`: `takeProperties()` (decode + strip top-level `properties`), `findReferences` over `messages[].content` + top-level `system` (`templateRefRe`), `replaceMessages(fragment)` (JSON-array or bare-string→user msg).
+- [x] 7.2 Create `modeb.go`: `resolveVersion(nt, label, defaultLabel)` (label → `default_label` fallback; unknown → `template_not_found` 400); render with `client > context` precedence; replace `messages`.
+- [x] 7.3 Write `body_test.go` (Mode B scope) + `modeb_test.go` (resolution): reference scan in content + system; takeProperties strips; replace with array/bare-string; label + default_label resolve; unknown → `template_not_found` (spec "Mode B reference detection").
 
 ## Phase 8: Client-variable validation + error codes + Mode B wiring (PR8)
 
-- [ ] 8.1 Create `validate.go`: `validateClientVars(version, properties)` — presence (`template_variable_missing`), type/enum/max_length (`template_variable_invalid`), non-required absent → `on_missing_client_variable`.
-- [ ] 8.2 Wire Mode B into `Execute` before Mode A: strip `properties` always; `allow_untemplated_requests:false` + no ref → `template_required` 400; observe no mutation/no reject.
-- [ ] 8.3 Write `validate_test.go` + extend `modeb_test.go` + `plugin_test.go`: each error code→status/Type; properties precedence + stripped; contract (Name/Stages/Modes); Execute nil/Mode A only/Mode B only/both (spec "Mode B client variable validation", "rendering and body substitution", "Runtime error mapping").
+- [x] 8.1 Create `validate.go`: `validateClientVars(version, properties)` — presence (`template_variable_missing`), type/enum/max_length (`template_variable_invalid`); non-required absent → `on_missing_client_variable` handled in `renderTemplateContent` (context-aware).
+- [x] 8.2 Wire Mode B into `Execute` before Mode A: strip `properties` always; `allow_untemplated_requests:false` + no ref → `template_required` 400; observe no mutation/no reject.
+- [x] 8.3 Write `validate_test.go` + extend `modeb_test.go` + `plugin_test.go`: each error code→status/Type; properties precedence + stripped; contract (Name/Stages/Modes); Execute nil/Mode A only/Mode B only/both (spec "Mode B client variable validation", "rendering and body substitution", "Runtime error mapping").
 
 ## Phase 9: Functional tests + catalog finalization (PR9)
 

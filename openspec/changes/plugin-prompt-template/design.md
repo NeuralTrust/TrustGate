@@ -36,7 +36,7 @@ package exports only `Plugin` and `PromptTemplateData`).
 | `render.go` | Internal logic-less `{{var}}` renderer + control-char escaping | `renderTemplate(tmpl string, vars map[string]string) (string, []string)`, `escapeControlChars(string) string`, `placeholderRe` |
 | `variables.go` | Context-variable resolution (header + jwt_claim) + `on_missing_context_variable` policy | `resolveContextVars(cfg, req) (map[string]string, error)`, `resolveOne(spec, req)` |
 | `jwt.go` | Unverified bearer-claim read | `bearerToken(req) string`, `unverifiedClaim(token, name) (string, bool)` |
-| `body.go` | Provider-native body read/mutate: detect `system`-string vs `messages[]` shape, inject/merge/replace the system prompt, replace the `messages` array, scan reference tokens, decode + strip the top-level `properties` field | `requestBody` (struct), `decodeBody`, `injectSystem(mode, role, content)`, `replaceMessages(fragment)`, `findReferences`, `takeProperties()`, `(rb).marshal()` |
+| `body.go` | Provider-native body read/mutate: detect `system`-string vs `messages[]` shape, inject/merge/replace the system prompt, replace the `messages` array, scan reference tokens (`messages[].content` only), decode + strip the top-level `properties` field, `clone()` for observe dry-run | `requestBody` (struct), `decodeBody`, `clone()`, `injectSystem(mode, role, content)`, `replaceMessages(fragment)`, `findReferences`, `takeProperties()`, `(rb).marshal()` |
 | `modea.go` | Mode A orchestration over `inject_templates[]` | `applyModeA(cfg, rb, ctxVars) (decision, error)` |
 | `modeb.go` | Mode B: reference detection, label/version resolution, render, replace `messages` | `applyModeB(cfg, rb, clientVars) (decision, error)`, `resolveVersion(nt, label, defaultLabel)` |
 | `validate.go` | `required_variables` presence/type/enum/max_length validation | `validateClientVars(version, supplied) error` |
@@ -216,10 +216,12 @@ sequenceDiagram
     P-->>Ex: Result{StatusCode:200, RequestBody: out}
 ```
 
-**Observe mode (`!blocks`)**: never mutate the body, never reject; compute the
-decision that *would* have been taken, write it via `event.SetExtras` +
-`appplugins.SetDecision(in.Event, in.Mode)`, and return `okResult()`. Mirrors
-`model_allowlist`'s observe branch.
+**Observe mode (`!blocks`)**: never inject prompts, never replace messages,
+never reject; compute the decision that *would* have been taken on a `clone()`
+of the body, write it via `event.SetExtras` + `appplugins.SetDecision(in.Event,
+in.Mode)`. The gateway-only `properties` field is still stripped (transport
+concern): if `properties` was present, return the stripped body via
+`Result.RequestBody`; otherwise return `okResult()`.
 
 ### Body merge semantics (Mode A, `body.go`)
 
@@ -251,14 +253,35 @@ ignored for that entry. v1 only validates `position == "system"`.
 
 Client variables source (canonical D1): the client supplies a **top-level body
 field `properties`** (object of string→scalar). `rb.takeProperties()` decodes
-it and **strips it from the forwarded body** (it is a gateway-only field, never
-sent upstream — stripped whether or not Mode B runs). Client `properties` values
-**take precedence** over context variables.
+it and **strips it from the forwarded body UNCONDITIONALLY on every path** — it
+is a gateway-only control field, never sent upstream. Stripping happens at the
+very start of body processing regardless of mode (`enforce`/`observe`),
+regardless of whether `named_templates` are configured, and regardless of
+whether any prompt mutation occurs. A Mode-A-only (or no-op) config that
+receives a request carrying `properties` still forwards a body **without**
+`properties`. Under `observe`, the would-be decision is computed on a `clone()`
+of the decoded body so the forwarded body carries only the `properties` removal
+and no prompt mutation. If nothing changed and no `properties` existed, the
+plugin returns `okResult()` with a nil `RequestBody` (no-op passthrough). Client
+`properties` values **take precedence** over context variables.
 
 Reference tokens are found by `findReferences` scanning every `messages[].content`
-string **and** the top-level `system` string (canonical D2) for
-`{template://<name>@<label>}` (`templateRefRe =
-\{template://([\w.-]+)(?:@([\w.-]+))?\}`).
+string **only** (canonical D2 — the top-level `system` string is owned by Mode A
+and is NOT a Mode B trigger) for `{template://<name>@<label>}` (`templateRefRe =
+\{template://([\w.-]+)(?:@([\w.-]+))?\}`). When multiple references appear across
+messages, the **first** in message order is used (the rendered fragment replaces
+the whole `messages` array, so subsequent references are moot).
+
+Substitution into a JSON-array `content` template **always** JSON-string-escapes
+each substituted value (client `properties` and context vars) so an attacker
+value containing `"`, `{`, `}`, or `,` cannot break out of its JSON string and
+inject extra message objects. The `escape_json_control_chars` flag layers C0
+control-byte stripping on top but does not gate the JSON-string escaping. If the
+rendered fragment fails to parse as a JSON messages array (and is not a valid
+bare string), Mode B rejects `500 template_render_failed` (a typed
+`*appplugins.PluginError`, not a plain wrapped error). Admin-time `validate`
+additionally rejects any `versions[].content` that begins with `[` but is not a
+parseable JSON array of message objects.
 
 Splice (canonical D3 — **replace-only**, Kong semantics; no `reference_mode`
 config in v1):
@@ -351,6 +374,7 @@ emitted when `appplugins.Blocks(in.Mode)` is true.
 | Client variable fails type/enum/max_length | B | 400 | `template_variable_invalid` |
 | Referenced template/label not found | B | 400 | `template_not_found` |
 | No reference + `allow_untemplated_requests:false` | B | 400 | `template_required` |
+| Rendered fragment not a valid messages array/bare string | B | 500 | `template_render_failed` |
 | Malformed config at runtime | — | (parse err wrapped `%w`, returned as plain `error`, surfaced 500 by proxy) | — |
 
 `Type` codes are package consts in `plugin.go`.
@@ -460,8 +484,11 @@ Each phase is independently green under `go vet`, `golangci-lint`, and
   over context vars), and **strips `properties`** from the body before the
   rewritten body is forwarded upstream.
 - [x] **D2 — Reference token placement**: scan `{template://name@label}` in
-  `messages[].content` strings and the top-level `system` string. (Confirmed as
-  designed.)
+  `messages[].content` strings **only**. The top-level `system` string is owned
+  by Mode A and is NOT a Mode B trigger (revised after review: scanning `system`
+  resolved a reference but left the token in the forwarded body — a leak — and
+  introduced first-reference ordering ambiguity). When multiple references exist,
+  the first in message order wins.
 - [x] **D3 — Mode B splice = replace-only**: Mode B **replaces** the request
   `messages` array with the rendered template messages fragment (Kong
   semantics). No `prepend` option, no `reference_mode` config in v1.

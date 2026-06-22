@@ -16,14 +16,17 @@ package prompttemplate
 
 const (
 	decisionInjected = "injected"
+	decisionRendered = "rendered"
 	decisionObserved = "observed"
 	decisionNoOp     = "no_op"
 	decisionSkipped  = "skipped"
 )
 
 type PromptTemplateData struct {
-	Decision      string   `json:"decision"`
-	InjectedIDs   []string `json:"injected_ids,omitempty"`
-	SkippedIDs    []string `json:"skipped_ids,omitempty"`
-	UnresolvedIDs []string `json:"unresolved_variables,omitempty"`
+	Decision         string   `json:"decision"`
+	InjectedIDs      []string `json:"injected_ids,omitempty"`
+	SkippedIDs       []string `json:"skipped_ids,omitempty"`
+	UnresolvedIDs    []string `json:"unresolved_variables,omitempty"`
+	ResolvedTemplate string   `json:"resolved_template,omitempty"`
+	ResolvedVersion  string   `json:"resolved_version,omitempty"`
 }

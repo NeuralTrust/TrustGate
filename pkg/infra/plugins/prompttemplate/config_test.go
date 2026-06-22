@@ -252,6 +252,41 @@ func TestConfigValidate(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "valid json array content accepted",
+			settings: map[string]any{
+				"named_templates": []any{
+					map[string]any{"name": "a", "versions": []any{
+						map[string]any{"version": "v1", "labels": []any{"stable"}, "content": `[{"role":"system","content":"hi {{p}}"}]`, "required_variables": map[string]any{
+							"p": map[string]any{"type": "string"},
+						}},
+					}},
+				},
+				"default_label": "stable",
+			},
+		},
+		{
+			name: "malformed json array content rejected",
+			settings: map[string]any{
+				"named_templates": []any{
+					map[string]any{"name": "a", "versions": []any{
+						map[string]any{"version": "v1", "content": `[{"role":"system"`},
+					}},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "non-object json array element rejected",
+			settings: map[string]any{
+				"named_templates": []any{
+					map[string]any{"name": "a", "versions": []any{
+						map[string]any{"version": "v1", "content": `["not an object"]`},
+					}},
+				},
+			},
+			wantErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
