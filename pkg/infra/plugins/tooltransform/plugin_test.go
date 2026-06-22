@@ -706,3 +706,514 @@ func TestPluginPreRequestNoOpSmoke(t *testing.T) {
 		})
 	}
 }
+
+func matrixSettings() map[string]any {
+	return map[string]any{
+		"transform_tools": []any{
+			map[string]any{
+				"tool":                 "search_*",
+				"schema_patch":         map[string]any{"title": "patched"},
+				"description_override": "overridden",
+			},
+		},
+		"inject_tools": []any{
+			map[string]any{
+				"type": "function",
+				"function": map[string]any{
+					"name":        "safety_check",
+					"description": "gateway",
+					"parameters":  map[string]any{"type": "object"},
+				},
+			},
+		},
+	}
+}
+
+func mustMarshal(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("json.Marshal error = %v", err)
+	}
+	return b
+}
+
+func openAICompletionsToolBody(t *testing.T, toolName string, params map[string]any) []byte {
+	t.Helper()
+	return mustMarshal(t, map[string]any{
+		"model":    "gpt",
+		"user":     "abc",
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+		"tools": []any{
+			map[string]any{
+				"type": "function",
+				"function": map[string]any{
+					"name":        toolName,
+					"description": "original",
+					"parameters":  params,
+				},
+			},
+		},
+	})
+}
+
+func openAIResponsesToolBody(t *testing.T, toolName string) []byte {
+	t.Helper()
+	return mustMarshal(t, map[string]any{
+		"model": "gpt",
+		"user":  "abc",
+		"input": "hi",
+		"tools": []any{
+			map[string]any{
+				"type":        "function",
+				"name":        toolName,
+				"description": "original",
+				"parameters":  map[string]any{"type": "object"},
+			},
+		},
+	})
+}
+
+func anthropicToolBody(t *testing.T, toolName string) []byte {
+	t.Helper()
+	return mustMarshal(t, map[string]any{
+		"model":      "claude",
+		"system":     "be safe",
+		"max_tokens": 1024,
+		"messages":   []any{map[string]any{"role": "user", "content": "hi"}},
+		"tools": []any{
+			map[string]any{
+				"name":         toolName,
+				"description":  "original",
+				"input_schema": map[string]any{"type": "object"},
+			},
+		},
+	})
+}
+
+func bedrockClaudeToolBody(t *testing.T, toolName string) []byte {
+	t.Helper()
+	return mustMarshal(t, map[string]any{
+		"anthropic_version": "bedrock-2023-05-31",
+		"system":            "be safe",
+		"max_tokens":        1024,
+		"messages":          []any{map[string]any{"role": "user", "content": "hi"}},
+		"tools": []any{
+			map[string]any{
+				"name":         toolName,
+				"description":  "original",
+				"input_schema": map[string]any{"type": "object"},
+			},
+		},
+	})
+}
+
+func geminiToolBody(t *testing.T, toolName string) []byte {
+	t.Helper()
+	return mustMarshal(t, map[string]any{
+		"contents": []any{
+			map[string]any{"role": "user", "parts": []any{map[string]any{"text": "hi"}}},
+		},
+		"cachedContent": "projects/p/cachedContents/abc",
+		"tools": []any{
+			map[string]any{
+				"functionDeclarations": []any{
+					map[string]any{
+						"name":        toolName,
+						"description": "original",
+						"parameters":  map[string]any{"type": "OBJECT"},
+					},
+				},
+			},
+		},
+	})
+}
+
+func mistralToolBody(t *testing.T, toolName string) []byte {
+	t.Helper()
+	return mustMarshal(t, map[string]any{
+		"model":    "mistral-large",
+		"user":     "abc",
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+		"tools": []any{
+			map[string]any{
+				"type": "function",
+				"function": map[string]any{
+					"name":        toolName,
+					"description": "original",
+					"parameters":  map[string]any{"type": "object"},
+				},
+			},
+		},
+	})
+}
+
+func execPreRequest(t *testing.T, settings map[string]any, sourceFormat string, body []byte) *appplugins.Result {
+	t.Helper()
+	p := New(adapter.NewRegistry())
+	in := appplugins.ExecInput{
+		Stage:   policy.StagePreRequest,
+		Config:  policy.PluginConfig{ID: "tt-1", Slug: PluginName, Name: PluginName, Settings: settings},
+		Scope:   appplugins.RuntimeScope{ConsumerID: "c-1", GatewayID: "gw-1"},
+		Request: &infracontext.RequestContext{Provider: sourceFormat, SourceFormat: sourceFormat, Body: body},
+	}
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+	if res == nil || res.RequestBody == nil {
+		t.Fatalf("Execute() result = %#v, want non-nil RequestBody", res)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("StatusCode = %d, want %d", res.StatusCode, http.StatusOK)
+	}
+	return res
+}
+
+func TestPluginPreRequestProviderMatrix(t *testing.T) {
+	tests := []struct {
+		name         string
+		sourceFormat string
+		decodeFormat adapter.Format
+		body         []byte
+		untouchedKey string
+		untouchedVal any
+	}{
+		{
+			name:         "openai completions",
+			sourceFormat: string(adapter.FormatOpenAI),
+			decodeFormat: adapter.FormatOpenAI,
+			body:         openAICompletionsToolBody(t, "search_docs", map[string]any{"type": "object"}),
+			untouchedKey: "user",
+			untouchedVal: "abc",
+		},
+		{
+			name:         "openai responses",
+			sourceFormat: string(adapter.FormatOpenAIResponses),
+			decodeFormat: adapter.FormatOpenAIResponses,
+			body:         openAIResponsesToolBody(t, "search_docs"),
+			untouchedKey: "user",
+			untouchedVal: "abc",
+		},
+		{
+			name:         "anthropic",
+			sourceFormat: string(adapter.FormatAnthropic),
+			decodeFormat: adapter.FormatAnthropic,
+			body:         anthropicToolBody(t, "search_docs"),
+			untouchedKey: "system",
+			untouchedVal: "be safe",
+		},
+		{
+			name:         "gemini",
+			sourceFormat: string(adapter.FormatGemini),
+			decodeFormat: adapter.FormatGemini,
+			body:         geminiToolBody(t, "search_docs"),
+			untouchedKey: "cachedContent",
+			untouchedVal: "projects/p/cachedContents/abc",
+		},
+		{
+			name:         "bedrock claude",
+			sourceFormat: string(adapter.FormatBedrock),
+			decodeFormat: adapter.FormatBedrock,
+			body:         bedrockClaudeToolBody(t, "search_docs"),
+			untouchedKey: "system",
+			untouchedVal: "be safe",
+		},
+		{
+			name:         "mistral",
+			sourceFormat: string(adapter.FormatMistral),
+			decodeFormat: adapter.FormatMistral,
+			body:         mistralToolBody(t, "search_docs"),
+			untouchedKey: "user",
+			untouchedVal: "abc",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res := execPreRequest(t, matrixSettings(), tt.sourceFormat, tt.body)
+
+			decoded, err := adapter.NewRegistry().DecodeRequestFor(res.RequestBody, tt.decodeFormat)
+			if err != nil {
+				t.Fatalf("DecodeRequestFor(RequestBody) error = %v", err)
+			}
+
+			transformed, ok := findTool(decoded.Tools, "search_docs")
+			if !ok {
+				t.Fatalf("decoded tools missing search_docs: %#v", decoded.Tools)
+			}
+			if transformed.Description != "overridden" {
+				t.Fatalf("search_docs description = %q, want %q", transformed.Description, "overridden")
+			}
+			if transformed.Schema["title"] != "patched" {
+				t.Fatalf("search_docs schema title = %v, want %q", transformed.Schema["title"], "patched")
+			}
+			if transformed.Schema["type"] != "object" {
+				t.Fatalf("search_docs schema type = %v, want %q", transformed.Schema["type"], "object")
+			}
+
+			if _, ok := findTool(decoded.Tools, "safety_check"); !ok {
+				t.Fatalf("decoded tools missing injected safety_check: %#v", decoded.Tools)
+			}
+
+			var raw map[string]any
+			if uerr := json.Unmarshal(res.RequestBody, &raw); uerr != nil {
+				t.Fatalf("json.Unmarshal(RequestBody) error = %v", uerr)
+			}
+			if got := raw[tt.untouchedKey]; !reflect.DeepEqual(got, tt.untouchedVal) {
+				t.Fatalf("untouched field %q = %#v, want %#v", tt.untouchedKey, got, tt.untouchedVal)
+			}
+		})
+	}
+}
+
+func toolSet(tools []adapter.CanonicalTool) map[string]adapter.CanonicalTool {
+	m := make(map[string]adapter.CanonicalTool, len(tools))
+	for i := range tools {
+		m[tools[i].Name] = tools[i]
+	}
+	return m
+}
+
+func TestPluginCrossProviderEquivalence(t *testing.T) {
+	settings := matrixSettings()
+
+	openAIRes := execPreRequest(t, settings, string(adapter.FormatOpenAI), openAICompletionsToolBody(t, "search_docs", map[string]any{"type": "object"}))
+	anthropicRes := execPreRequest(t, settings, string(adapter.FormatAnthropic), anthropicToolBody(t, "search_docs"))
+
+	reg := adapter.NewRegistry()
+	openAIDecoded, err := reg.DecodeRequestFor(openAIRes.RequestBody, adapter.FormatOpenAI)
+	if err != nil {
+		t.Fatalf("DecodeRequestFor(openai) error = %v", err)
+	}
+	anthropicDecoded, err := reg.DecodeRequestFor(anthropicRes.RequestBody, adapter.FormatAnthropic)
+	if err != nil {
+		t.Fatalf("DecodeRequestFor(anthropic) error = %v", err)
+	}
+
+	if !reflect.DeepEqual(toolSet(openAIDecoded.Tools), toolSet(anthropicDecoded.Tools)) {
+		t.Fatalf("cross-provider tool sets differ:\nopenai=%#v\nanthropic=%#v", openAIDecoded.Tools, anthropicDecoded.Tools)
+	}
+}
+
+func TestPluginInjectAfterTransformOrdering(t *testing.T) {
+	t.Run("injected tool appended after transformed tools", func(t *testing.T) {
+		res := execPreRequest(t, matrixSettings(), string(adapter.FormatOpenAI), openAICompletionsToolBody(t, "search_docs", map[string]any{"type": "object"}))
+		decoded, err := adapter.NewRegistry().DecodeRequestFor(res.RequestBody, adapter.FormatOpenAI)
+		if err != nil {
+			t.Fatalf("DecodeRequestFor error = %v", err)
+		}
+		if len(decoded.Tools) != 2 {
+			t.Fatalf("decoded tools = %#v, want 2", decoded.Tools)
+		}
+		if decoded.Tools[0].Name != "search_docs" {
+			t.Fatalf("tools[0] = %q, want search_docs", decoded.Tools[0].Name)
+		}
+		if decoded.Tools[0].Description != "overridden" || decoded.Tools[0].Schema["title"] != "patched" {
+			t.Fatalf("tools[0] not transformed before injection: %#v", decoded.Tools[0])
+		}
+		if decoded.Tools[1].Name != "safety_check" {
+			t.Fatalf("tools[1] = %q, want safety_check appended last", decoded.Tools[1].Name)
+		}
+	})
+
+	t.Run("injection observes post-transform tool set on collision", func(t *testing.T) {
+		settings := map[string]any{
+			"transform_tools": []any{
+				map[string]any{
+					"tool":                 "search_*",
+					"schema_patch":         map[string]any{"title": "patched"},
+					"description_override": "overridden",
+				},
+			},
+			"inject_tools": []any{
+				map[string]any{
+					"type": "function",
+					"function": map[string]any{
+						"name":        "search_docs",
+						"description": "gateway",
+						"parameters":  map[string]any{"type": "object"},
+					},
+				},
+			},
+			"on_conflict": "gateway_wins",
+		}
+		res := execPreRequest(t, settings, string(adapter.FormatOpenAI), openAICompletionsToolBody(t, "search_docs", map[string]any{"type": "object"}))
+		decoded, err := adapter.NewRegistry().DecodeRequestFor(res.RequestBody, adapter.FormatOpenAI)
+		if err != nil {
+			t.Fatalf("DecodeRequestFor error = %v", err)
+		}
+		if len(decoded.Tools) != 1 {
+			t.Fatalf("decoded tools = %#v, want 1 (gateway replaced post-transform tool)", decoded.Tools)
+		}
+		got := decoded.Tools[0]
+		if got.Name != "search_docs" {
+			t.Fatalf("tool name = %q, want search_docs", got.Name)
+		}
+		if got.Description != "gateway" {
+			t.Fatalf("description = %q, want gateway (injected replaced the transformed tool)", got.Description)
+		}
+		if _, hasTitle := got.Schema["title"]; hasTitle {
+			t.Fatalf("schema retained transform title; gateway tool should have replaced it: %#v", got.Schema)
+		}
+	})
+}
+
+func TestPluginExecuteNoOpMatrix(t *testing.T) {
+	transformAndInject := matrixSettings()
+	transformOnlyMatching := map[string]any{
+		"transform_tools": []any{map[string]any{"tool": "search_*"}},
+	}
+	transformOnlyNoMatch := map[string]any{
+		"transform_tools": []any{
+			map[string]any{"tool": "nomatch_*", "description_override": "x"},
+		},
+	}
+	noToolsBody := mustMarshal(t, map[string]any{
+		"model":    "gpt",
+		"user":     "abc",
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	})
+
+	tests := []struct {
+		name     string
+		settings map[string]any
+		req      *infracontext.RequestContext
+	}{
+		{
+			name:     "empty wire format",
+			settings: transformAndInject,
+			req:      &infracontext.RequestContext{Provider: "", SourceFormat: "", Body: openAICompletionsToolBody(t, "search_docs", map[string]any{"type": "object"})},
+		},
+		{
+			name:     "undecodable body",
+			settings: transformAndInject,
+			req:      &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: []byte("{not-json")},
+		},
+		{
+			name:     "no transform matches and no inject",
+			settings: transformOnlyNoMatch,
+			req:      &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: openAICompletionsToolBody(t, "search_docs", map[string]any{"type": "object"})},
+		},
+		{
+			name:     "zero tools and no inject",
+			settings: transformOnlyMatching,
+			req:      &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: noToolsBody},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := New(adapter.NewRegistry())
+			in := appplugins.ExecInput{
+				Stage:   policy.StagePreRequest,
+				Config:  policy.PluginConfig{ID: "tt-1", Slug: PluginName, Name: PluginName, Settings: tt.settings},
+				Scope:   appplugins.RuntimeScope{ConsumerID: "c-1", GatewayID: "gw-1"},
+				Request: tt.req,
+			}
+			res, err := p.Execute(context.Background(), in)
+			if err != nil {
+				t.Fatalf("Execute() error = %v, want nil", err)
+			}
+			if res == nil {
+				t.Fatalf("Execute() result = nil, want okResult")
+			}
+			if res.StatusCode != http.StatusOK {
+				t.Fatalf("StatusCode = %d, want %d", res.StatusCode, http.StatusOK)
+			}
+			if res.RequestBody != nil {
+				t.Fatalf("RequestBody = %q, want nil", res.RequestBody)
+			}
+		})
+	}
+}
+
+func TestPluginExecuteRejectPath(t *testing.T) {
+	settings := map[string]any{
+		"on_conflict": "reject",
+		"inject_tools": []any{
+			map[string]any{
+				"type":     "function",
+				"function": map[string]any{"name": "safety_check", "description": "gateway"},
+			},
+		},
+	}
+	p := New(adapter.NewRegistry())
+	in := appplugins.ExecInput{
+		Stage:   policy.StagePreRequest,
+		Config:  policy.PluginConfig{ID: "tt-1", Slug: PluginName, Name: PluginName, Settings: settings},
+		Scope:   appplugins.RuntimeScope{ConsumerID: "c-1", GatewayID: "gw-1"},
+		Request: &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: openAIReqBody(t, "safety_check")},
+	}
+
+	res, err := p.Execute(context.Background(), in)
+	if res != nil {
+		t.Fatalf("Execute() result = %#v, want nil", res)
+	}
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("Execute() error is not *PluginError: %v", err)
+	}
+	if pe.StatusCode != http.StatusBadRequest {
+		t.Fatalf("StatusCode = %d, want %d", pe.StatusCode, http.StatusBadRequest)
+	}
+	if pe.Type != "tool_name_reserved" {
+		t.Fatalf("Type = %q, want %q", pe.Type, "tool_name_reserved")
+	}
+	wantBytes := mustMarshal(t, map[string]any{
+		"error": map[string]any{"type": "tool_name_reserved", "name": "safety_check"},
+	})
+	var gotMap, wantMap map[string]any
+	if uerr := json.Unmarshal(pe.Body, &gotMap); uerr != nil {
+		t.Fatalf("json.Unmarshal(Body) error = %v", uerr)
+	}
+	if uerr := json.Unmarshal(wantBytes, &wantMap); uerr != nil {
+		t.Fatalf("json.Unmarshal(expected) error = %v", uerr)
+	}
+	if !reflect.DeepEqual(gotMap, wantMap) {
+		t.Fatalf("reject body = %#v, want %#v", gotMap, wantMap)
+	}
+}
+
+func TestPluginNestedSchemaPatchDecodeGuard(t *testing.T) {
+	settings := map[string]any{
+		"transform_tools": []any{
+			map[string]any{
+				"tool": "search_*",
+				"schema_patch": map[string]any{
+					"properties": map[string]any{
+						"max_results": map[string]any{"maximum": 10},
+					},
+				},
+			},
+		},
+	}
+	params := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"max_results": map[string]any{"type": "number", "maximum": 100},
+		},
+	}
+	res := execPreRequest(t, settings, string(adapter.FormatOpenAI), openAICompletionsToolBody(t, "search_docs", params))
+
+	decoded, err := adapter.NewRegistry().DecodeRequestFor(res.RequestBody, adapter.FormatOpenAI)
+	if err != nil {
+		t.Fatalf("DecodeRequestFor error = %v", err)
+	}
+	tool, ok := findTool(decoded.Tools, "search_docs")
+	if !ok {
+		t.Fatalf("decoded tools missing search_docs: %#v", decoded.Tools)
+	}
+	props, ok := tool.Schema["properties"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("schema.properties not an object: %#v", tool.Schema["properties"])
+	}
+	maxResults, ok := props["max_results"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("schema.properties.max_results not an object: %#v", props["max_results"])
+	}
+	if maxResults["maximum"] != float64(10) {
+		t.Fatalf("nested patch not applied: maximum = %v, want 10", maxResults["maximum"])
+	}
+	if maxResults["type"] != "number" {
+		t.Fatalf("sibling nested key lost: type = %v, want number", maxResults["type"])
+	}
+}

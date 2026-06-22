@@ -169,7 +169,7 @@ churn because the phases are strictly dependent. Prefer the chain.)
 
 ## Phase 4: Full provider matrix + edge-case suite (test-only)
 
-- [ ] 4.1 Per-provider round-trip (graft) — for OpenAI completions, OpenAI responses,
+- [x] 4.1 Per-provider round-trip (graft) — for OpenAI completions, OpenAI responses,
       Anthropic (mandatory), plus Gemini, Bedrock, Mistral (parity with
       `pertoolratelimit`): build a raw body with one tool + a provider-specific
       top-level field, run `preRequest` with a transform + injection, decode the
@@ -178,18 +178,18 @@ churn because the phases are strictly dependent. Prefer the chain.)
       survives verbatim. Resolve design open-questions 1 (OpenAI Responses tool
       envelope) and 2 (Anthropic `type+custom` re-encode) here; if a format drops
       tools, drop it from the v1 coverage claim and note it.
-- [ ] 4.2 Cross-provider equivalence: equivalent OpenAI and Anthropic requests with the
+- [x] 4.2 Cross-provider equivalence: equivalent OpenAI and Anthropic requests with the
       same logical tools + same config yield equivalent canonical tool sets.
-- [ ] 4.3 Inject-after-transform ordering: transform on `search_*` + injection whose
+- [x] 4.3 Inject-after-transform ordering: transform on `search_*` + injection whose
       name collides only with a post-transform tool exercises the post-transform
       conflict set.
-- [ ] 4.4 No-op/passthrough matrix via `Execute`: unknown/empty wire format; undecodable
+- [x] 4.4 No-op/passthrough matrix via `Execute`: unknown/empty wire format; undecodable
       body; tools present but no transform matches and no `inject_tools`;
       `len(Tools)==0 && len(InjectTools)==0` → all `okResult()` with no rewrite.
-- [ ] 4.5 Reject path via `Execute`: `on_conflict:reject` collision returns the
+- [x] 4.5 Reject path via `Execute`: `on_conflict:reject` collision returns the
       `*appplugins.PluginError` (400, `tool_name_reserved`, exact body) and records
       reject extras.
-- [ ] 4.6 Nested-patch decode guard (design open-question 3): assert mapstructure
+- [x] 4.6 Nested-patch decode guard (design open-question 3): assert mapstructure
       decodes nested JSON objects in `schema_patch`/`parameters` into
       `map[string]interface{}` (not `map[interface{}]interface{}`) so `mergePatch`
       type assertions hold.
