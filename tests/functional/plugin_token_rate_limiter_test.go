@@ -11,11 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestPluginE2E_TokenRateLimiter verifies the token budget limiter is wired into
-// the proxy and lets legitimate chat traffic through. Enforcement records the
-// tokens a response consumed at PostResponse; the PreRequest check keys off the
-// request provider, so a route guarded by the limiter must not break normal
-// provider traffic.
 func TestPluginE2E_TokenRateLimiter(t *testing.T) {
 	defer Track(t, "PluginTokenRateLimiter")()
 
@@ -34,14 +29,11 @@ func TestPluginE2E_TokenRateLimiter(t *testing.T) {
 	assert.Equal(t, 5, up.Hits())
 }
 
-// A global token_rate_limiter shares one budget across every consumer of the
-// gateway: tokens consumed by one consumer must, once the async post_response
-// accrual lands, gate a different consumer that never consumed tokens itself.
 func TestPluginE2E_TokenRateLimiter_GlobalSharedAcrossConsumers(t *testing.T) {
 	defer Track(t, "PluginTokenRateLimiter")()
 
 	const budget = 5
-	up := newUsageUpstream(t, "token-global", 8) // each response consumes 8 > budget
+	up := newUsageUpstream(t, "token-global", 8)
 	gatewayID, backendID := setupGatewayBackend(t, up)
 	createGlobalPolicy(t, gatewayID, "token_rate_limiter",
 		map[string]any{"window": map[string]any{"unit": "minute", "max": budget}})
@@ -50,12 +42,9 @@ func TestPluginE2E_TokenRateLimiter_GlobalSharedAcrossConsumers(t *testing.T) {
 
 	body := mustJSON(t, chatRequest(false))
 
-	// Consumer A consumes the shared global budget.
 	statusA, _, raw := proxyRequest(t, http.MethodPost, keyA, pathA, nil, body)
 	require.Equal(t, http.StatusOK, statusA, "consumer A first request should pass, body: %s", raw)
 
-	// Consumer B never consumed tokens, but the shared global counter must gate
-	// it once A's post_response accrual lands.
 	require.Eventually(t, func() bool {
 		s, _, _ := proxyRequest(t, http.MethodPost, keyB, pathB, nil, body)
 		return s == http.StatusTooManyRequests
@@ -63,13 +52,11 @@ func TestPluginE2E_TokenRateLimiter_GlobalSharedAcrossConsumers(t *testing.T) {
 		"a global token budget must gate other consumers once consumer A's accrual lands")
 }
 
-// With group_by_header set, the token budget is counted per header value within
-// the policy scope: one header value's budget must not gate another's.
 func TestPluginE2E_TokenRateLimiter_GroupByHeader(t *testing.T) {
 	defer Track(t, "PluginTokenRateLimiter")()
 
 	const budget = 5
-	up := newUsageUpstream(t, "token-group-header", 8) // each response consumes 8 > budget
+	up := newUsageUpstream(t, "token-group-header", 8)
 	gatewayID, backendID := setupGatewayBackend(t, up)
 	tok := createScopedPolicy(t, gatewayID, "token_rate_limiter", map[string]any{
 		"window":          map[string]any{"unit": "minute", "max": budget},
@@ -80,19 +67,94 @@ func TestPluginE2E_TokenRateLimiter_GroupByHeader(t *testing.T) {
 	body := mustJSON(t, chatRequest(false))
 	user1 := map[string]string{"X-User-Id": "user-1"}
 
-	// user-1 consumes its own budget.
 	status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, user1, body)
 	require.Equal(t, http.StatusOK, status, "user-1 first request should pass, body: %s", raw)
 
-	// Once user-1's accrual lands, user-1 is gated on its own bucket.
 	require.Eventually(t, func() bool {
 		s, _, _ := proxyRequest(t, http.MethodPost, apiKey, path, user1, body)
 		return s == http.StatusTooManyRequests
 	}, 5*time.Second, 100*time.Millisecond,
 		"user-1's token budget must gate its own further requests")
 
-	// A different header value keeps an independent budget on the same route.
 	statusU2, _, raw := proxyRequest(t, http.MethodPost, apiKey, path,
 		map[string]string{"X-User-Id": "user-2"}, body)
 	require.Equal(t, http.StatusOK, statusU2, "a different header value must have its own budget, body: %s", raw)
+}
+
+func TestPluginE2E_TokenRateLimiter_PerModelIsolation(t *testing.T) {
+	defer Track(t, "PluginTokenRateLimiter")()
+
+	const budget = 5
+	up := newUsageUpstream(t, "token-per-model", 8)
+	gatewayID, backendID := setupGatewayBackend(t, up)
+	tok := createScopedPolicy(t, gatewayID, "token_rate_limiter", map[string]any{
+		"per_model": true,
+		"rules": []map[string]any{
+			{"model": "gpt-4o-mini", "max": budget, "time_window": "1m"},
+			{"model": "gpt-4o", "max": budget, "time_window": "1m"},
+		},
+	}, 0, false)
+	path, apiKey := addConsumerRoute(t, gatewayID, backendID, tok)
+
+	bodyMini := mustJSON(t, chatRequestModel("gpt-4o-mini"))
+	bodyBig := mustJSON(t, chatRequestModel("gpt-4o"))
+
+	status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, bodyMini)
+	require.Equal(t, http.StatusOK, status, "first gpt-4o-mini request should pass, body: %s", raw)
+
+	require.Eventually(t, func() bool {
+		s, _, _ := proxyRequest(t, http.MethodPost, apiKey, path, nil, bodyMini)
+		return s == http.StatusTooManyRequests
+	}, 5*time.Second, 100*time.Millisecond,
+		"the gpt-4o-mini budget must gate further gpt-4o-mini requests once accrual lands")
+
+	statusBig, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, bodyBig)
+	require.Equal(t, http.StatusOK, statusBig, "a different model must keep an independent budget, body: %s", raw)
+}
+
+func TestPluginE2E_TokenRateLimiter_AggregateBudget(t *testing.T) {
+	defer Track(t, "PluginTokenRateLimiter")()
+
+	const budget = 5
+	up := newUsageUpstream(t, "token-aggregate", 8)
+	gatewayID, backendID := setupGatewayBackend(t, up)
+	tok := createScopedPolicy(t, gatewayID, "token_rate_limiter", map[string]any{
+		"aggregate": map[string]any{"max": budget, "time_window": "1m"},
+	}, 0, false)
+	path, apiKey := addConsumerRoute(t, gatewayID, backendID, tok)
+
+	body := mustJSON(t, chatRequest(false))
+
+	status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
+	require.Equal(t, http.StatusOK, status, "the crossing request must pass, body: %s", raw)
+
+	require.Eventually(t, func() bool {
+		s, _, _ := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
+		return s == http.StatusTooManyRequests
+	}, 5*time.Second, 100*time.Millisecond,
+		"an aggregate token budget must reject the next request once accrual lands")
+}
+
+func TestPluginE2E_TokenRateLimiter_LegacyBackCompat(t *testing.T) {
+	defer Track(t, "PluginTokenRateLimiter")()
+
+	const budget = 5
+	up := newUsageUpstream(t, "token-legacy", 8)
+	gatewayID, backendID := setupGatewayBackend(t, up)
+	tok := createScopedPolicy(t, gatewayID, "token_rate_limiter", map[string]any{
+		"window": map[string]any{"unit": "minute", "max": budget},
+	}, 0, false)
+	path, apiKey := addConsumerRoute(t, gatewayID, backendID, tok)
+
+	body := mustJSON(t, chatRequest(false))
+
+	status, headers, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
+	require.Equal(t, http.StatusOK, status, "legacy window first request should pass, body: %s", raw)
+	assert.Equal(t, "5", headers.Get("X-Ratelimit-Limit-Tokens"))
+
+	require.Eventually(t, func() bool {
+		s, _, _ := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
+		return s == http.StatusTooManyRequests
+	}, 5*time.Second, 100*time.Millisecond,
+		"a legacy window must still reject identically once accrual lands")
 }

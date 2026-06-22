@@ -14,15 +14,16 @@
 
 package tokenratelimit
 
-type TokenRateLimiterData struct {
-	Stage           string `json:"stage"`
-	CounterKey      string `json:"counter_key"`
-	Provider        string `json:"provider,omitempty"`
-	Model           string `json:"model,omitempty"`
-	WindowUnit      string `json:"window_unit"`
-	WindowMax       int    `json:"window_max"`
-	TokensConsumed  int    `json:"tokens_consumed"`
-	TokensActual    int    `json:"tokens_actual,omitempty"`
-	TokensRemaining int    `json:"tokens_remaining"`
-	LimitExceeded   bool   `json:"limit_exceeded"`
+const counterKeyPrefix = "trl"
+
+func aggregateKey(cfgID, dimension, subject, headerValue string) string {
+	key := counterKeyPrefix + ":" + cfgID + ":" + dimension + ":" + subject
+	if headerValue != "" {
+		key += ":hdr:" + headerValue
+	}
+	return key
+}
+
+func modelKey(base, slug string) string {
+	return base + ":model:" + slug
 }

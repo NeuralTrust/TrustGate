@@ -14,15 +14,15 @@
 
 package tokenratelimit
 
-type TokenRateLimiterData struct {
-	Stage           string `json:"stage"`
-	CounterKey      string `json:"counter_key"`
-	Provider        string `json:"provider,omitempty"`
-	Model           string `json:"model,omitempty"`
-	WindowUnit      string `json:"window_unit"`
-	WindowMax       int    `json:"window_max"`
-	TokensConsumed  int    `json:"tokens_consumed"`
-	TokensActual    int    `json:"tokens_actual,omitempty"`
-	TokensRemaining int    `json:"tokens_remaining"`
-	LimitExceeded   bool   `json:"limit_exceeded"`
-}
+import "github.com/go-redis/redis/v8"
+
+var recordScript = redis.NewScript(`
+local key        = KEYS[1]
+local tokens     = tonumber(ARGV[1])
+local window_sec = tonumber(ARGV[2])
+local total = redis.call('INCRBY', key, tokens)
+if redis.call('TTL', key) == -1 then
+    redis.call('EXPIRE', key, window_sec)
+end
+return total
+`)

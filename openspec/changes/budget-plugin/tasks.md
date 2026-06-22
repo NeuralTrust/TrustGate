@@ -47,11 +47,11 @@ churn because phases are strictly dependent. Prefer the chain.)
 
 ## Phase 2: Per-model + aggregate token budget
 
-- [ ] 2.1 Create `keys.go`: `counterKeyPrefix` const, `aggregateKey`, `modelKey` (`:model:{slug}` segment) from `RuntimeScope.Subject()`.
-- [ ] 2.2 Move existing Lua into `scripts.go` (`recordScript`, reused unchanged).
-- [ ] 2.3 Implement `budget.go`: `selectRule`, `windowsFor`, `budgetGate` (pre-request GET per window), `accrue` (post-response INCRBY); honor `counting` input/output/total.
-- [ ] 2.4 Wire `preRequest`/`postResponse` dispatch in `plugin.go`; preserve legacy single-window path + `X-Ratelimit-*-Tokens` headers + 429.
-- [ ] 2.5 Unit tests for keys + budget selection; functional test: per-model isolation, aggregate, crossing-request-passes, legacy back-compat.
+- [x] 2.1 Create `keys.go`: `counterKeyPrefix` const, `aggregateKey`, `modelKey` (`:model:{slug}` segment) from `RuntimeScope.Subject()`.
+- [x] 2.2 Move existing Lua into `scripts.go` (`recordScript`, reused unchanged).
+- [x] 2.3 Implement `budget.go`: `selectRule`, `windowsFor`, `budgetGate` (pre-request GET per window), `accrue` (post-response INCRBY); honor `counting` input/output/total.
+- [x] 2.4 Wire `preRequest`/`postResponse` dispatch in `plugin.go`; preserve legacy single-window path + `X-Ratelimit-*-Tokens` headers + 429.
+- [x] 2.5 Unit tests for keys + budget selection; functional test: per-model isolation, aggregate, crossing-request-passes, legacy back-compat.
 
 **Verify**: `go test -race ./pkg/infra/plugins/tokenratelimit/...` ; `go test -race ./tests/functional/... -run TokenRateLimiter`.
 **Rollback**: revert `budget.go`/`keys.go`/dispatch; legacy gate restored.

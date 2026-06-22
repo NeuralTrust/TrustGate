@@ -16,6 +16,7 @@ package tokenratelimit
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -182,6 +183,9 @@ func (c *config) validate() error {
 		if c.Rules[i].Max <= 0 {
 			return fmt.Errorf("token_rate_limiter: rules[%d].max must be > 0", i)
 		}
+		if c.Unit == unitTokens && !isWholeNumber(c.Rules[i].Max) {
+			return fmt.Errorf("token_rate_limiter: rules[%d].max must be a whole number of tokens", i)
+		}
 		if c.Rules[i].TimeWindow != "" {
 			if _, err := parseWindow(c.Rules[i].TimeWindow); err != nil {
 				return fmt.Errorf("token_rate_limiter: rules[%d].time_window: %w", i, err)
@@ -192,6 +196,9 @@ func (c *config) validate() error {
 	if c.Aggregate != nil {
 		if c.Aggregate.Max <= 0 {
 			return fmt.Errorf("token_rate_limiter: aggregate.max must be > 0")
+		}
+		if c.Unit == unitTokens && !isWholeNumber(c.Aggregate.Max) {
+			return fmt.Errorf("token_rate_limiter: aggregate.max must be a whole number of tokens")
 		}
 		if c.Aggregate.TimeWindow != "" {
 			if _, err := parseWindow(c.Aggregate.TimeWindow); err != nil {
@@ -284,4 +291,8 @@ func (c *config) windowSeconds() int {
 		return secs
 	}
 	return validUnits["minute"]
+}
+
+func isWholeNumber(f float64) bool {
+	return f == math.Trunc(f)
 }
