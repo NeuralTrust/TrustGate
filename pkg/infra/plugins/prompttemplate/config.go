@@ -15,7 +15,16 @@
 package prompttemplate
 
 import (
+	"fmt"
+	"regexp"
+	"strings"
+
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
+)
+
+var (
+	placeholderScanRe = regexp.MustCompile(`\{\{([^{}]*)\}\}`)
+	placeholderNameRe = regexp.MustCompile(`^[\w.-]+$`)
 )
 
 type engine string
@@ -137,5 +146,156 @@ func (c *config) applyDefaults() {
 }
 
 func (c *config) validate() error {
+	switch c.TemplateEngine {
+	case engineMustache:
+	case engineJinja2:
+		return fmt.Errorf("prompt_template: template_engine %q is not yet supported (v1 supports mustache only)", c.TemplateEngine)
+	default:
+		return fmt.Errorf("prompt_template: template_engine %q is not supported", c.TemplateEngine)
+	}
+
+	if err := c.validateContextVariables(); err != nil {
+		return err
+	}
+
+	if len(c.InjectTemplates) == 0 && len(c.NamedTemplates) == 0 {
+		return fmt.Errorf("prompt_template: at least one of inject_templates or named_templates must be set")
+	}
+
+	if err := c.validateInjectTemplates(); err != nil {
+		return err
+	}
+	return c.validateNamedTemplates()
+}
+
+func (c *config) validateContextVariables() error {
+	for key, cv := range c.ContextVariables {
+		switch cv.Source {
+		case sourceHeader, sourceJWTClaim:
+		case "consumer_attribute":
+			return fmt.Errorf("prompt_template: context_variables[%q].source consumer_attribute is deferred/unsupported in v1", key)
+		default:
+			return fmt.Errorf("prompt_template: context_variables[%q].source %q must be header or jwt_claim", key, cv.Source)
+		}
+		if strings.TrimSpace(cv.Name) == "" {
+			return fmt.Errorf("prompt_template: context_variables[%q].name must not be blank", key)
+		}
+	}
+	return nil
+}
+
+func (c *config) validateInjectTemplates() error {
+	for i := range c.InjectTemplates {
+		it := c.InjectTemplates[i]
+		if strings.TrimSpace(it.ID) == "" {
+			return fmt.Errorf("prompt_template: inject_templates[%d].id must not be blank", i)
+		}
+		if strings.TrimSpace(it.Content) == "" {
+			return fmt.Errorf("prompt_template: inject_templates[%d].content must not be blank", i)
+		}
+		if it.Position != "system" {
+			return fmt.Errorf("prompt_template: inject_templates[%d].position %q must be system", i, it.Position)
+		}
+		if strings.TrimSpace(it.Role) == "" {
+			return fmt.Errorf("prompt_template: inject_templates[%d].role must not be blank", i)
+		}
+		switch it.OnExistingSystem {
+		case onExistingMerge, onExistingReplace:
+		default:
+			return fmt.Errorf("prompt_template: inject_templates[%d].on_existing_system %q must be merge or replace", i, it.OnExistingSystem)
+		}
+		if err := validatePlaceholders(it.Content); err != nil {
+			return fmt.Errorf("prompt_template: inject_templates[%d].content: %w", i, err)
+		}
+	}
+	return nil
+}
+
+func (c *config) validateNamedTemplates() error {
+	labels := map[string]struct{}{}
+	names := map[string]struct{}{}
+	for i := range c.NamedTemplates {
+		nt := c.NamedTemplates[i]
+		if strings.TrimSpace(nt.Name) == "" {
+			return fmt.Errorf("prompt_template: named_templates[%d].name must not be blank", i)
+		}
+		if _, dup := names[nt.Name]; dup {
+			return fmt.Errorf("prompt_template: named_templates name %q is duplicated", nt.Name)
+		}
+		names[nt.Name] = struct{}{}
+		if len(nt.Versions) == 0 {
+			return fmt.Errorf("prompt_template: named_templates[%q] must have at least one version", nt.Name)
+		}
+		if err := validateVersions(nt, labels); err != nil {
+			return err
+		}
+	}
+	if len(c.NamedTemplates) > 0 && c.DefaultLabel != "" {
+		if _, ok := labels[c.DefaultLabel]; !ok {
+			return fmt.Errorf("prompt_template: default_label %q does not match any version label", c.DefaultLabel)
+		}
+	}
+	return nil
+}
+
+func validateVersions(nt namedTemplate, labels map[string]struct{}) error {
+	versions := map[string]struct{}{}
+	for j := range nt.Versions {
+		v := nt.Versions[j]
+		if strings.TrimSpace(v.Version) == "" {
+			return fmt.Errorf("prompt_template: named_templates[%q].versions[%d].version must not be blank", nt.Name, j)
+		}
+		if _, dup := versions[v.Version]; dup {
+			return fmt.Errorf("prompt_template: named_templates[%q] version %q is duplicated", nt.Name, v.Version)
+		}
+		versions[v.Version] = struct{}{}
+		for _, label := range v.Labels {
+			if strings.TrimSpace(label) == "" {
+				return fmt.Errorf("prompt_template: named_templates[%q].versions[%q] has a blank label", nt.Name, v.Version)
+			}
+			if _, dup := labels[label]; dup {
+				return fmt.Errorf("prompt_template: named_templates[%q] label %q points to more than one version", nt.Name, label)
+			}
+			labels[label] = struct{}{}
+		}
+		if strings.TrimSpace(v.Content) == "" {
+			return fmt.Errorf("prompt_template: named_templates[%q].versions[%q].content must not be blank", nt.Name, v.Version)
+		}
+		if err := validatePlaceholders(v.Content); err != nil {
+			return fmt.Errorf("prompt_template: named_templates[%q].versions[%q].content: %w", nt.Name, v.Version, err)
+		}
+		if err := validateRequiredVars(nt, v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateRequiredVars(nt namedTemplate, v templateVersion) error {
+	for name, rv := range v.RequiredVariables {
+		switch rv.Type {
+		case "string", "number", "boolean":
+		default:
+			return fmt.Errorf("prompt_template: named_templates[%q].versions[%q].required_variables[%q].type %q must be string, number, or boolean", nt.Name, v.Version, name, rv.Type)
+		}
+		if rv.MaxLength < 0 {
+			return fmt.Errorf("prompt_template: named_templates[%q].versions[%q].required_variables[%q].max_length must be >= 0", nt.Name, v.Version, name)
+		}
+		for _, e := range rv.Enum {
+			if strings.TrimSpace(e) == "" {
+				return fmt.Errorf("prompt_template: named_templates[%q].versions[%q].required_variables[%q] has a blank enum entry", nt.Name, v.Version, name)
+			}
+		}
+	}
+	return nil
+}
+
+func validatePlaceholders(content string) error {
+	for _, m := range placeholderScanRe.FindAllStringSubmatch(content, -1) {
+		name := strings.TrimSpace(m[1])
+		if !placeholderNameRe.MatchString(name) {
+			return fmt.Errorf("placeholder %q is not a valid [\\w.-]+ token", m[0])
+		}
+	}
 	return nil
 }

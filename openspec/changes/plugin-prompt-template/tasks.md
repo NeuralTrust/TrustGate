@@ -16,20 +16,20 @@ P4→7+8, P5→9).
 
 ## Phase 2: Config validation (PR2)
 
-- [ ] 2.1 Implement `(*config).validate` in `config.go`: engine enum gate (jinja2_subset → "not yet supported" 4xx); reject `consumer_attribute` source as deferred; `context_variables[*]` source/name; ≥1 inject or named template.
-- [ ] 2.2 Validate `inject_templates[]` (id/content non-blank, position=`system`, role non-blank, on_existing_system enum) and `named_templates` (unique name/version/label, `required_variables.type` enum, `max_length>=0`, `default_label` resolves) and placeholder syntax `[\w.-]+`.
-- [ ] 2.3 Write `config_test.go`: defaults; mustache accepted; jinja2/consumer_attribute rejected; duplicate name/version/label; empty inject content; bad on_existing_system; unresolved default_label; bad type (spec "Configuration validation" scenarios).
+- [x] 2.1 Implement `(*config).validate` in `config.go`: engine enum gate (jinja2_subset → "not yet supported" 4xx); reject `consumer_attribute` source as deferred; `context_variables[*]` source/name; ≥1 inject or named template.
+- [x] 2.2 Validate `inject_templates[]` (id/content non-blank, position=`system`, role non-blank, on_existing_system enum) and `named_templates` (unique name/version/label, `required_variables.type` enum, `max_length>=0`, `default_label` resolves) and placeholder syntax `[\w.-]+`.
+- [x] 2.3 Write `config_test.go`: defaults; mustache accepted; jinja2/consumer_attribute rejected; duplicate name/version/label; empty inject content; bad on_existing_system; unresolved default_label; bad type (spec "Configuration validation" scenarios).
 
 ## Phase 3: Render engine (PR3)
 
-- [ ] 3.1 Create `render.go`: `placeholderRe` (`\{\{\s*([\w.-]+)\s*\}\}`), `renderTemplate(tmpl, vars) (string, []string)` reporting missing keys, `escapeControlChars` stripping raw C0 bytes (keep `\n`/`\t`).
-- [ ] 3.2 Write `render_test.go`: substitution; whitespace tolerance `{{ var }}`; unknown placeholder reported in `missing`; control-char strip on/off; no-placeholder passthrough.
+- [x] 3.1 Create `render.go`: `placeholderRe` (`\{\{\s*([\w.-]+)\s*\}\}`), `renderTemplate(tmpl, vars) (string, []string)` reporting missing keys, `escapeControlChars` stripping raw C0 bytes (keep `\n`/`\t`).
+- [x] 3.2 Write `render_test.go`: substitution; whitespace tolerance `{{ var }}`; unknown placeholder reported in `missing`; control-char strip on/off; no-placeholder passthrough.
 
 ## Phase 4: Context variables + unverified JWT (PR4)
 
-- [ ] 4.1 Create `jwt.go`: `bearerToken(req)` + `unverifiedClaim(token, name)` via `jwt.NewParser().ParseUnverified`.
-- [ ] 4.2 Create `variables.go`: `resolveContextVars(cfg, req)` / `resolveOne` for `header` + `jwt_claim`; missing/unparsable → reported missing.
-- [ ] 4.3 Write `jwt_test.go` + `variables_test.go`: bearer extraction; non-bearer/empty → ""; valid + tampered token still read; header case-insensitive; absent header/claim → missing (spec "Header and jwt_claim resolve").
+- [x] 4.1 Create `jwt.go`: `bearerToken(req)` + `unverifiedClaim(token, name)` via `jwt.NewParser().ParseUnverified`.
+- [x] 4.2 Create `variables.go`: `resolveContextVars(cfg, req)` / `resolveOne` for `header` + `jwt_claim`; missing/unparsable → reported missing.
+- [x] 4.3 Write `jwt_test.go` + `variables_test.go`: bearer extraction; non-bearer/empty → ""; valid + tampered token still read; header case-insensitive; absent header/claim → missing (spec "Header and jwt_claim resolve").
 
 ## Phase 5: Body Mode A helpers + trace data (PR5)
 
