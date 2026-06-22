@@ -330,6 +330,9 @@ func TestPromptTemplateSchema_Tree(t *testing.T) {
 	source, ok := fieldByKey(contextVars.Value.Fields, "source")
 	require.True(t, ok)
 	assert.Equal(t, []string{"header", "jwt_claim"}, source.Enum)
+	ctxName, ok := fieldByKey(contextVars.Value.Fields, "name")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeString, ctxName.Type)
 
 	inject, ok := fieldByKey(fields, "inject_templates")
 	require.True(t, ok)
@@ -348,6 +351,10 @@ func TestPromptTemplateSchema_Tree(t *testing.T) {
 	assert.Equal(t, FieldTypeArray, named.Type)
 	require.NotNil(t, named.Item)
 
+	nameField, ok := fieldByKey(named.Item.Fields, "name")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeString, nameField.Type)
+
 	versions, ok := fieldByKey(named.Item.Fields, "versions")
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeArray, versions.Type)
@@ -357,6 +364,12 @@ func TestPromptTemplateSchema_Tree(t *testing.T) {
 		assert.Truef(t, ok, "version item missing %q", k)
 	}
 
+	labels, ok := fieldByKey(versions.Item.Fields, "labels")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeArray, labels.Type)
+	require.NotNil(t, labels.Item)
+	assert.Equal(t, FieldTypeString, labels.Item.Type)
+
 	requiredVars, ok := fieldByKey(versions.Item.Fields, "required_variables")
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeMap, requiredVars.Type)
@@ -365,6 +378,16 @@ func TestPromptTemplateSchema_Tree(t *testing.T) {
 	rvType, ok := fieldByKey(requiredVars.Value.Fields, "type")
 	require.True(t, ok)
 	assert.Equal(t, []string{"string", "number", "boolean"}, rvType.Enum)
+
+	rvEnum, ok := fieldByKey(requiredVars.Value.Fields, "enum")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeArray, rvEnum.Type)
+	require.NotNil(t, rvEnum.Item)
+	assert.Equal(t, FieldTypeString, rvEnum.Item.Type)
+
+	rvMaxLength, ok := fieldByKey(requiredVars.Value.Fields, "max_length")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeInteger, rvMaxLength.Type)
 
 	onMissingContext, ok := fieldByKey(fields, "on_missing_context_variable")
 	require.True(t, ok)

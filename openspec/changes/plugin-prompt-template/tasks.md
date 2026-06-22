@@ -57,8 +57,8 @@ P4→7+8, P5→9).
 
 ## Phase 9: Functional tests + catalog finalization (PR9)
 
-- [ ] 9.1 Create `tests/functional/plugin_prompt_template_test.go`: end-to-end Mode A (header+jwt), Mode B render via proxy, all five error codes, observe vs enforce. Reuse `setupPolicyRoute`/`createScopedPolicy`/`proxyRequest`; POST path must equal consumer name (§14.7).
-- [ ] 9.2 Finalize `catalog_test.go` assertions for full nested schema round-trip.
+- [x] 9.1 Create `tests/functional/plugin_prompt_template_test.go`: end-to-end Mode A (header+jwt), Mode B render via proxy, all five error codes, observe vs enforce. Reuse `setupPolicyRoute`/`createScopedPolicy`/`proxyRequest`; POST path must equal consumer name (§14.7).
+- [x] 9.2 Finalize `catalog_test.go` assertions for full nested schema round-trip.
 
 ## Review Workload Forecast
 
