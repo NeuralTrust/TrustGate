@@ -42,6 +42,12 @@ func New(registry *adapter.Registry, llm providers.Client, logger *slog.Logger) 
 
 func (p *Plugin) Name() string { return PluginName }
 
+func (p *Plugin) MutatesRequestBody() bool { return false }
+
+func (p *Plugin) MutatesResponseBody() bool { return true }
+
+func (p *Plugin) MutatesMetadata() bool { return false }
+
 func (p *Plugin) MandatoryStages() []policy.Stage {
 	return []policy.Stage{policy.StagePreResponse}
 }

@@ -45,6 +45,9 @@ func (f *fakePlugin) MandatoryStages() []policy.Stage     { return f.stages }
 func (f *fakePlugin) SupportedStages() []policy.Stage     { return f.stages }
 func (f *fakePlugin) SupportedModes() []policy.Mode       { return []policy.Mode{policy.ModeEnforce} }
 func (f *fakePlugin) ValidateConfig(map[string]any) error { return f.validErr }
+func (f *fakePlugin) MutatesRequestBody() bool            { return false }
+func (f *fakePlugin) MutatesResponseBody() bool           { return false }
+func (f *fakePlugin) MutatesMetadata() bool               { return false }
 
 func (f *fakePlugin) Execute(ctx context.Context, in ExecInput) (*Result, error) {
 	if f.calls != nil {
@@ -115,6 +118,9 @@ func (s *scopeCapturePlugin) SupportedStages() []policy.Stage {
 }
 func (s *scopeCapturePlugin) SupportedModes() []policy.Mode       { return []policy.Mode{policy.ModeEnforce} }
 func (s *scopeCapturePlugin) ValidateConfig(map[string]any) error { return nil }
+func (s *scopeCapturePlugin) MutatesRequestBody() bool            { return false }
+func (s *scopeCapturePlugin) MutatesResponseBody() bool           { return false }
+func (s *scopeCapturePlugin) MutatesMetadata() bool               { return false }
 func (s *scopeCapturePlugin) Execute(_ context.Context, in ExecInput) (*Result, error) {
 	s.seen <- in
 	return &Result{StatusCode: 200}, nil
