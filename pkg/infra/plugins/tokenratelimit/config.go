@@ -132,6 +132,9 @@ func (c *config) normalize() {
 	if c.BehaviorOnExceeded == "" {
 		c.BehaviorOnExceeded = behaviorReject
 	}
+	if len(c.Rules) > 0 {
+		c.PerModel = true
+	}
 	if len(c.Rules) == 0 && c.Aggregate == nil && c.Window.Max > 0 {
 		c.Aggregate = &aggregateConfig{Max: float64(c.Window.Max)}
 	}
@@ -174,6 +177,9 @@ func (c *config) validate() error {
 		if _, ok := validUnits[strings.ToLower(c.Window.Unit)]; !ok {
 			return fmt.Errorf("token_rate_limiter: window.unit must be one of second, minute, hour, day")
 		}
+		if c.Unit == unitDollars {
+			return fmt.Errorf("token_rate_limiter: dollar budgets cannot use the legacy window block; configure aggregate or rules with explicit dollar maxima")
+		}
 	}
 
 	if c.PerModel && len(c.Rules) == 0 && !hasLegacyWindow {
@@ -187,10 +193,12 @@ func (c *config) validate() error {
 		if c.Unit == unitTokens && !isWholeNumber(c.Rules[i].Max) {
 			return fmt.Errorf("token_rate_limiter: rules[%d].max must be a whole number of tokens", i)
 		}
-		if c.Rules[i].TimeWindow != "" {
-			if _, err := parseWindow(c.Rules[i].TimeWindow); err != nil {
-				return fmt.Errorf("token_rate_limiter: rules[%d].time_window: %w", i, err)
+		if c.Rules[i].TimeWindow == "" {
+			if !hasLegacyWindow {
+				return fmt.Errorf("token_rate_limiter: rules[%d].time_window is required when no legacy window is set", i)
 			}
+		} else if _, err := parseWindow(c.Rules[i].TimeWindow); err != nil {
+			return fmt.Errorf("token_rate_limiter: rules[%d].time_window: %w", i, err)
 		}
 	}
 
@@ -201,10 +209,12 @@ func (c *config) validate() error {
 		if c.Unit == unitTokens && !isWholeNumber(c.Aggregate.Max) {
 			return fmt.Errorf("token_rate_limiter: aggregate.max must be a whole number of tokens")
 		}
-		if c.Aggregate.TimeWindow != "" {
-			if _, err := parseWindow(c.Aggregate.TimeWindow); err != nil {
-				return fmt.Errorf("token_rate_limiter: aggregate.time_window: %w", err)
+		if c.Aggregate.TimeWindow == "" {
+			if !hasLegacyWindow {
+				return fmt.Errorf("token_rate_limiter: aggregate.time_window is required when no legacy window is set")
 			}
+		} else if _, err := parseWindow(c.Aggregate.TimeWindow); err != nil {
+			return fmt.Errorf("token_rate_limiter: aggregate.time_window: %w", err)
 		}
 	}
 

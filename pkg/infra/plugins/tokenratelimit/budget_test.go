@@ -152,21 +152,26 @@ func TestCounterMax(t *testing.T) {
 }
 
 func TestCountedTokens(t *testing.T) {
-	usage := &adapter.CanonicalUsage{InputTokens: 500, OutputTokens: 300, TotalTokens: 800}
+	usage := &adapter.CanonicalUsage{InputTokens: 500, OutputTokens: 300, TotalTokens: 800, CacheReadInputTokens: 100}
 	tests := []struct {
-		name     string
-		counting string
-		usage    *adapter.CanonicalUsage
-		want     int
+		name            string
+		counting        string
+		countCacheReads bool
+		usage           *adapter.CanonicalUsage
+		want            int
 	}{
 		{name: "total", counting: countingTotal, usage: usage, want: 800},
 		{name: "input", counting: countingInput, usage: usage, want: 500},
 		{name: "output", counting: countingOutput, usage: usage, want: 300},
 		{name: "nil usage", counting: countingTotal, usage: nil, want: 0},
+		{name: "total with cache reads", counting: countingTotal, countCacheReads: true, usage: usage, want: 900},
+		{name: "input with cache reads", counting: countingInput, countCacheReads: true, usage: usage, want: 600},
+		{name: "output ignores cache reads", counting: countingOutput, countCacheReads: true, usage: usage, want: 300},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, countedTokens(tt.counting, tt.usage))
+			cfg := &config{Counting: tt.counting, CountCacheReads: tt.countCacheReads}
+			assert.Equal(t, tt.want, countedTokens(cfg, tt.usage))
 		})
 	}
 }

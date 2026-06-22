@@ -130,17 +130,21 @@ func displayLimit(max float64) int {
 	return int(math.Round(max))
 }
 
-func countedTokens(counting string, usage *adapter.CanonicalUsage) int {
+func countedTokens(cfg *config, usage *adapter.CanonicalUsage) int {
 	if usage == nil {
 		return 0
 	}
-	switch counting {
+	cacheReads := 0
+	if cfg.CountCacheReads {
+		cacheReads = usage.CacheReadInputTokens
+	}
+	switch cfg.Counting {
 	case countingInput:
-		return usage.InputTokens
+		return usage.InputTokens + cacheReads
 	case countingOutput:
 		return usage.OutputTokens
 	default:
-		return usage.TotalTokens
+		return usage.TotalTokens + cacheReads
 	}
 }
 
@@ -308,7 +312,7 @@ func (p *Plugin) accrue(
 		return p.accrueDollars(ctx, cfg, base, model, req, resp, event)
 	}
 
-	tokens := countedTokens(cfg.Counting, p.extractUsage(req, resp))
+	tokens := countedTokens(cfg, p.extractUsage(req, resp))
 	if tokens <= 0 {
 		return &appplugins.Result{}, nil
 	}

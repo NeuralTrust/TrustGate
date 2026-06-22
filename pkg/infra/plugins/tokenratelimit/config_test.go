@@ -79,6 +79,13 @@ func TestConfigNormalizeDoesNotSynthesizeWhenRulesPresent(t *testing.T) {
 	assert.Nil(t, c.Aggregate)
 }
 
+func TestConfigNormalizeRulesImplyPerModel(t *testing.T) {
+	c := &config{Rules: []budgetRule{{Model: "gpt-5", Max: 100, TimeWindow: "1h"}}}
+	c.normalize()
+
+	assert.True(t, c.PerModel, "rules must enforce per-model keying so they are not silently ignored")
+}
+
 func validConfig(mutate func(*config)) *config {
 	c := &config{
 		Unit:               unitTokens,
@@ -241,6 +248,41 @@ func TestConfigValidate(t *testing.T) {
 			name: "cost cap negative override ceiling",
 			cfg: validConfig(func(c *config) {
 				c.CostCap = &costCapConfig{Enabled: true, PerModelOverrides: map[string]costCeiling{"gpt-5": {MaxOutputCostPer1k: -2}}}
+			}),
+			wantErr: true,
+		},
+		{
+			name: "rule without time window and no legacy window",
+			cfg: validConfig(func(c *config) {
+				c.PerModel = true
+				c.Aggregate = nil
+				c.Rules = []budgetRule{{Model: "gpt-5", Max: 100}}
+			}),
+			wantErr: true,
+		},
+		{
+			name: "rule without time window inherits legacy window",
+			cfg: validConfig(func(c *config) {
+				c.PerModel = true
+				c.Aggregate = nil
+				c.Window = windowConfig{Unit: "hour", Max: 1000}
+				c.Rules = []budgetRule{{Model: "gpt-5", Max: 100}}
+			}),
+		},
+		{
+			name: "aggregate without time window and no legacy window",
+			cfg: validConfig(func(c *config) {
+				c.Aggregate = &aggregateConfig{Max: 1000}
+			}),
+			wantErr: true,
+		},
+		{
+			name: "dollars cannot use legacy window",
+			cfg: validConfig(func(c *config) {
+				c.Unit = unitDollars
+				c.PricingTable = pricingCustom
+				c.CustomPricing = map[string]customPrice{"gpt-5": {Input: 0.00001, Output: 0.00003}}
+				c.Window = windowConfig{Unit: "hour", Max: 1000}
 			}),
 			wantErr: true,
 		},
