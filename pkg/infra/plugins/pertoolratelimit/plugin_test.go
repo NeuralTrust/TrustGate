@@ -336,6 +336,34 @@ func openAIReq() *infracontext.RequestContext {
 	return &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai"}
 }
 
+func anthropicToolBody(t *testing.T, calls ...tcSpec) []byte {
+	t.Helper()
+	content := make([]map[string]any, 0, len(calls))
+	for _, c := range calls {
+		content = append(content, map[string]any{
+			"type":  "tool_use",
+			"id":    c.id,
+			"name":  c.name,
+			"input": map[string]any{},
+		})
+	}
+	body := map[string]any{
+		"id":          "msg_1",
+		"type":        "message",
+		"role":        "assistant",
+		"model":       "claude",
+		"content":     content,
+		"stop_reason": "tool_use",
+	}
+	b, err := json.Marshal(body)
+	require.NoError(t, err)
+	return b
+}
+
+func anthropicReq() *infracontext.RequestContext {
+	return &infracontext.RequestContext{Provider: "anthropic", SourceFormat: "anthropic"}
+}
+
 func execInput(settings map[string]any, req *infracontext.RequestContext, resp *infracontext.ResponseContext) appplugins.ExecInput {
 	return appplugins.ExecInput{
 		Stage:    policy.StagePreResponse,
@@ -575,18 +603,22 @@ func TestPlugin_Execute_RejectHeaders(t *testing.T) {
 	assert.Equal(t, []string{"60"}, pe.Headers["Retry-After"])
 }
 
-func TestPlugin_Execute_InjectPlaceholderIsNoop(t *testing.T) {
-	p, _ := newPluginRedis(t)
-	settings := map[string]any{
+func injectSettings(tool, duration string, max int) map[string]any {
+	return map[string]any{
 		"rules": []any{
 			map[string]any{
-				"tool":     "send_email",
-				"windows":  []any{map[string]any{"duration": "1m", "max": 1}},
+				"tool":     tool,
+				"windows":  []any{map[string]any{"duration": duration, "max": max}},
 				"behavior": "inject_error_result",
 			},
 		},
 	}
-	resp := &infracontext.ResponseContext{Body: openAIToolBody(t, tcSpec{"call_1", "send_email"})}
+}
+
+func TestPlugin_Execute_InjectOpenAIRoundTrip(t *testing.T) {
+	p, _ := newPluginRedis(t)
+	settings := injectSettings("execute_code*", "1m", 1)
+	resp := &infracontext.ResponseContext{Body: openAIToolBody(t, tcSpec{"call_1", "execute_code_py"})}
 
 	_, err := p.Execute(context.Background(), execInput(settings, openAIReq(), resp))
 	require.NoError(t, err)
@@ -594,7 +626,93 @@ func TestPlugin_Execute_InjectPlaceholderIsNoop(t *testing.T) {
 	res, err := p.Execute(context.Background(), execInput(settings, openAIReq(), resp))
 	require.NoError(t, err)
 	require.NotNil(t, res)
+	assert.True(t, res.StopUpstream)
 	assert.Equal(t, http.StatusOK, res.StatusCode)
-	assert.False(t, res.StopUpstream)
-	assert.Nil(t, res.Body)
+	require.NotNil(t, res.Body)
+
+	decoded, err := adapter.NewRegistry().DecodeResponseFor(res.Body, adapter.FormatOpenAI)
+	require.NoError(t, err)
+	assert.Empty(t, decoded.ToolCalls)
+	assert.Contains(t, decoded.Content, "execute_code_py")
+	assert.Contains(t, decoded.Content, "call_1")
+	assert.Equal(t, "stop", decoded.FinishReason)
+}
+
+func TestPlugin_Execute_InjectAnthropicRoundTrip(t *testing.T) {
+	p, _ := newPluginRedis(t)
+	settings := injectSettings("execute_code*", "1m", 1)
+	resp := &infracontext.ResponseContext{Body: anthropicToolBody(t, tcSpec{"toolu_1", "execute_code_py"})}
+
+	_, err := p.Execute(context.Background(), execInput(settings, anthropicReq(), resp))
+	require.NoError(t, err)
+
+	res, err := p.Execute(context.Background(), execInput(settings, anthropicReq(), resp))
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.True(t, res.StopUpstream)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+	require.NotNil(t, res.Body)
+
+	decoded, err := adapter.NewRegistry().DecodeResponseFor(res.Body, adapter.FormatAnthropic)
+	require.NoError(t, err)
+	assert.Empty(t, decoded.ToolCalls)
+	assert.Contains(t, decoded.Content, "execute_code_py")
+	assert.Contains(t, decoded.Content, "toolu_1")
+	assert.Equal(t, "stop", decoded.FinishReason)
+}
+
+func TestPlugin_Execute_InjectKeepsOtherToolCalls(t *testing.T) {
+	p, _ := newPluginRedis(t)
+	settings := injectSettings("execute_code*", "1m", 1)
+	resp := &infracontext.ResponseContext{Body: openAIToolBody(t,
+		tcSpec{"call_1", "execute_code_py"},
+		tcSpec{"call_2", "lookup"},
+	)}
+
+	_, err := p.Execute(context.Background(), execInput(settings, openAIReq(), resp))
+	require.NoError(t, err)
+
+	res, err := p.Execute(context.Background(), execInput(settings, openAIReq(), resp))
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.True(t, res.StopUpstream)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+
+	decoded, err := adapter.NewRegistry().DecodeResponseFor(res.Body, adapter.FormatOpenAI)
+	require.NoError(t, err)
+	require.Len(t, decoded.ToolCalls, 1)
+	assert.Equal(t, "lookup", decoded.ToolCalls[0].Name)
+	assert.Contains(t, decoded.Content, "execute_code_py")
+	assert.Equal(t, "tool_calls", decoded.FinishReason)
+}
+
+func TestPlugin_Execute_RejectWinsOverInject(t *testing.T) {
+	p, _ := newPluginRedis(t)
+	settings := map[string]any{
+		"rules": []any{
+			map[string]any{
+				"tool":     "send_email",
+				"windows":  []any{map[string]any{"duration": "1m", "max": 1}},
+				"behavior": "reject_response",
+			},
+			map[string]any{
+				"tool":     "execute_code*",
+				"windows":  []any{map[string]any{"duration": "1m", "max": 1}},
+				"behavior": "inject_error_result",
+			},
+		},
+	}
+	resp := &infracontext.ResponseContext{Body: openAIToolBody(t,
+		tcSpec{"call_1", "execute_code_py"},
+		tcSpec{"call_2", "send_email"},
+	)}
+
+	_, err := p.Execute(context.Background(), execInput(settings, openAIReq(), resp))
+	require.NoError(t, err)
+
+	_, err = p.Execute(context.Background(), execInput(settings, openAIReq(), resp))
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok)
+	assert.Equal(t, http.StatusTooManyRequests, pe.StatusCode)
+	assert.Equal(t, `tool "send_email" rate limit exceeded`, pe.Message)
 }

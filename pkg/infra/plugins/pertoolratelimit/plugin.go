@@ -116,7 +116,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 
 	var violations []violation
-	for _, tc := range canonical.ToolCalls {
+	for idx, tc := range canonical.ToolCalls {
 		rule, ok := matchRule(cfg.Rules, tc.Name)
 		if !ok {
 			continue
@@ -154,7 +154,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 			}
 		}
 		if exceeded != nil {
-			violations = append(violations, violation{tool: tc.Name, behavior: behavior, window: *exceeded, total: exceededTotal})
+			violations = append(violations, violation{tool: tc.Name, index: idx, behavior: behavior, window: *exceeded, total: exceededTotal})
 		}
 	}
 	for _, v := range violations {
@@ -162,7 +162,44 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 			return p.reject(v.tool, v.window, v.total, dimension)
 		}
 	}
+	var injects []violation
+	for _, v := range violations {
+		if v.behavior == behaviorInject {
+			injects = append(injects, v)
+		}
+	}
+	if len(injects) > 0 {
+		return p.inject(canonical, format, injects)
+	}
 	return okResult(), nil
+}
+
+func (p *Plugin) inject(canonical *adapter.CanonicalResponse, format string, injects []violation) (*appplugins.Result, error) {
+	ad, err := p.registry.GetAdapter(adapter.Format(format))
+	if err != nil {
+		return nil, fmt.Errorf("per_tool_rate_limiter: inject: %w", err)
+	}
+	drop := make(map[int]string, len(injects))
+	for _, v := range injects {
+		drop[v.index] = v.tool
+	}
+	kept := make([]adapter.CanonicalToolCall, 0, len(canonical.ToolCalls))
+	for idx, tc := range canonical.ToolCalls {
+		if tool, ok := drop[idx]; ok {
+			canonical.Content += fmt.Sprintf(rateLimitTemplate, tool, tc.ID)
+			continue
+		}
+		kept = append(kept, tc)
+	}
+	canonical.ToolCalls = kept
+	if len(canonical.ToolCalls) == 0 {
+		canonical.FinishReason = "stop"
+	}
+	body, err := ad.EncodeResponse(canonical)
+	if err != nil {
+		return nil, fmt.Errorf("per_tool_rate_limiter: inject: %w", err)
+	}
+	return &appplugins.Result{StatusCode: http.StatusOK, Body: body, StopUpstream: true}, nil
 }
 
 func (p *Plugin) reject(tool string, w windowConfig, total int, dimension string) (*appplugins.Result, error) {
@@ -217,6 +254,7 @@ func setExtras(event *metrics.EventContext, data PerToolRateLimiterData) {
 
 type violation struct {
 	tool     string
+	index    int
 	behavior string
 	window   windowConfig
 	total    int
