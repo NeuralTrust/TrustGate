@@ -152,9 +152,19 @@ func (p *Plugin) budgetGate(
 	base, model, provider string,
 	mode policy.Mode,
 	event *metrics.EventContext,
+	capTel *costCapTelemetry,
 ) (*appplugins.Result, error) {
 	windows := windowsFor(cfg, base, model)
 	if len(windows) == 0 {
+		if capTel != nil {
+			data := TokenRateLimiterData{
+				Stage:    string(policy.StagePreRequest),
+				Provider: provider,
+				Model:    model,
+			}
+			capTel.apply(&data)
+			setTokenExtras(event, data)
+		}
 		return &appplugins.Result{StatusCode: http.StatusOK}, nil
 	}
 
@@ -199,6 +209,7 @@ func (p *Plugin) budgetGate(
 	if reportWindow.model != "" {
 		data.Model = reportWindow.model
 	}
+	capTel.apply(&data)
 
 	if !exceeded {
 		setTokenExtras(event, data)

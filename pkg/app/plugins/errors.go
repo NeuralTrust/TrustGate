@@ -22,6 +22,7 @@ type PluginError struct {
 	StatusCode int
 	Message    string
 	Headers    map[string][]string
+	Body       []byte
 }
 
 func (e *PluginError) Error() string {

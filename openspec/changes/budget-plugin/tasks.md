@@ -70,10 +70,10 @@ churn because phases are strictly dependent. Prefer the chain.)
 
 ## Phase 4: Stateless cost cap
 
-- [ ] 4.1 Implement `costcap.go`: `decision` struct, `evaluateCeiling`, `costCapDecision` (global + `per_model_overrides` via `bestMatch`).
-- [ ] 4.2 Run cost cap BEFORE budget gate in `preRequest`; 403 `model_too_expensive` with four price fields.
-- [ ] 4.3 `unknown_model` policy: reject | pass_through | assume_max.
-- [ ] 4.4 Unit tests (reject/override/unknown ×3, runs-before-budget) + functional cost-cap reject test.
+- [x] 4.1 Implement `costcap.go`: `decision` struct, `evaluateCeiling`, `costCapDecision` (global + `per_model_overrides` via `bestMatch`).
+- [x] 4.2 Run cost cap BEFORE budget gate in `preRequest`; 403 `model_too_expensive` with four price fields.
+- [x] 4.3 `unknown_model` policy: reject | pass_through | assume_max.
+- [x] 4.4 Unit tests (reject/override/unknown ×3, runs-before-budget) + functional cost-cap reject test.
 
 **Verify**: `go test -race ./pkg/infra/plugins/tokenratelimit/... ./tests/functional/...`.
 **Rollback**: revert `costcap.go` + preRequest hook; budget path intact.

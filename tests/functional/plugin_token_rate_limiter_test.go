@@ -162,6 +162,32 @@ func TestPluginE2E_TokenRateLimiter_AggregateDollarBudget(t *testing.T) {
 		"a dollar budget must reject the next request once the micro-USD accrual crosses the scaled max")
 }
 
+func TestPluginE2E_TokenRateLimiter_CostCapRejectsExpensiveModel(t *testing.T) {
+	defer Track(t, "PluginTokenRateLimiter")()
+
+	up := newUsageUpstream(t, "token-cost-cap", 8)
+	gatewayID, backendID := setupGatewayBackend(t, up)
+	tok := createScopedPolicy(t, gatewayID, "token_rate_limiter", map[string]any{
+		"pricing_table": "custom",
+		"custom_pricing": map[string]any{
+			"gpt-4o": map[string]any{"input": 0.001, "output": 0.002},
+		},
+		"cost_cap": map[string]any{
+			"enabled":                       true,
+			"max_input_cost_per_1k_tokens":  0.5,
+			"max_output_cost_per_1k_tokens": 0.5,
+			"behavior_on_violation":         "reject",
+		},
+	}, 0, false)
+	path, apiKey := addConsumerRoute(t, gatewayID, backendID, tok)
+
+	body := mustJSON(t, chatRequestModel("gpt-4o"))
+	status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
+	require.Equal(t, http.StatusForbidden, status, "a model priced above the cost cap must be rejected, body: %s", raw)
+	assert.Contains(t, string(raw), "model_too_expensive")
+	assert.Equal(t, 0, up.Hits(), "an over-priced model must never reach the upstream")
+}
+
 func TestPluginE2E_TokenRateLimiter_LegacyBackCompat(t *testing.T) {
 	defer Track(t, "PluginTokenRateLimiter")()
 

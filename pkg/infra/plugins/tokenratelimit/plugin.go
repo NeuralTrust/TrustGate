@@ -97,7 +97,21 @@ func (p *Plugin) preRequest(
 	mode policy.Mode,
 	event *metrics.EventContext,
 ) (*appplugins.Result, error) {
-	return p.budgetGate(ctx, cfg, base, modelFor(req), req.Provider, mode, event)
+	model := modelFor(req)
+	var capTel *costCapTelemetry
+	if cfg.CostCap != nil && cfg.CostCap.Enabled {
+		dec := p.costCapDecision(ctx, cfg, req.Provider, model, req.RequestedModel)
+		capTel = costCapTelemetryFrom(dec)
+		if dec.kind == decisionViolation {
+			if event != nil {
+				event.SetDecision(appplugins.DecisionForMode(mode))
+			}
+			if appplugins.Blocks(mode) && !appplugins.Throttles(mode) {
+				return nil, costCapError(dec)
+			}
+		}
+	}
+	return p.budgetGate(ctx, cfg, base, model, req.Provider, mode, event, capTel)
 }
 
 func (p *Plugin) postResponse(
