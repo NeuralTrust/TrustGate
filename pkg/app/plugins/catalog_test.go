@@ -32,6 +32,7 @@ var builtinSlugs = []string{
 	"token_rate_limiter",
 	"semantic_cache",
 	"model_allowlist",
+	"tool_allowlist",
 }
 
 func registerBuiltins(t *testing.T) Registry {
@@ -48,6 +49,7 @@ func registerBuiltins(t *testing.T) Registry {
 		{"token_rate_limiter", []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}, []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}},
 		{"semantic_cache", []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}, []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}},
 		{"model_allowlist", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}},
+		{"tool_allowlist", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}},
 	}
 	for _, s := range specs {
 		require.NoError(t, reg.Register(&stagePlugin{name: s.name, mandatory: s.mandatory, supported: s.supported}))
@@ -73,7 +75,7 @@ func TestCatalogService_GroupsAndOrder(t *testing.T) {
 	}
 	assert.ElementsMatch(t, []string{"rate_limiter", "request_size_limiter", "cors"}, byType[groupTrafficControl])
 	assert.Equal(t, []string{"token_rate_limiter"}, byType[groupQuota])
-	assert.ElementsMatch(t, []string{"semantic_cache", "model_allowlist"}, byType[groupRouting])
+	assert.ElementsMatch(t, []string{"semantic_cache", "model_allowlist", "tool_allowlist"}, byType[groupRouting])
 }
 
 func TestCatalogService_EntriesHaveStagesAndSchema(t *testing.T) {
@@ -256,6 +258,38 @@ func TestTokenRateLimiterSchema_LegacyWindowPreserved(t *testing.T) {
 
 	_, ok = fieldByKey(window.Fields, "max")
 	assert.True(t, ok)
+}
+
+func TestToolAllowlistSchema(t *testing.T) {
+	meta, ok := pluginCatalogMeta["tool_allowlist"]
+	require.True(t, ok)
+	assert.Equal(t, "Tool Allowlist", meta.name)
+	assert.Equal(t, groupRouting, meta.group)
+
+	fields := meta.schema.Fields
+
+	allow, ok := fieldByKey(fields, "allow_tools")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeArray, allow.Type)
+	require.NotNil(t, allow.Item)
+	assert.Equal(t, FieldTypeString, allow.Item.Type)
+
+	deny, ok := fieldByKey(fields, "deny_tools")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeArray, deny.Type)
+	require.NotNil(t, deny.Item)
+	assert.Equal(t, FieldTypeString, deny.Item.Type)
+
+	onEmpty, ok := fieldByKey(fields, "on_empty_after_filter")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeEnum, onEmpty.Type)
+	assert.Equal(t, []string{"reject", "pass_through_empty", "strip_tools_field"}, onEmpty.Enum)
+	assert.Equal(t, "reject", onEmpty.Default)
+
+	scope, ok := fieldByKey(fields, "scope")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeEnum, scope.Type)
+	assert.Equal(t, []string{"consumer", "global"}, scope.Enum)
 }
 
 func TestPluginCatalogMeta_CoversBuiltins(t *testing.T) {
