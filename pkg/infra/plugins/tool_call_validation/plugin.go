@@ -93,7 +93,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return passThrough(), nil
 	}
 
-	outcome := runRules(ctx, buildEvalContext(cfg, creq), in.Mode, cresp.ToolCalls)
+	outcome := runRules(ctx, buildEvalContext(cfg, creq, cresp, p.llm), in.Mode, cresp.ToolCalls)
 	if !outcome.matched {
 		setExtras(in.Event, ToolCallValidationData{Action: actionAllow})
 		return passThrough(), nil

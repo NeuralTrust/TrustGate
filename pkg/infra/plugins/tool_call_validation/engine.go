@@ -19,6 +19,7 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -32,6 +33,10 @@ type evalContext struct {
 	allowed    map[string]struct{}
 	toolByName map[string]adapter.CanonicalTool
 	rules      []RuleConfig
+	semantic   *SemanticConfig
+	llm        providers.Client
+	userPrompt string
+	reasoning  string
 }
 
 type engineOutcome struct {
@@ -45,6 +50,7 @@ type engineOutcome struct {
 var validatorRegistry = map[string]Validator{
 	validatorNotInAllowedList: notInAllowedListValidator{},
 	validatorJSONSchema:       jsonSchemaValidator{},
+	validatorSemantic:         semanticValidator{},
 	validatorRegex:            regexValidator{},
 	validatorDenylist:         denylistValidator{},
 }
@@ -54,14 +60,42 @@ func validatorFor(name string) (Validator, bool) {
 	return v, ok
 }
 
-func buildEvalContext(cfg *Config, creq *adapter.CanonicalRequest) *evalContext {
+func buildEvalContext(cfg *Config, creq *adapter.CanonicalRequest, cresp *adapter.CanonicalResponse, llm providers.Client) *evalContext {
 	allowed := make(map[string]struct{}, len(creq.Tools))
 	toolByName := make(map[string]adapter.CanonicalTool, len(creq.Tools))
 	for _, t := range creq.Tools {
 		allowed[t.Name] = struct{}{}
 		toolByName[t.Name] = t
 	}
-	return &evalContext{allowed: allowed, toolByName: toolByName, rules: cfg.Rules}
+	return &evalContext{
+		allowed:    allowed,
+		toolByName: toolByName,
+		rules:      cfg.Rules,
+		semantic:   cfg.Semantic,
+		llm:        llm,
+		userPrompt: lastUserPrompt(creq),
+		reasoning:  reasoningSummary(cresp),
+	}
+}
+
+func lastUserPrompt(creq *adapter.CanonicalRequest) string {
+	for i := len(creq.Messages) - 1; i >= 0; i-- {
+		msg := creq.Messages[i]
+		if msg.Role == "user" && msg.Content != "" {
+			return msg.Content
+		}
+	}
+	return ""
+}
+
+func reasoningSummary(cresp *adapter.CanonicalResponse) string {
+	if cresp == nil || cresp.Reasoning == nil {
+		return ""
+	}
+	if cresp.Reasoning.Summary != nil && *cresp.Reasoning.Summary != "" {
+		return *cresp.Reasoning.Summary
+	}
+	return cresp.Reasoning.ThinkingText
 }
 
 func ruleApplies(rule RuleConfig, tc adapter.CanonicalToolCall) bool {
