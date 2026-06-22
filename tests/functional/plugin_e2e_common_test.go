@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -21,8 +20,8 @@ import (
 func newUsageUpstream(t *testing.T, marker string, totalTokens int) *fakeUpstream {
 	t.Helper()
 	u := &fakeUpstream{}
-	u.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		atomic.AddInt64(&u.hits, 1)
+	u.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u.record(r)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprintf(w,
 			`{"id":"chatcmpl-test","object":"chat.completion",`+

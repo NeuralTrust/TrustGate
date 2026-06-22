@@ -38,6 +38,7 @@ const (
 	behaviorThrottle       = "throttle"
 	behaviorDowngradeModel = "downgrade_model"
 	behaviorDowngrade      = "downgrade"
+	behaviorAlertOnly      = "alert_only"
 
 	unknownReject      = "reject"
 	unknownPassThrough = "pass_through"
@@ -160,9 +161,9 @@ func (c *config) validate() error {
 	}
 
 	switch c.BehaviorOnExceeded {
-	case behaviorReject, behaviorThrottle, behaviorDowngradeModel:
+	case behaviorReject, behaviorThrottle, behaviorDowngradeModel, behaviorAlertOnly:
 	default:
-		return fmt.Errorf("token_rate_limiter: behavior_on_exceeded must be one of reject, throttle, downgrade_model")
+		return fmt.Errorf("token_rate_limiter: behavior_on_exceeded must be one of reject, throttle, downgrade_model, alert_only")
 	}
 	if strings.HasPrefix(c.BehaviorOnExceeded, behaviorDowngrade) && c.DowngradeTo == "" {
 		return fmt.Errorf("token_rate_limiter: behavior_on_exceeded=%s requires downgrade_to", c.BehaviorOnExceeded)

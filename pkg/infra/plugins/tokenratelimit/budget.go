@@ -37,6 +37,7 @@ type budgetWindow struct {
 	max       float64
 	windowSec int
 	model     string
+	label     string
 	aggregate bool
 }
 
@@ -78,6 +79,7 @@ func windowsFor(cfg *config, base, model string) []budgetWindow {
 				max:       counterMax(cfg, r.Max),
 				windowSec: ruleWindowSeconds(cfg, r),
 				model:     r.Model,
+				label:     windowLabel(cfg, r.TimeWindow),
 			})
 		}
 	}
@@ -86,10 +88,18 @@ func windowsFor(cfg *config, base, model string) []budgetWindow {
 			key:       base,
 			max:       counterMax(cfg, cfg.Aggregate.Max),
 			windowSec: aggregateWindowSeconds(cfg),
+			label:     windowLabel(cfg, cfg.Aggregate.TimeWindow),
 			aggregate: true,
 		})
 	}
 	return windows
+}
+
+func windowLabel(cfg *config, timeWindow string) string {
+	if timeWindow != "" {
+		return timeWindow
+	}
+	return cfg.Window.Unit
 }
 
 func counterMax(cfg *config, raw float64) float64 {
@@ -149,11 +159,16 @@ func modelFor(req *infracontext.RequestContext) string {
 func (p *Plugin) budgetGate(
 	ctx context.Context,
 	cfg *config,
-	base, model, provider string,
+	base, model, scope string,
+	req *infracontext.RequestContext,
 	mode policy.Mode,
 	event *metrics.EventContext,
 	capTel *costCapTelemetry,
 ) (*appplugins.Result, error) {
+	provider := ""
+	if req != nil {
+		provider = req.Provider
+	}
 	windows := windowsFor(cfg, base, model)
 	if len(windows) == 0 {
 		if capTel != nil {
@@ -189,22 +204,18 @@ func (p *Plugin) budgetGate(
 	reportWindow := windows[reportIdx]
 	reportConsumed := consumedByWindow[reportIdx]
 
-	limit := displayLimit(reportWindow.max)
-	remaining := limit - int(reportConsumed)
-	if remaining < 0 {
-		remaining = 0
-	}
-	headers := rateLimitHeaders(limit, remaining, p.resetSeconds(ctx, reportWindow.key, reportWindow.windowSec))
+	headers := p.budgetHeaders(ctx, cfg, reportWindow, reportConsumed, scope)
 
 	data := TokenRateLimiterData{
 		Stage:           string(policy.StagePreRequest),
 		CounterKey:      reportWindow.key,
 		Provider:        provider,
 		WindowUnit:      cfg.Window.Unit,
-		WindowMax:       limit,
+		WindowMax:       displayLimit(reportWindow.max),
 		TokensConsumed:  int(reportConsumed),
-		TokensRemaining: remaining,
+		TokensRemaining: tokensRemaining(reportWindow.max, reportConsumed),
 		Model:           model,
+		Unit:            cfg.Unit,
 	}
 	if reportWindow.model != "" {
 		data.Model = reportWindow.model
@@ -218,23 +229,68 @@ func (p *Plugin) budgetGate(
 
 	data.LimitExceeded = true
 	setTokenExtras(event, data)
-	if event != nil {
-		event.SetDecision(appplugins.DecisionForMode(mode))
+	appplugins.SetDecision(event, mode)
+
+	return p.handleExceeded(ctx, cfg, reportWindow, scope, model, req, mode, headers)
+}
+
+func (p *Plugin) handleExceeded(
+	ctx context.Context,
+	cfg *config,
+	w budgetWindow,
+	scope, model string,
+	req *infracontext.RequestContext,
+	mode policy.Mode,
+	headers map[string][]string,
+) (*appplugins.Result, error) {
+	if appplugins.Throttles(mode) {
+		return p.throttle(ctx, w, headers)
+	}
+	if !appplugins.Blocks(mode) {
+		return &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}, nil
 	}
 
-	switch {
-	case appplugins.Throttles(mode):
-		if err := appplugins.Throttle(ctx, time.Duration(reportWindow.windowSec)*time.Second); err != nil {
-			return nil, err
+	switch cfg.BehaviorOnExceeded {
+	case behaviorThrottle:
+		return p.throttle(ctx, w, headers)
+	case behaviorAlertOnly:
+		return &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}, nil
+	case behaviorDowngradeModel:
+		if _, hdr, ok := applyDowngrade(req, model, cfg.DowngradeTo); ok {
+			return &appplugins.Result{StatusCode: http.StatusOK, Headers: mergeHeaderValues(headers, hdr)}, nil
 		}
-	case appplugins.Blocks(mode):
-		return nil, &appplugins.PluginError{
-			StatusCode: http.StatusTooManyRequests,
-			Message:    fmt.Sprintf("token rate limit exceeded: consumed %d, limit %d", reportConsumed, limit),
-			Headers:    headers,
-		}
+		return nil, budgetExceededError(cfg.Unit, scope, w.label, withBudgetMeta(headers, cfg.Unit, scope, w.label))
+	default:
+		return nil, budgetExceededError(cfg.Unit, scope, w.label, withBudgetMeta(headers, cfg.Unit, scope, w.label))
+	}
+}
+
+func (p *Plugin) throttle(ctx context.Context, w budgetWindow, headers map[string][]string) (*appplugins.Result, error) {
+	if err := appplugins.Throttle(ctx, time.Duration(w.windowSec)*time.Second); err != nil {
+		return nil, err
 	}
 	return &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}, nil
+}
+
+func (p *Plugin) budgetHeaders(ctx context.Context, cfg *config, w budgetWindow, consumed int64, scope string) map[string][]string {
+	reset := p.resetSeconds(ctx, w.key, w.windowSec)
+	if cfg.Unit == unitDollars {
+		return dollarBudgetHeaders(int64(math.Round(w.max)), consumed, scope, w.label, reset)
+	}
+	limit := displayLimit(w.max)
+	remaining := limit - int(consumed)
+	if remaining < 0 {
+		remaining = 0
+	}
+	return rateLimitHeaders(limit, remaining, reset)
+}
+
+func tokensRemaining(max float64, consumed int64) int {
+	r := displayLimit(max) - int(consumed)
+	if r < 0 {
+		return 0
+	}
+	return r
 }
 
 func (p *Plugin) accrue(

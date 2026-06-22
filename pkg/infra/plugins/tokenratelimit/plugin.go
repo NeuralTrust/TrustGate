@@ -81,7 +81,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 
 	switch in.Stage {
 	case policy.StagePreRequest:
-		return p.preRequest(ctx, cfg, base, in.Request, in.Mode, in.Event)
+		return p.preRequest(ctx, cfg, base, dimension, in.Request, in.Mode, in.Event)
 	case policy.StagePostResponse:
 		return p.postResponse(ctx, cfg, base, in.Request, in.Response, in.Event)
 	default:
@@ -92,26 +92,55 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 func (p *Plugin) preRequest(
 	ctx context.Context,
 	cfg *config,
-	base string,
+	base, scope string,
 	req *infracontext.RequestContext,
 	mode policy.Mode,
 	event *metrics.EventContext,
 ) (*appplugins.Result, error) {
 	model := modelFor(req)
 	var capTel *costCapTelemetry
+	var downgradeHeaders map[string][]string
 	if cfg.CostCap != nil && cfg.CostCap.Enabled {
 		dec := p.costCapDecision(ctx, cfg, req.Provider, model, req.RequestedModel)
 		capTel = costCapTelemetryFrom(dec)
 		if dec.kind == decisionViolation {
-			if event != nil {
-				event.SetDecision(appplugins.DecisionForMode(mode))
-			}
+			appplugins.SetDecision(event, mode)
 			if appplugins.Blocks(mode) && !appplugins.Throttles(mode) {
-				return nil, costCapError(dec)
+				if cfg.CostCap.BehaviorOnViolation == behaviorDowngrade {
+					newModel, hdr, ok := applyDowngrade(req, model, cfg.CostCap.DowngradeTo)
+					if !ok {
+						return nil, costCapError(dec)
+					}
+					model = newModel
+					downgradeHeaders = hdr
+				} else {
+					return nil, costCapError(dec)
+				}
 			}
 		}
 	}
-	return p.budgetGate(ctx, cfg, base, model, req.Provider, mode, event, capTel)
+
+	res, err := p.budgetGate(ctx, cfg, base, model, scope, req, mode, event, capTel)
+	if err != nil {
+		return nil, err
+	}
+	if len(downgradeHeaders) > 0 {
+		res.Headers = mergeHeaderValues(res.Headers, downgradeHeaders)
+	}
+	return res, nil
+}
+
+func mergeHeaderValues(dst, src map[string][]string) map[string][]string {
+	if len(src) == 0 {
+		return dst
+	}
+	if dst == nil {
+		dst = make(map[string][]string, len(src))
+	}
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }
 
 func (p *Plugin) postResponse(

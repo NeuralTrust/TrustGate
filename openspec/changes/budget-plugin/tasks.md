@@ -80,11 +80,11 @@ churn because phases are strictly dependent. Prefer the chain.)
 
 ## Phase 5: Downgrade + responses/headers + mode reconciliation
 
-- [ ] 5.1 Implement downgrade: same-provider guard (`routingdomain.ParseModelRef`) + target ∈ `req.AllowedModels` (when non-empty) else fall back to reject; `req.Body = adapter.OverrideModel(req.Body, target)`.
-- [ ] 5.2 Emit `X-NeuralTrust-Model-Downgraded: <orig>→<new>` via `Result.Headers`.
-- [ ] 5.3 `X-Budget-*` headers + 429 bodies (`token_budget_exceeded`/`dollar_budget_exceeded`).
-- [ ] 5.4 Mode reconciliation: `observe` forces non-blocking (overrides behavior), `throttle` delays budget only, `enforce` applies `behavior_on_*`.
-- [ ] 5.5 Functional tests: successful same-provider downgrade, cross-provider falls back to reject, observe never blocks, enforce rejects. Document single-plugin-batch caveat (§14.2).
+- [x] 5.1 Implement downgrade: same-provider guard (`routingdomain.ParseModelRef`) + target ∈ `req.AllowedModels` (when non-empty) else fall back to reject; `req.Body = adapter.OverrideModel(req.Body, target)`.
+- [x] 5.2 Emit `X-NeuralTrust-Model-Downgraded: <orig>→<new>` via `Result.Headers`.
+- [x] 5.3 `X-Budget-*` headers + 429 bodies (`token_budget_exceeded`/`dollar_budget_exceeded`).
+- [x] 5.4 Mode reconciliation: `observe` forces non-blocking (overrides behavior), `throttle` delays budget only, `enforce` applies `behavior_on_*`.
+- [x] 5.5 Functional tests: successful same-provider downgrade, cross-provider falls back to reject, observe never blocks, enforce rejects. Document single-plugin-batch caveat (§14.2).
 
 **Verify**: `go test -race ./pkg/infra/plugins/tokenratelimit/... ./tests/functional/...`.
 **Rollback**: revert downgrade/header/mode code; reject-only behavior remains.
