@@ -32,6 +32,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/semanticcache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/tokenratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/tool_call_validation"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/tooltransform"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
 	"go.uber.org/dig"
@@ -77,6 +78,7 @@ func newPluginRegistry(p pluginParams) (appplugins.Registry, error) {
 		semanticcache.New(store, p.Locator, p.Adapters),
 		modelallowlist.New(),
 		tool_call_validation.New(p.Adapters, openai.NewOpenaiClient(), p.Logger),
+		tooltransform.New(p.Adapters),
 	}
 	for _, plugin := range catalog {
 		if err := reg.Register(plugin); err != nil {

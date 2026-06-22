@@ -199,10 +199,10 @@ churn because the phases are strictly dependent. Prefer the chain.)
 
 ## Phase 5: DI registration + catalog + functional
 
-- [ ] 5.1 `pkg/container/modules/plugins.go`: add the `tooltransform` import and
+- [x] 5.1 `pkg/container/modules/plugins.go`: add the `tooltransform` import and
       `tooltransform.New(p.Adapters)` to the `catalog` slice in `newPluginRegistry`
       (no `pluginParams` change — `Adapters` already injected).
-- [ ] 5.2 `pkg/app/plugins/catalog_metadata.go`: add
+- [x] 5.2 `pkg/app/plugins/catalog_metadata.go`: add
       `pluginCatalogMeta["tool_definition_transformation"]`, group `groupOther`,
       name "Tool Definition Transformation"; hand-authored `SettingsSchema.Fields`:
       `transform_tools` (`FieldTypeArray` of object `{tool string req, schema_patch
@@ -212,11 +212,11 @@ churn because the phases are strictly dependent. Prefer the chain.)
       `on_conflict` (`FieldTypeEnum [gateway_wins,client_wins,reject]`,
       `Default:"gateway_wins"`), `scope` (`FieldTypeEnum [consumer,global]`,
       informational). Stages/modes read from the plugin, not duplicated.
-- [ ] 5.3 `pkg/app/plugins/catalog_test.go`: assert the new slug appears, group
+- [x] 5.3 `pkg/app/plugins/catalog_test.go`: assert the new slug appears, group
       "Other", stages `[pre_request]` (mandatory+supported), modes `[enforce]`, and the
       top-level field keys/types/enums/default; tolerate the v1 opaque
       `FieldTypeObject` with empty `Fields` (design open-question 4).
-- [ ] 5.4 `tests/functional/` (`functional` build tag), mirroring
+- [x] 5.4 `tests/functional/` (`functional` build tag), mirroring
       `plugin_per_tool_rate_limiter_test.go`: policy-routed request with `tools[]` →
       assert the upstream-received body was patched/injected (recording upstream); and
       a `reject` collision → `400` with the exact envelope. Keep path == consumer name
@@ -227,11 +227,11 @@ churn because the phases are strictly dependent. Prefer the chain.)
 
 ## Final verification (run before the last PR merges)
 
-- [ ] V.1 `go build ./...`
-- [ ] V.2 `go vet ./...`
-- [ ] V.3 `golangci-lint run ./pkg/infra/plugins/tooltransform/... ./pkg/app/plugins/... ./pkg/container/modules/...`
-- [ ] V.4 `go test -race ./pkg/infra/plugins/tooltransform/... ./pkg/app/plugins/...`
-- [ ] V.5 `go test -tags functional -race ./tests/functional/... -run ToolDefinitionTransformation`
+- [x] V.1 `go build ./...`
+- [x] V.2 `go vet ./...`
+- [x] V.3 `golangci-lint run ./pkg/infra/plugins/tooltransform/... ./pkg/app/plugins/... ./pkg/container/modules/...`
+- [x] V.4 `go test -race ./pkg/infra/plugins/tooltransform/... ./pkg/app/plugins/...`
+- [x] V.5 `go test -tags functional -race ./tests/functional/... -run ToolDefinitionTransformation`
 - [ ] V.6 Confirm pre-commit comment-strip hook leaves no comments (AGENT.md §11.1);
       only the Apache license header / `//go:generate` survive.
 - [ ] V.7 Cross-check success criteria in `proposal.md` are all covered by Phase 1–5 tests.

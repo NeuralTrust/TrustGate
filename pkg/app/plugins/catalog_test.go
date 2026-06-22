@@ -258,6 +258,94 @@ func TestTokenRateLimiterSchema_LegacyWindowPreserved(t *testing.T) {
 	assert.True(t, ok)
 }
 
+func TestToolDefinitionTransformation_CatalogEntry(t *testing.T) {
+	reg := NewRegistry()
+	require.NoError(t, reg.Register(&stagePlugin{
+		name:      "tool_definition_transformation",
+		mandatory: []policy.Stage{policy.StagePreRequest},
+		supported: []policy.Stage{policy.StagePreRequest},
+	}))
+
+	catalog := NewCatalogService(reg).Catalog()
+	require.Len(t, catalog.Groups, 1)
+	group := catalog.Groups[0]
+	assert.Equal(t, groupOther, group.Type)
+	require.Len(t, group.Items, 1)
+
+	entry := group.Items[0]
+	assert.Equal(t, "tool_definition_transformation", entry.Slug)
+	assert.Equal(t, "Tool Definition Transformation", entry.Name)
+	assert.Equal(t, []policy.Stage{policy.StagePreRequest}, entry.MandatoryStages)
+	assert.Equal(t, []policy.Stage{policy.StagePreRequest}, entry.SupportedStages)
+	assert.Equal(t, []policy.Mode{policy.ModeEnforce}, entry.SupportedModes)
+}
+
+func TestToolDefinitionTransformationSchema_Fields(t *testing.T) {
+	meta, ok := pluginCatalogMeta["tool_definition_transformation"]
+	require.True(t, ok)
+	assert.Equal(t, "Tool Definition Transformation", meta.name)
+	assert.Equal(t, groupOther, meta.group)
+
+	fields := meta.schema.Fields
+
+	transformTools, ok := fieldByKey(fields, "transform_tools")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeArray, transformTools.Type)
+	require.NotNil(t, transformTools.Item)
+	assert.Equal(t, FieldTypeObject, transformTools.Item.Type)
+
+	tool, ok := fieldByKey(transformTools.Item.Fields, "tool")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeString, tool.Type)
+	assert.True(t, tool.Required)
+
+	schemaPatch, ok := fieldByKey(transformTools.Item.Fields, "schema_patch")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeObject, schemaPatch.Type)
+	assert.Empty(t, schemaPatch.Fields)
+
+	descriptionOverride, ok := fieldByKey(transformTools.Item.Fields, "description_override")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeString, descriptionOverride.Type)
+
+	injectTools, ok := fieldByKey(fields, "inject_tools")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeArray, injectTools.Type)
+	require.NotNil(t, injectTools.Item)
+	assert.Equal(t, FieldTypeObject, injectTools.Item.Type)
+
+	injectType, ok := fieldByKey(injectTools.Item.Fields, "type")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeEnum, injectType.Type)
+	assert.Equal(t, []string{"function"}, injectType.Enum)
+	assert.Equal(t, "function", injectType.Default)
+
+	function, ok := fieldByKey(injectTools.Item.Fields, "function")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeObject, function.Type)
+
+	name, ok := fieldByKey(function.Fields, "name")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeString, name.Type)
+	assert.True(t, name.Required)
+
+	parameters, ok := fieldByKey(function.Fields, "parameters")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeObject, parameters.Type)
+	assert.Empty(t, parameters.Fields)
+
+	onConflict, ok := fieldByKey(fields, "on_conflict")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeEnum, onConflict.Type)
+	assert.Equal(t, []string{"gateway_wins", "client_wins", "reject"}, onConflict.Enum)
+	assert.Equal(t, "gateway_wins", onConflict.Default)
+
+	scope, ok := fieldByKey(fields, "scope")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeEnum, scope.Type)
+	assert.Equal(t, []string{"consumer", "global"}, scope.Enum)
+}
+
 func TestPluginCatalogMeta_CoversBuiltins(t *testing.T) {
 	validGroups := map[string]struct{}{}
 	for _, g := range groupOrder {
