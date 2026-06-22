@@ -15,6 +15,7 @@
 package resolver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -34,6 +35,23 @@ const gatewayDiscoveryModeSubdomain = "subdomain"
 
 type GatewayResolver interface {
 	Resolve(c *fiber.Ctx) (*gatewaydomain.Gateway, error)
+}
+
+// WithResolvedGateway best-effort resolves the gateway addressed by the request
+// (gateway-slug header or subdomain, per the configured discovery mode) and
+// returns a context carrying it. On any resolution miss it returns the request
+// context unchanged, so callers that can still operate without a pinned gateway
+// keep working.
+func WithResolvedGateway(c *fiber.Ctx, r GatewayResolver) context.Context {
+	ctx := c.UserContext()
+	if r == nil {
+		return ctx
+	}
+	gw, err := r.Resolve(c)
+	if err != nil {
+		return ctx
+	}
+	return appgateway.WithGateway(ctx, gw)
 }
 
 func NewGatewayResolver(finder appgateway.Finder, mode, baseDomain string) GatewayResolver {

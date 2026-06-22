@@ -160,13 +160,19 @@ func API(c *container.Container) error {
 	if err := c.Provide(oauthhttp.NewRegisterHandler); err != nil {
 		return err
 	}
-	if err := c.Provide(oauthhttp.NewAuthorizeHandler); err != nil {
+	if err := c.Provide(func(proxy appoauth.AuthProxy, finder appgateway.Finder, cfg *config.Config) *oauthhttp.AuthorizeHandler {
+		gateways := resolver.NewGatewayResolver(finder, cfg.Server.GatewayDiscoveryMode, cfg.Server.MCPBaseDomain)
+		return oauthhttp.NewAuthorizeHandler(proxy, gateways)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(oauthhttp.NewCallbackHandler); err != nil {
 		return err
 	}
-	if err := c.Provide(oauthhttp.NewTokenHandler); err != nil {
+	if err := c.Provide(func(proxy appoauth.AuthProxy, finder appgateway.Finder, cfg *config.Config) *oauthhttp.TokenHandler {
+		gateways := resolver.NewGatewayResolver(finder, cfg.Server.GatewayDiscoveryMode, cfg.Server.MCPBaseDomain)
+		return oauthhttp.NewTokenHandler(proxy, gateways)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(oauthhttp.NewConnectHandler); err != nil {
