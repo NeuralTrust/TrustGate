@@ -37,7 +37,7 @@ Mirror `modelallowlist` + `pertoolratelimit`. New pkg `pkg/infra/plugins/toolall
 
 ## Phase 4: Functional test
 
-- [ ] 4.1 Create `tests/functional/plugin_tool_allowlist_test.go` (`//go:build functional`): mirror `plugin_per_tool_rate_limiter_test.go` helpers (`setupPolicyRoute`,`policyPlugin`,`proxyRequest`,`mustJSON`,`chatRequestWithTools`,`forwardedToolNames`,`Track`,`fakeUpstream`). Cover allow/deny/empty across OpenAI + Anthropic; assert forwarded `tools[]` and 403 `no_tools_allowed`.
+- [x] 4.1 Create `tests/functional/plugin_tool_allowlist_test.go` (`//go:build functional`): mirror `plugin_per_tool_rate_limiter_test.go` helpers (`setupPolicyRoute`,`policyPlugin`,`proxyRequest`,`mustJSON`,`chatRequestWithTools`,`forwardedToolNames`,`Track`,`fakeUpstream`). Cover allow/deny/empty across OpenAI + Anthropic; assert forwarded `tools[]` and 403 `no_tools_allowed`.
 
 **Verify**: `go build -tags functional ./... && go vet -tags functional ./tests/functional/... && go test -race -tags functional ./tests/functional/... -run ToolAllowlist` + comment-strip check.
 
