@@ -29,6 +29,8 @@ import (
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appsts "github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -42,6 +44,8 @@ type authProxy struct {
 	store       FlowStore
 	idp         *metadataService
 	chainer     ConsentChainer
+	signer      appsts.TokenSigner
+	userinfo    UserInfoClient
 }
 
 func NewAuthProxy(
@@ -50,6 +54,8 @@ func NewAuthProxy(
 	client *http.Client,
 	store FlowStore,
 	chainer ConsentChainer,
+	signer appsts.TokenSigner,
+	userinfo UserInfoClient,
 ) AuthProxy {
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
@@ -61,6 +67,8 @@ func NewAuthProxy(
 		store:       store,
 		idp:         &metadataService{credentials: credentials, client: client, asCache: map[string]asCacheEntry{}},
 		chainer:     chainer,
+		signer:      signer,
+		userinfo:    userinfo,
 	}
 }
 
@@ -102,7 +110,7 @@ func (p *authProxy) Authorize(ctx context.Context, baseURL string, req Authorize
 		CodeChallenge:       req.CodeChallenge,
 		CodeChallengeMethod: "S256",
 		Scope:               req.Scope,
-		CodeVerifier:         verifier,
+		CodeVerifier:        verifier,
 		Resource:            req.Resource,
 		AuthID:              auth.ID.String(),
 	}
@@ -172,21 +180,41 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 		CodeChallenge: pending.CodeChallenge,
 		Token:         token,
 	}
+	var capturedSubject string
+	if cfg.SessionMode {
+		sub, captureErr := p.captureSubject(ctx, cfg, token)
+		if captureErr != nil {
+			return "", captureErr
+		}
+		if sub == "" {
+			return "", oauthErr("access_denied", "could not determine subject from identity provider")
+		}
+		capturedSubject = sub
+		grant.Subject = sub
+		grant.AuthID = auth.ID.String()
+		grant.GatewayID = auth.GatewayID.String()
+		grant.Audiences = cfg.Audiences
+		grant.Scopes = grantedScopes(token, pending.Scope)
+		grant.SessionMode = true
+	}
 	if err := p.store.SaveCode(ctx, gwCode, grant); err != nil {
 		return "", fmt.Errorf("oauth: store code grant: %w", err)
 	}
 	resume := clientRedirect(pending.RedirectURI, url.Values{"code": {gwCode}}, pending.State)
-	if detour := p.consentDetour(ctx, baseURL, auth.GatewayID, pending.Resource, token, resume); detour != "" {
+	if detour := p.consentDetour(ctx, baseURL, auth.GatewayID, pending.Resource, capturedSubject, token, resume); detour != "" {
 		return detour, nil
 	}
 	return resume, nil
 }
 
-func (p *authProxy) consentDetour(ctx context.Context, baseURL string, gatewayID ids.GatewayID, resource string, token map[string]any, resume string) string {
+func (p *authProxy) consentDetour(ctx context.Context, baseURL string, gatewayID ids.GatewayID, resource, subject string, token map[string]any, resume string) string {
 	if p.chainer == nil {
 		return ""
 	}
-	sub := subjectFromToken(token)
+	sub := subject
+	if sub == "" {
+		sub = subjectFromToken(token)
+	}
 	if sub == "" {
 		slog.Warn("oauth: consent chaining skipped: no subject in IdP access token")
 		return ""
@@ -216,6 +244,56 @@ func subjectFromToken(token map[string]any) string {
 	}
 	sub, _ := claims.GetSubject()
 	return sub
+}
+
+func (p *authProxy) captureSubject(ctx context.Context, cfg *authdomain.OAuth2Config, token map[string]any) (string, error) {
+	if raw, ok := token["id_token"].(string); ok && raw != "" {
+		claims := jwt.MapClaims{}
+		if _, _, err := jwt.NewParser().ParseUnverified(raw, claims); err != nil {
+			return "", fmt.Errorf("oauth: parse id_token: %w", err)
+		}
+		return subjectFromClaims(claims, cfg.SubjectClaim), nil
+	}
+	if cfg.UserInfoURL != "" {
+		accessToken, _ := token["access_token"].(string)
+		info, err := p.userinfo.Fetch(ctx, cfg.UserInfoURL, accessToken)
+		if err != nil {
+			return "", fmt.Errorf("oauth: fetch userinfo: %w", err)
+		}
+		claim := cfg.SubjectClaim
+		if claim == "" {
+			claim = "sub"
+		}
+		return coerceClaim(info[claim]), nil
+	}
+	return subjectFromToken(token), nil
+}
+
+func subjectFromClaims(claims jwt.MapClaims, claim string) string {
+	if claim != "" {
+		return coerceClaim(claims[claim])
+	}
+	if oid := coerceClaim(claims["oid"]); oid != "" {
+		return oid
+	}
+	return coerceClaim(claims["sub"])
+}
+
+func coerceClaim(v any) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+func grantedScopes(token map[string]any, requested string) []string {
+	if scope, ok := token["scope"].(string); ok && scope != "" {
+		return strings.Fields(scope)
+	}
+	return strings.Fields(requested)
 }
 
 func (p *authProxy) Exchange(ctx context.Context, baseURL string, req TokenRequest) (map[string]any, error) {
@@ -249,12 +327,67 @@ func (p *authProxy) exchangeCode(ctx context.Context, req TokenRequest) (map[str
 	if req.CodeVerifier == "" || s256(req.CodeVerifier) != grant.CodeChallenge {
 		return nil, oauthErr("invalid_grant", "PKCE verification failed")
 	}
+	if grant.SessionMode {
+		resp, err := p.mintSession(*grant)
+		if err != nil {
+			return nil, err
+		}
+		token, err := randomToken()
+		if err != nil {
+			return nil, err
+		}
+		refresh := gatewayRefreshPrefix + token
+		rec := SessionRecord{
+			Subject:   grant.Subject,
+			Scopes:    grant.Scopes,
+			GatewayID: grant.GatewayID,
+			AuthID:    grant.AuthID,
+			Audiences: grant.Audiences,
+		}
+		if err := p.store.SaveSession(ctx, refresh, rec); err != nil {
+			return nil, fmt.Errorf("oauth: persist session: %w", err)
+		}
+		resp["refresh_token"] = refresh
+		return resp, nil
+	}
 	return grant.Token, nil
+}
+
+func (p *authProxy) mintSession(grant CodeGrant) (map[string]any, error) {
+	claims := jwt.MapClaims{
+		"sub":       grant.Subject,
+		"scope":     strings.Join(grant.Scopes, " "),
+		"authid":    grant.AuthID,
+		"token_use": "mcp_session",
+	}
+	if len(grant.Audiences) > 0 {
+		claims["aud"] = grant.Audiences
+	}
+	signed, err := p.signer.MintClaims(claims, time.Hour)
+	if err != nil {
+		return nil, fmt.Errorf("oauth: mint session token: %w", err)
+	}
+	return map[string]any{
+		"access_token": signed,
+		"token_type":   "Bearer",
+		"expires_in":   3600,
+		"scope":        strings.Join(grant.Scopes, " "),
+	}, nil
 }
 
 func (p *authProxy) refresh(ctx context.Context, req TokenRequest) (map[string]any, error) {
 	if req.RefreshToken == "" {
 		return nil, oauthErr("invalid_request", "refresh_token is required")
+	}
+	if strings.HasPrefix(req.RefreshToken, gatewayRefreshPrefix) {
+		rec, err := p.store.TakeSession(ctx, req.RefreshToken)
+		if err != nil {
+			return nil, fmt.Errorf("oauth: load session: %w", err)
+		}
+		if rec == nil {
+			return nil, oauthErr("invalid_grant", "unknown, expired or already used refresh token")
+		}
+		return p.refreshSession(ctx, *rec)
 	}
 	auth, err := p.authForResource(ctx, req.Resource)
 	if err != nil {
@@ -276,6 +409,29 @@ func (p *authProxy) refresh(ctx context.Context, req TokenRequest) (map[string]a
 		form.Set("scope", scope)
 	}
 	return p.idpTokenCall(ctx, endpoints.token, form)
+}
+
+func (p *authProxy) refreshSession(ctx context.Context, rec SessionRecord) (map[string]any, error) {
+	resp, err := p.mintSession(CodeGrant{
+		Subject:   rec.Subject,
+		Scopes:    rec.Scopes,
+		AuthID:    rec.AuthID,
+		GatewayID: rec.GatewayID,
+		Audiences: rec.Audiences,
+	})
+	if err != nil {
+		return nil, err
+	}
+	token, err := randomToken()
+	if err != nil {
+		return nil, err
+	}
+	newRefresh := gatewayRefreshPrefix + token
+	if err := p.store.SaveSession(ctx, newRefresh, rec); err != nil {
+		return nil, fmt.Errorf("oauth: rotate session: %w", err)
+	}
+	resp["refresh_token"] = newRefresh
+	return resp, nil
 }
 
 type idpEndpoints struct {

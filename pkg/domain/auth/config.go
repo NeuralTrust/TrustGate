@@ -40,6 +40,9 @@ type OAuth2Config struct {
 	ClientSecret     string   `json:"client_secret,omitempty"`
 	RequiredScopes   []string `json:"required_scopes,omitempty"`
 	Algorithms       []string `json:"allowed_algorithms,omitempty"`
+	SessionMode      bool     `json:"session_mode,omitempty"`
+	UserInfoURL      string   `json:"userinfo_url,omitempty"`
+	SubjectClaim     string   `json:"subject_claim,omitempty"`
 }
 
 type OIDCConfig struct {
@@ -130,7 +133,13 @@ func (c *OAuth2Config) validate() error {
 		}
 		c.RequiredScopes[i] = scope
 	}
-	if strings.TrimSpace(c.JWKSURL) == "" && strings.TrimSpace(c.IntrospectionURL) == "" {
+	if userInfoURL := strings.TrimSpace(c.UserInfoURL); userInfoURL != "" {
+		u, err := url.Parse(userInfoURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("%w: oauth2.userinfo_url must be an http(s) URL", ErrInvalidConfig)
+		}
+	}
+	if !c.SessionMode && strings.TrimSpace(c.JWKSURL) == "" && strings.TrimSpace(c.IntrospectionURL) == "" {
 		// Without an explicit endpoint the JWKS is resolved via OIDC
 		// discovery, which needs the issuer to be a resolvable http(s) URL.
 		u, err := url.Parse(strings.TrimSpace(c.Issuer))
