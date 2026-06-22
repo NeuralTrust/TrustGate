@@ -99,10 +99,25 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return passThrough(), nil
 	}
 
-	setExtras(in.Event, outcome.extras)
 	if outcome.rejection != nil {
+		setExtras(in.Event, outcome.extras)
 		return nil, outcome.rejection
 	}
+
+	if outcome.redacted {
+		patched, changed := applyRedactions(in.Response.Body, format, outcome.redactions)
+		extras := outcome.extras
+		if !changed {
+			extras.Degraded = true
+			extras.DegradedReason = degradedReasonUnsupportedFormat
+			setExtras(in.Event, extras)
+			return passThrough(), nil
+		}
+		setExtras(in.Event, extras)
+		return &appplugins.Result{StatusCode: http.StatusOK, Body: patched, StopUpstream: true}, nil
+	}
+
+	setExtras(in.Event, outcome.extras)
 	appplugins.SetDecision(in.Event, in.Mode)
 	return passThrough(), nil
 }

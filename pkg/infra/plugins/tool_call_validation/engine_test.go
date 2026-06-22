@@ -141,6 +141,63 @@ func TestRunRulesObserveModeDoesNotReject(t *testing.T) {
 	}
 }
 
+func TestRunRulesObserveModeRejectTakesPrecedenceOverEarlierRedact(t *testing.T) {
+	t.Parallel()
+
+	toolCalls := []adapter.CanonicalToolCall{{Name: "send_email", Arguments: `{"code":"rm -rf /"}`}}
+	eval := rejectingEval()
+	eval.rules = []RuleConfig{
+		{Validator: validatorDenylist, Tool: "*", ArgumentPath: "$.code", Denylist: []string{"rm -rf"}, Behavior: behaviorRedact, RedactWith: "[REDACTED]"},
+		{Validator: validatorNotInAllowedList},
+	}
+
+	out := runRules(context.Background(), eval, policy.ModeObserve, toolCalls)
+	if !out.matched {
+		t.Fatalf("expected matched outcome")
+	}
+	if out.rejection != nil {
+		t.Fatalf("observe mode must not reject, got %+v", out.rejection)
+	}
+	if out.redacted {
+		t.Fatalf("observe mode must not redact, got %+v", out)
+	}
+	if out.extras.Action != actionReject {
+		t.Fatalf("extras action = %q, want %q (reject precedence over earlier redact)", out.extras.Action, actionReject)
+	}
+}
+
+func TestBuildRedactionBehaviorMapping(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		rule      RuleConfig
+		wantWhole bool
+		wantTerms []string
+	}{
+		{"denylist redact uses substring terms", RuleConfig{Validator: validatorDenylist, ArgumentPath: "$.code", Denylist: []string{"rm -rf"}, Behavior: behaviorRedact, RedactWith: "[REDACTED]"}, false, []string{"rm -rf"}},
+		{"denylist mask uses substring terms", RuleConfig{Validator: validatorDenylist, ArgumentPath: "$.code", Denylist: []string{"rm -rf"}, Behavior: behaviorMask, RedactWith: "****"}, false, []string{"rm -rf"}},
+		{"denylist replace_with replaces whole value", RuleConfig{Validator: validatorDenylist, ArgumentPath: "$.code", Denylist: []string{"rm -rf"}, Behavior: behaviorReplaceWith, RedactWith: "[blocked]"}, true, nil},
+		{"regex redact replaces whole value", RuleConfig{Validator: validatorRegex, ArgumentPath: "$.to", Pattern: "^x$", Behavior: behaviorRedact, RedactWith: "[REDACTED]"}, true, nil},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			r := buildRedaction(0, c.rule)
+			if r.whole != c.wantWhole {
+				t.Fatalf("whole = %v, want %v", r.whole, c.wantWhole)
+			}
+			if c.wantTerms == nil && r.terms != nil {
+				t.Fatalf("terms = %v, want nil", r.terms)
+			}
+			if c.wantTerms != nil && (len(r.terms) != len(c.wantTerms) || r.terms[0] != c.wantTerms[0]) {
+				t.Fatalf("terms = %v, want %v", r.terms, c.wantTerms)
+			}
+		})
+	}
+}
+
 func TestRunRulesUnimplementedValidatorFailsOpen(t *testing.T) {
 	t.Parallel()
 

@@ -25,6 +25,7 @@ import (
 const (
 	actionAllow  = "allow"
 	actionReject = "reject"
+	actionRedact = "redact"
 )
 
 type evalContext struct {
@@ -34,14 +35,18 @@ type evalContext struct {
 }
 
 type engineOutcome struct {
-	matched   bool
-	rejection *appplugins.PluginError
-	extras    ToolCallValidationData
+	matched    bool
+	rejection  *appplugins.PluginError
+	redacted   bool
+	redactions []redaction
+	extras     ToolCallValidationData
 }
 
 var validatorRegistry = map[string]Validator{
 	validatorNotInAllowedList: notInAllowedListValidator{},
 	validatorJSONSchema:       jsonSchemaValidator{},
+	validatorRegex:            regexValidator{},
+	validatorDenylist:         denylistValidator{},
 }
 
 func validatorFor(name string) (Validator, bool) {
@@ -70,7 +75,10 @@ func ruleApplies(rule RuleConfig, tc adapter.CanonicalToolCall) bool {
 }
 
 func runRules(ctx context.Context, eval *evalContext, mode policy.Mode, toolCalls []adapter.CanonicalToolCall) engineOutcome {
-	for _, tc := range toolCalls {
+	var redactions []redaction
+	var redactExtras ToolCallValidationData
+	redacted := false
+	for idx, tc := range toolCalls {
 		for _, rule := range eval.rules {
 			if !ruleApplies(rule, tc) {
 				continue
@@ -83,6 +91,16 @@ func runRules(ctx context.Context, eval *evalContext, mode policy.Mode, toolCall
 			if err != nil || !res.matched {
 				continue
 			}
+			if isRedactionBehavior(rule.Behavior) {
+				if !redacted {
+					redactExtras = redactionExtras(rule, tc)
+					redacted = true
+				}
+				if mode != policy.ModeObserve {
+					redactions = append(redactions, buildRedaction(idx, rule))
+				}
+				continue
+			}
 			outcome := engineOutcome{
 				matched: true,
 				extras: ToolCallValidationData{
@@ -93,10 +111,38 @@ func runRules(ctx context.Context, eval *evalContext, mode policy.Mode, toolCall
 				},
 			}
 			if mode != policy.ModeObserve {
-				outcome.rejection = newPluginError(res)
+				outcome.rejection = rejectionForRule(rule, res, tc.Name)
 			}
 			return outcome
 		}
 	}
+	if redacted {
+		if mode == policy.ModeObserve {
+			return engineOutcome{matched: true, extras: redactExtras}
+		}
+		return engineOutcome{matched: true, redacted: true, redactions: redactions, extras: redactExtras}
+	}
 	return engineOutcome{}
+}
+
+func redactionExtras(rule RuleConfig, tc adapter.CanonicalToolCall) ToolCallValidationData {
+	return ToolCallValidationData{
+		Validator: rule.Validator,
+		Action:    actionRedact,
+		ToolName:  tc.Name,
+	}
+}
+
+func buildRedaction(callIndex int, rule RuleConfig) redaction {
+	r := redaction{
+		callIndex:   callIndex,
+		path:        rule.ArgumentPath,
+		replaceWith: rule.RedactWith,
+	}
+	if rule.Validator == validatorDenylist && rule.Behavior != behaviorReplaceWith {
+		r.terms = rule.Denylist
+		return r
+	}
+	r.whole = true
+	return r
 }

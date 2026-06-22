@@ -15,6 +15,7 @@
 package tool_call_validation
 
 import (
+	"fmt"
 	"net/http"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -53,4 +54,12 @@ func newPluginError(v violation) *appplugins.PluginError {
 		Type:       v.rejectType,
 		Message:    v.message,
 	}
+}
+
+func rejectionForRule(rule RuleConfig, res violation, toolName string) *appplugins.PluginError {
+	if res.rejectType != "" {
+		return newPluginError(res)
+	}
+	message := fmt.Sprintf("tool %q argument %q failed %s validation", toolName, rule.ArgumentPath, rule.Validator)
+	return newPluginError(newViolation(typeToolCallValidationFailed, message))
 }
