@@ -33,15 +33,15 @@ P4→7+8, P5→9).
 
 ## Phase 5: Body Mode A helpers + trace data (PR5)
 
-- [ ] 5.1 Create `body.go`: `requestBody` struct, `decodeBody`, shape detection (top-level `system` string vs `messages[]`), `injectSystem(mode, role, content)` (merge/replace/insert per design), `marshal`.
-- [ ] 5.2 Create `data.go`: exported `PromptTemplateData` + decision consts.
-- [ ] 5.3 Write `body_test.go` (Mode A scope): system-string merge/replace/absent; messages[] system merge/replace/insert; marshal stable (spec "Mode A injection and system collision" scenarios).
+- [x] 5.1 Create `body.go`: `requestBody` struct, `decodeBody`, shape detection (top-level `system` string vs `messages[]`), `injectSystem(mode, role, content)` (merge/replace/insert per design), `marshal`.
+- [x] 5.2 Create `data.go`: exported `PromptTemplateData` + decision consts.
+- [x] 5.3 Write `body_test.go` (Mode A scope): system-string merge/replace/absent; messages[] system merge/replace/insert; marshal stable (spec "Mode A injection and system collision" scenarios).
 
 ## Phase 6: Mode A orchestration + Execute wiring (PR6)
 
-- [ ] 6.1 Create `modea.go`: `applyModeA(cfg, rb, ctxVars)` over `inject_templates[]` applying `on_missing_context_variable` (error/empty_string/skip_injection).
-- [ ] 6.2 Wire Mode A into `Execute`: guard nil request, resolve ctx vars, inject, `template_variable_unresolved` 500 reject when `blocks`; observe path records decision via `SetExtras`+`SetDecision`, no mutation; return `Result.RequestBody`.
-- [ ] 6.3 Write `modea_test.go`: inject+merge; inject+replace; on_missing error→500 / empty_string / skip_injection; observe no mutation (spec "Mode A context variable resolution" + observe scenarios).
+- [x] 6.1 Create `modea.go`: `applyModeA(cfg, rb, ctxVars)` over `inject_templates[]` applying `on_missing_context_variable` (error/empty_string/skip_injection).
+- [x] 6.2 Wire Mode A into `Execute`: guard nil request, resolve ctx vars, inject, `template_variable_unresolved` 500 reject when `blocks`; observe path records decision via `SetExtras`+`SetDecision`, no mutation; return `Result.RequestBody`.
+- [x] 6.3 Write `modea_test.go`: inject+merge; inject+replace; on_missing error→500 / empty_string / skip_injection; observe no mutation (spec "Mode A context variable resolution" + observe scenarios).
 
 ## Phase 7: Body Mode B helpers + resolution/render/splice (PR7)
 
