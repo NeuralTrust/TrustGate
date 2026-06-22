@@ -16,6 +16,7 @@ package tool_call_validation
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -59,6 +60,50 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 }
 
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
+	cfg, err := parseConfig(in.Config.Settings)
+	if err != nil {
+		return nil, fmt.Errorf("tool_call_validation: %w", err)
+	}
+
+	if in.Request == nil || in.Response == nil {
+		return passThrough(), nil
+	}
+	if len(in.Request.Body) == 0 || len(in.Response.Body) == 0 {
+		return passThrough(), nil
+	}
+	if in.Response.Streaming {
+		return passThrough(), nil
+	}
+	if in.Request.Provider == "" || p.registry == nil {
+		return passThrough(), nil
+	}
+
+	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
+	if err != nil {
+		return passThrough(), nil
+	}
+
+	creq, err := p.registry.DecodeRequestFor(in.Request.Body, format)
+	if err != nil || creq == nil || len(creq.Tools) == 0 {
+		return passThrough(), nil
+	}
+
+	cresp, err := p.registry.DecodeResponseFor(in.Response.Body, format)
+	if err != nil || cresp == nil || len(cresp.ToolCalls) == 0 {
+		return passThrough(), nil
+	}
+
+	outcome := runRules(ctx, buildEvalContext(cfg, creq), in.Mode, cresp.ToolCalls)
+	if !outcome.matched {
+		setExtras(in.Event, ToolCallValidationData{Action: actionAllow})
+		return passThrough(), nil
+	}
+
+	setExtras(in.Event, outcome.extras)
+	if outcome.rejection != nil {
+		return nil, outcome.rejection
+	}
+	appplugins.SetDecision(in.Event, in.Mode)
 	return passThrough(), nil
 }
 

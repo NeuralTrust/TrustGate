@@ -14,28 +14,16 @@
 
 package tool_call_validation
 
-import (
-	"context"
+import "fmt"
 
-	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
-)
+type notInAllowedListValidator struct{}
 
-type Validator interface {
-	Evaluate(in validatorInput) (violation, error)
-}
-
-type validatorInput struct {
-	ctx      context.Context
-	toolCall adapter.CanonicalToolCall
-	rule     RuleConfig
-	eval     *evalContext
-}
-
-type violation struct {
-	matched      bool
-	rejectType   string
-	status       int
-	message      string
-	reasoning    string
-	matchedValue string
+func (notInAllowedListValidator) Evaluate(in validatorInput) (violation, error) {
+	if in.eval == nil || len(in.eval.allowed) == 0 {
+		return violation{}, nil
+	}
+	if _, ok := in.eval.allowed[in.toolCall.Name]; ok {
+		return violation{}, nil
+	}
+	return newViolation(typeToolNotInList, fmt.Sprintf("tool %q is not in the allowed list", in.toolCall.Name)), nil
 }
