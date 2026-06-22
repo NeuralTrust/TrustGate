@@ -426,6 +426,86 @@ var pluginCatalogMeta = map[string]catalogMeta{
 			},
 		},
 	},
+	"per_tool_rate_limiter": {
+		name:        "Per-Tool Rate Limiter",
+		group:       groupTrafficControl,
+		description: "Count and enforce limits per observed tool call in model responses. The limit applies gateway-wide when the policy is global, otherwise per consumer.",
+		schema: SettingsSchema{
+			Fields: []Field{
+				{
+					Key:         "rules",
+					Label:       "Rules",
+					Type:        FieldTypeArray,
+					Description: "Ordered list of per-tool rules. The first rule whose tool pattern matches a tool call wins.",
+					Required:    true,
+					Item: &Field{
+						Key:   "rule",
+						Label: "Rule",
+						Type:  FieldTypeObject,
+						Fields: []Field{
+							{
+								Key:         "tool",
+								Label:       "Tool",
+								Type:        FieldTypeString,
+								Description: "Glob pattern matched against the tool call name (e.g. execute_code*).",
+								Required:    true,
+							},
+							{
+								Key:         "windows",
+								Label:       "Windows",
+								Type:        FieldTypeArray,
+								Description: "One or more fixed windows enforced for the matched tool.",
+								Required:    true,
+								Item: &Field{
+									Key:   "window",
+									Label: "Window",
+									Type:  FieldTypeObject,
+									Fields: []Field{
+										{
+											Key:         "duration",
+											Label:       "Duration",
+											Type:        FieldTypeDuration,
+											Description: "Window duration (e.g. 1m, 1h).",
+											Required:    true,
+										},
+										{
+											Key:         "max",
+											Label:       "Max Calls",
+											Type:        FieldTypeInteger,
+											Description: "Maximum number of tool calls allowed within the window.",
+											Required:    true,
+										},
+									},
+								},
+							},
+							{
+								Key:         "behavior",
+								Label:       "Behavior",
+								Type:        FieldTypeEnum,
+								Description: "Action when a window is exceeded. reject_response and strip_tool_from_request act on the next request (PreRequest); inject_error_result rewrites the response (PreResponse). Defaults to the policy-level default behavior.",
+								Enum:        []string{"reject_response", "inject_error_result", "strip_tool_from_request"},
+							},
+						},
+					},
+				},
+				{
+					Key:         "behavior_default",
+					Label:       "Default Behavior",
+					Type:        FieldTypeEnum,
+					Description: "Behavior applied to rules without an explicit behavior and to tools matched by a catch-all rule.",
+					Enum:        []string{"reject_response", "inject_error_result", "strip_tool_from_request"},
+					Default:     "reject_response",
+				},
+				{
+					Key:         "scope",
+					Label:       "Scope",
+					Type:        FieldTypeEnum,
+					Description: "Informational; effective scope derives from the policy global flag.",
+					Enum:        []string{"consumer", "global"},
+				},
+			},
+		},
+	},
 	"semantic_cache": {
 		name:        "Semantic Cache",
 		group:       groupRouting,

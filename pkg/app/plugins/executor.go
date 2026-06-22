@@ -78,7 +78,7 @@ func (e *executor) RunStage(ctx context.Context, in StageInput) (*StageOutcome, 
 			return nil, err
 		}
 		for _, res := range results {
-			if e.applyResult(in.Response, outcome, res) {
+			if e.applyResult(in.Request, in.Response, outcome, res) {
 				return outcome, nil
 			}
 		}
@@ -260,12 +260,15 @@ func mergeHeaderMap(dst, src map[string][]string) map[string][]string {
 	return dst
 }
 
-func (e *executor) applyResult(resp *infracontext.ResponseContext, outcome *StageOutcome, res *Result) bool {
+func (e *executor) applyResult(req *infracontext.RequestContext, resp *infracontext.ResponseContext, outcome *StageOutcome, res *Result) bool {
 	if res == nil {
 		return false
 	}
 	if len(res.Headers) > 0 && resp != nil {
 		mergeHeaders(resp, res.Headers)
+	}
+	if res.RequestBody != nil && req != nil {
+		req.Body = res.RequestBody
 	}
 	if !res.StopUpstream {
 		return false

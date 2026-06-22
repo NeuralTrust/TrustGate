@@ -91,6 +91,7 @@ func (s RuntimeScope) Subject() (dimension string, id string, err error) {
 type Result struct {
 	StatusCode   int
 	Body         []byte
+	RequestBody  []byte
 	Headers      map[string][]string
 	StopUpstream bool
 }

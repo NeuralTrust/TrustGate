@@ -239,6 +239,27 @@ func TestExecutor_RunStage_ShortCircuitStopsChain(t *testing.T) {
 	assert.Equal(t, int32(1), atomic.LoadInt32(&calls)) // "after" never ran
 }
 
+func TestExecutor_RunStage_RequestBodyRewrite(t *testing.T) {
+	rewrite := &fakePlugin{
+		name:   "strip",
+		stages: []policy.Stage{policy.StagePreRequest},
+		result: &Result{StatusCode: 200, RequestBody: []byte(`{"stripped":true}`)},
+	}
+	reg := newRegistry(t, rewrite)
+	exec := NewExecutor(reg, nil)
+
+	req := &infracontext.RequestContext{Body: []byte(`{"original":true}`)}
+	out, err := exec.RunStage(context.Background(), StageInput{
+		Stage:    policy.StagePreRequest,
+		Policies: policies(t, polSpec{slug: "strip", enabled: true}),
+		Request:  req,
+		Response: &infracontext.ResponseContext{},
+	})
+	require.NoError(t, err)
+	require.False(t, out.ShortCircuit)
+	assert.Equal(t, []byte(`{"stripped":true}`), req.Body)
+}
+
 func TestExecutor_RunStage_PluginErrorPropagates(t *testing.T) {
 	reject := &fakePlugin{
 		name:   "rate",
