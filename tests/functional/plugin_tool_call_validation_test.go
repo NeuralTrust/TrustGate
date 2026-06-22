@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -59,6 +60,15 @@ func toolCallChatRequest(toolNames ...string) map[string]any {
 		"messages": []map[string]string{{"role": "user", "content": "do it"}},
 		"tools":    tools,
 	}
+}
+
+// toolCallChatRequestWithPrompt is like toolCallChatRequest but lets the caller
+// set the user message, which the semantic validator feeds to the LLM as the
+// user's request when judging whether the tool_call is appropriate.
+func toolCallChatRequestWithPrompt(prompt string, toolNames ...string) map[string]any {
+	req := toolCallChatRequest(toolNames...)
+	req["messages"] = []map[string]string{{"role": "user", "content": prompt}}
+	return req
 }
 
 // TestPluginE2E_ToolCallValidation drives the tool_call_validation plugin end to
@@ -141,5 +151,56 @@ func TestPluginE2E_ToolCallValidation(t *testing.T) {
 		require.Equal(t, http.StatusOK, status, "body: %s", body)
 		assert.Contains(t, string(body), "[REDACTED]")
 		assert.NotContains(t, string(body), "rm -rf")
+	})
+}
+
+// TestPluginE2E_ToolCallValidationSemantic exercises the semantic validator
+// against a real OpenAI Responses API, so it is skipped when OPENAI_API_KEY is
+// absent, mirroring the semantic_cache functional test. A tool_call that is
+// clearly misaligned with the user request is blocked with 403
+// tool_semantic_blocked; an aligned tool_call is forwarded.
+func TestPluginE2E_ToolCallValidationSemantic(t *testing.T) {
+	defer Track(t, "PluginToolCallValidationSemantic")()
+
+	openAIKey := os.Getenv("OPENAI_API_KEY")
+	if openAIKey == "" {
+		t.Skip("OPENAI_API_KEY not set, skipping semantic tool_call_validation functional test")
+	}
+
+	semanticSettings := func() map[string]any {
+		return map[string]any{
+			"semantic": map[string]any{
+				"provider": "openai",
+				"api_key":  openAIKey,
+				"model":    "gpt-4o-mini",
+			},
+			"rules": []any{
+				map[string]any{"validator": "semantic", "behavior": "reject_response"},
+			},
+		}
+	}
+
+	t.Run("misaligned tool_call is blocked with 403", func(t *testing.T) {
+		up := newToolCallUpstream(t, "delete_database", `{"target":"production","drop_all":true}`)
+		apiKey, path := setupPolicyRoute(t, up, policyPlugin("tool_call_validation", semanticSettings()))
+
+		status, _, body := proxyPost(t, apiKey, path,
+			toolCallChatRequestWithPrompt("What is the capital of France?", "delete_database"),
+		)
+
+		require.Equal(t, http.StatusForbidden, status, "body: %s", body)
+		assert.Contains(t, string(body), "tool_semantic_blocked")
+	})
+
+	t.Run("aligned tool_call is forwarded", func(t *testing.T) {
+		up := newToolCallUpstream(t, "get_weather", `{"city":"Paris"}`)
+		apiKey, path := setupPolicyRoute(t, up, policyPlugin("tool_call_validation", semanticSettings()))
+
+		status, _, body := proxyPost(t, apiKey, path,
+			toolCallChatRequestWithPrompt("What is the weather in Paris today?", "get_weather"),
+		)
+
+		require.Equal(t, http.StatusOK, status, "body: %s", body)
+		assert.Contains(t, string(body), "get_weather")
 	})
 }
