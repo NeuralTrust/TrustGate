@@ -3872,6 +3872,73 @@
                 }
             }
         },
+        "/v1/playground/traces/{trace_id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the metrics Event captured for a playground request, keyed by the X-AG-Trace-Id returned in the proxy response. Traces expire after a short TTL.",
+                "tags": [
+                    "playground"
+                ],
+                "summary": "Get a playground trace",
+                "parameters": [
+                    {
+                        "description": "Trace id (X-AG-Trace-Id from the proxy response)",
+                        "name": "trace_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Event"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/policies-catalog": {
             "get": {
                 "security": [
