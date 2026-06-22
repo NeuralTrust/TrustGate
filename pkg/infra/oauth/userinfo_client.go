@@ -15,6 +15,7 @@
 package oauth
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -57,8 +58,10 @@ func (c *UserInfoClient) Fetch(ctx context.Context, userInfoURL, accessToken str
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
 		return nil, fmt.Errorf("oauth userinfo: unexpected status %d", res.StatusCode)
 	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
 	var claims map[string]any
-	if err := json.Unmarshal(body, &claims); err != nil {
+	if err := decoder.Decode(&claims); err != nil {
 		return nil, fmt.Errorf("oauth userinfo: decode response: %w", err)
 	}
 	return claims, nil

@@ -137,6 +137,48 @@ func TestCaptureSubjectUserInfoCoercesNumericID(t *testing.T) {
 	}
 }
 
+func TestCaptureSubjectUserInfoLargeNumericIDIsNotScientific(t *testing.T) {
+	t.Parallel()
+	userinfo := &fakeUserInfo{info: map[string]any{"id": float64(97445496)}}
+	p := &authProxy{userinfo: userinfo}
+	cfg := &authdomain.OAuth2Config{UserInfoURL: "https://api.github.com/user", SubjectClaim: "id"}
+
+	sub, err := p.captureSubject(context.Background(), cfg, map[string]any{"access_token": "gho_token"})
+	if err != nil {
+		t.Fatalf("captureSubject: %v", err)
+	}
+	if sub != "97445496" {
+		t.Fatalf("expected plain integer subject, got %q", sub)
+	}
+}
+
+func TestCoerceClaim(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   any
+		want string
+	}{
+		{"nil", nil, ""},
+		{"string", "abc", "abc"},
+		{"json number integer", json.Number("97445496"), "97445496"},
+		{"json number large", json.Number("1234567890123456789"), "1234567890123456789"},
+		{"float64 integral", float64(97445496), "97445496"},
+		{"float64 small integral", float64(583231), "583231"},
+		{"float64 fractional", float64(1.5), "1.5"},
+		{"bool", true, "true"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := coerceClaim(tc.in); got != tc.want {
+				t.Fatalf("coerceClaim(%v) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func sessionAuth(t *testing.T, idpURL string) *authdomain.Auth {
 	t.Helper()
 	return oauth2Auth(t, authdomain.OAuth2Config{

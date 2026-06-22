@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -280,13 +281,33 @@ func subjectFromClaims(claims jwt.MapClaims, claim string) string {
 }
 
 func coerceClaim(v any) string {
-	if v == nil {
+	switch t := v.(type) {
+	case nil:
 		return ""
+	case string:
+		return t
+	case json.Number:
+		return t.String()
+	case float64:
+		return formatNumericClaim(t)
+	case float32:
+		return formatNumericClaim(float64(t))
+	case int:
+		return strconv.FormatInt(int64(t), 10)
+	case int64:
+		return strconv.FormatInt(t, 10)
+	case bool:
+		return strconv.FormatBool(t)
+	default:
+		return fmt.Sprintf("%v", v)
 	}
-	if s, ok := v.(string); ok {
-		return s
+}
+
+func formatNumericClaim(f float64) string {
+	if !math.IsInf(f, 0) && !math.IsNaN(f) && f == math.Trunc(f) {
+		return strconv.FormatInt(int64(f), 10)
 	}
-	return fmt.Sprintf("%v", v)
+	return strconv.FormatFloat(f, 'f', -1, 64)
 }
 
 func grantedScopes(token map[string]any, requested string) []string {
