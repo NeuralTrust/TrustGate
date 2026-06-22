@@ -109,7 +109,11 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		extras := outcome.extras
 		if !changed {
 			extras.Degraded = true
-			extras.DegradedReason = degradedReasonUnsupportedFormat
+			if redactSupportsFormat(format) {
+				extras.DegradedReason = degradedReasonRedactFailed
+			} else {
+				extras.DegradedReason = degradedReasonUnsupportedFormat
+			}
 			setExtras(in.Event, extras)
 			return passThrough(), nil
 		}

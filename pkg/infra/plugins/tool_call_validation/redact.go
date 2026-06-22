@@ -21,7 +21,14 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
-const degradedReasonUnsupportedFormat = "redact_unsupported_format"
+const (
+	degradedReasonUnsupportedFormat = "redact_unsupported_format"
+	degradedReasonRedactFailed      = "redact_failed"
+)
+
+func redactSupportsFormat(format adapter.Format) bool {
+	return format == adapter.FormatOpenAIResponses || adapter.IsSameWireFormat(format, adapter.FormatOpenAI)
+}
 
 type redaction struct {
 	callIndex   int

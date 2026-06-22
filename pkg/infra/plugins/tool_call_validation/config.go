@@ -91,13 +91,8 @@ func (c *Config) applyDefaults() {
 			}
 		}
 	}
-	if c.Semantic != nil {
-		if c.Semantic.Provider == "" {
-			c.Semantic.Provider = semanticProviderOpenAI
-		}
-		if c.Semantic.Model == "" {
-			c.Semantic.Model = defaultSemanticModel
-		}
+	if c.Semantic != nil && c.Semantic.Provider == semanticProviderOpenAI && c.Semantic.Model == "" {
+		c.Semantic.Model = defaultSemanticModel
 	}
 }
 

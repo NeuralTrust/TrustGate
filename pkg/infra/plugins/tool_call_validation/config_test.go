@@ -255,6 +255,28 @@ func TestParseConfigAppliesDefaults(t *testing.T) {
 	}
 }
 
+func TestParseConfigEmptyProviderStaysDisabled(t *testing.T) {
+	t.Parallel()
+
+	settings := map[string]any{
+		"semantic": map[string]any{"api_key": "sk-test"},
+		"rules": []any{
+			map[string]any{"validator": "semantic", "behavior": "reject_response"},
+		},
+	}
+
+	cfg, err := parseConfig(settings)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.Semantic.Provider != "" {
+		t.Fatalf("expected provider to stay empty (disabled), got %q", cfg.Semantic.Provider)
+	}
+	if cfg.Semantic.Model != "" {
+		t.Fatalf("expected model to stay empty when provider is disabled, got %q", cfg.Semantic.Model)
+	}
+}
+
 func TestValidateConfigScopeIgnored(t *testing.T) {
 	t.Parallel()
 
