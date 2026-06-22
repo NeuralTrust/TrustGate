@@ -18,12 +18,12 @@ Mirror `modelallowlist` + `pertoolratelimit`. New pkg `pkg/infra/plugins/toolall
 
 ## Phase 2: Plugin Execute + filter/glob/body-rewrite
 
-- [ ] 2.1 Create `plugin.go`: `PluginName="tool_allowlist"`, `Plugin struct{ registry *adapter.Registry }`, `New(*adapter.Registry) appplugins.Plugin` (DR-9), `var _ appplugins.Plugin = (*Plugin)(nil)`, `Name/MandatoryStages/SupportedStages=[StagePreRequest]`, `SupportedModes=[ModeEnforce,ModeObserve]`, `ValidateConfig`.
-- [ ] 2.2 Local helpers: `wireFormat` (SourceFormat else Provider), `matchToolPattern` (`path.Match` + `/`→sentinel), `matchAny`, `graftChangedFields` (local copy), `okResult`, `setExtras` (nil-safe).
-- [ ] 2.3 `filter`: allow-first (drop non-matches when allow non-empty) then deny-after (deny overrides allow, DR-7); return kept/removed canonical names.
-- [ ] 2.4 `Execute` flow per design: no-op guards (nil req/empty body/unresolved format/decode err/no tools); `removed==0`→setExtras+ok; observe→setExtras+`SetDecision`+ok (never mutate); enforce partial→`stripTools`; all-removed→`on_empty` switch.
-- [ ] 2.5 `stripTools` (graft re-encode, preserves `parallel_tool_calls`), `rewriteEmpty(deleteTools bool)` (raw-map delete `tool_choice`/`parallel_tool_calls`, +`tools` or `[]`), `newRejectResult` (`Result{StopUpstream,403,JSON,Content-Type}`).
-- [ ] 2.6 Create `plugin_test.go` table-driven `-race`, OpenAI+Anthropic fixtures: allow-only, deny-only, allow+deny precedence, globs (`search_*`,`admin_?`,`db_[rw]*`), each `on_empty` (403 body, strip 3 keys, pass `[]`+drop 2), partial graft preserves `parallel_tool_calls`, byte-stable no-change pass, all no-op cases, observe never mutates.
+- [x] 2.1 Create `plugin.go`: `PluginName="tool_allowlist"`, `Plugin struct{ registry *adapter.Registry }`, `New(*adapter.Registry) *Plugin` (concrete return per OQ-3 orchestrator decision; both compile into the `[]appplugins.Plugin` catalog), `var _ appplugins.Plugin = (*Plugin)(nil)`, `Name/MandatoryStages/SupportedStages=[StagePreRequest]`, `SupportedModes=[ModeEnforce,ModeObserve]`, `ValidateConfig`.
+- [x] 2.2 Local helpers: `wireFormat` (SourceFormat else Provider), `matchToolPattern` (`path.Match` + `/`→sentinel), `matchAny`, `graftChangedFields` (local copy), `okResult`, `setExtras` (nil-safe).
+- [x] 2.3 `filter`: allow-first (drop non-matches when allow non-empty) then deny-after (deny overrides allow, DR-7); return kept/removed canonical names.
+- [x] 2.4 `Execute` flow per design: no-op guards (nil req/empty body/unresolved format/decode err/no tools); `removed==0`→setExtras+ok; observe→setExtras+`SetDecision`+ok (never mutate); enforce partial→`stripTools`; all-removed→`on_empty` switch.
+- [x] 2.5 `stripTools` (graft re-encode, preserves `parallel_tool_calls`), `rewriteEmpty(deleteTools bool)` (raw-map delete `tool_choice`/`parallel_tool_calls`, +`tools` or `[]`), `newRejectResult` (`Result{StopUpstream,403,JSON,Content-Type}`).
+- [x] 2.6 Create `plugin_test.go` table-driven `-race`, OpenAI+Anthropic fixtures: allow-only, deny-only, allow+deny precedence, globs (`search_*`,`admin_?`,`db_[rw]*`), each `on_empty` (403 body, strip 3 keys, pass `[]`+drop 2), partial graft preserves `parallel_tool_calls`, byte-stable no-change pass, all no-op cases, observe never mutates.
 
 **Verify**: same `go build`/`vet`/`golangci-lint`/`go test -race ./pkg/infra/plugins/toolallowlist/...` + comment-strip check.
 
