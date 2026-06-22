@@ -96,26 +96,13 @@ func (s *Store) SaveSession(ctx context.Context, refreshToken string, rec appoau
 	return s.save(ctx, sessionPrefix+refreshToken, rec, sessionTTL)
 }
 
-func (s *Store) GetSession(ctx context.Context, refreshToken string) (*appoauth.SessionRecord, error) {
-	raw, err := s.rdb.Get(ctx, sessionPrefix+refreshToken).Bytes()
-	if errors.Is(err, redis.Nil) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("oauth flow store: get session: %w", err)
-	}
+func (s *Store) TakeSession(ctx context.Context, refreshToken string) (*appoauth.SessionRecord, error) {
 	var rec appoauth.SessionRecord
-	if err := json.Unmarshal(raw, &rec); err != nil {
-		return nil, fmt.Errorf("oauth flow store: decode session: %w", err)
+	ok, err := s.take(ctx, sessionPrefix+refreshToken, &rec)
+	if err != nil || !ok {
+		return nil, err
 	}
 	return &rec, nil
-}
-
-func (s *Store) DeleteSession(ctx context.Context, refreshToken string) error {
-	if err := s.rdb.Del(ctx, sessionPrefix+refreshToken).Err(); err != nil {
-		return fmt.Errorf("oauth flow store: delete session: %w", err)
-	}
-	return nil
 }
 
 func (s *Store) save(ctx context.Context, key string, v any, ttl time.Duration) error {

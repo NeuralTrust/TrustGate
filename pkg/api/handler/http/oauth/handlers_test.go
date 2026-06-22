@@ -88,11 +88,9 @@ func (s *memFlowStore) SaveSession(context.Context, string, appoauth.SessionReco
 	return nil
 }
 
-func (s *memFlowStore) GetSession(context.Context, string) (*appoauth.SessionRecord, error) {
+func (s *memFlowStore) TakeSession(context.Context, string) (*appoauth.SessionRecord, error) {
 	return nil, nil
 }
-
-func (s *memFlowStore) DeleteSession(context.Context, string) error { return nil }
 
 func newTestApp(auths ...*authdomain.Auth) *fiber.App {
 	svc := appoauth.NewMetadataService(&fakeCredentialFinder{oauth2: auths}, nil, nil, newMemFlowStore())

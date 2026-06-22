@@ -57,21 +57,25 @@ func (s *memFlowStore) SaveSession(_ context.Context, refreshToken string, rec S
 	return nil
 }
 
-func (s *memFlowStore) GetSession(_ context.Context, refreshToken string) (*SessionRecord, error) {
+func (s *memFlowStore) TakeSession(_ context.Context, refreshToken string) (*SessionRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec, ok := s.sessions[refreshToken]
 	if !ok {
 		return nil, nil
 	}
+	delete(s.sessions, refreshToken)
 	return &rec, nil
 }
 
-func (s *memFlowStore) DeleteSession(_ context.Context, refreshToken string) error {
+func (s *memFlowStore) peekSession(refreshToken string) *SessionRecord {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.sessions, refreshToken)
-	return nil
+	rec, ok := s.sessions[refreshToken]
+	if !ok {
+		return nil
+	}
+	return &rec
 }
 
 func (s *memFlowStore) SaveGatewayClient(_ context.Context, c RegisteredGatewayClient) error {

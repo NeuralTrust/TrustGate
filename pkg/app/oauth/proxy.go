@@ -194,7 +194,7 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 		grant.AuthID = auth.ID.String()
 		grant.GatewayID = auth.GatewayID.String()
 		grant.Audiences = cfg.Audiences
-		grant.Scopes = strings.Fields(mergeScopes(pending.Scope, cfg.RequiredScopes))
+		grant.Scopes = grantedScopes(token, pending.Scope)
 		grant.SessionMode = true
 	}
 	if err := p.store.SaveCode(ctx, gwCode, grant); err != nil {
@@ -289,6 +289,13 @@ func coerceClaim(v any) string {
 	return fmt.Sprintf("%v", v)
 }
 
+func grantedScopes(token map[string]any, requested string) []string {
+	if scope, ok := token["scope"].(string); ok && scope != "" {
+		return strings.Fields(scope)
+	}
+	return strings.Fields(requested)
+}
+
 func (p *authProxy) Exchange(ctx context.Context, baseURL string, req TokenRequest) (map[string]any, error) {
 	switch req.GrantType {
 	case "authorization_code":
@@ -325,10 +332,11 @@ func (p *authProxy) exchangeCode(ctx context.Context, req TokenRequest) (map[str
 		if err != nil {
 			return nil, err
 		}
-		refresh, err := randomToken()
+		token, err := randomToken()
 		if err != nil {
 			return nil, err
 		}
+		refresh := gatewayRefreshPrefix + token
 		rec := SessionRecord{
 			Subject:   grant.Subject,
 			Scopes:    grant.Scopes,
@@ -371,12 +379,15 @@ func (p *authProxy) refresh(ctx context.Context, req TokenRequest) (map[string]a
 	if req.RefreshToken == "" {
 		return nil, oauthErr("invalid_request", "refresh_token is required")
 	}
-	rec, err := p.store.GetSession(ctx, req.RefreshToken)
-	if err != nil {
-		return nil, fmt.Errorf("oauth: load session: %w", err)
-	}
-	if rec != nil {
-		return p.refreshSession(ctx, req.RefreshToken, *rec)
+	if strings.HasPrefix(req.RefreshToken, gatewayRefreshPrefix) {
+		rec, err := p.store.TakeSession(ctx, req.RefreshToken)
+		if err != nil {
+			return nil, fmt.Errorf("oauth: load session: %w", err)
+		}
+		if rec == nil {
+			return nil, oauthErr("invalid_grant", "unknown, expired or already used refresh token")
+		}
+		return p.refreshSession(ctx, *rec)
 	}
 	auth, err := p.authForResource(ctx, req.Resource)
 	if err != nil {
@@ -400,7 +411,7 @@ func (p *authProxy) refresh(ctx context.Context, req TokenRequest) (map[string]a
 	return p.idpTokenCall(ctx, endpoints.token, form)
 }
 
-func (p *authProxy) refreshSession(ctx context.Context, oldRefresh string, rec SessionRecord) (map[string]any, error) {
+func (p *authProxy) refreshSession(ctx context.Context, rec SessionRecord) (map[string]any, error) {
 	resp, err := p.mintSession(CodeGrant{
 		Subject:   rec.Subject,
 		Scopes:    rec.Scopes,
@@ -411,15 +422,13 @@ func (p *authProxy) refreshSession(ctx context.Context, oldRefresh string, rec S
 	if err != nil {
 		return nil, err
 	}
-	newRefresh, err := randomToken()
+	token, err := randomToken()
 	if err != nil {
 		return nil, err
 	}
+	newRefresh := gatewayRefreshPrefix + token
 	if err := p.store.SaveSession(ctx, newRefresh, rec); err != nil {
 		return nil, fmt.Errorf("oauth: rotate session: %w", err)
-	}
-	if err := p.store.DeleteSession(ctx, oldRefresh); err != nil {
-		return nil, fmt.Errorf("oauth: revoke previous session: %w", err)
 	}
 	resp["refresh_token"] = newRefresh
 	return resp, nil

@@ -47,9 +47,9 @@ func TestStoreSessionRoundTrip(t *testing.T) {
 		t.Fatalf("save session: %v", err)
 	}
 
-	got, err := store.GetSession(ctx, "refresh-1")
+	got, err := store.TakeSession(ctx, "refresh-1")
 	if err != nil {
-		t.Fatalf("get session: %v", err)
+		t.Fatalf("take session: %v", err)
 	}
 	if got == nil {
 		t.Fatal("expected a session record")
@@ -65,30 +65,36 @@ func TestStoreSessionRoundTrip(t *testing.T) {
 	}
 }
 
-func TestStoreGetSessionMissingReturnsNil(t *testing.T) {
+func TestStoreTakeSessionMissingReturnsNil(t *testing.T) {
 	store, _ := newSessionStore(t)
 
-	got, err := store.GetSession(context.Background(), "absent")
+	got, err := store.TakeSession(context.Background(), "absent")
 	if err != nil {
-		t.Fatalf("get missing session: %v", err)
+		t.Fatalf("take missing session: %v", err)
 	}
 	if got != nil {
 		t.Fatalf("expected nil for an absent session, got %+v", got)
 	}
 }
 
-func TestStoreSessionGetDoesNotConsume(t *testing.T) {
+func TestStoreSessionTakeConsumes(t *testing.T) {
 	store, _ := newSessionStore(t)
 	ctx := context.Background()
 
 	if err := store.SaveSession(ctx, "refresh-1", appoauth.SessionRecord{Subject: "user-42"}); err != nil {
 		t.Fatalf("save session: %v", err)
 	}
-	for i := 0; i < 2; i++ {
-		got, err := store.GetSession(ctx, "refresh-1")
-		if err != nil || got == nil {
-			t.Fatalf("get session (iteration %d) must not consume: %v", i, err)
-		}
+
+	got, err := store.TakeSession(ctx, "refresh-1")
+	if err != nil || got == nil {
+		t.Fatalf("first take must return the record: %v", err)
+	}
+	again, err := store.TakeSession(ctx, "refresh-1")
+	if err != nil {
+		t.Fatalf("second take: %v", err)
+	}
+	if again != nil {
+		t.Fatal("TakeSession must be single-use: second read returned a record")
 	}
 }
 
@@ -100,21 +106,23 @@ func TestStoreSessionRotation(t *testing.T) {
 	if err := store.SaveSession(ctx, "refresh-old", rec); err != nil {
 		t.Fatalf("save old: %v", err)
 	}
+
+	consumed, err := store.TakeSession(ctx, "refresh-old")
+	if err != nil || consumed == nil {
+		t.Fatalf("rotation must consume the old token: %v", err)
+	}
 	if err := store.SaveSession(ctx, "refresh-new", rec); err != nil {
 		t.Fatalf("save new: %v", err)
 	}
-	if err := store.DeleteSession(ctx, "refresh-old"); err != nil {
-		t.Fatalf("delete old: %v", err)
-	}
 
-	old, err := store.GetSession(ctx, "refresh-old")
+	old, err := store.TakeSession(ctx, "refresh-old")
 	if err != nil {
-		t.Fatalf("get old: %v", err)
+		t.Fatalf("take old: %v", err)
 	}
 	if old != nil {
 		t.Fatal("rotated-out refresh token must be gone")
 	}
-	fresh, err := store.GetSession(ctx, "refresh-new")
+	fresh, err := store.TakeSession(ctx, "refresh-new")
 	if err != nil || fresh == nil {
 		t.Fatalf("rotated-in refresh token must survive: %v", err)
 	}

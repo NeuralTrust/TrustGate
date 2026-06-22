@@ -83,8 +83,7 @@ type FlowStore interface {
 	SaveGatewayClient(ctx context.Context, c RegisteredGatewayClient) error
 	GetGatewayClient(ctx context.Context, clientID string) (*RegisteredGatewayClient, error)
 	SaveSession(ctx context.Context, refreshToken string, rec SessionRecord) error
-	GetSession(ctx context.Context, refreshToken string) (*SessionRecord, error)
-	DeleteSession(ctx context.Context, refreshToken string) error
+	TakeSession(ctx context.Context, refreshToken string) (*SessionRecord, error)
 }
 
 type AuthorizeRequest struct {

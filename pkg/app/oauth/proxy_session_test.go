@@ -18,12 +18,15 @@ import (
 	"context"
 	"crypto/rsa"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"math/big"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -201,8 +204,8 @@ func TestExchangeCodeSessionModeMintsSessionToken(t *testing.T) {
 		t.Fatalf("unexpected scope, got %v", resp["scope"])
 	}
 	refresh, _ := resp["refresh_token"].(string)
-	if refresh == "" {
-		t.Fatal("expected an opaque refresh_token")
+	if !strings.HasPrefix(refresh, "gwrt_") {
+		t.Fatalf("expected a gwrt_-prefixed refresh_token, got %q", refresh)
 	}
 	access, _ := resp["access_token"].(string)
 	if access == "" {
@@ -227,9 +230,9 @@ func TestExchangeCodeSessionModeMintsSessionToken(t *testing.T) {
 		t.Fatalf("expected issuer %q, got %v", signer.Issuer(), claims["iss"])
 	}
 
-	rec, err := store.GetSession(ctx, refresh)
-	if err != nil || rec == nil {
-		t.Fatalf("SaveSession must persist a record: %v", err)
+	rec := store.peekSession(refresh)
+	if rec == nil {
+		t.Fatal("SaveSession must persist a record")
 	}
 	if rec.Subject != "user-42" || strings.Join(rec.Scopes, " ") != "mcp.access openid" {
 		t.Fatalf("session record mismatch: %+v", rec)
@@ -244,7 +247,8 @@ func TestRefreshSessionReMintsAndRotates(t *testing.T) {
 	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, noIdP, store, nil, signer, nil)
 	ctx := context.Background()
 
-	if err := store.SaveSession(ctx, "old-refresh", SessionRecord{
+	const oldRefresh = "gwrt_old-refresh"
+	if err := store.SaveSession(ctx, oldRefresh, SessionRecord{
 		Subject:   "user-42",
 		Scopes:    []string{"mcp.access", "openid"},
 		GatewayID: "gw-1",
@@ -256,7 +260,7 @@ func TestRefreshSessionReMintsAndRotates(t *testing.T) {
 
 	resp, err := proxy.Exchange(ctx, "http://gw.example.com", TokenRequest{
 		GrantType:    "refresh_token",
-		RefreshToken: "old-refresh",
+		RefreshToken: oldRefresh,
 	})
 	if err != nil {
 		t.Fatalf("refresh: %v", err)
@@ -269,18 +273,27 @@ func TestRefreshSessionReMintsAndRotates(t *testing.T) {
 	}
 
 	newRefresh, _ := resp["refresh_token"].(string)
-	if newRefresh == "" || newRefresh == "old-refresh" {
-		t.Fatalf("refresh_token must be rotated, got %q", newRefresh)
+	if !strings.HasPrefix(newRefresh, "gwrt_") || newRefresh == oldRefresh {
+		t.Fatalf("refresh_token must be rotated with the gwrt_ prefix, got %q", newRefresh)
 	}
-	if old, _ := store.GetSession(ctx, "old-refresh"); old != nil {
-		t.Fatal("old refresh_token must be revoked after rotation")
-	}
-	rotated, err := store.GetSession(ctx, newRefresh)
-	if err != nil || rotated == nil {
-		t.Fatalf("rotated session must be persisted: %v", err)
+	rotated := store.peekSession(newRefresh)
+	if rotated == nil {
+		t.Fatal("rotated session must be persisted")
 	}
 	if rotated.Subject != "user-42" || strings.Join(rotated.Scopes, " ") != "mcp.access openid" {
 		t.Fatalf("rotated record must preserve subject/scopes, got %+v", rotated)
+	}
+
+	if _, err := proxy.Exchange(ctx, "http://gw.example.com", TokenRequest{
+		GrantType:    "refresh_token",
+		RefreshToken: oldRefresh,
+	}); err == nil {
+		t.Fatal("old refresh_token must be single-use after rotation")
+	} else {
+		var oe *OAuthError
+		if !errors.As(err, &oe) || oe.Code != "invalid_grant" {
+			t.Fatalf("expected invalid_grant for a consumed refresh token, got %v", err)
+		}
 	}
 
 	access, _ := resp["access_token"].(string)
@@ -318,6 +331,101 @@ func TestRefreshUnknownTokenFallsBackToIdP(t *testing.T) {
 	if captured.Get("refresh_token") != "not-a-session" || captured.Get("grant_type") != "refresh_token" {
 		t.Fatalf("IdP refresh used wrong form: %v", *captured)
 	}
+}
+
+func TestRefreshUnknownGatewayTokenRejected(t *testing.T) {
+	t.Parallel()
+	noIdP := &http.Client{Transport: failingTransport{t}}
+	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, noIdP, newMemFlowStore(), nil, newTestSigner(t), nil)
+
+	_, err := proxy.Exchange(context.Background(), "http://gw.example.com", TokenRequest{
+		GrantType:    "refresh_token",
+		RefreshToken: "gwrt_rotated-or-unknown",
+	})
+	var oe *OAuthError
+	if !errors.As(err, &oe) || oe.Code != "invalid_grant" {
+		t.Fatalf("expected invalid_grant for an unknown gateway refresh token, got %v", err)
+	}
+}
+
+func TestCallbackSessionMintsIdPGrantedScopes(t *testing.T) {
+	t.Parallel()
+	store := newMemFlowStore()
+	signer := newTestSigner(t)
+	idp := fakeIdPWithScopedToken(t, "read:user repo", unsignedJWT(t, map[string]any{"sub": "user-77"}))
+	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{
+		oauth2Auth(t, authdomain.OAuth2Config{
+			Issuer:         idp.URL,
+			ClientID:       "gw-client-id",
+			SessionMode:    true,
+			RequiredScopes: []string{"api://gw-client-id/mcp.access"},
+		}),
+	}}
+	proxy := NewAuthProxy(finder, nil, http.DefaultClient, store, nil, signer, nil)
+	ctx := context.Background()
+
+	gwState := authorizeAndGetState(t, proxy, "")
+	clientLoc, err := proxy.Callback(ctx, "http://gw.example.com", gwState, "idp-code", "", "")
+	if err != nil {
+		t.Fatalf("callback: %v", err)
+	}
+	cu, err := url.Parse(clientLoc)
+	if err != nil {
+		t.Fatalf("parse client redirect: %v", err)
+	}
+	gwCode := cu.Query().Get("code")
+
+	resp, err := proxy.Exchange(ctx, "http://gw.example.com", TokenRequest{
+		GrantType:    "authorization_code",
+		Code:         gwCode,
+		RedirectURI:  "cursor://anysphere.cursor-mcp/oauth/callback",
+		CodeVerifier: "client-verifier",
+	})
+	if err != nil {
+		t.Fatalf("exchange: %v", err)
+	}
+	if resp["scope"] != "read:user repo" {
+		t.Fatalf("minted scope must reflect the IdP-granted scopes, got %v", resp["scope"])
+	}
+
+	access, _ := resp["access_token"].(string)
+	claims := jwt.MapClaims{}
+	pub := signerPublicKey(t, signer)
+	if _, err := jwt.ParseWithClaims(access, claims, func(*jwt.Token) (any, error) { return pub, nil }); err != nil {
+		t.Fatalf("minted token must verify: %v", err)
+	}
+	if claims["scope"] != "read:user repo" {
+		t.Fatalf("minted token scope claim must equal the granted scopes, got %v", claims["scope"])
+	}
+}
+
+// fakeIdPWithScopedToken serves AS metadata and a token endpoint that returns a
+// granted scope plus an id_token carrying the subject.
+func fakeIdPWithScopedToken(t *testing.T, scope, idToken string) *httptest.Server {
+	t.Helper()
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issuer":                 srv.URL,
+				"authorization_endpoint": srv.URL + "/authorize",
+				"token_endpoint":         srv.URL + "/token",
+			})
+		case "/token":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "idp-access-token",
+				"id_token":     idToken,
+				"scope":        scope,
+				"token_type":   "Bearer",
+				"expires_in":   3600,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
 }
 
 func TestExchangeCodeOffModeReturnsTokenVerbatim(t *testing.T) {
