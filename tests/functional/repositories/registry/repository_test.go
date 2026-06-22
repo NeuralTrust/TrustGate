@@ -9,14 +9,14 @@ import (
 	"testing"
 	"time"
 
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
-	_ "github.com/NeuralTrust/AgentGateway/pkg/infra/database/migrations"
-	gatewayrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/gateway"
-	repo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/registry"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
+	gatewayrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/gateway"
+	repo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -217,7 +217,7 @@ func TestRepository_Delete(t *testing.T) {
 	if err := r.Save(ctx, b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := r.Delete(ctx, b.ID); err != nil {
+	if err := r.Delete(ctx, gwID, b.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if _, err := r.FindByID(ctx, b.ID); !errors.Is(err, domain.ErrNotFound) {
@@ -227,7 +227,7 @@ func TestRepository_Delete(t *testing.T) {
 
 func TestRepository_Delete_NotFound(t *testing.T) {
 	r, _, _ := setupRepo(t)
-	err := r.Delete(context.Background(), ids.New[ids.RegistryKind]())
+	err := r.Delete(context.Background(), ids.New[ids.GatewayKind](), ids.New[ids.RegistryKind]())
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}

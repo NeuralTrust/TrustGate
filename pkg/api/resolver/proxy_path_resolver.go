@@ -18,7 +18,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
 // ProxyRouteLocalsKey stores the resolved ProxyRoute in fiber Locals so the

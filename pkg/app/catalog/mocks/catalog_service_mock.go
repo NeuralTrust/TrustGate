@@ -5,7 +5,7 @@ package mocks
 import (
 	context "context"
 
-	catalog "github.com/NeuralTrust/AgentGateway/pkg/domain/catalog"
+	catalog "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	mock "github.com/stretchr/testify/mock"
 )
 

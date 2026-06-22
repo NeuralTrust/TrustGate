@@ -20,9 +20,9 @@ import (
 	"net/http"
 	"strings"
 
-	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 )
 
 // OAuth2TokenValidator adapts the shared OIDC verifier to the MCP-plane

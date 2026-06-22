@@ -24,25 +24,27 @@ import (
 	"testing"
 	"time"
 
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	"github.com/NeuralTrust/AgentGateway/pkg/app/identity/sts"
-	appoauth "github.com/NeuralTrust/AgentGateway/pkg/app/oauth"
-	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	vaultdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/vault"
-	infraoauth "github.com/NeuralTrust/AgentGateway/pkg/infra/oauth"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
+	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
+	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
 )
 
 type stubExchanger struct {
-	token *sts.Token
-	err   error
-	key   string
+	token     *sts.Token
+	err       error
+	key       string
+	gatewayID ids.GatewayID
 }
 
-func (s *stubExchanger) Exchange(_ context.Context, _ *identity.Principal, _ *registrydomain.MCPAuth, cacheKey string) (*sts.Token, error) {
+func (s *stubExchanger) Exchange(_ context.Context, _ *identity.Principal, gatewayID ids.GatewayID, _ *registrydomain.MCPAuth, cacheKey string) (*sts.Token, error) {
 	s.key = cacheKey
+	s.gatewayID = gatewayID
 	return s.token, s.err
 }
 

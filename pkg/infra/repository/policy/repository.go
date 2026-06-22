@@ -21,9 +21,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -98,10 +98,10 @@ func (r *Repository) Update(ctx context.Context, p *domain.Policy) error {
 		       updated_at  = $10,
 		       description = $11,
 		       mode        = $12
-		 WHERE id = $1`
+		 WHERE id = $1 AND gateway_id = $13`
 	cmd, err := r.conn.Pool.Exec(ctx, query,
 		p.ID, p.Name, p.Slug, p.Enabled, p.Global, p.Priority, p.Parallel,
-		settingsBytes, stagesBytes, p.UpdatedAt, p.Description, string(p.Mode.Normalize()),
+		settingsBytes, stagesBytes, p.UpdatedAt, p.Description, string(p.Mode.Normalize()), p.GatewayID,
 	)
 	if err != nil {
 		return mapPgError(err)
@@ -112,9 +112,9 @@ func (r *Repository) Update(ctx context.Context, p *domain.Policy) error {
 	return nil
 }
 
-func (r *Repository) SetGlobal(ctx context.Context, id ids.PolicyID, global bool) error {
-	const query = `UPDATE policies SET global = $2, updated_at = now() WHERE id = $1`
-	cmd, err := r.conn.Pool.Exec(ctx, query, id, global)
+func (r *Repository) SetGlobal(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID, global bool) error {
+	const query = `UPDATE policies SET global = $2, updated_at = now() WHERE id = $1 AND gateway_id = $3`
+	cmd, err := r.conn.Pool.Exec(ctx, query, id, global, gatewayID)
 	if err != nil {
 		return mapPgError(err)
 	}
@@ -124,10 +124,10 @@ func (r *Repository) SetGlobal(ctx context.Context, id ids.PolicyID, global bool
 	return nil
 }
 
-func (r *Repository) Delete(ctx context.Context, id ids.PolicyID) error {
-	const query = `DELETE FROM policies WHERE id = $1`
+func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID) error {
+	const query = `DELETE FROM policies WHERE id = $1 AND gateway_id = $2`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
-		cmd, err := tx.Exec(ctx, query, id)
+		cmd, err := tx.Exec(ctx, query, id, gatewayID)
 		if err != nil {
 			return mapPgDeleteError(err)
 		}

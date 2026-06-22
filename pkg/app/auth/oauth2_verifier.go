@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"strings"
 
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 )
 
 type OAuth2Verifier interface {

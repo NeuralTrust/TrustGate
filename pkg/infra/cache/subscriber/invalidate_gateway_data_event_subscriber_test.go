@@ -21,12 +21,12 @@ import (
 	"testing"
 	"time"
 
-	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/event"
-	cachemocks "github.com/NeuralTrust/AgentGateway/pkg/infra/cache/mocks"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/subscriber"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/subscriber"
 	"github.com/stretchr/testify/mock"
 )
 

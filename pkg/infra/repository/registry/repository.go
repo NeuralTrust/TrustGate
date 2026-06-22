@@ -20,9 +20,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -108,10 +108,10 @@ func (r *Repository) Update(ctx context.Context, b *domain.Registry) error {
 		       health_checks    = $9,
 		       mcp_target       = $10,
 		       updated_at       = $11
-		 WHERE id = $1`
+		 WHERE id = $1 AND gateway_id = $12`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query,
-			b.ID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authBytes, b.Description, healthChecksBytes, mcpTargetBytes, b.UpdatedAt,
+			b.ID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authBytes, b.Description, healthChecksBytes, mcpTargetBytes, b.UpdatedAt, b.GatewayID,
 		)
 		if err != nil {
 			return mapPgError(err)
@@ -123,14 +123,14 @@ func (r *Repository) Update(ctx context.Context, b *domain.Registry) error {
 	})
 }
 
-func (r *Repository) Delete(ctx context.Context, id ids.RegistryID) error {
-	const query = `DELETE FROM registries WHERE id = $1`
+func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.RegistryID) error {
+	const query = `DELETE FROM registries WHERE id = $1 AND gateway_id = $2`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 
 		if err := ensureNotInFallbackChain(ctx, tx, id); err != nil {
 			return err
 		}
-		cmd, err := tx.Exec(ctx, query, id)
+		cmd, err := tx.Exec(ctx, query, id, gatewayID)
 		if err != nil {
 			return mapPgDeleteError(err)
 		}

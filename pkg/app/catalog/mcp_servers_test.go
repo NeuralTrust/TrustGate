@@ -17,7 +17,7 @@ package catalog
 import (
 	"testing"
 
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/catalog"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/stretchr/testify/require"
 )
 

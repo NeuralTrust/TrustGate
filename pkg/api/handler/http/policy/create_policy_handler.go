@@ -17,11 +17,11 @@ package policy
 import (
 	"fmt"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/policy/request"
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/policy/response"
-	apppolicy "github.com/NeuralTrust/AgentGateway/pkg/app/policy"
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/request"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/response"
+	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/gofiber/fiber/v2"
 )
 

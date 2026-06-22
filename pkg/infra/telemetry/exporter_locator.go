@@ -17,8 +17,8 @@ package telemetry
 import (
 	"fmt"
 
-	appmetrics "github.com/NeuralTrust/AgentGateway/pkg/app/metrics"
-	telemetrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
+	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
+	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 )
 
 type ExporterTemplate interface {

@@ -18,9 +18,9 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
 //go:generate mockery --name=Scoper --dir=. --output=./mocks --filename=policy_scoper_mock.go --case=underscore --with-expecter
@@ -71,7 +71,7 @@ func (s *scoper) setGlobal(ctx context.Context, gatewayID ids.GatewayID, id ids.
 	if existing.Global == global {
 		return existing, nil
 	}
-	if err := s.repo.SetGlobal(ctx, id, global); err != nil {
+	if err := s.repo.SetGlobal(ctx, gatewayID, id, global); err != nil {
 		return nil, err
 	}
 	existing.Global = global

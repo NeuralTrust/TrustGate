@@ -24,8 +24,8 @@ import (
 	"net/url"
 	"strings"
 
-	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 )
 
 var ErrInvalidCertificate = errors.New("mtls: invalid client certificate")

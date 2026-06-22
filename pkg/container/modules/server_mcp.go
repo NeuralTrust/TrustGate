@@ -18,14 +18,14 @@ import (
 	"fmt"
 	"log/slog"
 
-	apihandler "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http"
-	mcphttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/mcp"
-	oauthhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/oauth"
-	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
-	"github.com/NeuralTrust/AgentGateway/pkg/config"
-	"github.com/NeuralTrust/AgentGateway/pkg/container"
-	"github.com/NeuralTrust/AgentGateway/pkg/server"
-	"github.com/NeuralTrust/AgentGateway/pkg/server/router"
+	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
+	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
+	oauthhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/oauth"
+	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/container"
+	"github.com/NeuralTrust/TrustGate/pkg/server"
+	"github.com/NeuralTrust/TrustGate/pkg/server/router"
 	"go.uber.org/dig"
 )
 

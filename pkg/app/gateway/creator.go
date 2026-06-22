@@ -18,10 +18,10 @@ import (
 	"context"
 	"log/slog"
 
-	appmetrics "github.com/NeuralTrust/AgentGateway/pkg/app/metrics"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
+	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
 type CreateInput struct {

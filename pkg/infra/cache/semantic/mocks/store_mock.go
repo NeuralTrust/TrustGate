@@ -5,8 +5,8 @@ package mocks
 import (
 	context "context"
 
-	embedding "github.com/NeuralTrust/AgentGateway/pkg/domain/embedding"
-	semantic "github.com/NeuralTrust/AgentGateway/pkg/infra/cache/semantic"
+	embedding "github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
+	semantic "github.com/NeuralTrust/TrustGate/pkg/infra/cache/semantic"
 	mock "github.com/stretchr/testify/mock"
 )
 

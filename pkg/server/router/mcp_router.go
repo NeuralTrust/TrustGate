@@ -15,11 +15,11 @@
 package router
 
 import (
-	apihandler "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http"
-	mcphttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/mcp"
-	oauthhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/oauth"
-	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
-	appoauth "github.com/NeuralTrust/AgentGateway/pkg/app/oauth"
+	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
+	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
+	oauthhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/oauth"
+	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
+	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/gofiber/fiber/v2"
 )
 

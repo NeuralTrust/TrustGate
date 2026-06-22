@@ -17,15 +17,15 @@ package modules
 import (
 	"log/slog"
 
-	appmetrics "github.com/NeuralTrust/AgentGateway/pkg/app/metrics"
-	"github.com/NeuralTrust/AgentGateway/pkg/config"
-	"github.com/NeuralTrust/AgentGateway/pkg/container"
-	telemetrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
-	infracache "github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/playground"
-	infratelemetry "github.com/NeuralTrust/AgentGateway/pkg/infra/telemetry"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/telemetry/kafka"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/telemetry/otlp"
+	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/container"
+	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	infracache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/playground"
+	infratelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/kafka"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/otlp"
 	"go.uber.org/dig"
 )
 

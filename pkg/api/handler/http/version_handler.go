@@ -15,7 +15,7 @@
 package http
 
 import (
-	"github.com/NeuralTrust/AgentGateway/pkg/version"
+	"github.com/NeuralTrust/TrustGate/pkg/version"
 	"github.com/gofiber/fiber/v2"
 )
 

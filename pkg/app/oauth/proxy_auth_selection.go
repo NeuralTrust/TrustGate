@@ -21,8 +21,9 @@ import (
 	"log/slog"
 	"net/url"
 
-	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 func (p *authProxy) authForResource(ctx context.Context, resource string) (*authdomain.Auth, error) {
@@ -34,21 +35,32 @@ func (p *authProxy) authForResource(ctx context.Context, resource string) (*auth
 	// its own: fall back to the single IdP configured on that consumer's
 	// gateway instead of scanning every tenant on the platform.
 	if matched {
-		a, err := p.singleOAuth2AuthForGateway(ctx, gatewayID)
-		switch {
-		case errors.Is(err, ErrAmbiguousAuthorizationServer):
-			return nil, oauthErr("invalid_target",
-				"multiple identity providers configured for this gateway; attach a single oauth2 identity provider to the MCP consumer")
-		case errors.Is(err, ErrNoAuthorizationServer):
-			return nil, oauthErr("invalid_request",
-				"this MCP server has no oauth2 identity provider; interactive login requires an oauth2 auth with a pre-registered client at your identity provider")
-		}
-		return a, err
+		return p.gatewayScopedAuth(ctx, gatewayID)
+	}
+	// No usable resource indicator, but the request was still routed to a
+	// specific gateway (by subdomain or by the gateway-slug header). Scope the
+	// fallback to that gateway instead of treating every issuer on the platform
+	// as a candidate.
+	if gw, ok := appgateway.FromContext(ctx); ok {
+		return p.gatewayScopedAuth(ctx, gw.ID)
 	}
 	a, err := p.singleOAuth2Auth(ctx)
 	if errors.Is(err, ErrAmbiguousAuthorizationServer) {
 		return nil, oauthErr("invalid_target",
 			"multiple identity providers configured; send an RFC 8707 resource parameter identifying the MCP server")
+	}
+	return a, err
+}
+
+func (p *authProxy) gatewayScopedAuth(ctx context.Context, gatewayID ids.GatewayID) (*authdomain.Auth, error) {
+	a, err := p.singleOAuth2AuthForGateway(ctx, gatewayID)
+	switch {
+	case errors.Is(err, ErrAmbiguousAuthorizationServer):
+		return nil, oauthErr("invalid_target",
+			"multiple identity providers configured for this gateway; attach a single oauth2 identity provider to the MCP consumer")
+	case errors.Is(err, ErrNoAuthorizationServer):
+		return nil, oauthErr("invalid_request",
+			"this MCP server has no oauth2 identity provider; interactive login requires an oauth2 auth with a pre-registered client at your identity provider")
 	}
 	return a, err
 }
@@ -119,7 +131,10 @@ func (p *authProxy) validateClientRedirect(ctx context.Context, clientID, redire
 		return oauthErr("invalid_client", "unknown client_id; register via /oauth/register")
 	}
 	if !IsAcceptableRedirectURI(redirectURI) {
-		return oauthErr("invalid_request", "redirect_uri must be an https URL or an http loopback URL without a fragment")
+		return oauthErr("invalid_request", "redirect_uri must be an https URL, an http loopback URL, or a registered private-use URI without a fragment")
+	}
+	if isPrivateUseRedirectURIString(redirectURI) && !isLegacyPrivateUseRedirectURI(redirectURI) {
+		return oauthErr("invalid_request", "private-use redirect_uri must be registered for this client")
 	}
 	return nil
 }

@@ -23,10 +23,10 @@ import (
 	"testing"
 	"time"
 
-	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -124,6 +124,15 @@ func idpAuths(issuer string) []*authdomain.Auth {
 	}}
 }
 
+func idpAuth(gatewayID ids.GatewayID, issuer, clientID, clientSecret string) *authdomain.Auth {
+	return &authdomain.Auth{
+		GatewayID: gatewayID,
+		Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
+			Issuer: issuer, ClientID: clientID, ClientSecret: clientSecret,
+		}},
+	}
+}
+
 func TestExchanger_Impersonation_MintsAndCaches(t *testing.T) {
 	t.Parallel()
 	ex := NewExchanger(&fakeSigner{}, &stubCredentials{}, nil)
@@ -131,7 +140,7 @@ func TestExchanger_Impersonation_MintsAndCaches(t *testing.T) {
 		Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeImpersonation,
 		Audience: "https://up.example.com",
 	}
-	tok, err := ex.Exchange(context.Background(), userPrincipal(), cfg, "k1")
+	tok, err := ex.Exchange(context.Background(), userPrincipal(), ids.GatewayID{}, cfg, "k1")
 	if err != nil {
 		t.Fatalf("Exchange: %v", err)
 	}
@@ -142,11 +151,11 @@ func TestExchanger_Impersonation_MintsAndCaches(t *testing.T) {
 	if _, hasAct := claims["act"]; hasAct {
 		t.Fatal("impersonation must not carry act claim")
 	}
-	again, err := ex.Exchange(context.Background(), userPrincipal(), cfg, "k1")
+	again, err := ex.Exchange(context.Background(), userPrincipal(), ids.GatewayID{}, cfg, "k1")
 	if err != nil || again.AccessToken != tok.AccessToken {
 		t.Fatal("expected cached token for same key")
 	}
-	other, err := ex.Exchange(context.Background(), userPrincipal(), cfg, "k2")
+	other, err := ex.Exchange(context.Background(), userPrincipal(), ids.GatewayID{}, cfg, "k2")
 	if err != nil || other.AccessToken == tok.AccessToken {
 		t.Fatal("cache must isolate per key")
 	}
@@ -159,7 +168,7 @@ func TestExchanger_Delegation_AddsActClaim(t *testing.T) {
 		Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeDelegation,
 		Audience: "https://up.example.com", Actor: "agent-bot",
 	}
-	tok, err := ex.Exchange(context.Background(), userPrincipal(), cfg, "k")
+	tok, err := ex.Exchange(context.Background(), userPrincipal(), ids.GatewayID{}, cfg, "k")
 	if err != nil {
 		t.Fatalf("Exchange: %v", err)
 	}
@@ -178,7 +187,7 @@ func TestExchanger_OBO_BuildsOnBehalfOfGrant(t *testing.T) {
 		Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeOBO,
 		Scope: "api://target/.default",
 	}
-	tok, err := ex.Exchange(context.Background(), userPrincipal(), cfg, "k")
+	tok, err := ex.Exchange(context.Background(), userPrincipal(), ids.GatewayID{}, cfg, "k")
 	if err != nil {
 		t.Fatalf("Exchange: %v", err)
 	}
@@ -198,6 +207,27 @@ func TestExchanger_OBO_BuildsOnBehalfOfGrant(t *testing.T) {
 	}
 }
 
+func TestExchanger_OBO_UsesGatewayScopedIdPConfig(t *testing.T) {
+	t.Parallel()
+	gatewayA := ids.New[ids.GatewayKind]()
+	gatewayB := ids.New[ids.GatewayKind]()
+	idp := &fakeIdP{token: &Token{AccessToken: "obo-token", TokenType: "Bearer", ExpiresAt: time.Now().Add(10 * time.Minute)}}
+	ex := NewExchanger(&fakeSigner{}, &stubCredentials{auths: []*authdomain.Auth{
+		idpAuth(gatewayA, "https://idp.example.com", "wrong-client", "wrong-secret"),
+		idpAuth(gatewayB, "https://idp.example.com", "right-client", "right-secret"),
+	}}, idp)
+	cfg := &registrydomain.MCPAuth{
+		Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeOBO,
+		Scope: "api://target/.default",
+	}
+	if _, err := ex.Exchange(context.Background(), userPrincipal(), gatewayB, cfg, "k"); err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+	if idp.gotForm.Get("client_id") != "right-client" || idp.gotForm.Get("client_secret") != "right-secret" {
+		t.Fatalf("OBO form used wrong tenant credentials: %v", idp.gotForm)
+	}
+}
+
 func TestExchanger_OBO_InteractionRequiredPropagates(t *testing.T) {
 	t.Parallel()
 	idp := &fakeIdP{err: fmt.Errorf("%w: MFA needed", ErrInteractionRequired)}
@@ -205,7 +235,7 @@ func TestExchanger_OBO_InteractionRequiredPropagates(t *testing.T) {
 	cfg := &registrydomain.MCPAuth{
 		Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeOBO, Scope: "x/.default",
 	}
-	_, err := ex.Exchange(context.Background(), userPrincipal(), cfg, "k")
+	_, err := ex.Exchange(context.Background(), userPrincipal(), ids.GatewayID{}, cfg, "k")
 	if err == nil || !errors.Is(err, ErrInteractionRequired) {
 		t.Fatalf("error = %v, want ErrInteractionRequired", err)
 	}
@@ -219,7 +249,7 @@ func TestExchanger_TokenExchange_RFC8693Form(t *testing.T) {
 		Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeTokenExchange,
 		Audience: "https://up.example.com",
 	}
-	if _, err := ex.Exchange(context.Background(), userPrincipal(), cfg, "k"); err != nil {
+	if _, err := ex.Exchange(context.Background(), userPrincipal(), ids.GatewayID{}, cfg, "k"); err != nil {
 		t.Fatalf("Exchange: %v", err)
 	}
 	if idp.gotForm.Get("grant_type") != "urn:ietf:params:oauth:grant-type:token-exchange" ||
@@ -236,7 +266,7 @@ func TestExchanger_OBO_RequiresUserJWT(t *testing.T) {
 		Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeOBO, Scope: "x/.default",
 	}
 	apiKeyPrincipal := &identity.Principal{Subject: "m2m", Method: identity.MethodAPIKey}
-	if _, err := ex.Exchange(context.Background(), apiKeyPrincipal, cfg, "k"); !errors.Is(err, ErrNoUserIdentity) {
+	if _, err := ex.Exchange(context.Background(), apiKeyPrincipal, ids.GatewayID{}, cfg, "k"); !errors.Is(err, ErrNoUserIdentity) {
 		t.Fatalf("error = %v, want ErrNoUserIdentity", err)
 	}
 }
@@ -252,7 +282,7 @@ func TestExchanger_TokenExchange_RejectsNonIdPTokens(t *testing.T) {
 		Subject: "m2m", Method: identity.MethodAPIKey, RawToken: "gateway-api-key",
 		Issuer: "https://idp.example.com",
 	}
-	if _, err := ex.Exchange(context.Background(), apiKeyPrincipal, cfg, "k-apikey"); !errors.Is(err, ErrNoUserIdentity) {
+	if _, err := ex.Exchange(context.Background(), apiKeyPrincipal, ids.GatewayID{}, cfg, "k-apikey"); !errors.Is(err, ErrNoUserIdentity) {
 		t.Fatalf("error = %v, want ErrNoUserIdentity (api keys must never reach the IdP)", err)
 	}
 }
@@ -264,7 +294,7 @@ func TestExchanger_MissingIdPConfigFails(t *testing.T) {
 		Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeTokenExchange,
 		Audience: "https://up.example.com",
 	}
-	if _, err := ex.Exchange(context.Background(), userPrincipal(), cfg, "k"); err == nil {
+	if _, err := ex.Exchange(context.Background(), userPrincipal(), ids.GatewayID{}, cfg, "k"); err == nil {
 		t.Fatal("exchange without a configured IdP must fail")
 	}
 }
@@ -280,7 +310,7 @@ func TestExchanger_CacheSweepsExpiredTokens(t *testing.T) {
 		Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeImpersonation,
 		Audience: "https://up.example.com",
 	}
-	if _, err := ex.Exchange(context.Background(), userPrincipal(), cfg, "fresh"); err != nil {
+	if _, err := ex.Exchange(context.Background(), userPrincipal(), ids.GatewayID{}, cfg, "fresh"); err != nil {
 		t.Fatalf("Exchange: %v", err)
 	}
 	ex.mu.Lock()

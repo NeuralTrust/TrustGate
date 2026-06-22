@@ -17,7 +17,7 @@ package registry
 import (
 	"fmt"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
 type LLMTarget struct {

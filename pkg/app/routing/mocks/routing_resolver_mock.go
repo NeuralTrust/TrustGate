@@ -3,8 +3,8 @@
 package mocks
 
 import (
-	routing "github.com/NeuralTrust/AgentGateway/pkg/app/routing"
-	domainrouting "github.com/NeuralTrust/AgentGateway/pkg/domain/routing"
+	routing "github.com/NeuralTrust/TrustGate/pkg/app/routing"
+	domainrouting "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	mock "github.com/stretchr/testify/mock"
 )
 

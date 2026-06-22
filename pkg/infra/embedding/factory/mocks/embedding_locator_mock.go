@@ -3,7 +3,7 @@
 package mocks
 
 import (
-	embedding "github.com/NeuralTrust/AgentGateway/pkg/domain/embedding"
+	embedding "github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
 
 	mock "github.com/stretchr/testify/mock"
 )

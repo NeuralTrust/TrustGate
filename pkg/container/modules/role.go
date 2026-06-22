@@ -15,12 +15,12 @@
 package modules
 
 import (
-	rolehttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/role"
-	approle "github.com/NeuralTrust/AgentGateway/pkg/app/role"
-	"github.com/NeuralTrust/AgentGateway/pkg/container"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
-	rolerepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/role"
+	rolehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/role"
+	approle "github.com/NeuralTrust/TrustGate/pkg/app/role"
+	"github.com/NeuralTrust/TrustGate/pkg/container"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	rolerepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/role"
 )
 
 func Role(c *container.Container) error {

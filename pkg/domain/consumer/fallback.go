@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 type FallbackTrigger string

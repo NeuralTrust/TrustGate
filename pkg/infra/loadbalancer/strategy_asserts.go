@@ -14,7 +14,7 @@
 
 package loadbalancer
 
-import "github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer/strategies"
+import "github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer/strategies"
 
 var (
 	_ Strategy = (*strategies.RoundRobin)(nil)

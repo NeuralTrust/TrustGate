@@ -25,9 +25,9 @@ import (
 	"sync"
 	"time"
 
-	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 )
 
 var (
@@ -169,7 +169,7 @@ func (s *metadataService) RegisterClient(ctx context.Context, req RegisterReques
 	for _, uri := range req.RedirectURIs {
 		if !IsAcceptableRedirectURI(uri) {
 			return nil, oauthErr("invalid_redirect_uri",
-				fmt.Sprintf("%q must be an https URL or an http loopback URL without a fragment", uri))
+				fmt.Sprintf("%q must be an https URL, an http loopback URL, or a private-use URI without a fragment", uri))
 		}
 	}
 	suffix, err := randomToken()
@@ -216,11 +216,37 @@ func IsAcceptableRedirectURI(raw string) bool {
 	case "http":
 		host := u.Hostname()
 		return host == "localhost" || host == "127.0.0.1" || host == "::1"
-	case "", "javascript", "data", "file", "vbscript", "blob":
+	default:
+		return isPrivateUseRedirectURI(u)
+	}
+}
+
+func isPrivateUseRedirectURI(u *url.URL) bool {
+	if u == nil || u.Scheme == "" {
+		return false
+	}
+	switch u.Scheme {
+	case "http", "https", "javascript", "data", "file", "vbscript", "blob", "about", "chrome", "devtools":
 		return false
 	default:
-		return true
+		return u.Host != "" || u.Path != "" || u.Opaque != ""
 	}
+}
+
+func isPrivateUseRedirectURIString(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Fragment != "" {
+		return false
+	}
+	return isPrivateUseRedirectURI(u)
+}
+
+func isLegacyPrivateUseRedirectURI(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Fragment != "" {
+		return false
+	}
+	return u.Scheme == "cursor" && u.Host == "anysphere.cursor-mcp" && u.Path == "/oauth/callback"
 }
 
 func (s *metadataService) fetchASMetadata(ctx context.Context, issuer string) (map[string]any, error) {

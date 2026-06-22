@@ -17,18 +17,23 @@ package modules
 import (
 	"log/slog"
 
-	cataloghttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/catalog"
-	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
-	"github.com/NeuralTrust/AgentGateway/pkg/container"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/semantic"
-	embeddingfactory "github.com/NeuralTrust/AgentGateway/pkg/infra/embedding/factory"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/plugins/cors"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/plugins/ratelimit"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/plugins/requestsize"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/plugins/semanticcache"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/plugins/tokenratelimit"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
+	cataloghttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/catalog"
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/container"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/semantic"
+	embeddingfactory "github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/cors"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/modelallowlist"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pertoolratelimit"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/ratelimit"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/requestsize"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/semanticcache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/tokenratelimit"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/tool_call_validation"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
 	"go.uber.org/dig"
 )
 
@@ -38,6 +43,7 @@ type pluginParams struct {
 	Adapters *adapter.Registry
 	Locator  embeddingfactory.EmbeddingServiceLocator
 	Logger   *slog.Logger
+	Pricing  appcatalog.PricingResolver
 }
 
 func Plugins(c *container.Container) error {
@@ -64,10 +70,13 @@ func newPluginRegistry(p pluginParams) (appplugins.Registry, error) {
 
 	catalog := []appplugins.Plugin{
 		ratelimit.New(redisClient),
-		tokenratelimit.New(redisClient, p.Adapters),
+		tokenratelimit.New(redisClient, p.Adapters, p.Pricing),
+		pertoolratelimit.New(redisClient, p.Adapters),
 		requestsize.New(),
 		cors.New(),
 		semanticcache.New(store, p.Locator, p.Adapters),
+		modelallowlist.New(),
+		tool_call_validation.New(p.Adapters, openai.NewOpenaiClient(), p.Logger),
 	}
 	for _, plugin := range catalog {
 		if err := reg.Register(plugin); err != nil {

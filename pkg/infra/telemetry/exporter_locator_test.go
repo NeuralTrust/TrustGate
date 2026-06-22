@@ -19,10 +19,10 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/config"
-	telemetrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
-	infratelemetry "github.com/NeuralTrust/AgentGateway/pkg/infra/telemetry"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/telemetry/kafka"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
+	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	infratelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/kafka"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

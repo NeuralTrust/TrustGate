@@ -19,15 +19,15 @@ import (
 	"testing"
 	"time"
 
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	authmocks "github.com/NeuralTrust/AgentGateway/pkg/domain/auth/mocks"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	consumermocks "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer/mocks"
-	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
-	gatewaymocks "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway/mocks"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	authmocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	consumermocks "github.com/NeuralTrust/TrustGate/pkg/domain/consumer/mocks"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	gatewaymocks "github.com/NeuralTrust/TrustGate/pkg/domain/gateway/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -52,7 +52,7 @@ func pathAuth(t *testing.T, gatewayID ids.GatewayID) *authdomain.Auth {
 		OAuth2: &authdomain.OAuth2Config{
 			Issuer:    "https://idp.example.com",
 			JWKSURL:   "https://idp.example.com/jwks",
-			Audiences: []string{"agentgateway"},
+			Audiences: []string{"trustgate"},
 		},
 	})
 	require.NoError(t, err)

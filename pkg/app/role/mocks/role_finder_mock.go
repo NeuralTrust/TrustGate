@@ -5,8 +5,8 @@ package mocks
 import (
 	context "context"
 
-	ids "github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	role "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
+	ids "github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	role "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	mock "github.com/stretchr/testify/mock"
 )
 

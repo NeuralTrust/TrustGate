@@ -18,7 +18,7 @@ import (
 	"context"
 	"reflect"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/channel"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 )
 
 type EventListener interface {

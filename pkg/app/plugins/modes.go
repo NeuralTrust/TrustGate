@@ -17,8 +17,8 @@ package plugins
 import (
 	"fmt"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 )
 
 var ErrInvalidModes = fmt.Errorf("plugin: invalid declared modes")

@@ -23,7 +23,7 @@ import (
 	"net/url"
 	"testing"
 
-	appsts "github.com/NeuralTrust/AgentGateway/pkg/app/identity/sts"
+	appsts "github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 )
 
 func TestEntraTokenEndpoint(t *testing.T) {

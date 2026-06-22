@@ -17,7 +17,7 @@ package mistral
 import (
 	"context"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
 const modelsURL = "https://api.mistral.ai/v1/models"

@@ -19,12 +19,12 @@ import (
 	"errors"
 	"testing"
 
-	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/auth/mocks"
-	consumermocks "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer/mocks"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
+	consumermocks "github.com/NeuralTrust/TrustGate/pkg/domain/consumer/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/cachetest"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -45,7 +45,7 @@ func enabledOAuth2(t *testing.T, gatewayID ids.GatewayID, issuer string, audienc
 
 func createOAuth2(t *testing.T, repo *repomocks.Repository, gatewayID ids.GatewayID, audiences ...string) error {
 	t.Helper()
-	creator := appauth.NewCreator(repo, newCacheManager(), newTestLogger())
+	creator := appauth.NewCreator(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	_, err := creator.Create(context.Background(), appauth.CreateInput{
 		GatewayID: gatewayID,
 		Name:      "new-idp",

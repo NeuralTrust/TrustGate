@@ -18,10 +18,10 @@ import (
 	"fmt"
 	"strings"
 
-	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/gofiber/fiber/v2"
 )
 

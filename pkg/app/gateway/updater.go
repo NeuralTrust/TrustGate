@@ -19,11 +19,11 @@ import (
 	"log/slog"
 	"time"
 
-	appmetrics "github.com/NeuralTrust/AgentGateway/pkg/app/metrics"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
+	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
 type UpdateInput struct {

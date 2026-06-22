@@ -18,8 +18,8 @@ import (
 	"errors"
 	"testing"
 
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 func TestToolkit_Validate(t *testing.T) {
@@ -94,7 +94,7 @@ func TestToolkit_AllowsResource(t *testing.T) {
 		uri  string
 		want bool
 	}{
-		{"prefix match", regA, "repo://github/neuraltrust/agentgateway", true},
+		{"prefix match", regA, "repo://github/neuraltrust/trustgate", true},
 		{"exact match", regA, "docs://readme", true},
 		{"prefix mismatch", regA, "repo://gitlab/x", false},
 		{"no resource entries for registry", regB, "repo://github/x", false},

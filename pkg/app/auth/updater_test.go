@@ -19,14 +19,14 @@ import (
 	"errors"
 	"testing"
 
-	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/auth/mocks"
-	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	consumermocks "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer/mocks"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	consumermocks "github.com/NeuralTrust/TrustGate/pkg/domain/consumer/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/cachetest"
 	"github.com/stretchr/testify/mock"
 )
 

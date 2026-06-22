@@ -25,7 +25,7 @@ var (
 	Version   = "0.0.0-dev"
 	Commit    = "unknown"
 	BuildDate = "unknown"
-	AppName   = "AgentGateway"
+	AppName   = "TrustGate"
 )
 
 func init() {

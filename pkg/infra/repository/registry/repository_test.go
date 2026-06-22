@@ -18,7 +18,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 func TestMarshalAuth_PreservesAzureFieldsByMode(t *testing.T) {

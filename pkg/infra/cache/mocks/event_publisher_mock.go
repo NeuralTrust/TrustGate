@@ -5,7 +5,7 @@ package mocks
 import (
 	context "context"
 
-	event "github.com/NeuralTrust/AgentGateway/pkg/infra/cache/event"
+	event "github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	mock "github.com/stretchr/testify/mock"
 )
 

@@ -23,10 +23,11 @@ import (
 	"sync"
 	"time"
 
-	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
-	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/sync/singleflight"
 )
@@ -46,7 +47,7 @@ type Token struct {
 
 //go:generate mockery --name=Exchanger --dir=. --output=./mocks --filename=sts_exchanger_mock.go --case=underscore --with-expecter
 type Exchanger interface {
-	Exchange(ctx context.Context, principal *identity.Principal, cfg *registrydomain.MCPAuth, cacheKey string) (*Token, error)
+	Exchange(ctx context.Context, principal *identity.Principal, gatewayID ids.GatewayID, cfg *registrydomain.MCPAuth, cacheKey string) (*Token, error)
 }
 
 var _ Exchanger = (*exchanger)(nil)
@@ -73,7 +74,7 @@ func NewExchanger(signer TokenSigner, credentials appauth.CredentialFinder, idp 
 
 const refreshSkew = 30 * time.Second
 
-func (e *exchanger) Exchange(ctx context.Context, principal *identity.Principal, cfg *registrydomain.MCPAuth, cacheKey string) (*Token, error) {
+func (e *exchanger) Exchange(ctx context.Context, principal *identity.Principal, gatewayID ids.GatewayID, cfg *registrydomain.MCPAuth, cacheKey string) (*Token, error) {
 	if principal == nil {
 		return nil, ErrNoUserIdentity
 	}
@@ -84,7 +85,7 @@ func (e *exchanger) Exchange(ctx context.Context, principal *identity.Principal,
 		if t, ok := e.cached(cacheKey); ok {
 			return t, nil
 		}
-		token, err := e.exchange(ctx, principal, cfg)
+		token, err := e.exchange(ctx, principal, gatewayID, cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -113,16 +114,16 @@ func (e *exchanger) cached(cacheKey string) (*Token, bool) {
 	return nil, false
 }
 
-func (e *exchanger) exchange(ctx context.Context, principal *identity.Principal, cfg *registrydomain.MCPAuth) (*Token, error) {
+func (e *exchanger) exchange(ctx context.Context, principal *identity.Principal, gatewayID ids.GatewayID, cfg *registrydomain.MCPAuth) (*Token, error) {
 	switch cfg.Pattern {
 	case registrydomain.ExchangeImpersonation:
 		return e.mint(principal, cfg, false)
 	case registrydomain.ExchangeDelegation:
 		return e.mint(principal, cfg, true)
 	case registrydomain.ExchangeOBO:
-		return e.entraOBO(ctx, principal, cfg)
+		return e.entraOBO(ctx, principal, gatewayID, cfg)
 	case registrydomain.ExchangeTokenExchange:
-		return e.tokenExchange(ctx, principal, cfg)
+		return e.tokenExchange(ctx, principal, gatewayID, cfg)
 	default:
 		return nil, fmt.Errorf("sts: unknown exchange pattern %q", cfg.Pattern)
 	}
@@ -164,11 +165,11 @@ func (e *exchanger) mint(principal *identity.Principal, cfg *registrydomain.MCPA
 	return &Token{AccessToken: signed, TokenType: "Bearer", ExpiresAt: time.Now().Add(DefaultTokenTTL)}, nil
 }
 
-func (e *exchanger) entraOBO(ctx context.Context, principal *identity.Principal, cfg *registrydomain.MCPAuth) (*Token, error) {
+func (e *exchanger) entraOBO(ctx context.Context, principal *identity.Principal, gatewayID ids.GatewayID, cfg *registrydomain.MCPAuth) (*Token, error) {
 	if principal.RawToken == "" || principal.Method != identity.MethodJWT {
 		return nil, ErrNoUserIdentity
 	}
-	idp, err := e.idpFor(ctx, principal.Issuer)
+	idp, err := e.idpFor(ctx, gatewayID, principal.Issuer)
 	if err != nil {
 		return nil, err
 	}
@@ -182,12 +183,12 @@ func (e *exchanger) entraOBO(ctx context.Context, principal *identity.Principal,
 	return e.idp.Call(ctx, principal.Issuer, form)
 }
 
-func (e *exchanger) tokenExchange(ctx context.Context, principal *identity.Principal, cfg *registrydomain.MCPAuth) (*Token, error) {
+func (e *exchanger) tokenExchange(ctx context.Context, principal *identity.Principal, gatewayID ids.GatewayID, cfg *registrydomain.MCPAuth) (*Token, error) {
 	if principal.RawToken == "" ||
 		(principal.Method != identity.MethodJWT && principal.Method != identity.MethodIntrospection) {
 		return nil, ErrNoUserIdentity
 	}
-	idp, err := e.idpFor(ctx, principal.Issuer)
+	idp, err := e.idpFor(ctx, gatewayID, principal.Issuer)
 	if err != nil {
 		return nil, err
 	}
@@ -204,8 +205,8 @@ func (e *exchanger) tokenExchange(ctx context.Context, principal *identity.Princ
 	return e.idp.Call(ctx, principal.Issuer, form)
 }
 
-func (e *exchanger) idpFor(ctx context.Context, issuer string) (*authdomain.OAuth2Config, error) {
-	auths, err := e.credentials.OAuth2Auths(ctx)
+func (e *exchanger) idpFor(ctx context.Context, gatewayID ids.GatewayID, issuer string) (*authdomain.OAuth2Config, error) {
+	auths, err := e.credentials.OAuth2AuthsForGateway(ctx, gatewayID)
 	if err != nil {
 		return nil, fmt.Errorf("sts: load oauth2 auths: %w", err)
 	}

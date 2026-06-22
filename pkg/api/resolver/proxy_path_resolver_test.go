@@ -18,7 +18,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
 func TestResolveProxyPath(t *testing.T) {

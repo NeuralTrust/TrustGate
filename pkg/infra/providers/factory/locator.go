@@ -17,17 +17,17 @@ package factory
 import (
 	"fmt"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/anthropic"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/azure"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/bedrock"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/deepseek"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/google"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/groq"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/mistral"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/openai"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/openaicompat"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/vertex"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/anthropic"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/azure"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/bedrock"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/deepseek"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/google"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/groq"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/mistral"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openaicompat"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/vertex"
 )
 
 // Provider name constants — aliased from the providers package so callers that

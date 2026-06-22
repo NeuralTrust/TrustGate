@@ -119,19 +119,24 @@ jobs:
           cp .env.example .env
           cp .env.functional.example .env.functional
 
+      - name: Inject functional test secrets
+        run: |
+          echo "" >> .env.functional
+          echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> .env.functional
+
       - name: Create repository integration test database
         run: |
           PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres \
-            -c "CREATE DATABASE agentgateway_repo_test;" || true
+            -c "CREATE DATABASE trustgate_repo_test;" || true
 
       - name: Run Functional tests
         env:
-          PG_TEST_URL: postgres://postgres:postgres@localhost:5432/agentgateway_repo_test?sslmode=disable
+          PG_TEST_URL: postgres://postgres:postgres@localhost:5432/trustgate_repo_test?sslmode=disable
         run: go test -tags functional -v -race -count=1 -p 1 ./tests/functional/...
 
   security:
     uses: NeuralTrust/workflows/.github/workflows/sast.yml@main
     with:
-      gitleaks_enabled: false
+      gitleaks_enabled: true
       gosec_enabled: true
-      gosec_args: "-no-fail ./..."
+      gosec_args: "-severity high ./..."

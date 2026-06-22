@@ -26,7 +26,7 @@ import (
 	"sync"
 	"time"
 
-	appoauth "github.com/NeuralTrust/AgentGateway/pkg/app/oauth"
+	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 )
 
 var _ appoauth.UpstreamRegistrar = (*upstreamRegistrar)(nil)

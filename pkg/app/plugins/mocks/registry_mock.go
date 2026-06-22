@@ -3,8 +3,8 @@
 package mocks
 
 import (
-	plugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
-	policy "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
+	plugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	policy "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	mock "github.com/stretchr/testify/mock"
 )
 

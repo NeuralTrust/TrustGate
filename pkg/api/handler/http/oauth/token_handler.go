@@ -17,19 +17,21 @@ package oauth
 import (
 	"errors"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
-	appoauth "github.com/NeuralTrust/AgentGateway/pkg/app/oauth"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/resolver"
+	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/gofiber/fiber/v2"
 )
 
 const TokenPath = "/oauth/token" // #nosec G101 -- route path, not a credential
 
 type TokenHandler struct {
-	proxy appoauth.AuthProxy
+	proxy    appoauth.AuthProxy
+	gateways resolver.GatewayResolver
 }
 
-func NewTokenHandler(proxy appoauth.AuthProxy) *TokenHandler {
-	return &TokenHandler{proxy: proxy}
+func NewTokenHandler(proxy appoauth.AuthProxy, gateways resolver.GatewayResolver) *TokenHandler {
+	return &TokenHandler{proxy: proxy, gateways: gateways}
 }
 
 func (h *TokenHandler) Handle(c *fiber.Ctx) error {
@@ -42,7 +44,8 @@ func (h *TokenHandler) Handle(c *fiber.Ctx) error {
 		RefreshToken: c.FormValue("refresh_token"),
 		Resource:     c.FormValue("resource"),
 	}
-	token, err := h.proxy.Exchange(c.UserContext(), c.BaseURL(), req)
+	ctx := resolver.WithResolvedGateway(c, h.gateways)
+	token, err := h.proxy.Exchange(ctx, c.BaseURL(), req)
 	if err != nil {
 		return writeOAuthError(c, err)
 	}

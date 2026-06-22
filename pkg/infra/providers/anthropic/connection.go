@@ -17,7 +17,7 @@ package anthropic
 import (
 	"context"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
 const modelsURL = "https://api.anthropic.com/v1/models"

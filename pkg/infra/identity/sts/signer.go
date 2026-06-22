@@ -27,7 +27,7 @@ import (
 	"strings"
 	"time"
 
-	appsts "github.com/NeuralTrust/AgentGateway/pkg/app/identity/sts"
+	appsts "github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	"github.com/golang-jwt/jwt/v5"
 )
 

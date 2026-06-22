@@ -17,11 +17,11 @@ package gateway
 import (
 	"fmt"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/gateway/request"
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/gateway/response"
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
-	appgateway "github.com/NeuralTrust/AgentGateway/pkg/app/gateway"
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway/request"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway/response"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/gofiber/fiber/v2"
 )
 

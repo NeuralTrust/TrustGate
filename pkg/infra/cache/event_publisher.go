@@ -17,7 +17,7 @@ package cache
 import (
 	"context"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/event"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 )
 
 //go:generate mockery --name=EventPublisher --dir=. --output=./mocks --filename=event_publisher_mock.go --case=underscore --with-expecter

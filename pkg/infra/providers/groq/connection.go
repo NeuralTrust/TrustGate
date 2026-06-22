@@ -17,7 +17,7 @@ package groq
 import (
 	"context"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
 const modelsURL = "https://api.groq.com/openai/v1/models"

@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 )
 
 var ErrUnknownPlugin = fmt.Errorf("plugin: unknown plugin")

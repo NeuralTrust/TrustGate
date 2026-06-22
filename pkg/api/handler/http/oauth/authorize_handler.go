@@ -15,18 +15,20 @@
 package oauth
 
 import (
-	appoauth "github.com/NeuralTrust/AgentGateway/pkg/app/oauth"
+	"github.com/NeuralTrust/TrustGate/pkg/api/resolver"
+	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/gofiber/fiber/v2"
 )
 
 const AuthorizePath = "/oauth/authorize"
 
 type AuthorizeHandler struct {
-	proxy appoauth.AuthProxy
+	proxy    appoauth.AuthProxy
+	gateways resolver.GatewayResolver
 }
 
-func NewAuthorizeHandler(proxy appoauth.AuthProxy) *AuthorizeHandler {
-	return &AuthorizeHandler{proxy: proxy}
+func NewAuthorizeHandler(proxy appoauth.AuthProxy, gateways resolver.GatewayResolver) *AuthorizeHandler {
+	return &AuthorizeHandler{proxy: proxy, gateways: gateways}
 }
 
 func (h *AuthorizeHandler) Handle(c *fiber.Ctx) error {
@@ -40,7 +42,8 @@ func (h *AuthorizeHandler) Handle(c *fiber.Ctx) error {
 		CodeChallengeMethod: c.Query("code_challenge_method"),
 		Resource:            c.Query("resource"),
 	}
-	location, err := h.proxy.Authorize(c.UserContext(), c.BaseURL(), req)
+	ctx := resolver.WithResolvedGateway(c, h.gateways)
+	location, err := h.proxy.Authorize(ctx, c.BaseURL(), req)
 	if err != nil {
 		return writeOAuthError(c, err)
 	}

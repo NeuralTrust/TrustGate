@@ -24,14 +24,14 @@ import (
 	"sync"
 	"sync/atomic"
 
-	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/embedding"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/semantic"
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	embeddingfactory "github.com/NeuralTrust/AgentGateway/pkg/infra/embedding/factory"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/semantic"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	embeddingfactory "github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
 // PluginName is the catalog name used in policy configuration.

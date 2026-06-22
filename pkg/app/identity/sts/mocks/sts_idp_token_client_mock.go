@@ -6,7 +6,7 @@ import (
 	context "context"
 	url "net/url"
 
-	sts "github.com/NeuralTrust/AgentGateway/pkg/app/identity/sts"
+	sts "github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	mock "github.com/stretchr/testify/mock"
 )
 

@@ -18,9 +18,9 @@ import (
 	"context"
 	"log/slog"
 
-	appmetrics "github.com/NeuralTrust/AgentGateway/pkg/app/metrics"
-	"github.com/NeuralTrust/AgentGateway/pkg/config"
-	infratelemetry "github.com/NeuralTrust/AgentGateway/pkg/infra/telemetry"
+	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
+	infratelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
 )
 
 var _ infratelemetry.ExporterTemplate = (*Template)(nil)

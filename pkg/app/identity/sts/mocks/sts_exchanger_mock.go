@@ -5,9 +5,10 @@ package mocks
 import (
 	context "context"
 
-	sts "github.com/NeuralTrust/AgentGateway/pkg/app/identity/sts"
-	identity "github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
-	registry "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	sts "github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
+	identity "github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	ids "github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registry "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -24,9 +25,9 @@ func (_m *Exchanger) EXPECT() *Exchanger_Expecter {
 	return &Exchanger_Expecter{mock: &_m.Mock}
 }
 
-// Exchange provides a mock function with given fields: ctx, principal, cfg, cacheKey
-func (_m *Exchanger) Exchange(ctx context.Context, principal *identity.Principal, cfg *registry.MCPAuth, cacheKey string) (*sts.Token, error) {
-	ret := _m.Called(ctx, principal, cfg, cacheKey)
+// Exchange provides a mock function with given fields: ctx, principal, gatewayID, cfg, cacheKey
+func (_m *Exchanger) Exchange(ctx context.Context, principal *identity.Principal, gatewayID ids.GatewayID, cfg *registry.MCPAuth, cacheKey string) (*sts.Token, error) {
+	ret := _m.Called(ctx, principal, gatewayID, cfg, cacheKey)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Exchange")
@@ -34,19 +35,19 @@ func (_m *Exchanger) Exchange(ctx context.Context, principal *identity.Principal
 
 	var r0 *sts.Token
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, *identity.Principal, *registry.MCPAuth, string) (*sts.Token, error)); ok {
-		return rf(ctx, principal, cfg, cacheKey)
+	if rf, ok := ret.Get(0).(func(context.Context, *identity.Principal, ids.GatewayID, *registry.MCPAuth, string) (*sts.Token, error)); ok {
+		return rf(ctx, principal, gatewayID, cfg, cacheKey)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, *identity.Principal, *registry.MCPAuth, string) *sts.Token); ok {
-		r0 = rf(ctx, principal, cfg, cacheKey)
+	if rf, ok := ret.Get(0).(func(context.Context, *identity.Principal, ids.GatewayID, *registry.MCPAuth, string) *sts.Token); ok {
+		r0 = rf(ctx, principal, gatewayID, cfg, cacheKey)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(*sts.Token)
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, *identity.Principal, *registry.MCPAuth, string) error); ok {
-		r1 = rf(ctx, principal, cfg, cacheKey)
+	if rf, ok := ret.Get(1).(func(context.Context, *identity.Principal, ids.GatewayID, *registry.MCPAuth, string) error); ok {
+		r1 = rf(ctx, principal, gatewayID, cfg, cacheKey)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -62,15 +63,16 @@ type Exchanger_Exchange_Call struct {
 // Exchange is a helper method to define mock.On call
 //   - ctx context.Context
 //   - principal *identity.Principal
+//   - gatewayID ids.GatewayID
 //   - cfg *registry.MCPAuth
 //   - cacheKey string
-func (_e *Exchanger_Expecter) Exchange(ctx interface{}, principal interface{}, cfg interface{}, cacheKey interface{}) *Exchanger_Exchange_Call {
-	return &Exchanger_Exchange_Call{Call: _e.mock.On("Exchange", ctx, principal, cfg, cacheKey)}
+func (_e *Exchanger_Expecter) Exchange(ctx interface{}, principal interface{}, gatewayID interface{}, cfg interface{}, cacheKey interface{}) *Exchanger_Exchange_Call {
+	return &Exchanger_Exchange_Call{Call: _e.mock.On("Exchange", ctx, principal, gatewayID, cfg, cacheKey)}
 }
 
-func (_c *Exchanger_Exchange_Call) Run(run func(ctx context.Context, principal *identity.Principal, cfg *registry.MCPAuth, cacheKey string)) *Exchanger_Exchange_Call {
+func (_c *Exchanger_Exchange_Call) Run(run func(ctx context.Context, principal *identity.Principal, gatewayID ids.GatewayID, cfg *registry.MCPAuth, cacheKey string)) *Exchanger_Exchange_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(*identity.Principal), args[2].(*registry.MCPAuth), args[3].(string))
+		run(args[0].(context.Context), args[1].(*identity.Principal), args[2].(ids.GatewayID), args[3].(*registry.MCPAuth), args[4].(string))
 	})
 	return _c
 }
@@ -80,7 +82,7 @@ func (_c *Exchanger_Exchange_Call) Return(_a0 *sts.Token, _a1 error) *Exchanger_
 	return _c
 }
 
-func (_c *Exchanger_Exchange_Call) RunAndReturn(run func(context.Context, *identity.Principal, *registry.MCPAuth, string) (*sts.Token, error)) *Exchanger_Exchange_Call {
+func (_c *Exchanger_Exchange_Call) RunAndReturn(run func(context.Context, *identity.Principal, ids.GatewayID, *registry.MCPAuth, string) (*sts.Token, error)) *Exchanger_Exchange_Call {
 	_c.Call.Return(run)
 	return _c
 }

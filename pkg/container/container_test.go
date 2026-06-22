@@ -18,7 +18,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/container"
+	"github.com/NeuralTrust/TrustGate/pkg/container"
 )
 
 type pinger interface {

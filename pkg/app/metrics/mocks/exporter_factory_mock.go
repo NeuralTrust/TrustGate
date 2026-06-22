@@ -3,8 +3,8 @@
 package mocks
 
 import (
-	metrics "github.com/NeuralTrust/AgentGateway/pkg/app/metrics"
-	telemetry "github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
+	metrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
+	telemetry "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 
 	mock "github.com/stretchr/testify/mock"
 )

@@ -20,10 +20,10 @@ import (
 	"reflect"
 	"testing"
 
-	apppolicy "github.com/NeuralTrust/AgentGateway/pkg/app/policy"
-	policymocks "github.com/NeuralTrust/AgentGateway/pkg/app/policy/mocks"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
+	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
+	policymocks "github.com/NeuralTrust/TrustGate/pkg/app/policy/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/stretchr/testify/mock"
 )
 

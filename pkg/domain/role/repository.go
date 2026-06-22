@@ -17,7 +17,7 @@ package role
 import (
 	"context"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 type ListFilter struct {
@@ -31,7 +31,7 @@ type ListFilter struct {
 type Repository interface {
 	Save(ctx context.Context, r *Role) error
 	Update(ctx context.Context, r *Role) error
-	Delete(ctx context.Context, id ids.RoleID) error
+	Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.RoleID) error
 	FindByID(ctx context.Context, id ids.RoleID) (*Role, error)
 	FindByIDs(ctx context.Context, gatewayID ids.GatewayID, roleIDs []ids.RoleID) ([]*Role, error)
 	List(ctx context.Context, filter ListFilter) (items []*Role, total int, err error)

@@ -17,10 +17,10 @@ package loadbalancer
 import (
 	"fmt"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/embedding"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/embedding/factory"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer/algorithm"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer/strategies"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer/algorithm"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer/strategies"
 )
 
 var _ Factory = (*BaseFactory)(nil)

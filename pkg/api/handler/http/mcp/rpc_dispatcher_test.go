@@ -20,9 +20,9 @@ import (
 	"errors"
 	"testing"
 
-	mcphttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/mcp"
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	"github.com/NeuralTrust/AgentGateway/pkg/app/mcp/mocks"
+	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/app/mcp/mocks"
 	"github.com/stretchr/testify/mock"
 )
 

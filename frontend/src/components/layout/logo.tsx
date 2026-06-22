@@ -21,7 +21,7 @@ export function Logo({ className }: { className?: string }) {
     <div className={cn("flex items-center gap-2.5", className)}>
       <LogoMark className="h-7 w-7" />
       <span className="text-[15px] font-semibold tracking-tight text-fg">
-        AgentGateway
+        TrustGate
       </span>
     </div>
   );

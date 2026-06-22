@@ -15,24 +15,24 @@
 package modules
 
 import (
-	apihandler "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http"
-	oauthhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/oauth"
-	playgroundhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/playground"
-	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
-	"github.com/NeuralTrust/AgentGateway/pkg/api/resolver"
-	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	appgateway "github.com/NeuralTrust/AgentGateway/pkg/app/gateway"
-	appoauth "github.com/NeuralTrust/AgentGateway/pkg/app/oauth"
-	"github.com/NeuralTrust/AgentGateway/pkg/config"
-	"github.com/NeuralTrust/AgentGateway/pkg/container"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/introspection"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/jwt"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/mtls"
-	oidcauth "github.com/NeuralTrust/AgentGateway/pkg/infra/auth/oidc"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	playgroundstore "github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/playground"
-	infraoauth "github.com/NeuralTrust/AgentGateway/pkg/infra/oauth"
+	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
+	oauthhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/oauth"
+	playgroundhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/playground"
+	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
+	"github.com/NeuralTrust/TrustGate/pkg/api/resolver"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/container"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/introspection"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/mtls"
+	oidcauth "github.com/NeuralTrust/TrustGate/pkg/infra/auth/oidc"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	playgroundstore "github.com/NeuralTrust/TrustGate/pkg/infra/metrics/playground"
+	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
 )
 
 func API(c *container.Container) error {
@@ -160,13 +160,19 @@ func API(c *container.Container) error {
 	if err := c.Provide(oauthhttp.NewRegisterHandler); err != nil {
 		return err
 	}
-	if err := c.Provide(oauthhttp.NewAuthorizeHandler); err != nil {
+	if err := c.Provide(func(proxy appoauth.AuthProxy, finder appgateway.Finder, cfg *config.Config) *oauthhttp.AuthorizeHandler {
+		gateways := resolver.NewGatewayResolver(finder, cfg.Server.GatewayDiscoveryMode, cfg.Server.MCPBaseDomain)
+		return oauthhttp.NewAuthorizeHandler(proxy, gateways)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(oauthhttp.NewCallbackHandler); err != nil {
 		return err
 	}
-	if err := c.Provide(oauthhttp.NewTokenHandler); err != nil {
+	if err := c.Provide(func(proxy appoauth.AuthProxy, finder appgateway.Finder, cfg *config.Config) *oauthhttp.TokenHandler {
+		gateways := resolver.NewGatewayResolver(finder, cfg.Server.GatewayDiscoveryMode, cfg.Server.MCPBaseDomain)
+		return oauthhttp.NewTokenHandler(proxy, gateways)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(oauthhttp.NewConnectHandler); err != nil {

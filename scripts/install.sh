@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# One-line installer for AgentGateway.
+# One-line installer for TrustGate.
 #
-#   curl -fsSL https://raw.githubusercontent.com/NeuralTrust/AgentGateway/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/NeuralTrust/TrustGate/main/scripts/install.sh | bash
 #
 # It clones the repository, seeds the .env file, and brings up the full stack
 # (Postgres, Redis, Kafka + admin, proxy & MCP planes) in Docker. Re-running is
@@ -11,17 +11,17 @@
 # on your PATH so you can run `trustgate <subcommand>` from anywhere.
 #
 # Environment overrides:
-#   AG_REPO_URL     Git URL to clone     (default: https://github.com/NeuralTrust/AgentGateway.git)
+#   AG_REPO_URL     Git URL to clone     (default: https://github.com/NeuralTrust/TrustGate.git)
 #   AG_REF          Branch/tag/commit    (default: main)
-#   AG_DIR          Target directory     (default: ./AgentGateway)
+#   AG_DIR          Target directory     (default: ./TrustGate)
 #   AG_BIN_DIR      Where to install the CLI (default: /usr/local/bin if writable, else ~/.local/bin)
 #   AG_INSTALL_CLI  Set to 0 to skip building/installing the trustgate binary
 #   AG_NO_START     Set to 1 to skip bringing the Docker stack up
 set -euo pipefail
 
-AG_REPO_URL="${AG_REPO_URL:-https://github.com/NeuralTrust/AgentGateway.git}"
+AG_REPO_URL="${AG_REPO_URL:-https://github.com/NeuralTrust/TrustGate.git}"
 AG_REF="${AG_REF:-main}"
-AG_DIR="${AG_DIR:-AgentGateway}"
+AG_DIR="${AG_DIR:-TrustGate}"
 CLI_BIN=""
 
 if [[ -t 1 ]]; then
@@ -126,12 +126,12 @@ if [[ "${AG_NO_START:-}" == "1" ]]; then
   warn "AG_NO_START=1 set, skipping Docker startup."
   echo "Start the stack later with: ${BOLD}cd $AG_DIR && make up${RESET}"
 else
-  info "Bringing up the AgentGateway stack (this builds images on first run) ..."
+  info "Bringing up the TrustGate stack (this builds images on first run) ..."
   "${COMPOSE[@]}" -f docker-compose.yaml -f docker-compose.api.yaml up -d --build
 
   cat <<EOF
 
-${GREEN}${BOLD}AgentGateway is up.${RESET}
+${GREEN}${BOLD}TrustGate is up.${RESET}
 
   Admin  -> ${BOLD}http://localhost:8080${RESET}  (healthz: /healthz)
   Proxy  -> ${BOLD}http://localhost:8081${RESET}  (healthz: /healthz)

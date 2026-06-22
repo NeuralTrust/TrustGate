@@ -21,8 +21,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/common/secret"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 )
 
 type Config struct {

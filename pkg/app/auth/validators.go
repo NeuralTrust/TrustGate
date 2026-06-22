@@ -18,8 +18,8 @@ import (
 	"context"
 	"crypto/x509"
 
-	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 )
 
 //go:generate mockery --name=JWTValidator --dir=. --output=./mocks --filename=auth_jwt_validator_mock.go --case=underscore --with-expecter

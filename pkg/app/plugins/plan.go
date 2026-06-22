@@ -17,7 +17,7 @@ package plugins
 import (
 	"sort"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 )
 
 type StagePlan struct {
@@ -83,6 +83,18 @@ func (p *StagePlan) Has(stage policy.Stage) bool {
 		return false
 	}
 	return len(p.byStage[stage]) > 0
+}
+
+func (p *StagePlan) Blocks(stage policy.Stage) bool {
+	if p == nil {
+		return false
+	}
+	for _, entry := range p.byStage[stage] {
+		if Blocks(entry.mode) {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *StagePlan) entriesFor(stage policy.Stage) []chainEntry {

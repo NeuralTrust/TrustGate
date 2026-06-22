@@ -3,7 +3,7 @@
 package mocks
 
 import (
-	plugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
+	plugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	mock "github.com/stretchr/testify/mock"
 )
 

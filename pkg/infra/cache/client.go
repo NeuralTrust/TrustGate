@@ -23,7 +23,7 @@ import (
 	"sync"
 	"time"
 
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/go-redis/redis/v8"
 )
 

@@ -20,8 +20,10 @@ import "errors"
 // chain with a specific HTTP status (e.g. rate limit 429, CORS preflight 204).
 type PluginError struct {
 	StatusCode int
+	Type       string
 	Message    string
 	Headers    map[string][]string
+	Body       []byte
 }
 
 func (e *PluginError) Error() string {

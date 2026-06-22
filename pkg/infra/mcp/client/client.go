@@ -21,12 +21,12 @@ import (
 	"net/http"
 	"time"
 
-	appmcp "github.com/NeuralTrust/AgentGateway/pkg/app/mcp"
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
-	clientName    = "agentgateway"
+	clientName    = "trustgate"
 	clientVersion = "1.0"
 
 	responseHeaderTimeout = 30 * time.Second

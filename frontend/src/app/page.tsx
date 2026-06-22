@@ -23,7 +23,7 @@ export default async function HomePage() {
         <div className="flex flex-col items-center text-center mb-8">
           <Logo className="h-9 w-auto mb-6" />
           <h1 className="text-[22px] font-semibold tracking-tight text-fg">
-            Welcome to AgentGateway
+            Welcome to TrustGate
           </h1>
           <p className="text-[14px] text-muted mt-2 max-w-xs">
             Create your first gateway to start configuring registries, consumers, auth and policies.

@@ -18,14 +18,14 @@ import (
 	"context"
 	"log/slog"
 
-	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
-	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"golang.org/x/sync/singleflight"
 )
 

@@ -26,9 +26,11 @@ import (
 	"sync"
 	"testing"
 
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 type memFlowStore struct {
@@ -332,6 +334,24 @@ func TestAuthorizeRejectsUnsafeRedirectForUnregisteredClients(t *testing.T) {
 	}
 }
 
+func TestAuthorizeRequiresPrivateUseRedirectRegistration(t *testing.T) {
+	t.Parallel()
+	idp, _ := fakeIdP(t)
+	proxy := newProxyUnderTest(t, idp.URL, newMemFlowStore())
+
+	_, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
+		ResponseType:        "code",
+		ClientID:            "gw-client-id",
+		RedirectURI:         "claude://oauth/callback",
+		CodeChallenge:       s256("v"),
+		CodeChallengeMethod: "S256",
+	})
+	var oe *OAuthError
+	if !errors.As(err, &oe) || oe.Code != "invalid_request" {
+		t.Fatalf("expected invalid_request for unregistered private-use redirect_uri, got %v", err)
+	}
+}
+
 func TestAuthorizeRequiresPKCE(t *testing.T) {
 	t.Parallel()
 	idp, _ := fakeIdP(t)
@@ -579,6 +599,46 @@ func TestAuthorizeMultiIssuerRequiresResource(t *testing.T) {
 	}
 }
 
+// Without a resource indicator, the gateway addressed by the request (resolved
+// upstream from the subdomain or the gateway-slug header and carried on the
+// context) scopes IdP selection, so a single-issuer gateway resolves even when
+// other tenants run different IdPs across the platform.
+func TestAuthorizeFallsBackToContextGatewayWithoutResource(t *testing.T) {
+	t.Parallel()
+	idpGateway, _ := fakeIdP(t)
+	idpOther, capturedOther := fakeIdP(t)
+
+	gatewayID := ids.New[ids.GatewayKind]()
+	gatewayAuth := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: idpGateway.URL, ClientID: "client-gw"})
+	gatewayAuth.GatewayID = gatewayID
+	otherAuth := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: idpOther.URL, ClientID: "client-other"})
+
+	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{gatewayAuth, otherAuth}}
+	proxy := NewAuthProxy(finder, &fakePathResolver{}, http.DefaultClient, newMemFlowStore(), nil)
+
+	ctx := appgateway.WithGateway(context.Background(), &gatewaydomain.Gateway{ID: gatewayID, Slug: "acme"})
+	location, err := proxy.Authorize(ctx, "https://acme.mcp.example.com", AuthorizeRequest{
+		ResponseType:        "code",
+		ClientID:            "client-gw",
+		RedirectURI:         "cursor://anysphere.cursor-mcp/oauth/callback",
+		CodeChallenge:       s256("v"),
+		CodeChallengeMethod: "S256",
+	})
+	if err != nil {
+		t.Fatalf("authorize must resolve the context gateway's single IdP, got %v", err)
+	}
+	loc, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("parse redirect: %v", err)
+	}
+	if got := loc.Scheme + "://" + loc.Host; got != idpGateway.URL {
+		t.Fatalf("authorize must redirect to the context gateway IdP, got %s (want %s)", got, idpGateway.URL)
+	}
+	if len(*capturedOther) != 0 {
+		t.Fatalf("another tenant's IdP must never be contacted, got %v", *capturedOther)
+	}
+}
+
 // The refresh leg also honors the resource indicator (RFC 8707 in token
 // requests), so refreshes keep hitting the right IdP.
 func TestRefreshUsesResourceIndicator(t *testing.T) {
@@ -605,6 +665,62 @@ func TestRefreshUsesResourceIndicator(t *testing.T) {
 	}
 	if capturedB.Get("grant_type") != "refresh_token" || capturedB.Get("client_id") != "client-b" {
 		t.Fatalf("refresh must be proxied to tenant B's IdP, got %v", *capturedB)
+	}
+}
+
+func TestDecodeTokenResponseFormEncoded(t *testing.T) {
+	t.Parallel()
+	doc, err := decodeTokenResponse([]byte("access_token=gho_abc&token_type=bearer&scope=&expires_in=3600"))
+	if err != nil {
+		t.Fatalf("decode form-encoded token: %v", err)
+	}
+	if doc["access_token"] != "gho_abc" || doc["token_type"] != "bearer" {
+		t.Fatalf("unexpected decoded token: %v", doc)
+	}
+	if doc["expires_in"] != 3600 {
+		t.Fatalf("expires_in must be numeric, got %T %v", doc["expires_in"], doc["expires_in"])
+	}
+}
+
+func TestDecodeTokenResponseRejectsGarbage(t *testing.T) {
+	t.Parallel()
+	if _, err := decodeTokenResponse([]byte("<html>nope</html>")); err == nil {
+		t.Fatal("expected error for a non-token body")
+	}
+}
+
+// GitHub's token endpoint replies with application/x-www-form-urlencoded unless
+// Accept: application/json is sent; the broker must still parse the token.
+func TestRefreshAcceptsFormEncodedIdP(t *testing.T) {
+	t.Parallel()
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issuer":                 srv.URL,
+				"authorization_endpoint": srv.URL + "/authorize",
+				"token_endpoint":         srv.URL + "/token",
+			})
+		case "/token":
+			w.Header().Set("Content-Type", "application/x-www-form-urlencoded")
+			_, _ = w.Write([]byte("access_token=gho_live&token_type=bearer&scope=mcp.access"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	proxy := newProxyUnderTest(t, srv.URL, newMemFlowStore())
+	token, err := proxy.Exchange(context.Background(), "http://gw.example.com", TokenRequest{
+		GrantType:    "refresh_token",
+		RefreshToken: "rt-1",
+	})
+	if err != nil {
+		t.Fatalf("refresh against form-encoded IdP: %v", err)
+	}
+	if token["access_token"] != "gho_live" {
+		t.Fatalf("expected form-decoded access token, got %v", token)
 	}
 }
 

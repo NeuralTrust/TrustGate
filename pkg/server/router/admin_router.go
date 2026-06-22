@@ -15,16 +15,16 @@
 package router
 
 import (
-	apihandler "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http"
-	authhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/auth"
-	cataloghttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/catalog"
-	consumerhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/consumer"
-	gatewayhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/gateway"
-	playgroundhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/playground"
-	policyhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/policy"
-	registryhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/registry"
-	rolehttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/role"
-	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
+	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
+	authhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth"
+	cataloghttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/catalog"
+	consumerhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer"
+	gatewayhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway"
+	playgroundhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/playground"
+	policyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy"
+	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
+	rolehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/role"
+	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/gofiber/fiber/v2"
 	fiberSwagger "github.com/gofiber/swagger"
 )

@@ -21,13 +21,13 @@ import (
 	"fmt"
 	"strings"
 
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -38,6 +38,7 @@ const (
 	pgForeignKeyViolation = "23503"
 	pgCheckViolation      = "23514"
 	pgRoutingConflict     = "AG409"
+	pgCrossGatewayLink    = "AG422"
 
 	gatewayFKConstraint          = "consumers_gateway_id_fkey"
 	consumerRegistryFKConstraint = "consumer_registry_registry_id_fkey"
@@ -163,7 +164,7 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
 		       headers          = $10,
 		       active           = $11,
 		       updated_at       = $12
-		 WHERE id = $1`
+		 WHERE id = $1 AND gateway_id = $13`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		if err := lockConsumerRow(ctx, tx, c.ID); err != nil {
 			return err
@@ -176,7 +177,7 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
 		}
 		cmd, err := tx.Exec(ctx, updateConsumer,
 			c.ID, c.Name, string(c.Type), string(c.RoutingMode), lbConfigBytes, fallbackBytes, modelPoliciesBytes,
-			toolkitBytes, nullableFailMode(c.FailMode()), headersBytes, c.Active, c.UpdatedAt,
+			toolkitBytes, nullableFailMode(c.FailMode()), headersBytes, c.Active, c.UpdatedAt, c.GatewayID,
 		)
 		if err != nil {
 			return mapPgError(err)
@@ -393,10 +394,10 @@ func (r *Repository) DetachPolicy(ctx context.Context, consumerID ids.ConsumerID
 	return nil
 }
 
-func (r *Repository) Delete(ctx context.Context, id ids.ConsumerID) error {
-	const query = `DELETE FROM consumers WHERE id = $1`
+func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.ConsumerID) error {
+	const query = `DELETE FROM consumers WHERE id = $1 AND gateway_id = $2`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
-		cmd, err := tx.Exec(ctx, query, id)
+		cmd, err := tx.Exec(ctx, query, id, gatewayID)
 		if err != nil {
 			return mapPgDeleteError(err)
 		}
@@ -793,7 +794,7 @@ func nullableUUID(id uuid.UUID) any {
 func mapPgError(err error) error {
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		switch pgErr.Code {
-		case pgRoutingConflict:
+		case pgRoutingConflict, pgCrossGatewayLink:
 			return fmt.Errorf("%s: %w", pgErr.Message, commonerrors.ErrConflict)
 		case pgUniqueViolation:
 			if strings.Contains(pgErr.ConstraintName, consumerSlugUniqueIndex) {

@@ -17,7 +17,7 @@ package secret_test
 import (
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/common/secret"
+	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 )
 
 func TestResolve(t *testing.T) {

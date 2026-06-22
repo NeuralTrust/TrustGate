@@ -18,9 +18,9 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
 //go:generate mockery --name=Deleter --dir=. --output=./mocks --filename=role_deleter_mock.go --case=underscore --with-expecter
@@ -59,7 +59,7 @@ func (d *deleter) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.Ro
 	if existing.GatewayID != gatewayID {
 		return domain.ErrNotFound
 	}
-	if err := d.repo.Delete(ctx, id); err != nil {
+	if err := d.repo.Delete(ctx, gatewayID, id); err != nil {
 		return err
 	}
 	d.memoryCache.Delete(id.String())

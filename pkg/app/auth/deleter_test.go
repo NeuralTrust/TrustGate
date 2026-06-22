@@ -19,15 +19,15 @@ import (
 	"errors"
 	"testing"
 
-	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/auth/mocks"
-	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	consumermocks "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer/mocks"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	consumermocks "github.com/NeuralTrust/TrustGate/pkg/domain/consumer/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/cachetest"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -37,7 +37,7 @@ func TestDeleter_Delete_Success(t *testing.T) {
 	id := ids.New[ids.AuthKind]()
 	gwID := ids.New[ids.GatewayKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Auth{ID: id, GatewayID: gwID}, nil).Once()
-	repo.EXPECT().Delete(mock.Anything, id).Return(nil).Once()
+	repo.EXPECT().Delete(mock.Anything, gwID, id).Return(nil).Once()
 
 	mgr := newCacheManager()
 	mgr.GetTTLMap(cache.AuthTTLName).Set(id.String(), &domain.Auth{ID: id})

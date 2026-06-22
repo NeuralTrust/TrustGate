@@ -23,20 +23,20 @@ import (
 	"strings"
 	"time"
 
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
-	approuting "github.com/NeuralTrust/AgentGateway/pkg/app/routing"
-	appsession "github.com/NeuralTrust/AgentGateway/pkg/app/session"
-	"github.com/NeuralTrust/AgentGateway/pkg/config"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	routingdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/routing"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer/algorithm"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
+	appsession "github.com/NeuralTrust/TrustGate/pkg/app/session"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer/algorithm"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -524,7 +524,9 @@ func (f *forwarder) finalizeBody(
 	pluginResp := dto.response
 	pluginResp.Headers = cloneHeaders(dto.baseHeaders)
 	mergeProviderResponse(pluginResp, providerResp, false)
-	f.runPreResponse(ctx, dto.policies, dto.plan, dto.request, pluginResp)
+	if pe := f.runPreResponseGated(ctx, dto.policies, dto.plan, dto.request, pluginResp); pe != nil {
+		return pluginErrorResult(pe)
+	}
 	f.firePostResponse(dto.policies, dto.plan, dto.request, pluginResp)
 	f.recordSession(ctx, dto.request, providerResp.ResponseID, dto.backend.Provider(), providerResp.Model, providerResp.StatusCode)
 	return &ForwardResult{

@@ -25,13 +25,13 @@ import (
 	"testing"
 	"time"
 
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	"github.com/NeuralTrust/AgentGateway/pkg/app/oauth"
-	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	vaultdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/vault"
-	infraoauth "github.com/NeuralTrust/AgentGateway/pkg/infra/oauth"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
+	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
 )
 
 type memConnectStore struct {

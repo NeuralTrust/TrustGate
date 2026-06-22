@@ -21,9 +21,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	telemetrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
+	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
 const (

@@ -20,8 +20,8 @@ import (
 	"net"
 	"net/http"
 
-	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 type Outcome int

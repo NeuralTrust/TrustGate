@@ -15,9 +15,9 @@
 package catalog
 
 import (
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
-	appcatalog "github.com/NeuralTrust/AgentGateway/pkg/app/catalog"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/catalog"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/gofiber/fiber/v2"
 )
 

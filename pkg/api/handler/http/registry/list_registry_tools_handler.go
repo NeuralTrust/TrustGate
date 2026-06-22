@@ -17,9 +17,9 @@ package registry
 import (
 	"errors"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
-	appmcp "github.com/NeuralTrust/AgentGateway/pkg/app/mcp"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 

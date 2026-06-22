@@ -20,8 +20,8 @@ import (
 	"strings"
 	"time"
 
-	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 // MCPPolicies mirrors the inline consumer MCP policy ({toolkit, fail_mode})

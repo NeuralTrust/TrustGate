@@ -20,18 +20,18 @@ import (
 	"log/slog"
 	"testing"
 
-	approle "github.com/NeuralTrust/AgentGateway/pkg/app/role"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
+	approle "github.com/NeuralTrust/TrustGate/pkg/app/role"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/cachetest"
 )
 
 type repositoryStub struct{}
 
 func (repositoryStub) Save(context.Context, *domain.Role) error   { return nil }
 func (repositoryStub) Update(context.Context, *domain.Role) error { return nil }
-func (repositoryStub) Delete(context.Context, ids.RoleID) error   { return nil }
+func (repositoryStub) Delete(context.Context, ids.GatewayID, ids.RoleID) error { return nil }
 func (repositoryStub) FindByID(context.Context, ids.RoleID) (*domain.Role, error) {
 	return nil, domain.ErrNotFound
 }

@@ -19,12 +19,13 @@ import (
 	"encoding/json"
 	"iter"
 	"log/slog"
+	"net/http"
 	"time"
 
-	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
 const postResponseTimeout = 30 * time.Second
@@ -62,27 +63,6 @@ func (f *forwarder) runPreRequest(
 	return nil, nil
 }
 
-func (f *forwarder) runPreResponse(
-	ctx context.Context,
-	policies []*policy.Policy,
-	plan *appplugins.StagePlan,
-	req *infracontext.RequestContext,
-	resp *infracontext.ResponseContext,
-) {
-	if f.executor == nil {
-		return
-	}
-	if _, err := f.executor.RunStage(ctx, appplugins.StageInput{
-		Stage:    policy.StagePreResponse,
-		Policies: policies,
-		Plan:     plan,
-		Request:  req,
-		Response: resp,
-	}); err != nil {
-		f.logger.Warn("pre_response plugin stage failed", slog.String("error", err.Error()))
-	}
-}
-
 func (f *forwarder) runPreResponseGated(
 	ctx context.Context,
 	policies []*policy.Policy,
@@ -104,8 +84,34 @@ func (f *forwarder) runPreResponseGated(
 			return pe
 		}
 		f.logger.Warn("pre_response plugin stage failed", slog.String("error", err.Error()))
+		if preResponseBlocks(policies, plan) {
+			return &appplugins.PluginError{
+				StatusCode: http.StatusBadGateway,
+				Message:    "pre_response plugin stage failed",
+			}
+		}
 	}
 	return nil
+}
+
+func preResponseBlocks(policies []*policy.Policy, plan *appplugins.StagePlan) bool {
+	if plan != nil {
+		return plan.Blocks(policy.StagePreResponse)
+	}
+	for _, pol := range policies {
+		if pol == nil || !pol.Enabled || !appplugins.Blocks(pol.Mode.Normalize()) {
+			continue
+		}
+		if len(pol.Stages) == 0 {
+			return true
+		}
+		for _, stage := range pol.Stages {
+			if stage == policy.StagePreResponse {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func hasPostResponse(plan *appplugins.StagePlan) bool {
@@ -192,10 +198,17 @@ func drainStream(stream iter.Seq2[[]byte, error]) {
 }
 
 func pluginErrorResult(pe *appplugins.PluginError) *ForwardResult {
-	body, _ := json.Marshal(map[string]string{
-		"error":   "plugin_rejected",
-		"message": pe.Message,
-	})
+	body := pe.Body
+	if body == nil {
+		payload := map[string]string{
+			"error":   "plugin_rejected",
+			"message": pe.Message,
+		}
+		if pe.Type != "" {
+			payload["type"] = pe.Type
+		}
+		body, _ = json.Marshal(payload)
+	}
 	return &ForwardResult{
 		StatusCode: pe.StatusCode,
 		Headers:    pe.Headers,

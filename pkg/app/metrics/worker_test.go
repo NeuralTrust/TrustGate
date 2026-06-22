@@ -22,12 +22,12 @@ import (
 	"testing"
 	"time"
 
-	appcatalog "github.com/NeuralTrust/AgentGateway/pkg/app/catalog"
-	appmetrics "github.com/NeuralTrust/AgentGateway/pkg/app/metrics"
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/events"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

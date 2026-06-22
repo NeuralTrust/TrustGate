@@ -18,7 +18,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 func TestLBConfig_Validate(t *testing.T) {

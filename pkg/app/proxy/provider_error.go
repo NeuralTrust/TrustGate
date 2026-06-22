@@ -14,7 +14,7 @@
 
 package proxy
 
-import "github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
+import "github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 
 func responseCarriesProviderError(resp *ProviderResponse) bool {
 	if resp == nil || len(resp.Body) == 0 {

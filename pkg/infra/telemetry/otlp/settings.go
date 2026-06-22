@@ -21,7 +21,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/mitchellh/mapstructure"
 )
 

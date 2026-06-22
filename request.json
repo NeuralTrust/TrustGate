@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 0.1.0\n\nCommits since last release:\n- 1152f45 Develop (#16)\n- 469ec9f rebuild agentgateway v0.1.0 in k8s/overlays/prod\n"
+      "content": "Current version: 0.1.0\n\nCommits since last release:\n- 1152f45 Develop (#16)\n- 469ec9f rebuild trustgate v0.1.0 in k8s/overlays/prod\n"
     }
   ],
   "max_tokens": 200,

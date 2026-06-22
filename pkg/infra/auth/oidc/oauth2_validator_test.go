@@ -26,8 +26,8 @@ import (
 	"testing"
 	"time"
 
-	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/oidc"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/oidc"
 	"github.com/golang-jwt/jwt/v5"
 )
 

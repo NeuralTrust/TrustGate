@@ -17,7 +17,7 @@ package catalog
 import (
 	"context"
 
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/catalog"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 )
 
 //go:generate mockery --name=Service --dir=. --output=./mocks --filename=catalog_service_mock.go --case=underscore --with-expecter

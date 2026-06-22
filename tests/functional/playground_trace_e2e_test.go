@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/jwt"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
 	golangjwt "github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"

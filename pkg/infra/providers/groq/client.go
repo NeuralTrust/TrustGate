@@ -18,8 +18,8 @@ import (
 	"context"
 	"iter"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/openai"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
 )
 
 const chatCompletionsURL = "https://api.groq.com/openai/v1/chat/completions"

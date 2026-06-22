@@ -17,12 +17,12 @@ package auth
 import (
 	"fmt"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/auth/request"
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/auth/response"
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
-	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth/request"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth/response"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/gofiber/fiber/v2"
 )
 

@@ -33,7 +33,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_version.Info"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_version.Info"
                         }
                     }
                 }
@@ -124,19 +124,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_response.ListGatewayResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_response.ListGatewayResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -165,7 +165,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_request.CreateGatewayRequest"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_request.CreateGatewayRequest"
                         }
                     }
                 ],
@@ -173,25 +173,25 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_response.GatewayResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_response.GatewayResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -244,19 +244,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.ListAuthResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.ListAuthResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -293,7 +293,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.CreateAuthRequest"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.CreateAuthRequest"
                         }
                     }
                 ],
@@ -301,31 +301,31 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.AuthResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.AuthResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -368,25 +368,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.AuthResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.AuthResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -431,7 +431,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.UpdateAuthRequest"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateAuthRequest"
                         }
                     }
                 ],
@@ -439,31 +439,31 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.AuthResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.AuthResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -507,25 +507,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -578,19 +578,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ListConsumerResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ListConsumerResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -627,7 +627,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.CreateConsumerRequest"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.CreateConsumerRequest"
                         }
                     }
                 ],
@@ -635,31 +635,31 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ConsumerResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -702,25 +702,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ConsumerResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -765,7 +765,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.UpdateConsumerRequest"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.UpdateConsumerRequest"
                         }
                     }
                 ],
@@ -773,31 +773,31 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ConsumerResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -841,25 +841,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -913,19 +913,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -977,19 +977,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -1043,19 +1043,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -1107,19 +1107,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -1173,7 +1173,7 @@ const docTemplate = `{
                         "name": "body",
                         "in": "body",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.AttachRegistryRequest"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AttachRegistryRequest"
                         }
                     }
                 ],
@@ -1184,19 +1184,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -1248,19 +1248,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -1314,25 +1314,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -1384,19 +1384,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -1449,19 +1449,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.ListPolicyResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.ListPolicyResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -1498,7 +1498,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.CreatePolicyRequest"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.CreatePolicyRequest"
                         }
                     }
                 ],
@@ -1506,31 +1506,31 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PolicyResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PolicyResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -1573,25 +1573,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PolicyResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PolicyResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -1636,7 +1636,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.UpdatePolicyRequest"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.UpdatePolicyRequest"
                         }
                     }
                 ],
@@ -1644,31 +1644,31 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PolicyResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PolicyResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -1712,25 +1712,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -1773,31 +1773,31 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PolicyResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PolicyResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -1840,25 +1840,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PolicyResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PolicyResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -1899,25 +1899,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PolicyResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PolicyResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -1970,19 +1970,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.ListRegistryResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.ListRegistryResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -2019,7 +2019,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.CreateRegistryRequest"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.CreateRegistryRequest"
                         }
                     }
                 ],
@@ -2027,31 +2027,31 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.RegistryResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -2090,7 +2090,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.TestConnectionRequest"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.TestConnectionRequest"
                         }
                     }
                 ],
@@ -2098,31 +2098,31 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.TestConnectionResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.TestConnectionResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "422": {
                         "description": "Unprocessable Entity",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -2165,25 +2165,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.RegistryResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -2228,7 +2228,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.UpdateRegistryRequest"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.UpdateRegistryRequest"
                         }
                     }
                 ],
@@ -2236,31 +2236,31 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.RegistryResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -2304,25 +2304,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -2375,19 +2375,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.ListRoleResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.ListRoleResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -2424,7 +2424,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.CreateRoleRequest"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.CreateRoleRequest"
                         }
                     }
                 ],
@@ -2432,31 +2432,31 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.RoleResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.RoleResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -2499,25 +2499,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.RoleResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.RoleResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -2562,7 +2562,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.UpdateRoleRequest"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.UpdateRoleRequest"
                         }
                     }
                 ],
@@ -2570,31 +2570,31 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.RoleResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.RoleResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -2638,25 +2638,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -2710,19 +2710,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -2774,25 +2774,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -2827,25 +2827,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_response.GatewayResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_response.GatewayResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -2882,7 +2882,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_request.UpdateGatewayRequest"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_request.UpdateGatewayRequest"
                         }
                     }
                 ],
@@ -2890,31 +2890,31 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_response.GatewayResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_response.GatewayResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -2950,25 +2950,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -2999,7 +2999,7 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -3036,7 +3036,7 @@ const docTemplate = `{
                             "additionalProperties": {
                                 "type": "array",
                                 "items": {
-                                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_catalog_response.ModelResponse"
+                                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_catalog_response.ModelResponse"
                                 }
                             }
                         }
@@ -3044,7 +3044,59 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/playground/traces/{trace_id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the metrics Event captured for a playground request, keyed by the X-AG-Trace-Id returned in the proxy response. Traces expire after a short TTL.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "playground"
+                ],
+                "summary": "Get a playground trace",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Trace id (X-AG-Trace-Id from the proxy response)",
+                        "name": "trace_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Event"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -3121,13 +3173,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Catalog"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_plugins.Catalog"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -3156,7 +3208,7 @@ const docTemplate = `{
                             "additionalProperties": {
                                 "type": "array",
                                 "items": {
-                                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_catalog_response.ProviderResponse"
+                                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_catalog_response.ProviderResponse"
                                 }
                             }
                         }
@@ -3164,7 +3216,7 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -3230,31 +3282,31 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     },
                     "502": {
                         "description": "Bad Gateway",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -3262,25 +3314,25 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.ConfigRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.ConfigRequest": {
             "type": "object",
             "properties": {
                 "mtls": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.MTLSConfigRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.MTLSConfigRequest"
                 },
                 "oauth2": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OAuth2ConfigRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.OAuth2ConfigRequest"
                 },
                 "oidc": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OIDCConfigRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.OIDCConfigRequest"
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.CreateAuthRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.CreateAuthRequest": {
             "type": "object",
             "properties": {
                 "config": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.ConfigRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.ConfigRequest"
                 },
                 "enabled": {
                     "type": "boolean"
@@ -3293,7 +3345,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.MTLSConfigRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.MTLSConfigRequest": {
             "type": "object",
             "properties": {
                 "allowed_common_names": {
@@ -3319,7 +3371,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OAuth2ConfigRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.OAuth2ConfigRequest": {
             "type": "object",
             "properties": {
                 "allowed_algorithms": {
@@ -3357,7 +3409,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OIDCConfigRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.OIDCConfigRequest": {
             "type": "object",
             "properties": {
                 "allowed_algorithms": {
@@ -3395,11 +3447,11 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.UpdateAuthRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.UpdateAuthRequest": {
             "type": "object",
             "properties": {
                 "config": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.ConfigRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.ConfigRequest"
                 },
                 "enabled": {
                     "type": "boolean"
@@ -3412,7 +3464,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.AuthResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.AuthResponse": {
             "type": "object",
             "properties": {
                 "api_key": {
@@ -3420,7 +3472,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "config": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.ConfigResponse"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.ConfigResponse"
                 },
                 "created_at": {
                     "type": "string"
@@ -3445,27 +3497,27 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.ConfigResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.ConfigResponse": {
             "type": "object",
             "properties": {
                 "mtls": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.MTLSConfigResponse"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.MTLSConfigResponse"
                 },
                 "oauth2": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OAuth2ConfigResponse"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.OAuth2ConfigResponse"
                 },
                 "oidc": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OIDCConfigResponse"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.OIDCConfigResponse"
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.ListAuthResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.ListAuthResponse": {
             "type": "object",
             "properties": {
                 "items": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.AuthResponse"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.AuthResponse"
                     }
                 },
                 "page": {
@@ -3479,7 +3531,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.MTLSConfigResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.MTLSConfigResponse": {
             "type": "object",
             "properties": {
                 "allowed_common_names": {
@@ -3505,7 +3557,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OAuth2ConfigResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.OAuth2ConfigResponse": {
             "type": "object",
             "properties": {
                 "allowed_algorithms": {
@@ -3543,7 +3595,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OIDCConfigResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.OIDCConfigResponse": {
             "type": "object",
             "properties": {
                 "allowed_algorithms": {
@@ -3581,7 +3633,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_catalog_response.ModelResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_catalog_response.ModelResponse": {
             "type": "object",
             "properties": {
                 "capabilities": {
@@ -3623,13 +3675,13 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_catalog_response.ProviderResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_catalog_response.ProviderResponse": {
             "type": "object",
             "properties": {
                 "auth_types": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_catalog.AuthTypeOption"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_catalog.AuthTypeOption"
                     }
                 },
                 "code": {
@@ -3648,7 +3700,7 @@ const docTemplate = `{
                 "provider_options_schema": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_catalog.ProviderOptionField"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_catalog.ProviderOptionField"
                     }
                 },
                 "source": {
@@ -3659,7 +3711,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.APIKeyAuthRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.APIKeyAuthRequest": {
             "type": "object",
             "properties": {
                 "api_key": {
@@ -3683,7 +3735,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.AttachRegistryRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.AttachRegistryRequest": {
             "type": "object",
             "properties": {
                 "weight": {
@@ -3695,7 +3747,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.CreateConsumerRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.CreateConsumerRequest": {
             "type": "object",
             "properties": {
                 "active": {
@@ -3705,7 +3757,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "fallback": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.FallbackRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.FallbackRequest"
                 },
                 "headers": {
                     "type": "object",
@@ -3714,12 +3766,12 @@ const docTemplate = `{
                     }
                 },
                 "lb_config": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.LBConfigRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.LBConfigRequest"
                 },
                 "model_policies": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ModelPolicyRequest"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ModelPolicyRequest"
                     }
                 },
                 "name": {
@@ -3728,7 +3780,7 @@ const docTemplate = `{
                 "registries": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryBindingRequest"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.RegistryBindingRequest"
                     }
                 },
                 "roles": {
@@ -3743,7 +3795,7 @@ const docTemplate = `{
                 "toolkit": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ToolkitEntryRequest"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ToolkitEntryRequest"
                     }
                 },
                 "type": {
@@ -3751,11 +3803,11 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.EmbeddingConfigRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.EmbeddingConfigRequest": {
             "type": "object",
             "properties": {
                 "auth": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.APIKeyAuthRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.APIKeyAuthRequest"
                 },
                 "model": {
                     "type": "string"
@@ -3765,7 +3817,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.FallbackBudgetRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.FallbackBudgetRequest": {
             "type": "object",
             "properties": {
                 "max_attempts": {
@@ -3776,11 +3828,11 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.FallbackRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.FallbackRequest": {
             "type": "object",
             "properties": {
                 "budget": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.FallbackBudgetRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.FallbackBudgetRequest"
                 },
                 "chain": {
                     "type": "array",
@@ -3799,14 +3851,14 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.LBConfigRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.LBConfigRequest": {
             "type": "object",
             "properties": {
                 "algorithm": {
                     "type": "string"
                 },
                 "embedding_config": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.EmbeddingConfigRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.EmbeddingConfigRequest"
                 },
                 "enabled": {
                     "type": "boolean"
@@ -3814,7 +3866,7 @@ const docTemplate = `{
                 "members": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.LBPoolMemberRequest"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.LBPoolMemberRequest"
                     }
                 },
                 "pool_alias": {
@@ -3822,7 +3874,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.LBPoolMemberRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.LBPoolMemberRequest": {
             "type": "object",
             "properties": {
                 "models": {
@@ -3836,7 +3888,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ModelPolicyRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ModelPolicyRequest": {
             "type": "object",
             "properties": {
                 "allowed": {
@@ -3853,14 +3905,14 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryBindingRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.RegistryBindingRequest": {
             "type": "object",
             "properties": {
                 "id": {
                     "type": "string"
                 },
                 "model_policies": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryModelPolicyRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.RegistryModelPolicyRequest"
                 },
                 "weight": {
                     "description": "Weight is the relative weighted-round-robin share on a 1..100 scale.",
@@ -3871,7 +3923,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryModelPolicyRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.RegistryModelPolicyRequest": {
             "type": "object",
             "properties": {
                 "allowed": {
@@ -3885,7 +3937,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ToolkitEntryRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ToolkitEntryRequest": {
             "type": "object",
             "properties": {
                 "expose_as": {
@@ -3905,7 +3957,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.UpdateConsumerRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.UpdateConsumerRequest": {
             "type": "object",
             "properties": {
                 "active": {
@@ -3915,7 +3967,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "fallback": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.FallbackRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.FallbackRequest"
                 },
                 "headers": {
                     "type": "object",
@@ -3924,12 +3976,12 @@ const docTemplate = `{
                     }
                 },
                 "lb_config": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.LBConfigRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.LBConfigRequest"
                 },
                 "model_policies": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ModelPolicyRequest"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ModelPolicyRequest"
                     }
                 },
                 "name": {
@@ -3941,7 +3993,7 @@ const docTemplate = `{
                 "toolkit": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ToolkitEntryRequest"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ToolkitEntryRequest"
                     }
                 },
                 "type": {
@@ -3949,7 +4001,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ConsumerResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerResponse": {
             "type": "object",
             "properties": {
                 "active": {
@@ -3968,7 +4020,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "fallback": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.FallbackResponse"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.FallbackResponse"
                 },
                 "gateway_id": {
                     "type": "string"
@@ -3983,12 +4035,12 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "lb_config": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.LBConfigResponse"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.LBConfigResponse"
                 },
                 "model_policies": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ModelPolicyResponse"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ModelPolicyResponse"
                     }
                 },
                 "name": {
@@ -4003,7 +4055,7 @@ const docTemplate = `{
                 "registry_weights": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.RegistryWeightResponse"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.RegistryWeightResponse"
                     }
                 },
                 "role_ids": {
@@ -4021,7 +4073,7 @@ const docTemplate = `{
                 "toolkit": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ToolkitEntryResponse"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ToolkitEntryResponse"
                     }
                 },
                 "type": {
@@ -4032,7 +4084,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.EmbeddingAuthResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.EmbeddingAuthResponse": {
             "type": "object",
             "properties": {
                 "api_key": {
@@ -4056,11 +4108,11 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.EmbeddingConfigResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.EmbeddingConfigResponse": {
             "type": "object",
             "properties": {
                 "auth": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.EmbeddingAuthResponse"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.EmbeddingAuthResponse"
                 },
                 "model": {
                     "type": "string"
@@ -4070,7 +4122,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.FallbackBudgetResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.FallbackBudgetResponse": {
             "type": "object",
             "properties": {
                 "max_attempts": {
@@ -4081,11 +4133,11 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.FallbackResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.FallbackResponse": {
             "type": "object",
             "properties": {
                 "budget": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.FallbackBudgetResponse"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.FallbackBudgetResponse"
                 },
                 "chain": {
                     "type": "array",
@@ -4104,14 +4156,14 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.LBConfigResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.LBConfigResponse": {
             "type": "object",
             "properties": {
                 "algorithm": {
                     "type": "string"
                 },
                 "embedding_config": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.EmbeddingConfigResponse"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.EmbeddingConfigResponse"
                 },
                 "enabled": {
                     "type": "boolean"
@@ -4119,7 +4171,7 @@ const docTemplate = `{
                 "members": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.LBPoolMemberResponse"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.LBPoolMemberResponse"
                     }
                 },
                 "pool_alias": {
@@ -4127,7 +4179,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.LBPoolMemberResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.LBPoolMemberResponse": {
             "type": "object",
             "properties": {
                 "models": {
@@ -4141,13 +4193,13 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ListConsumerResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ListConsumerResponse": {
             "type": "object",
             "properties": {
                 "items": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ConsumerResponse"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ConsumerResponse"
                     }
                 },
                 "page": {
@@ -4161,7 +4213,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ModelPolicyResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ModelPolicyResponse": {
             "type": "object",
             "properties": {
                 "allowed": {
@@ -4178,7 +4230,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.RegistryWeightResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.RegistryWeightResponse": {
             "type": "object",
             "properties": {
                 "registry_id": {
@@ -4189,7 +4241,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ToolkitEntryResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ToolkitEntryResponse": {
             "type": "object",
             "properties": {
                 "expose_as": {
@@ -4209,11 +4261,11 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_request.CreateGatewayRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_request.CreateGatewayRequest": {
             "type": "object",
             "properties": {
                 "client_tls": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.ClientTLSConfig"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.ClientTLSConfig"
                 },
                 "domain": {
                     "type": "string"
@@ -4228,21 +4280,21 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "session_config": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.SessionConfig"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.SessionConfig"
                 },
                 "slug": {
                     "type": "string"
                 },
                 "telemetry": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_telemetry.Telemetry"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry"
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_request.UpdateGatewayRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_request.UpdateGatewayRequest": {
             "type": "object",
             "properties": {
                 "client_tls": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.ClientTLSConfig"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.ClientTLSConfig"
                 },
                 "domain": {
                     "type": "string"
@@ -4257,7 +4309,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "session_config": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.SessionConfig"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.SessionConfig"
                 },
                 "slug": {
                     "type": "string"
@@ -4266,11 +4318,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "telemetry": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_telemetry.Telemetry"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry"
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_response.GatewayHosts": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_response.GatewayHosts": {
             "type": "object",
             "properties": {
                 "mcp": {
@@ -4281,11 +4333,11 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_response.GatewayResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_response.GatewayResponse": {
             "type": "object",
             "properties": {
                 "client_tls": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.ClientTLSConfig"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.ClientTLSConfig"
                 },
                 "created_at": {
                     "type": "string"
@@ -4294,7 +4346,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "hosts": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_response.GatewayHosts"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_response.GatewayHosts"
                 },
                 "id": {
                     "type": "string"
@@ -4309,7 +4361,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "session_config": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.SessionConfig"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.SessionConfig"
                 },
                 "slug": {
                     "type": "string"
@@ -4318,7 +4370,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "telemetry": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_telemetry.Telemetry"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry"
                 },
                 "updated_at": {
                     "type": "string"
@@ -4328,13 +4380,13 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_response.ListGatewayResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_response.ListGatewayResponse": {
             "type": "object",
             "properties": {
                 "items": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_response.GatewayResponse"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_response.GatewayResponse"
                     }
                 },
                 "page": {
@@ -4348,7 +4400,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody": {
             "type": "object",
             "properties": {
                 "error": {
@@ -4359,7 +4411,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.CreatePolicyRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.CreatePolicyRequest": {
             "type": "object",
             "properties": {
                 "description": {
@@ -4395,7 +4447,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.UpdatePolicyRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.UpdatePolicyRequest": {
             "type": "object",
             "properties": {
                 "description": {
@@ -4431,13 +4483,13 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.ListPolicyResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.ListPolicyResponse": {
             "type": "object",
             "properties": {
                 "items": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PolicyResponse"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PolicyResponse"
                     }
                 },
                 "page": {
@@ -4451,7 +4503,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PolicyResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_response.PolicyResponse": {
             "type": "object",
             "properties": {
                 "consumer_ids": {
@@ -4508,7 +4560,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.APIKeyAuthRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.APIKeyAuthRequest": {
             "type": "object",
             "properties": {
                 "api_key": {
@@ -4532,7 +4584,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.AWSAuthRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.AWSAuthRequest": {
             "type": "object",
             "properties": {
                 "access_key_id": {
@@ -4557,7 +4609,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.AzureAuthRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.AzureAuthRequest": {
             "type": "object",
             "properties": {
                 "api_key": {
@@ -4585,11 +4637,11 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.CreateRegistryRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.CreateRegistryRequest": {
             "type": "object",
             "properties": {
                 "auth": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.TargetAuthRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.TargetAuthRequest"
                 },
                 "description": {
                     "type": "string"
@@ -4598,10 +4650,10 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "health_checks": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.HealthChecksRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.HealthChecksRequest"
                 },
                 "mcp_target": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.MCPTargetRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.MCPTargetRequest"
                 },
                 "name": {
                     "type": "string"
@@ -4618,7 +4670,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.HealthChecksRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.HealthChecksRequest": {
             "type": "object",
             "properties": {
                 "headers": {
@@ -4641,7 +4693,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.MCPAuthRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.MCPAuthRequest": {
             "type": "object",
             "properties": {
                 "actor": {
@@ -4699,11 +4751,11 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.MCPTargetRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.MCPTargetRequest": {
             "type": "object",
             "properties": {
                 "auth": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.MCPAuthRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.MCPAuthRequest"
                 },
                 "code": {
                     "type": "string"
@@ -4722,30 +4774,30 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.TargetAuthRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.TargetAuthRequest": {
             "type": "object",
             "properties": {
                 "api_key": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.APIKeyAuthRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.APIKeyAuthRequest"
                 },
                 "aws": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.AWSAuthRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.AWSAuthRequest"
                 },
                 "azure": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.AzureAuthRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.AzureAuthRequest"
                 },
                 "gcp_service_account": {
                     "type": "string"
                 },
                 "oauth": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.TargetOAuthConfigRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.TargetOAuthConfigRequest"
                 },
                 "type": {
                     "type": "string"
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.TargetOAuthConfigRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.TargetOAuthConfigRequest": {
             "type": "object",
             "properties": {
                 "audience": {
@@ -4801,11 +4853,11 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.TestConnectionRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.TestConnectionRequest": {
             "type": "object",
             "properties": {
                 "auth": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.TargetAuthRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.TargetAuthRequest"
                 },
                 "provider": {
                     "type": "string"
@@ -4819,11 +4871,11 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.UpdateRegistryRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.UpdateRegistryRequest": {
             "type": "object",
             "properties": {
                 "auth": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.TargetAuthRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.TargetAuthRequest"
                 },
                 "description": {
                     "type": "string"
@@ -4832,10 +4884,10 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "health_checks": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.HealthChecksRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.HealthChecksRequest"
                 },
                 "mcp_target": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.MCPTargetRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.MCPTargetRequest"
                 },
                 "name": {
                     "type": "string"
@@ -4849,7 +4901,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.APIKeyAuthResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.APIKeyAuthResponse": {
             "type": "object",
             "properties": {
                 "api_key": {
@@ -4873,7 +4925,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.AWSAuthResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.AWSAuthResponse": {
             "type": "object",
             "properties": {
                 "access_key_id": {
@@ -4898,7 +4950,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.AzureAuthResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.AzureAuthResponse": {
             "type": "object",
             "properties": {
                 "api_key": {
@@ -4926,7 +4978,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.HealthChecksResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.HealthChecksResponse": {
             "type": "object",
             "properties": {
                 "headers": {
@@ -4949,13 +5001,13 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.ListRegistryResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.ListRegistryResponse": {
             "type": "object",
             "properties": {
                 "items": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.RegistryResponse"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryResponse"
                     }
                 },
                 "page": {
@@ -4969,7 +5021,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.MCPAuthResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.MCPAuthResponse": {
             "type": "object",
             "properties": {
                 "actor": {
@@ -5027,11 +5079,11 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.MCPTargetResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.MCPTargetResponse": {
             "type": "object",
             "properties": {
                 "auth": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.MCPAuthResponse"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.MCPAuthResponse"
                 },
                 "code": {
                     "type": "string"
@@ -5050,11 +5102,11 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.RegistryResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryResponse": {
             "type": "object",
             "properties": {
                 "auth": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.TargetAuthResponse"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.TargetAuthResponse"
                 },
                 "created_at": {
                     "type": "string"
@@ -5069,13 +5121,13 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "health_checks": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.HealthChecksResponse"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.HealthChecksResponse"
                 },
                 "id": {
                     "type": "string"
                 },
                 "mcp_target": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.MCPTargetResponse"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.MCPTargetResponse"
                 },
                 "name": {
                     "type": "string"
@@ -5095,30 +5147,30 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.TargetAuthResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.TargetAuthResponse": {
             "type": "object",
             "properties": {
                 "api_key": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.APIKeyAuthResponse"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.APIKeyAuthResponse"
                 },
                 "aws": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.AWSAuthResponse"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.AWSAuthResponse"
                 },
                 "azure": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.AzureAuthResponse"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.AzureAuthResponse"
                 },
                 "gcp_service_account": {
                     "type": "string"
                 },
                 "oauth": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.TargetOAuthConfigResponse"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.TargetOAuthConfigResponse"
                 },
                 "type": {
                     "type": "string"
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.TargetOAuthConfigResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.TargetOAuthConfigResponse": {
             "type": "object",
             "properties": {
                 "audience": {
@@ -5158,7 +5210,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.TestConnectionResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.TestConnectionResponse": {
             "type": "object",
             "properties": {
                 "latency_ms": {
@@ -5181,16 +5233,16 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.CreateRoleRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.CreateRoleRequest": {
             "type": "object",
             "properties": {
                 "mcp_policies": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.MCPPoliciesRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.MCPPoliciesRequest"
                 },
                 "model_policies": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.ModelPolicyRequest"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.ModelPolicyRequest"
                     }
                 },
                 "name": {
@@ -5204,7 +5256,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.MCPPoliciesRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.MCPPoliciesRequest": {
             "type": "object",
             "properties": {
                 "fail_mode": {
@@ -5213,12 +5265,12 @@ const docTemplate = `{
                 "toolkit": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.ToolkitEntryRequest"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.ToolkitEntryRequest"
                     }
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.ModelPolicyRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.ModelPolicyRequest": {
             "type": "object",
             "properties": {
                 "allowed": {
@@ -5235,7 +5287,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.ToolkitEntryRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.ToolkitEntryRequest": {
             "type": "object",
             "properties": {
                 "expose_as": {
@@ -5255,16 +5307,16 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.UpdateRoleRequest": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.UpdateRoleRequest": {
             "type": "object",
             "properties": {
                 "mcp_policies": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.MCPPoliciesRequest"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.MCPPoliciesRequest"
                 },
                 "model_policies": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.ModelPolicyRequest"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_request.ModelPolicyRequest"
                     }
                 },
                 "name": {
@@ -5278,13 +5330,13 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.ListRoleResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.ListRoleResponse": {
             "type": "object",
             "properties": {
                 "items": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.RoleResponse"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.RoleResponse"
                     }
                 },
                 "page": {
@@ -5298,7 +5350,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.ModelPolicyResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.ModelPolicyResponse": {
             "type": "object",
             "properties": {
                 "allowed": {
@@ -5315,7 +5367,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.RoleResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.RoleResponse": {
             "type": "object",
             "properties": {
                 "created_at": {
@@ -5328,12 +5380,12 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "mcp_policies": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_role.MCPPolicies"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_role.MCPPolicies"
                 },
                 "model_policies": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.ModelPolicyResponse"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_role_response.ModelPolicyResponse"
                     }
                 },
                 "name": {
@@ -5356,7 +5408,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_app_catalog.AuthField": {
+        "github_com_NeuralTrust_TrustGate_pkg_app_catalog.AuthField": {
             "type": "object",
             "properties": {
                 "default": {},
@@ -5376,11 +5428,11 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "type": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_catalog.AuthFieldType"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_catalog.AuthFieldType"
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_app_catalog.AuthFieldType": {
+        "github_com_NeuralTrust_TrustGate_pkg_app_catalog.AuthFieldType": {
             "type": "string",
             "enum": [
                 "string",
@@ -5391,7 +5443,7 @@ const docTemplate = `{
                 "AuthFieldTypeBoolean"
             ]
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_app_catalog.AuthTypeOption": {
+        "github_com_NeuralTrust_TrustGate_pkg_app_catalog.AuthTypeOption": {
             "type": "object",
             "properties": {
                 "description": {
@@ -5400,7 +5452,7 @@ const docTemplate = `{
                 "fields": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_catalog.AuthField"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_catalog.AuthField"
                     }
                 },
                 "label": {
@@ -5414,7 +5466,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_app_catalog.OptionFieldType": {
+        "github_com_NeuralTrust_TrustGate_pkg_app_catalog.OptionFieldType": {
             "type": "string",
             "enum": [
                 "string",
@@ -5427,7 +5479,7 @@ const docTemplate = `{
                 "OptionFieldTypeMap"
             ]
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_app_catalog.ProviderOptionField": {
+        "github_com_NeuralTrust_TrustGate_pkg_app_catalog.ProviderOptionField": {
             "type": "object",
             "properties": {
                 "default": {},
@@ -5450,26 +5502,26 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "type": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_catalog.OptionFieldType"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_catalog.OptionFieldType"
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Catalog": {
+        "github_com_NeuralTrust_TrustGate_pkg_app_plugins.Catalog": {
             "type": "object",
             "properties": {
                 "groups": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.CatalogGroup"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_plugins.CatalogGroup"
                     }
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_app_plugins.CatalogEntry": {
+        "github_com_NeuralTrust_TrustGate_pkg_app_plugins.CatalogEntry": {
             "type": "object",
             "properties": {
                 "default_mode": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Mode"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_policy.Mode"
                 },
                 "description": {
                     "type": "string"
@@ -5477,14 +5529,14 @@ const docTemplate = `{
                 "mandatory_stages": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Stage"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_policy.Stage"
                     }
                 },
                 "name": {
                     "type": "string"
                 },
                 "settings_schema": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.SettingsSchema"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_plugins.SettingsSchema"
                 },
                 "slug": {
                     "type": "string"
@@ -5492,24 +5544,24 @@ const docTemplate = `{
                 "supported_modes": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Mode"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_policy.Mode"
                     }
                 },
                 "supported_stages": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Stage"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_policy.Stage"
                     }
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_app_plugins.CatalogGroup": {
+        "github_com_NeuralTrust_TrustGate_pkg_app_plugins.CatalogGroup": {
             "type": "object",
             "properties": {
                 "items": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.CatalogEntry"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_plugins.CatalogEntry"
                     }
                 },
                 "type": {
@@ -5517,7 +5569,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Field": {
+        "github_com_NeuralTrust_TrustGate_pkg_app_plugins.Field": {
             "type": "object",
             "properties": {
                 "default": {},
@@ -5534,14 +5586,14 @@ const docTemplate = `{
                     "description": "Fields lists the child fields of an object.",
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Field"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_plugins.Field"
                     }
                 },
                 "item": {
                     "description": "Item describes the element schema of an array.",
                     "allOf": [
                         {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Field"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_plugins.Field"
                         }
                     ]
                 },
@@ -5562,19 +5614,19 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "type": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.FieldType"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_plugins.FieldType"
                 },
                 "value": {
                     "description": "Value describes the value schema of a map.",
                     "allOf": [
                         {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Field"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_plugins.Field"
                         }
                     ]
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_app_plugins.FieldType": {
+        "github_com_NeuralTrust_TrustGate_pkg_app_plugins.FieldType": {
             "type": "string",
             "enum": [
                 "string",
@@ -5599,18 +5651,18 @@ const docTemplate = `{
                 "FieldTypeMap"
             ]
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_app_plugins.SettingsSchema": {
+        "github_com_NeuralTrust_TrustGate_pkg_app_plugins.SettingsSchema": {
             "type": "object",
             "properties": {
                 "fields": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Field"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_plugins.Field"
                     }
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPAuthHeader": {
+        "github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPAuthHeader": {
             "type": "object",
             "properties": {
                 "description": {
@@ -5631,7 +5683,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPOAuth": {
+        "github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPOAuth": {
             "type": "object",
             "properties": {
                 "authorize_url": {
@@ -5672,13 +5724,13 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPServer": {
+        "github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPServer": {
             "type": "object",
             "properties": {
                 "auth_headers": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPAuthHeader"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPAuthHeader"
                     }
                 },
                 "auth_hint": {
@@ -5702,7 +5754,7 @@ const docTemplate = `{
                     "additionalProperties": {}
                 },
                 "oauth": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPOAuth"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPOAuth"
                 },
                 "relevance": {
                     "description": "Relevance ranks how broadly relevant a server is for enterprises\n(higher = more relevant). Used to sort the catalog; 0 means unranked.",
@@ -5728,7 +5780,7 @@ const docTemplate = `{
                     "description": "Tools is a snapshot of the server's advertised tools, captured by an\nunauthenticated tools/list where the server allows it. It is a preview for\nthe catalog UI; the authoritative per-connection tool set is discovered at\nruntime by the gateway's introspector (and may be tenant/user-specific).\nEmpty when the server requires auth to list tools.",
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPTool"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPTool"
                     }
                 },
                 "transport": {
@@ -5740,7 +5792,7 @@ const docTemplate = `{
                 "url_variables": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPURLVariable"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPURLVariable"
                     }
                 },
                 "vendor": {
@@ -5748,7 +5800,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPTool": {
+        "github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPTool": {
             "type": "object",
             "properties": {
                 "description": {
@@ -5759,7 +5811,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPURLVariable": {
+        "github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPURLVariable": {
             "type": "object",
             "properties": {
                 "description": {
@@ -5781,7 +5833,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_domain_consumer.FailMode": {
+        "github_com_NeuralTrust_TrustGate_pkg_domain_consumer.FailMode": {
             "type": "string",
             "enum": [
                 "closed",
@@ -5792,7 +5844,7 @@ const docTemplate = `{
                 "FailModeOpen"
             ]
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_domain_consumer.ToolkitEntry": {
+        "github_com_NeuralTrust_TrustGate_pkg_domain_consumer.ToolkitEntry": {
             "type": "object",
             "properties": {
                 "expose_as": {
@@ -5812,7 +5864,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.ClientTLSConfig": {
+        "github_com_NeuralTrust_TrustGate_pkg_domain_gateway.ClientTLSConfig": {
             "type": "object",
             "additionalProperties": {
                 "type": "array",
@@ -5821,7 +5873,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.SessionConfig": {
+        "github_com_NeuralTrust_TrustGate_pkg_domain_gateway.SessionConfig": {
             "type": "object",
             "properties": {
                 "body_param_name": {
@@ -5835,7 +5887,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Mode": {
+        "github_com_NeuralTrust_TrustGate_pkg_domain_policy.Mode": {
             "type": "string",
             "enum": [
                 "enforce",
@@ -5850,7 +5902,7 @@ const docTemplate = `{
                 "DefaultMode"
             ]
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Stage": {
+        "github_com_NeuralTrust_TrustGate_pkg_domain_policy.Stage": {
             "type": "string",
             "enum": [
                 "pre_request",
@@ -5865,21 +5917,21 @@ const docTemplate = `{
                 "StagePostResponse"
             ]
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_domain_role.MCPPolicies": {
+        "github_com_NeuralTrust_TrustGate_pkg_domain_role.MCPPolicies": {
             "type": "object",
             "properties": {
                 "fail_mode": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_consumer.FailMode"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_consumer.FailMode"
                 },
                 "toolkit": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_consumer.ToolkitEntry"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_consumer.ToolkitEntry"
                     }
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_domain_telemetry.ExporterConfig": {
+        "github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.ExporterConfig": {
             "type": "object",
             "properties": {
                 "name": {
@@ -5891,7 +5943,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_domain_telemetry.Telemetry": {
+        "github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry": {
             "type": "object",
             "properties": {
                 "enable_plugin_traces": {
@@ -5903,7 +5955,7 @@ const docTemplate = `{
                 "exporters": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_telemetry.ExporterConfig"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.ExporterConfig"
                     }
                 },
                 "extra_params": {
@@ -5920,7 +5972,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Attempt": {
+        "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Attempt": {
             "type": "object",
             "properties": {
                 "attempt": {
@@ -5952,7 +6004,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Consumer": {
+        "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Consumer": {
             "type": "object",
             "properties": {
                 "id": {
@@ -5963,7 +6015,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Cost": {
+        "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Cost": {
             "type": "object",
             "properties": {
                 "completion_usd": {
@@ -5980,20 +6032,20 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Event": {
+        "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Event": {
             "type": "object",
             "properties": {
                 "attempts": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Attempt"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Attempt"
                     }
                 },
                 "consumer": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Consumer"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Consumer"
                 },
                 "cost": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Cost"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Cost"
                 },
                 "end_timestamp": {
                     "type": "integer"
@@ -6008,7 +6060,7 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "latency": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Latency"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Latency"
                 },
                 "occurred_on": {
                     "type": "integer"
@@ -6016,14 +6068,14 @@ const docTemplate = `{
                 "policy_chain": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.PolicyEntry"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.PolicyEntry"
                     }
                 },
                 "request": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Request"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Request"
                 },
                 "response": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Response"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Response"
                 },
                 "schema_version": {
                     "type": "integer"
@@ -6038,7 +6090,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "status": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Status"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Status"
                 },
                 "team_id": {
                     "type": "string"
@@ -6053,11 +6105,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "usage": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Usage"
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Usage"
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Latency": {
+        "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Latency": {
             "type": "object",
             "properties": {
                 "gateway_ms": {
@@ -6077,7 +6129,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.PolicyEntry": {
+        "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.PolicyEntry": {
             "type": "object",
             "properties": {
                 "decision": {
@@ -6110,7 +6162,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Request": {
+        "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Request": {
             "type": "object",
             "properties": {
                 "body": {
@@ -6160,7 +6212,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Response": {
+        "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Response": {
             "type": "object",
             "properties": {
                 "body": {
@@ -6192,7 +6244,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Status": {
+        "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Status": {
             "type": "object",
             "properties": {
                 "code": {
@@ -6209,7 +6261,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Usage": {
+        "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Usage": {
             "type": "object",
             "properties": {
                 "cached_input_tokens": {
@@ -6229,7 +6281,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_version.Info": {
+        "github_com_NeuralTrust_TrustGate_pkg_version.Info": {
             "type": "object",
             "properties": {
                 "app_name": {
@@ -6258,7 +6310,7 @@ const docTemplate = `{
                 "mcp_servers": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPServer"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPServer"
                     }
                 }
             }
@@ -6279,7 +6331,7 @@ var SwaggerInfo = &swag.Spec{
 	Host:             "",
 	BasePath:         "/",
 	Schemes:          []string{},
-	Title:            "AgentGateway Admin API",
+	Title:            "TrustGate Admin API",
 	Description:      "Administrative API for managing gateways and their registries, policies, consumers, roles and auth credentials.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,

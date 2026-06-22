@@ -20,13 +20,13 @@ import (
 	"fmt"
 	"time"
 
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	"github.com/NeuralTrust/AgentGateway/pkg/app/identity/sts"
-	appoauth "github.com/NeuralTrust/AgentGateway/pkg/app/oauth"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	vaultdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/vault"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
+	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -107,7 +107,7 @@ func (r *credentialResolver) exchange(ctx context.Context, rc *appconsumer.Routa
 		return ErrNoPrincipal
 	}
 	cacheKey := fmt.Sprintf("%s|%s|%s", principal.Subject, reg.ID, rc.Consumer.GatewayID)
-	token, err := r.exchanger.Exchange(ctx, principal, cfg, cacheKey)
+	token, err := r.exchanger.Exchange(ctx, principal, rc.Consumer.GatewayID, cfg, cacheKey)
 	if err != nil {
 		return err
 	}

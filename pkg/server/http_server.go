@@ -18,8 +18,8 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/config"
-	"github.com/NeuralTrust/AgentGateway/pkg/server/router"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/server/router"
 )
 
 type httpServer struct {

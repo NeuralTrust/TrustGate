@@ -17,7 +17,7 @@ package otlp
 import (
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/events"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/stretchr/testify/assert"
 )
 
