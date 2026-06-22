@@ -53,10 +53,10 @@ regression). No DI change.
 Goal: an in-process RS256 verifier for the gateway's own session JWT, built from the STS signer's public
 key (no HTTP). New files only — no existing constructor changes.
 
-- [ ] **2.1** Create `pkg/app/auth/session_verifier.go`: port
+- [x] **2.1** Create `pkg/app/auth/session_verifier.go`: port
   `SessionTokenVerifier interface { Verify(ctx context.Context, raw string) (*identity.Principal, error); Issuer() string }`
   with the `//go:generate mockery --name=SessionTokenVerifier --dir=. --output=./mocks --filename=auth_session_token_verifier_mock.go --case=underscore --with-expecter` directive.
-- [ ] **2.2** Create `pkg/infra/auth/session/verifier.go`: adapter implementing `SessionTokenVerifier`.
+- [x] **2.2** Create `pkg/infra/auth/session/verifier.go`: adapter implementing `SessionTokenVerifier`.
   Construct from `appsts.TokenSigner` — read `Issuer()` and parse the RSA public key + `kid` from `JWKS()`
   at construction (single source of truth; no `*http.Client` field — AC#4). `Verify` parses RS256 only
   (reject `alg=none`/non-RS256), validates signature against the stored key, enforces `exp` and
@@ -64,9 +64,9 @@ key (no HTTP). New files only — no existing constructor changes.
   `identity.Principal{Subject: claims["sub"], Method: identity.MethodJWT, Issuer: Issuer(),
   Claims: claims, Scopes: <space-split "scope">, RawToken: raw}`. The `token_use`/`authid`/`aud`/scope
   policy checks live in `resolveSession` (Phase 4), not here. Wrap errors with `%w`.
-- [ ] **2.3** `go generate ./pkg/app/auth/...` (or `mockery`) to emit
+- [x] **2.3** `go generate ./pkg/app/auth/...` (or `mockery`) to emit
   `pkg/app/auth/mocks/auth_session_token_verifier_mock.go`.
-- [ ] **2.4** `pkg/infra/auth/session/verifier_test.go`: mint a token via a **real** `infra/identity/sts`
+- [x] **2.4** `pkg/infra/auth/session/verifier_test.go`: mint a token via a **real** `infra/identity/sts`
   signer and assert `Verify` succeeds and yields the expected `Subject`/`Issuer`/`Scopes`/`RawToken`.
   Reject: wrong `kid`, expired token, wrong issuer, `alg=none`, tampered signature. Assert the adapter
   type has **no** `*http.Client` field (AC#4 reflection or construction check).
