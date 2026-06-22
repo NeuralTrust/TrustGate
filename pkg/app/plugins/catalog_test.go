@@ -31,6 +31,7 @@ var builtinSlugs = []string{
 	"cors",
 	"token_rate_limiter",
 	"semantic_cache",
+	"model_allowlist",
 }
 
 func registerBuiltins(t *testing.T) Registry {
@@ -46,6 +47,7 @@ func registerBuiltins(t *testing.T) Registry {
 		{"cors", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}},
 		{"token_rate_limiter", []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}, []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}},
 		{"semantic_cache", []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}, []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}},
+		{"model_allowlist", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}},
 	}
 	for _, s := range specs {
 		require.NoError(t, reg.Register(&stagePlugin{name: s.name, mandatory: s.mandatory, supported: s.supported}))
@@ -71,7 +73,7 @@ func TestCatalogService_GroupsAndOrder(t *testing.T) {
 	}
 	assert.ElementsMatch(t, []string{"rate_limiter", "request_size_limiter", "cors"}, byType[groupTrafficControl])
 	assert.Equal(t, []string{"token_rate_limiter"}, byType[groupQuota])
-	assert.Equal(t, []string{"semantic_cache"}, byType[groupRouting])
+	assert.ElementsMatch(t, []string{"semantic_cache", "model_allowlist"}, byType[groupRouting])
 }
 
 func TestCatalogService_EntriesHaveStagesAndSchema(t *testing.T) {
