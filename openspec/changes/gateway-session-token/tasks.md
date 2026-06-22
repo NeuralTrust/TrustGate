@@ -137,22 +137,22 @@ whole module builds.
 Goal: route gateway-issued tokens to a local-validation branch keyed off the STS issuer; Okta paths
 untouched. Updates `NewChainIdentityResolver` + its DI site in the same phase.
 
-- [ ] **4.1** `pkg/api/middleware/auth_chain.go`: add `session appauth.SessionTokenVerifier` to
+- [x] **4.1** `pkg/api/middleware/auth_chain.go`: add `session appauth.SessionTokenVerifier` to
   `chainIdentityResolver`; add the param to `NewChainIdentityResolver` (and the struct literal).
-- [ ] **4.2** `pkg/api/middleware/auth_chain.go` `resolveBearer`: before the `isJWT` split, if the token is
+- [x] **4.2** `pkg/api/middleware/auth_chain.go` `resolveBearer`: before the `isJWT` split, if the token is
   a JWT and `unverifiedIssuer(token) == r.session.Issuer()`, dispatch to `resolveSession`. The IdP-issuer
   `resolveJWT` / `resolveOpaque` paths stay exactly as-is (Okta no-regression).
-- [ ] **4.3** `pkg/api/middleware/auth_chain.go`: add `resolveSession(ctx, token, candidates, scope)`:
+- [x] **4.3** `pkg/api/middleware/auth_chain.go`: add `resolveSession(ctx, token, candidates, scope)`:
   `r.session.Verify` once; require `principal.Claims["token_use"] == "mcp_session"`; pick the candidate
   `a` where `a.ID.String() == claims["authid"] && scope.allows(a.ID)`; defense-in-depth assert
   `identity.AudienceMatches(identity.AudiencesFromClaim(claims["aud"]), cfg.Audiences)` and
   `principal.HasScopes(cfg.RequiredScopes)`; return `Identity{a.GatewayID, a.ID, principal}` (principal
   already carries `Method: MethodJWT`, `Issuer: signerIssuer`, `RawToken: token` — Resolution #5).
   Reject (→ `ErrUnauthenticated`) on missing/wrong `token_use`, unknown/cross `authid`, aud/scope mismatch.
-- [ ] **4.4** `pkg/container/modules/api.go`: provide `appauth.SessionTokenVerifier` from the infra
+- [x] **4.4** `pkg/container/modules/api.go`: provide `appauth.SessionTokenVerifier` from the infra
   adapter built on `sts.TokenSigner` (e.g. `authsession.NewVerifier(signer)`), and pass it into the
   `NewChainIdentityResolver` provider.
-- [ ] **4.5** `pkg/api/middleware/auth_chain_test.go`: session token (iss == signer issuer) resolves by
+- [x] **4.5** `pkg/api/middleware/auth_chain_test.go`: session token (iss == signer issuer) resolves by
   `authid` and yields `Principal.Subject` == captured subject; **AC#3** an Okta JWT (iss == IdP) still hits
   `resolveJWT` unchanged; opaque non-introspection token still 401; cross-`authid` rejected; missing/bad
   `token_use` rejected; aud-mismatch rejected.

@@ -31,6 +31,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/mtls"
 	oidcauth "github.com/NeuralTrust/TrustGate/pkg/infra/auth/oidc"
+	authsession "github.com/NeuralTrust/TrustGate/pkg/infra/auth/session"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	playgroundstore "github.com/NeuralTrust/TrustGate/pkg/infra/metrics/playground"
 	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
@@ -80,11 +81,17 @@ func API(c *container.Container) error {
 	if err := c.Provide(middleware.NewSessionMiddleware); err != nil {
 		return err
 	}
+	if err := c.Provide(func(signer sts.TokenSigner) (appauth.SessionTokenVerifier, error) {
+		return authsession.NewVerifier(signer)
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(func(
 		apiKeys appauth.APIKeyFinder,
 		credentials appauth.CredentialFinder,
 		paths appconsumer.PathResolver,
 		verifier appauth.OIDCVerifier,
+		sessionVerifier appauth.SessionTokenVerifier,
 		cfg *config.Config,
 	) middleware.IdentityResolver {
 		return middleware.NewChainIdentityResolver(
@@ -95,6 +102,7 @@ func API(c *container.Container) error {
 			introspection.NewValidator(nil),
 			mtls.NewValidator(),
 			mtls.NewXFCCExtractor(),
+			sessionVerifier,
 			cfg.Server.TrustXFCCFrom,
 		)
 	}); err != nil {
