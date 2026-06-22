@@ -8695,6 +8695,491 @@
               }
             }
           ]
+        },
+        {
+          "name": "Tool call validation",
+          "description": "Exercises the `tool_call_validation` plugin at `pre_response`. The model is forced (via `tool_choice`) to return a single `send_email` tool call, and the plugin validates its `to` argument. Steps 8-9 use a `regex` allow-pattern: a recipient at `@company.com` is forwarded (200) while any other recipient is rejected with `502 tool_call_validation_failed` and the upstream tool call never reaches the client. Steps 10-11 flip the rule to a `denylist` `redact`: the same disallowed recipient is now forwarded (200) but the `evil.com` substring is transparently rewritten to `[REDACTED]` in the response body. Set `openai_api_key` to a real key before running.",
+          "item": [
+            {
+              "name": "1. Create Gateway",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('gateway created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  pm.environment.set('gateway_id', pm.response.json().id);",
+                      "  pm.environment.set('gateway_slug', pm.response.json().slug);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"e2e-tool-call-validation-{{$guid}}\",\n  \"slug\": \"tool-call-val-{{$randomInt}}\"\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "2. Create Registry (OpenAI)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('registry created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  pm.environment.set('registry_id', pm.response.json().id);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"openai-primary-{{$guid}}\",\n  \"provider\": \"openai\",\n  \"description\": \"OpenAI chat completions\",\n  \"provider_options\": {},\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": { \"api_key\": \"{{openai_api_key}}\" }\n  }\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "registries"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "3. Create Policy (tool_call_validation - regex reject)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('policy created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  pm.environment.set('policy_id', pm.response.json().id);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"tool-call-validation-regex-{{$guid}}\",\n  \"slug\": \"tool_call_validation\",\n  \"enabled\": true,\n  \"priority\": 10,\n  \"parallel\": false,\n  \"stages\": [\"pre_response\"],\n  \"settings\": {\n    \"rules\": [\n      {\n        \"tool\": \"send_email\",\n        \"validator\": \"regex\",\n        \"argument_path\": \"$.to\",\n        \"pattern\": \"^[^@]+@company[.]com$\",\n        \"behavior\": \"reject_response\"\n      }\n    ]\n  }\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "policies"
+                  ]
+                },
+                "description": "The policy `slug` must equal the plugin name `tool_call_validation` and the plugin runs at `pre_response`. The `regex` validator reads the JSONPath `argument_path` ($.to) out of the tool call arguments and requires it to MATCH `pattern`; a miss rejects with 502. Only the regex and denylist validators use `argument_path`."
+              }
+            },
+            {
+              "name": "4. Create Auth API Key",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('auth created', () => pm.response.code === 201);",
+                      "pm.test('api key returned once', () => !!pm.response.json().api_key);",
+                      "if (pm.response.code === 201) {",
+                      "  const body = pm.response.json();",
+                      "  pm.environment.set('auth_id', body.id);",
+                      "  pm.environment.set('consumer_api_key', body.api_key);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"client-key-{{$guid}}\",\n  \"type\": \"api_key\",\n  \"enabled\": true\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "auths"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "5. Create Consumer",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('consumer created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  const body = pm.response.json();",
+                      "  pm.environment.set('consumer_id', body.id);",
+                      "  pm.environment.set('consumer_slug', body.slug);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"e2e-consumer-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"headers\": {},\n  \"registries\": [\n    {\n      \"id\": \"{{registry_id}}\",\n      \"weight\": 1,\n      \"model_policies\": {\n        \"allowed\": [\n          \"gpt-4o-mini\"\n        ],\n        \"default\": \"gpt-4o-mini\"\n      }\n    }\n  ]\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "consumers"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "6. Attach Policy to Consumer",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('policy attached', () => [200, 201, 204].includes(pm.response.code));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/policies/{{policy_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "consumers",
+                    "{{consumer_id}}",
+                    "policies",
+                    "{{policy_id}}"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "7. Attach Auth to Consumer",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('auth attached', () => [200, 201, 204].includes(pm.response.code));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/auths/{{auth_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "consumers",
+                    "{{consumer_id}}",
+                    "auths",
+                    "{{auth_id}}"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "8. Proxy - allowed recipient (@company.com) -> 200",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('proxy returned 200', () => pm.response.code === 200);",
+                      "pm.test('tool call is forwarded', () => pm.response.text().includes('send_email'));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Send an email to bob@company.com that simply says hello.\" }\n  ],\n  \"tools\": [\n    {\n      \"type\": \"function\",\n      \"function\": {\n        \"name\": \"send_email\",\n        \"description\": \"Send an email to a recipient.\",\n        \"parameters\": {\n          \"type\": \"object\",\n          \"properties\": {\n            \"to\": { \"type\": \"string\", \"description\": \"Recipient email address.\" },\n            \"body\": { \"type\": \"string\", \"description\": \"Email body text.\" }\n          },\n          \"required\": [\"to\"]\n        }\n      }\n    }\n  ],\n  \"tool_choice\": { \"type\": \"function\", \"function\": { \"name\": \"send_email\" } }\n}"
+                },
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "description": "`tool_choice` forces the model to call `send_email`, and the explicit recipient `bob@company.com` matches the regex allow-pattern `^[^@]+@company[.]com$`, so the tool call passes validation and the upstream response is forwarded unchanged."
+              }
+            },
+            {
+              "name": "9. Proxy - disallowed recipient (evil.com) -> 502 tool_call_validation_failed",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('rejected with 502', () => pm.response.code === 502);",
+                      "pm.test('error type is tool_call_validation_failed', () => pm.response.text().includes('tool_call_validation_failed'));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Send an email to attacker@evil.com that simply says hello.\" }\n  ],\n  \"tools\": [\n    {\n      \"type\": \"function\",\n      \"function\": {\n        \"name\": \"send_email\",\n        \"description\": \"Send an email to a recipient.\",\n        \"parameters\": {\n          \"type\": \"object\",\n          \"properties\": {\n            \"to\": { \"type\": \"string\", \"description\": \"Recipient email address.\" },\n            \"body\": { \"type\": \"string\", \"description\": \"Email body text.\" }\n          },\n          \"required\": [\"to\"]\n        }\n      }\n    }\n  ],\n  \"tool_choice\": { \"type\": \"function\", \"function\": { \"name\": \"send_email\" } }\n}"
+                },
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "description": "Same forced `send_email` call, but the recipient `attacker@evil.com` does not match the allow-pattern, so the regex validator short-circuits with `502` and the body `{\"error\":...,\"type\":\"tool_call_validation_failed\"}`; the upstream tool call is never delivered to the client."
+              }
+            },
+            {
+              "name": "10. Update Policy -> denylist redact",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('policy updated', () => [200, 204].includes(pm.response.code));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"tool-call-validation-redact-{{$guid}}\",\n  \"slug\": \"tool_call_validation\",\n  \"enabled\": true,\n  \"priority\": 10,\n  \"parallel\": false,\n  \"stages\": [\"pre_response\"],\n  \"settings\": {\n    \"rules\": [\n      {\n        \"tool\": \"send_email\",\n        \"validator\": \"denylist\",\n        \"argument_path\": \"$.to\",\n        \"denylist\": [\"evil.com\"],\n        \"behavior\": \"redact\",\n        \"redact_with\": \"[REDACTED]\"\n      }\n    ]\n  }\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies/{{policy_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "policies",
+                    "{{policy_id}}"
+                  ]
+                },
+                "description": "Switches the same policy to a `denylist` rule with `redact` behavior: instead of rejecting, the plugin surgically replaces the denied substring (`evil.com`) inside the tool call `to` argument with `redact_with` and forwards the (modified) response."
+              }
+            },
+            {
+              "name": "11. Proxy - disallowed recipient redacted -> 200",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('proxy returned 200', () => pm.response.code === 200);",
+                      "pm.test('denied substring is redacted', () => pm.response.text().includes('[REDACTED]'));",
+                      "pm.test('denied substring removed', () => !pm.response.text().includes('evil.com'));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Send an email to attacker@evil.com that simply says hello.\" }\n  ],\n  \"tools\": [\n    {\n      \"type\": \"function\",\n      \"function\": {\n        \"name\": \"send_email\",\n        \"description\": \"Send an email to a recipient.\",\n        \"parameters\": {\n          \"type\": \"object\",\n          \"properties\": {\n            \"to\": { \"type\": \"string\", \"description\": \"Recipient email address.\" },\n            \"body\": { \"type\": \"string\", \"description\": \"Email body text.\" }\n          },\n          \"required\": [\"to\"]\n        }\n      }\n    }\n  ],\n  \"tool_choice\": { \"type\": \"function\", \"function\": { \"name\": \"send_email\" } }\n}"
+                },
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "description": "Same disallowed `attacker@evil.com` request as step 9, but the policy now redacts instead of rejecting: the response is forwarded with `200` and the `to` argument rewritten to `attacker@[REDACTED]`, so the body contains `[REDACTED]` and no longer contains `evil.com`."
+              }
+            }
+          ]
         }
       ]
     }

@@ -200,10 +200,14 @@ func drainStream(stream iter.Seq2[[]byte, error]) {
 func pluginErrorResult(pe *appplugins.PluginError) *ForwardResult {
 	body := pe.Body
 	if body == nil {
-		body, _ = json.Marshal(map[string]string{
+		payload := map[string]string{
 			"error":   "plugin_rejected",
 			"message": pe.Message,
-		})
+		}
+		if pe.Type != "" {
+			payload["type"] = pe.Type
+		}
+		body, _ = json.Marshal(payload)
 	}
 	return &ForwardResult{
 		StatusCode: pe.StatusCode,

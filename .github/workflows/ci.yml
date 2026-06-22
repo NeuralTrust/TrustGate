@@ -119,6 +119,11 @@ jobs:
           cp .env.example .env
           cp .env.functional.example .env.functional
 
+      - name: Inject functional test secrets
+        run: |
+          echo "" >> .env.functional
+          echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> .env.functional
+
       - name: Create repository integration test database
         run: |
           PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres \
