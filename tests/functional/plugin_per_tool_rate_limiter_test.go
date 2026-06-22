@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,8 +18,8 @@ import (
 func newToolCallUpstream(t *testing.T, toolName string) *fakeUpstream {
 	t.Helper()
 	u := &fakeUpstream{}
-	u.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		atomic.AddInt64(&u.hits, 1)
+	u.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u.record(r)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprintf(w,
 			`{"id":"chatcmpl-tool","object":"chat.completion",`+
@@ -67,36 +67,69 @@ func perToolRule(tool string, maxCalls int, behavior string) map[string]any {
 	return rule
 }
 
-// A reject_response rule counts tool_calls observed in the model response and,
-// once a tool exceeds its window, rejects the call with a 429 and rate-limit
-// headers. Counting happens at pre_response, so the upstream is still invoked.
+func chatRequestWithTools(tools ...string) map[string]any {
+	specs := make([]map[string]any, 0, len(tools))
+	for _, name := range tools {
+		specs = append(specs, map[string]any{
+			"type":     "function",
+			"function": map[string]any{"name": name, "parameters": map[string]any{"type": "object"}},
+		})
+	}
+	return map[string]any{
+		"model":    "gpt-4o-mini",
+		"messages": []map[string]string{{"role": "user", "content": "Hello"}},
+		"tools":    specs,
+	}
+}
+
+func forwardedToolNames(t *testing.T, raw []byte) []string {
+	t.Helper()
+	var parsed struct {
+		Tools []struct {
+			Function struct {
+				Name string `json:"name"`
+			} `json:"function"`
+		} `json:"tools"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &parsed), "upstream body: %s", raw)
+	out := make([]string, 0, len(parsed.Tools))
+	for _, tl := range parsed.Tools {
+		out = append(out, tl.Function.Name)
+	}
+	return out
+}
+
 func TestPluginE2E_PerToolRateLimiter_RejectResponse(t *testing.T) {
 	defer Track(t, "PluginPerToolRateLimiter")()
 
 	up := newToolCallUpstream(t, "get_weather")
 	apiKey, path := setupPolicyRoute(t, up,
 		policyPlugin("per_tool_rate_limiter", map[string]any{
-			"rules": []any{perToolRule("get_weather", 2, "reject_response")},
+			"rules": []any{perToolRule("get_weather", 1, "reject_response")},
 		}),
 	)
 
-	body := mustJSON(t, chatRequest(false))
+	body := mustJSON(t, chatRequestWithTools("get_weather"))
 
-	for i := 1; i <= 2; i++ {
-		status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
-		require.Equal(t, http.StatusOK, status, "call %d should pass through, body: %s", i, raw)
-	}
+	status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
+	require.Equal(t, http.StatusOK, status, "first call is under the limit, body: %s", raw)
 
-	status, headers, _ := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
-	assert.Equal(t, http.StatusTooManyRequests, status, "the tool's window is exhausted, the call must be rejected")
-	assert.Equal(t, "get_weather", headers.Get("X-RateLimit-Tool"))
-	assert.Equal(t, "2", headers.Get("X-RateLimit-consumer-Limit"))
-	assert.Equal(t, "60", headers.Get("Retry-After"))
+	var rlHeaders http.Header
+	require.Eventually(t, func() bool {
+		s, h, _ := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
+		if s == http.StatusTooManyRequests {
+			rlHeaders = h
+			return true
+		}
+		return false
+	}, 5*time.Second, 100*time.Millisecond,
+		"once the tool's window is exhausted the next request must be rejected")
+
+	assert.Equal(t, "get_weather", rlHeaders.Get("X-RateLimit-Tool"))
+	assert.Equal(t, "1", rlHeaders.Get("X-RateLimit-consumer-Limit"))
+	assert.Equal(t, "60", rlHeaders.Get("Retry-After"))
 }
 
-// An inject_error_result rule, once the window is exceeded, strips the offending
-// tool_call from the response, appends an assistant rate-limit message and flips
-// the finish reason to stop, while still answering 200.
 func TestPluginE2E_PerToolRateLimiter_InjectErrorResult(t *testing.T) {
 	defer Track(t, "PluginPerToolRateLimiter")()
 
@@ -113,20 +146,50 @@ func TestPluginE2E_PerToolRateLimiter_InjectErrorResult(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, "first call is under the limit, body: %s", raw)
 	first := decodePerToolResponse(t, raw)
 	require.Len(t, first.Choices[0].Message.ToolCalls, 1, "under-limit response keeps the tool_call, body: %s", raw)
-	assert.Equal(t, "get_weather", first.Choices[0].Message.ToolCalls[0].Function.Name)
 
-	status, _, raw = proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
-	require.Equal(t, http.StatusOK, status, "inject keeps a 200, body: %s", raw)
-	second := decodePerToolResponse(t, raw)
-	assert.Empty(t, second.Choices[0].Message.ToolCalls, "the rate-limited tool_call must be removed, body: %s", raw)
-	assert.Equal(t, "stop", second.Choices[0].FinishReason, "finish reason flips to stop when no tool_calls remain")
-	assert.True(t, strings.Contains(second.Choices[0].Message.Content, "get_weather"),
-		"the injected assistant message must reference the rate-limited tool, body: %s", raw)
+	var injected perToolChatResponse
+	require.Eventually(t, func() bool {
+		s, _, r := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
+		if s != http.StatusOK {
+			return false
+		}
+		resp := decodePerToolResponse(t, r)
+		if len(resp.Choices[0].Message.ToolCalls) == 0 {
+			injected = resp
+			return true
+		}
+		return false
+	}, 5*time.Second, 100*time.Millisecond,
+		"once the window is exhausted the tool_call must be injected away")
+
+	assert.Equal(t, "stop", injected.Choices[0].FinishReason)
+	assert.True(t, strings.Contains(injected.Choices[0].Message.Content, "get_weather"),
+		"the injected assistant message must reference the rate-limited tool")
 }
 
-// A rule without an explicit behavior falls back to behavior_default, and the
-// tool pattern is matched as a glob: get_weather matches get_* and is rejected
-// once its window is exhausted.
+func TestPluginE2E_PerToolRateLimiter_StripToolFromRequest(t *testing.T) {
+	defer Track(t, "PluginPerToolRateLimiter")()
+
+	up := newToolCallUpstream(t, "get_weather")
+	apiKey, path := setupPolicyRoute(t, up,
+		policyPlugin("per_tool_rate_limiter", map[string]any{
+			"rules": []any{perToolRule("get_weather", 1, "strip_tool_from_request")},
+		}),
+	)
+
+	body := mustJSON(t, chatRequestWithTools("get_weather", "lookup"))
+
+	status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
+	require.Equal(t, http.StatusOK, status, "first call is under the limit, body: %s", raw)
+
+	require.Eventually(t, func() bool {
+		_, _, _ = proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
+		tools := forwardedToolNames(t, up.LastBody())
+		return len(tools) == 1 && tools[0] == "lookup"
+	}, 5*time.Second, 100*time.Millisecond,
+		"once over budget, get_weather must be stripped from the forwarded tools while lookup remains")
+}
+
 func TestPluginE2E_PerToolRateLimiter_GlobMatchUsesDefaultBehavior(t *testing.T) {
 	defer Track(t, "PluginPerToolRateLimiter")()
 
@@ -138,12 +201,21 @@ func TestPluginE2E_PerToolRateLimiter_GlobMatchUsesDefaultBehavior(t *testing.T)
 		}),
 	)
 
-	body := mustJSON(t, chatRequest(false))
+	body := mustJSON(t, chatRequestWithTools("get_weather"))
 
 	status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
 	require.Equal(t, http.StatusOK, status, "first call is under the limit, body: %s", raw)
 
-	status, headers, _ := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
-	assert.Equal(t, http.StatusTooManyRequests, status, "glob-matched tool must use the default reject behavior")
-	assert.Equal(t, "get_weather", headers.Get("X-RateLimit-Tool"))
+	var rlHeaders http.Header
+	require.Eventually(t, func() bool {
+		s, h, _ := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
+		if s == http.StatusTooManyRequests {
+			rlHeaders = h
+			return true
+		}
+		return false
+	}, 5*time.Second, 100*time.Millisecond,
+		"glob-matched tool must use the default reject behavior once exhausted")
+
+	assert.Equal(t, "get_weather", rlHeaders.Get("X-RateLimit-Tool"))
 }

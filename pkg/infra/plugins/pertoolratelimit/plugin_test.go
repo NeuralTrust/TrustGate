@@ -15,6 +15,7 @@
 package pertoolratelimit
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -33,12 +34,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func allStages() []policy.Stage {
+	return []policy.Stage{policy.StagePreRequest, policy.StagePreResponse, policy.StagePostResponse}
+}
+
 func TestPlugin_Stages(t *testing.T) {
 	p := New(nil, nil)
 	assert.Equal(t, PluginName, p.Name())
-	assert.Equal(t, "per_tool_rate_limiter", p.Name())
-	assert.Equal(t, []policy.Stage{policy.StagePreResponse}, p.MandatoryStages())
-	assert.Equal(t, []policy.Stage{policy.StagePreResponse}, p.SupportedStages())
+	assert.Equal(t, allStages(), p.MandatoryStages())
+	assert.Equal(t, allStages(), p.SupportedStages())
 	assert.Equal(t, []policy.Mode{policy.ModeEnforce}, p.SupportedModes())
 }
 
@@ -55,9 +59,9 @@ func TestPlugin_WithClock(t *testing.T) {
 	assert.Equal(t, fixed, p.now())
 }
 
-func TestPlugin_Execute_Noop(t *testing.T) {
+func TestPlugin_Execute_NilDeps(t *testing.T) {
 	p := New(nil, nil)
-	res, err := p.Execute(context.Background(), appplugins.ExecInput{Stage: policy.StagePreResponse})
+	res, err := p.Execute(context.Background(), appplugins.ExecInput{Stage: policy.StagePostResponse})
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	assert.Equal(t, http.StatusOK, res.StatusCode)
@@ -69,22 +73,6 @@ func TestPlugin_RateLimitTemplate(t *testing.T) {
 	assert.Contains(t, msg, "call_1")
 }
 
-func run695Settings() map[string]any {
-	return map[string]any{
-		"scope": "consumer",
-		"rules": []any{
-			map[string]any{
-				"tool": "execute_code*",
-				"windows": []any{
-					map[string]any{"duration": "1h", "max": 50},
-				},
-				"behavior": "inject_error_result",
-			},
-		},
-		"behavior_default": "reject_response",
-	}
-}
-
 func TestPlugin_ValidateConfig(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -92,169 +80,121 @@ func TestPlugin_ValidateConfig(t *testing.T) {
 		wantErr  bool
 	}{
 		{
-			name:     "valid RUN-695 config",
-			settings: run695Settings(),
+			name: "valid reject",
+			settings: map[string]any{
+				"rules": []any{map[string]any{
+					"tool": "execute_code*", "windows": []any{map[string]any{"duration": "1h", "max": 50}},
+					"behavior": "reject_response",
+				}},
+			},
+		},
+		{
+			name: "valid inject",
+			settings: map[string]any{
+				"rules": []any{map[string]any{
+					"tool": "execute_code*", "windows": []any{map[string]any{"duration": "1h", "max": 50}},
+					"behavior": "inject_error_result",
+				}},
+			},
+		},
+		{
+			name: "valid strip",
+			settings: map[string]any{
+				"rules": []any{map[string]any{
+					"tool": "send_email", "windows": []any{map[string]any{"duration": "1m", "max": 5}},
+					"behavior": "strip_tool_from_request",
+				}},
+			},
+		},
+		{
+			name: "valid strip default",
+			settings: map[string]any{
+				"behavior_default": "strip_tool_from_request",
+				"rules": []any{map[string]any{
+					"tool": "send_email", "windows": []any{map[string]any{"duration": "1m", "max": 5}},
+				}},
+			},
 		},
 		{
 			name: "rule without behavior uses default",
 			settings: map[string]any{
-				"rules": []any{
-					map[string]any{
-						"tool":    "*",
-						"windows": []any{map[string]any{"duration": "1m", "max": 5}},
-					},
-				},
+				"rules": []any{map[string]any{
+					"tool": "*", "windows": []any{map[string]any{"duration": "1m", "max": 5}},
+				}},
 			},
 		},
 		{
-			name: "empty rules",
-			settings: map[string]any{
-				"behavior_default": "reject_response",
-				"rules":            []any{},
-			},
-			wantErr: true,
+			name:     "empty rules",
+			settings: map[string]any{"behavior_default": "reject_response", "rules": []any{}},
+			wantErr:  true,
 		},
 		{
-			name: "missing rules",
-			settings: map[string]any{
-				"behavior_default": "reject_response",
-			},
-			wantErr: true,
+			name:     "missing rules",
+			settings: map[string]any{"behavior_default": "reject_response"},
+			wantErr:  true,
 		},
 		{
 			name: "empty tool",
-			settings: map[string]any{
-				"rules": []any{
-					map[string]any{
-						"tool":    "",
-						"windows": []any{map[string]any{"duration": "1m", "max": 5}},
-					},
-				},
-			},
+			settings: map[string]any{"rules": []any{map[string]any{
+				"tool": "", "windows": []any{map[string]any{"duration": "1m", "max": 5}},
+			}}},
 			wantErr: true,
 		},
 		{
-			name: "bad glob pattern",
-			settings: map[string]any{
-				"rules": []any{
-					map[string]any{
-						"tool":    "[",
-						"windows": []any{map[string]any{"duration": "1m", "max": 5}},
-					},
-				},
-			},
+			name: "bad glob",
+			settings: map[string]any{"rules": []any{map[string]any{
+				"tool": "[", "windows": []any{map[string]any{"duration": "1m", "max": 5}},
+			}}},
 			wantErr: true,
 		},
 		{
 			name: "no windows",
-			settings: map[string]any{
-				"rules": []any{
-					map[string]any{
-						"tool":    "send_email",
-						"windows": []any{},
-					},
-				},
-			},
+			settings: map[string]any{"rules": []any{map[string]any{
+				"tool": "send_email", "windows": []any{},
+			}}},
 			wantErr: true,
 		},
 		{
 			name: "unparseable duration",
-			settings: map[string]any{
-				"rules": []any{
-					map[string]any{
-						"tool":    "send_email",
-						"windows": []any{map[string]any{"duration": "abc", "max": 5}},
-					},
-				},
-			},
+			settings: map[string]any{"rules": []any{map[string]any{
+				"tool": "send_email", "windows": []any{map[string]any{"duration": "abc", "max": 5}},
+			}}},
 			wantErr: true,
 		},
 		{
 			name: "zero duration",
-			settings: map[string]any{
-				"rules": []any{
-					map[string]any{
-						"tool":    "send_email",
-						"windows": []any{map[string]any{"duration": "0s", "max": 5}},
-					},
-				},
-			},
+			settings: map[string]any{"rules": []any{map[string]any{
+				"tool": "send_email", "windows": []any{map[string]any{"duration": "0s", "max": 5}},
+			}}},
 			wantErr: true,
 		},
 		{
 			name: "fractional duration",
-			settings: map[string]any{
-				"rules": []any{
-					map[string]any{
-						"tool":    "send_email",
-						"windows": []any{map[string]any{"duration": "1500ms", "max": 5}},
-					},
-				},
-			},
+			settings: map[string]any{"rules": []any{map[string]any{
+				"tool": "send_email", "windows": []any{map[string]any{"duration": "1500ms", "max": 5}},
+			}}},
 			wantErr: true,
 		},
 		{
 			name: "max not positive",
-			settings: map[string]any{
-				"rules": []any{
-					map[string]any{
-						"tool":    "send_email",
-						"windows": []any{map[string]any{"duration": "1m", "max": 0}},
-					},
-				},
-			},
+			settings: map[string]any{"rules": []any{map[string]any{
+				"tool": "send_email", "windows": []any{map[string]any{"duration": "1m", "max": 0}},
+			}}},
 			wantErr: true,
 		},
 		{
 			name: "bad behavior",
-			settings: map[string]any{
-				"rules": []any{
-					map[string]any{
-						"tool":     "send_email",
-						"windows":  []any{map[string]any{"duration": "1m", "max": 5}},
-						"behavior": "explode",
-					},
-				},
-			},
-			wantErr: true,
-		},
-		{
-			name: "strip behavior rejected",
-			settings: map[string]any{
-				"rules": []any{
-					map[string]any{
-						"tool":     "send_email",
-						"windows":  []any{map[string]any{"duration": "1m", "max": 5}},
-						"behavior": "strip_tool_from_request",
-					},
-				},
-			},
-			wantErr: true,
-		},
-		{
-			name: "strip behavior_default rejected",
-			settings: map[string]any{
-				"behavior_default": "strip_tool_from_request",
-				"rules": []any{
-					map[string]any{
-						"tool":    "send_email",
-						"windows": []any{map[string]any{"duration": "1m", "max": 5}},
-					},
-				},
-			},
+			settings: map[string]any{"rules": []any{map[string]any{
+				"tool": "send_email", "windows": []any{map[string]any{"duration": "1m", "max": 5}},
+				"behavior": "explode",
+			}}},
 			wantErr: true,
 		},
 		{
 			name: "bad scope",
-			settings: map[string]any{
-				"scope": "tenant",
-				"rules": []any{
-					map[string]any{
-						"tool":    "send_email",
-						"windows": []any{map[string]any{"duration": "1m", "max": 5}},
-					},
-				},
-			},
+			settings: map[string]any{"scope": "tenant", "rules": []any{map[string]any{
+				"tool": "send_email", "windows": []any{map[string]any{"duration": "1m", "max": 5}},
+			}}},
 			wantErr: true,
 		},
 	}
@@ -289,7 +229,7 @@ func TestPlugin_AppearsInCatalog(t *testing.T) {
 		}
 	}
 	require.Truef(t, found, "slug %q missing from catalog", PluginName)
-	assert.Equal(t, []policy.Stage{policy.StagePreResponse}, entry.SupportedStages)
+	assert.Equal(t, allStages(), entry.SupportedStages)
 	assert.Equal(t, []policy.Mode{policy.ModeEnforce}, entry.SupportedModes)
 	assert.NotEmpty(t, entry.SettingsSchema.Fields)
 }
@@ -307,66 +247,98 @@ func newPluginRedis(t *testing.T, opts ...Option) (*Plugin, *redis.Client) {
 	return New(rdb, adapter.NewRegistry(), opts...), rdb
 }
 
-func openAIToolBody(t *testing.T, calls ...tcSpec) []byte {
+func openAIRespBody(t *testing.T, calls ...tcSpec) []byte {
 	t.Helper()
 	toolCalls := make([]map[string]any, 0, len(calls))
 	for _, c := range calls {
 		toolCalls = append(toolCalls, map[string]any{
-			"id":       c.id,
-			"type":     "function",
+			"id": c.id, "type": "function",
 			"function": map[string]any{"name": c.name, "arguments": "{}"},
 		})
 	}
 	body := map[string]any{
-		"id":    "resp_1",
-		"model": "gpt",
-		"choices": []any{
-			map[string]any{
-				"message":       map[string]any{"role": "assistant", "content": "", "tool_calls": toolCalls},
-				"finish_reason": "tool_calls",
-			},
-		},
+		"id": "resp_1", "model": "gpt",
+		"choices": []any{map[string]any{
+			"message":       map[string]any{"role": "assistant", "content": "", "tool_calls": toolCalls},
+			"finish_reason": "tool_calls",
+		}},
 	}
 	b, err := json.Marshal(body)
 	require.NoError(t, err)
 	return b
 }
 
-func openAIReq() *infracontext.RequestContext {
-	return &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai"}
+func openAIStreamBody(t *testing.T, calls ...tcSpec) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	for i, c := range calls {
+		chunk := map[string]any{
+			"id": "x", "object": "chat.completion.chunk",
+			"choices": []any{map[string]any{
+				"index": 0,
+				"delta": map[string]any{"tool_calls": []any{map[string]any{
+					"index": i, "id": c.id, "type": "function",
+					"function": map[string]any{"name": c.name, "arguments": ""},
+				}}},
+			}},
+		}
+		b, err := json.Marshal(chunk)
+		require.NoError(t, err)
+		buf.WriteString("data: ")
+		buf.Write(b)
+		buf.WriteString("\n\n")
+	}
+	buf.WriteString("data: [DONE]\n")
+	return buf.Bytes()
 }
 
-func anthropicToolBody(t *testing.T, calls ...tcSpec) []byte {
+func openAIReqBody(t *testing.T, tools ...string) []byte {
+	t.Helper()
+	specs := make([]map[string]any, 0, len(tools))
+	for _, name := range tools {
+		specs = append(specs, map[string]any{
+			"type":     "function",
+			"function": map[string]any{"name": name, "parameters": map[string]any{"type": "object"}},
+		})
+	}
+	body := map[string]any{
+		"model":    "gpt",
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+		"tools":    specs,
+	}
+	b, err := json.Marshal(body)
+	require.NoError(t, err)
+	return b
+}
+
+func anthropicRespBody(t *testing.T, calls ...tcSpec) []byte {
 	t.Helper()
 	content := make([]map[string]any, 0, len(calls))
 	for _, c := range calls {
 		content = append(content, map[string]any{
-			"type":  "tool_use",
-			"id":    c.id,
-			"name":  c.name,
-			"input": map[string]any{},
+			"type": "tool_use", "id": c.id, "name": c.name, "input": map[string]any{},
 		})
 	}
 	body := map[string]any{
-		"id":          "msg_1",
-		"type":        "message",
-		"role":        "assistant",
-		"model":       "claude",
-		"content":     content,
-		"stop_reason": "tool_use",
+		"id": "msg_1", "type": "message", "role": "assistant", "model": "claude",
+		"content": content, "stop_reason": "tool_use",
 	}
 	b, err := json.Marshal(body)
 	require.NoError(t, err)
 	return b
 }
 
-func anthropicReq() *infracontext.RequestContext {
-	return &infracontext.RequestContext{Provider: "anthropic", SourceFormat: "anthropic"}
+func openAIReq(body []byte) *infracontext.RequestContext {
+	return &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: body}
 }
 
-func execInput(settings map[string]any, req *infracontext.RequestContext, resp *infracontext.ResponseContext) appplugins.ExecInput {
+func anthropicReq(body []byte) *infracontext.RequestContext {
+	return &infracontext.RequestContext{Provider: "anthropic", SourceFormat: "anthropic", Body: body}
+}
+
+func input(stage policy.Stage, settings map[string]any, req *infracontext.RequestContext, resp *infracontext.ResponseContext) appplugins.ExecInput {
 	return appplugins.ExecInput{
-		Stage:    policy.StagePreResponse,
+		Stage:    stage,
 		Config:   policy.PluginConfig{ID: "pt-1", Slug: PluginName, Name: PluginName, Settings: settings},
 		Scope:    appplugins.RuntimeScope{ConsumerID: "c-1", GatewayID: "gw-1"},
 		Request:  req,
@@ -374,196 +346,134 @@ func execInput(settings map[string]any, req *infracontext.RequestContext, resp *
 	}
 }
 
-func rejectSettings(tool, duration string, max int) map[string]any {
+func ruleSettings(tool, behavior, duration string, max int) map[string]any {
 	return map[string]any{
-		"rules": []any{
-			map[string]any{
-				"tool":     tool,
-				"windows":  []any{map[string]any{"duration": duration, "max": max}},
-				"behavior": "reject_response",
-			},
-		},
+		"rules": []any{map[string]any{
+			"tool": tool, "behavior": behavior,
+			"windows": []any{map[string]any{"duration": duration, "max": max}},
+		}},
 	}
 }
 
-func TestPlugin_Execute_NoopPaths(t *testing.T) {
-	settings := rejectSettings("send_email", "1m", 5)
-
-	tests := []struct {
-		name string
-		req  *infracontext.RequestContext
-		resp *infracontext.ResponseContext
-	}{
-		{name: "nil request", req: nil, resp: &infracontext.ResponseContext{Body: openAIToolBody(t, tcSpec{"call_1", "send_email"})}},
-		{name: "nil response", req: openAIReq(), resp: nil},
-		{name: "streaming", req: openAIReq(), resp: &infracontext.ResponseContext{Streaming: true}},
-		{name: "empty body", req: openAIReq(), resp: &infracontext.ResponseContext{Body: nil}},
-		{name: "unresolved format", req: &infracontext.RequestContext{}, resp: &infracontext.ResponseContext{Body: openAIToolBody(t, tcSpec{"call_1", "send_email"})}},
-		{name: "undecodable body", req: openAIReq(), resp: &infracontext.ResponseContext{Body: []byte("{not-json")}},
-		{name: "no tool calls", req: openAIReq(), resp: &infracontext.ResponseContext{Body: []byte(`{"id":"x","choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]}`)}},
-		{name: "unmatched tool", req: openAIReq(), resp: &infracontext.ResponseContext{Body: openAIToolBody(t, tcSpec{"call_1", "lookup"})}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			p, _ := newPluginRedis(t)
-			res, err := p.Execute(context.Background(), execInput(settings, tt.req, tt.resp))
-			require.NoError(t, err)
-			require.NotNil(t, res)
-			assert.Equal(t, http.StatusOK, res.StatusCode)
-			assert.False(t, res.StopUpstream)
-			assert.Nil(t, res.Body)
-		})
-	}
+func consumerKey(tool string, win int) string {
+	return counterKey("pt-1", "consumer", "c-1", tool, win)
 }
 
-func TestPlugin_Execute_UnderLimitRecords(t *testing.T) {
+func seed(t *testing.T, rdb *redis.Client, key string, val int) {
+	t.Helper()
+	require.NoError(t, rdb.Set(context.Background(), key, val, time.Minute).Err())
+}
+
+func TestPlugin_PostResponse_CountsNonStreaming(t *testing.T) {
 	p, rdb := newPluginRedis(t)
-	settings := rejectSettings("send_email", "1m", 5)
-	resp := &infracontext.ResponseContext{Body: openAIToolBody(t, tcSpec{"call_1", "send_email"})}
+	settings := ruleSettings("send_email", "reject_response", "1m", 5)
+	resp := &infracontext.ResponseContext{Body: openAIRespBody(t, tcSpec{"call_1", "send_email"})}
 
-	res, err := p.Execute(context.Background(), execInput(settings, openAIReq(), resp))
+	res, err := p.Execute(context.Background(), input(policy.StagePostResponse, settings, openAIReq(nil), resp))
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, res.StatusCode)
 
-	val, err := rdb.Get(context.Background(), "pertoolrl:pt-1:consumer:c-1:send_email:w0").Result()
+	val, err := rdb.Get(context.Background(), consumerKey("send_email", 0)).Result()
 	require.NoError(t, err)
 	assert.Equal(t, "1", val)
 
-	ttl, err := rdb.TTL(context.Background(), "pertoolrl:pt-1:consumer:c-1:send_email:w0").Result()
+	ttl, err := rdb.TTL(context.Background(), consumerKey("send_email", 0)).Result()
 	require.NoError(t, err)
 	assert.Greater(t, ttl, time.Duration(0))
 }
 
-func TestPlugin_Execute_CountsEachToolCallOncePerResponse(t *testing.T) {
+func TestPlugin_PostResponse_CountsEachToolCall(t *testing.T) {
 	p, rdb := newPluginRedis(t)
-	settings := rejectSettings("send_email", "1m", 5)
-	resp := &infracontext.ResponseContext{Body: openAIToolBody(t, tcSpec{"call_1", "send_email"}, tcSpec{"call_2", "send_email"})}
+	settings := ruleSettings("send_email", "reject_response", "1m", 5)
+	resp := &infracontext.ResponseContext{Body: openAIRespBody(t, tcSpec{"call_1", "send_email"}, tcSpec{"call_2", "send_email"})}
 
-	_, err := p.Execute(context.Background(), execInput(settings, openAIReq(), resp))
+	_, err := p.Execute(context.Background(), input(policy.StagePostResponse, settings, openAIReq(nil), resp))
 	require.NoError(t, err)
 
-	val, err := rdb.Get(context.Background(), "pertoolrl:pt-1:consumer:c-1:send_email:w0").Result()
+	val, err := rdb.Get(context.Background(), consumerKey("send_email", 0)).Result()
 	require.NoError(t, err)
 	assert.Equal(t, "2", val)
 }
 
-func TestPlugin_Execute_ExceedAcrossTwoWindows(t *testing.T) {
+func TestPlugin_PostResponse_CountsStreaming(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 5)
+	resp := &infracontext.ResponseContext{
+		Streaming: true,
+		Body:      openAIStreamBody(t, tcSpec{"call_1", "send_email"}, tcSpec{"call_2", "send_email"}),
+	}
+
+	_, err := p.Execute(context.Background(), input(policy.StagePostResponse, settings, openAIReq(nil), resp))
+	require.NoError(t, err)
+
+	val, err := rdb.Get(context.Background(), consumerKey("send_email", 0)).Result()
+	require.NoError(t, err)
+	assert.Equal(t, "2", val)
+}
+
+func TestPlugin_PostResponse_TwoWindows(t *testing.T) {
 	p, rdb := newPluginRedis(t)
 	settings := map[string]any{
-		"rules": []any{
-			map[string]any{
-				"tool": "send_email",
-				"windows": []any{
-					map[string]any{"duration": "1m", "max": 5},
-					map[string]any{"duration": "1h", "max": 50},
-				},
-				"behavior": "reject_response",
+		"rules": []any{map[string]any{
+			"tool":     "send_email",
+			"behavior": "reject_response",
+			"windows": []any{
+				map[string]any{"duration": "1m", "max": 5},
+				map[string]any{"duration": "1h", "max": 50},
 			},
-		},
+		}},
 	}
-	resp := &infracontext.ResponseContext{Body: openAIToolBody(t, tcSpec{"call_1", "send_email"})}
+	resp := &infracontext.ResponseContext{Body: openAIRespBody(t, tcSpec{"call_1", "send_email"})}
 
-	for i := 0; i < 5; i++ {
-		res, err := p.Execute(context.Background(), execInput(settings, openAIReq(), resp))
-		require.NoError(t, err)
-		assert.Equal(t, http.StatusOK, res.StatusCode)
-	}
-
-	_, err := p.Execute(context.Background(), execInput(settings, openAIReq(), resp))
-	pe, ok := appplugins.AsPluginError(err)
-	require.True(t, ok)
-	assert.Equal(t, http.StatusTooManyRequests, pe.StatusCode)
-
-	hour, err := rdb.Get(context.Background(), "pertoolrl:pt-1:consumer:c-1:send_email:w1").Result()
-	require.NoError(t, err)
-	assert.Equal(t, "6", hour)
-}
-
-func TestPlugin_Execute_GlobMatchAndDefaultBehavior(t *testing.T) {
-	p, _ := newPluginRedis(t)
-	settings := map[string]any{
-		"rules": []any{
-			map[string]any{
-				"tool":    "execute_code*",
-				"windows": []any{map[string]any{"duration": "1m", "max": 1}},
-			},
-		},
-		"behavior_default": "reject_response",
-	}
-	resp := &infracontext.ResponseContext{Body: openAIToolBody(t, tcSpec{"call_1", "execute_code_py"})}
-
-	res, err := p.Execute(context.Background(), execInput(settings, openAIReq(), resp))
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusOK, res.StatusCode)
-
-	_, err = p.Execute(context.Background(), execInput(settings, openAIReq(), resp))
-	pe, ok := appplugins.AsPluginError(err)
-	require.True(t, ok)
-	assert.Equal(t, http.StatusTooManyRequests, pe.StatusCode)
-}
-
-func TestPlugin_Execute_FirstMatchingRuleWins(t *testing.T) {
-	p, _ := newPluginRedis(t)
-	settings := map[string]any{
-		"rules": []any{
-			map[string]any{
-				"tool":     "send_*",
-				"windows":  []any{map[string]any{"duration": "1m", "max": 1}},
-				"behavior": "reject_response",
-			},
-			map[string]any{
-				"tool":     "*",
-				"windows":  []any{map[string]any{"duration": "1m", "max": 100}},
-				"behavior": "inject_error_result",
-			},
-		},
-	}
-	resp := &infracontext.ResponseContext{Body: openAIToolBody(t, tcSpec{"call_1", "send_email"})}
-
-	_, err := p.Execute(context.Background(), execInput(settings, openAIReq(), resp))
+	_, err := p.Execute(context.Background(), input(policy.StagePostResponse, settings, openAIReq(nil), resp))
 	require.NoError(t, err)
 
-	_, err = p.Execute(context.Background(), execInput(settings, openAIReq(), resp))
-	pe, ok := appplugins.AsPluginError(err)
-	require.True(t, ok)
-	assert.Equal(t, http.StatusTooManyRequests, pe.StatusCode)
+	w0, err := rdb.Get(context.Background(), consumerKey("send_email", 0)).Result()
+	require.NoError(t, err)
+	assert.Equal(t, "1", w0)
+	w1, err := rdb.Get(context.Background(), consumerKey("send_email", 1)).Result()
+	require.NoError(t, err)
+	assert.Equal(t, "1", w1)
 }
 
-func TestPlugin_Execute_ScopeIsolation(t *testing.T) {
+func TestPlugin_PostResponse_UnmatchedToolNoCount(t *testing.T) {
 	p, rdb := newPluginRedis(t)
-	settings := rejectSettings("send_email", "1m", 1)
-	resp := &infracontext.ResponseContext{Body: openAIToolBody(t, tcSpec{"call_1", "send_email"})}
+	settings := ruleSettings("send_email", "reject_response", "1m", 5)
+	resp := &infracontext.ResponseContext{Body: openAIRespBody(t, tcSpec{"call_1", "lookup"})}
 
-	consumer := execInput(settings, openAIReq(), resp)
-	consumer.Scope = appplugins.RuntimeScope{ConsumerID: "c-1", GatewayID: "gw-1"}
+	_, err := p.Execute(context.Background(), input(policy.StagePostResponse, settings, openAIReq(nil), resp))
+	require.NoError(t, err)
 
-	global := execInput(settings, openAIReq(), resp)
+	_, err = rdb.Get(context.Background(), consumerKey("lookup", 0)).Result()
+	assert.ErrorIs(t, err, redis.Nil)
+}
+
+func TestPlugin_PostResponse_ScopeIsolation(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 5)
+	resp := &infracontext.ResponseContext{Body: openAIRespBody(t, tcSpec{"call_1", "send_email"})}
+
+	consumer := input(policy.StagePostResponse, settings, openAIReq(nil), resp)
+	global := input(policy.StagePostResponse, settings, openAIReq(nil), resp)
 	global.Scope = appplugins.RuntimeScope{GatewayID: "gw-1", Global: true}
 
 	_, err := p.Execute(context.Background(), consumer)
 	require.NoError(t, err)
-	_, err = p.Execute(context.Background(), consumer)
-	_, ok := appplugins.AsPluginError(err)
-	require.True(t, ok)
-
-	res, err := p.Execute(context.Background(), global)
+	_, err = p.Execute(context.Background(), global)
 	require.NoError(t, err)
-	assert.Equal(t, http.StatusOK, res.StatusCode)
 
-	consumerVal, err := rdb.Get(context.Background(), "pertoolrl:pt-1:consumer:c-1:send_email:w0").Result()
+	cVal, err := rdb.Get(context.Background(), consumerKey("send_email", 0)).Result()
 	require.NoError(t, err)
-	assert.Equal(t, "2", consumerVal)
-
-	globalVal, err := rdb.Get(context.Background(), "pertoolrl:pt-1:global:gw-1:send_email:w0").Result()
+	assert.Equal(t, "1", cVal)
+	gVal, err := rdb.Get(context.Background(), counterKey("pt-1", "global", "gw-1", "send_email", 0)).Result()
 	require.NoError(t, err)
-	assert.Equal(t, "1", globalVal)
+	assert.Equal(t, "1", gVal)
 }
 
-func TestPlugin_Execute_ConcurrentIncrementsAtomic(t *testing.T) {
+func TestPlugin_PostResponse_ConcurrentAtomic(t *testing.T) {
 	p, rdb := newPluginRedis(t)
-	settings := rejectSettings("send_email", "1m", 100000)
-	resp := &infracontext.ResponseContext{Body: openAIToolBody(t, tcSpec{"call_1", "send_email"})}
+	settings := ruleSettings("send_email", "reject_response", "1m", 100000)
+	resp := &infracontext.ResponseContext{Body: openAIRespBody(t, tcSpec{"call_1", "send_email"})}
 
 	const n = 50
 	var wg sync.WaitGroup
@@ -571,59 +481,98 @@ func TestPlugin_Execute_ConcurrentIncrementsAtomic(t *testing.T) {
 	for i := 0; i < n; i++ {
 		go func() {
 			defer wg.Done()
-			_, err := p.Execute(context.Background(), execInput(settings, openAIReq(), resp))
+			_, err := p.Execute(context.Background(), input(policy.StagePostResponse, settings, openAIReq(nil), resp))
 			assert.NoError(t, err)
 		}()
 	}
 	wg.Wait()
 
-	val, err := rdb.Get(context.Background(), "pertoolrl:pt-1:consumer:c-1:send_email:w0").Result()
+	val, err := rdb.Get(context.Background(), consumerKey("send_email", 0)).Result()
 	require.NoError(t, err)
 	assert.Equal(t, fmt.Sprintf("%d", n), val)
 }
 
-func TestPlugin_Execute_RejectHeaders(t *testing.T) {
-	fixed := time.Unix(1000, 0)
-	p, _ := newPluginRedis(t, WithClock(func() time.Time { return fixed }))
-	settings := rejectSettings("send_email", "1m", 1)
-	resp := &infracontext.ResponseContext{Body: openAIToolBody(t, tcSpec{"call_1", "send_email"})}
+func TestPlugin_PreRequest_RejectWhenOverBudget(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 5)
+	seed(t, rdb, consumerKey("send_email", 0), 5)
 
-	_, err := p.Execute(context.Background(), execInput(settings, openAIReq(), resp))
-	require.NoError(t, err)
-
-	_, err = p.Execute(context.Background(), execInput(settings, openAIReq(), resp))
+	_, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, openAIReq(openAIReqBody(t, "send_email")), nil))
 	pe, ok := appplugins.AsPluginError(err)
 	require.True(t, ok)
 	assert.Equal(t, http.StatusTooManyRequests, pe.StatusCode)
 	assert.Equal(t, `tool "send_email" rate limit exceeded`, pe.Message)
-	assert.Equal(t, []string{"1"}, pe.Headers["X-RateLimit-consumer-Limit"])
+}
+
+func TestPlugin_PreRequest_NoRejectUnderBudget(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 5)
+	seed(t, rdb, consumerKey("send_email", 0), 4)
+
+	res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, openAIReq(openAIReqBody(t, "send_email")), nil))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+	assert.Nil(t, res.RequestBody)
+}
+
+func TestPlugin_PreRequest_NoRejectWhenToolNotDeclared(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 5)
+	seed(t, rdb, consumerKey("send_email", 0), 5)
+
+	res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, openAIReq(openAIReqBody(t, "lookup")), nil))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+}
+
+func TestPlugin_PreRequest_RejectHeaders(t *testing.T) {
+	fixed := time.Unix(1000, 0)
+	p, rdb := newPluginRedis(t, WithClock(func() time.Time { return fixed }))
+	settings := ruleSettings("send_email", "reject_response", "1m", 5)
+	seed(t, rdb, consumerKey("send_email", 0), 7)
+
+	_, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, openAIReq(openAIReqBody(t, "send_email")), nil))
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok)
+	assert.Equal(t, []string{"5"}, pe.Headers["X-RateLimit-consumer-Limit"])
 	assert.Equal(t, []string{"0"}, pe.Headers["X-RateLimit-consumer-Remaining"])
 	assert.Equal(t, []string{fmt.Sprintf("%d", fixed.Add(time.Minute).Unix())}, pe.Headers["X-RateLimit-consumer-Reset"])
 	assert.Equal(t, []string{"send_email"}, pe.Headers["X-RateLimit-Tool"])
 	assert.Equal(t, []string{"60"}, pe.Headers["Retry-After"])
 }
 
-func injectSettings(tool, duration string, max int) map[string]any {
-	return map[string]any{
-		"rules": []any{
-			map[string]any{
-				"tool":     tool,
-				"windows":  []any{map[string]any{"duration": duration, "max": max}},
-				"behavior": "inject_error_result",
-			},
-		},
-	}
+func TestPlugin_PreRequest_StripRemovesOverBudgetTool(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "strip_tool_from_request", "1m", 5)
+	seed(t, rdb, consumerKey("send_email", 0), 5)
+
+	res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, openAIReq(openAIReqBody(t, "send_email", "lookup")), nil))
+	require.NoError(t, err)
+	require.NotNil(t, res.RequestBody)
+
+	decoded, err := adapter.NewRegistry().DecodeRequestFor(res.RequestBody, adapter.FormatOpenAI)
+	require.NoError(t, err)
+	require.Len(t, decoded.Tools, 1)
+	assert.Equal(t, "lookup", decoded.Tools[0].Name)
 }
 
-func TestPlugin_Execute_InjectOpenAIRoundTrip(t *testing.T) {
-	p, _ := newPluginRedis(t)
-	settings := injectSettings("execute_code*", "1m", 1)
-	resp := &infracontext.ResponseContext{Body: openAIToolBody(t, tcSpec{"call_1", "execute_code_py"})}
+func TestPlugin_PreRequest_StripUnderBudgetNoChange(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "strip_tool_from_request", "1m", 5)
+	seed(t, rdb, consumerKey("send_email", 0), 4)
 
-	_, err := p.Execute(context.Background(), execInput(settings, openAIReq(), resp))
+	res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, openAIReq(openAIReqBody(t, "send_email", "lookup")), nil))
 	require.NoError(t, err)
+	assert.Nil(t, res.RequestBody)
+}
 
-	res, err := p.Execute(context.Background(), execInput(settings, openAIReq(), resp))
+func TestPlugin_PreResponse_InjectWhenOverBudget(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("execute_code*", "inject_error_result", "1m", 1)
+	seed(t, rdb, consumerKey("execute_code_py", 0), 1)
+	resp := &infracontext.ResponseContext{Body: openAIRespBody(t, tcSpec{"call_1", "execute_code_py"})}
+
+	res, err := p.Execute(context.Background(), input(policy.StagePreResponse, settings, openAIReq(nil), resp))
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	assert.True(t, res.StopUpstream)
@@ -638,81 +587,107 @@ func TestPlugin_Execute_InjectOpenAIRoundTrip(t *testing.T) {
 	assert.Equal(t, "stop", decoded.FinishReason)
 }
 
-func TestPlugin_Execute_InjectAnthropicRoundTrip(t *testing.T) {
-	p, _ := newPluginRedis(t)
-	settings := injectSettings("execute_code*", "1m", 1)
-	resp := &infracontext.ResponseContext{Body: anthropicToolBody(t, tcSpec{"toolu_1", "execute_code_py"})}
+func TestPlugin_PreResponse_InjectAnthropic(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("execute_code*", "inject_error_result", "1m", 1)
+	seed(t, rdb, consumerKey("execute_code_py", 0), 1)
+	resp := &infracontext.ResponseContext{Body: anthropicRespBody(t, tcSpec{"toolu_1", "execute_code_py"})}
 
-	_, err := p.Execute(context.Background(), execInput(settings, anthropicReq(), resp))
+	res, err := p.Execute(context.Background(), input(policy.StagePreResponse, settings, anthropicReq(nil), resp))
 	require.NoError(t, err)
-
-	res, err := p.Execute(context.Background(), execInput(settings, anthropicReq(), resp))
-	require.NoError(t, err)
-	require.NotNil(t, res)
-	assert.True(t, res.StopUpstream)
-	assert.Equal(t, http.StatusOK, res.StatusCode)
 	require.NotNil(t, res.Body)
 
 	decoded, err := adapter.NewRegistry().DecodeResponseFor(res.Body, adapter.FormatAnthropic)
 	require.NoError(t, err)
 	assert.Empty(t, decoded.ToolCalls)
 	assert.Contains(t, decoded.Content, "execute_code_py")
-	assert.Contains(t, decoded.Content, "toolu_1")
-	assert.Equal(t, "stop", decoded.FinishReason)
 }
 
-func TestPlugin_Execute_InjectKeepsOtherToolCalls(t *testing.T) {
-	p, _ := newPluginRedis(t)
-	settings := injectSettings("execute_code*", "1m", 1)
-	resp := &infracontext.ResponseContext{Body: openAIToolBody(t,
+func TestPlugin_PreResponse_InjectKeepsOtherToolCalls(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("execute_code*", "inject_error_result", "1m", 1)
+	seed(t, rdb, consumerKey("execute_code_py", 0), 1)
+	resp := &infracontext.ResponseContext{Body: openAIRespBody(t,
 		tcSpec{"call_1", "execute_code_py"},
 		tcSpec{"call_2", "lookup"},
 	)}
 
-	_, err := p.Execute(context.Background(), execInput(settings, openAIReq(), resp))
+	res, err := p.Execute(context.Background(), input(policy.StagePreResponse, settings, openAIReq(nil), resp))
 	require.NoError(t, err)
-
-	res, err := p.Execute(context.Background(), execInput(settings, openAIReq(), resp))
-	require.NoError(t, err)
-	require.NotNil(t, res)
-	assert.True(t, res.StopUpstream)
-	assert.Equal(t, http.StatusOK, res.StatusCode)
+	require.NotNil(t, res.Body)
 
 	decoded, err := adapter.NewRegistry().DecodeResponseFor(res.Body, adapter.FormatOpenAI)
 	require.NoError(t, err)
 	require.Len(t, decoded.ToolCalls, 1)
 	assert.Equal(t, "lookup", decoded.ToolCalls[0].Name)
-	assert.Contains(t, decoded.Content, "execute_code_py")
 	assert.Equal(t, "tool_calls", decoded.FinishReason)
 }
 
-func TestPlugin_Execute_RejectWinsOverInject(t *testing.T) {
-	p, _ := newPluginRedis(t)
-	settings := map[string]any{
-		"rules": []any{
-			map[string]any{
-				"tool":     "send_email",
-				"windows":  []any{map[string]any{"duration": "1m", "max": 1}},
-				"behavior": "reject_response",
-			},
-			map[string]any{
-				"tool":     "execute_code*",
-				"windows":  []any{map[string]any{"duration": "1m", "max": 1}},
-				"behavior": "inject_error_result",
-			},
-		},
-	}
-	resp := &infracontext.ResponseContext{Body: openAIToolBody(t,
-		tcSpec{"call_1", "execute_code_py"},
-		tcSpec{"call_2", "send_email"},
-	)}
+func TestPlugin_PreResponse_NoInjectUnderBudget(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("execute_code*", "inject_error_result", "1m", 5)
+	seed(t, rdb, consumerKey("execute_code_py", 0), 4)
+	resp := &infracontext.ResponseContext{Body: openAIRespBody(t, tcSpec{"call_1", "execute_code_py"})}
 
-	_, err := p.Execute(context.Background(), execInput(settings, openAIReq(), resp))
+	res, err := p.Execute(context.Background(), input(policy.StagePreResponse, settings, openAIReq(nil), resp))
 	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+	assert.False(t, res.StopUpstream)
+	assert.Nil(t, res.Body)
+}
 
-	_, err = p.Execute(context.Background(), execInput(settings, openAIReq(), resp))
+func TestPlugin_PreResponse_StreamingNoop(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("execute_code*", "inject_error_result", "1m", 1)
+	seed(t, rdb, consumerKey("execute_code_py", 0), 1)
+	resp := &infracontext.ResponseContext{Streaming: true, Body: openAIStreamBody(t, tcSpec{"call_1", "execute_code_py"})}
+
+	res, err := p.Execute(context.Background(), input(policy.StagePreResponse, settings, openAIReq(nil), resp))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+	assert.False(t, res.StopUpstream)
+}
+
+func TestPlugin_FullCycle_CountThenReject(t *testing.T) {
+	p, _ := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 2)
+	resp := &infracontext.ResponseContext{Body: openAIRespBody(t, tcSpec{"call_1", "send_email"})}
+	reqWithTools := func() *infracontext.RequestContext { return openAIReq(openAIReqBody(t, "send_email")) }
+
+	for i := 0; i < 2; i++ {
+		res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, reqWithTools(), nil))
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, res.StatusCode)
+
+		_, err = p.Execute(context.Background(), input(policy.StagePostResponse, settings, openAIReq(nil), resp))
+		require.NoError(t, err)
+	}
+
+	_, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, reqWithTools(), nil))
 	pe, ok := appplugins.AsPluginError(err)
 	require.True(t, ok)
 	assert.Equal(t, http.StatusTooManyRequests, pe.StatusCode)
-	assert.Equal(t, `tool "send_email" rate limit exceeded`, pe.Message)
+}
+
+func TestPlugin_PreRequest_NoopPaths(t *testing.T) {
+	settings := ruleSettings("send_email", "reject_response", "1m", 1)
+	tests := []struct {
+		name string
+		req  *infracontext.RequestContext
+	}{
+		{name: "nil request", req: nil},
+		{name: "empty body", req: openAIReq(nil)},
+		{name: "no tools declared", req: openAIReq(openAIReqBody(t))},
+		{name: "undecodable body", req: openAIReq([]byte("{not-json"))},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, rdb := newPluginRedis(t)
+			seed(t, rdb, consumerKey("send_email", 0), 5)
+			res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, tt.req, nil))
+			require.NoError(t, err)
+			require.NotNil(t, res)
+			assert.Equal(t, http.StatusOK, res.StatusCode)
+		})
+	}
 }

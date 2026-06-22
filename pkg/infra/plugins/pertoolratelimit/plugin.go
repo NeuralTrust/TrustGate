@@ -15,7 +15,9 @@
 package pertoolratelimit
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"path"
@@ -42,6 +44,11 @@ if redis.call('TTL', key) == -1 then
 end
 return total
 `)
+
+var (
+	sseDataPrefix = []byte("data:")
+	sseDoneMarker = []byte("[DONE]")
+)
 
 var _ appplugins.Plugin = (*Plugin)(nil)
 
@@ -72,11 +79,11 @@ func New(redisClient *redis.Client, adapters *adapter.Registry, opts ...Option) 
 func (p *Plugin) Name() string { return PluginName }
 
 func (p *Plugin) MandatoryStages() []policy.Stage {
-	return []policy.Stage{policy.StagePreResponse}
+	return []policy.Stage{policy.StagePreRequest, policy.StagePreResponse, policy.StagePostResponse}
 }
 
 func (p *Plugin) SupportedStages() []policy.Stage {
-	return []policy.Stage{policy.StagePreResponse}
+	return []policy.Stage{policy.StagePreRequest, policy.StagePreResponse, policy.StagePostResponse}
 }
 
 func (p *Plugin) SupportedModes() []policy.Mode {
@@ -89,20 +96,111 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 }
 
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
-	if in.Request == nil {
+	if p.redis == nil || p.registry == nil {
 		return okResult(), nil
 	}
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {
 		return nil, fmt.Errorf("per_tool_rate_limiter: %w", err)
 	}
-	if in.Response == nil || in.Response.Streaming || len(in.Response.Body) == 0 {
+	dimension, subject, err := in.Scope.Subject()
+	if err != nil {
 		return okResult(), nil
 	}
-	if p.registry == nil {
+	switch in.Stage {
+	case policy.StagePreRequest:
+		return p.preRequest(ctx, cfg, in, dimension, subject)
+	case policy.StagePreResponse:
+		return p.preResponse(ctx, cfg, in, dimension, subject)
+	case policy.StagePostResponse:
+		return p.postResponse(ctx, cfg, in, dimension, subject)
+	default:
 		return okResult(), nil
 	}
-	format := responseFormat(in.Request)
+}
+
+func (p *Plugin) preRequest(
+	ctx context.Context,
+	cfg *config,
+	in appplugins.ExecInput,
+	dimension, subject string,
+) (*appplugins.Result, error) {
+	if in.Request == nil || len(in.Request.Body) == 0 {
+		return okResult(), nil
+	}
+	format := wireFormat(in.Request)
+	if format == "" {
+		return okResult(), nil
+	}
+	canonical, err := p.registry.DecodeRequestFor(in.Request.Body, adapter.Format(format))
+	if err != nil || canonical == nil || len(canonical.Tools) == 0 {
+		return okResult(), nil
+	}
+
+	strip := make(map[string]struct{})
+	for i := range canonical.Tools {
+		tool := canonical.Tools[i].Name
+		rule, ok := matchRule(cfg.Rules, tool)
+		if !ok {
+			continue
+		}
+		behavior := effectiveBehavior(rule, cfg)
+		if behavior != behaviorReject && behavior != behaviorStrip {
+			continue
+		}
+		ws, err := p.overLimit(ctx, in.Config.ID, dimension, subject, tool, rule)
+		if err != nil {
+			return nil, fmt.Errorf("per_tool_rate_limiter: %w", err)
+		}
+		if ws == nil {
+			continue
+		}
+		setExtras(in.Event, p.data(policy.StagePreRequest, ws, tool, dimension, subject, behavior, true))
+		if behavior == behaviorReject {
+			return p.reject(tool, ws.window, ws.total, dimension)
+		}
+		strip[tool] = struct{}{}
+	}
+	if len(strip) == 0 {
+		return okResult(), nil
+	}
+	return p.stripTools(canonical, format, strip)
+}
+
+func (p *Plugin) stripTools(
+	canonical *adapter.CanonicalRequest,
+	format string,
+	strip map[string]struct{},
+) (*appplugins.Result, error) {
+	kept := make([]adapter.CanonicalTool, 0, len(canonical.Tools))
+	for i := range canonical.Tools {
+		if _, drop := strip[canonical.Tools[i].Name]; drop {
+			continue
+		}
+		kept = append(kept, canonical.Tools[i])
+	}
+	canonical.Tools = kept
+	ad, err := p.registry.GetAdapter(adapter.Format(format))
+	if err != nil {
+		return nil, fmt.Errorf("per_tool_rate_limiter: strip: %w", err)
+	}
+	body, err := ad.EncodeRequest(canonical)
+	if err != nil {
+		return nil, fmt.Errorf("per_tool_rate_limiter: strip: %w", err)
+	}
+	return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: body}, nil
+}
+
+func (p *Plugin) preResponse(
+	ctx context.Context,
+	cfg *config,
+	in appplugins.ExecInput,
+	dimension, subject string,
+) (*appplugins.Result, error) {
+	if in.Request == nil || in.Response == nil || in.Response.Streaming || len(in.Response.Body) == 0 {
+		return okResult(), nil
+	}
+	format := wireFormat(in.Request)
 	if format == "" {
 		return okResult(), nil
 	}
@@ -110,81 +208,45 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	if err != nil || canonical == nil || len(canonical.ToolCalls) == 0 {
 		return okResult(), nil
 	}
-	dimension, subject, err := in.Scope.Subject()
-	if err != nil {
-		return okResult(), nil
-	}
 
-	var violations []violation
-	for idx, tc := range canonical.ToolCalls {
-		rule, ok := matchRule(cfg.Rules, tc.Name)
+	drop := make(map[int]string)
+	for idx := range canonical.ToolCalls {
+		tool := canonical.ToolCalls[idx].Name
+		rule, ok := matchRule(cfg.Rules, tool)
 		if !ok {
 			continue
 		}
-		behavior := rule.Behavior
-		if behavior == "" {
-			behavior = cfg.behaviorDefault()
+		if effectiveBehavior(rule, cfg) != behaviorInject {
+			continue
 		}
-		var exceeded *windowConfig
-		exceededTotal := 0
-		for i := range rule.Windows {
-			w := rule.Windows[i]
-			secs := w.windowSeconds()
-			key := fmt.Sprintf("pertoolrl:%s:%s:%s:%s:w%d", in.Config.ID, dimension, subject, tc.Name, i)
-			total, err := recordScript.Run(ctx, p.redis, []string{key}, 1, secs).Int64()
-			if err != nil {
-				return nil, fmt.Errorf("per_tool_rate_limiter: record: %w", err)
-			}
-			if int(total) > w.Max && exceeded == nil {
-				win := w
-				exceeded = &win
-				exceededTotal = int(total)
-				setExtras(in.Event, PerToolRateLimiterData{
-					Stage:         string(policy.StagePreResponse),
-					CounterKey:    key,
-					Tool:          tc.Name,
-					Dimension:     dimension,
-					Subject:       subject,
-					WindowMax:     w.Max,
-					WindowSeconds: secs,
-					CurrentCount:  int(total),
-					Behavior:      behavior,
-					LimitExceeded: true,
-				})
-			}
+		ws, err := p.overLimit(ctx, in.Config.ID, dimension, subject, tool, rule)
+		if err != nil {
+			return nil, fmt.Errorf("per_tool_rate_limiter: %w", err)
 		}
-		if exceeded != nil {
-			violations = append(violations, violation{tool: tc.Name, index: idx, behavior: behavior, window: *exceeded, total: exceededTotal})
+		if ws == nil {
+			continue
 		}
+		setExtras(in.Event, p.data(policy.StagePreResponse, ws, tool, dimension, subject, behaviorInject, true))
+		drop[idx] = tool
 	}
-	for _, v := range violations {
-		if v.behavior == behaviorReject {
-			return p.reject(v.tool, v.window, v.total, dimension)
-		}
+	if len(drop) == 0 {
+		return okResult(), nil
 	}
-	var injects []violation
-	for _, v := range violations {
-		if v.behavior == behaviorInject {
-			injects = append(injects, v)
-		}
-	}
-	if len(injects) > 0 {
-		return p.inject(canonical, format, injects)
-	}
-	return okResult(), nil
+	return p.inject(canonical, format, drop)
 }
 
-func (p *Plugin) inject(canonical *adapter.CanonicalResponse, format string, injects []violation) (*appplugins.Result, error) {
+func (p *Plugin) inject(
+	canonical *adapter.CanonicalResponse,
+	format string,
+	drop map[int]string,
+) (*appplugins.Result, error) {
 	ad, err := p.registry.GetAdapter(adapter.Format(format))
 	if err != nil {
 		return nil, fmt.Errorf("per_tool_rate_limiter: inject: %w", err)
 	}
-	drop := make(map[int]string, len(injects))
-	for _, v := range injects {
-		drop[v.index] = v.tool
-	}
 	kept := make([]adapter.CanonicalToolCall, 0, len(canonical.ToolCalls))
-	for idx, tc := range canonical.ToolCalls {
+	for idx := range canonical.ToolCalls {
+		tc := canonical.ToolCalls[idx]
 		if tool, ok := drop[idx]; ok {
 			canonical.Content += fmt.Sprintf(rateLimitTemplate, tool, tc.ID)
 			continue
@@ -202,6 +264,109 @@ func (p *Plugin) inject(canonical *adapter.CanonicalResponse, format string, inj
 	return &appplugins.Result{StatusCode: http.StatusOK, Body: body, StopUpstream: true}, nil
 }
 
+func (p *Plugin) postResponse(
+	ctx context.Context,
+	cfg *config,
+	in appplugins.ExecInput,
+	dimension, subject string,
+) (*appplugins.Result, error) {
+	if in.Request == nil || in.Response == nil {
+		return okResult(), nil
+	}
+	format := wireFormat(in.Request)
+	if format == "" {
+		return okResult(), nil
+	}
+	for _, tool := range p.calledTools(format, in.Response) {
+		rule, ok := matchRule(cfg.Rules, tool)
+		if !ok {
+			continue
+		}
+		behavior := effectiveBehavior(rule, cfg)
+		for i := range rule.Windows {
+			w := rule.Windows[i]
+			secs := w.windowSeconds()
+			key := counterKey(in.Config.ID, dimension, subject, tool, i)
+			total, err := recordScript.Run(ctx, p.redis, []string{key}, 1, secs).Int64()
+			if err != nil {
+				return nil, fmt.Errorf("per_tool_rate_limiter: record: %w", err)
+			}
+			ws := &windowState{key: key, window: w, total: int(total)}
+			setExtras(in.Event, p.data(policy.StagePostResponse, ws, tool, dimension, subject, behavior, int(total) > w.Max))
+		}
+	}
+	return okResult(), nil
+}
+
+func (p *Plugin) calledTools(format string, resp *infracontext.ResponseContext) []string {
+	if resp.Streaming {
+		return p.streamToolNames(format, resp.Body)
+	}
+	if len(resp.Body) == 0 {
+		return nil
+	}
+	canonical, err := p.registry.DecodeResponseFor(resp.Body, adapter.Format(format))
+	if err != nil || canonical == nil {
+		return nil
+	}
+	names := make([]string, 0, len(canonical.ToolCalls))
+	for i := range canonical.ToolCalls {
+		names = append(names, canonical.ToolCalls[i].Name)
+	}
+	return names
+}
+
+func (p *Plugin) streamToolNames(format string, body []byte) []string {
+	if len(body) == 0 {
+		return nil
+	}
+	names := make(map[int]string)
+	var order []int
+	for _, line := range bytes.Split(body, []byte("\n")) {
+		payload, ok := ssePayload(line)
+		if !ok {
+			continue
+		}
+		chunk, err := p.registry.DecodeStreamChunkFor(payload, adapter.Format(format))
+		if err != nil || chunk == nil {
+			continue
+		}
+		for i := range chunk.ToolCallDeltas {
+			d := chunk.ToolCallDeltas[i]
+			if d.Name == "" {
+				continue
+			}
+			if _, seen := names[d.Index]; !seen {
+				order = append(order, d.Index)
+			}
+			names[d.Index] = d.Name
+		}
+	}
+	out := make([]string, 0, len(order))
+	for _, idx := range order {
+		out = append(out, names[idx])
+	}
+	return out
+}
+
+func (p *Plugin) overLimit(
+	ctx context.Context,
+	configID, dimension, subject, tool string,
+	rule *ruleConfig,
+) (*windowState, error) {
+	for i := range rule.Windows {
+		key := counterKey(configID, dimension, subject, tool, i)
+		v, err := p.redis.Get(ctx, key).Int64()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return nil, err
+		}
+		if int(v) >= rule.Windows[i].Max {
+			return &windowState{key: key, window: rule.Windows[i], total: int(v)}, nil
+		}
+	}
+	return nil, nil
+}
+
 func (p *Plugin) reject(tool string, w windowConfig, total int, dimension string) (*appplugins.Result, error) {
 	secs := w.windowSeconds()
 	headers := make(map[string][]string)
@@ -213,6 +378,36 @@ func (p *Plugin) reject(tool string, w windowConfig, total int, dimension string
 		Message:    fmt.Sprintf("tool %q rate limit exceeded", tool),
 		Headers:    headers,
 	}
+}
+
+func (p *Plugin) data(
+	stage policy.Stage,
+	ws *windowState,
+	tool, dimension, subject, behavior string,
+	exceeded bool,
+) PerToolRateLimiterData {
+	return PerToolRateLimiterData{
+		Stage:         string(stage),
+		CounterKey:    ws.key,
+		Tool:          tool,
+		Dimension:     dimension,
+		Subject:       subject,
+		WindowMax:     ws.window.Max,
+		WindowSeconds: ws.window.windowSeconds(),
+		CurrentCount:  ws.total,
+		Behavior:      behavior,
+		LimitExceeded: exceeded,
+	}
+}
+
+type windowState struct {
+	key    string
+	window windowConfig
+	total  int
+}
+
+func counterKey(configID, dimension, subject, tool string, window int) string {
+	return fmt.Sprintf("pertoolrl:%s:%s:%s:%s:w%d", configID, dimension, subject, tool, window)
 }
 
 func setLimitHeaders(headers map[string][]string, dimension string, limit int, count int64, reset time.Time) {
@@ -235,7 +430,14 @@ func matchRule(rules []ruleConfig, name string) (*ruleConfig, bool) {
 	return nil, false
 }
 
-func responseFormat(req *infracontext.RequestContext) string {
+func effectiveBehavior(rule *ruleConfig, cfg *config) string {
+	if rule.Behavior != "" {
+		return rule.Behavior
+	}
+	return cfg.behaviorDefault()
+}
+
+func wireFormat(req *infracontext.RequestContext) string {
 	if req == nil {
 		return ""
 	}
@@ -245,19 +447,22 @@ func responseFormat(req *infracontext.RequestContext) string {
 	return req.Provider
 }
 
+func ssePayload(line []byte) ([]byte, bool) {
+	if !bytes.HasPrefix(line, sseDataPrefix) {
+		return nil, false
+	}
+	payload := bytes.TrimSpace(bytes.TrimPrefix(line, sseDataPrefix))
+	if len(payload) == 0 || bytes.Equal(payload, sseDoneMarker) {
+		return nil, false
+	}
+	return payload, true
+}
+
 func setExtras(event *metrics.EventContext, data PerToolRateLimiterData) {
 	if event == nil {
 		return
 	}
 	event.SetExtras(data)
-}
-
-type violation struct {
-	tool     string
-	index    int
-	behavior string
-	window   windowConfig
-	total    int
 }
 
 func okResult() *appplugins.Result {

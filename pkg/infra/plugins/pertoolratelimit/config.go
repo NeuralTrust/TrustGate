@@ -36,6 +36,7 @@ var validScopes = map[string]struct{}{
 var enforceableBehaviors = map[string]struct{}{
 	behaviorReject: {},
 	behaviorInject: {},
+	behaviorStrip:  {},
 }
 
 type windowConfig struct {
@@ -122,12 +123,10 @@ func (r ruleConfig) validate() error {
 
 func validateBehavior(behavior string) error {
 	switch behavior {
-	case "", behaviorReject, behaviorInject:
+	case "", behaviorReject, behaviorInject, behaviorStrip:
 		return nil
-	case behaviorStrip:
-		return fmt.Errorf("strip_tool_from_request is not supported yet (Slice 2)")
 	default:
-		return fmt.Errorf("behavior must be one of reject_response, inject_error_result")
+		return fmt.Errorf("behavior must be one of reject_response, inject_error_result, strip_tool_from_request")
 	}
 }
 
