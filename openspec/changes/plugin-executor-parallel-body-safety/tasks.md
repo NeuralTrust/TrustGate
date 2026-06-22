@@ -50,15 +50,15 @@ Chain strategy: pending
 
 ## Phase 3: Planner + executor fold (core fix)
 
-- [ ] 3.1 `pkg/app/plugins/plan.go`: add `mutatesReq, mutatesResp, mutatesMeta bool` to `chainEntry`, populated in `NewStagePlan` from the capability methods.
-- [ ] 3.2 `plan.go`: add pure `groupBatches([]chainEntry) [][]chainEntry` — pre-sorted `priority→slug→id`; greedy parallel batch admitting ≤1 of each capability flag; conflict closes batch (forces sequential) + `logger.Warn` with `slog.String("stage"/"slug"/"capability", …)`; non-parallel = singleton batch.
-- [ ] 3.3 `plan.go`: add `StagePlan.batches map[policy.Stage][][]chainEntry` + `batchesFor(stage) [][]chainEntry`; keep `byStage` for `Has`/`Blocks`/`entriesFor` parity. Add `*slog.Logger` param to `NewStagePlan(reg, policies, logger)`.
-- [ ] 3.4 `pkg/app/plugins/chain.go`: `buildStageChain` fallback reuses shared `groupBatches` for parity; retire/adapt `parallelBatch`.
-- [ ] 3.5 `pkg/app/plugins/executor.go`: consume `batchesFor`/grouped-fallback batches — singleton → `runOne` on real ctx; parallel → isolate (Headers+Metadata clone, Body read-only), `errgroup`, `mergeIsolated`, then `applyResult` in batch order. Single-writer fold of `req.Body`/`resp.Body` across blocks.
-- [ ] 3.6 `executor.go`: defense-in-depth guards — count applied `RequestBody`/`Body` (>1 ⇒ log + first-in-order wins) and `StopUpstream` (>1 ⇒ log + first-in-order wins). No 4th interface method.
-- [ ] 3.7 `pkg/app/consumer/data_finder.go`: `buildPolicyPlan` passes `f.logger` to `NewStagePlan`.
-- [ ] 3.8 `pkg/app/plugins/plan_test.go`: update constructors for the new logger param; assert grouping (≤1/cap), force-sequential demotion, determinism.
-- [ ] 3.9 Green-gate for `pkg/app/plugins/...` and `pkg/app/consumer/...`.
+- [x] 3.1 `pkg/app/plugins/plan.go`: add `mutatesReq, mutatesResp, mutatesMeta bool` to `chainEntry`, populated in `NewStagePlan` from the capability methods.
+- [x] 3.2 `plan.go`: add pure `groupBatches([]chainEntry) [][]chainEntry` — pre-sorted `priority→slug→id`; greedy parallel batch admitting ≤1 of each capability flag; conflict closes batch (forces sequential) + `logger.Warn` with `slog.String("stage"/"slug"/"capability", …)`; non-parallel = singleton batch.
+- [x] 3.3 `plan.go`: add `StagePlan.batches map[policy.Stage][][]chainEntry` + `batchesFor(stage) [][]chainEntry`; keep `byStage` for `Has`/`Blocks`/`entriesFor` parity. Add `*slog.Logger` param to `NewStagePlan(reg, policies, logger)`.
+- [x] 3.4 `pkg/app/plugins/chain.go`: `buildStageChain` fallback reuses shared `groupBatches` for parity; retire/adapt `parallelBatch`.
+- [x] 3.5 `pkg/app/plugins/executor.go`: consume `batchesFor`/grouped-fallback batches — singleton → `runOne` on real ctx; parallel → isolate (Headers+Metadata clone, Body read-only), `errgroup`, `mergeIsolated`, then `applyResult` in batch order. Single-writer fold of `req.Body`/`resp.Body` across blocks.
+- [x] 3.6 `executor.go`: defense-in-depth guards — count applied `RequestBody`/`Body` (>1 ⇒ log + first-in-order wins) and `StopUpstream` (>1 ⇒ log + first-in-order wins). No 4th interface method.
+- [x] 3.7 `pkg/app/consumer/data_finder.go`: `buildPolicyPlan` passes `f.logger` to `NewStagePlan`.
+- [x] 3.8 `pkg/app/plugins/plan_test.go`: update constructors for the new logger param; assert grouping (≤1/cap), force-sequential demotion, determinism.
+- [x] 3.9 Green-gate for `pkg/app/plugins/...` and `pkg/app/consumer/...`.
 
 ## Phase 4: Tests + docs (verification)
 

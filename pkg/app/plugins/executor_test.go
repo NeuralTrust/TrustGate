@@ -38,6 +38,9 @@ type fakePlugin struct {
 	onExec    func()
 	writeMeta bool
 	validErr  error
+	mutReq    bool
+	mutResp   bool
+	mutMeta   bool
 }
 
 func (f *fakePlugin) Name() string                        { return f.name }
@@ -45,9 +48,9 @@ func (f *fakePlugin) MandatoryStages() []policy.Stage     { return f.stages }
 func (f *fakePlugin) SupportedStages() []policy.Stage     { return f.stages }
 func (f *fakePlugin) SupportedModes() []policy.Mode       { return []policy.Mode{policy.ModeEnforce} }
 func (f *fakePlugin) ValidateConfig(map[string]any) error { return f.validErr }
-func (f *fakePlugin) MutatesRequestBody() bool            { return false }
-func (f *fakePlugin) MutatesResponseBody() bool           { return false }
-func (f *fakePlugin) MutatesMetadata() bool               { return false }
+func (f *fakePlugin) MutatesRequestBody() bool            { return f.mutReq }
+func (f *fakePlugin) MutatesResponseBody() bool           { return f.mutResp }
+func (f *fakePlugin) MutatesMetadata() bool               { return f.mutMeta }
 
 func (f *fakePlugin) Execute(ctx context.Context, in ExecInput) (*Result, error) {
 	if f.calls != nil {
@@ -365,7 +368,7 @@ func TestExecutor_RunStage_UsesPrecomputedPlan(t *testing.T) {
 	reg := newRegistry(t, p)
 	exec := NewExecutor(reg, nil)
 
-	plan := NewStagePlan(reg, policies(t, polSpec{slug: "rate", enabled: true}))
+	plan := NewStagePlan(reg, policies(t, polSpec{slug: "rate", enabled: true}), nil)
 	// Policies is intentionally omitted: the executor must run purely from the
 	// precomputed plan.
 	_, err := exec.RunStage(context.Background(), StageInput{
@@ -425,7 +428,7 @@ func TestExecutor_RunStage_PropagatesGlobalScopeFromPlan(t *testing.T) {
 	reg := newRegistry(t, p)
 	exec := NewExecutor(reg, nil)
 
-	plan := NewStagePlan(reg, policies(t, polSpec{slug: "rate", enabled: true, global: true}))
+	plan := NewStagePlan(reg, policies(t, polSpec{slug: "rate", enabled: true, global: true}), nil)
 	_, err := exec.RunStage(context.Background(), StageInput{
 		Stage:    policy.StagePreRequest,
 		Plan:     plan,

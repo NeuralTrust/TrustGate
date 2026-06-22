@@ -15,6 +15,7 @@
 package plugins
 
 import (
+	"log/slog"
 	"sort"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -22,6 +23,7 @@ import (
 
 type StagePlan struct {
 	byStage map[policy.Stage][]chainEntry
+	batches map[policy.Stage][][]chainEntry
 }
 
 var planStages = [...]policy.Stage{
@@ -31,8 +33,11 @@ var planStages = [...]policy.Stage{
 	policy.StagePostResponse,
 }
 
-func NewStagePlan(reg Registry, policies []*policy.Policy) *StagePlan {
-	plan := &StagePlan{byStage: make(map[policy.Stage][]chainEntry, len(planStages))}
+func NewStagePlan(reg Registry, policies []*policy.Policy, logger *slog.Logger) *StagePlan {
+	plan := &StagePlan{
+		byStage: make(map[policy.Stage][]chainEntry, len(planStages)),
+		batches: make(map[policy.Stage][][]chainEntry, len(planStages)),
+	}
 	if reg == nil {
 		return plan
 	}
@@ -58,10 +63,13 @@ func NewStagePlan(reg Registry, policies []*policy.Policy) *StagePlan {
 				Name:     pol.Name,
 				Settings: pol.Settings,
 			},
-			mode:     pol.Mode.Normalize(),
-			priority: pol.Priority,
-			parallel: pol.Parallel,
-			global:   pol.IsGlobal(),
+			mode:        pol.Mode.Normalize(),
+			priority:    pol.Priority,
+			parallel:    pol.Parallel,
+			global:      pol.IsGlobal(),
+			mutatesReq:  plugin.MutatesRequestBody(),
+			mutatesResp: plugin.MutatesResponseBody(),
+			mutatesMeta: plugin.MutatesMetadata(),
 		}
 		for _, stage := range planStages {
 			if isEffectiveStage(plugin, pol.Stages, stage) {
@@ -74,6 +82,7 @@ func NewStagePlan(reg Registry, policies []*policy.Policy) *StagePlan {
 		sort.SliceStable(entries, func(i, j int) bool {
 			return entries[i].priority < entries[j].priority
 		})
+		plan.batches[stage] = groupBatches(entries, stage, logger)
 	}
 	return plan
 }
@@ -102,4 +111,77 @@ func (p *StagePlan) entriesFor(stage policy.Stage) []chainEntry {
 		return nil
 	}
 	return p.byStage[stage]
+}
+
+func (p *StagePlan) batchesFor(stage policy.Stage) [][]chainEntry {
+	if p == nil {
+		return nil
+	}
+	return p.batches[stage]
+}
+
+func groupBatches(entries []chainEntry, stage policy.Stage, logger *slog.Logger) [][]chainEntry {
+	if len(entries) == 0 {
+		return nil
+	}
+	sorted := append([]chainEntry(nil), entries...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		a, b := sorted[i], sorted[j]
+		if a.priority != b.priority {
+			return a.priority < b.priority
+		}
+		if a.config.Slug != b.config.Slug {
+			return a.config.Slug < b.config.Slug
+		}
+		return a.config.ID < b.config.ID
+	})
+
+	batches := make([][]chainEntry, 0, len(sorted))
+	var current []chainEntry
+	var usedReq, usedResp, usedMeta bool
+	for i := range sorted {
+		entry := sorted[i]
+		if !entry.parallel {
+			if len(current) > 0 {
+				batches = append(batches, current)
+				current = nil
+				usedReq, usedResp, usedMeta = false, false, false
+			}
+			batches = append(batches, []chainEntry{entry})
+			continue
+		}
+		if len(current) > 0 {
+			samePriority := current[0].priority == entry.priority
+			capability := ""
+			if samePriority {
+				switch {
+				case entry.mutatesReq && usedReq:
+					capability = "request_body"
+				case entry.mutatesResp && usedResp:
+					capability = "response_body"
+				case entry.mutatesMeta && usedMeta:
+					capability = "metadata"
+				}
+			}
+			if !samePriority || capability != "" {
+				if capability != "" && logger != nil {
+					logger.Warn("plugin forced sequential: parallel batch capability cap exceeded",
+						slog.String("stage", string(stage)),
+						slog.String("slug", entry.config.Slug),
+						slog.String("capability", capability))
+				}
+				batches = append(batches, current)
+				current = nil
+				usedReq, usedResp, usedMeta = false, false, false
+			}
+		}
+		current = append(current, entry)
+		usedReq = usedReq || entry.mutatesReq
+		usedResp = usedResp || entry.mutatesResp
+		usedMeta = usedMeta || entry.mutatesMeta
+	}
+	if len(current) > 0 {
+		batches = append(batches, current)
+	}
+	return batches
 }
