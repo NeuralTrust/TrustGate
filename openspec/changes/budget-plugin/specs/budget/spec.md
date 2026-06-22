@@ -165,12 +165,20 @@ The same resolved price MUST serve both the dollar budget and the cost cap.
 
 `policy.Mode` and `behavior_on_*` are orthogonal axes. `observe` MUST record only
 and never block or downgrade, overriding any `behavior_on_*`. `throttle` MUST
-delay (budget only). `enforce` MUST apply the configured behavior field.
+delay (budget only). `enforce` MUST apply the configured behavior field. The
+`behavior_on_exceeded` enum is `reject | throttle | downgrade_model |
+alert_only`; `alert_only` MUST record the breach without rejecting or
+downgrading, even under `enforce`.
 
 #### Scenario: Observe forces non-blocking
 - GIVEN mode `observe` and `behavior_on_exceeded:"reject"` with an exceeded budget
 - WHEN a request is processed
 - THEN it MUST NOT be rejected or downgraded; the event MUST still record the breach
+
+#### Scenario: Alert-only records without blocking
+- GIVEN mode `enforce` and `behavior_on_exceeded:"alert_only"` with an exceeded budget
+- WHEN a request is processed
+- THEN it MUST NOT be rejected or downgraded; the breach MUST still be recorded
 
 #### Scenario: Enforce applies behavior
 - GIVEN mode `enforce` and an exceeded budget with `behavior_on_exceeded:"reject"`

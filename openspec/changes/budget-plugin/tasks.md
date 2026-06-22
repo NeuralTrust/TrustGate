@@ -91,10 +91,10 @@ churn because phases are strictly dependent. Prefer the chain.)
 
 ## Phase 6: Catalog metadata + docs
 
-- [ ] 6.1 Expand `catalog_metadata.go` `SettingsSchema.Fields` (keep `window`+`group_by_header`; add unit, per_model, counting, rules[], aggregate, cost_cap, pricing_table, custom_pricing) using `FieldTypeObject/Array/Map/Enum`.
-- [ ] 6.2 Update `token_rate_limiter` name → "Token & Dollar Budget + Cost Cap" + description.
-- [ ] 6.3 Update `catalog_test.go` for the new schema tree.
-- [ ] 6.4 Update any example/docs for the new config.
+- [x] 6.1 Expand `catalog_metadata.go` `SettingsSchema.Fields` (keep `window`+`group_by_header`; add unit, per_model, counting, rules[], aggregate, cost_cap, pricing_table, custom_pricing) using `FieldTypeObject/Array/Map/Enum`.
+- [x] 6.2 Update `token_rate_limiter` name → "Token & Dollar Budget + Cost Cap" + description.
+- [x] 6.3 Update `catalog_test.go` for the new schema tree.
+- [x] 6.4 Update any example/docs for the new config.
 
 **Verify**: `go test -race ./pkg/app/plugins/... -run Catalog` ; `go vet ./...`.
 **Rollback**: revert metadata/name/description; legacy schema entry restored.
