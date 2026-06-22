@@ -77,7 +77,7 @@ func (h *UpdateRoleHandler) Handle(c *fiber.Ctx) error {
 		ModelPolicies:  modelPolicies,
 		MCPPolicies:    mcpPolicies,
 		MCPPoliciesSet: mcpPoliciesSet,
-		IDPMapping:     req.IDPMapping,
+		OIDCMapping:     req.OIDCMapping,
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

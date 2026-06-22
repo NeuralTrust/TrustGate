@@ -24,13 +24,14 @@ const (
 	// middleware from the per-gateway session configuration.
 	SessionContextKey          ContextKey = "session_id"
 	SessionGeneratedContextKey ContextKey = "session_id_generated"
-	// FingerprintIDContextKey holds the fingerprint identifier computed by the
-	// fingerprint middleware.
-	FingerprintIDContextKey ContextKey = "fingerprint_id"
 	// TeamIDContextKey holds the team identifier decoded from an admin JWT.
 	TeamIDContextKey ContextKey = "team_id"
 	// UserIDContextKey holds the user identifier decoded from an admin JWT.
 	UserIDContextKey ContextKey = "user_id"
 	// UserEmailContextKey holds the user email decoded from an admin JWT.
 	UserEmailContextKey ContextKey = "user_email"
+	// MCPSkipMetricsKey is set by the MCP handler to tell the MCP metrics
+	// middleware not to publish an event for the current request (e.g. ping,
+	// notifications, or pre-dispatch failures).
+	MCPSkipMetricsKey ContextKey = "__mcp_skip_metrics"
 )

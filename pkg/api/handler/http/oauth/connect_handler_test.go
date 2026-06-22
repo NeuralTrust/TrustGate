@@ -28,8 +28,9 @@ import (
 )
 
 type stubConnectService struct {
-	page *appoauth.ConnectPage
-	err  error
+	page        *appoauth.ConnectPage
+	err         error
+	gotProvider string
 }
 
 func (s *stubConnectService) CreateTicket(context.Context, ids.GatewayID, string, string) (string, error) {
@@ -40,7 +41,8 @@ func (s *stubConnectService) Page(context.Context, string) (*appoauth.ConnectPag
 	return s.page, s.err
 }
 
-func (s *stubConnectService) Start(context.Context, string, string, string) (string, error) {
+func (s *stubConnectService) Start(_ context.Context, _, _, provider string) (string, error) {
+	s.gotProvider = provider
 	return "https://github.com/login/oauth/authorize?x=1", nil
 }
 
@@ -122,5 +124,23 @@ func TestConnectStart_RedirectsToProvider(t *testing.T) {
 	}
 	if loc := res.Header.Get("Location"); !strings.HasPrefix(loc, "https://github.com/") {
 		t.Fatalf("Location = %q", loc)
+	}
+}
+
+func TestConnectStart_ProviderWithSlash(t *testing.T) {
+	t.Parallel()
+	stub := &stubConnectService{}
+	h := NewConnectHandler(stub)
+	app := fiber.New()
+	app.Get(ConnectStartPath, h.Start)
+	res, err := app.Test(httptest.NewRequest("GET", "/oauth/connect/app.linear/mcp?ticket=abc", nil))
+	if err != nil {
+		t.Fatalf("route test: %v", err)
+	}
+	if res.StatusCode != fiber.StatusFound {
+		t.Fatalf("status = %d, want 302", res.StatusCode)
+	}
+	if stub.gotProvider != "app.linear/mcp" {
+		t.Fatalf("provider = %q, want app.linear/mcp", stub.gotProvider)
 	}
 }

@@ -30,7 +30,7 @@ import (
 )
 
 func scoperUnderTest() RoleScoper {
-	return NewRoleScoper(approle.NewIDPResolver())
+	return NewRoleScoper(approle.NewOIDCResolver())
 }
 
 func rolePrincipalCtx(groups ...string) context.Context {
@@ -89,7 +89,7 @@ func roleWith(t *testing.T, gw ids.GatewayID, name, group string, policies *role
 	role, err := roledomain.New(roledomain.CreateParams{
 		GatewayID:  gw,
 		Name:       name,
-		IDPMapping: groupMapping(t, group),
+		OIDCMapping: groupMapping(t, group),
 	})
 	if err != nil {
 		t.Fatalf("new role: %v", err)

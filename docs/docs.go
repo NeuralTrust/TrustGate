@@ -3050,6 +3050,58 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/playground/traces/{trace_id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the metrics Event captured for a playground request, keyed by the X-AG-Trace-Id returned in the proxy response. Traces expire after a short TTL.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "playground"
+                ],
+                "summary": "Get a playground trace",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Trace id (X-AG-Trace-Id from the proxy response)",
+                        "name": "trace_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Event"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/policies-catalog": {
             "get": {
                 "security": [
@@ -3147,7 +3199,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Bearer token for OAuth2 or IDP consumers",
+                        "description": "Bearer token for OAuth2 or OIDC consumers",
                         "name": "Authorization",
                         "in": "header"
                     },
@@ -3213,14 +3265,14 @@ const docTemplate = `{
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.ConfigRequest": {
             "type": "object",
             "properties": {
-                "idp": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.IDPConfigRequest"
-                },
                 "mtls": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.MTLSConfigRequest"
                 },
                 "oauth2": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OAuth2ConfigRequest"
+                },
+                "oidc": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OIDCConfigRequest"
                 }
             }
         },
@@ -3237,44 +3289,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "type": {
-                    "type": "string"
-                }
-            }
-        },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.IDPConfigRequest": {
-            "type": "object",
-            "properties": {
-                "allowed_algorithms": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "audiences": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "issuer": {
-                    "type": "string"
-                },
-                "jwks_url": {
-                    "type": "string"
-                },
-                "public_keys": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "required_scopes": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "subject_claim": {
                     "type": "string"
                 }
             }
@@ -3343,6 +3357,44 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OIDCConfigRequest": {
+            "type": "object",
+            "properties": {
+                "allowed_algorithms": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "audiences": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "issuer": {
+                    "type": "string"
+                },
+                "jwks_url": {
+                    "type": "string"
+                },
+                "public_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "required_scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "subject_claim": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.UpdateAuthRequest": {
             "type": "object",
             "properties": {
@@ -3396,52 +3448,14 @@ const docTemplate = `{
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.ConfigResponse": {
             "type": "object",
             "properties": {
-                "idp": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.IDPConfigResponse"
-                },
                 "mtls": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.MTLSConfigResponse"
                 },
                 "oauth2": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OAuth2ConfigResponse"
-                }
-            }
-        },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.IDPConfigResponse": {
-            "type": "object",
-            "properties": {
-                "allowed_algorithms": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
                 },
-                "audiences": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "issuer": {
-                    "type": "string"
-                },
-                "jwks_url": {
-                    "type": "string"
-                },
-                "public_keys": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "required_scopes": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "subject_claim": {
-                    "type": "string"
+                "oidc": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OIDCConfigResponse"
                 }
             }
         },
@@ -3526,6 +3540,44 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OIDCConfigResponse": {
+            "type": "object",
+            "properties": {
+                "allowed_algorithms": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "audiences": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "issuer": {
+                    "type": "string"
+                },
+                "jwks_url": {
+                    "type": "string"
+                },
+                "public_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "required_scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "subject_claim": {
+                    "type": "string"
                 }
             }
         },
@@ -4269,6 +4321,9 @@ const docTemplate = `{
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_telemetry.Telemetry"
                 },
                 "updated_at": {
+                    "type": "string"
+                },
+                "version": {
                     "type": "string"
                 }
             }
@@ -5129,12 +5184,6 @@ const docTemplate = `{
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.CreateRoleRequest": {
             "type": "object",
             "properties": {
-                "idp_mapping": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
                 "mcp_policies": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.MCPPoliciesRequest"
                 },
@@ -5146,6 +5195,12 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "oidc_mapping": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
                 }
             }
         },
@@ -5203,12 +5258,6 @@ const docTemplate = `{
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.UpdateRoleRequest": {
             "type": "object",
             "properties": {
-                "idp_mapping": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
                 "mcp_policies": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.MCPPoliciesRequest"
                 },
@@ -5220,6 +5269,12 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "oidc_mapping": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
                 }
             }
         },
@@ -5272,12 +5327,6 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
-                "idp_mapping": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
                 "mcp_policies": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_role.MCPPolicies"
                 },
@@ -5289,6 +5338,12 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "oidc_mapping": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
                 },
                 "registry_ids": {
                     "type": "array",
@@ -5862,6 +5917,315 @@ const docTemplate = `{
                     "additionalProperties": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Attempt": {
+            "type": "object",
+            "properties": {
+                "attempt": {
+                    "type": "integer"
+                },
+                "fallback": {
+                    "type": "boolean"
+                },
+                "latency_ms": {
+                    "type": "integer"
+                },
+                "outcome": {
+                    "type": "string"
+                },
+                "pinned": {
+                    "type": "boolean"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "registry_id": {
+                    "type": "string"
+                },
+                "route": {
+                    "type": "string"
+                },
+                "status_code": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Consumer": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Cost": {
+            "type": "object",
+            "properties": {
+                "completion_usd": {
+                    "type": "number"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "prompt_usd": {
+                    "type": "number"
+                },
+                "total_usd": {
+                    "type": "number"
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Event": {
+            "type": "object",
+            "properties": {
+                "attempts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Attempt"
+                    }
+                },
+                "consumer": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Consumer"
+                },
+                "cost": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Cost"
+                },
+                "end_timestamp": {
+                    "type": "integer"
+                },
+                "gateway_id": {
+                    "type": "string"
+                },
+                "ip": {
+                    "type": "string"
+                },
+                "is_flagged": {
+                    "type": "boolean"
+                },
+                "latency": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Latency"
+                },
+                "occurred_on": {
+                    "type": "integer"
+                },
+                "policy_chain": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.PolicyEntry"
+                    }
+                },
+                "request": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Request"
+                },
+                "response": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Response"
+                },
+                "schema_version": {
+                    "type": "integer"
+                },
+                "security": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "session_id": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Status"
+                },
+                "team_id": {
+                    "type": "string"
+                },
+                "timestamp": {
+                    "type": "string"
+                },
+                "trace_id": {
+                    "type": "string"
+                },
+                "turn_id": {
+                    "type": "string"
+                },
+                "usage": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Usage"
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Latency": {
+            "type": "object",
+            "properties": {
+                "gateway_ms": {
+                    "type": "integer"
+                },
+                "policies_ms": {
+                    "type": "integer"
+                },
+                "provider_ms": {
+                    "type": "integer"
+                },
+                "routing_ms": {
+                    "type": "integer"
+                },
+                "total_ms": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.PolicyEntry": {
+            "type": "object",
+            "properties": {
+                "decision": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "boolean"
+                },
+                "extras": {},
+                "flagged": {
+                    "type": "boolean"
+                },
+                "latency_ms": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "score": {
+                    "type": "number"
+                },
+                "score_label": {
+                    "type": "string"
+                },
+                "stage": {
+                    "type": "string"
+                },
+                "status_code": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Request": {
+            "type": "object",
+            "properties": {
+                "body": {
+                    "type": "string"
+                },
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "max_tokens": {
+                    "type": "integer"
+                },
+                "method": {
+                    "type": "string"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "model_label": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "prompt_tokens": {
+                    "type": "integer"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "registry_id": {
+                    "type": "string"
+                },
+                "requested_model": {
+                    "type": "string"
+                },
+                "stream": {
+                    "type": "boolean"
+                },
+                "temperature": {
+                    "type": "number"
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Response": {
+            "type": "object",
+            "properties": {
+                "body": {
+                    "type": "string"
+                },
+                "completion_tokens": {
+                    "type": "integer"
+                },
+                "finish_reason": {
+                    "type": "string"
+                },
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "latency_ms": {
+                    "type": "integer"
+                },
+                "status_code": {
+                    "type": "integer"
+                },
+                "streaming": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Status": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "integer"
+                },
+                "is_timeout": {
+                    "type": "boolean"
+                },
+                "outcome": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Usage": {
+            "type": "object",
+            "properties": {
+                "cached_input_tokens": {
+                    "type": "integer"
+                },
+                "completion_tokens": {
+                    "type": "integer"
+                },
+                "prompt_tokens": {
+                    "type": "integer"
+                },
+                "reasoning_output_tokens": {
+                    "type": "integer"
+                },
+                "total_tokens": {
+                    "type": "integer"
                 }
             }
         },

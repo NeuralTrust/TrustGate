@@ -16,9 +16,12 @@ package middleware
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 )
+
+const protectedResourceMetadataPath = "/.well-known/oauth-protected-resource"
 
 type OAuthChallengeMiddleware struct{}
 
@@ -30,11 +33,22 @@ func (m *OAuthChallengeMiddleware) Middleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		err := c.Next()
 		if isUnauthorized(c, err) {
-			c.Set(fiber.HeaderWWWAuthenticate,
-				`Bearer resource_metadata="`+c.BaseURL()+`/.well-known/oauth-protected-resource"`)
+			c.Set(fiber.HeaderWWWAuthenticate, bearerChallenge(c))
 		}
 		return err
 	}
+}
+
+// bearerChallenge builds an RFC 9728 challenge whose resource_metadata points at
+// the protected-resource document scoped to the requested MCP path, so clients
+// send an RFC 8707 resource that identifies the consumer and its identity
+// provider rather than the gateway root.
+func bearerChallenge(c *fiber.Ctx) string {
+	metadata := c.BaseURL() + protectedResourceMetadataPath
+	if resourcePath := strings.Trim(c.Path(), "/"); resourcePath != "" {
+		metadata += "/" + resourcePath
+	}
+	return `Bearer resource_metadata="` + metadata + `"`
 }
 
 func isUnauthorized(c *fiber.Ctx, err error) bool {

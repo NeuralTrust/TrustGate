@@ -59,6 +59,7 @@ func (m *MetricsMiddleware) Middleware() fiber.Handler {
 		exporters := gatewayExporters(gw)
 
 		traceID := m.resolveTraceID(c)
+		c.Set(HeaderTraceID, traceID)
 		requestTrace := trace.New(traceID, m.buildTraceMetadata(c, gatewayID, gw))
 		// Gating is set once here, before the trace is shared with any
 		// downstream goroutine (forwarder, plugins, finalizer).
@@ -122,11 +123,10 @@ func (m *MetricsMiddleware) enabled() bool {
 }
 
 func (m *MetricsMiddleware) resolveTraceID(c *fiber.Ctx) string {
-	traceID := c.Get(fiber.HeaderXRequestID)
-	if traceID == "" {
-		traceID = uuid.New().String()
+	if tid := c.Get(HeaderTraceID); tid != "" {
+		return tid
 	}
-	return traceID
+	return uuid.New().String()
 }
 
 func (m *MetricsMiddleware) attachTrace(c *fiber.Ctx, requestTrace *trace.RequestTrace) {
@@ -143,9 +143,6 @@ func (m *MetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string, g
 	}
 	if sessionID, ok := c.Locals(string(infracontext.SessionContextKey)).(string); ok {
 		meta.SessionID = sessionID
-	}
-	if fpID, ok := c.Locals(string(infracontext.FingerprintIDContextKey)).(string); ok {
-		meta.FingerprintID = fpID
 	}
 	return meta
 }

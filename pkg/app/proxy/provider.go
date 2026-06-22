@@ -41,18 +41,11 @@ const (
 	fieldPreviousResponse = "previous_response_id"
 )
 
-// ErrInvalidRequestPayload signals that the inbound body could not be decoded
-// while adapting it to the target provider format. The handler maps it to a
-// 400 Bad Request.
 var ErrInvalidRequestPayload = errors.New("invalid request payload")
 
 var ErrModelNotAllowed = errors.New("model not allowed")
 
-// ProviderResponse is the backend LLM response. On the synchronous path it
-// carries Body; on the streaming path it carries Stream. It is relayed to the
-// client verbatim, including non-2xx backend statuses: a 4xx/5xx from the
-// backend is carried here (not as a Go error) so the backend error reaches the
-// client unchanged.
+
 type ProviderResponse struct {
 	StatusCode int
 	Headers    map[string][]string
@@ -61,9 +54,15 @@ type ProviderResponse struct {
 	// adapted to the client's source format. The consumer writes each line + "\n"
 	// and is responsible for draining the sequence (which closes the backend
 	// body). The second value carries mid-stream errors.
-	Stream       iter.Seq2[[]byte, error]
-	Usage        *adapter.CanonicalUsage
-	Model        string
+	Stream iter.Seq2[[]byte, error]
+	Usage  *adapter.CanonicalUsage
+	// Model is the model echoed by the provider in its response. Some providers
+	// (e.g. Bedrock Titan/Llama/Mistral) leave it empty.
+	Model string
+	// SentModel is the model the gateway actually put on the outbound request to
+	// the provider, after routing-ref parsing, pool/LB resolution and model
+	// enforcement. It is the most reliable identifier for cost attribution.
+	SentModel    string
 	FinishReason string
 	ResponseID   string
 }
@@ -101,6 +100,7 @@ type preparedInvocation struct {
 	client       providers.Client
 	cfg          *providers.Config
 	body         []byte
+	sentModel    string
 	sourceFormat adapter.Format
 	targetFormat adapter.Format
 	crossFormat  bool
@@ -148,6 +148,7 @@ func (p *providerInvoker) Invoke(
 		Body:         respBody,
 		Usage:        usage,
 		Model:        model,
+		SentModel:    prep.sentModel,
 		FinishReason: finishReason,
 		ResponseID:   responseID,
 	}, nil
@@ -181,6 +182,10 @@ func (p *providerInvoker) InvokeStream(
 		body = injectStreamTrue(body)
 	}
 
+	if adapter.IsSameWireFormat(prep.targetFormat, adapter.FormatOpenAI) {
+		body = injectStreamIncludeUsage(body)
+	}
+
 	seq, err := prep.client.CompletionsStream(ctx, prep.cfg, body)
 	if err != nil {
 		if be, ok := registry.IsBackendError(err); ok {
@@ -199,6 +204,7 @@ func (p *providerInvoker) InvokeStream(
 		StatusCode: http.StatusOK,
 		Headers:    streamHeaders(bk.Provider()),
 		Stream:     stream,
+		SentModel:  prep.sentModel,
 	}, nil
 }
 
@@ -251,6 +257,8 @@ func (p *providerInvoker) prepare(
 
 	body = injectPreviousResponseID(body, targetFormat, req.PreviousResponseID)
 
+	sentModel, _ := adapter.ExtractModel(body)
+
 	return &preparedInvocation{
 		client: client,
 		cfg: &providers.Config{
@@ -258,6 +266,7 @@ func (p *providerInvoker) prepare(
 			Credentials: bk.Auth().ProviderCredentials(),
 		},
 		body:         body,
+		sentModel:    sentModel,
 		sourceFormat: sourceFormat,
 		targetFormat: targetFormat,
 		crossFormat:  crossFormat,
@@ -308,8 +317,6 @@ func (p *providerInvoker) streamObserver(ctx context.Context) func(*adapter.Cano
 	}
 }
 
-// streamHeaders returns the SSE response headers for a streamed provider
-// response.
 func streamHeaders(provider string) map[string][]string {
 	return map[string][]string{
 		headerContentType:      {"text/event-stream"},
@@ -320,9 +327,6 @@ func streamHeaders(provider string) map[string][]string {
 	}
 }
 
-// sourceFormatFromRequest returns the client request wire format as stamped
-// by the proxy path resolver. Requests without a stamped format (internal
-// callers) default to OpenAI.
 func sourceFormatFromRequest(req *infracontext.RequestContext) adapter.Format {
 	if req.SourceFormat == "" {
 		return adapter.FormatOpenAI

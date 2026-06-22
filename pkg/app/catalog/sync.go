@@ -19,11 +19,11 @@ import (
 	"log/slog"
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/catalog"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/catalog/openrouter"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/catalog/modelsdev"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
 )
 
-const sourceOpenRouter = "openrouter"
+const sourceModelsDev = "models.dev"
 
 type seedProvider struct {
 	code        string
@@ -41,14 +41,21 @@ var seedProviders = []seedProvider{
 	{providers.ProviderAzure, "Azure OpenAI", "openai"},
 	{providers.ProviderMistral, "Mistral", "openai"},
 	{providers.ProviderGroq, "Groq", "openai"},
+	{providers.ProviderDeepSeek, "DeepSeek", "openai"},
 }
 
-var openRouterVendorToCode = map[string]string{
-	"openai":    providers.ProviderOpenAI,
-	"google":    providers.ProviderGoogle,
-	"anthropic": providers.ProviderAnthropic,
-	"mistral":   providers.ProviderMistral,
-	"mistralai": providers.ProviderMistral,
+// modelsDevProviderToCode maps models.dev provider keys to the gateway provider
+// codes. Only mapped providers are imported; everything else is ignored.
+var modelsDevProviderToCode = map[string]string{
+	"openai":         providers.ProviderOpenAI,
+	"google":         providers.ProviderGoogle,
+	"google-vertex":  providers.ProviderVertex,
+	"anthropic":      providers.ProviderAnthropic,
+	"amazon-bedrock": providers.ProviderBedrock,
+	"azure":          providers.ProviderAzure,
+	"mistral":        providers.ProviderMistral,
+	"groq":           providers.ProviderGroq,
+	"deepseek":       providers.ProviderDeepSeek,
 }
 
 //go:generate mockery --name=Syncer --dir=. --output=./mocks --filename=catalog_syncer_mock.go --case=underscore --with-expecter
@@ -60,11 +67,11 @@ var _ Syncer = (*syncer)(nil)
 
 type syncer struct {
 	repo   domain.Repository
-	client *openrouter.Client
+	client *modelsdev.Client
 	logger *slog.Logger
 }
 
-func NewSyncer(repo domain.Repository, client *openrouter.Client, logger *slog.Logger) Syncer {
+func NewSyncer(repo domain.Repository, client *modelsdev.Client, logger *slog.Logger) Syncer {
 	return &syncer{repo: repo, client: client, logger: logger}
 }
 
@@ -85,7 +92,7 @@ func (s *syncer) Sync(ctx context.Context) error {
 
 	keepByProvider := make(map[string][]string)
 	for _, m := range models {
-		code, ok := openRouterVendorToCode[m.ProviderCode]
+		code, ok := modelsDevProviderToCode[m.ProviderCode]
 		if !ok {
 			continue
 		}
@@ -103,7 +110,7 @@ func (s *syncer) Sync(ctx context.Context) error {
 			InputPrice:    m.InputPrice,
 			OutputPrice:   m.OutputPrice,
 			Enabled:       true,
-			Source:        sourceOpenRouter,
+			Source:        sourceModelsDev,
 		}
 		if err := s.repo.UpsertModel(ctx, entity); err != nil {
 			return err
@@ -112,7 +119,7 @@ func (s *syncer) Sync(ctx context.Context) error {
 	}
 
 	for code, provider := range codeToProvider {
-		if err := s.repo.DisableModelsExcept(ctx, provider.ID, sourceOpenRouter, keepByProvider[code]); err != nil {
+		if err := s.repo.DisableModelsExcept(ctx, provider.ID, sourceModelsDev, keepByProvider[code]); err != nil {
 			return err
 		}
 	}

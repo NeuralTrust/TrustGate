@@ -284,6 +284,9 @@ func (c *Consumer) validateRoleBased() error {
 	if c.MCP != nil {
 		return fmt.Errorf("%w: mcp policy is only valid in inline mode", ErrInvalidRoutingMode)
 	}
+	if len(c.AuthIDs) > 1 {
+		return fmt.Errorf("%w: a role_based consumer can have at most one auth", ErrInvalidRoutingMode)
+	}
 	if err := validateUniqueIDs(c.RoleIDs, ErrInvalidRoutingMode, "role"); err != nil {
 		return err
 	}

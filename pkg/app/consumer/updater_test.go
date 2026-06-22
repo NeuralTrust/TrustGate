@@ -21,6 +21,9 @@ import (
 	"time"
 
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
+	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
+	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
+	authmocks "github.com/NeuralTrust/AgentGateway/pkg/domain/auth/mocks"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer/mocks"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
@@ -63,7 +66,7 @@ func TestUpdater_Update_Success(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appconsumer.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	updater := appconsumer.NewUpdater(repo, authmocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	got, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
@@ -95,7 +98,7 @@ func TestUpdater_Update_Partial_PreservesFieldsAndAssociations(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appconsumer.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	updater := appconsumer.NewUpdater(repo, authmocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	got, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
@@ -117,7 +120,7 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, mock.Anything).Return(nil, domain.ErrNotFound).Once()
 
-	updater := appconsumer.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	updater := appconsumer.NewUpdater(repo, authmocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 
 	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID: ids.New[ids.ConsumerKind](),
@@ -136,7 +139,7 @@ func TestUpdater_Update_RejectsModelPolicyForUnassociatedRegistry(t *testing.T) 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 
-	updater := appconsumer.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	updater := appconsumer.NewUpdater(repo, authmocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 
 	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:        existing.ID,
@@ -162,7 +165,7 @@ func TestUpdater_Update_AllowsModelPolicyForAssociatedRegistry(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Once()
 
-	updater := appconsumer.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	updater := appconsumer.NewUpdater(repo, authmocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 
 	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:        existing.ID,
@@ -188,7 +191,7 @@ func TestUpdater_Update_RejectsLBConfigForUnassociatedRegistry(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 
-	updater := appconsumer.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	updater := appconsumer.NewUpdater(repo, authmocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 
 	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:        existing.ID,
@@ -233,7 +236,7 @@ func TestUpdater_Update_DisabledObjectsClearFallbackAndLBConfig(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appconsumer.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	updater := appconsumer.NewUpdater(repo, authmocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
@@ -268,7 +271,7 @@ func TestUpdater_Update_SwitchToRoleBasedCleansInlineConfig(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appconsumer.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	updater := appconsumer.NewUpdater(repo, authmocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	if _, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:          existing.ID,
 		GatewayID:   gwID,
@@ -305,13 +308,114 @@ func TestUpdater_Update_SwitchToInlineClearsRoles(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appconsumer.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	updater := appconsumer.NewUpdater(repo, authmocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	if _, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:          existing.ID,
 		GatewayID:   gwID,
 		RoutingMode: &mode,
 	}); err != nil {
 		t.Fatalf("Update error: %v", err)
+	}
+}
+
+func TestUpdater_Update_RejectsIdPAuthOnSwitchToMCP(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	beID := ids.New[ids.RegistryKind]()
+	authID := ids.New[ids.AuthKind]()
+	existing := existingConsumer(gwID, beID)
+	existing.AuthIDs = []ids.AuthID{authID}
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+
+	authRepo := authmocks.NewRepository(t)
+	authRepo.EXPECT().FindByIDs(mock.Anything, gwID, existing.AuthIDs).
+		Return([]*authdomain.Auth{{ID: authID, GatewayID: gwID, Type: authdomain.TypeOIDC}}, nil).Once()
+
+	updater := appconsumer.NewUpdater(repo, authRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
+		ID:        existing.ID,
+		GatewayID: gwID,
+		Type:      ptr(domain.TypeMCP),
+	})
+	if !errors.Is(err, commonerrors.ErrConflict) {
+		t.Fatalf("err = %v, want ErrConflict (oidc cannot broker for an MCP consumer)", err)
+	}
+}
+
+func TestUpdater_Update_RejectsNonIdPAuthOnSwitchToRoleBased(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	beID := ids.New[ids.RegistryKind]()
+	authID := ids.New[ids.AuthKind]()
+	existing := existingConsumer(gwID, beID)
+	existing.AuthIDs = []ids.AuthID{authID}
+	mode := domain.RoutingModeRoleBased
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+
+	authRepo := authmocks.NewRepository(t)
+	authRepo.EXPECT().FindByIDs(mock.Anything, gwID, existing.AuthIDs).
+		Return([]*authdomain.Auth{{ID: authID, GatewayID: gwID, Type: authdomain.TypeAPIKey}}, nil).Once()
+
+	updater := appconsumer.NewUpdater(repo, authRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
+		ID:          existing.ID,
+		GatewayID:   gwID,
+		RoutingMode: &mode,
+	})
+	if !errors.Is(err, commonerrors.ErrConflict) {
+		t.Fatalf("err = %v, want ErrConflict (role_based requires an identity-provider auth)", err)
+	}
+}
+
+func TestUpdater_Update_AllowsOAuth2AuthOnSwitchToMCP(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	beID := ids.New[ids.RegistryKind]()
+	authID := ids.New[ids.AuthKind]()
+	existing := existingConsumer(gwID, beID)
+	existing.AuthIDs = []ids.AuthID{authID}
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Once()
+
+	authRepo := authmocks.NewRepository(t)
+	authRepo.EXPECT().FindByIDs(mock.Anything, gwID, existing.AuthIDs).
+		Return([]*authdomain.Auth{{ID: authID, GatewayID: gwID, Type: authdomain.TypeOAuth2}}, nil).Once()
+
+	updater := appconsumer.NewUpdater(repo, authRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	if _, err := updater.Update(context.Background(), appconsumer.UpdateInput{
+		ID:        existing.ID,
+		GatewayID: gwID,
+		Type:      ptr(domain.TypeMCP),
+	}); err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+}
+
+func TestUpdater_Update_RejectsMultipleAuthsOnSwitchToRoleBased(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	beID := ids.New[ids.RegistryKind]()
+	existing := existingConsumer(gwID, beID)
+	existing.AuthIDs = []ids.AuthID{ids.New[ids.AuthKind](), ids.New[ids.AuthKind]()}
+	mode := domain.RoutingModeRoleBased
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+
+	updater := appconsumer.NewUpdater(repo, authmocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
+		ID:          existing.ID,
+		GatewayID:   gwID,
+		RoutingMode: &mode,
+	})
+	if !errors.Is(err, domain.ErrInvalidRoutingMode) {
+		t.Fatalf("err = %v, want ErrInvalidRoutingMode (role_based allows at most one auth)", err)
 	}
 }
 
@@ -324,7 +428,7 @@ func TestUpdater_Update_RejectsCrossGateway(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 
-	updater := appconsumer.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	updater := appconsumer.NewUpdater(repo, authmocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 
 	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:        existing.ID,

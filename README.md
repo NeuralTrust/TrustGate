@@ -26,12 +26,12 @@
 ## ✨ Features
 
 - 🚀 **High Performance** — Built in Go on top of [Fiber](https://gofiber.io), tuned for low latency and high concurrency.
-- 🌍 **Multi-Provider** — First-class adapters for OpenAI, Anthropic, Azure OpenAI, AWS Bedrock, Google Gemini, Vertex AI, Groq and Mistral.
+- 🌍 **Multi-Provider** — First-class adapters for OpenAI, Anthropic, Azure OpenAI, AWS Bedrock, Google Gemini, Vertex AI, Groq, Mistral and DeepSeek.
 - 🧭 **Smart Routing & Load Balancing** — Round-robin, weighted round-robin and IP-hash strategies with health checks and fallback targets.
 - 🔌 **Plugin System** — Policy stages with built-in plugins: rate limiting, token rate limiting, request size guard, semantic cache and CORS.
 - 🧠 **Semantic Cache** — Embedding-based response caching to cut cost and latency on repeated prompts.
 - 🔒 **Security & Multi-Tenancy** — Per-gateway consumers, API-key auth, and policies scoped globally or per consumer.
-- 📊 **Observability** — Built-in metrics, request telemetry streamed to Kafka and optional [TrustLens](https://neuraltrust.ai) integration.
+- 📊 **Observability** — Built-in metrics, request telemetry streamed to Kafka by default, with an opt-in per-gateway [OpenTelemetry](https://opentelemetry.io) (OTLP) exporter.
 - ⚙️ **Two Independent Planes** — Admin and Proxy run as separate processes so you can scale them independently.
 - ☁️ **Cloud Agnostic** — Single static binary, Docker image and Kubernetes manifests. Deploy anywhere.
 
@@ -254,7 +254,7 @@ flowchart LR
     subgraph Infra["Infrastructure"]
         PG[("Postgres")]
         RD[("Redis")]
-        KFK[["Kafka → TrustLens"]]
+        KFK[["Kafka"]]
     end
 
     APP -->|API key| PROXY
@@ -305,6 +305,7 @@ Plugins run inside ordered **policy stages** and can execute sequentially or in 
 |----------|----------|----------|----------|
 | OpenAI | Anthropic | Azure OpenAI | AWS Bedrock |
 | Google Gemini | Vertex AI | Groq | Mistral |
+| DeepSeek | | | |
 
 ## ⚙️ Configuration
 
@@ -335,9 +336,73 @@ KAFKA_BROKERS=localhost:9092
 TELEMETRY_ENABLED=true
 TELEMETRY_KAFKA_TOPIC=agentgateway.requests
 METRICS_ENABLED=true
+
+# OTLP exporter defaults (opt-in per gateway; per-gateway settings override these)
+OTEL_EXPORTER_OTLP_ENDPOINT=collector:4317
+OTEL_EXPORTER_OTLP_PROTOCOL=grpc
 ```
 
 See [`.env.example`](.env.example) for the full set with safe defaults.
+
+### Telemetry exporters (Kafka default + OTLP opt-in)
+
+Every completed request is turned into a sanitized business event and fanned out
+to one or more exporters. **Kafka is the config-driven default** (feeds
+`kafka-connect → ClickHouse → data-plane-api`). A gateway can additionally opt
+into the **`otlp`** exporter, which ships the same event to an external
+[OpenTelemetry Collector](https://opentelemetry.io/docs/collector/) as a single
+OTLP **log record** per request (`event.name="gateway.request"`); the Collector
+fans out to any vendor backend. Enabling `otlp` does not replace Kafka — both
+fire (explicit exporters merge with the global defaults).
+
+Add it to a gateway's `telemetry.exporters`:
+
+```json
+{
+  "telemetry": {
+    "exporters": [
+      {
+        "name": "otlp",
+        "settings": {
+          "endpoint": "collector:4317",
+          "protocol": "grpc",
+          "headers": { "authorization": "Bearer <token>" },
+          "compression": "gzip",
+          "timeout": "10s",
+          "insecure": false
+        }
+      }
+    ]
+  }
+}
+```
+
+With Kafka still configured, the event is delivered to the Collector **and**
+Kafka (the ClickHouse path keeps populating with `schema_version=2` intact).
+
+**`otlp` settings**
+
+| Key | Type | Default | Notes |
+|-----|------|---------|-------|
+| `endpoint` | string | — (required unless env fallback) | `host:port` or full URL of the Collector |
+| `protocol` | string | `grpc` | `grpc` (`:4317`) or `http/protobuf` (`:4318`) |
+| `signal` | string | `logs` | `logs`; `traces` is reserved and rejected |
+| `headers` | map | `{}` | auth/tenant headers |
+| `insecure` | bool | `false` | plaintext, no TLS (cannot combine with `tls`) |
+| `tls` | object | — | `{ ca_file, cert_file, key_file, skip_verify }` |
+| `timeout` | duration | `10s` | export + graceful-shutdown bound; must be `> 0` |
+| `compression` | string | `gzip` | `gzip` or `none` |
+| `max_body_bytes` | int | `4096` | request/response body truncation cap |
+
+Any key absent from a gateway's settings falls back to the process-level
+`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`,
+`OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_TIMEOUT`,
+`OTEL_EXPORTER_OTLP_INSECURE`, and `OTEL_EXPORTER_OTLP_COMPRESSION` env vars
+(per-gateway settings win). `OTEL_EXPORTER_OTLP_TIMEOUT` accepts an integer of
+milliseconds per the OpenTelemetry spec (e.g. `10000`); a Go duration string
+(e.g. `10s`) is also accepted. Settings are validated structurally on gateway create/update with
+no network I/O; export is non-blocking (bounded queue, drop-on-full) so a slow
+or unreachable Collector never affects request latency or the Kafka path.
 
 ### Migrations
 
@@ -370,7 +435,7 @@ pkg/infra/providers/   # provider adapters (openai, anthropic, bedrock, …)
 pkg/infra/plugins/     # policy plugins (ratelimit, semanticcache, …)
 pkg/infra/loadbalancer/# routing strategies + health checks
 pkg/infra/database/    # pgxpool + in-code Go migrations registry
-pkg/infra/telemetry/   # Kafka + TrustLens telemetry
+pkg/infra/telemetry/   # Kafka (default) + OTLP exporters
 pkg/api/handler/http/  # per-route HTTP handlers
 pkg/server/            # Server interface + admin / proxy routers
 pkg/container/         # dig DI container + one module per context

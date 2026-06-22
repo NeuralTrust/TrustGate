@@ -24,7 +24,7 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	"github.com/NeuralTrust/AgentGateway/pkg/container"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/catalog"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/catalog/openrouter"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/catalog/modelsdev"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
 	catalogrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/catalog"
 	"go.uber.org/dig"
@@ -38,8 +38,8 @@ func Catalog(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(cfg *config.Config) *openrouter.Client {
-		return openrouter.NewClient(cfg.Catalog.OpenRouterBaseURL, cfg.Catalog.OpenRouterAPIKey)
+	if err := c.Provide(func(cfg *config.Config) *modelsdev.Client {
+		return modelsdev.NewClient(cfg.Catalog.ModelsDevBaseURL)
 	}); err != nil {
 		return err
 	}

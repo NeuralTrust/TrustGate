@@ -29,10 +29,10 @@ type OAuth2Verifier interface {
 var _ OAuth2Verifier = (*oauth2Verifier)(nil)
 
 type oauth2Verifier struct {
-	jwtVerifier IDPVerifier
+	jwtVerifier OIDCVerifier
 }
 
-func NewOAuth2Verifier(jwtVerifier IDPVerifier) OAuth2Verifier {
+func NewOAuth2Verifier(jwtVerifier OIDCVerifier) OAuth2Verifier {
 	return &oauth2Verifier{jwtVerifier: jwtVerifier}
 }
 
@@ -40,7 +40,7 @@ func (v *oauth2Verifier) Verify(ctx context.Context, token string, cfg domain.OA
 	if strings.TrimSpace(cfg.JWKSURL) == "" {
 		return nil, fmt.Errorf("%w: oauth2 introspection-only configs are not supported for proxy auth", ErrInvalidAuthRequest)
 	}
-	return v.jwtVerifier.Verify(ctx, token, domain.IDPConfig{
+	return v.jwtVerifier.Verify(ctx, token, domain.OIDCConfig{
 		Issuer:            cfg.Issuer,
 		Audiences:         cfg.Audiences,
 		JWKSURL:           cfg.JWKSURL,

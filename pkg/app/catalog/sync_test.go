@@ -25,7 +25,7 @@ import (
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/catalog"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/catalog/openrouter"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/catalog/modelsdev"
 )
 
 type fakeRepo struct {
@@ -58,7 +58,7 @@ func (f *fakeRepo) UpsertModel(_ context.Context, m *domain.Model) error {
 }
 
 func (f *fakeRepo) DisableModelsExcept(_ context.Context, providerID ids.ProviderID, source string, keepSlugs []string) error {
-	if source != sourceOpenRouter {
+	if source != sourceModelsDev {
 		panic("unexpected source: " + source)
 	}
 	f.disabledCalls[providerID] = keepSlugs
@@ -84,11 +84,27 @@ func (f *fakeRepo) FindModel(_ context.Context, _ string, _ string) (*domain.Mod
 func TestSyncer_Sync(t *testing.T) {
 	t.Parallel()
 	const payload = `{
-		"data": [
-			{"id":"openai/gpt-4o","name":"GPT-4o","context_length":128000,"pricing":{"prompt":"0.0000025","completion":"0.00001"}},
-			{"id":"mistralai/mistral-large","name":"Mistral Large","context_length":32000,"pricing":{"prompt":"0.000002","completion":"0.000006"}},
-			{"id":"unknownvendor/foo","name":"ignored"}
-		]
+		"openai": {
+			"id": "openai",
+			"name": "OpenAI",
+			"models": {
+				"gpt-4o": {"id":"gpt-4o","name":"GPT-4o","limit":{"context":128000,"output":16384},"cost":{"input":2.5,"output":10}}
+			}
+		},
+		"mistral": {
+			"id": "mistral",
+			"name": "Mistral",
+			"models": {
+				"mistral-large-2411": {"id":"mistral-large-2411","name":"Mistral Large","limit":{"context":131072,"output":8192},"cost":{"input":2,"output":6}}
+			}
+		},
+		"unknownvendor": {
+			"id": "unknownvendor",
+			"name": "Ignored",
+			"models": {
+				"foo": {"id":"foo","name":"ignored"}
+			}
+		}
 	}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, payload)
@@ -96,7 +112,7 @@ func TestSyncer_Sync(t *testing.T) {
 	defer srv.Close()
 
 	repo := newFakeRepo()
-	client := openrouter.NewClient(srv.URL, "")
+	client := modelsdev.NewClient(srv.URL)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s := NewSyncer(repo, client, logger)
 
@@ -124,7 +140,7 @@ func TestSyncer_Sync(t *testing.T) {
 	}
 	vertexID := repo.providers["vertex"].ID
 	if keep := repo.disabledCalls[vertexID]; len(keep) != 0 {
-		t.Fatalf("vertex (no OpenRouter models) keep slugs = %v, want empty", keep)
+		t.Fatalf("vertex (no models.dev models) keep slugs = %v, want empty", keep)
 	}
 }
 
@@ -136,7 +152,7 @@ func TestSyncer_Sync_PropagatesClientError(t *testing.T) {
 	defer srv.Close()
 
 	repo := newFakeRepo()
-	client := openrouter.NewClient(srv.URL, "")
+	client := modelsdev.NewClient(srv.URL)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s := NewSyncer(repo, client, logger)
 

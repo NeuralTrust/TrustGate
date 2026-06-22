@@ -22,6 +22,7 @@ import (
 	"net/url"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
 	apiresolver "github.com/NeuralTrust/AgentGateway/pkg/api/resolver"
 	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
@@ -86,7 +87,7 @@ func NewForwardedHandler(forwarder appproxy.Forwarder) *ForwardedHandler {
 // @Produce      json
 // @Param        consumer_slug      path   string  true   "Consumer slug"
 // @Param        X-AG-API-Key       header string  false  "API key for inline consumers"
-// @Param        Authorization      header string  false  "Bearer token for OAuth2 or IDP consumers"
+// @Param        Authorization      header string  false  "Bearer token for OAuth2 or OIDC consumers"
 // @Param        X-AG-Gateway-Slug  header string  false  "Gateway slug when using header-based gateway discovery"
 // @Param        body               body   object  true   "OpenAI Chat Completions request body"
 // @Success      200                {object}  map[string]interface{}
@@ -131,7 +132,11 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 
 func relayHeaders(c *fiber.Ctx, headers map[string][]string) {
 	for name, values := range headers {
-		if _, skip := hopByHopHeaders[textproto.CanonicalMIMEHeaderKey(name)]; skip {
+		canonical := textproto.CanonicalMIMEHeaderKey(name)
+		if _, skip := hopByHopHeaders[canonical]; skip {
+			continue
+		}
+		if _, skip := middleware.StrippedProxyResponseHeaders[canonical]; skip {
 			continue
 		}
 		for _, v := range values {
@@ -262,7 +267,7 @@ func isAuthorizedForConsumer(rc *appconsumer.RoutableConsumer, authCtx *appauth.
 	case "", domainconsumer.RoutingModeInline:
 		return isInlineAuthMethod(authCtx.Method) && consumerHasAuth(rc, authCtx.AuthID)
 	case domainconsumer.RoutingModeRoleBased:
-		return authCtx.Method == appauth.MethodIDP && consumerHasRole(rc, authCtx.RoleIDs)
+		return authCtx.Method == appauth.MethodOIDC && consumerHasRole(rc, authCtx.RoleIDs)
 	default:
 		return false
 	}

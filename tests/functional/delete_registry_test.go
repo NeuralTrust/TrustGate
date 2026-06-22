@@ -87,14 +87,18 @@ func TestDeleteRegistry_InvalidRegistryUUID(t *testing.T) {
 	assert.Equal(t, "invalid_uuid", body["error"])
 }
 
-func TestDeleteGateway_FailsWhenItHasBackends(t *testing.T) {
+func TestDeleteGateway_CascadesRegistries(t *testing.T) {
 	defer Track(t, "DeleteRegistry")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-del-cascade-gw")})
-	_ = CreateRegistry(t, gwID, validRegistryPayload(uniqueName("be-del-cascade-be")))
+	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("be-del-cascade-be")))
 
 	status, body := sendRequest(t, http.MethodDelete,
 		fmt.Sprintf("%s/v1/gateways/%s", AdminURL, gwID), nil, nil,
 	)
-	require.Equal(t, http.StatusConflict, status, "body=%v", body)
-	assert.Equal(t, "has_dependents", body["error"])
+	require.Equal(t, http.StatusNoContent, status, "deleting a gateway must cascade to its registries, body=%v", body)
+
+	status, body = sendRequest(t, http.MethodGet,
+		fmt.Sprintf("%s/v1/gateways/%s/registries/%s", AdminURL, gwID, beID), nil, nil,
+	)
+	require.Equal(t, http.StatusNotFound, status, "the registry must be gone after the gateway deletion, body=%v", body)
 }

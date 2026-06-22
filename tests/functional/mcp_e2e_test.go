@@ -450,7 +450,7 @@ func TestMCPServer_RoleBasedConsumerAppliesRoleMCPPolicies(t *testing.T) {
 
 	roleID := CreateRole(t, gatewayID, map[string]any{
 		"name": uniqueName("mcp-role"),
-		"idp_mapping": map[string]any{
+		"oidc_mapping": map[string]any{
 			"match": "any",
 			"claims": []map[string]any{
 				{"path": "groups", "op": "contains_any", "values": []string{"mcp-users"}},
@@ -516,7 +516,7 @@ func TestMCPServer_RoleBasedConsumerEmptyToolkitDeniesAll(t *testing.T) {
 
 	roleID := CreateRole(t, gatewayID, map[string]any{
 		"name": uniqueName("mcp-role"),
-		"idp_mapping": map[string]any{
+		"oidc_mapping": map[string]any{
 			"match": "any",
 			"claims": []map[string]any{
 				{"path": "groups", "op": "contains_any", "values": []string{"mcp-users"}},
@@ -568,7 +568,7 @@ func TestMCPServer_RoleBasedConsumerRejectsIdentityWithoutMatchingRole(t *testin
 
 	roleID := CreateRole(t, gatewayID, map[string]any{
 		"name": uniqueName("mcp-role"),
-		"idp_mapping": map[string]any{
+		"oidc_mapping": map[string]any{
 			"match": "any",
 			"claims": []map[string]any{
 				{"path": "groups", "op": "contains_any", "values": []string{"mcp-users"}},
@@ -602,15 +602,16 @@ func TestMCPServer_RoleBasedConsumerRejectsIdentityWithoutMatchingRole(t *testin
 	status, body := mcpRPC(t, gatewayID, consumerID, bearerHeaders(denied), "tools/list", nil)
 	require.Equal(t, http.StatusForbidden, status, "identity without a matching role must be rejected: %v", body)
 
-	apiKeyAuthID, key := CreateAPIKeyAuth(t, gatewayID, uniqueName("mcp-key"))
-	AttachAuth(t, gatewayID, consumerID, apiKeyAuthID)
-	// The freshly attached API key only reaches the MCP process after the admin
-	// plane's cache-invalidation event propagates across processes via Redis, so
-	// poll until the role_based consumer rejects the claimless credential.
-	require.Eventually(t, func() bool {
-		s, _ := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
-		return s == http.StatusForbidden
-	}, 5*time.Second, 100*time.Millisecond, "claimless credentials cannot satisfy role_based consumers")
+	// A role_based consumer is backed by a single identity-provider auth, so a
+	// claimless API key cannot be attached in the first place: the association is
+	// rejected before any request can reach the MCP process.
+	apiKeyAuthID, _ := CreateAPIKeyAuth(t, gatewayID, uniqueName("mcp-key"))
+	status, body = sendRequest(t, http.MethodPost,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s/auths/%s", AdminURL, gatewayID, consumerID, apiKeyAuthID),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusConflict, status,
+		"a role_based consumer must reject a non-IdP auth at attach time: %v", body)
 }
 
 func TestMCPServer_RoleBasedConsumerMergesMultipleRoles(t *testing.T) {
@@ -629,14 +630,14 @@ func TestMCPServer_RoleBasedConsumerMergesMultipleRoles(t *testing.T) {
 			{"path": "groups", "op": "contains_any", "values": []string{"mcp-users"}},
 		},
 	}
-	roleA := CreateRole(t, gatewayID, map[string]any{"name": uniqueName("role-a"), "idp_mapping": mapping})
+	roleA := CreateRole(t, gatewayID, map[string]any{"name": uniqueName("role-a"), "oidc_mapping": mapping})
 	AttachRoleRegistry(t, gatewayID, roleA, registryA)
 	UpdateRole(t, gatewayID, roleA, map[string]any{
 		"mcp_policies": map[string]any{
 			"toolkit": []map[string]any{{"registry_id": registryA, "tool": "alpha"}},
 		},
 	})
-	roleB := CreateRole(t, gatewayID, map[string]any{"name": uniqueName("role-b"), "idp_mapping": mapping})
+	roleB := CreateRole(t, gatewayID, map[string]any{"name": uniqueName("role-b"), "oidc_mapping": mapping})
 	AttachRoleRegistry(t, gatewayID, roleB, registryB)
 
 	oauthAuthID := CreateAuth(t, gatewayID, map[string]any{

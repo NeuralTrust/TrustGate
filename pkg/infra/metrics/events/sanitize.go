@@ -39,16 +39,17 @@ const (
 // sensitiveHeaders are stored lower-cased; their values are never exported to a
 // telemetry exporter to avoid leaking credentials/PII into the metrics topic.
 var sensitiveHeaders = map[string]struct{}{
-	"authorization":        {},
-	"proxy-authorization":  {},
-	"cookie":               {},
-	"set-cookie":           {},
-	"x-api-key":            {},
-	"x-ag-api-key":         {},
-	"api-key":              {},
-	"x-auth-token":         {},
-	"x-access-token":       {},
-	"x-amz-security-token": {},
+	"authorization":         {},
+	"proxy-authorization":   {},
+	"cookie":                {},
+	"set-cookie":            {},
+	"x-api-key":             {},
+	"x-ag-api-key":          {},
+	"x-ag-playground-token": {},
+	"api-key":               {},
+	"x-auth-token":          {},
+	"x-access-token":        {},
+	"x-amz-security-token":  {},
 }
 
 // SanitizeBody returns a loggable representation of a request/response body.

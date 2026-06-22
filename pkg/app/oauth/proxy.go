@@ -100,7 +100,7 @@ func (p *authProxy) Authorize(ctx context.Context, baseURL string, req Authorize
 		CodeChallenge:       req.CodeChallenge,
 		CodeChallengeMethod: "S256",
 		Scope:               req.Scope,
-		IDPVerifier:         verifier,
+		CodeVerifier:         verifier,
 		Resource:            req.Resource,
 		AuthID:              auth.ID.String(),
 	}
@@ -151,7 +151,7 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 	form.Set("code", code)
 	form.Set("redirect_uri", baseURL+CallbackPath)
 	form.Set("client_id", cfg.ClientID)
-	form.Set("code_verifier", pending.IDPVerifier)
+	form.Set("code_verifier", pending.CodeVerifier)
 	if cfg.ClientSecret != "" {
 		form.Set("client_secret", cfg.ClientSecret)
 	}

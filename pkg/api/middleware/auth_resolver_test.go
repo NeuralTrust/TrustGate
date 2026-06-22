@@ -86,7 +86,7 @@ type fakeRoleResolver struct {
 	err     error
 }
 
-func (r fakeRoleResolver) ResolveIDPRoles(_ context.Context, _ []*roledomain.Role, _ map[string]any) ([]ids.RoleID, error) {
+func (r fakeRoleResolver) ResolveOIDCRoles(_ context.Context, _ []*roledomain.Role, _ map[string]any) ([]ids.RoleID, error) {
 	return r.roleIDs, r.err
 }
 
@@ -99,17 +99,17 @@ func (v fakeOAuth2Verifier) Verify(_ context.Context, _ string, _ authdomain.OAu
 	return v.claims, v.err
 }
 
-type fakeIDPVerifier struct {
+type fakeOIDCVerifier struct {
 	hints  appauth.TokenHints
 	claims *appauth.VerifiedClaims
 	err    error
 }
 
-func (v fakeIDPVerifier) Peek(_ string) (appauth.TokenHints, error) {
+func (v fakeOIDCVerifier) Peek(_ string) (appauth.TokenHints, error) {
 	return v.hints, nil
 }
 
-func (v fakeIDPVerifier) Verify(_ context.Context, _ string, _ authdomain.IDPConfig) (*appauth.VerifiedClaims, error) {
+func (v fakeOIDCVerifier) Verify(_ context.Context, _ string, _ authdomain.OIDCConfig) (*appauth.VerifiedClaims, error) {
 	if v.err != nil {
 		return nil, v.err
 	}
@@ -119,7 +119,7 @@ func (v fakeIDPVerifier) Verify(_ context.Context, _ string, _ authdomain.IDPCon
 func TestAuthMiddleware_APIKeyInlineSuccess(t *testing.T) {
 	t.Parallel()
 	gw, rc, rawKey := inlineConsumerWithAPIKey(t)
-	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeIDPVerifier{}, nil)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{}, nil)
 
 	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
@@ -152,7 +152,7 @@ func TestAuthMiddleware_APIKeyValidElsewhereForbidden(t *testing.T) {
 		}},
 	}
 	data := appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc, otherRC})
-	app := newAuthTestApp(t, gw, data, fakeOAuth2Verifier{}, fakeIDPVerifier{}, nil)
+	app := newAuthTestApp(t, gw, data, fakeOAuth2Verifier{}, fakeOIDCVerifier{}, nil)
 
 	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
@@ -165,7 +165,7 @@ func TestAuthMiddleware_APIKeyValidElsewhereForbidden(t *testing.T) {
 func TestAuthMiddleware_APIKeyUnknownUnauthorized(t *testing.T) {
 	t.Parallel()
 	gw, rc, _ := inlineConsumerWithAPIKey(t)
-	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeIDPVerifier{}, nil)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{}, nil)
 
 	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
@@ -178,7 +178,7 @@ func TestAuthMiddleware_APIKeyUnknownUnauthorized(t *testing.T) {
 func TestAuthMiddleware_PlaygroundTokenInlineSuccess(t *testing.T) {
 	t.Parallel()
 	gw, rc, _ := inlineConsumerWithAPIKey(t)
-	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeIDPVerifier{}, nil)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{}, nil)
 
 	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
@@ -192,7 +192,7 @@ func TestAuthMiddleware_PlaygroundTokenRoleBasedSuccess(t *testing.T) {
 	t.Parallel()
 	gw, rc, _ := roleBasedConsumerWithIDP(t)
 	failingRoles := fakeRoleResolver{err: fmt.Errorf("idp roles must not be resolved for playground tokens")}
-	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeIDPVerifier{}, failingRoles)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{}, failingRoles)
 
 	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
@@ -205,7 +205,7 @@ func TestAuthMiddleware_PlaygroundTokenRoleBasedSuccess(t *testing.T) {
 func TestAuthMiddleware_PlaygroundTokenWrongConsumerForbidden(t *testing.T) {
 	t.Parallel()
 	gw, rc, _ := inlineConsumerWithAPIKey(t)
-	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeIDPVerifier{}, nil)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{}, nil)
 
 	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
@@ -223,7 +223,7 @@ func TestAuthMiddleware_OAuthInlineSuccess(t *testing.T) {
 		Claims:  map[string]any{"sub": "user-1"},
 		Scopes:  []string{"chat"},
 	}}
-	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), oauthVerifier, fakeIDPVerifier{}, nil)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), oauthVerifier, fakeOIDCVerifier{}, nil)
 
 	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
@@ -236,8 +236,8 @@ func TestAuthMiddleware_OAuthInlineSuccess(t *testing.T) {
 func TestAuthMiddleware_IDPRoleBasedSuccess(t *testing.T) {
 	t.Parallel()
 	gw, rc, roleID := roleBasedConsumerWithIDP(t)
-	idpVerifier := matchingIDPVerifier()
-	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, idpVerifier, fakeRoleResolver{roleIDs: []ids.RoleID{roleID}})
+	oidcVerifier := matchingOIDCVerifier()
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, oidcVerifier, fakeRoleResolver{roleIDs: []ids.RoleID{roleID}})
 
 	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
@@ -250,7 +250,7 @@ func TestAuthMiddleware_IDPRoleBasedSuccess(t *testing.T) {
 func TestAuthMiddleware_OAuthCannotAuthorizeRoleBasedConsumer(t *testing.T) {
 	t.Parallel()
 	gw, rc := roleBasedConsumerWithOAuth(t)
-	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeIDPVerifier{}, nil)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{}, nil)
 
 	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
@@ -263,8 +263,8 @@ func TestAuthMiddleware_OAuthCannotAuthorizeRoleBasedConsumer(t *testing.T) {
 func TestAuthMiddleware_IDPRoleBasedNoRoleForbidden(t *testing.T) {
 	t.Parallel()
 	gw, rc, _ := roleBasedConsumerWithIDP(t)
-	idpVerifier := matchingIDPVerifier()
-	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, idpVerifier, fakeRoleResolver{roleIDs: nil})
+	oidcVerifier := matchingOIDCVerifier()
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, oidcVerifier, fakeRoleResolver{roleIDs: nil})
 
 	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
@@ -330,7 +330,7 @@ func TestAuthMiddleware_ErrorMatrix(t *testing.T) {
 				fakeGatewayResolver{gateway: gw, err: tt.gatewayErr},
 				tt.data,
 				fakeOAuth2Verifier{},
-				fakeIDPVerifier{},
+				fakeOIDCVerifier{},
 				nil,
 			)
 			req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
@@ -353,7 +353,7 @@ func TestAuthMiddleware_RejectsHeaderOnlyGatewayIdentity(t *testing.T) {
 		fakeGatewayResolver{err: fmt.Errorf("%w: host is required", appauth.ErrInvalidAuthRequest)},
 		nil,
 		fakeOAuth2Verifier{},
-		fakeIDPVerifier{},
+		fakeOIDCVerifier{},
 		nil,
 	)
 
@@ -371,15 +371,15 @@ func newAuthTestApp(
 	gw *gatewaydomain.Gateway,
 	data *appconsumer.Data,
 	oauthVerifier fakeOAuth2Verifier,
-	idpVerifier fakeIDPVerifier,
+	oidcVerifier fakeOIDCVerifier,
 	roleResolver middlewareRoleResolver,
 ) *fiber.App {
 	t.Helper()
-	return newAuthTestAppWithResolver(t, fakeGatewayResolver{gateway: gw}, data, oauthVerifier, idpVerifier, roleResolver)
+	return newAuthTestAppWithResolver(t, fakeGatewayResolver{gateway: gw}, data, oauthVerifier, oidcVerifier, roleResolver)
 }
 
 type middlewareRoleResolver interface {
-	ResolveIDPRoles(context.Context, []*roledomain.Role, map[string]any) ([]ids.RoleID, error)
+	ResolveOIDCRoles(context.Context, []*roledomain.Role, map[string]any) ([]ids.RoleID, error)
 }
 
 func newAuthTestAppWithResolver(
@@ -387,7 +387,7 @@ func newAuthTestAppWithResolver(
 	gatewayResolver resolver.GatewayResolver,
 	data *appconsumer.Data,
 	oauthVerifier fakeOAuth2Verifier,
-	idpVerifier fakeIDPVerifier,
+	oidcVerifier fakeOIDCVerifier,
 	roleResolver middlewareRoleResolver,
 ) *fiber.App {
 	t.Helper()
@@ -399,7 +399,7 @@ func newAuthTestAppWithResolver(
 	)
 	apiKey := resolver.NewAPIKeyIdentityResolver()
 	oauth2 := resolver.NewOAuth2IdentityResolver(oauthVerifier)
-	idp := resolver.NewIDPIdentityResolver(appauth.NewIDPFinder(idpVerifier), idpVerifier)
+	idp := resolver.NewOIDCIdentityResolver(appauth.NewOIDCFinder(oidcVerifier), oidcVerifier)
 	authMiddleware := middleware.NewAuthMiddleware(
 		resolver.NewIdentityResolver(playground, apiKey, oauth2, idp),
 		fakeDataFinder{data: data},
@@ -490,9 +490,9 @@ func roleBasedConsumerWithIDP(t *testing.T) (*gatewaydomain.Gateway, appconsumer
 		Auths: []*authdomain.Auth{{
 			ID:        authID,
 			GatewayID: gw.ID,
-			Type:      authdomain.TypeIDP,
+			Type:      authdomain.TypeOIDC,
 			Enabled:   true,
-			Config: authdomain.Config{IDP: &authdomain.IDPConfig{
+			Config: authdomain.Config{OIDC: &authdomain.OIDCConfig{
 				Issuer:    "https://issuer.example.com",
 				Audiences: []string{"gateway"},
 				JWKSURL:   "https://issuer.example.com/jwks",
@@ -532,8 +532,8 @@ func roleBasedConsumerWithOAuth(t *testing.T) (*gatewaydomain.Gateway, appconsum
 	return gw, rc
 }
 
-func matchingIDPVerifier() fakeIDPVerifier {
-	return fakeIDPVerifier{
+func matchingOIDCVerifier() fakeOIDCVerifier {
+	return fakeOIDCVerifier{
 		hints: appauth.TokenHints{Issuer: "https://issuer.example.com", Audiences: []string{"gateway"}},
 		claims: &appauth.VerifiedClaims{
 			Subject: "user-1",

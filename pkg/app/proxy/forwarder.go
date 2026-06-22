@@ -353,6 +353,7 @@ func (f *forwarder) recordSpan(
 		span.SetStatusCode(resp.StatusCode)
 		span.ObserveUsage(resp.Usage)
 		span.LLM.Model = resp.Model
+		span.LLM.SentModel = resp.SentModel
 		span.LLM.FinishReason = resp.FinishReason
 		span.LLM.TurnID = resp.ResponseID
 	}

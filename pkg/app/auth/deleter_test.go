@@ -20,8 +20,11 @@ import (
 	"testing"
 
 	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
+	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/auth/mocks"
+	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
+	consumermocks "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer/mocks"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
@@ -39,7 +42,10 @@ func TestDeleter_Delete_Success(t *testing.T) {
 	mgr := newCacheManager()
 	mgr.GetTTLMap(cache.AuthTTLName).Set(id.String(), &domain.Auth{ID: id})
 
-	deleter := appauth.NewDeleter(repo, mgr, cachetest.NoopPublisher(), newTestLogger())
+	consumerRepo := consumermocks.NewRepository(t)
+	consumerRepo.EXPECT().ListByAuthID(mock.Anything, id).Return(nil, nil).Once()
+
+	deleter := appauth.NewDeleter(repo, consumerRepo, mgr, cachetest.NoopPublisher(), newTestLogger())
 	if err := deleter.Delete(context.Background(), gwID, id); err != nil {
 		t.Fatalf("Delete error: %v", err)
 	}
@@ -54,7 +60,7 @@ func TestDeleter_Delete_PropagatesError(t *testing.T) {
 	id := ids.New[ids.AuthKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
 
-	deleter := appauth.NewDeleter(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	deleter := appauth.NewDeleter(repo, consumermocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	if err := deleter.Delete(context.Background(), ids.New[ids.GatewayKind](), id); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
@@ -66,8 +72,27 @@ func TestDeleter_Delete_WrongGateway(t *testing.T) {
 	id := ids.New[ids.AuthKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Auth{ID: id, GatewayID: ids.New[ids.GatewayKind]()}, nil).Once()
 
-	deleter := appauth.NewDeleter(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	deleter := appauth.NewDeleter(repo, consumermocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	if err := deleter.Delete(context.Background(), ids.New[ids.GatewayKind](), id); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound for cross-gateway delete", err)
+	}
+}
+
+func TestDeleter_Delete_RejectsWhenReferencedByConsumer(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.AuthKind]()
+	gwID := ids.New[ids.GatewayKind]()
+	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Auth{ID: id, GatewayID: gwID}, nil).Once()
+
+	consumerRepo := consumermocks.NewRepository(t)
+	consumerRepo.EXPECT().ListByAuthID(mock.Anything, id).Return([]*consumerdomain.Consumer{{
+		ID:   ids.New[ids.ConsumerKind](),
+		Slug: "cons",
+	}}, nil).Once()
+
+	deleter := appauth.NewDeleter(repo, consumerRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	if err := deleter.Delete(context.Background(), gwID, id); !errors.Is(err, commonerrors.ErrConflict) {
+		t.Fatalf("err = %v, want ErrConflict (auth still referenced by a consumer)", err)
 	}
 }

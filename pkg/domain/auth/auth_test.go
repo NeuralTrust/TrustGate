@@ -200,16 +200,16 @@ func TestNewAuth_Validation(t *testing.T) {
 			name:      "idp missing key material",
 			gatewayID: gwID,
 			authName:  "k",
-			authType:  TypeIDP,
-			config:    Config{IDP: &IDPConfig{Issuer: "https://issuer", Audiences: []string{"gateway"}}},
+			authType:  TypeOIDC,
+			config:    Config{OIDC: &OIDCConfig{Issuer: "https://issuer", Audiences: []string{"gateway"}}},
 			wantErr:   ErrInvalidConfig,
 		},
 		{
 			name:      "idp rejects hs algorithms",
 			gatewayID: gwID,
 			authName:  "k",
-			authType:  TypeIDP,
-			config: Config{IDP: &IDPConfig{
+			authType:  TypeOIDC,
+			config: Config{OIDC: &OIDCConfig{
 				Issuer:            "https://issuer",
 				Audiences:         []string{"gateway"},
 				JWKSURL:           "https://issuer/.well-known/jwks.json",
@@ -259,7 +259,7 @@ func TestNewAuth_ValidPerType(t *testing.T) {
 			Audiences: []string{"agentgateway"},
 		}}},
 		"mtls": {TypeMTLS, Config{MTLS: &MTLSConfig{CACert: "-----BEGIN CERTIFICATE-----"}}},
-		"idp": {TypeIDP, Config{IDP: &IDPConfig{
+		"oidc": {TypeOIDC, Config{OIDC: &OIDCConfig{
 			Issuer:            "https://issuer",
 			Audiences:         []string{"gateway"},
 			JWKSURL:           "https://issuer/.well-known/jwks.json",
@@ -283,7 +283,7 @@ func TestConfig_ScanNil(t *testing.T) {
 	if err := c.Scan(nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if c.OAuth2 != nil || c.IDP != nil || c.MTLS != nil {
+	if c.OAuth2 != nil || c.OIDC != nil || c.MTLS != nil {
 		t.Fatal("expected empty config after scanning nil")
 	}
 }

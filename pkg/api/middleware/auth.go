@@ -35,7 +35,7 @@ type AuthMiddleware struct {
 	resolver        resolver.IdentityResolver
 	dataFinder      appconsumer.DataFinder
 	gatewayResolver resolver.GatewayResolver
-	roleResolver    approle.IDPResolver
+	roleResolver    approle.OIDCResolver
 	logger          *slog.Logger
 }
 
@@ -43,7 +43,7 @@ func NewAuthMiddleware(
 	identityResolver resolver.IdentityResolver,
 	dataFinder appconsumer.DataFinder,
 	gatewayResolver resolver.GatewayResolver,
-	roleResolver approle.IDPResolver,
+	roleResolver approle.OIDCResolver,
 	logger *slog.Logger,
 ) *AuthMiddleware {
 	return &AuthMiddleware{
@@ -91,11 +91,11 @@ func (m *AuthMiddleware) Middleware() fiber.Handler {
 		authCtx.GatewayID = gw.ID
 		authCtx.GatewaySlug = gw.Slug
 		authCtx.ConsumerID = rc.Consumer.ID
-		if authCtx.Method == appauth.MethodIDP {
+		if authCtx.Method == appauth.MethodOIDC {
 			if m.roleResolver == nil {
 				return internalError(c, "failed to resolve idp roles")
 			}
-			roleIDs, err := m.roleResolver.ResolveIDPRoles(c.UserContext(), data.Roles, authCtx.Claims)
+			roleIDs, err := m.roleResolver.ResolveOIDCRoles(c.UserContext(), data.Roles, authCtx.Claims)
 			if err != nil {
 				m.debug(c).Debug("idp role resolution error",
 					slog.String("subject", authCtx.Subject),
@@ -111,7 +111,7 @@ func (m *AuthMiddleware) Middleware() fiber.Handler {
 				slog.Any("roles_claim", authCtx.Claims["roles"]),
 				slog.Any("groups_claim", authCtx.Claims["groups"]))
 			if len(authCtx.RoleIDs) == 0 {
-				m.debug(c).Debug("idp authorization denied: no matching role between token claims and consumer assignment",
+				m.debug(c).Debug("oidc authorization denied: no matching role between token claims and consumer assignment",
 					slog.String("subject", authCtx.Subject))
 				return forbidden(c, resolver.ErrForbidden)
 			}
@@ -127,13 +127,13 @@ func (m *AuthMiddleware) debug(c *fiber.Ctx) *slog.Logger {
 		logger = slog.Default()
 	}
 	return logger.With(
-		slog.String("request_id", c.GetRespHeader(fiber.HeaderXRequestID)),
+		slog.String("trace_id", c.Get(HeaderTraceID)),
 		slog.String("path", c.Path()),
 	)
 }
 
 func writeAuthError(c *fiber.Ctx, err error) error {
-	if errors.Is(err, appauth.ErrInvalidAuthRequest) || errors.Is(err, appauth.ErrAmbiguousIDPConfig) {
+	if errors.Is(err, appauth.ErrInvalidAuthRequest) || errors.Is(err, appauth.ErrAmbiguousOIDCConfig) {
 		return invalidAuthRequest(c, err)
 	}
 	if errors.Is(err, commonerrors.ErrInvalidConfig) || errors.Is(err, commonerrors.ErrValidation) {
@@ -147,7 +147,7 @@ func writeAuthError(c *fiber.Ctx, err error) error {
 
 func isAuthMappableError(err error) bool {
 	return errors.Is(err, appauth.ErrInvalidAuthRequest) ||
-		errors.Is(err, appauth.ErrAmbiguousIDPConfig) ||
+		errors.Is(err, appauth.ErrAmbiguousOIDCConfig) ||
 		errors.Is(err, commonerrors.ErrInvalidConfig) ||
 		errors.Is(err, commonerrors.ErrValidation) ||
 		errors.Is(err, resolver.ErrForbidden) ||

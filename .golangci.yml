@@ -20,6 +20,8 @@ linters:
       - vendor
       - ".*\\.pb\\.go$"
       - ".*_gen\\.go$"
+      - ".*_mock\\.go$"
+      - ".*/mocks/.*"
     rules:
       - linters:
           - errcheck

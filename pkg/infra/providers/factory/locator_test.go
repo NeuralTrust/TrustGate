@@ -34,6 +34,7 @@ func TestProviderLocator_Get(t *testing.T) {
 		ProviderAzure,
 		ProviderMistral,
 		ProviderGroq,
+		ProviderDeepSeek,
 	} {
 		t.Run(provider, func(t *testing.T) {
 			client, err := locator.Get(provider)

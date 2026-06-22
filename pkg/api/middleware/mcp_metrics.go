@@ -1,0 +1,134 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package middleware
+
+import (
+	"context"
+	"time"
+
+	appmetrics "github.com/NeuralTrust/AgentGateway/pkg/app/metrics"
+	"github.com/NeuralTrust/AgentGateway/pkg/config"
+	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/events"
+	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
+	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
+)
+
+type MCPMetricsMiddleware struct {
+	worker              appmetrics.Worker
+	telemetryEnabled    bool
+	enableRequestTraces bool
+	enablePluginTraces  bool
+}
+
+func NewMCPMetricsMiddleware(worker appmetrics.Worker, cfg *config.Config) *MCPMetricsMiddleware {
+	return &MCPMetricsMiddleware{
+		worker:              worker,
+		telemetryEnabled:    cfg.Telemetry.Enabled,
+		enableRequestTraces: cfg.Telemetry.EnableRequestTraces,
+		enablePluginTraces:  cfg.Telemetry.EnablePluginTraces,
+	}
+}
+
+func (m *MCPMetricsMiddleware) Middleware() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		if !m.telemetryEnabled {
+			return c.Next()
+		}
+
+		startTime := time.Now()
+		gatewayID := gatewayIDFromContext(c)
+		gw := gatewayFromContext(c)
+		exporters := gatewayExporters(gw)
+
+		traceID := m.resolveTraceID(c)
+		c.Set(HeaderTraceID, traceID)
+		requestTrace := trace.New(traceID, m.buildTraceMetadata(c, gatewayID, gw))
+		requestTrace.SetGating(m.enableRequestTraces, m.enablePluginTraces)
+		c.SetUserContext(trace.NewContext(c.UserContext(), requestTrace))
+
+		req := m.buildRequestContext(c, gatewayID)
+
+		defer func() {
+			if skip, _ := c.Locals(string(infracontext.MCPSkipMetricsKey)).(bool); skip {
+				return
+			}
+			resp := m.buildResponseContext(c, gatewayID)
+			endTime := time.Now()
+			requestTrace.OnComplete(func() {
+				m.worker.Process(requestTrace, req, resp, startTime, endTime, exporters)
+			})
+			requestTrace.Done()
+		}()
+
+		return c.Next()
+	}
+}
+
+func (m *MCPMetricsMiddleware) resolveTraceID(c *fiber.Ctx) string {
+	if tid := c.Get(HeaderTraceID); tid != "" {
+		return tid
+	}
+	return uuid.New().String()
+}
+
+func (m *MCPMetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string, gw *gatewaydomain.Gateway) trace.Metadata {
+	meta := trace.Metadata{
+		GatewayID: gatewayID,
+		Path:      c.Path(),
+		Method:    c.Method(),
+		IP:        c.IP(),
+		Kind:      events.KindMCP,
+	}
+	if gw != nil {
+		meta.TeamID = gw.TeamID()
+	}
+	return meta
+}
+
+func (m *MCPMetricsMiddleware) buildRequestContext(c *fiber.Ctx, gatewayID string) *infracontext.RequestContext {
+	headers := make(map[string][]string)
+	for key, values := range c.GetReqHeaders() {
+		headers[key] = append(headers[key], values...)
+	}
+
+	return &infracontext.RequestContext{
+		Context:   context.Background(),
+		GatewayID: gatewayID,
+		Headers:   headers,
+		Method:    c.Method(),
+		Path:      c.Path(),
+		Body:      append([]byte(nil), c.Body()...),
+		IP:        c.IP(),
+	}
+}
+
+func (m *MCPMetricsMiddleware) buildResponseContext(c *fiber.Ctx, gatewayID string) *infracontext.ResponseContext {
+	headers := make(map[string][]string)
+	for key, values := range c.GetRespHeaders() {
+		headers[key] = append(headers[key], values...)
+	}
+
+	return &infracontext.ResponseContext{
+		Context:    context.Background(),
+		GatewayID:  gatewayID,
+		Headers:    headers,
+		Body:       append([]byte(nil), c.Response().Body()...),
+		StatusCode: c.Response().StatusCode(),
+		Streaming:  false,
+	}
+}

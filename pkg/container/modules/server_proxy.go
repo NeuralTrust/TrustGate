@@ -30,7 +30,6 @@ import (
 
 type proxyMiddlewares struct {
 	dig.In
-	RequestID       *middleware.RequestIDMiddleware
 	PanicRecover    *middleware.PanicRecoverMiddleware
 	AccessLog       *middleware.AccessLogMiddleware
 	SecurityHeaders *middleware.SecurityHeadersMiddleware
@@ -41,7 +40,6 @@ type proxyMiddlewares struct {
 
 func proxyTransport(m proxyMiddlewares) *middleware.Transport {
 	return middleware.NewTransport(
-		m.RequestID,
 		m.SecurityHeaders,
 		m.PanicRecover,
 		m.AccessLog,

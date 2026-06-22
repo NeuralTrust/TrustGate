@@ -48,11 +48,10 @@ body{
 }
 .brand{display:flex;align-items:center;gap:10px;margin-bottom:24px}
 .brand .mark{
-  width:28px;height:28px;border-radius:8px;flex:none;
-  background:linear-gradient(135deg,var(--accent),#4f4fd9);
+  width:28px;height:28px;border-radius:8px;flex:none;overflow:hidden;
   display:flex;align-items:center;justify-content:center;
-  color:#fff;font-weight:700;font-size:14px;
 }
+.brand .mark svg{width:100%;height:100%;display:block}
 .brand .name{font-weight:600;font-size:14px;letter-spacing:.01em}
 .brand .product{color:var(--faint);font-size:14px}
 h1{font-size:19px;font-weight:600;margin:0 0 6px}
@@ -100,7 +99,9 @@ a.btn.continue:hover{background:#6ee7a0}
 .hint a:hover{color:var(--fg)}
 `
 
-const brandHeader = `<div class="brand"><div class="mark">N</div><div class="name">NeuralTrust</div><div class="product">/ TrustGate</div></div>`
+const brandMark = `<svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><g clip-path="url(#ntClip)"><path fill="url(#ntGrad)" d="M32 0H0v32h32z"/><path fill="#fff" d="M18.092 20.06a.67.67 0 0 1-.55.3.7.7 0 0 1-.565-.286l-2.704-3.814-1.45 2.103 2.197 3.098a3.08 3.08 0 0 0 2.51 1.297h.038a3.06 3.06 0 0 0 2.502-1.342l8.02-11.477h-2.926z"/><path fill="#fff" d="M14.292 11.518a.63.63 0 0 1 .552.286l2.652 3.74 1.449-2.103-2.145-3.024a3.08 3.08 0 0 0-2.509-1.297h-.039a3.06 3.06 0 0 0-2.506 1.35L3.925 21.85l-.085.123h2.91l6.98-10.155a.68.68 0 0 1 .562-.3"/></g><defs><linearGradient id="ntGrad" x1="30.667" x2="6.667" y1="0" y2="32" gradientUnits="userSpaceOnUse"><stop stop-color="#03AFFF"/><stop offset="1" stop-color="#9B29FF"/></linearGradient><clipPath id="ntClip"><path fill="#fff" d="M0 0h32v32H0z"/></clipPath></defs></svg>`
+
+const brandHeader = `<div class="brand"><div class="mark">` + brandMark + `</div><div class="name">NeuralTrust</div><div class="product">/ TrustGate</div></div>`
 
 var connectPageTmpl = template.Must(template.New("connect").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -111,7 +112,7 @@ var connectPageTmpl = template.Must(template.New("connect").Parse(`<!doctype htm
 {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
 {{if not .Providers}}<p class="empty">No third-party providers are configured for this virtual MCP.</p>{{end}}
 {{range .Providers}}<div class="row">
-  <div><div class="name">{{.Provider}}</div><div class="reg">{{.Registry}}</div></div>
+  <div><div class="name">{{.Registry}}</div><div class="reg">{{.Provider}}</div></div>
   <div class="actions">{{if .Linked}}
     <span class="status"><span class="dot"></span>Connected</span>
     <form method="post" action="/oauth/disconnect/{{.Provider}}?ticket={{$.Ticket}}"><button class="btn revoke">Revoke</button></form>

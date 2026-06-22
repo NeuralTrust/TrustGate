@@ -14,10 +14,16 @@
 
 package events
 
-const SchemaVersion = 2
+const SchemaVersion = 3
+
+const (
+	KindLLM = "llm"
+	KindMCP = "mcp"
+)
 
 type Event struct {
 	SchemaVersion int    `json:"schema_version"`
+	Kind          string `json:"kind"`
 	TraceID       string `json:"trace_id"`
 	GatewayID     string `json:"gateway_id"`
 	TeamID        string `json:"team_id,omitempty"`
@@ -27,10 +33,9 @@ type Event struct {
 	EndTimestamp int64  `json:"end_timestamp"`
 
 	Consumer      Consumer `json:"consumer"`
-	SessionID     string   `json:"session_id,omitempty"`
-	TurnID        string   `json:"turn_id,omitempty"`
-	FingerprintID string   `json:"fingerprint_id,omitempty"`
-	IP            string   `json:"ip,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	TurnID    string `json:"turn_id,omitempty"`
+	IP        string `json:"ip,omitempty"`
 
 	Status    Status   `json:"status"`
 	IsFlagged bool     `json:"is_flagged"`
@@ -44,6 +49,26 @@ type Event struct {
 
 	Attempts    []Attempt     `json:"attempts,omitempty"`
 	PolicyChain []PolicyEntry `json:"policy_chain,omitempty"`
+
+	MCP *MCP `json:"mcp,omitempty"`
+}
+
+type MCP struct {
+	Method            string `json:"method"`
+	Operation         string `json:"operation,omitempty"`
+	ServerName        string `json:"server_name,omitempty"`
+	RegistryID        string `json:"registry_id,omitempty"`
+	Host              string `json:"host,omitempty"`
+	CatalogCode       string `json:"catalog_code,omitempty"`
+	Transport         string `json:"transport,omitempty"`
+	Tool              string `json:"tool,omitempty"`
+	UpstreamTool      string `json:"upstream_tool,omitempty"`
+	Prompt            string `json:"prompt,omitempty"`
+	ResourceURI       string `json:"resource_uri,omitempty"`
+	Targets           int    `json:"targets,omitempty"`
+	UpstreamStatus    string `json:"upstream_status,omitempty"`
+	UpstreamLatencyMs int64  `json:"upstream_latency_ms,omitempty"`
+	RPCErrorCode      int    `json:"rpc_error_code,omitempty"`
 }
 
 type Consumer struct {
@@ -93,10 +118,10 @@ type Usage struct {
 }
 
 type Cost struct {
-	PromptUsd     float64 `json:"prompt_usd"`
-	CompletionUsd float64 `json:"completion_usd"`
-	TotalUsd      float64 `json:"total_usd"`
-	Currency      string  `json:"currency"`
+	PromptUsd     DecimalFloat `json:"prompt_usd"`
+	CompletionUsd DecimalFloat `json:"completion_usd"`
+	TotalUsd      DecimalFloat `json:"total_usd"`
+	Currency      string       `json:"currency"`
 }
 
 type Latency struct {

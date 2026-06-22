@@ -17,6 +17,7 @@ package modules
 import (
 	apihandler "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http"
 	oauthhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/oauth"
+	playgroundhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/playground"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/resolver"
 	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
@@ -25,12 +26,12 @@ import (
 	appoauth "github.com/NeuralTrust/AgentGateway/pkg/app/oauth"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	"github.com/NeuralTrust/AgentGateway/pkg/container"
-	idpauth "github.com/NeuralTrust/AgentGateway/pkg/infra/auth/idp"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/introspection"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/jwt"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/mtls"
+	oidcauth "github.com/NeuralTrust/AgentGateway/pkg/infra/auth/oidc"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/fingerprint"
+	playgroundstore "github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/playground"
 	infraoauth "github.com/NeuralTrust/AgentGateway/pkg/infra/oauth"
 )
 
@@ -59,15 +60,20 @@ func API(c *container.Container) error {
 	if err := c.Provide(middleware.NewMetricsMiddleware); err != nil {
 		return err
 	}
+	if err := c.Provide(middleware.NewMCPMetricsMiddleware); err != nil {
+		return err
+	}
+	if err := c.Provide(func(store *playgroundstore.Store) *playgroundhttp.GetTraceHandler {
+		return playgroundhttp.NewGetTraceHandler(store)
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(func(cfg *config.Config) jwt.Manager {
 		return jwt.NewJwtManager(&cfg.Server)
 	}); err != nil {
 		return err
 	}
 	if err := c.Provide(middleware.NewAdminAuthMiddleware); err != nil {
-		return err
-	}
-	if err := c.Provide(fingerprint.NewFingerPrintTracker); err != nil {
 		return err
 	}
 	if err := c.Provide(middleware.NewSessionMiddleware); err != nil {
@@ -77,14 +83,14 @@ func API(c *container.Container) error {
 		apiKeys appauth.APIKeyFinder,
 		credentials appauth.CredentialFinder,
 		paths appconsumer.PathResolver,
-		verifier appauth.IDPVerifier,
+		verifier appauth.OIDCVerifier,
 		cfg *config.Config,
 	) middleware.IdentityResolver {
 		return middleware.NewChainIdentityResolver(
 			apiKeys,
 			credentials,
 			paths,
-			idpauth.NewOAuth2TokenValidator(verifier, nil),
+			oidcauth.NewOAuth2TokenValidator(verifier, nil),
 			introspection.NewValidator(nil),
 			mtls.NewValidator(),
 			mtls.NewXFCCExtractor(),
@@ -96,7 +102,7 @@ func API(c *container.Container) error {
 	if err := c.Provide(middleware.NewMCPAuthMiddleware); err != nil {
 		return err
 	}
-	if err := c.Provide(idpauth.NewVerifier); err != nil {
+	if err := c.Provide(oidcauth.NewVerifier); err != nil {
 		return err
 	}
 	if err := c.Provide(func(cfg *config.Config, finder appgateway.Finder) resolver.GatewayResolver {
@@ -113,7 +119,7 @@ func API(c *container.Container) error {
 	if err := c.Provide(resolver.NewOAuth2IdentityResolver); err != nil {
 		return err
 	}
-	if err := c.Provide(resolver.NewIDPIdentityResolver); err != nil {
+	if err := c.Provide(resolver.NewOIDCIdentityResolver); err != nil {
 		return err
 	}
 	if err := c.Provide(resolver.NewIdentityResolver); err != nil {

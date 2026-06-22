@@ -34,7 +34,8 @@ spec:
   - name: internal-gateway
     namespace: gateway-internal
   hostnames:
-  - "agentgateway.internal.neuraltrust.ai"  # Base domain, overridden in overlays
+  # Per-gateway wildcard ({slug}.<GATEWAY_BASE_DOMAIN>), overridden in overlays
+  - "*.llm.internal.neuraltrust.ai"
   rules:
   - matches:
     - path:
@@ -57,7 +58,8 @@ spec:
   - name: internal-gateway
     namespace: gateway-internal
   hostnames:
-  - "agentgateway-mcp.internal.neuraltrust.ai"  # Base domain, overridden in overlays
+  # Per-gateway wildcard ({slug}.<MCP_BASE_DOMAIN>), overridden in overlays
+  - "*.mcp.internal.neuraltrust.ai"
   rules:
   - matches:
     - path:

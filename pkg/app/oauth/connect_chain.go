@@ -50,7 +50,7 @@ func (s *connectService) chainTarget(ctx context.Context, data *appconsumer.Data
 	if resource != "" {
 		if res, err := url.Parse(resource); err == nil && res.Path != "" {
 			if rc, ok := data.MatchPath(res.Path); ok {
-				if s.hasUnlinked(ctx, gatewayID, rc, principalSub) {
+				if s.hasUnlinked(ctx, gatewayID, data, rc, principalSub) {
 					return rc
 				}
 				return nil
@@ -62,15 +62,15 @@ func (s *connectService) chainTarget(ctx context.Context, data *appconsumer.Data
 		if rc.Consumer == nil || !rc.Consumer.Active {
 			continue
 		}
-		if s.hasUnlinked(ctx, gatewayID, rc, principalSub) {
+		if s.hasUnlinked(ctx, gatewayID, data, rc, principalSub) {
 			return rc
 		}
 	}
 	return nil
 }
 
-func (s *connectService) hasUnlinked(ctx context.Context, gatewayID ids.GatewayID, rc *appconsumer.RoutableConsumer, principalSub string) bool {
-	for _, reg := range rc.Registries {
+func (s *connectService) hasUnlinked(ctx context.Context, gatewayID ids.GatewayID, data *appconsumer.Data, rc *appconsumer.RoutableConsumer, principalSub string) bool {
+	for _, reg := range data.EffectiveRegistries(rc) {
 		cfg := forwardedAuth(reg)
 		if cfg == nil {
 			continue

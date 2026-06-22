@@ -245,6 +245,143 @@ func TestAssociator_AttachAuth_Success(t *testing.T) {
 	}
 }
 
+func TestAssociator_AttachAuth_RoleBasedAcceptsIdP(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	authID := ids.New[ids.AuthKind]()
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, consumerID).
+		Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, RoutingMode: domain.RoutingModeRoleBased}, nil).Once()
+	repo.EXPECT().AttachAuth(mock.Anything, consumerID, authID).Return(nil).Once()
+
+	authRepo := authmocks.NewRepository(t)
+	authRepo.EXPECT().FindByID(mock.Anything, authID).
+		Return(&authdomain.Auth{ID: authID, GatewayID: gwID, Type: authdomain.TypeOAuth2}, nil).Once()
+
+	a := newAssociator(repo, backendmocks.NewRepository(t), authRepo, policymocks.NewRepository(t))
+	if err := a.AttachAuth(context.Background(), gwID, consumerID, authID); err != nil {
+		t.Fatalf("AttachAuth error: %v", err)
+	}
+}
+
+func TestAssociator_AttachAuth_RoleBasedRejectsNonIdP(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	authID := ids.New[ids.AuthKind]()
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, consumerID).
+		Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, RoutingMode: domain.RoutingModeRoleBased}, nil).Once()
+
+	authRepo := authmocks.NewRepository(t)
+	authRepo.EXPECT().FindByID(mock.Anything, authID).
+		Return(&authdomain.Auth{ID: authID, GatewayID: gwID, Type: authdomain.TypeAPIKey}, nil).Once()
+
+	a := newAssociator(repo, backendmocks.NewRepository(t), authRepo, policymocks.NewRepository(t))
+	err := a.AttachAuth(context.Background(), gwID, consumerID, authID)
+	if !errors.Is(err, commonerrors.ErrConflict) {
+		t.Fatalf("err = %v, want ErrConflict", err)
+	}
+}
+
+func TestAssociator_AttachAuth_RoleBasedRejectsSecondAuth(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	existingAuthID := ids.New[ids.AuthKind]()
+	authID := ids.New[ids.AuthKind]()
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, consumerID).
+		Return(&domain.Consumer{
+			ID:          consumerID,
+			GatewayID:   gwID,
+			RoutingMode: domain.RoutingModeRoleBased,
+			AuthIDs:     []ids.AuthID{existingAuthID},
+		}, nil).Once()
+
+	authRepo := authmocks.NewRepository(t)
+	authRepo.EXPECT().FindByID(mock.Anything, authID).
+		Return(&authdomain.Auth{ID: authID, GatewayID: gwID, Type: authdomain.TypeOAuth2}, nil).Once()
+
+	a := newAssociator(repo, backendmocks.NewRepository(t), authRepo, policymocks.NewRepository(t))
+	err := a.AttachAuth(context.Background(), gwID, consumerID, authID)
+	if !errors.Is(err, commonerrors.ErrConflict) {
+		t.Fatalf("err = %v, want ErrConflict", err)
+	}
+}
+
+func TestAssociator_AttachAuth_MCPRejectsIdP(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	authID := ids.New[ids.AuthKind]()
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, consumerID).
+		Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, Type: domain.TypeMCP}, nil).Once()
+
+	authRepo := authmocks.NewRepository(t)
+	authRepo.EXPECT().FindByID(mock.Anything, authID).
+		Return(&authdomain.Auth{ID: authID, GatewayID: gwID, Type: authdomain.TypeOIDC}, nil).Once()
+
+	a := newAssociator(repo, backendmocks.NewRepository(t), authRepo, policymocks.NewRepository(t))
+	err := a.AttachAuth(context.Background(), gwID, consumerID, authID)
+	if !errors.Is(err, commonerrors.ErrConflict) {
+		t.Fatalf("err = %v, want ErrConflict (oidc cannot broker for an MCP consumer)", err)
+	}
+}
+
+func TestAssociator_AttachAuth_MCPAcceptsOAuth2(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	authID := ids.New[ids.AuthKind]()
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, consumerID).
+		Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, Type: domain.TypeMCP}, nil).Once()
+	repo.EXPECT().AttachAuth(mock.Anything, consumerID, authID).Return(nil).Once()
+
+	authRepo := authmocks.NewRepository(t)
+	authRepo.EXPECT().FindByID(mock.Anything, authID).
+		Return(&authdomain.Auth{ID: authID, GatewayID: gwID, Type: authdomain.TypeOAuth2}, nil).Once()
+
+	a := newAssociator(repo, backendmocks.NewRepository(t), authRepo, policymocks.NewRepository(t))
+	if err := a.AttachAuth(context.Background(), gwID, consumerID, authID); err != nil {
+		t.Fatalf("AttachAuth error: %v", err)
+	}
+}
+
+func TestAssociator_AttachAuth_RoleBasedReattachIsIdempotent(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	authID := ids.New[ids.AuthKind]()
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, consumerID).
+		Return(&domain.Consumer{
+			ID:          consumerID,
+			GatewayID:   gwID,
+			RoutingMode: domain.RoutingModeRoleBased,
+			AuthIDs:     []ids.AuthID{authID},
+		}, nil).Once()
+	repo.EXPECT().AttachAuth(mock.Anything, consumerID, authID).Return(nil).Once()
+
+	authRepo := authmocks.NewRepository(t)
+	authRepo.EXPECT().FindByID(mock.Anything, authID).
+		Return(&authdomain.Auth{ID: authID, GatewayID: gwID, Type: authdomain.TypeOIDC}, nil).Once()
+
+	a := newAssociator(repo, backendmocks.NewRepository(t), authRepo, policymocks.NewRepository(t))
+	if err := a.AttachAuth(context.Background(), gwID, consumerID, authID); err != nil {
+		t.Fatalf("AttachAuth error: %v", err)
+	}
+}
+
 func TestAssociator_DetachPolicy_Success(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()

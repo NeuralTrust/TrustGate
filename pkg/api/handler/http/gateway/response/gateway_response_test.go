@@ -20,6 +20,7 @@ import (
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/AgentGateway/pkg/version"
 )
 
 func TestFromDomain_IncludesSlug(t *testing.T) {
@@ -30,6 +31,9 @@ func TestFromDomain_IncludesSlug(t *testing.T) {
 	got := FromDomain(gw, "llm.neuraltrust.ai", "mcp.neuraltrust.ai")
 	if got.Slug != "acme" {
 		t.Fatalf("Slug = %q, want acme", got.Slug)
+	}
+	if got.Version != version.Version {
+		t.Fatalf("Version = %q, want %q", got.Version, version.Version)
 	}
 	if got.Hosts.Proxy != "acme.llm.neuraltrust.ai" {
 		t.Fatalf("Hosts.Proxy = %q, want acme.llm.neuraltrust.ai", got.Hosts.Proxy)

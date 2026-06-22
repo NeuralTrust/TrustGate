@@ -81,7 +81,7 @@ func validAuth(t *testing.T, gwID ids.GatewayID, name string) *domain.Auth {
 
 func validIDPAuth(t *testing.T, gwID ids.GatewayID, name string, enabled bool) *domain.Auth {
 	t.Helper()
-	a, err := domain.NewAuth(gwID, name, domain.TypeIDP, enabled, domain.Config{IDP: &domain.IDPConfig{
+	a, err := domain.NewAuth(gwID, name, domain.TypeOIDC, enabled, domain.Config{OIDC: &domain.OIDCConfig{
 		Issuer:            "https://issuer.example.com",
 		Audiences:         []string{"gateway"},
 		JWKSURL:           "https://issuer.example.com/.well-known/jwks.json",
@@ -166,7 +166,7 @@ func TestRepository_ListEnabledByGatewayAndType(t *testing.T) {
 		}
 	}
 
-	got, err := r.ListEnabledByGatewayAndType(ctx, gwID, domain.TypeIDP)
+	got, err := r.ListEnabledByGatewayAndType(ctx, gwID, domain.TypeOIDC)
 	if err != nil {
 		t.Fatalf("ListEnabledByGatewayAndType: %v", err)
 	}

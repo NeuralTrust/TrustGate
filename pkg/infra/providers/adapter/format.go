@@ -32,6 +32,7 @@ const (
 	FormatGroq            Format = "groq"  // wire-compatible with OpenAI Chat Completions
 	FormatVertex          Format = "vertex"
 	FormatMistral         Format = "mistral"
+	FormatDeepSeek        Format = "deepseek" // wire-compatible with OpenAI Chat Completions
 )
 
 // GeminiModelsRoutePrefix is the fixed Gemini route segment that carries the
@@ -93,7 +94,7 @@ func DetectFormat(body []byte) Format {
 func SupportedSourceFormat(f Format) bool {
 	switch f {
 	case FormatOpenAI, FormatOpenAIResponses, FormatAnthropic, FormatGemini,
-		FormatAzure, FormatGroq, FormatVertex, FormatMistral:
+		FormatAzure, FormatGroq, FormatVertex, FormatMistral, FormatDeepSeek:
 		return true
 	default:
 		return false
@@ -114,6 +115,8 @@ func resolveProviderWireFormat(provider string) Format {
 	switch provider {
 	case string(FormatGroq):
 		return FormatGroq
+	case string(FormatDeepSeek):
+		return FormatDeepSeek
 	case "openai_compatible":
 		return FormatOpenAI
 	default:
@@ -141,7 +144,7 @@ func ResolveAgentFormat(provider, sourceFormat string, providerOptions map[strin
 		return Format(sourceFormat), nil
 	}
 	switch provider {
-	case "openai", "openai_compatible", "azure", "groq":
+	case "openai", "openai_compatible", "azure", "groq", "deepseek":
 		return ResolveTargetFormat(provider, providerOptions), nil
 	case "anthropic":
 		return FormatAnthropic, nil
@@ -166,7 +169,7 @@ func IsSameWireFormat(a, b Format) bool {
 
 func normalizeFormat(f Format) Format {
 	switch f {
-	case FormatAzure, FormatGroq:
+	case FormatAzure, FormatGroq, FormatDeepSeek:
 		return FormatOpenAI
 	case FormatVertex:
 		return FormatGemini

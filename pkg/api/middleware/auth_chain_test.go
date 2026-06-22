@@ -51,6 +51,16 @@ func (f fakeCredentialFinder) OAuth2Auths(context.Context) ([]*authdomain.Auth, 
 	return f.oauth2, nil
 }
 
+func (f fakeCredentialFinder) OAuth2AuthsForGateway(_ context.Context, gatewayID ids.GatewayID) ([]*authdomain.Auth, error) {
+	out := make([]*authdomain.Auth, 0, len(f.oauth2))
+	for _, a := range f.oauth2 {
+		if a.GatewayID == gatewayID {
+			out = append(out, a)
+		}
+	}
+	return out, nil
+}
+
 func (f fakeCredentialFinder) MTLSAuths(context.Context) ([]*authdomain.Auth, error) {
 	return f.mtls, nil
 }

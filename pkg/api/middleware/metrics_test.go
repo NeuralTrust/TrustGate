@@ -90,6 +90,55 @@ func TestMetricsMiddleware_ProcessesNonStreamingRequest(t *testing.T) {
 	assert.Equal(t, fiber.StatusOK, gotResp.StatusCode)
 }
 
+func TestMetricsMiddleware_TraceIDMatchesTraceIDHeader(t *testing.T) {
+	worker := appmetricsmocks.NewWorker(t)
+
+	var (
+		mu           sync.Mutex
+		gotTraceID   string
+		processCalls int
+	)
+	worker.EXPECT().
+		Process(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Run(func(rt *trace.RequestTrace, _ *infracontext.RequestContext, _ *infracontext.ResponseContext, _ time.Time, _ time.Time, _ []telemetrydomain.ExporterConfig) {
+			mu.Lock()
+			defer mu.Unlock()
+			processCalls++
+			gotTraceID = rt.TraceID()
+		}).
+		Return().
+		Once()
+
+	cfg := &config.Config{}
+	cfg.Telemetry.Enabled = true
+	mw := middleware.NewMetricsMiddleware(worker, cfg)
+
+	gatewayID := ids.New[ids.GatewayKind]()
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		c.SetUserContext(appconsumer.WithGatewayID(c.UserContext(), gatewayID))
+		return c.Next()
+	})
+	app.Use(mw.Middleware())
+	app.Post("/v1/chat/completions", func(c *fiber.Ctx) error {
+		return c.Status(fiber.StatusOK).SendString("ok")
+	})
+
+	req := httptest.NewRequest(fiber.MethodPost, "/v1/chat/completions", nil)
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	respTraceID := resp.Header.Get(middleware.HeaderTraceID)
+	require.NotEmpty(t, respTraceID, "metrics middleware must echo X-AG-Trace-Id")
+	assert.Empty(t, resp.Header.Get(fiber.HeaderXRequestID), "proxy must not set X-Request-Id")
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, 1, processCalls)
+	assert.Equal(t, respTraceID, gotTraceID, "event TraceID must equal the X-AG-Trace-Id returned to the client")
+}
+
 func TestMetricsMiddleware_StreamingEmitsViaFinalizer(t *testing.T) {
 	worker := appmetricsmocks.NewWorker(t)
 

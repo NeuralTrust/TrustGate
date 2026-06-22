@@ -36,6 +36,7 @@ type Repository interface {
 	List(ctx context.Context, filter ListFilter) (items []*Consumer, total int, err error)
 
 	ListByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*Consumer, error)
+	ListByAuthID(ctx context.Context, authID ids.AuthID) ([]*Consumer, error)
 
 	FindActiveBySlug(ctx context.Context, slug string) (*Consumer, error)
 

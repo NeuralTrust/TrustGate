@@ -35,17 +35,25 @@ type Type string
 const (
 	TypeAPIKey Type = "api_key"
 	TypeOAuth2 Type = "oauth2"
-	TypeIDP    Type = "idp"
+	TypeOIDC   Type = "oidc"
 	TypeMTLS   Type = "mtls"
 )
 
 func Types() []Type {
-	return []Type{TypeAPIKey, TypeOAuth2, TypeIDP, TypeMTLS}
+	return []Type{TypeAPIKey, TypeOAuth2, TypeOIDC, TypeMTLS}
 }
 
 func IsValidType(t Type) bool {
 	switch t {
-	case TypeAPIKey, TypeOAuth2, TypeIDP, TypeMTLS:
+	case TypeAPIKey, TypeOAuth2, TypeOIDC, TypeMTLS:
+		return true
+	}
+	return false
+}
+
+func (t Type) IsIdentityProvider() bool {
+	switch t {
+	case TypeOAuth2, TypeOIDC:
 		return true
 	}
 	return false

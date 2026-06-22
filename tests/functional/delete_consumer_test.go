@@ -66,17 +66,22 @@ func TestDeleteConsumer_InvalidConsumerUUID(t *testing.T) {
 	assert.Equal(t, "invalid_uuid", body["error"])
 }
 
-func TestDeleteGateway_FailsWhenItHasConsumers(t *testing.T) {
+func TestDeleteGateway_CascadesConsumers(t *testing.T) {
 	defer Track(t, "DeleteConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-del-gw-cascade")})
-	_ = CreateConsumer(t, gwID, validConsumerPayload(uniqueName("co-del-gw-cascade-co")))
+	coID := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("co-del-gw-cascade-co")))
 
 	status, body := sendRequest(t, http.MethodDelete,
 		fmt.Sprintf("%s/v1/gateways/%s", AdminURL, gwID),
 		nil, nil,
 	)
-	require.Equal(t, http.StatusConflict, status, "body=%v", body)
-	assert.Equal(t, "has_dependents", body["error"])
+	require.Equal(t, http.StatusNoContent, status, "deleting a gateway must cascade to its consumers, body=%v", body)
+
+	status, body = sendRequest(t, http.MethodGet,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gwID, coID),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusNotFound, status, "the consumer must be gone after the gateway deletion, body=%v", body)
 }
 
 func TestDeleteRegistry_CascadesInlineConsumerBinding(t *testing.T) {

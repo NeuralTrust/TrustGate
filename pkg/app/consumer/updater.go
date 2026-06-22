@@ -20,6 +20,8 @@ import (
 	"log/slog"
 	"time"
 
+	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
+	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
@@ -50,6 +52,7 @@ var _ Updater = (*updater)(nil)
 
 type updater struct {
 	repo        domain.Repository
+	authRepo    authdomain.Repository
 	memoryCache *cache.TTLMap
 	publisher   cache.EventPublisher
 	logger      *slog.Logger
@@ -57,12 +60,14 @@ type updater struct {
 
 func NewUpdater(
 	repo domain.Repository,
+	authRepo authdomain.Repository,
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
 ) Updater {
 	return &updater{
 		repo:        repo,
+		authRepo:    authRepo,
 		memoryCache: manager.GetTTLMap(cache.ConsumerTTLName),
 		publisher:   publisher,
 		logger:      logger,
@@ -80,6 +85,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	if in.Name != nil {
 		existing.Name = *in.Name
 	}
+	previousType := existing.Type
 	if in.Type != nil && *in.Type != existing.Type {
 		existing.Type = *in.Type
 		existing.MCP = nil
@@ -115,12 +121,42 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	if err := existing.Validate(); err != nil {
 		return nil, err
 	}
+	if err := u.revalidateAuthsForTransition(ctx, existing, previousType, previousMode); err != nil {
+		return nil, err
+	}
 	if err := u.repo.Update(ctx, existing); err != nil {
 		return nil, err
 	}
 	u.memoryCache.Set(existing.ID.String(), existing)
 	publishGatewayDataInvalidation(ctx, u.publisher, u.logger, existing.GatewayID)
 	return existing, nil
+}
+
+func (u *updater) revalidateAuthsForTransition(
+	ctx context.Context,
+	c *domain.Consumer,
+	previousType domain.Type,
+	previousMode domain.RoutingMode,
+) error {
+	toMCP := c.Type == domain.TypeMCP && previousType != domain.TypeMCP
+	toRoleBased := c.RoutingMode == domain.RoutingModeRoleBased && previousMode != domain.RoutingModeRoleBased
+	if (!toMCP && !toRoleBased) || len(c.AuthIDs) == 0 {
+		return nil
+	}
+	auths, err := u.authRepo.FindByIDs(ctx, c.GatewayID, c.AuthIDs)
+	if err != nil {
+		return err
+	}
+	if len(auths) != len(c.AuthIDs) {
+		return fmt.Errorf("%w: consumer references %d auth(s) but %d were found in its gateway",
+			commonerrors.ErrConflict, len(c.AuthIDs), len(auths))
+	}
+	for _, au := range auths {
+		if err := domain.ValidateAuthType(c.Type, c.RoutingMode, au.Type); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func applyMCPPolicyUpdate(existing *domain.Consumer, in UpdateInput) {

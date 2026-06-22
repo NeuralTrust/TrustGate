@@ -58,7 +58,7 @@ func newApp(t *testing.T, composer appmcp.Composer, consumerType consumerdomain.
 		c.SetUserContext(ctx)
 		return c.Next()
 	})
-	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(composer), appmcp.NewRoleScoper(approle.NewIDPResolver()))
+	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(composer), appmcp.NewRoleScoper(approle.NewOIDCResolver()))
 	app.Post(mcpPath, handler.Handle)
 	app.Get(mcpPath, handler.MethodNotAllowed)
 	return app

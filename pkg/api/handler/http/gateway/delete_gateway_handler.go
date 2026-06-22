@@ -31,7 +31,7 @@ func NewDeleteGatewayHandler(deleter appgateway.Deleter) *DeleteGatewayHandler {
 
 // Handle godoc
 // @Summary      Delete a gateway
-// @Description  Deletes a gateway. Fails if it still has dependent resources.
+// @Description  Deletes a gateway and cascades the deletion to every resource that belongs to it (consumers, roles, policies, auths, registries and vault credentials).
 // @Tags         gateways
 // @Produce      json
 // @Security     BearerAuth
@@ -40,7 +40,6 @@ func NewDeleteGatewayHandler(deleter appgateway.Deleter) *DeleteGatewayHandler {
 // @Failure      400  {object}  helpers.ErrorBody
 // @Failure      401  {object}  helpers.ErrorBody
 // @Failure      404  {object}  helpers.ErrorBody
-// @Failure      409  {object}  helpers.ErrorBody
 // @Router       /v1/gateways/{id} [delete]
 func (h *DeleteGatewayHandler) Handle(c *fiber.Ctx) error {
 	id, err := helpers.ParseUUIDParam[ids.GatewayKind](c, "id")
