@@ -32,6 +32,7 @@ var builtinSlugs = []string{
 	"token_rate_limiter",
 	"semantic_cache",
 	"model_allowlist",
+	"prompt_template",
 }
 
 func registerBuiltins(t *testing.T) Registry {
@@ -48,6 +49,7 @@ func registerBuiltins(t *testing.T) Registry {
 		{"token_rate_limiter", []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}, []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}},
 		{"semantic_cache", []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}, []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}},
 		{"model_allowlist", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}},
+		{"prompt_template", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}},
 	}
 	for _, s := range specs {
 		require.NoError(t, reg.Register(&stagePlugin{name: s.name, mandatory: s.mandatory, supported: s.supported}))
@@ -63,7 +65,7 @@ func TestCatalogService_GroupsAndOrder(t *testing.T) {
 	for _, g := range catalog.Groups {
 		types = append(types, g.Type)
 	}
-	assert.Equal(t, []string{groupTrafficControl, groupQuota, groupRouting}, types)
+	assert.Equal(t, []string{groupTrafficControl, groupQuota, groupRouting, groupOther}, types)
 
 	byType := make(map[string][]string)
 	for _, g := range catalog.Groups {
@@ -74,6 +76,7 @@ func TestCatalogService_GroupsAndOrder(t *testing.T) {
 	assert.ElementsMatch(t, []string{"rate_limiter", "request_size_limiter", "cors"}, byType[groupTrafficControl])
 	assert.Equal(t, []string{"token_rate_limiter"}, byType[groupQuota])
 	assert.ElementsMatch(t, []string{"semantic_cache", "model_allowlist"}, byType[groupRouting])
+	assert.Equal(t, []string{"prompt_template"}, byType[groupOther])
 }
 
 func TestCatalogService_EntriesHaveStagesAndSchema(t *testing.T) {
@@ -276,5 +279,103 @@ func TestPluginCatalogMeta_CoversBuiltins(t *testing.T) {
 			assert.NotEmptyf(t, f.Key, "slug %q has a field with empty key", slug)
 			assert.NotEmptyf(t, f.Type, "slug %q field %q has empty type", slug, f.Key)
 		}
+	}
+}
+
+func TestPromptTemplate_CatalogEntry(t *testing.T) {
+	svc := NewCatalogService(registerBuiltins(t))
+	catalog := svc.Catalog()
+
+	var entry CatalogEntry
+	found := false
+	for _, g := range catalog.Groups {
+		if g.Type != groupOther {
+			continue
+		}
+		for _, item := range g.Items {
+			if item.Slug == "prompt_template" {
+				entry = item
+				found = true
+			}
+		}
+	}
+
+	require.True(t, found, "prompt_template missing from the Other group")
+	assert.Equal(t, "Prompt Template", entry.Name)
+	assert.Contains(t, entry.SupportedModes, policy.ModeEnforce)
+	assert.Equal(t, policy.DefaultMode, entry.DefaultMode)
+	assert.Equal(t, []policy.Stage{policy.StagePreRequest}, entry.SupportedStages)
+	assert.NotEmpty(t, entry.SettingsSchema.Fields)
+}
+
+func TestPromptTemplateSchema_Tree(t *testing.T) {
+	meta, ok := pluginCatalogMeta["prompt_template"]
+	require.True(t, ok)
+	assert.Equal(t, "Prompt Template", meta.name)
+	assert.Equal(t, groupOther, meta.group)
+
+	fields := meta.schema.Fields
+
+	engineField, ok := fieldByKey(fields, "template_engine")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeEnum, engineField.Type)
+	assert.Equal(t, []string{"mustache", "jinja2_subset"}, engineField.Enum)
+	assert.Equal(t, "mustache", engineField.Default)
+
+	contextVars, ok := fieldByKey(fields, "context_variables")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeMap, contextVars.Type)
+	require.NotNil(t, contextVars.Value)
+	assert.Equal(t, FieldTypeObject, contextVars.Value.Type)
+	source, ok := fieldByKey(contextVars.Value.Fields, "source")
+	require.True(t, ok)
+	assert.Equal(t, []string{"header", "jwt_claim"}, source.Enum)
+
+	inject, ok := fieldByKey(fields, "inject_templates")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeArray, inject.Type)
+	require.NotNil(t, inject.Item)
+	for _, k := range []string{"id", "position", "role", "content", "on_existing_system"} {
+		_, ok := fieldByKey(inject.Item.Fields, k)
+		assert.Truef(t, ok, "inject_templates item missing %q", k)
+	}
+	onExisting, ok := fieldByKey(inject.Item.Fields, "on_existing_system")
+	require.True(t, ok)
+	assert.Equal(t, []string{"merge", "replace"}, onExisting.Enum)
+
+	named, ok := fieldByKey(fields, "named_templates")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeArray, named.Type)
+	require.NotNil(t, named.Item)
+
+	versions, ok := fieldByKey(named.Item.Fields, "versions")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeArray, versions.Type)
+	require.NotNil(t, versions.Item)
+	for _, k := range []string{"version", "labels", "content", "required_variables"} {
+		_, ok := fieldByKey(versions.Item.Fields, k)
+		assert.Truef(t, ok, "version item missing %q", k)
+	}
+
+	requiredVars, ok := fieldByKey(versions.Item.Fields, "required_variables")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeMap, requiredVars.Type)
+	require.NotNil(t, requiredVars.Value)
+	assert.Equal(t, FieldTypeObject, requiredVars.Value.Type)
+	rvType, ok := fieldByKey(requiredVars.Value.Fields, "type")
+	require.True(t, ok)
+	assert.Equal(t, []string{"string", "number", "boolean"}, rvType.Enum)
+
+	onMissingContext, ok := fieldByKey(fields, "on_missing_context_variable")
+	require.True(t, ok)
+	assert.Equal(t, []string{"error", "empty_string", "skip_injection"}, onMissingContext.Enum)
+
+	onMissingClient, ok := fieldByKey(fields, "on_missing_client_variable")
+	require.True(t, ok)
+	assert.Equal(t, []string{"error", "empty_string"}, onMissingClient.Enum)
+
+	for _, k := range []string{"allow_untemplated_requests", "default_label", "escape_json_control_chars"} {
+		_, ok := fieldByKey(fields, k)
+		assert.Truef(t, ok, "missing top-level field %q", k)
 	}
 }
