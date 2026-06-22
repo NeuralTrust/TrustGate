@@ -32,7 +32,7 @@ import (
 
 const (
 	batchMaxQueueSize = 2048
-	serviceName       = "agentgateway"
+	serviceName       = "trustgate"
 )
 
 // newLoggerProvider builds a dedicated logs provider for the given settings. The

@@ -5,8 +5,8 @@ package mocks
 import (
 	context "context"
 
-	registry "github.com/NeuralTrust/AgentGateway/pkg/app/registry"
-	domainregistry "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	registry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
+	domainregistry "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	mock "github.com/stretchr/testify/mock"
 )
 

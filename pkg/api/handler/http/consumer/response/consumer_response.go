@@ -18,10 +18,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/common/secret"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 type ConsumerResponse struct {

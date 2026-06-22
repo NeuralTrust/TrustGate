@@ -15,11 +15,11 @@
 package auth
 
 import (
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/auth/request"
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/auth/response"
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
-	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth/request"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth/response"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/gofiber/fiber/v2"
 )
 

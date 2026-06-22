@@ -14,7 +14,7 @@
 
 package modules
 
-import "github.com/NeuralTrust/AgentGateway/pkg/container"
+import "github.com/NeuralTrust/TrustGate/pkg/container"
 
 func All() []container.Option {
 	return []container.Option{

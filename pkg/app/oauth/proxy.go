@@ -25,9 +25,9 @@ import (
 	"strings"
 	"time"
 
-	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/golang-jwt/jwt/v5"
 )
 

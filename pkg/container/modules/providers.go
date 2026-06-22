@@ -15,11 +15,11 @@
 package modules
 
 import (
-	"github.com/NeuralTrust/AgentGateway/pkg/config"
-	"github.com/NeuralTrust/AgentGateway/pkg/container"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/factory"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/container"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 )
 
 func Providers(c *container.Container) error {

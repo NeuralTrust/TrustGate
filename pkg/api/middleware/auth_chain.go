@@ -21,12 +21,12 @@ import (
 	"net"
 	"strings"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/api/resolver"
-	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/api/resolver"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
 )

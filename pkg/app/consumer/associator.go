@@ -19,14 +19,14 @@ import (
 	"fmt"
 	"log/slog"
 
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
 //go:generate mockery --name=Associator --dir=. --output=./mocks --filename=consumer_associator_mock.go --case=underscore --with-expecter

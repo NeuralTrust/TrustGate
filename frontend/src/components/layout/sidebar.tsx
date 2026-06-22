@@ -59,7 +59,7 @@ export function Sidebar() {
       </nav>
 
       <div className="px-5 py-4 border-t border-border">
-        <p className="text-[11px] text-faint">AgentGateway Console</p>
+        <p className="text-[11px] text-faint">TrustGate Console</p>
       </div>
     </aside>
   );

@@ -18,8 +18,8 @@ import (
 	"errors"
 	"testing"
 
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 

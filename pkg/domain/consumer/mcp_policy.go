@@ -14,7 +14,7 @@
 
 package consumer
 
-import "github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+import "github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 
 type MCPPolicy struct {
 	Toolkit  Toolkit  `json:"toolkit"`

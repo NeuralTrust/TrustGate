@@ -21,8 +21,8 @@ import (
 	"strconv"
 	"time"
 
-	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
 )

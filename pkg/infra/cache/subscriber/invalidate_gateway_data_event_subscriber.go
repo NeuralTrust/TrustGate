@@ -18,9 +18,9 @@ import (
 	"context"
 	"log/slog"
 
-	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/event"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 )
 
 var _ cache.EventSubscriber[event.InvalidateGatewayDataEvent] = (*InvalidateGatewayDataEventSubscriber)(nil)

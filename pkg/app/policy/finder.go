@@ -18,9 +18,9 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
 //go:generate mockery --name=Finder --dir=. --output=./mocks --filename=policy_finder_mock.go --case=underscore --with-expecter

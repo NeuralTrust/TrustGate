@@ -21,9 +21,9 @@ import (
 	"strings"
 	"testing"
 
-	appoauth "github.com/NeuralTrust/AgentGateway/pkg/app/oauth"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/gofiber/fiber/v2"
 )
 

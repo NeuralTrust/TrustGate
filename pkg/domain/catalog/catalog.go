@@ -18,7 +18,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 type Provider struct {

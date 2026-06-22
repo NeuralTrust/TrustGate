@@ -17,9 +17,9 @@ package policy
 import (
 	"errors"
 
-	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 )
 
 func validatePlugin(reg appplugins.Registry, slug string, stages []domain.Stage, settings map[string]any) error {

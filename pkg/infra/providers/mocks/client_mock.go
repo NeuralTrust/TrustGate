@@ -6,7 +6,7 @@ import (
 	context "context"
 	iter "iter"
 
-	providers "github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
+	providers "github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	mock "github.com/stretchr/testify/mock"
 )
 

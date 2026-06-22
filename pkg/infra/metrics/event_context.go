@@ -17,7 +17,7 @@ package metrics
 import (
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
 type EventContext struct {

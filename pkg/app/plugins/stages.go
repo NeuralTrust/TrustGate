@@ -17,7 +17,7 @@ package plugins
 import (
 	"fmt"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 )
 
 var ErrStageNotSupported = fmt.Errorf("plugin: stage not supported")

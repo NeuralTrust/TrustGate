@@ -23,7 +23,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/embedding"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
 )
 
 const (

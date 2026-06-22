@@ -19,12 +19,12 @@ import (
 	"errors"
 	"testing"
 
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer/mocks"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/consumer/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/cachetest"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -34,7 +34,7 @@ func TestDeleter_Delete_Success(t *testing.T) {
 	gwID := ids.New[ids.GatewayKind]()
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Consumer{ID: id, GatewayID: gwID}, nil).Once()
-	repo.EXPECT().Delete(mock.Anything, id).Return(nil).Once()
+	repo.EXPECT().Delete(mock.Anything, gwID, id).Return(nil).Once()
 
 	mgr := newCacheManager()
 	mgr.GetTTLMap(cache.ConsumerTTLName).Set(id.String(), &domain.Consumer{ID: id})
@@ -78,7 +78,7 @@ func TestDeleter_Delete_PropagatesRepoError(t *testing.T) {
 	gwID := ids.New[ids.GatewayKind]()
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Consumer{ID: id, GatewayID: gwID}, nil).Once()
-	repo.EXPECT().Delete(mock.Anything, id).Return(domain.ErrAlreadyExists).Once()
+	repo.EXPECT().Delete(mock.Anything, gwID, id).Return(domain.ErrAlreadyExists).Once()
 
 	d := appconsumer.NewDeleter(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	if err := d.Delete(context.Background(), gwID, id); !errors.Is(err, domain.ErrAlreadyExists) {

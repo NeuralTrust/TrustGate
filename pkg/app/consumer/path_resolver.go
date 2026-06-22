@@ -21,11 +21,11 @@ import (
 	"net"
 	"strings"
 
-	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"golang.org/x/sync/singleflight"
 )
 

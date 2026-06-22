@@ -19,11 +19,11 @@ import (
 	"errors"
 	"testing"
 
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer/mocks"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/consumer/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/stretchr/testify/mock"
 )
 

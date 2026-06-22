@@ -15,11 +15,11 @@
 package modules
 
 import (
-	"github.com/NeuralTrust/AgentGateway/pkg/container"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/embedding"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/embedding/factory"
-	embeddingopenai "github.com/NeuralTrust/AgentGateway/pkg/infra/embedding/openai"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer"
+	"github.com/NeuralTrust/TrustGate/pkg/container"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
+	embeddingopenai "github.com/NeuralTrust/TrustGate/pkg/infra/embedding/openai"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
 	"go.uber.org/dig"
 )
 

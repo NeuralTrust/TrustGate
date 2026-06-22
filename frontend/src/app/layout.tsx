@@ -10,8 +10,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "AgentGateway Console",
-  description: "Admin console for AgentGateway — gateways, registries, consumers, auth and policies.",
+  title: "TrustGate Console",
+  description: "Admin console for TrustGate — gateways, registries, consumers, auth and policies.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

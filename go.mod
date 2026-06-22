@@ -1,4 +1,4 @@
-module github.com/NeuralTrust/AgentGateway
+module github.com/NeuralTrust/TrustGate
 
 go 1.26.4
 

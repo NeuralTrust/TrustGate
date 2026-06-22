@@ -17,7 +17,7 @@ package request
 import (
 	"testing"
 
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 )
 
 func strPtr(v string) *string { return &v }

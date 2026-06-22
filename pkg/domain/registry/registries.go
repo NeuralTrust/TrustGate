@@ -17,7 +17,7 @@ package registry
 import (
 	"fmt"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 type Registries []ids.RegistryID

@@ -18,7 +18,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
 const (

@@ -21,7 +21,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

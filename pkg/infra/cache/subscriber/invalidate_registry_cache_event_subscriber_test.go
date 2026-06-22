@@ -18,10 +18,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/event"
-	cachemocks "github.com/NeuralTrust/AgentGateway/pkg/infra/cache/mocks"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/subscriber"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/subscriber"
 )
 
 func TestInvalidateRegistryCacheEventSubscriber_OnEvent_EvictsRegistryDataAndGatewayBalancers(t *testing.T) {

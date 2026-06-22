@@ -22,8 +22,8 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/channel"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/event"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 )
 
 var _ EventListener = (*redisEventListener)(nil)

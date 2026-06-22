@@ -18,9 +18,9 @@ import (
 	"errors"
 	"testing"
 
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	"github.com/NeuralTrust/AgentGateway/pkg/common/secret"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 func TestConfig_Validate_RejectsRedactedClientSecret(t *testing.T) {
@@ -256,7 +256,7 @@ func TestNewAuth_ValidPerType(t *testing.T) {
 		}}},
 		"oauth2 issuer-only (JWKS via OIDC discovery)": {TypeOAuth2, Config{OAuth2: &OAuth2Config{
 			Issuer:    "https://login.microsoftonline.com/tenant-id/v2.0",
-			Audiences: []string{"agentgateway"},
+			Audiences: []string{"trustgate"},
 		}}},
 		"mtls": {TypeMTLS, Config{MTLS: &MTLSConfig{CACert: "-----BEGIN CERTIFICATE-----"}}},
 		"oidc": {TypeOIDC, Config{OIDC: &OIDCConfig{

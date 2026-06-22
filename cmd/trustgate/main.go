@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Command agentgateway starts a server selected by argv[1] (default proxy):
+// Command trustgate starts a server selected by argv[1] (default proxy):
 // "admin", "proxy", "mcp", or "run" (admin + proxy together in one process).
 //
-// @title                       AgentGateway Admin API
+// @title                       TrustGate Admin API
 // @version                     1.0
 // @description                 Administrative API for managing gateways and their registries, policies, consumers, roles and auth credentials.
 // @contact.name                NeuralTrust
@@ -36,13 +36,13 @@ import (
 	"syscall"
 	"time"
 
-	_ "github.com/NeuralTrust/AgentGateway/docs"
-	appmetrics "github.com/NeuralTrust/AgentGateway/pkg/app/metrics"
-	"github.com/NeuralTrust/AgentGateway/pkg/container"
-	"github.com/NeuralTrust/AgentGateway/pkg/container/modules"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
-	_ "github.com/NeuralTrust/AgentGateway/pkg/infra/database/migrations"
-	"github.com/NeuralTrust/AgentGateway/pkg/server"
+	_ "github.com/NeuralTrust/TrustGate/docs"
+	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/container"
+	"github.com/NeuralTrust/TrustGate/pkg/container/modules"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
+	"github.com/NeuralTrust/TrustGate/pkg/server"
 	"github.com/joho/godotenv"
 	"go.uber.org/dig"
 )

@@ -5,8 +5,8 @@ package mocks
 import (
 	context "context"
 
-	consumer "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	ids "github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	consumer "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	ids "github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -216,17 +216,17 @@ func (_c *Repository_AttachRole_Call) RunAndReturn(run func(context.Context, ids
 	return _c
 }
 
-// Delete provides a mock function with given fields: ctx, id
-func (_m *Repository) Delete(ctx context.Context, id ids.ID[ids.ConsumerKind]) error {
-	ret := _m.Called(ctx, id)
+// Delete provides a mock function with given fields: ctx, gatewayID, id
+func (_m *Repository) Delete(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], id ids.ID[ids.ConsumerKind]) error {
+	ret := _m.Called(ctx, gatewayID, id)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Delete")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.ConsumerKind]) error); ok {
-		r0 = rf(ctx, id)
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.ConsumerKind]) error); ok {
+		r0 = rf(ctx, gatewayID, id)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -241,14 +241,15 @@ type Repository_Delete_Call struct {
 
 // Delete is a helper method to define mock.On call
 //   - ctx context.Context
+//   - gatewayID ids.ID[ids.GatewayKind]
 //   - id ids.ID[ids.ConsumerKind]
-func (_e *Repository_Expecter) Delete(ctx interface{}, id interface{}) *Repository_Delete_Call {
-	return &Repository_Delete_Call{Call: _e.mock.On("Delete", ctx, id)}
+func (_e *Repository_Expecter) Delete(ctx interface{}, gatewayID interface{}, id interface{}) *Repository_Delete_Call {
+	return &Repository_Delete_Call{Call: _e.mock.On("Delete", ctx, gatewayID, id)}
 }
 
-func (_c *Repository_Delete_Call) Run(run func(ctx context.Context, id ids.ID[ids.ConsumerKind])) *Repository_Delete_Call {
+func (_c *Repository_Delete_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], id ids.ID[ids.ConsumerKind])) *Repository_Delete_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(ids.ID[ids.ConsumerKind]))
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(ids.ID[ids.ConsumerKind]))
 	})
 	return _c
 }
@@ -258,7 +259,7 @@ func (_c *Repository_Delete_Call) Return(_a0 error) *Repository_Delete_Call {
 	return _c
 }
 
-func (_c *Repository_Delete_Call) RunAndReturn(run func(context.Context, ids.ID[ids.ConsumerKind]) error) *Repository_Delete_Call {
+func (_c *Repository_Delete_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.ConsumerKind]) error) *Repository_Delete_Call {
 	_c.Call.Return(run)
 	return _c
 }

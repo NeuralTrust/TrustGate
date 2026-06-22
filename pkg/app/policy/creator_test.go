@@ -22,12 +22,12 @@ import (
 	"testing"
 	"time"
 
-	pluginmocks "github.com/NeuralTrust/AgentGateway/pkg/app/plugins/mocks"
-	apppolicy "github.com/NeuralTrust/AgentGateway/pkg/app/policy"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
-	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/policy/mocks"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
+	pluginmocks "github.com/NeuralTrust/TrustGate/pkg/app/plugins/mocks"
+	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/policy/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/stretchr/testify/mock"
 )
 

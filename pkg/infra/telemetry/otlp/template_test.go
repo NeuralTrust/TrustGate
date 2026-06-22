@@ -17,10 +17,10 @@ package otlp_test
 import (
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/config"
-	telemetrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
-	infratelemetry "github.com/NeuralTrust/AgentGateway/pkg/infra/telemetry"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/telemetry/otlp"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
+	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	infratelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/otlp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

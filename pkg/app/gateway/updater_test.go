@@ -20,13 +20,13 @@ import (
 	"testing"
 	"time"
 
-	appgateway "github.com/NeuralTrust/AgentGateway/pkg/app/gateway"
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
-	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway/mocks"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/gateway/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/cachetest"
 	"github.com/stretchr/testify/mock"
 )
 

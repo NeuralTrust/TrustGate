@@ -20,10 +20,10 @@ import (
 	"fmt"
 	"time"
 
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/catalog"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/jackc/pgx/v5"
 )
 

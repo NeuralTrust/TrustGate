@@ -18,8 +18,8 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/event"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 )
 
 var _ cache.EventSubscriber[event.DeleteGatewayCacheEvent] = (*DeleteGatewayCacheEventSubscriber)(nil)

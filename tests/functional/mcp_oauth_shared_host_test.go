@@ -25,7 +25,7 @@ import (
 // the OAuth facade must work here exactly as it does behind a dedicated
 // subdomain: this is the "shared host" access pattern (a single MCP ingress in
 // front of every gateway, with the consumer slug carried in the path).
-const sharedHost = "agentgateway-mcp.shared.neuraltrust.ai"
+const sharedHost = "trustgate-mcp.shared.neuraltrust.ai"
 
 // oauthIDPStub is an upstream identity provider that serves enough OAuth 2.0
 // authorization-server metadata for the gateway to build a redirect, plus a

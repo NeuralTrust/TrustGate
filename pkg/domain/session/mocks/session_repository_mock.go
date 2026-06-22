@@ -5,7 +5,7 @@ package mocks
 import (
 	context "context"
 
-	session "github.com/NeuralTrust/AgentGateway/pkg/domain/session"
+	session "github.com/NeuralTrust/TrustGate/pkg/domain/session"
 	mock "github.com/stretchr/testify/mock"
 )
 

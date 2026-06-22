@@ -15,10 +15,10 @@
 package policy
 
 import (
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/policy/response"
-	apppolicy "github.com/NeuralTrust/AgentGateway/pkg/app/policy"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/response"
+	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 

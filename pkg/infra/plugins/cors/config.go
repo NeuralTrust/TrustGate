@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/plugins/pluginutil"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 )
 
 type config struct {

@@ -28,9 +28,9 @@ import (
 	"testing"
 	"time"
 
-	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/mtls"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/mtls"
 )
 
 type testPKI struct {

@@ -20,10 +20,10 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 type DiscoveryCache interface {

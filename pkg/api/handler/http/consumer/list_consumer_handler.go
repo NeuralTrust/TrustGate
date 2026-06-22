@@ -15,11 +15,11 @@
 package consumer
 
 import (
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/consumer/request"
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/consumer/response"
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer/request"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer/response"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/gofiber/fiber/v2"
 )
 

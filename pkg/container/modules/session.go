@@ -17,12 +17,12 @@ package modules
 import (
 	"log/slog"
 
-	appsession "github.com/NeuralTrust/AgentGateway/pkg/app/session"
-	"github.com/NeuralTrust/AgentGateway/pkg/config"
-	"github.com/NeuralTrust/AgentGateway/pkg/container"
-	sessiondomain "github.com/NeuralTrust/AgentGateway/pkg/domain/session"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	sessionrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/session"
+	appsession "github.com/NeuralTrust/TrustGate/pkg/app/session"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/container"
+	sessiondomain "github.com/NeuralTrust/TrustGate/pkg/domain/session"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	sessionrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/session"
 )
 
 func Session(c *container.Container) error {

@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 const ToolWildcard = "*"

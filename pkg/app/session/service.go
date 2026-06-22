@@ -19,8 +19,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/config"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/session"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/session"
 )
 
 const DefaultTTL = time.Hour

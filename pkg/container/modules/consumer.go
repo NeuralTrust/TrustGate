@@ -15,12 +15,12 @@
 package modules
 
 import (
-	consumerhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/consumer"
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	"github.com/NeuralTrust/AgentGateway/pkg/container"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
-	consumerrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/consumer"
+	consumerhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/container"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	consumerrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/consumer"
 )
 
 func Consumer(c *container.Container) error {

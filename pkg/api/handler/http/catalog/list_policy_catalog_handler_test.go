@@ -21,9 +21,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	cataloghttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/catalog"
-	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
+	cataloghttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/catalog"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -18,7 +18,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 )
 
 func TestParseModelRef(t *testing.T) {

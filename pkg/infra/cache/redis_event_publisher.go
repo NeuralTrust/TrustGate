@@ -18,8 +18,8 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/channel"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/event"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 )
 
 type RedisPublisherInitializer func(cache Client, channel channel.Channel) EventPublisher

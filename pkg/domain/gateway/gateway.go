@@ -22,8 +22,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/google/uuid"
 )
 

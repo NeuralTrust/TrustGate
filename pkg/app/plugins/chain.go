@@ -17,7 +17,7 @@ package plugins
 import (
 	"sort"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 )
 
 type chainEntry struct {

@@ -17,10 +17,10 @@ package consumer
 import (
 	"testing"
 
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	roledomain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 )
 
 func routable(slug string, active bool) RoutableConsumer {

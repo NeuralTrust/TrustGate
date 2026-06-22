@@ -18,7 +18,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/events"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/stretchr/testify/assert"
 	otellog "go.opentelemetry.io/otel/log"
 )
@@ -99,21 +99,21 @@ func TestEventToRecord_StandardAndProprietaryCoexist(t *testing.T) {
 	assert.Len(t, finish, 1)
 	assert.Equal(t, "stop", finish[0].AsString())
 
-	assert.Equal(t, int64(events.SchemaVersion), attrs["agentgateway.schema_version"].AsInt64())
-	assert.Equal(t, "trace-123", attrs["agentgateway.trace_id"].AsString())
-	assert.Equal(t, "gw-1", attrs["agentgateway.gateway_id"].AsString())
-	assert.Equal(t, "team-1", attrs["agentgateway.team_id"].AsString())
-	assert.Equal(t, "c-1", attrs["agentgateway.consumer.id"].AsString())
-	assert.Equal(t, "alice", attrs["agentgateway.consumer.name"].AsString())
-	assert.InDelta(t, 0.01, attrs["agentgateway.cost.total_usd"].AsFloat64(), 1e-9)
-	assert.Equal(t, "USD", attrs["agentgateway.cost.currency"].AsString())
-	assert.Equal(t, int64(15), attrs["agentgateway.usage.total_tokens"].AsInt64())
-	assert.Equal(t, int64(120), attrs["agentgateway.latency.total_ms"].AsInt64())
+	assert.Equal(t, int64(events.SchemaVersion), attrs["trustgate.schema_version"].AsInt64())
+	assert.Equal(t, "trace-123", attrs["trustgate.trace_id"].AsString())
+	assert.Equal(t, "gw-1", attrs["trustgate.gateway_id"].AsString())
+	assert.Equal(t, "team-1", attrs["trustgate.team_id"].AsString())
+	assert.Equal(t, "c-1", attrs["trustgate.consumer.id"].AsString())
+	assert.Equal(t, "alice", attrs["trustgate.consumer.name"].AsString())
+	assert.InDelta(t, 0.01, attrs["trustgate.cost.total_usd"].AsFloat64(), 1e-9)
+	assert.Equal(t, "USD", attrs["trustgate.cost.currency"].AsString())
+	assert.Equal(t, int64(15), attrs["trustgate.usage.total_tokens"].AsInt64())
+	assert.Equal(t, int64(120), attrs["trustgate.latency.total_ms"].AsInt64())
 
-	assert.Contains(t, attrs["agentgateway.policy_chain"].AsString(), "rate-limit")
-	assert.Equal(t, int64(1), attrs["agentgateway.attempts.count"].AsInt64())
-	assert.Contains(t, attrs["agentgateway.attempts"].AsString(), "openai")
-	assert.Equal(t, "request-body", attrs["agentgateway.request.body"].AsString())
+	assert.Contains(t, attrs["trustgate.policy_chain"].AsString(), "rate-limit")
+	assert.Equal(t, int64(1), attrs["trustgate.attempts.count"].AsInt64())
+	assert.Contains(t, attrs["trustgate.attempts"].AsString(), "openai")
+	assert.Equal(t, "request-body", attrs["trustgate.request.body"].AsString())
 }
 
 func TestEventToRecord_Severity(t *testing.T) {
@@ -146,16 +146,16 @@ func TestEventToRecord_StatusFields(t *testing.T) {
 	rec := eventToRecord(evt, 4096)
 	attrs := attrsOf(rec)
 
-	assert.Equal(t, "timeout", attrs["agentgateway.status.outcome"].AsString())
-	assert.Equal(t, "upstream deadline", attrs["agentgateway.status.reason"].AsString())
-	assert.True(t, attrs["agentgateway.status.is_timeout"].AsBool())
+	assert.Equal(t, "timeout", attrs["trustgate.status.outcome"].AsString())
+	assert.Equal(t, "upstream deadline", attrs["trustgate.status.reason"].AsString())
+	assert.True(t, attrs["trustgate.status.is_timeout"].AsBool())
 }
 
 func TestEventToRecord_StatusTimeoutOmittedWhenFalse(t *testing.T) {
 	t.Parallel()
 	rec := eventToRecord(fullEvent(), 4096)
 	attrs := attrsOf(rec)
-	_, ok := attrs["agentgateway.status.is_timeout"]
+	_, ok := attrs["trustgate.status.is_timeout"]
 	assert.False(t, ok)
 }
 
@@ -169,9 +169,9 @@ func TestEventToRecord_NoUsage(t *testing.T) {
 
 	_, hasInput := attrs["gen_ai.usage.input_tokens"]
 	assert.False(t, hasInput)
-	_, hasTotal := attrs["agentgateway.usage.total_tokens"]
+	_, hasTotal := attrs["trustgate.usage.total_tokens"]
 	assert.False(t, hasTotal)
-	_, hasCost := attrs["agentgateway.cost.total_usd"]
+	_, hasCost := attrs["trustgate.cost.total_usd"]
 	assert.False(t, hasCost)
 }
 
@@ -198,7 +198,7 @@ func TestEventToRecord_EmptyTrace(t *testing.T) {
 	evt.TraceID = ""
 	rec := eventToRecord(evt, 4096)
 	attrs := attrsOf(rec)
-	_, ok := attrs["agentgateway.trace_id"]
+	_, ok := attrs["trustgate.trace_id"]
 	assert.False(t, ok)
 	assert.Equal(t, eventName, rec.EventName())
 }

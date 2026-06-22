@@ -19,7 +19,7 @@ import (
 	"errors"
 	"fmt"
 
-	appmcp "github.com/NeuralTrust/AgentGateway/pkg/app/mcp"
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 )
 

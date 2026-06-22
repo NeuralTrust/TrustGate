@@ -19,8 +19,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	"github.com/NeuralTrust/AgentGateway/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 

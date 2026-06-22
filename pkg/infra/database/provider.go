@@ -17,7 +17,7 @@ package database
 import (
 	"context"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
 )
 
 func NewConnectionProvider(ctx context.Context, cfg *config.DatabaseConfig) (*Connection, error) {

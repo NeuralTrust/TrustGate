@@ -19,10 +19,10 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"golang.org/x/sync/errgroup"
 )
 

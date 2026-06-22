@@ -17,7 +17,7 @@ package gateway
 import (
 	"context"
 
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 )
 
 type contextKey string

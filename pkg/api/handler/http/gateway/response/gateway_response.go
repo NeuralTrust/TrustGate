@@ -18,10 +18,10 @@ import (
 	"strings"
 	"time"
 
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
-	"github.com/NeuralTrust/AgentGateway/pkg/version"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/version"
 )
 
 type GatewayResponse struct {

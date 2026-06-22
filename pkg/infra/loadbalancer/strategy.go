@@ -15,11 +15,11 @@
 package loadbalancer
 
 import (
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/embedding"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer/algorithm"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer/algorithm"
 )
 
 const (

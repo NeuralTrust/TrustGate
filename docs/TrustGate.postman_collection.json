@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "39f29039-8ebc-4efe-bf98-1ee457c76ec6",
     "name": "TrustGate",
-    "description": "Admin API for AgentGateway. Manage gateways and their registries, policies, consumers, roles and auth credentials. Set the `base_url` and `admin_token` collection variables before running. IDs captured from create responses are stored automatically into `gateway_id`, `registry_id`, `policy_id`, `consumer_id`, `role_id` and `auth_id`. Creating an `api_key` auth returns the generated key exactly once; it is captured into `consumer_api_key`. Use `E2E Flow` for inline + API key, `E2E Flow (OAuth2 JWT)` for inline + classic OAuth Bearer JWT, and `E2E Role-Based Flow (OIDC)` for roles + OIDC auth.",
+    "description": "Admin API for TrustGate. Manage gateways and their registries, policies, consumers, roles and auth credentials. Set the `base_url` and `admin_token` collection variables before running. IDs captured from create responses are stored automatically into `gateway_id`, `registry_id`, `policy_id`, `consumer_id`, `role_id` and `auth_id`. Creating an `api_key` auth returns the generated key exactly once; it is captured into `consumer_api_key`. Use `E2E Flow` for inline + API key, `E2E Flow (OAuth2 JWT)` for inline + classic OAuth Bearer JWT, and `E2E Role-Based Flow (OIDC)` for roles + OIDC auth.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -690,7 +690,7 @@
         },
         {
           "name": "Create Azure Registry (DefaultAzureCredential)",
-          "description": "The public field use_managed_identity is retained for compatibility, but AgentGateway uses Azure SDK DefaultAzureCredential semantics for this mode.",
+          "description": "The public field use_managed_identity is retained for compatibility, but TrustGate uses Azure SDK DefaultAzureCredential semantics for this mode.",
           "request": {
             "method": "POST",
             "header": [
@@ -1827,7 +1827,7 @@
             "description": "Classic OAuth: validates Bearer JWTs from an external authorization server (JWKS or introspection). Inline consumers only.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"oauth2-{{$guid}}\",\n  \"type\": \"oauth2\",\n  \"enabled\": true,\n  \"config\": {\n    \"oauth2\": {\n      \"issuer\": \"{{oauth2_issuer}}\",\n      \"audiences\": [\n        \"agentgateway\"\n      ],\n      \"jwks_url\": \"{{oauth2_jwks_url}}\",\n      \"required_scopes\": [\n        \"llm:invoke\"\n      ],\n      \"allowed_algorithms\": [\n        \"RS256\"\n      ]\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"oauth2-{{$guid}}\",\n  \"type\": \"oauth2\",\n  \"enabled\": true,\n  \"config\": {\n    \"oauth2\": {\n      \"issuer\": \"{{oauth2_issuer}}\",\n      \"audiences\": [\n        \"trustgate\"\n      ],\n      \"jwks_url\": \"{{oauth2_jwks_url}}\",\n      \"required_scopes\": [\n        \"llm:invoke\"\n      ],\n      \"allowed_algorithms\": [\n        \"RS256\"\n      ]\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
@@ -1870,7 +1870,7 @@
             "description": "Validates OIDC-issued JWTs; claims are matched against role oidc_mapping rules. Role-based consumers only.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"idp-{{$guid}}\",\n  \"type\": \"idp\",\n  \"enabled\": true,\n  \"config\": {\n    \"idp\": {\n      \"issuer\": \"{{idp_issuer}}\",\n      \"audiences\": [\n        \"agentgateway\"\n      ],\n      \"jwks_url\": \"{{idp_jwks_url}}\",\n      \"subject_claim\": \"sub\"\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"idp-{{$guid}}\",\n  \"type\": \"idp\",\n  \"enabled\": true,\n  \"config\": {\n    \"idp\": {\n      \"issuer\": \"{{idp_issuer}}\",\n      \"audiences\": [\n        \"trustgate\"\n      ],\n      \"jwks_url\": \"{{idp_jwks_url}}\",\n      \"subject_claim\": \"sub\"\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
@@ -2826,7 +2826,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Hello from AgentGateway\" }\n  ]\n}"
+              "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Hello from TrustGate\" }\n  ]\n}"
             },
             "url": {
               "raw": "{{proxy_url}}/{{consumer_slug}}/v1/chat/completions",
@@ -3000,7 +3000,7 @@
             "description": "Classic OAuth: validates Bearer JWTs from an external authorization server. Inline consumers only.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"oauth2-{{$guid}}\",\n  \"type\": \"oauth2\",\n  \"enabled\": true,\n  \"config\": {\n    \"oauth2\": {\n      \"issuer\": \"{{oauth2_issuer}}\",\n      \"audiences\": [\n        \"agentgateway\"\n      ],\n      \"jwks_url\": \"{{oauth2_jwks_url}}\",\n      \"required_scopes\": [\n        \"llm:invoke\"\n      ],\n      \"allowed_algorithms\": [\n        \"RS256\"\n      ]\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"oauth2-{{$guid}}\",\n  \"type\": \"oauth2\",\n  \"enabled\": true,\n  \"config\": {\n    \"oauth2\": {\n      \"issuer\": \"{{oauth2_issuer}}\",\n      \"audiences\": [\n        \"trustgate\"\n      ],\n      \"jwks_url\": \"{{oauth2_jwks_url}}\",\n      \"required_scopes\": [\n        \"llm:invoke\"\n      ],\n      \"allowed_algorithms\": [\n        \"RS256\"\n      ]\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
@@ -3163,7 +3163,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Hello from AgentGateway OAuth2 flow\" }\n  ]\n}"
+              "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Hello from TrustGate OAuth2 flow\" }\n  ]\n}"
             },
             "url": {
               "raw": "{{proxy_url}}/{{consumer_slug}}/v1/chat/completions",
@@ -3412,7 +3412,7 @@
             "description": "Validates OIDC-issued JWTs; claims are matched against role oidc_mapping rules. Role-based consumers only.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"idp-{{$guid}}\",\n  \"type\": \"idp\",\n  \"enabled\": true,\n  \"config\": {\n    \"idp\": {\n      \"issuer\": \"{{idp_issuer}}\",\n      \"audiences\": [\n        \"agentgateway\"\n      ],\n      \"jwks_url\": \"{{idp_jwks_url}}\",\n      \"subject_claim\": \"sub\"\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"idp-{{$guid}}\",\n  \"type\": \"idp\",\n  \"enabled\": true,\n  \"config\": {\n    \"idp\": {\n      \"issuer\": \"{{idp_issuer}}\",\n      \"audiences\": [\n        \"trustgate\"\n      ],\n      \"jwks_url\": \"{{idp_jwks_url}}\",\n      \"subject_claim\": \"sub\"\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
@@ -3575,7 +3575,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Hello from AgentGateway role-based flow\" }\n  ]\n}"
+              "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Hello from TrustGate role-based flow\" }\n  ]\n}"
             },
             "url": {
               "raw": "{{proxy_url}}/{{consumer_slug}}/v1/chat/completions",
@@ -4056,7 +4056,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Hello from AgentGateway Entra role-based flow\" }\n  ]\n}"
+              "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Hello from TrustGate Entra role-based flow\" }\n  ]\n}"
             },
             "url": {
               "raw": "{{proxy_url}}/{{consumer_slug}}/v1/chat/completions",
@@ -4536,7 +4536,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Hello from AgentGateway Okta role-based flow\" }\n  ]\n}"
+              "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Hello from TrustGate Okta role-based flow\" }\n  ]\n}"
             },
             "url": {
               "raw": "{{proxy_url}}/{{consumer_slug}}/v1/chat/completions",

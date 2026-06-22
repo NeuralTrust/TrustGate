@@ -15,11 +15,11 @@
 package middleware
 
 import (
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	appgateway "github.com/NeuralTrust/AgentGateway/pkg/app/gateway"
-	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
-	identitydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	identitydomain "github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 

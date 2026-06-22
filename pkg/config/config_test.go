@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/common/errors"
 )
 
 func minimumEnv(t *testing.T) {

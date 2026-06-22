@@ -22,11 +22,11 @@ import (
 	"fmt"
 	"strings"
 
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -35,6 +35,7 @@ import (
 const (
 	pgUniqueViolation     = "23505"
 	pgForeignKeyViolation = "23503"
+	pgCrossGatewayLink    = "AG422"
 
 	roleGatewayFKConstraint        = "roles_gateway_id_fkey"
 	roleRegistryRegistryConstraint = "role_registry_registry_id_fkey"
@@ -99,7 +100,7 @@ func (r *Repository) Update(ctx context.Context, role *domain.Role) error {
 		       mcp_policies   = $4,
 		       oidc_mapping    = $5,
 		       updated_at     = $6
-		 WHERE id = $1`
+		 WHERE id = $1 AND gateway_id = $7`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		if err := lockRoleRow(ctx, tx, role.ID); err != nil {
 			return err
@@ -108,7 +109,7 @@ func (r *Repository) Update(ctx context.Context, role *domain.Role) error {
 			return err
 		}
 		cmd, err := tx.Exec(ctx, query,
-			role.ID, role.Name, modelPoliciesBytes, nullableJSON(mcpPoliciesBytes), nullableJSON(role.OIDCMapping), role.UpdatedAt,
+			role.ID, role.Name, modelPoliciesBytes, nullableJSON(mcpPoliciesBytes), nullableJSON(role.OIDCMapping), role.UpdatedAt, role.GatewayID,
 		)
 		if err != nil {
 			return mapPgError(err)
@@ -167,10 +168,10 @@ func ensureRoleRegistryRefsAssociated(ctx context.Context, tx pgx.Tx, role *doma
 	return nil
 }
 
-func (r *Repository) Delete(ctx context.Context, id ids.RoleID) error {
-	const query = `DELETE FROM roles WHERE id = $1`
+func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.RoleID) error {
+	const query = `DELETE FROM roles WHERE id = $1 AND gateway_id = $2`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
-		cmd, err := tx.Exec(ctx, query, id)
+		cmd, err := tx.Exec(ctx, query, id, gatewayID)
 		if err != nil {
 			return mapPgDeleteError(err)
 		}
@@ -487,6 +488,8 @@ func nullableUUID(id uuid.UUID) any {
 func mapPgError(err error) error {
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		switch pgErr.Code {
+		case pgCrossGatewayLink:
+			return fmt.Errorf("%s: %w", pgErr.Message, commonerrors.ErrConflict)
 		case pgUniqueViolation:
 			return domain.ErrAlreadyExists
 		case pgForeignKeyViolation:

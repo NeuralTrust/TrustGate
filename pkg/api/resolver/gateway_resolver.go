@@ -21,10 +21,10 @@ import (
 	"strconv"
 	"strings"
 
-	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
-	appgateway "github.com/NeuralTrust/AgentGateway/pkg/app/gateway"
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/gofiber/fiber/v2"
 )
 

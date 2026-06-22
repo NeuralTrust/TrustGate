@@ -19,7 +19,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	smithy "github.com/aws/smithy-go"
 )

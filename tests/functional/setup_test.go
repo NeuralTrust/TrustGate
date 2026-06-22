@@ -22,8 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/config"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/jwt"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
 	"github.com/go-redis/redis/v8"
 	"github.com/jackc/pgx/v5"
 	"github.com/joho/godotenv"
@@ -52,7 +52,7 @@ const (
 	dbPassword = "postgres"
 	dbHost     = "localhost"
 	dbPort     = "5432"
-	dbName     = "agentgateway_functional"
+	dbName     = "trustgate_functional"
 	redisAddr  = "localhost:6379"
 	redisDBIdx = 9
 )
@@ -165,7 +165,7 @@ func teardownTestEnvironment() {
 }
 
 func buildGatewayBinary(env []string) string {
-	tmpDir, err := os.MkdirTemp("", "agentgateway-test-*")
+	tmpDir, err := os.MkdirTemp("", "trustgate-test-*")
 	if err != nil {
 		log.Fatalf("failed to create temp dir for gateway binary: %v", err)
 	}
@@ -180,7 +180,7 @@ func buildGatewayBinary(env []string) string {
 	if err := cmd.Run(); err != nil {
 		log.Fatalf("failed to build trustgate binary: %v", err)
 	}
-	fmt.Printf("Built agentgateway binary in %s\n", time.Since(start).Round(time.Millisecond))
+	fmt.Printf("Built trustgate binary in %s\n", time.Since(start).Round(time.Millisecond))
 	return binaryPath
 }
 

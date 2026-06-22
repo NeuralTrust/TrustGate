@@ -17,7 +17,7 @@ package auth
 import (
 	"context"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 type ListFilter struct {
@@ -31,7 +31,7 @@ type ListFilter struct {
 type Repository interface {
 	Save(ctx context.Context, a *Auth) error
 	Update(ctx context.Context, a *Auth) error
-	Delete(ctx context.Context, id ids.AuthID) error
+	Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.AuthID) error
 	FindByID(ctx context.Context, id ids.AuthID) (*Auth, error)
 	FindByIDs(ctx context.Context, gatewayID ids.GatewayID, authIDs []ids.AuthID) ([]*Auth, error)
 	FindByAPIKeyHash(ctx context.Context, keyHash string) (*Auth, error)

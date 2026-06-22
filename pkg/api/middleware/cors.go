@@ -17,7 +17,7 @@ package middleware
 import (
 	"strings"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/gofiber/fiber/v2"
 )
 

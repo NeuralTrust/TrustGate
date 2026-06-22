@@ -19,7 +19,7 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/events"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -18,7 +18,7 @@ import (
 	"context"
 	"errors"
 
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 )
 
 var (

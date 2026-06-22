@@ -17,8 +17,8 @@ package proxy
 import (
 	"strings"
 
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
 // geminiStreamAction is the Gemini/Vertex URL action that signals a streamed

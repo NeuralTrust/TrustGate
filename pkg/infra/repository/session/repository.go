@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"time"
 
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/session"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/session"
 	"github.com/go-redis/redis/v8"
 )
 

@@ -17,7 +17,7 @@ package proxy
 import (
 	"testing"
 
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

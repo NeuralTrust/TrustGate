@@ -18,7 +18,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
 func TestProviderAuthOptions_AzureVariants(t *testing.T) {

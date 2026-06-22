@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/common/errors"
 )
 
 const (
@@ -43,9 +43,9 @@ const (
 
 	defaultDBHost                    = "localhost"
 	defaultDBPort                    = 5432
-	defaultDBUser                    = "agentgateway"
+	defaultDBUser                    = "trustgate"
 	defaultDBPassword                = "postgres" // #nosec G101 -- dev default, override via env
-	defaultDBName                    = "agentgateway"
+	defaultDBName                    = "trustgate"
 	defaultDBSSLMode                 = "disable"
 	defaultDBMinConns          int32 = 1
 	defaultDBMaxConns          int32 = 10
@@ -67,7 +67,7 @@ const (
 	defaultKafkaBrokers = "localhost:9092"
 
 	defaultTelemetryEnabled             = true
-	defaultTelemetryKafkaTopic          = "agentgateway.requests"
+	defaultTelemetryKafkaTopic          = "trustgate.requests"
 	defaultTelemetryEnableRequestTraces = true
 	defaultTelemetryEnablePluginTraces  = true
 

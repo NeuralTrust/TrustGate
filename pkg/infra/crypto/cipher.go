@@ -37,7 +37,7 @@ func NewCipher(secret string) (*Cipher, error) {
 	if len(secret) < minSecretLen {
 		return nil, fmt.Errorf("crypto: encryption secret must be at least %d bytes of random data (got %d)", minSecretLen, len(secret))
 	}
-	key := sha256.Sum256([]byte("agentgateway-vault:" + secret))
+	key := sha256.Sum256([]byte("trustgate-vault:" + secret))
 	block, err := aes.NewCipher(key[:])
 	if err != nil {
 		return nil, fmt.Errorf("crypto: %w", err)

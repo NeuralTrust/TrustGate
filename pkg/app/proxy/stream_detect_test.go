@@ -18,8 +18,8 @@ import (
 	"net/url"
 	"testing"
 
-	appproxy "github.com/NeuralTrust/AgentGateway/pkg/app/proxy"
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
+	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 )
 
 func TestDetectStream(t *testing.T) {

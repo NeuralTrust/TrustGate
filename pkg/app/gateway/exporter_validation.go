@@ -17,9 +17,9 @@ package gateway
 import (
 	"fmt"
 
-	appmetrics "github.com/NeuralTrust/AgentGateway/pkg/app/metrics"
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
+	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 )
 
 func validateExporters(factory appmetrics.ExporterFactory, tel *telemetry.Telemetry) error {

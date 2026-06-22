@@ -15,10 +15,10 @@
 package gateway
 
 import (
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/gateway/response"
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
-	appgateway "github.com/NeuralTrust/AgentGateway/pkg/app/gateway"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway/response"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 

@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/google/uuid"
 )
 

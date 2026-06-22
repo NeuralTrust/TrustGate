@@ -21,8 +21,8 @@ import (
 	"log/slog"
 	"net/url"
 
-	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 func (p *authProxy) authForResource(ctx context.Context, resource string) (*authdomain.Auth, error) {
@@ -119,7 +119,10 @@ func (p *authProxy) validateClientRedirect(ctx context.Context, clientID, redire
 		return oauthErr("invalid_client", "unknown client_id; register via /oauth/register")
 	}
 	if !IsAcceptableRedirectURI(redirectURI) {
-		return oauthErr("invalid_request", "redirect_uri must be an https URL or an http loopback URL without a fragment")
+		return oauthErr("invalid_request", "redirect_uri must be an https URL, an http loopback URL, or a registered private-use URI without a fragment")
+	}
+	if isPrivateUseRedirectURIString(redirectURI) && !isLegacyPrivateUseRedirectURI(redirectURI) {
+		return oauthErr("invalid_request", "private-use redirect_uri must be registered for this client")
 	}
 	return nil
 }

@@ -15,13 +15,13 @@
 package modules
 
 import (
-	gatewayhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/gateway"
-	appgateway "github.com/NeuralTrust/AgentGateway/pkg/app/gateway"
-	"github.com/NeuralTrust/AgentGateway/pkg/config"
-	"github.com/NeuralTrust/AgentGateway/pkg/container"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
-	gatewayrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/gateway"
+	gatewayhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/container"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	gatewayrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/gateway"
 )
 
 // Gateway wires the Gateway aggregate end-to-end: pgx repository,

@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/session"
-	sessionrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/session"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/session"
+	sessionrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/session"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"

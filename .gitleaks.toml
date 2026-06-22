@@ -1,0 +1,11 @@
+title = "TrustGate gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Curated false positives: deterministic test fixtures and historical agent transcripts/docs."
+paths = [
+  '''pkg/infra/crypto/cipher_test\.go''',
+  '''.*cursor_phase_\d+\.md''',
+]

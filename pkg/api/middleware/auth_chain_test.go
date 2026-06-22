@@ -22,12 +22,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
-	apiresolver "github.com/NeuralTrust/AgentGateway/pkg/api/resolver"
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
+	apiresolver "github.com/NeuralTrust/TrustGate/pkg/api/resolver"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
@@ -87,7 +87,7 @@ func (f *fakeMTLSValidator) Validate(_ *x509.Certificate, _ *authdomain.MTLSConf
 
 func oauth2Auth(t *testing.T, issuer string, jwks bool) *authdomain.Auth {
 	t.Helper()
-	cfg := &authdomain.OAuth2Config{Issuer: issuer, Audiences: []string{"agentgateway"}}
+	cfg := &authdomain.OAuth2Config{Issuer: issuer, Audiences: []string{"trustgate"}}
 	if jwks {
 		cfg.JWKSURL = "https://idp.example.com/jwks"
 	} else {

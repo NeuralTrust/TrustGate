@@ -21,7 +21,7 @@ import (
 	"log/slog"
 	"sort"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
 var (

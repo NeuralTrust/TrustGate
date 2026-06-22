@@ -19,12 +19,12 @@ import (
 	"errors"
 	"testing"
 
-	apppolicy "github.com/NeuralTrust/AgentGateway/pkg/app/policy"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
-	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/policy/mocks"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
+	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/policy/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/cachetest"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -34,7 +34,7 @@ func TestDeleter_Delete_Success(t *testing.T) {
 	id := ids.New[ids.PolicyKind]()
 	gwID := ids.New[ids.GatewayKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Policy{ID: id, GatewayID: gwID}, nil).Once()
-	repo.EXPECT().Delete(mock.Anything, id).Return(nil).Once()
+	repo.EXPECT().Delete(mock.Anything, gwID, id).Return(nil).Once()
 
 	mgr := newCacheManager()
 	mgr.GetTTLMap(cache.PolicyTTLName).Set(id.String(), "junk")

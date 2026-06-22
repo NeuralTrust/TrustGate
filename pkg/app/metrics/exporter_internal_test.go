@@ -23,10 +23,10 @@ import (
 	"testing"
 	"time"
 
-	telemetrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/events"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
+	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

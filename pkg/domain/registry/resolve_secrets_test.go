@@ -17,7 +17,7 @@ package registry
 import (
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/common/secret"
+	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 )
 
 func TestTargetAuth_ResolveSecretsFrom_APIKey(t *testing.T) {

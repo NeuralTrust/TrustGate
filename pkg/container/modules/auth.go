@@ -15,12 +15,12 @@
 package modules
 
 import (
-	authhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/auth"
-	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
-	"github.com/NeuralTrust/AgentGateway/pkg/container"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
-	authrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/auth"
+	authhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/container"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	authrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/auth"
 )
 
 func Auth(c *container.Container) error {

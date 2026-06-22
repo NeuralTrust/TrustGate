@@ -1,4 +1,4 @@
-# AgentGateway — Agent guide
+# TrustGate — Agent guide
 
 DO NOT PUT CODE COMMENTS!
 
@@ -7,11 +7,11 @@ contributor) opening this repository. Read it before changing code.
 
 The workspace-level rules (`/home/edu/.cursor/rules/*.mdc`) still apply.
 Where this file disagrees with a workspace rule, the workspace rule wins —
-but this file captures the AgentGateway-specific conventions on top.
+but this file captures the TrustGate-specific conventions on top.
 
 ## 1. What this repository is
 
-AgentGateway is the **data-plane runtime** of NeuralTrust TrustGate
+TrustGate is the **data-plane runtime** of NeuralTrust TrustGate
 ("Agent Runtime"). It sits between LLM/agent clients and upstream model
 providers and enforces policies declared in the control plane.
 

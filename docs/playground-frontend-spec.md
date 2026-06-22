@@ -1,8 +1,8 @@
 # Playground integration spec
 
-How to build a gateway playground in a frontend: let a user pick a consumer and chat through AgentGateway **without that consumer's credentials**, while the consumer's policies (rate limits, guardrails, model policies) are enforced exactly as in production.
+How to build a gateway playground in a frontend: let a user pick a consumer and chat through TrustGate **without that consumer's credentials**, while the consumer's policies (rate limits, guardrails, model policies) are enforced exactly as in production.
 
-Audience: frontend teams integrating against AgentGateway from another repository. A reference implementation lives in this repo under `frontend/` (see [Reference implementation](#reference-implementation)).
+Audience: frontend teams integrating against TrustGate from another repository. A reference implementation lives in this repo under `frontend/` (see [Reference implementation](#reference-implementation)).
 
 ## How it works
 
@@ -161,7 +161,7 @@ Environment required by the BFF:
 | Variable | Purpose |
 |---|---|
 | `SERVER_SECRET_KEY` | Signs playground (and admin) tokens; same value as the gateway |
-| `PROXY_API_URL` | Base URL of the proxy plane, e.g. `http://agentgateway-proxy:8081` |
+| `PROXY_API_URL` | Base URL of the proxy plane, e.g. `http://trustgate-proxy:8081` |
 
 ## Verification checklist
 

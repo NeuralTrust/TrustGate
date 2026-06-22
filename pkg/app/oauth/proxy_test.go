@@ -26,9 +26,9 @@ import (
 	"sync"
 	"testing"
 
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 type memFlowStore struct {
@@ -329,6 +329,24 @@ func TestAuthorizeRejectsUnsafeRedirectForUnregisteredClients(t *testing.T) {
 	var oe *OAuthError
 	if !errors.As(err, &oe) || oe.Code != "invalid_request" {
 		t.Fatalf("expected invalid_request for non-loopback http redirect, got %v", err)
+	}
+}
+
+func TestAuthorizeRequiresPrivateUseRedirectRegistration(t *testing.T) {
+	t.Parallel()
+	idp, _ := fakeIdP(t)
+	proxy := newProxyUnderTest(t, idp.URL, newMemFlowStore())
+
+	_, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
+		ResponseType:        "code",
+		ClientID:            "gw-client-id",
+		RedirectURI:         "claude://oauth/callback",
+		CodeChallenge:       s256("v"),
+		CodeChallengeMethod: "S256",
+	})
+	var oe *OAuthError
+	if !errors.As(err, &oe) || oe.Code != "invalid_request" {
+		t.Fatalf("expected invalid_request for unregistered private-use redirect_uri, got %v", err)
 	}
 }
 

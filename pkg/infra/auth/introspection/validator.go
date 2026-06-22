@@ -27,8 +27,8 @@ import (
 	"sync"
 	"time"
 
-	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -86,6 +86,9 @@ func (v *Validator) Validate(ctx context.Context, raw string, cfg *authdomain.OA
 	if len(cfg.Audiences) > 0 && !identity.AudienceMatches(identity.AudiencesFromClaim(res.Aud), cfg.Audiences) {
 		return nil, fmt.Errorf("%w: audience mismatch", ErrInvalidToken)
 	}
+	if cfg.Issuer != "" && !sameIssuer(res.Iss, cfg.Issuer) {
+		return nil, fmt.Errorf("%w: issuer mismatch", ErrInvalidToken)
+	}
 
 	subject := res.Sub
 	if subject == "" {
@@ -102,6 +105,10 @@ func (v *Validator) Validate(ctx context.Context, raw string, cfg *authdomain.OA
 		return nil, fmt.Errorf("%w: missing required scopes", ErrInvalidToken)
 	}
 	return principal, nil
+}
+
+func sameIssuer(got, want string) bool {
+	return strings.TrimRight(got, "/") == strings.TrimRight(want, "/")
 }
 
 func (v *Validator) introspect(ctx context.Context, raw string, cfg *authdomain.OAuth2Config) (result, error) {

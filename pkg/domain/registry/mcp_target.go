@@ -19,7 +19,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/common/secret"
+	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 )
 
 type Type string

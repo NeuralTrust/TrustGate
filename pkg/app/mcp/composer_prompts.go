@@ -19,9 +19,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 func (c *composer) ListPrompts(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Prompt, error) {

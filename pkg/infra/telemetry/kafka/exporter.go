@@ -22,10 +22,10 @@ import (
 	"log/slog"
 	"strings"
 
-	appmetrics "github.com/NeuralTrust/AgentGateway/pkg/app/metrics"
-	"github.com/NeuralTrust/AgentGateway/pkg/config"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/events"
-	infratelemetry "github.com/NeuralTrust/AgentGateway/pkg/infra/telemetry"
+	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
+	infratelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
 )
 
 const ExporterName = "kafka"

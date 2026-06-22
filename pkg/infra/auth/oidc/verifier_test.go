@@ -30,7 +30,7 @@ import (
 	"testing"
 	"time"
 
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/golang-jwt/jwt/v5"
 )
 

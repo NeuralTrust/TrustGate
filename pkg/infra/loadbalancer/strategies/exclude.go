@@ -15,8 +15,8 @@
 package strategies
 
 import (
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 func isExcluded(id ids.RegistryID, exclude map[ids.RegistryID]struct{}) bool {

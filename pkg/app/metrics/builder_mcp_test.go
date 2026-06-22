@@ -19,10 +19,10 @@ import (
 	"testing"
 	"time"
 
-	appcatalog "github.com/NeuralTrust/AgentGateway/pkg/app/catalog"
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/events"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

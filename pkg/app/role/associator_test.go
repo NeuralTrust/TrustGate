@@ -21,13 +21,13 @@ import (
 	"log/slog"
 	"testing"
 
-	approle "github.com/NeuralTrust/AgentGateway/pkg/app/role"
-	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	registrymocks "github.com/NeuralTrust/AgentGateway/pkg/domain/registry/mocks"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
+	approle "github.com/NeuralTrust/TrustGate/pkg/app/role"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrymocks "github.com/NeuralTrust/TrustGate/pkg/domain/registry/mocks"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/cachetest"
 )
 
 type associatorRoleRepositoryStub struct {
@@ -37,7 +37,9 @@ type associatorRoleRepositoryStub struct {
 
 func (s associatorRoleRepositoryStub) Save(context.Context, *domain.Role) error   { return nil }
 func (s associatorRoleRepositoryStub) Update(context.Context, *domain.Role) error { return nil }
-func (s associatorRoleRepositoryStub) Delete(context.Context, ids.RoleID) error   { return nil }
+func (s associatorRoleRepositoryStub) Delete(context.Context, ids.GatewayID, ids.RoleID) error {
+	return nil
+}
 func (s associatorRoleRepositoryStub) FindByID(context.Context, ids.RoleID) (*domain.Role, error) {
 	if s.role == nil {
 		return nil, domain.ErrNotFound

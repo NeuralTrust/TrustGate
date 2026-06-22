@@ -17,7 +17,7 @@ package deepseek
 import (
 	"context"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
 const modelsURL = "https://api.deepseek.com/models"

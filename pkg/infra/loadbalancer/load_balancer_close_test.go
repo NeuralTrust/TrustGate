@@ -19,10 +19,10 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	cachemocks "github.com/NeuralTrust/AgentGateway/pkg/infra/cache/mocks"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 )

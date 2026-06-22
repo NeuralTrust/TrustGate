@@ -19,18 +19,18 @@ import (
 	"errors"
 	"fmt"
 
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	"github.com/NeuralTrust/AgentGateway/pkg/app/identity/sts"
-	appmcp "github.com/NeuralTrust/AgentGateway/pkg/app/mcp"
-	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
 )
 
 const (
-	serverName            = "agentgateway"
+	serverName            = "trustgate"
 	serverVersion         = "1.0"
 	latestProtocolVersion = "2025-06-18"
 )

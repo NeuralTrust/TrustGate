@@ -19,14 +19,14 @@ import (
 	"log/slog"
 	"time"
 
-	cataloghttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/catalog"
-	appcatalog "github.com/NeuralTrust/AgentGateway/pkg/app/catalog"
-	"github.com/NeuralTrust/AgentGateway/pkg/config"
-	"github.com/NeuralTrust/AgentGateway/pkg/container"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/catalog"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/catalog/modelsdev"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
-	catalogrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/catalog"
+	cataloghttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/catalog"
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/container"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/catalog/modelsdev"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	catalogrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/catalog"
 	"go.uber.org/dig"
 )
 

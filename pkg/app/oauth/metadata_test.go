@@ -20,9 +20,9 @@ import (
 	"strings"
 	"testing"
 
-	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 type fakeCredentialFinder struct {
@@ -209,6 +209,26 @@ func TestRegisterClient(t *testing.T) {
 	}
 	if saved.RedirectURIs[0] != "cursor://anysphere.cursor-mcp/oauth/callback" {
 		t.Fatalf("persisted redirect_uris = %v", saved.RedirectURIs)
+	}
+}
+
+func TestRegisterClientAcceptsPrivateUseRedirects(t *testing.T) {
+	t.Parallel()
+	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{
+		oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp.example.com", ClientID: "mcp-public-client"}),
+	}}
+	svc := NewMetadataService(finder, nil, nil, newMemFlowStore())
+
+	for _, uri := range []string{
+		"cursor://anysphere.cursor-mcp/oauth/callback",
+		"claude://oauth/callback",
+		"antigravity://oauth/callback",
+		"vscode://neuraltrust.trustgate/oauth/callback",
+		"com.example.agent:/oauth2redirect",
+	} {
+		if _, err := svc.RegisterClient(context.Background(), RegisterRequest{RedirectURIs: []string{uri}}); err != nil {
+			t.Fatalf("expected private-use redirect %q to be accepted, got %v", uri, err)
+		}
 	}
 }
 

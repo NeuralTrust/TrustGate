@@ -19,12 +19,12 @@ import (
 	"net/http"
 	"time"
 
-	appcatalog "github.com/NeuralTrust/AgentGateway/pkg/app/catalog"
-	routingdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/routing"
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/events"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
 const costCurrencyUSD = "USD"

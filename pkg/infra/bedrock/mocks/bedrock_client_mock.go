@@ -5,7 +5,7 @@ package mocks
 import (
 	context "context"
 
-	bedrock "github.com/NeuralTrust/AgentGateway/pkg/infra/bedrock"
+	bedrock "github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
 	bedrockruntime "github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	mock "github.com/stretchr/testify/mock"
 )

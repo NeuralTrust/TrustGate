@@ -20,7 +20,7 @@ import (
 	"strings"
 	"testing"
 
-	appoauth "github.com/NeuralTrust/AgentGateway/pkg/app/oauth"
+	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/gofiber/fiber/v2"
 )
 

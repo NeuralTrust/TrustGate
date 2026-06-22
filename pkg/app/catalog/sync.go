@@ -18,9 +18,9 @@ import (
 	"context"
 	"log/slog"
 
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/catalog"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/catalog/modelsdev"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/catalog/modelsdev"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
 const sourceModelsDev = "models.dev"
