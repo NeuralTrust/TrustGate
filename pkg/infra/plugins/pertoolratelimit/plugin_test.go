@@ -556,6 +556,49 @@ func TestPlugin_PreRequest_StripRemovesOverBudgetTool(t *testing.T) {
 	assert.Equal(t, "lookup", decoded.Tools[0].Name)
 }
 
+func TestPlugin_PreRequest_StripPreservesNonCanonicalFields(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "strip_tool_from_request", "1m", 5)
+	seed(t, rdb, consumerKey("send_email", 0), 5)
+
+	raw := []byte(`{"model":"gpt","messages":[{"role":"user","content":"hi"}],` +
+		`"temperature":0.7,"frequency_penalty":0.5,"seed":42,"top_logprobs":3,` +
+		`"tools":[` +
+		`{"type":"function","function":{"name":"send_email","parameters":{"type":"object"}}},` +
+		`{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}]}`)
+
+	res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, openAIReq(raw), nil))
+	require.NoError(t, err)
+	require.NotNil(t, res.RequestBody)
+
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(res.RequestBody, &out))
+	assert.EqualValues(t, 0.7, out["temperature"])
+	assert.EqualValues(t, 0.5, out["frequency_penalty"])
+	assert.EqualValues(t, 42, out["seed"])
+	assert.EqualValues(t, 3, out["top_logprobs"])
+
+	decoded, err := adapter.NewRegistry().DecodeRequestFor(res.RequestBody, adapter.FormatOpenAI)
+	require.NoError(t, err)
+	require.Len(t, decoded.Tools, 1)
+	assert.Equal(t, "lookup", decoded.Tools[0].Name)
+}
+
+func TestPlugin_PreRequest_StripAllToolsRemovesToolsField(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "strip_tool_from_request", "1m", 5)
+	seed(t, rdb, consumerKey("send_email", 0), 5)
+
+	res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, openAIReq(openAIReqBody(t, "send_email")), nil))
+	require.NoError(t, err)
+	require.NotNil(t, res.RequestBody)
+
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(res.RequestBody, &out))
+	_, hasTools := out["tools"]
+	assert.False(t, hasTools, "tools field must be dropped when empty")
+}
+
 func TestPlugin_PreRequest_StripUnderBudgetNoChange(t *testing.T) {
 	p, rdb := newPluginRedis(t)
 	settings := ruleSettings("send_email", "strip_tool_from_request", "1m", 5)
@@ -634,6 +677,86 @@ func TestPlugin_PreResponse_NoInjectUnderBudget(t *testing.T) {
 	assert.Equal(t, http.StatusOK, res.StatusCode)
 	assert.False(t, res.StopUpstream)
 	assert.Nil(t, res.Body)
+}
+
+func openAIStreamReqBody(t *testing.T, tools ...string) []byte {
+	t.Helper()
+	body := map[string]any{
+		"model":    "gpt",
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+		"stream":   true,
+	}
+	specs := make([]map[string]any, 0, len(tools))
+	for _, name := range tools {
+		specs = append(specs, map[string]any{
+			"type":     "function",
+			"function": map[string]any{"name": name, "parameters": map[string]any{"type": "object"}},
+		})
+	}
+	body["tools"] = specs
+	b, err := json.Marshal(body)
+	require.NoError(t, err)
+	return b
+}
+
+func TestPlugin_PreRequest_InjectStreamingDegradesToStrip(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "inject_error_result", "1m", 5)
+	seed(t, rdb, consumerKey("send_email", 0), 5)
+
+	res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, openAIReq(openAIStreamReqBody(t, "send_email", "lookup")), nil))
+	require.NoError(t, err)
+	require.NotNil(t, res.RequestBody, "streaming inject must strip the tool at pre_request")
+
+	decoded, err := adapter.NewRegistry().DecodeRequestFor(res.RequestBody, adapter.FormatOpenAI)
+	require.NoError(t, err)
+	require.Len(t, decoded.Tools, 1)
+	assert.Equal(t, "lookup", decoded.Tools[0].Name)
+}
+
+func TestPlugin_PreRequest_InjectNonStreamingNoStrip(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "inject_error_result", "1m", 5)
+	seed(t, rdb, consumerKey("send_email", 0), 5)
+
+	res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, openAIReq(openAIReqBody(t, "send_email")), nil))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+	assert.Nil(t, res.RequestBody, "non-streaming inject is handled at pre_response, not pre_request")
+}
+
+func TestPlugin_PostResponse_EmptyToolNameNotCounted(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("*", "reject_response", "1m", 5)
+	resp := &infracontext.ResponseContext{Body: openAIRespBody(t, tcSpec{"call_1", ""})}
+
+	_, err := p.Execute(context.Background(), input(policy.StagePostResponse, settings, openAIReq(nil), resp))
+	require.NoError(t, err)
+
+	_, err = rdb.Get(context.Background(), consumerKey("", 0)).Result()
+	assert.ErrorIs(t, err, redis.Nil)
+}
+
+func TestMatchToolPattern(t *testing.T) {
+	tests := []struct {
+		pattern string
+		name    string
+		want    bool
+	}{
+		{"get_weather", "get_weather", true},
+		{"get_*", "get_weather", true},
+		{"execute_code*", "execute_code_py", true},
+		{"*", "srv/get_weather", true},
+		{"srv/get_*", "srv/get_weather", true},
+		{"*/get_weather", "srv/get_weather", true},
+		{"get_*", "srv/get_weather", false},
+		{"send_email", "send_sms", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.pattern+"|"+tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, matchToolPattern(tt.pattern, tt.name))
+		})
+	}
 }
 
 func TestPlugin_PreResponse_StreamingNoop(t *testing.T) {

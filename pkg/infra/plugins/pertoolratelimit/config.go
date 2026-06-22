@@ -42,6 +42,7 @@ var enforceableBehaviors = map[string]struct{}{
 type windowConfig struct {
 	Duration string `mapstructure:"duration"`
 	Max      int    `mapstructure:"max"`
+	seconds  int
 }
 
 type ruleConfig struct {
@@ -63,6 +64,11 @@ func parseConfig(settings map[string]any) (*config, error) {
 	}
 	if err := cfg.validate(); err != nil {
 		return nil, err
+	}
+	for i := range cfg.Rules {
+		for j := range cfg.Rules[i].Windows {
+			cfg.Rules[i].Windows[j].seconds = cfg.Rules[i].Windows[j].windowSeconds()
+		}
 	}
 	return &cfg, nil
 }
@@ -138,6 +144,9 @@ func (c *config) behaviorDefault() string {
 }
 
 func (w windowConfig) windowSeconds() int {
+	if w.seconds > 0 {
+		return w.seconds
+	}
 	d, err := time.ParseDuration(w.Duration)
 	if err != nil {
 		return 0

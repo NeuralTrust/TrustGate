@@ -17,11 +17,13 @@ package pertoolratelimit
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
@@ -140,12 +142,15 @@ func (p *Plugin) preRequest(
 	strip := make(map[string]struct{})
 	for i := range canonical.Tools {
 		tool := canonical.Tools[i].Name
+		if tool == "" {
+			continue
+		}
 		rule, ok := matchRule(cfg.Rules, tool)
 		if !ok {
 			continue
 		}
 		behavior := effectiveBehavior(rule, cfg)
-		if behavior != behaviorReject && behavior != behaviorStrip {
+		if !p.enforcedAtRequest(behavior, canonical.Stream) {
 			continue
 		}
 		ws, err := p.overLimit(ctx, in.Config.ID, dimension, subject, tool, rule)
@@ -157,21 +162,41 @@ func (p *Plugin) preRequest(
 		}
 		setExtras(in.Event, p.data(policy.StagePreRequest, ws, tool, dimension, subject, behavior, true))
 		if behavior == behaviorReject {
-			return p.reject(tool, ws.window, ws.total, dimension)
+			return p.reject(ctx, tool, ws, dimension)
 		}
 		strip[tool] = struct{}{}
 	}
 	if len(strip) == 0 {
 		return okResult(), nil
 	}
-	return p.stripTools(canonical, format, strip)
+	return p.stripTools(in.Request.Body, format, canonical, strip)
+}
+
+func (p *Plugin) enforcedAtRequest(behavior string, streaming bool) bool {
+	switch behavior {
+	case behaviorReject, behaviorStrip:
+		return true
+	case behaviorInject:
+		return streaming
+	default:
+		return false
+	}
 }
 
 func (p *Plugin) stripTools(
-	canonical *adapter.CanonicalRequest,
+	originalBody []byte,
 	format string,
+	canonical *adapter.CanonicalRequest,
 	strip map[string]struct{},
 ) (*appplugins.Result, error) {
+	ad, err := p.registry.GetAdapter(adapter.Format(format))
+	if err != nil {
+		return nil, fmt.Errorf("per_tool_rate_limiter: strip: %w", err)
+	}
+	fullEncoded, err := ad.EncodeRequest(canonical)
+	if err != nil {
+		return nil, fmt.Errorf("per_tool_rate_limiter: strip: %w", err)
+	}
 	kept := make([]adapter.CanonicalTool, 0, len(canonical.Tools))
 	for i := range canonical.Tools {
 		if _, drop := strip[canonical.Tools[i].Name]; drop {
@@ -180,15 +205,44 @@ func (p *Plugin) stripTools(
 		kept = append(kept, canonical.Tools[i])
 	}
 	canonical.Tools = kept
-	ad, err := p.registry.GetAdapter(adapter.Format(format))
+	strippedEncoded, err := ad.EncodeRequest(canonical)
 	if err != nil {
 		return nil, fmt.Errorf("per_tool_rate_limiter: strip: %w", err)
 	}
-	body, err := ad.EncodeRequest(canonical)
+	body, err := graftChangedFields(originalBody, fullEncoded, strippedEncoded)
 	if err != nil {
-		return nil, fmt.Errorf("per_tool_rate_limiter: strip: %w", err)
+		body = strippedEncoded
 	}
 	return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: body}, nil
+}
+
+func graftChangedFields(original, fullEncoded, strippedEncoded []byte) ([]byte, error) {
+	var orig, full, stripped map[string]json.RawMessage
+	if err := json.Unmarshal(original, &orig); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(fullEncoded, &full); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(strippedEncoded, &stripped); err != nil {
+		return nil, err
+	}
+	for key, fullValue := range full {
+		strippedValue, ok := stripped[key]
+		if !ok {
+			delete(orig, key)
+			continue
+		}
+		if !bytes.Equal(fullValue, strippedValue) {
+			orig[key] = strippedValue
+		}
+	}
+	for key, strippedValue := range stripped {
+		if _, ok := full[key]; !ok {
+			orig[key] = strippedValue
+		}
+	}
+	return json.Marshal(orig)
 }
 
 func (p *Plugin) preResponse(
@@ -212,6 +266,9 @@ func (p *Plugin) preResponse(
 	drop := make(map[int]string)
 	for idx := range canonical.ToolCalls {
 		tool := canonical.ToolCalls[idx].Name
+		if tool == "" {
+			continue
+		}
 		rule, ok := matchRule(cfg.Rules, tool)
 		if !ok {
 			continue
@@ -292,7 +349,7 @@ func (p *Plugin) postResponse(
 				return nil, fmt.Errorf("per_tool_rate_limiter: record: %w", err)
 			}
 			ws := &windowState{key: key, window: w, total: int(total)}
-			setExtras(in.Event, p.data(policy.StagePostResponse, ws, tool, dimension, subject, behavior, int(total) > w.Max))
+			setExtras(in.Event, p.data(policy.StagePostResponse, ws, tool, dimension, subject, behavior, int(total) >= w.Max))
 		}
 	}
 	return okResult(), nil
@@ -311,6 +368,9 @@ func (p *Plugin) calledTools(format string, resp *infracontext.ResponseContext) 
 	}
 	names := make([]string, 0, len(canonical.ToolCalls))
 	for i := range canonical.ToolCalls {
+		if canonical.ToolCalls[i].Name == "" {
+			continue
+		}
 		names = append(names, canonical.ToolCalls[i].Name)
 	}
 	return names
@@ -367,10 +427,15 @@ func (p *Plugin) overLimit(
 	return nil, nil
 }
 
-func (p *Plugin) reject(tool string, w windowConfig, total int, dimension string) (*appplugins.Result, error) {
-	secs := w.windowSeconds()
+func (p *Plugin) reject(ctx context.Context, tool string, ws *windowState, dimension string) (*appplugins.Result, error) {
+	secs := ws.window.windowSeconds()
+	reset := p.now().Add(time.Duration(secs) * time.Second)
+	if ttl, err := p.redis.TTL(ctx, ws.key).Result(); err == nil && ttl > 0 {
+		secs = int((ttl + time.Second - 1) / time.Second)
+		reset = p.now().Add(ttl)
+	}
 	headers := make(map[string][]string)
-	setLimitHeaders(headers, dimension, w.Max, int64(total), p.now().Add(time.Duration(secs)*time.Second))
+	setLimitHeaders(headers, dimension, ws.window.Max, int64(ws.total), reset)
 	headers["X-RateLimit-Tool"] = []string{tool}
 	headers["Retry-After"] = []string{strconv.Itoa(secs)}
 	return nil, &appplugins.PluginError{
@@ -423,11 +488,19 @@ func setLimitHeaders(headers map[string][]string, dimension string, limit int, c
 
 func matchRule(rules []ruleConfig, name string) (*ruleConfig, bool) {
 	for i := range rules {
-		if ok, err := path.Match(rules[i].Tool, name); err == nil && ok {
+		if matchToolPattern(rules[i].Tool, name) {
 			return &rules[i], true
 		}
 	}
 	return nil, false
+}
+
+func matchToolPattern(pattern, name string) bool {
+	const sentinel = "\x00"
+	p := strings.ReplaceAll(pattern, "/", sentinel)
+	n := strings.ReplaceAll(name, "/", sentinel)
+	ok, err := path.Match(p, n)
+	return err == nil && ok
 }
 
 func effectiveBehavior(rule *ruleConfig, cfg *config) string {
