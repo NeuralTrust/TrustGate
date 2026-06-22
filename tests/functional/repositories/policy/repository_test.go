@@ -261,7 +261,7 @@ func TestRepository_Delete(t *testing.T) {
 	if err := r.Save(ctx, p); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := r.Delete(ctx, p.ID); err != nil {
+	if err := r.Delete(ctx, gwID, p.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if _, err := r.FindByID(ctx, p.ID); !errors.Is(err, domain.ErrNotFound) {
@@ -271,7 +271,7 @@ func TestRepository_Delete(t *testing.T) {
 
 func TestRepository_Delete_NotFound(t *testing.T) {
 	r, _, _ := setupRepo(t)
-	err := r.Delete(context.Background(), ids.New[ids.PolicyKind]())
+	err := r.Delete(context.Background(), ids.New[ids.GatewayKind](), ids.New[ids.PolicyKind]())
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
@@ -326,7 +326,7 @@ func TestRepository_GlobalFlag_RoundTripAndListByGateway(t *testing.T) {
 	if err := r.Save(ctx, global); err != nil {
 		t.Fatalf("Save global: %v", err)
 	}
-	if err := r.SetGlobal(ctx, global.ID, true); err != nil {
+	if err := r.SetGlobal(ctx, gwID, global.ID, true); err != nil {
 		t.Fatalf("SetGlobal: %v", err)
 	}
 
@@ -422,7 +422,7 @@ func TestRepository_DeletePolicy_CascadesJunction(t *testing.T) {
 	if err := consumers.AttachPolicy(ctx, c1, p.ID); err != nil {
 		t.Fatalf("AttachPolicy: %v", err)
 	}
-	if err := r.Delete(ctx, p.ID); err != nil {
+	if err := r.Delete(ctx, gwID, p.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 

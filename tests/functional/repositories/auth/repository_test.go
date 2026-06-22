@@ -260,7 +260,7 @@ func TestRepository_Delete(t *testing.T) {
 	if err := r.Save(ctx, a); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := r.Delete(ctx, a.ID); err != nil {
+	if err := r.Delete(ctx, gwID, a.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if _, err := r.FindByID(ctx, a.ID); !errors.Is(err, domain.ErrNotFound) {

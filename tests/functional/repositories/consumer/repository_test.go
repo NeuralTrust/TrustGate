@@ -588,7 +588,7 @@ func TestRepository_Delete(t *testing.T) {
 	if err := f.repo.Save(ctx, c); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := f.repo.Delete(ctx, c.ID); err != nil {
+	if err := f.repo.Delete(ctx, gwID, c.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if _, err := f.repo.FindByID(ctx, c.ID); !errors.Is(err, domain.ErrNotFound) {
@@ -598,7 +598,7 @@ func TestRepository_Delete(t *testing.T) {
 
 func TestRepository_Delete_NotFound(t *testing.T) {
 	f := setupRepo(t)
-	err := f.repo.Delete(context.Background(), ids.New[ids.ConsumerKind]())
+	err := f.repo.Delete(context.Background(), ids.New[ids.GatewayKind](), ids.New[ids.ConsumerKind]())
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
@@ -676,7 +676,7 @@ func TestRepository_DeleteBackend_CascadesConsumerBinding(t *testing.T) {
 	c := validConsumer(t, gwID, "uses-be", beID)
 	saveWithRegistries(t, f, c)
 
-	if err := f.be.Delete(ctx, beID); err != nil {
+	if err := f.be.Delete(ctx, gwID, beID); err != nil {
 		t.Fatalf("Delete: %v, want cascade to consumer_registry", err)
 	}
 
@@ -707,7 +707,7 @@ func TestRepository_DeleteBackend_FailsWhenReferencedByFallbackChain(t *testing.
 		t.Fatalf("Save: %v", err)
 	}
 
-	err := f.be.Delete(ctx, fbBE)
+	err := f.be.Delete(ctx, gwID, fbBE)
 	if !errors.Is(err, registrydomain.ErrHasDependents) {
 		t.Fatalf("err = %v, want registrydomain.ErrHasDependents", err)
 	}
