@@ -42,7 +42,7 @@ func TestEnforceJunctionSameGatewayCoversEveryJunction(t *testing.T) {
 func TestEnforceJunctionSameGatewayRejectsCrossGateway(t *testing.T) {
 	t.Parallel()
 
-	if !strings.Contains(enforceJunctionSameGatewayDDL, "left_gw <> right_gw") {
+	if !strings.Contains(enforceJunctionSameGatewayDDL, "left_gw IS NOT NULL AND right_gw IS NOT NULL AND left_gw <> right_gw") {
 		t.Fatal("trigger must reject links whose gateways differ")
 	}
 	if !strings.Contains(enforceJunctionSameGatewayDDL, "ERRCODE = 'AG422'") {

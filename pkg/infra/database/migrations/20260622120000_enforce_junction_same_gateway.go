@@ -47,7 +47,7 @@ const enforceJunctionSameGatewayDDL = `
 			SELECT gateway_id INTO left_gw  FROM roles      WHERE id = NEW.role_id;
 			SELECT gateway_id INTO right_gw FROM registries WHERE id = NEW.registry_id;
 		END IF;
-		IF left_gw IS NULL OR right_gw IS NULL OR left_gw <> right_gw THEN
+		IF left_gw IS NOT NULL AND right_gw IS NOT NULL AND left_gw <> right_gw THEN
 			RAISE EXCEPTION 'cross_gateway_link on %', TG_TABLE_NAME USING ERRCODE = 'AG422';
 		END IF;
 		RETURN NEW;
