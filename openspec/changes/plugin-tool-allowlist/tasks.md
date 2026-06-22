@@ -29,9 +29,9 @@ Mirror `modelallowlist` + `pertoolratelimit`. New pkg `pkg/infra/plugins/toolall
 
 ## Phase 3: Wiring — DI + catalog metadata + catalog_test
 
-- [ ] 3.1 `pkg/container/modules/plugins.go`: import `toolallowlist`, add `toolallowlist.New(p.Adapters)` to `newPluginRegistry` catalog slice (no `pluginParams` change).
-- [ ] 3.2 `pkg/app/plugins/catalog_metadata.go`: add `pluginCatalogMeta["tool_allowlist"]` (`groupRouting`, name "Tool Allowlist", description, `SettingsSchema` fields `allow_tools`/`deny_tools` array-of-string, `on_empty_after_filter` enum default `reject`, `scope` enum informational).
-- [ ] 3.3 `pkg/app/plugins/catalog_test.go` (OQ-1/OQ-2 RESOLVED): add `"tool_allowlist"` to `builtinSlugs`; add `{"tool_allowlist",[]policy.Stage{policy.StagePreRequest},[]policy.Stage{policy.StagePreRequest}}` to `registerBuiltins` `specs`; extend `TestCatalogService_GroupsAndOrder` Routing `ElementsMatch` to `{semantic_cache,model_allowlist,tool_allowlist}`. Optional `TestToolAllowlistSchema`.
+- [x] 3.1 `pkg/container/modules/plugins.go`: import `toolallowlist`, add `toolallowlist.New(p.Adapters)` to `newPluginRegistry` catalog slice (no `pluginParams` change).
+- [x] 3.2 `pkg/app/plugins/catalog_metadata.go`: add `pluginCatalogMeta["tool_allowlist"]` (`groupRouting`, name "Tool Allowlist", description, `SettingsSchema` fields `allow_tools`/`deny_tools` array-of-string, `on_empty_after_filter` enum default `reject`, `scope` enum informational).
+- [x] 3.3 `pkg/app/plugins/catalog_test.go` (OQ-1/OQ-2 RESOLVED): add `"tool_allowlist"` to `builtinSlugs`; add `{"tool_allowlist",[]policy.Stage{policy.StagePreRequest},[]policy.Stage{policy.StagePreRequest}}` to `registerBuiltins` `specs`; extend `TestCatalogService_GroupsAndOrder` Routing `ElementsMatch` to `{semantic_cache,model_allowlist,tool_allowlist}`. Optional `TestToolAllowlistSchema`.
 
 **Verify**: `go build ./... && go vet ./... && golangci-lint run pkg/container/modules/... pkg/app/plugins/... && go test -race ./pkg/app/plugins/... -run Catalog`.
 
