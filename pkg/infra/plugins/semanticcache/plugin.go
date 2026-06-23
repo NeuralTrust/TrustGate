@@ -118,25 +118,28 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 }
 
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
-	if noCache(in.Request) {
-		return &appplugins.Result{StatusCode: http.StatusOK}, nil
-	}
-
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {
 		return nil, fmt.Errorf("semantic_cache: %w", err)
 	}
 
-	// Degraded pass-through: never fail the request on cache infrastructure
-	// problems.
-	if err := p.ensureIndex(ctx); err != nil {
-		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Degraded: true, DegradedReason: "index_unavailable"})
+	if p.bypassed(in.Request, cfg) {
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Bypassed: true, Mode: cfg.mode(), Scope: cfg.scope()})
+		if in.Stage == policy.StagePreRequest {
+			markStatus(in.Response, cacheStatusMiss)
+			return missResult(), nil
+		}
 		return passThrough(), nil
 	}
-	creator, err := p.locator.GetService(cfg.Embedding.Provider)
+
+	if err := p.ensureIndex(ctx); err != nil {
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Degraded: true, DegradedReason: "index_unavailable"})
+		return p.degraded(in), nil
+	}
+	creator, err := p.locator.GetService(cfg.provider())
 	if err != nil {
 		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Degraded: true, DegradedReason: "embedding_service_unavailable"})
-		return passThrough(), nil
+		return p.degraded(in), nil
 	}
 
 	switch in.Stage {
@@ -147,6 +150,21 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	default:
 		return passThrough(), nil
 	}
+}
+
+func (p *Plugin) bypassed(req *infracontext.RequestContext, cfg *config) bool {
+	if noCache(req) {
+		return true
+	}
+	return req.HeaderValue(cfg.bypassHeader()) != ""
+}
+
+func (p *Plugin) degraded(in appplugins.ExecInput) *appplugins.Result {
+	if in.Stage == policy.StagePreRequest {
+		markStatus(in.Response, cacheStatusMiss)
+		return missResult()
+	}
+	return passThrough()
 }
 
 func (p *Plugin) ensureIndex(ctx context.Context) error {
@@ -175,13 +193,14 @@ func (p *Plugin) preRequest(
 	if text == "" {
 		markStatus(in.Response, cacheStatusMiss)
 		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, CacheHit: false})
-		return passThrough(), nil
+		return missResult(), nil
 	}
 
-	emb, err := creator.Generate(ctx, text, cfg.Embedding.Model, cfg.embeddingDomainConfig())
+	emb, err := creator.Generate(ctx, text, cfg.model(), cfg.embeddingDomainConfig())
 	if err != nil || emb == nil {
+		markStatus(in.Response, cacheStatusMiss)
 		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Degraded: true, DegradedReason: "embedding_failed"})
-		return passThrough(), nil
+		return missResult(), nil
 	}
 
 	candidates, err := p.store.Lookup(ctx, scopeID(in.Request), emb, 1)
@@ -197,7 +216,7 @@ func (p *Plugin) preRequest(
 			miss.Similarity = candidates[0].Similarity
 		}
 		setCacheExtras(in.Event, miss)
-		return passThrough(), nil
+		return missResult(), nil
 	}
 
 	best := candidates[0]
@@ -212,7 +231,7 @@ func (p *Plugin) preRequest(
 			VectorDim:     p.dimension,
 		})
 		appplugins.SetDecision(in.Event, in.Mode)
-		return passThrough(), nil
+		return missResult(), nil
 	}
 
 	markStatus(in.Response, cacheStatusHit)
@@ -228,6 +247,7 @@ func (p *Plugin) preRequest(
 		Body:         []byte(best.Response),
 		StopUpstream: true,
 		Headers: map[string][]string{
+			"X-Cache":            {cacheStatusHit},
 			"X-Cache-Status":     {cacheStatusHit},
 			"X-Cache-Similarity": {fmt.Sprintf("%.4f", best.Similarity)},
 		},
@@ -241,7 +261,11 @@ func (p *Plugin) postResponse(
 	creator embedding.Creator,
 ) (*appplugins.Result, error) {
 	resp := in.Response
-	if resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 || len(resp.Body) == 0 {
+	if resp == nil || len(resp.Body) == 0 {
+		return passThrough(), nil
+	}
+	if !cfg.cacheableStatus(resp.StatusCode) {
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Stored: false, SkipReason: "status"})
 		return passThrough(), nil
 	}
 	if in.Mode == policy.ModeObserve {
@@ -258,7 +282,7 @@ func (p *Plugin) postResponse(
 		return passThrough(), nil
 	}
 
-	emb, err := creator.Generate(ctx, text, cfg.Embedding.Model, cfg.embeddingDomainConfig())
+	emb, err := creator.Generate(ctx, text, cfg.model(), cfg.embeddingDomainConfig())
 	if err != nil || emb == nil {
 		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Degraded: true, DegradedReason: "embedding_failed"})
 		return passThrough(), nil
@@ -268,7 +292,7 @@ func (p *Plugin) postResponse(
 		RuleID:    scopeID(in.Request),
 		Embedding: emb,
 		Response:  string(resp.Body),
-		TTL:       cfg.parsedTTL(),
+		TTL:       cfg.resolvedTTL(),
 	}); err != nil {
 		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Degraded: true, DegradedReason: "store_failed", EmbeddingSize: embeddingSize(emb), VectorDim: p.dimension})
 		return passThrough(), nil
@@ -356,4 +380,14 @@ func statusOf(resp *infracontext.ResponseContext) string {
 
 func passThrough() *appplugins.Result {
 	return &appplugins.Result{StatusCode: http.StatusOK}
+}
+
+func missResult() *appplugins.Result {
+	return &appplugins.Result{
+		StatusCode: http.StatusOK,
+		Headers: map[string][]string{
+			"X-Cache":        {cacheStatusMiss},
+			"X-Cache-Status": {cacheStatusMiss},
+		},
+	}
 }

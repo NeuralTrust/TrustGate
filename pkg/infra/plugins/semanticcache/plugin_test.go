@@ -96,9 +96,9 @@ func TestPlugin_ValidateConfig(t *testing.T) {
 	p := New(nil, nil, nil)
 	require.NoError(t, p.ValidateConfig(baseSettings()))
 
-	bad := baseSettings()
-	bad["embedding"] = map[string]any{"provider": "openai", "model": "m"} // missing api_key
-	require.Error(t, p.ValidateConfig(bad))
+	noKey := baseSettings()
+	noKey["embedding"] = map[string]any{"provider": "openai", "model": "m"}
+	require.NoError(t, p.ValidateConfig(noKey), "api_key must be optional")
 
 	bad2 := baseSettings()
 	bad2["similarity_threshold"] = 2.0
@@ -113,6 +113,30 @@ func TestPlugin_NoCacheHeaderSkips(t *testing.T) {
 	res, err := p.Execute(context.Background(), newInput(policy.StagePreRequest, req, &infracontext.ResponseContext{}))
 	require.NoError(t, err)
 	require.False(t, res.StopUpstream)
+	assert.Equal(t, []string{"MISS"}, res.Headers["X-Cache"])
+}
+
+func TestPlugin_BypassHeaderSkips(t *testing.T) {
+	store := &fakeStore{candidates: []semantic.Candidate{{Response: `{"cached":true}`, Similarity: 0.99}}}
+	creator := &fakeCreator{emb: &embedding.Embedding{Value: []float64{0.1}}}
+	p := New(store, locatorWith(creator), adapter.NewRegistry())
+
+	req := &infracontext.RequestContext{
+		Provider:   "openai",
+		RegistryID: "b1",
+		Body:       openAIBody(),
+		Headers:    map[string][]string{"X-Cache-Bypass": {"1"}},
+	}
+
+	res, err := p.Execute(context.Background(), newInput(policy.StagePreRequest, req, &infracontext.ResponseContext{}))
+	require.NoError(t, err)
+	require.False(t, res.StopUpstream, "bypass header must prevent serving a hit")
+	assert.Equal(t, []string{"MISS"}, res.Headers["X-Cache"])
+
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"answer":"hi"}`)}
+	_, err = p.Execute(context.Background(), newInput(policy.StagePostResponse, req, resp))
+	require.NoError(t, err)
+	assert.Empty(t, store.stored, "bypass header must prevent storing")
 }
 
 func TestPlugin_PreRequest_HitShortCircuits(t *testing.T) {
@@ -127,6 +151,7 @@ func TestPlugin_PreRequest_HitShortCircuits(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, res.StopUpstream)
 	assert.Equal(t, []byte(`{"cached":true}`), res.Body)
+	assert.Equal(t, []string{"HIT"}, res.Headers["X-Cache"])
 	assert.Equal(t, []string{"HIT"}, res.Headers["X-Cache-Status"])
 	assert.Equal(t, cacheStatusHit, resp.Metadata[metadataCacheStatus])
 }
@@ -177,6 +202,7 @@ func TestPlugin_PreRequest_BelowThresholdMisses(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, res.StopUpstream)
 	assert.Equal(t, cacheStatusMiss, resp.Metadata[metadataCacheStatus])
+	assert.Equal(t, []string{"MISS"}, res.Headers["X-Cache"])
 }
 
 func TestPlugin_PreRequest_EmbeddingErrorDegrades(t *testing.T) {
@@ -239,4 +265,39 @@ func TestPlugin_PostResponse_SkipsNon2xx(t *testing.T) {
 	_, err := p.Execute(context.Background(), newInput(policy.StagePostResponse, req, resp))
 	require.NoError(t, err)
 	assert.Empty(t, store.stored)
+}
+
+func TestPlugin_PostResponse_CacheOnlyOnStatus(t *testing.T) {
+	creator := &fakeCreator{emb: &embedding.Embedding{Value: []float64{0.1, 0.2}}}
+	cases := []struct {
+		name       string
+		statusCode int
+		wantStored bool
+	}{
+		{name: "200 allowed", statusCode: 200, wantStored: true},
+		{name: "201 blocked", statusCode: 201, wantStored: false},
+		{name: "500 blocked", statusCode: 500, wantStored: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeStore{}
+			p := New(store, locatorWith(creator), adapter.NewRegistry())
+
+			settings := baseSettings()
+			settings["cache_only_on_status"] = []any{200}
+
+			req := &infracontext.RequestContext{Provider: "openai", RegistryID: "b1", Body: openAIBody()}
+			resp := &infracontext.ResponseContext{StatusCode: tc.statusCode, Body: []byte(`{"answer":"hi"}`)}
+			in := newInput(policy.StagePostResponse, req, resp)
+			in.Config.Settings = settings
+
+			_, err := p.Execute(context.Background(), in)
+			require.NoError(t, err)
+			if tc.wantStored {
+				assert.Len(t, store.stored, 1)
+			} else {
+				assert.Empty(t, store.stored)
+			}
+		})
+	}
 }
