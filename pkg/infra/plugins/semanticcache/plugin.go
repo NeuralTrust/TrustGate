@@ -60,6 +60,11 @@ const (
 	skipReasonStreaming = "streaming"
 )
 
+const (
+	matchTypeExact    = "exact"
+	matchTypeSemantic = "semantic"
+)
+
 var _ appplugins.Plugin = (*Plugin)(nil)
 
 // Plugin caches responses by request embedding similarity, scoped per registry.
@@ -146,24 +151,28 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return p.degraded(in), nil
 	}
 
-	if err := p.ensureIndex(ctx); err != nil {
-		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Degraded: true, DegradedReason: "index_unavailable"})
-		return p.degraded(in), nil
-	}
-	creator, err := p.locator.GetService(cfg.provider())
-	if err != nil {
-		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Degraded: true, DegradedReason: "embedding_service_unavailable"})
-		return p.degraded(in), nil
-	}
-
 	switch in.Stage {
 	case policy.StagePreRequest:
-		return p.preRequest(ctx, in, cfg, creator, partition)
+		return p.preRequest(ctx, in, cfg, partition)
 	case policy.StagePostResponse:
-		return p.postResponse(ctx, in, cfg, creator, partition)
+		return p.postResponse(ctx, in, cfg, partition)
 	default:
 		return passThrough(), nil
 	}
+}
+
+// semanticCreator lazily acquires the vector index and embedding service needed
+// only by the semantic lookup/store legs. It returns a non-empty degrade reason
+// when either is unavailable so exact mode never depends on embeddings.
+func (p *Plugin) semanticCreator(ctx context.Context, cfg *config) (embedding.Creator, string) {
+	if err := p.ensureIndex(ctx); err != nil {
+		return nil, "index_unavailable"
+	}
+	creator, err := p.locator.GetService(cfg.provider())
+	if err != nil {
+		return nil, "embedding_service_unavailable"
+	}
+	return creator, ""
 }
 
 func (p *Plugin) bypassed(req *infracontext.RequestContext, cfg *config) bool {
@@ -250,26 +259,77 @@ func (p *Plugin) preRequest(
 	ctx context.Context,
 	in appplugins.ExecInput,
 	cfg *config,
-	creator embedding.Creator,
 	partition string,
 ) (*appplugins.Result, error) {
 	if cfg.skipIfTools() && p.requestHasTools(in.Request) {
 		markStatus(in.Response, cacheStatusMiss)
-		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, CacheHit: false, Scope: cfg.scope(), SkipReason: skipReasonTools})
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, CacheHit: false, Scope: cfg.scope(), Mode: cfg.mode(), SkipReason: skipReasonTools})
 		return missResult(), nil
 	}
 
 	text := p.extractUserInput(in.Request)
 	if text == "" {
 		markStatus(in.Response, cacheStatusMiss)
-		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, CacheHit: false, Scope: cfg.scope()})
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, CacheHit: false, Scope: cfg.scope(), Mode: cfg.mode()})
+		return missResult(), nil
+	}
+
+	mode := cfg.mode()
+	if mode == modeExact || mode == modeBoth {
+		if res := p.preRequestExact(ctx, in, cfg, partition, text); res != nil {
+			return res, nil
+		}
+		if mode == modeExact {
+			markStatus(in.Response, cacheStatusMiss)
+			setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, CacheHit: false, Scope: cfg.scope(), Mode: mode})
+			return missResult(), nil
+		}
+	}
+
+	return p.preRequestSemantic(ctx, in, cfg, partition, text)
+}
+
+// preRequestExact serves an exact cache hit. It returns a terminal Result on a
+// hit (or an observed hit), and nil to signal a miss the caller may resolve via
+// the semantic path. It never computes an embedding.
+func (p *Plugin) preRequestExact(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	cfg *config,
+	partition, text string,
+) *appplugins.Result {
+	body, hit, _ := p.store.GetExact(ctx, partition, exactKey(partition, text))
+	if !hit {
+		return nil
+	}
+	if in.Mode == policy.ModeObserve {
+		markStatus(in.Response, cacheStatusMiss)
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, CacheHit: true, Stored: false, Scope: cfg.scope(), Mode: cfg.mode(), MatchType: matchTypeExact})
+		appplugins.SetDecision(in.Event, in.Mode)
+		return missResult()
+	}
+	markStatus(in.Response, cacheStatusHit)
+	setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, CacheHit: true, Scope: cfg.scope(), Mode: cfg.mode(), MatchType: matchTypeExact})
+	return hitResult([]byte(body), 0, true)
+}
+
+func (p *Plugin) preRequestSemantic(
+	ctx context.Context,
+	in appplugins.ExecInput,
+	cfg *config,
+	partition, text string,
+) (*appplugins.Result, error) {
+	creator, degradeReason := p.semanticCreator(ctx, cfg)
+	if degradeReason != "" {
+		markStatus(in.Response, cacheStatusMiss)
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Degraded: true, DegradedReason: degradeReason, Scope: cfg.scope(), Mode: cfg.mode()})
 		return missResult(), nil
 	}
 
 	emb, err := creator.Generate(ctx, text, cfg.model(), cfg.embeddingDomainConfig())
 	if err != nil || emb == nil {
 		markStatus(in.Response, cacheStatusMiss)
-		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Degraded: true, DegradedReason: "embedding_failed"})
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Degraded: true, DegradedReason: "embedding_failed", Scope: cfg.scope(), Mode: cfg.mode()})
 		return missResult(), nil
 	}
 
@@ -280,6 +340,7 @@ func (p *Plugin) preRequest(
 			Threshold:     cfg.SimilarityThreshold,
 			CacheHit:      false,
 			Scope:         cfg.scope(),
+			Mode:          cfg.mode(),
 			EmbeddingSize: embeddingSize(emb),
 			VectorDim:     p.dimension,
 		}
@@ -297,6 +358,9 @@ func (p *Plugin) preRequest(
 			Threshold:     cfg.SimilarityThreshold,
 			CacheHit:      true,
 			Stored:        false,
+			Scope:         cfg.scope(),
+			Mode:          cfg.mode(),
+			MatchType:     matchTypeSemantic,
 			Similarity:    best.Similarity,
 			EmbeddingSize: embeddingSize(emb),
 			VectorDim:     p.dimension,
@@ -310,27 +374,19 @@ func (p *Plugin) preRequest(
 		Threshold:     cfg.SimilarityThreshold,
 		CacheHit:      true,
 		Scope:         cfg.scope(),
+		Mode:          cfg.mode(),
+		MatchType:     matchTypeSemantic,
 		Similarity:    best.Similarity,
 		EmbeddingSize: embeddingSize(emb),
 		VectorDim:     p.dimension,
 	})
-	return &appplugins.Result{
-		StatusCode:   http.StatusOK,
-		Body:         []byte(best.Response),
-		StopUpstream: true,
-		Headers: map[string][]string{
-			"X-Cache":            {cacheStatusHit},
-			"X-Cache-Status":     {cacheStatusHit},
-			"X-Cache-Similarity": {fmt.Sprintf("%.4f", best.Similarity)},
-		},
-	}, nil
+	return hitResult([]byte(best.Response), best.Similarity, false), nil
 }
 
 func (p *Plugin) postResponse(
 	ctx context.Context,
 	in appplugins.ExecInput,
 	cfg *config,
-	creator embedding.Creator,
 	partition string,
 ) (*appplugins.Result, error) {
 	resp := in.Response
@@ -338,23 +394,23 @@ func (p *Plugin) postResponse(
 		return passThrough(), nil
 	}
 	if !cfg.cacheableStatus(resp.StatusCode) {
-		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Stored: false, Scope: cfg.scope(), SkipReason: "status"})
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Stored: false, Scope: cfg.scope(), Mode: cfg.mode(), SkipReason: "status"})
 		return passThrough(), nil
 	}
 	if in.Mode == policy.ModeObserve {
-		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Stored: false, Scope: cfg.scope()})
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Stored: false, Scope: cfg.scope(), Mode: cfg.mode()})
 		return passThrough(), nil
 	}
 	if statusOf(resp) == cacheStatusHit {
-		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, CacheHit: true, Stored: false, Scope: cfg.scope()})
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, CacheHit: true, Stored: false, Scope: cfg.scope(), Mode: cfg.mode()})
 		return passThrough(), nil
 	}
 	if cfg.SkipIfStreaming && resp.Streaming {
-		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Stored: false, Scope: cfg.scope(), SkipReason: skipReasonStreaming})
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Stored: false, Scope: cfg.scope(), Mode: cfg.mode(), SkipReason: skipReasonStreaming})
 		return passThrough(), nil
 	}
 	if cfg.skipIfTools() && (p.requestHasTools(in.Request) || p.responseHasToolCalls(providerOf(in.Request), resp)) {
-		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Stored: false, Scope: cfg.scope(), SkipReason: skipReasonTools})
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Stored: false, Scope: cfg.scope(), Mode: cfg.mode(), SkipReason: skipReasonTools})
 		return passThrough(), nil
 	}
 
@@ -363,29 +419,63 @@ func (p *Plugin) postResponse(
 		return passThrough(), nil
 	}
 
-	emb, err := creator.Generate(ctx, text, cfg.model(), cfg.embeddingDomainConfig())
-	if err != nil || emb == nil {
-		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Degraded: true, DegradedReason: "embedding_failed"})
-		return passThrough(), nil
+	mode := cfg.mode()
+	data := SemanticCacheData{Threshold: cfg.SimilarityThreshold, Scope: cfg.scope(), Mode: mode}
+	exactStored, semanticStored := false, false
+
+	if mode == modeExact || mode == modeBoth {
+		if err := p.store.PutExact(ctx, partition, exactKey(partition, text), string(resp.Body), cfg.resolvedTTL()); err != nil {
+			data.Degraded = true
+			data.DegradedReason = "exact_store_failed"
+		} else {
+			exactStored = true
+		}
 	}
 
+	if mode == modeSemantic || mode == modeBoth {
+		if degradeReason := p.storeSemantic(ctx, cfg, partition, text, resp.Body); degradeReason != "" {
+			data.Degraded = true
+			data.DegradedReason = degradeReason
+		} else {
+			semanticStored = true
+		}
+	}
+
+	data.Stored = exactStored || semanticStored
+	switch {
+	case exactStored && semanticStored:
+		data.MatchType = modeBoth
+	case exactStored:
+		data.MatchType = matchTypeExact
+	case semanticStored:
+		data.MatchType = matchTypeSemantic
+	}
+	setCacheExtras(in.Event, data)
+	return passThrough(), nil
+}
+
+// storeSemantic embeds the request text and persists the response under the
+// partition. It returns a non-empty degrade reason when the embedding service,
+// embedding generation, or the store fails; the caller treats this as a trace,
+// never a request failure.
+func (p *Plugin) storeSemantic(ctx context.Context, cfg *config, partition, text string, body []byte) string {
+	creator, degradeReason := p.semanticCreator(ctx, cfg)
+	if degradeReason != "" {
+		return degradeReason
+	}
+	emb, err := creator.Generate(ctx, text, cfg.model(), cfg.embeddingDomainConfig())
+	if err != nil || emb == nil {
+		return "embedding_failed"
+	}
 	if err := p.store.Store(ctx, semantic.Entry{
 		RuleID:    partition,
 		Embedding: emb,
-		Response:  string(resp.Body),
+		Response:  string(body),
 		TTL:       cfg.resolvedTTL(),
 	}); err != nil {
-		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Degraded: true, DegradedReason: "store_failed", EmbeddingSize: embeddingSize(emb), VectorDim: p.dimension})
-		return passThrough(), nil
+		return "store_failed"
 	}
-	setCacheExtras(in.Event, SemanticCacheData{
-		Threshold:     cfg.SimilarityThreshold,
-		Stored:        true,
-		Scope:         cfg.scope(),
-		EmbeddingSize: embeddingSize(emb),
-		VectorDim:     p.dimension,
-	})
-	return passThrough(), nil
+	return ""
 }
 
 func embeddingSize(emb *embedding.Embedding) int {
@@ -501,5 +591,21 @@ func missResult() *appplugins.Result {
 			"X-Cache":        {cacheStatusMiss},
 			"X-Cache-Status": {cacheStatusMiss},
 		},
+	}
+}
+
+func hitResult(body []byte, similarity float64, exact bool) *appplugins.Result {
+	headers := map[string][]string{
+		"X-Cache":        {cacheStatusHit},
+		"X-Cache-Status": {cacheStatusHit},
+	}
+	if !exact {
+		headers["X-Cache-Similarity"] = []string{fmt.Sprintf("%.4f", similarity)}
+	}
+	return &appplugins.Result{
+		StatusCode:   http.StatusOK,
+		Body:         body,
+		StopUpstream: true,
+		Headers:      headers,
 	}
 }

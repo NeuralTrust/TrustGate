@@ -34,11 +34,13 @@ import (
 )
 
 type fakeStore struct {
-	candidates []semantic.Candidate
-	lookupErr  error
-	stored     []semantic.Entry
-	storeErr   error
-	ensureErr  error
+	candidates  []semantic.Candidate
+	lookupErr   error
+	stored      []semantic.Entry
+	storeErr    error
+	ensureErr   error
+	exact       map[string]string
+	exactPutErr error
 }
 
 func (f *fakeStore) EnsureIndex(context.Context, int) error { return f.ensureErr }
@@ -52,19 +54,32 @@ func (f *fakeStore) Store(_ context.Context, e semantic.Entry) error {
 	f.stored = append(f.stored, e)
 	return nil
 }
-func (f *fakeStore) GetExact(context.Context, string, string) (string, bool, error) {
-	return "", false, nil
+func (f *fakeStore) GetExact(_ context.Context, ruleID, key string) (string, bool, error) {
+	if f.exact == nil {
+		return "", false, nil
+	}
+	v, ok := f.exact[ruleID+"|"+key]
+	return v, ok, nil
 }
-func (f *fakeStore) PutExact(context.Context, string, string, string, time.Duration) error {
+func (f *fakeStore) PutExact(_ context.Context, ruleID, key, response string, _ time.Duration) error {
+	if f.exactPutErr != nil {
+		return f.exactPutErr
+	}
+	if f.exact == nil {
+		f.exact = make(map[string]string)
+	}
+	f.exact[ruleID+"|"+key] = response
 	return nil
 }
 
 type fakeCreator struct {
-	emb *embedding.Embedding
-	err error
+	emb   *embedding.Embedding
+	err   error
+	calls int
 }
 
 func (f *fakeCreator) Generate(context.Context, string, string, *embedding.Config) (*embedding.Embedding, error) {
+	f.calls++
 	return f.emb, f.err
 }
 
@@ -681,5 +696,162 @@ func TestPlugin_ToolsGate(t *testing.T) {
 		_, err = p.Execute(context.Background(), scopedInput(policy.StagePostResponse, settings, req, resp, defaultScope()))
 		require.NoError(t, err)
 		assert.Len(t, store.stored, 1, "explicit skip_if_tools_present=false must still store")
+	})
+}
+
+func differentTextBody() []byte {
+	return []byte(`{"model":"gpt","messages":[{"role":"user","content":"a completely different question"}]}`)
+}
+
+func normalizedVariantBody() []byte {
+	return []byte(`{"model":"gpt","messages":[{"role":"user","content":"HELLO   World"}]}`)
+}
+
+func TestPlugin_ExactMode(t *testing.T) {
+	const partition = "b1|c:c-1"
+	exactSettings := settingsWith(map[string]any{"mode": modeExact})
+
+	t.Run("normalized hit served without embedding", func(t *testing.T) {
+		store := &fakeStore{ensureErr: errors.New("index must not be touched")}
+		creator := &fakeCreator{emb: anEmbedding()}
+		p := New(store, locatorWith(creator), adapter.NewRegistry())
+
+		req := &infracontext.RequestContext{Provider: "openai", RegistryID: "b1", Body: openAIBody()}
+		resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"answer":"hi"}`)}
+		_, err := p.Execute(context.Background(), scopedInput(policy.StagePostResponse, exactSettings, req, resp, defaultScope()))
+		require.NoError(t, err)
+
+		hitReq := &infracontext.RequestContext{Provider: "openai", RegistryID: "b1", Body: normalizedVariantBody()}
+		res, err := p.Execute(context.Background(), scopedInput(policy.StagePreRequest, exactSettings, hitReq, &infracontext.ResponseContext{}, defaultScope()))
+		require.NoError(t, err)
+		require.True(t, res.StopUpstream, "normalized exact match must serve from cache")
+		assert.Equal(t, []byte(`{"answer":"hi"}`), res.Body)
+		assert.Equal(t, []string{"HIT"}, res.Headers["X-Cache"])
+		assert.Equal(t, []string{"HIT"}, res.Headers["X-Cache-Status"])
+		assert.Empty(t, res.Headers["X-Cache-Similarity"], "exact hit must not emit a similarity header")
+		assert.Equal(t, 0, creator.calls, "exact mode must never compute an embedding")
+	})
+
+	t.Run("different text misses without embedding", func(t *testing.T) {
+		store := &fakeStore{ensureErr: errors.New("index must not be touched")}
+		creator := &fakeCreator{emb: anEmbedding()}
+		p := New(store, locatorWith(creator), adapter.NewRegistry())
+
+		req := &infracontext.RequestContext{Provider: "openai", RegistryID: "b1", Body: openAIBody()}
+		resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"answer":"hi"}`)}
+		_, err := p.Execute(context.Background(), scopedInput(policy.StagePostResponse, exactSettings, req, resp, defaultScope()))
+		require.NoError(t, err)
+		require.Equal(t, `{"answer":"hi"}`, store.exact[partition+"|"+exactKey(partition, "hello world")])
+
+		missReq := &infracontext.RequestContext{Provider: "openai", RegistryID: "b1", Body: differentTextBody()}
+		res, err := p.Execute(context.Background(), scopedInput(policy.StagePreRequest, exactSettings, missReq, &infracontext.ResponseContext{}, defaultScope()))
+		require.NoError(t, err)
+		require.False(t, res.StopUpstream, "near-miss text must not serve a cached response")
+		assert.Equal(t, []string{"MISS"}, res.Headers["X-Cache"])
+		assert.Equal(t, 0, creator.calls, "exact mode must never compute an embedding")
+	})
+
+	t.Run("serves and stores without an embedding service", func(t *testing.T) {
+		store := &fakeStore{}
+		p := New(store, embeddingfactory.NewServiceLocator(embeddingfactory.ProviderRegistry{}), adapter.NewRegistry())
+		noEmbed := map[string]any{"mode": modeExact, "similarity_threshold": 0.8}
+
+		req := &infracontext.RequestContext{Provider: "openai", RegistryID: "b1", Body: openAIBody()}
+		resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"answer":"hi"}`)}
+		_, err := p.Execute(context.Background(), scopedInput(policy.StagePostResponse, noEmbed, req, resp, defaultScope()))
+		require.NoError(t, err, "exact store must not require an embedding service")
+		require.Len(t, store.exact, 1)
+
+		res, err := p.Execute(context.Background(), scopedInput(policy.StagePreRequest, noEmbed, req, &infracontext.ResponseContext{}, defaultScope()))
+		require.NoError(t, err, "exact serve must not require an embedding service")
+		require.True(t, res.StopUpstream)
+		assert.Equal(t, []byte(`{"answer":"hi"}`), res.Body)
+	})
+}
+
+func TestPlugin_SemanticModeThreshold(t *testing.T) {
+	t.Run("at or above threshold serves with similarity header", func(t *testing.T) {
+		store := &fakeStore{candidates: []semantic.Candidate{{Response: `{"cached":true}`, Similarity: 0.97}}}
+		creator := &fakeCreator{emb: anEmbedding()}
+		p := New(store, locatorWith(creator), adapter.NewRegistry())
+		settings := settingsWith(map[string]any{"mode": modeSemantic, "similarity_threshold": 0.95})
+
+		req := &infracontext.RequestContext{Provider: "openai", RegistryID: "b1", Body: openAIBody()}
+		res, err := p.Execute(context.Background(), scopedInput(policy.StagePreRequest, settings, req, &infracontext.ResponseContext{}, defaultScope()))
+		require.NoError(t, err)
+		require.True(t, res.StopUpstream, "0.97 >= 0.95 must serve")
+		assert.Equal(t, []byte(`{"cached":true}`), res.Body)
+		assert.Equal(t, []string{"HIT"}, res.Headers["X-Cache"])
+		assert.Equal(t, []string{"0.9700"}, res.Headers["X-Cache-Similarity"])
+	})
+
+	t.Run("below threshold misses", func(t *testing.T) {
+		store := &fakeStore{candidates: []semantic.Candidate{{Response: `{"cached":true}`, Similarity: 0.90}}}
+		creator := &fakeCreator{emb: anEmbedding()}
+		p := New(store, locatorWith(creator), adapter.NewRegistry())
+		settings := settingsWith(map[string]any{"mode": modeSemantic, "similarity_threshold": 0.95})
+
+		req := &infracontext.RequestContext{Provider: "openai", RegistryID: "b1", Body: openAIBody()}
+		res, err := p.Execute(context.Background(), scopedInput(policy.StagePreRequest, settings, req, &infracontext.ResponseContext{}, defaultScope()))
+		require.NoError(t, err)
+		require.False(t, res.StopUpstream, "0.90 < 0.95 must miss")
+		assert.Equal(t, []string{"MISS"}, res.Headers["X-Cache"])
+	})
+}
+
+func TestPlugin_BothMode(t *testing.T) {
+	const partition = "b1|c:c-1"
+	bothSettings := settingsWith(map[string]any{"mode": modeBoth, "similarity_threshold": 0.95})
+
+	t.Run("exact miss falls through to semantic hit", func(t *testing.T) {
+		store := &fakeStore{candidates: []semantic.Candidate{{Response: `{"semantic":true}`, Similarity: 0.97}}}
+		creator := &fakeCreator{emb: anEmbedding()}
+		p := New(store, locatorWith(creator), adapter.NewRegistry())
+
+		req := &infracontext.RequestContext{Provider: "openai", RegistryID: "b1", Body: openAIBody()}
+		res, err := p.Execute(context.Background(), scopedInput(policy.StagePreRequest, bothSettings, req, &infracontext.ResponseContext{}, defaultScope()))
+		require.NoError(t, err)
+		require.True(t, res.StopUpstream, "no exact match must fall through to the semantic hit")
+		assert.Equal(t, []byte(`{"semantic":true}`), res.Body)
+		assert.Equal(t, []string{"HIT"}, res.Headers["X-Cache"])
+		assert.Equal(t, []string{"0.9700"}, res.Headers["X-Cache-Similarity"])
+		assert.Equal(t, 1, creator.calls, "both mode embeds only after an exact miss")
+	})
+
+	t.Run("store on miss writes both exact and semantic", func(t *testing.T) {
+		store := &fakeStore{}
+		creator := &fakeCreator{emb: anEmbedding()}
+		p := New(store, locatorWith(creator), adapter.NewRegistry())
+
+		req := &infracontext.RequestContext{Provider: "openai", RegistryID: "b1", Body: openAIBody()}
+		resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"answer":"hi"}`)}
+		_, err := p.Execute(context.Background(), scopedInput(policy.StagePostResponse, bothSettings, req, resp, defaultScope()))
+		require.NoError(t, err)
+		require.Len(t, store.stored, 1, "semantic entry must be stored")
+		assert.Equal(t, `{"answer":"hi"}`, store.exact[partition+"|"+exactKey(partition, "hello world")], "exact entry must be stored")
+	})
+
+	t.Run("exact store failure does not fail the request", func(t *testing.T) {
+		store := &fakeStore{exactPutErr: errors.New("exact down")}
+		creator := &fakeCreator{emb: anEmbedding()}
+		p := New(store, locatorWith(creator), adapter.NewRegistry())
+
+		req := &infracontext.RequestContext{Provider: "openai", RegistryID: "b1", Body: openAIBody()}
+		resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"answer":"hi"}`)}
+		_, err := p.Execute(context.Background(), scopedInput(policy.StagePostResponse, bothSettings, req, resp, defaultScope()))
+		require.NoError(t, err, "an exact store failure must not fail the request")
+		require.Len(t, store.stored, 1, "the semantic store must still succeed when the exact store fails")
+	})
+
+	t.Run("semantic store failure does not fail the request", func(t *testing.T) {
+		store := &fakeStore{storeErr: errors.New("semantic down")}
+		creator := &fakeCreator{emb: anEmbedding()}
+		p := New(store, locatorWith(creator), adapter.NewRegistry())
+
+		req := &infracontext.RequestContext{Provider: "openai", RegistryID: "b1", Body: openAIBody()}
+		resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"answer":"hi"}`)}
+		_, err := p.Execute(context.Background(), scopedInput(policy.StagePostResponse, bothSettings, req, resp, defaultScope()))
+		require.NoError(t, err, "a semantic store failure must not fail the request")
+		assert.Equal(t, `{"answer":"hi"}`, store.exact[partition+"|"+exactKey(partition, "hello world")], "the exact store must still succeed when the semantic store fails")
 	})
 }

@@ -267,30 +267,30 @@ would force constant rebases. Prefer the chain.)
 
 ## Phase 4b: Mode dispatch (exact / semantic / both) in plugin.go
 
-- [ ] 4b.1 In `preRequest` dispatch on `cfg.mode()`: `exact`/`both` → `store.GetExact(
+- [x] 4b.1 In `preRequest` dispatch on `cfg.mode()`: `exact`/`both` → `store.GetExact(
       ctx, partition, exactKey(partition,text))` first; hit in enforce → serve via
       `hitResult(body, 0, exact=true)` (`MatchType:"exact"`, no `X-Cache-Similarity`);
       `exact` miss → `missResult()`; `both`/`semantic` → fall through to the existing
       embedding `Lookup` path (`MatchType:"semantic"`). Observe mode never serves.
-- [ ] 4b.2 Add `hitResult(body []byte, similarity float64, exact bool) *Result`
+- [x] 4b.2 Add `hitResult(body []byte, similarity float64, exact bool) *Result`
       emitting `X-Cache: HIT`/`X-Cache-Status: HIT` always and `X-Cache-Similarity`
       only when `!exact`; replace the inline hit `Result` from P1a.
-- [ ] 4b.3 In `postResponse` store per mode: `exact`/`both` → `store.PutExact(...)`;
+- [x] 4b.3 In `postResponse` store per mode: `exact`/`both` → `store.PutExact(...)`;
       `semantic`/`both` → existing `store.Store(...)`. In `both`, a `PutExact` failure
       must not block the semantic store and vice-versa; each failure is a `Degraded`
       trace, never a request failure. Keep exact path embedding-free (no locator call).
-- [ ] 4b.4 Ensure index/embedding acquisition stays inside the semantic-only branches
+- [x] 4b.4 Ensure index/embedding acquisition stays inside the semantic-only branches
       so `mode:exact` needs neither (move the `ensureIndex`/`GetService` calls out of
       `Execute`'s unconditional preamble into the semantic paths).
-- [ ] 4b.5 Set `data.go` `Mode` and `MatchType` extras on hit/store legs.
+- [x] 4b.5 Set `data.go` `Mode` and `MatchType` extras on hit/store legs.
 
 ### Phase 4b tests (`plugin_test.go`)
 
-- [ ] 4b.6 `exact` mode: normalized-message hit returns HIT with NO embedding
+- [x] 4b.6 `exact` mode: normalized-message hit returns HIT with NO embedding
       computed (assert the fake creator's `Generate` is never called); near-miss text →
       MISS.
-- [ ] 4b.7 `semantic` mode: threshold boundary (`0.97 ≥ 0.95` serves; `0.90` misses).
-- [ ] 4b.8 `both` mode: no exact match but semantic above threshold → exact miss +
+- [x] 4b.7 `semantic` mode: threshold boundary (`0.97 ≥ 0.95` serves; `0.90` misses).
+- [x] 4b.8 `both` mode: no exact match but semantic above threshold → exact miss +
       semantic hit; store writes BOTH keys; one store failure (exact or semantic) does
       not fail the request. Extend the existing `fakeStore` double with
       `GetExact`/`PutExact`.
