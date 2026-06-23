@@ -12,28 +12,35 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tokenratelimit
+package llmcost
 
 import (
 	"context"
 	"math"
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
-func (p *Plugin) priceFor(ctx context.Context, cfg *config, provider string, models ...string) (float64, float64, bool) {
+// CustomPrice is a per-token USD overlay rate for a model slug or pattern.
+type CustomPrice struct {
+	Input  float64 `mapstructure:"input"`
+	Output float64 `mapstructure:"output"`
+}
+
+// PriceFor resolves per-token input and output USD prices for the first
+// matching model. A custom overlay is consulted before the builtin resolver.
+func PriceFor(ctx context.Context, resolver appcatalog.PricingResolver, custom map[string]CustomPrice, provider string, models ...string) (float64, float64, bool) {
 	candidates := appcatalog.SlugCandidates(models...)
 	for _, slug := range candidates {
-		if cp, ok := bestMatch(cfg.CustomPricing, slug); ok {
+		if cp, ok := BestMatch(custom, slug); ok {
 			return cp.Input, cp.Output, true
 		}
 	}
-	if p.pricing == nil || provider == "" {
+	if resolver == nil || provider == "" {
 		return 0, 0, false
 	}
 	for _, slug := range candidates {
-		price := p.pricing.Resolve(ctx, provider, slug)
+		price := resolver.Resolve(ctx, provider, slug)
 		if price.Found {
 			return price.InputPrice, price.OutputPrice, true
 		}
@@ -41,21 +48,12 @@ func (p *Plugin) priceFor(ctx context.Context, cfg *config, provider string, mod
 	return 0, 0, false
 }
 
-func per1k(perToken float64) float64 {
+// Per1k converts a per-token rate to a per-1000-token rate.
+func Per1k(perToken float64) float64 {
 	return perToken * 1000
 }
 
-func microUSD(costUSD float64) int64 {
+// MicroUSD converts a USD amount to micro-USD, rounding half away from zero.
+func MicroUSD(costUSD float64) int64 {
 	return int64(math.Round(costUSD * 1e6))
-}
-
-func billableInputTokens(cfg *config, usage *adapter.CanonicalUsage) int {
-	if usage == nil {
-		return 0
-	}
-	in := usage.InputTokens
-	if cfg.CountCacheReads {
-		in += usage.CacheReadInputTokens
-	}
-	return in
 }
