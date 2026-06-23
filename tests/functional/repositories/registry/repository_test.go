@@ -233,6 +233,45 @@ func TestRepository_Delete_NotFound(t *testing.T) {
 	}
 }
 
+func TestRepository_Delete_CascadesRoleRegistryBinding(t *testing.T) {
+	r, gw, conn := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "poolrr")
+
+	b := validRegistry(t, gwID, "role-bound")
+	if err := r.Save(ctx, b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	roleID := ids.New[ids.RoleKind]()
+	if _, err := conn.Pool.Exec(ctx,
+		"INSERT INTO roles (id, gateway_id, name, created_at, updated_at) VALUES ($1, $2, $3, now(), now())",
+		roleID, gwID, "role-x",
+	); err != nil {
+		t.Fatalf("seed role: %v", err)
+	}
+	if _, err := conn.Pool.Exec(ctx,
+		"INSERT INTO role_registry (role_id, registry_id) VALUES ($1, $2)",
+		roleID, b.ID,
+	); err != nil {
+		t.Fatalf("seed role_registry: %v", err)
+	}
+
+	if err := r.Delete(ctx, gwID, b.ID); err != nil {
+		t.Fatalf("Delete: %v, want success (role binding must cascade)", err)
+	}
+
+	var remaining int
+	if err := conn.Pool.QueryRow(ctx,
+		"SELECT count(*) FROM role_registry WHERE registry_id = $1", b.ID,
+	).Scan(&remaining); err != nil {
+		t.Fatalf("count role_registry: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("role_registry rows remaining = %d, want 0", remaining)
+	}
+}
+
 func TestRepository_List_FilterByGatewayAndName(t *testing.T) {
 	r, gw, _ := setupRepo(t)
 	ctx := context.Background()
