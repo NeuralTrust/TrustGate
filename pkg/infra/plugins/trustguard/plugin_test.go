@@ -159,6 +159,9 @@ func TestExecutePreRequestBlockReturns403(t *testing.T) {
 	if got.SessionID != "sess-123" {
 		t.Fatalf("session_id = %q, want sess-123", got.SessionID)
 	}
+	if got.Protocol != protocolLLM {
+		t.Fatalf("protocol = %q, want %q", got.Protocol, protocolLLM)
+	}
 	if got.Attributes.Model.Name != "gpt-4o-mini" || got.Attributes.Model.Provider != "openai" {
 		t.Fatalf("model = %+v, want gpt-4o-mini/openai", got.Attributes.Model)
 	}
@@ -315,5 +318,58 @@ func TestExecuteStageNotSelectedPassThrough(t *testing.T) {
 	}
 	if f.count() != 0 {
 		t.Fatalf("expected guard not called when stage not selected, got %d hits", f.count())
+	}
+}
+
+func TestExecuteProtocolFromConsumerType(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name         string
+		consumerType string
+		want         string
+	}{
+		{name: "llm consumer", consumerType: "LLM", want: protocolLLM},
+		{name: "mcp consumer", consumerType: "MCP", want: protocolMCP},
+		{name: "a2a consumer", consumerType: "A2A", want: protocolA2A},
+		{name: "unset consumer", consumerType: "", want: protocolLLM},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
+			srv := newServer(t, f)
+			p := New(adapter.NewRegistry(), srv.URL, testTimeout, nil)
+
+			req := requestContext()
+			req.ConsumerType = tc.consumerType
+			in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), req, nil)
+			if _, err := p.Execute(context.Background(), in); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got := f.captured().Protocol; got != tc.want {
+				t.Fatalf("protocol = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestProtocolFor(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]string{
+		"LLM":      protocolLLM,
+		"llm":      protocolLLM,
+		"MCP":      protocolMCP,
+		"  mcp  ":  protocolMCP,
+		"A2A":      protocolA2A,
+		"":         protocolLLM,
+		"whatever": protocolLLM,
+	}
+	for raw, want := range cases {
+		if got := protocolFor(raw); got != want {
+			t.Fatalf("protocolFor(%q) = %q, want %q", raw, got, want)
+		}
 	}
 }

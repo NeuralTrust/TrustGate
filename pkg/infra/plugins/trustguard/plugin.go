@@ -32,8 +32,13 @@ const PluginName = "trustguard"
 const (
 	directionInput  = "input"
 	directionOutput = "output"
-	protocolLLM     = "llm"
 	contentTypeJSON = "application/json"
+)
+
+const (
+	protocolLLM = "llm"
+	protocolMCP = "mcp"
+	protocolA2A = "a2a"
 )
 
 const (
@@ -150,7 +155,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	body := GuardRequest{
 		Input:      GuardInput{Input: text},
 		Direction:  direction,
-		Protocol:   protocolLLM,
+		Protocol:   protocolFor(in.Request.ConsumerType),
 		SessionID:  in.Request.SessionID,
 		ConsumerID: cfg.ConsumerID,
 		Attributes: GuardAttributes{
@@ -203,6 +208,17 @@ func (p *Plugin) warn(ctx context.Context, msg string, attrs ...any) {
 		return
 	}
 	p.logger.WarnContext(ctx, msg, attrs...)
+}
+
+func protocolFor(consumerType string) string {
+	switch strings.ToLower(strings.TrimSpace(consumerType)) {
+	case protocolMCP:
+		return protocolMCP
+	case protocolA2A:
+		return protocolA2A
+	default:
+		return protocolLLM
+	}
 }
 
 func joinRequestText(creq *adapter.CanonicalRequest) string {

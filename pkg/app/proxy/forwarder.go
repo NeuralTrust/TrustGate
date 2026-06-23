@@ -370,6 +370,7 @@ func (f *forwarder) stampConsumerScope(in ForwardInput) {
 		return
 	}
 	in.Request.ConsumerID = in.Consumer.Consumer.ID.String()
+	in.Request.ConsumerType = string(in.Consumer.Consumer.Type)
 	if in.Request.GatewayID == "" {
 		in.Request.GatewayID = in.Consumer.Consumer.GatewayID.String()
 	}

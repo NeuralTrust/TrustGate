@@ -31,6 +31,7 @@ type RequestContext struct {
 	Context            context.Context
 	GatewayID          string
 	ConsumerID         string
+	ConsumerType       string
 	RegistryID         string
 	Headers            map[string][]string
 	Method             string
