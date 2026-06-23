@@ -142,7 +142,7 @@ would force constant rebases. Prefer the chain.)
 
 ## Phase 1b: Catalog metadata
 
-- [ ] 1b.1 In `pkg/app/plugins/catalog_metadata.go` `"semantic_cache"` entry: drop
+- [x] 1b.1 In `pkg/app/plugins/catalog_metadata.go` `"semantic_cache"` entry: drop
       `embedding.Required` and `api_key.Required`; add fields `mode`
       (`FieldTypeEnum [exact,semantic,both]` default `"semantic"`), `scope`
       (`FieldTypeEnum [consumer,global]` default `"consumer"`, mirroring the
@@ -153,7 +153,7 @@ would force constant rebases. Prefer the chain.)
       `bypass_header` (`FieldTypeString` default `"X-Cache-Bypass"`),
       `skip_if_tools_present` (`FieldTypeBoolean` default `true`), `skip_if_streaming`
       (`FieldTypeBoolean` default `false`).
-- [ ] 1b.2 Extend `pkg/app/plugins/catalog_test.go` to assert the new field
+- [x] 1b.2 Extend `pkg/app/plugins/catalog_test.go` to assert the new field
       keys/types/enums/defaults and that `embedding` is no longer `Required`.
 
 **Verify**: `go test -race ./pkg/app/plugins/... -run Catalog ; go vet ./pkg/app/plugins/...`.
