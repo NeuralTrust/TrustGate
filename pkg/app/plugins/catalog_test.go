@@ -69,7 +69,7 @@ func TestCatalogService_GroupsAndOrder(t *testing.T) {
 	for _, g := range catalog.Groups {
 		types = append(types, g.Type)
 	}
-	assert.Equal(t, []string{groupTrafficControl, groupQuota, groupRouting, groupOther}, types)
+	assert.Equal(t, []string{groupTrafficControl, groupQuota, groupRouting, groupPromptManagement}, types)
 
 	byType := make(map[string][]string)
 	for _, g := range catalog.Groups {
@@ -80,7 +80,7 @@ func TestCatalogService_GroupsAndOrder(t *testing.T) {
 	assert.ElementsMatch(t, []string{"rate_limiter", "request_size_limiter", "cors"}, byType[groupTrafficControl])
 	assert.ElementsMatch(t, []string{"token_rate_limiter", "cost_cap"}, byType[groupQuota])
 	assert.ElementsMatch(t, []string{"semantic_cache", "model_allowlist", "tool_allowlist"}, byType[groupRouting])
-	assert.Equal(t, []string{"prompt_template"}, byType[groupOther])
+	assert.Equal(t, []string{"prompt_template"}, byType[groupPromptManagement])
 }
 
 func TestCatalogService_EntriesHaveStagesAndSchema(t *testing.T) {
@@ -273,7 +273,7 @@ func TestToolDefinitionTransformation_CatalogEntry(t *testing.T) {
 	catalog := NewCatalogService(reg).Catalog()
 	require.Len(t, catalog.Groups, 1)
 	group := catalog.Groups[0]
-	assert.Equal(t, groupOther, group.Type)
+	assert.Equal(t, groupToolGovernance, group.Type)
 	require.Len(t, group.Items, 1)
 
 	entry := group.Items[0]
@@ -288,7 +288,7 @@ func TestToolDefinitionTransformationSchema_Fields(t *testing.T) {
 	meta, ok := pluginCatalogMeta["tool_definition_transformation"]
 	require.True(t, ok)
 	assert.Equal(t, "Tool Definition Transformation", meta.name)
-	assert.Equal(t, groupOther, meta.group)
+	assert.Equal(t, groupToolGovernance, meta.group)
 
 	fields := meta.schema.Fields
 
@@ -386,7 +386,7 @@ func TestTrustGuardSchema(t *testing.T) {
 	meta, ok := pluginCatalogMeta["trustguard"]
 	require.True(t, ok)
 	assert.Equal(t, "TrustGuard", meta.name)
-	assert.Equal(t, groupOther, meta.group)
+	assert.Equal(t, groupGuardrails, meta.group)
 
 	fields := meta.schema.Fields
 
@@ -518,7 +518,7 @@ func TestPromptTemplate_CatalogEntry(t *testing.T) {
 	var entry CatalogEntry
 	found := false
 	for _, g := range catalog.Groups {
-		if g.Type != groupOther {
+		if g.Type != groupPromptManagement {
 			continue
 		}
 		for _, item := range g.Items {
@@ -529,7 +529,7 @@ func TestPromptTemplate_CatalogEntry(t *testing.T) {
 		}
 	}
 
-	require.True(t, found, "prompt_template missing from the Other group")
+	require.True(t, found, "prompt_template missing from the Prompt Management group")
 	assert.Equal(t, "Prompt Template", entry.Name)
 	assert.Contains(t, entry.SupportedModes, policy.ModeEnforce)
 	assert.Equal(t, policy.DefaultMode, entry.DefaultMode)
@@ -541,7 +541,7 @@ func TestPromptTemplateSchema_Tree(t *testing.T) {
 	meta, ok := pluginCatalogMeta["prompt_template"]
 	require.True(t, ok)
 	assert.Equal(t, "Prompt Template", meta.name)
-	assert.Equal(t, groupOther, meta.group)
+	assert.Equal(t, groupPromptManagement, meta.group)
 
 	fields := meta.schema.Fields
 
