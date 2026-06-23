@@ -5,6 +5,7 @@ metadata:
 resources:
 - ../../base
 - secretproviderclass/agentgateway-secrets.yaml
+- cloudflare-backendpolicy.yaml
 # - patches/hpa-patch.yaml
 patchesStrategicMerge:
 - patches/replicas-patch.yaml
