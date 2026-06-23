@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
 	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/tool_call_validation"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
@@ -36,6 +37,7 @@ func newTestPluginRegistry(t *testing.T) appplugins.Registry {
 		Cache:    cacheClient,
 		Adapters: adapter.NewRegistry(),
 		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Cfg:      &config.Config{},
 	})
 	require.NoError(t, err)
 	return reg

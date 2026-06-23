@@ -94,6 +94,8 @@ const (
 
 	defaultLogLevel  = "INFO"
 	defaultLogFormat = "json"
+
+	defaultTrustGuardTimeout = 15 * time.Second
 )
 
 type Config struct {
@@ -112,6 +114,7 @@ type Config struct {
 	Catalog      CatalogConfig
 	CORS         CORSConfig
 	Logger       LoggerConfig
+	TrustGuard   TrustGuardConfig
 }
 
 type ServerConfig struct {
@@ -238,6 +241,11 @@ type LoggerConfig struct {
 	Format string
 }
 
+type TrustGuardConfig struct {
+	BaseURL string
+	Timeout time.Duration
+}
+
 func LoadConfig() (*Config, error) {
 	cfg := &Config{
 		AppEnv:       getEnv("APP_ENV", defaultAppEnv),
@@ -255,6 +263,7 @@ func LoadConfig() (*Config, error) {
 		Catalog:      getCatalogConfig(),
 		CORS:         getCORSConfig(),
 		Logger:       getLoggerConfig(),
+		TrustGuard:   getTrustGuardConfig(),
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -470,6 +479,13 @@ func getLoggerConfig() LoggerConfig {
 	return LoggerConfig{
 		Level:  getLogLevel(),
 		Format: getEnv("LOG_FORMAT", defaultLogFormat),
+	}
+}
+
+func getTrustGuardConfig() TrustGuardConfig {
+	return TrustGuardConfig{
+		BaseURL: getEnv("TRUSTGUARD_BASE_URL", ""),
+		Timeout: getEnvDuration("TRUSTGUARD_TIMEOUT", defaultTrustGuardTimeout),
 	}
 }
 
