@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -35,6 +36,7 @@ import (
 const (
 	defaultIndexName = "semantic_cache"
 	keyPrefix        = "semantic_cache:"
+	exactKeyPrefix   = "sc_exact:" // #nosec G101 -- redis key prefix, not a credential
 )
 
 // Candidate is a cache hit returned by Lookup.
@@ -58,6 +60,8 @@ type Store interface {
 	EnsureIndex(ctx context.Context, dimension int) error
 	Lookup(ctx context.Context, ruleID string, emb *embedding.Embedding, topK int) ([]Candidate, error)
 	Store(ctx context.Context, entry Entry) error
+	GetExact(ctx context.Context, ruleID, key string) (string, bool, error)
+	PutExact(ctx context.Context, ruleID, key, response string, ttl time.Duration) error
 }
 
 var _ Store = (*RedisStore)(nil)
@@ -191,6 +195,34 @@ func (s *RedisStore) Store(ctx context.Context, entry Entry) error {
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("semantic: store cache entry: %w", err)
+	}
+	return nil
+}
+
+// GetExact returns the response cached under the exact key for the rule. A miss
+// or a transient backend error degrades to ("", false, nil) so the caller falls
+// through to the upstream, matching Lookup's degrade-on-error contract.
+func (s *RedisStore) GetExact(ctx context.Context, ruleID, key string) (string, bool, error) {
+	full := exactKeyPrefix + hashID(ruleID) + ":" + key
+	val, err := s.client.Get(ctx, full).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", false, nil
+	}
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Debug("semantic cache exact get failed", slog.String("error", err.Error()))
+		}
+		return "", false, nil
+	}
+	return val, true, nil
+}
+
+// PutExact stores a response under the exact key for the rule. A TTL of zero or
+// less stores the entry without expiry.
+func (s *RedisStore) PutExact(ctx context.Context, ruleID, key, response string, ttl time.Duration) error {
+	full := exactKeyPrefix + hashID(ruleID) + ":" + key
+	if err := s.client.Set(ctx, full, response, ttl).Err(); err != nil {
+		return fmt.Errorf("semantic: put exact entry: %w", err)
 	}
 	return nil
 }

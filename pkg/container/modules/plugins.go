@@ -16,6 +16,7 @@ package modules
 
 import (
 	"log/slog"
+	"os"
 
 	cataloghttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/catalog"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
@@ -23,6 +24,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/semantic"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	embeddingfactory "github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/cors"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/modelallowlist"
@@ -37,8 +39,11 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/tooltransform"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/dig"
 )
+
+const vectorStoreEnv = "SEMANTIC_CACHE_VECTOR_STORE"
 
 type pluginParams struct {
 	dig.In
@@ -47,6 +52,7 @@ type pluginParams struct {
 	Locator  embeddingfactory.EmbeddingServiceLocator
 	Logger   *slog.Logger
 	Pricing  appcatalog.PricingResolver
+	DB       *database.Connection `optional:"true"`
 }
 
 func Plugins(c *container.Container) error {
@@ -69,7 +75,14 @@ func Plugins(c *container.Container) error {
 func newPluginRegistry(p pluginParams) (appplugins.Registry, error) {
 	reg := appplugins.NewRegistry()
 	redisClient := p.Cache.RedisClient()
-	store := semantic.NewRedisStore(redisClient, p.Logger)
+	store, err := semantic.NewStore(vectorStoreKind(), semantic.Deps{
+		Redis:  redisClient,
+		Pool:   poolOrNil(p.DB),
+		Logger: p.Logger,
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	catalog := []appplugins.Plugin{
 		ratelimit.New(redisClient),
@@ -90,4 +103,18 @@ func newPluginRegistry(p pluginParams) (appplugins.Registry, error) {
 		}
 	}
 	return reg, nil
+}
+
+func vectorStoreKind() string {
+	if kind := os.Getenv(vectorStoreEnv); kind != "" {
+		return kind
+	}
+	return "redis"
+}
+
+func poolOrNil(db *database.Connection) *pgxpool.Pool {
+	if db == nil {
+		return nil
+	}
+	return db.Pool
 }

@@ -15,10 +15,57 @@
 package semantic
 
 import (
+	"context"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func newRedisStore(t *testing.T) (*RedisStore, *miniredis.Miniredis) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	return NewRedisStore(rdb, nil), mr
+}
+
+func TestRedisStoreExactRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	store, mr := newRedisStore(t)
+
+	const (
+		rule = "registry|c:consumer-1"
+		key  = "abc123"
+	)
+
+	val, hit, err := store.GetExact(ctx, rule, key)
+	require.NoError(t, err)
+	assert.False(t, hit)
+	assert.Empty(t, val)
+
+	require.NoError(t, store.PutExact(ctx, rule, key, "cached body", time.Minute))
+
+	val, hit, err = store.GetExact(ctx, rule, key)
+	require.NoError(t, err)
+	assert.True(t, hit)
+	assert.Equal(t, "cached body", val)
+
+	val, hit, err = store.GetExact(ctx, rule, "missing")
+	require.NoError(t, err)
+	assert.False(t, hit)
+	assert.Empty(t, val)
+
+	require.False(t, strings.HasPrefix(exactKeyPrefix, keyPrefix))
+	for _, k := range mr.Keys() {
+		assert.True(t, strings.HasPrefix(k, exactKeyPrefix))
+		assert.False(t, strings.HasPrefix(k, keyPrefix))
+	}
+}
 
 func TestParseSearch(t *testing.T) {
 	tests := []struct {

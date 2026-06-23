@@ -383,6 +383,84 @@ func TestToolAllowlistSchema(t *testing.T) {
 	assert.Equal(t, []string{"consumer", "global"}, scope.Enum)
 }
 
+func TestSemanticCacheSchema(t *testing.T) {
+	meta, ok := pluginCatalogMeta["semantic_cache"]
+	require.True(t, ok)
+	assert.Equal(t, "Semantic Cache", meta.name)
+	assert.Equal(t, groupRouting, meta.group)
+
+	fields := meta.schema.Fields
+
+	mode, ok := fieldByKey(fields, "mode")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeEnum, mode.Type)
+	assert.Equal(t, []string{"exact", "semantic", "both"}, mode.Enum)
+	assert.Equal(t, "semantic", mode.Default)
+
+	scope, ok := fieldByKey(fields, "scope")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeEnum, scope.Type)
+	assert.Equal(t, []string{"consumer", "global"}, scope.Enum)
+	assert.Equal(t, "consumer", scope.Default)
+
+	vectorStore, ok := fieldByKey(fields, "vector_store")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeEnum, vectorStore.Type)
+	assert.Equal(t, []string{"redis", "pgvector", "in_memory"}, vectorStore.Enum)
+	assert.Equal(t, "redis", vectorStore.Default)
+
+	ttlSeconds, ok := fieldByKey(fields, "ttl_seconds")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeInteger, ttlSeconds.Type)
+
+	embeddingProvider, ok := fieldByKey(fields, "embedding_provider")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeString, embeddingProvider.Type)
+
+	embeddingModel, ok := fieldByKey(fields, "embedding_model")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeString, embeddingModel.Type)
+
+	cacheOnlyOnStatus, ok := fieldByKey(fields, "cache_only_on_status")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeArray, cacheOnlyOnStatus.Type)
+	require.NotNil(t, cacheOnlyOnStatus.Item)
+	assert.Equal(t, FieldTypeInteger, cacheOnlyOnStatus.Item.Type)
+	assert.Equal(t, []int{200}, cacheOnlyOnStatus.Default)
+
+	bypassHeader, ok := fieldByKey(fields, "bypass_header")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeString, bypassHeader.Type)
+	assert.Equal(t, "X-Cache-Bypass", bypassHeader.Default)
+
+	skipIfTools, ok := fieldByKey(fields, "skip_if_tools_present")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeBoolean, skipIfTools.Type)
+	assert.Equal(t, true, skipIfTools.Default)
+
+	skipIfStreaming, ok := fieldByKey(fields, "skip_if_streaming")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeBoolean, skipIfStreaming.Type)
+	assert.Equal(t, false, skipIfStreaming.Default)
+
+	embedding, ok := fieldByKey(fields, "embedding")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeObject, embedding.Type)
+	assert.False(t, embedding.Required)
+
+	apiKey, ok := fieldByKey(embedding.Fields, "api_key")
+	require.True(t, ok)
+	assert.False(t, apiKey.Required)
+
+	similarityThreshold, ok := fieldByKey(fields, "similarity_threshold")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeNumber, similarityThreshold.Type)
+
+	ttl, ok := fieldByKey(fields, "ttl")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeDuration, ttl.Type)
+}
+
 func TestPluginCatalogMeta_CoversBuiltins(t *testing.T) {
 	validGroups := map[string]struct{}{}
 	for _, g := range groupOrder {

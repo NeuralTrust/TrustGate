@@ -4,6 +4,7 @@ package mocks
 
 import (
 	context "context"
+	time "time"
 
 	embedding "github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
 	semantic "github.com/NeuralTrust/TrustGate/pkg/infra/cache/semantic"
@@ -70,6 +71,71 @@ func (_c *Store_EnsureIndex_Call) RunAndReturn(run func(context.Context, int) er
 	return _c
 }
 
+// GetExact provides a mock function with given fields: ctx, ruleID, key
+func (_m *Store) GetExact(ctx context.Context, ruleID string, key string) (string, bool, error) {
+	ret := _m.Called(ctx, ruleID, key)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetExact")
+	}
+
+	var r0 string
+	var r1 bool
+	var r2 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, string) (string, bool, error)); ok {
+		return rf(ctx, ruleID, key)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string, string) string); ok {
+		r0 = rf(ctx, ruleID, key)
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string, string) bool); ok {
+		r1 = rf(ctx, ruleID, key)
+	} else {
+		r1 = ret.Get(1).(bool)
+	}
+
+	if rf, ok := ret.Get(2).(func(context.Context, string, string) error); ok {
+		r2 = rf(ctx, ruleID, key)
+	} else {
+		r2 = ret.Error(2)
+	}
+
+	return r0, r1, r2
+}
+
+// Store_GetExact_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetExact'
+type Store_GetExact_Call struct {
+	*mock.Call
+}
+
+// GetExact is a helper method to define mock.On call
+//   - ctx context.Context
+//   - ruleID string
+//   - key string
+func (_e *Store_Expecter) GetExact(ctx interface{}, ruleID interface{}, key interface{}) *Store_GetExact_Call {
+	return &Store_GetExact_Call{Call: _e.mock.On("GetExact", ctx, ruleID, key)}
+}
+
+func (_c *Store_GetExact_Call) Run(run func(ctx context.Context, ruleID string, key string)) *Store_GetExact_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string), args[2].(string))
+	})
+	return _c
+}
+
+func (_c *Store_GetExact_Call) Return(_a0 string, _a1 bool, _a2 error) *Store_GetExact_Call {
+	_c.Call.Return(_a0, _a1, _a2)
+	return _c
+}
+
+func (_c *Store_GetExact_Call) RunAndReturn(run func(context.Context, string, string) (string, bool, error)) *Store_GetExact_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Lookup provides a mock function with given fields: ctx, ruleID, emb, topK
 func (_m *Store) Lookup(ctx context.Context, ruleID string, emb *embedding.Embedding, topK int) ([]semantic.Candidate, error) {
 	ret := _m.Called(ctx, ruleID, emb, topK)
@@ -127,6 +193,56 @@ func (_c *Store_Lookup_Call) Return(_a0 []semantic.Candidate, _a1 error) *Store_
 }
 
 func (_c *Store_Lookup_Call) RunAndReturn(run func(context.Context, string, *embedding.Embedding, int) ([]semantic.Candidate, error)) *Store_Lookup_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// PutExact provides a mock function with given fields: ctx, ruleID, key, response, ttl
+func (_m *Store) PutExact(ctx context.Context, ruleID string, key string, response string, ttl time.Duration) error {
+	ret := _m.Called(ctx, ruleID, key, response, ttl)
+
+	if len(ret) == 0 {
+		panic("no return value specified for PutExact")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, time.Duration) error); ok {
+		r0 = rf(ctx, ruleID, key, response, ttl)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Store_PutExact_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'PutExact'
+type Store_PutExact_Call struct {
+	*mock.Call
+}
+
+// PutExact is a helper method to define mock.On call
+//   - ctx context.Context
+//   - ruleID string
+//   - key string
+//   - response string
+//   - ttl time.Duration
+func (_e *Store_Expecter) PutExact(ctx interface{}, ruleID interface{}, key interface{}, response interface{}, ttl interface{}) *Store_PutExact_Call {
+	return &Store_PutExact_Call{Call: _e.mock.On("PutExact", ctx, ruleID, key, response, ttl)}
+}
+
+func (_c *Store_PutExact_Call) Run(run func(ctx context.Context, ruleID string, key string, response string, ttl time.Duration)) *Store_PutExact_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(string), args[4].(time.Duration))
+	})
+	return _c
+}
+
+func (_c *Store_PutExact_Call) Return(_a0 error) *Store_PutExact_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Store_PutExact_Call) RunAndReturn(run func(context.Context, string, string, string, time.Duration) error) *Store_PutExact_Call {
 	_c.Call.Return(run)
 	return _c
 }
