@@ -18,10 +18,13 @@ package plugins
 // here so it stays isolated from plugin execution code and can evolve without
 // touching the plugin implementations.
 const (
-	groupTrafficControl = "Traffic Control"
-	groupQuota          = "Quota"
-	groupRouting        = "Routing"
-	groupOther          = "Other"
+	groupTrafficControl   = "Traffic Control"
+	groupQuota            = "Quota"
+	groupRouting          = "Routing"
+	groupPromptManagement = "Prompt Management"
+	groupToolGovernance   = "Tool Governance"
+	groupGuardrails       = "Guardrails"
+	groupOther            = "Other"
 )
 
 // groupOrder fixes the order groups appear in the catalog response.
@@ -29,6 +32,9 @@ var groupOrder = []string{
 	groupTrafficControl,
 	groupQuota,
 	groupRouting,
+	groupPromptManagement,
+	groupToolGovernance,
+	groupGuardrails,
 	groupOther,
 }
 
@@ -687,7 +693,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	},
 	"tool_call_validation": {
 		name:        "Tool Call Validation",
-		group:       groupOther,
+		group:       groupToolGovernance,
 		description: "Validate the tool calls an LLM returns against per-tool rules, rejecting or redacting responses that violate them.",
 		schema: SettingsSchema{
 			Fields: []Field{
@@ -792,7 +798,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	},
 	"prompt_template": {
 		name:        "Prompt Template",
-		group:       groupOther,
+		group:       groupPromptManagement,
 		description: "Inject context-bound system prompts (Mode A) and/or render client-referenced named, versioned templates (Mode B) into the request before it reaches the model.",
 		schema: SettingsSchema{
 			Fields: []Field{
@@ -1010,7 +1016,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	},
 	"tool_definition_transformation": {
 		name:        "Tool Definition Transformation",
-		group:       groupOther,
+		group:       groupToolGovernance,
 		description: "Reshape tool definitions on the request leg before they reach the model: patch a matched tool's JSON schema, override its description, and inject operator-authored tools. This is a governance and steering layer, not an access gate.",
 		schema: SettingsSchema{
 			Fields: []Field{
@@ -1114,7 +1120,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	},
 	"trustguard": {
 		name:        "TrustGuard",
-		group:       groupOther,
+		group:       groupGuardrails,
 		description: "Inspect request and/or response content with the external TrustGuard guardrail service and block content it flags. Fails open on any transport error, timeout, non-2xx response, or missing base URL. Streaming responses cannot be blocked in realtime.",
 		schema: SettingsSchema{
 			Fields: []Field{
