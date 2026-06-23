@@ -14,6 +14,8 @@
 
 package trustguard
 
+import "github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+
 type GuardRequest struct {
 	Input      GuardInput      `json:"input"`
 	Direction  string          `json:"direction"`
@@ -62,4 +64,21 @@ type GuardFinding struct {
 	DetectorID    string  `json:"detector_id,omitempty"`
 	Action        string  `json:"action,omitempty"`
 	Details       any     `json:"details,omitempty"`
+}
+
+type guardData struct {
+	Direction     string `json:"direction,omitempty"`
+	Status        string `json:"status,omitempty"`
+	Decision      string `json:"decision,omitempty"`
+	TraceID       string `json:"trace_id,omitempty"`
+	RequestID     string `json:"request_id,omitempty"`
+	FindingsCount int    `json:"findings_count,omitempty"`
+	FailedOpen    bool   `json:"failed_open,omitempty"`
+}
+
+func setExtras(event *metrics.EventContext, data guardData) {
+	if event == nil {
+		return
+	}
+	event.SetExtras(data)
 }
