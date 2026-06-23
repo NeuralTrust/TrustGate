@@ -41,6 +41,7 @@ type chainIdentityResolver struct {
 	intro       appauth.IntrospectionValidator
 	mtls        appauth.MTLSValidator
 	certs       appauth.ClientCertificateExtractor
+	session     appauth.SessionTokenVerifier
 	xfccPeers   []*net.IPNet
 }
 
@@ -52,6 +53,7 @@ func NewChainIdentityResolver(
 	introValidator appauth.IntrospectionValidator,
 	mtlsValidator appauth.MTLSValidator,
 	certExtractor appauth.ClientCertificateExtractor,
+	sessionVerifier appauth.SessionTokenVerifier,
 	trustXFCCFrom []string,
 ) IdentityResolver {
 	return &chainIdentityResolver{
@@ -62,6 +64,7 @@ func NewChainIdentityResolver(
 		intro:       introValidator,
 		mtls:        mtlsValidator,
 		certs:       certExtractor,
+		session:     sessionVerifier,
 		xfccPeers:   parseTrustedPeers(trustXFCCFrom),
 	}
 }
@@ -166,9 +169,49 @@ func (r *chainIdentityResolver) resolveBearer(ctx context.Context, token string,
 		return Identity{}, resolver.ErrUnauthenticated
 	}
 	if isJWT(token) {
+		if r.session != nil && unverifiedIssuer(token) == r.session.Issuer() {
+			return r.resolveSession(ctx, token, candidates, scope)
+		}
 		return r.resolveJWT(ctx, token, candidates, scope)
 	}
 	return r.resolveOpaque(ctx, token, candidates, scope)
+}
+
+func (r *chainIdentityResolver) resolveSession(ctx context.Context, token string, candidates []*authdomain.Auth, scope authScope) (Identity, error) {
+	if scope == nil && r.paths != nil {
+		return Identity{}, resolver.ErrUnauthenticated
+	}
+	principal, err := r.session.Verify(ctx, token)
+	if err != nil {
+		return Identity{}, resolver.ErrUnauthenticated
+	}
+	if principal.Subject == "" {
+		return Identity{}, resolver.ErrUnauthenticated
+	}
+	if use, _ := principal.Claims["token_use"].(string); use != "mcp_session" {
+		return Identity{}, resolver.ErrUnauthenticated
+	}
+	authID, _ := principal.Claims["authid"].(string)
+	if authID == "" {
+		return Identity{}, resolver.ErrUnauthenticated
+	}
+	for _, a := range candidates {
+		if a.ID.String() != authID || !scope.allows(a.ID) {
+			continue
+		}
+		cfg := a.Config.OAuth2
+		if cfg == nil {
+			return Identity{}, resolver.ErrUnauthenticated
+		}
+		if !identity.AudienceMatches(identity.AudiencesFromClaim(principal.Claims["aud"]), cfg.Audiences) {
+			return Identity{}, resolver.ErrUnauthenticated
+		}
+		if !principal.HasScopes(cfg.RequiredScopes) {
+			return Identity{}, resolver.ErrUnauthenticated
+		}
+		return Identity{GatewayID: a.GatewayID, AuthID: a.ID, Principal: principal}, nil
+	}
+	return Identity{}, resolver.ErrUnauthenticated
 }
 
 func (r *chainIdentityResolver) resolveJWT(ctx context.Context, token string, candidates []*authdomain.Auth, scope authScope) (Identity, error) {

@@ -43,7 +43,7 @@ type PendingAuthorization struct {
 	CodeChallenge       string `json:"code_challenge"`
 	CodeChallengeMethod string `json:"code_challenge_method"`
 	Scope               string `json:"scope"`
-	CodeVerifier         string `json:"code_verifier"`
+	CodeVerifier        string `json:"code_verifier"`
 	Resource            string `json:"resource,omitempty"`
 	AuthID              string `json:"auth_id,omitempty"`
 }
@@ -53,6 +53,20 @@ type CodeGrant struct {
 	RedirectURI   string         `json:"redirect_uri"`
 	CodeChallenge string         `json:"code_challenge"`
 	Token         map[string]any `json:"token"`
+	Subject       string         `json:"subject,omitempty"`
+	AuthID        string         `json:"auth_id,omitempty"`
+	GatewayID     string         `json:"gateway_id,omitempty"`
+	Audiences     []string       `json:"audiences,omitempty"`
+	Scopes        []string       `json:"scopes,omitempty"`
+	SessionMode   bool           `json:"session_mode,omitempty"`
+}
+
+type SessionRecord struct {
+	Subject   string   `json:"subject"`
+	Scopes    []string `json:"scopes,omitempty"`
+	GatewayID string   `json:"gateway_id"`
+	AuthID    string   `json:"auth_id"`
+	Audiences []string `json:"audiences,omitempty"`
 }
 
 type RegisteredGatewayClient struct {
@@ -68,6 +82,8 @@ type FlowStore interface {
 	TakeCode(ctx context.Context, code string) (*CodeGrant, error)
 	SaveGatewayClient(ctx context.Context, c RegisteredGatewayClient) error
 	GetGatewayClient(ctx context.Context, clientID string) (*RegisteredGatewayClient, error)
+	SaveSession(ctx context.Context, refreshToken string, rec SessionRecord) error
+	TakeSession(ctx context.Context, refreshToken string) (*SessionRecord, error)
 }
 
 type AuthorizeRequest struct {
