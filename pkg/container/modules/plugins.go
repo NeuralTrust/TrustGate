@@ -25,6 +25,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/semantic"
 	embeddingfactory "github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/cors"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/costcap"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/modelallowlist"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pertoolratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/prompttemplate"
@@ -74,6 +75,7 @@ func newPluginRegistry(p pluginParams) (appplugins.Registry, error) {
 	catalog := []appplugins.Plugin{
 		ratelimit.New(redisClient),
 		tokenratelimit.New(redisClient, p.Adapters, p.Pricing),
+		costcap.New(p.Pricing),
 		pertoolratelimit.New(redisClient, p.Adapters),
 		requestsize.New(),
 		cors.New(),

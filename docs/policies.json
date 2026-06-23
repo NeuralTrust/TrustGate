@@ -179,8 +179,8 @@
       "items": [
         {
           "slug": "token_rate_limiter",
-          "name": "Token & Dollar Budget + Cost Cap",
-          "description": "Enforce LLM token or dollar budgets (aggregate or per-model) over fixed windows, plus a stateless per-request cost cap on model list price. Budgets and the cost cap apply gateway-wide when the policy is global, otherwise per consumer. All fields are optional; a legacy window-only config keeps its original aggregate token-budget behaviour.",
+          "name": "LLM Budget",
+          "description": "Cap LLM spend with token or dollar budgets over time windows, either as one aggregate counter or per-model rules. Applies gateway-wide for global policies, otherwise per consumer.",
           "mandatory_stages": [
             "pre_request",
             "post_response"
@@ -201,13 +201,6 @@
                   "tokens",
                   "dollars"
                 ]
-              },
-              {
-                "key": "per_model",
-                "label": "Per Model",
-                "type": "boolean",
-                "description": "Account budgets per model using rules instead of a single aggregate counter.",
-                "default": false
               },
               {
                 "key": "counting",
@@ -309,95 +302,115 @@
                 "default": false
               },
               {
-                "key": "cost_cap",
-                "label": "Cost Cap",
-                "type": "object",
-                "description": "Stateless per-request guard that rejects or downgrades models whose list price per 1k tokens exceeds the configured ceiling.",
-                "fields": [
-                  {
-                    "key": "enabled",
-                    "label": "Enabled",
-                    "type": "boolean",
-                    "description": "Turn the cost cap on.",
-                    "default": false
-                  },
-                  {
-                    "key": "max_input_cost_per_1k_tokens",
-                    "label": "Max Input Cost Per 1k Tokens",
-                    "type": "number",
-                    "description": "Global input-price ceiling in USD per 1k tokens."
-                  },
-                  {
-                    "key": "max_output_cost_per_1k_tokens",
-                    "label": "Max Output Cost Per 1k Tokens",
-                    "type": "number",
-                    "description": "Global output-price ceiling in USD per 1k tokens."
-                  },
-                  {
-                    "key": "per_model_overrides",
-                    "label": "Per-Model Overrides",
-                    "type": "map",
-                    "description": "Per-model ceilings keyed by model slug or wildcard pattern.",
-                    "value": {
-                      "key": "ceiling",
-                      "label": "Ceiling",
-                      "type": "object",
-                      "fields": [
-                        {
-                          "key": "max_input_cost_per_1k_tokens",
-                          "label": "Max Input Cost Per 1k Tokens",
-                          "type": "number",
-                          "description": "Input-price ceiling in USD per 1k tokens."
-                        },
-                        {
-                          "key": "max_output_cost_per_1k_tokens",
-                          "label": "Max Output Cost Per 1k Tokens",
-                          "type": "number",
-                          "description": "Output-price ceiling in USD per 1k tokens."
-                        }
-                      ]
+                "key": "custom_pricing",
+                "label": "Custom Pricing",
+                "type": "map",
+                "description": "Per-token USD rates keyed by model slug or wildcard pattern, consulted before the builtin table. Used for dollar budgets.",
+                "value": {
+                  "key": "price",
+                  "label": "Price",
+                  "type": "object",
+                  "fields": [
+                    {
+                      "key": "input",
+                      "label": "Input",
+                      "type": "number",
+                      "description": "Input price in USD per token."
+                    },
+                    {
+                      "key": "output",
+                      "label": "Output",
+                      "type": "number",
+                      "description": "Output price in USD per token."
                     }
-                  },
-                  {
-                    "key": "behavior_on_violation",
-                    "label": "Behavior On Violation",
-                    "type": "enum",
-                    "description": "Action taken when a model exceeds its cost ceiling.",
-                    "default": "reject",
-                    "enum": [
-                      "reject",
-                      "downgrade"
-                    ]
-                  },
-                  {
-                    "key": "downgrade_to",
-                    "label": "Downgrade To",
-                    "type": "string",
-                    "description": "Target model used when behavior is downgrade. Must be on the same provider."
-                  },
-                  {
-                    "key": "unknown_model",
-                    "label": "Unknown Model",
-                    "type": "enum",
-                    "description": "How to treat a model with no resolvable price.",
-                    "default": "reject",
-                    "enum": [
-                      "reject",
-                      "pass_through",
-                      "assume_max"
-                    ]
-                  }
+                  ]
+                }
+              },
+              {
+                "key": "group_by_header",
+                "label": "Group By Header",
+                "type": "string",
+                "description": "Optional request header whose value sub-partitions the budget within the policy scope (e.g. X-User-Id). When empty, the budget is counted per gateway (global) or per consumer."
+              }
+            ]
+          }
+        },
+        {
+          "slug": "cost_cap",
+          "name": "LLM Cost Cap",
+          "description": "Stateless per-request guard that rejects or downgrades models whose list price per 1k tokens exceeds a configured ceiling.",
+          "mandatory_stages": [
+            "pre_request"
+          ],
+          "supported_stages": [
+            "pre_request"
+          ],
+          "settings_schema": {
+            "fields": [
+              {
+                "key": "max_input_cost_per_1k_tokens",
+                "label": "Max Input Cost Per 1k Tokens",
+                "type": "number",
+                "description": "Global input-price ceiling in USD per 1k tokens."
+              },
+              {
+                "key": "max_output_cost_per_1k_tokens",
+                "label": "Max Output Cost Per 1k Tokens",
+                "type": "number",
+                "description": "Global output-price ceiling in USD per 1k tokens."
+              },
+              {
+                "key": "per_model_overrides",
+                "label": "Per-Model Overrides",
+                "type": "map",
+                "description": "Per-model ceilings keyed by model slug or wildcard pattern. The most specific pattern wins.",
+                "value": {
+                  "key": "ceiling",
+                  "label": "Ceiling",
+                  "type": "object",
+                  "fields": [
+                    {
+                      "key": "max_input_cost_per_1k_tokens",
+                      "label": "Max Input Cost Per 1k Tokens",
+                      "type": "number",
+                      "description": "Input-price ceiling in USD per 1k tokens."
+                    },
+                    {
+                      "key": "max_output_cost_per_1k_tokens",
+                      "label": "Max Output Cost Per 1k Tokens",
+                      "type": "number",
+                      "description": "Output-price ceiling in USD per 1k tokens."
+                    }
+                  ]
+                }
+              },
+              {
+                "key": "behavior_on_violation",
+                "label": "Behavior On Violation",
+                "type": "enum",
+                "description": "Action taken when a model exceeds its cost ceiling under enforce mode.",
+                "default": "reject",
+                "enum": [
+                  "reject",
+                  "downgrade"
                 ]
               },
               {
-                "key": "pricing_table",
-                "label": "Pricing Table",
+                "key": "downgrade_to",
+                "label": "Downgrade To",
+                "type": "string",
+                "description": "Target model used when behavior is downgrade. Must be on the same provider."
+              },
+              {
+                "key": "unknown_model",
+                "label": "Unknown Model",
                 "type": "enum",
-                "description": "Price source: builtin catalog or a custom overlay.",
-                "default": "builtin",
+                "description": "How to treat a model with no resolvable price.",
+                "default": "reject",
                 "enum": [
-                  "builtin",
-                  "custom"
+                  "reject",
+                  "pass_through",
+                  "assume_max"
                 ]
               },
               {
@@ -424,38 +437,6 @@
                     }
                   ]
                 }
-              },
-              {
-                "key": "window",
-                "label": "Window",
-                "type": "object",
-                "description": "Legacy single-window aggregate token budget, kept for backward compatibility.",
-                "fields": [
-                  {
-                    "key": "unit",
-                    "label": "Unit",
-                    "type": "enum",
-                    "description": "Time unit of the budget window.",
-                    "enum": [
-                      "second",
-                      "minute",
-                      "hour",
-                      "day"
-                    ]
-                  },
-                  {
-                    "key": "max",
-                    "label": "Max Tokens",
-                    "type": "integer",
-                    "description": "Maximum number of tokens allowed within the window."
-                  }
-                ]
-              },
-              {
-                "key": "group_by_header",
-                "label": "Group By Header",
-                "type": "string",
-                "description": "Optional request header whose value sub-partitions the budget within the policy scope (e.g. X-User-Id). When empty, the budget is counted per gateway (global) or per consumer."
               }
             ]
           }

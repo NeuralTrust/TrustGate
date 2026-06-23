@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tokenratelimit
+package llmcost
 
 import (
 	"testing"
@@ -44,7 +44,7 @@ func TestGlobMatch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, globMatch(tt.pattern, tt.input))
+			assert.Equal(t, tt.want, GlobMatch(tt.pattern, tt.input))
 		})
 	}
 }
@@ -54,7 +54,7 @@ func TestBestMatchExactWins(t *testing.T) {
 		"claude-opus-*": 1,
 		"claude-opus-4": 2,
 	}
-	got, ok := bestMatch(m, "claude-opus-4")
+	got, ok := BestMatch(m, "claude-opus-4")
 	require.True(t, ok)
 	assert.Equal(t, 2, got)
 }
@@ -64,7 +64,7 @@ func TestBestMatchMostSpecificGlobWins(t *testing.T) {
 		"claude-*":      1,
 		"claude-opus-*": 2,
 	}
-	got, ok := bestMatch(m, "claude-opus-4")
+	got, ok := BestMatch(m, "claude-opus-4")
 	require.True(t, ok)
 	assert.Equal(t, 2, got)
 }
@@ -73,7 +73,7 @@ func TestBestMatchNoMatch(t *testing.T) {
 	m := map[string]int{
 		"gpt-*": 1,
 	}
-	_, ok := bestMatch(m, "claude-opus-4")
+	_, ok := BestMatch(m, "claude-opus-4")
 	assert.False(t, ok)
 }
 
@@ -81,12 +81,12 @@ func TestBestMatchSingleGlob(t *testing.T) {
 	m := map[string]int{
 		"gpt-5-*": 7,
 	}
-	got, ok := bestMatch(m, "gpt-5-mini")
+	got, ok := BestMatch(m, "gpt-5-mini")
 	require.True(t, ok)
 	assert.Equal(t, 7, got)
 }
 
 func TestBestMatchEmptyMap(t *testing.T) {
-	_, ok := bestMatch(map[string]int{}, "gpt-5")
+	_, ok := BestMatch(map[string]int{}, "gpt-5")
 	assert.False(t, ok)
 }
