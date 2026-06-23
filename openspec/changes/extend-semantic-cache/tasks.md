@@ -161,42 +161,42 @@ would force constant rebases. Prefer the chain.)
 
 ## Phase 2: Scope partitioning + streaming + tools gates
 
-- [ ] 2.1 In `plugin.go` add `partitionKey(cfg *config, scope appplugins.RuntimeScope,
+- [x] 2.1 In `plugin.go` add `partitionKey(cfg *config, scope appplugins.RuntimeScope,
       req *infracontext.RequestContext) (string, bool)` and `registryNamespace(req)`
       per `design.md`: `global` → `registry+"|g:"+scope.GatewayID`; default
       (`consumer`) → `registry+"|c:"+scope.ConsumerID`; empty subject id → `("",false)`
       (pass-through). Read ids from `in.Scope`, registry from `req` (`RegistryID`,
       gateway fallback).
-- [ ] 2.2 Replace both `scopeID(in.Request)` call sites (`preRequest` Lookup,
+- [x] 2.2 Replace both `scopeID(in.Request)` call sites (`preRequest` Lookup,
       `postResponse` Store) with the `partitionKey` result; delete `scopeID`. On
       `ok==false` record `Degraded:true, DegradedReason:"no_partition"` and return
       `missResult()` (pre) / `passThrough()` (post). Thread `partition` through both
       stage handlers' signatures.
-- [ ] 2.3 Add the `skip_if_streaming` request-side gate into `bypassed`
+- [x] 2.3 Add the `skip_if_streaming` request-side gate into `bypassed`
       (`cfg.SkipIfStreaming && p.requestWantsStream(req)`); add
       `requestWantsStream(req)` decoding the canonical request `Stream` flag with a
       generic `"stream":true` fallback (mirror the forwarder's `DetectStream`).
-- [ ] 2.4 Add the `skip_if_streaming` response-side gate in `postResponse`:
+- [x] 2.4 Add the `skip_if_streaming` response-side gate in `postResponse`:
       `cfg.SkipIfStreaming && resp.Streaming` → pass-through, `SkipReason="streaming"`.
-- [ ] 2.5 Add the `skip_if_tools_present` gates: serve-side in `preRequest`
+- [x] 2.5 Add the `skip_if_tools_present` gates: serve-side in `preRequest`
       (`cfg.skipIfTools()` and request canonical `Tools` non-empty → MISS, no serve,
       `SkipReason="tools_present"`); store-side in `postResponse` (request `Tools`
       non-empty OR response `ToolCalls` non-empty OR `FinishReason=="tool_calls"` →
       pass-through). Reuse `p.registry.DecodeRequestFor`/`DecodeResponseFor`; decode
       failure is fail-open (treated as "no tools").
-- [ ] 2.6 Populate `data.go` extras `Scope`, `SkipReason` on the new gate/partition
+- [x] 2.6 Populate `data.go` extras `Scope`, `SkipReason` on the new gate/partition
       paths.
 
 ### Phase 2 tests (`plugin_test.go`)
 
-- [ ] 2.7 Partition matrix: `scope:consumer` two different `ConsumerID`s → distinct
+- [x] 2.7 Partition matrix: `scope:consumer` two different `ConsumerID`s → distinct
       partitions, B never reads A's body; empty `ConsumerID` → `ok=false` →
       pass-through + MISS; `scope:global` two requests same `GatewayID` → shared
       partition; two registries same consumer → distinct partitions; empty registry →
       gateway fallback.
-- [ ] 2.8 Streaming gate: `skip_if_streaming:true` + request `stream=true` → no
+- [x] 2.8 Streaming gate: `skip_if_streaming:true` + request `stream=true` → no
       lookup/store; `+ resp.Streaming` → no store; `false` → today's behaviour.
-- [ ] 2.9 Tools gate: `skip_if_tools_present:true` request with `Tools` → hit not
+- [x] 2.9 Tools gate: `skip_if_tools_present:true` request with `Tools` → hit not
       served + store skipped; response `ToolCalls`/`FinishReason=="tool_calls"` →
       store skipped; default-true survives explicit `false` via the `*bool` pointer.
 

@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -46,6 +47,15 @@ const metadataCacheStatus = "semantic_cache_status"
 const (
 	cacheStatusHit  = "HIT"
 	cacheStatusMiss = "MISS"
+)
+
+const geminiStreamAction = ":streamGenerateContent"
+
+const (
+	toolCallsFinishReason = "tool_calls"
+
+	skipReasonTools     = "tools_present"
+	skipReasonStreaming = "streaming"
 )
 
 var _ appplugins.Plugin = (*Plugin)(nil)
@@ -125,11 +135,13 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 
 	if p.bypassed(in.Request, cfg) {
 		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Bypassed: true, Mode: cfg.mode(), Scope: cfg.scope()})
-		if in.Stage == policy.StagePreRequest {
-			markStatus(in.Response, cacheStatusMiss)
-			return missResult(), nil
-		}
-		return passThrough(), nil
+		return p.degraded(in), nil
+	}
+
+	partition, ok := partitionKey(cfg, in.Scope, in.Request)
+	if !ok {
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Degraded: true, DegradedReason: "no_partition", Scope: cfg.scope()})
+		return p.degraded(in), nil
 	}
 
 	if err := p.ensureIndex(ctx); err != nil {
@@ -144,9 +156,9 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 
 	switch in.Stage {
 	case policy.StagePreRequest:
-		return p.preRequest(ctx, in, cfg, creator)
+		return p.preRequest(ctx, in, cfg, creator, partition)
 	case policy.StagePostResponse:
-		return p.postResponse(ctx, in, cfg, creator)
+		return p.postResponse(ctx, in, cfg, creator, partition)
 	default:
 		return passThrough(), nil
 	}
@@ -156,7 +168,56 @@ func (p *Plugin) bypassed(req *infracontext.RequestContext, cfg *config) bool {
 	if noCache(req) {
 		return true
 	}
-	return req.HeaderValue(cfg.bypassHeader()) != ""
+	if req.HeaderValue(cfg.bypassHeader()) != "" {
+		return true
+	}
+	if cfg.SkipIfStreaming && p.requestWantsStream(req) {
+		return true
+	}
+	return false
+}
+
+func (p *Plugin) requestWantsStream(req *infracontext.RequestContext) bool {
+	if req == nil {
+		return false
+	}
+	if strings.Contains(req.Path, geminiStreamAction) {
+		return true
+	}
+	if req.Query != nil && req.Query.Get("alt") == "sse" {
+		return true
+	}
+	if req.Provider != "" && p.registry != nil {
+		if canonical, err := p.registry.DecodeRequestFor(req.Body, adapter.Format(req.Provider)); err == nil && canonical != nil {
+			return canonical.Stream
+		}
+	}
+	if stream, explicit := adapter.RequestWantsStream(req.Body); explicit {
+		return stream
+	}
+	return false
+}
+
+func (p *Plugin) requestHasTools(req *infracontext.RequestContext) bool {
+	if req == nil || req.Provider == "" || p.registry == nil {
+		return false
+	}
+	canonical, err := p.registry.DecodeRequestFor(req.Body, adapter.Format(req.Provider))
+	if err != nil || canonical == nil {
+		return false
+	}
+	return len(canonical.Tools) > 0
+}
+
+func (p *Plugin) responseHasToolCalls(provider string, resp *infracontext.ResponseContext) bool {
+	if resp == nil || provider == "" || p.registry == nil {
+		return false
+	}
+	canonical, err := p.registry.DecodeResponseFor(resp.Body, adapter.Format(provider))
+	if err != nil || canonical == nil {
+		return false
+	}
+	return len(canonical.ToolCalls) > 0 || canonical.FinishReason == toolCallsFinishReason
 }
 
 func (p *Plugin) degraded(in appplugins.ExecInput) *appplugins.Result {
@@ -188,11 +249,18 @@ func (p *Plugin) preRequest(
 	in appplugins.ExecInput,
 	cfg *config,
 	creator embedding.Creator,
+	partition string,
 ) (*appplugins.Result, error) {
+	if cfg.skipIfTools() && p.requestHasTools(in.Request) {
+		markStatus(in.Response, cacheStatusMiss)
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, CacheHit: false, Scope: cfg.scope(), SkipReason: skipReasonTools})
+		return missResult(), nil
+	}
+
 	text := p.extractUserInput(in.Request)
 	if text == "" {
 		markStatus(in.Response, cacheStatusMiss)
-		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, CacheHit: false})
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, CacheHit: false, Scope: cfg.scope()})
 		return missResult(), nil
 	}
 
@@ -203,12 +271,13 @@ func (p *Plugin) preRequest(
 		return missResult(), nil
 	}
 
-	candidates, err := p.store.Lookup(ctx, scopeID(in.Request), emb, 1)
+	candidates, err := p.store.Lookup(ctx, partition, emb, 1)
 	if err != nil || len(candidates) == 0 || candidates[0].Similarity < cfg.SimilarityThreshold {
 		markStatus(in.Response, cacheStatusMiss)
 		miss := SemanticCacheData{
 			Threshold:     cfg.SimilarityThreshold,
 			CacheHit:      false,
+			Scope:         cfg.scope(),
 			EmbeddingSize: embeddingSize(emb),
 			VectorDim:     p.dimension,
 		}
@@ -238,6 +307,7 @@ func (p *Plugin) preRequest(
 	setCacheExtras(in.Event, SemanticCacheData{
 		Threshold:     cfg.SimilarityThreshold,
 		CacheHit:      true,
+		Scope:         cfg.scope(),
 		Similarity:    best.Similarity,
 		EmbeddingSize: embeddingSize(emb),
 		VectorDim:     p.dimension,
@@ -259,21 +329,30 @@ func (p *Plugin) postResponse(
 	in appplugins.ExecInput,
 	cfg *config,
 	creator embedding.Creator,
+	partition string,
 ) (*appplugins.Result, error) {
 	resp := in.Response
 	if resp == nil || len(resp.Body) == 0 {
 		return passThrough(), nil
 	}
 	if !cfg.cacheableStatus(resp.StatusCode) {
-		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Stored: false, SkipReason: "status"})
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Stored: false, Scope: cfg.scope(), SkipReason: "status"})
 		return passThrough(), nil
 	}
 	if in.Mode == policy.ModeObserve {
-		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Stored: false})
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Stored: false, Scope: cfg.scope()})
 		return passThrough(), nil
 	}
 	if statusOf(resp) == cacheStatusHit {
-		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, CacheHit: true, Stored: false})
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, CacheHit: true, Stored: false, Scope: cfg.scope()})
+		return passThrough(), nil
+	}
+	if cfg.SkipIfStreaming && resp.Streaming {
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Stored: false, Scope: cfg.scope(), SkipReason: skipReasonStreaming})
+		return passThrough(), nil
+	}
+	if cfg.skipIfTools() && (p.requestHasTools(in.Request) || p.responseHasToolCalls(providerOf(in.Request), resp)) {
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Stored: false, Scope: cfg.scope(), SkipReason: skipReasonTools})
 		return passThrough(), nil
 	}
 
@@ -289,7 +368,7 @@ func (p *Plugin) postResponse(
 	}
 
 	if err := p.store.Store(ctx, semantic.Entry{
-		RuleID:    scopeID(in.Request),
+		RuleID:    partition,
 		Embedding: emb,
 		Response:  string(resp.Body),
 		TTL:       cfg.resolvedTTL(),
@@ -300,6 +379,7 @@ func (p *Plugin) postResponse(
 	setCacheExtras(in.Event, SemanticCacheData{
 		Threshold:     cfg.SimilarityThreshold,
 		Stored:        true,
+		Scope:         cfg.scope(),
 		EmbeddingSize: embeddingSize(emb),
 		VectorDim:     p.dimension,
 	})
@@ -338,9 +418,23 @@ func (p *Plugin) extractUserInput(req *infracontext.RequestContext) string {
 	return adapter.ExtractUserInputGeneric(req.Body)
 }
 
-// scopeID isolates cache entries. Registry id is preferred so identical requests
-// to different upstreams do not collide; gateway id is the fallback.
-func scopeID(req *infracontext.RequestContext) string {
+func partitionKey(cfg *config, scope appplugins.RuntimeScope, req *infracontext.RequestContext) (string, bool) {
+	registry := registryNamespace(req)
+	switch cfg.scope() {
+	case scopeGlobal:
+		if scope.GatewayID == "" {
+			return "", false
+		}
+		return registry + "|g:" + scope.GatewayID, true
+	default:
+		if scope.ConsumerID == "" {
+			return "", false
+		}
+		return registry + "|c:" + scope.ConsumerID, true
+	}
+}
+
+func registryNamespace(req *infracontext.RequestContext) string {
 	if req == nil {
 		return ""
 	}
@@ -348,6 +442,13 @@ func scopeID(req *infracontext.RequestContext) string {
 		return req.RegistryID
 	}
 	return req.GatewayID
+}
+
+func providerOf(req *infracontext.RequestContext) string {
+	if req == nil {
+		return ""
+	}
+	return req.Provider
 }
 
 func noCache(req *infracontext.RequestContext) bool {
