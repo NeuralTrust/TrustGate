@@ -25,4 +25,11 @@ type SemanticCacheData struct {
 	Stored         bool    `json:"stored"`
 	Degraded       bool    `json:"degraded,omitempty"`
 	DegradedReason string  `json:"degraded_reason,omitempty"`
+
+	Mode        string `json:"mode,omitempty"`
+	Scope       string `json:"scope,omitempty"`
+	VectorStore string `json:"vector_store,omitempty"`
+	MatchType   string `json:"match_type,omitempty"`
+	Bypassed    bool   `json:"bypassed,omitempty"`
+	SkipReason  string `json:"skip_reason,omitempty"`
 }

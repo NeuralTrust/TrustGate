@@ -1,0 +1,39 @@
+# Cloud Armor: allow only Cloudflare-proxied traffic to these Services' load
+# balancer backends. References the security policy created in
+# cloud-infrastructure (var.enable_cloudflare_only_armor). Prod only — dev uses
+# the internal gateway. Namespace is applied by the overlay's namespace setting.
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: cloudflare-only-agentgateway-admin
+spec:
+  default:
+    securityPolicy: neuraltrust-prod-cloudflare-only
+  targetRef:
+    group: ""
+    kind: Service
+    name: agentgateway-admin
+---
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: cloudflare-only-agentgateway-proxy
+spec:
+  default:
+    securityPolicy: neuraltrust-prod-cloudflare-only
+  targetRef:
+    group: ""
+    kind: Service
+    name: agentgateway-proxy
+---
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: cloudflare-only-agentgateway-mcp
+spec:
+  default:
+    securityPolicy: neuraltrust-prod-cloudflare-only
+  targetRef:
+    group: ""
+    kind: Service
+    name: agentgateway-mcp

@@ -16,6 +16,7 @@ package modules
 
 import (
 	"log/slog"
+	"os"
 
 	cataloghttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/catalog"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
@@ -24,8 +25,10 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/semantic"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	embeddingfactory "github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/cors"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/costcap"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/modelallowlist"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pertoolratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/prompttemplate"
@@ -39,8 +42,11 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/trustguard"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/dig"
 )
+
+const vectorStoreEnv = "SEMANTIC_CACHE_VECTOR_STORE"
 
 type pluginParams struct {
 	dig.In
@@ -50,6 +56,7 @@ type pluginParams struct {
 	Logger   *slog.Logger
 	Pricing  appcatalog.PricingResolver
 	Cfg      *config.Config
+	DB       *database.Connection `optional:"true"`
 }
 
 func Plugins(c *container.Container) error {
@@ -72,11 +79,19 @@ func Plugins(c *container.Container) error {
 func newPluginRegistry(p pluginParams) (appplugins.Registry, error) {
 	reg := appplugins.NewRegistry()
 	redisClient := p.Cache.RedisClient()
-	store := semantic.NewRedisStore(redisClient, p.Logger)
+	store, err := semantic.NewStore(vectorStoreKind(), semantic.Deps{
+		Redis:  redisClient,
+		Pool:   poolOrNil(p.DB),
+		Logger: p.Logger,
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	catalog := []appplugins.Plugin{
 		ratelimit.New(redisClient),
 		tokenratelimit.New(redisClient, p.Adapters, p.Pricing),
+		costcap.New(p.Pricing),
 		pertoolratelimit.New(redisClient, p.Adapters),
 		requestsize.New(),
 		cors.New(),
@@ -94,4 +109,18 @@ func newPluginRegistry(p pluginParams) (appplugins.Registry, error) {
 		}
 	}
 	return reg, nil
+}
+
+func vectorStoreKind() string {
+	if kind := os.Getenv(vectorStoreEnv); kind != "" {
+		return kind
+	}
+	return "redis"
+}
+
+func poolOrNil(db *database.Connection) *pgxpool.Pool {
+	if db == nil {
+		return nil
+	}
+	return db.Pool
 }

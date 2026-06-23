@@ -24,9 +24,22 @@ import (
 
 const (
 	defaultSimilarityThreshold = 0.85
-	defaultTTL                 = "24h"
+	defaultTTLSeconds          = 86400
 	defaultProvider            = "openai"
 	defaultModel               = "text-embedding-ada-002"
+
+	modeExact    = "exact"
+	modeSemantic = "semantic"
+	modeBoth     = "both"
+
+	scopeConsumer = "consumer"
+	scopeGlobal   = "global"
+
+	storeRedis    = "redis"
+	storePgvector = "pgvector"
+	storeInMemory = "in_memory"
+
+	defaultBypassHeader = "X-Cache-Bypass" // #nosec G101 -- HTTP header name, not a credential
 )
 
 type embeddingConfig struct {
@@ -36,9 +49,23 @@ type embeddingConfig struct {
 }
 
 type config struct {
-	SimilarityThreshold float64         `mapstructure:"similarity_threshold"`
-	TTL                 string          `mapstructure:"ttl"`
-	Embedding           embeddingConfig `mapstructure:"embedding"`
+	SimilarityThreshold float64 `mapstructure:"similarity_threshold"`
+
+	TTL        string `mapstructure:"ttl"`
+	TTLSeconds int    `mapstructure:"ttl_seconds"`
+
+	Scope       string `mapstructure:"scope"`
+	Mode        string `mapstructure:"mode"`
+	VectorStore string `mapstructure:"vector_store"`
+
+	EmbeddingProvider string          `mapstructure:"embedding_provider"`
+	EmbeddingModel    string          `mapstructure:"embedding_model"`
+	Embedding         embeddingConfig `mapstructure:"embedding"`
+
+	CacheOnlyOnStatus  []int  `mapstructure:"cache_only_on_status"`
+	BypassHeader       string `mapstructure:"bypass_header"`
+	SkipIfToolsPresent *bool  `mapstructure:"skip_if_tools_present"`
+	SkipIfStreaming    bool   `mapstructure:"skip_if_streaming"`
 }
 
 func parseConfig(settings map[string]any) (*config, error) {
@@ -57,46 +84,127 @@ func (c *config) applyDefaults() {
 	if c.SimilarityThreshold == 0 {
 		c.SimilarityThreshold = defaultSimilarityThreshold
 	}
-	if c.TTL == "" {
-		c.TTL = defaultTTL
-	}
-	if c.Embedding.Provider == "" {
-		c.Embedding.Provider = defaultProvider
-	}
-	if c.Embedding.Model == "" {
-		c.Embedding.Model = defaultModel
-	}
 }
 
 func (c *config) validate() error {
 	if c.SimilarityThreshold <= 0 || c.SimilarityThreshold > 1 {
 		return fmt.Errorf("semantic_cache: similarity_threshold must be in (0, 1], got %f", c.SimilarityThreshold)
 	}
-	ttl, err := time.ParseDuration(c.TTL)
-	if err != nil {
-		return fmt.Errorf("semantic_cache: ttl must be a valid duration: %w", err)
+	if c.TTL != "" && c.TTLSeconds == 0 {
+		if _, err := time.ParseDuration(c.TTL); err != nil {
+			return fmt.Errorf("semantic_cache: ttl must be a valid duration: %w", err)
+		}
 	}
-	if ttl <= 0 {
-		return fmt.Errorf("semantic_cache: ttl must be positive, got %s", c.TTL)
+	if c.TTLSeconds < 0 {
+		return fmt.Errorf("semantic_cache: ttl_seconds must be non-negative, got %d", c.TTLSeconds)
 	}
-	if c.Embedding.APIKey == "" {
-		return fmt.Errorf("semantic_cache: embedding.api_key is required")
+	if err := validateEnum("mode", c.Mode, modeExact, modeSemantic, modeBoth); err != nil {
+		return err
+	}
+	if err := validateEnum("scope", c.Scope, scopeConsumer, scopeGlobal); err != nil {
+		return err
+	}
+	if err := validateEnum("vector_store", c.VectorStore, storeRedis, storePgvector, storeInMemory); err != nil {
+		return err
 	}
 	return nil
 }
 
-func (c *config) parsedTTL() time.Duration {
-	ttl, err := time.ParseDuration(c.TTL)
-	if err != nil {
-		return 24 * time.Hour
+func validateEnum(name, value string, allowed ...string) error {
+	if value == "" {
+		return nil
 	}
-	return ttl
+	for _, a := range allowed {
+		if value == a {
+			return nil
+		}
+	}
+	return fmt.Errorf("semantic_cache: %s must be one of %v, got %q", name, allowed, value)
+}
+
+func (c *config) resolvedTTL() time.Duration {
+	if c.TTLSeconds > 0 {
+		return time.Duration(c.TTLSeconds) * time.Second
+	}
+	if c.TTL != "" {
+		if d, err := time.ParseDuration(c.TTL); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultTTLSeconds * time.Second
+}
+
+func (c *config) provider() string {
+	if c.EmbeddingProvider != "" {
+		return c.EmbeddingProvider
+	}
+	if c.Embedding.Provider != "" {
+		return c.Embedding.Provider
+	}
+	return defaultProvider
+}
+
+func (c *config) model() string {
+	if c.EmbeddingModel != "" {
+		return c.EmbeddingModel
+	}
+	if c.Embedding.Model != "" {
+		return c.Embedding.Model
+	}
+	return defaultModel
+}
+
+func (c *config) mode() string {
+	if c.Mode != "" {
+		return c.Mode
+	}
+	return modeSemantic
+}
+
+func (c *config) scope() string {
+	if c.Scope != "" {
+		return c.Scope
+	}
+	return scopeConsumer
+}
+
+func (c *config) vectorStore() string {
+	if c.VectorStore != "" {
+		return c.VectorStore
+	}
+	return storeRedis
+}
+
+func (c *config) bypassHeader() string {
+	if c.BypassHeader != "" {
+		return c.BypassHeader
+	}
+	return defaultBypassHeader
+}
+
+func (c *config) skipIfTools() bool {
+	if c.SkipIfToolsPresent == nil {
+		return true
+	}
+	return *c.SkipIfToolsPresent
+}
+
+func (c *config) cacheableStatus(code int) bool {
+	if len(c.CacheOnlyOnStatus) == 0 {
+		return code >= 200 && code < 300
+	}
+	for _, s := range c.CacheOnlyOnStatus {
+		if s == code {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *config) embeddingDomainConfig() *embedding.Config {
 	return &embedding.Config{
-		Provider:    c.Embedding.Provider,
-		Model:       c.Embedding.Model,
+		Provider:    c.provider(),
+		Model:       c.model(),
 		Credentials: embedding.Credentials{APIKey: c.Embedding.APIKey},
 	}
 }
