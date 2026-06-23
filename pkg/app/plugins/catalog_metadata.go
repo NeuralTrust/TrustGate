@@ -1060,4 +1060,41 @@ var pluginCatalogMeta = map[string]catalogMeta{
 			},
 		},
 	},
+	"trustguard": {
+		name:        "TrustGuard",
+		group:       groupOther,
+		description: "Inspect request and/or response content with the external TrustGuard guardrail service and block content it flags. Fails open on any transport error, timeout, non-2xx response, or missing base URL. Streaming responses cannot be blocked in realtime.",
+		schema: SettingsSchema{
+			Fields: []Field{
+				{
+					Key:         "api_key",
+					Label:       "API Key",
+					Type:        FieldTypeString,
+					Description: "Credential sent as a Bearer token to the TrustGuard service.",
+					Required:    true,
+				},
+				{
+					Key:         "consumer_id",
+					Label:       "Consumer ID",
+					Type:        FieldTypeString,
+					Description: "Identifier forwarded to TrustGuard to attribute the guarded call.",
+					Required:    true,
+				},
+				{
+					Key:         "inspect",
+					Label:       "Inspect",
+					Type:        FieldTypeEnum,
+					Description: "Which legs to inspect: the request, the response, or both.",
+					Enum:        []string{"request", "response", "request_response"},
+					Default:     "request_response",
+				},
+				{
+					Key:         "base_url",
+					Label:       "Base URL",
+					Type:        FieldTypeString,
+					Description: "Optional per-policy override of the TrustGuard base URL. Falls back to the gateway TRUSTGUARD_BASE_URL when empty.",
+				},
+			},
+		},
+	},
 }

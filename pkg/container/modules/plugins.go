@@ -20,6 +20,7 @@ import (
 	cataloghttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/catalog"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/semantic"
@@ -35,6 +36,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/tool_call_validation"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/toolallowlist"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/tooltransform"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/trustguard"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
 	"go.uber.org/dig"
@@ -47,6 +49,7 @@ type pluginParams struct {
 	Locator  embeddingfactory.EmbeddingServiceLocator
 	Logger   *slog.Logger
 	Pricing  appcatalog.PricingResolver
+	Cfg      *config.Config
 }
 
 func Plugins(c *container.Container) error {
@@ -83,6 +86,7 @@ func newPluginRegistry(p pluginParams) (appplugins.Registry, error) {
 		toolallowlist.New(p.Adapters),
 		tool_call_validation.New(p.Adapters, openai.NewOpenaiClient(), p.Logger),
 		tooltransform.New(p.Adapters),
+		trustguard.New(p.Adapters, p.Cfg.TrustGuard.BaseURL, p.Cfg.TrustGuard.Timeout, p.Logger),
 	}
 	for _, plugin := range catalog {
 		if err := reg.Register(plugin); err != nil {

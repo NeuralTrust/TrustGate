@@ -383,6 +383,36 @@ func TestToolAllowlistSchema(t *testing.T) {
 	assert.Equal(t, []string{"consumer", "global"}, scope.Enum)
 }
 
+func TestTrustGuardSchema(t *testing.T) {
+	meta, ok := pluginCatalogMeta["trustguard"]
+	require.True(t, ok)
+	assert.Equal(t, "TrustGuard", meta.name)
+	assert.Equal(t, groupOther, meta.group)
+
+	fields := meta.schema.Fields
+
+	apiKey, ok := fieldByKey(fields, "api_key")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeString, apiKey.Type)
+	assert.True(t, apiKey.Required)
+
+	consumerID, ok := fieldByKey(fields, "consumer_id")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeString, consumerID.Type)
+	assert.True(t, consumerID.Required)
+
+	inspect, ok := fieldByKey(fields, "inspect")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeEnum, inspect.Type)
+	assert.Equal(t, []string{"request", "response", "request_response"}, inspect.Enum)
+	assert.Equal(t, "request_response", inspect.Default)
+
+	baseURL, ok := fieldByKey(fields, "base_url")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeString, baseURL.Type)
+	assert.False(t, baseURL.Required)
+}
+
 func TestPluginCatalogMeta_CoversBuiltins(t *testing.T) {
 	validGroups := map[string]struct{}{}
 	for _, g := range groupOrder {
