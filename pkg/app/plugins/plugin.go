@@ -43,6 +43,9 @@ type Plugin interface {
 	SupportedModes() []policy.Mode
 	ValidateConfig(settings map[string]any) error
 	Execute(ctx context.Context, in ExecInput) (*Result, error)
+	MutatesRequestBody() bool
+	MutatesResponseBody() bool
+	MutatesMetadata() bool
 }
 
 // ExecInput is the immutable input handed to a plugin for a single stage run.

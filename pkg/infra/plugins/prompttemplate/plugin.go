@@ -55,6 +55,12 @@ func (p *Plugin) SupportedModes() []policy.Mode {
 	return []policy.Mode{policy.ModeEnforce, policy.ModeObserve}
 }
 
+func (p *Plugin) MutatesRequestBody() bool { return true }
+
+func (p *Plugin) MutatesResponseBody() bool { return false }
+
+func (p *Plugin) MutatesMetadata() bool { return false }
+
 func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	_, err := parseConfig(settings)
 	return err

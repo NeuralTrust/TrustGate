@@ -956,4 +956,108 @@ var pluginCatalogMeta = map[string]catalogMeta{
 			},
 		},
 	},
+	"tool_definition_transformation": {
+		name:        "Tool Definition Transformation",
+		group:       groupOther,
+		description: "Reshape tool definitions on the request leg before they reach the model: patch a matched tool's JSON schema, override its description, and inject operator-authored tools. This is a governance and steering layer, not an access gate.",
+		schema: SettingsSchema{
+			Fields: []Field{
+				{
+					Key:         "transform_tools",
+					Label:       "Transform Tools",
+					Type:        FieldTypeArray,
+					Description: "Rules applied to matching client tools. All matching rules apply in declaration order; schema patches accrue and the last description override wins.",
+					Item: &Field{
+						Key:   "transform",
+						Label: "Transform",
+						Type:  FieldTypeObject,
+						Fields: []Field{
+							{
+								Key:         "tool",
+								Label:       "Tool",
+								Type:        FieldTypeString,
+								Description: "Glob pattern matched against the tool name (e.g. search_*).",
+								Required:    true,
+							},
+							{
+								Key:         "schema_patch",
+								Label:       "Schema Patch",
+								Type:        FieldTypeObject,
+								Description: "RFC 7386 JSON merge patch applied to the matched tool's parameter schema. Free-form JSON; edited as a raw object.",
+							},
+							{
+								Key:         "description_override",
+								Label:       "Description Override",
+								Type:        FieldTypeString,
+								Description: "Replacement description for the matched tool.",
+							},
+						},
+					},
+				},
+				{
+					Key:         "inject_tools",
+					Label:       "Inject Tools",
+					Type:        FieldTypeArray,
+					Description: "Operator-authored tools appended to the request. Name collisions are resolved by the on_conflict policy.",
+					Item: &Field{
+						Key:   "inject",
+						Label: "Inject",
+						Type:  FieldTypeObject,
+						Fields: []Field{
+							{
+								Key:         "type",
+								Label:       "Type",
+								Type:        FieldTypeEnum,
+								Description: "Tool kind. Only function tools are supported.",
+								Enum:        []string{"function"},
+								Default:     "function",
+							},
+							{
+								Key:         "function",
+								Label:       "Function",
+								Type:        FieldTypeObject,
+								Description: "Function tool definition to inject.",
+								Fields: []Field{
+									{
+										Key:         "name",
+										Label:       "Name",
+										Type:        FieldTypeString,
+										Description: "Injected tool name.",
+										Required:    true,
+									},
+									{
+										Key:         "description",
+										Label:       "Description",
+										Type:        FieldTypeString,
+										Description: "Injected tool description.",
+									},
+									{
+										Key:         "parameters",
+										Label:       "Parameters",
+										Type:        FieldTypeObject,
+										Description: "Injected tool parameter schema. Free-form JSON; edited as a raw object.",
+									},
+								},
+							},
+						},
+					},
+				},
+				{
+					Key:         "on_conflict",
+					Label:       "On Conflict",
+					Type:        FieldTypeEnum,
+					Description: "Resolution when an injected tool name collides with a surviving or already-injected tool.",
+					Enum:        []string{"gateway_wins", "client_wins", "reject"},
+					Default:     "gateway_wins",
+				},
+				{
+					Key:         "scope",
+					Label:       "Scope",
+					Type:        FieldTypeEnum,
+					Description: "Informational; effective scope derives from the policy global flag.",
+					Enum:        []string{"consumer", "global"},
+				},
+			},
+		},
+	},
 }

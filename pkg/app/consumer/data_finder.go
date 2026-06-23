@@ -151,7 +151,7 @@ func (f *dataFinder) buildPolicyPlan(policies []*policydomain.Policy) *appplugin
 	if f.pluginRegistry == nil {
 		return nil
 	}
-	return appplugins.NewStagePlan(f.pluginRegistry, policies)
+	return appplugins.NewStagePlan(f.pluginRegistry, policies, f.logger)
 }
 
 func (f *dataFinder) loadBackends(

@@ -79,7 +79,9 @@ func TestPlugin_CostCap_DowngradeRewritesModel(t *testing.T) {
 	require.NotNil(t, res)
 	assert.Equal(t, 200, res.StatusCode)
 	assert.Equal(t, []string{"gpt-4o→gpt-4o-mini"}, res.Headers[downgradeHeader])
-	assert.Contains(t, string(req.Body), `"model":"gpt-4o-mini"`, "the outbound body must carry the downgraded model")
+	require.NotNil(t, res.RequestBody)
+	assert.Contains(t, string(res.RequestBody), `"model":"gpt-4o-mini"`, "the outbound body must carry the downgraded model")
+	assert.Contains(t, string(req.Body), `"model":"gpt-4o"`, "the downgrade must not mutate the context body in place")
 }
 
 func TestPlugin_CostCap_DowngradeCrossProviderRejects(t *testing.T) {
@@ -148,7 +150,9 @@ func TestPlugin_Budget_DowngradeModelOnExceed(t *testing.T) {
 	require.NotNil(t, res)
 	assert.Equal(t, 200, res.StatusCode)
 	assert.Equal(t, []string{"gpt-4o→gpt-4o-mini"}, res.Headers[downgradeHeader])
-	assert.Contains(t, string(req.Body), `"model":"gpt-4o-mini"`)
+	require.NotNil(t, res.RequestBody)
+	assert.Contains(t, string(res.RequestBody), `"model":"gpt-4o-mini"`)
+	assert.Contains(t, string(req.Body), `"model":"gpt-4o"`, "the downgrade must not mutate the context body in place")
 }
 
 func TestPlugin_Budget_AlertOnlyDoesNotBlock(t *testing.T) {

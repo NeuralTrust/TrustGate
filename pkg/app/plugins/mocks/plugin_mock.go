@@ -129,6 +129,141 @@ func (_c *Plugin_MandatoryStages_Call) RunAndReturn(run func() []policy.Stage) *
 	return _c
 }
 
+// MutatesMetadata provides a mock function with no fields
+func (_m *Plugin) MutatesMetadata() bool {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for MutatesMetadata")
+	}
+
+	var r0 bool
+	if rf, ok := ret.Get(0).(func() bool); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+
+	return r0
+}
+
+// Plugin_MutatesMetadata_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'MutatesMetadata'
+type Plugin_MutatesMetadata_Call struct {
+	*mock.Call
+}
+
+// MutatesMetadata is a helper method to define mock.On call
+func (_e *Plugin_Expecter) MutatesMetadata() *Plugin_MutatesMetadata_Call {
+	return &Plugin_MutatesMetadata_Call{Call: _e.mock.On("MutatesMetadata")}
+}
+
+func (_c *Plugin_MutatesMetadata_Call) Run(run func()) *Plugin_MutatesMetadata_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *Plugin_MutatesMetadata_Call) Return(_a0 bool) *Plugin_MutatesMetadata_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Plugin_MutatesMetadata_Call) RunAndReturn(run func() bool) *Plugin_MutatesMetadata_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// MutatesRequestBody provides a mock function with no fields
+func (_m *Plugin) MutatesRequestBody() bool {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for MutatesRequestBody")
+	}
+
+	var r0 bool
+	if rf, ok := ret.Get(0).(func() bool); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+
+	return r0
+}
+
+// Plugin_MutatesRequestBody_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'MutatesRequestBody'
+type Plugin_MutatesRequestBody_Call struct {
+	*mock.Call
+}
+
+// MutatesRequestBody is a helper method to define mock.On call
+func (_e *Plugin_Expecter) MutatesRequestBody() *Plugin_MutatesRequestBody_Call {
+	return &Plugin_MutatesRequestBody_Call{Call: _e.mock.On("MutatesRequestBody")}
+}
+
+func (_c *Plugin_MutatesRequestBody_Call) Run(run func()) *Plugin_MutatesRequestBody_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *Plugin_MutatesRequestBody_Call) Return(_a0 bool) *Plugin_MutatesRequestBody_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Plugin_MutatesRequestBody_Call) RunAndReturn(run func() bool) *Plugin_MutatesRequestBody_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// MutatesResponseBody provides a mock function with no fields
+func (_m *Plugin) MutatesResponseBody() bool {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for MutatesResponseBody")
+	}
+
+	var r0 bool
+	if rf, ok := ret.Get(0).(func() bool); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+
+	return r0
+}
+
+// Plugin_MutatesResponseBody_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'MutatesResponseBody'
+type Plugin_MutatesResponseBody_Call struct {
+	*mock.Call
+}
+
+// MutatesResponseBody is a helper method to define mock.On call
+func (_e *Plugin_Expecter) MutatesResponseBody() *Plugin_MutatesResponseBody_Call {
+	return &Plugin_MutatesResponseBody_Call{Call: _e.mock.On("MutatesResponseBody")}
+}
+
+func (_c *Plugin_MutatesResponseBody_Call) Run(run func()) *Plugin_MutatesResponseBody_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *Plugin_MutatesResponseBody_Call) Return(_a0 bool) *Plugin_MutatesResponseBody_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Plugin_MutatesResponseBody_Call) RunAndReturn(run func() bool) *Plugin_MutatesResponseBody_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Name provides a mock function with no fields
 func (_m *Plugin) Name() string {
 	ret := _m.Called()
@@ -170,53 +305,6 @@ func (_c *Plugin_Name_Call) Return(_a0 string) *Plugin_Name_Call {
 }
 
 func (_c *Plugin_Name_Call) RunAndReturn(run func() string) *Plugin_Name_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// SupportedStages provides a mock function with no fields
-func (_m *Plugin) SupportedStages() []policy.Stage {
-	ret := _m.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for SupportedStages")
-	}
-
-	var r0 []policy.Stage
-	if rf, ok := ret.Get(0).(func() []policy.Stage); ok {
-		r0 = rf()
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]policy.Stage)
-		}
-	}
-
-	return r0
-}
-
-// Plugin_SupportedStages_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SupportedStages'
-type Plugin_SupportedStages_Call struct {
-	*mock.Call
-}
-
-// SupportedStages is a helper method to define mock.On call
-func (_e *Plugin_Expecter) SupportedStages() *Plugin_SupportedStages_Call {
-	return &Plugin_SupportedStages_Call{Call: _e.mock.On("SupportedStages")}
-}
-
-func (_c *Plugin_SupportedStages_Call) Run(run func()) *Plugin_SupportedStages_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *Plugin_SupportedStages_Call) Return(_a0 []policy.Stage) *Plugin_SupportedStages_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *Plugin_SupportedStages_Call) RunAndReturn(run func() []policy.Stage) *Plugin_SupportedStages_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -264,6 +352,53 @@ func (_c *Plugin_SupportedModes_Call) Return(_a0 []policy.Mode) *Plugin_Supporte
 }
 
 func (_c *Plugin_SupportedModes_Call) RunAndReturn(run func() []policy.Mode) *Plugin_SupportedModes_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// SupportedStages provides a mock function with no fields
+func (_m *Plugin) SupportedStages() []policy.Stage {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for SupportedStages")
+	}
+
+	var r0 []policy.Stage
+	if rf, ok := ret.Get(0).(func() []policy.Stage); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]policy.Stage)
+		}
+	}
+
+	return r0
+}
+
+// Plugin_SupportedStages_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SupportedStages'
+type Plugin_SupportedStages_Call struct {
+	*mock.Call
+}
+
+// SupportedStages is a helper method to define mock.On call
+func (_e *Plugin_Expecter) SupportedStages() *Plugin_SupportedStages_Call {
+	return &Plugin_SupportedStages_Call{Call: _e.mock.On("SupportedStages")}
+}
+
+func (_c *Plugin_SupportedStages_Call) Run(run func()) *Plugin_SupportedStages_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *Plugin_SupportedStages_Call) Return(_a0 []policy.Stage) *Plugin_SupportedStages_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Plugin_SupportedStages_Call) RunAndReturn(run func() []policy.Stage) *Plugin_SupportedStages_Call {
 	_c.Call.Return(run)
 	return _c
 }
