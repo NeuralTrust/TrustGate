@@ -142,6 +142,25 @@ func TestParseConfig(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "four scale zero threshold rejected",
+			settings: map[string]any{
+				"api_key":           "key",
+				"endpoint":          "https://content.azure.com",
+				"category_severity": map[string]any{CategoryHate: 0},
+			},
+			wantErr: true,
+		},
+		{
+			name: "eight scale zero threshold rejected",
+			settings: map[string]any{
+				"api_key":           "key",
+				"endpoint":          "https://content.azure.com",
+				"output_type":       OutputTypeEightSeverityLevels,
+				"category_severity": map[string]any{CategoryHate: 0},
+			},
+			wantErr: true,
+		},
+		{
 			name: "four scale out-of-range threshold rejected",
 			settings: map[string]any{
 				"api_key":           "key",

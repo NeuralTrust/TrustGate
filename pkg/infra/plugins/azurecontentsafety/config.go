@@ -31,6 +31,9 @@ const (
 	SeverityEightMin = 0
 	SeverityEightMax = 7
 
+	ThresholdFourMin  = 2
+	ThresholdEightMin = 1
+
 	CategoryHate     = "Hate"
 	CategoryViolence = "Violence"
 	CategorySelfHarm = "SelfHarm"
@@ -99,16 +102,16 @@ func (s *Settings) validate() error {
 	if len(s.CategorySeverity) == 0 {
 		return fmt.Errorf("azure_content_safety: category_severity is required")
 	}
-	minSeverity, maxSeverity := s.severityBounds()
+	minThreshold, maxThreshold := s.thresholdBounds()
 	for category, severity := range s.CategorySeverity {
 		if !isSupportedCategory(category) {
 			return fmt.Errorf("azure_content_safety: unsupported category_severity key %q", category)
 		}
-		if severity < minSeverity || severity > maxSeverity {
-			return fmt.Errorf("azure_content_safety: category_severity for %q must be in [%d,%d]", category, minSeverity, maxSeverity)
+		if severity < minThreshold || severity > maxThreshold {
+			return fmt.Errorf("azure_content_safety: category_severity for %q must be in [%d,%d]", category, minThreshold, maxThreshold)
 		}
 		if s.OutputType == OutputTypeFourSeverityLevels && severity%2 != 0 {
-			return fmt.Errorf("azure_content_safety: category_severity for %q must be one of 0, 2, 4, 6", category)
+			return fmt.Errorf("azure_content_safety: category_severity for %q must be one of 2, 4, 6", category)
 		}
 	}
 	return nil
@@ -119,6 +122,13 @@ func (s Settings) severityBounds() (int, int) {
 		return SeverityEightMin, SeverityEightMax
 	}
 	return SeverityFourMin, SeverityFourMax
+}
+
+func (s Settings) thresholdBounds() (int, int) {
+	if s.OutputType == OutputTypeEightSeverityLevels {
+		return ThresholdEightMin, SeverityEightMax
+	}
+	return ThresholdFourMin, SeverityFourMax
 }
 
 func (s Settings) thresholdFor(category string) int {

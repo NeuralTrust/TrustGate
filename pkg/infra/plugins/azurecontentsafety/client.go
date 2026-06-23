@@ -34,7 +34,12 @@ type client struct {
 }
 
 func newClient() *client {
-	return &client{http: &http.Client{Timeout: defaultTimeout}}
+	return &client{http: &http.Client{
+		Timeout: defaultTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}}
 }
 
 type analyzeRequest struct {
