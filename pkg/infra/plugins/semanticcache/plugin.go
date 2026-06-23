@@ -19,6 +19,8 @@ package semanticcache
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"strings"
@@ -432,6 +434,15 @@ func partitionKey(cfg *config, scope appplugins.RuntimeScope, req *infracontext.
 		}
 		return registry + "|c:" + scope.ConsumerID, true
 	}
+}
+
+func exactKey(partition, text string) string {
+	sum := sha256.Sum256([]byte(partition + "\x00" + normalize(text)))
+	return hex.EncodeToString(sum[:])
+}
+
+func normalize(s string) string {
+	return strings.ToLower(strings.Join(strings.Fields(s), " "))
 }
 
 func registryNamespace(req *infracontext.RequestContext) string {

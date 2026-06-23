@@ -33,12 +33,18 @@ type memVector struct {
 	expiry   time.Time
 }
 
+type memEntry struct {
+	value  string
+	expiry time.Time
+}
+
 // MemoryStore is an in-process Store backed by a TTL map and brute-force cosine
 // similarity. It suits development and small single-replica deployments;
 // eviction is purely TTL-based.
 type MemoryStore struct {
 	mu     sync.Mutex
 	vec    map[string][]memVector
+	exact  map[string]memEntry
 	logger *slog.Logger
 }
 
@@ -46,6 +52,7 @@ type MemoryStore struct {
 func NewMemoryStore(logger *slog.Logger) *MemoryStore {
 	return &MemoryStore{
 		vec:    make(map[string][]memVector),
+		exact:  make(map[string]memEntry),
 		logger: logger,
 	}
 }
@@ -107,6 +114,41 @@ func (s *MemoryStore) Lookup(ctx context.Context, ruleID string, emb *embedding.
 		candidates = candidates[:topK]
 	}
 	return candidates, nil
+}
+
+// GetExact returns the response cached under the exact key for the rule when it
+// is still live, filtering out expired entries on read.
+func (s *MemoryStore) GetExact(ctx context.Context, ruleID, key string) (string, bool, error) {
+	composite := ruleID + "\x00" + key
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry, ok := s.exact[composite]
+	if !ok {
+		return "", false, nil
+	}
+	if !entry.expiry.IsZero() && !entry.expiry.After(time.Now()) {
+		delete(s.exact, composite)
+		return "", false, nil
+	}
+	return entry.value, true, nil
+}
+
+// PutExact stores a response under the exact key for the rule. A TTL of zero or
+// less means the entry never expires.
+func (s *MemoryStore) PutExact(ctx context.Context, ruleID, key, response string, ttl time.Duration) error {
+	composite := ruleID + "\x00" + key
+
+	var expiry time.Time
+	if ttl > 0 {
+		expiry = time.Now().Add(ttl)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.exact[composite] = memEntry{value: response, expiry: expiry}
+	return nil
 }
 
 func (s *MemoryStore) sweep(ruleID string) []memVector {

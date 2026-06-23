@@ -52,6 +52,12 @@ func (f *fakeStore) Store(_ context.Context, e semantic.Entry) error {
 	f.stored = append(f.stored, e)
 	return nil
 }
+func (f *fakeStore) GetExact(context.Context, string, string) (string, bool, error) {
+	return "", false, nil
+}
+func (f *fakeStore) PutExact(context.Context, string, string, string, time.Duration) error {
+	return nil
+}
 
 type fakeCreator struct {
 	emb *embedding.Embedding
@@ -102,6 +108,14 @@ func (s *partitionStore) Lookup(_ context.Context, ruleID string, _ *embedding.E
 	return out, nil
 }
 
+func (s *partitionStore) GetExact(context.Context, string, string) (string, bool, error) {
+	return "", false, nil
+}
+
+func (s *partitionStore) PutExact(context.Context, string, string, string, time.Duration) error {
+	return nil
+}
+
 func (s *partitionStore) count(ruleID string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -114,6 +128,19 @@ func settingsWith(extra map[string]any) map[string]any {
 		s[k] = v
 	}
 	return s
+}
+
+func TestExactKeyNormalization(t *testing.T) {
+	const partition = "registry|c:consumer-1"
+
+	assert.Equal(t, exactKey(partition, "Hello World"), exactKey(partition, "hello world"))
+	assert.Equal(t, exactKey(partition, "hello   world"), exactKey(partition, "hello world"))
+	assert.Equal(t, exactKey(partition, "  hello world  "), exactKey(partition, "hello world"))
+	assert.Equal(t, exactKey(partition, "HELLO\tWORLD"), exactKey(partition, "hello world"))
+
+	assert.NotEqual(t, exactKey(partition, "hello world"), exactKey(partition, "goodbye world"))
+	assert.NotEqual(t, exactKey("a", "b"), exactKey("a|b", ""))
+	assert.Len(t, exactKey(partition, "hello world"), 64)
 }
 
 func anEmbedding() *embedding.Embedding {

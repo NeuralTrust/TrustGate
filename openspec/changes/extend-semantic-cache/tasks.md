@@ -238,28 +238,28 @@ would force constant rebases. Prefer the chain.)
 
 ## Phase 4a: Exact-match storage seam (interface + redis + in_memory + keys)
 
-- [ ] 4a.1 In `store.go` extend `Store` with `GetExact(ctx, ruleID, key string)
+- [x] 4a.1 In `store.go` extend `Store` with `GetExact(ctx, ruleID, key string)
       (string, bool, error)` and `PutExact(ctx, ruleID, key, response string,
       ttl time.Duration) error`. Add `const exactKeyPrefix = "sc_exact:"` (disjoint
       from `keyPrefix="semantic_cache:"`, resolving open-question 5).
-- [ ] 4a.2 Implement `RedisStore.GetExact` (`GET exactKeyPrefix+hashID(ruleID)+":"+key`,
+- [x] 4a.2 Implement `RedisStore.GetExact` (`GET exactKeyPrefix+hashID(ruleID)+":"+key`,
       `redis.Nil`/error → `("",false,nil)`) and `RedisStore.PutExact`
       (`SET ... EX ttl`, error wrapped `%w`).
-- [ ] 4a.3 Implement `MemoryStore.GetExact`/`PutExact` over an
+- [x] 4a.3 Implement `MemoryStore.GetExact`/`PutExact` over an
       `exact map[string]memEntry{value,expiry}` keyed by the composite, TTL-filtered
       on read.
-- [ ] 4a.4 In `plugin.go` add `exactKey(partition, text string) string`
+- [x] 4a.4 In `plugin.go` add `exactKey(partition, text string) string`
       (`sha256(partition+"\x00"+normalize(text))`) and `normalize(s)` (lower-case +
       `strings.Fields` whitespace collapse).
-- [ ] 4a.5 Regenerate the store mock: `go generate ./pkg/infra/cache/semantic/...`
+- [x] 4a.5 Regenerate the store mock: `go generate ./pkg/infra/cache/semantic/...`
       (updates `mocks/store_mock.go` with the two new methods). Do not hand-edit.
 
 ### Phase 4a tests (`store_test.go`, `memory_store_test.go`)
 
-- [ ] 4a.6 `RedisStore` exact round-trip (miniredis or existing redis test harness):
+- [x] 4a.6 `RedisStore` exact round-trip (miniredis or existing redis test harness):
       put→get hit, missing key → `("",false,nil)`, disjoint prefix never collides with
       a vector `HSET` key under `semantic_cache:`.
-- [ ] 4a.7 `MemoryStore` exact round-trip + TTL expiry; `exactKey` is
+- [x] 4a.7 `MemoryStore` exact round-trip + TTL expiry; `exactKey` is
       case/whitespace-insensitive and partition-separated (`a|b` vs `a` + `|b` differ).
 
 **Verify**: `go generate ./pkg/infra/cache/semantic/... ; go vet ./pkg/infra/cache/semantic/... ./pkg/infra/plugins/semanticcache/... ; go test -race ./pkg/infra/cache/semantic/...`.

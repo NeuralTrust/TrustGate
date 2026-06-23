@@ -93,3 +93,65 @@ func TestMemoryStoreZeroTTLNeverExpires(t *testing.T) {
 	require.Len(t, candidates, 1)
 	assert.Equal(t, "kept", candidates[0].Response)
 }
+
+func TestMemoryStoreExactRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore(nil)
+
+	const (
+		rule = "rule-exact"
+		key  = "k1"
+	)
+
+	val, hit, err := store.GetExact(ctx, rule, key)
+	require.NoError(t, err)
+	assert.False(t, hit)
+	assert.Empty(t, val)
+
+	require.NoError(t, store.PutExact(ctx, rule, key, "body", time.Minute))
+
+	val, hit, err = store.GetExact(ctx, rule, key)
+	require.NoError(t, err)
+	assert.True(t, hit)
+	assert.Equal(t, "body", val)
+
+	val, hit, err = store.GetExact(ctx, rule, "other")
+	require.NoError(t, err)
+	assert.False(t, hit)
+	assert.Empty(t, val)
+}
+
+func TestMemoryStoreExactTTLExpiry(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore(nil)
+
+	const (
+		rule = "rule-exact-ttl"
+		key  = "k1"
+	)
+	require.NoError(t, store.PutExact(ctx, rule, key, "ephemeral", 30*time.Millisecond))
+
+	_, hit, err := store.GetExact(ctx, rule, key)
+	require.NoError(t, err)
+	require.True(t, hit)
+
+	time.Sleep(60 * time.Millisecond)
+
+	_, hit, err = store.GetExact(ctx, rule, key)
+	require.NoError(t, err)
+	assert.False(t, hit)
+}
+
+func TestMemoryStoreExactZeroTTLNeverExpires(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore(nil)
+
+	require.NoError(t, store.PutExact(ctx, "rule", "key", "kept", 0))
+
+	time.Sleep(20 * time.Millisecond)
+
+	val, hit, err := store.GetExact(ctx, "rule", "key")
+	require.NoError(t, err)
+	require.True(t, hit)
+	assert.Equal(t, "kept", val)
+}
