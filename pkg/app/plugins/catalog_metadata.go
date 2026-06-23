@@ -21,6 +21,7 @@ const (
 	groupTrafficControl = "Traffic Control"
 	groupQuota          = "Quota"
 	groupRouting        = "Routing"
+	groupGuardrails     = "Guardrails"
 	groupOther          = "Other"
 )
 
@@ -29,6 +30,7 @@ var groupOrder = []string{
 	groupTrafficControl,
 	groupQuota,
 	groupRouting,
+	groupGuardrails,
 	groupOther,
 }
 
@@ -1145,6 +1147,64 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "Base URL",
 					Type:        FieldTypeString,
 					Description: "Optional per-policy override of the TrustGuard base URL. Falls back to the gateway TRUSTGUARD_BASE_URL when empty.",
+				},
+			},
+		},
+	},
+	"azure_content_safety": {
+		name:        "Azure Content Safety",
+		group:       groupGuardrails,
+		description: "Screen request content with the Azure AI Content Safety Analyze Text API and block categories whose severity meets the configured threshold. Fails closed in enforce mode.",
+		schema: SettingsSchema{
+			Fields: []Field{
+				{
+					Key:         "api_key",
+					Label:       "API Key",
+					Type:        FieldTypeString,
+					Description: "Azure Content Safety subscription key sent as the Ocp-Apim-Subscription-Key header.",
+					Required:    true,
+				},
+				{
+					Key:         "endpoint",
+					Label:       "Endpoint",
+					Type:        FieldTypeString,
+					Description: "Absolute Analyze Text endpoint URL for the Azure Content Safety resource.",
+					Required:    true,
+				},
+				{
+					Key:         "output_type",
+					Label:       "Output Type",
+					Type:        FieldTypeEnum,
+					Description: "Severity scale returned by Azure: four levels (0/2/4/6) or eight levels (0-7).",
+					Enum:        []string{"FourSeverityLevels", "EightSeverityLevels"},
+					Default:     "FourSeverityLevels",
+				},
+				{
+					Key:         "categories",
+					Label:       "Categories",
+					Type:        FieldTypeArray,
+					Description: "Harm categories sent to Azure for analysis. Defaults to all four when empty.",
+					Item: &Field{
+						Key:   "category",
+						Label: "Category",
+						Type:  FieldTypeEnum,
+						Enum:  []string{"Hate", "Violence", "SelfHarm", "Sexual"},
+					},
+				},
+				{
+					Key:         "category_severity",
+					Label:       "Category Severity",
+					Type:        FieldTypeMap,
+					Description: "Per-category severity thresholds. A category breaches when its returned severity meets or exceeds its threshold. Only categories listed here are enforced.",
+					Required:    true,
+					KeyOptions:  []string{"Hate", "Violence", "SelfHarm", "Sexual"},
+					Value:       &Field{Key: "severity", Label: "Severity", Type: FieldTypeInteger},
+				},
+				{
+					Key:         "message",
+					Label:       "Block Message",
+					Type:        FieldTypeString,
+					Description: "Optional message returned to the caller when content is blocked.",
 				},
 			},
 		},
