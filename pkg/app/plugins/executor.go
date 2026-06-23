@@ -39,11 +39,11 @@ type StageInput struct {
 	Response *infracontext.ResponseContext
 }
 
-func (in StageInput) chainFor(reg Registry) []chainEntry {
+func (e *executor) batchesFor(in StageInput) [][]chainEntry {
 	if in.Plan != nil {
-		return in.Plan.entriesFor(in.Stage)
+		return in.Plan.batchesFor(in.Stage)
 	}
-	return buildStageChain(reg, in.Policies, in.Stage)
+	return groupBatches(buildStageChain(e.registry, in.Policies, in.Stage), in.Stage, e.logger)
 }
 
 type StageOutcome struct {
@@ -65,24 +65,20 @@ func NewExecutor(registry Registry, logger *slog.Logger) Executor {
 }
 
 func (e *executor) RunStage(ctx context.Context, in StageInput) (*StageOutcome, error) {
-	entries := in.chainFor(e.registry)
+	batches := e.batchesFor(in)
 	outcome := &StageOutcome{}
-	if len(entries) == 0 {
+	if len(batches) == 0 {
 		return outcome, nil
 	}
 
-	for i := 0; i < len(entries); {
-		batch := parallelBatch(entries, i)
+	for _, batch := range batches {
 		results, err := e.runBatch(ctx, in.Stage, in.Request, in.Response, batch)
 		if err != nil {
 			return nil, err
 		}
-		for _, res := range results {
-			if e.applyResult(in.Request, in.Response, outcome, res) {
-				return outcome, nil
-			}
+		if e.applyResults(in.Stage, in.Request, in.Response, outcome, results) {
+			return outcome, nil
 		}
-		i += len(batch)
 	}
 	return outcome, nil
 }
@@ -260,31 +256,63 @@ func mergeHeaderMap(dst, src map[string][]string) map[string][]string {
 	return dst
 }
 
-func (e *executor) applyResult(req *infracontext.RequestContext, resp *infracontext.ResponseContext, outcome *StageOutcome, res *Result) bool {
-	if res == nil {
-		return false
+func (e *executor) applyResults(
+	stage policy.Stage,
+	req *infracontext.RequestContext,
+	resp *infracontext.ResponseContext,
+	outcome *StageOutcome,
+	results []*Result,
+) bool {
+	var reqBodyApplied, stopApplied bool
+	for _, res := range results {
+		if res == nil {
+			continue
+		}
+		if stopApplied {
+			if res.StopUpstream {
+				e.warnExcessWriter(stage, "stop_upstream")
+			}
+			if res.RequestBody != nil {
+				e.warnExcessWriter(stage, "request_body")
+			}
+			continue
+		}
+		if len(res.Headers) > 0 && resp != nil {
+			mergeHeaders(resp, res.Headers)
+		}
+		if res.RequestBody != nil && req != nil {
+			if reqBodyApplied {
+				e.warnExcessWriter(stage, "request_body")
+			} else {
+				req.Body = res.RequestBody
+				reqBodyApplied = true
+			}
+		}
+		if !res.StopUpstream {
+			continue
+		}
+		stopApplied = true
+		outcome.ShortCircuit = true
+		outcome.StatusCode = res.StatusCode
+		outcome.Body = res.Body
+		if resp != nil {
+			resp.StatusCode = res.StatusCode
+			resp.Body = res.Body
+			outcome.Headers = cloneHeaders(resp.Headers)
+		} else {
+			outcome.Headers = cloneHeaders(res.Headers)
+		}
 	}
-	if len(res.Headers) > 0 && resp != nil {
-		mergeHeaders(resp, res.Headers)
-	}
-	if res.RequestBody != nil && req != nil {
-		req.Body = res.RequestBody
-	}
-	if !res.StopUpstream {
-		return false
-	}
+	return stopApplied
+}
 
-	outcome.ShortCircuit = true
-	outcome.StatusCode = res.StatusCode
-	outcome.Body = res.Body
-	if resp != nil {
-		resp.StatusCode = res.StatusCode
-		resp.Body = res.Body
-		outcome.Headers = cloneHeaders(resp.Headers)
-	} else {
-		outcome.Headers = cloneHeaders(res.Headers)
+func (e *executor) warnExcessWriter(stage policy.Stage, capability string) {
+	if e.logger == nil {
+		return
 	}
-	return true
+	e.logger.Warn("parallel batch produced multiple writers; keeping first in deterministic order",
+		slog.String("stage", string(stage)),
+		slog.String("capability", capability))
 }
 
 func mergeHeaders(resp *infracontext.ResponseContext, headers map[string][]string) {

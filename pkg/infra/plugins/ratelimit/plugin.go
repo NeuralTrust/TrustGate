@@ -61,6 +61,12 @@ func New(redisClient *redis.Client, opts ...Option) *Plugin {
 
 func (p *Plugin) Name() string { return PluginName }
 
+func (p *Plugin) MutatesRequestBody() bool { return false }
+
+func (p *Plugin) MutatesResponseBody() bool { return false }
+
+func (p *Plugin) MutatesMetadata() bool { return false }
+
 func (p *Plugin) MandatoryStages() []policy.Stage {
 	return []policy.Stage{policy.StagePreRequest}
 }

@@ -46,6 +46,12 @@ func New(redisClient *redis.Client, registry *adapter.Registry, pricing appcatal
 
 func (p *Plugin) Name() string { return PluginName }
 
+func (p *Plugin) MutatesRequestBody() bool { return true }
+
+func (p *Plugin) MutatesResponseBody() bool { return false }
+
+func (p *Plugin) MutatesMetadata() bool { return false }
+
 func (p *Plugin) MandatoryStages() []policy.Stage {
 	return []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}
 }
@@ -100,6 +106,7 @@ func (p *Plugin) preRequest(
 	model := modelFor(req)
 	var capTel *costCapTelemetry
 	var downgradeHeaders map[string][]string
+	var downgradeBody []byte
 	if cfg.CostCap != nil && cfg.CostCap.Enabled {
 		dec := p.costCapDecision(ctx, cfg, req.Provider, model, req.RequestedModel)
 		capTel = costCapTelemetryFrom(dec)
@@ -107,11 +114,12 @@ func (p *Plugin) preRequest(
 			appplugins.SetDecision(event, mode)
 			if appplugins.Blocks(mode) && !appplugins.Throttles(mode) {
 				if cfg.CostCap.BehaviorOnViolation == behaviorDowngrade {
-					newModel, hdr, ok := applyDowngrade(req, model, cfg.CostCap.DowngradeTo)
+					newModel, body, hdr, ok := applyDowngrade(req, model, cfg.CostCap.DowngradeTo)
 					if !ok {
 						return nil, costCapError(dec)
 					}
 					model = newModel
+					downgradeBody = body
 					downgradeHeaders = hdr
 				} else {
 					return nil, costCapError(dec)
@@ -126,6 +134,9 @@ func (p *Plugin) preRequest(
 	}
 	if len(downgradeHeaders) > 0 {
 		res.Headers = mergeHeaderValues(res.Headers, downgradeHeaders)
+	}
+	if downgradeBody != nil && res.RequestBody == nil {
+		res.RequestBody = downgradeBody
 	}
 	return res, nil
 }
