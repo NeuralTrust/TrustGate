@@ -127,7 +127,7 @@ func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids
 	const query = `DELETE FROM registries WHERE id = $1 AND gateway_id = $2`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 
-		if err := ensureNotInFallbackChain(ctx, tx, id); err != nil {
+		if err := ensureNotInFallbackChain(ctx, tx, gatewayID, id); err != nil {
 			return err
 		}
 		cmd, err := tx.Exec(ctx, query, id, gatewayID)
@@ -141,15 +141,17 @@ func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids
 	})
 }
 
-func ensureNotInFallbackChain(ctx context.Context, tx pgx.Tx, id ids.RegistryID) error {
+func ensureNotInFallbackChain(ctx context.Context, tx pgx.Tx, gatewayID ids.GatewayID, id ids.RegistryID) error {
 	const query = `
 		SELECT EXISTS (
 			SELECT 1 FROM consumers
-			 WHERE fallback IS NOT NULL
+			 WHERE gateway_id = $2
+			   AND active = TRUE
+			   AND fallback IS NOT NULL
 			   AND fallback->'chain' @> to_jsonb($1::text)
 		)`
 	var referenced bool
-	if err := tx.QueryRow(ctx, query, id.String()).Scan(&referenced); err != nil {
+	if err := tx.QueryRow(ctx, query, id.String(), gatewayID).Scan(&referenced); err != nil {
 		return fmt.Errorf("registry repository: fallback-chain check: %w", err)
 	}
 	if referenced {
