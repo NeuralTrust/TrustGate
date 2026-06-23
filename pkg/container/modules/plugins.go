@@ -27,6 +27,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/cors"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/modelallowlist"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pertoolratelimit"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/prompttemplate"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/requestsize"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/semanticcache"
@@ -78,6 +79,7 @@ func newPluginRegistry(p pluginParams) (appplugins.Registry, error) {
 		cors.New(),
 		semanticcache.New(store, p.Locator, p.Adapters),
 		modelallowlist.New(),
+		prompttemplate.New(),
 		toolallowlist.New(p.Adapters),
 		tool_call_validation.New(p.Adapters, openai.NewOpenaiClient(), p.Logger),
 		tooltransform.New(p.Adapters),
