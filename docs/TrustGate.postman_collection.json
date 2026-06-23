@@ -8059,6 +8059,1201 @@
           ]
         },
         {
+          "name": "Prompt template",
+          "description": "Exercises the `prompt_template` plugin at `pre_request`. Steps 1-7 build a gateway/registry/consumer with the plugin policy attached (policy `slug` must equal the plugin name `prompt_template`). Steps 8-9 cover Mode A (context injection): a templated system prompt is rendered from request context and injected; an unresolved `{{variable}}` with `on_missing_context_variable: error` returns `500 template_variable_unresolved`. Step 10 switches the policy to Mode B (named template reference) with `allow_untemplated_requests: false`; steps 11-15 prove rendering (`{template://support-bot@published}` + a top-level `properties` map replaces the messages array and `properties` never reaches the upstream) and the client-facing error codes. Plugin rejections share the shape `{\"error\":\"plugin_rejected\",\"type\":<code>}`. The policy is single-plugin and sequential so the in-place body rewrite is preserved. NOTE: the `{{tenant_tier}}`, `{{persona}}` and `{{question}}` tokens are the plugin's own template placeholders; they are intentionally NOT Postman variables, so Postman forwards them literally.",
+          "item": [
+            {
+              "name": "1. Create Gateway",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('gateway created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  pm.environment.set('gateway_id', pm.response.json().id);",
+                      "  pm.environment.set('gateway_slug', pm.response.json().slug);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"e2e-prompt-template-{{$guid}}\",\n  \"slug\": \"prompt-template-{{$randomInt}}\"\n}"
+                }
+              }
+            },
+            {
+              "name": "2. Create Registry (OpenAI)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('registry created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  pm.environment.set('registry_id', pm.response.json().id);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "registries"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"openai-primary-{{$guid}}\",\n  \"provider\": \"openai\",\n  \"description\": \"OpenAI chat completions\",\n  \"provider_options\": {},\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": {\n      \"api_key\": \"{{openai_api_key}}\"\n    }\n  }\n}"
+                }
+              }
+            },
+            {
+              "name": "3. Create Policy (prompt_template - Mode A inject)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('policy created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  pm.environment.set('policy_id', pm.response.json().id);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "policies"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"prompt-template-mode-a-{{$guid}}\",\n  \"slug\": \"prompt_template\",\n  \"enabled\": true,\n  \"priority\": 10,\n  \"parallel\": false,\n  \"stages\": [\n    \"pre_request\"\n  ],\n  \"settings\": {\n    \"context_variables\": {\n      \"tenant_tier\": {\n        \"source\": \"header\",\n        \"name\": \"X-Tenant-Tier\"\n      }\n    },\n    \"inject_templates\": [\n      {\n        \"id\": \"tenant-system-prompt\",\n        \"position\": \"system\",\n        \"role\": \"system\",\n        \"content\": \"You are a helpful assistant for {{tenant_tier}} customers.\",\n        \"on_existing_system\": \"merge\"\n      }\n    ],\n    \"on_missing_context_variable\": \"error\",\n    \"allow_untemplated_requests\": true\n  }\n}"
+                },
+                "description": "Mode A: `context_variables.tenant_tier` is read from the `X-Tenant-Tier` request header and substituted into the `inject_templates` content, which is merged into the system prompt. `on_missing_context_variable: error` makes an unresolved variable a hard `500`. `allow_untemplated_requests: true` lets non-referencing requests pass."
+              }
+            },
+            {
+              "name": "4. Create Auth API Key",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('auth created', () => pm.response.code === 201);",
+                      "pm.test('api key returned once', () => !!pm.response.json().api_key);",
+                      "if (pm.response.code === 201) {",
+                      "  const body = pm.response.json();",
+                      "  pm.environment.set('auth_id', body.id);",
+                      "  pm.environment.set('consumer_api_key', body.api_key);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "auths"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"client-key-{{$guid}}\",\n  \"type\": \"api_key\",\n  \"enabled\": true\n}"
+                }
+              }
+            },
+            {
+              "name": "5. Create Consumer (permissive model policy)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('consumer created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  const body = pm.response.json();",
+                      "  pm.environment.set('consumer_id', body.id);",
+                      "  pm.environment.set('consumer_slug', body.slug);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "consumers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"e2e-consumer-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"headers\": {},\n  \"registries\": [\n    {\n      \"id\": \"{{registry_id}}\",\n      \"weight\": 1,\n      \"model_policies\": {\n        \"allowed\": [\n          \"gpt-4o-mini\",\n          \"gpt-4o\"\n        ],\n        \"default\": \"gpt-4o-mini\"\n      }\n    }\n  ]\n}"
+                },
+                "description": "The consumer model policy admits the model used below so the `prompt_template` plugin is the only thing transforming the request."
+              }
+            },
+            {
+              "name": "6. Attach Policy to Consumer",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('policy attached', () => [200, 201, 204].includes(pm.response.code));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/policies/{{policy_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "consumers",
+                    "{{consumer_id}}",
+                    "policies",
+                    "{{policy_id}}"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "7. Attach Auth to Consumer",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('auth attached', () => [200, 201, 204].includes(pm.response.code));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/auths/{{auth_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "consumers",
+                    "{{consumer_id}}",
+                    "auths",
+                    "{{auth_id}}"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "8. Proxy - Mode A header present -> 200 (system injected)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('proxy returned 200', () => pm.response.code === 200);",
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  },
+                  {
+                    "key": "X-Tenant-Tier",
+                    "value": "enterprise"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Hello from TrustGate\"\n    }\n  ]\n}"
+                },
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "description": "`X-Tenant-Tier: enterprise` resolves `{{tenant_tier}}`, so the plugin injects/merges the system prompt 'You are a helpful assistant for enterprise customers.' and forwards the rewritten body to OpenAI."
+              }
+            },
+            {
+              "name": "9. Proxy - Mode A header missing -> 500 template_variable_unresolved",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('rejected with 500', () => pm.response.code === 500);",
+                      "const body = pm.response.json();",
+                      "pm.test('error is plugin_rejected', () => body.error === 'plugin_rejected');",
+                      "pm.test('type is template_variable_unresolved', () => body.type === 'template_variable_unresolved');"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Hello from TrustGate\"\n    }\n  ]\n}"
+                },
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "description": "Without `X-Tenant-Tier` the `{{tenant_tier}}` variable is unresolved; with `on_missing_context_variable: error` the plugin short-circuits with `500` and `{\"error\":\"plugin_rejected\",\"type\":\"template_variable_unresolved\"}`; upstream is never contacted."
+              }
+            },
+            {
+              "name": "10. Update Policy -> Mode B (named template reference)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('policy updated', () => [200, 204].includes(pm.response.code));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"prompt-template-mode-b-{{$guid}}\",\n  \"slug\": \"prompt_template\",\n  \"enabled\": true,\n  \"priority\": 10,\n  \"parallel\": false,\n  \"stages\": [\n    \"pre_request\"\n  ],\n  \"settings\": {\n    \"named_templates\": [\n      {\n        \"name\": \"support-bot\",\n        \"versions\": [\n          {\n            \"version\": \"v3\",\n            \"labels\": [\n              \"latest\",\n              \"published\"\n            ],\n            \"content\": \"[{\\\"role\\\":\\\"system\\\",\\\"content\\\":\\\"You are a {{persona}} support agent.\\\"},{\\\"role\\\":\\\"user\\\",\\\"content\\\":\\\"{{question}}\\\"}]\",\n            \"required_variables\": {\n              \"persona\": {\n                \"type\": \"string\",\n                \"enum\": [\n                  \"friendly\",\n                  \"formal\"\n                ]\n              },\n              \"question\": {\n                \"type\": \"string\",\n                \"max_length\": 200\n              }\n            }\n          }\n        ]\n      }\n    ],\n    \"default_label\": \"published\",\n    \"allow_untemplated_requests\": false,\n    \"on_missing_client_variable\": \"error\",\n    \"escape_json_control_chars\": true\n  }\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies/{{policy_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "policies",
+                    "{{policy_id}}"
+                  ]
+                },
+                "description": "Switches the same policy to Mode B: the client references `{template://support-bot@published}` and supplies a `properties` map. The version is resolved by label (`default_label: published`), `properties` are validated against `required_variables`, the rendered JSON messages replace the request messages array, and `properties` is stripped before forwarding. `allow_untemplated_requests: false` rejects requests with no reference."
+              }
+            },
+            {
+              "name": "11. Proxy - Mode B render -> 200 (messages replaced, properties stripped)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('proxy returned 200', () => pm.response.code === 200);",
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"{template://support-bot@published}\"\n    }\n  ],\n  \"properties\": {\n    \"persona\": \"friendly\",\n    \"question\": \"How do I reset my password?\"\n  }\n}"
+                },
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "description": "The reference resolves to `support-bot` v3; `properties` (persona, question) render the template and replace the messages array with the rendered system+user pair. The literal `{template://...}` token and the `properties` field never reach OpenAI."
+              }
+            },
+            {
+              "name": "12. Proxy - Mode B missing required var -> 400 template_variable_missing",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('rejected with 400', () => pm.response.code === 400);",
+                      "const body = pm.response.json();",
+                      "pm.test('error is plugin_rejected', () => body.error === 'plugin_rejected');",
+                      "pm.test('type is template_variable_missing', () => body.type === 'template_variable_missing');"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"{template://support-bot@published}\"\n    }\n  ],\n  \"properties\": {\n    \"question\": \"Where is my invoice?\"\n  }\n}"
+                },
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "description": "`persona` is required but absent from `properties`, so the plugin rejects with `400 template_variable_missing` before contacting the upstream."
+              }
+            },
+            {
+              "name": "13. Proxy - Mode B invalid enum -> 400 template_variable_invalid",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('rejected with 400', () => pm.response.code === 400);",
+                      "const body = pm.response.json();",
+                      "pm.test('error is plugin_rejected', () => body.error === 'plugin_rejected');",
+                      "pm.test('type is template_variable_invalid', () => body.type === 'template_variable_invalid');"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"{template://support-bot@published}\"\n    }\n  ],\n  \"properties\": {\n    \"persona\": \"rude\",\n    \"question\": \"Help\"\n  }\n}"
+                },
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "description": "`persona: rude` is not in the `enum` [friendly, formal], so the plugin rejects with `400 template_variable_invalid`."
+              }
+            },
+            {
+              "name": "14. Proxy - unknown template -> 400 template_not_found",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('rejected with 400', () => pm.response.code === 400);",
+                      "const body = pm.response.json();",
+                      "pm.test('error is plugin_rejected', () => body.error === 'plugin_rejected');",
+                      "pm.test('type is template_not_found', () => body.type === 'template_not_found');"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"{template://does-not-exist@published}\"\n    }\n  ],\n  \"properties\": {\n    \"persona\": \"friendly\",\n    \"question\": \"Help\"\n  }\n}"
+                },
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "description": "No `named_templates` entry matches `does-not-exist`, so the plugin rejects with `400 template_not_found`."
+              }
+            },
+            {
+              "name": "15. Proxy - no reference (allow_untemplated_requests false) -> 400 template_required",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('rejected with 400', () => pm.response.code === 400);",
+                      "const body = pm.response.json();",
+                      "pm.test('error is plugin_rejected', () => body.error === 'plugin_rejected');",
+                      "pm.test('type is template_required', () => body.type === 'template_required');"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Just a plain question, no template reference\"\n    }\n  ]\n}"
+                },
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "description": "With `allow_untemplated_requests: false` and no `{template://...}` reference in the request, the plugin rejects with `400 template_required`."
+              }
+            }
+          ]
+        },
+        {
+          "name": "Tool allowlist",
+          "description": "Exercises the `tool_allowlist` plugin at `pre_request`. The plugin glob-filters the request `tools[]` array before the model sees it. The first policy allow-lists `search_*`/`calculate` and rejects when the filter empties the array: an allowed request (200) and a request whose only tool is disallowed -> 403 `no_tools_allowed`. The final steps flip `on_empty_after_filter` to `strip_tools_field` and prove the same all-disallowed request now passes (200) with the tools removed from the forwarded body. Single-plugin sequential policy, so the body rewrite is preserved. Set `openai_api_key` to a real key before running.",
+          "item": [
+            {
+              "name": "1. Create Gateway",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('gateway created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  pm.environment.set('gateway_id', pm.response.json().id);",
+                      "  pm.environment.set('gateway_slug', pm.response.json().slug);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"e2e-tool-allowlist-{{$guid}}\",\n  \"slug\": \"tool-allowlist-{{$randomInt}}\"\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "2. Create Registry (OpenAI)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('registry created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  pm.environment.set('registry_id', pm.response.json().id);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"openai-primary-{{$guid}}\",\n  \"provider\": \"openai\",\n  \"description\": \"OpenAI chat completions\",\n  \"provider_options\": {},\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": { \"api_key\": \"{{openai_api_key}}\" }\n  }\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "registries"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "3. Create Policy (tool_allowlist - reject)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('policy created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  pm.environment.set('policy_id', pm.response.json().id);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"tool-allowlist-reject-{{$guid}}\",\n  \"slug\": \"tool_allowlist\",\n  \"enabled\": true,\n  \"priority\": 10,\n  \"parallel\": false,\n  \"stages\": [\"pre_request\"],\n  \"settings\": {\n    \"allow_tools\": [\"search_*\", \"calculate\"],\n    \"on_empty_after_filter\": \"reject\"\n  }\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "policies"
+                  ]
+                },
+                "description": "The policy `slug` must equal the plugin name `tool_allowlist`. `allow_tools` accepts `*`/`?`/`[...]` globs matched against the tool name (`search_*` matches `search_web`, `search_docs`, etc.). `deny_tools` (not used here) is applied after the allow-list and overrides it. `on_empty_after_filter` controls behaviour when every tool is filtered out: `reject` (used here) short-circuits with `403 no_tools_allowed`, while `pass_through_empty`/`strip_tools_field` forward the request with the tools removed."
+              }
+            },
+            {
+              "name": "4. Create Auth API Key",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('auth created', () => pm.response.code === 201);",
+                      "pm.test('api key returned once', () => !!pm.response.json().api_key);",
+                      "if (pm.response.code === 201) {",
+                      "  const body = pm.response.json();",
+                      "  pm.environment.set('auth_id', body.id);",
+                      "  pm.environment.set('consumer_api_key', body.api_key);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"client-key-{{$guid}}\",\n  \"type\": \"api_key\",\n  \"enabled\": true\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "auths"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "5. Create Consumer (permissive model policy)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('consumer created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  const body = pm.response.json();",
+                      "  pm.environment.set('consumer_id', body.id);",
+                      "  pm.environment.set('consumer_slug', body.slug);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"e2e-consumer-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"headers\": {},\n  \"registries\": [\n    {\n      \"id\": \"{{registry_id}}\",\n      \"weight\": 1,\n      \"model_policies\": {\n        \"allowed\": [\n          \"gpt-4o-mini\",\n          \"gpt-4o\",\n          \"gpt-3.5-turbo\"\n        ],\n        \"default\": \"gpt-4o-mini\"\n      }\n    }\n  ]\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "consumers"
+                  ]
+                },
+                "description": "The consumer model policy admits the model used in this flow so that the `tool_allowlist` plugin is the only thing gating the request; the plugin operates on the `tools[]` array, not the model."
+              }
+            },
+            {
+              "name": "6. Attach Policy to Consumer",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('policy attached', () => [200, 201, 204].includes(pm.response.code));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/policies/{{policy_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "consumers",
+                    "{{consumer_id}}",
+                    "policies",
+                    "{{policy_id}}"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "7. Attach Auth to Consumer",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('auth attached', () => [200, 201, 204].includes(pm.response.code));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/auths/{{auth_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "consumers",
+                    "{{consumer_id}}",
+                    "auths",
+                    "{{auth_id}}"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "8. Proxy - allowed tools (search_web, calculate) -> 200",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('proxy returned 200', () => pm.response.code === 200);",
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Search the web for TrustGate and add 2 + 2.\" }\n  ],\n  \"tools\": [\n    {\n      \"type\": \"function\",\n      \"function\": {\n        \"name\": \"search_web\",\n        \"description\": \"Search the web for a query.\",\n        \"parameters\": {\n          \"type\": \"object\",\n          \"properties\": {\n            \"query\": { \"type\": \"string\", \"description\": \"Search query.\" }\n          },\n          \"required\": [\"query\"]\n        }\n      }\n    },\n    {\n      \"type\": \"function\",\n      \"function\": {\n        \"name\": \"calculate\",\n        \"description\": \"Evaluate an arithmetic expression.\",\n        \"parameters\": {\n          \"type\": \"object\",\n          \"properties\": {\n            \"expression\": { \"type\": \"string\", \"description\": \"Expression to evaluate.\" }\n          },\n          \"required\": [\"expression\"]\n        }\n      }\n    }\n  ],\n  \"tool_choice\": \"auto\"\n}"
+                },
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "description": "`search_web` matches the `search_*` glob and `calculate` is allow-listed verbatim, so the filter keeps both tools and the request passes through to OpenAI with its `tools[]` array intact."
+              }
+            },
+            {
+              "name": "9. Proxy - all tools disallowed (delete_db) -> 403 no_tools_allowed",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('rejected with 403', () => pm.response.code === 403);",
+                      "const body = pm.response.json();",
+                      "pm.test('error type is no_tools_allowed', () => body.error && body.error.type === 'no_tools_allowed');",
+                      "pm.test('echoes requested tools', () => Array.isArray(body.error.requested) && body.error.requested.includes('delete_db'));",
+                      "pm.test('allowed_after_filter is empty', () => Array.isArray(body.error.allowed_after_filter) && body.error.allowed_after_filter.length === 0);"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Delete the production database.\" }\n  ],\n  \"tools\": [\n    {\n      \"type\": \"function\",\n      \"function\": {\n        \"name\": \"delete_db\",\n        \"description\": \"Delete a database.\",\n        \"parameters\": {\n          \"type\": \"object\",\n          \"properties\": {\n            \"name\": { \"type\": \"string\", \"description\": \"Database name.\" }\n          },\n          \"required\": [\"name\"]\n        }\n      }\n    }\n  ],\n  \"tool_choice\": \"auto\"\n}"
+                },
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "description": "`delete_db` matches neither `search_*` nor `calculate`, so the filter empties the `tools[]` array. With `on_empty_after_filter: reject` the plugin short-circuits at `pre_request` with `403` and the exact body `{\"error\":{\"type\":\"no_tools_allowed\",\"requested\":[\"delete_db\"],\"allowed_after_filter\":[]}}`; upstream is never contacted."
+              }
+            },
+            {
+              "name": "10. Update Policy -> strip_tools_field",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('policy updated', () => [200, 204].includes(pm.response.code));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"tool-allowlist-strip-{{$guid}}\",\n  \"slug\": \"tool_allowlist\",\n  \"enabled\": true,\n  \"priority\": 10,\n  \"parallel\": false,\n  \"stages\": [\"pre_request\"],\n  \"settings\": {\n    \"allow_tools\": [\"search_*\", \"calculate\"],\n    \"on_empty_after_filter\": \"strip_tools_field\"\n  }\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies/{{policy_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "policies",
+                    "{{policy_id}}"
+                  ]
+                },
+                "description": "Switches the same policy to `strip_tools_field`: when the filter empties the `tools[]` array the plugin drops the `tools`/`tool_choice` fields from the forwarded body and lets the request through instead of rejecting it."
+              }
+            },
+            {
+              "name": "11. Proxy - all tools disallowed, tools stripped -> 200",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('proxy returned 200', () => pm.response.code === 200);",
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Delete the production database.\" }\n  ],\n  \"tools\": [\n    {\n      \"type\": \"function\",\n      \"function\": {\n        \"name\": \"delete_db\",\n        \"description\": \"Delete a database.\",\n        \"parameters\": {\n          \"type\": \"object\",\n          \"properties\": {\n            \"name\": { \"type\": \"string\", \"description\": \"Database name.\" }\n          },\n          \"required\": [\"name\"]\n        }\n      }\n    }\n  ],\n  \"tool_choice\": \"auto\"\n}"
+                },
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "description": "Same all-disallowed `delete_db` request as step 9, but the policy is now in `strip_tools_field` mode, so the plugin removes the `tools`/`tool_choice` fields and forwards the request to OpenAI, which answers normally with `200`."
+              }
+            }
+          ]
+        },
+        {
           "name": "Budget (token, dollar & cost cap)",
           "description": "Exercises the `token_rate_limiter` budget plugin through the proxy. The consumer model policy is permissive so the plugin is the sole gate. Steps 8-9 prove the stateless cost cap allows a cheap model and rejects an over-priced one with `403 model_too_expensive`. Steps 10-11 flip the cost cap to `downgrade` and prove an over-ceiling model is transparently rewritten to a same-provider cheaper model (`X-NeuralTrust-Model-Downgraded`). Steps 12-14 replace the cost cap with a cumulative token budget and prove the first request passes while the next is blocked with `429 token_budget_exceeded` and `X-Budget-*` headers. Pricing is `custom` for determinism; set `openai_api_key` to a real key and run top-to-bottom.",
           "item": [
@@ -9621,6 +10816,544 @@
                   }
                 }
               ]
+            }
+          ]
+        },
+        {
+          "name": "Per-tool rate limiter",
+          "description": "Exercises the `per_tool_rate_limiter` plugin across `pre_request`, `pre_response` and `post_response`. The model is forced (via `tool_choice`) to call `get_weather` on every request, and the plugin counts each actual tool call at `post_response`. The rule allows 2 calls of `get_weather` per 1m window, scoped per consumer. Steps 8-9 stay within the limit (200, tool call forwarded). Step 10 is over the limit and, with `behavior: reject_response`, short-circuits at `pre_request` with `429`, a `tool \"get_weather\" rate limit exceeded` body, a `Retry-After` and an `X-RateLimit-Tool` header; upstream is never contacted. Steps 11-12 flip the behavior to `inject_error_result` and prove that, instead of rejecting, the plugin removes the over-limit tool call from the response at `pre_response` and injects a `... is rate limited and was not executed` message (200). The third behavior, `strip_tool_from_request`, removes the tool from the outbound request before it reaches upstream. Set `openai_api_key` to a real key and run top-to-bottom.",
+          "item": [
+            {
+              "name": "1. Create Gateway",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('gateway created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  pm.environment.set('gateway_id', pm.response.json().id);",
+                      "  pm.environment.set('gateway_slug', pm.response.json().slug);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"e2e-per-tool-rate-limiter-{{$guid}}\",\n  \"slug\": \"per-tool-rl-{{$randomInt}}\"\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "2. Create Registry (OpenAI)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('registry created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  pm.environment.set('registry_id', pm.response.json().id);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"openai-primary-{{$guid}}\",\n  \"provider\": \"openai\",\n  \"description\": \"OpenAI chat completions\",\n  \"provider_options\": {},\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": { \"api_key\": \"{{openai_api_key}}\" }\n  }\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "registries"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "3. Create Policy (per_tool_rate_limiter - reject)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('policy created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  pm.environment.set('policy_id', pm.response.json().id);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"per-tool-rate-limiter-reject-{{$guid}}\",\n  \"slug\": \"per_tool_rate_limiter\",\n  \"enabled\": true,\n  \"priority\": 10,\n  \"parallel\": false,\n  \"stages\": [\"pre_request\", \"pre_response\", \"post_response\"],\n  \"settings\": {\n    \"scope\": \"consumer\",\n    \"behavior_default\": \"reject_response\",\n    \"rules\": [\n      {\n        \"tool\": \"get_weather\",\n        \"windows\": [ { \"duration\": \"1m\", \"max\": 2 } ]\n      }\n    ]\n  }\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "policies"
+                  ]
+                },
+                "description": "The policy `slug` must equal the plugin name `per_tool_rate_limiter`, and the plugin declares all three stages as mandatory (`pre_request` enforces, `post_response` counts actual tool calls). The single rule allows 2 calls of `get_weather` per 1m window; `behavior_default: reject_response` returns a `429` once the limit is reached."
+              }
+            },
+            {
+              "name": "4. Create Auth API Key",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('auth created', () => pm.response.code === 201);",
+                      "pm.test('api key returned once', () => !!pm.response.json().api_key);",
+                      "if (pm.response.code === 201) {",
+                      "  const body = pm.response.json();",
+                      "  pm.environment.set('auth_id', body.id);",
+                      "  pm.environment.set('consumer_api_key', body.api_key);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"client-key-{{$guid}}\",\n  \"type\": \"api_key\",\n  \"enabled\": true\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "auths"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "5. Create Consumer",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('consumer created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  const body = pm.response.json();",
+                      "  pm.environment.set('consumer_id', body.id);",
+                      "  pm.environment.set('consumer_slug', body.slug);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"e2e-consumer-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"headers\": {},\n  \"registries\": [\n    {\n      \"id\": \"{{registry_id}}\",\n      \"weight\": 1,\n      \"model_policies\": {\n        \"allowed\": [\n          \"gpt-4o-mini\"\n        ],\n        \"default\": \"gpt-4o-mini\"\n      }\n    }\n  ]\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "consumers"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "6. Attach Policy to Consumer",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('policy attached', () => [200, 201, 204].includes(pm.response.code));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/policies/{{policy_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "consumers",
+                    "{{consumer_id}}",
+                    "policies",
+                    "{{policy_id}}"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "7. Attach Auth to Consumer",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('auth attached', () => [200, 201, 204].includes(pm.response.code));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/auths/{{auth_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "consumers",
+                    "{{consumer_id}}",
+                    "auths",
+                    "{{auth_id}}"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "8. Proxy - get_weather call 1 within limit -> 200",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('first call allowed', () => pm.response.code === 200);",
+                      "pm.test('tool call forwarded', () => pm.response.text().includes('get_weather'));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"What is the weather in Paris right now?\" }\n  ],\n  \"tools\": [\n    {\n      \"type\": \"function\",\n      \"function\": {\n        \"name\": \"get_weather\",\n        \"description\": \"Get the current weather for a city.\",\n        \"parameters\": {\n          \"type\": \"object\",\n          \"properties\": {\n            \"city\": { \"type\": \"string\", \"description\": \"City name.\" }\n          },\n          \"required\": [\"city\"]\n        }\n      }\n    }\n  ],\n  \"tool_choice\": { \"type\": \"function\", \"function\": { \"name\": \"get_weather\" } }\n}"
+                },
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "description": "`tool_choice` forces the model to call `get_weather`. First call inside the window: the counter is below the limit, so the request is forwarded and the tool call reaches the client. The actual call is counted at `post_response` (counter -> 1)."
+              }
+            },
+            {
+              "name": "9. Proxy - get_weather call 2 within limit -> 200",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('second call allowed', () => pm.response.code === 200);",
+                      "pm.test('tool call forwarded', () => pm.response.text().includes('get_weather'));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"What is the weather in Berlin right now?\" }\n  ],\n  \"tools\": [\n    {\n      \"type\": \"function\",\n      \"function\": {\n        \"name\": \"get_weather\",\n        \"description\": \"Get the current weather for a city.\",\n        \"parameters\": {\n          \"type\": \"object\",\n          \"properties\": {\n            \"city\": { \"type\": \"string\", \"description\": \"City name.\" }\n          },\n          \"required\": [\"city\"]\n        }\n      }\n    }\n  ],\n  \"tool_choice\": { \"type\": \"function\", \"function\": { \"name\": \"get_weather\" } }\n}"
+                },
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "description": "Second (last) allowed call of `get_weather` inside the window; counted at `post_response` (counter -> 2, now at the limit)."
+              }
+            },
+            {
+              "name": "10. Proxy - get_weather call 3 over limit -> 429",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('third call rejected', () => pm.response.code === 429);",
+                      "pm.test('tool rate limit message', () => pm.response.text().includes('rate limit exceeded'));",
+                      "pm.test('rate-limited tool header', () => pm.response.headers.get('X-RateLimit-Tool') === 'get_weather');",
+                      "pm.test('retry-after header present', () => pm.response.headers.has('Retry-After'));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"What is the weather in Madrid right now?\" }\n  ],\n  \"tools\": [\n    {\n      \"type\": \"function\",\n      \"function\": {\n        \"name\": \"get_weather\",\n        \"description\": \"Get the current weather for a city.\",\n        \"parameters\": {\n          \"type\": \"object\",\n          \"properties\": {\n            \"city\": { \"type\": \"string\", \"description\": \"City name.\" }\n          },\n          \"required\": [\"city\"]\n        }\n      }\n    }\n  ],\n  \"tool_choice\": { \"type\": \"function\", \"function\": { \"name\": \"get_weather\" } }\n}"
+                },
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "description": "Third request to call `get_weather` exceeds the 2-per-window limit. With `reject_response`, the plugin short-circuits at `pre_request` with `429`, a `tool \"get_weather\" rate limit exceeded` body, an `X-RateLimit-Tool: get_weather` header and a `Retry-After`; upstream is never contacted."
+              }
+            },
+            {
+              "name": "11. Update Policy -> inject_error_result",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('policy updated', () => [200, 204].includes(pm.response.code));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"per-tool-rate-limiter-inject-{{$guid}}\",\n  \"slug\": \"per_tool_rate_limiter\",\n  \"enabled\": true,\n  \"priority\": 10,\n  \"parallel\": false,\n  \"stages\": [\"pre_request\", \"pre_response\", \"post_response\"],\n  \"settings\": {\n    \"scope\": \"consumer\",\n    \"behavior_default\": \"inject_error_result\",\n    \"rules\": [\n      {\n        \"tool\": \"get_weather\",\n        \"windows\": [ { \"duration\": \"1m\", \"max\": 2 } ]\n      }\n    ]\n  }\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies/{{policy_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "policies",
+                    "{{policy_id}}"
+                  ]
+                },
+                "description": "Switches the same rule to `inject_error_result`. The counter is still over the limit, so instead of rejecting the request, the plugin now lets it reach upstream, then removes the over-limit tool call from the response at `pre_response` and injects an explanatory message in its place."
+              }
+            },
+            {
+              "name": "12. Proxy - over limit, tool call injected away -> 200",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('proxy returned 200', () => pm.response.code === 200);",
+                      "pm.test('tool call replaced with rate-limit notice', () => pm.response.text().includes('is rate limited and was not executed'));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"What is the weather in Lisbon right now?\" }\n  ],\n  \"tools\": [\n    {\n      \"type\": \"function\",\n      \"function\": {\n        \"name\": \"get_weather\",\n        \"description\": \"Get the current weather for a city.\",\n        \"parameters\": {\n          \"type\": \"object\",\n          \"properties\": {\n            \"city\": { \"type\": \"string\", \"description\": \"City name.\" }\n          },\n          \"required\": [\"city\"]\n        }\n      }\n    }\n  ],\n  \"tool_choice\": { \"type\": \"function\", \"function\": { \"name\": \"get_weather\" } }\n}"
+                },
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "description": "Same forced `get_weather` call while still over the limit, but the policy now injects instead of rejecting: the response is forwarded with `200`, the over-limit tool call is dropped and replaced with content like `The tool \"get_weather\" (call ...) is rate limited and was not executed.`"
+              }
             }
           ]
         },

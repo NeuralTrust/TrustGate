@@ -23,6 +23,7 @@ import (
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
@@ -30,6 +31,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/mtls"
 	oidcauth "github.com/NeuralTrust/TrustGate/pkg/infra/auth/oidc"
+	authsession "github.com/NeuralTrust/TrustGate/pkg/infra/auth/session"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	playgroundstore "github.com/NeuralTrust/TrustGate/pkg/infra/metrics/playground"
 	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
@@ -79,11 +81,17 @@ func API(c *container.Container) error {
 	if err := c.Provide(middleware.NewSessionMiddleware); err != nil {
 		return err
 	}
+	if err := c.Provide(func(signer sts.TokenSigner) (appauth.SessionTokenVerifier, error) {
+		return authsession.NewVerifier(signer)
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(func(
 		apiKeys appauth.APIKeyFinder,
 		credentials appauth.CredentialFinder,
 		paths appconsumer.PathResolver,
 		verifier appauth.OIDCVerifier,
+		sessionVerifier appauth.SessionTokenVerifier,
 		cfg *config.Config,
 	) middleware.IdentityResolver {
 		return middleware.NewChainIdentityResolver(
@@ -94,6 +102,7 @@ func API(c *container.Container) error {
 			introspection.NewValidator(nil),
 			mtls.NewValidator(),
 			mtls.NewXFCCExtractor(),
+			sessionVerifier,
 			cfg.Server.TrustXFCCFrom,
 		)
 	}); err != nil {
@@ -141,13 +150,20 @@ func API(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	if err := c.Provide(func() appoauth.UserInfoClient {
+		return infraoauth.NewUserInfoClient(nil)
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(func(
 		credentials appauth.CredentialFinder,
 		paths appconsumer.PathResolver,
 		store appoauth.FlowStore,
 		connect appoauth.ConnectService,
+		signer sts.TokenSigner,
+		userinfo appoauth.UserInfoClient,
 	) appoauth.AuthProxy {
-		return appoauth.NewAuthProxy(credentials, paths, nil, store, connect)
+		return appoauth.NewAuthProxy(credentials, paths, nil, store, connect, signer, userinfo)
 	}); err != nil {
 		return err
 	}

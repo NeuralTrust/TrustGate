@@ -393,13 +393,27 @@ upstream invocation, which is too late for `pre_request`. Use the single
 `stampTarget(req, backend)` helper in `forwarder.go`; do not stamp `RegistryID`
 / `Provider` ad hoc in more than one place.
 
-### 14.2 Parallel plugins never share mutable maps
+### 14.2 Parallel plugins never share mutable maps and the executor is the single writer of the body
 
-A parallel batch (`policy.Parallel == true`, same priority) runs each plugin on
-an **isolated clone** of the Request/Response context; per-plugin mutations are
-merged back sequentially, in deterministic batch order, after `errgroup.Wait()`.
-Plugins must not write the shared `Headers` / `Metadata` maps concurrently — Go
-will panic on a concurrent map write. Single-plugin batches skip the clone.
+Batch grouping happens at `StagePlan` build time. The planner sorts each stage's
+entries by `priority → slug → id` and greedily forms batches so that every
+parallel batch (`policy.Parallel == true`, same priority) admits **at most one**
+request-body mutator, **one** response-body mutator, and **one** metadata mutator
+(capabilities come from `MutatesRequestBody` / `MutatesResponseBody` /
+`MutatesMetadata`, resolved once on the cold path). Excess mutators are forced
+into the next batch — effectively sequential — and the demotion is logged.
+
+A parallel batch runs each plugin on an **isolated clone** of the Request/Response
+context; `Headers` and `Metadata` mutations are merged back sequentially, in
+deterministic batch order, after `errgroup.Wait()`. Plugins MUST treat the
+context as read-only and return body changes via `Result.RequestBody` /
+`Result.Body` — never assign `in.Request.Body` or write the shared `Headers` /
+`Metadata` maps concurrently. The executor is the **single writer** of
+`req.Body` / `resp.Body`: it folds each batch's `Result`s in batch order across
+the `[par][seq][par]…` blocks, so a later block observes the earlier block's
+folded body. As defense-in-depth it enforces ≤1 applied body and ≤1
+`StopUpstream` per batch with first-in-order-wins guards. Single-plugin batches
+skip the clone and run on the real context.
 
 ### 14.3 Policy chains are precomputed (`StagePlan`), not per-request
 

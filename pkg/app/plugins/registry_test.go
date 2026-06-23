@@ -36,6 +36,9 @@ func (s *stagePlugin) SupportedStages() []policy.Stage                     { ret
 func (s *stagePlugin) SupportedModes() []policy.Mode                       { return []policy.Mode{policy.ModeEnforce} }
 func (s *stagePlugin) ValidateConfig(map[string]any) error                 { return nil }
 func (s *stagePlugin) Execute(context.Context, ExecInput) (*Result, error) { return nil, nil }
+func (s *stagePlugin) MutatesRequestBody() bool                            { return false }
+func (s *stagePlugin) MutatesResponseBody() bool                           { return false }
+func (s *stagePlugin) MutatesMetadata() bool                               { return false }
 
 func TestRegistry_Register(t *testing.T) {
 	tests := []struct {

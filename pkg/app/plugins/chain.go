@@ -21,12 +21,15 @@ import (
 )
 
 type chainEntry struct {
-	plugin   Plugin
-	config   policy.PluginConfig
-	mode     policy.Mode
-	priority int
-	parallel bool
-	global   bool
+	plugin      Plugin
+	config      policy.PluginConfig
+	mode        policy.Mode
+	priority    int
+	parallel    bool
+	global      bool
+	mutatesReq  bool
+	mutatesResp bool
+	mutatesMeta bool
 }
 
 func buildStageChain(reg Registry, policies []*policy.Policy, stage policy.Stage) []chainEntry {
@@ -57,10 +60,13 @@ func buildStageChain(reg Registry, policies []*policy.Policy, stage policy.Stage
 				Name:     pol.Name,
 				Settings: pol.Settings,
 			},
-			mode:     pol.Mode.Normalize(),
-			priority: pol.Priority,
-			parallel: pol.Parallel,
-			global:   pol.IsGlobal(),
+			mode:        pol.Mode.Normalize(),
+			priority:    pol.Priority,
+			parallel:    pol.Parallel,
+			global:      pol.IsGlobal(),
+			mutatesReq:  plugin.MutatesRequestBody(),
+			mutatesResp: plugin.MutatesResponseBody(),
+			mutatesMeta: plugin.MutatesMetadata(),
 		})
 	}
 
@@ -82,17 +88,4 @@ func isEffectiveStage(p Plugin, selected []policy.Stage, stage policy.Stage) boo
 		}
 	}
 	return false
-}
-
-func parallelBatch(entries []chainEntry, i int) []chainEntry {
-	if !entries[i].parallel {
-		return entries[i : i+1]
-	}
-	j := i
-	for j < len(entries) &&
-		entries[j].parallel &&
-		entries[j].priority == entries[i].priority {
-		j++
-	}
-	return entries[i:j]
 }
