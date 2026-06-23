@@ -206,31 +206,31 @@ would force constant rebases. Prefer the chain.)
 
 ## Phase 3: Store factory + in_memory backend + DI wiring (redis default unchanged)
 
-- [ ] 3.1 Create `pkg/infra/cache/semantic/factory.go`: `Deps{Redis *redis.Client,
+- [x] 3.1 Create `pkg/infra/cache/semantic/factory.go`: `Deps{Redis *redis.Client,
       Pool *pgxpool.Pool, Logger *slog.Logger}` and `NewStore(kind string, deps Deps)
       (Store, error)` handling `""`/`"redis"` (nil client → error, else `NewRedisStore`)
       and `"in_memory"` (`NewMemoryStore`); `"pgvector"` and unknown kinds → error for
       now (pgvector case added in P5).
-- [ ] 3.2 Create `pkg/infra/cache/semantic/memory_store.go`: `MemoryStore` (mutex +
+- [x] 3.2 Create `pkg/infra/cache/semantic/memory_store.go`: `MemoryStore` (mutex +
       `vec map[string][]memVector{vector,response,expiry}`), `NewMemoryStore(logger)`,
       and the existing-interface methods only — `EnsureIndex` (no-op), `Store` (append
       with `expiry=now+TTL`), `Lookup` (brute-force cosine `dot/(‖a‖·‖b‖)` over live
       entries, top-K desc, lazy + opportunistic TTL sweep). `var _ Store = (*MemoryStore)(nil)`.
-- [ ] 3.3 In `pkg/container/modules/plugins.go`: add `DB *database.Connection` to
+- [x] 3.3 In `pkg/container/modules/plugins.go`: add `DB *database.Connection` to
       `pluginParams`; add `vectorStoreKind()` (env `SEMANTIC_CACHE_VECTOR_STORE`,
       default `redis`) and `poolOrNil(p.DB)` guard; build the store via
       `semantic.NewStore(p.vectorStoreKind(), semantic.Deps{Redis: redisClient,
       Pool: poolOrNil(p.DB), Logger: p.Logger})` (error-propagated) and pass it to
       `semanticcache.New`. `redis` default keeps the existing graph byte-identical.
-- [ ] 3.4 Resolve design open-question 2: confirm a minimal test container
+- [x] 3.4 Resolve design open-question 2: confirm a minimal test container
       (`container.New` + selective modules, AGENT.md §9) tolerates the new optional
       `pluginParams.DB`; if dig requires it, make the field `optional:"true"`.
 
 ### Phase 3 tests (`memory_store_test.go`, factory rows)
 
-- [ ] 3.5 `factory_test.go`/rows: `NewStore` selects redis (nil deps → error) /
+- [x] 3.5 `factory_test.go`/rows: `NewStore` selects redis (nil deps → error) /
       in_memory; `"pgvector"` and unknown kind → error.
-- [ ] 3.6 `memory_store_test.go`: `Store`+`Lookup` cosine top-K ordering;
+- [x] 3.6 `memory_store_test.go`: `Store`+`Lookup` cosine top-K ordering;
       TTL eviction (entry gone after `ttl` elapses); empty-rule lookup → no candidates.
 
 **Verify**: `go build ./... ; go vet ./pkg/infra/cache/semantic/... ./pkg/container/modules/... ; go test -race ./pkg/infra/cache/semantic/...`.
