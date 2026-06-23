@@ -66,7 +66,7 @@ func TestNewStore(t *testing.T) {
 			},
 		},
 		{
-			name:    "pgvector not yet available",
+			name:    "pgvector without pool errors",
 			kind:    "pgvector",
 			deps:    Deps{},
 			wantErr: true,

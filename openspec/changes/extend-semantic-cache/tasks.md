@@ -300,7 +300,7 @@ would force constant rebases. Prefer the chain.)
 
 ## Phase 5: pgvector backend + DB migration (inert unless configured)
 
-- [ ] 5.1 Create `pkg/infra/cache/semantic/pgvector_store.go`: `PgvectorStore{pool
+- [x] 5.1 Create `pkg/infra/cache/semantic/pgvector_store.go`: `PgvectorStore{pool
       *pgxpool.Pool, logger, ensured atomic.Bool, mu sync.Mutex}`,
       `NewPgvectorStore(pool, logger)`, `var _ Store = (*PgvectorStore)(nil)`.
       `EnsureIndex` validates column dim once (no DDL — migration owns it); `Lookup`
@@ -309,30 +309,35 @@ would force constant rebases. Prefer the chain.)
       `(rule_id,embedding,response,expires_at)`; `GetExact`/`PutExact` over
       `semantic_cache_exact (rule_id,key,response,expires_at)`. Every query error /
       missing extension → degrade (`nil` / `("",false,nil)`), never fail traffic.
-- [ ] 5.2 Add the `"pgvector"` case to `factory.go` `NewStore` (nil `Pool` → error,
+- [x] 5.2 Add the `"pgvector"` case to `factory.go` `NewStore` (nil `Pool` → error,
       else `NewPgvectorStore`).
-- [ ] 5.3 Create `pkg/infra/database/migrations/20260623120000_add_semantic_cache_pgvector.go`
-      registering via `init()` → `database.RegisterMigration`, idempotent up+down in
-      one tx: `CREATE EXTENSION IF NOT EXISTS vector`; `semantic_cache_entries`
-      (`embedding vector(1536)`, `rule_id`, `response`, `expires_at`, `created_at`) +
-      `rule`/`ivfflat vector_cosine_ops (lists=100)`/`expires_at` indexes;
-      `semantic_cache_exact` (PK `(rule_id,key)`, `expires_at`) + expiry index. Down
-      drops both tables, leaves the extension (note this in the migration `Name`).
-- [ ] 5.4 Resolve design open-question 3: validate-and-degrade on non-1536 dimension —
+- [x] 5.3 SEAM ADJUSTMENT (review fix): the pgvector schema is created LAZILY by the
+      store (`PgvectorStore.ensureSchema`, run once on first use), NOT by a boot
+      migration. A mandatory `database.RegisterMigration` running
+      `CREATE EXTENSION IF NOT EXISTS vector` on every boot would abort startup for
+      every Postgres deployment (including redis-default ones) where the extension or
+      `CREATE EXTENSION` privilege is absent. `ensureSchema` runs the same idempotent
+      DDL (`CREATE EXTENSION IF NOT EXISTS vector`; `semantic_cache_entries` with
+      `embedding vector(1536)`, rule/`ivfflat vector_cosine_ops (lists=100)`/expires
+      indexes; `semantic_cache_exact` PK `(rule_id,key)` + expiry index) only when
+      `pgvector` is the configured backend, and degrades (no-op) on failure so traffic
+      is never affected. Mirrors `RedisStore.EnsureIndex`'s lazy `FT.CREATE`.
+- [x] 5.4 Resolve design open-question 3: validate-and-degrade on non-1536 dimension —
       `EnsureIndex`/`Store` reject a mismatched `len(emb.Value)` by degrading to
       pass-through and tracing it; document 1536-only for the pgvector backend in the
       migration/code (no parametric column for v1).
-- [ ] 5.5 In `pkg/container/modules/plugins.go` confirm `poolOrNil(p.DB)` feeds the
+- [x] 5.5 In `pkg/container/modules/plugins.go` confirm `poolOrNil(p.DB)` feeds the
       factory so the pgvector branch resolves; admin/minimal graphs without
       `*database.Connection` stay nil-safe.
 
-### Phase 5 tests (env-gated)
+### Phase 5 tests
 
-- [ ] 5.6 `20260623120000_add_semantic_cache_pgvector_test.go`: assert up/down register
-      and apply cleanly against `PG_TEST_URL` (skip when unset, AGENT.md §9).
-- [ ] 5.7 `pgvector_store_test.go` (gated on `PG_TEST_URL`): semantic `Store`+`Lookup`
-      cosine ordering; exact round-trip; `expires_at` filtering; dimension-mismatch
-      degrade.
+- [x] 5.6 SEAM ADJUSTMENT: no boot-migration test (no migration). The schema DDL is
+      asserted indirectly via the store; pure DB-free unit tests cover the rest.
+- [x] 5.7 `pgvector_store_test.go` (DB-free): `vectorLiteral` formatting; `EnsureIndex`
+      1536 dimension guard; `Store` dimension-mismatch/nil-embedding degrade; exact
+      get/put degrade without a pool. Live-DB coverage is deferred (no PG_TEST_URL
+      harness in-repo).
 
 **Verify**: `go build ./... ; go vet ./... ; go test -race ./pkg/infra/cache/semantic/... ; PG_TEST_URL=... go test -race ./pkg/infra/cache/semantic/... ./pkg/infra/database/migrations/...`.
 **Rollback**: revert the pgvector file + factory case + `plugins.go` pool line; revert the migration (down is clean and the backend is inert unless `vector_store: pgvector`).

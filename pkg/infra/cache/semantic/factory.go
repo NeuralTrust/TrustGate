@@ -39,7 +39,10 @@ func NewStore(kind string, deps Deps) (Store, error) {
 	case "in_memory":
 		return NewMemoryStore(deps.Logger), nil
 	case "pgvector":
-		return nil, fmt.Errorf("semantic: pgvector store not yet available")
+		if deps.Pool == nil {
+			return nil, fmt.Errorf("semantic: pgvector store requires a database pool")
+		}
+		return NewPgvectorStore(deps.Pool, deps.Logger), nil
 	default:
 		return nil, fmt.Errorf("semantic: unknown vector_store %q", kind)
 	}
