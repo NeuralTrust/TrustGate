@@ -24,6 +24,8 @@ import (
 	"strings"
 )
 
+const gatewayRefreshPrefix = "gwrt_"
+
 func clientRedirect(redirectURI string, params url.Values, state string) string {
 	if state != "" {
 		params.Set("state", state)

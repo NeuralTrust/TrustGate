@@ -595,6 +595,44 @@ var pluginCatalogMeta = map[string]catalogMeta{
 			},
 		},
 	},
+	"tool_allowlist": {
+		name:        "Tool Allowlist",
+		group:       groupRouting,
+		description: "Glob-based access control for the request tools[] array: allow_tools whitelists patterns and deny_tools removes patterns (deny overrides allow) before the model sees the tools. When filtering empties the array, reject the request, strip the tools field, or pass through an empty array. Scope is informational; effective scope derives from the policy global flag.",
+		schema: SettingsSchema{
+			Fields: []Field{
+				{
+					Key:         "allow_tools",
+					Label:       "Allow Tools",
+					Type:        FieldTypeArray,
+					Description: "Glob patterns; if set, only matching tools pass.",
+					Item:        &Field{Key: "pattern", Label: "Pattern", Type: FieldTypeString},
+				},
+				{
+					Key:         "deny_tools",
+					Label:       "Deny Tools",
+					Type:        FieldTypeArray,
+					Description: "Glob patterns removed after allow_tools (deny overrides allow).",
+					Item:        &Field{Key: "pattern", Label: "Pattern", Type: FieldTypeString},
+				},
+				{
+					Key:         "on_empty_after_filter",
+					Label:       "On Empty After Filter",
+					Type:        FieldTypeEnum,
+					Description: "Behavior when filtering removes every tool from the request.",
+					Enum:        []string{"reject", "pass_through_empty", "strip_tools_field"},
+					Default:     "reject",
+				},
+				{
+					Key:         "scope",
+					Label:       "Scope",
+					Type:        FieldTypeEnum,
+					Description: "Informational; effective scope derives from the policy global flag.",
+					Enum:        []string{"consumer", "global"},
+				},
+			},
+		},
+	},
 	"tool_call_validation": {
 		name:        "Tool Call Validation",
 		group:       groupOther,

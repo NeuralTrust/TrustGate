@@ -29,9 +29,11 @@ const (
 	pendingPrefix       = "oauth:pending:"
 	codePrefix          = "oauth:code:"
 	gatewayClientPrefix = "oauth:gwclient:"
+	sessionPrefix       = "oauth:session:"
 	pendingTTL          = 10 * time.Minute
 	codeTTL             = 5 * time.Minute
 	gatewayClientTTL    = 30 * 24 * time.Hour
+	sessionTTL          = 30 * 24 * time.Hour
 )
 
 var _ appoauth.FlowStore = (*Store)(nil)
@@ -88,6 +90,19 @@ func (s *Store) GetGatewayClient(ctx context.Context, clientID string) (*appoaut
 	}
 	_ = s.rdb.Expire(ctx, gatewayClientPrefix+clientID, gatewayClientTTL).Err()
 	return &c, nil
+}
+
+func (s *Store) SaveSession(ctx context.Context, refreshToken string, rec appoauth.SessionRecord) error {
+	return s.save(ctx, sessionPrefix+refreshToken, rec, sessionTTL)
+}
+
+func (s *Store) TakeSession(ctx context.Context, refreshToken string) (*appoauth.SessionRecord, error) {
+	var rec appoauth.SessionRecord
+	ok, err := s.take(ctx, sessionPrefix+refreshToken, &rec)
+	if err != nil || !ok {
+		return nil, err
+	}
+	return &rec, nil
 }
 
 func (s *Store) save(ctx context.Context, key string, v any, ttl time.Duration) error {
