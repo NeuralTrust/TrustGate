@@ -129,6 +129,9 @@ func TestExecuteEnforceBlockReturns403(t *testing.T) {
 	if pe.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", pe.StatusCode, http.StatusForbidden)
 	}
+	if ct := pe.Headers["Content-Type"]; len(ct) != 1 || ct[0] != "application/json" {
+		t.Fatalf("Content-Type header = %v, want [application/json]", ct)
+	}
 	if pe.Type != typeContentFlagged {
 		t.Fatalf("type = %q, want %q", pe.Type, typeContentFlagged)
 	}

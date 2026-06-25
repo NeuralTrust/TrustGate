@@ -40,6 +40,7 @@ func blockError(message string, breaches []breachedCategory) *appplugins.PluginE
 		StatusCode: http.StatusForbidden,
 		Type:       typeContentFlagged,
 		Message:    message,
+		Headers:    map[string][]string{"Content-Type": {"application/json"}},
 		Body:       blockBody(message, breaches),
 	}
 }
