@@ -61,10 +61,10 @@ Phase 4 alone (~710) exceeds 400 → split into 4a (orchestration) and 4b (anony
 
 ## Phase 5: Registration + catalog metadata
 
-- [ ] 5.1 `pkg/container/modules/plugins.go`: import `bedrockguardrail`, append `bedrockguardrail.New(p.Adapters, p.Logger)` to `catalog`.
-- [ ] 5.2 `pkg/app/plugins/catalog_metadata.go`: add `bedrock_guardrail` entry under `groupGuardrails` (name/group/description + `SettingsSchema` per design §7). Gate G.
+- [x] 5.1 `pkg/container/modules/plugins.go`: import `bedrockguardrail`, append `bedrockguardrail.New(p.Adapters, p.Logger)` to `catalog`.
+- [x] 5.2 `pkg/app/plugins/catalog_metadata.go`: add `bedrock_guardrail` entry under `groupGuardrails` (name/group/description + `SettingsSchema` per design §7). Gate G.
 
 ## Phase 6: Functional test
 
-- [ ] 6.1 Add `//go:build functional` test shim in package (`newWithClient` + exported setter) so the harness injects a scripted fake `guardrailClient`.
-- [ ] 6.2 Create `tests/functional/plugin_bedrock_guardrail_test.go` mirroring azure: benign→allow upstream hit; topic block→exact 403 no upstream; observe→hit+reported; PII anonymize→forwarded body rewritten. Gate G.
+- [x] 6.1 Cross-process fake injection: the harness runs the gateway as a separate plainly-built binary, so a build-tagged Go seam is unusable. Instead point the gateway's Bedrock client at a fixed-port local fake via `AWS_ENDPOINT_URL_BEDROCK_RUNTIME` (honored natively by `LoadDefaultConfig`, zero production change), wired in `tests/functional/setup_test.go` `buildCmdEnv`, mirroring azure's HTTP-stub mechanism.
+- [x] 6.2 Create `tests/functional/plugin_bedrock_guardrail_test.go` mirroring azure: benign→allow upstream hit; topic block→exact 403 no upstream; observe→hit+reported; PII anonymize→forwarded body rewritten. Gate G (compiles under `-tags functional`; runtime needs harness services).
