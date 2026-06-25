@@ -51,8 +51,8 @@ Phase 4 alone (~710) exceeds 400 → split into 4a (orchestration) and 4b (anony
 
 ## Phase 4a: Execute orchestration (PreRequest + PreResponse)
 
-- [ ] 4a.1 Create `plugin.go`: `PluginName`, decision consts, `Plugin`+`New`, 9 interface methods (`SupportedStages={PreRequest,PreResponse}`, `MandatoryStages=nil`, modes enforce/observe, Mutates*=true), `ValidateConfig`, `Execute` dispatch, `executePreRequest`/`executePreResponse` (guards, decode, `lastUserText`/`responseText`, ApplyGuardrail, block/report gating via `Blocks`, fail-closed on error, `setExtras`+`SetDecision`), `passThrough`.
-- [ ] 4a.2 Create `plugin_test.go` (fake `guardrailClient`): INPUT/OUTPUT source, guard pass-throughs, non-PII block enforce→403/observe→reported, client-error fail-closed, stages/modes/Mutates asserts. Gate G.
+- [x] 4a.1 Create `plugin.go`: `PluginName`, decision consts, `Plugin`+`New`, 9 interface methods (`SupportedStages={PreRequest,PreResponse}`, `MandatoryStages=nil`, modes enforce/observe, Mutates*=true), `ValidateConfig`, `Execute` dispatch, `executePreRequest`/`executePreResponse` (guards, decode, `lastUserText`/`responseText`, ApplyGuardrail, block/report gating via `Blocks`, fail-closed on error, `setExtras`+`SetDecision`), `passThrough`.
+- [x] 4a.2 Create `plugin_test.go` (fake `guardrailClient`): INPUT/OUTPUT source, guard pass-throughs, non-PII block enforce→403/observe→reported, client-error fail-closed, stages/modes/Mutates asserts. Gate G.
 
 ## Phase 4b: Anonymize re-encode path
 
