@@ -31,10 +31,9 @@ const (
 )
 
 type Settings struct {
-	APIKey     string `mapstructure:"api_key"` // #nosec G101 -- config field name, not a credential
-	ConsumerID string `mapstructure:"consumer_id"`
-	Inspect    string `mapstructure:"inspect"`
-	BaseURL    string `mapstructure:"base_url"`
+	APIKey  string `mapstructure:"api_key"` // #nosec G101 -- config field name, not a credential
+	Inspect string `mapstructure:"inspect"`
+	BaseURL string `mapstructure:"base_url"`
 }
 
 func parseConfig(settings map[string]any) (Settings, error) {
@@ -58,9 +57,6 @@ func (s *Settings) applyDefaults() {
 func (s *Settings) validate() error {
 	if strings.TrimSpace(s.APIKey) == "" {
 		return fmt.Errorf("trustguard: api_key is required")
-	}
-	if strings.TrimSpace(s.ConsumerID) == "" {
-		return fmt.Errorf("trustguard: consumer_id is required")
 	}
 	switch s.Inspect {
 	case inspectRequest, inspectResponse, inspectRequestResponse:

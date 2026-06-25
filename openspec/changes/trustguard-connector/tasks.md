@@ -41,7 +41,7 @@ Apache header on every new file. No other comments. `go test -race` per phase.
 
 ## Phase 3: Plugin config
 
-- [x] 3.1 Create `pkg/infra/plugins/trustguard/config.go`: `inspect*` consts, `Settings` (mapstructure tags, `#nosec G101`), `parseConfig` (Parse→applyDefaults `request_response`→validate: `api_key`/`consumer_id` required, enum, `base_url` URL), `selectsStage`.
+- [x] 3.1 Create `pkg/infra/plugins/trustguard/config.go`: `inspect*` consts, `Settings` (mapstructure tags, `#nosec G101`), `parseConfig` (Parse→applyDefaults `request_response`→validate: `api_key` required, enum, `base_url` URL), `selectsStage`.
 - [x] 3.2 Add `config_test.go`: required-field rejection, inspect enum+default, `base_url` validation, `selectsStage` matrix.
 
 ## Phase 4: Plugin core
@@ -53,6 +53,6 @@ Apache header on every new file. No other comments. `go test -race` per phase.
 ## Phase 5: Wiring & catalog
 
 - [x] 5.1 `pkg/container/modules/plugins.go`: import `trustguard`, add `Cfg *config.Config` to `pluginParams`, append `trustguard.New(p.Adapters, p.Cfg.TrustGuard.BaseURL, p.Cfg.TrustGuard.Timeout, p.Logger)` to `newPluginRegistry`.
-- [x] 5.2 `pkg/app/plugins/catalog_metadata.go`: add `"trustguard"` entry (`groupOther`, hand-authored `SettingsSchema`: `api_key`, `consumer_id`, `inspect` enum, optional `base_url`).
+- [x] 5.2 `pkg/app/plugins/catalog_metadata.go`: add `"trustguard"` entry (`groupOther`, hand-authored `SettingsSchema`: `api_key`, `inspect` enum, optional `base_url`).
 - [x] 5.3 `pkg/app/plugins/catalog_test.go`: add `TestTrustGuardSchema` mirroring the token-schema test.
 - [x] 5.4 Add `TRUSTGUARD_BASE_URL` + `TRUSTGUARD_TIMEOUT` to `.env.example`. Plugin docs skipped: repo has no per-plugin docs convention (no markdown exists for `tool_call_validation`/`prompt_template`/`tool_definition_transformation`); slug/config/stage-direction matrix/fail-open/streaming limitation are documented under `openspec/changes/trustguard-connector/`.

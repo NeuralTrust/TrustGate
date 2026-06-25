@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package trustguard
+package azurecontentsafety
 
 import (
 	"context"
@@ -27,26 +27,13 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
-const PluginName = "trustguard"
+const PluginName = "azure_content_safety"
 
 const (
-	directionInput  = "input"
-	directionOutput = "output"
-	contentTypeJSON = "application/json"
-)
-
-const (
-	protocolLLM = "llm"
-	protocolMCP = "mcp"
-	protocolA2A = "a2a"
-)
-
-const (
-	decisionBlocked    = "blocked"
-	decisionReported   = "reported"
-	decisionAllowed    = "allowed"
-	decisionFailedOpen = "failed_open"
-	statusBlock        = "block"
+	decisionBlocked      = "blocked"
+	decisionReported     = "reported"
+	decisionAllowed      = "allowed"
+	decisionFailedClosed = "failed_closed"
 )
 
 var _ appplugins.Plugin = (*Plugin)(nil)
@@ -54,15 +41,13 @@ var _ appplugins.Plugin = (*Plugin)(nil)
 type Plugin struct {
 	registry *adapter.Registry
 	client   *client
-	baseURL  string
 	logger   *slog.Logger
 }
 
-func New(registry *adapter.Registry, baseURL string, timeout time.Duration, logger *slog.Logger) *Plugin {
+func New(registry *adapter.Registry, logger *slog.Logger) *Plugin {
 	return &Plugin{
 		registry: registry,
-		client:   newClient(timeout),
-		baseURL:  baseURL,
+		client:   newClient(),
 		logger:   logger,
 	}
 }
@@ -70,11 +55,11 @@ func New(registry *adapter.Registry, baseURL string, timeout time.Duration, logg
 func (p *Plugin) Name() string { return PluginName }
 
 func (p *Plugin) MandatoryStages() []policy.Stage {
-	return []policy.Stage{policy.StagePreRequest, policy.StagePreResponse}
+	return []policy.Stage{policy.StagePreRequest}
 }
 
 func (p *Plugin) SupportedStages() []policy.Stage {
-	return []policy.Stage{policy.StagePreRequest, policy.StagePreResponse}
+	return []policy.Stage{policy.StagePreRequest}
 }
 
 func (p *Plugin) SupportedModes() []policy.Mode {
@@ -95,106 +80,83 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {
-		return nil, fmt.Errorf("trustguard: %w", err)
+		return nil, fmt.Errorf("azure_content_safety: %w", err)
 	}
 
-	if !cfg.selectsStage(in.Stage) {
+	if in.Stage != policy.StagePreRequest {
 		return passThrough(), nil
 	}
-
-	baseURL := cfg.BaseURL
-	if baseURL == "" {
-		baseURL = p.baseURL
-	}
-	if baseURL == "" {
-		p.warn(ctx, "trustguard base url not configured",
-			slog.String("plugin", PluginName),
-			slog.String("stage", string(in.Stage)),
-		)
+	if in.Request == nil || p.registry == nil || in.Request.Provider == "" || len(in.Request.Body) == 0 {
 		return passThrough(), nil
-	}
-
-	if in.Request == nil || p.registry == nil || in.Request.Provider == "" {
-		return passThrough(), nil
-	}
-
-	direction := directionInput
-	if in.Stage == policy.StagePreResponse {
-		direction = directionOutput
 	}
 
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
 	if err != nil {
 		return passThrough(), nil
 	}
-
-	var text string
-	if direction == directionInput {
-		if len(in.Request.Body) == 0 {
-			return passThrough(), nil
-		}
-		creq, decErr := p.registry.DecodeRequestFor(in.Request.Body, format)
-		if decErr != nil || creq == nil {
-			return passThrough(), nil
-		}
-		text = joinRequestText(creq)
-	} else {
-		if in.Response == nil || in.Response.Streaming || len(in.Response.Body) == 0 {
-			return passThrough(), nil
-		}
-		cresp, decErr := p.registry.DecodeResponseFor(in.Response.Body, format)
-		if decErr != nil || cresp == nil {
-			return passThrough(), nil
-		}
-		text = cresp.Content
+	creq, decErr := p.registry.DecodeRequestFor(in.Request.Body, format)
+	if decErr != nil || creq == nil {
+		return passThrough(), nil
 	}
+	text := joinRequestText(creq)
 	if strings.TrimSpace(text) == "" {
 		return passThrough(), nil
 	}
 
-	body := GuardRequest{
-		Input:      GuardInput{Input: text},
-		Direction:  direction,
-		Protocol:   protocolFor(in.Request.ConsumerType),
-		SessionID:  in.Request.SessionID,
-		ConsumerID: in.Request.ConsumerID,
-		Attributes: GuardAttributes{
-			ContentType: contentTypeJSON,
-			Model: GuardModel{
-				Name:     in.Request.RequestedModel,
-				Provider: in.Request.Provider,
-			},
-		},
-	}
-
-	resp, err := p.client.Guard(ctx, baseURL, cfg.APIKey, body)
+	start := time.Now()
+	resp, err := p.client.Analyze(ctx, cfg.Endpoint, cfg.APIKey, analyzeRequest{
+		Text:       text,
+		Categories: cfg.Categories,
+		OutputType: cfg.OutputType,
+	})
+	latency := time.Since(start).Milliseconds()
 	if err != nil {
-		p.warn(ctx, "trustguard call failed, failing open",
+		data := &Data{
+			Endpoint:   cfg.Endpoint,
+			OutputType: cfg.OutputType,
+			Mode:       string(in.Mode),
+			LatencyMS:  latency,
+			FailedOpen: true,
+			Decision:   decisionFailedClosed,
+		}
+		if appplugins.Blocks(in.Mode) {
+			p.warn(ctx, "azure content safety call failed, failing closed",
+				slog.String("plugin", PluginName),
+				slog.String("stage", string(in.Stage)),
+				slog.Any("error", err),
+			)
+			setExtras(in.Event, data)
+			return nil, fmt.Errorf("azure_content_safety: analyze: %w", err)
+		}
+		p.warn(ctx, "azure content safety call failed, observe mode passing through",
 			slog.String("plugin", PluginName),
 			slog.String("stage", string(in.Stage)),
-			slog.String("direction", direction),
 			slog.Any("error", err),
 		)
-		setExtras(in.Event, guardData{Direction: direction, Decision: decisionFailedOpen, FailedOpen: true})
+		setExtras(in.Event, data)
+		appplugins.SetDecision(in.Event, in.Mode)
 		return passThrough(), nil
 	}
 
-	data := guardData{
-		Direction:     direction,
-		Status:        resp.Status,
-		TraceID:       resp.TraceID,
-		RequestID:     resp.RequestID,
-		FindingsCount: len(resp.Findings),
+	severities, breaches := evaluate(resp, cfg)
+	data := &Data{
+		Endpoint:   cfg.Endpoint,
+		OutputType: cfg.OutputType,
+		Severities: severities,
+		Mode:       string(in.Mode),
+		LatencyMS:  latency,
 	}
 
-	if resp.Status == statusBlock && appplugins.Blocks(in.Mode) {
+	if len(breaches) > 0 && appplugins.Blocks(in.Mode) {
 		data.Decision = decisionBlocked
+		data.Breached = breachedNames(breaches)
 		setExtras(in.Event, data)
-		return nil, blockError(resp)
+		return nil, blockError(cfg.Message, breaches)
 	}
 
-	if resp.Status == statusBlock {
+	if len(breaches) > 0 {
 		data.Decision = decisionReported
+		data.Breached = breachedNames(breaches)
 	} else {
 		data.Decision = decisionAllowed
 	}
@@ -210,17 +172,6 @@ func (p *Plugin) warn(ctx context.Context, msg string, attrs ...any) {
 	p.logger.WarnContext(ctx, msg, attrs...)
 }
 
-func protocolFor(consumerType string) string {
-	switch strings.ToLower(strings.TrimSpace(consumerType)) {
-	case protocolMCP:
-		return protocolMCP
-	case protocolA2A:
-		return protocolA2A
-	default:
-		return protocolLLM
-	}
-}
-
 func joinRequestText(creq *adapter.CanonicalRequest) string {
 	parts := make([]string, 0, len(creq.Messages)+1)
 	if strings.TrimSpace(creq.System) != "" {
@@ -232,6 +183,37 @@ func joinRequestText(creq *adapter.CanonicalRequest) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+func evaluate(resp *analyzeResponse, cfg Settings) (map[string]int, []breachedCategory) {
+	if resp == nil {
+		return nil, nil
+	}
+	severities := make(map[string]int, len(resp.CategoriesAnalysis))
+	var breaches []breachedCategory
+	for _, analysis := range resp.CategoriesAnalysis {
+		severities[analysis.Category] = analysis.Severity
+		threshold, ok := cfg.CategorySeverity[analysis.Category]
+		if !ok {
+			continue
+		}
+		if analysis.Severity >= threshold {
+			breaches = append(breaches, breachedCategory{
+				Category:  analysis.Category,
+				Severity:  analysis.Severity,
+				Threshold: threshold,
+			})
+		}
+	}
+	return severities, breaches
+}
+
+func breachedNames(breaches []breachedCategory) []string {
+	names := make([]string, 0, len(breaches))
+	for _, breach := range breaches {
+		names = append(names, breach.Category)
+	}
+	return names
 }
 
 func passThrough() *appplugins.Result {
