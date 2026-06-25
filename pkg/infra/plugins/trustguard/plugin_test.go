@@ -61,11 +61,17 @@ func settings(inspect string) map[string]any {
 }
 
 type fakeGuard struct {
-	mu       sync.Mutex
-	hits     int
-	lastBody GuardRequest
-	status   int
-	response GuardResponse
+	mu          sync.Mutex
+	hits        int
+	lastBody    GuardRequest
+	lastMethod  string
+	lastPath    string
+	lastAuth    string
+	lastCT      string
+	directions  []string
+	status      int
+	response    GuardResponse
+	responseFor map[string]GuardResponse
 }
 
 func (f *fakeGuard) handler() http.HandlerFunc {
@@ -73,6 +79,10 @@ func (f *fakeGuard) handler() http.HandlerFunc {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.hits++
+		f.lastMethod = r.Method
+		f.lastPath = r.URL.Path
+		f.lastAuth = r.Header.Get("Authorization")
+		f.lastCT = r.Header.Get("Content-Type")
 		if r.URL.Path != guardPath {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -80,14 +90,33 @@ func (f *fakeGuard) handler() http.HandlerFunc {
 		var body GuardRequest
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		f.lastBody = body
+		f.directions = append(f.directions, body.Direction)
 		status := f.status
 		if status == 0 {
 			status = http.StatusOK
 		}
+		resp := f.response
+		if r, ok := f.responseFor[body.Direction]; ok {
+			resp = r
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(f.response)
+		_ = json.NewEncoder(w).Encode(resp)
 	}
+}
+
+func (f *fakeGuard) http() (method, path, auth, contentType string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastMethod, f.lastPath, f.lastAuth, f.lastCT
+}
+
+func (f *fakeGuard) seenDirections() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.directions))
+	copy(out, f.directions)
+	return out
 }
 
 func (f *fakeGuard) count() int {
@@ -371,5 +400,163 @@ func TestProtocolFor(t *testing.T) {
 		if got := protocolFor(raw); got != want {
 			t.Fatalf("protocolFor(%q) = %q, want %q", raw, got, want)
 		}
+	}
+}
+
+func TestExecuteForwardsFullGuardRequest(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, nil)
+
+	req := requestContext()
+	req.ConsumerType = "MCP"
+	req.ConsumerID = "consumer-real-42"
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), req, nil)
+	if _, err := p.Execute(context.Background(), in); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	method, path, auth, ct := f.http()
+	if method != http.MethodPost {
+		t.Fatalf("method = %q, want POST", method)
+	}
+	if path != guardPath {
+		t.Fatalf("path = %q, want %q", path, guardPath)
+	}
+	if auth != "Bearer secret-key" {
+		t.Fatalf("authorization = %q, want %q", auth, "Bearer secret-key")
+	}
+	if ct != contentTypeJSON {
+		t.Fatalf("content-type = %q, want %q", ct, contentTypeJSON)
+	}
+
+	got := f.captured()
+	if got.Direction != directionInput {
+		t.Fatalf("direction = %q, want %q", got.Direction, directionInput)
+	}
+	if got.Protocol != protocolMCP {
+		t.Fatalf("protocol = %q, want %q", got.Protocol, protocolMCP)
+	}
+	if got.SessionID != "sess-123" {
+		t.Fatalf("session_id = %q, want sess-123", got.SessionID)
+	}
+	if got.ConsumerID != "consumer-real-42" {
+		t.Fatalf("consumer_id = %q, want consumer-real-42", got.ConsumerID)
+	}
+	if got.Input.Input != "be safe\nhello world" {
+		t.Fatalf("input = %q, want %q", got.Input.Input, "be safe\nhello world")
+	}
+	if got.Attributes.ContentType != contentTypeJSON {
+		t.Fatalf("attributes.content_type = %q, want %q", got.Attributes.ContentType, contentTypeJSON)
+	}
+	if got.Attributes.Model.Name != "gpt-4o-mini" || got.Attributes.Model.Provider != "openai" {
+		t.Fatalf("model = %+v, want gpt-4o-mini/openai", got.Attributes.Model)
+	}
+}
+
+func TestExecuteConsumerIDComesFromRequestNotSettings(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, nil)
+
+	req := requestContext()
+	req.ConsumerID = "from-request"
+	set := settings("")
+	set["consumer_id"] = "from-settings-should-be-ignored"
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, set, req, nil)
+	if _, err := p.Execute(context.Background(), in); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := f.captured().ConsumerID; got != "from-request" {
+		t.Fatalf("consumer_id = %q, want from-request", got)
+	}
+}
+
+func TestExecuteInspectModeDirections(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		inspect    string
+		directions []string
+	}{
+		{name: "request only", inspect: inspectRequest, directions: []string{directionInput}},
+		{name: "response only", inspect: inspectResponse, directions: []string{directionOutput}},
+		{name: "request_response", inspect: inspectRequestResponse, directions: []string{directionInput, directionOutput}},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
+			srv := newServer(t, f)
+			p := New(adapter.NewRegistry(), srv.URL, testTimeout, nil)
+
+			resp := &infracontext.ResponseContext{StatusCode: 200, Body: openAIResponseBody()}
+			for _, stage := range []policy.Stage{policy.StagePreRequest, policy.StagePreResponse} {
+				in := execInput(stage, policy.ModeEnforce, settings(tc.inspect), requestContext(), resp)
+				if _, err := p.Execute(context.Background(), in); err != nil {
+					t.Fatalf("stage %s: unexpected error: %v", stage, err)
+				}
+			}
+
+			got := f.seenDirections()
+			if len(got) != len(tc.directions) {
+				t.Fatalf("directions = %v, want %v", got, tc.directions)
+			}
+			for i, d := range tc.directions {
+				if got[i] != d {
+					t.Fatalf("direction[%d] = %q, want %q", i, got[i], d)
+				}
+			}
+		})
+	}
+}
+
+func TestExecuteBaseURLOverrideFromSettings(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), "https://unreachable.invalid", testTimeout, nil)
+
+	set := settings("")
+	set["base_url"] = srv.URL
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(), nil)
+	if _, err := p.Execute(context.Background(), in); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if f.count() != 1 {
+		t.Fatalf("expected guard called once via settings base_url, got %d", f.count())
+	}
+}
+
+func TestExecuteBlocksOnlyOnFlaggedLeg(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{responseFor: map[string]GuardResponse{
+		directionInput:  {Status: "allowed"},
+		directionOutput: {Status: statusBlock, TraceID: "trace-out"},
+	}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, nil)
+
+	reqIn := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil)
+	if _, err := p.Execute(context.Background(), reqIn); err != nil {
+		t.Fatalf("pre_request leg must pass (allowed), got %v", err)
+	}
+
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: openAIResponseBody()}
+	respIn := execInput(policy.StagePreResponse, policy.ModeEnforce, settings(""), requestContext(), resp)
+	res, err := p.Execute(context.Background(), respIn)
+	if res != nil {
+		t.Fatalf("expected nil result on response block, got %+v", res)
+	}
+	if _, ok := appplugins.AsPluginError(err); !ok {
+		t.Fatalf("expected *PluginError on response block, got %v", err)
 	}
 }
