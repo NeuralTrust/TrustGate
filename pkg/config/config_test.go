@@ -317,6 +317,8 @@ func TestLoadConfig_TrustGuardEnvOverrides(t *testing.T) {
 	minimumEnv(t)
 	t.Setenv("TRUSTGUARD_BASE_URL", "https://guard.example")
 	t.Setenv("TRUSTGUARD_TIMEOUT", "30s")
+	t.Setenv("TRUSTGUARD_CLIENT_ID", "tgc_gateway")
+	t.Setenv("TRUSTGUARD_CLIENT_SECRET", "super-secret")
 
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -327,6 +329,12 @@ func TestLoadConfig_TrustGuardEnvOverrides(t *testing.T) {
 	}
 	if cfg.TrustGuard.Timeout != 30*time.Second {
 		t.Errorf("TrustGuard.Timeout = %v, want %v", cfg.TrustGuard.Timeout, 30*time.Second)
+	}
+	if cfg.TrustGuard.ClientID != "tgc_gateway" {
+		t.Errorf("TrustGuard.ClientID = %q, want %q", cfg.TrustGuard.ClientID, "tgc_gateway")
+	}
+	if cfg.TrustGuard.ClientSecret != "super-secret" {
+		t.Errorf("TrustGuard.ClientSecret = %q, want %q", cfg.TrustGuard.ClientSecret, "super-secret")
 	}
 }
 

@@ -1125,13 +1125,6 @@ var pluginCatalogMeta = map[string]catalogMeta{
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
-					Key:         "api_key",
-					Label:       "API Key",
-					Type:        FieldTypeString,
-					Description: "Credential sent as a Bearer token to the TrustGuard service.",
-					Required:    true,
-				},
-				{
 					Key:         "inspect",
 					Label:       "Inspect",
 					Type:        FieldTypeEnum,

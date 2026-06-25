@@ -20,6 +20,7 @@ type GuardRequest struct {
 	Input      GuardInput      `json:"input"`
 	Direction  string          `json:"direction"`
 	Protocol   string          `json:"protocol"`
+	GatewayID  string          `json:"gateway_id"`
 	SessionID  string          `json:"session_id"`
 	ConsumerID string          `json:"consumer_id"`
 	Attributes GuardAttributes `json:"attributes"`

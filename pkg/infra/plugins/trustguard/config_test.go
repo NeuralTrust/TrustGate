@@ -32,72 +32,62 @@ func TestParseConfig(t *testing.T) {
 	}{
 		{
 			name:        "valid minimal config defaults inspect",
-			settings:    map[string]any{"api_key": "key"},
+			settings:    map[string]any{},
 			wantInspect: inspectRequestResponse,
 		},
 		{
-			name:     "missing api_key",
-			settings: map[string]any{},
-			wantErr:  true,
-		},
-		{
-			name:     "blank api_key",
-			settings: map[string]any{"api_key": "  "},
-			wantErr:  true,
-		},
-		{
 			name:        "inspect request accepted",
-			settings:    map[string]any{"api_key": "key", "inspect": inspectRequest},
+			settings:    map[string]any{"inspect": inspectRequest},
 			wantInspect: inspectRequest,
 		},
 		{
 			name:        "inspect response accepted",
-			settings:    map[string]any{"api_key": "key", "inspect": inspectResponse},
+			settings:    map[string]any{"inspect": inspectResponse},
 			wantInspect: inspectResponse,
 		},
 		{
 			name:        "inspect request_response accepted",
-			settings:    map[string]any{"api_key": "key", "inspect": inspectRequestResponse},
+			settings:    map[string]any{"inspect": inspectRequestResponse},
 			wantInspect: inspectRequestResponse,
 		},
 		{
 			name:     "invalid inspect",
-			settings: map[string]any{"api_key": "key", "inspect": "both"},
+			settings: map[string]any{"inspect": "both"},
 			wantErr:  true,
 		},
 		{
 			name:        "base_url http accepted",
-			settings:    map[string]any{"api_key": "key", "base_url": "http://guard.local"},
+			settings:    map[string]any{"base_url": "http://guard.local"},
 			wantInspect: inspectRequestResponse,
 		},
 		{
 			name:        "base_url https accepted",
-			settings:    map[string]any{"api_key": "key", "base_url": "https://guard.example.com/api"},
+			settings:    map[string]any{"base_url": "https://guard.example.com/api"},
 			wantInspect: inspectRequestResponse,
 		},
 		{
 			name:        "empty base_url ok",
-			settings:    map[string]any{"api_key": "key", "base_url": ""},
+			settings:    map[string]any{"base_url": ""},
 			wantInspect: inspectRequestResponse,
 		},
 		{
 			name:     "base_url relative rejected",
-			settings: map[string]any{"api_key": "key", "base_url": "/v1/guard"},
+			settings: map[string]any{"base_url": "/v1/guard"},
 			wantErr:  true,
 		},
 		{
 			name:     "base_url missing scheme rejected",
-			settings: map[string]any{"api_key": "key", "base_url": "guard.local"},
+			settings: map[string]any{"base_url": "guard.local"},
 			wantErr:  true,
 		},
 		{
 			name:     "base_url non-http scheme rejected",
-			settings: map[string]any{"api_key": "key", "base_url": "ftp://guard.local"},
+			settings: map[string]any{"base_url": "ftp://guard.local"},
 			wantErr:  true,
 		},
 		{
 			name:     "base_url missing host rejected",
-			settings: map[string]any{"api_key": "key", "base_url": "http://"},
+			settings: map[string]any{"base_url": "http://"},
 			wantErr:  true,
 		},
 	}

@@ -245,8 +245,10 @@ type LoggerConfig struct {
 }
 
 type TrustGuardConfig struct {
-	BaseURL string
-	Timeout time.Duration
+	BaseURL      string
+	Timeout      time.Duration
+	ClientID     string
+	ClientSecret string
 }
 
 type OpenAIModerationConfig struct {
@@ -493,8 +495,10 @@ func getLoggerConfig() LoggerConfig {
 
 func getTrustGuardConfig() TrustGuardConfig {
 	return TrustGuardConfig{
-		BaseURL: getEnv("TRUSTGUARD_BASE_URL", ""),
-		Timeout: getEnvDuration("TRUSTGUARD_TIMEOUT", defaultTrustGuardTimeout),
+		BaseURL:      getEnv("TRUSTGUARD_BASE_URL", ""),
+		Timeout:      getEnvDuration("TRUSTGUARD_TIMEOUT", defaultTrustGuardTimeout),
+		ClientID:     getEnv("TRUSTGUARD_CLIENT_ID", ""),
+		ClientSecret: getEnv("TRUSTGUARD_CLIENT_SECRET", ""),
 	}
 }
 

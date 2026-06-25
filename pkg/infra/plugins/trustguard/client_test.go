@@ -17,6 +17,7 @@ package trustguard
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -163,6 +164,20 @@ func TestGuardTransportError(t *testing.T) {
 	c := newClient(time.Second)
 	if _, err := c.Guard(context.Background(), srv.URL, "k", sampleRequest()); err == nil {
 		t.Fatal("expected transport error, got nil")
+	}
+}
+
+func TestGuardUnauthorizedReturnsSentinel(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	c := newClient(time.Second)
+	_, err := c.Guard(context.Background(), srv.URL, "stale-token", sampleRequest())
+	if !errors.Is(err, errUnauthorized) {
+		t.Fatalf("err = %v, want errUnauthorized", err)
 	}
 }
 
