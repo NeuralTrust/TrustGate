@@ -40,8 +40,8 @@ Phase 4 alone (~710) exceeds 400 → split into 4a (orchestration) and 4b (anony
 
 ## Phase 2: Client wrapper + per-credential cache + auth + seam
 
-- [ ] 2.1 Create `client.go`: `awsCredentials`+`credentialsFromConfig`+`fingerprint()` (sha256), `guardrailClient` interface over `ApplyGuardrail`, `cacheEntry`/`clientCache.get` (sync.Once single-flight, delete-on-error), `cachedGuardrailClient`, `newCachedGuardrailClient`, `buildRuntimeClient` (static-key + STS assume-role, region fallback).
-- [ ] 2.2 Create `client_test.go`: `fingerprint` stability/difference; `clientCache.get` single-flight under `-race` (build called once for N goroutines) + error-not-cached, injected fake `build`. Gate G.
+- [x] 2.1 Create `client.go`: `awsCredentials`+`credentialsFromConfig`+`fingerprint()` (sha256), `guardrailClient` interface over `ApplyGuardrail`, `cacheEntry`/`clientCache.get` (sync.Once single-flight, delete-on-error), `cachedGuardrailClient`, `newCachedGuardrailClient`, `buildRuntimeClient` (static-key + STS assume-role, region fallback).
+- [x] 2.2 Create `client_test.go`: `fingerprint` stability/difference; `clientCache.get` single-flight under `-race` (build called once for N goroutines) + error-not-cached, injected fake `build`. Gate G.
 
 ## Phase 3: Assessment inspection + 403 reject envelope
 
