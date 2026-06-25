@@ -45,9 +45,9 @@ Phase 4 alone (~710) exceeds 400 → split into 4a (orchestration) and 4b (anony
 
 ## Phase 3: Assessment inspection + 403 reject envelope
 
-- [ ] 3.1 Create `assess.go`: `buildApplyInput(cfg,text,source)`, `finding`/`assessmentResult` types, `inspect` walking all 5 families (topic/content/word/sensitive-info/contextual-grounding) using verified `Blocked`/`Anonymized` constants, `aws.ToString` nil-safe.
-- [ ] 3.2 Create `reject.go`: `typeGuardrailBlocked` const, `blockBody(finding)` exact `{"error":{"type":...,"policy":...,"name":...}}`, `blockError(finding) *PluginError` (403, JSON header).
-- [ ] 3.3 Create `assess_test.go` (table per family+action; PII classify; empty→allow) and `reject_test.go` (exact 403 JSON). Gate G.
+- [x] 3.1 Create `assess.go`: `buildApplyInput(cfg,text,source)`, `finding`/`assessmentResult` types, `inspect` walking all 5 families (topic/content/word/sensitive-info/contextual-grounding) using verified `Blocked`/`Anonymized` constants, `aws.ToString` nil-safe.
+- [x] 3.2 Create `reject.go`: `typeGuardrailBlocked` const, `blockBody(finding)` exact `{"error":{"type":...,"policy":...,"name":...}}`, `blockError(finding) *PluginError` (403, JSON header).
+- [x] 3.3 Create `assess_test.go` (table per family+action; PII classify; empty→allow) and `reject_test.go` (exact 403 JSON). Gate G.
 
 ## Phase 4a: Execute orchestration (PreRequest + PreResponse)
 
