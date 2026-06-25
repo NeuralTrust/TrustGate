@@ -89,10 +89,8 @@ func (s *Settings) validate() error {
 		}
 		return nil
 	}
-	hasAccessKey := strings.TrimSpace(s.Credentials.AccessKeyID) != ""
-	hasSecretKey := strings.TrimSpace(s.Credentials.SecretAccessKey) != ""
-	if hasAccessKey != hasSecretKey {
-		return fmt.Errorf("bedrock_guardrail: access_key_id and secret_access_key must be set together")
+	if strings.TrimSpace(s.Credentials.AccessKeyID) == "" || strings.TrimSpace(s.Credentials.SecretAccessKey) == "" {
+		return fmt.Errorf("bedrock_guardrail: access_key_id and secret_access_key are required when use_role is false")
 	}
 	return nil
 }

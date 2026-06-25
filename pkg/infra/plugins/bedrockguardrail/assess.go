@@ -130,7 +130,6 @@ func inspectWord(p *types.GuardrailWordPolicyAssessment, res *assessmentResult) 
 		if w.Action == types.GuardrailWordPolicyActionBlocked {
 			res.block = &finding{
 				policy:    policyWord,
-				name:      aws.ToString(w.Match),
 				matchType: matchTypeCustomWord,
 				action:    string(w.Action),
 			}
@@ -142,7 +141,7 @@ func inspectWord(p *types.GuardrailWordPolicyAssessment, res *assessmentResult) 
 		if w.Action == types.GuardrailWordPolicyActionBlocked {
 			res.block = &finding{
 				policy:    policyWord,
-				name:      aws.ToString(w.Match),
+				name:      string(w.Type),
 				matchType: string(w.Type),
 				action:    string(w.Action),
 			}
@@ -157,15 +156,11 @@ func inspectSensitive(p *types.GuardrailSensitiveInformationPolicyAssessment, pi
 	}
 	for i := range p.PiiEntities {
 		e := p.PiiEntities[i]
-		classifyPII(e.Action, aws.ToString(e.Match), string(e.Type), piiAction, res)
+		classifyPII(e.Action, string(e.Type), string(e.Type), piiAction, res)
 	}
 	for i := range p.Regexes {
 		r := p.Regexes[i]
-		name := aws.ToString(r.Match)
-		if name == "" {
-			name = aws.ToString(r.Name)
-		}
-		classifyPII(r.Action, name, matchTypeRegex, piiAction, res)
+		classifyPII(r.Action, aws.ToString(r.Name), matchTypeRegex, piiAction, res)
 	}
 }
 

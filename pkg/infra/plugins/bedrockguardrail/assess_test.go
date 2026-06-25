@@ -88,7 +88,6 @@ func TestInspectFamilies(t *testing.T) {
 			piiAction: piiActionBlock,
 			block: &finding{
 				policy:    policyWord,
-				name:      "forbidden",
 				matchType: matchTypeCustomWord,
 				action:    string(types.GuardrailWordPolicyActionBlocked),
 			},
@@ -107,7 +106,7 @@ func TestInspectFamilies(t *testing.T) {
 			piiAction: piiActionBlock,
 			block: &finding{
 				policy:    policyWord,
-				name:      "damn",
+				name:      string(types.GuardrailManagedWordTypeProfanity),
 				matchType: string(types.GuardrailManagedWordTypeProfanity),
 				action:    string(types.GuardrailWordPolicyActionBlocked),
 			},
@@ -145,7 +144,7 @@ func TestInspectFamilies(t *testing.T) {
 			piiAction: piiActionBlock,
 			block: &finding{
 				policy:    policySensitiveInformation,
-				name:      "john@example.com",
+				name:      string(types.GuardrailPiiEntityTypeEmail),
 				matchType: string(types.GuardrailPiiEntityTypeEmail),
 				action:    string(types.GuardrailSensitiveInformationPolicyActionBlocked),
 			},
@@ -164,7 +163,7 @@ func TestInspectFamilies(t *testing.T) {
 			piiAction: piiActionBlock,
 			block: &finding{
 				policy:    policySensitiveInformation,
-				name:      "john@example.com",
+				name:      string(types.GuardrailPiiEntityTypeEmail),
 				matchType: string(types.GuardrailPiiEntityTypeEmail),
 				action:    string(types.GuardrailSensitiveInformationPolicyActionAnonymized),
 			},
@@ -183,7 +182,7 @@ func TestInspectFamilies(t *testing.T) {
 			piiAction: piiActionAnonymize,
 			anonymize: &finding{
 				policy:    policySensitiveInformation,
-				name:      "john@example.com",
+				name:      string(types.GuardrailPiiEntityTypeEmail),
 				matchType: string(types.GuardrailPiiEntityTypeEmail),
 				action:    string(types.GuardrailSensitiveInformationPolicyActionAnonymized),
 			},
@@ -202,7 +201,7 @@ func TestInspectFamilies(t *testing.T) {
 			piiAction: piiActionAnonymize,
 			block: &finding{
 				policy:    policySensitiveInformation,
-				name:      "john@example.com",
+				name:      string(types.GuardrailPiiEntityTypeEmail),
 				matchType: string(types.GuardrailPiiEntityTypeEmail),
 				action:    string(types.GuardrailSensitiveInformationPolicyActionBlocked),
 			},
@@ -252,7 +251,7 @@ func TestInspectFamilies(t *testing.T) {
 			},
 			anonymize: &finding{
 				policy:    policySensitiveInformation,
-				name:      "john@example.com",
+				name:      string(types.GuardrailPiiEntityTypeEmail),
 				matchType: string(types.GuardrailPiiEntityTypeEmail),
 				action:    string(types.GuardrailSensitiveInformationPolicyActionAnonymized),
 			},

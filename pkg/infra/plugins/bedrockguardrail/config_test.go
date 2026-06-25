@@ -139,6 +139,14 @@ func TestParseConfigValidation(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "no credentials and no role rejected",
+			settings: map[string]any{
+				"guardrail_id": "gr-123",
+				"credentials":  map[string]any{},
+			},
+			wantErr: true,
+		},
 	}
 	for _, tt := range tests {
 		tt := tt
