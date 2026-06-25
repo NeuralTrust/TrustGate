@@ -407,6 +407,52 @@ func TestTrustGuardSchema(t *testing.T) {
 	assert.False(t, baseURL.Required)
 }
 
+func TestAzureContentSafetySchema(t *testing.T) {
+	meta, ok := pluginCatalogMeta["azure_content_safety"]
+	require.True(t, ok)
+	assert.Equal(t, "Azure Content Safety", meta.name)
+	assert.Equal(t, groupGuardrails, meta.group)
+
+	fields := meta.schema.Fields
+
+	apiKey, ok := fieldByKey(fields, "api_key")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeString, apiKey.Type)
+	assert.True(t, apiKey.Required)
+
+	endpoint, ok := fieldByKey(fields, "endpoint")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeString, endpoint.Type)
+	assert.True(t, endpoint.Required)
+
+	outputType, ok := fieldByKey(fields, "output_type")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeEnum, outputType.Type)
+	assert.Equal(t, []string{"FourSeverityLevels", "EightSeverityLevels"}, outputType.Enum)
+	assert.Equal(t, "FourSeverityLevels", outputType.Default)
+	assert.False(t, outputType.Required)
+
+	categories, ok := fieldByKey(fields, "categories")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeArray, categories.Type)
+	assert.False(t, categories.Required)
+	require.NotNil(t, categories.Item)
+	assert.Equal(t, FieldTypeEnum, categories.Item.Type)
+	assert.Equal(t, []string{"Hate", "Violence", "SelfHarm", "Sexual"}, categories.Item.Enum)
+
+	categorySeverity, ok := fieldByKey(fields, "category_severity")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeMap, categorySeverity.Type)
+	assert.True(t, categorySeverity.Required)
+	require.NotNil(t, categorySeverity.Value)
+	assert.Equal(t, FieldTypeInteger, categorySeverity.Value.Type)
+
+	message, ok := fieldByKey(fields, "message")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeString, message.Type)
+	assert.False(t, message.Required)
+}
+
 func TestSemanticCacheSchema(t *testing.T) {
 	meta, ok := pluginCatalogMeta["semantic_cache"]
 	require.True(t, ok)

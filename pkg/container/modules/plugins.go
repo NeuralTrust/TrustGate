@@ -27,6 +27,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/semantic"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	embeddingfactory "github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/azurecontentsafety"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/bedrockguardrail"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/cors"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/costcap"
@@ -103,6 +104,7 @@ func newPluginRegistry(p pluginParams) (appplugins.Registry, error) {
 		tool_call_validation.New(p.Adapters, openai.NewOpenaiClient(), p.Logger),
 		tooltransform.New(p.Adapters),
 		trustguard.New(p.Adapters, p.Cfg.TrustGuard.BaseURL, p.Cfg.TrustGuard.Timeout, p.Logger),
+		azurecontentsafety.New(p.Adapters, p.Logger),
 		bedrockguardrail.New(p.Adapters, p.Logger),
 	}
 	for _, plugin := range catalog {
