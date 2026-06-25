@@ -44,6 +44,7 @@ func requestContext() *infracontext.RequestContext {
 		Provider:       "openai",
 		SourceFormat:   "openai",
 		SessionID:      "sess-123",
+		ConsumerID:     "consumer-9",
 		RequestedModel: "gpt-4o-mini",
 		Body:           openAIRequestBody(),
 	}
@@ -51,8 +52,7 @@ func requestContext() *infracontext.RequestContext {
 
 func settings(inspect string) map[string]any {
 	s := map[string]any{
-		"api_key":     "secret-key",
-		"consumer_id": "consumer-9",
+		"api_key": "secret-key",
 	}
 	if inspect != "" {
 		s["inspect"] = inspect
