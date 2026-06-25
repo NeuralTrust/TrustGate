@@ -1126,13 +1126,6 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Required:    true,
 				},
 				{
-					Key:         "consumer_id",
-					Label:       "Consumer ID",
-					Type:        FieldTypeString,
-					Description: "Identifier forwarded to TrustGuard to attribute the guarded call.",
-					Required:    true,
-				},
-				{
 					Key:         "inspect",
 					Label:       "Inspect",
 					Type:        FieldTypeEnum,

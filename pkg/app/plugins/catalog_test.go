@@ -395,11 +395,6 @@ func TestTrustGuardSchema(t *testing.T) {
 	assert.Equal(t, FieldTypeString, apiKey.Type)
 	assert.True(t, apiKey.Required)
 
-	consumerID, ok := fieldByKey(fields, "consumer_id")
-	require.True(t, ok)
-	assert.Equal(t, FieldTypeString, consumerID.Type)
-	assert.True(t, consumerID.Required)
-
 	inspect, ok := fieldByKey(fields, "inspect")
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeEnum, inspect.Type)
