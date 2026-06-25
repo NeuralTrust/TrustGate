@@ -56,8 +56,8 @@ Phase 4 alone (~710) exceeds 400 → split into 4a (orchestration) and 4b (anony
 
 ## Phase 4b: Anonymize re-encode path
 
-- [ ] 4b.1 Create `anonymize.go`: `maskedText`, `supportsReencode`, `rewriteRequest`(span=msgIndex)/`rewriteResponse` via `registry.GetAdapter().Encode*`; wire PII branch in `plugin.go` (block vs anonymize, BLOCKED→fallback block, enforce mutate via `RequestBody`/`Body`+`StopUpstream`, degraded fail-closed enforce / report observe).
-- [ ] 4b.2 Create `anonymize_test.go` (round-trip + unsupported/encode-fail) and extend `plugin_test.go` (anonymize enforce mutate, BLOCKED fallback, observe no-mutate, degraded). Gate G.
+- [x] 4b.1 Create `anonymize.go`: `maskedText`, `supportsReencode`, `rewriteRequest`(span=msgIndex)/`rewriteResponse` via `registry.GetAdapter().Encode*`; wire PII branch in `plugin.go` (block vs anonymize, BLOCKED→fallback block, enforce mutate via `RequestBody`/`Body`+`StopUpstream`, degraded fail-closed enforce / report observe).
+- [x] 4b.2 Create `anonymize_test.go` (round-trip + unsupported/encode-fail) and extend `plugin_test.go` (anonymize enforce mutate, BLOCKED fallback, observe no-mutate, degraded). Gate G.
 
 ## Phase 5: Registration + catalog metadata
 

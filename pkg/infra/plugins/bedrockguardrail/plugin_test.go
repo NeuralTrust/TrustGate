@@ -153,6 +153,12 @@ func piiAnonymizedOutput() *bedrockruntime.ApplyGuardrailOutput {
 	})
 }
 
+func piiAnonymizedOutputWithText(masked string) *bedrockruntime.ApplyGuardrailOutput {
+	out := piiAnonymizedOutput()
+	out.Outputs = []types.GuardrailOutputContent{{Text: aws.String(masked)}}
+	return out
+}
+
 func assertPassThrough(t *testing.T, res *appplugins.Result, err error) {
 	t.Helper()
 	if err != nil {
@@ -312,16 +318,168 @@ func TestExecuteClientErrorObservePassesThrough(t *testing.T) {
 	assertPassThrough(t, res, err)
 }
 
-func TestExecuteAnonymizeFindingReportsInPhase4a(t *testing.T) {
+func TestExecuteAnonymizeEnforcePreRequestRewritesBody(t *testing.T) {
+	t.Parallel()
+	const masked = "hello {EMAIL}"
+	client := &recordingClient{output: piiAnonymizedOutputWithText(masked)}
+	p := pluginWith(client)
+
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, bedrockSettings(piiActionAnonymize), reqCtx(openAIRequest()), nil)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK || res.StopUpstream {
+		t.Fatalf("expected rewritten request result, got %+v", res)
+	}
+	if len(res.RequestBody) == 0 || res.Body != nil {
+		t.Fatalf("expected RequestBody set and Body nil, got %+v", res)
+	}
+	creq, err := adapter.NewRegistry().DecodeRequestFor(res.RequestBody, adapter.FormatOpenAI)
+	if err != nil {
+		t.Fatalf("decode rewritten body: %v", err)
+	}
+	last, idx := lastUserText(creq)
+	if idx < 0 || last != masked {
+		t.Fatalf("last user content = %q (idx %d), want %q", last, idx, masked)
+	}
+}
+
+func TestExecuteAnonymizeEnforcePreResponseRewritesBody(t *testing.T) {
+	t.Parallel()
+	const masked = "the {SSN}"
+	client := &recordingClient{output: piiAnonymizedOutputWithText(masked)}
+	p := pluginWith(client)
+
+	in := execInput(policy.StagePreResponse, policy.ModeEnforce, bedrockSettings(piiActionAnonymize), reqCtx(openAIRequest()), respCtx(openAIResponse(), false))
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK || !res.StopUpstream {
+		t.Fatalf("expected rewritten response with StopUpstream, got %+v", res)
+	}
+	if len(res.Body) == 0 || res.RequestBody != nil {
+		t.Fatalf("expected Body set and RequestBody nil, got %+v", res)
+	}
+	cresp, err := adapter.NewRegistry().DecodeResponseFor(res.Body, adapter.FormatOpenAI)
+	if err != nil {
+		t.Fatalf("decode rewritten body: %v", err)
+	}
+	if cresp.Content != masked {
+		t.Fatalf("response content = %q, want %q", cresp.Content, masked)
+	}
+}
+
+func TestExecuteAnonymizeObserveDoesNotMutate(t *testing.T) {
+	t.Parallel()
+	client := &recordingClient{output: piiAnonymizedOutputWithText("hello {EMAIL}")}
+	p := pluginWith(client)
+
+	in := execInput(policy.StagePreRequest, policy.ModeObserve, bedrockSettings(piiActionAnonymize), reqCtx(openAIRequest()), nil)
+	res, err := p.Execute(context.Background(), in)
+	assertPassThrough(t, res, err)
+	if client.count() != 1 {
+		t.Fatalf("expected one guardrail call, got %d", client.count())
+	}
+}
+
+func TestExecuteAnonymizeEnforceNoOutputFailsClosed(t *testing.T) {
 	t.Parallel()
 	client := &recordingClient{output: piiAnonymizedOutput()}
 	p := pluginWith(client)
 
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, bedrockSettings(piiActionAnonymize), reqCtx(openAIRequest()), nil)
 	res, err := p.Execute(context.Background(), in)
-	assertPassThrough(t, res, err)
-	if client.count() != 1 {
-		t.Fatalf("expected one guardrail call, got %d", client.count())
+	if res != nil {
+		t.Fatalf("expected nil result on degraded fail-closed, got %+v", res)
+	}
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("expected *PluginError, got %v", err)
+	}
+	if pe.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", pe.StatusCode, http.StatusForbidden)
+	}
+	if pe.Type != typeGuardrailBlocked {
+		t.Fatalf("type = %q, want %q", pe.Type, typeGuardrailBlocked)
+	}
+}
+
+func TestAnonymizeEnforceDegradedReasons(t *testing.T) {
+	t.Parallel()
+	p := pluginWith(&recordingClient{})
+	f := &finding{policy: policySensitiveInformation, name: "EMAIL"}
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, bedrockSettings(piiActionAnonymize), reqCtx(openAIRequest()), nil)
+
+	tests := []struct {
+		name   string
+		out    *bedrockruntime.ApplyGuardrailOutput
+		span   rewriteSpan
+		reason string
+	}{
+		{
+			name:   "no output",
+			out:    &bedrockruntime.ApplyGuardrailOutput{},
+			span:   rewriteSpan{format: adapter.FormatOpenAI, rewrite: func(string) ([]byte, bool) { return []byte("x"), true }},
+			reason: reasonAnonymizeNoOutput,
+		},
+		{
+			name:   "unsupported format",
+			out:    piiAnonymizedOutputWithText("masked"),
+			span:   rewriteSpan{format: unsupportedFormat, rewrite: func(string) ([]byte, bool) { return []byte("x"), true }},
+			reason: reasonAnonymizeUnsupportedFormat,
+		},
+		{
+			name:   "encode failed",
+			out:    piiAnonymizedOutputWithText("masked"),
+			span:   rewriteSpan{format: adapter.FormatOpenAI, rewrite: func(string) ([]byte, bool) { return nil, false }},
+			reason: reasonAnonymizeEncodeFailed,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			data := &Data{}
+			res, err := p.anonymizeEnforce(in, data, tt.out, tt.span, f)
+			if res != nil {
+				t.Fatalf("expected nil result, got %+v", res)
+			}
+			if _, ok := appplugins.AsPluginError(err); !ok {
+				t.Fatalf("expected *PluginError, got %v", err)
+			}
+			if !data.Degraded || data.DegradedReason != tt.reason {
+				t.Fatalf("degraded = %t reason = %q, want true %q", data.Degraded, data.DegradedReason, tt.reason)
+			}
+			if data.Decision != decisionBlocked {
+				t.Fatalf("decision = %q, want %q", data.Decision, decisionBlocked)
+			}
+		})
+	}
+}
+
+func TestAnonymizeEnforceSuccessSetsDecision(t *testing.T) {
+	t.Parallel()
+	p := pluginWith(&recordingClient{})
+	f := &finding{policy: policySensitiveInformation, name: "EMAIL"}
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, bedrockSettings(piiActionAnonymize), reqCtx(openAIRequest()), nil)
+	data := &Data{}
+	span := rewriteSpan{format: adapter.FormatOpenAI, rewrite: func(masked string) ([]byte, bool) {
+		return []byte(masked), true
+	}}
+
+	res, err := p.anonymizeEnforce(in, data, piiAnonymizedOutputWithText("masked-body"), span, f)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if res == nil || res.RequestBody == nil || string(res.RequestBody) != "masked-body" {
+		t.Fatalf("expected masked request body, got %+v", res)
+	}
+	if data.Degraded {
+		t.Fatal("expected not degraded on success")
+	}
+	if data.Decision != decisionAnonymized {
+		t.Fatalf("decision = %q, want %q", data.Decision, decisionAnonymized)
 	}
 }
 

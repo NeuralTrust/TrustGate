@@ -25,6 +25,7 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 )
 
@@ -38,7 +39,28 @@ const (
 	decisionFailedClosed = "failed_closed"
 )
 
+const (
+	reasonAnonymizeNoOutput          = "anonymize_no_output"
+	reasonAnonymizeUnsupportedFormat = "anonymize_unsupported_format"
+	reasonAnonymizeEncodeFailed      = "anonymize_encode_failed"
+)
+
+const roleUser = "user"
+
 var _ appplugins.Plugin = (*Plugin)(nil)
+
+type rewriteSpan struct {
+	format     adapter.Format
+	isResponse bool
+	rewrite    func(masked string) ([]byte, bool)
+}
+
+func (s rewriteSpan) result(body []byte) *appplugins.Result {
+	if s.isResponse {
+		return &appplugins.Result{StatusCode: http.StatusOK, Body: body, StopUpstream: true}
+	}
+	return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: body}
+}
 
 type Plugin struct {
 	registry   *adapter.Registry
@@ -104,11 +126,17 @@ func (p *Plugin) executePreRequest(ctx context.Context, in appplugins.ExecInput,
 	if err != nil || creq == nil {
 		return passThrough(), nil
 	}
-	text := joinRequestText(creq)
+	text, idx := lastUserText(creq)
 	if strings.TrimSpace(text) == "" {
 		return passThrough(), nil
 	}
-	return p.runGuardrail(ctx, in, cfg, text, types.GuardrailContentSourceInput)
+	span := rewriteSpan{
+		format: format,
+		rewrite: func(masked string) ([]byte, bool) {
+			return rewriteRequest(p.registry, format, creq, idx, masked)
+		},
+	}
+	return p.runGuardrail(ctx, in, cfg, text, types.GuardrailContentSourceInput, span)
 }
 
 func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput, cfg Settings) (*appplugins.Result, error) {
@@ -133,10 +161,17 @@ func (p *Plugin) executePreResponse(ctx context.Context, in appplugins.ExecInput
 	if strings.TrimSpace(text) == "" {
 		return passThrough(), nil
 	}
-	return p.runGuardrail(ctx, in, cfg, text, types.GuardrailContentSourceOutput)
+	span := rewriteSpan{
+		format:     format,
+		isResponse: true,
+		rewrite: func(masked string) ([]byte, bool) {
+			return rewriteResponse(p.registry, format, cresp, masked)
+		},
+	}
+	return p.runGuardrail(ctx, in, cfg, text, types.GuardrailContentSourceOutput, span)
 }
 
-func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg Settings, text string, source types.GuardrailContentSource) (*appplugins.Result, error) {
+func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg Settings, text string, source types.GuardrailContentSource, span rewriteSpan) (*appplugins.Result, error) {
 	start := time.Now()
 	out, err := p.guardrails.ApplyGuardrail(ctx, credentialsFromConfig(cfg.Credentials), buildApplyInput(cfg, text, source))
 	latency := time.Since(start).Milliseconds()
@@ -162,6 +197,9 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 
 	if res.anonymize != nil {
 		applyFinding(data, res.anonymize)
+		if appplugins.Blocks(in.Mode) {
+			return p.anonymizeEnforce(in, data, out, span, res.anonymize)
+		}
 		data.Decision = decisionReported
 		setExtras(in.Event, data)
 		appplugins.SetDecision(in.Event, in.Mode)
@@ -172,6 +210,31 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 	setExtras(in.Event, data)
 	appplugins.SetDecision(in.Event, in.Mode)
 	return passThrough(), nil
+}
+
+func (p *Plugin) anonymizeEnforce(in appplugins.ExecInput, data *Data, out *bedrockruntime.ApplyGuardrailOutput, span rewriteSpan, f *finding) (*appplugins.Result, error) {
+	masked, ok := maskedText(out)
+	if !ok {
+		return p.anonymizeDegraded(in, data, reasonAnonymizeNoOutput, f)
+	}
+	if !supportsReencode(p.registry, span.format) {
+		return p.anonymizeDegraded(in, data, reasonAnonymizeUnsupportedFormat, f)
+	}
+	body, ok := span.rewrite(masked)
+	if !ok {
+		return p.anonymizeDegraded(in, data, reasonAnonymizeEncodeFailed, f)
+	}
+	data.Decision = decisionAnonymized
+	setExtras(in.Event, data)
+	return span.result(body), nil
+}
+
+func (p *Plugin) anonymizeDegraded(in appplugins.ExecInput, data *Data, reason string, f *finding) (*appplugins.Result, error) {
+	data.Degraded = true
+	data.DegradedReason = reason
+	data.Decision = decisionBlocked
+	setExtras(in.Event, data)
+	return nil, blockError(*f)
 }
 
 func (p *Plugin) failClosed(ctx context.Context, in appplugins.ExecInput, cfg Settings, latency int64, err error) (*appplugins.Result, error) {
@@ -221,20 +284,17 @@ func applyFinding(data *Data, f *finding) {
 	data.Name = f.name
 }
 
-func joinRequestText(creq *adapter.CanonicalRequest) string {
+func lastUserText(creq *adapter.CanonicalRequest) (string, int) {
 	if creq == nil {
-		return ""
+		return "", -1
 	}
-	parts := make([]string, 0, len(creq.Messages)+1)
-	if strings.TrimSpace(creq.System) != "" {
-		parts = append(parts, creq.System)
-	}
-	for _, msg := range creq.Messages {
-		if strings.TrimSpace(msg.Content) != "" {
-			parts = append(parts, msg.Content)
+	for i := len(creq.Messages) - 1; i >= 0; i-- {
+		msg := creq.Messages[i]
+		if msg.Role == roleUser && strings.TrimSpace(msg.Content) != "" {
+			return msg.Content, i
 		}
 	}
-	return strings.Join(parts, "\n")
+	return "", -1
 }
 
 func responseText(cresp *adapter.CanonicalResponse) string {
