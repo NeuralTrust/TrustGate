@@ -11,7 +11,8 @@ external-guardrail decode-and-block flow of `tool_call_validation` (adapter
 `net/http` client of `oauth/provider_client.go` (`*http.Client{Timeout}`,
 `NewRequestWithContext`, Bearer auth, `io.LimitReader`, JSON decode). Base URL +
 timeout come from env via `pkg/config`, injected through DI; per-policy
-`Settings` carry `api_key`, `consumer_id`, `inspect`, optional `base_url`.
+`Settings` carry `api_key`, `inspect`, optional `base_url`. The `consumer_id`
+sent to TrustGuard is the real TrustGate consumer id (`Request.ConsumerID`).
 
 ## Architecture Decisions
 
@@ -92,10 +93,9 @@ const (
 )
 
 type Settings struct {
-    APIKey     string `mapstructure:"api_key"` // #nosec G101 -- config field name
-    ConsumerID string `mapstructure:"consumer_id"`
-    Inspect    string `mapstructure:"inspect"`
-    BaseURL    string `mapstructure:"base_url"`
+    APIKey  string `mapstructure:"api_key"` // #nosec G101 -- config field name
+    Inspect string `mapstructure:"inspect"`
+    BaseURL string `mapstructure:"base_url"`
 }
 
 func parseConfig(settings map[string]any) (*Settings, error) // Parse -> applyDefaults(Inspect="request_response") -> validate

@@ -18,11 +18,13 @@ package plugins
 // here so it stays isolated from plugin execution code and can evolve without
 // touching the plugin implementations.
 const (
-	groupTrafficControl = "Traffic Control"
-	groupQuota          = "Quota"
-	groupRouting        = "Routing"
-	groupGuardrails     = "Guardrails"
-	groupOther          = "Other"
+	groupTrafficControl   = "Traffic Control"
+	groupQuota            = "Quota"
+	groupRouting          = "Routing"
+	groupPromptManagement = "Prompt Management"
+	groupToolGovernance   = "Tool Governance"
+	groupGuardrails       = "Guardrails"
+	groupOther            = "Other"
 )
 
 // groupOrder fixes the order groups appear in the catalog response.
@@ -30,6 +32,8 @@ var groupOrder = []string{
 	groupTrafficControl,
 	groupQuota,
 	groupRouting,
+	groupPromptManagement,
+	groupToolGovernance,
 	groupGuardrails,
 	groupOther,
 }
@@ -689,7 +693,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	},
 	"tool_call_validation": {
 		name:        "Tool Call Validation",
-		group:       groupOther,
+		group:       groupToolGovernance,
 		description: "Validate the tool calls an LLM returns against per-tool rules, rejecting or redacting responses that violate them.",
 		schema: SettingsSchema{
 			Fields: []Field{
@@ -794,7 +798,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	},
 	"prompt_template": {
 		name:        "Prompt Template",
-		group:       groupOther,
+		group:       groupPromptManagement,
 		description: "Inject context-bound system prompts (Mode A) and/or render client-referenced named, versioned templates (Mode B) into the request before it reaches the model.",
 		schema: SettingsSchema{
 			Fields: []Field{
@@ -1012,7 +1016,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	},
 	"tool_definition_transformation": {
 		name:        "Tool Definition Transformation",
-		group:       groupOther,
+		group:       groupToolGovernance,
 		description: "Reshape tool definitions on the request leg before they reach the model: patch a matched tool's JSON schema, override its description, and inject operator-authored tools. This is a governance and steering layer, not an access gate.",
 		schema: SettingsSchema{
 			Fields: []Field{
@@ -1116,7 +1120,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	},
 	"trustguard": {
 		name:        "TrustGuard",
-		group:       groupOther,
+		group:       groupGuardrails,
 		description: "Inspect request and/or response content with the external TrustGuard guardrail service and block content it flags. Fails open on any transport error, timeout, non-2xx response, or missing base URL. Streaming responses cannot be blocked in realtime.",
 		schema: SettingsSchema{
 			Fields: []Field{
@@ -1125,13 +1129,6 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "API Key",
 					Type:        FieldTypeString,
 					Description: "Credential sent as a Bearer token to the TrustGuard service.",
-					Required:    true,
-				},
-				{
-					Key:         "consumer_id",
-					Label:       "Consumer ID",
-					Type:        FieldTypeString,
-					Description: "Identifier forwarded to TrustGuard to attribute the guarded call.",
 					Required:    true,
 				},
 				{
@@ -1205,6 +1202,96 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "Block Message",
 					Type:        FieldTypeString,
 					Description: "Optional message returned to the caller when content is blocked.",
+				},
+			},
+		},
+	},
+	"bedrock_guardrail": {
+		name:        "AWS Bedrock Guardrail",
+		group:       groupGuardrails,
+		description: "Apply an AWS Bedrock guardrail to request prompts (PreRequest) and/or responses (PreResponse). Inspects the topic, content, word, sensitive-information (PII) and contextual-grounding policy families configured on the guardrail; blocks with a 403 or anonymizes PII in place. Streaming responses are passed through untouched.",
+		schema: SettingsSchema{
+			Fields: []Field{
+				{
+					Key:         "guardrail_id",
+					Label:       "Guardrail ID",
+					Type:        FieldTypeString,
+					Description: "AWS Bedrock guardrail identifier.",
+					Required:    true,
+				},
+				{
+					Key:         "version",
+					Label:       "Version",
+					Type:        FieldTypeString,
+					Description: "Guardrail version. Defaults to DRAFT.",
+					Default:     "DRAFT",
+				},
+				{
+					Key:         "pii_action",
+					Label:       "PII Action",
+					Type:        FieldTypeEnum,
+					Description: "How TrustGate reacts when the sensitive-information policy fires: block the call or anonymize the matched spans in place.",
+					Enum:        []string{"block", "anonymize"},
+					Default:     "block",
+				},
+				{
+					Key:         "message",
+					Label:       "Block Message",
+					Type:        FieldTypeString,
+					Description: "Optional operator message; the 403 body always carries the matched policy and name.",
+				},
+				{
+					Key:      "credentials",
+					Label:    "AWS Credentials",
+					Type:     FieldTypeObject,
+					Required: true,
+					Fields: []Field{
+						{
+							Key:         "aws_region",
+							Label:       "AWS Region",
+							Type:        FieldTypeString,
+							Description: "AWS region hosting the guardrail.",
+							Default:     "us-east-1",
+						},
+						{
+							Key:         "use_role",
+							Label:       "Use IAM Role",
+							Type:        FieldTypeBoolean,
+							Description: "Assume an IAM role via STS instead of using static keys.",
+							Default:     false,
+						},
+						{
+							Key:         "role_arn",
+							Label:       "Role ARN",
+							Type:        FieldTypeString,
+							Description: "Required when Use IAM Role is enabled.",
+						},
+						{
+							Key:         "session_name",
+							Label:       "Session Name",
+							Type:        FieldTypeString,
+							Description: "STS assume-role session name.",
+							Default:     "BedrockClientSession",
+						},
+						{
+							Key:         "access_key_id",
+							Label:       "Access Key ID",
+							Type:        FieldTypeString,
+							Description: "Required for static-key auth (Use IAM Role disabled).",
+						},
+						{
+							Key:         "secret_access_key",
+							Label:       "Secret Access Key",
+							Type:        FieldTypeString,
+							Description: "Required for static-key auth (Use IAM Role disabled).",
+						},
+						{
+							Key:         "session_token",
+							Label:       "Session Token",
+							Type:        FieldTypeString,
+							Description: "Optional temporary-credential session token.",
+						},
+					},
 				},
 			},
 		},
