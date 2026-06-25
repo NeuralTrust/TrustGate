@@ -105,14 +105,20 @@ use only the first result.
 
 On block, the plugin MUST return a `*PluginError` with `StatusCode` 403 and
 `Type` `content_flagged` whose body is set verbatim to a JSON object of the
-shape `{"error":{"type":"content_flagged","categories":[{"category","score","threshold"}]}}`,
-listing each violating category with its aggregated score and configured
-threshold. This body MUST reach the client unchanged.
+shape `{"error":{"type":"content_flagged","message","categories":[{"category","score","threshold"}]}}`,
+where `message` is the configured `action.message` (or the default block
+message) and `categories` lists each violating category with its aggregated
+score and configured threshold. This body MUST reach the client unchanged.
 
 #### Scenario: 403 content_flagged body
-- GIVEN a `hate` violation with aggregated score `0.91` and threshold `0.7`
+- GIVEN a `hate` violation with aggregated score `0.91` and threshold `0.7` and no configured `action.message`
 - WHEN the plugin blocks
-- THEN the response MUST be 403 with body `{"error":{"type":"content_flagged","categories":[{"category":"hate","score":0.91,"threshold":0.7}]}}`
+- THEN the response MUST be 403 with body `{"error":{"type":"content_flagged","message":"request blocked by content policy","categories":[{"category":"hate","score":0.91,"threshold":0.7}]}}`
+
+#### Scenario: Configured action.message is surfaced
+- GIVEN a configured `action.message`
+- WHEN the plugin blocks
+- THEN the 403 body's `error.message` MUST equal the configured `action.message`
 
 ### Requirement: Fail-closed on moderation unavailability
 

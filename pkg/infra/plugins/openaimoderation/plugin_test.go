@@ -164,24 +164,48 @@ func TestExecuteEnforceBlockReturns403(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, pe.StatusCode)
 	assert.Equal(t, typeContentFlagged, pe.Type)
 
-	const wantBody = `{"error":{"type":"content_flagged","categories":[{"category":"hate","score":0.91,"threshold":0.7}]}}`
+	const wantBody = `{"error":{"type":"content_flagged","message":"request blocked by content policy","categories":[{"category":"hate","score":0.91,"threshold":0.7}]}}`
 	assert.JSONEq(t, wantBody, string(pe.Body))
 	assert.Equal(t, wantBody, string(pe.Body))
 
 	var decoded struct {
 		Error struct {
 			Type       string      `json:"type"`
+			Message    string      `json:"message"`
 			Categories []violation `json:"categories"`
 		} `json:"error"`
 	}
 	require.NoError(t, json.Unmarshal(pe.Body, &decoded))
 	assert.Equal(t, typeContentFlagged, decoded.Error.Type)
+	assert.Equal(t, defaultBlockMessage, decoded.Error.Message)
 	require.Len(t, decoded.Error.Categories, 1)
 	assert.Equal(t, "hate", decoded.Error.Categories[0].Category)
 
 	data, ok := span.PluginAttrsCopy().Extras.(ModerationData)
 	require.True(t, ok, "expected ModerationData extras")
 	assert.Equal(t, decisionBlock, data.Decision)
+}
+
+func TestExecuteEnforceBlockSurfacesCustomMessage(t *testing.T) {
+	t.Parallel()
+	f := &fakeModerator{response: flaggedHateResponse()}
+	srv := newModeratorServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, pluginTestTimeout, nil)
+
+	settings := blockSettings()
+	settings["action"] = map[string]any{"message": "blocked by policy XYZ"}
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings, requestContext(), nil, nil)
+	_, err := p.Execute(context.Background(), in)
+
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok, "expected *PluginError, got %v", err)
+	var decoded struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(pe.Body, &decoded))
+	assert.Equal(t, "blocked by policy XYZ", decoded.Error.Message)
 }
 
 func TestExecuteObserveWithViolationPassesThrough(t *testing.T) {

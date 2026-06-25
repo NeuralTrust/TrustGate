@@ -32,14 +32,16 @@ const (
 
 const unavailableBodyJSON = `{"error":{"type":"moderation_unavailable","message":"content moderation is temporarily unavailable"}}`
 
-func blockBody(violations []violation) []byte {
+func blockBody(message string, violations []violation) []byte {
 	body := struct {
 		Error struct {
 			Type       string      `json:"type"`
+			Message    string      `json:"message"`
 			Categories []violation `json:"categories"`
 		} `json:"error"`
 	}{}
 	body.Error.Type = typeContentFlagged
+	body.Error.Message = message
 	body.Error.Categories = violations
 
 	raw, err := json.Marshal(body)
@@ -58,7 +60,7 @@ func blockError(message string, violations []violation) *appplugins.PluginError 
 		StatusCode: http.StatusForbidden,
 		Type:       typeContentFlagged,
 		Message:    msg,
-		Body:       blockBody(violations),
+		Body:       blockBody(msg, violations),
 	}
 }
 
