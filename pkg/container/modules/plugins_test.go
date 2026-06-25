@@ -22,6 +22,7 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/openaimoderation"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/tool_call_validation"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/stretchr/testify/assert"
@@ -80,4 +81,46 @@ func TestNewPluginRegistry_ToolCallValidationCatalogMetadata(t *testing.T) {
 		keys = append(keys, f.Key)
 	}
 	assert.ElementsMatch(t, []string{"scope", "semantic", "rules"}, keys)
+}
+
+func TestNewPluginRegistry_RegistersOpenAIModeration(t *testing.T) {
+	reg := newTestPluginRegistry(t)
+
+	plugin, ok := reg.Get(openaimoderation.PluginName)
+	require.Truef(t, ok, "plugin %q is not registered", openaimoderation.PluginName)
+	assert.Equal(t, openaimoderation.PluginName, plugin.Name())
+	assert.Contains(t, reg.Names(), openaimoderation.PluginName)
+}
+
+func TestNewPluginRegistry_OpenAIModerationCatalogMetadata(t *testing.T) {
+	reg := newTestPluginRegistry(t)
+
+	catalog := appplugins.NewCatalogService(reg).Catalog()
+
+	var entry appplugins.CatalogEntry
+	groupType := ""
+	found := false
+	for _, group := range catalog.Groups {
+		for _, item := range group.Items {
+			if item.Slug == openaimoderation.PluginName {
+				entry = item
+				groupType = group.Type
+				found = true
+			}
+		}
+	}
+
+	require.Truef(t, found, "catalog has no entry for %q", openaimoderation.PluginName)
+	assert.Equal(t, "Guardrails", groupType)
+	assert.NotEmpty(t, entry.Name)
+	assert.NotEmpty(t, entry.Description)
+	assert.NotEmpty(t, entry.SettingsSchema.Fields)
+	assert.NotEmpty(t, entry.SupportedStages)
+	assert.NotEmpty(t, entry.SupportedModes)
+
+	keys := make([]string, 0, len(entry.SettingsSchema.Fields))
+	for _, f := range entry.SettingsSchema.Fields {
+		keys = append(keys, f.Key)
+	}
+	assert.ElementsMatch(t, []string{"api_key", "model", "stages", "categories", "thresholds", "block_on_flagged", "action"}, keys)
 }

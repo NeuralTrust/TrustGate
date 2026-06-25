@@ -1155,4 +1155,81 @@ var pluginCatalogMeta = map[string]catalogMeta{
 			},
 		},
 	},
+	"openai_moderation": {
+		name:        "OpenAI Moderation",
+		group:       groupGuardrails,
+		description: "Screen request and/or response text with the OpenAI Moderations API and block content that crosses configured category thresholds. Fails closed (HTTP 502) in enforce mode on any moderator error; observe mode records and passes through. Streaming responses cannot be inspected in realtime. Text-only.",
+		schema: SettingsSchema{
+			Fields: []Field{
+				{
+					Key:         "api_key",
+					Label:       "API Key",
+					Type:        FieldTypeString,
+					Description: "OpenAI credential sent as a Bearer token to the Moderations API.",
+					Required:    true,
+				},
+				{
+					Key:         "model",
+					Label:       "Model",
+					Type:        FieldTypeString,
+					Description: "Moderations model.",
+					Default:     "omni-moderation-latest",
+				},
+				{
+					Key:         "stages",
+					Label:       "Stages",
+					Type:        FieldTypeArray,
+					Description: "Legs to inspect.",
+					Item: &Field{
+						Key:   "stage",
+						Label: "Stage",
+						Type:  FieldTypeEnum,
+						Enum:  []string{"pre_request", "pre_response"},
+					},
+				},
+				{
+					Key:         "categories",
+					Label:       "Categories",
+					Type:        FieldTypeArray,
+					Description: "Allow-list of categories to evaluate. Empty evaluates all categories returned by OpenAI.",
+					Item: &Field{
+						Key:   "category",
+						Label: "Category",
+						Type:  FieldTypeString,
+					},
+				},
+				{
+					Key:         "thresholds",
+					Label:       "Thresholds",
+					Type:        FieldTypeMap,
+					Description: "Per-category score threshold (0..1). A score at or above the threshold blocks.",
+					Value: &Field{
+						Key:   "threshold",
+						Label: "Threshold",
+						Type:  FieldTypeNumber,
+					},
+				},
+				{
+					Key:         "block_on_flagged",
+					Label:       "Block On Flagged",
+					Type:        FieldTypeBoolean,
+					Description: "Block any category OpenAI marks flagged, even without a configured threshold.",
+					Default:     false,
+				},
+				{
+					Key:   "action",
+					Label: "Action",
+					Type:  FieldTypeObject,
+					Fields: []Field{
+						{
+							Key:         "message",
+							Label:       "Message",
+							Type:        FieldTypeString,
+							Description: "Block message returned to the caller.",
+						},
+					},
+				},
+			},
+		},
+	},
 }

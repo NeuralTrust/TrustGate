@@ -30,6 +30,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/cors"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/costcap"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/modelallowlist"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/openaimoderation"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pertoolratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/prompttemplate"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/ratelimit"
@@ -102,6 +103,7 @@ func newPluginRegistry(p pluginParams) (appplugins.Registry, error) {
 		tool_call_validation.New(p.Adapters, openai.NewOpenaiClient(), p.Logger),
 		tooltransform.New(p.Adapters),
 		trustguard.New(p.Adapters, p.Cfg.TrustGuard.BaseURL, p.Cfg.TrustGuard.Timeout, p.Logger),
+		openaimoderation.New(p.Adapters, p.Cfg.OpenAIModeration.BaseURL, p.Cfg.OpenAIModeration.Timeout, p.Logger),
 	}
 	for _, plugin := range catalog {
 		if err := reg.Register(plugin); err != nil {

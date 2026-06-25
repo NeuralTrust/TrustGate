@@ -60,9 +60,9 @@ Chain strategy: feature-branch-chain
 
 ## Phase 3: Activation — env config, catalog, registration (PR3)
 
-- [ ] 3.1 `pkg/config/config.go`: `defaultOpenAIModerationTimeout = 15s` const, `OpenAIModerationConfig{BaseURL,Timeout}`, `getOpenAIModerationConfig()` (`OPENAI_MODERATION_BASE_URL` default `https://api.openai.com`, `OPENAI_MODERATION_TIMEOUT` default 15s), `OpenAIModeration` field on `Config` after `TrustGuard`, wired in `LoadConfig`.
-- [ ] 3.2 `.env.example`: add `OPENAI_MODERATION_BASE_URL` + `OPENAI_MODERATION_TIMEOUT` (+ comment) after the TrustGuard block.
-- [ ] 3.3 `pkg/app/plugins/catalog_metadata.go`: add `pluginCatalogMeta["openai_moderation"]` (group `groupGuardrails`) with `SettingsSchema` fields `{api_key, model, stages, categories, thresholds, block_on_flagged, action.message}` per design.
-- [ ] 3.4 `pkg/container/modules/plugins.go`: import package + append `openaimoderation.New(p.Adapters, p.Cfg.OpenAIModeration.BaseURL, p.Cfg.OpenAIModeration.Timeout, p.Logger)` to the `catalog` slice in `newPluginRegistry`.
-- [ ] 3.5 `pkg/container/modules/plugins_test.go`: assert registration (`Get`/`Names` include `openai_moderation`) + catalog-metadata entry (group, non-empty Name/Description/SettingsSchema.Fields, field-key set).
-- [ ] 3.6 Verify: `go build ./... && go vet ./... && go test -race ./pkg/config/... ./pkg/app/plugins/... ./pkg/container/modules/...` green; strip any code comments.
+- [x] 3.1 `pkg/config/config.go`: `defaultOpenAIModerationTimeout = 15s` const, `OpenAIModerationConfig{BaseURL,Timeout}`, `getOpenAIModerationConfig()` (`OPENAI_MODERATION_BASE_URL` default `https://api.openai.com`, `OPENAI_MODERATION_TIMEOUT` default 15s), `OpenAIModeration` field on `Config` after `TrustGuard`, wired in `LoadConfig`.
+- [x] 3.2 `.env.example`: add `OPENAI_MODERATION_BASE_URL` + `OPENAI_MODERATION_TIMEOUT` (+ comment) after the TrustGuard block.
+- [x] 3.3 `pkg/app/plugins/catalog_metadata.go`: add `pluginCatalogMeta["openai_moderation"]` (group `groupGuardrails`) with `SettingsSchema` fields `{api_key, model, stages, categories, thresholds, block_on_flagged, action.message}` per design.
+- [x] 3.4 `pkg/container/modules/plugins.go`: import package + append `openaimoderation.New(p.Adapters, p.Cfg.OpenAIModeration.BaseURL, p.Cfg.OpenAIModeration.Timeout, p.Logger)` to the `catalog` slice in `newPluginRegistry`.
+- [x] 3.5 `pkg/container/modules/plugins_test.go`: assert registration (`Get`/`Names` include `openai_moderation`) + catalog-metadata entry (group, non-empty Name/Description/SettingsSchema.Fields, field-key set).
+- [x] 3.6 Verify: `go build ./... && go vet ./... && go test -race ./pkg/config/... ./pkg/app/plugins/... ./pkg/container/modules/...` green; strip any code comments.
