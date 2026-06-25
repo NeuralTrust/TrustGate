@@ -157,7 +157,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		Direction:  direction,
 		Protocol:   protocolFor(in.Request.ConsumerType),
 		SessionID:  in.Request.SessionID,
-		ConsumerID: cfg.ConsumerID,
+		ConsumerID: in.Request.ConsumerID,
 		Attributes: GuardAttributes{
 			ContentType: contentTypeJSON,
 			Model: GuardModel{

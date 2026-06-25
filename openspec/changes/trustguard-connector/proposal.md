@@ -102,7 +102,6 @@ framework, modeled on the established external-guardrail pattern
 ```json
 {
   "api_key": "tg_live_...",
-  "consumer_id": "acme-prod",
   "inspect": "request_response",
   "base_url": "https://trustguard.internal/"
 }
@@ -110,8 +109,6 @@ framework, modeled on the established external-guardrail pattern
 
 - `api_key` — **string, required**. Bearer token for TrustGuard
   (`Authorization: Bearer <api_key>`).
-- `consumer_id` — **string, required**. Sent as TrustGuard `consumer_id` (the
-  product/tenant identifier; distinct from the proxy request's `ConsumerID`).
 - `inspect` — **enum `request | response | request_response`, default
   `request_response`**. Selects which legs are inspected (see matrix).
 - `base_url` — **string, optional**. Overrides `TRUSTGUARD_BASE_URL` for this
@@ -177,7 +174,7 @@ Request-leg (`pre_request`) inspection is unaffected by streaming.
   "direction": "input",
   "protocol": "llm",
   "session_id": "<in.Request.SessionID>",
-  "consumer_id": "<config.consumer_id>",
+  "consumer_id": "<in.Request.ConsumerID>",
   "input": { "input": "<decoded request/response text>" },
   "attributes": {
     "content_type": "application/json",
@@ -190,9 +187,10 @@ Request-leg (`pre_request`) inspection is unaffected by streaming.
 ```
 
 - `direction` — from stage (`input` for pre_request, `output` for pre_response).
-- `protocol` — constant `"llm"` in v1.
+- `protocol` — derived from the resolved consumer `Type` (`LLM → "llm"`,
+  `MCP → "mcp"`, `A2A → "a2a"`; defaults to `"llm"`).
 - `session_id` — `in.Request.SessionID`.
-- `consumer_id` — from config (not the proxy request's `ConsumerID`).
+- `consumer_id` — the real TrustGate consumer id (`in.Request.ConsumerID`).
 - `input.input` — text decoded via the adapter `Registry`
   (`DecodeRequestFor` messages/system content on input; `DecodeResponseFor`
   content on output).
@@ -228,7 +226,7 @@ Request-leg (`pre_request`) inspection is unaffected by streaming.
 | `pkg/infra/plugins/trustguard/data.go` | New | `/v1/guard` request/response DTOs + event-extras struct. |
 | `pkg/infra/plugins/trustguard/*_test.go` | New | Table-driven config tests + `Execute` tests against `httptest.NewServer`. |
 | `pkg/container/modules/plugins.go` | Modified | Import `trustguard` and add `trustguard.New(...)` to the `newPluginRegistry` catalog slice with DI params (config, adapters, logger). |
-| `pkg/app/plugins/catalog_metadata.go` (+ `catalog_test.go`) | Modified | Catalog metadata entry (name, group, hand-authored `SettingsSchema`: `api_key`, `consumer_id`, `inspect` enum, optional `base_url`). |
+| `pkg/app/plugins/catalog_metadata.go` (+ `catalog_test.go`) | Modified | Catalog metadata entry (name, group, hand-authored `SettingsSchema`: `api_key`, `inspect` enum, optional `base_url`). |
 | `pkg/config/*` | Modified | Add `TRUSTGUARD_BASE_URL` (no default) and `TRUSTGUARD_TIMEOUT` (default `15s`) env-only config, wired into DI. |
 | Plugin docs | New/Modified | Document slug, config, stages, blocking/fail-open, streaming limitation (RUN-669 "connector documented"). |
 
@@ -242,14 +240,14 @@ Request-leg (`pre_request`) inspection is unaffected by streaming.
 | **Missing attributes** | `attachments`, consumer `tag`/`type`, `collector.type` omitted (not on the proxy request context). Future: enrich via consumer lookup / attachment extraction. |
 | **Empty session splits legs** | When `Request.SessionID` is empty (e.g. gateway session config disabled), TrustGuard mints a fresh session per `/v1/guard` call, so the request and response legs are not correlated in TrustGuard. The proxy data plane exposes no stable per-transaction id (the request-id middleware is admin-only). Blocking is unaffected (it decides per leg). Future: stamp a stable per-transaction session id in the proxy request context. |
 | **Added latency** | Each guarded leg adds a synchronous TrustGuard round-trip. Mitigation: bounded per-call timeout (`TRUSTGUARD_TIMEOUT`); operators scope the policy. |
-| **`consumer_id` semantics** | Config `consumer_id` (TrustGuard tenant) is intentionally distinct from the proxy `Request.ConsumerID`; documented to avoid confusion. |
+| **`consumer_id` semantics** | The `consumer_id` sent to TrustGuard is the real TrustGate consumer id (`Request.ConsumerID`), stamped in `stampConsumerScope`; it is not a plugin setting. |
 | **Empty base URL** | No env default; an unconfigured base URL passes through with a warning rather than failing requests. |
 
 ## Acceptance criteria (mapped to RUN-669)
 
 - [ ] **TrustGate configurable with a TrustGuard connector** — new `trustguard`
       plugin registered in `newPluginRegistry` + catalog metadata; per-policy
-      Settings `api_key`, `consumer_id`, `inspect`, optional `base_url`; env
+      Settings `api_key`, `inspect`, optional `base_url`; env
       `TRUSTGUARD_BASE_URL` / `TRUSTGUARD_TIMEOUT` via `pkg/config`.
 - [ ] **Requests forwarded correctly** — `Execute` builds the `/v1/guard` body
       (direction, protocol, session_id, consumer_id, decoded `input`, model
