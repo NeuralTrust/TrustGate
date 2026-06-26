@@ -14,7 +14,10 @@
 
 package catalog
 
-import "github.com/NeuralTrust/TrustGate/pkg/infra/providers"
+import (
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
+)
 
 type OptionFieldType string
 
@@ -25,13 +28,13 @@ const (
 )
 
 type ProviderOptionField struct {
-	Key         string          `json:"key"`
-	Label       string          `json:"label"`
-	Type        OptionFieldType `json:"type"`
-	Description string          `json:"description,omitempty"`
-	Required    bool            `json:"required,omitempty"`
-	Default     any             `json:"default,omitempty"`
-	Enum        []string        `json:"enum,omitempty"`
+	Key         string                  `json:"key"`
+	Label       string                  `json:"label"`
+	Type        OptionFieldType         `json:"type"`
+	Description string                  `json:"description,omitempty"`
+	Required    bool                    `json:"required,omitempty"`
+	Default     any                     `json:"default,omitempty"`
+	Enum        []appplugins.EnumOption `json:"enum,omitempty"`
 }
 
 var providerOptionsCatalog = map[string][]ProviderOptionField{
@@ -41,7 +44,10 @@ var providerOptionsCatalog = map[string][]ProviderOptionField{
 			Label:       "API",
 			Type:        OptionFieldTypeEnum,
 			Description: "OpenAI API surface to target.",
-			Enum:        []string{providers.OpenAIAPICompletions, providers.OpenAIAPIResponses},
+			Enum: []appplugins.EnumOption{
+				{Value: providers.OpenAIAPICompletions, Label: "Completions"},
+				{Value: providers.OpenAIAPIResponses, Label: "Responses"},
+			},
 		},
 		{
 			Key:         "base_url",
