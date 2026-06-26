@@ -19,13 +19,14 @@ import (
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	registryrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
 )
 
 func Registry(c *container.Container) error {
-	if err := c.Provide(func(conn *database.Connection) domain.Repository {
-		return registryrepo.NewRepository(conn)
+	if err := c.Provide(func(conn *database.Connection, enc vaultdomain.Encrypter) domain.Repository {
+		return registryrepo.NewRepository(conn, enc)
 	}); err != nil {
 		return err
 	}

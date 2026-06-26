@@ -16,9 +16,14 @@ package registry
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 )
 
 func TestMarshalAuth_PreservesAzureFieldsByMode(t *testing.T) {
@@ -105,4 +110,102 @@ func TestMarshalAuth_PreservesAzureFieldsByMode(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRepository_AuthEncryptionRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	cipher, err := crypto.NewCipher("functional-test-secret-0123456789abcdef")
+	if err != nil {
+		t.Fatalf("new cipher: %v", err)
+	}
+	r := &Repository{cipher: cipher}
+
+	const apiKey = "sk-super-secret-value"
+	stored, err := r.encryptAuth(domain.NewAPIKeyAuth(apiKey))
+	if err != nil {
+		t.Fatalf("encryptAuth: %v", err)
+	}
+	ciphertext, ok := stored.(string)
+	if !ok || ciphertext == "" {
+		t.Fatalf("encryptAuth returned %T (%v), want non-empty string", stored, stored)
+	}
+	if strings.Contains(ciphertext, apiKey) {
+		t.Fatalf("stored auth leaks the plaintext secret: %q", ciphertext)
+	}
+
+	provider := "openai"
+	reg, err := r.scanRegistry(fakeRow{values: []any{
+		ids.New[ids.RegistryKind](),
+		ids.New[ids.GatewayKind](),
+		"openai-pool",
+		string(domain.TypeLLM),
+		true,
+		&provider,
+		[]byte(nil),
+		[]byte(ciphertext),
+		"",
+		[]byte(nil),
+		[]byte(nil),
+		time.Now().UTC(),
+		time.Now().UTC(),
+	}})
+	if err != nil {
+		t.Fatalf("scanRegistry: %v", err)
+	}
+	if reg.Auth() == nil || reg.Auth().APIKey == nil {
+		t.Fatalf("decrypted auth lost data: %+v", reg.Auth())
+	}
+	if reg.Auth().APIKey.APIKey != apiKey {
+		t.Fatalf("decrypted api key = %q, want %q", reg.Auth().APIKey.APIKey, apiKey)
+	}
+}
+
+func TestRepository_AuthEncryption_NilAuthStoresNull(t *testing.T) {
+	t.Parallel()
+
+	cipher, err := crypto.NewCipher("functional-test-secret-0123456789abcdef")
+	if err != nil {
+		t.Fatalf("new cipher: %v", err)
+	}
+	r := &Repository{cipher: cipher}
+
+	stored, err := r.encryptAuth(nil)
+	if err != nil {
+		t.Fatalf("encryptAuth(nil): %v", err)
+	}
+	if stored != nil {
+		t.Fatalf("encryptAuth(nil) = %v, want nil", stored)
+	}
+}
+
+type fakeRow struct {
+	values []any
+}
+
+func (f fakeRow) Scan(dest ...any) error {
+	if len(dest) != len(f.values) {
+		return fmt.Errorf("fakeRow: got %d dest, have %d values", len(dest), len(f.values))
+	}
+	for i, d := range dest {
+		switch dst := d.(type) {
+		case *ids.RegistryID:
+			*dst = f.values[i].(ids.RegistryID)
+		case *ids.GatewayID:
+			*dst = f.values[i].(ids.GatewayID)
+		case *string:
+			*dst = f.values[i].(string)
+		case **string:
+			*dst = f.values[i].(*string)
+		case *bool:
+			*dst = f.values[i].(bool)
+		case *[]byte:
+			*dst = f.values[i].([]byte)
+		case *time.Time:
+			*dst = f.values[i].(time.Time)
+		default:
+			return fmt.Errorf("fakeRow: unsupported dest type %T", d)
+		}
+	}
+	return nil
 }
