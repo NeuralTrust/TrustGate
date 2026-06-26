@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -58,6 +59,8 @@ type Plugin struct {
 	tokens   *tokenManager
 	baseURL  string
 	logger   *slog.Logger
+
+	cfgCache sync.Map
 }
 
 func New(registry *adapter.Registry, baseURL string, timeout time.Duration, clientID, clientSecret string, logger *slog.Logger) *Plugin {
@@ -100,7 +103,7 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 }
 
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
-	cfg, err := parseConfig(in.Config.Settings)
+	cfg, err := p.config(in.Config.Settings)
 	if err != nil {
 		return nil, fmt.Errorf("trustguard: %w", err)
 	}
@@ -216,6 +219,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	if resp.Status == statusBlock && appplugins.Blocks(in.Mode) {
 		data.Decision = decisionBlocked
 		setExtras(in.Event, data)
+		appplugins.SetDecision(in.Event, in.Mode)
 		return nil, blockError(resp)
 	}
 
@@ -227,6 +231,23 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	setExtras(in.Event, data)
 	appplugins.SetDecision(in.Event, in.Mode)
 	return passThrough(), nil
+}
+
+func (p *Plugin) config(settings map[string]any) (Settings, error) {
+	key := configCacheKey(settings)
+	if v, ok := p.cfgCache.Load(key); ok {
+		return v.(Settings), nil
+	}
+	cfg, err := parseConfig(settings)
+	if err != nil {
+		return Settings{}, err
+	}
+	p.cfgCache.Store(key, cfg)
+	return cfg, nil
+}
+
+func configCacheKey(settings map[string]any) string {
+	return fmt.Sprintf("%v\x00%v", settings["inspect"], settings["base_url"])
 }
 
 func (p *Plugin) guard(ctx context.Context, baseURL string, body GuardRequest) (*GuardResponse, error) {

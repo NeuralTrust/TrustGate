@@ -139,7 +139,10 @@ func (m *tokenManager) fetch(ctx context.Context, tokenURL string) (tokenEntry, 
 	if err != nil {
 		return tokenEntry{}, fmt.Errorf("trustguard: token call: %w", err)
 	}
-	defer func() { _ = res.Body.Close() }()
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, maxResponseBytes))
+		_ = res.Body.Close()
+	}()
 	raw, err := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes))
 	if err != nil {
 		return tokenEntry{}, fmt.Errorf("trustguard: read token response: %w", err)
