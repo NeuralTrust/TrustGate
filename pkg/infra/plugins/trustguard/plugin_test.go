@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -43,6 +44,7 @@ func requestContext() *infracontext.RequestContext {
 	return &infracontext.RequestContext{
 		Provider:       "openai",
 		SourceFormat:   "openai",
+		GatewayID:      "gw-test",
 		SessionID:      "sess-123",
 		ConsumerID:     "consumer-9",
 		RequestedModel: "gpt-4o-mini",
@@ -51,9 +53,7 @@ func requestContext() *infracontext.RequestContext {
 }
 
 func settings(inspect string) map[string]any {
-	s := map[string]any{
-		"api_key": "secret-key",
-	}
+	s := map[string]any{}
 	if inspect != "" {
 		s["inspect"] = inspect
 	}
@@ -76,6 +76,12 @@ type fakeGuard struct {
 
 func (f *fakeGuard) handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == tokenPath {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "test-token", TokenType: "Bearer", ExpiresIn: 3600})
+			return
+		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.hits++
@@ -158,7 +164,7 @@ func TestExecutePreRequestBlockReturns403(t *testing.T) {
 		RequestID: "req-1",
 	}}
 	srv := newServer(t, f)
-	p := New(adapter.NewRegistry(), srv.URL, testTimeout, nil)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil)
 	res, err := p.Execute(context.Background(), in)
@@ -204,7 +210,7 @@ func TestExecutePreResponseBlockReturns403(t *testing.T) {
 
 	f := &fakeGuard{response: GuardResponse{Status: statusBlock, TraceID: "trace-2"}}
 	srv := newServer(t, f)
-	p := New(adapter.NewRegistry(), srv.URL, testTimeout, nil)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
 	resp := &infracontext.ResponseContext{StatusCode: 200, Body: openAIResponseBody()}
 	in := execInput(policy.StagePreResponse, policy.ModeEnforce, settings(""), requestContext(), resp)
@@ -233,7 +239,7 @@ func TestExecuteObserveModeOnBlockPassesThrough(t *testing.T) {
 
 	f := &fakeGuard{response: GuardResponse{Status: statusBlock, TraceID: "trace-3"}}
 	srv := newServer(t, f)
-	p := New(adapter.NewRegistry(), srv.URL, testTimeout, nil)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
 	in := execInput(policy.StagePreRequest, policy.ModeObserve, settings(""), requestContext(), nil)
 	res, err := p.Execute(context.Background(), in)
@@ -257,7 +263,7 @@ func TestExecuteAllowStatusesPassThrough(t *testing.T) {
 			t.Parallel()
 			f := &fakeGuard{response: GuardResponse{Status: status}}
 			srv := newServer(t, f)
-			p := New(adapter.NewRegistry(), srv.URL, testTimeout, nil)
+			p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
 			in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil)
 			res, err := p.Execute(context.Background(), in)
@@ -276,7 +282,7 @@ func TestExecuteStreamingResponsePassThrough(t *testing.T) {
 
 	f := &fakeGuard{response: GuardResponse{Status: statusBlock}}
 	srv := newServer(t, f)
-	p := New(adapter.NewRegistry(), srv.URL, testTimeout, nil)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
 	resp := &infracontext.ResponseContext{StatusCode: 200, Streaming: true, Body: openAIResponseBody()}
 	in := execInput(policy.StagePreResponse, policy.ModeEnforce, settings(""), requestContext(), resp)
@@ -296,7 +302,7 @@ func TestExecuteEmptyBaseURLPassThrough(t *testing.T) {
 	t.Parallel()
 
 	f := &fakeGuard{response: GuardResponse{Status: statusBlock}}
-	p := New(adapter.NewRegistry(), "", testTimeout, nil)
+	p := New(adapter.NewRegistry(), "", testTimeout, "test-client", "test-secret", nil)
 
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil)
 	res, err := p.Execute(context.Background(), in)
@@ -319,7 +325,7 @@ func TestExecuteTransportErrorFailsOpen(t *testing.T) {
 	addr := srv.URL
 	srv.Close()
 
-	p := New(adapter.NewRegistry(), addr, testTimeout, nil)
+	p := New(adapter.NewRegistry(), addr, testTimeout, "test-client", "test-secret", nil)
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil)
 	res, err := p.Execute(context.Background(), in)
 	if err != nil {
@@ -330,12 +336,34 @@ func TestExecuteTransportErrorFailsOpen(t *testing.T) {
 	}
 }
 
+func TestExecuteMissingGatewayIDFailsOpenWithoutCall(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusBlock}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	req := requestContext()
+	req.GatewayID = ""
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), req, nil)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("expected fail-open pass, got error %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK || res.StopUpstream {
+		t.Fatalf("expected pass-through on missing gateway id, got %+v", res)
+	}
+	if f.count() != 0 {
+		t.Fatalf("expected no guard call when gateway id missing, got %d hits", f.count())
+	}
+}
+
 func TestExecuteStageNotSelectedPassThrough(t *testing.T) {
 	t.Parallel()
 
 	f := &fakeGuard{response: GuardResponse{Status: statusBlock}}
 	srv := newServer(t, f)
-	p := New(adapter.NewRegistry(), srv.URL, testTimeout, nil)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(inspectResponse), requestContext(), nil)
 	res, err := p.Execute(context.Background(), in)
@@ -369,7 +397,7 @@ func TestExecuteProtocolFromConsumerType(t *testing.T) {
 			t.Parallel()
 			f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
 			srv := newServer(t, f)
-			p := New(adapter.NewRegistry(), srv.URL, testTimeout, nil)
+			p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
 			req := requestContext()
 			req.ConsumerType = tc.consumerType
@@ -408,7 +436,7 @@ func TestExecuteForwardsFullGuardRequest(t *testing.T) {
 
 	f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
 	srv := newServer(t, f)
-	p := New(adapter.NewRegistry(), srv.URL, testTimeout, nil)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
 	req := requestContext()
 	req.ConsumerType = "MCP"
@@ -425,8 +453,11 @@ func TestExecuteForwardsFullGuardRequest(t *testing.T) {
 	if path != guardPath {
 		t.Fatalf("path = %q, want %q", path, guardPath)
 	}
-	if auth != "Bearer secret-key" {
-		t.Fatalf("authorization = %q, want %q", auth, "Bearer secret-key")
+	if got := f.captured().GatewayID; got != "gw-test" {
+		t.Fatalf("gateway_id = %q, want gw-test", got)
+	}
+	if auth != "Bearer test-token" {
+		t.Fatalf("authorization = %q, want %q", auth, "Bearer test-token")
 	}
 	if ct != contentTypeJSON {
 		t.Fatalf("content-type = %q, want %q", ct, contentTypeJSON)
@@ -461,7 +492,7 @@ func TestExecuteConsumerIDComesFromRequestNotSettings(t *testing.T) {
 
 	f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
 	srv := newServer(t, f)
-	p := New(adapter.NewRegistry(), srv.URL, testTimeout, nil)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
 	req := requestContext()
 	req.ConsumerID = "from-request"
@@ -494,7 +525,7 @@ func TestExecuteInspectModeDirections(t *testing.T) {
 			t.Parallel()
 			f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
 			srv := newServer(t, f)
-			p := New(adapter.NewRegistry(), srv.URL, testTimeout, nil)
+			p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
 			resp := &infracontext.ResponseContext{StatusCode: 200, Body: openAIResponseBody()}
 			for _, stage := range []policy.Stage{policy.StagePreRequest, policy.StagePreResponse} {
@@ -522,7 +553,7 @@ func TestExecuteBaseURLOverrideFromSettings(t *testing.T) {
 
 	f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
 	srv := newServer(t, f)
-	p := New(adapter.NewRegistry(), "https://unreachable.invalid", testTimeout, nil)
+	p := New(adapter.NewRegistry(), "https://unreachable.invalid", testTimeout, "test-client", "test-secret", nil)
 
 	set := settings("")
 	set["base_url"] = srv.URL
@@ -535,6 +566,47 @@ func TestExecuteBaseURLOverrideFromSettings(t *testing.T) {
 	}
 }
 
+func TestExecuteRetriesOnceOn401(t *testing.T) {
+	t.Parallel()
+
+	var guardHits int32
+	var tokenHits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case tokenPath:
+			atomic.AddInt32(&tokenHits, 1)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "tok", TokenType: "Bearer", ExpiresIn: 3600})
+		case guardPath:
+			if atomic.AddInt32(&guardHits, 1) == 1 {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(GuardResponse{Status: "allowed"})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("expected success after 401 retry, got %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("expected pass-through after retry, got %+v", res)
+	}
+	if got := atomic.LoadInt32(&guardHits); got != 2 {
+		t.Fatalf("guard hits = %d, want 2 (original + retry)", got)
+	}
+	if got := atomic.LoadInt32(&tokenHits); got != 2 {
+		t.Fatalf("token hits = %d, want 2 (initial + refresh after 401)", got)
+	}
+}
+
 func TestExecuteBlocksOnlyOnFlaggedLeg(t *testing.T) {
 	t.Parallel()
 
@@ -543,7 +615,7 @@ func TestExecuteBlocksOnlyOnFlaggedLeg(t *testing.T) {
 		directionOutput: {Status: statusBlock, TraceID: "trace-out"},
 	}}
 	srv := newServer(t, f)
-	p := New(adapter.NewRegistry(), srv.URL, testTimeout, nil)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
 	reqIn := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil)
 	if _, err := p.Execute(context.Background(), reqIn); err != nil {

@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -30,6 +31,8 @@ const (
 	maxResponseBytes = 1 << 20
 )
 
+var errUnauthorized = errors.New("trustguard: unauthorized")
+
 type client struct {
 	http *http.Client
 }
@@ -38,7 +41,7 @@ func newClient(timeout time.Duration) *client {
 	return &client{http: &http.Client{Timeout: timeout}}
 }
 
-func (c *client) Guard(ctx context.Context, baseURL, apiKey string, body GuardRequest) (*GuardResponse, error) {
+func (c *client) Guard(ctx context.Context, baseURL, token string, body GuardRequest) (*GuardResponse, error) {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("trustguard: marshal request: %w", err)
@@ -48,16 +51,22 @@ func (c *client) Guard(ctx context.Context, baseURL, apiKey string, body GuardRe
 	if err != nil {
 		return nil, fmt.Errorf("trustguard: build request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", contentTypeJSON)
 	res, err := c.http.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("trustguard: guard call: %w", err)
 	}
-	defer func() { _ = res.Body.Close() }()
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, maxResponseBytes))
+		_ = res.Body.Close()
+	}()
 	raw, err := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes))
 	if err != nil {
 		return nil, fmt.Errorf("trustguard: read response: %w", err)
+	}
+	if res.StatusCode == http.StatusUnauthorized {
+		return nil, errUnauthorized
 	}
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
 		return nil, fmt.Errorf("trustguard: unexpected status %d", res.StatusCode)

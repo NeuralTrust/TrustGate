@@ -17,7 +17,6 @@ package trustguard
 import (
 	"fmt"
 	"net/url"
-	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
@@ -31,7 +30,6 @@ const (
 )
 
 type Settings struct {
-	APIKey  string `mapstructure:"api_key"` // #nosec G101 -- config field name, not a credential
 	Inspect string `mapstructure:"inspect"`
 	BaseURL string `mapstructure:"base_url"`
 }
@@ -55,9 +53,6 @@ func (s *Settings) applyDefaults() {
 }
 
 func (s *Settings) validate() error {
-	if strings.TrimSpace(s.APIKey) == "" {
-		return fmt.Errorf("trustguard: api_key is required")
-	}
 	switch s.Inspect {
 	case inspectRequest, inspectResponse, inspectRequestResponse:
 	default:

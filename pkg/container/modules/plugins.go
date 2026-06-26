@@ -104,7 +104,7 @@ func newPluginRegistry(p pluginParams) (appplugins.Registry, error) {
 		toolallowlist.New(p.Adapters),
 		tool_call_validation.New(p.Adapters, openai.NewOpenaiClient(), p.Logger),
 		tooltransform.New(p.Adapters),
-		trustguard.New(p.Adapters, p.Cfg.TrustGuard.BaseURL, p.Cfg.TrustGuard.Timeout, p.Logger),
+		trustguard.New(p.Adapters, p.Cfg.TrustGuard.BaseURL, p.Cfg.TrustGuard.Timeout, p.Cfg.TrustGuard.ClientID, p.Cfg.TrustGuard.ClientSecret, p.Logger),
 		openaimoderation.New(p.Adapters, p.Cfg.OpenAIModeration.BaseURL, p.Cfg.OpenAIModeration.Timeout, p.Logger),
 		azurecontentsafety.New(p.Adapters, p.Logger),
 		bedrockguardrail.New(p.Adapters, p.Logger),

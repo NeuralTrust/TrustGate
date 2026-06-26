@@ -390,10 +390,9 @@ func TestTrustGuardSchema(t *testing.T) {
 
 	fields := meta.schema.Fields
 
-	apiKey, ok := fieldByKey(fields, "api_key")
-	require.True(t, ok)
-	assert.Equal(t, FieldTypeString, apiKey.Type)
-	assert.True(t, apiKey.Required)
+	if _, ok := fieldByKey(fields, "api_key"); ok {
+		t.Fatal("trustguard schema must not expose api_key; credentials live in the gateway .env")
+	}
 
 	inspect, ok := fieldByKey(fields, "inspect")
 	require.True(t, ok)

@@ -16,10 +16,12 @@ package trustguard
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -54,14 +56,19 @@ var _ appplugins.Plugin = (*Plugin)(nil)
 type Plugin struct {
 	registry *adapter.Registry
 	client   *client
+	tokens   *tokenManager
 	baseURL  string
 	logger   *slog.Logger
+
+	cfgCache sync.Map
 }
 
-func New(registry *adapter.Registry, baseURL string, timeout time.Duration, logger *slog.Logger) *Plugin {
+func New(registry *adapter.Registry, baseURL string, timeout time.Duration, clientID, clientSecret string, logger *slog.Logger) *Plugin {
+	c := newClient(timeout)
 	return &Plugin{
 		registry: registry,
-		client:   newClient(timeout),
+		client:   c,
+		tokens:   newTokenManager(c.http, clientID, clientSecret),
 		baseURL:  baseURL,
 		logger:   logger,
 	}
@@ -88,12 +95,15 @@ func (p *Plugin) MutatesResponseBody() bool { return false }
 func (p *Plugin) MutatesMetadata() bool { return false }
 
 func (p *Plugin) ValidateConfig(settings map[string]any) error {
+	if !p.tokens.configured() {
+		return fmt.Errorf("trustguard: client credentials are not configured (set TRUSTGUARD_CLIENT_ID and TRUSTGUARD_CLIENT_SECRET)")
+	}
 	_, err := parseConfig(settings)
 	return err
 }
 
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
-	cfg, err := parseConfig(in.Config.Settings)
+	cfg, err := p.config(in.Config.Settings)
 	if err != nil {
 		return nil, fmt.Errorf("trustguard: %w", err)
 	}
@@ -114,6 +124,14 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return passThrough(), nil
 	}
 
+	if !p.tokens.configured() {
+		p.warn(ctx, "trustguard client credentials not configured, failing open",
+			slog.String("plugin", PluginName),
+			slog.String("stage", string(in.Stage)),
+		)
+		return passThrough(), nil
+	}
+
 	if in.Request == nil || p.registry == nil || in.Request.Provider == "" {
 		return passThrough(), nil
 	}
@@ -121,6 +139,16 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	direction := directionInput
 	if in.Stage == policy.StagePreResponse {
 		direction = directionOutput
+	}
+
+	if strings.TrimSpace(in.Request.GatewayID) == "" {
+		p.warn(ctx, "trustguard gateway id missing, failing open",
+			slog.String("plugin", PluginName),
+			slog.String("stage", string(in.Stage)),
+			slog.String("direction", direction),
+		)
+		setExtras(in.Event, guardData{Direction: direction, Decision: decisionFailedOpen, FailedOpen: true})
+		return passThrough(), nil
 	}
 
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
@@ -156,6 +184,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		Input:      GuardInput{Input: text},
 		Direction:  direction,
 		Protocol:   protocolFor(in.Request.ConsumerType),
+		GatewayID:  in.Request.GatewayID,
 		SessionID:  in.Request.SessionID,
 		ConsumerID: in.Request.ConsumerID,
 		Attributes: GuardAttributes{
@@ -167,7 +196,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		},
 	}
 
-	resp, err := p.client.Guard(ctx, baseURL, cfg.APIKey, body)
+	resp, err := p.guard(ctx, baseURL, body)
 	if err != nil {
 		p.warn(ctx, "trustguard call failed, failing open",
 			slog.String("plugin", PluginName),
@@ -190,6 +219,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	if resp.Status == statusBlock && appplugins.Blocks(in.Mode) {
 		data.Decision = decisionBlocked
 		setExtras(in.Event, data)
+		appplugins.SetDecision(in.Event, in.Mode)
 		return nil, blockError(resp)
 	}
 
@@ -201,6 +231,43 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	setExtras(in.Event, data)
 	appplugins.SetDecision(in.Event, in.Mode)
 	return passThrough(), nil
+}
+
+func (p *Plugin) config(settings map[string]any) (Settings, error) {
+	key := configCacheKey(settings)
+	if v, ok := p.cfgCache.Load(key); ok {
+		return v.(Settings), nil
+	}
+	cfg, err := parseConfig(settings)
+	if err != nil {
+		return Settings{}, err
+	}
+	p.cfgCache.Store(key, cfg)
+	return cfg, nil
+}
+
+func configCacheKey(settings map[string]any) string {
+	return fmt.Sprintf("%v\x00%v", settings["inspect"], settings["base_url"])
+}
+
+func (p *Plugin) guard(ctx context.Context, baseURL string, body GuardRequest) (*GuardResponse, error) {
+	token, err := p.tokens.token(ctx, baseURL)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := p.client.Guard(ctx, baseURL, token, body)
+	if err == nil {
+		return resp, nil
+	}
+	if !errors.Is(err, errUnauthorized) {
+		return nil, err
+	}
+	p.tokens.invalidate(baseURL)
+	token, err = p.tokens.token(ctx, baseURL)
+	if err != nil {
+		return nil, err
+	}
+	return p.client.Guard(ctx, baseURL, token, body)
 }
 
 func (p *Plugin) warn(ctx context.Context, msg string, attrs ...any) {
