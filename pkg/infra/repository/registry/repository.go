@@ -22,6 +22,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -36,11 +37,12 @@ const (
 var _ domain.Repository = (*Repository)(nil)
 
 type Repository struct {
-	conn *database.Connection
+	conn   *database.Connection
+	cipher vaultdomain.Encrypter
 }
 
-func NewRepository(conn *database.Connection) *Repository {
-	return &Repository{conn: conn}
+func NewRepository(conn *database.Connection, cipher vaultdomain.Encrypter) *Repository {
+	return &Repository{conn: conn, cipher: cipher}
 }
 
 func (r *Repository) Save(ctx context.Context, b *domain.Registry) error {
@@ -51,9 +53,9 @@ func (r *Repository) Save(ctx context.Context, b *domain.Registry) error {
 	if err != nil {
 		return fmt.Errorf("registry repository: marshal provider_options: %w", err)
 	}
-	authBytes, err := marshalAuth(b.Auth())
+	authStored, err := r.encryptAuth(b.Auth())
 	if err != nil {
-		return fmt.Errorf("registry repository: marshal auth: %w", err)
+		return fmt.Errorf("registry repository: encrypt auth: %w", err)
 	}
 	healthChecksBytes, err := marshalHealthChecks(b.HealthChecks())
 	if err != nil {
@@ -68,7 +70,7 @@ func (r *Repository) Save(ctx context.Context, b *domain.Registry) error {
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
-			b.ID, b.GatewayID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authBytes, b.Description, healthChecksBytes, mcpTargetBytes, b.CreatedAt, b.UpdatedAt,
+			b.ID, b.GatewayID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authStored, b.Description, healthChecksBytes, mcpTargetBytes, b.CreatedAt, b.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -84,9 +86,9 @@ func (r *Repository) Update(ctx context.Context, b *domain.Registry) error {
 	if err != nil {
 		return fmt.Errorf("registry repository: marshal provider_options: %w", err)
 	}
-	authBytes, err := marshalAuth(b.Auth())
+	authStored, err := r.encryptAuth(b.Auth())
 	if err != nil {
-		return fmt.Errorf("registry repository: marshal auth: %w", err)
+		return fmt.Errorf("registry repository: encrypt auth: %w", err)
 	}
 	healthChecksBytes, err := marshalHealthChecks(b.HealthChecks())
 	if err != nil {
@@ -111,7 +113,7 @@ func (r *Repository) Update(ctx context.Context, b *domain.Registry) error {
 		 WHERE id = $1 AND gateway_id = $12`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query,
-			b.ID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authBytes, b.Description, healthChecksBytes, mcpTargetBytes, b.UpdatedAt, b.GatewayID,
+			b.ID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authStored, b.Description, healthChecksBytes, mcpTargetBytes, b.UpdatedAt, b.GatewayID,
 		)
 		if err != nil {
 			return mapPgError(err)
@@ -166,7 +168,7 @@ func (r *Repository) FindByID(ctx context.Context, id ids.RegistryID) (*domain.R
 		  FROM registries
 		 WHERE id = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, id)
-	b, err := scanRegistry(row)
+	b, err := r.scanRegistry(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrNotFound
@@ -193,7 +195,7 @@ func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, reg
 
 	out := make([]*domain.Registry, 0, len(registryIDs))
 	for rows.Next() {
-		b, err := scanRegistry(rows)
+		b, err := r.scanRegistry(rows)
 		if err != nil {
 			return nil, fmt.Errorf("registry repository: scan: %w", err)
 		}
@@ -242,7 +244,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 
 	items := make([]*domain.Registry, 0, filter.Size)
 	for rows.Next() {
-		b, err := scanRegistry(rows)
+		b, err := r.scanRegistry(rows)
 		if err != nil {
 			return nil, 0, fmt.Errorf("registry repository: scan: %w", err)
 		}
@@ -258,7 +260,7 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
-func scanRegistry(s rowScanner) (*domain.Registry, error) {
+func (r *Repository) scanRegistry(s rowScanner) (*domain.Registry, error) {
 	b := &domain.Registry{}
 	var providerOptionsRaw, authRaw, healthChecksRaw, mcpTargetRaw []byte
 	var providerRaw *string
@@ -286,8 +288,12 @@ func scanRegistry(s rowScanner) (*domain.Registry, error) {
 			}
 		}
 		if len(authRaw) > 0 {
+			plain, err := r.cipher.Decrypt(string(authRaw))
+			if err != nil {
+				return nil, fmt.Errorf("decrypt auth: %w", err)
+			}
 			var auth domain.TargetAuth
-			if err := json.Unmarshal(authRaw, &auth); err != nil {
+			if err := json.Unmarshal([]byte(plain), &auth); err != nil {
 				return nil, fmt.Errorf("scan auth: %w", err)
 			}
 			target.Auth = &auth
@@ -339,6 +345,17 @@ func marshalAuth(a *domain.TargetAuth) ([]byte, error) {
 		return nil, nil
 	}
 	return json.Marshal(a)
+}
+
+func (r *Repository) encryptAuth(a *domain.TargetAuth) (any, error) {
+	authBytes, err := marshalAuth(a)
+	if err != nil {
+		return nil, err
+	}
+	if authBytes == nil {
+		return nil, nil
+	}
+	return r.cipher.Encrypt(string(authBytes))
 }
 
 func marshalHealthChecks(h *domain.HealthChecks) ([]byte, error) {

@@ -20,6 +20,8 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/logger"
 )
@@ -49,6 +51,11 @@ func Core(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(database.NewMigrationsManagerProvider); err != nil {
+		return err
+	}
+	if err := c.Provide(func(cfg *config.Config) (vaultdomain.Encrypter, error) {
+		return crypto.NewCipher(cfg.Server.SecretKey)
+	}); err != nil {
 		return err
 	}
 	return nil

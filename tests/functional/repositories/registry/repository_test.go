@@ -13,12 +13,15 @@ import (
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
 	gatewayrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/gateway"
 	repo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const testSecretKey = "functional-test-secret-0123456789abcdef"
 
 func setupRepo(t *testing.T) (*repo.Repository, *gatewayrepo.Repository, *database.Connection) {
 	t.Helper()
@@ -55,7 +58,13 @@ func setupRepo(t *testing.T) (*repo.Repository, *gatewayrepo.Repository, *databa
 		pool.Close()
 	})
 
-	return repo.NewRepository(conn), gatewayrepo.NewRepository(conn), conn
+	cipher, err := crypto.NewCipher(testSecretKey)
+	if err != nil {
+		pool.Close()
+		t.Fatalf("new cipher: %v", err)
+	}
+
+	return repo.NewRepository(conn, cipher), gatewayrepo.NewRepository(conn), conn
 }
 
 func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) ids.GatewayID {

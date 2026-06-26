@@ -30,7 +30,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	infrasts "github.com/NeuralTrust/TrustGate/pkg/infra/identity/sts"
 	mcpclient "github.com/NeuralTrust/TrustGate/pkg/infra/mcp/client"
@@ -44,11 +43,6 @@ func MCP(c *container.Container) error {
 	}
 	if err := c.Provide(func(client *mcpclient.Client, logger *slog.Logger) appmcp.Dialer {
 		return mcpclient.NewCachedDialer(client, logger)
-	}); err != nil {
-		return err
-	}
-	if err := c.Provide(func(cfg *config.Config) (vaultdomain.Encrypter, error) {
-		return crypto.NewCipher(cfg.Server.SecretKey)
 	}); err != nil {
 		return err
 	}
