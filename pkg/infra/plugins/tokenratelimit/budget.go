@@ -28,6 +28,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/llmcost"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/go-redis/redis/v8"
 )
@@ -49,7 +50,7 @@ func selectRule(cfg *config, model string) (budgetRule, bool) {
 	for _, r := range cfg.Rules {
 		rules[r.Model] = r
 	}
-	return bestMatch(rules, model)
+	return llmcost.BestMatch(rules, model)
 }
 
 func aggregateWindowSeconds(cfg *config) int {
@@ -104,13 +105,24 @@ func windowLabel(cfg *config, timeWindow string) string {
 
 func counterMax(cfg *config, raw float64) float64 {
 	if cfg.Unit == unitDollars {
-		scaled := microUSD(raw)
+		scaled := llmcost.MicroUSD(raw)
 		if scaled == 0 && raw > 0 {
 			scaled = 1
 		}
 		return float64(scaled)
 	}
 	return raw
+}
+
+func billableInputTokens(cfg *config, usage *adapter.CanonicalUsage) int {
+	if usage == nil {
+		return 0
+	}
+	in := usage.InputTokens
+	if cfg.CountCacheReads {
+		in += usage.CacheReadInputTokens
+	}
+	return in
 }
 
 func primaryWindowIndex(windows []budgetWindow) int {
@@ -167,7 +179,7 @@ func (p *Plugin) budgetGate(
 	req *infracontext.RequestContext,
 	mode policy.Mode,
 	event *metrics.EventContext,
-	capTel *costCapTelemetry,
+	capTel *llmcost.Telemetry,
 ) (*appplugins.Result, error) {
 	provider := ""
 	if req != nil {
@@ -181,7 +193,7 @@ func (p *Plugin) budgetGate(
 				Provider: provider,
 				Model:    model,
 			}
-			capTel.apply(&data)
+			applyCostCapTelemetry(&data, capTel)
 			setTokenExtras(event, data)
 		}
 		return &appplugins.Result{StatusCode: http.StatusOK}, nil
@@ -224,7 +236,7 @@ func (p *Plugin) budgetGate(
 	if reportWindow.model != "" {
 		data.Model = reportWindow.model
 	}
-	capTel.apply(&data)
+	applyCostCapTelemetry(&data, capTel)
 
 	if !exceeded {
 		setTokenExtras(event, data)
@@ -260,7 +272,7 @@ func (p *Plugin) handleExceeded(
 	case behaviorAlertOnly:
 		return &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}, nil
 	case behaviorDowngradeModel:
-		if _, body, hdr, ok := applyDowngrade(req, model, cfg.DowngradeTo); ok {
+		if _, body, hdr, ok := llmcost.ApplyDowngrade(req, model, cfg.DowngradeTo); ok {
 			return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: body, Headers: mergeHeaderValues(headers, hdr)}, nil
 		}
 		return nil, budgetExceededError(cfg.Unit, scope, w.label, withBudgetMeta(headers, cfg.Unit, scope, w.label))
@@ -376,7 +388,7 @@ func (p *Plugin) accrueDollars(
 
 	usage, servedModel := p.extractUsageAndModel(req, resp)
 
-	inputRate, outputRate, found := p.priceFor(ctx, cfg, provider, model, servedModel, requested)
+	inputRate, outputRate, found := llmcost.PriceFor(ctx, p.pricing, cfg.CustomPricing, provider, model, servedModel, requested)
 	if !found {
 		slog.Warn("token_rate_limiter: unpriced model in dollar budget, accruing zero",
 			slog.String("provider", provider),
@@ -396,7 +408,7 @@ func (p *Plugin) accrueDollars(
 		return &appplugins.Result{}, nil
 	}
 	cost := float64(billableInputTokens(cfg, usage))*inputRate + float64(usage.OutputTokens)*outputRate
-	micros := microUSD(cost)
+	micros := llmcost.MicroUSD(cost)
 	if micros <= 0 {
 		return &appplugins.Result{}, nil
 	}

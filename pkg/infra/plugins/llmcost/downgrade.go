@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tokenratelimit
+package llmcost
 
 import (
 	"strings"
@@ -22,12 +22,15 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
-const (
-	downgradeHeader = "X-NeuralTrust-Model-Downgraded"
-	downgradeArrow  = "→"
-)
+// DowngradeHeader flags a response whose model was downgraded, carrying the
+// "original→target" transition as its value.
+const DowngradeHeader = "X-NeuralTrust-Model-Downgraded"
 
-func resolveDowngrade(provider, target string, allowed []string) (string, bool) {
+const downgradeArrow = "→"
+
+// ResolveDowngrade validates a downgrade target against the request provider and
+// the allowed models, returning the bare target model when it is usable.
+func ResolveDowngrade(provider, target string, allowed []string) (string, bool) {
 	intent, err := routingdomain.ParseModelRef(target)
 	if err != nil {
 		return "", false
@@ -53,17 +56,19 @@ func modelAllowed(model string, allowed []string) bool {
 	return false
 }
 
-func applyDowngrade(req *infracontext.RequestContext, orig, target string) (string, []byte, map[string][]string, bool) {
+// ApplyDowngrade rewrites the request body to target when the downgrade is
+// valid, returning the new model, the rewritten body, and the downgrade header.
+func ApplyDowngrade(req *infracontext.RequestContext, orig, target string) (string, []byte, map[string][]string, bool) {
 	if req == nil {
 		return "", nil, nil, false
 	}
-	newModel, ok := resolveDowngrade(req.Provider, target, req.AllowedModels)
+	newModel, ok := ResolveDowngrade(req.Provider, target, req.AllowedModels)
 	if !ok {
 		return "", nil, nil, false
 	}
 	body := adapter.OverrideModel(req.Body, newModel)
 	headers := map[string][]string{
-		downgradeHeader: {orig + downgradeArrow + newModel},
+		DowngradeHeader: {orig + downgradeArrow + newModel},
 	}
 	return newModel, body, headers, true
 }

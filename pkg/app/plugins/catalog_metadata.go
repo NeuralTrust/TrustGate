@@ -18,10 +18,13 @@ package plugins
 // here so it stays isolated from plugin execution code and can evolve without
 // touching the plugin implementations.
 const (
-	groupTrafficControl = "Traffic Control"
-	groupQuota          = "Quota"
-	groupRouting        = "Routing"
-	groupOther          = "Other"
+	groupTrafficControl   = "Traffic Control"
+	groupQuota            = "Quota"
+	groupRouting          = "Routing"
+	groupPromptManagement = "Prompt Management"
+	groupToolGovernance   = "Tool Governance"
+	groupGuardrails       = "Guardrails"
+	groupOther            = "Other"
 )
 
 // groupOrder fixes the order groups appear in the catalog response.
@@ -29,6 +32,9 @@ var groupOrder = []string{
 	groupTrafficControl,
 	groupQuota,
 	groupRouting,
+	groupPromptManagement,
+	groupToolGovernance,
+	groupGuardrails,
 	groupOther,
 }
 
@@ -179,9 +185,9 @@ var pluginCatalogMeta = map[string]catalogMeta{
 		},
 	},
 	"token_rate_limiter": {
-		name:        "Token & Dollar Budget + Cost Cap",
+		name:        "LLM Budget",
 		group:       groupQuota,
-		description: "Enforce LLM token or dollar budgets (aggregate or per-model) over fixed windows, plus a stateless per-request cost cap on model list price. Budgets and the cost cap apply gateway-wide when the policy is global, otherwise per consumer. All fields are optional; a legacy window-only config keeps its original aggregate token-budget behaviour.",
+		description: "Cap LLM spend with token or dollar budgets over time windows, either as one aggregate counter or per-model rules. Applies gateway-wide for global policies, otherwise per consumer.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -191,13 +197,6 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Description: "Whether budgets count provider tokens or USD cost.",
 					Enum:        []string{"tokens", "dollars"},
 					Default:     "tokens",
-				},
-				{
-					Key:         "per_model",
-					Label:       "Per Model",
-					Type:        FieldTypeBoolean,
-					Description: "Account budgets per model using rules instead of a single aggregate counter.",
-					Default:     false,
 				},
 				{
 					Key:         "counting",
@@ -290,86 +289,103 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Default:     false,
 				},
 				{
-					Key:         "cost_cap",
-					Label:       "Cost Cap",
-					Type:        FieldTypeObject,
-					Description: "Stateless per-request guard that rejects or downgrades models whose list price per 1k tokens exceeds the configured ceiling.",
-					Fields: []Field{
-						{
-							Key:         "enabled",
-							Label:       "Enabled",
-							Type:        FieldTypeBoolean,
-							Description: "Turn the cost cap on.",
-							Default:     false,
-						},
-						{
-							Key:         "max_input_cost_per_1k_tokens",
-							Label:       "Max Input Cost Per 1k Tokens",
-							Type:        FieldTypeNumber,
-							Description: "Global input-price ceiling in USD per 1k tokens.",
-						},
-						{
-							Key:         "max_output_cost_per_1k_tokens",
-							Label:       "Max Output Cost Per 1k Tokens",
-							Type:        FieldTypeNumber,
-							Description: "Global output-price ceiling in USD per 1k tokens.",
-						},
-						{
-							Key:         "per_model_overrides",
-							Label:       "Per-Model Overrides",
-							Type:        FieldTypeMap,
-							Description: "Per-model ceilings keyed by model slug or wildcard pattern.",
-							Value: &Field{
-								Key:   "ceiling",
-								Label: "Ceiling",
-								Type:  FieldTypeObject,
-								Fields: []Field{
-									{
-										Key:         "max_input_cost_per_1k_tokens",
-										Label:       "Max Input Cost Per 1k Tokens",
-										Type:        FieldTypeNumber,
-										Description: "Input-price ceiling in USD per 1k tokens.",
-									},
-									{
-										Key:         "max_output_cost_per_1k_tokens",
-										Label:       "Max Output Cost Per 1k Tokens",
-										Type:        FieldTypeNumber,
-										Description: "Output-price ceiling in USD per 1k tokens.",
-									},
-								},
+					Key:         "custom_pricing",
+					Label:       "Custom Pricing",
+					Type:        FieldTypeMap,
+					Description: "Per-token USD rates keyed by model slug or wildcard pattern, consulted before the builtin table. Used for dollar budgets.",
+					Value: &Field{
+						Key:   "price",
+						Label: "Price",
+						Type:  FieldTypeObject,
+						Fields: []Field{
+							{
+								Key:         "input",
+								Label:       "Input",
+								Type:        FieldTypeNumber,
+								Description: "Input price in USD per token.",
 							},
-						},
-						{
-							Key:         "behavior_on_violation",
-							Label:       "Behavior On Violation",
-							Type:        FieldTypeEnum,
-							Description: "Action taken when a model exceeds its cost ceiling.",
-							Enum:        []string{"reject", "downgrade"},
-							Default:     "reject",
-						},
-						{
-							Key:         "downgrade_to",
-							Label:       "Downgrade To",
-							Type:        FieldTypeString,
-							Description: "Target model used when behavior is downgrade. Must be on the same provider.",
-						},
-						{
-							Key:         "unknown_model",
-							Label:       "Unknown Model",
-							Type:        FieldTypeEnum,
-							Description: "How to treat a model with no resolvable price.",
-							Enum:        []string{"reject", "pass_through", "assume_max"},
-							Default:     "reject",
+							{
+								Key:         "output",
+								Label:       "Output",
+								Type:        FieldTypeNumber,
+								Description: "Output price in USD per token.",
+							},
 						},
 					},
 				},
 				{
-					Key:         "pricing_table",
-					Label:       "Pricing Table",
+					Key:         "group_by_header",
+					Label:       "Group By Header",
+					Type:        FieldTypeString,
+					Description: "Optional request header whose value sub-partitions the budget within the policy scope (e.g. X-User-Id). When empty, the budget is counted per gateway (global) or per consumer.",
+				},
+			},
+		},
+	},
+	"cost_cap": {
+		name:        "LLM Cost Cap",
+		group:       groupQuota,
+		description: "Stateless per-request guard that rejects or downgrades models whose list price per 1k tokens exceeds a configured ceiling.",
+		schema: SettingsSchema{
+			Fields: []Field{
+				{
+					Key:         "max_input_cost_per_1k_tokens",
+					Label:       "Max Input Cost Per 1k Tokens",
+					Type:        FieldTypeNumber,
+					Description: "Global input-price ceiling in USD per 1k tokens.",
+				},
+				{
+					Key:         "max_output_cost_per_1k_tokens",
+					Label:       "Max Output Cost Per 1k Tokens",
+					Type:        FieldTypeNumber,
+					Description: "Global output-price ceiling in USD per 1k tokens.",
+				},
+				{
+					Key:         "per_model_overrides",
+					Label:       "Per-Model Overrides",
+					Type:        FieldTypeMap,
+					Description: "Per-model ceilings keyed by model slug or wildcard pattern. The most specific pattern wins.",
+					Value: &Field{
+						Key:   "ceiling",
+						Label: "Ceiling",
+						Type:  FieldTypeObject,
+						Fields: []Field{
+							{
+								Key:         "max_input_cost_per_1k_tokens",
+								Label:       "Max Input Cost Per 1k Tokens",
+								Type:        FieldTypeNumber,
+								Description: "Input-price ceiling in USD per 1k tokens.",
+							},
+							{
+								Key:         "max_output_cost_per_1k_tokens",
+								Label:       "Max Output Cost Per 1k Tokens",
+								Type:        FieldTypeNumber,
+								Description: "Output-price ceiling in USD per 1k tokens.",
+							},
+						},
+					},
+				},
+				{
+					Key:         "behavior_on_violation",
+					Label:       "Behavior On Violation",
 					Type:        FieldTypeEnum,
-					Description: "Price source: builtin catalog or a custom overlay.",
-					Enum:        []string{"builtin", "custom"},
-					Default:     "builtin",
+					Description: "Action taken when a model exceeds its cost ceiling under enforce mode.",
+					Enum:        []string{"reject", "downgrade"},
+					Default:     "reject",
+				},
+				{
+					Key:         "downgrade_to",
+					Label:       "Downgrade To",
+					Type:        FieldTypeString,
+					Description: "Target model used when behavior is downgrade. Must be on the same provider.",
+				},
+				{
+					Key:         "unknown_model",
+					Label:       "Unknown Model",
+					Type:        FieldTypeEnum,
+					Description: "How to treat a model with no resolvable price.",
+					Enum:        []string{"reject", "pass_through", "assume_max"},
+					Default:     "reject",
 				},
 				{
 					Key:         "custom_pricing",
@@ -395,33 +411,6 @@ var pluginCatalogMeta = map[string]catalogMeta{
 							},
 						},
 					},
-				},
-				{
-					Key:         "window",
-					Label:       "Window",
-					Type:        FieldTypeObject,
-					Description: "Legacy single-window aggregate token budget, kept for backward compatibility.",
-					Fields: []Field{
-						{
-							Key:         "unit",
-							Label:       "Unit",
-							Type:        FieldTypeEnum,
-							Description: "Time unit of the budget window.",
-							Enum:        []string{"second", "minute", "hour", "day"},
-						},
-						{
-							Key:         "max",
-							Label:       "Max Tokens",
-							Type:        FieldTypeInteger,
-							Description: "Maximum number of tokens allowed within the window.",
-						},
-					},
-				},
-				{
-					Key:         "group_by_header",
-					Label:       "Group By Header",
-					Type:        FieldTypeString,
-					Description: "Optional request header whose value sub-partitions the budget within the policy scope (e.g. X-User-Id). When empty, the budget is counted per gateway (global) or per consumer.",
 				},
 			},
 		},
@@ -509,9 +498,33 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"semantic_cache": {
 		name:        "Semantic Cache",
 		group:       groupRouting,
-		description: "Serve cached responses for semantically similar requests, scoped per registry.",
+		description: "Serve cached responses for exact or semantically similar requests. Supports exact, semantic, or both match modes, consumer or global scope, and Redis, pgvector, or in-memory vector stores.",
 		schema: SettingsSchema{
 			Fields: []Field{
+				{
+					Key:         "mode",
+					Label:       "Mode",
+					Type:        FieldTypeEnum,
+					Description: "Match strategy: exact (normalized text equality), semantic (embedding similarity), or both.",
+					Enum:        []string{"exact", "semantic", "both"},
+					Default:     "semantic",
+				},
+				{
+					Key:         "scope",
+					Label:       "Scope",
+					Type:        FieldTypeEnum,
+					Description: "Cache partition scope: consumer isolates entries per consumer, global shares them gateway-wide.",
+					Enum:        []string{"consumer", "global"},
+					Default:     "consumer",
+				},
+				{
+					Key:         "vector_store",
+					Label:       "Vector Store",
+					Type:        FieldTypeEnum,
+					Description: "Backing store for cached embeddings and responses.",
+					Enum:        []string{"redis", "pgvector", "in_memory"},
+					Default:     "redis",
+				},
 				{
 					Key:         "similarity_threshold",
 					Label:       "Similarity Threshold",
@@ -520,17 +533,63 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Default:     0.85,
 				},
 				{
+					Key:         "ttl_seconds",
+					Label:       "TTL (seconds)",
+					Type:        FieldTypeInteger,
+					Description: "How long cached responses remain valid, in seconds. Takes precedence over the legacy ttl duration.",
+				},
+				{
+					Key:         "embedding_provider",
+					Label:       "Embedding Provider",
+					Type:        FieldTypeString,
+					Description: "Embedding provider used to vectorize requests.",
+				},
+				{
+					Key:         "embedding_model",
+					Label:       "Embedding Model",
+					Type:        FieldTypeString,
+					Description: "Embedding model name.",
+				},
+				{
+					Key:         "cache_only_on_status",
+					Label:       "Cache Only On Status",
+					Type:        FieldTypeArray,
+					Description: "HTTP status codes whose responses may be cached. Empty allows any 2xx.",
+					Default:     []int{200},
+					Item:        &Field{Key: "status", Label: "Status", Type: FieldTypeInteger},
+				},
+				{
+					Key:         "bypass_header",
+					Label:       "Bypass Header",
+					Type:        FieldTypeString,
+					Description: "Request header whose presence bypasses cache lookup and store.",
+					Default:     "X-Cache-Bypass",
+				},
+				{
+					Key:         "skip_if_tools_present",
+					Label:       "Skip If Tools Present",
+					Type:        FieldTypeBoolean,
+					Description: "Skip caching when the request carries tool definitions or the response contains tool calls.",
+					Default:     true,
+				},
+				{
+					Key:         "skip_if_streaming",
+					Label:       "Skip If Streaming",
+					Type:        FieldTypeBoolean,
+					Description: "Skip caching for streaming requests and responses.",
+					Default:     false,
+				},
+				{
 					Key:         "ttl",
 					Label:       "TTL",
 					Type:        FieldTypeDuration,
-					Description: "How long cached responses remain valid (e.g. 24h).",
+					Description: "Legacy duration for how long cached responses remain valid (e.g. 24h). Superseded by ttl_seconds.",
 					Default:     "24h",
 				},
 				{
-					Key:      "embedding",
-					Label:    "Embedding",
-					Type:     FieldTypeObject,
-					Required: true,
+					Key:   "embedding",
+					Label: "Embedding",
+					Type:  FieldTypeObject,
 					Fields: []Field{
 						{
 							Key:         "provider",
@@ -551,7 +610,6 @@ var pluginCatalogMeta = map[string]catalogMeta{
 							Label:       "API Key",
 							Type:        FieldTypeString,
 							Description: "Credential for the embedding provider.",
-							Required:    true,
 						},
 					},
 				},
@@ -635,7 +693,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	},
 	"tool_call_validation": {
 		name:        "Tool Call Validation",
-		group:       groupOther,
+		group:       groupToolGovernance,
 		description: "Validate the tool calls an LLM returns against per-tool rules, rejecting or redacting responses that violate them.",
 		schema: SettingsSchema{
 			Fields: []Field{
@@ -740,7 +798,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	},
 	"prompt_template": {
 		name:        "Prompt Template",
-		group:       groupOther,
+		group:       groupPromptManagement,
 		description: "Inject context-bound system prompts (Mode A) and/or render client-referenced named, versioned templates (Mode B) into the request before it reaches the model.",
 		schema: SettingsSchema{
 			Fields: []Field{
@@ -958,7 +1016,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	},
 	"tool_definition_transformation": {
 		name:        "Tool Definition Transformation",
-		group:       groupOther,
+		group:       groupToolGovernance,
 		description: "Reshape tool definitions on the request leg before they reach the model: patch a matched tool's JSON schema, override its description, and inject operator-authored tools. This is a governance and steering layer, not an access gate.",
 		schema: SettingsSchema{
 			Fields: []Field{
@@ -1056,6 +1114,254 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Type:        FieldTypeEnum,
 					Description: "Informational; effective scope derives from the policy global flag.",
 					Enum:        []string{"consumer", "global"},
+				},
+			},
+		},
+	},
+	"trustguard": {
+		name:        "TrustGuard",
+		group:       groupGuardrails,
+		description: "Inspect request and/or response content with the external TrustGuard guardrail service and block content it flags. Fails open on any transport error, timeout, non-2xx response, or missing base URL. Streaming responses cannot be blocked in realtime.",
+		schema: SettingsSchema{
+			Fields: []Field{
+				{
+					Key:         "inspect",
+					Label:       "Inspect",
+					Type:        FieldTypeEnum,
+					Description: "Which legs to inspect: the request, the response, or both.",
+					Enum:        []string{"request", "response", "request_response"},
+					Default:     "request_response",
+				},
+				{
+					Key:         "base_url",
+					Label:       "Base URL",
+					Type:        FieldTypeString,
+					Description: "Optional per-policy override of the TrustGuard base URL. Falls back to the gateway TRUSTGUARD_BASE_URL when empty.",
+				},
+			},
+		},
+	},
+	"openai_moderation": {
+		name:        "OpenAI Moderation",
+		group:       groupGuardrails,
+		description: "Screen request and/or response text with the OpenAI Moderations API and block content that crosses configured category thresholds. Fails closed (HTTP 502) in enforce mode on any moderator error; observe mode records and passes through. Streaming responses cannot be inspected in realtime. Text-only.",
+		schema: SettingsSchema{
+			Fields: []Field{
+				{
+					Key:         "api_key",
+					Label:       "API Key",
+					Type:        FieldTypeString,
+					Description: "OpenAI credential sent as a Bearer token to the Moderations API.",
+					Required:    true,
+				},
+				{
+					Key:         "model",
+					Label:       "Model",
+					Type:        FieldTypeString,
+					Description: "Moderations model.",
+					Default:     "omni-moderation-latest",
+				},
+				{
+					Key:         "stages",
+					Label:       "Stages",
+					Type:        FieldTypeArray,
+					Description: "Legs to inspect.",
+					Item: &Field{
+						Key:   "stage",
+						Label: "Stage",
+						Type:  FieldTypeEnum,
+						Enum:  []string{"pre_request", "pre_response"},
+					},
+				},
+				{
+					Key:         "categories",
+					Label:       "Categories",
+					Type:        FieldTypeArray,
+					Description: "Allow-list of categories to evaluate. Empty evaluates all categories returned by OpenAI.",
+					Item: &Field{
+						Key:   "category",
+						Label: "Category",
+						Type:  FieldTypeString,
+					},
+				},
+				{
+					Key:         "thresholds",
+					Label:       "Thresholds",
+					Type:        FieldTypeMap,
+					Description: "Per-category score threshold (0..1). A score at or above the threshold blocks.",
+					Value: &Field{
+						Key:   "threshold",
+						Label: "Threshold",
+						Type:  FieldTypeNumber,
+					},
+				},
+				{
+					Key:         "block_on_flagged",
+					Label:       "Block On Flagged",
+					Type:        FieldTypeBoolean,
+					Description: "Block any category OpenAI marks flagged, even without a configured threshold.",
+					Default:     false,
+				},
+				{
+					Key:   "action",
+					Label: "Action",
+					Type:  FieldTypeObject,
+					Fields: []Field{
+						{
+							Key:         "message",
+							Label:       "Message",
+							Type:        FieldTypeString,
+							Description: "Block message returned to the caller.",
+						},
+					},
+				},
+			},
+		},
+	},
+	"azure_content_safety": {
+		name:        "Azure Content Safety",
+		group:       groupGuardrails,
+		description: "Screen request content with the Azure AI Content Safety Analyze Text API and block categories whose severity meets the configured threshold. Fails closed in enforce mode.",
+		schema: SettingsSchema{
+			Fields: []Field{
+				{
+					Key:         "api_key",
+					Label:       "API Key",
+					Type:        FieldTypeString,
+					Description: "Azure Content Safety subscription key sent as the Ocp-Apim-Subscription-Key header.",
+					Required:    true,
+				},
+				{
+					Key:         "endpoint",
+					Label:       "Endpoint",
+					Type:        FieldTypeString,
+					Description: "Absolute Analyze Text endpoint URL for the Azure Content Safety resource.",
+					Required:    true,
+				},
+				{
+					Key:         "output_type",
+					Label:       "Output Type",
+					Type:        FieldTypeEnum,
+					Description: "Severity scale returned by Azure: four levels (0/2/4/6) or eight levels (0-7).",
+					Enum:        []string{"FourSeverityLevels", "EightSeverityLevels"},
+					Default:     "FourSeverityLevels",
+				},
+				{
+					Key:         "categories",
+					Label:       "Categories",
+					Type:        FieldTypeArray,
+					Description: "Harm categories sent to Azure for analysis. Defaults to all four when empty.",
+					Item: &Field{
+						Key:   "category",
+						Label: "Category",
+						Type:  FieldTypeEnum,
+						Enum:  []string{"Hate", "Violence", "SelfHarm", "Sexual"},
+					},
+				},
+				{
+					Key:         "category_severity",
+					Label:       "Category Severity",
+					Type:        FieldTypeMap,
+					Description: "Per-category severity thresholds. A category breaches when its returned severity meets or exceeds its threshold. Only categories listed here are enforced.",
+					Required:    true,
+					KeyOptions:  []string{"Hate", "Violence", "SelfHarm", "Sexual"},
+					Value:       &Field{Key: "severity", Label: "Severity", Type: FieldTypeInteger},
+				},
+				{
+					Key:         "message",
+					Label:       "Block Message",
+					Type:        FieldTypeString,
+					Description: "Optional message returned to the caller when content is blocked.",
+				},
+			},
+		},
+	},
+	"bedrock_guardrail": {
+		name:        "AWS Bedrock Guardrail",
+		group:       groupGuardrails,
+		description: "Apply an AWS Bedrock guardrail to request prompts (PreRequest) and/or responses (PreResponse). Inspects the topic, content, word, sensitive-information (PII) and contextual-grounding policy families configured on the guardrail; blocks with a 403 or anonymizes PII in place. Streaming responses are passed through untouched.",
+		schema: SettingsSchema{
+			Fields: []Field{
+				{
+					Key:         "guardrail_id",
+					Label:       "Guardrail ID",
+					Type:        FieldTypeString,
+					Description: "AWS Bedrock guardrail identifier.",
+					Required:    true,
+				},
+				{
+					Key:         "version",
+					Label:       "Version",
+					Type:        FieldTypeString,
+					Description: "Guardrail version. Defaults to DRAFT.",
+					Default:     "DRAFT",
+				},
+				{
+					Key:         "pii_action",
+					Label:       "PII Action",
+					Type:        FieldTypeEnum,
+					Description: "How TrustGate reacts when the sensitive-information policy fires: block the call or anonymize the matched spans in place.",
+					Enum:        []string{"block", "anonymize"},
+					Default:     "block",
+				},
+				{
+					Key:         "message",
+					Label:       "Block Message",
+					Type:        FieldTypeString,
+					Description: "Optional operator message; the 403 body always carries the matched policy and name.",
+				},
+				{
+					Key:      "credentials",
+					Label:    "AWS Credentials",
+					Type:     FieldTypeObject,
+					Required: true,
+					Fields: []Field{
+						{
+							Key:         "aws_region",
+							Label:       "AWS Region",
+							Type:        FieldTypeString,
+							Description: "AWS region hosting the guardrail.",
+							Default:     "us-east-1",
+						},
+						{
+							Key:         "use_role",
+							Label:       "Use IAM Role",
+							Type:        FieldTypeBoolean,
+							Description: "Assume an IAM role via STS instead of using static keys.",
+							Default:     false,
+						},
+						{
+							Key:         "role_arn",
+							Label:       "Role ARN",
+							Type:        FieldTypeString,
+							Description: "Required when Use IAM Role is enabled.",
+						},
+						{
+							Key:         "session_name",
+							Label:       "Session Name",
+							Type:        FieldTypeString,
+							Description: "STS assume-role session name.",
+							Default:     "BedrockClientSession",
+						},
+						{
+							Key:         "access_key_id",
+							Label:       "Access Key ID",
+							Type:        FieldTypeString,
+							Description: "Required for static-key auth (Use IAM Role disabled).",
+						},
+						{
+							Key:         "secret_access_key",
+							Label:       "Secret Access Key",
+							Type:        FieldTypeString,
+							Description: "Required for static-key auth (Use IAM Role disabled).",
+						},
+						{
+							Key:         "session_token",
+							Label:       "Session Token",
+							Type:        FieldTypeString,
+							Description: "Optional temporary-credential session token.",
+						},
+					},
 				},
 			},
 		},

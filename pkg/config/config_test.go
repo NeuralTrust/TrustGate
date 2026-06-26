@@ -298,6 +298,59 @@ func TestGetOTLPTimeout(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_TrustGuardDefaults(t *testing.T) {
+	minimumEnv(t)
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.TrustGuard.BaseURL != "" {
+		t.Errorf("TrustGuard.BaseURL default = %q, want empty", cfg.TrustGuard.BaseURL)
+	}
+	if cfg.TrustGuard.Timeout != defaultTrustGuardTimeout {
+		t.Errorf("TrustGuard.Timeout default = %v, want %v", cfg.TrustGuard.Timeout, defaultTrustGuardTimeout)
+	}
+}
+
+func TestLoadConfig_TrustGuardEnvOverrides(t *testing.T) {
+	minimumEnv(t)
+	t.Setenv("TRUSTGUARD_BASE_URL", "https://guard.example")
+	t.Setenv("TRUSTGUARD_TIMEOUT", "30s")
+	t.Setenv("TRUSTGUARD_CLIENT_ID", "tgc_gateway")
+	t.Setenv("TRUSTGUARD_CLIENT_SECRET", "super-secret")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.TrustGuard.BaseURL != "https://guard.example" {
+		t.Errorf("TrustGuard.BaseURL = %q, want %q", cfg.TrustGuard.BaseURL, "https://guard.example")
+	}
+	if cfg.TrustGuard.Timeout != 30*time.Second {
+		t.Errorf("TrustGuard.Timeout = %v, want %v", cfg.TrustGuard.Timeout, 30*time.Second)
+	}
+	if cfg.TrustGuard.ClientID != "tgc_gateway" {
+		t.Errorf("TrustGuard.ClientID = %q, want %q", cfg.TrustGuard.ClientID, "tgc_gateway")
+	}
+	if cfg.TrustGuard.ClientSecret != "super-secret" {
+		t.Errorf("TrustGuard.ClientSecret = %q, want %q", cfg.TrustGuard.ClientSecret, "super-secret")
+	}
+}
+
+func TestLoadConfig_TrustGuardMalformedTimeoutFallsBack(t *testing.T) {
+	minimumEnv(t)
+	t.Setenv("TRUSTGUARD_TIMEOUT", "not-a-duration")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.TrustGuard.Timeout != defaultTrustGuardTimeout {
+		t.Errorf("TrustGuard.Timeout fell back to %v, want %v", cfg.TrustGuard.Timeout, defaultTrustGuardTimeout)
+	}
+}
+
 func TestLoadConfig_KafkaBrokersAllBlankFailsValidation(t *testing.T) {
 	minimumEnv(t)
 	t.Setenv("KAFKA_BROKERS", " , , ")

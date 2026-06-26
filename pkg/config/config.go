@@ -94,24 +94,30 @@ const (
 
 	defaultLogLevel  = "INFO"
 	defaultLogFormat = "json"
+
+	defaultTrustGuardTimeout = 15 * time.Second
+
+	defaultOpenAIModerationTimeout = 15 * time.Second
 )
 
 type Config struct {
-	AppEnv       string
-	Server       ServerConfig
-	Database     DatabaseConfig
-	Redis        RedisConfig
-	Cache        CacheConfig
-	SessionStore SessionStoreConfig
-	Kafka        KafkaConfig
-	Telemetry    TelemetryConfig
-	Metrics      MetricsConfig
-	Playground   PlaygroundConfig
-	Upstream     UpstreamConfig
-	Provider     ProviderConfig
-	Catalog      CatalogConfig
-	CORS         CORSConfig
-	Logger       LoggerConfig
+	AppEnv           string
+	Server           ServerConfig
+	Database         DatabaseConfig
+	Redis            RedisConfig
+	Cache            CacheConfig
+	SessionStore     SessionStoreConfig
+	Kafka            KafkaConfig
+	Telemetry        TelemetryConfig
+	Metrics          MetricsConfig
+	Playground       PlaygroundConfig
+	Upstream         UpstreamConfig
+	Provider         ProviderConfig
+	Catalog          CatalogConfig
+	CORS             CORSConfig
+	Logger           LoggerConfig
+	TrustGuard       TrustGuardConfig
+	OpenAIModeration OpenAIModerationConfig
 }
 
 type ServerConfig struct {
@@ -238,23 +244,37 @@ type LoggerConfig struct {
 	Format string
 }
 
+type TrustGuardConfig struct {
+	BaseURL      string
+	Timeout      time.Duration
+	ClientID     string
+	ClientSecret string
+}
+
+type OpenAIModerationConfig struct {
+	BaseURL string
+	Timeout time.Duration
+}
+
 func LoadConfig() (*Config, error) {
 	cfg := &Config{
-		AppEnv:       getEnv("APP_ENV", defaultAppEnv),
-		Server:       getServerConfig(),
-		Database:     getDatabaseConfig(),
-		Redis:        getRedisConfig(),
-		Cache:        getCacheConfig(),
-		SessionStore: getSessionStoreConfig(),
-		Kafka:        getKafkaConfig(),
-		Telemetry:    getTelemetryConfig(),
-		Metrics:      getMetricsConfig(),
-		Playground:   getPlaygroundConfig(),
-		Upstream:     getUpstreamConfig(),
-		Provider:     getProviderConfig(),
-		Catalog:      getCatalogConfig(),
-		CORS:         getCORSConfig(),
-		Logger:       getLoggerConfig(),
+		AppEnv:           getEnv("APP_ENV", defaultAppEnv),
+		Server:           getServerConfig(),
+		Database:         getDatabaseConfig(),
+		Redis:            getRedisConfig(),
+		Cache:            getCacheConfig(),
+		SessionStore:     getSessionStoreConfig(),
+		Kafka:            getKafkaConfig(),
+		Telemetry:        getTelemetryConfig(),
+		Metrics:          getMetricsConfig(),
+		Playground:       getPlaygroundConfig(),
+		Upstream:         getUpstreamConfig(),
+		Provider:         getProviderConfig(),
+		Catalog:          getCatalogConfig(),
+		CORS:             getCORSConfig(),
+		Logger:           getLoggerConfig(),
+		TrustGuard:       getTrustGuardConfig(),
+		OpenAIModeration: getOpenAIModerationConfig(),
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -470,6 +490,22 @@ func getLoggerConfig() LoggerConfig {
 	return LoggerConfig{
 		Level:  getLogLevel(),
 		Format: getEnv("LOG_FORMAT", defaultLogFormat),
+	}
+}
+
+func getTrustGuardConfig() TrustGuardConfig {
+	return TrustGuardConfig{
+		BaseURL:      getEnv("TRUSTGUARD_BASE_URL", ""),
+		Timeout:      getEnvDuration("TRUSTGUARD_TIMEOUT", defaultTrustGuardTimeout),
+		ClientID:     getEnv("TRUSTGUARD_CLIENT_ID", ""),
+		ClientSecret: getEnv("TRUSTGUARD_CLIENT_SECRET", ""),
+	}
+}
+
+func getOpenAIModerationConfig() OpenAIModerationConfig {
+	return OpenAIModerationConfig{
+		BaseURL: getEnv("OPENAI_MODERATION_BASE_URL", "https://api.openai.com"),
+		Timeout: getEnvDuration("OPENAI_MODERATION_TIMEOUT", defaultOpenAIModerationTimeout),
 	}
 }
 

@@ -29,6 +29,7 @@ type fixture struct {
 	gw    *gatewayrepo.Repository
 	be    *registryrepo.Repository
 	roles *rolerepo.Repository
+	conn  *database.Connection
 }
 
 func setupRepo(t *testing.T) fixture {
@@ -72,6 +73,7 @@ func setupRepo(t *testing.T) fixture {
 		gw:    gatewayrepo.NewRepository(conn),
 		be:    registryrepo.NewRepository(conn),
 		roles: rolerepo.NewRepository(conn),
+		conn:  conn,
 	}
 }
 
@@ -708,6 +710,80 @@ func TestRepository_DeleteBackend_FailsWhenReferencedByFallbackChain(t *testing.
 	}
 
 	err := f.be.Delete(ctx, gwID, fbBE)
+	if !errors.Is(err, registrydomain.ErrHasDependents) {
+		t.Fatalf("err = %v, want registrydomain.ErrHasDependents", err)
+	}
+}
+
+func TestRepository_DeleteRegistry_IgnoresCrossGatewayFallbackConsumer(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwReg := seedGateway(t, f.gw, "gw-reg")
+	gwOther := seedGateway(t, f.gw, "gw-other")
+	regID := seedRegistry(t, f.be, gwReg, "victim-reg")
+	otherReg := seedRegistry(t, f.be, gwOther, "other-pool")
+
+	c := validConsumer(t, gwOther, "cross-gw-consumer", otherReg)
+	c.Fallback = &domain.Fallback{
+		Enabled:  true,
+		Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
+		Budget:   domain.FallbackBudget{MaxAttempts: 3},
+		Chain:    registrydomain.Registries{regID},
+	}
+	if err := f.repo.Save(ctx, c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if err := f.be.Delete(ctx, gwReg, regID); err != nil {
+		t.Fatalf("Delete: %v, want success (cross-gateway consumer must not block)", err)
+	}
+}
+
+func TestRepository_DeleteRegistry_IgnoresInactiveConsumer(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "gw-inactive")
+	poolReg := seedRegistry(t, f.be, gwID, "inactive-pool")
+	regID := seedRegistry(t, f.be, gwID, "inactive-victim")
+
+	c := validConsumer(t, gwID, "inactive-consumer", poolReg)
+	c.Fallback = &domain.Fallback{
+		Enabled:  true,
+		Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
+		Budget:   domain.FallbackBudget{MaxAttempts: 3},
+		Chain:    registrydomain.Registries{regID},
+	}
+	if err := f.repo.Save(ctx, c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := f.conn.Pool.Exec(ctx, "UPDATE consumers SET active = FALSE WHERE id = $1", c.ID); err != nil {
+		t.Fatalf("deactivate consumer: %v", err)
+	}
+
+	if err := f.be.Delete(ctx, gwID, regID); err != nil {
+		t.Fatalf("Delete: %v, want success (inactive consumer must not block)", err)
+	}
+}
+
+func TestRepository_DeleteRegistry_BlockedByActiveSameGatewayConsumer(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "gw-block")
+	poolReg := seedRegistry(t, f.be, gwID, "block-pool")
+	regID := seedRegistry(t, f.be, gwID, "block-victim")
+
+	c := validConsumer(t, gwID, "active-consumer", poolReg)
+	c.Fallback = &domain.Fallback{
+		Enabled:  true,
+		Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
+		Budget:   domain.FallbackBudget{MaxAttempts: 3},
+		Chain:    registrydomain.Registries{regID},
+	}
+	if err := f.repo.Save(ctx, c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	err := f.be.Delete(ctx, gwID, regID)
 	if !errors.Is(err, registrydomain.ErrHasDependents) {
 		t.Fatalf("err = %v, want registrydomain.ErrHasDependents", err)
 	}

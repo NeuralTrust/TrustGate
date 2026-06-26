@@ -22,6 +22,7 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/llmcost"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,32 +33,6 @@ type budgetErrorBody struct {
 		Scope  string `json:"scope"`
 		Window string `json:"window"`
 	} `json:"error"`
-}
-
-func TestResolveDowngrade(t *testing.T) {
-	tests := []struct {
-		name     string
-		provider string
-		target   string
-		allowed  []string
-		want     string
-		wantOK   bool
-	}{
-		{name: "bare same provider", provider: "openai", target: "gpt-4o-mini", want: "gpt-4o-mini", wantOK: true},
-		{name: "qualified same provider", provider: "openai", target: "@openai/gpt-4o-mini", want: "gpt-4o-mini", wantOK: true},
-		{name: "qualified cross provider", provider: "openai", target: "@anthropic/claude-3-haiku"},
-		{name: "pool target", provider: "openai", target: "pool:fast"},
-		{name: "empty target", provider: "openai", target: ""},
-		{name: "allowed contains target", provider: "openai", target: "gpt-4o-mini", allowed: []string{"gpt-4o", "gpt-4o-mini"}, want: "gpt-4o-mini", wantOK: true},
-		{name: "allowed excludes target", provider: "openai", target: "gpt-4o-mini", allowed: []string{"gpt-4o"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, ok := resolveDowngrade(tt.provider, tt.target, tt.allowed)
-			assert.Equal(t, tt.wantOK, ok)
-			assert.Equal(t, tt.want, got)
-		})
-	}
 }
 
 func TestPlugin_CostCap_DowngradeRewritesModel(t *testing.T) {
@@ -78,7 +53,7 @@ func TestPlugin_CostCap_DowngradeRewritesModel(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	assert.Equal(t, 200, res.StatusCode)
-	assert.Equal(t, []string{"gpt-4o→gpt-4o-mini"}, res.Headers[downgradeHeader])
+	assert.Equal(t, []string{"gpt-4o→gpt-4o-mini"}, res.Headers[llmcost.DowngradeHeader])
 	require.NotNil(t, res.RequestBody)
 	assert.Contains(t, string(res.RequestBody), `"model":"gpt-4o-mini"`, "the outbound body must carry the downgraded model")
 	assert.Contains(t, string(req.Body), `"model":"gpt-4o"`, "the downgrade must not mutate the context body in place")
@@ -149,7 +124,7 @@ func TestPlugin_Budget_DowngradeModelOnExceed(t *testing.T) {
 	require.NoError(t, err, "a downgradeable budget breach must pass through")
 	require.NotNil(t, res)
 	assert.Equal(t, 200, res.StatusCode)
-	assert.Equal(t, []string{"gpt-4o→gpt-4o-mini"}, res.Headers[downgradeHeader])
+	assert.Equal(t, []string{"gpt-4o→gpt-4o-mini"}, res.Headers[llmcost.DowngradeHeader])
 	require.NotNil(t, res.RequestBody)
 	assert.Contains(t, string(res.RequestBody), `"model":"gpt-4o-mini"`)
 	assert.Contains(t, string(req.Body), `"model":"gpt-4o"`, "the downgrade must not mutate the context body in place")

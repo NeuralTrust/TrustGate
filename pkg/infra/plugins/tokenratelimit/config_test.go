@@ -17,6 +17,7 @@ package tokenratelimit
 import (
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/llmcost"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -27,7 +28,6 @@ func TestConfigNormalizeDefaults(t *testing.T) {
 
 	assert.Equal(t, unitTokens, c.Unit)
 	assert.Equal(t, countingTotal, c.Counting)
-	assert.Equal(t, pricingBuiltin, c.PricingTable)
 	assert.Equal(t, behaviorReject, c.BehaviorOnExceeded)
 }
 
@@ -35,7 +35,6 @@ func TestConfigNormalizePreservesExplicitValues(t *testing.T) {
 	c := &config{
 		Unit:               unitDollars,
 		Counting:           countingInput,
-		PricingTable:       pricingCustom,
 		BehaviorOnExceeded: behaviorThrottle,
 		Aggregate:          &aggregateConfig{Max: 5, TimeWindow: "1h"},
 	}
@@ -43,7 +42,6 @@ func TestConfigNormalizePreservesExplicitValues(t *testing.T) {
 
 	assert.Equal(t, unitDollars, c.Unit)
 	assert.Equal(t, countingInput, c.Counting)
-	assert.Equal(t, pricingCustom, c.PricingTable)
 	assert.Equal(t, behaviorThrottle, c.BehaviorOnExceeded)
 }
 
@@ -101,7 +99,6 @@ func validConfig(mutate func(*config)) *config {
 	c := &config{
 		Unit:               unitTokens,
 		Counting:           countingTotal,
-		PricingTable:       pricingBuiltin,
 		BehaviorOnExceeded: behaviorReject,
 		Aggregate:          &aggregateConfig{Max: 1000, TimeWindow: "1h"},
 	}
@@ -141,8 +138,7 @@ func TestConfigValidate(t *testing.T) {
 			name: "valid dollars with custom pricing",
 			cfg: validConfig(func(c *config) {
 				c.Unit = unitDollars
-				c.PricingTable = pricingCustom
-				c.CustomPricing = map[string]customPrice{"gpt-5": {Input: 0.00001, Output: 0.00003}}
+				c.CustomPricing = map[string]llmcost.CustomPrice{"gpt-5": {Input: 0.00001, Output: 0.00003}}
 			}),
 		},
 		{
@@ -156,7 +152,7 @@ func TestConfigValidate(t *testing.T) {
 			name: "valid cost cap only",
 			cfg: validConfig(func(c *config) {
 				c.Aggregate = nil
-				c.CostCap = &costCapConfig{Enabled: true, MaxInputCostPer1k: 0.5, MaxOutputCostPer1k: 1.5, UnknownModel: unknownReject, BehaviorOnViolation: behaviorReject}
+				c.CostCap = &llmcost.CapConfig{Enabled: true, MaxInputCostPer1k: 0.5, MaxOutputCostPer1k: 1.5, UnknownModel: llmcost.UnknownReject, BehaviorOnViolation: llmcost.BehaviorReject}
 			}),
 		},
 		{
@@ -167,19 +163,6 @@ func TestConfigValidate(t *testing.T) {
 		{
 			name:    "invalid counting",
 			cfg:     validConfig(func(c *config) { c.Counting = "prompt" }),
-			wantErr: true,
-		},
-		{
-			name:    "invalid pricing table",
-			cfg:     validConfig(func(c *config) { c.PricingTable = "spreadsheet" }),
-			wantErr: true,
-		},
-		{
-			name: "dollars custom without custom pricing",
-			cfg: validConfig(func(c *config) {
-				c.Unit = unitDollars
-				c.PricingTable = pricingCustom
-			}),
 			wantErr: true,
 		},
 		{
@@ -230,35 +213,35 @@ func TestConfigValidate(t *testing.T) {
 		{
 			name: "cost cap bad unknown model",
 			cfg: validConfig(func(c *config) {
-				c.CostCap = &costCapConfig{Enabled: true, UnknownModel: "maybe"}
+				c.CostCap = &llmcost.CapConfig{Enabled: true, UnknownModel: "maybe"}
 			}),
 			wantErr: true,
 		},
 		{
 			name: "cost cap bad behavior on violation",
 			cfg: validConfig(func(c *config) {
-				c.CostCap = &costCapConfig{Enabled: true, BehaviorOnViolation: "explode"}
+				c.CostCap = &llmcost.CapConfig{Enabled: true, BehaviorOnViolation: "explode"}
 			}),
 			wantErr: true,
 		},
 		{
 			name: "cost cap downgrade without target",
 			cfg: validConfig(func(c *config) {
-				c.CostCap = &costCapConfig{Enabled: true, BehaviorOnViolation: behaviorDowngrade}
+				c.CostCap = &llmcost.CapConfig{Enabled: true, BehaviorOnViolation: llmcost.BehaviorDowngrade}
 			}),
 			wantErr: true,
 		},
 		{
 			name: "cost cap negative ceiling",
 			cfg: validConfig(func(c *config) {
-				c.CostCap = &costCapConfig{Enabled: true, MaxInputCostPer1k: -1}
+				c.CostCap = &llmcost.CapConfig{Enabled: true, MaxInputCostPer1k: -1}
 			}),
 			wantErr: true,
 		},
 		{
 			name: "cost cap negative override ceiling",
 			cfg: validConfig(func(c *config) {
-				c.CostCap = &costCapConfig{Enabled: true, PerModelOverrides: map[string]costCeiling{"gpt-5": {MaxOutputCostPer1k: -2}}}
+				c.CostCap = &llmcost.CapConfig{Enabled: true, PerModelOverrides: map[string]llmcost.Ceiling{"gpt-5": {MaxOutputCostPer1k: -2}}}
 			}),
 			wantErr: true,
 		},
@@ -291,8 +274,7 @@ func TestConfigValidate(t *testing.T) {
 			name: "dollars cannot use legacy window",
 			cfg: validConfig(func(c *config) {
 				c.Unit = unitDollars
-				c.PricingTable = pricingCustom
-				c.CustomPricing = map[string]customPrice{"gpt-5": {Input: 0.00001, Output: 0.00003}}
+				c.CustomPricing = map[string]llmcost.CustomPrice{"gpt-5": {Input: 0.00001, Output: 0.00003}}
 				c.Window = windowConfig{Unit: "hour", Max: 1000}
 			}),
 			wantErr: true,

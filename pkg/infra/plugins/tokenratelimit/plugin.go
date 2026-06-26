@@ -26,6 +26,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/llmcost"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/go-redis/redis/v8"
 )
@@ -104,25 +105,25 @@ func (p *Plugin) preRequest(
 	event *metrics.EventContext,
 ) (*appplugins.Result, error) {
 	model := modelFor(req)
-	var capTel *costCapTelemetry
+	var capTel *llmcost.Telemetry
 	var downgradeHeaders map[string][]string
 	var downgradeBody []byte
 	if cfg.CostCap != nil && cfg.CostCap.Enabled {
-		dec := p.costCapDecision(ctx, cfg, req.Provider, model, req.RequestedModel)
-		capTel = costCapTelemetryFrom(dec)
-		if dec.kind == decisionViolation {
+		dec := llmcost.Decide(ctx, p.pricing, cfg.CustomPricing, cfg.CostCap, req.Provider, model, req.RequestedModel)
+		capTel = llmcost.TelemetryFrom(dec)
+		if dec.Kind == llmcost.DecisionViolation {
 			appplugins.SetDecision(event, mode)
 			if appplugins.Blocks(mode) && !appplugins.Throttles(mode) {
-				if cfg.CostCap.BehaviorOnViolation == behaviorDowngrade {
-					newModel, body, hdr, ok := applyDowngrade(req, model, cfg.CostCap.DowngradeTo)
+				if cfg.CostCap.BehaviorOnViolation == llmcost.BehaviorDowngrade {
+					newModel, body, hdr, ok := llmcost.ApplyDowngrade(req, model, cfg.CostCap.DowngradeTo)
 					if !ok {
-						return nil, costCapError(dec)
+						return nil, llmcost.CostCapError(dec)
 					}
 					model = newModel
 					downgradeBody = body
 					downgradeHeaders = hdr
 				} else {
-					return nil, costCapError(dec)
+					return nil, llmcost.CostCapError(dec)
 				}
 			}
 		}
@@ -170,6 +171,18 @@ func setTokenExtras(event *metrics.EventContext, data TokenRateLimiterData) {
 		return
 	}
 	event.SetExtras(data)
+}
+
+func applyCostCapTelemetry(data *TokenRateLimiterData, t *llmcost.Telemetry) {
+	if t == nil {
+		return
+	}
+	data.CostCapViolation = t.Violation
+	data.UnknownModel = t.Unknown
+	data.InputPricePer1k = t.InputPrice
+	data.OutputPricePer1k = t.OutputPrice
+	data.MaxInputPer1k = t.MaxInput
+	data.MaxOutputPer1k = t.MaxOutput
 }
 
 func (p *Plugin) resetSeconds(ctx context.Context, counterKey string, fallbackSec int) int {

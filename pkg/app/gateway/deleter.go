@@ -31,10 +31,18 @@ type Deleter interface {
 var _ Deleter = (*deleter)(nil)
 
 type deleter struct {
-	repo        domain.Repository
-	memoryCache *cache.TTLMap
-	publisher   cache.EventPublisher
-	logger      *slog.Logger
+	repo              domain.Repository
+	memoryCache       *cache.TTLMap
+	registryCache     *cache.TTLMap
+	policyCache       *cache.TTLMap
+	consumerCache     *cache.TTLMap
+	consumerDataCache *cache.TTLMap
+	loadBalancerCache *cache.TTLMap
+	authCache         *cache.TTLMap
+	consumerPathCache *cache.TTLMap
+	roleCache         *cache.TTLMap
+	publisher         cache.EventPublisher
+	logger            *slog.Logger
 }
 
 func NewDeleter(
@@ -44,10 +52,18 @@ func NewDeleter(
 	logger *slog.Logger,
 ) Deleter {
 	return &deleter{
-		repo:        repo,
-		memoryCache: manager.GetTTLMap(cache.GatewayTTLName),
-		publisher:   publisher,
-		logger:      logger,
+		repo:              repo,
+		memoryCache:       manager.GetTTLMap(cache.GatewayTTLName),
+		registryCache:     manager.GetTTLMap(cache.RegistryTTLName),
+		policyCache:       manager.GetTTLMap(cache.PolicyTTLName),
+		consumerCache:     manager.GetTTLMap(cache.ConsumerTTLName),
+		consumerDataCache: manager.GetTTLMap(cache.ConsumerDataTTLName),
+		loadBalancerCache: manager.GetTTLMap(cache.LoadBalancerTTLName),
+		authCache:         manager.GetTTLMap(cache.AuthTTLName),
+		consumerPathCache: manager.GetTTLMap(cache.ConsumerPathTTLName),
+		roleCache:         manager.GetTTLMap(cache.RoleTTLName),
+		publisher:         publisher,
+		logger:            logger,
 	}
 }
 
@@ -58,8 +74,40 @@ func (d *deleter) Delete(ctx context.Context, id ids.GatewayID) error {
 	}
 	deleteGatewayCache(d.memoryCache, g)
 	d.memoryCache.Delete(gatewayIDCacheKey(id))
+	d.evictGatewayScopedCaches(id)
 	publishGatewayDataInvalidation(ctx, d.publisher, d.logger, id)
 	return nil
+}
+
+// evictGatewayScopedCaches drops the in-memory read caches for resources owned
+// by the deleted gateway on this instance, so a read that immediately follows
+// the delete cannot serve a cascade-removed registry/policy/etc. from cache.
+// Other instances are converged by the published InvalidateGatewayDataEvent.
+func (d *deleter) evictGatewayScopedCaches(id ids.GatewayID) {
+	if d.consumerDataCache != nil {
+		d.consumerDataCache.Delete(id.String())
+	}
+	if d.loadBalancerCache != nil {
+		d.loadBalancerCache.DeleteByPrefix(id.String() + ":")
+	}
+	if d.registryCache != nil {
+		d.registryCache.Clear()
+	}
+	if d.policyCache != nil {
+		d.policyCache.Clear()
+	}
+	if d.consumerCache != nil {
+		d.consumerCache.Clear()
+	}
+	if d.authCache != nil {
+		d.authCache.Clear()
+	}
+	if d.consumerPathCache != nil {
+		d.consumerPathCache.Clear()
+	}
+	if d.roleCache != nil {
+		d.roleCache.Clear()
+	}
 }
 
 func cachedGatewayForDelete(memoryCache *cache.TTLMap, id ids.GatewayID) (*domain.Gateway, bool) {
