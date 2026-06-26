@@ -15,6 +15,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
 	consumerrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/consumer"
@@ -23,6 +24,14 @@ import (
 	registryrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func newRegistryRepo(conn *database.Connection) *registryrepo.Repository {
+	cipher, err := crypto.NewCipher("functional-test-secret-0123456789abcdef")
+	if err != nil {
+		panic(err)
+	}
+	return registryrepo.NewRepository(conn, cipher)
+}
 
 func setupRepo(t *testing.T) (*repo.Repository, *gatewayrepo.Repository, *database.Connection) {
 	t.Helper()
@@ -72,7 +81,7 @@ func seedConsumer(t *testing.T, conn *database.Connection, gwID ids.GatewayID, n
 	if err != nil {
 		t.Fatalf("registry domain.NewLLMRegistry: %v", err)
 	}
-	if err := registryrepo.NewRepository(conn).Save(ctx, reg); err != nil {
+	if err := newRegistryRepo(conn).Save(ctx, reg); err != nil {
 		t.Fatalf("registry Save: %v", err)
 	}
 	cons, err := consumerdomain.New(consumerdomain.CreateParams{

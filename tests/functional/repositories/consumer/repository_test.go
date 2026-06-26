@@ -15,6 +15,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
 	repo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/consumer"
@@ -23,6 +24,14 @@ import (
 	rolerepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/role"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func newRegistryRepo(conn *database.Connection) *registryrepo.Repository {
+	cipher, err := crypto.NewCipher("functional-test-secret-0123456789abcdef")
+	if err != nil {
+		panic(err)
+	}
+	return registryrepo.NewRepository(conn, cipher)
+}
 
 type fixture struct {
 	repo  *repo.Repository
@@ -71,7 +80,7 @@ func setupRepo(t *testing.T) fixture {
 	return fixture{
 		repo:  repo.NewRepository(conn),
 		gw:    gatewayrepo.NewRepository(conn),
-		be:    registryrepo.NewRepository(conn),
+		be:    newRegistryRepo(conn),
 		roles: rolerepo.NewRepository(conn),
 		conn:  conn,
 	}
