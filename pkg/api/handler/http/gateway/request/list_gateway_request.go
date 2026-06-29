@@ -15,7 +15,7 @@
 package request
 
 type ListGatewayRequest struct {
-	Name string
+	Slug string
 	Page int
 	Size int
 }

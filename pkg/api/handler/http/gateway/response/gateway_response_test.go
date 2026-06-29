@@ -26,7 +26,7 @@ import (
 func TestFromDomain_IncludesSlug(t *testing.T) {
 	t.Parallel()
 	now := time.Now().UTC()
-	gw := domain.RehydrateWithSlug(ids.New[ids.GatewayKind](), "Acme", "acme", "active", nil, nil, nil, now, now)
+	gw := domain.Rehydrate(ids.New[ids.GatewayKind](), "acme", "active", "", nil, nil, nil, now, now)
 
 	got := FromDomain(gw, "llm.neuraltrust.ai", "mcp.neuraltrust.ai")
 	if got.Slug != "acme" {
@@ -46,7 +46,7 @@ func TestFromDomain_IncludesSlug(t *testing.T) {
 func TestFromDomain_CustomDomainHost(t *testing.T) {
 	t.Parallel()
 	now := time.Now().UTC()
-	gw := domain.RehydrateWithSlug(ids.New[ids.GatewayKind](), "Acme", "acme", "active", nil, nil, nil, now, now)
+	gw := domain.Rehydrate(ids.New[ids.GatewayKind](), "acme", "active", "", nil, nil, nil, now, now)
 	gw.Domain = "api.acme.com"
 
 	got := FromDomain(gw, "llm.neuraltrust.ai", "mcp.neuraltrust.ai")

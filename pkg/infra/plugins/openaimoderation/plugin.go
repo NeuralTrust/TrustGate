@@ -58,7 +58,7 @@ func New(registry *adapter.Registry, baseURL string, timeout time.Duration, logg
 func (p *Plugin) Name() string { return PluginName }
 
 func (p *Plugin) MandatoryStages() []policy.Stage {
-	return []policy.Stage{}
+	return []policy.Stage{policy.StagePreRequest}
 }
 
 func (p *Plugin) SupportedStages() []policy.Stage {

@@ -46,8 +46,7 @@ func TestCreator_Create_Success(t *testing.T) {
 	tel := &telemetry.Telemetry{ExtraParams: map[string]string{"env": "prod"}}
 	repo.EXPECT().
 		Save(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
-			return g.Name == "Prod" &&
-				g.Slug == "prod" &&
+			return g.Slug == "prod" &&
 				g.Status == "active" &&
 				g.Telemetry == tel
 		})).
@@ -58,17 +57,14 @@ func TestCreator_Create_Success(t *testing.T) {
 	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger())
 
 	g, err := creator.Create(context.Background(), appgateway.CreateInput{
-		Name:      "Prod",
+		Slug:      "prod",
 		Telemetry: tel,
 	})
 	if err != nil {
 		t.Fatalf("Create error: %v", err)
 	}
-	if g.Name != "Prod" || g.Status != "active" {
+	if g.Slug != "prod" || g.Status != "active" {
 		t.Fatalf("Create returned unexpected gateway: %+v", g)
-	}
-	if g.Slug != "prod" {
-		t.Fatalf("Slug = %q, want prod", g.Slug)
 	}
 	if !g.SessionConfig.IsEnabled() {
 		t.Fatal("expected default session config to be enabled when none is provided")
@@ -93,7 +89,7 @@ func TestCreator_Create_PreservesExplicitSessionConfig(t *testing.T) {
 	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger())
 
 	g, err := creator.Create(context.Background(), appgateway.CreateInput{
-		Name:          "Prod",
+		Slug:          "prod",
 		SessionConfig: &domain.SessionConfig{Enabled: &disabled},
 	})
 	if err != nil {
@@ -104,14 +100,14 @@ func TestCreator_Create_PreservesExplicitSessionConfig(t *testing.T) {
 	}
 }
 
-func TestCreator_Create_RejectsEmptyName(t *testing.T) {
+func TestCreator_Create_RejectsEmptySlug(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	mgr := newCacheManager()
 	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger())
 
 	_, err := creator.Create(context.Background(), appgateway.CreateInput{
-		Name: "",
+		Slug: "",
 	})
 	if err == nil {
 		t.Fatal("expected validation error, got nil")
@@ -130,7 +126,7 @@ func TestCreator_Create_RejectsUnknownExporter(t *testing.T) {
 	creator := appgateway.NewCreator(repo, newCacheManager(), factory, newTestLogger())
 
 	_, err := creator.Create(context.Background(), appgateway.CreateInput{
-		Name: "Prod",
+		Slug: "prod",
 		Telemetry: &telemetry.Telemetry{
 			Exporters: []telemetry.ExporterConfig{
 				{Name: "datadog", Settings: map[string]interface{}{}},
@@ -151,7 +147,7 @@ func TestCreator_Create_RejectsDuplicateExporter(t *testing.T) {
 	creator := appgateway.NewCreator(repo, newCacheManager(), factory, newTestLogger())
 
 	_, err := creator.Create(context.Background(), appgateway.CreateInput{
-		Name: "Prod",
+		Slug: "prod",
 		Telemetry: &telemetry.Telemetry{
 			Exporters: []telemetry.ExporterConfig{
 				{Name: "kafka", Settings: map[string]interface{}{"topic": "a"}},
@@ -176,7 +172,7 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger())
 
 	_, err := creator.Create(context.Background(), appgateway.CreateInput{
-		Name: "Prod",
+		Slug: "prod",
 	})
 	if !errors.Is(err, domain.ErrAlreadyExists) {
 		t.Fatalf("expected ErrAlreadyExists, got %v", err)

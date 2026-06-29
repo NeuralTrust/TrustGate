@@ -24,14 +24,12 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
-	"github.com/google/uuid"
 )
 
 const MetadataTeamIDKey = "team_id"
 
 type Gateway struct {
 	ID              ids.GatewayID        `json:"id"`
-	Name            string               `json:"name"`
 	Slug            string               `json:"slug"`
 	Status          string               `json:"status"`
 	Domain          string               `json:"domain,omitempty"`
@@ -73,12 +71,11 @@ func DefaultSessionConfig() *SessionConfig {
 
 var slugPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
-func New(name string, slug ...string) (*Gateway, error) {
+func New(slug string) (*Gateway, error) {
 	now := time.Now().UTC()
 	g := &Gateway{
 		ID:        ids.New[ids.GatewayKind](),
-		Name:      name,
-		Slug:      firstSlug(name, slug),
+		Slug:      NormalizeSlug(slug),
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -90,7 +87,7 @@ func New(name string, slug ...string) (*Gateway, error) {
 
 func Rehydrate(
 	id ids.GatewayID,
-	name, status, domain string,
+	slug, status, domain string,
 	tel *telemetry.Telemetry,
 	clientTLS ClientTLSConfig,
 	session *SessionConfig,
@@ -98,8 +95,7 @@ func Rehydrate(
 ) *Gateway {
 	return &Gateway{
 		ID:              id,
-		Name:            name,
-		Slug:            SlugFromName(name),
+		Slug:            slug,
 		Status:          status,
 		Domain:          domain,
 		Telemetry:       tel,
@@ -108,19 +104,6 @@ func Rehydrate(
 		CreatedAt:       createdAt,
 		UpdatedAt:       updatedAt,
 	}
-}
-
-func RehydrateWithSlug(
-	id ids.GatewayID,
-	name, slug, status string,
-	tel *telemetry.Telemetry,
-	clientTLS ClientTLSConfig,
-	session *SessionConfig,
-	createdAt, updatedAt time.Time,
-) *Gateway {
-	g := Rehydrate(id, name, status, "", tel, clientTLS, session, createdAt, updatedAt)
-	g.Slug = slug
-	return g
 }
 
 type ClientTLSConfig map[string]json.RawMessage
@@ -145,14 +128,9 @@ func (c *ClientTLSConfig) Scan(value interface{}) error {
 }
 
 func (g *Gateway) Validate() error {
-	if g.Name == "" {
-		return fmt.Errorf("name is required")
-	}
-
+	g.Slug = NormalizeSlug(g.Slug)
 	if g.Slug == "" {
-		g.Slug = SlugFromName(g.Name)
-	} else {
-		g.Slug = NormalizeSlug(g.Slug)
+		return fmt.Errorf("slug is required")
 	}
 	if !IsValidSlug(g.Slug) {
 		return fmt.Errorf("slug must be a lowercase DNS label")
@@ -198,39 +176,6 @@ func NormalizeSlug(slug string) string {
 	return strings.ToLower(strings.TrimSpace(slug))
 }
 
-func SlugFromName(name string) string {
-	name = NormalizeSlug(name)
-	var b strings.Builder
-	lastDash := false
-	for _, r := range name {
-		valid := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
-		if valid {
-			if b.Len() < 63 {
-				b.WriteRune(r)
-			}
-			lastDash = false
-			continue
-		}
-		if b.Len() == 0 || lastDash || b.Len() >= 63 {
-			continue
-		}
-		b.WriteByte('-')
-		lastDash = true
-	}
-	out := strings.Trim(b.String(), "-")
-	if out == "" {
-		return "gateway-" + uuid.NewString()[:8]
-	}
-	return out
-}
-
 func IsValidSlug(slug string) bool {
 	return slugPattern.MatchString(slug)
-}
-
-func firstSlug(name string, slug []string) string {
-	if len(slug) == 0 {
-		return SlugFromName(name)
-	}
-	return NormalizeSlug(slug[0])
 }

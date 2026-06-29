@@ -14,7 +14,7 @@ import (
 
 func TestListAuths_NeverReturnsSecrets(t *testing.T) {
 	defer Track(t, "ListAuth")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-list")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("auth-list")})
 	prefix := uniqueName("listed")
 	for i := 0; i < 3; i++ {
 		_ = CreateAuth(t, gwID, validAuthPayload(fmt.Sprintf("%s-%d", prefix, i)))
@@ -45,7 +45,7 @@ func TestListAuths_NeverReturnsSecrets(t *testing.T) {
 
 func TestListAuths_InvalidPagination(t *testing.T) {
 	defer Track(t, "ListAuth")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-list-bad")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("auth-list-bad")})
 	status, body := sendRequest(t, http.MethodGet,
 		fmt.Sprintf("%s/v1/gateways/%s/auths?page=-1", AdminURL, gwID), nil, nil,
 	)

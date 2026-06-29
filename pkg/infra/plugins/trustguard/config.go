@@ -17,6 +17,9 @@ package trustguard
 import (
 	"fmt"
 	"net/url"
+	"strings"
+
+	"github.com/google/uuid"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
@@ -30,12 +33,23 @@ const (
 )
 
 type Settings struct {
-	Inspect string `mapstructure:"inspect"`
-	BaseURL string `mapstructure:"base_url"`
+	Inspect     string `mapstructure:"inspect"`
+	BaseURL     string `mapstructure:"base_url"`
+	CollectorID string `mapstructure:"collector_id"`
 }
 
 func parseConfig(settings map[string]any) (Settings, error) {
-	cfg, err := pluginutil.Parse[Settings](settings)
+	normalized := settings
+	if _, hasInspect := settings["inspect"]; !hasInspect {
+		if dir, ok := settings["direction"].(string); ok && strings.TrimSpace(dir) != "" {
+			normalized = make(map[string]any, len(settings)+1)
+			for k, v := range settings {
+				normalized[k] = v
+			}
+			normalized["inspect"] = dir
+		}
+	}
+	cfg, err := pluginutil.Parse[Settings](normalized)
 	if err != nil {
 		return Settings{}, err
 	}
@@ -66,6 +80,12 @@ func (s *Settings) validate() error {
 		if !parsed.IsAbs() || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
 			return fmt.Errorf("trustguard: base_url must be an absolute http(s) url")
 		}
+	}
+	if strings.TrimSpace(s.CollectorID) == "" {
+		return fmt.Errorf("trustguard: collector_id is required")
+	}
+	if _, err := uuid.Parse(strings.TrimSpace(s.CollectorID)); err != nil {
+		return fmt.Errorf("trustguard: collector_id must be a valid UUID")
 	}
 	return nil
 }

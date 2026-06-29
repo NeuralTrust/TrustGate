@@ -12,13 +12,13 @@ import (
 
 func TestCreateGateway_Success(t *testing.T) {
 	defer Track(t, "CreateGateway")()
-	name := uniqueName("create-ok")
+	slug := uniqueName("create-ok")
 	status, body := sendRequest(t, http.MethodPost, AdminURL+"/v1/gateways", nil, map[string]any{
-		"name": name,
+		"slug": slug,
 	})
 
 	require.Equal(t, http.StatusCreated, status, "body=%v", body)
-	assert.Equal(t, name, body["name"])
+	assert.Equal(t, slug, body["slug"])
 	assert.Equal(t, "active", body["status"])
 	assert.NotEmpty(t, body["id"])
 	assert.NotEmpty(t, body["created_at"])
@@ -27,20 +27,20 @@ func TestCreateGateway_Success(t *testing.T) {
 
 func TestCreateGateway_Conflict(t *testing.T) {
 	defer Track(t, "CreateGateway")()
-	name := uniqueName("create-dup")
-	_ = CreateGateway(t, map[string]any{"name": name})
+	slug := uniqueName("create-dup")
+	_ = CreateGateway(t, map[string]any{"slug": slug})
 
 	status, body := sendRequest(t, http.MethodPost, AdminURL+"/v1/gateways", nil, map[string]any{
-		"name": name,
+		"slug": slug,
 	})
 	require.Equal(t, http.StatusConflict, status, "body=%v", body)
 	assert.Equal(t, "already_exists", body["error"])
 }
 
-func TestCreateGateway_ValidationEmptyName(t *testing.T) {
+func TestCreateGateway_ValidationEmptySlug(t *testing.T) {
 	defer Track(t, "CreateGateway")()
 	status, body := sendRequest(t, http.MethodPost, AdminURL+"/v1/gateways", nil, map[string]any{
-		"name": "",
+		"slug": "",
 	})
 	require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
 	assert.Equal(t, "validation_failed", body["error"])

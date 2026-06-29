@@ -91,7 +91,7 @@ func createGlobalPolicy(t *testing.T, gatewayID, slug string, settings map[strin
 // pointing at up, returning both ids.
 func setupGatewayBackend(t *testing.T, up *fakeUpstream) (string, string) {
 	t.Helper()
-	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("pol-gw")})
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("pol-gw")})
 	backendID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be"), up.URL()))
 	return gatewayID, backendID
 }

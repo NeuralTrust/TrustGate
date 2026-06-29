@@ -67,11 +67,11 @@ func (r *Repository) Save(ctx context.Context, g *domain.Gateway) error {
 		return fmt.Errorf("gateway repository: marshal session_config: %w", err)
 	}
 	const query = `
-		INSERT INTO gateways (id, name, slug, status, domain, metadata, telemetry, client_tls, session_config, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+		INSERT INTO gateways (id, slug, status, domain, metadata, telemetry, client_tls, session_config, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
-			g.ID, g.Name, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, g.CreatedAt, g.UpdatedAt,
+			g.ID, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, g.CreatedAt, g.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -101,19 +101,18 @@ func (r *Repository) Update(ctx context.Context, g *domain.Gateway) error {
 	}
 	const query = `
 		UPDATE gateways
-		   SET name           = $2,
-		       slug           = $3,
-		       status         = $4,
-		       domain         = $5,
-		       metadata       = $6,
-		       telemetry      = $7,
-		       client_tls     = $8,
-		       session_config = $9,
-		       updated_at     = $10
+		   SET slug           = $2,
+		       status         = $3,
+		       domain         = $4,
+		       metadata       = $5,
+		       telemetry      = $6,
+		       client_tls     = $7,
+		       session_config = $8,
+		       updated_at     = $9
 		 WHERE id = $1`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query,
-			g.ID, g.Name, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, g.UpdatedAt,
+			g.ID, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, g.UpdatedAt,
 		)
 		if err != nil {
 			return mapPgError(err)
@@ -160,7 +159,7 @@ func (r *Repository) Delete(ctx context.Context, id ids.GatewayID) error {
 
 func (r *Repository) FindByID(ctx context.Context, id ids.GatewayID) (*domain.Gateway, error) {
 	const query = `
-		SELECT id, name, slug, status, domain, metadata, telemetry, client_tls, session_config, created_at, updated_at
+		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, created_at, updated_at
 		  FROM gateways
 		 WHERE id = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, id)
@@ -176,7 +175,7 @@ func (r *Repository) FindByID(ctx context.Context, id ids.GatewayID) (*domain.Ga
 
 func (r *Repository) FindByDomain(ctx context.Context, host string) (*domain.Gateway, error) {
 	const query = `
-		SELECT id, name, slug, status, domain, metadata, telemetry, client_tls, session_config, created_at, updated_at
+		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, created_at, updated_at
 		  FROM gateways
 		 WHERE domain = $1 AND domain <> ''`
 	row := r.conn.Pool.QueryRow(ctx, query, host)
@@ -192,7 +191,7 @@ func (r *Repository) FindByDomain(ctx context.Context, host string) (*domain.Gat
 
 func (r *Repository) FindBySlug(ctx context.Context, slug string) (*domain.Gateway, error) {
 	const query = `
-		SELECT id, name, slug, status, domain, metadata, telemetry, client_tls, session_config, created_at, updated_at
+		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, created_at, updated_at
 		  FROM gateways
 		 WHERE slug = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, domain.NormalizeSlug(slug))
@@ -218,19 +217,19 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	const countQuery = `
 		SELECT COUNT(*)
 		  FROM gateways
-		 WHERE ($1 = '' OR lower(name) LIKE '%' || lower($1) || '%')`
+		 WHERE ($1 = '' OR lower(slug) LIKE '%' || lower($1) || '%')`
 	var total int
-	if err := r.conn.Pool.QueryRow(ctx, countQuery, filter.NameContains).Scan(&total); err != nil {
+	if err := r.conn.Pool.QueryRow(ctx, countQuery, filter.SlugContains).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("gateway repository: count: %w", err)
 	}
 
 	const listQuery = `
-		SELECT id, name, slug, status, domain, metadata, telemetry, client_tls, session_config, created_at, updated_at
+		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, created_at, updated_at
 		  FROM gateways
-		 WHERE ($1 = '' OR lower(name) LIKE '%' || lower($1) || '%')
+		 WHERE ($1 = '' OR lower(slug) LIKE '%' || lower($1) || '%')
 		 ORDER BY created_at DESC, id
 		 LIMIT $2 OFFSET $3`
-	rows, err := r.conn.Pool.Query(ctx, listQuery, filter.NameContains, filter.Size, offset)
+	rows, err := r.conn.Pool.Query(ctx, listQuery, filter.SlugContains, filter.Size, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("gateway repository: list: %w", err)
 	}
@@ -258,7 +257,7 @@ func scanGateway(s rowScanner) (*domain.Gateway, error) {
 	g := &domain.Gateway{}
 	var metadataRaw, telemetryRaw, clientTLSRaw, sessionRaw []byte
 	if err := s.Scan(
-		&g.ID, &g.Name, &g.Slug, &g.Status, &g.Domain,
+		&g.ID, &g.Slug, &g.Status, &g.Domain,
 		&metadataRaw, &telemetryRaw, &clientTLSRaw, &sessionRaw,
 		&g.CreatedAt, &g.UpdatedAt,
 	); err != nil {
@@ -327,7 +326,7 @@ func mapPgError(err error) error {
 		switch pgErr.Code {
 		case pgUniqueViolation:
 			if strings.Contains(pgErr.ConstraintName, gatewaySlugUniqueConstraint) {
-				return fmt.Errorf("%w: the slug derived from the gateway name is already taken; provide a distinct explicit slug", domain.ErrAlreadyExists)
+				return fmt.Errorf("%w: the slug is already taken", domain.ErrAlreadyExists)
 			}
 			return domain.ErrAlreadyExists
 		case pgForeignKeyViolation:

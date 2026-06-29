@@ -159,7 +159,7 @@ func authorizeQuery(clientID, resource string) url.Values {
 // single IdP bound to the consumer, instead of failing with invalid_target.
 func TestMCPOAuth_SharedHostScopesChallengeAndResolvesConsumerIdP(t *testing.T) {
 	upstream := startMCPUpstream(t, func(s *sdk.Server) { addTool(s, "echo") })
-	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("mcp-gw")})
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
 	registryID := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-reg"), upstream.URL))
 
 	// Two issuers => gateway-wide selection is ambiguous; only the resource can

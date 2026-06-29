@@ -14,7 +14,7 @@ import (
 
 func TestCreateConsumer_Success(t *testing.T) {
 	defer Track(t, "CreateConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-create-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-create-gw")})
 	name := uniqueName("co-create-ok")
 
 	status, body := sendRequest(t, http.MethodPost,
@@ -37,7 +37,7 @@ func TestCreateConsumer_Success(t *testing.T) {
 
 func TestCreateConsumer_ConflictSameGateway(t *testing.T) {
 	defer Track(t, "CreateConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-conflict-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-conflict-gw")})
 	name := uniqueName("co-conflict")
 
 	_ = CreateConsumer(t, gwID, validConsumerPayload(name))
@@ -53,8 +53,8 @@ func TestCreateConsumer_ConflictSameGateway(t *testing.T) {
 
 func TestCreateConsumer_SameNameDifferentGatewaysAllowed(t *testing.T) {
 	defer Track(t, "CreateConsumer")()
-	gwA := CreateGateway(t, map[string]any{"name": uniqueName("co-shared-a")})
-	gwB := CreateGateway(t, map[string]any{"name": uniqueName("co-shared-b")})
+	gwA := CreateGateway(t, map[string]any{"slug": uniqueName("co-shared-a")})
+	gwB := CreateGateway(t, map[string]any{"slug": uniqueName("co-shared-b")})
 	shared := uniqueName("co-shared-name")
 
 	_ = CreateConsumer(t, gwA, validConsumerPayload(shared))
@@ -91,7 +91,7 @@ func TestCreateConsumer_InvalidGatewayUUID(t *testing.T) {
 
 func TestCreateConsumer_ValidationEmptyName(t *testing.T) {
 	defer Track(t, "CreateConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-emptyname-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-emptyname-gw")})
 
 	status, body := sendRequest(t, http.MethodPost,
 		fmt.Sprintf("%s/v1/gateways/%s/consumers", AdminURL, gwID),
@@ -103,7 +103,7 @@ func TestCreateConsumer_ValidationEmptyName(t *testing.T) {
 
 func TestCreateConsumer_GeneratesSlug(t *testing.T) {
 	defer Track(t, "CreateConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-slug-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-slug-gw")})
 
 	status, body := sendRequest(t, http.MethodPost,
 		fmt.Sprintf("%s/v1/gateways/%s/consumers", AdminURL, gwID),
@@ -123,7 +123,7 @@ func TestCreateConsumer_RoleBasedWithRoles(t *testing.T) {
 	defer Track(t, "CreateConsumer")()
 
 	t.Run("existing role is bound atomically", func(t *testing.T) {
-		gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-roles-gw")})
+		gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-roles-gw")})
 		roleID := CreateRole(t, gwID, map[string]any{"name": uniqueName("co-role")})
 
 		status, body := sendRequest(t, http.MethodPost,
@@ -143,8 +143,8 @@ func TestCreateConsumer_RoleBasedWithRoles(t *testing.T) {
 	})
 
 	t.Run("role from another gateway is rejected", func(t *testing.T) {
-		gwA := CreateGateway(t, map[string]any{"name": uniqueName("co-roles-gw-a")})
-		gwB := CreateGateway(t, map[string]any{"name": uniqueName("co-roles-gw-b")})
+		gwA := CreateGateway(t, map[string]any{"slug": uniqueName("co-roles-gw-a")})
+		gwB := CreateGateway(t, map[string]any{"slug": uniqueName("co-roles-gw-b")})
 		foreignRole := CreateRole(t, gwA, map[string]any{"name": uniqueName("co-role-foreign")})
 
 		status, body := sendRequest(t, http.MethodPost,
@@ -160,7 +160,7 @@ func TestCreateConsumer_RoleBasedWithRoles(t *testing.T) {
 	})
 
 	t.Run("nonexistent role is rejected", func(t *testing.T) {
-		gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-roles-gw-404")})
+		gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-roles-gw-404")})
 
 		status, body := sendRequest(t, http.MethodPost,
 			fmt.Sprintf("%s/v1/gateways/%s/consumers", AdminURL, gwID),
@@ -175,7 +175,7 @@ func TestCreateConsumer_RoleBasedWithRoles(t *testing.T) {
 	})
 
 	t.Run("malformed role id is rejected", func(t *testing.T) {
-		gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-roles-gw-bad")})
+		gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-roles-gw-bad")})
 
 		status, body := sendRequest(t, http.MethodPost,
 			fmt.Sprintf("%s/v1/gateways/%s/consumers", AdminURL, gwID),
@@ -190,7 +190,7 @@ func TestCreateConsumer_RoleBasedWithRoles(t *testing.T) {
 	})
 
 	t.Run("roles with inline routing are rejected", func(t *testing.T) {
-		gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-roles-gw-inline")})
+		gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-roles-gw-inline")})
 		roleID := CreateRole(t, gwID, map[string]any{"name": uniqueName("co-role-inline")})
 
 		status, body := sendRequest(t, http.MethodPost,
@@ -207,7 +207,7 @@ func TestCreateConsumer_RoleBasedWithRoles(t *testing.T) {
 
 func TestCreateConsumer_InvalidBody(t *testing.T) {
 	defer Track(t, "CreateConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-badbody-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-badbody-gw")})
 
 	status, body := sendRequest(t, http.MethodPost,
 		fmt.Sprintf("%s/v1/gateways/%s/consumers", AdminURL, gwID),
@@ -219,7 +219,7 @@ func TestCreateConsumer_InvalidBody(t *testing.T) {
 
 func TestCreateConsumer_TypeDefaultsToLLM(t *testing.T) {
 	defer Track(t, "CreateConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-deftype-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-deftype-gw")})
 	name := uniqueName("co-deftype")
 
 	status, body := sendRequest(t, http.MethodPost,
@@ -235,7 +235,7 @@ func TestCreateConsumer_TypeMCPAndA2A(t *testing.T) {
 	for _, ty := range []string{"MCP", "A2A"} {
 		ty := ty
 		t.Run(ty, func(t *testing.T) {
-			gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-" + ty + "-gw")})
+			gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-" + ty + "-gw")})
 			payload := validConsumerPayload(uniqueName("co-" + ty))
 			payload["type"] = ty
 
@@ -251,7 +251,7 @@ func TestCreateConsumer_TypeMCPAndA2A(t *testing.T) {
 
 func TestCreateConsumer_InvalidType(t *testing.T) {
 	defer Track(t, "CreateConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-badtype-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-badtype-gw")})
 
 	payload := validConsumerPayload(uniqueName("co-badtype"))
 	payload["type"] = "foo"

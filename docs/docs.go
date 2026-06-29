@@ -103,8 +103,8 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Filter by name (substring match)",
-                        "name": "name",
+                        "description": "Filter by slug (substring match)",
+                        "name": "slug",
                         "in": "query"
                     },
                     {
@@ -4236,9 +4236,6 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
-                "name": {
-                    "type": "string"
-                },
                 "session_config": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.SessionConfig"
                 },
@@ -4264,9 +4261,6 @@ const docTemplate = `{
                     "additionalProperties": {
                         "type": "string"
                     }
-                },
-                "name": {
-                    "type": "string"
                 },
                 "session_config": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.SessionConfig"
@@ -4316,9 +4310,6 @@ const docTemplate = `{
                     "additionalProperties": {
                         "type": "string"
                     }
-                },
-                "name": {
-                    "type": "string"
                 },
                 "session_config": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.SessionConfig"

@@ -412,17 +412,22 @@ func TestTrustGuardSchema(t *testing.T) {
 		t.Fatal("trustguard schema must not expose api_key; credentials live in the gateway .env")
 	}
 
-	inspect, ok := fieldByKey(fields, "inspect")
+	direction, ok := fieldByKey(fields, "direction")
 	require.True(t, ok)
-	assert.Equal(t, FieldTypeEnum, inspect.Type)
-	assert.Equal(t, []string{"request", "response", "request_response"}, enumValues(inspect.Enum))
-	assert.Equal(t, []string{"Request", "Response", "Request & Response"}, enumLabels(inspect.Enum))
-	assert.Equal(t, "request_response", inspect.Default)
+	assert.Equal(t, FieldTypeEnum, direction.Type)
+	assert.Equal(t, []string{"request", "response", "request_response"}, enumValues(direction.Enum))
+	assert.Equal(t, []string{"Request", "Response", "Request & Response"}, enumLabels(direction.Enum))
+	assert.Equal(t, "request", direction.Default)
 
 	baseURL, ok := fieldByKey(fields, "base_url")
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeString, baseURL.Type)
 	assert.False(t, baseURL.Required)
+
+	collectorID, ok := fieldByKey(fields, "collector_id")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeString, collectorID.Type)
+	assert.True(t, collectorID.Required)
 }
 
 func TestAzureContentSafetySchema(t *testing.T) {

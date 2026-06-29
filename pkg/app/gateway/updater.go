@@ -28,7 +28,6 @@ import (
 
 type UpdateInput struct {
 	ID              ids.GatewayID
-	Name            *string
 	Slug            *string
 	Status          *string
 	Domain          *string
@@ -78,9 +77,6 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 		return nil, err
 	}
 	old := *g
-	if in.Name != nil {
-		g.Name = *in.Name
-	}
 	if in.Slug != nil {
 		g.Slug = *in.Slug
 	}

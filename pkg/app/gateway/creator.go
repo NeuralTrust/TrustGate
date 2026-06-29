@@ -25,7 +25,6 @@ import (
 )
 
 type CreateInput struct {
-	Name            string
 	Slug            string
 	Domain          string
 	Metadata        map[string]string
@@ -66,7 +65,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, 
 	if err := validateExporters(c.exporterFactory, in.Telemetry); err != nil {
 		return nil, err
 	}
-	g, err := domain.New(in.Name, in.Slug)
+	g, err := domain.New(in.Slug)
 	if err != nil {
 		return nil, err
 	}

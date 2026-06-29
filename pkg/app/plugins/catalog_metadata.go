@@ -1133,6 +1133,13 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Default:     "request",
 				},
 				{
+					Key:         "collector_id",
+					Label:       "Collector ID",
+					Type:        FieldTypeString,
+					Description: "TrustGuard collector UUID bound to this gateway policy.",
+					Required:    true,
+				},
+				{
 					Key:         "base_url",
 					Label:       "Base URL",
 					Type:        FieldTypeString,

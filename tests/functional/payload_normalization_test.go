@@ -22,7 +22,7 @@ func anthropicChatRequest(model string) map[string]any {
 // the consumer slug so tests can build any fixed proxy route.
 func setupSlugRoute(t *testing.T, up *fakeUpstream, allowed []string, defaultModel string) (string, string) {
 	t.Helper()
-	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("norm-gw")})
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("norm-gw")})
 	backendID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be"), up.URL()))
 	policy := map[string]any{"allowed": allowed}
 	if defaultModel != "" {
@@ -116,7 +116,7 @@ func TestPayloadNormalization_CrossFormat(t *testing.T) {
 
 	t.Run("pool alias never leaks to the upstream regardless of source format", func(t *testing.T) {
 		up := newJSONUpstream(t, "pool-cross-served")
-		gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("norm-pool-gw")})
+		gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("norm-pool-gw")})
 		backendID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be"), up.URL()))
 		coID := CreateConsumer(t, gatewayID, map[string]any{
 			"name": uniqueName("cons"),

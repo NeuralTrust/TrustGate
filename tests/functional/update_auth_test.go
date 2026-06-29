@@ -13,7 +13,7 @@ import (
 
 func TestUpdateAuth_Success(t *testing.T) {
 	defer Track(t, "UpdateAuth")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-upd")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("auth-upd")})
 	id, _ := CreateAPIKeyAuth(t, gwID, uniqueName("api-key"))
 
 	newName := uniqueName("renamed")
@@ -40,7 +40,7 @@ func TestUpdateAuth_Success(t *testing.T) {
 
 func TestUpdateAuth_Partial_OAuth2PreservesConfig(t *testing.T) {
 	defer Track(t, "UpdateAuth")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-upd-oauth-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("auth-upd-oauth-gw")})
 	id := CreateAuth(t, gwID, map[string]any{
 		"name": uniqueName("oauth-cred"),
 		"type": "oauth2",
@@ -71,7 +71,7 @@ func TestUpdateAuth_Partial_OAuth2PreservesConfig(t *testing.T) {
 
 func TestUpdateAuth_OAuth2MaskedSecretKeepsStoredValue(t *testing.T) {
 	defer Track(t, "UpdateAuth")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-upd-oauth-secret")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("auth-upd-oauth-secret")})
 	id := CreateAuth(t, gwID, map[string]any{
 		"name": uniqueName("oauth-cred"),
 		"type": "oauth2",
@@ -105,7 +105,7 @@ func TestUpdateAuth_OAuth2MaskedSecretKeepsStoredValue(t *testing.T) {
 
 func TestUpdateAuth_Validation(t *testing.T) {
 	defer Track(t, "UpdateAuth")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-upd-val")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("auth-upd-val")})
 	id := CreateAuth(t, gwID, validAuthPayload(uniqueName("api-key")))
 
 	status, body := sendRequest(t, http.MethodPut,

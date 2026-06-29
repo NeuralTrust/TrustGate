@@ -16,6 +16,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"net/http"
 	"testing"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -39,6 +40,7 @@ func TestPluginErrorResult_IncludesTypeWhenSet(t *testing.T) {
 	assert.Equal(t, "plugin_rejected", payload["error"])
 	assert.Equal(t, "tool not allowed", payload["message"])
 	assert.Equal(t, "tool_not_in_list", payload["type"])
+	assert.Equal(t, []string{"application/json"}, res.Headers["Content-Type"])
 }
 
 func TestPluginErrorResult_OmitsTypeWhenEmpty(t *testing.T) {
@@ -56,4 +58,30 @@ func TestPluginErrorResult_OmitsTypeWhenEmpty(t *testing.T) {
 	assert.Equal(t, map[string]string{"error": "plugin_rejected", "message": "too many"}, payload)
 	_, hasType := payload["type"]
 	assert.False(t, hasType)
+	assert.Equal(t, []string{"application/json"}, res.Headers["Content-Type"])
+}
+
+func TestPluginErrorResult_SetsJSONContentTypeForCustomBody(t *testing.T) {
+	pe := &appplugins.PluginError{
+		StatusCode: http.StatusForbidden,
+		Type:       "trustguard_blocked",
+		Message:    "request blocked due to a policy infraction",
+		Body:       []byte(`{"status":"block","findings":[]}`),
+	}
+
+	res := pluginErrorResult(pe)
+	require.NotNil(t, res)
+	assert.Equal(t, []string{"application/json"}, res.Headers["Content-Type"])
+}
+
+func TestPluginErrorResult_PreservesExistingContentType(t *testing.T) {
+	pe := &appplugins.PluginError{
+		StatusCode: http.StatusForbidden,
+		Headers:    map[string][]string{"Content-Type": {"application/problem+json"}},
+		Body:       []byte(`{"status":"block"}`),
+	}
+
+	res := pluginErrorResult(pe)
+	require.NotNil(t, res)
+	assert.Equal(t, []string{"application/problem+json"}, res.Headers["Content-Type"])
 }

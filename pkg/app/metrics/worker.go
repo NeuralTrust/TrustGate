@@ -22,6 +22,7 @@ import (
 	"time"
 
 	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/bootlog"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
@@ -92,7 +93,7 @@ func (w *worker) StartWorkers(n int) {
 // still using the exporter when it is closed.
 func (w *worker) Shutdown() {
 	w.closed.Store(true)
-	w.logger.Info("shutting down metrics workers")
+	w.logger.Info(bootlog.MetricsWorkersShuttingDown)
 
 	w.cancel()
 	if !w.waitForWorkers(shutdownWaitTimeout) {
@@ -102,7 +103,7 @@ func (w *worker) Shutdown() {
 	w.drainPendingTasks()
 	w.pipeline.close()
 
-	w.logger.Info("metrics workers stopped")
+	w.logger.Info(bootlog.MetricsWorkersStopped)
 }
 
 // waitForWorkers waits for the worker goroutines to exit, returning false if the

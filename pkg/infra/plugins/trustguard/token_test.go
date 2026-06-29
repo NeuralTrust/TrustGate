@@ -17,6 +17,7 @@ package trustguard
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -24,6 +25,14 @@ import (
 	"testing"
 	"time"
 )
+
+func testTokenParams(baseURL string) tokenParams {
+	return tokenParams{
+		baseURL:     baseURL,
+		collectorID: testCollectorID,
+		gatewayID:   "gw-test",
+	}
+}
 
 func tokenServer(t *testing.T, hits *int32) *httptest.Server {
 	t.Helper()
@@ -58,9 +67,10 @@ func TestTokenManagerCachesToken(t *testing.T) {
 	var hits int32
 	srv := tokenServer(t, &hits)
 	m := newTokenManager(srv.Client(), "id", "secret")
+	params := testTokenParams(srv.URL)
 
 	for i := 0; i < 3; i++ {
-		tok, err := m.token(context.Background(), srv.URL)
+		tok, err := m.token(context.Background(), params)
 		if err != nil {
 			t.Fatalf("token: %v", err)
 		}
@@ -78,12 +88,13 @@ func TestTokenManagerInvalidateForcesRefetch(t *testing.T) {
 	var hits int32
 	srv := tokenServer(t, &hits)
 	m := newTokenManager(srv.Client(), "id", "secret")
+	params := testTokenParams(srv.URL)
 
-	if _, err := m.token(context.Background(), srv.URL); err != nil {
+	if _, err := m.token(context.Background(), params); err != nil {
 		t.Fatalf("token: %v", err)
 	}
-	m.invalidate(srv.URL)
-	if _, err := m.token(context.Background(), srv.URL); err != nil {
+	m.invalidate(params)
+	if _, err := m.token(context.Background(), params); err != nil {
 		t.Fatalf("token after invalidate: %v", err)
 	}
 	if got := atomic.LoadInt32(&hits); got != 2 {
@@ -102,13 +113,14 @@ func TestTokenManagerSingleFlight(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	m := newTokenManager(srv.Client(), "id", "secret")
+	params := testTokenParams(srv.URL)
 
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := m.token(context.Background(), srv.URL); err != nil {
+			if _, err := m.token(context.Background(), params); err != nil {
 				t.Errorf("token: %v", err)
 			}
 		}()
@@ -116,5 +128,63 @@ func TestTokenManagerSingleFlight(t *testing.T) {
 	wg.Wait()
 	if got := atomic.LoadInt32(&hits); got != 1 {
 		t.Fatalf("concurrent refresh hits = %d, want 1 (single-flight)", got)
+	}
+}
+
+func TestTokenManagerCacheKeyIncludesGatewayID(t *testing.T) {
+	t.Parallel()
+	var hits int32
+	srv := tokenServer(t, &hits)
+	m := newTokenManager(srv.Client(), "id", "secret")
+
+	p1 := testTokenParams(srv.URL)
+	p2 := tokenParams{baseURL: srv.URL, collectorID: testCollectorID, gatewayID: "gw-other"}
+
+	if _, err := m.token(context.Background(), p1); err != nil {
+		t.Fatalf("token p1: %v", err)
+	}
+	if _, err := m.token(context.Background(), p2); err != nil {
+		t.Fatalf("token p2: %v", err)
+	}
+	if got := atomic.LoadInt32(&hits); got != 2 {
+		t.Fatalf("token endpoint hits = %d, want 2 (distinct cache keys)", got)
+	}
+}
+
+func TestTokenManagerSendsPlatformScope(t *testing.T) {
+	t.Parallel()
+	var captured tokenRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != tokenPath {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_ = json.Unmarshal(body, &captured)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "tok", TokenType: "Bearer", ExpiresIn: 3600})
+	}))
+	t.Cleanup(srv.Close)
+
+	m := newTokenManager(srv.Client(), "platform-id", "platform-secret")
+	params := tokenParams{baseURL: srv.URL, collectorID: testCollectorID, gatewayID: "gw-abc"}
+	if _, err := m.token(context.Background(), params); err != nil {
+		t.Fatalf("token: %v", err)
+	}
+	if captured.Scope != tokenScopePlatform {
+		t.Fatalf("scope = %q, want %q", captured.Scope, tokenScopePlatform)
+	}
+	if captured.CollectorID != testCollectorID {
+		t.Fatalf("collector_id = %q, want %q", captured.CollectorID, testCollectorID)
+	}
+	if captured.GatewayID != "gw-abc" {
+		t.Fatalf("gateway_id = %q, want gw-abc", captured.GatewayID)
+	}
+	if captured.GrantType != grantType {
+		t.Fatalf("grant_type = %q, want %q", captured.GrantType, grantType)
 	}
 }

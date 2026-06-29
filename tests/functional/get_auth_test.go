@@ -14,7 +14,7 @@ import (
 
 func TestGetAuth_Success_NeverReturnsSecret(t *testing.T) {
 	defer Track(t, "GetAuth")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-get")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("auth-get")})
 	name := uniqueName("api-key")
 	id, _ := CreateAPIKeyAuth(t, gwID, name)
 
@@ -36,7 +36,7 @@ func TestGetAuth_Success_NeverReturnsSecret(t *testing.T) {
 
 func TestGetAuth_NotFound(t *testing.T) {
 	defer Track(t, "GetAuth")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-get-404")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("auth-get-404")})
 	status, body := sendRequest(t, http.MethodGet,
 		fmt.Sprintf("%s/v1/gateways/%s/auths/%s", AdminURL, gwID, uuid.NewString()), nil, nil,
 	)
@@ -46,7 +46,7 @@ func TestGetAuth_NotFound(t *testing.T) {
 
 func TestGetAuth_InvalidUUID(t *testing.T) {
 	defer Track(t, "GetAuth")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-get-bad")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("auth-get-bad")})
 	status, body := sendRequest(t, http.MethodGet,
 		fmt.Sprintf("%s/v1/gateways/%s/auths/not-a-uuid", AdminURL, gwID), nil, nil,
 	)
