@@ -647,8 +647,6 @@ definitions:
         additionalProperties:
           type: string
         type: object
-      name:
-        type: string
       session_config:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.SessionConfig'
       slug:
@@ -666,8 +664,6 @@ definitions:
         additionalProperties:
           type: string
         type: object
-      name:
-        type: string
       session_config:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.SessionConfig'
       slug:
@@ -700,8 +696,6 @@ definitions:
         additionalProperties:
           type: string
         type: object
-      name:
-        type: string
       session_config:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.SessionConfig'
       slug:
@@ -2205,9 +2199,9 @@ paths:
     get:
       description: Returns a paginated list of gateways.
       parameters:
-      - description: Filter by name (substring match)
+      - description: Filter by slug (substring match)
         in: query
-        name: name
+        name: slug
         type: string
       - description: Page number (1-based)
         in: query

@@ -85,7 +85,7 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindByID: %v", err)
 	}
-	if got.ID != g.ID || got.Name != "alpha" || got.Status != "active" {
+	if got.ID != g.ID || got.Slug != "alpha" || got.Status != "active" {
 		t.Fatalf("FindByID returned %+v", got)
 	}
 	if got.Slug != "alpha" {
@@ -134,7 +134,7 @@ func TestRepository_FindBySlug(t *testing.T) {
 	r, _ := setupRepo(t)
 	ctx := context.Background()
 
-	g, err := domain.New("Alpha", "acme")
+	g, err := domain.New("acme")
 	if err != nil {
 		t.Fatalf("domain.New: %v", err)
 	}
@@ -181,11 +181,11 @@ func TestRepository_Save_DuplicateSlug(t *testing.T) {
 	r, _ := setupRepo(t)
 	ctx := context.Background()
 
-	g1, _ := domain.New("first", "shared")
+	g1, _ := domain.New("shared")
 	if err := r.Save(ctx, g1); err != nil {
 		t.Fatalf("first Save: %v", err)
 	}
-	g2, _ := domain.New("second", "shared")
+	g2, _ := domain.New("shared")
 	err := r.Save(ctx, g2)
 	if !errors.Is(err, domain.ErrAlreadyExists) {
 		t.Fatalf("err = %v, want ErrAlreadyExists", err)
@@ -201,7 +201,7 @@ func TestRepository_Update(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	g.Name = "alpha-renamed"
+	g.Slug = "alpha-renamed"
 	g.Status = "paused"
 	g.UpdatedAt = time.Now().UTC()
 	if err := r.Update(ctx, g); err != nil {
@@ -212,7 +212,7 @@ func TestRepository_Update(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindByID after update: %v", err)
 	}
-	if got.Name != "alpha-renamed" || got.Status != "paused" {
+	if got.Slug != "alpha-renamed" || got.Status != "paused" {
 		t.Fatalf("Update did not persist: %+v", got)
 	}
 }
@@ -249,10 +249,10 @@ func TestRepository_List(t *testing.T) {
 	r, _ := setupRepo(t)
 	ctx := context.Background()
 
-	for _, name := range []string{"alpha", "alphabet", "beta", "gamma", "delta"} {
-		g, _ := domain.New(name)
+	for _, slug := range []string{"alpha", "alphabet", "beta", "gamma", "delta"} {
+		g, _ := domain.New(slug)
 		if err := r.Save(ctx, g); err != nil {
-			t.Fatalf("Save %s: %v", name, err)
+			t.Fatalf("Save %s: %v", slug, err)
 		}
 	}
 
@@ -269,24 +269,24 @@ func TestRepository_List(t *testing.T) {
 	}
 
 	// total == 2 matching "alph", regardless of page/size
-	items, total, err = r.List(ctx, domain.ListFilter{NameContains: "alph", Page: 1, Size: 20})
+	items, total, err = r.List(ctx, domain.ListFilter{SlugContains: "alph", Page: 1, Size: 20})
 	if err != nil {
 		t.Fatalf("List with filter: %v", err)
 	}
 	if total != 2 {
 		t.Fatalf("filtered total = %d, want 2", total)
 	}
-	gotNames := make([]string, 0, len(items))
+	gotSlugs := make([]string, 0, len(items))
 	for _, it := range items {
-		gotNames = append(gotNames, it.Name)
+		gotSlugs = append(gotSlugs, it.Slug)
 	}
-	joined := strings.Join(gotNames, ",")
+	joined := strings.Join(gotSlugs, ",")
 	if !strings.Contains(joined, "alpha") || !strings.Contains(joined, "alphabet") {
-		t.Fatalf("filtered items = %v, expected alpha + alphabet", gotNames)
+		t.Fatalf("filtered items = %v, expected alpha + alphabet", gotSlugs)
 	}
 
 	// case-insensitive
-	_, totalUpper, err := r.List(ctx, domain.ListFilter{NameContains: "ALPH"})
+	_, totalUpper, err := r.List(ctx, domain.ListFilter{SlugContains: "ALPH"})
 	if err != nil {
 		t.Fatalf("List case-insensitive: %v", err)
 	}

@@ -43,6 +43,11 @@ func TestParseConfig(t *testing.T) {
 			wantInspect: inspectRequest,
 		},
 		{
+			name:        "catalog direction alias maps to inspect",
+			settings:    map[string]any{"direction": inspectRequest, "collector_id": testCollectorID},
+			wantInspect: inspectRequest,
+		},
+		{
 			name:        "inspect response accepted",
 			settings:    map[string]any{"inspect": inspectResponse, "collector_id": testCollectorID},
 			wantInspect: inspectResponse,

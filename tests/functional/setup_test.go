@@ -86,6 +86,8 @@ func buildCmdEnv() []string {
 	env := os.Environ()
 	env = append(env, "ENV_FILE=../../.env.functional")
 	env = append(env, "AWS_ENDPOINT_URL_BEDROCK_RUNTIME="+bedrockGuardrailEndpoint)
+	env = append(env, "TRUSTGUARD_CLIENT_ID="+trustGuardFunctionalClientID)
+	env = append(env, "TRUSTGUARD_CLIENT_SECRET="+trustGuardFunctionalClientSecret)
 	return env
 }
 

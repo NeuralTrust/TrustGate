@@ -39,7 +39,17 @@ type Settings struct {
 }
 
 func parseConfig(settings map[string]any) (Settings, error) {
-	cfg, err := pluginutil.Parse[Settings](settings)
+	normalized := settings
+	if _, hasInspect := settings["inspect"]; !hasInspect {
+		if dir, ok := settings["direction"].(string); ok && strings.TrimSpace(dir) != "" {
+			normalized = make(map[string]any, len(settings)+1)
+			for k, v := range settings {
+				normalized[k] = v
+			}
+			normalized["inspect"] = dir
+		}
+	}
+	cfg, err := pluginutil.Parse[Settings](normalized)
 	if err != nil {
 		return Settings{}, err
 	}
