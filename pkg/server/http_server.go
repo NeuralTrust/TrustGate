@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/bootlog"
 	"github.com/NeuralTrust/TrustGate/pkg/server/router"
 )
 
@@ -39,7 +40,7 @@ func NewHTTPServer(
 }
 
 func (s *httpServer) Run() error {
-	s.logger.Info("HTTP server starting",
+	s.logger.Info(bootlog.HTTPStart(s.Name),
 		slog.String("server", s.Name),
 		slog.String("addr", s.Addr),
 	)
@@ -49,7 +50,7 @@ func (s *httpServer) Run() error {
 func (s *httpServer) Shutdown() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.logger.Info("shutting down HTTP server", slog.String("server", s.Name))
+	s.logger.Info(bootlog.HTTPShutdown(s.Name), slog.String("server", s.Name))
 	if err := s.Router.Shutdown(); err != nil {
 		s.logger.Warn("HTTP server shutdown error",
 			slog.String("server", s.Name),
@@ -57,6 +58,6 @@ func (s *httpServer) Shutdown() error {
 		)
 		return err
 	}
-	s.logger.Info("HTTP server stopped", slog.String("server", s.Name))
+	s.logger.Info(bootlog.HTTPStopped(s.Name), slog.String("server", s.Name))
 	return nil
 }

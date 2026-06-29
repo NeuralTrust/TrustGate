@@ -22,6 +22,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/bootlog"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 )
@@ -67,7 +68,7 @@ func (r *redisEventListener) Listen(ctx context.Context, channels ...channel.Cha
 	for {
 		select {
 		case <-ctx.Done():
-			r.logger.Info("redis pubsub listener shutting down")
+			r.logger.Info(bootlog.RedisPubSubShuttingDown)
 			return
 		default:
 		}
@@ -87,7 +88,7 @@ func (r *redisEventListener) listenWithReconnect(ctx context.Context, channelNam
 	pubSub := r.cache.RedisClient().Subscribe(ctx, channelNames...)
 	defer func() { _ = pubSub.Close() }()
 
-	r.logger.Debug("redis pubsub connected", slog.Any("channels", channelNames))
+	r.logger.Debug(bootlog.RedisPubSubConnected, slog.Any("channels", channelNames))
 
 	go func() {
 		<-ctx.Done()

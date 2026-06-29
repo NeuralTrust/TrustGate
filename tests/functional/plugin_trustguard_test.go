@@ -47,9 +47,9 @@ type trustGuardTokenCapture struct {
 }
 
 type trustGuardGuardCapture struct {
-	Input struct {
+	Payload struct {
 		Input string `json:"input"`
-	} `json:"input"`
+	} `json:"payload"`
 	Direction  string `json:"direction"`
 	Protocol   string `json:"protocol"`
 	GatewayID  string `json:"gateway_id"`
@@ -131,7 +131,7 @@ func (s *trustGuardStub) handleGuard(t *testing.T, w http.ResponseWriter, r *htt
 	s.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
-	if strings.Contains(strings.ToLower(req.Input.Input), trustGuardBlockWord) {
+	if strings.Contains(strings.ToLower(req.Payload.Input), trustGuardBlockWord) {
 		_, _ = io.WriteString(w, `{"status":"block","findings":[{"detection_type":"prompt_injection","action":"block"}],"trace_id":"tg-trace-1","request_id":"tg-req-1"}`)
 		return
 	}
@@ -178,7 +178,7 @@ func TestPluginE2E_TrustGuard_Enforce(t *testing.T) {
 		assert.Equal(t, "llm", guard.Protocol)
 		assert.NotEmpty(t, guard.GatewayID)
 		assert.NotEmpty(t, guard.ConsumerID)
-		assert.Contains(t, guard.Input.Input, "hello, how are you?")
+		assert.Contains(t, guard.Payload.Input, "hello, how are you?")
 
 		tokensAfterFirst := tg.TokenHits()
 		status, _, raw = proxyRequest(t, http.MethodPost, apiKey, path, nil,
@@ -195,7 +195,9 @@ func TestPluginE2E_TrustGuard_Enforce(t *testing.T) {
 		)
 		assert.Equal(t, http.StatusForbidden, status)
 		assert.Contains(t, string(raw), `"status":"block"`)
+		assert.Contains(t, string(raw), `"message":"request blocked due to a policy infraction"`)
 		assert.Contains(t, string(raw), "tg-trace-1")
+		assert.NotContains(t, string(raw), `"findings"`)
 		assert.Equal(t, hitsBefore, up.Hits())
 	})
 }

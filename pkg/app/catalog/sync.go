@@ -19,6 +19,7 @@ import (
 	"log/slog"
 
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/bootlog"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/catalog/modelsdev"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
@@ -124,7 +125,7 @@ func (s *syncer) Sync(ctx context.Context) error {
 		}
 	}
 
-	s.logger.Info("catalog sync completed",
+	s.logger.Info(bootlog.CatalogSyncCompleted,
 		slog.Int("providers", len(seedProviders)),
 		slog.Int("models", len(models)))
 	return nil

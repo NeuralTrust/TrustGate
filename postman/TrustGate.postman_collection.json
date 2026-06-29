@@ -1875,7 +1875,7 @@
             "description": "Validates OIDC-issued JWTs; claims are matched against role oidc_mapping rules. Role-based consumers only.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"idp-{{$guid}}\",\n  \"type\": \"idp\",\n  \"enabled\": true,\n  \"config\": {\n    \"idp\": {\n      \"issuer\": \"{{idp_issuer}}\",\n      \"audiences\": [\n        \"trustgate\"\n      ],\n      \"jwks_url\": \"{{idp_jwks_url}}\",\n      \"subject_claim\": \"sub\"\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"idp-{{$guid}}\",\n  \"type\": \"oidc\",\n  \"enabled\": true,\n  \"config\": {\n    \"oidc\": {\n      \"issuer\": \"{{idp_issuer}}\",\n      \"audiences\": [\n        \"trustgate\"\n      ],\n      \"jwks_url\": \"{{idp_jwks_url}}\",\n      \"subject_claim\": \"sub\"\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
@@ -3417,7 +3417,7 @@
             "description": "Validates OIDC-issued JWTs; claims are matched against role oidc_mapping rules. Role-based consumers only.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"idp-{{$guid}}\",\n  \"type\": \"idp\",\n  \"enabled\": true,\n  \"config\": {\n    \"idp\": {\n      \"issuer\": \"{{idp_issuer}}\",\n      \"audiences\": [\n        \"trustgate\"\n      ],\n      \"jwks_url\": \"{{idp_jwks_url}}\",\n      \"subject_claim\": \"sub\"\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"idp-{{$guid}}\",\n  \"type\": \"oidc\",\n  \"enabled\": true,\n  \"config\": {\n    \"oidc\": {\n      \"issuer\": \"{{idp_issuer}}\",\n      \"audiences\": [\n        \"trustgate\"\n      ],\n      \"jwks_url\": \"{{idp_jwks_url}}\",\n      \"subject_claim\": \"sub\"\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
@@ -3898,7 +3898,7 @@
             "description": "Role-based consumers MUST use an `oidc` auth; `oauth2`/`api_key` are rejected (Forbidden) for role_based. No `client_secret` here: the gateway only validates the Entra JWT via JWKS, it never calls Entra. `audiences` must equal the token `aud` (api://{client_id} or the bare client_id GUID - verify by decoding the token at jwt.ms). `subject_claim` `oid` is Entra's stable per-tenant user id (use `sub` if you prefer the pairwise per-app id).",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"entra-idp-{{$guid}}\",\n  \"type\": \"idp\",\n  \"enabled\": true,\n  \"config\": {\n    \"idp\": {\n      \"issuer\": \"https://login.microsoftonline.com/{{entra_tenant_id}}/v2.0\",\n      \"audiences\": [\n        \"{{entra_client_id}}\",\n        \"api://{{entra_client_id}}\"\n      ],\n      \"jwks_url\": \"https://login.microsoftonline.com/{{entra_tenant_id}}/discovery/v2.0/keys\",\n      \"subject_claim\": \"oid\"\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"entra-idp-{{$guid}}\",\n  \"type\": \"oidc\",\n  \"enabled\": true,\n  \"config\": {\n    \"oidc\": {\n      \"issuer\": \"https://login.microsoftonline.com/{{entra_tenant_id}}/v2.0\",\n      \"audiences\": [\n        \"{{entra_client_id}}\",\n        \"api://{{entra_client_id}}\"\n      ],\n      \"jwks_url\": \"https://login.microsoftonline.com/{{entra_tenant_id}}/discovery/v2.0/keys\",\n      \"subject_claim\": \"oid\"\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
@@ -4378,7 +4378,7 @@
             "description": "Role-based consumers MUST use an `oidc` auth; `oauth2`/`api_key` are rejected (Forbidden) for role_based. No `client_secret` here: the gateway only validates the Okta JWT via JWKS, it never calls Okta. `issuer` and `jwks_url` come from the authorization server's /.well-known/openid-configuration. `audiences` must equal the token `aud` (the authorization server audience, default api://default; verify by decoding the token). `subject_claim` `sub` is the Okta subject (the client_id for M2M, the user id for user tokens).",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"okta-idp-{{$guid}}\",\n  \"type\": \"idp\",\n  \"enabled\": true,\n  \"config\": {\n    \"idp\": {\n      \"issuer\": \"https://{{okta_domain}}/oauth2/{{okta_auth_server_id}}\",\n      \"audiences\": [\n        \"{{okta_audience}}\"\n      ],\n      \"jwks_url\": \"https://{{okta_domain}}/oauth2/{{okta_auth_server_id}}/v1/keys\",\n      \"subject_claim\": \"sub\"\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"okta-idp-{{$guid}}\",\n  \"type\": \"oidc\",\n  \"enabled\": true,\n  \"config\": {\n    \"oidc\": {\n      \"issuer\": \"https://{{okta_domain}}/oauth2/{{okta_auth_server_id}}\",\n      \"audiences\": [\n        \"{{okta_audience}}\"\n      ],\n      \"jwks_url\": \"https://{{okta_domain}}/oauth2/{{okta_auth_server_id}}/v1/keys\",\n      \"subject_claim\": \"sub\"\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",

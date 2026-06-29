@@ -19,6 +19,7 @@ import (
 	"log/slog"
 
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/bootlog"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
@@ -63,5 +64,5 @@ func StartCacheEventListener(ctx context.Context, p CacheEventListenerParams) {
 	cache.RegisterEventSubscriber(p.Listener, p.RegistryCacheSub)
 
 	go p.Listener.Listen(ctx, channel.GatewayEventsChannel)
-	p.Logger.Info("cache event listener started", slog.String("channel", string(channel.GatewayEventsChannel)))
+	p.Logger.Info(bootlog.CacheListenerStarted, slog.String("channel", string(channel.GatewayEventsChannel)))
 }

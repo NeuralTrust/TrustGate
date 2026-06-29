@@ -24,6 +24,7 @@ import (
 	"time"
 
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/bootlog"
 	"github.com/go-redis/redis/v8"
 )
 
@@ -90,7 +91,7 @@ func NewClient(config Config, manager *TTLMapManager, logger *slog.Logger) (Clie
 		return nil, fmt.Errorf("failed to connect to redis: %w", err)
 	}
 
-	logger.Info("redis connected successfully",
+	logger.Info(bootlog.RedisConnected,
 		slog.String("host", config.Host),
 		slog.Int("port", config.Port),
 	)

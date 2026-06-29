@@ -181,7 +181,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 
 	body := GuardRequest{
-		Input:      GuardInput{Input: text},
+		Payload:    GuardPayload{Input: text},
 		Direction:  direction,
 		Protocol:   protocolFor(in.Request.ConsumerType),
 		GatewayID:  in.Request.GatewayID,
@@ -214,6 +214,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		TraceID:       resp.TraceID,
 		RequestID:     resp.RequestID,
 		FindingsCount: len(resp.Findings),
+		Findings:      resp.Findings,
 	}
 
 	if resp.Status == statusBlock && appplugins.Blocks(in.Mode) {
