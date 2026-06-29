@@ -61,6 +61,12 @@ definitions:
         items:
           type: string
         type: array
+      session_mode:
+        type: boolean
+      subject_claim:
+        type: string
+      userinfo_url:
+        type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_request.OIDCConfigRequest:
     properties:
@@ -183,6 +189,12 @@ definitions:
         items:
           type: string
         type: array
+      session_mode:
+        type: boolean
+      subject_claim:
+        type: string
+      userinfo_url:
+        type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.OIDCConfigResponse:
     properties:
@@ -1441,7 +1453,7 @@ definitions:
         type: string
       enum:
         items:
-          type: string
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_plugins.EnumOption'
         type: array
       key:
         type: string
@@ -1493,6 +1505,13 @@ definitions:
       type:
         type: string
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_app_plugins.EnumOption:
+    properties:
+      label:
+        type: string
+      value:
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_app_plugins.Field:
     properties:
       default: {}
@@ -1500,7 +1519,7 @@ definitions:
         type: string
       enum:
         items:
-          type: string
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_plugins.EnumOption'
         type: array
       fields:
         description: Fields lists the child fields of an object.
@@ -1862,8 +1881,12 @@ definitions:
         type: string
       is_flagged:
         type: boolean
+      kind:
+        type: string
       latency:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Latency'
+      mcp:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCP'
       occurred_on:
         type: integer
       policy_chain:
@@ -1907,6 +1930,39 @@ definitions:
         type: integer
       total_ms:
         type: integer
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCP:
+    properties:
+      catalog_code:
+        type: string
+      host:
+        type: string
+      method:
+        type: string
+      operation:
+        type: string
+      prompt:
+        type: string
+      registry_id:
+        type: string
+      resource_uri:
+        type: string
+      rpc_error_code:
+        type: integer
+      server_name:
+        type: string
+      targets:
+        type: integer
+      tool:
+        type: string
+      transport:
+        type: string
+      upstream_latency_ms:
+        type: integer
+      upstream_status:
+        type: string
+      upstream_tool:
+        type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.PolicyEntry:
     properties:
@@ -3945,7 +4001,8 @@ paths:
       - roles
   /v1/gateways/{id}:
     delete:
-      description: Deletes a gateway. Fails if it still has dependent resources.
+      description: Deletes a gateway and cascades the deletion to every resource that
+        belongs to it (consumers, roles, policies, auths, registries and vault credentials).
       parameters:
       - description: Gateway id
         format: uuid
@@ -3968,10 +4025,6 @@ paths:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
         "404":
           description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
-        "409":
-          description: Conflict
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
       security:
