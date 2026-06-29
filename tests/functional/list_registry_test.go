@@ -15,7 +15,7 @@ import (
 
 func TestListBackends_Pagination(t *testing.T) {
 	defer Track(t, "ListRegistry")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-list-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("be-list-gw")})
 	prefix := uniqueName("be-list-page")
 	created := make([]string, 0, 3)
 	for i := 0; i < 3; i++ {
@@ -51,7 +51,7 @@ func TestListBackends_Pagination(t *testing.T) {
 
 func TestListBackends_FilterByName(t *testing.T) {
 	defer Track(t, "ListRegistry")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-list-filter-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("be-list-filter-gw")})
 	uniq := uniqueName("be-list-needle")
 	id := CreateRegistry(t, gwID, validRegistryPayload(uniq))
 
@@ -71,8 +71,8 @@ func TestListBackends_FilterByName(t *testing.T) {
 
 func TestListBackends_ScopedByGateway(t *testing.T) {
 	defer Track(t, "ListRegistry")()
-	gwA := CreateGateway(t, map[string]any{"name": uniqueName("be-scope-a")})
-	gwB := CreateGateway(t, map[string]any{"name": uniqueName("be-scope-b")})
+	gwA := CreateGateway(t, map[string]any{"slug": uniqueName("be-scope-a")})
+	gwB := CreateGateway(t, map[string]any{"slug": uniqueName("be-scope-b")})
 
 	idA := CreateRegistry(t, gwA, validRegistryPayload(uniqueName("be-scope-be-a")))
 	idB := CreateRegistry(t, gwB, validRegistryPayload(uniqueName("be-scope-be-b")))
@@ -99,7 +99,7 @@ func TestListBackends_ScopedByGateway(t *testing.T) {
 
 func TestListBackends_InvalidPagination(t *testing.T) {
 	defer Track(t, "ListRegistry")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-list-badpage-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("be-list-badpage-gw")})
 
 	status, body := sendRequest(t, http.MethodGet,
 		fmt.Sprintf("%s/v1/gateways/%s/registries?page=-1", AdminURL, gwID),

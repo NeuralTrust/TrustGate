@@ -14,7 +14,7 @@ import (
 
 func TestGetRegistry_Success(t *testing.T) {
 	defer Track(t, "GetRegistry")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-get-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("be-get-gw")})
 	name := uniqueName("be-get-ok")
 	beID := CreateRegistry(t, gwID, validRegistryPayload(name))
 
@@ -31,7 +31,7 @@ func TestGetRegistry_Success(t *testing.T) {
 
 func TestGetRegistry_NotFound(t *testing.T) {
 	defer Track(t, "GetRegistry")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-get-notfound-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("be-get-notfound-gw")})
 	missing := uuid.NewString()
 
 	status, body := sendRequest(t, http.MethodGet,
@@ -54,7 +54,7 @@ func TestGetRegistry_InvalidGatewayUUID(t *testing.T) {
 
 func TestGetRegistry_InvalidRegistryUUID(t *testing.T) {
 	defer Track(t, "GetRegistry")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-get-baduuid-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("be-get-baduuid-gw")})
 
 	status, body := sendRequest(t, http.MethodGet,
 		fmt.Sprintf("%s/v1/gateways/%s/registries/not-a-uuid", AdminURL, gwID),

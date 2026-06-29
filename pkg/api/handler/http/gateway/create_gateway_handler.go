@@ -58,7 +58,6 @@ func (h *CreateGatewayHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	g, err := h.creator.Create(c.UserContext(), appgateway.CreateInput{
-		Name:            req.Name,
 		Slug:            req.Slug,
 		Domain:          req.Domain,
 		Metadata:        req.Metadata,

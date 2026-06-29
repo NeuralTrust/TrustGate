@@ -39,7 +39,7 @@ func NewListGatewayHandler(finder appgateway.Finder, baseDomain, mcpBaseDomain s
 // @Tags         gateways
 // @Produce      json
 // @Security     BearerAuth
-// @Param        name  query     string  false  "Filter by name (substring match)"
+// @Param        slug  query     string  false  "Filter by slug (substring match)"
 // @Param        page  query     int     false  "Page number (1-based)"
 // @Param        size  query     int     false  "Page size"
 // @Success      200   {object}  response.ListGatewayResponse
@@ -56,13 +56,13 @@ func (h *ListGatewayHandler) Handle(c *fiber.Ctx) error {
 		return helpers.WriteError(c, err)
 	}
 	req := request.ListGatewayRequest{
-		Name: c.Query("name"),
+		Slug: c.Query("slug"),
 		Page: page,
 		Size: size,
 	}
 
 	items, total, err := h.finder.List(c.UserContext(), domain.ListFilter{
-		NameContains: req.Name,
+		SlugContains: req.Slug,
 		Page:         req.Page,
 		Size:         req.Size,
 	})

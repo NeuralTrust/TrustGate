@@ -14,7 +14,7 @@ import (
 
 func TestUpdatePolicy_Success(t *testing.T) {
 	defer Track(t, "UpdatePolicy")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("polu-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("polu-gw")})
 
 	original := uniqueName("polu-from")
 	id := CreatePolicy(t, gwID, validPolicyPayload(original))
@@ -43,7 +43,7 @@ func TestUpdatePolicy_Success(t *testing.T) {
 
 func TestUpdatePolicy_Partial(t *testing.T) {
 	defer Track(t, "UpdatePolicy")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("polu-partial-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("polu-partial-gw")})
 	id := CreatePolicy(t, gwID, validPolicyPayload(uniqueName("polu-partial")))
 
 	renamed := uniqueName("polu-partial-to")
@@ -62,7 +62,7 @@ func TestUpdatePolicy_Partial(t *testing.T) {
 
 func TestUpdatePolicy_NotFound(t *testing.T) {
 	defer Track(t, "UpdatePolicy")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("polu-gw2")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("polu-gw2")})
 	missing := uuid.NewString()
 	url := fmt.Sprintf("%s/v1/gateways/%s/policies/%s", AdminURL, gwID, missing)
 	status, body := sendRequest(t, http.MethodPut, url, nil, validPolicyPayload(uniqueName("polu-missing")))
@@ -72,7 +72,7 @@ func TestUpdatePolicy_NotFound(t *testing.T) {
 
 func TestUpdatePolicy_ValidationEmptyName(t *testing.T) {
 	defer Track(t, "UpdatePolicy")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("polu-gw3")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("polu-gw3")})
 	id := CreatePolicy(t, gwID, validPolicyPayload(uniqueName("polu-val")))
 
 	url := fmt.Sprintf("%s/v1/gateways/%s/policies/%s", AdminURL, gwID, id)
@@ -83,7 +83,7 @@ func TestUpdatePolicy_ValidationEmptyName(t *testing.T) {
 
 func TestUpdatePolicy_NameConflict(t *testing.T) {
 	defer Track(t, "UpdatePolicy")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("polu-gw4")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("polu-gw4")})
 	a := uniqueName("polu-a")
 	b := uniqueName("polu-b")
 	_ = CreatePolicy(t, gwID, validPolicyPayload(a))

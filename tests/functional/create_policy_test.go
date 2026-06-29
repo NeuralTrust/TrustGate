@@ -14,7 +14,7 @@ import (
 
 func TestCreatePolicy_Success(t *testing.T) {
 	defer Track(t, "CreatePolicy")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("pol-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("pol-gw")})
 
 	name := uniqueName("pol-ok")
 	url := fmt.Sprintf("%s/v1/gateways/%s/policies", AdminURL, gwID)
@@ -33,7 +33,7 @@ func TestCreatePolicy_Success(t *testing.T) {
 
 func TestCreatePolicy_WithDescription(t *testing.T) {
 	defer Track(t, "CreatePolicy")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("pol-gw-desc")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("pol-gw-desc")})
 
 	name := uniqueName("pol-desc")
 	payload := validPolicyPayload(name)
@@ -48,7 +48,7 @@ func TestCreatePolicy_WithDescription(t *testing.T) {
 
 func TestCreatePolicy_ValidationMissingSlug(t *testing.T) {
 	defer Track(t, "CreatePolicy")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("pol-gw2")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("pol-gw2")})
 
 	url := fmt.Sprintf("%s/v1/gateways/%s/policies", AdminURL, gwID)
 	status, body := sendRequest(t, http.MethodPost, url, nil, map[string]any{
@@ -60,7 +60,7 @@ func TestCreatePolicy_ValidationMissingSlug(t *testing.T) {
 
 func TestCreatePolicy_Conflict(t *testing.T) {
 	defer Track(t, "CreatePolicy")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("pol-gw3")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("pol-gw3")})
 	name := uniqueName("pol-dup")
 	_ = CreatePolicy(t, gwID, validPolicyPayload(name))
 
@@ -72,8 +72,8 @@ func TestCreatePolicy_Conflict(t *testing.T) {
 
 func TestCreatePolicy_AllowsSameNameAcrossGateways(t *testing.T) {
 	defer Track(t, "CreatePolicy")()
-	gw1 := CreateGateway(t, map[string]any{"name": uniqueName("pol-gwA")})
-	gw2 := CreateGateway(t, map[string]any{"name": uniqueName("pol-gwB")})
+	gw1 := CreateGateway(t, map[string]any{"slug": uniqueName("pol-gwA")})
+	gw2 := CreateGateway(t, map[string]any{"slug": uniqueName("pol-gwB")})
 
 	name := uniqueName("pol-cross")
 	_ = CreatePolicy(t, gw1, validPolicyPayload(name))
@@ -85,7 +85,7 @@ func TestCreatePolicy_AllowsSameNameAcrossGateways(t *testing.T) {
 
 func TestCreatePolicy_ValidationEmptyName(t *testing.T) {
 	defer Track(t, "CreatePolicy")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("pol-gw4")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("pol-gw4")})
 
 	url := fmt.Sprintf("%s/v1/gateways/%s/policies", AdminURL, gwID)
 	status, body := sendRequest(t, http.MethodPost, url, nil, map[string]any{"name": ""})
@@ -95,7 +95,7 @@ func TestCreatePolicy_ValidationEmptyName(t *testing.T) {
 
 func TestCreatePolicy_ValidationUnknownStage(t *testing.T) {
 	defer Track(t, "CreatePolicy")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("pol-gw5")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("pol-gw5")})
 
 	payload := map[string]any{
 		"name":   uniqueName("pol-stage"),

@@ -14,7 +14,7 @@ import (
 
 func TestDeleteConsumer_Success(t *testing.T) {
 	defer Track(t, "DeleteConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-del-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-del-gw")})
 	coID := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("co-del-ok")))
 
 	status, _ := sendRequest(t, http.MethodDelete,
@@ -33,7 +33,7 @@ func TestDeleteConsumer_Success(t *testing.T) {
 
 func TestDeleteConsumer_NotFound(t *testing.T) {
 	defer Track(t, "DeleteConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-del-notfound-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-del-notfound-gw")})
 	missing := uuid.NewString()
 
 	status, body := sendRequest(t, http.MethodDelete,
@@ -56,7 +56,7 @@ func TestDeleteConsumer_InvalidGatewayUUID(t *testing.T) {
 
 func TestDeleteConsumer_InvalidConsumerUUID(t *testing.T) {
 	defer Track(t, "DeleteConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-del-baduuid-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-del-baduuid-gw")})
 
 	status, body := sendRequest(t, http.MethodDelete,
 		fmt.Sprintf("%s/v1/gateways/%s/consumers/not-a-uuid", AdminURL, gwID),
@@ -68,7 +68,7 @@ func TestDeleteConsumer_InvalidConsumerUUID(t *testing.T) {
 
 func TestDeleteGateway_CascadesConsumers(t *testing.T) {
 	defer Track(t, "DeleteConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-del-gw-cascade")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-del-gw-cascade")})
 	coID := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("co-del-gw-cascade-co")))
 
 	status, body := sendRequest(t, http.MethodDelete,
@@ -86,7 +86,7 @@ func TestDeleteGateway_CascadesConsumers(t *testing.T) {
 
 func TestDeleteRegistry_CascadesInlineConsumerBinding(t *testing.T) {
 	defer Track(t, "DeleteConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-del-be-ref-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-del-be-ref-gw")})
 	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-del-be-ref-be")))
 	coID := CreateConsumerWithRegistries(t, gwID, uniqueName("co-del-be-ref"), beID)
 

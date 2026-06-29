@@ -48,7 +48,7 @@ func mintPlaygroundToken(t *testing.T, consumerSlug string) string {
 // upstream so the test can drive a playground request end-to-end.
 func setupPlaygroundRoute(t *testing.T) (gatewaySlug, consumerSlug, path string, up *fakeUpstream) {
 	t.Helper()
-	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("pg-gw")})
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("pg-gw")})
 	host, ok := gatewayHosts.Load(gatewayID)
 	require.True(t, ok, "gateway host missing for %s", gatewayID)
 	gatewaySlug = strings.TrimSuffix(host.(string), "."+functionalGatewayBaseDomain)

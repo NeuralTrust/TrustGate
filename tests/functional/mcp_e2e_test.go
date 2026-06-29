@@ -216,7 +216,7 @@ func UpdateRole(t *testing.T, gatewayID, roleID string, payload map[string]any) 
 
 func TestMCPServer_RejectsUnauthenticatedRequests(t *testing.T) {
 	upstream := startMCPUpstream(t, func(s *sdk.Server) { addTool(s, "echo") })
-	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("mcp-gw")})
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
 	registryID := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-reg"), upstream.URL))
 	consumerID, _ := createMCPConsumer(t, gatewayID, []string{registryID}, nil, "")
 
@@ -226,7 +226,7 @@ func TestMCPServer_RejectsUnauthenticatedRequests(t *testing.T) {
 
 func TestMCPServer_InitializePingAndNotification(t *testing.T) {
 	upstream := startMCPUpstream(t, func(s *sdk.Server) { addTool(s, "echo") })
-	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("mcp-gw")})
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
 	registryID := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-reg"), upstream.URL))
 	consumerID, key := createMCPConsumer(t, gatewayID, []string{registryID}, nil, "")
 
@@ -252,7 +252,7 @@ func TestMCPServer_ToolsListAndCallWithFullAccess(t *testing.T) {
 		addTool(s, "echo")
 		addTool(s, "search")
 	})
-	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("mcp-gw")})
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
 	registryID := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-reg"), upstream.URL))
 	consumerID, key := createMCPConsumer(t, gatewayID, []string{registryID}, nil, "")
 
@@ -273,7 +273,7 @@ func TestMCPServer_ToolkitFiltersAndAliasesTools(t *testing.T) {
 		addTool(s, "echo")
 		addTool(s, "secret")
 	})
-	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("mcp-gw")})
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
 	registryID := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-reg"), upstream.URL))
 	consumerID, key := createMCPConsumer(t, gatewayID, []string{registryID},
 		[]map[string]any{{"registry_id": registryID, "tool": "echo", "expose_as": "alias-echo"}}, "")
@@ -301,7 +301,7 @@ func TestMCPServer_PromptsAndResources(t *testing.T) {
 		addReadmeResource(s, "file:///docs/readme", "hello-docs")
 		addReadmeResource(s, "file:///private/keys", "top-secret")
 	})
-	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("mcp-gw")})
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
 	registryID := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-reg"), upstream.URL))
 	consumerID, key := createMCPConsumer(t, gatewayID, []string{registryID},
 		[]map[string]any{
@@ -340,7 +340,7 @@ func TestMCPServer_PromptsAndResources(t *testing.T) {
 
 func TestMCPServer_FailModeClosedRejectsWhenUpstreamIsDown(t *testing.T) {
 	upstream := startMCPUpstream(t, func(s *sdk.Server) { addTool(s, "echo") })
-	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("mcp-gw")})
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
 	liveRegistry := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-live"), upstream.URL))
 	deadRegistry := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-dead"), "http://127.0.0.1:1/mcp"))
 	consumerID, key := createMCPConsumer(t, gatewayID, []string{liveRegistry, deadRegistry}, nil, "closed")
@@ -351,7 +351,7 @@ func TestMCPServer_FailModeClosedRejectsWhenUpstreamIsDown(t *testing.T) {
 
 func TestMCPServer_FailModeOpenSkipsDeadUpstream(t *testing.T) {
 	upstream := startMCPUpstream(t, func(s *sdk.Server) { addTool(s, "echo") })
-	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("mcp-gw")})
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
 	liveRegistry := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-live"), upstream.URL))
 	deadRegistry := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-dead"), "http://127.0.0.1:1/mcp"))
 	consumerID, key := createMCPConsumer(t, gatewayID, []string{liveRegistry, deadRegistry}, nil, "open")
@@ -363,7 +363,7 @@ func TestMCPServer_FailModeOpenSkipsDeadUpstream(t *testing.T) {
 
 func TestMCPServer_CredentialOfAnotherConsumerIsRejected(t *testing.T) {
 	upstream := startMCPUpstream(t, func(s *sdk.Server) { addTool(s, "echo") })
-	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("mcp-gw")})
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
 	registryID := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-reg"), upstream.URL))
 	victimID, _ := createMCPConsumer(t, gatewayID, []string{registryID}, nil, "")
 	_, intruderKey := createMCPConsumer(t, gatewayID, []string{registryID}, nil, "")
@@ -374,7 +374,7 @@ func TestMCPServer_CredentialOfAnotherConsumerIsRejected(t *testing.T) {
 
 func TestMCPServer_UnknownMethodAndMalformedBody(t *testing.T) {
 	upstream := startMCPUpstream(t, func(s *sdk.Server) { addTool(s, "echo") })
-	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("mcp-gw")})
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
 	registryID := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-reg"), upstream.URL))
 	consumerID, key := createMCPConsumer(t, gatewayID, []string{registryID}, nil, "")
 
@@ -445,7 +445,7 @@ func TestMCPServer_RoleBasedConsumerAppliesRoleMCPPolicies(t *testing.T) {
 	stub := newMCPIDPStub(t)
 	audience := "mcp-" + strings.ToLower(uniqueName("aud"))
 
-	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("mcp-gw")})
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
 	registryID := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-reg"), upstream.URL))
 
 	roleID := CreateRole(t, gatewayID, map[string]any{
@@ -511,7 +511,7 @@ func TestMCPServer_RoleBasedConsumerEmptyToolkitDeniesAll(t *testing.T) {
 	stub := newMCPIDPStub(t)
 	audience := "mcp-" + strings.ToLower(uniqueName("aud"))
 
-	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("mcp-gw")})
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
 	registryID := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-reg"), upstream.URL))
 
 	roleID := CreateRole(t, gatewayID, map[string]any{
@@ -563,7 +563,7 @@ func TestMCPServer_RoleBasedConsumerRejectsIdentityWithoutMatchingRole(t *testin
 	stub := newMCPIDPStub(t)
 	audience := "mcp-" + strings.ToLower(uniqueName("aud"))
 
-	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("mcp-gw")})
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
 	registryID := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-reg"), upstream.URL))
 
 	roleID := CreateRole(t, gatewayID, map[string]any{
@@ -620,7 +620,7 @@ func TestMCPServer_RoleBasedConsumerMergesMultipleRoles(t *testing.T) {
 	stub := newMCPIDPStub(t)
 	audience := "mcp-" + strings.ToLower(uniqueName("aud"))
 
-	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("mcp-gw")})
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
 	registryA := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-reg-a"), upstreamA.URL))
 	registryB := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-reg-b"), upstreamB.URL))
 

@@ -40,7 +40,7 @@ func TestInvalidateGatewayDataEventSubscriber_OnEvent_EvictsGatewayScopedEntries
 	gatewayID := id.String()
 	otherID := ids.New[ids.GatewayKind]().String()
 	now := time.Now().UTC()
-	gw := gatewaydomain.RehydrateWithSlug(id, "Gateway", "acme", "active", nil, nil, nil, now, now)
+	gw := gatewaydomain.Rehydrate(id, "acme", "active", "", nil, nil, nil, now, now)
 
 	gatewayMap := cache.NewTTLMap(cache.GatewayCacheTTL)
 	consumerMap := cache.NewTTLMap(cache.ConsumerCacheTTL)

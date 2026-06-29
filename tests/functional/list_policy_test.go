@@ -14,7 +14,7 @@ import (
 
 func TestListPolicies_Pagination(t *testing.T) {
 	defer Track(t, "ListPolicy")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("poll-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("poll-gw")})
 
 	prefix := uniqueName("poll-page")
 	created := make([]string, 0, 3)
@@ -51,8 +51,8 @@ func TestListPolicies_Pagination(t *testing.T) {
 
 func TestListPolicies_ScopedToGateway(t *testing.T) {
 	defer Track(t, "ListPolicy")()
-	gw1 := CreateGateway(t, map[string]any{"name": uniqueName("poll-gw1")})
-	gw2 := CreateGateway(t, map[string]any{"name": uniqueName("poll-gw2")})
+	gw1 := CreateGateway(t, map[string]any{"slug": uniqueName("poll-gw1")})
+	gw2 := CreateGateway(t, map[string]any{"slug": uniqueName("poll-gw2")})
 
 	_ = CreatePolicy(t, gw1, validPolicyPayload(uniqueName("poll-g1a")))
 	_ = CreatePolicy(t, gw1, validPolicyPayload(uniqueName("poll-g1b")))
@@ -74,7 +74,7 @@ func TestListPolicies_ScopedToGateway(t *testing.T) {
 
 func TestListPolicies_FilterByName(t *testing.T) {
 	defer Track(t, "ListPolicy")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("poll-gw3")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("poll-gw3")})
 
 	uniq := uniqueName("poll-needle")
 	id := CreatePolicy(t, gwID, validPolicyPayload(uniq))
@@ -95,7 +95,7 @@ func TestListPolicies_FilterByName(t *testing.T) {
 
 func TestListPolicies_InvalidPagination(t *testing.T) {
 	defer Track(t, "ListPolicy")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("poll-gw4")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("poll-gw4")})
 	status, body := sendRequest(t, http.MethodGet,
 		fmt.Sprintf("%s/v1/gateways/%s/policies?page=-1", AdminURL, gwID),
 		nil, nil,

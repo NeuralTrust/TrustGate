@@ -450,7 +450,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"my-gateway-{{$guid}}\",\n  \"slug\": \"team-a-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+              "raw": "{\n  \"slug\": \"team-a-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways",
@@ -462,7 +462,7 @@
                 "gateways"
               ]
             },
-            "description": "Optional `slug` (lowercase DNS label) identifies the gateway on the proxy plane: `X-AG-Gateway-Slug` header (GATEWAY_DISCOVERY_MODE=header, default) or `{slug}.<GATEWAY_BASE_DOMAIN>` host (subdomain mode). Omitted slugs are derived from the name."
+            "description": "Required `slug` (lowercase DNS label) identifies the gateway on the proxy plane: `X-AG-Gateway-Slug` header (GATEWAY_DISCOVERY_MODE=header, default) or `{slug}.<GATEWAY_BASE_DOMAIN>` host (subdomain mode). Required `slug` (lowercase DNS label) is the gateway identifier on the proxy plane."
           }
         },
         {
@@ -489,7 +489,7 @@
                   "value": "20"
                 },
                 {
-                  "key": "name",
+                  "key": "slug",
                   "value": "",
                   "disabled": true
                 }
@@ -527,7 +527,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"my-gateway\",\n  \"status\": \"active\"\n}"
+              "raw": "{\n  \"status\": \"active\"\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}",
@@ -2115,7 +2115,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"e2e-gateway-{{$guid}}\",\n  \"slug\": \"team-a-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+              "raw": "{\n  \"slug\": \"team-a-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways",
@@ -2127,7 +2127,7 @@
                 "gateways"
               ]
             },
-            "description": "Optional `slug` (lowercase DNS label) identifies the gateway on the proxy plane: `X-AG-Gateway-Slug` header (GATEWAY_DISCOVERY_MODE=header, default) or `{slug}.<GATEWAY_BASE_DOMAIN>` host (subdomain mode). Omitted slugs are derived from the name."
+            "description": "Required `slug` (lowercase DNS label) identifies the gateway on the proxy plane: `X-AG-Gateway-Slug` header (GATEWAY_DISCOVERY_MODE=header, default) or `{slug}.<GATEWAY_BASE_DOMAIN>` host (subdomain mode). Required `slug` (lowercase DNS label) is the gateway identifier on the proxy plane."
           }
         },
         {
@@ -2880,7 +2880,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"e2e-gateway-{{$guid}}\",\n  \"slug\": \"team-a-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+              "raw": "{\n  \"slug\": \"team-a-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways",
@@ -3217,7 +3217,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"e2e-gateway-{{$guid}}\",\n  \"slug\": \"team-a-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+              "raw": "{\n  \"slug\": \"team-a-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways",
@@ -7508,7 +7508,7 @@
                   "script": {
                     "exec": [
                       "const gateways = pm.response.json();",
-                      "console.log('Existing gateways:', gateways.map(g => g.id + ' (' + g.name + ')'));",
+                      "console.log('Existing gateways:', gateways.map(g => g.id + ' (' + g.slug + ')'));",
                       "console.log('Multiple gateways may share an IdP, but no two ENABLED oauth2 auths may cover the same (issuer, audience) pair - the admin API rejects that with 409.');",
                       "console.log('If an old gateway still has an enabled oauth2 auth with the same Entra issuer AND audience, delete it (or scope it with a different audience) before running an Entra flow.');"
                     ],
@@ -9696,7 +9696,7 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                      "pm.test('model was downgraded', () => pm.response.headers.get('X-NeuralTrust-Model-Downgraded') === 'gpt-4o→gpt-4o-mini');",
+                      "pm.test('model was downgraded', () => pm.response.headers.get('X-NeuralTrust-Model-Downgraded') === 'gpt-4o\u2192gpt-4o-mini');",
                       "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
                     ]
                   }
@@ -9737,7 +9737,7 @@
                     "completions"
                   ]
                 },
-                "description": "Same over-ceiling `gpt-4o` request as step 9, but the cost cap is now in `downgrade` mode, so the plugin rewrites the outbound model to `gpt-4o-mini`, emits `X-NeuralTrust-Model-Downgraded: gpt-4o→gpt-4o-mini`, and the request succeeds against OpenAI."
+                "description": "Same over-ceiling `gpt-4o` request as step 9, but the cost cap is now in `downgrade` mode, so the plugin rewrites the outbound model to `gpt-4o-mini`, emits `X-NeuralTrust-Model-Downgraded: gpt-4o\u2192gpt-4o-mini`, and the request succeeds against OpenAI."
               }
             },
             {

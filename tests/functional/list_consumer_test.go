@@ -15,7 +15,7 @@ import (
 
 func TestListConsumers_Pagination(t *testing.T) {
 	defer Track(t, "ListConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-list-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-list-gw")})
 	prefix := uniqueName("co-list-page")
 	created := make([]string, 0, 3)
 	for i := 0; i < 3; i++ {
@@ -50,7 +50,7 @@ func TestListConsumers_Pagination(t *testing.T) {
 
 func TestListConsumers_FilterByName(t *testing.T) {
 	defer Track(t, "ListConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-list-filter-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-list-filter-gw")})
 	uniq := uniqueName("co-list-needle")
 	id := CreateConsumer(t, gwID, validConsumerPayload(uniq))
 
@@ -70,8 +70,8 @@ func TestListConsumers_FilterByName(t *testing.T) {
 
 func TestListConsumers_ScopedByGateway(t *testing.T) {
 	defer Track(t, "ListConsumer")()
-	gwA := CreateGateway(t, map[string]any{"name": uniqueName("co-scope-a")})
-	gwB := CreateGateway(t, map[string]any{"name": uniqueName("co-scope-b")})
+	gwA := CreateGateway(t, map[string]any{"slug": uniqueName("co-scope-a")})
+	gwB := CreateGateway(t, map[string]any{"slug": uniqueName("co-scope-b")})
 
 	idA := CreateConsumer(t, gwA, validConsumerPayload(uniqueName("co-scope-co-a")))
 	idB := CreateConsumer(t, gwB, validConsumerPayload(uniqueName("co-scope-co-b")))
@@ -98,7 +98,7 @@ func TestListConsumers_ScopedByGateway(t *testing.T) {
 
 func TestListConsumers_InvalidPagination(t *testing.T) {
 	defer Track(t, "ListConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-list-badpage-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-list-badpage-gw")})
 
 	status, body := sendRequest(t, http.MethodGet,
 		fmt.Sprintf("%s/v1/gateways/%s/consumers?page=-1", AdminURL, gwID),

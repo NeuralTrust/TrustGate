@@ -14,7 +14,7 @@ import (
 
 func TestCreateAuth_Success_GeneratesKey(t *testing.T) {
 	defer Track(t, "CreateAuth")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-create")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("auth-create")})
 	name := uniqueName("api-key")
 
 	status, body := sendRequest(t, http.MethodPost,
@@ -41,7 +41,7 @@ func TestCreateAuth_Success_GeneratesKey(t *testing.T) {
 
 func TestCreateAuth_OAuth2(t *testing.T) {
 	defer Track(t, "CreateAuth")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-oauth")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("auth-oauth")})
 	name := uniqueName("oauth")
 
 	status, body := sendRequest(t, http.MethodPost,
@@ -69,7 +69,7 @@ func TestCreateAuth_OAuth2(t *testing.T) {
 
 func TestCreateAuth_OAuth2RequiresAudiences(t *testing.T) {
 	defer Track(t, "CreateAuth")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-oauth-aud")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("auth-oauth-aud")})
 
 	status, body := sendRequest(t, http.MethodPost,
 		fmt.Sprintf("%s/v1/gateways/%s/auths", AdminURL, gwID), nil,
@@ -90,7 +90,7 @@ func TestCreateAuth_OAuth2RequiresAudiences(t *testing.T) {
 
 func TestCreateAuth_Conflict(t *testing.T) {
 	defer Track(t, "CreateAuth")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-dup")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("auth-dup")})
 	name := uniqueName("api-key")
 	_ = CreateAuth(t, gwID, validAuthPayload(name))
 
@@ -104,7 +104,7 @@ func TestCreateAuth_Conflict(t *testing.T) {
 
 func TestCreateAuth_InvalidType(t *testing.T) {
 	defer Track(t, "CreateAuth")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-val")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("auth-val")})
 
 	status, body := sendRequest(t, http.MethodPost,
 		fmt.Sprintf("%s/v1/gateways/%s/auths", AdminURL, gwID), nil,
@@ -116,7 +116,7 @@ func TestCreateAuth_InvalidType(t *testing.T) {
 
 func TestCreateAuth_ValidationEmptyName(t *testing.T) {
 	defer Track(t, "CreateAuth")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-noname")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("auth-noname")})
 
 	payload := validAuthPayload("")
 	status, body := sendRequest(t, http.MethodPost,

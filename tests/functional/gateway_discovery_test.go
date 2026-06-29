@@ -19,7 +19,7 @@ const gatewaySlugHeader = "X-AG-Gateway-Slug"
 
 func setupDiscoveryRoute(t *testing.T) (slug, apiKey, path string) {
 	t.Helper()
-	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("disc-gw")})
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("disc-gw")})
 	host, ok := gatewayHosts.Load(gatewayID)
 	require.True(t, ok, "gateway host missing for %s", gatewayID)
 	slug = strings.TrimSuffix(host.(string), "."+functionalGatewayBaseDomain)

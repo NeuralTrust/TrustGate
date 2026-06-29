@@ -42,7 +42,7 @@ func TestUpdater_Update_Success(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
 	repo.EXPECT().
 		Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
-			return g.ID == id && g.Name == "new" && g.Status == "paused"
+			return g.ID == id && g.Slug == "new" && g.Status == "paused"
 		})).
 		Return(nil).
 		Once()
@@ -52,13 +52,13 @@ func TestUpdater_Update_Success(t *testing.T) {
 
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:     id,
-		Name:   ptr("new"),
+		Slug:   ptr("new"),
 		Status: ptr("paused"),
 	})
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
-	if got.Name != "new" || got.Status != "paused" {
+	if got.Slug != "new" || got.Status != "paused" {
 		t.Fatalf("unexpected gateway: %+v", got)
 	}
 
@@ -66,8 +66,8 @@ func TestUpdater_Update_Success(t *testing.T) {
 	if !ok {
 		t.Fatal("updated gateway was not refreshed in cache")
 	}
-	if cached.(*domain.Gateway).Name != "new" {
-		t.Fatal("cache holds stale name after update")
+	if cached.(*domain.Gateway).Slug != "new" {
+		t.Fatal("cache holds stale slug after update")
 	}
 }
 
@@ -76,7 +76,7 @@ func TestUpdater_UpdateSlug_InvalidatesOldSlugCache(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	id := ids.New[ids.GatewayKind]()
 	now := time.Now().UTC()
-	existing := domain.RehydrateWithSlug(id, "old", "old", "active", nil, nil, nil, now, now)
+	existing := domain.Rehydrate(id, "old", "active", "", nil, nil, nil, now, now)
 
 	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
 	repo.EXPECT().
@@ -117,7 +117,7 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger())
 	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
-		Name: ptr("x"),
+		Slug: ptr("x"),
 	})
 	if !errors.Is(err, commonerrors.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
@@ -134,7 +134,7 @@ func TestUpdater_Update_Partial_PreservesStatus(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
 	repo.EXPECT().
 		Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
-			return g.Name == "renamed" && g.Status == "paused"
+			return g.Slug == "renamed" && g.Status == "paused"
 		})).
 		Return(nil).
 		Once()
@@ -142,7 +142,7 @@ func TestUpdater_Update_Partial_PreservesStatus(t *testing.T) {
 	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger())
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
-		Name: ptr("renamed"),
+		Slug: ptr("renamed"),
 	})
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
@@ -152,7 +152,7 @@ func TestUpdater_Update_Partial_PreservesStatus(t *testing.T) {
 	}
 }
 
-func TestUpdater_Update_RejectsEmptyName(t *testing.T) {
+func TestUpdater_Update_RejectsEmptySlug(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	id := ids.New[ids.GatewayKind]()
@@ -160,12 +160,11 @@ func TestUpdater_Update_RejectsEmptyName(t *testing.T) {
 	existing := domain.Rehydrate(id, "old", "active", "", nil, nil, nil, now, now)
 
 	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
-	// repo.Update must not be called.
 
 	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger())
 	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
-		Name: ptr(""),
+		Slug: ptr(""),
 	})
 	if err == nil {
 		t.Fatal("expected validation error, got nil")

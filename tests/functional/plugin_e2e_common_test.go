@@ -56,7 +56,7 @@ const proxyAPIKeyHeader = "X-AG-API-Key"
 // against the proxy plane.
 func setupPolicyRoute(t *testing.T, up *fakeUpstream, pluginEntries ...map[string]any) (string, string) {
 	t.Helper()
-	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("plugin-gw")})
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("plugin-gw")})
 	backendID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be"), up.URL()))
 
 	policyIDs := make([]string, 0, len(pluginEntries))

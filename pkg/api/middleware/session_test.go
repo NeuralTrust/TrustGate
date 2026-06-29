@@ -77,7 +77,7 @@ func newSessionApp(t *testing.T, gw *domain.Gateway) (*fiber.App, *sessionCaptur
 }
 
 func gatewayWithSession(cfg *domain.SessionConfig) *domain.Gateway {
-	return &domain.Gateway{ID: ids.From[ids.GatewayKind](uuid.MustParse(testGatewayID)), Name: "gw", SessionConfig: cfg}
+	return &domain.Gateway{ID: ids.From[ids.GatewayKind](uuid.MustParse(testGatewayID)), Slug: "gw", SessionConfig: cfg}
 }
 
 func boolPtr(b bool) *bool { return &b }

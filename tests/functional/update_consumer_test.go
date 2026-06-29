@@ -14,7 +14,7 @@ import (
 
 func TestUpdateConsumer_Success(t *testing.T) {
 	defer Track(t, "UpdateConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-upd-gw")})
 	original := uniqueName("co-upd-from")
 	coID := CreateConsumer(t, gwID, validConsumerPayload(original))
 
@@ -42,7 +42,7 @@ func TestUpdateConsumer_Success(t *testing.T) {
 // link endpoints.
 func TestUpdateConsumer_PreservesAssociations(t *testing.T) {
 	defer Track(t, "UpdateConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-keep-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-upd-keep-gw")})
 	be1 := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-keep-be1")))
 	be2 := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-keep-be2")))
 	name := uniqueName("co-upd-keep")
@@ -66,7 +66,7 @@ func TestUpdateConsumer_PreservesAssociations(t *testing.T) {
 // policy through an update and asserts it is persisted and returned.
 func TestUpdateConsumer_SetsModelPolicies(t *testing.T) {
 	defer Track(t, "UpdateConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-mp-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-upd-mp-gw")})
 	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-mp-be")))
 	name := uniqueName("co-upd-mp")
 	coID := CreateConsumerWithRegistries(t, gwID, name, beID)
@@ -100,7 +100,7 @@ func TestUpdateConsumer_SetsModelPolicies(t *testing.T) {
 // policy can only reference a registry already attached to the consumer.
 func TestUpdateConsumer_RejectsModelPolicyForUnassociatedRegistry(t *testing.T) {
 	defer Track(t, "UpdateConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-mp-unassoc-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-upd-mp-unassoc-gw")})
 	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-mp-unassoc-be")))
 	name := uniqueName("co-upd-mp-unassoc")
 	coID := CreateConsumer(t, gwID, validConsumerPayload(name)) // registry NOT attached
@@ -119,7 +119,7 @@ func TestUpdateConsumer_RejectsModelPolicyForUnassociatedRegistry(t *testing.T) 
 
 func TestUpdateConsumer_Partial(t *testing.T) {
 	defer Track(t, "UpdateConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-partial-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-upd-partial-gw")})
 	name := uniqueName("co-upd-partial")
 	coID := CreateConsumer(t, gwID, validConsumerPayload(name))
 	expectedSlug := ConsumerSlug(t, coID)
@@ -138,7 +138,7 @@ func TestUpdateConsumer_Partial(t *testing.T) {
 
 func TestUpdateConsumer_Partial_EmptyTypePreservesExisting(t *testing.T) {
 	defer Track(t, "UpdateConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-empty-type-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-upd-empty-type-gw")})
 	name := uniqueName("co-upd-empty-type")
 	payload := validConsumerPayload(name)
 	payload["type"] = "MCP"
@@ -155,7 +155,7 @@ func TestUpdateConsumer_Partial_EmptyTypePreservesExisting(t *testing.T) {
 
 func TestUpdateConsumer_NotFound(t *testing.T) {
 	defer Track(t, "UpdateConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-missing-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-upd-missing-gw")})
 	missing := uuid.NewString()
 
 	status, body := sendRequest(t, http.MethodPut,
@@ -169,7 +169,7 @@ func TestUpdateConsumer_NotFound(t *testing.T) {
 
 func TestUpdateConsumer_ValidationEmptyName(t *testing.T) {
 	defer Track(t, "UpdateConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-val-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-upd-val-gw")})
 	coID := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("co-upd-val")))
 
 	status, body := sendRequest(t, http.MethodPut,
@@ -182,7 +182,7 @@ func TestUpdateConsumer_ValidationEmptyName(t *testing.T) {
 
 func TestUpdateConsumer_NameConflictSameGateway(t *testing.T) {
 	defer Track(t, "UpdateConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-conflict-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-upd-conflict-gw")})
 	a := uniqueName("co-upd-a")
 	b := uniqueName("co-upd-b")
 	_ = CreateConsumer(t, gwID, validConsumerPayload(a))
@@ -209,7 +209,7 @@ func TestUpdateConsumer_InvalidGatewayUUID(t *testing.T) {
 
 func TestUpdateConsumer_InvalidConsumerUUID(t *testing.T) {
 	defer Track(t, "UpdateConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-bad-co-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-upd-bad-co-gw")})
 
 	status, body := sendRequest(t, http.MethodPut,
 		fmt.Sprintf("%s/v1/gateways/%s/consumers/not-a-uuid", AdminURL, gwID),

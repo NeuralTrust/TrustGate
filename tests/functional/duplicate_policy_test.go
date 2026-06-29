@@ -20,7 +20,7 @@ func duplicatePolicy(t *testing.T, gatewayID, policyID string) (int, map[string]
 
 func TestDuplicatePolicy_Success(t *testing.T) {
 	defer Track(t, "DuplicatePolicy")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("dup-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("dup-gw")})
 	name := uniqueName("dup-src")
 	srcID := CreatePolicy(t, gwID, validPolicyPayload(name))
 
@@ -41,7 +41,7 @@ func TestDuplicatePolicy_Success(t *testing.T) {
 
 func TestDuplicatePolicy_DoesNotCopyGlobalOrConsumers(t *testing.T) {
 	defer Track(t, "DuplicatePolicy")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("dup-gw2")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("dup-gw2")})
 	name := uniqueName("dup-scoped")
 	srcID := CreatePolicy(t, gwID, validPolicyPayload(name))
 
@@ -58,7 +58,7 @@ func TestDuplicatePolicy_DoesNotCopyGlobalOrConsumers(t *testing.T) {
 
 func TestDuplicatePolicy_TwiceIncrementsSuffix(t *testing.T) {
 	defer Track(t, "DuplicatePolicy")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("dup-gw3")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("dup-gw3")})
 	name := uniqueName("dup-seq")
 	srcID := CreatePolicy(t, gwID, validPolicyPayload(name))
 
@@ -73,7 +73,7 @@ func TestDuplicatePolicy_TwiceIncrementsSuffix(t *testing.T) {
 
 func TestDuplicatePolicy_NotFound(t *testing.T) {
 	defer Track(t, "DuplicatePolicy")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("dup-gw4")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("dup-gw4")})
 	status, body := duplicatePolicy(t, gwID, uuid.NewString())
 	require.Equal(t, http.StatusNotFound, status, "body=%v", body)
 	assert.Equal(t, "not_found", body["error"])
@@ -81,7 +81,7 @@ func TestDuplicatePolicy_NotFound(t *testing.T) {
 
 func TestDuplicatePolicy_InvalidUUID(t *testing.T) {
 	defer Track(t, "DuplicatePolicy")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("dup-gw5")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("dup-gw5")})
 	url := fmt.Sprintf("%s/v1/gateways/%s/policies/not-a-uuid/duplicate", AdminURL, gwID)
 	status, body := sendRequest(t, http.MethodPost, url, nil, nil)
 	require.Equal(t, http.StatusBadRequest, status, "body=%v", body)

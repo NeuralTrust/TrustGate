@@ -14,13 +14,13 @@ import (
 
 func TestGetGateway_Success(t *testing.T) {
 	defer Track(t, "GetGateway")()
-	name := uniqueName("get-ok")
-	id := CreateGateway(t, map[string]any{"name": name})
+	slug := uniqueName("get-ok")
+	id := CreateGateway(t, map[string]any{"slug": slug})
 
 	status, body := sendRequest(t, http.MethodGet, fmt.Sprintf("%s/v1/gateways/%s", AdminURL, id), nil, nil)
 	require.Equal(t, http.StatusOK, status, "body=%v", body)
 	assert.Equal(t, id, body["id"])
-	assert.Equal(t, name, body["name"])
+	assert.Equal(t, slug, body["slug"])
 }
 
 func TestGetGateway_NotFound(t *testing.T) {
