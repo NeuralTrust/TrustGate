@@ -1125,12 +1125,12 @@ var pluginCatalogMeta = map[string]catalogMeta{
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
-					Key:         "inspect",
-					Label:       "Inspect",
+					Key:         "direction",
+					Label:       "Direction",
 					Type:        FieldTypeEnum,
 					Description: "Which legs to inspect: the request, the response, or both.",
 					Enum:        enumOptions("request", "response", "request_response"),
-					Default:     "request_response",
+					Default:     "request",
 				},
 				{
 					Key:         "base_url",
