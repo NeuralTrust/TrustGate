@@ -154,6 +154,22 @@ func fieldByKey(fields []Field, key string) (Field, bool) {
 	return Field{}, false
 }
 
+func enumValues(options []EnumOption) []string {
+	values := make([]string, len(options))
+	for i, o := range options {
+		values[i] = o.Value
+	}
+	return values
+}
+
+func enumLabels(options []EnumOption) []string {
+	labels := make([]string, len(options))
+	for i, o := range options {
+		labels[i] = o.Label
+	}
+	return labels
+}
+
 func TestTokenRateLimiterSchema_BudgetTree(t *testing.T) {
 	meta, ok := pluginCatalogMeta["token_rate_limiter"]
 	require.True(t, ok)
@@ -165,17 +181,19 @@ func TestTokenRateLimiterSchema_BudgetTree(t *testing.T) {
 	unit, ok := fieldByKey(fields, "unit")
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeEnum, unit.Type)
-	assert.Equal(t, []string{"tokens", "dollars"}, unit.Enum)
+	assert.Equal(t, []string{"tokens", "dollars"}, enumValues(unit.Enum))
+	assert.Equal(t, []string{"Tokens", "Dollars"}, enumLabels(unit.Enum))
 
 	counting, ok := fieldByKey(fields, "counting")
 	require.True(t, ok)
-	assert.Equal(t, []string{"total", "input", "output"}, counting.Enum)
+	assert.Equal(t, []string{"total", "input", "output"}, enumValues(counting.Enum))
 
 	behavior, ok := fieldByKey(fields, "behavior_on_exceeded")
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeEnum, behavior.Type)
-	assert.Equal(t, []string{"reject", "throttle", "downgrade_model", "alert_only"}, behavior.Enum)
-	assert.Contains(t, behavior.Enum, "alert_only")
+	assert.Equal(t, []string{"reject", "throttle", "downgrade_model", "alert_only"}, enumValues(behavior.Enum))
+	assert.Equal(t, []string{"Reject", "Throttle", "Downgrade Model", "Alert Only"}, enumLabels(behavior.Enum))
+	assert.Contains(t, enumValues(behavior.Enum), "alert_only")
 
 	for _, k := range []string{"downgrade_to", "stream_usage_injection", "count_cache_reads", "custom_pricing", "group_by_header"} {
 		_, ok := fieldByKey(fields, k)
@@ -245,11 +263,11 @@ func TestCostCapSchema(t *testing.T) {
 
 	behaviorOnViolation, ok := fieldByKey(fields, "behavior_on_violation")
 	require.True(t, ok)
-	assert.Equal(t, []string{"reject", "downgrade"}, behaviorOnViolation.Enum)
+	assert.Equal(t, []string{"reject", "downgrade"}, enumValues(behaviorOnViolation.Enum))
 
 	unknownModel, ok := fieldByKey(fields, "unknown_model")
 	require.True(t, ok)
-	assert.Equal(t, []string{"reject", "pass_through", "assume_max"}, unknownModel.Enum)
+	assert.Equal(t, []string{"reject", "pass_through", "assume_max"}, enumValues(unknownModel.Enum))
 
 	overrides, ok := fieldByKey(fields, "per_model_overrides")
 	require.True(t, ok)
@@ -321,7 +339,7 @@ func TestToolDefinitionTransformationSchema_Fields(t *testing.T) {
 	injectType, ok := fieldByKey(injectTools.Item.Fields, "type")
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeEnum, injectType.Type)
-	assert.Equal(t, []string{"function"}, injectType.Enum)
+	assert.Equal(t, []string{"function"}, enumValues(injectType.Enum))
 	assert.Equal(t, "function", injectType.Default)
 
 	function, ok := fieldByKey(injectTools.Item.Fields, "function")
@@ -341,13 +359,13 @@ func TestToolDefinitionTransformationSchema_Fields(t *testing.T) {
 	onConflict, ok := fieldByKey(fields, "on_conflict")
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeEnum, onConflict.Type)
-	assert.Equal(t, []string{"gateway_wins", "client_wins", "reject"}, onConflict.Enum)
+	assert.Equal(t, []string{"gateway_wins", "client_wins", "reject"}, enumValues(onConflict.Enum))
 	assert.Equal(t, "gateway_wins", onConflict.Default)
 
 	scope, ok := fieldByKey(fields, "scope")
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeEnum, scope.Type)
-	assert.Equal(t, []string{"consumer", "global"}, scope.Enum)
+	assert.Equal(t, []string{"consumer", "global"}, enumValues(scope.Enum))
 }
 
 func TestToolAllowlistSchema(t *testing.T) {
@@ -373,13 +391,13 @@ func TestToolAllowlistSchema(t *testing.T) {
 	onEmpty, ok := fieldByKey(fields, "on_empty_after_filter")
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeEnum, onEmpty.Type)
-	assert.Equal(t, []string{"reject", "pass_through_empty", "strip_tools_field"}, onEmpty.Enum)
+	assert.Equal(t, []string{"reject", "pass_through_empty", "strip_tools_field"}, enumValues(onEmpty.Enum))
 	assert.Equal(t, "reject", onEmpty.Default)
 
 	scope, ok := fieldByKey(fields, "scope")
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeEnum, scope.Type)
-	assert.Equal(t, []string{"consumer", "global"}, scope.Enum)
+	assert.Equal(t, []string{"consumer", "global"}, enumValues(scope.Enum))
 }
 
 func TestTrustGuardSchema(t *testing.T) {
@@ -394,16 +412,22 @@ func TestTrustGuardSchema(t *testing.T) {
 		t.Fatal("trustguard schema must not expose api_key; credentials live in the gateway .env")
 	}
 
-	inspect, ok := fieldByKey(fields, "inspect")
+	direction, ok := fieldByKey(fields, "direction")
 	require.True(t, ok)
-	assert.Equal(t, FieldTypeEnum, inspect.Type)
-	assert.Equal(t, []string{"request", "response", "request_response"}, inspect.Enum)
-	assert.Equal(t, "request_response", inspect.Default)
+	assert.Equal(t, FieldTypeEnum, direction.Type)
+	assert.Equal(t, []string{"request", "response", "request_response"}, enumValues(direction.Enum))
+	assert.Equal(t, []string{"Request", "Response", "Request & Response"}, enumLabels(direction.Enum))
+	assert.Equal(t, "request", direction.Default)
 
 	baseURL, ok := fieldByKey(fields, "base_url")
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeString, baseURL.Type)
 	assert.False(t, baseURL.Required)
+
+	collectorID, ok := fieldByKey(fields, "collector_id")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeString, collectorID.Type)
+	assert.True(t, collectorID.Required)
 }
 
 func TestAzureContentSafetySchema(t *testing.T) {
@@ -427,7 +451,8 @@ func TestAzureContentSafetySchema(t *testing.T) {
 	outputType, ok := fieldByKey(fields, "output_type")
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeEnum, outputType.Type)
-	assert.Equal(t, []string{"FourSeverityLevels", "EightSeverityLevels"}, outputType.Enum)
+	assert.Equal(t, []string{"FourSeverityLevels", "EightSeverityLevels"}, enumValues(outputType.Enum))
+	assert.Equal(t, []string{"Four Severity Levels", "Eight Severity Levels"}, enumLabels(outputType.Enum))
 	assert.Equal(t, "FourSeverityLevels", outputType.Default)
 	assert.False(t, outputType.Required)
 
@@ -437,7 +462,8 @@ func TestAzureContentSafetySchema(t *testing.T) {
 	assert.False(t, categories.Required)
 	require.NotNil(t, categories.Item)
 	assert.Equal(t, FieldTypeEnum, categories.Item.Type)
-	assert.Equal(t, []string{"Hate", "Violence", "SelfHarm", "Sexual"}, categories.Item.Enum)
+	assert.Equal(t, []string{"Hate", "Violence", "SelfHarm", "Sexual"}, enumValues(categories.Item.Enum))
+	assert.Equal(t, []string{"Hate", "Violence", "Self-Harm", "Sexual"}, enumLabels(categories.Item.Enum))
 
 	categorySeverity, ok := fieldByKey(fields, "category_severity")
 	require.True(t, ok)
@@ -463,19 +489,20 @@ func TestSemanticCacheSchema(t *testing.T) {
 	mode, ok := fieldByKey(fields, "mode")
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeEnum, mode.Type)
-	assert.Equal(t, []string{"exact", "semantic", "both"}, mode.Enum)
+	assert.Equal(t, []string{"exact", "semantic", "both"}, enumValues(mode.Enum))
 	assert.Equal(t, "semantic", mode.Default)
 
 	scope, ok := fieldByKey(fields, "scope")
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeEnum, scope.Type)
-	assert.Equal(t, []string{"consumer", "global"}, scope.Enum)
+	assert.Equal(t, []string{"consumer", "global"}, enumValues(scope.Enum))
 	assert.Equal(t, "consumer", scope.Default)
 
 	vectorStore, ok := fieldByKey(fields, "vector_store")
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeEnum, vectorStore.Type)
-	assert.Equal(t, []string{"redis", "pgvector", "in_memory"}, vectorStore.Enum)
+	assert.Equal(t, []string{"redis", "pgvector", "in_memory"}, enumValues(vectorStore.Enum))
+	assert.Equal(t, []string{"Redis", "pgvector", "In-Memory"}, enumLabels(vectorStore.Enum))
 	assert.Equal(t, "redis", vectorStore.Default)
 
 	ttlSeconds, ok := fieldByKey(fields, "ttl_seconds")
@@ -588,7 +615,7 @@ func TestPromptTemplateSchema_Tree(t *testing.T) {
 	engineField, ok := fieldByKey(fields, "template_engine")
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeEnum, engineField.Type)
-	assert.Equal(t, []string{"mustache", "jinja2_subset"}, engineField.Enum)
+	assert.Equal(t, []string{"mustache", "jinja2_subset"}, enumValues(engineField.Enum))
 	assert.Equal(t, "mustache", engineField.Default)
 
 	contextVars, ok := fieldByKey(fields, "context_variables")
@@ -598,7 +625,8 @@ func TestPromptTemplateSchema_Tree(t *testing.T) {
 	assert.Equal(t, FieldTypeObject, contextVars.Value.Type)
 	source, ok := fieldByKey(contextVars.Value.Fields, "source")
 	require.True(t, ok)
-	assert.Equal(t, []string{"header", "jwt_claim"}, source.Enum)
+	assert.Equal(t, []string{"header", "jwt_claim"}, enumValues(source.Enum))
+	assert.Equal(t, []string{"Header", "JWT Claim"}, enumLabels(source.Enum))
 	ctxName, ok := fieldByKey(contextVars.Value.Fields, "name")
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeString, ctxName.Type)
@@ -613,7 +641,7 @@ func TestPromptTemplateSchema_Tree(t *testing.T) {
 	}
 	onExisting, ok := fieldByKey(inject.Item.Fields, "on_existing_system")
 	require.True(t, ok)
-	assert.Equal(t, []string{"merge", "replace"}, onExisting.Enum)
+	assert.Equal(t, []string{"merge", "replace"}, enumValues(onExisting.Enum))
 
 	named, ok := fieldByKey(fields, "named_templates")
 	require.True(t, ok)
@@ -646,7 +674,7 @@ func TestPromptTemplateSchema_Tree(t *testing.T) {
 	assert.Equal(t, FieldTypeObject, requiredVars.Value.Type)
 	rvType, ok := fieldByKey(requiredVars.Value.Fields, "type")
 	require.True(t, ok)
-	assert.Equal(t, []string{"string", "number", "boolean"}, rvType.Enum)
+	assert.Equal(t, []string{"string", "number", "boolean"}, enumValues(rvType.Enum))
 
 	rvEnum, ok := fieldByKey(requiredVars.Value.Fields, "enum")
 	require.True(t, ok)
@@ -660,11 +688,11 @@ func TestPromptTemplateSchema_Tree(t *testing.T) {
 
 	onMissingContext, ok := fieldByKey(fields, "on_missing_context_variable")
 	require.True(t, ok)
-	assert.Equal(t, []string{"error", "empty_string", "skip_injection"}, onMissingContext.Enum)
+	assert.Equal(t, []string{"error", "empty_string", "skip_injection"}, enumValues(onMissingContext.Enum))
 
 	onMissingClient, ok := fieldByKey(fields, "on_missing_client_variable")
 	require.True(t, ok)
-	assert.Equal(t, []string{"error", "empty_string"}, onMissingClient.Enum)
+	assert.Equal(t, []string{"error", "empty_string"}, enumValues(onMissingClient.Enum))
 
 	for _, k := range []string{"allow_untemplated_requests", "default_label", "escape_json_control_chars"} {
 		_, ok := fieldByKey(fields, k)

@@ -20,6 +20,7 @@ import (
 	"iter"
 	"log/slog"
 	"net/http"
+	"net/textproto"
 	"time"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -209,11 +210,42 @@ func pluginErrorResult(pe *appplugins.PluginError) *ForwardResult {
 		}
 		body, _ = json.Marshal(payload)
 	}
+	headers := pe.Headers
+	if len(body) > 0 && !hasResponseHeader(headers, "Content-Type") {
+		headers = cloneResponseHeaders(headers)
+		headers["Content-Type"] = []string{"application/json"}
+	}
 	return &ForwardResult{
 		StatusCode: pe.StatusCode,
-		Headers:    pe.Headers,
+		Headers:    headers,
 		Body:       body,
 	}
+}
+
+func hasResponseHeader(headers map[string][]string, name string) bool {
+	if len(headers) == 0 {
+		return false
+	}
+	want := textproto.CanonicalMIMEHeaderKey(name)
+	for k := range headers {
+		if textproto.CanonicalMIMEHeaderKey(k) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func cloneResponseHeaders(headers map[string][]string) map[string][]string {
+	if len(headers) == 0 {
+		return map[string][]string{}
+	}
+	out := make(map[string][]string, len(headers))
+	for k, vs := range headers {
+		cp := make([]string, len(vs))
+		copy(cp, vs)
+		out[k] = cp
+	}
+	return out
 }
 
 func mergeProviderResponse(resp *infracontext.ResponseContext, provider *ProviderResponse, streaming bool) {

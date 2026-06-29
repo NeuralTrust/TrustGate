@@ -11,7 +11,7 @@ import (
 
 func setupIntentRoute(t *testing.T, up *fakeUpstream, allowed []string, defaultModel string) (string, string) {
 	t.Helper()
-	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("intent-gw")})
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("intent-gw")})
 	backendID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be"), up.URL()))
 	policy := map[string]any{"allowed": allowed}
 	if defaultModel != "" {
@@ -82,7 +82,7 @@ func TestRoutingIntent_PoolAlias(t *testing.T) {
 
 	setupPoolRoute := func(t *testing.T, memberA, memberB, outside *fakeUpstream) (string, string) {
 		t.Helper()
-		gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("pool-gw")})
+		gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("pool-gw")})
 		memberAID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-a"), memberA.URL()))
 		memberBID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-b"), memberB.URL()))
 		outsideID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-out"), outside.URL()))
@@ -156,7 +156,7 @@ func TestRoutingIntent_FallbackAuthorization(t *testing.T) {
 
 	setupCrossProviderFallback := func(t *testing.T, primary, fallback *fakeUpstream) (string, string) {
 		t.Helper()
-		gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("fbauth-gw")})
+		gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("fbauth-gw")})
 		primaryID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-primary"), primary.URL()))
 		fallbackID := CreateRegistry(t, gatewayID, openaiCompatibleBackendPayload(uniqueName("be-fallback"), fallback.URL()))
 		coID := CreateConsumer(t, gatewayID, map[string]any{
@@ -207,7 +207,7 @@ func TestRoutingIntent_PinVersusLB(t *testing.T) {
 	t.Run("qualified pin bypasses an enabled load balancer", func(t *testing.T) {
 		pinned := newJSONUpstream(t, "pinned-served")
 		other := newJSONUpstream(t, "lb-member-served")
-		gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("pinlb-gw")})
+		gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("pinlb-gw")})
 		pinnedID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-oai"), pinned.URL()))
 		otherID := CreateRegistry(t, gatewayID, openaiCompatibleBackendPayload(uniqueName("be-compat"), other.URL()))
 		coID := CreateConsumer(t, gatewayID, map[string]any{
@@ -243,7 +243,7 @@ func TestRoutingIntent_PinVersusLB(t *testing.T) {
 	t.Run("qualified pin never fails over, even to a same-provider chain", func(t *testing.T) {
 		primary := newFailingUpstream(t, http.StatusInternalServerError)
 		chain := newFailingUpstream(t, http.StatusServiceUnavailable)
-		gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("pinfb-gw")})
+		gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("pinfb-gw")})
 		primaryID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-primary"), primary.URL()))
 		chainID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-chain"), chain.URL()))
 		coID := CreateConsumer(t, gatewayID, map[string]any{
@@ -277,7 +277,7 @@ func TestRoutingIntent_ShortModel(t *testing.T) {
 
 	setupTwoProviderRoute := func(t *testing.T, openaiUp, compatUp *fakeUpstream, openaiModels, compatModels []string) (string, string) {
 		t.Helper()
-		gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("short-gw")})
+		gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("short-gw")})
 		openaiID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-oai"), openaiUp.URL()))
 		compatID := CreateRegistry(t, gatewayID, openaiCompatibleBackendPayload(uniqueName("be-compat"), compatUp.URL()))
 		coID := CreateConsumer(t, gatewayID, map[string]any{

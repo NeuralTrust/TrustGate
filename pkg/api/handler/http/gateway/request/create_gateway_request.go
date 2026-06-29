@@ -24,8 +24,7 @@ import (
 )
 
 type CreateGatewayRequest struct {
-	Name            string                 `json:"name"`
-	Slug            string                 `json:"slug,omitempty"`
+	Slug            string                 `json:"slug"`
 	Domain          string                 `json:"domain,omitempty"`
 	Metadata        map[string]string      `json:"metadata,omitempty"`
 	Telemetry       *telemetry.Telemetry   `json:"telemetry,omitempty"`
@@ -34,13 +33,10 @@ type CreateGatewayRequest struct {
 }
 
 func (r CreateGatewayRequest) Validate() error {
-	if strings.TrimSpace(r.Name) == "" {
-		return fmt.Errorf("name is required: %w", commonerrors.ErrValidation)
+	if strings.TrimSpace(r.Slug) == "" {
+		return fmt.Errorf("slug is required: %w", commonerrors.ErrValidation)
 	}
-	if len(r.Name) > 255 {
-		return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
-	}
-	if strings.TrimSpace(r.Slug) != "" && !domain.IsValidSlug(domain.NormalizeSlug(r.Slug)) {
+	if !domain.IsValidSlug(domain.NormalizeSlug(r.Slug)) {
 		return fmt.Errorf("slug must be a lowercase DNS label: %w", commonerrors.ErrValidation)
 	}
 	return nil

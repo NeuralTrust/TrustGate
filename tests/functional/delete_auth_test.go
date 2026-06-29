@@ -14,7 +14,7 @@ import (
 
 func TestDeleteAuth_Success(t *testing.T) {
 	defer Track(t, "DeleteAuth")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-del")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("auth-del")})
 	id := CreateAuth(t, gwID, validAuthPayload(uniqueName("api-key")))
 
 	status, _ := sendRequest(t, http.MethodDelete,
@@ -31,7 +31,7 @@ func TestDeleteAuth_Success(t *testing.T) {
 
 func TestDeleteAuth_RejectedWhileAttachedThenAllowedAfterDetach(t *testing.T) {
 	defer Track(t, "DeleteAuth")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-del-ref")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("auth-del-ref")})
 	authID := CreateAuth(t, gwID, validAuthPayload(uniqueName("api-key-ref")))
 	coID := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("auth-del-ref-cons")))
 	AttachAuth(t, gwID, coID, authID)
@@ -60,7 +60,7 @@ func TestDeleteAuth_RejectedWhileAttachedThenAllowedAfterDetach(t *testing.T) {
 
 func TestDeleteAuth_NotFound(t *testing.T) {
 	defer Track(t, "DeleteAuth")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-del-404")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("auth-del-404")})
 	status, body := sendRequest(t, http.MethodDelete,
 		fmt.Sprintf("%s/v1/gateways/%s/auths/%s", AdminURL, gwID, uuid.NewString()), nil, nil,
 	)

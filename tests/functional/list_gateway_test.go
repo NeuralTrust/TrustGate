@@ -17,12 +17,12 @@ func TestListGateways_Pagination(t *testing.T) {
 	prefix := uniqueName("list-page")
 	created := make([]string, 0, 3)
 	for i := 0; i < 3; i++ {
-		id := CreateGateway(t, map[string]any{"name": fmt.Sprintf("%s-%d", prefix, i)})
+		id := CreateGateway(t, map[string]any{"slug": fmt.Sprintf("%s-%d", prefix, i)})
 		created = append(created, id)
 	}
 
 	status, body := sendRequest(t, http.MethodGet,
-		fmt.Sprintf("%s/v1/gateways?name=%s&page=1&size=10", AdminURL, url.QueryEscape(prefix)),
+		fmt.Sprintf("%s/v1/gateways?slug=%s&page=1&size=10", AdminURL, url.QueryEscape(prefix)),
 		nil, nil,
 	)
 	require.Equal(t, http.StatusOK, status, "body=%v", body)
@@ -46,13 +46,13 @@ func TestListGateways_Pagination(t *testing.T) {
 	}
 }
 
-func TestListGateways_FilterByName(t *testing.T) {
+func TestListGateways_FilterBySlug(t *testing.T) {
 	defer Track(t, "ListGateway")()
 	uniq := uniqueName("list-needle")
-	id := CreateGateway(t, map[string]any{"name": uniq})
+	id := CreateGateway(t, map[string]any{"slug": uniq})
 
 	status, body := sendRequest(t, http.MethodGet,
-		fmt.Sprintf("%s/v1/gateways?name=%s", AdminURL, url.QueryEscape(uniq)),
+		fmt.Sprintf("%s/v1/gateways?slug=%s", AdminURL, url.QueryEscape(uniq)),
 		nil, nil,
 	)
 	require.Equal(t, http.StatusOK, status, "body=%v", body)

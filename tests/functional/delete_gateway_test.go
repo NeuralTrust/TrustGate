@@ -14,7 +14,7 @@ import (
 
 func TestDeleteGateway_Success(t *testing.T) {
 	defer Track(t, "DeleteGateway")()
-	id := CreateGateway(t, map[string]any{"name": uniqueName("del-ok")})
+	id := CreateGateway(t, map[string]any{"slug": uniqueName("del-ok")})
 
 	status, _ := sendRequest(t, http.MethodDelete,
 		fmt.Sprintf("%s/v1/gateways/%s", AdminURL, id), nil, nil,

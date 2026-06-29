@@ -23,7 +23,7 @@ import (
 
 const typeBlocked = "trustguard_blocked"
 
-const blockMessage = "request blocked by TrustGuard"
+const blockMessage = "request blocked due to a policy infraction"
 
 func blockError(resp *GuardResponse) *appplugins.PluginError {
 	return &appplugins.PluginError{
@@ -36,24 +36,24 @@ func blockError(resp *GuardResponse) *appplugins.PluginError {
 
 func blockBody(resp *GuardResponse) []byte {
 	body := struct {
-		Status    string         `json:"status"`
-		Message   string         `json:"message"`
-		Findings  []GuardFinding `json:"findings,omitempty"`
-		TraceID   string         `json:"trace_id,omitempty"`
-		RequestID string         `json:"request_id,omitempty"`
+		Status    string `json:"status"`
+		Message   string `json:"message"`
+		TraceID   string `json:"trace_id,omitempty"`
+		RequestID string `json:"request_id,omitempty"`
 	}{
-		Status:  blockMessage,
+		Status:  statusBlock,
 		Message: blockMessage,
 	}
 	if resp != nil {
-		body.Status = resp.Status
-		body.Findings = resp.Findings
+		if resp.Status != "" {
+			body.Status = resp.Status
+		}
 		body.TraceID = resp.TraceID
 		body.RequestID = resp.RequestID
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
-		return []byte(blockMessage)
+		return []byte(`{"status":"block","message":"request blocked due to a policy infraction"}`)
 	}
 	return raw
 }

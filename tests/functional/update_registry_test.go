@@ -14,7 +14,7 @@ import (
 
 func TestUpdateRegistry_Success(t *testing.T) {
 	defer Track(t, "UpdateRegistry")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-upd-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("be-upd-gw")})
 	original := uniqueName("be-upd-from")
 	beID := CreateRegistry(t, gwID, validRegistryPayload(original))
 
@@ -41,7 +41,7 @@ func TestUpdateRegistry_Success(t *testing.T) {
 
 func TestUpdateRegistry_Partial(t *testing.T) {
 	defer Track(t, "UpdateRegistry")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-upd-partial-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("be-upd-partial-gw")})
 	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("be-upd-partial")))
 
 	renamed := uniqueName("be-upd-partial-to")
@@ -59,7 +59,7 @@ func TestUpdateRegistry_Partial(t *testing.T) {
 
 func TestUpdateRegistry_NotFound(t *testing.T) {
 	defer Track(t, "UpdateRegistry")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-upd-missing-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("be-upd-missing-gw")})
 	missing := uuid.NewString()
 
 	status, body := sendRequest(t, http.MethodPut,
@@ -73,7 +73,7 @@ func TestUpdateRegistry_NotFound(t *testing.T) {
 
 func TestUpdateRegistry_ValidationEmptyName(t *testing.T) {
 	defer Track(t, "UpdateRegistry")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-upd-val-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("be-upd-val-gw")})
 	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("be-upd-val")))
 
 	payload := validRegistryPayload("")
@@ -87,7 +87,7 @@ func TestUpdateRegistry_ValidationEmptyName(t *testing.T) {
 
 func TestUpdateRegistry_NameConflictSameGateway(t *testing.T) {
 	defer Track(t, "UpdateRegistry")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-upd-conflict-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("be-upd-conflict-gw")})
 	a := uniqueName("be-upd-a")
 	b := uniqueName("be-upd-b")
 	_ = CreateRegistry(t, gwID, validRegistryPayload(a))
@@ -115,7 +115,7 @@ func TestUpdateRegistry_InvalidGatewayUUID(t *testing.T) {
 
 func TestUpdateRegistry_InvalidRegistryUUID(t *testing.T) {
 	defer Track(t, "UpdateRegistry")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-upd-bad-be-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("be-upd-bad-be-gw")})
 
 	status, body := sendRequest(t, http.MethodPut,
 		fmt.Sprintf("%s/v1/gateways/%s/registries/not-a-uuid", AdminURL, gwID),

@@ -20,6 +20,7 @@ import (
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/bootlog"
 	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	infracache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/playground"
@@ -112,5 +113,5 @@ func StartMetricsWorker(p MetricsWorkerParams) {
 		n = 1
 	}
 	p.Worker.StartWorkers(n)
-	p.Logger.Info("metrics worker started", slog.Int("workers", n))
+	p.Logger.Info(bootlog.MetricsWorkerStarted, slog.Int("workers", n))
 }

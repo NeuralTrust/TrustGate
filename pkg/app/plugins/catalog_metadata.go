@@ -108,7 +108,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "Size Unit",
 					Type:        FieldTypeEnum,
 					Description: "Unit used to interpret the allowed payload size.",
-					Enum:        []string{"bytes", "kilobytes", "megabytes"},
+					Enum:        enumOptions("bytes", "kilobytes", "megabytes"),
 					Default:     "megabytes",
 				},
 				{
@@ -151,7 +151,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 						Key:   "method",
 						Label: "Method",
 						Type:  FieldTypeEnum,
-						Enum:  []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"},
+						Enum:  enumOptions("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"),
 					},
 				},
 				{
@@ -195,7 +195,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "Unit",
 					Type:        FieldTypeEnum,
 					Description: "Whether budgets count provider tokens or USD cost.",
-					Enum:        []string{"tokens", "dollars"},
+					Enum:        enumOptions("tokens", "dollars"),
 					Default:     "tokens",
 				},
 				{
@@ -203,7 +203,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "Counting",
 					Type:        FieldTypeEnum,
 					Description: "Which usage figure accrues against the budget.",
-					Enum:        []string{"total", "input", "output"},
+					Enum:        enumOptions("total", "input", "output"),
 					Default:     "total",
 				},
 				{
@@ -265,7 +265,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "Behavior On Exceeded",
 					Type:        FieldTypeEnum,
 					Description: "Action taken when a budget is exceeded under enforce mode.",
-					Enum:        []string{"reject", "throttle", "downgrade_model", "alert_only"},
+					Enum:        enumOptions("reject", "throttle", "downgrade_model", "alert_only"),
 					Default:     "reject",
 				},
 				{
@@ -370,7 +370,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "Behavior On Violation",
 					Type:        FieldTypeEnum,
 					Description: "Action taken when a model exceeds its cost ceiling under enforce mode.",
-					Enum:        []string{"reject", "downgrade"},
+					Enum:        enumOptions("reject", "downgrade"),
 					Default:     "reject",
 				},
 				{
@@ -384,7 +384,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "Unknown Model",
 					Type:        FieldTypeEnum,
 					Description: "How to treat a model with no resolvable price.",
-					Enum:        []string{"reject", "pass_through", "assume_max"},
+					Enum:        enumOptions("reject", "pass_through", "assume_max"),
 					Default:     "reject",
 				},
 				{
@@ -472,7 +472,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 								Label:       "Behavior",
 								Type:        FieldTypeEnum,
 								Description: "Action when a window is exceeded. reject_response and strip_tool_from_request act on the next request (PreRequest); inject_error_result rewrites the response (PreResponse). Defaults to the policy-level default behavior.",
-								Enum:        []string{"reject_response", "inject_error_result", "strip_tool_from_request"},
+								Enum:        enumOptions("reject_response", "inject_error_result", "strip_tool_from_request"),
 							},
 						},
 					},
@@ -482,7 +482,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "Default Behavior",
 					Type:        FieldTypeEnum,
 					Description: "Behavior applied to rules without an explicit behavior and to tools matched by a catch-all rule.",
-					Enum:        []string{"reject_response", "inject_error_result", "strip_tool_from_request"},
+					Enum:        enumOptions("reject_response", "inject_error_result", "strip_tool_from_request"),
 					Default:     "reject_response",
 				},
 				{
@@ -490,7 +490,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "Scope",
 					Type:        FieldTypeEnum,
 					Description: "Informational; effective scope derives from the policy global flag.",
-					Enum:        []string{"consumer", "global"},
+					Enum:        enumOptions("consumer", "global"),
 				},
 			},
 		},
@@ -506,7 +506,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "Mode",
 					Type:        FieldTypeEnum,
 					Description: "Match strategy: exact (normalized text equality), semantic (embedding similarity), or both.",
-					Enum:        []string{"exact", "semantic", "both"},
+					Enum:        enumOptions("exact", "semantic", "both"),
 					Default:     "semantic",
 				},
 				{
@@ -514,7 +514,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "Scope",
 					Type:        FieldTypeEnum,
 					Description: "Cache partition scope: consumer isolates entries per consumer, global shares them gateway-wide.",
-					Enum:        []string{"consumer", "global"},
+					Enum:        enumOptions("consumer", "global"),
 					Default:     "consumer",
 				},
 				{
@@ -522,7 +522,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "Vector Store",
 					Type:        FieldTypeEnum,
 					Description: "Backing store for cached embeddings and responses.",
-					Enum:        []string{"redis", "pgvector", "in_memory"},
+					Enum:        enumOptions("redis", "pgvector", "in_memory"),
 					Default:     "redis",
 				},
 				{
@@ -635,7 +635,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "Behavior On Disallowed",
 					Type:        FieldTypeEnum,
 					Description: "Action taken when a requested model is not in the allowlist.",
-					Enum:        []string{"reject", "substitute"},
+					Enum:        enumOptions("reject", "substitute"),
 					Default:     "reject",
 				},
 				{
@@ -678,7 +678,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "On Empty After Filter",
 					Type:        FieldTypeEnum,
 					Description: "Behavior when filtering removes every tool from the request.",
-					Enum:        []string{"reject", "pass_through_empty", "strip_tools_field"},
+					Enum:        enumOptions("reject", "pass_through_empty", "strip_tools_field"),
 					Default:     "reject",
 				},
 				{
@@ -686,7 +686,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "Scope",
 					Type:        FieldTypeEnum,
 					Description: "Informational; effective scope derives from the policy global flag.",
-					Enum:        []string{"consumer", "global"},
+					Enum:        enumOptions("consumer", "global"),
 				},
 			},
 		},
@@ -714,7 +714,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 							Label:       "Provider",
 							Type:        FieldTypeEnum,
 							Description: "LLM provider backing semantic validation.",
-							Enum:        []string{"openai"},
+							Enum:        enumOptions("openai"),
 							Default:     "openai",
 						},
 						{
@@ -755,7 +755,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 								Type:        FieldTypeEnum,
 								Description: "Validation strategy applied to the tool call.",
 								Required:    true,
-								Enum:        []string{"not_in_allowed_list", "json_schema", "semantic", "regex", "denylist"},
+								Enum:        enumOptions("not_in_allowed_list", "json_schema", "semantic", "regex", "denylist"),
 							},
 							{
 								Key:         "argument_path",
@@ -781,7 +781,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 								Label:       "Behavior",
 								Type:        FieldTypeEnum,
 								Description: "Action taken when the rule matches. Redact, mask, and replace_with apply only to the regex and denylist validators.",
-								Enum:        []string{"reject_response", "redact", "mask", "replace_with"},
+								Enum:        enumOptions("reject_response", "redact", "mask", "replace_with"),
 								Default:     "reject_response",
 							},
 							{
@@ -807,7 +807,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "Template Engine",
 					Type:        FieldTypeEnum,
 					Description: "Placeholder rendering engine. Only mustache is supported in v1.",
-					Enum:        []string{"mustache", "jinja2_subset"},
+					Enum:        enumOptions("mustache", "jinja2_subset"),
 					Default:     "mustache",
 				},
 				{
@@ -825,7 +825,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 								Label:       "Source",
 								Type:        FieldTypeEnum,
 								Description: "Where the variable value is read from.",
-								Enum:        []string{"header", "jwt_claim"},
+								Enum:        enumOptions("header", "jwt_claim"),
 								Required:    true,
 							},
 							{
@@ -860,7 +860,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 								Label:       "Position",
 								Type:        FieldTypeEnum,
 								Description: "Where the rendered content is injected. Only system is supported in v1.",
-								Enum:        []string{"system"},
+								Enum:        enumOptions("system"),
 								Default:     "system",
 							},
 							{
@@ -882,7 +882,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 								Label:       "On Existing System",
 								Type:        FieldTypeEnum,
 								Description: "How to combine with an existing system prompt.",
-								Enum:        []string{"merge", "replace"},
+								Enum:        enumOptions("merge", "replace"),
 								Default:     "merge",
 							},
 						},
@@ -951,7 +951,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 														Label:       "Type",
 														Type:        FieldTypeEnum,
 														Description: "Expected scalar type of the client value.",
-														Enum:        []string{"string", "number", "boolean"},
+														Enum:        enumOptions("string", "number", "boolean"),
 													},
 													{
 														Key:         "enum",
@@ -987,7 +987,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "On Missing Context Variable",
 					Type:        FieldTypeEnum,
 					Description: "Behavior when a context variable cannot be resolved.",
-					Enum:        []string{"error", "empty_string", "skip_injection"},
+					Enum:        enumOptions("error", "empty_string", "skip_injection"),
 					Default:     "error",
 				},
 				{
@@ -995,7 +995,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "On Missing Client Variable",
 					Type:        FieldTypeEnum,
 					Description: "Behavior when a non-required client variable is absent.",
-					Enum:        []string{"error", "empty_string"},
+					Enum:        enumOptions("error", "empty_string"),
 					Default:     "error",
 				},
 				{
@@ -1067,7 +1067,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 								Label:       "Type",
 								Type:        FieldTypeEnum,
 								Description: "Tool kind. Only function tools are supported.",
-								Enum:        []string{"function"},
+								Enum:        enumOptions("function"),
 								Default:     "function",
 							},
 							{
@@ -1105,7 +1105,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "On Conflict",
 					Type:        FieldTypeEnum,
 					Description: "Resolution when an injected tool name collides with a surviving or already-injected tool.",
-					Enum:        []string{"gateway_wins", "client_wins", "reject"},
+					Enum:        enumOptions("gateway_wins", "client_wins", "reject"),
 					Default:     "gateway_wins",
 				},
 				{
@@ -1113,7 +1113,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "Scope",
 					Type:        FieldTypeEnum,
 					Description: "Informational; effective scope derives from the policy global flag.",
-					Enum:        []string{"consumer", "global"},
+					Enum:        enumOptions("consumer", "global"),
 				},
 			},
 		},
@@ -1125,12 +1125,19 @@ var pluginCatalogMeta = map[string]catalogMeta{
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
-					Key:         "inspect",
-					Label:       "Inspect",
+					Key:         "direction",
+					Label:       "Direction",
 					Type:        FieldTypeEnum,
 					Description: "Which legs to inspect: the request, the response, or both.",
-					Enum:        []string{"request", "response", "request_response"},
-					Default:     "request_response",
+					Enum:        enumOptions("request", "response", "request_response"),
+					Default:     "request",
+				},
+				{
+					Key:         "collector_id",
+					Label:       "Collector ID",
+					Type:        FieldTypeString,
+					Description: "TrustGuard collector UUID bound to this gateway policy.",
+					Required:    true,
 				},
 				{
 					Key:         "base_url",
@@ -1170,7 +1177,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 						Key:   "stage",
 						Label: "Stage",
 						Type:  FieldTypeEnum,
-						Enum:  []string{"pre_request", "pre_response"},
+						Enum:  enumOptions("pre_request", "pre_response"),
 					},
 				},
 				{
@@ -1243,7 +1250,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "Output Type",
 					Type:        FieldTypeEnum,
 					Description: "Severity scale returned by Azure: four levels (0/2/4/6) or eight levels (0-7).",
-					Enum:        []string{"FourSeverityLevels", "EightSeverityLevels"},
+					Enum:        enumOptions("FourSeverityLevels", "EightSeverityLevels"),
 					Default:     "FourSeverityLevels",
 				},
 				{
@@ -1255,7 +1262,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 						Key:   "category",
 						Label: "Category",
 						Type:  FieldTypeEnum,
-						Enum:  []string{"Hate", "Violence", "SelfHarm", "Sexual"},
+						Enum:  enumOptions("Hate", "Violence", "SelfHarm", "Sexual"),
 					},
 				},
 				{
@@ -1301,7 +1308,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "PII Action",
 					Type:        FieldTypeEnum,
 					Description: "How TrustGate reacts when the sensitive-information policy fires: block the call or anonymize the matched spans in place.",
-					Enum:        []string{"block", "anonymize"},
+					Enum:        enumOptions("block", "anonymize"),
 					Default:     "block",
 				},
 				{

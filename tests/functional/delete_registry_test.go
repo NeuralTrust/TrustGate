@@ -14,7 +14,7 @@ import (
 
 func TestDeleteRegistry_Success(t *testing.T) {
 	defer Track(t, "DeleteRegistry")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-del-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("be-del-gw")})
 	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("be-del-ok")))
 
 	status, _ := sendRequest(t, http.MethodDelete,
@@ -33,7 +33,7 @@ func TestDeleteRegistry_Success(t *testing.T) {
 
 func TestDeleteRegistry_CascadesConsumerAttachment(t *testing.T) {
 	defer Track(t, "DeleteRegistry")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-del-casc-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("be-del-casc-gw")})
 	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("be-del-casc-be")))
 	coID := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("be-del-casc-cons")))
 	AttachRegistry(t, gwID, coID, beID)
@@ -54,7 +54,7 @@ func TestDeleteRegistry_CascadesConsumerAttachment(t *testing.T) {
 
 func TestDeleteRegistry_NotFound(t *testing.T) {
 	defer Track(t, "DeleteRegistry")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-del-notfound-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("be-del-notfound-gw")})
 	missing := uuid.NewString()
 
 	status, body := sendRequest(t, http.MethodDelete,
@@ -77,7 +77,7 @@ func TestDeleteRegistry_InvalidGatewayUUID(t *testing.T) {
 
 func TestDeleteRegistry_InvalidRegistryUUID(t *testing.T) {
 	defer Track(t, "DeleteRegistry")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-del-baduuid-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("be-del-baduuid-gw")})
 
 	status, body := sendRequest(t, http.MethodDelete,
 		fmt.Sprintf("%s/v1/gateways/%s/registries/not-a-uuid", AdminURL, gwID),
@@ -89,7 +89,7 @@ func TestDeleteRegistry_InvalidRegistryUUID(t *testing.T) {
 
 func TestDeleteGateway_CascadesRegistries(t *testing.T) {
 	defer Track(t, "DeleteRegistry")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-del-cascade-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("be-del-cascade-gw")})
 	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("be-del-cascade-be")))
 
 	status, body := sendRequest(t, http.MethodDelete,

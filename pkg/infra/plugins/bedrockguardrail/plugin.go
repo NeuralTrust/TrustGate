@@ -84,7 +84,9 @@ func (p *Plugin) MutatesResponseBody() bool { return true }
 
 func (p *Plugin) MutatesMetadata() bool { return false }
 
-func (p *Plugin) MandatoryStages() []policy.Stage { return nil }
+func (p *Plugin) MandatoryStages() []policy.Stage {
+	return []policy.Stage{policy.StagePreRequest}
+}
 
 func (p *Plugin) SupportedStages() []policy.Stage {
 	return []policy.Stage{policy.StagePreRequest, policy.StagePreResponse}

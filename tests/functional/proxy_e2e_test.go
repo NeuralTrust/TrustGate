@@ -196,7 +196,7 @@ func proxyPost(t *testing.T, apiKey, path string, body any) (int, http.Header, [
 
 func setupRoute(t *testing.T, algorithm string, upstreams ...*fakeUpstream) (string, string) {
 	t.Helper()
-	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("proxy-gw")})
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("proxy-gw")})
 
 	registryIDs := make([]string, 0, len(upstreams))
 	for _, up := range upstreams {
@@ -275,7 +275,7 @@ func TestProxyE2E_OpenAICompatibleProvider(t *testing.T) {
 
 	setupCompatRoute := func(t *testing.T, up *fakeUpstream) (string, string) {
 		t.Helper()
-		gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("compat-gw")})
+		gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("compat-gw")})
 		registryID := CreateRegistry(t, gatewayID, openaiCompatibleBackendPayload(uniqueName("be"), up.URL()))
 		coID := CreateConsumer(t, gatewayID, map[string]any{"name": uniqueName("cons")})
 		AttachRegistry(t, gatewayID, coID, registryID)
@@ -361,7 +361,7 @@ func TestProxyE2E_Streaming_LB(t *testing.T) {
 // api key attached to that consumer and the routing path.
 func setupModelPolicyRoute(t *testing.T, up *fakeUpstream, allowed []string, defaultModel string) (string, string) {
 	t.Helper()
-	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("mp-gw")})
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mp-gw")})
 	backendID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be"), up.URL()))
 	name := uniqueName("cons")
 	policy := map[string]any{"allowed": allowed}
@@ -472,7 +472,7 @@ func setupFallbackRoute(t *testing.T, primary, fallback *fakeUpstream, fallbackE
 	if len(triggers) == 0 {
 		triggers = []string{"http_5xx"}
 	}
-	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("fb-gw")})
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("fb-gw")})
 	primaryID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-primary"), primary.URL()))
 	fallbackID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-fallback"), fallback.URL()))
 	name := uniqueName("cons")

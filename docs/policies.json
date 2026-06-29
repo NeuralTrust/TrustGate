@@ -37,13 +37,34 @@
                   "label": "Method",
                   "type": "enum",
                   "enum": [
-                    "GET",
-                    "POST",
-                    "PUT",
-                    "PATCH",
-                    "DELETE",
-                    "OPTIONS",
-                    "HEAD"
+                    {
+                      "value": "GET",
+                      "label": "GET"
+                    },
+                    {
+                      "value": "POST",
+                      "label": "POST"
+                    },
+                    {
+                      "value": "PUT",
+                      "label": "PUT"
+                    },
+                    {
+                      "value": "PATCH",
+                      "label": "PATCH"
+                    },
+                    {
+                      "value": "DELETE",
+                      "label": "DELETE"
+                    },
+                    {
+                      "value": "OPTIONS",
+                      "label": "OPTIONS"
+                    },
+                    {
+                      "value": "HEAD",
+                      "label": "HEAD"
+                    }
                   ]
                 }
               },
@@ -150,9 +171,18 @@
                 "description": "Unit used to interpret the allowed payload size.",
                 "default": "megabytes",
                 "enum": [
-                  "bytes",
-                  "kilobytes",
-                  "megabytes"
+                  {
+                    "value": "bytes",
+                    "label": "Bytes"
+                  },
+                  {
+                    "value": "kilobytes",
+                    "label": "Kilobytes"
+                  },
+                  {
+                    "value": "megabytes",
+                    "label": "Megabytes"
+                  }
                 ]
               },
               {
@@ -198,8 +228,14 @@
                 "description": "Whether budgets count provider tokens or USD cost.",
                 "default": "tokens",
                 "enum": [
-                  "tokens",
-                  "dollars"
+                  {
+                    "value": "tokens",
+                    "label": "Tokens"
+                  },
+                  {
+                    "value": "dollars",
+                    "label": "Dollars"
+                  }
                 ]
               },
               {
@@ -209,9 +245,18 @@
                 "description": "Which usage figure accrues against the budget.",
                 "default": "total",
                 "enum": [
-                  "total",
-                  "input",
-                  "output"
+                  {
+                    "value": "total",
+                    "label": "Total"
+                  },
+                  {
+                    "value": "input",
+                    "label": "Input"
+                  },
+                  {
+                    "value": "output",
+                    "label": "Output"
+                  }
                 ]
               },
               {
@@ -275,10 +320,22 @@
                 "description": "Action taken when a budget is exceeded under enforce mode.",
                 "default": "reject",
                 "enum": [
-                  "reject",
-                  "throttle",
-                  "downgrade_model",
-                  "alert_only"
+                  {
+                    "value": "reject",
+                    "label": "Reject"
+                  },
+                  {
+                    "value": "throttle",
+                    "label": "Throttle"
+                  },
+                  {
+                    "value": "downgrade_model",
+                    "label": "Downgrade Model"
+                  },
+                  {
+                    "value": "alert_only",
+                    "label": "Alert Only"
+                  }
                 ]
               },
               {
@@ -391,8 +448,14 @@
                 "description": "Action taken when a model exceeds its cost ceiling under enforce mode.",
                 "default": "reject",
                 "enum": [
-                  "reject",
-                  "downgrade"
+                  {
+                    "value": "reject",
+                    "label": "Reject"
+                  },
+                  {
+                    "value": "downgrade",
+                    "label": "Downgrade"
+                  }
                 ]
               },
               {
@@ -408,9 +471,18 @@
                 "description": "How to treat a model with no resolvable price.",
                 "default": "reject",
                 "enum": [
-                  "reject",
-                  "pass_through",
-                  "assume_max"
+                  {
+                    "value": "reject",
+                    "label": "Reject"
+                  },
+                  {
+                    "value": "pass_through",
+                    "label": "Pass Through"
+                  },
+                  {
+                    "value": "assume_max",
+                    "label": "Assume Max"
+                  }
                 ]
               },
               {

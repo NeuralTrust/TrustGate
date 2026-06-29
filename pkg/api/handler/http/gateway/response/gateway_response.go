@@ -26,7 +26,6 @@ import (
 
 type GatewayResponse struct {
 	ID              ids.GatewayID          `json:"id"`
-	Name            string                 `json:"name"`
 	Slug            string                 `json:"slug"`
 	Status          string                 `json:"status"`
 	Version         string                 `json:"version"`
@@ -53,7 +52,6 @@ func FromDomain(g *domain.Gateway, proxyBaseDomain, mcpBaseDomain string) Gatewa
 	}
 	return GatewayResponse{
 		ID:      g.ID,
-		Name:    g.Name,
 		Slug:    g.Slug,
 		Status:  g.Status,
 		Version: version.Version,

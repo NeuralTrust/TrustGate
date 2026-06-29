@@ -49,7 +49,7 @@ func idSet(t *testing.T, body map[string]any, key string) map[string]struct{} {
 
 func TestAttachRegistry_RoundTrip(t *testing.T) {
 	defer Track(t, "ConsumerAssociations")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("assoc-be-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-be-gw")})
 	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("assoc-be")))
 	coID := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("assoc-be-co")))
 
@@ -73,7 +73,7 @@ func TestAttachRegistry_RoundTrip(t *testing.T) {
 
 func TestAttachRegistry_UnknownRegistry(t *testing.T) {
 	defer Track(t, "ConsumerAssociations")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("assoc-be-ghost-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-be-ghost-gw")})
 	coID := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("assoc-be-ghost-co")))
 
 	status, body := sendRequest(t, http.MethodPost,
@@ -86,8 +86,8 @@ func TestAttachRegistry_UnknownRegistry(t *testing.T) {
 
 func TestAttachRegistry_CrossGatewayRejected(t *testing.T) {
 	defer Track(t, "ConsumerAssociations")()
-	gwA := CreateGateway(t, map[string]any{"name": uniqueName("assoc-be-xgw-a")})
-	gwB := CreateGateway(t, map[string]any{"name": uniqueName("assoc-be-xgw-b")})
+	gwA := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-be-xgw-a")})
+	gwB := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-be-xgw-b")})
 	beB := CreateRegistry(t, gwB, validRegistryPayload(uniqueName("assoc-be-xgw-be")))
 	coA := CreateConsumer(t, gwA, validConsumerPayload(uniqueName("assoc-be-xgw-co")))
 
@@ -101,7 +101,7 @@ func TestAttachRegistry_CrossGatewayRejected(t *testing.T) {
 
 func TestAttachRegistry_UnknownConsumer(t *testing.T) {
 	defer Track(t, "ConsumerAssociations")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("assoc-be-noco-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-be-noco-gw")})
 	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("assoc-be-noco-be")))
 
 	status, body := sendRequest(t, http.MethodPost,
@@ -114,7 +114,7 @@ func TestAttachRegistry_UnknownConsumer(t *testing.T) {
 
 func TestAttachRegistry_InvalidUUID(t *testing.T) {
 	defer Track(t, "ConsumerAssociations")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("assoc-be-baduuid-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-be-baduuid-gw")})
 	coID := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("assoc-be-baduuid-co")))
 
 	status, body := sendRequest(t, http.MethodPost,
@@ -127,7 +127,7 @@ func TestAttachRegistry_InvalidUUID(t *testing.T) {
 
 func TestAttachAuth_RoundTrip(t *testing.T) {
 	defer Track(t, "ConsumerAssociations")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("assoc-auth-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-auth-gw")})
 	authID := CreateAuth(t, gwID, validAuthPayload(uniqueName("assoc-auth")))
 	coID := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("assoc-auth-co")))
 
@@ -149,8 +149,8 @@ func TestAttachAuth_RoundTrip(t *testing.T) {
 
 func TestAttachAuth_CrossGatewayRejected(t *testing.T) {
 	defer Track(t, "ConsumerAssociations")()
-	gwA := CreateGateway(t, map[string]any{"name": uniqueName("assoc-auth-xgw-a")})
-	gwB := CreateGateway(t, map[string]any{"name": uniqueName("assoc-auth-xgw-b")})
+	gwA := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-auth-xgw-a")})
+	gwB := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-auth-xgw-b")})
 	authB := CreateAuth(t, gwB, validAuthPayload(uniqueName("assoc-auth-xgw-auth")))
 	coA := CreateConsumer(t, gwA, validConsumerPayload(uniqueName("assoc-auth-xgw-co")))
 
@@ -164,7 +164,7 @@ func TestAttachAuth_CrossGatewayRejected(t *testing.T) {
 
 func TestAttachPolicy_RoundTrip(t *testing.T) {
 	defer Track(t, "ConsumerAssociations")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("assoc-pol-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-pol-gw")})
 	policyID := CreatePolicy(t, gwID, validPolicyPayload(uniqueName("assoc-pol")))
 	coID := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("assoc-pol-co")))
 
@@ -187,8 +187,8 @@ func TestAttachPolicy_RoundTrip(t *testing.T) {
 
 func TestAttachPolicy_CrossGatewayRejected(t *testing.T) {
 	defer Track(t, "ConsumerAssociations")()
-	gwA := CreateGateway(t, map[string]any{"name": uniqueName("assoc-pol-xgw-a")})
-	gwB := CreateGateway(t, map[string]any{"name": uniqueName("assoc-pol-xgw-b")})
+	gwA := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-pol-xgw-a")})
+	gwB := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-pol-xgw-b")})
 	policyB := CreatePolicy(t, gwB, validPolicyPayload(uniqueName("assoc-pol-xgw-pol")))
 	coA := CreateConsumer(t, gwA, validConsumerPayload(uniqueName("assoc-pol-xgw-co")))
 
@@ -202,7 +202,7 @@ func TestAttachPolicy_CrossGatewayRejected(t *testing.T) {
 
 func TestPolicyGlobalScope_SetAndUnset(t *testing.T) {
 	defer Track(t, "ConsumerAssociations")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("assoc-global-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-global-gw")})
 	policyID := CreatePolicy(t, gwID, validPolicyPayload(uniqueName("assoc-global-pol")))
 
 	// A freshly created policy is consumer-scoped (not global).
@@ -227,8 +227,8 @@ func TestPolicyGlobalScope_SetAndUnset(t *testing.T) {
 
 func TestPolicyGlobalScope_CrossGatewayRejected(t *testing.T) {
 	defer Track(t, "ConsumerAssociations")()
-	gwA := CreateGateway(t, map[string]any{"name": uniqueName("assoc-global-xgw-a")})
-	gwB := CreateGateway(t, map[string]any{"name": uniqueName("assoc-global-xgw-b")})
+	gwA := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-global-xgw-a")})
+	gwB := CreateGateway(t, map[string]any{"slug": uniqueName("assoc-global-xgw-b")})
 	policyA := CreatePolicy(t, gwA, validPolicyPayload(uniqueName("assoc-global-xgw-pol")))
 
 	status, body := sendRequest(t, http.MethodPost,

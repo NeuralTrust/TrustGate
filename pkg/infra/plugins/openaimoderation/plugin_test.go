@@ -133,7 +133,7 @@ func TestPluginContract(t *testing.T) {
 	var p appplugins.Plugin = New(adapter.NewRegistry(), "http://example.invalid", pluginTestTimeout, nil)
 
 	assert.Equal(t, PluginName, p.Name())
-	assert.Empty(t, p.MandatoryStages())
+	assert.ElementsMatch(t, []policy.Stage{policy.StagePreRequest}, p.MandatoryStages())
 	assert.ElementsMatch(t, []policy.Stage{policy.StagePreRequest, policy.StagePreResponse}, p.SupportedStages())
 	assert.ElementsMatch(t, []policy.Mode{policy.ModeEnforce, policy.ModeObserve}, p.SupportedModes())
 	assert.False(t, p.MutatesRequestBody())

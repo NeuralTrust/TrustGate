@@ -511,8 +511,9 @@ func TestPluginContract(t *testing.T) {
 	if p.MutatesMetadata() {
 		t.Fatal("MutatesMetadata must be false")
 	}
-	if len(p.MandatoryStages()) != 0 {
-		t.Fatalf("MandatoryStages = %v, want empty", p.MandatoryStages())
+	mandatory := p.MandatoryStages()
+	if len(mandatory) != 1 || mandatory[0] != policy.StagePreRequest {
+		t.Fatalf("MandatoryStages = %v, want [pre_request]", mandatory)
 	}
 	stages := p.SupportedStages()
 	if len(stages) != 2 || stages[0] != policy.StagePreRequest || stages[1] != policy.StagePreResponse {

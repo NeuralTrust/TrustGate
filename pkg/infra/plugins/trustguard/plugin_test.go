@@ -53,7 +53,7 @@ func requestContext() *infracontext.RequestContext {
 }
 
 func settings(inspect string) map[string]any {
-	s := map[string]any{}
+	s := map[string]any{"collector_id": testCollectorID}
 	if inspect != "" {
 		s["inspect"] = inspect
 	}
@@ -200,8 +200,8 @@ func TestExecutePreRequestBlockReturns403(t *testing.T) {
 	if got.Attributes.Model.Name != "gpt-4o-mini" || got.Attributes.Model.Provider != "openai" {
 		t.Fatalf("model = %+v, want gpt-4o-mini/openai", got.Attributes.Model)
 	}
-	if got.Input.Input != "be safe\nhello world" {
-		t.Fatalf("input = %q, want %q", got.Input.Input, "be safe\nhello world")
+	if got.Payload.Input != "be safe\nhello world" {
+		t.Fatalf("input = %q, want %q", got.Payload.Input, "be safe\nhello world")
 	}
 }
 
@@ -229,8 +229,8 @@ func TestExecutePreResponseBlockReturns403(t *testing.T) {
 	if got.Direction != directionOutput {
 		t.Fatalf("direction = %q, want %q", got.Direction, directionOutput)
 	}
-	if got.Input.Input != "the answer" {
-		t.Fatalf("input = %q, want %q", got.Input.Input, "the answer")
+	if got.Payload.Input != "the answer" {
+		t.Fatalf("input = %q, want %q", got.Payload.Input, "the answer")
 	}
 }
 
@@ -476,8 +476,8 @@ func TestExecuteForwardsFullGuardRequest(t *testing.T) {
 	if got.ConsumerID != "consumer-real-42" {
 		t.Fatalf("consumer_id = %q, want consumer-real-42", got.ConsumerID)
 	}
-	if got.Input.Input != "be safe\nhello world" {
-		t.Fatalf("input = %q, want %q", got.Input.Input, "be safe\nhello world")
+	if got.Payload.Input != "be safe\nhello world" {
+		t.Fatalf("input = %q, want %q", got.Payload.Input, "be safe\nhello world")
 	}
 	if got.Attributes.ContentType != contentTypeJSON {
 		t.Fatalf("attributes.content_type = %q, want %q", got.Attributes.ContentType, contentTypeJSON)

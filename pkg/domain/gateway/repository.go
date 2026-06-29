@@ -21,7 +21,7 @@ import (
 )
 
 type ListFilter struct {
-	NameContains string
+	SlugContains string
 	Page         int
 	Size         int
 }

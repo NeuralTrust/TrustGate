@@ -103,8 +103,8 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Filter by name (substring match)",
-                        "name": "name",
+                        "description": "Filter by slug (substring match)",
+                        "name": "slug",
                         "in": "query"
                     },
                     {
@@ -2925,7 +2925,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Deletes a gateway. Fails if it still has dependent resources.",
+                "description": "Deletes a gateway and cascades the deletion to every resource that belongs to it (consumers, roles, policies, auths, registries and vault credentials).",
                 "produces": [
                     "application/json"
                 ],
@@ -2961,12 +2961,6 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
-                        }
-                    },
-                    "409": {
-                        "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
                         }
@@ -3097,58 +3091,6 @@ const docTemplate = `{
                         "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody"
-                        }
-                    }
-                }
-            }
-        },
-        "/v1/playground/traces/{trace_id}": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Returns the metrics Event captured for a playground request, keyed by the X-AG-Trace-Id returned in the proxy response. Traces expire after a short TTL.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "playground"
-                ],
-                "summary": "Get a playground trace",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Trace id (X-AG-Trace-Id from the proxy response)",
-                        "name": "trace_id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Event"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
                         }
                     }
                 }
@@ -3406,6 +3348,15 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "session_mode": {
+                    "type": "boolean"
+                },
+                "subject_claim": {
+                    "type": "string"
+                },
+                "userinfo_url": {
+                    "type": "string"
                 }
             }
         },
@@ -3592,6 +3543,15 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "session_mode": {
+                    "type": "boolean"
+                },
+                "subject_claim": {
+                    "type": "string"
+                },
+                "userinfo_url": {
+                    "type": "string"
                 }
             }
         },
@@ -4276,9 +4236,6 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
-                "name": {
-                    "type": "string"
-                },
                 "session_config": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.SessionConfig"
                 },
@@ -4304,9 +4261,6 @@ const docTemplate = `{
                     "additionalProperties": {
                         "type": "string"
                     }
-                },
-                "name": {
-                    "type": "string"
                 },
                 "session_config": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.SessionConfig"
@@ -4356,9 +4310,6 @@ const docTemplate = `{
                     "additionalProperties": {
                         "type": "string"
                     }
-                },
-                "name": {
-                    "type": "string"
                 },
                 "session_config": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.SessionConfig"
@@ -5489,7 +5440,7 @@ const docTemplate = `{
                 "enum": {
                     "type": "array",
                     "items": {
-                        "type": "string"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_plugins.EnumOption"
                     }
                 },
                 "key": {
@@ -5569,6 +5520,17 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_app_plugins.EnumOption": {
+            "type": "object",
+            "properties": {
+                "label": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_app_plugins.Field": {
             "type": "object",
             "properties": {
@@ -5579,7 +5541,7 @@ const docTemplate = `{
                 "enum": {
                     "type": "array",
                     "items": {
-                        "type": "string"
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_plugins.EnumOption"
                     }
                 },
                 "fields": {
@@ -6059,8 +6021,14 @@ const docTemplate = `{
                 "is_flagged": {
                     "type": "boolean"
                 },
+                "kind": {
+                    "type": "string"
+                },
                 "latency": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Latency"
+                },
+                "mcp": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCP"
                 },
                 "occurred_on": {
                     "type": "integer"
@@ -6126,6 +6094,56 @@ const docTemplate = `{
                 },
                 "total_ms": {
                     "type": "integer"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCP": {
+            "type": "object",
+            "properties": {
+                "catalog_code": {
+                    "type": "string"
+                },
+                "host": {
+                    "type": "string"
+                },
+                "method": {
+                    "type": "string"
+                },
+                "operation": {
+                    "type": "string"
+                },
+                "prompt": {
+                    "type": "string"
+                },
+                "registry_id": {
+                    "type": "string"
+                },
+                "resource_uri": {
+                    "type": "string"
+                },
+                "rpc_error_code": {
+                    "type": "integer"
+                },
+                "server_name": {
+                    "type": "string"
+                },
+                "targets": {
+                    "type": "integer"
+                },
+                "tool": {
+                    "type": "string"
+                },
+                "transport": {
+                    "type": "string"
+                },
+                "upstream_latency_ms": {
+                    "type": "integer"
+                },
+                "upstream_status": {
+                    "type": "string"
+                },
+                "upstream_tool": {
+                    "type": "string"
                 }
             }
         },

@@ -37,17 +37,25 @@ const (
 	FieldTypeMap      FieldType = "map"
 )
 
+// EnumOption is a single selectable value of an enum field. Value is the value
+// the admin UI must send back to the API; Label is the human-readable text the
+// UI shows for it.
+type EnumOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
 // Field describes a single settings entry. Containers use ordered child slices
 // (Fields, Item, Value) instead of maps so the frontend can render a stable
 // form layout.
 type Field struct {
-	Key         string    `json:"key"`
-	Label       string    `json:"label"`
-	Type        FieldType `json:"type"`
-	Description string    `json:"description,omitempty"`
-	Required    bool      `json:"required,omitempty"`
-	Default     any       `json:"default,omitempty"`
-	Enum        []string  `json:"enum,omitempty"`
+	Key         string       `json:"key"`
+	Label       string       `json:"label"`
+	Type        FieldType    `json:"type"`
+	Description string       `json:"description,omitempty"`
+	Required    bool         `json:"required,omitempty"`
+	Default     any          `json:"default,omitempty"`
+	Enum        []EnumOption `json:"enum,omitempty"`
 	// Fields lists the child fields of an object.
 	Fields []Field `json:"fields,omitempty"`
 	// Item describes the element schema of an array.

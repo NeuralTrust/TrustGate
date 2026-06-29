@@ -31,6 +31,9 @@ var/
 .env
 .env.functional
 
+# Local-only secret decrypt/encrypt helper (never commit)
+scripts/secret/
+
 # Editor/IDE
 .idea/
 # .vscode/

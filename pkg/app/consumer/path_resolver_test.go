@@ -98,7 +98,7 @@ func TestPathResolver_HostFiltersToClaimingGateway(t *testing.T) {
 	auths.EXPECT().FindByIDs(mock.Anything, gwB, []ids.AuthID{authB.ID}).Return([]*authdomain.Auth{authB}, nil).Once()
 	gateways := gatewaymocks.NewRepository(t)
 	gateways.EXPECT().FindByDomain(mock.Anything, "tenant-b.example.com").
-		Return(&gatewaydomain.Gateway{ID: gwB, Name: "b", Domain: "tenant-b.example.com"}, nil).Once()
+		Return(&gatewaydomain.Gateway{ID: gwB, Slug: "b", Domain: "tenant-b.example.com"}, nil).Once()
 
 	resolver := appconsumer.NewPathResolver(consumers, auths, gateways, cache.NewTTLMapManager(time.Hour), newTestLogger())
 
@@ -119,7 +119,7 @@ func TestPathResolver_HostClaimedByOtherGatewayDropsConsumer(t *testing.T) {
 	auths := authmocks.NewRepository(t)
 	gateways := gatewaymocks.NewRepository(t)
 	gateways.EXPECT().FindByDomain(mock.Anything, "tenant-b.example.com").
-		Return(&gatewaydomain.Gateway{ID: gwB, Name: "b", Domain: "tenant-b.example.com"}, nil).Once()
+		Return(&gatewaydomain.Gateway{ID: gwB, Slug: "b", Domain: "tenant-b.example.com"}, nil).Once()
 
 	resolver := appconsumer.NewPathResolver(consumers, auths, gateways, cache.NewTTLMapManager(time.Hour), newTestLogger())
 
@@ -141,7 +141,7 @@ func TestPathResolver_UnclaimedHostKeepsDomainlessGateways(t *testing.T) {
 	gateways.EXPECT().FindByDomain(mock.Anything, "localhost").
 		Return(nil, gatewaydomain.ErrNotFound).Once()
 	gateways.EXPECT().FindByID(mock.Anything, gwA).
-		Return(&gatewaydomain.Gateway{ID: gwA, Name: "a"}, nil).Once()
+		Return(&gatewaydomain.Gateway{ID: gwA, Slug: "a"}, nil).Once()
 
 	resolver := appconsumer.NewPathResolver(consumers, auths, gateways, cache.NewTTLMapManager(time.Hour), newTestLogger())
 
@@ -163,7 +163,7 @@ func TestPathResolver_UnclaimedHostDropsDomainClaimingGateways(t *testing.T) {
 	gateways.EXPECT().FindByDomain(mock.Anything, "evil.example.com").
 		Return(nil, gatewaydomain.ErrNotFound).Once()
 	gateways.EXPECT().FindByID(mock.Anything, gwA).
-		Return(&gatewaydomain.Gateway{ID: gwA, Name: "a", Domain: "tenant-a.example.com"}, nil).Once()
+		Return(&gatewaydomain.Gateway{ID: gwA, Slug: "a", Domain: "tenant-a.example.com"}, nil).Once()
 
 	resolver := appconsumer.NewPathResolver(consumers, auths, gateways, cache.NewTTLMapManager(time.Hour), newTestLogger())
 

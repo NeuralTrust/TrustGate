@@ -14,7 +14,7 @@ import (
 
 func TestCreateRegistry_Success(t *testing.T) {
 	defer Track(t, "CreateRegistry")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-create-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("be-create-gw")})
 	name := uniqueName("be-create-ok")
 
 	status, body := sendRequest(t, http.MethodPost,
@@ -40,7 +40,7 @@ func TestCreateRegistry_Success(t *testing.T) {
 
 func TestCreateRegistry_ConflictSameGateway(t *testing.T) {
 	defer Track(t, "CreateRegistry")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-conflict-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("be-conflict-gw")})
 	name := uniqueName("be-conflict")
 
 	_ = CreateRegistry(t, gwID, validRegistryPayload(name))
@@ -56,8 +56,8 @@ func TestCreateRegistry_ConflictSameGateway(t *testing.T) {
 
 func TestCreateRegistry_SameNameDifferentGatewaysAllowed(t *testing.T) {
 	defer Track(t, "CreateRegistry")()
-	gwA := CreateGateway(t, map[string]any{"name": uniqueName("be-shared-a")})
-	gwB := CreateGateway(t, map[string]any{"name": uniqueName("be-shared-b")})
+	gwA := CreateGateway(t, map[string]any{"slug": uniqueName("be-shared-a")})
+	gwB := CreateGateway(t, map[string]any{"slug": uniqueName("be-shared-b")})
 	shared := uniqueName("be-shared-name")
 
 	_ = CreateRegistry(t, gwA, validRegistryPayload(shared))
@@ -94,7 +94,7 @@ func TestCreateRegistry_InvalidGatewayUUID(t *testing.T) {
 
 func TestCreateRegistry_ValidationEmptyName(t *testing.T) {
 	defer Track(t, "CreateRegistry")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-emptyname-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("be-emptyname-gw")})
 	payload := validRegistryPayload("")
 
 	status, body := sendRequest(t, http.MethodPost,
@@ -107,7 +107,7 @@ func TestCreateRegistry_ValidationEmptyName(t *testing.T) {
 
 func TestCreateRegistry_ValidationNoProvider(t *testing.T) {
 	defer Track(t, "CreateRegistry")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-noprovider-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("be-noprovider-gw")})
 
 	payload := validRegistryPayload(uniqueName("be-noprovider"))
 	delete(payload, "provider")
@@ -122,7 +122,7 @@ func TestCreateRegistry_ValidationNoProvider(t *testing.T) {
 
 func TestCreateRegistry_ValidationNoAuth(t *testing.T) {
 	defer Track(t, "CreateRegistry")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-noauth-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("be-noauth-gw")})
 
 	payload := validRegistryPayload(uniqueName("be-noauth"))
 	delete(payload, "auth")
@@ -137,7 +137,7 @@ func TestCreateRegistry_ValidationNoAuth(t *testing.T) {
 
 func TestCreateRegistry_InvalidBody(t *testing.T) {
 	defer Track(t, "CreateRegistry")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-badbody-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("be-badbody-gw")})
 
 	status, body := sendRequest(t, http.MethodPost,
 		fmt.Sprintf("%s/v1/gateways/%s/registries", AdminURL, gwID),
@@ -149,7 +149,7 @@ func TestCreateRegistry_InvalidBody(t *testing.T) {
 
 func TestCreateRegistry_WithHealthChecks(t *testing.T) {
 	defer Track(t, "CreateRegistry")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-hc-gw")})
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("be-hc-gw")})
 	payload := validRegistryPayload(uniqueName("be-hc"))
 	payload["health_checks"] = map[string]any{
 		"passive":   true,

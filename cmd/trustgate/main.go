@@ -40,6 +40,7 @@ import (
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/container/modules"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/bootlog"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
 	"github.com/NeuralTrust/TrustGate/pkg/server"
@@ -126,12 +127,12 @@ func runMigrations(mgr *database.MigrationsManager, logger *slog.Logger) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	logger.Info("running database migrations")
+	logger.Info(bootlog.MigrationsRunning)
 	if err := mgr.ApplyPending(ctx); err != nil {
 		logger.Error("failed to apply migrations", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
-	logger.Info("database migrations applied")
+	logger.Info(bootlog.MigrationsApplied)
 }
 
 type adminParam struct {
@@ -201,11 +202,11 @@ func runServers(logger *slog.Logger, servers ...namedServer) {
 
 	<-quit
 	for _, s := range servers {
-		logger.Info("shutting down server", slog.String("server", s.name))
+		logger.Info(bootlog.ServerShutdown(s.name), slog.String("server", s.name))
 		if err := s.srv.Shutdown(); err != nil {
 			logger.Error("server shutdown error", slog.String("server", s.name), slog.String("error", err.Error()))
 			continue
 		}
-		logger.Info("server stopped gracefully", slog.String("server", s.name))
+		logger.Info(bootlog.ServerStoppedGracefully(s.name), slog.String("server", s.name))
 	}
 }

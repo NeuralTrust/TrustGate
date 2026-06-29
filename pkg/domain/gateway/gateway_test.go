@@ -17,7 +17,6 @@ package gateway
 import (
 	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
@@ -35,9 +34,6 @@ func TestNew(t *testing.T) {
 		if g.ID.IsNil() {
 			t.Fatal("ID is zero")
 		}
-		if g.Name != "alpha" {
-			t.Fatalf("Name = %q, want alpha", g.Name)
-		}
 		if g.Slug != "alpha" {
 			t.Fatalf("Slug = %q, want alpha", g.Slug)
 		}
@@ -52,11 +48,11 @@ func TestNew(t *testing.T) {
 		}
 	})
 
-	t.Run("empty name rejected", func(t *testing.T) {
+	t.Run("empty slug rejected", func(t *testing.T) {
 		t.Parallel()
 		g, err := New("")
 		if err == nil {
-			t.Fatal("expected error for empty name, got nil")
+			t.Fatal("expected error for empty slug, got nil")
 		}
 		if g != nil {
 			t.Fatalf("expected nil aggregate on error, got %+v", g)
@@ -64,56 +60,9 @@ func TestNew(t *testing.T) {
 	})
 }
 
-func TestNew_ExplicitSlug(t *testing.T) {
-	t.Parallel()
-	g, err := New("Alpha Gateway", "acme")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if g.Slug != "acme" {
-		t.Fatalf("Slug = %q, want acme", g.Slug)
-	}
-}
-
-func TestSlugFromName(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{name: "lowercase dns label", in: "Acme Gateway", want: "acme-gateway"},
-		{name: "trims separators", in: "---Acme---", want: "acme"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := SlugFromName(tt.in); got != tt.want {
-				t.Fatalf("SlugFromName(%q) = %q, want %q", tt.in, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestSlugFromName_FallbackIsUniqueAndValid(t *testing.T) {
-	t.Parallel()
-	first := SlugFromName("!!!")
-	second := SlugFromName("日本語")
-	for _, slug := range []string{first, second} {
-		if !strings.HasPrefix(slug, "gateway-") {
-			t.Fatalf("fallback slug = %q, want gateway- prefix", slug)
-		}
-		if !IsValidSlug(slug) {
-			t.Fatalf("fallback slug %q is not a valid slug", slug)
-		}
-	}
-	if first == second {
-		t.Fatalf("fallback slugs must be unique, both were %q", first)
-	}
-}
-
 func TestValidate_InvalidSlug(t *testing.T) {
 	t.Parallel()
-	g := &Gateway{Name: "alpha", Slug: "-bad"}
+	g := &Gateway{Slug: "-bad"}
 	if err := g.Validate(); err == nil {
 		t.Fatal("expected invalid slug error, got nil")
 	}
@@ -121,7 +70,7 @@ func TestValidate_InvalidSlug(t *testing.T) {
 
 func TestValidate_StatusDefault(t *testing.T) {
 	t.Parallel()
-	g := &Gateway{Name: "alpha"}
+	g := &Gateway{Slug: "alpha"}
 	if err := g.Validate(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -132,7 +81,7 @@ func TestValidate_StatusDefault(t *testing.T) {
 
 func TestValidate_StatusPreserved(t *testing.T) {
 	t.Parallel()
-	g := &Gateway{Name: "alpha", Status: "paused"}
+	g := &Gateway{Slug: "alpha", Status: "paused"}
 	if err := g.Validate(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -141,17 +90,17 @@ func TestValidate_StatusPreserved(t *testing.T) {
 	}
 }
 
-func TestValidate_NameRequired(t *testing.T) {
+func TestValidate_SlugRequired(t *testing.T) {
 	t.Parallel()
 	g := &Gateway{}
 	if err := g.Validate(); err == nil {
-		t.Fatal("expected error for empty name, got nil")
+		t.Fatal("expected error for empty slug, got nil")
 	}
 }
 
 func TestValidate_DomainNormalized(t *testing.T) {
 	t.Parallel()
-	g := &Gateway{Name: "alpha", Domain: "  Tenant-A.Example.COM "}
+	g := &Gateway{Slug: "alpha", Domain: "  Tenant-A.Example.COM "}
 	if err := g.Validate(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -163,7 +112,7 @@ func TestValidate_DomainNormalized(t *testing.T) {
 func TestValidate_DomainRejectsNonHostnames(t *testing.T) {
 	t.Parallel()
 	for _, bad := range []string{"https://x.com", "x.com/path", "x.com:8082", "two words"} {
-		g := &Gateway{Name: "alpha", Domain: bad}
+		g := &Gateway{Slug: "alpha", Domain: bad}
 		if err := g.Validate(); !errors.Is(err, ErrInvalidDomain) {
 			t.Fatalf("Domain %q: err = %v, want ErrInvalidDomain", bad, err)
 		}
@@ -172,7 +121,7 @@ func TestValidate_DomainRejectsNonHostnames(t *testing.T) {
 
 func TestValidate_EmptyDomainAllowed(t *testing.T) {
 	t.Parallel()
-	g := &Gateway{Name: "alpha"}
+	g := &Gateway{Slug: "alpha"}
 	if err := g.Validate(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
