@@ -196,7 +196,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		},
 	}
 
-	resp, err := p.guard(ctx, baseURL, body)
+	resp, err := p.guard(ctx, baseURL, cfg.CollectorID, body)
 	if err != nil {
 		p.warn(ctx, "trustguard call failed, failing open",
 			slog.String("plugin", PluginName),
@@ -247,11 +247,16 @@ func (p *Plugin) config(settings map[string]any) (Settings, error) {
 }
 
 func configCacheKey(settings map[string]any) string {
-	return fmt.Sprintf("%v\x00%v", settings["inspect"], settings["base_url"])
+	return fmt.Sprintf("%v\x00%v\x00%v", settings["inspect"], settings["base_url"], settings["collector_id"])
 }
 
-func (p *Plugin) guard(ctx context.Context, baseURL string, body GuardRequest) (*GuardResponse, error) {
-	token, err := p.tokens.token(ctx, baseURL)
+func (p *Plugin) guard(ctx context.Context, baseURL, collectorID string, body GuardRequest) (*GuardResponse, error) {
+	params := tokenParams{
+		baseURL:     baseURL,
+		collectorID: collectorID,
+		gatewayID:   body.GatewayID,
+	}
+	token, err := p.tokens.token(ctx, params)
 	if err != nil {
 		return nil, err
 	}
@@ -262,8 +267,8 @@ func (p *Plugin) guard(ctx context.Context, baseURL string, body GuardRequest) (
 	if !errors.Is(err, errUnauthorized) {
 		return nil, err
 	}
-	p.tokens.invalidate(baseURL)
-	token, err = p.tokens.token(ctx, baseURL)
+	p.tokens.invalidate(params)
+	token, err = p.tokens.token(ctx, params)
 	if err != nil {
 		return nil, err
 	}

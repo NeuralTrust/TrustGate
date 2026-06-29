@@ -53,7 +53,7 @@ func requestContext() *infracontext.RequestContext {
 }
 
 func settings(inspect string) map[string]any {
-	s := map[string]any{}
+	s := map[string]any{"collector_id": testCollectorID}
 	if inspect != "" {
 		s["inspect"] = inspect
 	}

@@ -29,16 +29,30 @@ import (
 )
 
 const (
-	tokenPath        = "/v1/token"
-	grantType        = "client_credentials"
-	tokenRefreshSkew = 30 * time.Second
-	tokenMinTTL      = time.Minute
+	tokenPath          = "/v1/token"
+	grantType          = "client_credentials"
+	tokenScopePlatform = "platform"
+	tokenRefreshSkew   = 30 * time.Second
+	tokenMinTTL        = time.Minute
 )
+
+type tokenParams struct {
+	baseURL     string
+	collectorID string
+	gatewayID   string
+}
+
+func (p tokenParams) cacheKey() string {
+	return strings.TrimRight(p.baseURL, "/") + tokenPath + "\x00" + p.collectorID + "\x00" + p.gatewayID
+}
 
 type tokenRequest struct {
 	GrantType    string `json:"grant_type"`
 	ClientID     string `json:"client_id"`
 	ClientSecret string `json:"client_secret"`
+	Scope        string `json:"scope"`
+	CollectorID  string `json:"collector_id"`
+	GatewayID    string `json:"gateway_id"`
 }
 
 type tokenResponse struct {
@@ -76,22 +90,22 @@ func (m *tokenManager) configured() bool {
 	return strings.TrimSpace(m.clientID) != "" && strings.TrimSpace(m.clientSecret) != ""
 }
 
-func (m *tokenManager) token(ctx context.Context, baseURL string) (string, error) {
-	tokenURL := strings.TrimRight(baseURL, "/") + tokenPath
-	if tok, ok := m.cachedToken(tokenURL); ok {
+func (m *tokenManager) token(ctx context.Context, params tokenParams) (string, error) {
+	key := params.cacheKey()
+	if tok, ok := m.cachedToken(key); ok {
 		return tok, nil
 	}
 	fetchCtx := context.WithoutCancel(ctx)
-	v, err, _ := m.group.Do(tokenURL, func() (any, error) {
-		if tok, ok := m.cachedToken(tokenURL); ok {
+	v, err, _ := m.group.Do(key, func() (any, error) {
+		if tok, ok := m.cachedToken(key); ok {
 			return tok, nil
 		}
-		entry, err := m.fetch(fetchCtx, tokenURL)
+		entry, err := m.fetch(fetchCtx, params)
 		if err != nil {
 			return "", err
 		}
 		m.mu.Lock()
-		m.cache[tokenURL] = entry
+		m.cache[key] = entry
 		m.mu.Unlock()
 		return entry.token, nil
 	})
@@ -101,10 +115,10 @@ func (m *tokenManager) token(ctx context.Context, baseURL string) (string, error
 	return v.(string), nil
 }
 
-func (m *tokenManager) cachedToken(tokenURL string) (string, bool) {
+func (m *tokenManager) cachedToken(key string) (string, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	entry, ok := m.cache[tokenURL]
+	entry, ok := m.cache[key]
 	if !ok || entry.token == "" {
 		return "", false
 	}
@@ -114,18 +128,22 @@ func (m *tokenManager) cachedToken(tokenURL string) (string, bool) {
 	return entry.token, true
 }
 
-func (m *tokenManager) invalidate(baseURL string) {
-	tokenURL := strings.TrimRight(baseURL, "/") + tokenPath
+func (m *tokenManager) invalidate(params tokenParams) {
+	key := params.cacheKey()
 	m.mu.Lock()
-	delete(m.cache, tokenURL)
+	delete(m.cache, key)
 	m.mu.Unlock()
 }
 
-func (m *tokenManager) fetch(ctx context.Context, tokenURL string) (tokenEntry, error) {
+func (m *tokenManager) fetch(ctx context.Context, params tokenParams) (tokenEntry, error) {
+	tokenURL := strings.TrimRight(params.baseURL, "/") + tokenPath
 	payload, err := json.Marshal(tokenRequest{ // #nosec G117 -- client_secret must be sent in the OAuth2 client-credentials token request body
 		GrantType:    grantType,
 		ClientID:     m.clientID,
 		ClientSecret: m.clientSecret,
+		Scope:        tokenScopePlatform,
+		CollectorID:  params.collectorID,
+		GatewayID:    params.gatewayID,
 	})
 	if err != nil {
 		return tokenEntry{}, fmt.Errorf("trustguard: marshal token request: %w", err)

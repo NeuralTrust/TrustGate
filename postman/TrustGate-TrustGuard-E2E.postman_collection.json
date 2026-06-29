@@ -80,7 +80,7 @@
 		},
 		{
 			"name": "1 - TrustGate config",
-			"description": "Provision a TrustGate gateway with an OpenAI backend, a `trustguard` plugin policy, an API-key credential and an inline consumer. The `trustguard` policy inspects the request (input) only, so a block is decided before the request is forwarded upstream.",
+			"description": "Provision a TrustGate gateway with an OpenAI backend, an API-key credential and an inline consumer. The `trustguard` plugin policy is created in folder 2b after the TrustGuard collector exists.",
 			"item": [
 				{
 					"name": "1. Create Gateway",
@@ -104,7 +104,7 @@
 						"auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "{{tg_admin_token}}", "type": "string" } ] },
 						"method": "POST",
 						"header": [ { "key": "Content-Type", "value": "application/json" } ],
-						"body": { "mode": "raw", "raw": "{\n  \"name\": \"e2e-trustguard-gateway-{{$guid}}\",\n  \"slug\": \"e2e-tguard-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}" },
+						"body": { "mode": "raw", "raw": "{\n  \"slug\": \"e2e-tguard-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}" },
 						"url": { "raw": "{{tg_base_url}}/v1/gateways", "host": ["{{tg_base_url}}"], "path": ["v1", "gateways"] }
 					}
 				},
@@ -131,30 +131,7 @@
 					}
 				},
 				{
-					"name": "3. Create TrustGuard Policy",
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"type": "text/javascript",
-								"exec": [
-									"pm.test('policy created (201)', function () { pm.response.to.have.status(201); });",
-									"if (pm.response.code === 201) { pm.collectionVariables.set('tg_policy_id', pm.response.json().id); }"
-								]
-							}
-						}
-					],
-					"request": {
-						"auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "{{tg_admin_token}}", "type": "string" } ] },
-						"method": "POST",
-						"header": [ { "key": "Content-Type", "value": "application/json" } ],
-						"body": { "mode": "raw", "raw": "{\n  \"name\": \"trustguard-guard-{{$guid}}\",\n  \"slug\": \"trustguard\",\n  \"enabled\": true,\n  \"priority\": 0,\n  \"parallel\": false,\n  \"stages\": [],\n  \"settings\": {\n    \"inspect\": \"request\"\n  }\n}" },
-						"url": { "raw": "{{tg_base_url}}/v1/gateways/{{gw_id}}/policies", "host": ["{{tg_base_url}}"], "path": ["v1", "gateways", "{{gw_id}}", "policies"] },
-						"description": "The `trustguard` plugin calls TrustGuard at runtime. `settings.inspect` is one of request, response, request_response. `request` inspects only the input so a block is decided before the LLM provider is contacted."
-					}
-				},
-				{
-					"name": "4. Create Auth API Key",
+					"name": "3. Create Auth API Key",
 					"event": [
 						{
 							"listen": "test",
@@ -181,7 +158,7 @@
 					}
 				},
 				{
-					"name": "5. Create Consumer (inline + OpenAI registry)",
+					"name": "4. Create Consumer (inline + OpenAI registry)",
 					"event": [
 						{
 							"listen": "test",
@@ -204,46 +181,6 @@
 						"header": [ { "key": "Content-Type", "value": "application/json" } ],
 						"body": { "mode": "raw", "raw": "{\n  \"name\": \"e2e-consumer-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"headers\": {},\n  \"registries\": [\n    {\n      \"id\": \"{{tg_registry_id}}\",\n      \"weight\": 1,\n      \"model_policies\": {\n        \"allowed\": [\n          \"gpt-4o-mini\"\n        ],\n        \"default\": \"gpt-4o-mini\"\n      }\n    }\n  ]\n}" },
 						"url": { "raw": "{{tg_base_url}}/v1/gateways/{{gw_id}}/consumers", "host": ["{{tg_base_url}}"], "path": ["v1", "gateways", "{{gw_id}}", "consumers"] }
-					}
-				},
-				{
-					"name": "6. Attach Policy to Consumer",
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"type": "text/javascript",
-								"exec": [
-									"pm.test('policy attached', function () { pm.expect([200, 201, 204]).to.include(pm.response.code); });"
-								]
-							}
-						}
-					],
-					"request": {
-						"auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "{{tg_admin_token}}", "type": "string" } ] },
-						"method": "POST",
-						"header": [],
-						"url": { "raw": "{{tg_base_url}}/v1/gateways/{{gw_id}}/consumers/{{tg_consumer_id}}/policies/{{tg_policy_id}}", "host": ["{{tg_base_url}}"], "path": ["v1", "gateways", "{{gw_id}}", "consumers", "{{tg_consumer_id}}", "policies", "{{tg_policy_id}}"] }
-					}
-				},
-				{
-					"name": "7. Attach Auth to Consumer",
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"type": "text/javascript",
-								"exec": [
-									"pm.test('auth attached', function () { pm.expect([200, 201, 204]).to.include(pm.response.code); });"
-								]
-							}
-						}
-					],
-					"request": {
-						"auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "{{tg_admin_token}}", "type": "string" } ] },
-						"method": "POST",
-						"header": [],
-						"url": { "raw": "{{tg_base_url}}/v1/gateways/{{gw_id}}/consumers/{{tg_consumer_id}}/auths/{{tg_auth_id}}", "host": ["{{tg_base_url}}"], "path": ["v1", "gateways", "{{gw_id}}", "consumers", "{{tg_consumer_id}}", "auths", "{{tg_auth_id}}"] }
 					}
 				}
 			]
@@ -363,6 +300,10 @@
 									"  var body = pm.response.json();",
 									"  pm.collectionVariables.set('guard_collector_id', body.id);",
 									"  pm.collectionVariables.set('guard_collector_key', body.collector_key);",
+									"  if (body.service_client) {",
+									"    pm.collectionVariables.set('guard_service_client_id', body.service_client.client_id);",
+									"    pm.collectionVariables.set('guard_service_client_secret', body.service_client.client_secret);",
+									"  }",
 									"}"
 								]
 							}
@@ -375,6 +316,74 @@
 						"body": { "mode": "raw", "raw": "{\n  \"name\": \"e2e-collector-{{$timestamp}}\",\n  \"default_policy_id\": \"{{guard_policy_id}}\",\n  \"metadata\": {\n    \"provider\": \"trustgate\",\n    \"gateway_id\": \"{{gw_id}}\"\n  }\n}" },
 						"url": { "raw": "{{guard_base_url}}/v1/collectors", "host": ["{{guard_base_url}}"], "path": ["v1", "collectors"] },
 						"description": "metadata.gateway_id MUST equal the TrustGate gateway id captured in step 1.1. In platform scope TrustGuard resolves this collector (and its tenant) from the gateway_id that TrustGate sends in the guard request."
+					}
+				}
+			]
+		},
+		{
+			"name": "2b - TrustGate plugin policy",
+			"description": "Creates the TrustGate `trustguard` plugin policy after the TrustGuard collector exists so `settings.collector_id` can reference `{{guard_collector_id}}`, then attaches the policy and auth to the consumer.",
+			"item": [
+				{
+					"name": "1. Create TrustGuard Policy",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('policy created (201)', function () { pm.response.to.have.status(201); });",
+									"if (pm.response.code === 201) { pm.collectionVariables.set('tg_policy_id', pm.response.json().id); }"
+								]
+							}
+						}
+					],
+					"request": {
+						"auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "{{tg_admin_token}}", "type": "string" } ] },
+						"method": "POST",
+						"header": [ { "key": "Content-Type", "value": "application/json" } ],
+						"body": { "mode": "raw", "raw": "{\n  \"name\": \"trustguard-guard-{{$guid}}\",\n  \"slug\": \"trustguard\",\n  \"enabled\": true,\n  \"priority\": 0,\n  \"parallel\": false,\n  \"stages\": [],\n  \"settings\": {\n    \"inspect\": \"request\",\n    \"collector_id\": \"{{guard_collector_id}}\"\n  }\n}" },
+						"url": { "raw": "{{tg_base_url}}/v1/gateways/{{gw_id}}/policies", "host": ["{{tg_base_url}}"], "path": ["v1", "gateways", "{{gw_id}}", "policies"] }
+					}
+				},
+				{
+					"name": "2. Attach Policy to Consumer",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('policy attached', function () { pm.expect([200, 201, 204]).to.include(pm.response.code); });"
+								]
+							}
+						}
+					],
+					"request": {
+						"auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "{{tg_admin_token}}", "type": "string" } ] },
+						"method": "POST",
+						"header": [],
+						"url": { "raw": "{{tg_base_url}}/v1/gateways/{{gw_id}}/consumers/{{tg_consumer_id}}/policies/{{tg_policy_id}}", "host": ["{{tg_base_url}}"], "path": ["v1", "gateways", "{{gw_id}}", "consumers", "{{tg_consumer_id}}", "policies", "{{tg_policy_id}}"] }
+					}
+				},
+				{
+					"name": "3. Attach Auth to Consumer",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('auth attached', function () { pm.expect([200, 201, 204]).to.include(pm.response.code); });"
+								]
+							}
+						}
+					],
+					"request": {
+						"auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "{{tg_admin_token}}", "type": "string" } ] },
+						"method": "POST",
+						"header": [],
+						"url": { "raw": "{{tg_base_url}}/v1/gateways/{{gw_id}}/consumers/{{tg_consumer_id}}/auths/{{tg_auth_id}}", "host": ["{{tg_base_url}}"], "path": ["v1", "gateways", "{{gw_id}}", "consumers", "{{tg_consumer_id}}", "auths", "{{tg_auth_id}}"] }
 					}
 				}
 			]
@@ -440,7 +449,7 @@
 		},
 		{
 			"name": "4 - External caller via collector_key (direct /v1/guard)",
-			"description": "Demonstrates the non-gateway routing path: a service that is NOT a TrustGate gateway calls TrustGuard's /v1/guard directly, addressing the collector by its server-generated `collector_key` instead of a `gateway_id`. The collector created in step 2.5 is reused (it can be addressed by either field; exactly one must be sent per request).\n\nThis folder needs a service token, so it requires the platform client credentials that are otherwise server-side only. Set `guard_platform_client_id` and `guard_platform_client_secret` (matching TrustGuard's TRUSTGUARD_PLATFORM_CLIENT_ID/SECRET) to run it; the requests skip cleanly when they are empty.",
+			"description": "Demonstrates the non-gateway routing path: a service that is NOT a TrustGate gateway calls TrustGuard's /v1/guard directly, addressing the collector by its server-generated `collector_key`. Uses the collector's tenant-scoped service_client credentials returned at collector creation (scope=tenant).",
 			"item": [
 				{
 					"name": "1. Get Service Token (client-credentials)",
@@ -450,10 +459,10 @@
 							"script": {
 								"type": "text/javascript",
 								"exec": [
-									"var id = pm.collectionVariables.get('guard_platform_client_id');",
-									"var secret = pm.collectionVariables.get('guard_platform_client_secret');",
+									"var id = pm.collectionVariables.get('guard_service_client_id');",
+									"var secret = pm.collectionVariables.get('guard_service_client_secret');",
 									"if (!id || !secret) {",
-									"  pm.test.skip('set guard_platform_client_id/secret to exercise the external collector_key path');",
+									"  pm.test.skip('collector service_client credentials missing (run folder 2 first)');",
 									"} else {",
 									"  pm.test('token issued (200)', function () { pm.response.to.have.status(200); });",
 									"  if (pm.response.code === 200) { pm.collectionVariables.set('guard_service_token', pm.response.json().access_token); }",
@@ -466,9 +475,9 @@
 						"auth": { "type": "noauth" },
 						"method": "POST",
 						"header": [ { "key": "Content-Type", "value": "application/json" } ],
-						"body": { "mode": "raw", "raw": "{\n  \"grant_type\": \"client_credentials\",\n  \"client_id\": \"{{guard_platform_client_id}}\",\n  \"client_secret\": \"{{guard_platform_client_secret}}\"\n}" },
+						"body": { "mode": "raw", "raw": "{\n  \"grant_type\": \"client_credentials\",\n  \"client_id\": \"{{guard_service_client_id}}\",\n  \"client_secret\": \"{{guard_service_client_secret}}\",\n  \"scope\": \"tenant\"\n}" },
 						"url": { "raw": "{{guard_base_url}}/v1/token", "host": ["{{guard_base_url}}"], "path": ["v1", "token"] },
-						"description": "OAuth2 client-credentials exchange. The returned platform-scoped service token authorizes /v1/guard; platform scope resolves the collector by collector_key with no tenant binding."
+						"description": "OAuth2 client-credentials with scope=tenant using the collector-bound service_client. The token authorizes /v1/guard for external callers."
 					}
 				},
 				{
