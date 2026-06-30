@@ -81,7 +81,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 
 	model := modelFor(in.Request)
 	dec := llmcost.Decide(ctx, p.pricing, cfg.CustomPricing, &cfg.Cap, in.Request.Provider, model, in.Request.RequestedModel)
-	data := CostCapData{Stage: string(in.Stage), Provider: in.Request.Provider, Model: model}
+	data := CapData{Stage: string(in.Stage), Provider: in.Request.Provider, Model: model}
 	applyTelemetry(&data, llmcost.TelemetryFrom(dec))
 
 	if dec.Kind == llmcost.DecisionViolation {
@@ -117,14 +117,14 @@ func modelFor(req *infracontext.RequestContext) string {
 	return req.RequestedModel
 }
 
-func setExtras(event *metrics.EventContext, data CostCapData) {
+func setExtras(event *metrics.EventContext, data CapData) {
 	if event == nil {
 		return
 	}
 	event.SetExtras(data)
 }
 
-func applyTelemetry(data *CostCapData, t *llmcost.Telemetry) {
+func applyTelemetry(data *CapData, t *llmcost.Telemetry) {
 	if t == nil {
 		return
 	}

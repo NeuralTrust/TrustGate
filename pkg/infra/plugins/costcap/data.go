@@ -14,8 +14,8 @@
 
 package costcap
 
-// CostCapData is the per-request telemetry emitted by the cost cap plugin.
-type CostCapData struct {
+// CapData is the per-request telemetry emitted by the cost cap plugin.
+type CapData struct {
 	Stage            string  `json:"stage"`
 	Provider         string  `json:"provider,omitempty"`
 	Model            string  `json:"model,omitempty"`

@@ -261,7 +261,7 @@ func TestPlugin_ObserveViolationExtrasSurvive(t *testing.T) {
 	assert.Equal(t, 200, res.StatusCode)
 
 	require.NotNil(t, span.Plugin)
-	data, ok := span.Plugin.Extras.(CostCapData)
+	data, ok := span.Plugin.Extras.(CapData)
 	require.True(t, ok)
 	assert.True(t, data.Violation, "cost-cap telemetry must survive when the request proceeds")
 	assert.InDelta(t, 1.0, data.InputPricePer1k, 1e-9)
