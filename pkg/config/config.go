@@ -177,14 +177,6 @@ type SessionStoreConfig struct {
 
 type KafkaConfig struct {
 	Brokers []string
-	// SASL/TLS client settings consumed by the Kafka telemetry exporter. All are
-	// optional: when SecurityProtocol is empty the producer stays on PLAINTEXT, so
-	// existing deployments against an unauthenticated broker are unchanged.
-	SecurityProtocol string
-	SASLMechanism    string
-	SASLUsername     string
-	SASLPassword     string
-	SSLCALocation    string
 }
 
 type TelemetryConfig struct {
@@ -360,14 +352,7 @@ func getSessionStoreConfig() SessionStoreConfig {
 }
 
 func getKafkaConfig() KafkaConfig {
-	return KafkaConfig{
-		Brokers:          splitCSV(getEnv("KAFKA_BROKERS", defaultKafkaBrokers)),
-		SecurityProtocol: getEnv("KAFKA_SECURITY_PROTOCOL", ""),
-		SASLMechanism:    getEnv("KAFKA_SASL_MECHANISM", ""),
-		SASLUsername:     getEnv("KAFKA_SASL_USERNAME", ""),
-		SASLPassword:     getEnv("KAFKA_SASL_PASSWORD", ""),
-		SSLCALocation:    getEnv("KAFKA_SSL_CA_LOCATION", ""),
-	}
+	return KafkaConfig{Brokers: splitCSV(getEnv("KAFKA_BROKERS", defaultKafkaBrokers))}
 }
 
 func getTelemetryConfig() TelemetryConfig {
