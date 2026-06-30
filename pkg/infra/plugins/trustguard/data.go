@@ -14,7 +14,10 @@
 
 package trustguard
 
-import "github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+import (
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+)
 
 type GuardRequest struct {
 	Payload    GuardPayload    `json:"payload"`
@@ -83,4 +86,9 @@ func setExtras(event *metrics.EventContext, data guardData) {
 		return
 	}
 	event.SetExtras(data)
+}
+
+func recordGuardOutcome(event *metrics.EventContext, data guardData) {
+	setExtras(event, data)
+	appplugins.SetDecisionFromOutcome(event, data.Decision)
 }

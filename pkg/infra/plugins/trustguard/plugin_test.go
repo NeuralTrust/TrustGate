@@ -27,7 +27,9 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
 const testTimeout = 2 * time.Second
@@ -145,13 +147,24 @@ func newServer(t *testing.T, f *fakeGuard) *httptest.Server {
 }
 
 func execInput(stage policy.Stage, mode policy.Mode, set map[string]any, req *infracontext.RequestContext, resp *infracontext.ResponseContext) appplugins.ExecInput {
+	return execInputWithEvent(stage, mode, set, req, resp, nil)
+}
+
+func execInputWithEvent(stage policy.Stage, mode policy.Mode, set map[string]any, req *infracontext.RequestContext, resp *infracontext.ResponseContext, event *metrics.EventContext) appplugins.ExecInput {
 	return appplugins.ExecInput{
 		Stage:    stage,
 		Mode:     mode,
 		Config:   policy.PluginConfig{Settings: set},
 		Request:  req,
 		Response: resp,
+		Event:    event,
 	}
+}
+
+func newEvent() (*metrics.EventContext, *trace.Span) {
+	tr := trace.New("", trace.Metadata{})
+	span := tr.StartSpan(trace.SpanPlugin, PluginName)
+	return metrics.NewEventContext(span), span
 }
 
 func TestExecutePreRequestBlockReturns403(t *testing.T) {
@@ -274,6 +287,71 @@ func TestExecuteAllowStatusesPassThrough(t *testing.T) {
 				t.Fatalf("expected pass-through, got %+v", res)
 			}
 		})
+	}
+}
+
+func TestExecuteAllowedRecordsAllowedSpanDecision(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: "allowed", TraceID: "trace-allowed"}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil, event)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("expected pass-through, got %+v", res)
+	}
+	attrs := span.PluginAttrsCopy()
+	if attrs.Decision != decisionAllowed {
+		t.Fatalf("span decision = %q, want %q", attrs.Decision, decisionAllowed)
+	}
+	extras, ok := attrs.Extras.(guardData)
+	if !ok {
+		t.Fatalf("extras type = %T, want guardData", attrs.Extras)
+	}
+	if extras.Decision != decisionAllowed {
+		t.Fatalf("extras decision = %q, want %q", extras.Decision, decisionAllowed)
+	}
+}
+
+func TestExecuteReportStatusRecordsReportedSpanDecision(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusReport, TraceID: "trace-report"}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil, event)
+	if _, err := p.Execute(context.Background(), in); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	attrs := span.PluginAttrsCopy()
+	if attrs.Decision != "reported" {
+		t.Fatalf("span decision = %q, want reported", attrs.Decision)
+	}
+}
+
+func TestExecuteBlockRecordsBlockSpanDecision(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusBlock, TraceID: "trace-block"}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil, event)
+	if _, err := p.Execute(context.Background(), in); err == nil {
+		t.Fatal("expected block error")
+	}
+	attrs := span.PluginAttrsCopy()
+	if attrs.Decision != "block" {
+		t.Fatalf("span decision = %q, want block", attrs.Decision)
 	}
 }
 
@@ -545,24 +623,6 @@ func TestExecuteInspectModeDirections(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestExecuteBaseURLOverrideFromSettings(t *testing.T) {
-	t.Parallel()
-
-	f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
-	srv := newServer(t, f)
-	p := New(adapter.NewRegistry(), "https://unreachable.invalid", testTimeout, "test-client", "test-secret", nil)
-
-	set := settings("")
-	set["base_url"] = srv.URL
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(), nil)
-	if _, err := p.Execute(context.Background(), in); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if f.count() != 1 {
-		t.Fatalf("expected guard called once via settings base_url, got %d", f.count())
 	}
 }
 

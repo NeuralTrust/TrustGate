@@ -22,7 +22,7 @@ func setupDiscoveryRoute(t *testing.T) (slug, apiKey, path string) {
 	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("disc-gw")})
 	host, ok := gatewayHosts.Load(gatewayID)
 	require.True(t, ok, "gateway host missing for %s", gatewayID)
-	slug = strings.TrimSuffix(host.(string), "."+functionalGatewayBaseDomain)
+	slug = strings.TrimSuffix(host.(string), "."+gatewayBaseDomain())
 	require.NotEmpty(t, slug)
 
 	up := newJSONUpstream(t, "discovery-upstream")
@@ -63,7 +63,7 @@ func discoveryPost(t *testing.T, apiKey, path, host, headerSlug string) (int, []
 func TestProxyE2E_GatewayDiscovery(t *testing.T) {
 	defer Track(t, "GatewayDiscovery")()
 	slug, apiKey, path := setupDiscoveryRoute(t)
-	subdomainHost := fmt.Sprintf("%s.%s", slug, functionalGatewayBaseDomain)
+	subdomainHost := fmt.Sprintf("%s.%s", slug, gatewayBaseDomain())
 
 	t.Run("matches by slug header without a gateway host", func(t *testing.T) {
 		status, body := discoveryPost(t, apiKey, path, "", slug)

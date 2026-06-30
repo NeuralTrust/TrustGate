@@ -51,7 +51,7 @@ func setupPlaygroundRoute(t *testing.T) (gatewaySlug, consumerSlug, path string,
 	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("pg-gw")})
 	host, ok := gatewayHosts.Load(gatewayID)
 	require.True(t, ok, "gateway host missing for %s", gatewayID)
-	gatewaySlug = strings.TrimSuffix(host.(string), "."+functionalGatewayBaseDomain)
+	gatewaySlug = strings.TrimSuffix(host.(string), "."+gatewayBaseDomain())
 	require.NotEmpty(t, gatewaySlug)
 
 	up = newJSONUpstream(t, "playground-upstream")

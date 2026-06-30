@@ -67,3 +67,24 @@ func SetDecision(event *metrics.EventContext, mode policy.Mode) {
 	}
 	event.SetDecision(DecisionForMode(mode))
 }
+
+// SetDecisionFromOutcome records the plugin's actual outcome on the metrics span.
+// Unlike SetDecision(mode), this does not label enforce-mode pass-throughs as "block".
+func SetDecisionFromOutcome(event *metrics.EventContext, outcome string) {
+	if event == nil {
+		return
+	}
+	event.SetDecision(SpanDecisionFromOutcome(outcome))
+}
+
+// SpanDecisionFromOutcome maps plugin-specific outcome strings to policy-chain decisions.
+func SpanDecisionFromOutcome(outcome string) string {
+	switch outcome {
+	case "blocked", "block":
+		return "block"
+	case "reported", "report", "rejected":
+		return "reported"
+	default:
+		return outcome
+	}
+}
