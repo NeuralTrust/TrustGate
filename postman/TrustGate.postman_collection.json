@@ -7497,7 +7497,368 @@
           ]
         },
         {
-          "name": "9. Diagnostics (standalone)",
+          "name": "9. Flow I - GitHub end-to-end (inbound OAuth + upstream forwarded GitHub)",
+          "description": "Self-contained. The full GitHub story on real services: INBOUND OAuth brokered through a discovery-capable IdP (Entra here) plus UPSTREAM GitHub Copilot MCP in forwarded mode with manual registration (a pre-registered GitHub OAuth app). Both legs are OAuth 2.x; the GitHub OAuth is the UPSTREAM leg.\n\nIMPORTANT - why the INBOUND IdP is NOT GitHub: the AS facade resolves the IdP's authorize/token endpoints purely via issuer discovery ({issuer}/.well-known/oauth-authorization-server then /openid-configuration). GitHub OAuth apps publish no such metadata, and https://token.actions.githubusercontent.com only exposes JWKS (no authorization/token endpoints). Pointing the INBOUND oauth2 auth at a GitHub issuer makes GET /oauth/authorize fail with 'oauth: IdP metadata for ... lacks authorization/token endpoints' (HTTP 500). GitHub OAuth therefore belongs to the UPSTREAM (forwarded) leg, where authorize_url/token_url are set explicitly. For the inbound IdP use Entra/Okta/Auth0/Cognito/Google (anything with AS discovery).\n\nRun the admin requests top to bottom, then 'Get Entra token', then the MCP plane requests. The first tools/list returns -32003 with data.connect_url: open it in a browser, click Connect GitHub, approve, re-run. Finish with the Cleanup requests.\n\nPrereqs:\n1. entra_tenant_id / entra_client_id / entra_client_secret (see Flow C for the Entra app setup) for the INBOUND leg.\n2. A GitHub OAuth app for the UPSTREAM leg: set github_client_id / github_client_secret and the app's Authorization callback URL to {{mcp_url}}/oauth/callback/github.\n\nMCP endpoint: {{mcp_url}}/{{consumer_slug}}/mcp - the consumer slug is generated on creation and captured by the create request.\n\nNOTE: only one ENABLED oauth2 auth may cover the same (issuer, audience) pair - run another Entra folder's Cleanup first or 'Create oauth2 auth' answers 409.",
+          "item": [
+            {
+              "name": "Create gateway",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "pm.environment.set('gateway_id', pm.response.json().id);"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{admin_url}}/v1/gateways",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"flow-i-github\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Create oauth2 auth (Entra) [INBOUND IdP]",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "pm.environment.set('oauth2_auth_id', pm.response.json().id);"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/auths",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"entra\",\n  \"type\": \"oauth2\",\n  \"config\": {\n    \"oauth2\": {\n      \"issuer\": \"https://login.microsoftonline.com/{{entra_tenant_id}}/v2.0\",\n      \"audiences\": [\"api://{{entra_client_id}}\"],\n      \"client_id\": \"{{entra_client_id}}\",\n      \"client_secret\": \"{{entra_client_secret}}\",\n      \"required_scopes\": [\"api://{{entra_client_id}}/mcp.access\", \"offline_access\"]\n    }\n  }\n}"
+                },
+                "description": "INBOUND identity provider. This is the IdP the gateway delegates the MCP client login to (the AS facade brokers an authorization-code flow against this issuer). It is NOT GitHub on purpose: GitHub publishes no AS discovery, so a GitHub issuer here would make /oauth/authorize fail with 'lacks authorization/token endpoints' (HTTP 500). Swap Entra for Okta/Auth0/Cognito/Google freely. See Flow C's 'Create oauth2 auth' for the field-by-field Entra explanation. 409 means another ENABLED oauth2 auth already covers this (issuer, audience): run that folder's Cleanup or disable it."
+              }
+            },
+            {
+              "name": "Create GitHub MCP registry (forwarded + manual) [UPSTREAM GitHub OAuth]",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "pm.environment.set('registry_id', pm.response.json().id);"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/registries",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"github-mcp\",\n  \"type\": \"MCP\",\n  \"mcp_target\": {\n    \"url\": \"https://api.githubcopilot.com/mcp/\",\n    \"transport\": \"streamable-http\",\n    \"auth\": {\n      \"mode\": \"forwarded\",\n      \"provider\": \"github\",\n      \"registration\": \"manual\",\n      \"client_id\": \"{{github_client_id}}\",\n      \"client_secret\": \"{{github_client_secret}}\",\n      \"authorize_url\": \"https://github.com/login/oauth/authorize\",\n      \"token_url\": \"https://github.com/login/oauth/access_token\",\n      \"scopes\": [\"repo\", \"read:org\", \"read:user\", \"user:email\"],\n      \"resource\": \"https://api.githubcopilot.com/mcp/\"\n    }\n  }\n}"
+                },
+                "description": "UPSTREAM GitHub OAuth (the second OAuth leg). forwarded + manual registration: the gateway drives a per-user authorization-code flow against the GitHub OAuth app you pre-registered (github.com is NOT discovery-capable, hence the explicit authorize_url/token_url). Set the GitHub app's Authorization callback URL to {{mcp_url}}/oauth/callback/github. At tools time a user without a linked GitHub account gets JSON-RPC error -32003 with data.connect_url; after consent the gateway vaults that user's GitHub token and injects it upstream. client_secret is write-only (reads return it masked)."
+              }
+            },
+            {
+              "name": "Create MCP consumer",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "pm.environment.set('consumer_id', pm.response.json().id);",
+                      "pm.environment.set('consumer_slug', pm.response.json().slug);"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"flow-i-github\",\n  \"type\": \"MCP\",\n  \"fail_mode\": \"closed\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Attach oauth2 auth to consumer",
+              "request": {
+                "method": "POST",
+                "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/auths/{{oauth2_auth_id}}"
+              }
+            },
+            {
+              "name": "Attach GitHub registry to consumer",
+              "request": {
+                "method": "POST",
+                "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/registries/{{registry_id}}"
+              }
+            },
+            {
+              "name": "Set toolkit (all GitHub tools)",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"toolkit\": [\n    {\n      \"registry_id\": \"{{registry_id}}\",\n      \"tool\": \"*\"\n    }\n  ],\n  \"fail_mode\": \"closed\"\n}"
+                },
+                "description": "Wildcard exposes every GitHub MCP tool. Replace with explicit {tool, expose_as} entries to curate or rename."
+              }
+            },
+            {
+              "name": "Get Entra token (client credentials)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const res = pm.response.json();",
+                      "pm.test('access token issued', () => pm.expect(res.access_token).to.be.a('string'));",
+                      "pm.environment.set('entra_token', res.access_token);",
+                      "let b64 = res.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+                      "while (b64.length % 4) b64 += '=';",
+                      "const claims = JSON.parse(atob(b64));",
+                      "console.log('token claims', { iss: claims.iss, aud: claims.aud, oid: claims.oid, roles: claims.roles });",
+                      "pm.test('v2.0 issuer (else set requestedAccessTokenVersion=2 in the manifest)', () => {",
+                      "  pm.expect(claims.iss).to.include('/v2.0');",
+                      "});"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "url": "https://login.microsoftonline.com/{{entra_tenant_id}}/oauth2/v2.0/token",
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "grant_type",
+                      "value": "client_credentials"
+                    },
+                    {
+                      "key": "client_id",
+                      "value": "{{entra_client_id}}"
+                    },
+                    {
+                      "key": "client_secret",
+                      "value": "{{entra_client_secret}}"
+                    },
+                    {
+                      "key": "scope",
+                      "value": "api://{{entra_client_id}}/.default"
+                    }
+                  ]
+                },
+                "description": "INBOUND M2M token for Postman testing (the inbound leg). The scope must be your own app's .default. This token links the GitHub account to the service principal; real users in Cursor each link their own GitHub account. See Flow C's note about the mcp.access app role for client-credentials tokens."
+              }
+            },
+            {
+              "name": "initialize (Entra JWT)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const sid = pm.response.headers.get('Mcp-Session-Id');",
+                      "if (sid) pm.environment.set('mcp_session_id', sid);"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{entra_token}}"
+                  }
+                ],
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"initialize\",\n  \"params\": {\n    \"protocolVersion\": \"2025-06-18\",\n    \"capabilities\": {},\n    \"clientInfo\": { \"name\": \"postman\", \"version\": \"1.0\" }\n  }\n}"
+                },
+                "description": "Authenticates the INBOUND leg with the Entra JWT. Get {{entra_token}} first via this folder's 'Get Entra token (client credentials)'."
+              }
+            },
+            {
+              "name": "tools/list -> GitHub consent error on first run",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const body = pm.response.json();",
+                      "if (body.error && body.error.code === -32003) {",
+                      "  const url = body.error.data.connect_url;",
+                      "  const ticket = (url.split('ticket=')[1] || '').split('&')[0];",
+                      "  pm.environment.set('connect_ticket', ticket);",
+                      "  console.log('Open in a browser to link GitHub:', url);",
+                      "} else if (body.result) {",
+                      "  console.log('Linked: ' + body.result.tools.length + ' GitHub tools exposed');",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{entra_token}}"
+                  }
+                ],
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 2,\n  \"method\": \"tools/list\"\n}"
+                },
+                "description": "First run: no vaulted GitHub token for this principal, so the gateway answers JSON-RPC error -32003 with data.connect_url (the script saves the ticket and logs the URL). Open it in a browser, click Connect GitHub, approve at GitHub, then re-run: the result lists GitHub's tools. This is the UPSTREAM GitHub OAuth leg in action."
+              }
+            },
+            {
+              "name": "Connect page (browser UI)",
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "GET",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp/connect?ticket={{connect_ticket}}",
+                "description": "The ticket-authenticated consent page: one button per forwarded provider behind this virtual MCP (GitHub here), with linked/unlinked status. Normally opened in a browser via the connect_url from the -32003 error. Tickets expire after 15 minutes."
+              }
+            },
+            {
+              "name": "tools/call get_me (after linking)",
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{entra_token}}"
+                  }
+                ],
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 3,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"get_me\",\n    \"arguments\": {}\n  }\n}"
+                },
+                "description": "Check the exact tool names in the tools/list result (the composer prefixes with the registry name only on collisions). The call runs with YOUR vaulted GitHub token; another principal calling the same consumer gets their own consent flow."
+              }
+            },
+            {
+              "name": "Disconnect GitHub (revoke vaulted token)",
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "url": "{{mcp_url}}/oauth/disconnect/github?ticket={{connect_ticket}}",
+                "description": "Deletes the vaulted credential for (gateway, principal, github). The next tools call returns the -32003 consent error again."
+              }
+            },
+            {
+              "name": "Cleanup: delete consumer",
+              "request": {
+                "method": "DELETE",
+                "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}"
+              }
+            },
+            {
+              "name": "Cleanup: delete GitHub registry",
+              "request": {
+                "method": "DELETE",
+                "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/registries/{{registry_id}}"
+              }
+            },
+            {
+              "name": "Cleanup: delete oauth2 auth",
+              "request": {
+                "method": "DELETE",
+                "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/auths/{{oauth2_auth_id}}"
+              }
+            },
+            {
+              "name": "Cleanup: delete gateway",
+              "request": {
+                "method": "DELETE",
+                "url": "{{admin_url}}/v1/gateways/{{gateway_id}}"
+              }
+            }
+          ]
+        },
+        {
+          "name": "10. Diagnostics (standalone)",
           "description": "Utilities that need no setup of their own. The id-based requests (introspect/get) read whatever {{gateway_id}}/{{registry_id}}/{{consumer_id}} the last-run flow stored - run them mid-flow, before that flow's Cleanup.",
           "item": [
             {
