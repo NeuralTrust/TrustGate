@@ -102,6 +102,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	outcome := runRules(ctx, buildEvalContext(cfg, creq, cresp, p.llm), in.Mode, cresp.ToolCalls)
 	if !outcome.matched {
 		setExtras(in.Event, ToolCallValidationData{Action: actionAllow})
+		appplugins.SetDecisionFromOutcome(in.Event, "allowed")
 		return passThrough(), nil
 	}
 
@@ -128,8 +129,17 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 
 	setExtras(in.Event, outcome.extras)
-	appplugins.SetDecision(in.Event, in.Mode)
+	appplugins.SetDecisionFromOutcome(in.Event, validationSpanDecision(outcome.extras))
 	return passThrough(), nil
+}
+
+func validationSpanDecision(data ToolCallValidationData) string {
+	switch data.Action {
+	case actionReject, actionRedact:
+		return "reported"
+	default:
+		return "allowed"
+	}
 }
 
 func passThrough() *appplugins.Result {

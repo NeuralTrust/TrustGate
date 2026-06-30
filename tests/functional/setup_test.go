@@ -82,12 +82,15 @@ func getEnv(key, fallback string) string {
 
 // buildCmdEnv returns the env the gateway binary will see, pinning
 // ENV_FILE so it loads the same .env.functional as TestMain.
-func buildCmdEnv() []string {
+func buildCmdEnv(trustGuardBaseURL string) []string {
 	env := os.Environ()
 	env = append(env, "ENV_FILE=../../.env.functional")
 	env = append(env, "AWS_ENDPOINT_URL_BEDROCK_RUNTIME="+bedrockGuardrailEndpoint)
 	env = append(env, "TRUSTGUARD_CLIENT_ID="+trustGuardFunctionalClientID)
 	env = append(env, "TRUSTGUARD_CLIENT_SECRET="+trustGuardFunctionalClientSecret)
+	if trustGuardBaseURL != "" {
+		env = append(env, "TRUSTGUARD_BASE_URL="+trustGuardBaseURL)
+	}
 	return env
 }
 
@@ -121,7 +124,8 @@ func setupTestEnvironment() {
 	redisDB = redis.NewClient(&redis.Options{Addr: redisAddr, DB: redisDBIdx})
 	_ = redisDB.FlushDB(context.Background()).Err()
 
-	cmdEnv := buildCmdEnv()
+	trustGuardStubURL := StartTrustGuardFunctionalStub()
+	cmdEnv := buildCmdEnv(trustGuardStubURL)
 	gatewayBinaryPath = buildGatewayBinary(cmdEnv)
 
 	// The admin plane runs the migrations on boot; wait for it to be ready before
@@ -141,6 +145,7 @@ func setupTestEnvironment() {
 }
 
 func teardownTestEnvironment() {
+	StopTrustGuardFunctionalStub()
 	if mcpCmd != nil && mcpCmd.Process != nil {
 		if err := syscall.Kill(-mcpCmd.Process.Pid, syscall.SIGKILL); err != nil {
 			log.Printf("error killing mcp server: %v", err)

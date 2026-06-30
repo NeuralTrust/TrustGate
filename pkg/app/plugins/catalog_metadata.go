@@ -1139,12 +1139,6 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Description: "TrustGuard collector UUID bound to this gateway policy.",
 					Required:    true,
 				},
-				{
-					Key:         "base_url",
-					Label:       "Base URL",
-					Type:        FieldTypeString,
-					Description: "Optional per-policy override of the TrustGuard base URL. Falls back to the gateway TRUSTGUARD_BASE_URL when empty.",
-				},
 			},
 		},
 	},

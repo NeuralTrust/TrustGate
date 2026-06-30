@@ -226,6 +226,7 @@ func TestExecuteObserveWithViolationPassesThrough(t *testing.T) {
 	data, ok := span.PluginAttrsCopy().Extras.(ModerationData)
 	require.True(t, ok, "expected ModerationData extras")
 	assert.Equal(t, decisionReported, data.Decision)
+	assert.Equal(t, "reported", span.PluginAttrsCopy().Decision)
 	assert.True(t, span.HasDecision())
 }
 
@@ -251,6 +252,7 @@ func TestExecuteAllowPassesThrough(t *testing.T) {
 	data, ok := span.PluginAttrsCopy().Extras.(ModerationData)
 	require.True(t, ok)
 	assert.Equal(t, decisionAllowed, data.Decision)
+	assert.Equal(t, "allowed", span.PluginAttrsCopy().Decision)
 	assert.InDelta(t, 0.10, data.MaxScore, 1e-9)
 	assert.Equal(t, "hate", data.MaxScoreCategory)
 }
