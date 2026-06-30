@@ -134,7 +134,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 			slog.Any("error", err),
 		)
 		setExtras(in.Event, data)
-		appplugins.SetDecision(in.Event, in.Mode)
+		appplugins.SetDecisionFromOutcome(in.Event, decisionFailedClosed)
 		return passThrough(), nil
 	}
 
@@ -151,6 +151,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		data.Decision = decisionBlocked
 		data.Breached = breachedNames(breaches)
 		setExtras(in.Event, data)
+		appplugins.SetDecisionFromOutcome(in.Event, decisionBlocked)
 		return nil, blockError(cfg.Message, breaches)
 	}
 
@@ -161,7 +162,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		data.Decision = decisionAllowed
 	}
 	setExtras(in.Event, data)
-	appplugins.SetDecision(in.Event, in.Mode)
+	appplugins.SetDecisionFromOutcome(in.Event, data.Decision)
 	return passThrough(), nil
 }
 

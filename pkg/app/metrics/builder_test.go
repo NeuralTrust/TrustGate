@@ -411,3 +411,37 @@ func TestBuilder_StatusReasonFromTrace(t *testing.T) {
 	assert.Equal(t, 403, evt.Status.Code)
 	assert.Equal(t, "model_not_allowed", evt.Status.Reason)
 }
+
+func TestBuilder_TrustGuardAllowedNotFlagged(t *testing.T) {
+	rt := trace.New("trace-tg-allowed", trace.Metadata{GatewayID: "gw-1"})
+	_ = rt.AddSpan(pluginSpan("trustguard",
+		&trace.PluginAttrs{Stage: "pre_request", Decision: "allowed"}, 200, 250*time.Millisecond, ""))
+
+	req := &infracontext.RequestContext{GatewayID: "gw-1", Body: []byte(openAIRequestBody), SourceFormat: string(adapter.FormatOpenAI)}
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"ok":true}`)}
+
+	start := time.UnixMilli(6_000_000)
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(260*time.Millisecond))
+
+	require.Len(t, evt.PolicyChain, 1)
+	assert.Equal(t, "allowed", evt.PolicyChain[0].Decision)
+	assert.False(t, evt.PolicyChain[0].Flagged)
+	assert.False(t, evt.IsFlagged)
+}
+
+func TestBuilder_TrustGuardReportedIsFlagged(t *testing.T) {
+	rt := trace.New("trace-tg-reported", trace.Metadata{GatewayID: "gw-1"})
+	_ = rt.AddSpan(pluginSpan("trustguard",
+		&trace.PluginAttrs{Stage: "pre_request", Decision: "reported"}, 200, 250*time.Millisecond, ""))
+
+	req := &infracontext.RequestContext{GatewayID: "gw-1", Body: []byte(openAIRequestBody), SourceFormat: string(adapter.FormatOpenAI)}
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"ok":true}`)}
+
+	start := time.UnixMilli(7_000_000)
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(260*time.Millisecond))
+
+	require.Len(t, evt.PolicyChain, 1)
+	assert.Equal(t, "reported", evt.PolicyChain[0].Decision)
+	assert.True(t, evt.PolicyChain[0].Flagged)
+	assert.True(t, evt.IsFlagged)
+}

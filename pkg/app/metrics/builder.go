@@ -146,7 +146,7 @@ func (b *Builder) foldPluginSpans(requestTrace *trace.RequestTrace) ([]events.Po
 		attrs := span.PluginAttrsCopy()
 		statusCode := span.StatusCode()
 		hasError := span.Error() != ""
-		flagged := hasError || attrs.Decision == "block" || (statusCode >= http.StatusBadRequest)
+		flagged := hasError || pluginDecisionFlagged(attrs.Decision) || (statusCode >= http.StatusBadRequest)
 		latencyMs := span.Latency().Milliseconds()
 		pluginsMs += latencyMs
 		if flagged {
@@ -172,6 +172,15 @@ func (b *Builder) foldPluginSpans(requestTrace *trace.RequestTrace) ([]events.Po
 		})
 	}
 	return chain, pluginsMs, anyFlagged, security
+}
+
+func pluginDecisionFlagged(decision string) bool {
+	switch decision {
+	case "block", "blocked", "reported", "report", "throttle":
+		return true
+	default:
+		return false
+	}
 }
 
 func (b *Builder) buildMCP(

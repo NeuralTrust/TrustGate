@@ -129,7 +129,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 			return nil, unavailableError()
 		}
 		setExtras(in.Event, ModerationData{Model: cfg.Model, Decision: decisionFailedOpen})
-		appplugins.SetDecision(in.Event, in.Mode)
+		appplugins.SetDecisionFromOutcome(in.Event, decisionFailedOpen)
 		return passThrough(), nil
 	}
 
@@ -149,6 +149,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	if len(violations) > 0 && appplugins.Blocks(in.Mode) {
 		data.Decision = decisionBlock
 		setExtras(in.Event, data)
+		appplugins.SetDecisionFromOutcome(in.Event, decisionBlock)
 		return nil, blockError(cfg.Action.Message, violations)
 	}
 
@@ -158,7 +159,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		data.Decision = decisionAllowed
 	}
 	setExtras(in.Event, data)
-	appplugins.SetDecision(in.Event, in.Mode)
+	appplugins.SetDecisionFromOutcome(in.Event, data.Decision)
 	return passThrough(), nil
 }
 

@@ -419,10 +419,9 @@ func TestTrustGuardSchema(t *testing.T) {
 	assert.Equal(t, []string{"Request", "Response", "Request & Response"}, enumLabels(direction.Enum))
 	assert.Equal(t, "request", direction.Default)
 
-	baseURL, ok := fieldByKey(fields, "base_url")
-	require.True(t, ok)
-	assert.Equal(t, FieldTypeString, baseURL.Type)
-	assert.False(t, baseURL.Required)
+	if _, ok := fieldByKey(fields, "base_url"); ok {
+		t.Fatal("trustguard schema must not expose base_url; use gateway TRUSTGUARD_BASE_URL")
+	}
 
 	collectorID, ok := fieldByKey(fields, "collector_id")
 	require.True(t, ok)

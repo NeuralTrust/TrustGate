@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 
@@ -16,7 +17,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const functionalGatewayBaseDomain = "llm.neuraltrust.ai"
+func gatewayBaseDomain() string {
+	if GlobalConfig != nil && GlobalConfig.Server.GatewayBaseDomain != "" {
+		return strings.Trim(strings.ToLower(strings.TrimSpace(GlobalConfig.Server.GatewayBaseDomain)), ".")
+	}
+	return "llm.neuraltrust.ai"
+}
 
 var (
 	gatewayHosts  sync.Map
@@ -43,7 +49,7 @@ func CreateGateway(t *testing.T, payload map[string]any) string {
 	slug, ok := body["slug"].(string)
 	require.True(t, ok, "create response missing slug: %v", body)
 	require.NotEmpty(t, slug)
-	gatewayHosts.Store(id, slug+"."+functionalGatewayBaseDomain)
+	gatewayHosts.Store(id, slug+"."+gatewayBaseDomain())
 	return id
 }
 

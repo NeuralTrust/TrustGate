@@ -16,7 +16,6 @@ package trustguard
 
 import (
 	"fmt"
-	"net/url"
 	"strings"
 
 	"github.com/google/uuid"
@@ -34,7 +33,6 @@ const (
 
 type Settings struct {
 	Inspect     string `mapstructure:"inspect"`
-	BaseURL     string `mapstructure:"base_url"`
 	CollectorID string `mapstructure:"collector_id"`
 }
 
@@ -71,15 +69,6 @@ func (s *Settings) validate() error {
 	case inspectRequest, inspectResponse, inspectRequestResponse:
 	default:
 		return fmt.Errorf("trustguard: inspect must be one of request, response, request_response")
-	}
-	if s.BaseURL != "" {
-		parsed, err := url.Parse(s.BaseURL)
-		if err != nil {
-			return fmt.Errorf("trustguard: base_url is invalid: %w", err)
-		}
-		if !parsed.IsAbs() || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-			return fmt.Errorf("trustguard: base_url must be an absolute http(s) url")
-		}
 	}
 	if strings.TrimSpace(s.CollectorID) == "" {
 		return fmt.Errorf("trustguard: collector_id is required")

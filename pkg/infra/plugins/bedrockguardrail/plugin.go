@@ -189,11 +189,12 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 		if appplugins.Blocks(in.Mode) {
 			data.Decision = decisionBlocked
 			setExtras(in.Event, data)
+			appplugins.SetDecisionFromOutcome(in.Event, decisionBlocked)
 			return nil, blockError(*res.block)
 		}
 		data.Decision = decisionReported
 		setExtras(in.Event, data)
-		appplugins.SetDecision(in.Event, in.Mode)
+		appplugins.SetDecisionFromOutcome(in.Event, decisionReported)
 		return passThrough(), nil
 	}
 
@@ -204,13 +205,13 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 		}
 		data.Decision = decisionReported
 		setExtras(in.Event, data)
-		appplugins.SetDecision(in.Event, in.Mode)
+		appplugins.SetDecisionFromOutcome(in.Event, decisionReported)
 		return passThrough(), nil
 	}
 
 	data.Decision = decisionAllowed
 	setExtras(in.Event, data)
-	appplugins.SetDecision(in.Event, in.Mode)
+	appplugins.SetDecisionFromOutcome(in.Event, decisionAllowed)
 	return passThrough(), nil
 }
 
@@ -228,6 +229,7 @@ func (p *Plugin) anonymizeEnforce(in appplugins.ExecInput, data *Data, out *bedr
 	}
 	data.Decision = decisionAnonymized
 	setExtras(in.Event, data)
+	appplugins.SetDecisionFromOutcome(in.Event, decisionAnonymized)
 	return span.result(body), nil
 }
 
@@ -236,6 +238,7 @@ func (p *Plugin) anonymizeDegraded(in appplugins.ExecInput, data *Data, reason s
 	data.DegradedReason = reason
 	data.Decision = decisionBlocked
 	setExtras(in.Event, data)
+	appplugins.SetDecisionFromOutcome(in.Event, decisionBlocked)
 	return nil, blockError(*f)
 }
 
@@ -257,7 +260,7 @@ func (p *Plugin) failClosed(ctx context.Context, in appplugins.ExecInput, cfg Se
 		slog.Any("error", err),
 	)
 	setExtras(in.Event, data)
-	appplugins.SetDecision(in.Event, in.Mode)
+	appplugins.SetDecisionFromOutcome(in.Event, decisionFailedClosed)
 	return passThrough(), nil
 }
 

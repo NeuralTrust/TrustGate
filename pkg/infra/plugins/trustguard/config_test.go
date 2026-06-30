@@ -63,39 +63,9 @@ func TestParseConfig(t *testing.T) {
 			wantErr:  true,
 		},
 		{
-			name:        "base_url http accepted",
+			name:        "legacy base_url in settings ignored",
 			settings:    map[string]any{"base_url": "http://guard.local", "collector_id": testCollectorID},
 			wantInspect: inspectRequestResponse,
-		},
-		{
-			name:        "base_url https accepted",
-			settings:    map[string]any{"base_url": "https://guard.example.com/api", "collector_id": testCollectorID},
-			wantInspect: inspectRequestResponse,
-		},
-		{
-			name:        "empty base_url ok",
-			settings:    map[string]any{"base_url": "", "collector_id": testCollectorID},
-			wantInspect: inspectRequestResponse,
-		},
-		{
-			name:     "base_url relative rejected",
-			settings: map[string]any{"base_url": "/v1/guard", "collector_id": testCollectorID},
-			wantErr:  true,
-		},
-		{
-			name:     "base_url missing scheme rejected",
-			settings: map[string]any{"base_url": "guard.local", "collector_id": testCollectorID},
-			wantErr:  true,
-		},
-		{
-			name:     "base_url non-http scheme rejected",
-			settings: map[string]any{"base_url": "ftp://guard.local", "collector_id": testCollectorID},
-			wantErr:  true,
-		},
-		{
-			name:     "base_url missing host rejected",
-			settings: map[string]any{"base_url": "http://", "collector_id": testCollectorID},
-			wantErr:  true,
 		},
 		{
 			name:     "missing collector_id rejected",

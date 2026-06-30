@@ -49,6 +49,7 @@ const (
 	decisionAllowed    = "allowed"
 	decisionFailedOpen = "failed_open"
 	statusBlock        = "block"
+	statusReport       = "report"
 )
 
 var _ appplugins.Plugin = (*Plugin)(nil)
@@ -112,10 +113,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return passThrough(), nil
 	}
 
-	baseURL := cfg.BaseURL
-	if baseURL == "" {
-		baseURL = p.baseURL
-	}
+	baseURL := p.baseURL
 	if baseURL == "" {
 		p.warn(ctx, "trustguard base url not configured",
 			slog.String("plugin", PluginName),
@@ -217,21 +215,27 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		Findings:      resp.Findings,
 	}
 
-	if resp.Status == statusBlock && appplugins.Blocks(in.Mode) {
-		data.Decision = decisionBlocked
-		setExtras(in.Event, data)
-		appplugins.SetDecision(in.Event, in.Mode)
+	data.Decision = guardOutcomeDecision(resp.Status, in.Mode)
+	if data.Decision == decisionBlocked {
+		recordGuardOutcome(in.Event, data)
 		return nil, blockError(resp)
 	}
-
-	if resp.Status == statusBlock {
-		data.Decision = decisionReported
-	} else {
-		data.Decision = decisionAllowed
-	}
-	setExtras(in.Event, data)
-	appplugins.SetDecision(in.Event, in.Mode)
+	recordGuardOutcome(in.Event, data)
 	return passThrough(), nil
+}
+
+func guardOutcomeDecision(status string, mode policy.Mode) string {
+	switch status {
+	case statusBlock:
+		if appplugins.Blocks(mode) {
+			return decisionBlocked
+		}
+		return decisionReported
+	case statusReport:
+		return decisionReported
+	default:
+		return decisionAllowed
+	}
 }
 
 func (p *Plugin) config(settings map[string]any) (Settings, error) {
@@ -248,7 +252,7 @@ func (p *Plugin) config(settings map[string]any) (Settings, error) {
 }
 
 func configCacheKey(settings map[string]any) string {
-	return fmt.Sprintf("%v\x00%v\x00%v", settings["inspect"], settings["base_url"], settings["collector_id"])
+	return fmt.Sprintf("%v\x00%v", settings["inspect"], settings["collector_id"])
 }
 
 func (p *Plugin) guard(ctx context.Context, baseURL, collectorID string, body GuardRequest) (*GuardResponse, error) {
