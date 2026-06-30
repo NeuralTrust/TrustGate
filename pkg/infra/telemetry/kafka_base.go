@@ -53,6 +53,33 @@ func NewKafkaBase(logger *slog.Logger, envCfg config.KafkaConfig) KafkaBase {
 	}
 }
 
+// applyKafkaSecurity sets SASL/TLS client properties from the environment-derived
+// config. Every key is optional: when SecurityProtocol is empty the producer
+// stays on PLAINTEXT, so deployments against an unauthenticated broker are
+// unchanged. This mirrors the env vars the platform Helm chart injects
+// (KAFKA_SECURITY_PROTOCOL, KAFKA_SASL_*, KAFKA_SSL_CA_LOCATION).
+func applyKafkaSecurity(cm *kafka.ConfigMap, env config.KafkaConfig) error {
+	set := func(key, value string) error {
+		if strings.TrimSpace(value) == "" {
+			return nil
+		}
+		return cm.SetKey(key, value)
+	}
+	if err := set("security.protocol", env.SecurityProtocol); err != nil {
+		return err
+	}
+	if err := set("sasl.mechanism", env.SASLMechanism); err != nil {
+		return err
+	}
+	if err := set("sasl.username", env.SASLUsername); err != nil {
+		return err
+	}
+	if err := set("sasl.password", env.SASLPassword); err != nil {
+		return err
+	}
+	return set("ssl.ca.location", env.SSLCALocation)
+}
+
 func (b *KafkaBase) ResolveBaseConfig(settings map[string]interface{}) (KafkaBaseConfig, error) {
 	var cfg KafkaBaseConfig
 	if err := mapstructure.Decode(settings, &cfg); err != nil {
@@ -79,9 +106,13 @@ func (b *KafkaBase) ValidateBaseConfig(settings map[string]interface{}) error {
 // handler. Topic creation runs in the background so an unreachable broker never
 // blocks startup.
 func (b *KafkaBase) InitProducer(cfg KafkaBaseConfig) error {
-	producer, err := kafka.NewProducer(&kafka.ConfigMap{
+	producerCfg := &kafka.ConfigMap{
 		"bootstrap.servers": strings.Join(cfg.Brokers, ","),
-	})
+	}
+	if err := applyKafkaSecurity(producerCfg, b.EnvCfg); err != nil {
+		return fmt.Errorf("failed to configure kafka security: %w", err)
+	}
+	producer, err := kafka.NewProducer(producerCfg)
 	if err != nil {
 		return fmt.Errorf("failed to create kafka producer: %w", err)
 	}
