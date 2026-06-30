@@ -445,3 +445,22 @@ func TestBuilder_TrustGuardReportedIsFlagged(t *testing.T) {
 	assert.True(t, evt.PolicyChain[0].Flagged)
 	assert.True(t, evt.IsFlagged)
 }
+
+func TestBuilder_SkipsNoOpPluginSpan(t *testing.T) {
+	rt := trace.New("trace-tg-noop", trace.Metadata{GatewayID: "gw-1"})
+	_ = rt.AddSpan(pluginSpan("trustguard",
+		&trace.PluginAttrs{Stage: "pre_request", Decision: "allowed", Extras: map[string]any{"trace_id": "tg-1"}},
+		200, 250*time.Millisecond, ""))
+	_ = rt.AddSpan(pluginSpan("trustguard",
+		&trace.PluginAttrs{Stage: "pre_response"}, 200, 0, ""))
+
+	req := &infracontext.RequestContext{GatewayID: "gw-1", Body: []byte(openAIRequestBody), SourceFormat: string(adapter.FormatOpenAI)}
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"ok":true}`)}
+
+	start := time.UnixMilli(8_000_000)
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(260*time.Millisecond))
+
+	require.Len(t, evt.PolicyChain, 1)
+	assert.Equal(t, "pre_request", evt.PolicyChain[0].Stage)
+	assert.Equal(t, "allowed", evt.PolicyChain[0].Decision)
+}

@@ -146,6 +146,9 @@ func (b *Builder) foldPluginSpans(requestTrace *trace.RequestTrace) ([]events.Po
 		attrs := span.PluginAttrsCopy()
 		statusCode := span.StatusCode()
 		hasError := span.Error() != ""
+		if pluginSpanIsNoOp(attrs, statusCode, hasError) {
+			continue
+		}
 		flagged := hasError || pluginDecisionFlagged(attrs.Decision) || (statusCode >= http.StatusBadRequest)
 		latencyMs := span.Latency().Milliseconds()
 		pluginsMs += latencyMs
@@ -181,6 +184,19 @@ func pluginDecisionFlagged(decision string) bool {
 	default:
 		return false
 	}
+}
+
+// pluginSpanIsNoOp reports whether a plugin span carries no observable outcome.
+// Plugins that skip a stage (e.g. a request-only guard on the response leg)
+// pass through without recording a decision, extras, error or score, so their
+// span must not surface as an empty entry in the policy chain.
+func pluginSpanIsNoOp(attrs trace.PluginAttrs, statusCode int, hasError bool) bool {
+	return attrs.Decision == "" &&
+		attrs.Extras == nil &&
+		attrs.ScoreLabel == "" &&
+		attrs.Score == nil &&
+		!hasError &&
+		statusCode < http.StatusBadRequest
 }
 
 func (b *Builder) buildMCP(
