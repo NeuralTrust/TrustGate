@@ -80,10 +80,10 @@ QA satisfied: read parity, gateway scoping, read-only writes, DB-less pricing. D
 
 Covers: db-less-data-plane (boot without Postgres — env contract).
 
-- [ ] 3.1 In `pkg/config/config.go` add `ConfigSyncConfig` (fields per design: `DataPlaneEnabled`, `Token`, `SnapshotURL`, `StreamKey`, `StreamMaxLen`, `LKGPath`, `LKGKey`, `PollInterval`, `RecompileDebounce`, `InstanceID`) + `getConfigSyncConfig()` reading `CONFIG_SYNC_*`; wire into `LoadConfig`.
-- [ ] 3.2 Make `Config.Validate()` plane-aware: when `(proxy|mcp)` **and** `DataPlaneEnabled`, skip `DB_HOST`/`DB_USER`/`DB_NAME` and require `CONFIG_SYNC_*` (token, well-formed URL, LKG path, base64 32-byte key, positive poll, non-empty stream key, `StreamMaxLen>=1`); keep `REDIS_HOST`/`KAFKA_BROKERS` required.
-- [ ] 3.3 Add `pkg/config/config_test.go` cases: DB-less DP skips `DB_*`, requires `CONFIG_SYNC_*`; base64/32-byte key + URL validation; Redis/Kafka still required; Postgres graph unchanged.
-- [ ] 3.4 Add the `CONFIG_SYNC_*` set to `.env.example`.
+- [x] 3.1 In `pkg/config/config.go` add `ConfigSyncConfig` (fields per design: `DataPlaneEnabled`, `Token`, `SnapshotURL`, `StreamKey`, `StreamMaxLen`, `LKGPath`, `LKGKey`, `PollInterval`, `RecompileDebounce`, `InstanceID`) + `getConfigSyncConfig()` reading `CONFIG_SYNC_*`; wire into `LoadConfig`.
+- [x] 3.2 Make `Config.Validate()` plane-aware: when `(proxy|mcp)` **and** `DataPlaneEnabled`, skip `DB_HOST`/`DB_USER`/`DB_NAME` and require `CONFIG_SYNC_*` (token, well-formed URL, LKG path, base64 32-byte key, positive poll, non-empty stream key, `StreamMaxLen>=1`); keep `REDIS_HOST`/`KAFKA_BROKERS` required.
+- [x] 3.3 Add `pkg/config/config_test.go` cases: DB-less DP skips `DB_*`, requires `CONFIG_SYNC_*`; base64/32-byte key + URL validation; Redis/Kafka still required; Postgres graph unchanged.
+- [x] 3.4 Add the `CONFIG_SYNC_*` set to `.env.example`.
 
 QA satisfied: proxy/mcp env contract (`DB_*` unset OK; Redis/Kafka still required). Depends on: none (parallel to P1/P2).
 

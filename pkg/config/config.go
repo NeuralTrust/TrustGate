@@ -16,8 +16,10 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -98,6 +100,15 @@ const (
 	defaultTrustGuardTimeout = 15 * time.Second
 
 	defaultOpenAIModerationTimeout = 15 * time.Second
+
+	defaultConfigSyncDataPlaneEnabled        = false
+	defaultConfigSyncStreamKey               = "trustgate:config:snapshot:versions"
+	defaultConfigSyncStreamMaxLen      int64 = 1000
+	defaultConfigSyncLKGPath                 = "/var/lib/trustgate/snapshot.lkg"
+	defaultConfigSyncPollInterval            = 5 * time.Minute
+	defaultConfigSyncRecompileDebounce       = 2 * time.Second
+
+	configSyncKeyBytes = 32
 )
 
 type Config struct {
@@ -118,6 +129,20 @@ type Config struct {
 	Logger           LoggerConfig
 	TrustGuard       TrustGuardConfig
 	OpenAIModeration OpenAIModerationConfig
+	ConfigSync       ConfigSyncConfig
+}
+
+type ConfigSyncConfig struct {
+	DataPlaneEnabled  bool
+	Token             string // #nosec G117 -- config struct field, not a hardcoded credential
+	SnapshotURL       string
+	StreamKey         string
+	StreamMaxLen      int64
+	LKGPath           string
+	LKGKey            string // #nosec G117 -- config struct field, not a hardcoded credential
+	PollInterval      time.Duration
+	RecompileDebounce time.Duration
+	InstanceID        string
 }
 
 type ServerConfig struct {
@@ -275,6 +300,7 @@ func LoadConfig() (*Config, error) {
 		Logger:           getLoggerConfig(),
 		TrustGuard:       getTrustGuardConfig(),
 		OpenAIModeration: getOpenAIModerationConfig(),
+		ConfigSync:       getConfigSyncConfig(),
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -509,6 +535,70 @@ func getOpenAIModerationConfig() OpenAIModerationConfig {
 	}
 }
 
+func getConfigSyncConfig() ConfigSyncConfig {
+	return ConfigSyncConfig{
+		DataPlaneEnabled:  getEnvBool("CONFIG_SYNC_DATA_PLANE_ENABLED", defaultConfigSyncDataPlaneEnabled),
+		Token:             getEnv("CONFIG_SYNC_TOKEN", ""),
+		SnapshotURL:       getEnv("CONFIG_SYNC_SNAPSHOT_URL", ""),
+		StreamKey:         getEnv("CONFIG_SYNC_STREAM_KEY", defaultConfigSyncStreamKey),
+		StreamMaxLen:      getEnvInt64("CONFIG_SYNC_STREAM_MAXLEN", defaultConfigSyncStreamMaxLen),
+		LKGPath:           getEnv("CONFIG_SYNC_LKG_PATH", defaultConfigSyncLKGPath),
+		LKGKey:            getEnv("CONFIG_SYNC_LKG_KEY", ""),
+		PollInterval:      getEnvDuration("CONFIG_SYNC_POLL_INTERVAL", defaultConfigSyncPollInterval),
+		RecompileDebounce: getEnvDuration("CONFIG_SYNC_RECOMPILE_DEBOUNCE", defaultConfigSyncRecompileDebounce),
+		InstanceID:        resolveConfigSyncInstanceID(),
+	}
+}
+
+func resolveConfigSyncInstanceID() string {
+	if id := getEnv("CONFIG_SYNC_INSTANCE_ID", ""); id != "" {
+		return id
+	}
+	if host := os.Getenv("HOSTNAME"); host != "" {
+		return host
+	}
+	if host, err := os.Hostname(); err == nil {
+		return host
+	}
+	return ""
+}
+
+func DBLessDataPlaneEnabled() bool {
+	return getEnvBool("CONFIG_SYNC_DATA_PLANE_ENABLED", defaultConfigSyncDataPlaneEnabled)
+}
+
+func (cs ConfigSyncConfig) Validate() error {
+	if !cs.DataPlaneEnabled {
+		return nil
+	}
+	if cs.Token == "" {
+		return fmt.Errorf("%w: CONFIG_SYNC_TOKEN is required when CONFIG_SYNC_DATA_PLANE_ENABLED is true", errors.ErrInvalidConfig)
+	}
+	if cs.SnapshotURL == "" {
+		return fmt.Errorf("%w: CONFIG_SYNC_SNAPSHOT_URL is required when CONFIG_SYNC_DATA_PLANE_ENABLED is true", errors.ErrInvalidConfig)
+	}
+	if parsed, err := url.Parse(cs.SnapshotURL); err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("%w: CONFIG_SYNC_SNAPSHOT_URL must be a well-formed absolute URL", errors.ErrInvalidConfig)
+	}
+	if cs.LKGPath == "" {
+		return fmt.Errorf("%w: CONFIG_SYNC_LKG_PATH is required when CONFIG_SYNC_DATA_PLANE_ENABLED is true", errors.ErrInvalidConfig)
+	}
+	key, err := base64.StdEncoding.DecodeString(cs.LKGKey)
+	if err != nil || len(key) != configSyncKeyBytes {
+		return fmt.Errorf("%w: CONFIG_SYNC_LKG_KEY must be base64 that decodes to exactly 32 bytes (AES-256)", errors.ErrInvalidConfig)
+	}
+	if cs.PollInterval <= 0 {
+		return fmt.Errorf("%w: CONFIG_SYNC_POLL_INTERVAL must be a positive duration", errors.ErrInvalidConfig)
+	}
+	if cs.StreamKey == "" {
+		return fmt.Errorf("%w: CONFIG_SYNC_STREAM_KEY must not be empty", errors.ErrInvalidConfig)
+	}
+	if cs.StreamMaxLen < 1 {
+		return fmt.Errorf("%w: CONFIG_SYNC_STREAM_MAXLEN must be a positive integer", errors.ErrInvalidConfig)
+	}
+	return nil
+}
+
 func (c *Config) Validate() error {
 	if c.Server.GatewayDiscoveryMode != GatewayDiscoveryModeHeader &&
 		c.Server.GatewayDiscoveryMode != GatewayDiscoveryModeSubdomain {
@@ -520,14 +610,16 @@ func (c *Config) Validate() error {
 	if strings.Trim(strings.ToLower(strings.TrimSpace(c.Server.GatewayBaseDomain)), ".") == "" {
 		return fmt.Errorf("%w: GATEWAY_BASE_DOMAIN is required", errors.ErrInvalidConfig)
 	}
-	if c.Database.Host == "" {
-		return fmt.Errorf("%w: DB_HOST is required", errors.ErrInvalidConfig)
-	}
-	if c.Database.User == "" {
-		return fmt.Errorf("%w: DB_USER is required", errors.ErrInvalidConfig)
-	}
-	if c.Database.Name == "" {
-		return fmt.Errorf("%w: DB_NAME is required", errors.ErrInvalidConfig)
+	if !c.ConfigSync.DataPlaneEnabled {
+		if c.Database.Host == "" {
+			return fmt.Errorf("%w: DB_HOST is required", errors.ErrInvalidConfig)
+		}
+		if c.Database.User == "" {
+			return fmt.Errorf("%w: DB_USER is required", errors.ErrInvalidConfig)
+		}
+		if c.Database.Name == "" {
+			return fmt.Errorf("%w: DB_NAME is required", errors.ErrInvalidConfig)
+		}
 	}
 	if c.Redis.Host == "" {
 		return fmt.Errorf("%w: REDIS_HOST is required", errors.ErrInvalidConfig)
@@ -546,6 +638,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Provider.MaxRetries < 0 {
 		return fmt.Errorf("%w: PROVIDER_MAX_RETRIES must be zero or greater", errors.ErrInvalidConfig)
+	}
+	if err := c.ConfigSync.Validate(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -583,6 +678,20 @@ func getEnvInt32(key string, defaultValue int32) int32 {
 		return defaultValue
 	}
 	return int32(parsed)
+}
+
+func getEnvInt64(key string, defaultValue int64) int64 {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed < 0 {
+		slog.Warn("invalid int64 environment variable, falling back to default",
+			slog.String("key", key), slog.String("value", sanitizeLogValue(value)))
+		return defaultValue
+	}
+	return parsed
 }
 
 func getEnvBool(key string, defaultValue bool) bool {
