@@ -47,6 +47,8 @@ type OAuth2ConfigRequest struct {
 	SessionMode      bool     `json:"session_mode,omitempty"`
 	UserInfoURL      string   `json:"userinfo_url,omitempty"`
 	SubjectClaim     string   `json:"subject_claim,omitempty"`
+	AuthorizeURL     string   `json:"authorize_url,omitempty"`
+	TokenURL         string   `json:"token_url,omitempty"`
 }
 
 type OIDCConfigRequest struct {
@@ -101,6 +103,8 @@ func (c ConfigRequest) ToDomain() domain.Config {
 			SessionMode:      c.OAuth2.SessionMode,
 			UserInfoURL:      c.OAuth2.UserInfoURL,
 			SubjectClaim:     c.OAuth2.SubjectClaim,
+			AuthorizeURL:     c.OAuth2.AuthorizeURL,
+			TokenURL:         c.OAuth2.TokenURL,
 		}
 	}
 	if c.OIDC != nil {
