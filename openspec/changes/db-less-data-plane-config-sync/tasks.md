@@ -129,9 +129,9 @@ QA satisfied: boot no-Postgres (migrations/pool skipped), readiness 503→ready,
 
 Covers: mcp-vault-redis (Redis-backed vault, credential-exchange DB-less, missing→re-consent).
 
-- [ ] 7.1 Create `pkg/infra/repository/vault/redis_repository.go`: `NewRedisRepository(rc *redis.Client, cipher vaultdomain.Encrypter)` implementing `vaultdomain.Repository` — key `vault:{gatewayID}:{principalSub}:{provider}`; `Find`/`Upsert`/`ListByPrincipal` (scan `vault:{gw}:{sub}:*`)/`Delete`; store already-encrypted blob (JSON); no TTL; miss → `vaultdomain.ErrNotFound`.
-- [ ] 7.2 Bind the Redis vault repo in the DB-less MCP module (`pkg/container/modules/mcp.go`) in place of `vaultrepo.NewRepository(conn, cipher)`.
-- [ ] 7.3 Add `redis_repository_test.go` (miniredis/fake): upsert→find round-trip, value stored encrypted (raw value is ciphertext), `ListByPrincipal`, delete, missing → `ErrNotFound`→re-consent.
+- [x] 7.1 Create `pkg/infra/repository/vault/redis_repository.go`: `NewRedisRepository(rc *redis.Client, cipher vaultdomain.Encrypter)` implementing `vaultdomain.Repository` — key `vault:{gatewayID}:{principalSub}:{provider}`; `Find`/`Upsert`/`ListByPrincipal` (scan `vault:{gw}:{sub}:*`)/`Delete`; store already-encrypted blob (JSON); no TTL; miss → `vaultdomain.ErrNotFound`.
+- [x] 7.2 Bind the Redis vault repo in the DB-less MCP module (`pkg/container/modules/mcp.go`) in place of `vaultrepo.NewRepository(conn, cipher)`.
+- [x] 7.3 Add `redis_repository_test.go` (miniredis/fake): upsert→find round-trip, value stored encrypted (raw value is ciphertext), `ListByPrincipal`, delete, missing → `ErrNotFound`→re-consent.
 
 QA satisfied: MCP OAuth creds via Redis vault; encrypted at rest; missing→re-consent. Depends on: P6 (DB-less MCP graph).
 

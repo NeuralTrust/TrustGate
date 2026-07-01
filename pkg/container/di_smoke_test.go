@@ -25,6 +25,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/container/modules"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/alicebob/miniredis/v2"
 )
@@ -92,14 +93,27 @@ func TestDISmoke_DBLessDataPlane_ResolvesConfigSyncWorker(t *testing.T) {
 	t.Setenv("CONFIG_SYNC_SNAPSHOT_URL", "http://admin.example.com/v1/config/snapshot")
 	t.Setenv("CONFIG_SYNC_LKG_PATH", t.TempDir()+"/snapshot.lkg")
 	t.Setenv("CONFIG_SYNC_LKG_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	t.Setenv("SERVER_SECRET_KEY", "smoke-secret-key-that-is-long-enough-1234567890")
 
-	c, err := container.New(modules.All("proxy", true)...)
+	c, err := container.New(modules.All("mcp", true)...)
 	if err != nil {
-		t.Fatalf("New(modules.All(proxy, true)...): %v", err)
+		t.Fatalf("New(modules.All(mcp, true)...): %v", err)
 	}
 
-	if err := c.Invoke(func(_ *configsync.Worker[*readmodel.Snapshot], _ configsync.ConfigStore[*readmodel.Snapshot]) {}); err != nil {
-		t.Fatalf("Invoke(configsync worker + store): %v", err)
+	if err := c.Invoke(func(
+		_ *configsync.Worker[*readmodel.Snapshot],
+		_ configsync.ConfigStore[*readmodel.Snapshot],
+		conn *database.Connection,
+		vault vaultdomain.Repository,
+	) {
+		if conn != nil {
+			t.Fatal("DB-less mcp graph resolved a non-nil *database.Connection")
+		}
+		if vault == nil {
+			t.Fatal("DB-less mcp graph resolved a nil vault repository")
+		}
+	}); err != nil {
+		t.Fatalf("Invoke(configsync worker + store + redis vault): %v", err)
 	}
 }
 
