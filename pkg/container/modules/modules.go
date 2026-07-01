@@ -39,5 +39,6 @@ func All() []container.Option {
 		container.WithModule(ServerAdmin),
 		container.WithModule(ServerProxy),
 		container.WithModule(ServerMCP),
+		container.WithModule(ControlConfigSync),
 	}
 }

@@ -18,6 +18,7 @@ import (
 	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
 	authhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth"
 	cataloghttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/catalog"
+	configsnapshothttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/configsnapshot"
 	consumerhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer"
 	gatewayhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway"
 	playgroundhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/playground"
@@ -40,6 +41,7 @@ const (
 	PoliciesCatalogPath   = "/v1/policies-catalog"
 	MCPServersCatalogPath = "/v1/mcp-servers-catalog"
 	PlaygroundTracePath   = "/v1/playground/traces/:trace_id"
+	ConfigSnapshotPath    = "/internal/config/snapshot"
 )
 
 // AdminRouterDeps groups every handler mounted by the admin plane.
@@ -99,6 +101,9 @@ type AdminRouterDeps struct {
 	ListMCPServersCatalog *cataloghttp.ListMCPServersHandler
 
 	GetTrace *playgroundhttp.GetTraceHandler
+
+	ConfigSnapshot *configsnapshothttp.Handler
+	ConfigSyncAuth *middleware.ConfigSyncAuthMiddleware
 }
 
 type adminRouter struct {
@@ -184,6 +189,10 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	app.Get(MCPServersCatalogPath, r.deps.AdminAuth.Middleware(), r.deps.ListMCPServersCatalog.Handle)
 
 	app.Get(PlaygroundTracePath, r.deps.AdminAuth.Middleware(), r.deps.GetTrace.Handle)
+
+	if r.deps.ConfigSnapshot != nil && r.deps.ConfigSyncAuth != nil {
+		app.Get(ConfigSnapshotPath, r.deps.ConfigSyncAuth.Middleware(), r.deps.ConfigSnapshot.Get)
+	}
 
 	return nil
 }

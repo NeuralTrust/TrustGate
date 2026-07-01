@@ -91,13 +91,13 @@ QA satisfied: proxy/mcp env contract (`DB_*` unset OK; Redis/Kafka still require
 
 Covers: control-plane-snapshot (compilation/versioning, authed HTTP endpoint+ETag, version bumps to Redis Stream), config-sync-security (transport auth fail-closed, no-body logging).
 
-- [ ] 4.1 Port `pkg/app/configsnapshot/compiler.go` (walk all gateways over live gateway/consumer/registry/policy/auth/role/catalog readers → sorted deterministic `readmodel.Data`; `ErrNotFound` tolerance).
-- [ ] 4.2 Port `pkg/app/configsnapshot/{holder,publisher}.go` (`Holder` atomic encoded snapshot; `SnapshotVersionPublisher` — `Signal(ctx)` no-op when signaler nil).
-- [ ] 4.3 Port `pkg/app/configsnapshot/recompiler.go` (debounced `RecompileDebounce`; publish-on-change via `RedisStreamNotifier.Publish(version)`; retry-on-fail; publish failure non-fatal).
-- [ ] 4.4 Port `pkg/api/handler/http/configsnapshot/handler.go` (`Handler.Get`: `200`+ETag / `304` on `If-None-Match`==version / `503`; logs pull headers only, never body).
-- [ ] 4.5 Port `pkg/api/middleware/config_sync_auth.go` (constant-time SHA-256 bearer vs `CONFIG_SYNC_TOKEN`; fail-closed when unset) and register on the snapshot route only in `pkg/server/router/*`.
-- [ ] 4.6 Create `pkg/container/modules/control_config_sync.go` (`Compiler` via `compilerReaders dig.In`, `Holder`, `Codec`, notifier, `Recompiler`, `SnapshotVersionPublisher`→`SnapshotSignaler`, auth middleware, `Handler`); add to admin/run module set in `modules.go`.
-- [ ] 4.7 Port tests: `compiler_test.go` (sorted deterministic Data, `ErrNotFound` tolerance, fakes), `holder_test.go`, `recompiler_test.go` (bursts coalesce, publish-on-change), `publisher_test.go`, `handler_test.go` (200/304/503), `config_sync_auth_test.go` (missing/invalid/unset-token rejection).
+- [x] 4.1 Port `pkg/app/configsnapshot/compiler.go` (walk all gateways over live gateway/consumer/registry/policy/auth/role/catalog readers → sorted deterministic `readmodel.Data`; `ErrNotFound` tolerance).
+- [x] 4.2 Port `pkg/app/configsnapshot/{holder,publisher}.go` (`Holder` atomic encoded snapshot; `SnapshotVersionPublisher` — `Signal(ctx)` no-op when signaler nil).
+- [x] 4.3 Port `pkg/app/configsnapshot/recompiler.go` (debounced `RecompileDebounce`; publish-on-change via `RedisStreamNotifier.Publish(version)`; retry-on-fail; publish failure non-fatal).
+- [x] 4.4 Port `pkg/api/handler/http/configsnapshot/handler.go` (`Handler.Get`: `200`+ETag / `304` on `If-None-Match`==version / `503`; logs pull headers only, never body).
+- [x] 4.5 Port `pkg/api/middleware/config_sync_auth.go` (constant-time SHA-256 bearer vs `CONFIG_SYNC_TOKEN`; fail-closed when unset) and register on the snapshot route only in `pkg/server/router/*`.
+- [x] 4.6 Create `pkg/container/modules/control_config_sync.go` (`Compiler` via `compilerReaders dig.In`, `Holder`, `Codec`, notifier, `Recompiler`, `SnapshotVersionPublisher`→`SnapshotSignaler`, auth middleware, `Handler`); add to admin/run module set in `modules.go`.
+- [x] 4.7 Port tests: `compiler_test.go` (sorted deterministic Data, `ErrNotFound` tolerance, fakes), `holder_test.go`, `recompiler_test.go` (bursts coalesce, publish-on-change), `publisher_test.go`, `handler_test.go` (200/304/503), `config_sync_auth_test.go` (missing/invalid/unset-token rejection).
 
 QA satisfied: version stable/changes, bursts coalesce, ETag 200/304, version→Redis Stream, publish-failure non-fatal, fail-closed auth, no body logged. Depends on: P1 (codec/notifier), P2 (readmodel), P3 (config).
 
