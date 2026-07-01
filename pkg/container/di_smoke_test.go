@@ -27,7 +27,9 @@ import (
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	"github.com/NeuralTrust/TrustGate/pkg/server"
 	"github.com/alicebob/miniredis/v2"
+	"go.uber.org/dig"
 )
 
 func TestDISmoke_PlaneAwareModuleSets_Register(t *testing.T) {
@@ -78,12 +80,13 @@ func TestDISmoke_DBLessDataPlane_ResolvesRepositoriesWithoutPool(t *testing.T) {
 	}
 }
 
-func TestDISmoke_DBLessDataPlane_ResolvesConfigSyncWorker(t *testing.T) {
+func setDBLessSmokeEnv(t *testing.T) {
+	t.Helper()
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatalf("miniredis: %v", err)
 	}
-	defer mr.Close()
+	t.Cleanup(mr.Close)
 	t.Setenv("REDIS_HOST", mr.Host())
 	t.Setenv("REDIS_PORT", mr.Port())
 	t.Setenv("KAFKA_BROKERS", "localhost:9092")
@@ -91,9 +94,14 @@ func TestDISmoke_DBLessDataPlane_ResolvesConfigSyncWorker(t *testing.T) {
 	t.Setenv("CONFIG_SYNC_DATA_PLANE_ENABLED", "true")
 	t.Setenv("CONFIG_SYNC_TOKEN", "smoke-token")
 	t.Setenv("CONFIG_SYNC_SNAPSHOT_URL", "http://admin.example.com/v1/config/snapshot")
+	t.Setenv("CONFIG_SYNC_SNAPSHOT_INSECURE", "true")
 	t.Setenv("CONFIG_SYNC_LKG_PATH", t.TempDir()+"/snapshot.lkg")
 	t.Setenv("CONFIG_SYNC_LKG_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
 	t.Setenv("SERVER_SECRET_KEY", "smoke-secret-key-that-is-long-enough-1234567890")
+}
+
+func TestDISmoke_DBLessDataPlane_ResolvesConfigSyncWorker(t *testing.T) {
+	setDBLessSmokeEnv(t)
 
 	c, err := container.New(modules.All("mcp", true)...)
 	if err != nil {
@@ -115,6 +123,47 @@ func TestDISmoke_DBLessDataPlane_ResolvesConfigSyncWorker(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Invoke(configsync worker + store + redis vault): %v", err)
 	}
+}
+
+func TestDISmoke_DBLessDataPlane_ResolvesNamedServer(t *testing.T) {
+	for _, plane := range []string{"proxy", "mcp"} {
+		t.Run(plane, func(t *testing.T) {
+			setDBLessSmokeEnv(t)
+			c, err := container.New(modules.All(plane, true)...)
+			if err != nil {
+				t.Fatalf("New(modules.All(%q, true)...): %v", plane, err)
+			}
+			resolve := func(p dblessServerParam) {
+				if p.Srv == nil {
+					t.Fatalf("DB-less %q graph resolved a nil server", plane)
+				}
+			}
+			var invErr error
+			switch plane {
+			case "proxy":
+				invErr = c.Invoke(func(p dblessProxyServerParam) { resolve(dblessServerParam{Srv: p.Srv}) })
+			case "mcp":
+				invErr = c.Invoke(func(p dblessMCPServerParam) { resolve(dblessServerParam{Srv: p.Srv}) })
+			}
+			if invErr != nil {
+				t.Fatalf("Invoke(server.Server name=%q): %v", plane, invErr)
+			}
+		})
+	}
+}
+
+type dblessServerParam struct {
+	Srv server.Server
+}
+
+type dblessProxyServerParam struct {
+	dig.In
+	Srv server.Server `name:"proxy"`
+}
+
+type dblessMCPServerParam struct {
+	dig.In
+	Srv server.Server `name:"mcp"`
 }
 
 func TestDISmoke_ControlPlane_BuildsControlConfigSync(t *testing.T) {

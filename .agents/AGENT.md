@@ -496,11 +496,15 @@ repository binding is swapped on the DB-less DI graph.
     (nil) `*database.Connection`.
 
 - **Env contract.** With the flag ON the proxy/mcp planes do **not** need
-  `DB_*`. `Config.Validate()` is plane-aware: for `(proxy|mcp) && DataPlaneEnabled`
-  it skips `DB_HOST` / `DB_USER` / `DB_NAME` and instead requires the
+  `DB_*`. `Config.Validate()` keys off `CONFIG_SYNC_DATA_PLANE_ENABLED`: when the
+  flag is on it skips `DB_HOST` / `DB_USER` / `DB_NAME` and instead requires the
   `CONFIG_SYNC_*` set below, while **`REDIS_HOST` and `KAFKA_BROKERS` stay
-  required**. Boot fails fast (`ErrInvalidConfig` naming the offending key) when
-  `CONFIG_SYNC_TOKEN`, a well-formed `CONFIG_SYNC_SNAPSHOT_URL`,
+  required**. The flag is set per-plane in deployment (proxy/mcp on, admin/run
+  off); `main.go` derives `dbless = CONFIG_SYNC_DATA_PLANE_ENABLED && isDataPlane(plane)`
+  so only proxy/mcp actually drop Postgres. Boot fails fast
+  (`ErrInvalidConfig` naming the offending key) when `CONFIG_SYNC_TOKEN`, a
+  well-formed **`https`** `CONFIG_SYNC_SNAPSHOT_URL` (set
+  `CONFIG_SYNC_SNAPSHOT_INSECURE=true` to allow `http` in local dev),
   `CONFIG_SYNC_LKG_PATH`, a 32-byte `CONFIG_SYNC_LKG_KEY`, a positive
   `CONFIG_SYNC_POLL_INTERVAL`, a non-empty `CONFIG_SYNC_STREAM_KEY`, or a
   positive `CONFIG_SYNC_STREAM_MAXLEN` is missing/invalid.
@@ -551,7 +555,8 @@ repository binding is swapped on the DB-less DI graph.
 |---|---|---|
 | `CONFIG_SYNC_DATA_PLANE_ENABLED` | DB-less data-plane master flag | `false` |
 | `CONFIG_SYNC_TOKEN` | config-sync shared secret (CP guards the endpoint; DP authenticates) | `""` |
-| `CONFIG_SYNC_SNAPSHOT_URL` | CP snapshot endpoint URL the DP pulls | `""` |
+| `CONFIG_SYNC_SNAPSHOT_URL` | CP snapshot endpoint URL the DP pulls (must be `https`) | `""` |
+| `CONFIG_SYNC_SNAPSHOT_INSECURE` | allow a non-`https` snapshot URL (local dev only) | `false` |
 | `CONFIG_SYNC_LKG_PATH` | encrypted LKG file path | `/var/lib/trustgate/snapshot.lkg` |
 | `CONFIG_SYNC_LKG_KEY` | AES-256 key, base64 → exactly 32 bytes | `""` |
 | `CONFIG_SYNC_POLL_INTERVAL` | backstop re-pull interval | `5m` |

@@ -54,6 +54,7 @@ func dblessOverrides(lkgPath, token, instanceID string, port int) []string {
 	return []string{
 		"CONFIG_SYNC_DATA_PLANE_ENABLED=true",
 		"CONFIG_SYNC_SNAPSHOT_URL=" + AdminURL + configSnapshotPath,
+		"CONFIG_SYNC_SNAPSHOT_INSECURE=true",
 		"CONFIG_SYNC_TOKEN=" + token,
 		"CONFIG_SYNC_LKG_PATH=" + lkgPath,
 		"CONFIG_SYNC_LKG_KEY=" + dblessLKGKey(),

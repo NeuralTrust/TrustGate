@@ -30,7 +30,7 @@ type LKGStore[T any] struct {
 }
 
 func NewLKGStore[T any](crypto Crypto, codec SnapshotCodec[T], path string) *LKGStore[T] {
-	return &LKGStore[T]{crypto: crypto, codec: codec, path: path}
+	return &LKGStore[T]{crypto: crypto, codec: codec, path: filepath.Clean(path)}
 }
 
 func (s *LKGStore[T]) Load() (*Versioned[T], error) {
@@ -61,7 +61,12 @@ func (s *LKGStore[T]) Persist(v *Versioned[T]) error {
 		return fmt.Errorf("configsync: encrypt lkg: %w", err)
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(s.path), lkgTempPattern)
+	dir := filepath.Dir(s.path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("configsync: create lkg dir: %w", err)
+	}
+
+	tmp, err := os.CreateTemp(dir, lkgTempPattern)
 	if err != nil {
 		return fmt.Errorf("configsync: create temp lkg: %w", err)
 	}
@@ -88,7 +93,7 @@ func (s *LKGStore[T]) Persist(v *Versioned[T]) error {
 		return fmt.Errorf("configsync: rename lkg: %w", err)
 	}
 	renamed = true
-	return syncDir(filepath.Dir(s.path))
+	return syncDir(dir)
 }
 
 func syncDir(dir string) error {

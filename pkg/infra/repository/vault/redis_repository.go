@@ -58,6 +58,10 @@ type storedCredential struct {
 	UpdatedAt    time.Time     `json:"updated_at"`
 }
 
+func (s *storedCredential) matches(gatewayID ids.GatewayID, principalSub, provider string) bool {
+	return s.GatewayID == gatewayID && s.PrincipalSub == principalSub && s.Provider == provider
+}
+
 func (r *redisRepository) Upsert(ctx context.Context, c *domain.Credential) error {
 	if c == nil {
 		return errors.New("vault repository: nil credential")
@@ -112,6 +116,9 @@ func (r *redisRepository) Find(ctx context.Context, gatewayID ids.GatewayID, pri
 	if err != nil {
 		return nil, err
 	}
+	if !stored.matches(gatewayID, principalSub, provider) {
+		return nil, domain.ErrNotFound
+	}
 	return r.decrypt(stored)
 }
 
@@ -155,12 +162,16 @@ func (r *redisRepository) ListByPrincipal(ctx context.Context, gatewayID ids.Gat
 }
 
 func (r *redisRepository) Delete(ctx context.Context, gatewayID ids.GatewayID, principalSub, provider string) error {
-	n, err := r.rc.Del(ctx, redisKey(gatewayID, principalSub, provider)).Result()
+	key := redisKey(gatewayID, principalSub, provider)
+	stored, err := r.load(ctx, key)
 	if err != nil {
-		return fmt.Errorf("vault repository: delete: %w", err)
+		return err
 	}
-	if n == 0 {
+	if !stored.matches(gatewayID, principalSub, provider) {
 		return domain.ErrNotFound
+	}
+	if err := r.rc.Del(ctx, key).Err(); err != nil {
+		return fmt.Errorf("vault repository: delete: %w", err)
 	}
 	return nil
 }

@@ -231,6 +231,31 @@ func TestRedisRepository_Delete(t *testing.T) {
 	}
 }
 
+func TestRedisRepository_FindAndDeleteRejectCollidingCompositeKeys(t *testing.T) {
+	repo, _, _ := newRedisVaultRepo(t)
+	ctx := context.Background()
+	gw := ids.New[ids.GatewayKind]()
+
+	if err := repo.Upsert(ctx, newTestCredential(t, gw, "user", "a:b", "access", "refresh")); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	if _, err := repo.Find(ctx, gw, "user:a", "b"); !errors.Is(err, vaultdomain.ErrNotFound) {
+		t.Fatalf("find colliding tuple err = %v, want ErrNotFound", err)
+	}
+	if err := repo.Delete(ctx, gw, "user:a", "b"); !errors.Is(err, vaultdomain.ErrNotFound) {
+		t.Fatalf("delete colliding tuple err = %v, want ErrNotFound", err)
+	}
+
+	got, err := repo.Find(ctx, gw, "user", "a:b")
+	if err != nil {
+		t.Fatalf("original credential must survive colliding delete: %v", err)
+	}
+	if got.AccessToken != "access" {
+		t.Fatalf("unexpected credential: %+v", got)
+	}
+}
+
 func TestRedisRepository_FindMissingReturnsNotFound(t *testing.T) {
 	repo, _, _ := newRedisVaultRepo(t)
 	ctx := context.Background()

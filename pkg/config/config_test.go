@@ -453,6 +453,15 @@ func TestValidate_DBLessSkipsDatabaseFields(t *testing.T) {
 	}
 }
 
+func TestValidate_DBLessAllowsInsecureURLWithOverride(t *testing.T) {
+	cfg := dbLessValid()
+	cfg.ConfigSync.SnapshotURL = "http://control.example/internal/config/snapshot"
+	cfg.ConfigSync.AllowInsecureURL = true
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("http url with CONFIG_SYNC_SNAPSHOT_INSECURE should validate: %v", err)
+	}
+}
+
 func TestValidate_DBLessRequiresConfigSync(t *testing.T) {
 	tests := []struct {
 		name string
@@ -462,6 +471,9 @@ func TestValidate_DBLessRequiresConfigSync(t *testing.T) {
 		{"missing url", func(cs *ConfigSyncConfig) { cs.SnapshotURL = "" }},
 		{"malformed url", func(cs *ConfigSyncConfig) { cs.SnapshotURL = "not-a-url" }},
 		{"url missing host", func(cs *ConfigSyncConfig) { cs.SnapshotURL = "https://" }},
+		{"insecure url without override", func(cs *ConfigSyncConfig) {
+			cs.SnapshotURL = "http://control.example/internal/config/snapshot"
+		}},
 		{"missing lkg path", func(cs *ConfigSyncConfig) { cs.LKGPath = "" }},
 		{"key not base64", func(cs *ConfigSyncConfig) { cs.LKGKey = "!!!not-base64!!!" }},
 		{"key wrong length", func(cs *ConfigSyncConfig) {

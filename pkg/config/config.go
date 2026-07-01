@@ -143,6 +143,7 @@ type ConfigSyncConfig struct {
 	PollInterval      time.Duration
 	RecompileDebounce time.Duration
 	InstanceID        string
+	AllowInsecureURL  bool
 }
 
 type ServerConfig struct {
@@ -547,6 +548,7 @@ func getConfigSyncConfig() ConfigSyncConfig {
 		PollInterval:      getEnvDuration("CONFIG_SYNC_POLL_INTERVAL", defaultConfigSyncPollInterval),
 		RecompileDebounce: getEnvDuration("CONFIG_SYNC_RECOMPILE_DEBOUNCE", defaultConfigSyncRecompileDebounce),
 		InstanceID:        resolveConfigSyncInstanceID(),
+		AllowInsecureURL:  getEnvBool("CONFIG_SYNC_SNAPSHOT_INSECURE", false),
 	}
 }
 
@@ -577,8 +579,12 @@ func (cs ConfigSyncConfig) Validate() error {
 	if cs.SnapshotURL == "" {
 		return fmt.Errorf("%w: CONFIG_SYNC_SNAPSHOT_URL is required when CONFIG_SYNC_DATA_PLANE_ENABLED is true", errors.ErrInvalidConfig)
 	}
-	if parsed, err := url.Parse(cs.SnapshotURL); err != nil || parsed.Scheme == "" || parsed.Host == "" {
+	parsed, err := url.Parse(cs.SnapshotURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return fmt.Errorf("%w: CONFIG_SYNC_SNAPSHOT_URL must be a well-formed absolute URL", errors.ErrInvalidConfig)
+	}
+	if parsed.Scheme != "https" && !cs.AllowInsecureURL {
+		return fmt.Errorf("%w: CONFIG_SYNC_SNAPSHOT_URL must use https (set CONFIG_SYNC_SNAPSHOT_INSECURE=true only for local development)", errors.ErrInvalidConfig)
 	}
 	if cs.LKGPath == "" {
 		return fmt.Errorf("%w: CONFIG_SYNC_LKG_PATH is required when CONFIG_SYNC_DATA_PLANE_ENABLED is true", errors.ErrInvalidConfig)
