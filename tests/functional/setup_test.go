@@ -124,6 +124,9 @@ func setupTestEnvironment() {
 	redisDB = redis.NewClient(&redis.Options{Addr: redisAddr, DB: redisDBIdx})
 	_ = redisDB.FlushDB(context.Background()).Err()
 
+	_ = os.Setenv("CONFIG_SYNC_TOKEN", dblessConfigSyncToken)
+	_ = os.Setenv("CONFIG_SYNC_RECOMPILE_DEBOUNCE", "500ms")
+
 	trustGuardStubURL := StartTrustGuardFunctionalStub()
 	cmdEnv := buildCmdEnv(trustGuardStubURL)
 	gatewayBinaryPath = buildGatewayBinary(cmdEnv)

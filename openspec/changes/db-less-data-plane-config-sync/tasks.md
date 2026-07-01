@@ -139,8 +139,8 @@ QA satisfied: MCP OAuth creds via Redis vault; encrypted at rest; missing→re-c
 
 Covers: cross-cutting end-to-end parity; config-sync-security (no body logged) assertion.
 
-- [ ] 8.1 Add functional test: admin write → `Signal` → publish → DP converges (fake admin endpoint + real codec/notifier) → hot-path parity vs Postgres (gateway-by-slug, consumer, precomputed policy plan); assert no snapshot body in logs.
-- [ ] 8.2 Add MCP vault re-consist functional check over Redis (upsert on connect flow → forwarded resolve → refresh persists).
-- [ ] 8.3 Update `.agents/AGENT.md` (plane-aware DI, DB-less env contract, `CONFIG_SYNC_*`, buf proto-gen note) and archive the OpenSpec change.
+- [x] 8.1 Add functional test: admin write → `Signal` → publish → DP converges (fake admin endpoint + real codec/notifier) → hot-path parity vs Postgres (gateway-by-slug, consumer, precomputed policy plan); assert no snapshot body in logs.
+- [x] 8.2 Add MCP vault re-consist functional check over Redis (upsert on connect flow → forwarded resolve → refresh persists).
+- [x] 8.3 Update `.agents/AGENT.md` (plane-aware DI, DB-less env contract, `CONFIG_SYNC_*`, buf proto-gen note). (Archive of the OpenSpec change is deferred to the orchestrator at close-out.)
 
 QA satisfied: end-to-end converge + parity + secret-safety. Depends on: P1–P7.
