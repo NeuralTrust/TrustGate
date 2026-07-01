@@ -116,12 +116,12 @@ QA satisfied: successful write triggers one signal; failed write no signal; nil 
 
 Covers: db-less-data-plane (boot without Postgres, config-read wiring), data-plane-config-sync (readiness gating, cold-start/notify worker wiring).
 
-- [ ] 6.1 Create `pkg/container/modules/core_data.go` (DB-less core: config/logger/redis/crypto, `provideNilConnection func() *database.Connection { return nil }`, snapshot-adapter bindings for gateway/registry/role/consumer/policy/auth/catalog — never take `*database.Connection`).
-- [ ] 6.2 Create `pkg/container/modules/config_sync_data.go` (`MemoryStore`, `Codec`, `AESGCMCrypto`, `HTTPFetcher`, `RedisStreamNotifier`, `LKGStore`, `Worker` — not started here).
-- [ ] 6.3 Change `pkg/container/modules/modules.go` to `All(plane string, dbless bool) []container.Option`: DB-less DP set (CoreData + Cache/CacheEvents/Session/Telemetry/Auth/Policy/Plugins/LoadBalancer/Providers/Proxy/MCP/Server*/ConfigSyncData) vs full Postgres set + `ControlConfigSync`; exclude the 8 pgx domain modules from the DB-less set.
-- [ ] 6.4 In `cmd/trustgate/main.go` compute `(plane, dbless)` from `serverType()`+`cfg.ConfigSync.DataPlaneEnabled`; gate `runMigrations`/`StartCacheEventListener`/`StartCatalogSync` off on DB-less; nil-safe `closeResources`.
-- [ ] 6.5 In `runProxy`/`runMCP` start `go worker.Run(ctx)` (join on shutdown, mirror `startConfigSyncWorker`); wire `/readyz` to `configsync.ReadinessCheck(store)` → `503` until first converge or LKG restore. In `runAdmin`/`runAll` start `Recompiler.Run` + eager `Signal()`.
-- [ ] 6.6 Add DI smoke tests (per `.agents/AGENT.md §9`): `proxy`/`mcp` DB-less graph builds with `DB_*` unset (no `*database.Connection` pulled); control graph builds `ControlConfigSync`.
+- [x] 6.1 Create `pkg/container/modules/core_data.go` (DB-less core: config/logger/redis/crypto, `provideNilConnection func() *database.Connection { return nil }`, snapshot-adapter bindings for gateway/registry/role/consumer/policy/auth/catalog — never take `*database.Connection`).
+- [x] 6.2 Create `pkg/container/modules/config_sync_data.go` (`MemoryStore`, `Codec`, `AESGCMCrypto`, `HTTPFetcher`, `RedisStreamNotifier`, `LKGStore`, `Worker` — not started here).
+- [x] 6.3 Change `pkg/container/modules/modules.go` to `All(plane string, dbless bool) []container.Option`: DB-less DP set (CoreData + Cache/CacheEvents/Session/Telemetry/Auth/Policy/Plugins/LoadBalancer/Providers/Proxy/MCP/Server*/ConfigSyncData) vs full Postgres set + `ControlConfigSync`; exclude the 8 pgx domain modules from the DB-less set.
+- [x] 6.4 In `cmd/trustgate/main.go` compute `(plane, dbless)` from `serverType()`+`cfg.ConfigSync.DataPlaneEnabled`; gate `runMigrations`/`StartCacheEventListener`/`StartCatalogSync` off on DB-less; nil-safe `closeResources`.
+- [x] 6.5 In `runProxy`/`runMCP` start `go worker.Run(ctx)` (join on shutdown, mirror `startConfigSyncWorker`); wire `/readyz` to `configsync.ReadinessCheck(store)` → `503` until first converge or LKG restore. In `runAdmin`/`runAll` start `Recompiler.Run` + eager `Signal()`.
+- [x] 6.6 Add DI smoke tests (per `.agents/AGENT.md §9`): `proxy`/`mcp` DB-less graph builds with `DB_*` unset (no `*database.Connection` pulled); control graph builds `ControlConfigSync`.
 
 QA satisfied: boot no-Postgres (migrations/pool skipped), readiness 503→ready, notify/cold-start worker running. Depends on: P1–P5.
 

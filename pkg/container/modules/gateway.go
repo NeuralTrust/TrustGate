@@ -28,15 +28,20 @@ import (
 	gatewayrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/gateway"
 )
 
-// Gateway wires the Gateway aggregate end-to-end: pgx repository,
-// the four application services, and the five admin HTTP handlers.
 func Gateway(c *container.Container) error {
-	if err := c.Provide(func(conn *database.Connection) domain.Repository {
-		return gatewayrepo.NewRepository(conn)
-	}); err != nil {
+	if err := provideGatewayRepository(c); err != nil {
 		return err
 	}
+	return provideGatewayServices(c)
+}
 
+func provideGatewayRepository(c *container.Container) error {
+	return c.Provide(func(conn *database.Connection) domain.Repository {
+		return gatewayrepo.NewRepository(conn)
+	})
+}
+
+func provideGatewayServices(c *container.Container) error {
 	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, exporterFactory appmetrics.ExporterFactory, logger *slog.Logger, sig snapshotSignalParams) appgateway.Creator {
 		return appgateway.NewCreator(repo, manager, exporterFactory, logger, sig.Signaler)
 	}); err != nil {

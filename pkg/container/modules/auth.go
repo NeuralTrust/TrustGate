@@ -28,12 +28,19 @@ import (
 )
 
 func Auth(c *container.Container) error {
-	if err := c.Provide(func(conn *database.Connection) domain.Repository {
-		return authrepo.NewRepository(conn)
-	}); err != nil {
+	if err := provideAuthRepository(c); err != nil {
 		return err
 	}
+	return provideAuthServices(c)
+}
 
+func provideAuthRepository(c *container.Container) error {
+	return c.Provide(func(conn *database.Connection) domain.Repository {
+		return authrepo.NewRepository(conn)
+	})
+}
+
+func provideAuthServices(c *container.Container) error {
 	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appauth.Creator {
 		return appauth.NewCreator(repo, manager, publisher, logger, sig.Signaler)
 	}); err != nil {

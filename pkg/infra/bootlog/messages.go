@@ -17,6 +17,7 @@ package bootlog
 const (
 	MigrationsRunning          = "🗄️  running database migrations"
 	MigrationsApplied          = "✅ database migrations applied"
+	DatabaseClosing            = "🗄️  closing database connection"
 	RedisConnected             = "📡 redis connected successfully"
 	CacheListenerStarted       = "📻 cache event listener started"
 	RedisPubSubConnected       = "📡 redis pubsub connected"

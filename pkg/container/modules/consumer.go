@@ -31,12 +31,19 @@ import (
 )
 
 func Consumer(c *container.Container) error {
-	if err := c.Provide(func(conn *database.Connection) domain.Repository {
-		return consumerrepo.NewRepository(conn)
-	}); err != nil {
+	if err := provideConsumerRepository(c); err != nil {
 		return err
 	}
+	return provideConsumerServices(c)
+}
 
+func provideConsumerRepository(c *container.Container) error {
+	return c.Provide(func(conn *database.Connection) domain.Repository {
+		return consumerrepo.NewRepository(conn)
+	})
+}
+
+func provideConsumerServices(c *container.Container) error {
 	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, roleRepo roledomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appconsumer.Creator {
 		return appconsumer.NewCreator(repo, registryRepo, roleRepo, manager, publisher, logger, sig.Signaler)
 	}); err != nil {

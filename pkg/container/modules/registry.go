@@ -28,12 +28,19 @@ import (
 )
 
 func Registry(c *container.Container) error {
-	if err := c.Provide(func(conn *database.Connection, enc vaultdomain.Encrypter) domain.Repository {
-		return registryrepo.NewRepository(conn, enc)
-	}); err != nil {
+	if err := provideRegistryRepository(c); err != nil {
 		return err
 	}
+	return provideRegistryServices(c)
+}
 
+func provideRegistryRepository(c *container.Container) error {
+	return c.Provide(func(conn *database.Connection, enc vaultdomain.Encrypter) domain.Repository {
+		return registryrepo.NewRepository(conn, enc)
+	})
+}
+
+func provideRegistryServices(c *container.Container) error {
 	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger, sig snapshotSignalParams) appregistry.Creator {
 		return appregistry.NewCreator(repo, manager, logger, sig.Signaler)
 	}); err != nil {

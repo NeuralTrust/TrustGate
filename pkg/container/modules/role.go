@@ -28,12 +28,19 @@ import (
 )
 
 func Role(c *container.Container) error {
-	if err := c.Provide(func(conn *database.Connection) domain.Repository {
-		return rolerepo.NewRepository(conn)
-	}); err != nil {
+	if err := provideRoleRepository(c); err != nil {
 		return err
 	}
+	return provideRoleServices(c)
+}
 
+func provideRoleRepository(c *container.Container) error {
+	return c.Provide(func(conn *database.Connection) domain.Repository {
+		return rolerepo.NewRepository(conn)
+	})
+}
+
+func provideRoleServices(c *container.Container) error {
 	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) approle.Creator {
 		return approle.NewCreator(repo, manager, publisher, logger, sig.Signaler)
 	}); err != nil {

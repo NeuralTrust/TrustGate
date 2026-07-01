@@ -16,7 +16,18 @@ package modules
 
 import "github.com/NeuralTrust/TrustGate/pkg/container"
 
-func All() []container.Option {
+func All(plane string, dbless bool) []container.Option {
+	if dbless && isDataPlane(plane) {
+		return dataPlaneModules()
+	}
+	return fullModules()
+}
+
+func isDataPlane(plane string) bool {
+	return plane == "proxy" || plane == "mcp"
+}
+
+func fullModules() []container.Option {
 	return []container.Option{
 		container.WithModule(Core),
 		container.WithModule(API),
@@ -40,5 +51,24 @@ func All() []container.Option {
 		container.WithModule(ServerProxy),
 		container.WithModule(ServerMCP),
 		container.WithModule(ControlConfigSync),
+	}
+}
+
+func dataPlaneModules() []container.Option {
+	return []container.Option{
+		container.WithModule(CoreData),
+		container.WithModule(API),
+		container.WithModule(Cache),
+		container.WithModule(CacheEvents),
+		container.WithModule(Session),
+		container.WithModule(Telemetry),
+		container.WithModule(Plugins),
+		container.WithModule(LoadBalancer),
+		container.WithModule(Providers),
+		container.WithModule(Proxy),
+		container.WithModule(MCP),
+		container.WithModule(ServerProxy),
+		container.WithModule(ServerMCP),
+		container.WithModule(ConfigSyncData),
 	}
 }

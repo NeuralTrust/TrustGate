@@ -27,6 +27,21 @@ import (
 )
 
 func Core(c *container.Container) error {
+	if err := provideRuntimeBase(c); err != nil {
+		return err
+	}
+	if err := c.Provide(func(cfg *config.Config) *config.DatabaseConfig {
+		return &cfg.Database
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(database.NewConnectionProvider); err != nil {
+		return err
+	}
+	return c.Provide(database.NewMigrationsManagerProvider)
+}
+
+func provideRuntimeBase(c *container.Container) error {
 	if err := c.Provide(config.LoadConfig); err != nil {
 		return err
 	}
@@ -37,26 +52,12 @@ func Core(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(cfg *config.Config) *config.DatabaseConfig {
-		return &cfg.Database
-	}); err != nil {
-		return err
-	}
 	if err := c.Provide(func() context.Context {
 		return context.Background()
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(database.NewConnectionProvider); err != nil {
-		return err
-	}
-	if err := c.Provide(database.NewMigrationsManagerProvider); err != nil {
-		return err
-	}
-	if err := c.Provide(func(cfg *config.Config) (vaultdomain.Encrypter, error) {
+	return c.Provide(func(cfg *config.Config) (vaultdomain.Encrypter, error) {
 		return crypto.NewCipher(cfg.Server.SecretKey)
-	}); err != nil {
-		return err
-	}
-	return nil
+	})
 }

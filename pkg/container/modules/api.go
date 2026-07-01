@@ -26,6 +26,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/configsnapshot/readmodel"
+	"github.com/NeuralTrust/TrustGate/pkg/configsync"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/introspection"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
@@ -35,10 +37,22 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	playgroundstore "github.com/NeuralTrust/TrustGate/pkg/infra/metrics/playground"
 	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
+	"go.uber.org/dig"
 )
 
+type healthParams struct {
+	dig.In
+	Store configsync.ConfigStore[*readmodel.Snapshot] `optional:"true"`
+}
+
 func API(c *container.Container) error {
-	if err := c.Provide(apihandler.NewHealthHandler); err != nil {
+	if err := c.Provide(func(p healthParams) *apihandler.HealthHandler {
+		var checks []apihandler.ReadinessCheck
+		if p.Store != nil {
+			checks = append(checks, apihandler.ReadinessCheck{Name: "snapshot", Ping: configsync.ReadinessCheck(p.Store)})
+		}
+		return apihandler.NewHealthHandler(checks...)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(apihandler.NewVersionHandler); err != nil {

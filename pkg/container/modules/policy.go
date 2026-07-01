@@ -28,12 +28,19 @@ import (
 )
 
 func Policy(c *container.Container) error {
-	if err := c.Provide(func(conn *database.Connection) domain.Repository {
-		return policyrepo.NewRepository(conn)
-	}); err != nil {
+	if err := providePolicyRepository(c); err != nil {
 		return err
 	}
+	return providePolicyServices(c)
+}
 
+func providePolicyRepository(c *container.Container) error {
+	return c.Provide(func(conn *database.Connection) domain.Repository {
+		return policyrepo.NewRepository(conn)
+	})
+}
+
+func providePolicyServices(c *container.Container) error {
 	if err := c.Provide(func(repo domain.Repository, registry appplugins.Registry, manager *cache.TTLMapManager, logger *slog.Logger, sig snapshotSignalParams) apppolicy.Creator {
 		return apppolicy.NewCreator(repo, registry, manager, logger, sig.Signaler)
 	}); err != nil {
