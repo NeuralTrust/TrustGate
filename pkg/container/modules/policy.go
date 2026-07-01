@@ -15,10 +15,14 @@
 package modules
 
 import (
+	"log/slog"
+
 	policyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	policyrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/policy"
 )
@@ -30,19 +34,27 @@ func Policy(c *container.Container) error {
 		return err
 	}
 
-	if err := c.Provide(apppolicy.NewCreator); err != nil {
+	if err := c.Provide(func(repo domain.Repository, registry appplugins.Registry, manager *cache.TTLMapManager, logger *slog.Logger, sig snapshotSignalParams) apppolicy.Creator {
+		return apppolicy.NewCreator(repo, registry, manager, logger, sig.Signaler)
+	}); err != nil {
 		return err
 	}
-	if err := c.Provide(apppolicy.NewUpdater); err != nil {
+	if err := c.Provide(func(repo domain.Repository, registry appplugins.Registry, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) apppolicy.Updater {
+		return apppolicy.NewUpdater(repo, registry, manager, publisher, logger, sig.Signaler)
+	}); err != nil {
 		return err
 	}
-	if err := c.Provide(apppolicy.NewDeleter); err != nil {
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) apppolicy.Deleter {
+		return apppolicy.NewDeleter(repo, manager, publisher, logger, sig.Signaler)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(apppolicy.NewFinder); err != nil {
 		return err
 	}
-	if err := c.Provide(apppolicy.NewScoper); err != nil {
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) apppolicy.Scoper {
+		return apppolicy.NewScoper(repo, manager, publisher, logger, sig.Signaler)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(apppolicy.NewDuplicator); err != nil {

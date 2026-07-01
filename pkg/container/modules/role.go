@@ -15,10 +15,14 @@
 package modules
 
 import (
+	"log/slog"
+
 	rolehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/role"
 	approle "github.com/NeuralTrust/TrustGate/pkg/app/role"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	rolerepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/role"
 )
@@ -30,19 +34,27 @@ func Role(c *container.Container) error {
 		return err
 	}
 
-	if err := c.Provide(approle.NewCreator); err != nil {
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) approle.Creator {
+		return approle.NewCreator(repo, manager, publisher, logger, sig.Signaler)
+	}); err != nil {
 		return err
 	}
-	if err := c.Provide(approle.NewUpdater); err != nil {
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) approle.Updater {
+		return approle.NewUpdater(repo, manager, publisher, logger, sig.Signaler)
+	}); err != nil {
 		return err
 	}
-	if err := c.Provide(approle.NewDeleter); err != nil {
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) approle.Deleter {
+		return approle.NewDeleter(repo, manager, publisher, logger, sig.Signaler)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(approle.NewFinder); err != nil {
 		return err
 	}
-	if err := c.Provide(approle.NewAssociator); err != nil {
+	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) approle.Associator {
+		return approle.NewAssociator(repo, registryRepo, manager, publisher, logger, sig.Signaler)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(approle.NewOIDCResolver); err != nil {

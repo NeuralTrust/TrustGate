@@ -18,6 +18,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bootlog"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/catalog/modelsdev"
@@ -67,13 +68,14 @@ type Syncer interface {
 var _ Syncer = (*syncer)(nil)
 
 type syncer struct {
-	repo   domain.Repository
-	client *modelsdev.Client
-	logger *slog.Logger
+	repo     domain.Repository
+	client   *modelsdev.Client
+	logger   *slog.Logger
+	signaler configsyncport.SnapshotSignaler
 }
 
-func NewSyncer(repo domain.Repository, client *modelsdev.Client, logger *slog.Logger) Syncer {
-	return &syncer{repo: repo, client: client, logger: logger}
+func NewSyncer(repo domain.Repository, client *modelsdev.Client, logger *slog.Logger, signaler configsyncport.SnapshotSignaler) Syncer {
+	return &syncer{repo: repo, client: client, logger: logger, signaler: signaler}
 }
 
 func (s *syncer) Sync(ctx context.Context) error {
@@ -128,6 +130,9 @@ func (s *syncer) Sync(ctx context.Context) error {
 	s.logger.Info(bootlog.CatalogSyncCompleted,
 		slog.Int("providers", len(seedProviders)),
 		slog.Int("models", len(models)))
+	if s.signaler != nil {
+		s.signaler.Signal(ctx)
+	}
 	return nil
 }
 

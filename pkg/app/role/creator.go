@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"log/slog"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -42,6 +43,7 @@ type creator struct {
 	memoryCache *cache.TTLMap
 	publisher   cache.EventPublisher
 	logger      *slog.Logger
+	signaler    configsyncport.SnapshotSignaler
 }
 
 func NewCreator(
@@ -49,12 +51,14 @@ func NewCreator(
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
+	signaler configsyncport.SnapshotSignaler,
 ) Creator {
 	return &creator{
 		repo:        repo,
 		memoryCache: manager.GetTTLMap(cache.RoleTTLName),
 		publisher:   publisher,
 		logger:      logger,
+		signaler:    signaler,
 	}
 }
 
@@ -72,5 +76,8 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Role, err
 	}
 	c.memoryCache.Set(role.ID.String(), role)
 	publishGatewayDataInvalidation(ctx, c.publisher, c.logger, role.GatewayID)
+	if c.signaler != nil {
+		c.signaler.Signal(ctx)
+	}
 	return role, nil
 }

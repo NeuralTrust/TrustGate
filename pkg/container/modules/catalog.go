@@ -46,7 +46,9 @@ func Catalog(c *container.Container) error {
 	if err := c.Provide(appcatalog.NewService); err != nil {
 		return err
 	}
-	if err := c.Provide(appcatalog.NewSyncer); err != nil {
+	if err := c.Provide(func(repo domain.Repository, client *modelsdev.Client, logger *slog.Logger, sig snapshotSignalParams) appcatalog.Syncer {
+		return appcatalog.NewSyncer(repo, client, logger, sig.Signaler)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(appcatalog.NewPricingResolver); err != nil {

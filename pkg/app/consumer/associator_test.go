@@ -43,7 +43,7 @@ func newAssociator(
 ) appconsumer.Associator {
 	return appconsumer.NewAssociator(
 		repo, registryRepo, &roleRepositoryStub{}, authRepo, policyRepo,
-		newCacheManager(), cachetest.NoopPublisher(), newTestLogger(),
+		newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil,
 	)
 }
 

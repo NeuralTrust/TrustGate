@@ -18,6 +18,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
@@ -38,6 +39,7 @@ type associator struct {
 	memoryCache  *cache.TTLMap
 	publisher    cache.EventPublisher
 	logger       *slog.Logger
+	signaler     configsyncport.SnapshotSignaler
 }
 
 func NewAssociator(
@@ -46,6 +48,7 @@ func NewAssociator(
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
+	signaler configsyncport.SnapshotSignaler,
 ) Associator {
 	return &associator{
 		repo:         repo,
@@ -53,6 +56,7 @@ func NewAssociator(
 		memoryCache:  manager.GetTTLMap(cache.RoleTTLName),
 		publisher:    publisher,
 		logger:       logger,
+		signaler:     signaler,
 	}
 }
 
@@ -105,4 +109,7 @@ func (a *associator) registryInGateway(ctx context.Context, gatewayID ids.Gatewa
 func (a *associator) invalidate(ctx context.Context, role *domain.Role) {
 	a.memoryCache.Delete(role.ID.String())
 	publishGatewayDataInvalidation(ctx, a.publisher, a.logger, role.GatewayID)
+	if a.signaler != nil {
+		a.signaler.Signal(ctx)
+	}
 }

@@ -20,6 +20,7 @@ import (
 	configsnapshothandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/configsnapshot"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
+	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/configsnapshot/readmodel"
 	"github.com/NeuralTrust/TrustGate/pkg/configsync"
@@ -80,6 +81,11 @@ func ControlConfigSync(c *container.Container) error {
 	}
 	if err := c.Provide(func(r *appsnapshot.Recompiler) *appsnapshot.SnapshotVersionPublisher {
 		return appsnapshot.NewSnapshotVersionPublisher(r)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(p *appsnapshot.SnapshotVersionPublisher) configsyncport.SnapshotSignaler {
+		return p
 	}); err != nil {
 		return err
 	}

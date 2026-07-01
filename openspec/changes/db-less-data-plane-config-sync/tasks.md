@@ -105,10 +105,10 @@ QA satisfied: version stable/changes, bursts coalesce, ETag 200/304, version→R
 
 Covers: control-plane-snapshot (admin writes signal a version bump).
 
-- [ ] 5.1 Port `pkg/app/configsyncport/port.go` (`SnapshotSignaler` interface `Signal(ctx)`).
-- [ ] 5.2 Inject `configsyncport.SnapshotSignaler` (nil-safe) and call `Signal(ctx)` after successful commit — alongside existing `gateway_events` pub/sub — in gateway `creator/updater/deleter`, registry `creator/updater/deleter`, consumer `creator/updater/deleter/associator`.
-- [ ] 5.3 Same for policy `creator/updater/deleter/duplicator/scoper`, auth `creator/updater/deleter`, role `creator/updater/deleter/associator`, catalog `sync/provider_auth/mcp_servers`.
-- [ ] 5.4 Update the affected use-case constructors/DI providers to accept the (optional) signaler; add/extend tests: successful write signals once, failed write does not signal, nil signaler is a no-op.
+- [x] 5.1 Port `pkg/app/configsyncport/port.go` (`SnapshotSignaler` interface `Signal(ctx)`).
+- [x] 5.2 Inject `configsyncport.SnapshotSignaler` (nil-safe) and call `Signal(ctx)` after successful commit — alongside existing `gateway_events` pub/sub — in gateway `creator/updater/deleter`, registry `creator/updater/deleter`, consumer `creator/updater/deleter/associator`.
+- [x] 5.3 Same for policy `creator/updater/deleter/scoper` (duplicator signals via `creator.Create`), auth `creator/updater/deleter`, role `creator/updater/deleter/associator`, catalog `sync` (provider_auth/mcp_servers are non-mutating, not hooked).
+- [x] 5.4 Update the affected use-case constructors/DI providers to accept the (optional) signaler; add/extend tests: successful write signals once, failed write does not signal, nil signaler is a no-op.
 
 QA satisfied: successful write triggers one signal; failed write no signal; nil no-op. Depends on: P4 (publisher implements `SnapshotSignaler`).
 

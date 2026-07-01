@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -50,6 +51,7 @@ type updater struct {
 	publisher       cache.EventPublisher
 	exporterFactory appmetrics.ExporterFactory
 	logger          *slog.Logger
+	signaler        configsyncport.SnapshotSignaler
 }
 
 func NewUpdater(
@@ -58,6 +60,7 @@ func NewUpdater(
 	publisher cache.EventPublisher,
 	exporterFactory appmetrics.ExporterFactory,
 	logger *slog.Logger,
+	signaler configsyncport.SnapshotSignaler,
 ) Updater {
 	return &updater{
 		repo:            repo,
@@ -65,6 +68,7 @@ func NewUpdater(
 		publisher:       publisher,
 		exporterFactory: exporterFactory,
 		logger:          logger,
+		signaler:        signaler,
 	}
 }
 
@@ -108,5 +112,8 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	deleteGatewayCache(u.memoryCache, &old)
 	setGatewayCache(u.memoryCache, g)
 	publishGatewayDataInvalidation(ctx, u.publisher, u.logger, g.ID)
+	if u.signaler != nil {
+		u.signaler.Signal(ctx)
+	}
 	return g, nil
 }

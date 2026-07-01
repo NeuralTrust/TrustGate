@@ -37,7 +37,7 @@ func TestScoper_SetGlobal_Success(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().SetGlobal(mock.Anything, gwID, existing.ID, true).Return(nil).Once()
 
-	scoper := apppolicy.NewScoper(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	scoper := apppolicy.NewScoper(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
 	got, err := scoper.SetGlobal(context.Background(), gwID, existing.ID)
 	if err != nil {
 		t.Fatalf("SetGlobal error: %v", err)
@@ -58,7 +58,7 @@ func TestScoper_SetGlobal_AlreadyGlobalIsNoop(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	// No SetGlobal call expected: the state is unchanged.
 
-	scoper := apppolicy.NewScoper(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	scoper := apppolicy.NewScoper(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
 	got, err := scoper.SetGlobal(context.Background(), gwID, existing.ID)
 	if err != nil {
 		t.Fatalf("SetGlobal error: %v", err)
@@ -75,7 +75,7 @@ func TestScoper_SetGlobal_RejectsForeignGateway(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 
-	scoper := apppolicy.NewScoper(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	scoper := apppolicy.NewScoper(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
 	_, err := scoper.SetGlobal(context.Background(), ids.New[ids.GatewayKind](), existing.ID)
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
@@ -93,7 +93,7 @@ func TestScoper_UnsetGlobal_Success(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().SetGlobal(mock.Anything, gwID, existing.ID, false).Return(nil).Once()
 
-	scoper := apppolicy.NewScoper(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	scoper := apppolicy.NewScoper(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
 	got, err := scoper.UnsetGlobal(context.Background(), gwID, existing.ID)
 	if err != nil {
 		t.Fatalf("UnsetGlobal error: %v", err)
