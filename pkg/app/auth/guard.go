@@ -92,16 +92,15 @@ func consumerHasOtherUsableAuth(ctx context.Context, auths domain.Repository, c 
 	return false, nil
 }
 
-func guardAuthDelete(ctx context.Context, consumers consumerdomain.Repository, authID ids.AuthID) error {
+func detachAuthFromConsumers(ctx context.Context, consumers consumerdomain.Repository, authID ids.AuthID) error {
 	refs, err := referencingConsumers(ctx, consumers, authID)
 	if err != nil {
 		return err
 	}
-	if len(refs) > 0 {
-		return fmt.Errorf(
-			"%w: auth is referenced by %d consumer(s); detach it from them before deleting",
-			commonerrors.ErrConflict, len(refs),
-		)
+	for _, c := range refs {
+		if err := consumers.DetachAuth(ctx, c.ID, authID); err != nil {
+			return fmt.Errorf("auth: detach from consumer %q: %w", c.Slug, err)
+		}
 	}
 	return nil
 }
