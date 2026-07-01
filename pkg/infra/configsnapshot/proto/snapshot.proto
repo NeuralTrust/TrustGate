@@ -6,8 +6,6 @@ option go_package = "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/p
 
 //go:generate go run github.com/bufbuild/buf/cmd/buf@v1.50.0 generate
 
-import "google/protobuf/struct.proto";
-
 message Snapshot {
   string version = 1;
   repeated Gateway gateways = 2;
@@ -16,70 +14,40 @@ message Snapshot {
   repeated Policy policies = 5;
   repeated Auth auths = 6;
   repeated Role roles = 7;
-  repeated CatalogModel catalog_models = 8;
+  repeated Provider providers = 8;
+  repeated CatalogModel catalog_models = 9;
 }
 
 message Gateway {
-  string id = 1;
-  string slug = 2;
-  string domain = 3;
-  string name = 4;
+  bytes json = 1;
 }
 
 message Consumer {
-  string id = 1;
-  string gateway_id = 2;
-  string slug = 3;
-  bool active = 4;
-  repeated string registry_ids = 5;
-  repeated string role_ids = 6;
-  repeated string auth_ids = 7;
-  repeated string policy_ids = 8;
-  repeated string fallback_registry_ids = 9;
-  string name = 10;
-}
-
-message McpTarget {
-  string auth = 1;
+  bytes json = 1;
 }
 
 message Registry {
-  string id = 1;
-  string gateway_id = 2;
-  string name = 3;
-  McpTarget mcp_target = 4;
+  bytes json = 1;
 }
 
 message Policy {
-  string id = 1;
-  string gateway_id = 2;
-  string slug = 3;
-  bool is_global = 4;
-  repeated string consumer_ids = 5;
-  google.protobuf.Struct config = 6;
-  string name = 7;
+  bytes json = 1;
 }
 
 message Auth {
-  string id = 1;
-  string gateway_id = 2;
-  string key_hash = 3;
-  string type = 4;
-  bool enabled = 5;
-  string name = 6;
+  bytes json = 1;
+  string key_hash = 2;
 }
 
 message Role {
-  string id = 1;
-  string gateway_id = 2;
-  repeated string registry_ids = 3;
-  string name = 4;
+  bytes json = 1;
+}
+
+message Provider {
+  bytes json = 1;
 }
 
 message CatalogModel {
-  string provider_code = 1;
-  string slug = 2;
-  string display_name = 3;
-  double input_price = 4;
-  double output_price = 5;
+  bytes json = 1;
+  string provider_code = 2;
 }

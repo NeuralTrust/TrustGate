@@ -64,15 +64,15 @@ QA satisfied: LKG encrypted-at-rest + tamper-detected; atomic swap; no snapshot 
 
 Covers: db-less-data-plane (config read parity, gateway-scoped isolation, read-only write rejection, pricing from embedded catalog).
 
-- [ ] 2.1 Create `pkg/configsnapshot/readmodel/snapshot.go`: `Data` struct (Version + Gateways/Consumers/Registries/Policies/Auths/Roles/CatalogModels) + immutable `Snapshot` + `Build(Data)` building `gatewaysByID`, `gatewaysBySlug` (`gateway.NormalizeSlug`), `gatewaysByDomain`, `consumersByGateway`+`byID`+`activeBySlug`, `registriesByGateway map[GW]map[RegID]`, `policiesByGateway`+`byID`, `authsByGateway`+`byID`+`byAPIKeyHash`+enabled-by-type, `rolesByGateway`+`byID`, `catalogByProviderSlug`; one accessor per hot-path lookup (exploration §2).
-- [ ] 2.2 Wire `codec.go` `toProto`/`fromProto` to the real `readmodel` types; confirm registry `MCPTarget.Auth` decrypted-cred fidelity (design Open Q) in codec test.
-- [ ] 2.3 Create `pkg/configsnapshot/adapters/adapters.go` (`snapshotFrom(store)` → `ErrNotFound` if no snapshot; shared deep-clone helpers).
-- [ ] 2.4 Create `pkg/configsnapshot/adapters/gateway_repository.go` (`FindBySlug`/`FindByID`/`FindByDomain` from snapshot, clone; writes → `configsync.ErrReadOnly`).
-- [ ] 2.5 Create `consumer_repository.go` (`ListByGateway`/`FindByID`/`FindActiveBySlug`/`ListByAuthID`; all mutators → `ErrReadOnly`).
-- [ ] 2.6 Create `registry_repository.go` + `policy_repository.go` (`FindByIDs`/`FindByID`; `ListByGateway`/`FindByID`/`FindByIDs`; writes → `ErrReadOnly`).
-- [ ] 2.7 Create `auth_repository.go` + `role_repository.go` (`FindByAPIKeyHash`/`FindByIDs`/`FindByID`/`FindEnabledByTypes`/`ListEnabledByGatewayAndType`; role reads; writes → `ErrReadOnly`).
-- [ ] 2.8 Create `catalog_repository.go` (`FindModel`/`ListModelsByProviderCode`; reproduce `PricingResolver` provider/slug keying from `pkg/app/catalog/pricing.go`, design Open Q).
-- [ ] 2.9 Add `readmodel/snapshot_test.go` (id+slug indexing, `NormalizeSlug`, `activeBySlug`, `byAPIKeyHash`, per-gateway grouping) + `adapters/*_test.go` table-driven parity: `scopeToGateway`→`ErrNotFound`, cross-gateway deny, clone isolation, all writes → `ErrReadOnly`.
+- [x] 2.1 Create `pkg/configsnapshot/readmodel/snapshot.go`: `Data` struct (Version + Gateways/Consumers/Registries/Policies/Auths/Roles/CatalogModels) + immutable `Snapshot` + `Build(Data)` building `gatewaysByID`, `gatewaysBySlug` (`gateway.NormalizeSlug`), `gatewaysByDomain`, `consumersByGateway`+`byID`+`activeBySlug`, `registriesByGateway map[GW]map[RegID]`, `policiesByGateway`+`byID`, `authsByGateway`+`byID`+`byAPIKeyHash`+enabled-by-type, `rolesByGateway`+`byID`, `catalogByProviderSlug`; one accessor per hot-path lookup (exploration §2).
+- [x] 2.2 Wire `codec.go` `toProto`/`fromProto` to the real `readmodel` types; confirm registry `MCPTarget.Auth` decrypted-cred fidelity (design Open Q) in codec test.
+- [x] 2.3 Create `pkg/configsnapshot/adapters/adapters.go` (`snapshotFrom(store)` → `ErrNotFound` if no snapshot; shared deep-clone helpers).
+- [x] 2.4 Create `pkg/configsnapshot/adapters/gateway_repository.go` (`FindBySlug`/`FindByID`/`FindByDomain` from snapshot, clone; writes → `configsync.ErrReadOnly`).
+- [x] 2.5 Create `consumer_repository.go` (`ListByGateway`/`FindByID`/`FindActiveBySlug`/`ListByAuthID`; all mutators → `ErrReadOnly`).
+- [x] 2.6 Create `registry_repository.go` + `policy_repository.go` (`FindByIDs`/`FindByID`; `ListByGateway`/`FindByID`/`FindByIDs`; writes → `ErrReadOnly`).
+- [x] 2.7 Create `auth_repository.go` + `role_repository.go` (`FindByAPIKeyHash`/`FindByIDs`/`FindByID`/`FindEnabledByTypes`/`ListEnabledByGatewayAndType`; role reads; writes → `ErrReadOnly`).
+- [x] 2.8 Create `catalog_repository.go` (`FindModel`/`ListModelsByProviderCode`; reproduce `PricingResolver` provider/slug keying from `pkg/app/catalog/pricing.go`, design Open Q).
+- [x] 2.9 Add `readmodel/snapshot_test.go` (id+slug indexing, `NormalizeSlug`, `activeBySlug`, `byAPIKeyHash`, per-gateway grouping) + `adapters/*_test.go` table-driven parity: `scopeToGateway`→`ErrNotFound`, cross-gateway deny, clone isolation, all writes → `ErrReadOnly`.
 
 QA satisfied: read parity, gateway scoping, read-only writes, DB-less pricing. Depends on: P1.
 

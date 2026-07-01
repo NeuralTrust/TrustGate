@@ -9,7 +9,6 @@ package snapshotpb
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	structpb "google.golang.org/protobuf/types/known/structpb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -31,7 +30,8 @@ type Snapshot struct {
 	Policies      []*Policy              `protobuf:"bytes,5,rep,name=policies,proto3" json:"policies,omitempty"`
 	Auths         []*Auth                `protobuf:"bytes,6,rep,name=auths,proto3" json:"auths,omitempty"`
 	Roles         []*Role                `protobuf:"bytes,7,rep,name=roles,proto3" json:"roles,omitempty"`
-	CatalogModels []*CatalogModel        `protobuf:"bytes,8,rep,name=catalog_models,json=catalogModels,proto3" json:"catalog_models,omitempty"`
+	Providers     []*Provider            `protobuf:"bytes,8,rep,name=providers,proto3" json:"providers,omitempty"`
+	CatalogModels []*CatalogModel        `protobuf:"bytes,9,rep,name=catalog_models,json=catalogModels,proto3" json:"catalog_models,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -115,6 +115,13 @@ func (x *Snapshot) GetRoles() []*Role {
 	return nil
 }
 
+func (x *Snapshot) GetProviders() []*Provider {
+	if x != nil {
+		return x.Providers
+	}
+	return nil
+}
+
 func (x *Snapshot) GetCatalogModels() []*CatalogModel {
 	if x != nil {
 		return x.CatalogModels
@@ -124,10 +131,7 @@ func (x *Snapshot) GetCatalogModels() []*CatalogModel {
 
 type Gateway struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Slug          string                 `protobuf:"bytes,2,opt,name=slug,proto3" json:"slug,omitempty"`
-	Domain        string                 `protobuf:"bytes,3,opt,name=domain,proto3" json:"domain,omitempty"`
-	Name          string                 `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
+	Json          []byte                 `protobuf:"bytes,1,opt,name=json,proto3" json:"json,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -162,48 +166,18 @@ func (*Gateway) Descriptor() ([]byte, []int) {
 	return file_snapshot_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *Gateway) GetId() string {
+func (x *Gateway) GetJson() []byte {
 	if x != nil {
-		return x.Id
+		return x.Json
 	}
-	return ""
-}
-
-func (x *Gateway) GetSlug() string {
-	if x != nil {
-		return x.Slug
-	}
-	return ""
-}
-
-func (x *Gateway) GetDomain() string {
-	if x != nil {
-		return x.Domain
-	}
-	return ""
-}
-
-func (x *Gateway) GetName() string {
-	if x != nil {
-		return x.Name
-	}
-	return ""
+	return nil
 }
 
 type Consumer struct {
-	state               protoimpl.MessageState `protogen:"open.v1"`
-	Id                  string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	GatewayId           string                 `protobuf:"bytes,2,opt,name=gateway_id,json=gatewayId,proto3" json:"gateway_id,omitempty"`
-	Slug                string                 `protobuf:"bytes,3,opt,name=slug,proto3" json:"slug,omitempty"`
-	Active              bool                   `protobuf:"varint,4,opt,name=active,proto3" json:"active,omitempty"`
-	RegistryIds         []string               `protobuf:"bytes,5,rep,name=registry_ids,json=registryIds,proto3" json:"registry_ids,omitempty"`
-	RoleIds             []string               `protobuf:"bytes,6,rep,name=role_ids,json=roleIds,proto3" json:"role_ids,omitempty"`
-	AuthIds             []string               `protobuf:"bytes,7,rep,name=auth_ids,json=authIds,proto3" json:"auth_ids,omitempty"`
-	PolicyIds           []string               `protobuf:"bytes,8,rep,name=policy_ids,json=policyIds,proto3" json:"policy_ids,omitempty"`
-	FallbackRegistryIds []string               `protobuf:"bytes,9,rep,name=fallback_registry_ids,json=fallbackRegistryIds,proto3" json:"fallback_registry_ids,omitempty"`
-	Name                string                 `protobuf:"bytes,10,opt,name=name,proto3" json:"name,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Json          []byte                 `protobuf:"bytes,1,opt,name=json,proto3" json:"json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Consumer) Reset() {
@@ -236,133 +210,23 @@ func (*Consumer) Descriptor() ([]byte, []int) {
 	return file_snapshot_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *Consumer) GetId() string {
+func (x *Consumer) GetJson() []byte {
 	if x != nil {
-		return x.Id
-	}
-	return ""
-}
-
-func (x *Consumer) GetGatewayId() string {
-	if x != nil {
-		return x.GatewayId
-	}
-	return ""
-}
-
-func (x *Consumer) GetSlug() string {
-	if x != nil {
-		return x.Slug
-	}
-	return ""
-}
-
-func (x *Consumer) GetActive() bool {
-	if x != nil {
-		return x.Active
-	}
-	return false
-}
-
-func (x *Consumer) GetRegistryIds() []string {
-	if x != nil {
-		return x.RegistryIds
+		return x.Json
 	}
 	return nil
-}
-
-func (x *Consumer) GetRoleIds() []string {
-	if x != nil {
-		return x.RoleIds
-	}
-	return nil
-}
-
-func (x *Consumer) GetAuthIds() []string {
-	if x != nil {
-		return x.AuthIds
-	}
-	return nil
-}
-
-func (x *Consumer) GetPolicyIds() []string {
-	if x != nil {
-		return x.PolicyIds
-	}
-	return nil
-}
-
-func (x *Consumer) GetFallbackRegistryIds() []string {
-	if x != nil {
-		return x.FallbackRegistryIds
-	}
-	return nil
-}
-
-func (x *Consumer) GetName() string {
-	if x != nil {
-		return x.Name
-	}
-	return ""
-}
-
-type McpTarget struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Auth          string                 `protobuf:"bytes,1,opt,name=auth,proto3" json:"auth,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *McpTarget) Reset() {
-	*x = McpTarget{}
-	mi := &file_snapshot_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *McpTarget) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*McpTarget) ProtoMessage() {}
-
-func (x *McpTarget) ProtoReflect() protoreflect.Message {
-	mi := &file_snapshot_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use McpTarget.ProtoReflect.Descriptor instead.
-func (*McpTarget) Descriptor() ([]byte, []int) {
-	return file_snapshot_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *McpTarget) GetAuth() string {
-	if x != nil {
-		return x.Auth
-	}
-	return ""
 }
 
 type Registry struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	GatewayId     string                 `protobuf:"bytes,2,opt,name=gateway_id,json=gatewayId,proto3" json:"gateway_id,omitempty"`
-	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
-	McpTarget     *McpTarget             `protobuf:"bytes,4,opt,name=mcp_target,json=mcpTarget,proto3" json:"mcp_target,omitempty"`
+	Json          []byte                 `protobuf:"bytes,1,opt,name=json,proto3" json:"json,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Registry) Reset() {
 	*x = Registry{}
-	mi := &file_snapshot_proto_msgTypes[4]
+	mi := &file_snapshot_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -374,7 +238,7 @@ func (x *Registry) String() string {
 func (*Registry) ProtoMessage() {}
 
 func (x *Registry) ProtoReflect() protoreflect.Message {
-	mi := &file_snapshot_proto_msgTypes[4]
+	mi := &file_snapshot_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -387,53 +251,26 @@ func (x *Registry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Registry.ProtoReflect.Descriptor instead.
 func (*Registry) Descriptor() ([]byte, []int) {
-	return file_snapshot_proto_rawDescGZIP(), []int{4}
+	return file_snapshot_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *Registry) GetId() string {
+func (x *Registry) GetJson() []byte {
 	if x != nil {
-		return x.Id
-	}
-	return ""
-}
-
-func (x *Registry) GetGatewayId() string {
-	if x != nil {
-		return x.GatewayId
-	}
-	return ""
-}
-
-func (x *Registry) GetName() string {
-	if x != nil {
-		return x.Name
-	}
-	return ""
-}
-
-func (x *Registry) GetMcpTarget() *McpTarget {
-	if x != nil {
-		return x.McpTarget
+		return x.Json
 	}
 	return nil
 }
 
 type Policy struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	GatewayId     string                 `protobuf:"bytes,2,opt,name=gateway_id,json=gatewayId,proto3" json:"gateway_id,omitempty"`
-	Slug          string                 `protobuf:"bytes,3,opt,name=slug,proto3" json:"slug,omitempty"`
-	IsGlobal      bool                   `protobuf:"varint,4,opt,name=is_global,json=isGlobal,proto3" json:"is_global,omitempty"`
-	ConsumerIds   []string               `protobuf:"bytes,5,rep,name=consumer_ids,json=consumerIds,proto3" json:"consumer_ids,omitempty"`
-	Config        *structpb.Struct       `protobuf:"bytes,6,opt,name=config,proto3" json:"config,omitempty"`
-	Name          string                 `protobuf:"bytes,7,opt,name=name,proto3" json:"name,omitempty"`
+	Json          []byte                 `protobuf:"bytes,1,opt,name=json,proto3" json:"json,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Policy) Reset() {
 	*x = Policy{}
-	mi := &file_snapshot_proto_msgTypes[5]
+	mi := &file_snapshot_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -445,7 +282,7 @@ func (x *Policy) String() string {
 func (*Policy) ProtoMessage() {}
 
 func (x *Policy) ProtoReflect() protoreflect.Message {
-	mi := &file_snapshot_proto_msgTypes[5]
+	mi := &file_snapshot_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -458,73 +295,27 @@ func (x *Policy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Policy.ProtoReflect.Descriptor instead.
 func (*Policy) Descriptor() ([]byte, []int) {
-	return file_snapshot_proto_rawDescGZIP(), []int{5}
+	return file_snapshot_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *Policy) GetId() string {
+func (x *Policy) GetJson() []byte {
 	if x != nil {
-		return x.Id
-	}
-	return ""
-}
-
-func (x *Policy) GetGatewayId() string {
-	if x != nil {
-		return x.GatewayId
-	}
-	return ""
-}
-
-func (x *Policy) GetSlug() string {
-	if x != nil {
-		return x.Slug
-	}
-	return ""
-}
-
-func (x *Policy) GetIsGlobal() bool {
-	if x != nil {
-		return x.IsGlobal
-	}
-	return false
-}
-
-func (x *Policy) GetConsumerIds() []string {
-	if x != nil {
-		return x.ConsumerIds
+		return x.Json
 	}
 	return nil
-}
-
-func (x *Policy) GetConfig() *structpb.Struct {
-	if x != nil {
-		return x.Config
-	}
-	return nil
-}
-
-func (x *Policy) GetName() string {
-	if x != nil {
-		return x.Name
-	}
-	return ""
 }
 
 type Auth struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	GatewayId     string                 `protobuf:"bytes,2,opt,name=gateway_id,json=gatewayId,proto3" json:"gateway_id,omitempty"`
-	KeyHash       string                 `protobuf:"bytes,3,opt,name=key_hash,json=keyHash,proto3" json:"key_hash,omitempty"`
-	Type          string                 `protobuf:"bytes,4,opt,name=type,proto3" json:"type,omitempty"`
-	Enabled       bool                   `protobuf:"varint,5,opt,name=enabled,proto3" json:"enabled,omitempty"`
-	Name          string                 `protobuf:"bytes,6,opt,name=name,proto3" json:"name,omitempty"`
+	Json          []byte                 `protobuf:"bytes,1,opt,name=json,proto3" json:"json,omitempty"`
+	KeyHash       string                 `protobuf:"bytes,2,opt,name=key_hash,json=keyHash,proto3" json:"key_hash,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Auth) Reset() {
 	*x = Auth{}
-	mi := &file_snapshot_proto_msgTypes[6]
+	mi := &file_snapshot_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -536,7 +327,7 @@ func (x *Auth) String() string {
 func (*Auth) ProtoMessage() {}
 
 func (x *Auth) ProtoReflect() protoreflect.Message {
-	mi := &file_snapshot_proto_msgTypes[6]
+	mi := &file_snapshot_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -549,21 +340,14 @@ func (x *Auth) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Auth.ProtoReflect.Descriptor instead.
 func (*Auth) Descriptor() ([]byte, []int) {
-	return file_snapshot_proto_rawDescGZIP(), []int{6}
+	return file_snapshot_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *Auth) GetId() string {
+func (x *Auth) GetJson() []byte {
 	if x != nil {
-		return x.Id
+		return x.Json
 	}
-	return ""
-}
-
-func (x *Auth) GetGatewayId() string {
-	if x != nil {
-		return x.GatewayId
-	}
-	return ""
+	return nil
 }
 
 func (x *Auth) GetKeyHash() string {
@@ -573,40 +357,16 @@ func (x *Auth) GetKeyHash() string {
 	return ""
 }
 
-func (x *Auth) GetType() string {
-	if x != nil {
-		return x.Type
-	}
-	return ""
-}
-
-func (x *Auth) GetEnabled() bool {
-	if x != nil {
-		return x.Enabled
-	}
-	return false
-}
-
-func (x *Auth) GetName() string {
-	if x != nil {
-		return x.Name
-	}
-	return ""
-}
-
 type Role struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	GatewayId     string                 `protobuf:"bytes,2,opt,name=gateway_id,json=gatewayId,proto3" json:"gateway_id,omitempty"`
-	RegistryIds   []string               `protobuf:"bytes,3,rep,name=registry_ids,json=registryIds,proto3" json:"registry_ids,omitempty"`
-	Name          string                 `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
+	Json          []byte                 `protobuf:"bytes,1,opt,name=json,proto3" json:"json,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Role) Reset() {
 	*x = Role{}
-	mi := &file_snapshot_proto_msgTypes[7]
+	mi := &file_snapshot_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -618,7 +378,7 @@ func (x *Role) String() string {
 func (*Role) ProtoMessage() {}
 
 func (x *Role) ProtoReflect() protoreflect.Message {
-	mi := &file_snapshot_proto_msgTypes[7]
+	mi := &file_snapshot_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -631,44 +391,64 @@ func (x *Role) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Role.ProtoReflect.Descriptor instead.
 func (*Role) Descriptor() ([]byte, []int) {
-	return file_snapshot_proto_rawDescGZIP(), []int{7}
+	return file_snapshot_proto_rawDescGZIP(), []int{6}
 }
 
-func (x *Role) GetId() string {
+func (x *Role) GetJson() []byte {
 	if x != nil {
-		return x.Id
-	}
-	return ""
-}
-
-func (x *Role) GetGatewayId() string {
-	if x != nil {
-		return x.GatewayId
-	}
-	return ""
-}
-
-func (x *Role) GetRegistryIds() []string {
-	if x != nil {
-		return x.RegistryIds
+		return x.Json
 	}
 	return nil
 }
 
-func (x *Role) GetName() string {
+type Provider struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Json          []byte                 `protobuf:"bytes,1,opt,name=json,proto3" json:"json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Provider) Reset() {
+	*x = Provider{}
+	mi := &file_snapshot_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Provider) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Provider) ProtoMessage() {}
+
+func (x *Provider) ProtoReflect() protoreflect.Message {
+	mi := &file_snapshot_proto_msgTypes[7]
 	if x != nil {
-		return x.Name
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
 	}
-	return ""
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Provider.ProtoReflect.Descriptor instead.
+func (*Provider) Descriptor() ([]byte, []int) {
+	return file_snapshot_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *Provider) GetJson() []byte {
+	if x != nil {
+		return x.Json
+	}
+	return nil
 }
 
 type CatalogModel struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	ProviderCode  string                 `protobuf:"bytes,1,opt,name=provider_code,json=providerCode,proto3" json:"provider_code,omitempty"`
-	Slug          string                 `protobuf:"bytes,2,opt,name=slug,proto3" json:"slug,omitempty"`
-	DisplayName   string                 `protobuf:"bytes,3,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
-	InputPrice    float64                `protobuf:"fixed64,4,opt,name=input_price,json=inputPrice,proto3" json:"input_price,omitempty"`
-	OutputPrice   float64                `protobuf:"fixed64,5,opt,name=output_price,json=outputPrice,proto3" json:"output_price,omitempty"`
+	Json          []byte                 `protobuf:"bytes,1,opt,name=json,proto3" json:"json,omitempty"`
+	ProviderCode  string                 `protobuf:"bytes,2,opt,name=provider_code,json=providerCode,proto3" json:"provider_code,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -703,6 +483,13 @@ func (*CatalogModel) Descriptor() ([]byte, []int) {
 	return file_snapshot_proto_rawDescGZIP(), []int{8}
 }
 
+func (x *CatalogModel) GetJson() []byte {
+	if x != nil {
+		return x.Json
+	}
+	return nil
+}
+
 func (x *CatalogModel) GetProviderCode() string {
 	if x != nil {
 		return x.ProviderCode
@@ -710,40 +497,12 @@ func (x *CatalogModel) GetProviderCode() string {
 	return ""
 }
 
-func (x *CatalogModel) GetSlug() string {
-	if x != nil {
-		return x.Slug
-	}
-	return ""
-}
-
-func (x *CatalogModel) GetDisplayName() string {
-	if x != nil {
-		return x.DisplayName
-	}
-	return ""
-}
-
-func (x *CatalogModel) GetInputPrice() float64 {
-	if x != nil {
-		return x.InputPrice
-	}
-	return 0
-}
-
-func (x *CatalogModel) GetOutputPrice() float64 {
-	if x != nil {
-		return x.OutputPrice
-	}
-	return 0
-}
-
 var File_snapshot_proto protoreflect.FileDescriptor
 
 const file_snapshot_proto_rawDesc = "" +
 	"\n" +
 	"\x0esnapshot.proto\x12\n" +
-	"snapshotpb\x1a\x1cgoogle/protobuf/struct.proto\"\x80\x03\n" +
+	"snapshotpb\"\xb4\x03\n" +
 	"\bSnapshot\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12/\n" +
 	"\bgateways\x18\x02 \x03(\v2\x13.snapshotpb.GatewayR\bgateways\x122\n" +
@@ -753,66 +512,27 @@ const file_snapshot_proto_rawDesc = "" +
 	"registries\x12.\n" +
 	"\bpolicies\x18\x05 \x03(\v2\x12.snapshotpb.PolicyR\bpolicies\x12&\n" +
 	"\x05auths\x18\x06 \x03(\v2\x10.snapshotpb.AuthR\x05auths\x12&\n" +
-	"\x05roles\x18\a \x03(\v2\x10.snapshotpb.RoleR\x05roles\x12?\n" +
-	"\x0ecatalog_models\x18\b \x03(\v2\x18.snapshotpb.CatalogModelR\rcatalogModels\"Y\n" +
-	"\aGateway\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
-	"\x04slug\x18\x02 \x01(\tR\x04slug\x12\x16\n" +
-	"\x06domain\x18\x03 \x01(\tR\x06domain\x12\x12\n" +
-	"\x04name\x18\x04 \x01(\tR\x04name\"\xa5\x02\n" +
-	"\bConsumer\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
-	"\n" +
-	"gateway_id\x18\x02 \x01(\tR\tgatewayId\x12\x12\n" +
-	"\x04slug\x18\x03 \x01(\tR\x04slug\x12\x16\n" +
-	"\x06active\x18\x04 \x01(\bR\x06active\x12!\n" +
-	"\fregistry_ids\x18\x05 \x03(\tR\vregistryIds\x12\x19\n" +
-	"\brole_ids\x18\x06 \x03(\tR\aroleIds\x12\x19\n" +
-	"\bauth_ids\x18\a \x03(\tR\aauthIds\x12\x1d\n" +
-	"\n" +
-	"policy_ids\x18\b \x03(\tR\tpolicyIds\x122\n" +
-	"\x15fallback_registry_ids\x18\t \x03(\tR\x13fallbackRegistryIds\x12\x12\n" +
-	"\x04name\x18\n" +
-	" \x01(\tR\x04name\"\x1f\n" +
-	"\tMcpTarget\x12\x12\n" +
-	"\x04auth\x18\x01 \x01(\tR\x04auth\"\x83\x01\n" +
-	"\bRegistry\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
-	"\n" +
-	"gateway_id\x18\x02 \x01(\tR\tgatewayId\x12\x12\n" +
-	"\x04name\x18\x03 \x01(\tR\x04name\x124\n" +
-	"\n" +
-	"mcp_target\x18\x04 \x01(\v2\x15.snapshotpb.McpTargetR\tmcpTarget\"\xd0\x01\n" +
-	"\x06Policy\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
-	"\n" +
-	"gateway_id\x18\x02 \x01(\tR\tgatewayId\x12\x12\n" +
-	"\x04slug\x18\x03 \x01(\tR\x04slug\x12\x1b\n" +
-	"\tis_global\x18\x04 \x01(\bR\bisGlobal\x12!\n" +
-	"\fconsumer_ids\x18\x05 \x03(\tR\vconsumerIds\x12/\n" +
-	"\x06config\x18\x06 \x01(\v2\x17.google.protobuf.StructR\x06config\x12\x12\n" +
-	"\x04name\x18\a \x01(\tR\x04name\"\x92\x01\n" +
-	"\x04Auth\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
-	"\n" +
-	"gateway_id\x18\x02 \x01(\tR\tgatewayId\x12\x19\n" +
-	"\bkey_hash\x18\x03 \x01(\tR\akeyHash\x12\x12\n" +
-	"\x04type\x18\x04 \x01(\tR\x04type\x12\x18\n" +
-	"\aenabled\x18\x05 \x01(\bR\aenabled\x12\x12\n" +
-	"\x04name\x18\x06 \x01(\tR\x04name\"l\n" +
-	"\x04Role\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
-	"\n" +
-	"gateway_id\x18\x02 \x01(\tR\tgatewayId\x12!\n" +
-	"\fregistry_ids\x18\x03 \x03(\tR\vregistryIds\x12\x12\n" +
-	"\x04name\x18\x04 \x01(\tR\x04name\"\xae\x01\n" +
-	"\fCatalogModel\x12#\n" +
-	"\rprovider_code\x18\x01 \x01(\tR\fproviderCode\x12\x12\n" +
-	"\x04slug\x18\x02 \x01(\tR\x04slug\x12!\n" +
-	"\fdisplay_name\x18\x03 \x01(\tR\vdisplayName\x12\x1f\n" +
-	"\vinput_price\x18\x04 \x01(\x01R\n" +
-	"inputPrice\x12!\n" +
-	"\foutput_price\x18\x05 \x01(\x01R\voutputPriceBLZJgithub.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto;snapshotpbb\x06proto3"
+	"\x05roles\x18\a \x03(\v2\x10.snapshotpb.RoleR\x05roles\x122\n" +
+	"\tproviders\x18\b \x03(\v2\x14.snapshotpb.ProviderR\tproviders\x12?\n" +
+	"\x0ecatalog_models\x18\t \x03(\v2\x18.snapshotpb.CatalogModelR\rcatalogModels\"\x1d\n" +
+	"\aGateway\x12\x12\n" +
+	"\x04json\x18\x01 \x01(\fR\x04json\"\x1e\n" +
+	"\bConsumer\x12\x12\n" +
+	"\x04json\x18\x01 \x01(\fR\x04json\"\x1e\n" +
+	"\bRegistry\x12\x12\n" +
+	"\x04json\x18\x01 \x01(\fR\x04json\"\x1c\n" +
+	"\x06Policy\x12\x12\n" +
+	"\x04json\x18\x01 \x01(\fR\x04json\"5\n" +
+	"\x04Auth\x12\x12\n" +
+	"\x04json\x18\x01 \x01(\fR\x04json\x12\x19\n" +
+	"\bkey_hash\x18\x02 \x01(\tR\akeyHash\"\x1a\n" +
+	"\x04Role\x12\x12\n" +
+	"\x04json\x18\x01 \x01(\fR\x04json\"\x1e\n" +
+	"\bProvider\x12\x12\n" +
+	"\x04json\x18\x01 \x01(\fR\x04json\"G\n" +
+	"\fCatalogModel\x12\x12\n" +
+	"\x04json\x18\x01 \x01(\fR\x04json\x12#\n" +
+	"\rprovider_code\x18\x02 \x01(\tR\fproviderCodeBLZJgithub.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto;snapshotpbb\x06proto3"
 
 var (
 	file_snapshot_proto_rawDescOnce sync.Once
@@ -828,32 +548,30 @@ func file_snapshot_proto_rawDescGZIP() []byte {
 
 var file_snapshot_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_snapshot_proto_goTypes = []any{
-	(*Snapshot)(nil),        // 0: snapshotpb.Snapshot
-	(*Gateway)(nil),         // 1: snapshotpb.Gateway
-	(*Consumer)(nil),        // 2: snapshotpb.Consumer
-	(*McpTarget)(nil),       // 3: snapshotpb.McpTarget
-	(*Registry)(nil),        // 4: snapshotpb.Registry
-	(*Policy)(nil),          // 5: snapshotpb.Policy
-	(*Auth)(nil),            // 6: snapshotpb.Auth
-	(*Role)(nil),            // 7: snapshotpb.Role
-	(*CatalogModel)(nil),    // 8: snapshotpb.CatalogModel
-	(*structpb.Struct)(nil), // 9: google.protobuf.Struct
+	(*Snapshot)(nil),     // 0: snapshotpb.Snapshot
+	(*Gateway)(nil),      // 1: snapshotpb.Gateway
+	(*Consumer)(nil),     // 2: snapshotpb.Consumer
+	(*Registry)(nil),     // 3: snapshotpb.Registry
+	(*Policy)(nil),       // 4: snapshotpb.Policy
+	(*Auth)(nil),         // 5: snapshotpb.Auth
+	(*Role)(nil),         // 6: snapshotpb.Role
+	(*Provider)(nil),     // 7: snapshotpb.Provider
+	(*CatalogModel)(nil), // 8: snapshotpb.CatalogModel
 }
 var file_snapshot_proto_depIdxs = []int32{
 	1, // 0: snapshotpb.Snapshot.gateways:type_name -> snapshotpb.Gateway
 	2, // 1: snapshotpb.Snapshot.consumers:type_name -> snapshotpb.Consumer
-	4, // 2: snapshotpb.Snapshot.registries:type_name -> snapshotpb.Registry
-	5, // 3: snapshotpb.Snapshot.policies:type_name -> snapshotpb.Policy
-	6, // 4: snapshotpb.Snapshot.auths:type_name -> snapshotpb.Auth
-	7, // 5: snapshotpb.Snapshot.roles:type_name -> snapshotpb.Role
-	8, // 6: snapshotpb.Snapshot.catalog_models:type_name -> snapshotpb.CatalogModel
-	3, // 7: snapshotpb.Registry.mcp_target:type_name -> snapshotpb.McpTarget
-	9, // 8: snapshotpb.Policy.config:type_name -> google.protobuf.Struct
-	9, // [9:9] is the sub-list for method output_type
-	9, // [9:9] is the sub-list for method input_type
-	9, // [9:9] is the sub-list for extension type_name
-	9, // [9:9] is the sub-list for extension extendee
-	0, // [0:9] is the sub-list for field type_name
+	3, // 2: snapshotpb.Snapshot.registries:type_name -> snapshotpb.Registry
+	4, // 3: snapshotpb.Snapshot.policies:type_name -> snapshotpb.Policy
+	5, // 4: snapshotpb.Snapshot.auths:type_name -> snapshotpb.Auth
+	6, // 5: snapshotpb.Snapshot.roles:type_name -> snapshotpb.Role
+	7, // 6: snapshotpb.Snapshot.providers:type_name -> snapshotpb.Provider
+	8, // 7: snapshotpb.Snapshot.catalog_models:type_name -> snapshotpb.CatalogModel
+	8, // [8:8] is the sub-list for method output_type
+	8, // [8:8] is the sub-list for method input_type
+	8, // [8:8] is the sub-list for extension type_name
+	8, // [8:8] is the sub-list for extension extendee
+	0, // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_snapshot_proto_init() }
