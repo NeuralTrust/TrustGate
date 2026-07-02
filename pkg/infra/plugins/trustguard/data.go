@@ -80,7 +80,7 @@ type GuardFindingOutcome struct {
 	Action string `json:"action,omitempty"`
 }
 
-// GuardFinding is one TrustGuard finding in the v2 wire contract.
+// GuardFinding is one TrustGuard finding in the guard wire contract.
 type GuardFinding struct {
 	Source   *GuardFindingSource  `json:"source,omitempty"`
 	Signal   *GuardFindingSignal  `json:"signal,omitempty"`
