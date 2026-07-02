@@ -49,41 +49,44 @@ func (f *fakeFetcher) callCount() int {
 }
 
 type watchMsg struct {
-	id      string
 	version string
 	err     error
 }
 
-type fakeNotifier struct {
-	tailID  string
-	tailErr error
-	ch      chan watchMsg
-	mu      sync.Mutex
-	watched int
+type fakeTransport struct {
+	ch   chan watchMsg
+	mu   sync.Mutex
+	acks []string
 }
 
-func (n *fakeNotifier) Tail(context.Context) (string, error) {
-	return n.tailID, n.tailErr
-}
-
-func (n *fakeNotifier) Watch(ctx context.Context, _ string) (string, string, error) {
-	n.mu.Lock()
-	n.watched++
-	n.mu.Unlock()
+func (t *fakeTransport) Watch(ctx context.Context) (string, error) {
+	if t.ch == nil {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
 	select {
 	case <-ctx.Done():
-		return "", "", ctx.Err()
-	case m, ok := <-n.ch:
+		return "", ctx.Err()
+	case m, ok := <-t.ch:
 		if !ok {
 			<-ctx.Done()
-			return "", "", ctx.Err()
+			return "", ctx.Err()
 		}
-		return m.id, m.version, m.err
+		return m.version, m.err
 	}
 }
 
-func (n *fakeNotifier) Publish(context.Context, string) (string, error) {
-	return "1-0", nil
+func (t *fakeTransport) Ack(_ context.Context, appliedVersion string) error {
+	t.mu.Lock()
+	t.acks = append(t.acks, appliedVersion)
+	t.mu.Unlock()
+	return nil
+}
+
+func (t *fakeTransport) ackedVersions() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]string(nil), t.acks...)
 }
 
 type failingDecodeCodec struct{}
@@ -107,7 +110,8 @@ func TestWorker_Converge200Swaps(t *testing.T) {
 	raw := []byte("fresh")
 	fetcher := &fakeFetcher{results: []fetchResult{{raw: raw, version: stringCodec{}.Version(raw)}}}
 	store := NewMemoryStore[string]()
-	worker := NewWorker[string](fetcher, store, &fakeNotifier{}, nil, stringCodec{}, nil, WorkerConfig{})
+	transport := &fakeTransport{}
+	worker := NewWorker[string](fetcher, store, transport, nil, stringCodec{}, nil, WorkerConfig{})
 
 	require.NoError(t, worker.Converge(context.Background()))
 
@@ -115,6 +119,7 @@ func TestWorker_Converge200Swaps(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "fresh", snap)
 	assert.NotEmpty(t, store.Version())
+	assert.Equal(t, []string{store.Version()}, transport.ackedVersions())
 }
 
 func TestWorker_ConvergeMissingVersionRejected(t *testing.T) {
@@ -122,12 +127,14 @@ func TestWorker_ConvergeMissingVersionRejected(t *testing.T) {
 
 	fetcher := &fakeFetcher{results: []fetchResult{{raw: []byte("no-etag")}}}
 	store := NewMemoryStore[string]()
-	worker := NewWorker[string](fetcher, store, &fakeNotifier{}, nil, stringCodec{}, nil, WorkerConfig{})
+	transport := &fakeTransport{}
+	worker := NewWorker[string](fetcher, store, transport, nil, stringCodec{}, nil, WorkerConfig{})
 
 	err := worker.Converge(context.Background())
 	require.ErrorIs(t, err, ErrIntegrity)
 	_, ok := store.Load()
 	assert.False(t, ok)
+	assert.Empty(t, transport.ackedVersions())
 }
 
 func TestWorker_Converge304Keeps(t *testing.T) {
@@ -138,13 +145,15 @@ func TestWorker_Converge304Keeps(t *testing.T) {
 	current := &Versioned[string]{Version: "v1", Snapshot: "current", Raw: []byte("current")}
 	store.Swap(current)
 
-	worker := NewWorker[string](fetcher, store, &fakeNotifier{}, nil, stringCodec{}, nil, WorkerConfig{})
+	transport := &fakeTransport{}
+	worker := NewWorker[string](fetcher, store, transport, nil, stringCodec{}, nil, WorkerConfig{})
 	require.NoError(t, worker.Converge(context.Background()))
 
 	got, ok := store.Load()
 	require.True(t, ok)
 	assert.Same(t, current, got)
 	assert.Equal(t, []string{"v1"}, fetcher.etags)
+	assert.Empty(t, transport.ackedVersions())
 }
 
 func TestWorker_ConvergeFetchError(t *testing.T) {
@@ -152,7 +161,7 @@ func TestWorker_ConvergeFetchError(t *testing.T) {
 
 	fetcher := &fakeFetcher{results: []fetchResult{{err: errors.New("boom")}}}
 	store := NewMemoryStore[string]()
-	worker := NewWorker[string](fetcher, store, &fakeNotifier{}, nil, stringCodec{}, nil, WorkerConfig{})
+	worker := NewWorker[string](fetcher, store, &fakeTransport{}, nil, stringCodec{}, nil, WorkerConfig{})
 
 	err := worker.Converge(context.Background())
 	require.Error(t, err)
@@ -165,7 +174,7 @@ func TestWorker_ConvergeDecodeError(t *testing.T) {
 
 	fetcher := &fakeFetcher{results: []fetchResult{{raw: []byte("bytes")}}}
 	store := NewMemoryStore[string]()
-	worker := NewWorker[string](fetcher, store, &fakeNotifier{}, nil, failingDecodeCodec{}, nil, WorkerConfig{})
+	worker := NewWorker[string](fetcher, store, &fakeTransport{}, nil, failingDecodeCodec{}, nil, WorkerConfig{})
 
 	err := worker.Converge(context.Background())
 	require.Error(t, err)
@@ -181,7 +190,8 @@ func TestWorker_ConvergeIntegrityMismatchKeepsCurrent(t *testing.T) {
 	current := &Versioned[string]{Version: "v1", Snapshot: "current", Raw: []byte("current")}
 	store.Swap(current)
 
-	worker := NewWorker[string](fetcher, store, &fakeNotifier{}, nil, stringCodec{}, nil, WorkerConfig{})
+	transport := &fakeTransport{}
+	worker := NewWorker[string](fetcher, store, transport, nil, stringCodec{}, nil, WorkerConfig{})
 
 	err := worker.Converge(context.Background())
 	require.ErrorIs(t, err, ErrIntegrity)
@@ -189,6 +199,7 @@ func TestWorker_ConvergeIntegrityMismatchKeepsCurrent(t *testing.T) {
 	got, ok := store.Load()
 	require.True(t, ok)
 	assert.Same(t, current, got)
+	assert.Empty(t, transport.ackedVersions())
 }
 
 func TestWorker_ConvergeIntegrityMatchSwaps(t *testing.T) {
@@ -199,28 +210,31 @@ func TestWorker_ConvergeIntegrityMatchSwaps(t *testing.T) {
 	fetcher := &fakeFetcher{results: []fetchResult{{raw: raw, version: version}}}
 	store := NewMemoryStore[string]()
 
-	worker := NewWorker[string](fetcher, store, &fakeNotifier{}, nil, stringCodec{}, nil, WorkerConfig{})
+	transport := &fakeTransport{}
+	worker := NewWorker[string](fetcher, store, transport, nil, stringCodec{}, nil, WorkerConfig{})
 	require.NoError(t, worker.Converge(context.Background()))
 
 	snap, ok := snapshotOf(t, store)
 	require.True(t, ok)
 	assert.Equal(t, "fresh", snap)
 	assert.Equal(t, version, store.Version())
+	assert.Equal(t, []string{version}, transport.ackedVersions())
 }
 
 func TestWorker_RunWatchTriggersConverge(t *testing.T) {
 	t.Parallel()
 
+	updatedVersion := stringCodec{}.Version([]byte("updated"))
 	fetcher := &fakeFetcher{results: []fetchResult{
 		{raw: []byte("initial"), version: stringCodec{}.Version([]byte("initial"))},
-		{raw: []byte("updated"), version: stringCodec{}.Version([]byte("updated"))},
+		{raw: []byte("updated"), version: updatedVersion},
 		{notModified: true},
 	}}
-	notifier := &fakeNotifier{tailID: streamStart, ch: make(chan watchMsg, 1)}
-	notifier.ch <- watchMsg{id: "5-0", version: "v2"}
+	transport := &fakeTransport{ch: make(chan watchMsg, 1)}
+	transport.ch <- watchMsg{version: "v2"}
 
 	store := NewMemoryStore[string]()
-	worker := NewWorker[string](fetcher, store, notifier, nil, stringCodec{}, nil, WorkerConfig{
+	worker := NewWorker[string](fetcher, store, transport, nil, stringCodec{}, nil, WorkerConfig{
 		PollInterval: time.Hour,
 		MinBackoff:   time.Millisecond,
 		MaxBackoff:   5 * time.Millisecond,
@@ -233,6 +247,11 @@ func TestWorker_RunWatchTriggersConverge(t *testing.T) {
 	require.Eventually(t, func() bool {
 		snap, ok := snapshotOf(t, store)
 		return ok && snap == "updated"
+	}, 2*time.Second, 5*time.Millisecond)
+
+	require.Eventually(t, func() bool {
+		acks := transport.ackedVersions()
+		return len(acks) > 0 && acks[len(acks)-1] == updatedVersion
 	}, 2*time.Second, 5*time.Millisecond)
 
 	cancel()
@@ -252,12 +271,12 @@ func TestWorker_RunBacksOffOnWatchError(t *testing.T) {
 		{raw: []byte("recovered"), version: stringCodec{}.Version([]byte("recovered"))},
 		{notModified: true},
 	}}
-	notifier := &fakeNotifier{tailID: streamStart, ch: make(chan watchMsg, 2)}
-	notifier.ch <- watchMsg{err: errors.New("watch boom")}
-	notifier.ch <- watchMsg{id: "6-0", version: "v3"}
+	transport := &fakeTransport{ch: make(chan watchMsg, 2)}
+	transport.ch <- watchMsg{err: errors.New("watch boom")}
+	transport.ch <- watchMsg{version: "v3"}
 
 	store := NewMemoryStore[string]()
-	worker := NewWorker[string](fetcher, store, notifier, nil, stringCodec{}, nil, WorkerConfig{
+	worker := NewWorker[string](fetcher, store, transport, nil, stringCodec{}, nil, WorkerConfig{
 		PollInterval: time.Hour,
 		MinBackoff:   time.Millisecond,
 		MaxBackoff:   5 * time.Millisecond,
@@ -282,13 +301,49 @@ func TestWorker_RunBacksOffOnWatchError(t *testing.T) {
 	assert.GreaterOrEqual(t, fetcher.callCount(), 2)
 }
 
+func TestWorker_RunBackstopConverges(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte("backstop")
+	version := stringCodec{}.Version(raw)
+	fetcher := &fakeFetcher{results: []fetchResult{
+		{notModified: true},
+		{raw: raw, version: version},
+		{notModified: true},
+	}}
+	transport := &fakeTransport{}
+	store := NewMemoryStore[string]()
+	worker := NewWorker[string](fetcher, store, transport, nil, stringCodec{}, nil, WorkerConfig{
+		PollInterval: 10 * time.Millisecond,
+		MinBackoff:   time.Millisecond,
+		MaxBackoff:   5 * time.Millisecond,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- worker.Run(ctx) }()
+
+	require.Eventually(t, func() bool {
+		snap, ok := snapshotOf(t, store)
+		return ok && snap == "backstop"
+	}, 2*time.Second, 5*time.Millisecond)
+
+	cancel()
+	select {
+	case err := <-done:
+		assert.ErrorIs(t, err, context.Canceled)
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker did not exit after cancel")
+	}
+}
+
 func TestWorker_RunCtxCancelExitsImmediately(t *testing.T) {
 	t.Parallel()
 
 	fetcher := &fakeFetcher{results: []fetchResult{{notModified: true}}}
-	notifier := &fakeNotifier{tailID: streamStart, ch: make(chan watchMsg)}
+	transport := &fakeTransport{ch: make(chan watchMsg)}
 	store := NewMemoryStore[string]()
-	worker := NewWorker[string](fetcher, store, notifier, nil, stringCodec{}, nil, WorkerConfig{
+	worker := NewWorker[string](fetcher, store, transport, nil, stringCodec{}, nil, WorkerConfig{
 		PollInterval: time.Hour,
 	})
 
@@ -319,7 +374,7 @@ func TestWorker_RestoreLKG(t *testing.T) {
 	require.NoError(t, lkg.Persist(&Versioned[string]{Version: codec.Version(raw), Snapshot: "from-disk", Raw: raw}))
 
 	store := NewMemoryStore[string]()
-	worker := NewWorker[string](&fakeFetcher{}, store, &fakeNotifier{}, lkg, codec, nil, WorkerConfig{})
+	worker := NewWorker[string](&fakeFetcher{}, store, &fakeTransport{}, lkg, codec, nil, WorkerConfig{})
 	worker.restoreLKG()
 
 	snap, ok := snapshotOf(t, store)
@@ -338,7 +393,7 @@ func TestWorker_RestoreLKGCorruptDiscarded(t *testing.T) {
 	lkg := NewLKGStore[string](crypto, codec, path)
 
 	store := NewMemoryStore[string]()
-	worker := NewWorker[string](&fakeFetcher{}, store, &fakeNotifier{}, lkg, codec, nil, WorkerConfig{})
+	worker := NewWorker[string](&fakeFetcher{}, store, &fakeTransport{}, lkg, codec, nil, WorkerConfig{})
 	worker.restoreLKG()
 
 	_, ok := store.Load()

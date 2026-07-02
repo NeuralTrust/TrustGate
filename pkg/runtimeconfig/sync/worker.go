@@ -31,7 +31,7 @@ type WorkerConfig struct {
 type Worker[T any] struct {
 	fetcher      ConfigFetcher
 	store        ConfigStore[T]
-	notifier     ChangeNotifier
+	transport    StreamTransport
 	lkg          *LKGStore[T]
 	codec        SnapshotCodec[T]
 	logger       *slog.Logger
@@ -41,10 +41,12 @@ type Worker[T any] struct {
 	convergeMu   sync.Mutex
 }
 
+// NewWorker builds a convergence worker that drives the config-sync stream
+// transport for change notices/acks and the fetcher for chunked snapshot pulls.
 func NewWorker[T any](
 	fetcher ConfigFetcher,
 	store ConfigStore[T],
-	notifier ChangeNotifier,
+	transport StreamTransport,
 	lkg *LKGStore[T],
 	codec SnapshotCodec[T],
 	logger *slog.Logger,
@@ -71,7 +73,7 @@ func NewWorker[T any](
 	return &Worker[T]{
 		fetcher:      fetcher,
 		store:        store,
-		notifier:     notifier,
+		transport:    transport,
 		lkg:          lkg,
 		codec:        codec,
 		logger:       logger,
@@ -84,13 +86,6 @@ func NewWorker[T any](
 func (w *Worker[T]) Run(ctx context.Context) error {
 	w.restoreLKG()
 
-	lastID, err := w.notifier.Tail(ctx)
-	if err != nil {
-		w.logger.Warn("failed to tail change stream",
-			slog.String("component", component), slog.String("error", err.Error()))
-		lastID = streamStart
-	}
-
 	if err := w.Converge(ctx); err != nil && ctx.Err() == nil {
 		w.logger.Error("initial converge failed",
 			slog.String("component", component), slog.String("error", err.Error()))
@@ -100,7 +95,7 @@ func (w *Worker[T]) Run(ctx context.Context) error {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		w.watchLoop(ctx, lastID)
+		w.watchLoop(ctx)
 	}()
 	go func() {
 		defer wg.Done()
@@ -133,6 +128,12 @@ func (w *Worker[T]) Converge(ctx context.Context) error {
 	versioned := &Versioned[T]{Version: version, Snapshot: snapshot, Raw: raw}
 	w.store.Swap(versioned)
 	w.persist(versioned)
+	if err := w.transport.Ack(ctx, versioned.Version); err != nil && ctx.Err() == nil {
+		w.logger.Warn("failed to ack applied version",
+			slog.String("component", component),
+			slog.String("version", versioned.Version),
+			slog.String("error", err.Error()))
+	}
 	return nil
 }
 
@@ -178,13 +179,13 @@ func (w *Worker[T]) persist(v *Versioned[T]) {
 	}
 }
 
-func (w *Worker[T]) watchLoop(ctx context.Context, lastID string) {
+func (w *Worker[T]) watchLoop(ctx context.Context) {
 	backoff := w.minBackoff
 	for {
 		if ctx.Err() != nil {
 			return
 		}
-		id, _, err := w.notifier.Watch(ctx, lastID)
+		_, err := w.transport.Watch(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
@@ -198,10 +199,6 @@ func (w *Worker[T]) watchLoop(ctx context.Context, lastID string) {
 			continue
 		}
 		backoff = w.minBackoff
-		if id == "" {
-			continue
-		}
-		lastID = id
 		if err := w.Converge(ctx); err != nil && ctx.Err() == nil {
 			w.logger.Error("converge after notification failed",
 				slog.String("component", component), slog.String("error", err.Error()))

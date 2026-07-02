@@ -401,7 +401,7 @@ func dbLessValid() *Config {
 		ConfigSync: ConfigSyncConfig{
 			DataPlaneEnabled: true,
 			Token:            "config-sync-token",
-			SnapshotURL:      "https://control.example/internal/config/snapshot",
+			GRPCEndpoint:     "control.example:8083",
 			StreamKey:        defaultConfigSyncStreamKey,
 			StreamMaxLen:     defaultConfigSyncStreamMaxLen,
 			LKGPath:          defaultConfigSyncLKGPath,
@@ -453,27 +453,15 @@ func TestValidate_DBLessSkipsDatabaseFields(t *testing.T) {
 	}
 }
 
-func TestValidate_DBLessAllowsInsecureURLWithOverride(t *testing.T) {
-	cfg := dbLessValid()
-	cfg.ConfigSync.SnapshotURL = "http://control.example/internal/config/snapshot"
-	cfg.ConfigSync.AllowInsecureURL = true
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("http url with CONFIG_SYNC_SNAPSHOT_INSECURE should validate: %v", err)
-	}
-}
-
 func TestValidate_DBLessRequiresConfigSync(t *testing.T) {
 	tests := []struct {
 		name string
 		mut  func(cs *ConfigSyncConfig)
 	}{
 		{"missing token", func(cs *ConfigSyncConfig) { cs.Token = "" }},
-		{"missing url", func(cs *ConfigSyncConfig) { cs.SnapshotURL = "" }},
-		{"malformed url", func(cs *ConfigSyncConfig) { cs.SnapshotURL = "not-a-url" }},
-		{"url missing host", func(cs *ConfigSyncConfig) { cs.SnapshotURL = "https://" }},
-		{"insecure url without override", func(cs *ConfigSyncConfig) {
-			cs.SnapshotURL = "http://control.example/internal/config/snapshot"
-		}},
+		{"missing grpc endpoint", func(cs *ConfigSyncConfig) { cs.GRPCEndpoint = "" }},
+		{"malformed grpc endpoint", func(cs *ConfigSyncConfig) { cs.GRPCEndpoint = "not-a-host-port" }},
+		{"grpc endpoint missing port", func(cs *ConfigSyncConfig) { cs.GRPCEndpoint = "control.example" }},
 		{"missing lkg path", func(cs *ConfigSyncConfig) { cs.LKGPath = "" }},
 		{"key not base64", func(cs *ConfigSyncConfig) { cs.LKGKey = "!!!not-base64!!!" }},
 		{"key wrong length", func(cs *ConfigSyncConfig) {
@@ -570,7 +558,7 @@ func TestLoadConfig_DBLessDataPlaneViaEnv(t *testing.T) {
 	t.Setenv("KAFKA_BROKERS", "kafka.example:9092")
 	t.Setenv("CONFIG_SYNC_DATA_PLANE_ENABLED", "true")
 	t.Setenv("CONFIG_SYNC_TOKEN", "config-sync-token")
-	t.Setenv("CONFIG_SYNC_SNAPSHOT_URL", "https://control.example/internal/config/snapshot")
+	t.Setenv("CONFIG_SYNC_GRPC_ENDPOINT", "control.example:8083")
 	t.Setenv("CONFIG_SYNC_LKG_KEY", aes256Key())
 	t.Setenv("CONFIG_SYNC_STREAM_MAXLEN", "2000")
 
@@ -599,7 +587,7 @@ func TestLoadConfig_DBLessRejectsMissingConfigSyncToken(t *testing.T) {
 	t.Setenv("REDIS_HOST", "redis.example")
 	t.Setenv("KAFKA_BROKERS", "kafka.example:9092")
 	t.Setenv("CONFIG_SYNC_DATA_PLANE_ENABLED", "true")
-	t.Setenv("CONFIG_SYNC_SNAPSHOT_URL", "https://control.example/internal/config/snapshot")
+	t.Setenv("CONFIG_SYNC_GRPC_ENDPOINT", "control.example:8083")
 	t.Setenv("CONFIG_SYNC_LKG_KEY", aes256Key())
 
 	_, err := LoadConfig()

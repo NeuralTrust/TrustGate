@@ -34,10 +34,11 @@ spec:
             name: agentgateway-config
         env:
         # Run the proxy as a DB-less data plane: no Postgres, config pulled from the
-        # admin control plane snapshot endpoint over the in-cluster (plaintext) service.
+        # admin control plane over the config-sync gRPC transport (CONFIG_SYNC_GRPC_ENDPOINT
+        # in config.env), plaintext on the in-cluster service.
         - name: CONFIG_SYNC_DATA_PLANE_ENABLED
           value: "true"
-        - name: CONFIG_SYNC_SNAPSHOT_INSECURE
+        - name: CONFIG_SYNC_TLS_INSECURE
           value: "true"
         ports:
         - containerPort: 8081

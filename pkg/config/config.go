@@ -19,7 +19,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log/slog"
-	"net/url"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -147,7 +147,6 @@ type ConfigSyncConfig struct {
 	// TokenPrevious is the prior bearer accepted alongside Token so a token can be
 	// rotated without a window where in-flight data planes fail to authenticate.
 	TokenPrevious     string // #nosec G117 -- config struct field, not a hardcoded credential
-	SnapshotURL       string
 	StreamKey         string
 	StreamMaxLen      int64
 	LKGPath           string
@@ -159,7 +158,6 @@ type ConfigSyncConfig struct {
 	// mutations.
 	RecompileBackstop time.Duration
 	InstanceID        string
-	AllowInsecureURL  bool
 	// GRPCEndpoint is the control-plane host:port the data plane dials for the
 	// config-sync gRPC transport (ENG-959).
 	GRPCEndpoint string
@@ -576,7 +574,6 @@ func getConfigSyncConfig() ConfigSyncConfig {
 		DataPlaneEnabled:     getEnvBool("CONFIG_SYNC_DATA_PLANE_ENABLED", defaultConfigSyncDataPlaneEnabled),
 		Token:                getEnv("CONFIG_SYNC_TOKEN", ""),
 		TokenPrevious:        getEnv("CONFIG_SYNC_TOKEN_PREVIOUS", ""),
-		SnapshotURL:          getEnv("CONFIG_SYNC_SNAPSHOT_URL", ""),
 		StreamKey:            getEnv("CONFIG_SYNC_STREAM_KEY", defaultConfigSyncStreamKey),
 		StreamMaxLen:         getEnvInt64("CONFIG_SYNC_STREAM_MAXLEN", defaultConfigSyncStreamMaxLen),
 		LKGPath:              getEnv("CONFIG_SYNC_LKG_PATH", defaultConfigSyncLKGPath),
@@ -585,7 +582,6 @@ func getConfigSyncConfig() ConfigSyncConfig {
 		RecompileDebounce:    getEnvDuration("CONFIG_SYNC_RECOMPILE_DEBOUNCE", defaultConfigSyncRecompileDebounce),
 		RecompileBackstop:    getEnvDuration("CONFIG_SYNC_RECOMPILE_BACKSTOP", defaultConfigSyncRecompileBackstop),
 		InstanceID:           resolveConfigSyncInstanceID(),
-		AllowInsecureURL:     getEnvBool("CONFIG_SYNC_SNAPSHOT_INSECURE", false),
 		GRPCEndpoint:         getEnv("CONFIG_SYNC_GRPC_ENDPOINT", ""),
 		GRPCListenAddr:       getEnv("CONFIG_SYNC_GRPC_LISTEN_ADDR", defaultConfigSyncGRPCListenAddr),
 		TLSCAPath:            getEnv("CONFIG_SYNC_TLS_CA", ""),
@@ -626,15 +622,11 @@ func (cs ConfigSyncConfig) Validate() error {
 	if cs.Token == "" {
 		return fmt.Errorf("%w: CONFIG_SYNC_TOKEN is required when CONFIG_SYNC_DATA_PLANE_ENABLED is true", errors.ErrInvalidConfig)
 	}
-	if cs.SnapshotURL == "" {
-		return fmt.Errorf("%w: CONFIG_SYNC_SNAPSHOT_URL is required when CONFIG_SYNC_DATA_PLANE_ENABLED is true", errors.ErrInvalidConfig)
+	if cs.GRPCEndpoint == "" {
+		return fmt.Errorf("%w: CONFIG_SYNC_GRPC_ENDPOINT is required when CONFIG_SYNC_DATA_PLANE_ENABLED is true", errors.ErrInvalidConfig)
 	}
-	parsed, err := url.Parse(cs.SnapshotURL)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return fmt.Errorf("%w: CONFIG_SYNC_SNAPSHOT_URL must be a well-formed absolute URL", errors.ErrInvalidConfig)
-	}
-	if parsed.Scheme != "https" && !cs.AllowInsecureURL {
-		return fmt.Errorf("%w: CONFIG_SYNC_SNAPSHOT_URL must use https (set CONFIG_SYNC_SNAPSHOT_INSECURE=true only for local development)", errors.ErrInvalidConfig)
+	if host, port, err := net.SplitHostPort(cs.GRPCEndpoint); err != nil || host == "" || port == "" {
+		return fmt.Errorf("%w: CONFIG_SYNC_GRPC_ENDPOINT must be a well-formed host:port", errors.ErrInvalidConfig)
 	}
 	if cs.LKGPath == "" {
 		return fmt.Errorf("%w: CONFIG_SYNC_LKG_PATH is required when CONFIG_SYNC_DATA_PLANE_ENABLED is true", errors.ErrInvalidConfig)
