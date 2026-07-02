@@ -65,7 +65,7 @@ func (d *deleter) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.Au
 	if existing.GatewayID != gatewayID {
 		return domain.ErrNotFound
 	}
-	if err := guardAuthDelete(ctx, d.consumerRepo, id); err != nil {
+	if err := detachAuthFromConsumers(ctx, d.consumerRepo, id); err != nil {
 		return err
 	}
 	if err := d.repo.Delete(ctx, gatewayID, id); err != nil {

@@ -102,3 +102,78 @@ func TestOAuth2Config_Validate_SessionMode(t *testing.T) {
 		})
 	}
 }
+
+func TestOAuth2Config_Validate_ManualAuthorizationEndpoints(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		config  OAuth2Config
+		wantErr bool
+	}{
+		{
+			name: "github session mode with explicit endpoints and client id",
+			config: OAuth2Config{
+				Issuer:       "https://github.com",
+				Audiences:    []string{"gateway"},
+				ClientID:     "gh-client",
+				ClientSecret: "gh-secret",
+				SessionMode:  true,
+				UserInfoURL:  "https://api.github.com/user",
+				AuthorizeURL: "https://github.com/login/oauth/authorize",
+				TokenURL:     "https://github.com/login/oauth/access_token",
+			},
+			wantErr: false,
+		},
+		{
+			name: "authorize url without token url",
+			config: OAuth2Config{
+				Issuer:       "https://github.com",
+				Audiences:    []string{"gateway"},
+				ClientID:     "gh-client",
+				SessionMode:  true,
+				AuthorizeURL: "https://github.com/login/oauth/authorize",
+			},
+			wantErr: true,
+		},
+		{
+			name: "explicit endpoints without client id",
+			config: OAuth2Config{
+				Issuer:       "https://github.com",
+				Audiences:    []string{"gateway"},
+				SessionMode:  true,
+				AuthorizeURL: "https://github.com/login/oauth/authorize",
+				TokenURL:     "https://github.com/login/oauth/access_token",
+			},
+			wantErr: true,
+		},
+		{
+			name: "malformed authorize url",
+			config: OAuth2Config{
+				Issuer:       "https://github.com",
+				Audiences:    []string{"gateway"},
+				ClientID:     "gh-client",
+				SessionMode:  true,
+				AuthorizeURL: "://github.com/login/oauth/authorize",
+				TokenURL:     "https://github.com/login/oauth/access_token",
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := tt.config
+			err := cfg.validate()
+			if tt.wantErr {
+				if !errors.Is(err, ErrInvalidConfig) {
+					t.Fatalf("validate() error = %v, want ErrInvalidConfig", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("validate() error = %v, want nil", err)
+			}
+		})
+	}
+}

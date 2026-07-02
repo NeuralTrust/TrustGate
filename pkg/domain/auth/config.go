@@ -43,6 +43,8 @@ type OAuth2Config struct {
 	SessionMode      bool     `json:"session_mode,omitempty"`
 	UserInfoURL      string   `json:"userinfo_url,omitempty"`
 	SubjectClaim     string   `json:"subject_claim,omitempty"`
+	AuthorizeURL     string   `json:"authorize_url,omitempty"`
+	TokenURL         string   `json:"token_url,omitempty"`
 }
 
 type OIDCConfig struct {
@@ -139,6 +141,9 @@ func (c *OAuth2Config) validate() error {
 			return fmt.Errorf("%w: oauth2.userinfo_url must be an http(s) URL", ErrInvalidConfig)
 		}
 	}
+	if err := c.validateAuthorizationEndpoints(); err != nil {
+		return err
+	}
 	if !c.SessionMode && strings.TrimSpace(c.JWKSURL) == "" && strings.TrimSpace(c.IntrospectionURL) == "" {
 		// Without an explicit endpoint the JWKS is resolved via OIDC
 		// discovery, which needs the issuer to be a resolvable http(s) URL.
@@ -147,6 +152,33 @@ func (c *OAuth2Config) validate() error {
 			return fmt.Errorf("%w: oauth2 requires jwks_url or introspection_url, or an http(s) issuer for OIDC discovery", ErrInvalidConfig)
 		}
 	}
+	return nil
+}
+
+// validateAuthorizationEndpoints enforces the manual brokering endpoints used
+// for identity providers that publish no authorization-server metadata (e.g.
+// GitHub): authorize_url and token_url must be provided together, be http(s)
+// URLs, and require a pre-registered client_id.
+func (c *OAuth2Config) validateAuthorizationEndpoints() error {
+	authorizeURL := strings.TrimSpace(c.AuthorizeURL)
+	tokenURL := strings.TrimSpace(c.TokenURL)
+	if authorizeURL == "" && tokenURL == "" {
+		return nil
+	}
+	if authorizeURL == "" || tokenURL == "" {
+		return fmt.Errorf("%w: oauth2.authorize_url and oauth2.token_url must be set together", ErrInvalidConfig)
+	}
+	if strings.TrimSpace(c.ClientID) == "" {
+		return fmt.Errorf("%w: oauth2.authorize_url/token_url require oauth2.client_id (interactive brokering needs a pre-registered client)", ErrInvalidConfig)
+	}
+	for _, ep := range []struct{ name, value string }{{"authorize_url", authorizeURL}, {"token_url", tokenURL}} {
+		u, err := url.Parse(ep.value)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("%w: oauth2.%s must be an http(s) URL", ErrInvalidConfig, ep.name)
+		}
+	}
+	c.AuthorizeURL = authorizeURL
+	c.TokenURL = tokenURL
 	return nil
 }
 

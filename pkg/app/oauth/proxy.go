@@ -91,7 +91,7 @@ func (p *authProxy) Authorize(ctx context.Context, baseURL string, req Authorize
 	if err := p.validateClientRedirect(ctx, req.ClientID, req.RedirectURI); err != nil {
 		return "", err
 	}
-	endpoints, err := p.idpEndpoints(ctx, cfg.Issuer)
+	endpoints, err := p.idpEndpoints(ctx, cfg)
 	if err != nil {
 		return "", err
 	}
@@ -152,7 +152,7 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 		return "", err
 	}
 	cfg := auth.Config.OAuth2
-	endpoints, err := p.idpEndpoints(ctx, cfg.Issuer)
+	endpoints, err := p.idpEndpoints(ctx, cfg)
 	if err != nil {
 		return "", err
 	}
@@ -415,7 +415,7 @@ func (p *authProxy) refresh(ctx context.Context, req TokenRequest) (map[string]a
 		return nil, err
 	}
 	cfg := auth.Config.OAuth2
-	endpoints, err := p.idpEndpoints(ctx, cfg.Issuer)
+	endpoints, err := p.idpEndpoints(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -460,15 +460,18 @@ type idpEndpoints struct {
 	token     string
 }
 
-func (p *authProxy) idpEndpoints(ctx context.Context, issuer string) (*idpEndpoints, error) {
-	doc, err := p.idp.fetchASMetadata(ctx, issuer)
+func (p *authProxy) idpEndpoints(ctx context.Context, cfg *authdomain.OAuth2Config) (*idpEndpoints, error) {
+	if cfg.AuthorizeURL != "" && cfg.TokenURL != "" {
+		return &idpEndpoints{authorize: cfg.AuthorizeURL, token: cfg.TokenURL}, nil
+	}
+	doc, err := p.idp.fetchASMetadata(ctx, cfg.Issuer)
 	if err != nil {
 		return nil, fmt.Errorf("oauth: resolve IdP endpoints: %w", err)
 	}
 	authorize, _ := doc["authorization_endpoint"].(string)
 	token, _ := doc["token_endpoint"].(string)
 	if authorize == "" || token == "" {
-		return nil, fmt.Errorf("oauth: IdP metadata for %s lacks authorization/token endpoints", issuer)
+		return nil, fmt.Errorf("oauth: IdP metadata for %s lacks authorization/token endpoints", cfg.Issuer)
 	}
 	return &idpEndpoints{authorize: authorize, token: token}, nil
 }

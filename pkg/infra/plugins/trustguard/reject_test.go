@@ -25,12 +25,13 @@ func TestBlockBodyOmitsFindingsFromClientResponse(t *testing.T) {
 	raw := blockBody(&GuardResponse{
 		Status: statusBlock,
 		Findings: []GuardFinding{{
-			DetectionType: "jailbreak",
-			Confidence:    0.99,
-			PolicyID:      "policy-1",
-			DetectorID:    "detector-1",
-			Action:        "block",
-			Details:       map[string]any{"plugin": "prompt_guard"},
+			Source:  &GuardFindingSource{Kind: "detector", Plugin: "prompt_guard"},
+			Signal:  &GuardFindingSignal{Type: "jailbreak", Confidence: 0.99},
+			Outcome: &GuardFindingOutcome{Action: "block"},
+			Evidence: map[string]any{
+				"policy_id":   "policy-1",
+				"detector_id": "detector-1",
+			},
 		}},
 		TraceID:   "trace-1",
 		RequestID: "req-1",

@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
-	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -78,21 +77,26 @@ func TestDeleter_Delete_WrongGateway(t *testing.T) {
 	}
 }
 
-func TestDeleter_Delete_RejectsWhenReferencedByConsumer(t *testing.T) {
+func TestDeleter_Delete_DetachesReferencingConsumers(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	id := ids.New[ids.AuthKind]()
 	gwID := ids.New[ids.GatewayKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Auth{ID: id, GatewayID: gwID}, nil).Once()
+	repo.EXPECT().Delete(mock.Anything, gwID, id).Return(nil).Once()
 
+	firstConsumer := ids.New[ids.ConsumerKind]()
+	secondConsumer := ids.New[ids.ConsumerKind]()
 	consumerRepo := consumermocks.NewRepository(t)
-	consumerRepo.EXPECT().ListByAuthID(mock.Anything, id).Return([]*consumerdomain.Consumer{{
-		ID:   ids.New[ids.ConsumerKind](),
-		Slug: "cons",
-	}}, nil).Once()
+	consumerRepo.EXPECT().ListByAuthID(mock.Anything, id).Return([]*consumerdomain.Consumer{
+		{ID: firstConsumer, Slug: "cons-a"},
+		{ID: secondConsumer, Slug: "cons-b"},
+	}, nil).Once()
+	consumerRepo.EXPECT().DetachAuth(mock.Anything, firstConsumer, id).Return(nil).Once()
+	consumerRepo.EXPECT().DetachAuth(mock.Anything, secondConsumer, id).Return(nil).Once()
 
 	deleter := appauth.NewDeleter(repo, consumerRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
-	if err := deleter.Delete(context.Background(), gwID, id); !errors.Is(err, commonerrors.ErrConflict) {
-		t.Fatalf("err = %v, want ErrConflict (auth still referenced by a consumer)", err)
+	if err := deleter.Delete(context.Background(), gwID, id); err != nil {
+		t.Fatalf("Delete error: %v", err)
 	}
 }

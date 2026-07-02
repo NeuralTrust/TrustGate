@@ -251,3 +251,98 @@ func TestOktaFlowNoRegressionEndToEnd(t *testing.T) {
 		t.Fatalf("subject must derive from the IdP token, got issuer %q", iss)
 	}
 }
+
+// githubNoDiscoveryIdP models real GitHub: the authorization-server metadata
+// paths 404, only the fixed login/token endpoints and a GitHub-shaped userinfo
+// endpoint respond.
+func githubNoDiscoveryIdP(t *testing.T, userID int) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login/oauth/access_token":
+			w.Header().Set("Content-Type", "application/x-www-form-urlencoded")
+			_, _ = w.Write([]byte("access_token=gho_opaque&token_type=bearer&scope=read:user"))
+		case "/user":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": userID, "login": "octocat"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// GitHub publishes no authorization-server discovery, so the inbound oauth2
+// auth pins authorize_url/token_url explicitly. Authorize must redirect to the
+// pinned endpoint without any discovery call, and the opaque login must still
+// mint a verifiable gateway session token.
+func TestSessionFlowGitHubExplicitEndpointsNoDiscovery(t *testing.T) {
+	t.Parallel()
+	idp := githubNoDiscoveryIdP(t, 4242)
+	signer := newTestSigner(t)
+	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{
+		oauth2Auth(t, authdomain.OAuth2Config{
+			Issuer:         "https://github.com",
+			ClientID:       "gw-client-id",
+			ClientSecret:   "gw-secret",
+			SessionMode:    true,
+			UserInfoURL:    idp.URL + "/user",
+			SubjectClaim:   "id",
+			Audiences:      []string{"api://gw"},
+			RequiredScopes: []string{"read:user"},
+			AuthorizeURL:   idp.URL + "/login/oauth/authorize",
+			TokenURL:       idp.URL + "/login/oauth/access_token",
+		}),
+	}}
+	proxy := NewAuthProxy(finder, nil, http.DefaultClient, newMemFlowStore(), &fakeChainer{url: ""}, signer, httpUserInfo{http.DefaultClient})
+	ctx := context.Background()
+
+	location, err := proxy.Authorize(ctx, "http://gw.example.com", AuthorizeRequest{
+		ResponseType:        "code",
+		ClientID:            "gw-client-id",
+		RedirectURI:         "cursor://anysphere.cursor-mcp/oauth/callback",
+		State:               "client-state",
+		CodeChallenge:       s256("client-verifier"),
+		CodeChallengeMethod: "S256",
+	})
+	if err != nil {
+		t.Fatalf("authorize: %v", err)
+	}
+	loc, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("parse redirect: %v", err)
+	}
+	if base := loc.Scheme + "://" + loc.Host + loc.Path; base != idp.URL+"/login/oauth/authorize" {
+		t.Fatalf("authorize must redirect to the pinned endpoint, got %s", base)
+	}
+
+	clientLoc, err := proxy.Callback(ctx, "http://gw.example.com", loc.Query().Get("state"), "idp-code", "", "")
+	if err != nil {
+		t.Fatalf("callback: %v", err)
+	}
+	resp, err := proxy.Exchange(ctx, "http://gw.example.com", TokenRequest{
+		GrantType:    "authorization_code",
+		Code:         exchangeCodeFrom(t, clientLoc),
+		RedirectURI:  "cursor://anysphere.cursor-mcp/oauth/callback",
+		CodeVerifier: "client-verifier",
+	})
+	if err != nil {
+		t.Fatalf("exchange: %v", err)
+	}
+	access, _ := resp["access_token"].(string)
+	if access == "" {
+		t.Fatal("expected a minted session access_token")
+	}
+	verifier, err := authsession.NewVerifier(signer)
+	if err != nil {
+		t.Fatalf("new verifier: %v", err)
+	}
+	principal, err := verifier.Verify(ctx, access)
+	if err != nil {
+		t.Fatalf("minted token must verify against the gateway JWKS: %v", err)
+	}
+	if principal.Subject != "4242" {
+		t.Fatalf("subject must follow the GitHub id, got %q", principal.Subject)
+	}
+}
