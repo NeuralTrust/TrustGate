@@ -16,6 +16,7 @@ package container_test
 
 import (
 	"encoding/base64"
+	"strings"
 	"testing"
 
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
@@ -97,7 +98,7 @@ func setDBLessSmokeEnv(t *testing.T) {
 	t.Setenv("CONFIG_SYNC_SNAPSHOT_INSECURE", "true")
 	t.Setenv("CONFIG_SYNC_LKG_PATH", t.TempDir()+"/snapshot.lkg")
 	t.Setenv("CONFIG_SYNC_LKG_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
-	t.Setenv("SERVER_SECRET_KEY", "smoke-secret-key-that-is-long-enough-1234567890")
+	t.Setenv("SERVER_SECRET_KEY", strings.Repeat("smoke-server-secret-", 3))
 }
 
 func TestDISmoke_DBLessDataPlane_ResolvesConfigSyncWorker(t *testing.T) {
