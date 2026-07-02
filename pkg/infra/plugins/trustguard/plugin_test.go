@@ -172,7 +172,11 @@ func TestExecutePreRequestBlockReturns403(t *testing.T) {
 
 	f := &fakeGuard{response: GuardResponse{
 		Status:    statusBlock,
-		Findings:  []GuardFinding{{DetectionType: "prompt_injection", Action: "block"}},
+		Findings: []GuardFinding{{
+			Source:  &GuardFindingSource{Kind: "detector", Plugin: "prompt_guard"},
+			Signal:  &GuardFindingSignal{Type: "prompt_injection"},
+			Outcome: &GuardFindingOutcome{Action: "block"},
+		}},
 		TraceID:   "trace-1",
 		RequestID: "req-1",
 	}}
