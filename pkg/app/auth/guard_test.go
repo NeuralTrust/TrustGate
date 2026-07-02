@@ -45,7 +45,7 @@ func enabledOAuth2(t *testing.T, gatewayID ids.GatewayID, issuer string, audienc
 
 func createOAuth2(t *testing.T, repo *repomocks.Repository, gatewayID ids.GatewayID, audiences ...string) error {
 	t.Helper()
-	creator := appauth.NewCreator(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	creator := appauth.NewCreator(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
 	_, err := creator.Create(context.Background(), appauth.CreateInput{
 		GatewayID: gatewayID,
 		Name:      "new-idp",
@@ -148,7 +148,7 @@ func TestUpdater_RejectsEnablingConflictingAuth(t *testing.T) {
 	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).
 		Return([]*domain.Auth{other}, nil).Once()
 
-	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
 	_, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:      existing.ID,
 		Enabled: ptr(true),
@@ -168,7 +168,7 @@ func TestUpdater_AllowsUpdatingSameEntry(t *testing.T) {
 		Return([]*domain.Auth{existing}, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Once()
 
-	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
 	if _, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:   existing.ID,
 		Name: ptr("renamed"),

@@ -15,28 +15,45 @@
 package modules
 
 import (
+	"log/slog"
+
 	authhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	authrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/auth"
 )
 
 func Auth(c *container.Container) error {
-	if err := c.Provide(func(conn *database.Connection) domain.Repository {
+	if err := provideAuthRepository(c); err != nil {
+		return err
+	}
+	return provideAuthServices(c)
+}
+
+func provideAuthRepository(c *container.Container) error {
+	return c.Provide(func(conn *database.Connection) domain.Repository {
 		return authrepo.NewRepository(conn)
+	})
+}
+
+func provideAuthServices(c *container.Container) error {
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appauth.Creator {
+		return appauth.NewCreator(repo, manager, publisher, logger, sig.Signaler)
 	}); err != nil {
 		return err
 	}
-
-	if err := c.Provide(appauth.NewCreator); err != nil {
+	if err := c.Provide(func(repo domain.Repository, consumerRepo consumerdomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appauth.Updater {
+		return appauth.NewUpdater(repo, consumerRepo, manager, publisher, logger, sig.Signaler)
+	}); err != nil {
 		return err
 	}
-	if err := c.Provide(appauth.NewUpdater); err != nil {
-		return err
-	}
-	if err := c.Provide(appauth.NewDeleter); err != nil {
+	if err := c.Provide(func(repo domain.Repository, consumerRepo consumerdomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appauth.Deleter {
+		return appauth.NewDeleter(repo, consumerRepo, manager, publisher, logger, sig.Signaler)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(appauth.NewFinder); err != nil {

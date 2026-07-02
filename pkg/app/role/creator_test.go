@@ -57,6 +57,7 @@ func TestCreator_Create_SavesRoleWithoutInitialModelPolicies(t *testing.T) {
 		cache.NewTTLMapManager(cache.RoleCacheTTL),
 		cachetest.NoopPublisher(),
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		nil,
 	)
 	role, err := creator.Create(context.Background(), approle.CreateInput{
 		GatewayID: ids.New[ids.GatewayKind](),

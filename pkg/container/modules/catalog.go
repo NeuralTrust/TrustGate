@@ -33,11 +33,19 @@ import (
 const catalogSyncTimeout = 60 * time.Second
 
 func Catalog(c *container.Container) error {
-	if err := c.Provide(func(conn *database.Connection) domain.Repository {
-		return catalogrepo.NewRepository(conn)
-	}); err != nil {
+	if err := provideCatalogRepository(c); err != nil {
 		return err
 	}
+	return provideCatalogServices(c)
+}
+
+func provideCatalogRepository(c *container.Container) error {
+	return c.Provide(func(conn *database.Connection) domain.Repository {
+		return catalogrepo.NewRepository(conn)
+	})
+}
+
+func provideCatalogServices(c *container.Container) error {
 	if err := c.Provide(func(cfg *config.Config) *modelsdev.Client {
 		return modelsdev.NewClient(cfg.Catalog.ModelsDevBaseURL)
 	}); err != nil {
@@ -46,7 +54,9 @@ func Catalog(c *container.Container) error {
 	if err := c.Provide(appcatalog.NewService); err != nil {
 		return err
 	}
-	if err := c.Provide(appcatalog.NewSyncer); err != nil {
+	if err := c.Provide(func(repo domain.Repository, client *modelsdev.Client, logger *slog.Logger, sig snapshotSignalParams) appcatalog.Syncer {
+		return appcatalog.NewSyncer(repo, client, logger, sig.Signaler)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(appcatalog.NewPricingResolver); err != nil {

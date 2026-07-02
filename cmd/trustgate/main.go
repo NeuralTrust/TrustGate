@@ -29,15 +29,21 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
 	_ "github.com/NeuralTrust/TrustGate/docs"
+	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/configsnapshot/readmodel"
+	"github.com/NeuralTrust/TrustGate/pkg/configsync"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/container/modules"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bootlog"
@@ -62,20 +68,24 @@ func main() {
 		_ = godotenv.Load(path)
 	}
 
-	c, err := container.New(modules.All()...)
+	plane := serverType()
+	dbless := config.DBLessDataPlaneEnabled() && isDataPlane(plane)
+
+	c, err := container.New(modules.All(plane, dbless)...)
 	if err != nil {
 		log.Fatalf("failed to initialize container: %v", err)
 	}
 
-	if err := c.Invoke(runMigrations); err != nil {
-		log.Fatalf("failed to run migrations: %v", err)
+	if !dbless {
+		if err := c.Invoke(runMigrations); err != nil {
+			log.Fatalf("failed to run migrations: %v", err)
+		}
+		if err := c.Invoke(modules.StartCacheEventListener); err != nil {
+			log.Fatalf("failed to start cache event listener: %v", err)
+		}
 	}
 
-	if err := c.Invoke(modules.StartCacheEventListener); err != nil {
-		log.Fatalf("failed to start cache event listener: %v", err)
-	}
-
-	if serverType() == serverAdmin {
+	if plane == serverAdmin {
 		if err := c.Invoke(modules.StartCatalogSync); err != nil {
 			log.Fatalf("failed to start catalog sync: %v", err)
 		}
@@ -85,7 +95,7 @@ func main() {
 		return
 	}
 
-	if serverType() == serverMCP {
+	if plane == serverMCP {
 		if err := c.Invoke(modules.StartMetricsWorker); err != nil {
 			log.Fatalf("failed to start metrics worker: %v", err)
 		}
@@ -95,7 +105,7 @@ func main() {
 		return
 	}
 
-	if serverType() == serverRun {
+	if plane == serverRun {
 		if err := c.Invoke(modules.StartCatalogSync); err != nil {
 			log.Fatalf("failed to start catalog sync: %v", err)
 		}
@@ -123,6 +133,10 @@ func serverType() string {
 	return serverProxy
 }
 
+func isDataPlane(plane string) bool {
+	return plane == serverProxy || plane == serverMCP
+}
+
 func runMigrations(mgr *database.MigrationsManager, logger *slog.Logger) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -137,45 +151,112 @@ func runMigrations(mgr *database.MigrationsManager, logger *slog.Logger) {
 
 type adminParam struct {
 	dig.In
-	Srv server.Server `name:"admin"`
+	Srv        server.Server `name:"admin"`
+	Conn       *database.Connection
+	Recompiler *appsnapshot.Recompiler `optional:"true"`
 }
 
 type proxyParam struct {
 	dig.In
-	Srv    server.Server `name:"proxy"`
-	Worker appmetrics.Worker
+	Srv          server.Server `name:"proxy"`
+	Worker       appmetrics.Worker
+	Conn         *database.Connection
+	ConfigWorker *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
 }
 
 type mcpParam struct {
 	dig.In
-	Srv    server.Server `name:"mcp"`
-	Worker appmetrics.Worker
+	Srv          server.Server `name:"mcp"`
+	Worker       appmetrics.Worker
+	Conn         *database.Connection
+	ConfigWorker *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
 }
 
 type allParam struct {
 	dig.In
-	Admin  server.Server `name:"admin"`
-	Proxy  server.Server `name:"proxy"`
-	Worker appmetrics.Worker
+	Admin      server.Server `name:"admin"`
+	Proxy      server.Server `name:"proxy"`
+	Worker     appmetrics.Worker
+	Conn       *database.Connection
+	Recompiler *appsnapshot.Recompiler `optional:"true"`
 }
 
 func runAdmin(p adminParam, logger *slog.Logger) {
+	stopRecompiler := startRecompiler(p.Recompiler, logger)
+	defer closeResources(p.Conn, logger)
+	defer stopRecompiler()
 	runServer(p.Srv, serverAdmin, logger)
 }
 
 func runMCP(p mcpParam, logger *slog.Logger) {
+	stopWorker := startConfigSyncWorker(p.ConfigWorker, logger)
+	defer closeResources(p.Conn, logger)
 	defer p.Worker.Shutdown()
+	defer stopWorker()
 	runServer(p.Srv, serverMCP, logger)
 }
 
 func runProxy(p proxyParam, logger *slog.Logger) {
+	stopWorker := startConfigSyncWorker(p.ConfigWorker, logger)
+	defer closeResources(p.Conn, logger)
 	defer p.Worker.Shutdown()
+	defer stopWorker()
 	runServer(p.Srv, serverProxy, logger)
 }
 
 func runAll(p allParam, logger *slog.Logger) {
+	stopRecompiler := startRecompiler(p.Recompiler, logger)
+	defer closeResources(p.Conn, logger)
+	defer stopRecompiler()
 	defer p.Worker.Shutdown()
 	runServers(logger, namedServer{name: serverAdmin, srv: p.Admin}, namedServer{name: serverProxy, srv: p.Proxy})
+}
+
+func startRecompiler(recompiler *appsnapshot.Recompiler, logger *slog.Logger) func() {
+	if recompiler == nil {
+		return func() {}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := recompiler.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("config snapshot recompiler stopped", slog.String("error", err.Error()))
+		}
+	}()
+	recompiler.Signal()
+	return func() {
+		cancel()
+		wg.Wait()
+	}
+}
+
+func startConfigSyncWorker(worker *configsync.Worker[*readmodel.Snapshot], logger *slog.Logger) func() {
+	if worker == nil {
+		return func() {}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := worker.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("config sync worker stopped", slog.String("error", err.Error()))
+		}
+	}()
+	return func() {
+		cancel()
+		wg.Wait()
+	}
+}
+
+func closeResources(conn *database.Connection, logger *slog.Logger) {
+	if conn == nil {
+		return
+	}
+	logger.Info(bootlog.DatabaseClosing)
+	conn.Close()
 }
 
 type namedServer struct {

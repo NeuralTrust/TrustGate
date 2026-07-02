@@ -18,6 +18,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -44,15 +45,17 @@ type creator struct {
 	keyCache    *cache.TTLMap
 	publisher   cache.EventPublisher
 	logger      *slog.Logger
+	signaler    configsyncport.SnapshotSignaler
 }
 
-func NewCreator(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger) Creator {
+func NewCreator(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, signaler configsyncport.SnapshotSignaler) Creator {
 	return &creator{
 		repo:        repo,
 		memoryCache: manager.GetTTLMap(cache.AuthTTLName),
 		keyCache:    manager.GetTTLMap(cache.AuthKeyTTLName),
 		publisher:   publisher,
 		logger:      logger,
+		signaler:    signaler,
 	}
 }
 
@@ -72,6 +75,9 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Auth, err
 		c.keyCache.Set(a.KeyHash, a)
 	}
 	publishGatewayDataInvalidation(ctx, c.publisher, c.logger, a.GatewayID)
+	if c.signaler != nil {
+		c.signaler.Signal(ctx)
+	}
 	return a, nil
 }
 

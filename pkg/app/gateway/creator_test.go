@@ -54,7 +54,7 @@ func TestCreator_Create_Success(t *testing.T) {
 		Once()
 
 	mgr := newCacheManager()
-	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger())
+	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger(), nil)
 
 	g, err := creator.Create(context.Background(), appgateway.CreateInput{
 		Slug:      "prod",
@@ -86,7 +86,7 @@ func TestCreator_Create_PreservesExplicitSessionConfig(t *testing.T) {
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
 
 	mgr := newCacheManager()
-	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger())
+	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger(), nil)
 
 	g, err := creator.Create(context.Background(), appgateway.CreateInput{
 		Slug:          "prod",
@@ -104,7 +104,7 @@ func TestCreator_Create_RejectsEmptySlug(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	mgr := newCacheManager()
-	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger())
+	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger(), nil)
 
 	_, err := creator.Create(context.Background(), appgateway.CreateInput{
 		Slug: "",
@@ -123,7 +123,7 @@ func TestCreator_Create_RejectsUnknownExporter(t *testing.T) {
 		Return(errors.New("unknown exporter")).
 		Once()
 
-	creator := appgateway.NewCreator(repo, newCacheManager(), factory, newTestLogger())
+	creator := appgateway.NewCreator(repo, newCacheManager(), factory, newTestLogger(), nil)
 
 	_, err := creator.Create(context.Background(), appgateway.CreateInput{
 		Slug: "prod",
@@ -144,7 +144,7 @@ func TestCreator_Create_RejectsDuplicateExporter(t *testing.T) {
 	factory := metricsmocks.NewExporterFactory(t)
 	factory.EXPECT().Validate(mock.Anything).Return(nil).Maybe()
 
-	creator := appgateway.NewCreator(repo, newCacheManager(), factory, newTestLogger())
+	creator := appgateway.NewCreator(repo, newCacheManager(), factory, newTestLogger(), nil)
 
 	_, err := creator.Create(context.Background(), appgateway.CreateInput{
 		Slug: "prod",
@@ -169,7 +169,7 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 		Once()
 
 	mgr := newCacheManager()
-	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger())
+	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger(), nil)
 
 	_, err := creator.Create(context.Background(), appgateway.CreateInput{
 		Slug: "prod",

@@ -18,6 +18,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -49,6 +50,7 @@ type creator struct {
 	registry    appplugins.Registry
 	memoryCache *cache.TTLMap
 	logger      *slog.Logger
+	signaler    configsyncport.SnapshotSignaler
 }
 
 func NewCreator(
@@ -56,12 +58,14 @@ func NewCreator(
 	registry appplugins.Registry,
 	manager *cache.TTLMapManager,
 	logger *slog.Logger,
+	signaler configsyncport.SnapshotSignaler,
 ) Creator {
 	return &creator{
 		repo:        repo,
 		registry:    registry,
 		memoryCache: manager.GetTTLMap(cache.PolicyTTLName),
 		logger:      logger,
+		signaler:    signaler,
 	}
 }
 
@@ -77,5 +81,8 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Policy, e
 		return nil, err
 	}
 	c.memoryCache.Set(p.ID.String(), p)
+	if c.signaler != nil {
+		c.signaler.Signal(ctx)
+	}
 	return p, nil
 }

@@ -461,7 +461,136 @@ A consumer's routing path is derived from its name (`/v1/<name>` in
 must match the consumer's name exactly, or `MatchPath` returns 404. Wire setup
 helpers so the returned path and the created consumer's name stay in sync.
 
-## 15. References
+## 15. DB-less data plane (pull-based config sync, ENG-950)
+
+The **proxy** and **mcp** data planes can run **without Postgres**, resolving
+every `domain.Repository` from an in-memory multi-gateway State-of-the-World
+snapshot pulled from the control plane. It is gated by a master flag that
+defaults **OFF**, so the flag-off planes keep their Postgres-backed
+`DataFinder` / `*.Finder` / `PricingResolver` and their TTL caches byte-for-byte
+unchanged. `DataFinder`, all finders and pricing stay the same — only the
+repository binding is swapped on the DB-less DI graph.
+
+- **Plane-aware DI (distinct module sets, never `dig.Decorate`).** `main`
+  computes `dbless = config.DBLessDataPlaneEnabled() && isDataPlane(plane)` and
+  calls `modules.All(plane, dbless)`. `dig.Decorate` is **not** used to override
+  the pgx repositories: dig resolves the original provider first, which forces
+  the Postgres pool to build. Instead `modules.All` returns a **different module
+  set**:
+  - **Full / control set** (`admin`, `run`, or any flag-off plane): the Postgres
+    graph (`Core`, `Gateway`, `Registry`, `Role`, `Consumer`, `Catalog`,
+    `Auth`, `Policy`, `MCPVaultPostgres`, …) **+** `ControlConfigSync` (the
+    snapshot compiler, holder, debounced recompiler, Redis-stream publisher, and
+    authed HTTP endpoint).
+  - **DB-less DP set** (`(proxy|mcp) && dbless`): `CoreData` (config / logger /
+    redis / crypto + snapshot-adapter bindings for the 8 domains, plus
+    `provideNilConnection` so `optional:"true"` consumers stay resolvable
+    without a pool), `Cache`, `CacheEvents`, `Session`, `Telemetry`, `Plugins`,
+    `LoadBalancer`, `Providers`, `Proxy`, `MCP` (with `MCPVaultRedis`),
+    `ServerProxy` / `ServerMCP`, and `ConfigSyncData` (the store, codec, crypto,
+    fetcher, notifier, LKG store and converge `Worker` — the 8 pgx domain
+    modules are excluded). `main` gates `runMigrations`,
+    `StartCacheEventListener` and `StartCatalogSync` off on DB-less; `runProxy` /
+    `runMCP` start `Worker.Run(ctx)`; `runAdmin` / `runAll` start
+    `Recompiler.Run` with an eager `Signal()`. `closeResources` nil-checks the
+    (nil) `*database.Connection`.
+
+- **Env contract.** With the flag ON the proxy/mcp planes do **not** need
+  `DB_*`. `Config.Validate()` keys off `CONFIG_SYNC_DATA_PLANE_ENABLED`: when the
+  flag is on it skips `DB_HOST` / `DB_USER` / `DB_NAME` and instead requires the
+  `CONFIG_SYNC_*` set below, while **`REDIS_HOST` and `KAFKA_BROKERS` stay
+  required**. The flag is set per-plane in deployment (proxy/mcp on, admin/run
+  off); `main.go` derives `dbless = CONFIG_SYNC_DATA_PLANE_ENABLED && isDataPlane(plane)`
+  so only proxy/mcp actually drop Postgres. Boot fails fast
+  (`ErrInvalidConfig` naming the offending key) when `CONFIG_SYNC_TOKEN`, a
+  well-formed **`https`** `CONFIG_SYNC_SNAPSHOT_URL` (set
+  `CONFIG_SYNC_SNAPSHOT_INSECURE=true` to allow `http` in local dev),
+  `CONFIG_SYNC_LKG_PATH`, a 32-byte `CONFIG_SYNC_LKG_KEY`, a positive
+  `CONFIG_SYNC_POLL_INTERVAL`, a non-empty `CONFIG_SYNC_STREAM_KEY`, or a
+  positive `CONFIG_SYNC_STREAM_MAXLEN` is missing/invalid.
+
+- **CP snapshot endpoint.** The control plane serves
+  `GET /internal/config/snapshot` (`router.ConfigSnapshotPath`) behind a
+  **config-sync bearer token** (`CONFIG_SYNC_TOKEN`), separate from the admin
+  JWT. Fresh pull → `200` `application/x-protobuf` + `ETag: "<version>"`;
+  `If-None-Match` match → `304`; missing/bad token → `401`; no snapshot yet →
+  `503`. The middleware **fails closed** when the token is unset, and the
+  handler logs the pull headers (`X-Instance-Id`, `X-Applied-Version`) only —
+  never the snapshot body.
+
+- **Version = content hash + Redis stream.** The version is the hex SHA-256 of
+  the deterministic protobuf bytes; identical config recompiles to the identical
+  version and publishes no new event. Every guard-relevant admin write
+  `Signal`s a **debounced** recompile (`CONFIG_SYNC_RECOMPILE_DEBOUNCE`, default
+  `2s`) which `XADD`s the new version to `CONFIG_SYNC_STREAM_KEY` (default
+  `trustgate:config:snapshot:versions`, bounded by `CONFIG_SYNC_STREAM_MAXLEN`).
+  Each data plane consumes with `XREAD BLOCK` (fan-out, not consumer groups) and
+  a backstop `CONFIG_SYNC_POLL_INTERVAL` re-pull; a single `convergeMu`
+  serializes swaps and Redis outages self-heal via the HTTP backstop.
+
+- **Encrypted LKG + readiness.** The last-known-good snapshot is persisted to
+  `CONFIG_SYNC_LKG_PATH` (default `/var/lib/trustgate/snapshot.lkg`), encrypted
+  with **AES-256-GCM** under `CONFIG_SYNC_LKG_KEY` (base64 → exactly 32 bytes),
+  written atomically off the hot path; a `200` body whose SHA-256 ≠ the `ETag`
+  is rejected without swapping. `/readyz` gates on the `snapshot` readiness
+  check (`503` until the first converge or an LKG restore) and exposes **no**
+  `postgres` dependency on the DB-less plane; `/healthz` liveness is independent
+  of snapshot presence.
+
+- **Vault on Redis (DB-less MCP).** The DB-less MCP plane binds
+  `vaultrepo.NewRedisRepository(rc, cipher)` in place of the Postgres vault repo.
+  Key `vault:{gatewayID}:{principalSub}:{provider}` holds the credential JSON
+  with tokens **already encrypted** by the existing `Encrypter`;
+  `ListByPrincipal` scans `vault:{gw}:{sub}:*`, no TTL, and a `Find` miss →
+  `vaultdomain.ErrNotFound` (which the connect flow treats as re-consent).
+
+- **Proto generation.** The snapshot wire format lives in
+  `pkg/infra/configsnapshot/proto/snapshot.proto`; regenerate `snapshot.pb.go`
+  with **`make proto`** (buf) after changing it — never hand-edit the generated
+  file.
+
+### `CONFIG_SYNC_*` env
+
+| Env | Meaning | Default |
+|---|---|---|
+| `CONFIG_SYNC_DATA_PLANE_ENABLED` | DB-less data-plane master flag | `false` |
+| `CONFIG_SYNC_TOKEN` | config-sync shared secret (CP guards the endpoint; DP authenticates) | `""` |
+| `CONFIG_SYNC_SNAPSHOT_URL` | CP snapshot endpoint URL the DP pulls (must be `https`) | `""` |
+| `CONFIG_SYNC_SNAPSHOT_INSECURE` | allow a non-`https` snapshot URL (local dev only) | `false` |
+| `CONFIG_SYNC_LKG_PATH` | encrypted LKG file path | `/var/lib/trustgate/snapshot.lkg` |
+| `CONFIG_SYNC_LKG_KEY` | AES-256 key, base64 → exactly 32 bytes | `""` |
+| `CONFIG_SYNC_POLL_INTERVAL` | backstop re-pull interval | `5m` |
+| `CONFIG_SYNC_STREAM_KEY` | Redis stream key | `trustgate:config:snapshot:versions` |
+| `CONFIG_SYNC_STREAM_MAXLEN` | stream trim bound | `1000` |
+| `CONFIG_SYNC_RECOMPILE_DEBOUNCE` | CP recompile debounce | `2s` |
+| `CONFIG_SYNC_INSTANCE_ID` | fleet-visibility id | `HOSTNAME` |
+
+### Running the DB-less functional tests
+
+The DB-less end-to-end tests live under `tests/functional/` behind the
+`functional` build tag, so plain `go test ./...` never compiles them and they do
+not require infra. They boot a second proxy process from the shared binary as a
+DB-less plane pointed at the harness control plane, and the harness enables the
+control plane's snapshot endpoint (`CONFIG_SYNC_TOKEN` + a short recompile
+debounce) while keeping its own data plane Postgres-backed. Like every other
+functional test they need Postgres + Redis (+ Kafka) locally:
+
+```
+make test-functional
+# or a focused run:
+go test -tags functional -run 'TestDBLessDataPlane|TestDBLessMCPVault' ./tests/functional/...
+```
+
+- `TestDBLessDataPlane_*` assert readiness gating (`/readyz` 503 until converge,
+  `/healthz` live regardless), the fail-closed snapshot endpoint, hot-path parity
+  vs the Postgres proxy (gateway-by-slug, consumer resolution, precomputed policy
+  plan), convergence-on-write after an admin `Signal`, and that no snapshot
+  registry credential ever appears in the DB-less plane logs.
+- `TestDBLessMCPVault_ConnectResolveRefreshOverRedis` exercises the Redis vault
+  repo the DB-less MCP plane binds (connect upsert → resolve → refresh persists →
+  encrypted at rest → delete → miss re-consent) against the harness Redis.
+
+## 16. References
 
 - Platform shape: `/home/edu/.cursor/rules/neuraltrust-platform.mdc`
 - Domain glossary: `/home/edu/.cursor/rules/neuraltrust-domain.mdc`

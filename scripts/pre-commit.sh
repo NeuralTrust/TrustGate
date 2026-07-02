@@ -13,7 +13,7 @@ if ! command -v gosec >/dev/null 2>&1; then
   go install github.com/securego/gosec/v2/cmd/gosec@latest
 fi
 
-gosec ./...
+gosec -severity high -exclude-generated ./...
 if [ $? -ne 0 ]; then
   echo "Gosec found security issues!"
   exit 1

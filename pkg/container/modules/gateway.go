@@ -15,31 +15,46 @@
 package modules
 
 import (
+	"log/slog"
+
 	gatewayhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	gatewayrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/gateway"
 )
 
-// Gateway wires the Gateway aggregate end-to-end: pgx repository,
-// the four application services, and the five admin HTTP handlers.
 func Gateway(c *container.Container) error {
-	if err := c.Provide(func(conn *database.Connection) domain.Repository {
+	if err := provideGatewayRepository(c); err != nil {
+		return err
+	}
+	return provideGatewayServices(c)
+}
+
+func provideGatewayRepository(c *container.Container) error {
+	return c.Provide(func(conn *database.Connection) domain.Repository {
 		return gatewayrepo.NewRepository(conn)
+	})
+}
+
+func provideGatewayServices(c *container.Container) error {
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, exporterFactory appmetrics.ExporterFactory, logger *slog.Logger, sig snapshotSignalParams) appgateway.Creator {
+		return appgateway.NewCreator(repo, manager, exporterFactory, logger, sig.Signaler)
 	}); err != nil {
 		return err
 	}
-
-	if err := c.Provide(appgateway.NewCreator); err != nil {
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, exporterFactory appmetrics.ExporterFactory, logger *slog.Logger, sig snapshotSignalParams) appgateway.Updater {
+		return appgateway.NewUpdater(repo, manager, publisher, exporterFactory, logger, sig.Signaler)
+	}); err != nil {
 		return err
 	}
-	if err := c.Provide(appgateway.NewUpdater); err != nil {
-		return err
-	}
-	if err := c.Provide(appgateway.NewDeleter); err != nil {
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appgateway.Deleter {
+		return appgateway.NewDeleter(repo, manager, publisher, logger, sig.Signaler)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(appgateway.NewFinder); err != nil {

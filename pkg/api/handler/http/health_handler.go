@@ -15,15 +15,27 @@
 package http
 
 import (
+	"context"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/version"
 	"github.com/gofiber/fiber/v2"
 )
 
-type HealthHandler struct{}
+const readinessTimeout = 2 * time.Second
 
-func NewHealthHandler() *HealthHandler { return &HealthHandler{} }
+type ReadinessCheck struct {
+	Name string
+	Ping func(ctx context.Context) error
+}
+
+type HealthHandler struct {
+	checks []ReadinessCheck
+}
+
+func NewHealthHandler(checks ...ReadinessCheck) *HealthHandler {
+	return &HealthHandler{checks: checks}
+}
 
 // Liveness godoc
 // @Summary      Liveness probe
@@ -46,11 +58,33 @@ func (h *HealthHandler) Liveness(c *fiber.Ctx) error {
 // @Tags         system
 // @Produce      json
 // @Success      200  {object}  map[string]string
+// @Failure      503  {object}  map[string]string
 // @Router       /readyz [get]
 func (h *HealthHandler) Readiness(c *fiber.Ctx) error {
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"status":  "ready",
-		"version": version.Version,
-		"time":    time.Now().Format(time.RFC3339),
+	ctx, cancel := context.WithTimeout(c.Context(), readinessTimeout)
+	defer cancel()
+
+	dependencies := make(map[string]string, len(h.checks))
+	ready := true
+	for _, check := range h.checks {
+		if err := check.Ping(ctx); err != nil {
+			ready = false
+			dependencies[check.Name] = "unavailable"
+			continue
+		}
+		dependencies[check.Name] = "ok"
+	}
+
+	status := fiber.StatusOK
+	state := "ready"
+	if !ready {
+		status = fiber.StatusServiceUnavailable
+		state = "not_ready"
+	}
+	return c.Status(status).JSON(fiber.Map{
+		"status":       state,
+		"version":      version.Version,
+		"time":         time.Now().Format(time.RFC3339),
+		"dependencies": dependencies,
 	})
 }

@@ -7,5 +7,6 @@ useDefault = true
 description = "Curated false positives: deterministic test fixtures and historical agent transcripts/docs."
 paths = [
   '''pkg/infra/crypto/cipher_test\.go''',
+  '''pkg/container/di_smoke_test\.go''',
   '''.*cursor_phase_\d+\.md''',
 ]

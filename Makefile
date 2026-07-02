@@ -1,4 +1,4 @@
-.PHONY: help build run run-admin run-proxy run-mcp run-all run-proxy-sandbox run-servers up down logs local-dns test test-race test-cover test-functional test-repositories lint fmt tidy generate gen-mocks tools swagger openapi docs license license-check \
+.PHONY: help build run run-admin run-proxy run-mcp run-all run-proxy-sandbox run-servers up down logs local-dns test test-race test-cover test-functional test-repositories lint fmt tidy generate proto gen-mocks tools swagger openapi docs license license-check \
         install-pre-commit \
         docker-build docker-push compose-up compose-down compose-logs
 
@@ -109,6 +109,10 @@ tidy: ## Run go mod tidy
 generate: ## Run go generate
 	@$(info $(M) Running go generate ...)
 	go generate ./...
+
+proto: ## Regenerate protobuf bindings from .proto files via buf
+	@$(info $(M) Generating protobuf bindings ...)
+	cd pkg/infra/configsnapshot/proto && go run github.com/bufbuild/buf/cmd/buf@v1.50.0 generate
 
 tools: ## Install Go dev tools pinned in tools/tools.go
 	@$(info $(M) Installing dev tools ...)

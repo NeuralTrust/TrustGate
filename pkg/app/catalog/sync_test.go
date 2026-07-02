@@ -114,7 +114,7 @@ func TestSyncer_Sync(t *testing.T) {
 	repo := newFakeRepo()
 	client := modelsdev.NewClient(srv.URL)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s := NewSyncer(repo, client, logger)
+	s := NewSyncer(repo, client, logger, nil)
 
 	if err := s.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync error: %v", err)
@@ -154,7 +154,7 @@ func TestSyncer_Sync_PropagatesClientError(t *testing.T) {
 	repo := newFakeRepo()
 	client := modelsdev.NewClient(srv.URL)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s := NewSyncer(repo, client, logger)
+	s := NewSyncer(repo, client, logger, nil)
 
 	if err := s.Sync(context.Background()); err == nil {
 		t.Fatal("expected error from failing client")

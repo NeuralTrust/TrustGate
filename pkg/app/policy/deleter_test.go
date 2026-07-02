@@ -39,7 +39,7 @@ func TestDeleter_Delete_Success(t *testing.T) {
 	mgr := newCacheManager()
 	mgr.GetTTLMap(cache.PolicyTTLName).Set(id.String(), "junk")
 
-	deleter := apppolicy.NewDeleter(repo, mgr, cachetest.NoopPublisher(), newTestLogger())
+	deleter := apppolicy.NewDeleter(repo, mgr, cachetest.NoopPublisher(), newTestLogger(), nil)
 	if err := deleter.Delete(context.Background(), gwID, id); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestDeleter_Delete_NotFound(t *testing.T) {
 	id := ids.New[ids.PolicyKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
 
-	deleter := apppolicy.NewDeleter(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	deleter := apppolicy.NewDeleter(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
 	err := deleter.Delete(context.Background(), ids.New[ids.GatewayKind](), id)
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
@@ -67,7 +67,7 @@ func TestDeleter_Delete_WrongGateway(t *testing.T) {
 	id := ids.New[ids.PolicyKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Policy{ID: id, GatewayID: ids.New[ids.GatewayKind]()}, nil).Once()
 
-	deleter := apppolicy.NewDeleter(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	deleter := apppolicy.NewDeleter(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
 	err := deleter.Delete(context.Background(), ids.New[ids.GatewayKind](), id)
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound for cross-gateway delete", err)

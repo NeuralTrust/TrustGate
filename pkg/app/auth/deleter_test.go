@@ -44,7 +44,7 @@ func TestDeleter_Delete_Success(t *testing.T) {
 	consumerRepo := consumermocks.NewRepository(t)
 	consumerRepo.EXPECT().ListByAuthID(mock.Anything, id).Return(nil, nil).Once()
 
-	deleter := appauth.NewDeleter(repo, consumerRepo, mgr, cachetest.NoopPublisher(), newTestLogger())
+	deleter := appauth.NewDeleter(repo, consumerRepo, mgr, cachetest.NoopPublisher(), newTestLogger(), nil)
 	if err := deleter.Delete(context.Background(), gwID, id); err != nil {
 		t.Fatalf("Delete error: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestDeleter_Delete_PropagatesError(t *testing.T) {
 	id := ids.New[ids.AuthKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
 
-	deleter := appauth.NewDeleter(repo, consumermocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	deleter := appauth.NewDeleter(repo, consumermocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
 	if err := deleter.Delete(context.Background(), ids.New[ids.GatewayKind](), id); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
@@ -71,7 +71,7 @@ func TestDeleter_Delete_WrongGateway(t *testing.T) {
 	id := ids.New[ids.AuthKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Auth{ID: id, GatewayID: ids.New[ids.GatewayKind]()}, nil).Once()
 
-	deleter := appauth.NewDeleter(repo, consumermocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	deleter := appauth.NewDeleter(repo, consumermocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
 	if err := deleter.Delete(context.Background(), ids.New[ids.GatewayKind](), id); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound for cross-gateway delete", err)
 	}
@@ -95,7 +95,7 @@ func TestDeleter_Delete_DetachesReferencingConsumers(t *testing.T) {
 	consumerRepo.EXPECT().DetachAuth(mock.Anything, firstConsumer, id).Return(nil).Once()
 	consumerRepo.EXPECT().DetachAuth(mock.Anything, secondConsumer, id).Return(nil).Once()
 
-	deleter := appauth.NewDeleter(repo, consumerRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	deleter := appauth.NewDeleter(repo, consumerRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
 	if err := deleter.Delete(context.Background(), gwID, id); err != nil {
 		t.Fatalf("Delete error: %v", err)
 	}

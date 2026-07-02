@@ -21,6 +21,7 @@ import (
 	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
 	authhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth"
 	cataloghttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/catalog"
+	configsnapshothttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/configsnapshot"
 	consumerhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer"
 	gatewayhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway"
 	playgroundhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/playground"
@@ -109,6 +110,9 @@ type adminRouterParams struct {
 	ListMCPServersCatalog *cataloghttp.ListMCPServersHandler
 
 	GetTrace *playgroundhttp.GetTraceHandler
+
+	ConfigSnapshot *configsnapshothttp.Handler          `optional:"true"`
+	ConfigSyncAuth *middleware.ConfigSyncAuthMiddleware `optional:"true"`
 }
 
 type adminServerParams struct {
@@ -172,6 +176,9 @@ func ServerAdmin(c *container.Container) error {
 				ListMCPServersCatalog: p.ListMCPServersCatalog,
 
 				GetTrace: p.GetTrace,
+
+				ConfigSnapshot: p.ConfigSnapshot,
+				ConfigSyncAuth: p.ConfigSyncAuth,
 			})
 		},
 		dig.Name("admin"),

@@ -18,6 +18,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -43,6 +44,7 @@ type deleter struct {
 	roleCache         *cache.TTLMap
 	publisher         cache.EventPublisher
 	logger            *slog.Logger
+	signaler          configsyncport.SnapshotSignaler
 }
 
 func NewDeleter(
@@ -50,6 +52,7 @@ func NewDeleter(
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
+	signaler configsyncport.SnapshotSignaler,
 ) Deleter {
 	return &deleter{
 		repo:              repo,
@@ -64,6 +67,7 @@ func NewDeleter(
 		roleCache:         manager.GetTTLMap(cache.RoleTTLName),
 		publisher:         publisher,
 		logger:            logger,
+		signaler:          signaler,
 	}
 }
 
@@ -76,6 +80,9 @@ func (d *deleter) Delete(ctx context.Context, id ids.GatewayID) error {
 	d.memoryCache.Delete(gatewayIDCacheKey(id))
 	d.evictGatewayScopedCaches(id)
 	publishGatewayDataInvalidation(ctx, d.publisher, d.logger, id)
+	if d.signaler != nil {
+		d.signaler.Signal(ctx)
+	}
 	return nil
 }
 
