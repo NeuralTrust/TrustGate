@@ -54,7 +54,7 @@ func TestGuardDecodesResponses(t *testing.T) {
 		{
 			name:          "block verdict",
 			statusCode:    http.StatusOK,
-			respBody:      `{"status":"block","trace_id":"t1","request_id":"r1","findings":[{"detection_type":"pii","confidence":0.9,"action":"block"}]}`,
+			respBody:      `{"status":"block","trace_id":"t1","request_id":"r1","findings":[{"source":{"kind":"detector","plugin":"data_loss_prevention"},"signal":{"type":"pii","confidence":0.9},"outcome":{"action":"block"}}]}`,
 			wantStatus:    "block",
 			wantFindings:  1,
 			wantTraceID:   "t1",
