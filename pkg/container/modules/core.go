@@ -24,6 +24,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/logger"
+	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 )
 
 func Core(c *container.Container) error {
@@ -38,7 +39,23 @@ func Core(c *container.Container) error {
 	if err := c.Provide(database.NewConnectionProvider); err != nil {
 		return err
 	}
-	return c.Provide(database.NewMigrationsManagerProvider)
+	if err := c.Provide(database.NewMigrationsManagerProvider); err != nil {
+		return err
+	}
+	return provideOutbox(c)
+}
+
+// provideOutbox registers the config-snapshot change-marker outbox repository and
+// binds it as the infra Appender the config-mutating admin repositories share.
+// The control plane additionally binds it as the app-side OutboxRepository the
+// dispatcher drains (in ControlConfigSync).
+func provideOutbox(c *container.Container) error {
+	if err := c.Provide(outboxrepo.NewRepository); err != nil {
+		return err
+	}
+	return c.Provide(func(r *outboxrepo.Repository) outboxrepo.Appender {
+		return r
+	})
 }
 
 func provideRuntimeBase(c *container.Container) error {

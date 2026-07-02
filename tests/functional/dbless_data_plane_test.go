@@ -24,10 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const (
-	dblessConfigSyncToken = "functional-config-sync-token"
-	configSnapshotPath    = "/internal/config/snapshot"
-)
+const dblessConfigSyncToken = "functional-config-sync-token"
 
 func dblessLKGKey() string {
 	return base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
@@ -53,8 +50,8 @@ func (b *syncBuffer) String() string {
 func dblessOverrides(lkgPath, token, instanceID string, port int) []string {
 	return []string{
 		"CONFIG_SYNC_DATA_PLANE_ENABLED=true",
-		"CONFIG_SYNC_SNAPSHOT_URL=" + AdminURL + configSnapshotPath,
-		"CONFIG_SYNC_SNAPSHOT_INSECURE=true",
+		"CONFIG_SYNC_GRPC_ENDPOINT=" + fmt.Sprintf("localhost:%d", serverConfigSyncGRPCPort),
+		"CONFIG_SYNC_TLS_INSECURE=true",
 		"CONFIG_SYNC_TOKEN=" + token,
 		"CONFIG_SYNC_LKG_PATH=" + lkgPath,
 		"CONFIG_SYNC_LKG_KEY=" + dblessLKGKey(),
@@ -194,52 +191,6 @@ func TestDBLessDataPlane_ReadinessGatedOnSnapshotAndLivenessIndependent(t *testi
 		assert.False(t, hasPostgres, "db-less plane must not expose a postgres dependency: %v", b)
 		time.Sleep(300 * time.Millisecond)
 	}
-}
-
-func TestDBLessDataPlane_SnapshotEndpointFailsClosed(t *testing.T) {
-	defer Track(t, "DBLessDataPlane")()
-
-	noTokenStatus, noTokenBody := sendRequest(t, http.MethodGet, AdminURL+configSnapshotPath,
-		map[string]string{"Authorization": ""}, nil)
-	require.Equal(t, http.StatusUnauthorized, noTokenStatus,
-		"snapshot endpoint must reject a request with no config-sync token: %v", noTokenBody)
-
-	wrongTokenStatus, wrongTokenBody := sendRequest(t, http.MethodGet, AdminURL+configSnapshotPath,
-		map[string]string{"Authorization": "Bearer not-the-token"}, nil)
-	require.Equal(t, http.StatusUnauthorized, wrongTokenStatus,
-		"snapshot endpoint must reject an invalid config-sync token: %v", wrongTokenBody)
-
-	authHeaders := map[string]string{"Authorization": "Bearer " + dblessConfigSyncToken}
-	var (
-		status int
-		etag   string
-		ctype  string
-		raw    []byte
-	)
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		req, err := http.NewRequest(http.MethodGet, AdminURL+configSnapshotPath, nil)
-		require.NoError(t, err)
-		for k, v := range authHeaders {
-			req.Header.Set(k, v)
-		}
-		resp, err := http.DefaultClient.Do(req)
-		require.NoError(t, err)
-		status = resp.StatusCode
-		etag = resp.Header.Get("ETag")
-		ctype = resp.Header.Get("Content-Type")
-		raw, _ = io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		if status == http.StatusOK {
-			break
-		}
-		time.Sleep(300 * time.Millisecond)
-	}
-	require.Equal(t, http.StatusOK, status, "authenticated snapshot pull must eventually succeed")
-	require.NotEmpty(t, etag, "a 200 snapshot response must carry an ETag version")
-	assert.True(t, strings.HasPrefix(etag, `"`) && strings.HasSuffix(etag, `"`), "ETag must be a quoted version: %q", etag)
-	assert.Equal(t, "application/x-protobuf", ctype, "snapshot must be served as protobuf")
-	require.NotEmpty(t, raw, "a 200 snapshot response must carry a protobuf body")
 }
 
 func TestDBLessDataPlane_ConvergesServesAtParityAndKeepsSecretsOutOfLogs(t *testing.T) {

@@ -28,6 +28,7 @@ import (
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -64,11 +65,26 @@ const consumerSelectColumns = `
 var _ domain.Repository = (*Repository)(nil)
 
 type Repository struct {
-	conn *database.Connection
+	conn   *database.Connection
+	outbox outbox.Appender
 }
 
-func NewRepository(conn *database.Connection) *Repository {
-	return &Repository{conn: conn}
+// NewRepository builds the pgx consumer repository from the shared connection.
+// Each config-mutating write commits its config-snapshot change marker in the
+// same transaction via the injected outbox appender.
+func NewRepository(conn *database.Connection, appender outbox.Appender) *Repository {
+	return &Repository{conn: conn, outbox: appender}
+}
+
+// withMarkedTx runs fn inside a transaction and, when it succeeds, appends one
+// config-snapshot change marker so the mutation and its marker commit atomically.
+func (r *Repository) withMarkedTx(ctx context.Context, fn func(pgx.Tx) error) error {
+	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+		if err := fn(tx); err != nil {
+			return err
+		}
+		return r.outbox.AppendTx(ctx, tx)
+	})
 }
 
 func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
@@ -106,7 +122,7 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 		ON CONFLICT (consumer_id, registry_id) DO UPDATE SET weight = EXCLUDED.weight`
 	const insertConsumerRole = `
 		INSERT INTO consumer_role (consumer_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, insertConsumer,
 			c.ID, c.GatewayID, c.Name, string(c.Type), c.Slug, string(c.RoutingMode), lbConfigBytes, fallbackBytes, modelPoliciesBytes,
 			toolkitBytes, nullableFailMode(c.FailMode()), headersBytes, c.Active, c.CreatedAt, c.UpdatedAt,
@@ -165,7 +181,7 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
 		       active           = $11,
 		       updated_at       = $12
 		 WHERE id = $1 AND gateway_id = $13`
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if err := lockConsumerRow(ctx, tx, c.ID); err != nil {
 			return err
 		}
@@ -263,18 +279,22 @@ func (r *Repository) AttachRegistry(ctx context.Context, consumerID ids.Consumer
 		const query = `
 			INSERT INTO consumer_registry (consumer_id, registry_id, weight) VALUES ($1, $2, $3)
 			ON CONFLICT (consumer_id, registry_id) DO NOTHING`
-		if _, err := r.conn.Pool.Exec(ctx, query, consumerID, registryID, domain.DefaultRegistryWeight); err != nil {
-			return mapPgError(err)
-		}
-		return nil
+		return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+			if _, err := tx.Exec(ctx, query, consumerID, registryID, domain.DefaultRegistryWeight); err != nil {
+				return mapPgError(err)
+			}
+			return nil
+		})
 	}
 	const query = `
 		INSERT INTO consumer_registry (consumer_id, registry_id, weight) VALUES ($1, $2, $3)
 		ON CONFLICT (consumer_id, registry_id) DO UPDATE SET weight = EXCLUDED.weight`
-	if _, err := r.conn.Pool.Exec(ctx, query, consumerID, registryID, clampRegistryWeight(*weight)); err != nil {
-		return mapPgError(err)
-	}
-	return nil
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, query, consumerID, registryID, clampRegistryWeight(*weight)); err != nil {
+			return mapPgError(err)
+		}
+		return nil
+	})
 }
 
 func clampRegistryWeight(weight int) int {
@@ -309,7 +329,7 @@ func (r *Repository) detachRegistryIfUnreferenced(
 	checkGateway bool,
 ) (*domain.Consumer, error) {
 	var current *domain.Consumer
-	err := database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+	err := r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		consumer, err := lockConsumerRoutingReferences(ctx, tx, consumerID)
 		if err != nil {
 			return err
@@ -335,22 +355,26 @@ func (r *Repository) detachRegistryIfUnreferenced(
 
 func (r *Repository) AttachRole(ctx context.Context, consumerID ids.ConsumerID, roleID ids.RoleID) error {
 	const query = `INSERT INTO consumer_role (consumer_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
-	if _, err := r.conn.Pool.Exec(ctx, query, consumerID, roleID); err != nil {
-		return mapPgError(err)
-	}
-	return nil
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, query, consumerID, roleID); err != nil {
+			return mapPgError(err)
+		}
+		return nil
+	})
 }
 
 func (r *Repository) DetachRole(ctx context.Context, consumerID ids.ConsumerID, roleID ids.RoleID) error {
 	const query = `DELETE FROM consumer_role WHERE consumer_id = $1 AND role_id = $2`
-	if _, err := r.conn.Pool.Exec(ctx, query, consumerID, roleID); err != nil {
-		return mapPgError(err)
-	}
-	return nil
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, query, consumerID, roleID); err != nil {
+			return mapPgError(err)
+		}
+		return nil
+	})
 }
 
 func (r *Repository) AttachAuth(ctx context.Context, consumerID ids.ConsumerID, authID ids.AuthID) error {
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if err := lockConsumerRow(ctx, tx, consumerID); err != nil {
 			return err
 		}
@@ -372,31 +396,37 @@ func (r *Repository) AttachAuth(ctx context.Context, consumerID ids.ConsumerID, 
 
 func (r *Repository) DetachAuth(ctx context.Context, consumerID ids.ConsumerID, authID ids.AuthID) error {
 	const query = `DELETE FROM consumer_auth WHERE consumer_id = $1 AND auth_id = $2`
-	if _, err := r.conn.Pool.Exec(ctx, query, consumerID, authID); err != nil {
-		return mapPgError(err)
-	}
-	return nil
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, query, consumerID, authID); err != nil {
+			return mapPgError(err)
+		}
+		return nil
+	})
 }
 
 func (r *Repository) AttachPolicy(ctx context.Context, consumerID ids.ConsumerID, policyID ids.PolicyID) error {
 	const query = `INSERT INTO consumer_policy (consumer_id, policy_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
-	if _, err := r.conn.Pool.Exec(ctx, query, consumerID, policyID); err != nil {
-		return mapPgError(err)
-	}
-	return nil
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, query, consumerID, policyID); err != nil {
+			return mapPgError(err)
+		}
+		return nil
+	})
 }
 
 func (r *Repository) DetachPolicy(ctx context.Context, consumerID ids.ConsumerID, policyID ids.PolicyID) error {
 	const query = `DELETE FROM consumer_policy WHERE consumer_id = $1 AND policy_id = $2`
-	if _, err := r.conn.Pool.Exec(ctx, query, consumerID, policyID); err != nil {
-		return mapPgError(err)
-	}
-	return nil
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, query, consumerID, policyID); err != nil {
+			return mapPgError(err)
+		}
+		return nil
+	})
 }
 
 func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.ConsumerID) error {
 	const query = `DELETE FROM consumers WHERE id = $1 AND gateway_id = $2`
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query, id, gatewayID)
 		if err != nil {
 			return mapPgDeleteError(err)

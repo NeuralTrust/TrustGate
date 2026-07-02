@@ -20,6 +20,7 @@ import (
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
 	repo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/consumer"
 	gatewayrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/gateway"
+	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	registryrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
 	rolerepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/role"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -30,7 +31,7 @@ func newRegistryRepo(conn *database.Connection) *registryrepo.Repository {
 	if err != nil {
 		panic(err)
 	}
-	return registryrepo.NewRepository(conn, cipher)
+	return registryrepo.NewRepository(conn, cipher, outboxrepo.NewRepository(conn))
 }
 
 type fixture struct {
@@ -77,11 +78,12 @@ func setupRepo(t *testing.T) fixture {
 		pool.Close()
 	})
 
+	appender := outboxrepo.NewRepository(conn)
 	return fixture{
-		repo:  repo.NewRepository(conn),
-		gw:    gatewayrepo.NewRepository(conn),
+		repo:  repo.NewRepository(conn, appender),
+		gw:    gatewayrepo.NewRepository(conn, appender),
 		be:    newRegistryRepo(conn),
-		roles: rolerepo.NewRepository(conn),
+		roles: rolerepo.NewRepository(conn, appender),
 		conn:  conn,
 	}
 }

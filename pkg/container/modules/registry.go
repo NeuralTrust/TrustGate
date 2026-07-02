@@ -24,6 +24,7 @@ import (
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	registryrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
 )
 
@@ -35,8 +36,8 @@ func Registry(c *container.Container) error {
 }
 
 func provideRegistryRepository(c *container.Container) error {
-	return c.Provide(func(conn *database.Connection, enc vaultdomain.Encrypter) domain.Repository {
-		return registryrepo.NewRepository(conn, enc)
+	return c.Provide(func(conn *database.Connection, enc vaultdomain.Encrypter, appender outboxrepo.Appender) domain.Repository {
+		return registryrepo.NewRepository(conn, enc, appender)
 	})
 }
 

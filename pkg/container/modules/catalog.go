@@ -27,6 +27,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/catalog/modelsdev"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	catalogrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/catalog"
+	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	"go.uber.org/dig"
 )
 
@@ -40,8 +41,8 @@ func Catalog(c *container.Container) error {
 }
 
 func provideCatalogRepository(c *container.Container) error {
-	return c.Provide(func(conn *database.Connection) domain.Repository {
-		return catalogrepo.NewRepository(conn)
+	return c.Provide(func(conn *database.Connection, appender outboxrepo.Appender) domain.Repository {
+		return catalogrepo.NewRepository(conn, appender)
 	})
 }
 

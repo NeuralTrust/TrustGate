@@ -101,13 +101,11 @@ const (
 
 	defaultOpenAIModerationTimeout = 15 * time.Second
 
-	defaultConfigSyncDataPlaneEnabled        = false
-	defaultConfigSyncStreamKey               = "trustgate:config:snapshot:versions"
-	defaultConfigSyncStreamMaxLen      int64 = 1000
-	defaultConfigSyncLKGPath                 = "/var/lib/trustgate/snapshot.lkg"
-	defaultConfigSyncPollInterval            = 5 * time.Minute
-	defaultConfigSyncRecompileDebounce       = 2 * time.Second
-	defaultConfigSyncRecompileBackstop       = 5 * time.Minute
+	defaultConfigSyncDataPlaneEnabled  = false
+	defaultConfigSyncLKGPath           = "/var/lib/trustgate/snapshot.lkg"
+	defaultConfigSyncPollInterval      = 5 * time.Minute
+	defaultConfigSyncRecompileDebounce = 2 * time.Second
+	defaultConfigSyncRecompileBackstop = 5 * time.Minute
 
 	defaultConfigSyncGRPCListenAddr             = ":8083"
 	defaultConfigSyncGRPCKeepaliveTime          = 30 * time.Second
@@ -147,8 +145,6 @@ type ConfigSyncConfig struct {
 	// TokenPrevious is the prior bearer accepted alongside Token so a token can be
 	// rotated without a window where in-flight data planes fail to authenticate.
 	TokenPrevious     string // #nosec G117 -- config struct field, not a hardcoded credential
-	StreamKey         string
-	StreamMaxLen      int64
 	LKGPath           string
 	LKGKey            string // #nosec G117 -- config struct field, not a hardcoded credential
 	PollInterval      time.Duration
@@ -574,8 +570,6 @@ func getConfigSyncConfig() ConfigSyncConfig {
 		DataPlaneEnabled:     getEnvBool("CONFIG_SYNC_DATA_PLANE_ENABLED", defaultConfigSyncDataPlaneEnabled),
 		Token:                getEnv("CONFIG_SYNC_TOKEN", ""),
 		TokenPrevious:        getEnv("CONFIG_SYNC_TOKEN_PREVIOUS", ""),
-		StreamKey:            getEnv("CONFIG_SYNC_STREAM_KEY", defaultConfigSyncStreamKey),
-		StreamMaxLen:         getEnvInt64("CONFIG_SYNC_STREAM_MAXLEN", defaultConfigSyncStreamMaxLen),
 		LKGPath:              getEnv("CONFIG_SYNC_LKG_PATH", defaultConfigSyncLKGPath),
 		LKGKey:               getEnv("CONFIG_SYNC_LKG_KEY", ""),
 		PollInterval:         getEnvDuration("CONFIG_SYNC_POLL_INTERVAL", defaultConfigSyncPollInterval),
@@ -637,12 +631,6 @@ func (cs ConfigSyncConfig) Validate() error {
 	}
 	if cs.PollInterval <= 0 {
 		return fmt.Errorf("%w: CONFIG_SYNC_POLL_INTERVAL must be a positive duration", errors.ErrInvalidConfig)
-	}
-	if cs.StreamKey == "" {
-		return fmt.Errorf("%w: CONFIG_SYNC_STREAM_KEY must not be empty", errors.ErrInvalidConfig)
-	}
-	if cs.StreamMaxLen < 1 {
-		return fmt.Errorf("%w: CONFIG_SYNC_STREAM_MAXLEN must be a positive integer", errors.ErrInvalidConfig)
 	}
 	return nil
 }

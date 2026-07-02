@@ -402,8 +402,6 @@ func dbLessValid() *Config {
 			DataPlaneEnabled: true,
 			Token:            "config-sync-token",
 			GRPCEndpoint:     "control.example:8083",
-			StreamKey:        defaultConfigSyncStreamKey,
-			StreamMaxLen:     defaultConfigSyncStreamMaxLen,
 			LKGPath:          defaultConfigSyncLKGPath,
 			LKGKey:           aes256Key(),
 			PollInterval:     5 * time.Minute,
@@ -469,8 +467,6 @@ func TestValidate_DBLessRequiresConfigSync(t *testing.T) {
 		}},
 		{"empty key", func(cs *ConfigSyncConfig) { cs.LKGKey = "" }},
 		{"non-positive poll", func(cs *ConfigSyncConfig) { cs.PollInterval = 0 }},
-		{"empty stream key", func(cs *ConfigSyncConfig) { cs.StreamKey = "" }},
-		{"stream maxlen below one", func(cs *ConfigSyncConfig) { cs.StreamMaxLen = 0 }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -533,12 +529,6 @@ func TestLoadConfig_ConfigSyncDefaults(t *testing.T) {
 	if cfg.ConfigSync.DataPlaneEnabled {
 		t.Errorf("ConfigSync.DataPlaneEnabled default = true, want false")
 	}
-	if cfg.ConfigSync.StreamKey != defaultConfigSyncStreamKey {
-		t.Errorf("ConfigSync.StreamKey = %q, want %q", cfg.ConfigSync.StreamKey, defaultConfigSyncStreamKey)
-	}
-	if cfg.ConfigSync.StreamMaxLen != defaultConfigSyncStreamMaxLen {
-		t.Errorf("ConfigSync.StreamMaxLen = %d, want %d", cfg.ConfigSync.StreamMaxLen, defaultConfigSyncStreamMaxLen)
-	}
 	if cfg.ConfigSync.PollInterval != defaultConfigSyncPollInterval {
 		t.Errorf("ConfigSync.PollInterval = %v, want %v", cfg.ConfigSync.PollInterval, defaultConfigSyncPollInterval)
 	}
@@ -560,7 +550,6 @@ func TestLoadConfig_DBLessDataPlaneViaEnv(t *testing.T) {
 	t.Setenv("CONFIG_SYNC_TOKEN", "config-sync-token")
 	t.Setenv("CONFIG_SYNC_GRPC_ENDPOINT", "control.example:8083")
 	t.Setenv("CONFIG_SYNC_LKG_KEY", aes256Key())
-	t.Setenv("CONFIG_SYNC_STREAM_MAXLEN", "2000")
 
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -574,9 +563,6 @@ func TestLoadConfig_DBLessDataPlaneViaEnv(t *testing.T) {
 	}
 	if cfg.ConfigSync.Token != "config-sync-token" {
 		t.Errorf("ConfigSync.Token = %q, want %q", cfg.ConfigSync.Token, "config-sync-token")
-	}
-	if cfg.ConfigSync.StreamMaxLen != 2000 {
-		t.Errorf("ConfigSync.StreamMaxLen = %d, want 2000", cfg.ConfigSync.StreamMaxLen)
 	}
 	if cfg.ConfigSync.InstanceID == "" {
 		t.Errorf("ConfigSync.InstanceID = empty, want a resolved host id")

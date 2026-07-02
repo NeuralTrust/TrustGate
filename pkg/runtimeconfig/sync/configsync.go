@@ -18,12 +18,6 @@ type ConfigStore[T any] interface {
 	Version() string
 }
 
-type ChangeNotifier interface {
-	Tail(ctx context.Context) (lastID string, err error)
-	Watch(ctx context.Context, lastID string) (id, version string, err error)
-	Publish(ctx context.Context, version string) (id string, err error)
-}
-
 // StreamTransport is the DP-side control channel: block for the next change
 // notice, and report the version the data plane has applied. Implementations
 // (the gRPC client) reconnect internally with backoff.

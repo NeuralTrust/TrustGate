@@ -20,6 +20,7 @@ import (
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
 	consumerrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/consumer"
 	gatewayrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/gateway"
+	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	repo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/policy"
 	registryrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -30,7 +31,7 @@ func newRegistryRepo(conn *database.Connection) *registryrepo.Repository {
 	if err != nil {
 		panic(err)
 	}
-	return registryrepo.NewRepository(conn, cipher)
+	return registryrepo.NewRepository(conn, cipher, outboxrepo.NewRepository(conn))
 }
 
 func setupRepo(t *testing.T) (*repo.Repository, *gatewayrepo.Repository, *database.Connection) {
@@ -68,7 +69,8 @@ func setupRepo(t *testing.T) (*repo.Repository, *gatewayrepo.Repository, *databa
 		pool.Close()
 	})
 
-	return repo.NewRepository(conn), gatewayrepo.NewRepository(conn), conn
+	appender := outboxrepo.NewRepository(conn)
+	return repo.NewRepository(conn, appender), gatewayrepo.NewRepository(conn, appender), conn
 }
 
 func seedConsumer(t *testing.T, conn *database.Connection, gwID ids.GatewayID, name string) ids.ConsumerID {
@@ -93,7 +95,7 @@ func seedConsumer(t *testing.T, conn *database.Connection, gwID ids.GatewayID, n
 	if err != nil {
 		t.Fatalf("consumer domain.New: %v", err)
 	}
-	if err := consumerrepo.NewRepository(conn).Save(ctx, cons); err != nil {
+	if err := consumerrepo.NewRepository(conn, outboxrepo.NewRepository(conn)).Save(ctx, cons); err != nil {
 		t.Fatalf("consumer Save: %v", err)
 	}
 	return cons.ID
@@ -378,7 +380,7 @@ func TestRepository_ConsumerPolicyJunction_AttachDetachRoundTrip(t *testing.T) {
 	gwID := seedGateway(t, gw, "pgw-junction")
 	c1 := seedConsumer(t, conn, gwID, "junction-a")
 	c2 := seedConsumer(t, conn, gwID, "junction-b")
-	consumers := consumerrepo.NewRepository(conn)
+	consumers := consumerrepo.NewRepository(conn, outboxrepo.NewRepository(conn))
 
 	p := validPolicy(t, gwID, "linked")
 	if err := r.Save(ctx, p); err != nil {
@@ -422,7 +424,7 @@ func TestRepository_DeletePolicy_CascadesJunction(t *testing.T) {
 	ctx := context.Background()
 	gwID := seedGateway(t, gw, "pgw-cascade")
 	c1 := seedConsumer(t, conn, gwID, "cascade-a")
-	consumers := consumerrepo.NewRepository(conn)
+	consumers := consumerrepo.NewRepository(conn, outboxrepo.NewRepository(conn))
 
 	p := validPolicy(t, gwID, "cascade")
 	if err := r.Save(ctx, p); err != nil {

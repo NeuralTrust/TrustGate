@@ -28,6 +28,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	consumerrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/consumer"
+	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 )
 
 func Consumer(c *container.Container) error {
@@ -38,8 +39,8 @@ func Consumer(c *container.Container) error {
 }
 
 func provideConsumerRepository(c *container.Container) error {
-	return c.Provide(func(conn *database.Connection) domain.Repository {
-		return consumerrepo.NewRepository(conn)
+	return c.Provide(func(conn *database.Connection, appender outboxrepo.Appender) domain.Repository {
+		return consumerrepo.NewRepository(conn, appender)
 	})
 }
 
