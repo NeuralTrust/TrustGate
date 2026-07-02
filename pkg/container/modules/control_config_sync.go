@@ -22,8 +22,6 @@ import (
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
-	"github.com/NeuralTrust/TrustGate/pkg/configsnapshot/readmodel"
-	"github.com/NeuralTrust/TrustGate/pkg/configsync"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
@@ -34,6 +32,8 @@ import (
 	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	infrasnapshot "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
+	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
+	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 	"go.uber.org/dig"
 )
 
@@ -49,8 +49,8 @@ type compilerReaders struct {
 }
 
 func ControlConfigSync(c *container.Container) error {
-	if err := c.Provide(func(r compilerReaders) *appsnapshot.Compiler {
-		return appsnapshot.NewCompiler(r.Gateways, r.Consumers, r.Registries, r.Policies, r.Auths, r.Roles, r.Catalog)
+	if err := c.Provide(func(r compilerReaders, logger *slog.Logger) *appsnapshot.Compiler {
+		return appsnapshot.NewCompiler(r.Gateways, r.Consumers, r.Registries, r.Policies, r.Auths, r.Roles, r.Catalog, logger)
 	}); err != nil {
 		return err
 	}
@@ -75,7 +75,10 @@ func ControlConfigSync(c *container.Container) error {
 		logger *slog.Logger,
 		cfg *config.Config,
 	) *appsnapshot.Recompiler {
-		return appsnapshot.NewRecompiler(compiler, codec, holder, notifier, logger, cfg.ConfigSync.RecompileDebounce)
+		return appsnapshot.NewRecompiler(compiler, codec, holder, notifier, logger, appsnapshot.RecompilerConfig{
+			Debounce: cfg.ConfigSync.RecompileDebounce,
+			Backstop: cfg.ConfigSync.RecompileBackstop,
+		})
 	}); err != nil {
 		return err
 	}

@@ -1,31 +1,18 @@
-// Copyright 2026 NeuralTrust
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package configsnapshot
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
-	"github.com/NeuralTrust/TrustGate/pkg/configsnapshot/readmodel"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 )
 
 const compilerPageSize = 100
@@ -38,6 +25,7 @@ type Compiler struct {
 	auths      AuthReader
 	roles      RoleReader
 	catalog    CatalogReader
+	logger     *slog.Logger
 }
 
 func NewCompiler(
@@ -48,7 +36,11 @@ func NewCompiler(
 	auths AuthReader,
 	roles RoleReader,
 	catalog CatalogReader,
+	logger *slog.Logger,
 ) *Compiler {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Compiler{
 		gateways:   gateways,
 		consumers:  consumers,
@@ -57,6 +49,7 @@ func NewCompiler(
 		auths:      auths,
 		roles:      roles,
 		catalog:    catalog,
+		logger:     logger,
 	}
 }
 
@@ -66,12 +59,33 @@ func (c *Compiler) Compile(ctx context.Context) (*readmodel.Snapshot, error) {
 		return nil, err
 	}
 
-	data := readmodel.Data{Gateways: gateways}
+	data := readmodel.Data{}
+	var skipped int
 	for i := range gateways {
-		if err := c.collectGateway(ctx, gateways[i].ID, &data); err != nil {
+		var gwData readmodel.Data
+		if err := c.collectGateway(ctx, gateways[i].ID, &gwData); err != nil {
+			if errors.Is(err, commonerrors.ErrCorruptData) {
+				c.logger.Warn("skipping gateway with corrupt persisted config from snapshot",
+					slog.String("component", component),
+					slog.String("gateway_id", gateways[i].ID.String()),
+					slog.String("error", err.Error()))
+				skipped++
+				continue
+			}
 			return nil, err
 		}
+		data.Gateways = append(data.Gateways, gateways[i])
+		data.Consumers = append(data.Consumers, gwData.Consumers...)
+		data.Registries = append(data.Registries, gwData.Registries...)
+		data.Policies = append(data.Policies, gwData.Policies...)
+		data.Auths = append(data.Auths, gwData.Auths...)
+		data.Roles = append(data.Roles, gwData.Roles...)
 	}
+
+	if skipped > 0 && len(data.Gateways) == 0 {
+		return nil, fmt.Errorf("configsnapshot: every gateway (%d) skipped due to corrupt persisted config; refusing to publish empty snapshot: %w", skipped, commonerrors.ErrCorruptData)
+	}
+
 	if err := c.collectCatalog(ctx, &data); err != nil {
 		return nil, err
 	}

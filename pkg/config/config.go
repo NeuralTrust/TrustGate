@@ -107,6 +107,7 @@ const (
 	defaultConfigSyncLKGPath                 = "/var/lib/trustgate/snapshot.lkg"
 	defaultConfigSyncPollInterval            = 5 * time.Minute
 	defaultConfigSyncRecompileDebounce       = 2 * time.Second
+	defaultConfigSyncRecompileBackstop       = 5 * time.Minute
 
 	configSyncKeyBytes = 32
 )
@@ -133,8 +134,11 @@ type Config struct {
 }
 
 type ConfigSyncConfig struct {
-	DataPlaneEnabled  bool
-	Token             string // #nosec G117 -- config struct field, not a hardcoded credential
+	DataPlaneEnabled bool
+	Token            string // #nosec G117 -- config struct field, not a hardcoded credential
+	// TokenPrevious is the prior bearer accepted alongside Token so a token can be
+	// rotated without a window where in-flight data planes fail to authenticate.
+	TokenPrevious     string // #nosec G117 -- config struct field, not a hardcoded credential
 	SnapshotURL       string
 	StreamKey         string
 	StreamMaxLen      int64
@@ -142,6 +146,10 @@ type ConfigSyncConfig struct {
 	LKGKey            string // #nosec G117 -- config struct field, not a hardcoded credential
 	PollInterval      time.Duration
 	RecompileDebounce time.Duration
+	// RecompileBackstop periodically recompiles even without a write signal so the
+	// control plane recovers from a failed boot compile and picks up out-of-band
+	// mutations.
+	RecompileBackstop time.Duration
 	InstanceID        string
 	AllowInsecureURL  bool
 }
@@ -540,6 +548,7 @@ func getConfigSyncConfig() ConfigSyncConfig {
 	return ConfigSyncConfig{
 		DataPlaneEnabled:  getEnvBool("CONFIG_SYNC_DATA_PLANE_ENABLED", defaultConfigSyncDataPlaneEnabled),
 		Token:             getEnv("CONFIG_SYNC_TOKEN", ""),
+		TokenPrevious:     getEnv("CONFIG_SYNC_TOKEN_PREVIOUS", ""),
 		SnapshotURL:       getEnv("CONFIG_SYNC_SNAPSHOT_URL", ""),
 		StreamKey:         getEnv("CONFIG_SYNC_STREAM_KEY", defaultConfigSyncStreamKey),
 		StreamMaxLen:      getEnvInt64("CONFIG_SYNC_STREAM_MAXLEN", defaultConfigSyncStreamMaxLen),
@@ -547,6 +556,7 @@ func getConfigSyncConfig() ConfigSyncConfig {
 		LKGKey:            getEnv("CONFIG_SYNC_LKG_KEY", ""),
 		PollInterval:      getEnvDuration("CONFIG_SYNC_POLL_INTERVAL", defaultConfigSyncPollInterval),
 		RecompileDebounce: getEnvDuration("CONFIG_SYNC_RECOMPILE_DEBOUNCE", defaultConfigSyncRecompileDebounce),
+		RecompileBackstop: getEnvDuration("CONFIG_SYNC_RECOMPILE_BACKSTOP", defaultConfigSyncRecompileBackstop),
 		InstanceID:        resolveConfigSyncInstanceID(),
 		AllowInsecureURL:  getEnvBool("CONFIG_SYNC_SNAPSHOT_INSECURE", false),
 	}

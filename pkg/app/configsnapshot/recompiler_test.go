@@ -1,17 +1,3 @@
-// Copyright 2026 NeuralTrust
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package configsnapshot_test
 
 import (
@@ -93,6 +79,7 @@ func newTestCompiler(gateways appsnapshot.GatewayReader) *appsnapshot.Compiler {
 		fakeAuths{byGateway: map[string][]*authdomain.Auth{}},
 		fakeRoles{byGateway: map[string][]*roledomain.Role{}},
 		fakeCatalog{},
+		nil,
 	)
 }
 
@@ -103,7 +90,7 @@ func TestRecompilerPublishesOnChangeOnly(t *testing.T) {
 	holder := appsnapshot.NewHolder()
 	notifier := &recordingNotifier{}
 
-	r := appsnapshot.NewRecompiler(compiler, infrasnapshot.NewCodec(), holder, notifier, nil, time.Second)
+	r := appsnapshot.NewRecompiler(compiler, infrasnapshot.NewCodec(), holder, notifier, nil, appsnapshot.RecompilerConfig{Debounce: time.Second})
 
 	if err := r.Recompile(context.Background()); err != nil {
 		t.Fatalf("first recompile: %v", err)
@@ -140,7 +127,7 @@ func TestRecompilerRetriesAfterPublishFailure(t *testing.T) {
 	holder := appsnapshot.NewHolder()
 	notifier := &recordingNotifier{errs: []error{errors.New("redis down")}}
 
-	r := appsnapshot.NewRecompiler(compiler, infrasnapshot.NewCodec(), holder, notifier, nil, time.Second)
+	r := appsnapshot.NewRecompiler(compiler, infrasnapshot.NewCodec(), holder, notifier, nil, appsnapshot.RecompilerConfig{Debounce: time.Second})
 
 	if err := r.Recompile(context.Background()); err == nil {
 		t.Fatalf("expected error when publish fails")
@@ -168,7 +155,7 @@ func TestRecompilerRefreshesHolderOnRollback(t *testing.T) {
 	holder := appsnapshot.NewHolder()
 	notifier := &recordingNotifier{}
 
-	r := appsnapshot.NewRecompiler(compiler, infrasnapshot.NewCodec(), holder, notifier, nil, time.Second)
+	r := appsnapshot.NewRecompiler(compiler, infrasnapshot.NewCodec(), holder, notifier, nil, appsnapshot.RecompilerConfig{Debounce: time.Second})
 
 	if err := r.Recompile(context.Background()); err != nil {
 		t.Fatalf("first recompile: %v", err)
@@ -203,7 +190,7 @@ func TestRecompilerCoalescesBursts(t *testing.T) {
 	holder := appsnapshot.NewHolder()
 	notifier := &recordingNotifier{}
 
-	r := appsnapshot.NewRecompiler(compiler, infrasnapshot.NewCodec(), holder, notifier, nil, 40*time.Millisecond)
+	r := appsnapshot.NewRecompiler(compiler, infrasnapshot.NewCodec(), holder, notifier, nil, appsnapshot.RecompilerConfig{Debounce: 40 * time.Millisecond})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -225,6 +212,36 @@ func TestRecompilerCoalescesBursts(t *testing.T) {
 	if notifier.count() != 2 {
 		t.Fatalf("expected exactly 2 publishes after coalesced burst, got %d", notifier.count())
 	}
+
+	cancel()
+	<-done
+}
+
+func TestRecompilerBackstopRecompilesWithoutSignal(t *testing.T) {
+	gwA := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
+	gateways := &settableGateways{items: []*gatewaydomain.Gateway{{ID: gwA}}}
+	compiler := newTestCompiler(gateways)
+	holder := appsnapshot.NewHolder()
+	notifier := &recordingNotifier{}
+
+	r := appsnapshot.NewRecompiler(compiler, infrasnapshot.NewCodec(), holder, notifier, nil, appsnapshot.RecompilerConfig{
+		Debounce: time.Hour,
+		Backstop: 30 * time.Millisecond,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_ = r.Run(ctx)
+		close(done)
+	}()
+
+	waitFor(t, func() bool { return notifier.count() == 1 }, time.Second)
+
+	gwB := mustGatewayID(t, "22222222-2222-2222-2222-222222222222")
+	gateways.set([]*gatewaydomain.Gateway{{ID: gwA}, {ID: gwB}})
+
+	waitFor(t, func() bool { return notifier.count() == 2 }, time.Second)
 
 	cancel()
 	<-done

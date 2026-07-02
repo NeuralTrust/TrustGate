@@ -1,17 +1,3 @@
-// Copyright 2026 NeuralTrust
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package configsnapshot
 
 import (
@@ -21,16 +7,24 @@ import (
 	"sync"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/configsnapshot/readmodel"
-	"github.com/NeuralTrust/TrustGate/pkg/configsync"
+	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
+	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 )
 
 const component = "configsnapshot"
 
-const defaultDebounce = 2 * time.Second
+const (
+	defaultDebounce = 2 * time.Second
+	defaultBackstop = 5 * time.Minute
+)
 
 type snapshotCompiler interface {
 	Compile(ctx context.Context) (*readmodel.Snapshot, error)
+}
+
+type RecompilerConfig struct {
+	Debounce time.Duration
+	Backstop time.Duration
 }
 
 type Recompiler struct {
@@ -40,6 +34,7 @@ type Recompiler struct {
 	notifier configsync.ChangeNotifier
 	logger   *slog.Logger
 	debounce time.Duration
+	backstop time.Duration
 	trigger  chan struct{}
 
 	mu        sync.Mutex
@@ -52,13 +47,16 @@ func NewRecompiler(
 	holder *Holder,
 	notifier configsync.ChangeNotifier,
 	logger *slog.Logger,
-	debounce time.Duration,
+	cfg RecompilerConfig,
 ) *Recompiler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	if debounce <= 0 {
-		debounce = defaultDebounce
+	if cfg.Debounce <= 0 {
+		cfg.Debounce = defaultDebounce
+	}
+	if cfg.Backstop <= 0 {
+		cfg.Backstop = defaultBackstop
 	}
 	return &Recompiler{
 		compiler: compiler,
@@ -66,7 +64,8 @@ func NewRecompiler(
 		holder:   holder,
 		notifier: notifier,
 		logger:   logger,
-		debounce: debounce,
+		debounce: cfg.Debounce,
+		backstop: cfg.Backstop,
 		trigger:  make(chan struct{}, 1),
 	}
 }
@@ -90,6 +89,9 @@ func (r *Recompiler) Run(ctx context.Context) error {
 	}
 	defer timer.Stop()
 
+	backstop := time.NewTicker(r.backstop)
+	defer backstop.Stop()
+
 	var armed bool
 	for {
 		select {
@@ -104,6 +106,11 @@ func (r *Recompiler) Run(ctx context.Context) error {
 			armed = false
 			if err := r.recompile(ctx); err != nil && ctx.Err() == nil {
 				r.logger.Error("recompile failed",
+					slog.String("component", component), slog.String("error", err.Error()))
+			}
+		case <-backstop.C:
+			if err := r.recompile(ctx); err != nil && ctx.Err() == nil {
+				r.logger.Error("backstop recompile failed",
 					slog.String("component", component), slog.String("error", err.Error()))
 			}
 		}

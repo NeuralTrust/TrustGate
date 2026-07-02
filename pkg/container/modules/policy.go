@@ -18,8 +18,8 @@ import (
 	"log/slog"
 
 	policyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy"
-	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"

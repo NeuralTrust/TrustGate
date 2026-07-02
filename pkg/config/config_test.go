@@ -557,6 +557,12 @@ func TestLoadConfig_ConfigSyncDefaults(t *testing.T) {
 	if cfg.ConfigSync.RecompileDebounce != defaultConfigSyncRecompileDebounce {
 		t.Errorf("ConfigSync.RecompileDebounce = %v, want %v", cfg.ConfigSync.RecompileDebounce, defaultConfigSyncRecompileDebounce)
 	}
+	if cfg.ConfigSync.RecompileBackstop != defaultConfigSyncRecompileBackstop {
+		t.Errorf("ConfigSync.RecompileBackstop = %v, want %v", cfg.ConfigSync.RecompileBackstop, defaultConfigSyncRecompileBackstop)
+	}
+	if cfg.ConfigSync.TokenPrevious != "" {
+		t.Errorf("ConfigSync.TokenPrevious default = %q, want empty", cfg.ConfigSync.TokenPrevious)
+	}
 }
 
 func TestLoadConfig_DBLessDataPlaneViaEnv(t *testing.T) {

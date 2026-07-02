@@ -1,17 +1,3 @@
-// Copyright 2026 NeuralTrust
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package middleware
 
 import (
@@ -25,17 +11,19 @@ import (
 )
 
 type ConfigSyncAuthMiddleware struct {
-	tokenDigest [32]byte
-	configured  bool
-	logger      *slog.Logger
+	tokenDigests [][32]byte
+	logger       *slog.Logger
 }
 
 func NewConfigSyncAuthMiddleware(cfg *config.Config, logger *slog.Logger) *ConfigSyncAuthMiddleware {
 	m := &ConfigSyncAuthMiddleware{logger: logger}
 	if cfg.ConfigSync.Token != "" {
-		m.tokenDigest = sha256.Sum256([]byte(cfg.ConfigSync.Token))
-		m.configured = true
-	} else if logger != nil {
+		m.tokenDigests = append(m.tokenDigests, sha256.Sum256([]byte(cfg.ConfigSync.Token)))
+	}
+	if cfg.ConfigSync.TokenPrevious != "" {
+		m.tokenDigests = append(m.tokenDigests, sha256.Sum256([]byte(cfg.ConfigSync.TokenPrevious)))
+	}
+	if len(m.tokenDigests) == 0 && logger != nil {
 		logger.Warn("config-sync token is not configured; the snapshot endpoint will reject every pull and no data plane can converge",
 			slog.String("component", "configsnapshot"))
 	}
@@ -44,7 +32,7 @@ func NewConfigSyncAuthMiddleware(cfg *config.Config, logger *slog.Logger) *Confi
 
 func (m *ConfigSyncAuthMiddleware) Middleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		if !m.configured {
+		if len(m.tokenDigests) == 0 {
 			if m.logger != nil {
 				m.logger.Warn("config-sync token is not configured; rejecting snapshot request",
 					slog.String("component", "configsnapshot"))
@@ -56,7 +44,11 @@ func (m *ConfigSyncAuthMiddleware) Middleware() fiber.Handler {
 			return configSyncUnauthorized(c)
 		}
 		providedDigest := sha256.Sum256([]byte(provided))
-		if subtle.ConstantTimeCompare(providedDigest[:], m.tokenDigest[:]) != 1 {
+		matched := 0
+		for i := range m.tokenDigests {
+			matched |= subtle.ConstantTimeCompare(providedDigest[:], m.tokenDigests[i][:])
+		}
+		if matched != 1 {
 			return configSyncUnauthorized(c)
 		}
 		return c.Next()

@@ -1,17 +1,3 @@
-// Copyright 2026 NeuralTrust
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package middleware_test
 
 import (
@@ -24,8 +10,13 @@ import (
 )
 
 func newConfigSyncApp(token string) *fiber.App {
+	return newConfigSyncAppWithPrevious(token, "")
+}
+
+func newConfigSyncAppWithPrevious(token, previous string) *fiber.App {
 	cfg := &config.Config{}
 	cfg.ConfigSync.Token = token
+	cfg.ConfigSync.TokenPrevious = previous
 	m := middleware.NewConfigSyncAuthMiddleware(cfg, nil)
 	app := fiber.New()
 	app.Get("/snapshot", m.Middleware(), func(c *fiber.Ctx) error {
@@ -72,5 +63,27 @@ func TestConfigSyncAuthFailsClosedWhenUnset(t *testing.T) {
 	app := newConfigSyncApp("")
 	if status := requestStatus(t, app, "Bearer anything"); status != fiber.StatusUnauthorized {
 		t.Fatalf("expected 401 when token unset, got %d", status)
+	}
+}
+
+func TestConfigSyncAuthTokenRotation(t *testing.T) {
+	app := newConfigSyncAppWithPrevious("current-token", "previous-token")
+
+	cases := []struct {
+		name   string
+		header string
+		want   int
+	}{
+		{"current accepted", "Bearer current-token", fiber.StatusOK},
+		{"previous accepted", "Bearer previous-token", fiber.StatusOK},
+		{"unknown rejected", "Bearer stale-token", fiber.StatusUnauthorized},
+		{"missing rejected", "", fiber.StatusUnauthorized},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if status := requestStatus(t, app, tc.header); status != tc.want {
+				t.Fatalf("expected %d, got %d", tc.want, status)
+			}
+		})
 	}
 }

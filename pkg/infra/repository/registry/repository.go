@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
@@ -284,24 +285,24 @@ func (r *Repository) scanRegistry(s rowScanner) (*domain.Registry, error) {
 		}
 		if len(providerOptionsRaw) > 0 {
 			if err := json.Unmarshal(providerOptionsRaw, &target.ProviderOptions); err != nil {
-				return nil, fmt.Errorf("scan provider_options: %w", err)
+				return nil, fmt.Errorf("scan provider_options: %w: %w", commonerrors.ErrCorruptData, err)
 			}
 		}
 		if len(authRaw) > 0 {
 			plain, err := r.cipher.Decrypt(string(authRaw))
 			if err != nil {
-				return nil, fmt.Errorf("decrypt auth: %w", err)
+				return nil, fmt.Errorf("decrypt auth: %w: %w", commonerrors.ErrCorruptData, err)
 			}
 			var auth domain.TargetAuth
 			if err := json.Unmarshal([]byte(plain), &auth); err != nil {
-				return nil, fmt.Errorf("scan auth: %w", err)
+				return nil, fmt.Errorf("scan auth: %w: %w", commonerrors.ErrCorruptData, err)
 			}
 			target.Auth = &auth
 		}
 		if len(healthChecksRaw) > 0 {
 			var hc domain.HealthChecks
 			if err := json.Unmarshal(healthChecksRaw, &hc); err != nil {
-				return nil, fmt.Errorf("scan health_checks: %w", err)
+				return nil, fmt.Errorf("scan health_checks: %w: %w", commonerrors.ErrCorruptData, err)
 			}
 			target.HealthChecks = &hc
 		}
@@ -311,7 +312,7 @@ func (r *Repository) scanRegistry(s rowScanner) (*domain.Registry, error) {
 	if len(mcpTargetRaw) > 0 {
 		var t domain.MCPTarget
 		if err := json.Unmarshal(mcpTargetRaw, &t); err != nil {
-			return nil, fmt.Errorf("scan mcp_target: %w", err)
+			return nil, fmt.Errorf("scan mcp_target: %w: %w", commonerrors.ErrCorruptData, err)
 		}
 		b.MCPTarget = &t
 	}
