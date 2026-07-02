@@ -109,6 +109,14 @@ const (
 	defaultConfigSyncRecompileDebounce       = 2 * time.Second
 	defaultConfigSyncRecompileBackstop       = 5 * time.Minute
 
+	defaultConfigSyncGRPCListenAddr             = ":8083"
+	defaultConfigSyncGRPCKeepaliveTime          = 30 * time.Second
+	defaultConfigSyncGRPCKeepaliveTimeout       = 10 * time.Second
+	defaultConfigSyncGRPCMinBackoff             = 1 * time.Second
+	defaultConfigSyncGRPCMaxBackoff             = 30 * time.Second
+	defaultConfigSyncOutboxRetention            = 24 * time.Hour
+	defaultConfigSyncOutboxMaxRows        int64 = 10000
+
 	configSyncKeyBytes = 32
 )
 
@@ -152,6 +160,25 @@ type ConfigSyncConfig struct {
 	RecompileBackstop time.Duration
 	InstanceID        string
 	AllowInsecureURL  bool
+	// GRPCEndpoint is the control-plane host:port the data plane dials for the
+	// config-sync gRPC transport (ENG-959).
+	GRPCEndpoint string
+	// GRPCListenAddr is the control-plane listen address for the config-sync gRPC
+	// server.
+	GRPCListenAddr string
+	TLSCAPath      string
+	TLSServerName  string
+	// TLSInsecure disables transport security on the data-plane dial. It is a
+	// dev-only escape hatch and is rejected in deployed environments.
+	TLSInsecure          bool
+	GRPCTLSCertPath      string
+	GRPCTLSKeyPath       string // #nosec G117 -- config struct field, not a hardcoded credential
+	GRPCKeepaliveTime    time.Duration
+	GRPCKeepaliveTimeout time.Duration
+	GRPCMinBackoff       time.Duration
+	GRPCMaxBackoff       time.Duration
+	OutboxRetention      time.Duration
+	OutboxMaxRows        int64
 }
 
 type ServerConfig struct {
@@ -546,19 +573,32 @@ func getOpenAIModerationConfig() OpenAIModerationConfig {
 
 func getConfigSyncConfig() ConfigSyncConfig {
 	return ConfigSyncConfig{
-		DataPlaneEnabled:  getEnvBool("CONFIG_SYNC_DATA_PLANE_ENABLED", defaultConfigSyncDataPlaneEnabled),
-		Token:             getEnv("CONFIG_SYNC_TOKEN", ""),
-		TokenPrevious:     getEnv("CONFIG_SYNC_TOKEN_PREVIOUS", ""),
-		SnapshotURL:       getEnv("CONFIG_SYNC_SNAPSHOT_URL", ""),
-		StreamKey:         getEnv("CONFIG_SYNC_STREAM_KEY", defaultConfigSyncStreamKey),
-		StreamMaxLen:      getEnvInt64("CONFIG_SYNC_STREAM_MAXLEN", defaultConfigSyncStreamMaxLen),
-		LKGPath:           getEnv("CONFIG_SYNC_LKG_PATH", defaultConfigSyncLKGPath),
-		LKGKey:            getEnv("CONFIG_SYNC_LKG_KEY", ""),
-		PollInterval:      getEnvDuration("CONFIG_SYNC_POLL_INTERVAL", defaultConfigSyncPollInterval),
-		RecompileDebounce: getEnvDuration("CONFIG_SYNC_RECOMPILE_DEBOUNCE", defaultConfigSyncRecompileDebounce),
-		RecompileBackstop: getEnvDuration("CONFIG_SYNC_RECOMPILE_BACKSTOP", defaultConfigSyncRecompileBackstop),
-		InstanceID:        resolveConfigSyncInstanceID(),
-		AllowInsecureURL:  getEnvBool("CONFIG_SYNC_SNAPSHOT_INSECURE", false),
+		DataPlaneEnabled:     getEnvBool("CONFIG_SYNC_DATA_PLANE_ENABLED", defaultConfigSyncDataPlaneEnabled),
+		Token:                getEnv("CONFIG_SYNC_TOKEN", ""),
+		TokenPrevious:        getEnv("CONFIG_SYNC_TOKEN_PREVIOUS", ""),
+		SnapshotURL:          getEnv("CONFIG_SYNC_SNAPSHOT_URL", ""),
+		StreamKey:            getEnv("CONFIG_SYNC_STREAM_KEY", defaultConfigSyncStreamKey),
+		StreamMaxLen:         getEnvInt64("CONFIG_SYNC_STREAM_MAXLEN", defaultConfigSyncStreamMaxLen),
+		LKGPath:              getEnv("CONFIG_SYNC_LKG_PATH", defaultConfigSyncLKGPath),
+		LKGKey:               getEnv("CONFIG_SYNC_LKG_KEY", ""),
+		PollInterval:         getEnvDuration("CONFIG_SYNC_POLL_INTERVAL", defaultConfigSyncPollInterval),
+		RecompileDebounce:    getEnvDuration("CONFIG_SYNC_RECOMPILE_DEBOUNCE", defaultConfigSyncRecompileDebounce),
+		RecompileBackstop:    getEnvDuration("CONFIG_SYNC_RECOMPILE_BACKSTOP", defaultConfigSyncRecompileBackstop),
+		InstanceID:           resolveConfigSyncInstanceID(),
+		AllowInsecureURL:     getEnvBool("CONFIG_SYNC_SNAPSHOT_INSECURE", false),
+		GRPCEndpoint:         getEnv("CONFIG_SYNC_GRPC_ENDPOINT", ""),
+		GRPCListenAddr:       getEnv("CONFIG_SYNC_GRPC_LISTEN_ADDR", defaultConfigSyncGRPCListenAddr),
+		TLSCAPath:            getEnv("CONFIG_SYNC_TLS_CA", ""),
+		TLSServerName:        getEnv("CONFIG_SYNC_TLS_SERVER_NAME", ""),
+		TLSInsecure:          getEnvBool("CONFIG_SYNC_TLS_INSECURE", false),
+		GRPCTLSCertPath:      getEnv("CONFIG_SYNC_GRPC_TLS_CERT", ""),
+		GRPCTLSKeyPath:       getEnv("CONFIG_SYNC_GRPC_TLS_KEY", ""),
+		GRPCKeepaliveTime:    getEnvDuration("CONFIG_SYNC_GRPC_KEEPALIVE_TIME", defaultConfigSyncGRPCKeepaliveTime),
+		GRPCKeepaliveTimeout: getEnvDuration("CONFIG_SYNC_GRPC_KEEPALIVE_TIMEOUT", defaultConfigSyncGRPCKeepaliveTimeout),
+		GRPCMinBackoff:       getEnvDuration("CONFIG_SYNC_GRPC_MIN_BACKOFF", defaultConfigSyncGRPCMinBackoff),
+		GRPCMaxBackoff:       getEnvDuration("CONFIG_SYNC_GRPC_MAX_BACKOFF", defaultConfigSyncGRPCMaxBackoff),
+		OutboxRetention:      getEnvDuration("CONFIG_SYNC_OUTBOX_RETENTION", defaultConfigSyncOutboxRetention),
+		OutboxMaxRows:        getEnvInt64("CONFIG_SYNC_OUTBOX_MAX_ROWS", defaultConfigSyncOutboxMaxRows),
 	}
 }
 
@@ -655,10 +695,33 @@ func (c *Config) Validate() error {
 	if c.Provider.MaxRetries < 0 {
 		return fmt.Errorf("%w: PROVIDER_MAX_RETRIES must be zero or greater", errors.ErrInvalidConfig)
 	}
+	if c.isDeployed() && c.ConfigSync.DataPlaneEnabled && c.ConfigSync.TLSInsecure {
+		return fmt.Errorf("%w: CONFIG_SYNC_TLS_INSECURE must not be true in deployed environments so the config-sync channel is not sent in cleartext", errors.ErrInvalidConfig)
+	}
 	if err := c.ConfigSync.Validate(); err != nil {
 		return err
 	}
 	return nil
+}
+
+// IsDeployed reports whether APP_ENV marks a non-local deployment (staging or
+// production), so plane wiring can enforce deployed-only requirements such as the
+// control-plane config-sync gRPC server TLS certificate.
+func (c *Config) IsDeployed() bool {
+	return c.isDeployed()
+}
+
+func (c *Config) isDeployed() bool {
+	return isDeployedEnv(c.AppEnv)
+}
+
+func isDeployedEnv(appEnv string) bool {
+	switch strings.ToLower(strings.TrimSpace(appEnv)) {
+	case "prod", "production", "staging", "stage":
+		return true
+	default:
+		return false
+	}
 }
 
 func getEnv(key, defaultValue string) string {

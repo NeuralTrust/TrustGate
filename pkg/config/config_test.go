@@ -610,3 +610,71 @@ func TestLoadConfig_DBLessRejectsMissingConfigSyncToken(t *testing.T) {
 		t.Errorf("error %v is not ErrInvalidConfig", err)
 	}
 }
+
+func TestLoadConfig_ConfigSyncGRPCDefaults(t *testing.T) {
+	minimumEnv(t)
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	cs := cfg.ConfigSync
+	if cs.GRPCListenAddr != defaultConfigSyncGRPCListenAddr {
+		t.Errorf("GRPCListenAddr = %q, want %q", cs.GRPCListenAddr, defaultConfigSyncGRPCListenAddr)
+	}
+	if cs.GRPCKeepaliveTime != defaultConfigSyncGRPCKeepaliveTime {
+		t.Errorf("GRPCKeepaliveTime = %v, want %v", cs.GRPCKeepaliveTime, defaultConfigSyncGRPCKeepaliveTime)
+	}
+	if cs.GRPCKeepaliveTimeout != defaultConfigSyncGRPCKeepaliveTimeout {
+		t.Errorf("GRPCKeepaliveTimeout = %v, want %v", cs.GRPCKeepaliveTimeout, defaultConfigSyncGRPCKeepaliveTimeout)
+	}
+	if cs.GRPCMinBackoff != defaultConfigSyncGRPCMinBackoff {
+		t.Errorf("GRPCMinBackoff = %v, want %v", cs.GRPCMinBackoff, defaultConfigSyncGRPCMinBackoff)
+	}
+	if cs.GRPCMaxBackoff != defaultConfigSyncGRPCMaxBackoff {
+		t.Errorf("GRPCMaxBackoff = %v, want %v", cs.GRPCMaxBackoff, defaultConfigSyncGRPCMaxBackoff)
+	}
+	if cs.OutboxRetention != defaultConfigSyncOutboxRetention {
+		t.Errorf("OutboxRetention = %v, want %v", cs.OutboxRetention, defaultConfigSyncOutboxRetention)
+	}
+	if cs.OutboxMaxRows != defaultConfigSyncOutboxMaxRows {
+		t.Errorf("OutboxMaxRows = %d, want %d", cs.OutboxMaxRows, defaultConfigSyncOutboxMaxRows)
+	}
+	if cs.TLSInsecure {
+		t.Errorf("TLSInsecure default = true, want false")
+	}
+}
+
+func TestValidate_DeployedRejectsConfigSyncTLSInsecure(t *testing.T) {
+	cfg := dbLessValid()
+	cfg.AppEnv = "production"
+	cfg.ConfigSync.TLSInsecure = true
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error for CONFIG_SYNC_TLS_INSECURE in a deployed environment")
+	}
+	if !stderrors.Is(err, errors.ErrInvalidConfig) {
+		t.Errorf("error %v is not ErrInvalidConfig", err)
+	}
+}
+
+func TestValidate_DeployedAllowsSecureConfigSync(t *testing.T) {
+	cfg := dbLessValid()
+	cfg.AppEnv = "production"
+	cfg.ConfigSync.TLSInsecure = false
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("deployed data plane with TLS enabled should validate: %v", err)
+	}
+}
+
+func TestValidate_LocalAllowsConfigSyncTLSInsecure(t *testing.T) {
+	cfg := dbLessValid()
+	cfg.AppEnv = "dev"
+	cfg.ConfigSync.TLSInsecure = true
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("local data plane should allow CONFIG_SYNC_TLS_INSECURE: %v", err)
+	}
+}

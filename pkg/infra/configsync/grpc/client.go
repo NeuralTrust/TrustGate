@@ -1,0 +1,189 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package grpc
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"sync"
+
+	"github.com/NeuralTrust/TrustGate/pkg/config"
+	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
+)
+
+// Client is the data-plane end of the config-sync transport. It implements
+// configsync.ConfigFetcher (Fetch via GetSnapshot) and configsync.StreamTransport
+// (Watch/Ack via the long-lived Sync stream), reconnecting the Sync stream on
+// break.
+type Client struct {
+	conn       *grpc.ClientConn
+	cli        snapshotpb.ConfigSyncClient
+	instanceID string
+	logger     *slog.Logger
+
+	mu          sync.Mutex
+	stream      snapshotpb.ConfigSync_SyncClient
+	lastApplied string
+}
+
+// NewClient dials the control plane with TLS (or dev-insecure), per-RPC bearer
+// credentials, and keepalive tuning.
+func NewClient(cfg config.ConfigSyncConfig, logger *slog.Logger) (*Client, error) {
+	creds, err := clientTransportCredentials(cfg)
+	if err != nil {
+		return nil, err
+	}
+	opts := []grpc.DialOption{
+		grpc.WithTransportCredentials(creds),
+		grpc.WithPerRPCCredentials(newBearerPerRPCCredentials(cfg)),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                cfg.GRPCKeepaliveTime,
+			Timeout:             cfg.GRPCKeepaliveTimeout,
+			PermitWithoutStream: true,
+		}),
+	}
+	conn, err := grpc.NewClient(cfg.GRPCEndpoint, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("configsync: dial %q: %w", cfg.GRPCEndpoint, err)
+	}
+	return newClient(conn, cfg.InstanceID, logger), nil
+}
+
+func newClient(conn *grpc.ClientConn, instanceID string, logger *slog.Logger) *Client {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Client{
+		conn:       conn,
+		cli:        snapshotpb.NewConfigSyncClient(conn),
+		instanceID: instanceID,
+		logger:     logger,
+	}
+}
+
+// Close tears down the underlying connection.
+func (c *Client) Close() error {
+	return c.conn.Close()
+}
+
+// Fetch pulls the current snapshot via GetSnapshot, short-circuiting on
+// not_modified and verifying the reassembled body length against the header.
+func (c *Client) Fetch(ctx context.Context, etag string) ([]byte, string, bool, error) {
+	stream, err := c.cli.GetSnapshot(ctx, &snapshotpb.GetSnapshotRequest{AppliedVersion: etag, InstanceId: c.instanceID})
+	if err != nil {
+		return nil, "", false, fmt.Errorf("configsync: get snapshot: %w", err)
+	}
+	first, err := stream.Recv()
+	if err != nil {
+		return nil, "", false, fmt.Errorf("configsync: read snapshot header: %w", err)
+	}
+	header := first.GetHeader()
+	if header == nil {
+		return nil, "", false, fmt.Errorf("configsync: first snapshot chunk is not a header")
+	}
+	if header.GetNotModified() {
+		return nil, "", true, nil
+	}
+	total := header.GetTotalBytes()
+	if total < 0 || total > maxSnapshotBytes {
+		return nil, "", false, fmt.Errorf("configsync: snapshot header size %d out of bounds", total)
+	}
+	buf := make([]byte, 0, total)
+	for {
+		msg, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, "", false, fmt.Errorf("configsync: read snapshot chunk: %w", err)
+		}
+		buf = append(buf, msg.GetData()...)
+		if int64(len(buf)) > maxSnapshotBytes {
+			return nil, "", false, fmt.Errorf("configsync: snapshot body exceeds %d bytes", int64(maxSnapshotBytes))
+		}
+	}
+	if int64(len(buf)) != total {
+		return nil, "", false, fmt.Errorf("configsync: snapshot body length %d != header total %d", len(buf), total)
+	}
+	return buf, header.GetVersion(), false, nil
+}
+
+// Watch blocks for the next VersionNotice on the Sync stream, reopening the
+// stream (and re-sending Hello) when it is not yet established or has broken.
+func (c *Client) Watch(ctx context.Context) (string, error) {
+	stream, err := c.ensureStream(ctx)
+	if err != nil {
+		return "", err
+	}
+	for {
+		msg, err := stream.Recv()
+		if err != nil {
+			c.resetStream()
+			return "", fmt.Errorf("configsync: watch recv: %w", err)
+		}
+		if notice := msg.GetNotice(); notice != nil {
+			return notice.GetVersion(), nil
+		}
+	}
+}
+
+// Ack reports the applied version to the control plane over the Sync stream.
+func (c *Client) Ack(ctx context.Context, appliedVersion string) error {
+	stream, err := c.ensureStream(ctx)
+	if err != nil {
+		return err
+	}
+	ack := &snapshotpb.ClientMessage{Msg: &snapshotpb.ClientMessage_Ack{Ack: &snapshotpb.Ack{AppliedVersion: appliedVersion}}}
+	if err := stream.Send(ack); err != nil {
+		c.resetStream()
+		return fmt.Errorf("configsync: ack send: %w", err)
+	}
+	c.mu.Lock()
+	c.lastApplied = appliedVersion
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *Client) ensureStream(ctx context.Context) (snapshotpb.ConfigSync_SyncClient, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stream != nil {
+		return c.stream, nil
+	}
+	stream, err := c.cli.Sync(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("configsync: open sync stream: %w", err)
+	}
+	hello := &snapshotpb.ClientMessage{Msg: &snapshotpb.ClientMessage_Hello{Hello: &snapshotpb.Hello{
+		InstanceId:         c.instanceID,
+		LastAppliedVersion: c.lastApplied,
+	}}}
+	if err := stream.Send(hello); err != nil {
+		return nil, fmt.Errorf("configsync: send hello: %w", err)
+	}
+	c.stream = stream
+	return stream, nil
+}
+
+func (c *Client) resetStream() {
+	c.mu.Lock()
+	c.stream = nil
+	c.mu.Unlock()
+}

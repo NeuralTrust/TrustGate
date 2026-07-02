@@ -24,6 +24,14 @@ type ChangeNotifier interface {
 	Publish(ctx context.Context, version string) (id string, err error)
 }
 
+// StreamTransport is the DP-side control channel: block for the next change
+// notice, and report the version the data plane has applied. Implementations
+// (the gRPC client) reconnect internally with backoff.
+type StreamTransport interface {
+	Watch(ctx context.Context) (version string, err error)
+	Ack(ctx context.Context, appliedVersion string) error
+}
+
 type Crypto interface {
 	Encrypt(plaintext []byte) ([]byte, error)
 	Decrypt(ciphertext []byte) ([]byte, error)
