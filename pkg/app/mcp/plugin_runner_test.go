@@ -132,6 +132,7 @@ func TestPluginRunner_PreResponse(t *testing.T) {
 	tests := []struct {
 		name        string
 		plan        []policydomain.Stage
+		outcome     *appplugins.StageOutcome
 		execErr     error
 		wantRPCCode int64
 		wantRPCData string
@@ -155,6 +156,13 @@ func TestPluginRunner_PreResponse(t *testing.T) {
 			wantRPCData: `{"trace_id":"t3"}`,
 		},
 		{
+			name:        "enforce block via short circuit",
+			plan:        []policydomain.Stage{policydomain.StagePreResponse},
+			outcome:     &appplugins.StageOutcome{ShortCircuit: true, StatusCode: 403, Body: []byte(`{"trace_id":"t4"}`)},
+			wantRPCCode: codePolicyBlocked,
+			wantRPCData: `{"trace_id":"t4"}`,
+		},
+		{
 			name:    "generic error fails open even when plan blocks pre_response",
 			plan:    []policydomain.Stage{policydomain.StagePreResponse},
 			execErr: errors.New("guard down"),
@@ -175,9 +183,13 @@ func TestPluginRunner_PreResponse(t *testing.T) {
 
 			exec := pluginmocks.NewExecutor(t)
 			var captured appplugins.StageInput
+			outcome := tt.outcome
+			if outcome == nil {
+				outcome = &appplugins.StageOutcome{}
+			}
 			exec.EXPECT().RunStage(mock.Anything, mock.Anything).
 				Run(func(_ context.Context, in appplugins.StageInput) { captured = in }).
-				Return(&appplugins.StageOutcome{}, tt.execErr)
+				Return(outcome, tt.execErr)
 
 			rc := routableMCPConsumer(preResponsePolicy(tt.plan...))
 			runner := NewPluginRunner(exec, discardLogger())

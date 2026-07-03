@@ -124,17 +124,26 @@ func (r *PluginRunner) PreResponse(
 		Body:      result,
 		Streaming: false,
 	}
-	if _, err := r.executor.RunStage(ctx, appplugins.StageInput{
+	outcome, err := r.executor.RunStage(ctx, appplugins.StageInput{
 		Stage:    policy.StagePreResponse,
 		Policies: rc.Policies,
 		Plan:     rc.PolicyPlan,
 		Request:  reqCtx,
 		Response: respCtx,
-	}); err != nil {
+	})
+	if err != nil {
 		if pe, ok := appplugins.AsPluginError(err); ok {
 			return blockToRPCError(pe)
 		}
 		r.logFailOpen(rc, policy.StagePreResponse, directionOutput, err)
+		return nil
+	}
+	if outcome != nil && outcome.ShortCircuit {
+		return blockToRPCError(&appplugins.PluginError{
+			StatusCode: outcome.StatusCode,
+			Message:    "response blocked by policy",
+			Body:       outcome.Body,
+		})
 	}
 	return nil
 }
