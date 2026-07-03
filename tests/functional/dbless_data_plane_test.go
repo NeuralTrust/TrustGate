@@ -260,3 +260,69 @@ func TestDBLessDataPlane_ConvergesServesAtParityAndKeepsSecretsOutOfLogs(t *test
 	assert.NotContains(t, captured, secret, "the db-less plane must never log a snapshot registry credential")
 	assert.NotContains(t, captured, newSecret, "the db-less plane must never log a snapshot registry credential")
 }
+
+func pollProxyStatusAt(t *testing.T, base, apiKey, path string, body any, want int, timeout time.Duration) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		status, _, _ := proxyPostAt(t, base, apiKey, path, body)
+		if status == want {
+			return true
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return false
+}
+
+// TestDBLessDataPlane_ConvergesOnInPlaceEditOfServedGateway guards the failure
+// mode where the data plane keeps serving a stale, cache-warmed configuration
+// after an in-place edit to an already-served gateway. Creating new gateways
+// is not enough: the derived caches keyed by an existing gateway must also be
+// dropped when a new snapshot version is applied, or edits never take effect
+// until the process restarts.
+func TestDBLessDataPlane_ConvergesOnInPlaceEditOfServedGateway(t *testing.T) {
+	defer Track(t, "DBLessDataPlane")()
+
+	upstream := newJSONUpstream(t, "dbless-inplace-marker")
+	secret := "sk-dbless-inplace-" + uuid.NewString()
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("dbless-inplace-gw")})
+	registryID := CreateRegistry(t, gatewayID, dblessBackendPayload(uniqueName("be"), upstream.URL(), secret))
+	consumerName := uniqueName("cons")
+	coID := CreateConsumer(t, gatewayID, map[string]any{
+		"name": consumerName,
+		"registries": []map[string]any{
+			{"id": registryID, "model_policies": map[string]any{"allowed": []string{"gpt-4o-mini"}}},
+		},
+	})
+	apiKey := createAndAttachAPIKey(t, gatewayID, coID)
+	path := chatCompletionsPath(t, coID)
+
+	port := GlobalConfig.Server.ProxyPort + 102
+	lkgPath := filepath.Join(t.TempDir(), "snapshot.lkg")
+	base, _ := startDBLessProxyPlane(t, port,
+		dblessOverrides(lkgPath, dblessConfigSyncToken, uniqueName("dbless-inplace"), port))
+	require.True(t, pollDBLessReady(base, 30*time.Second),
+		"db-less plane never became ready after the first snapshot pull")
+
+	require.True(t, pollProxyStatusAt(t, base, apiKey, path, chatRequestModel("gpt-4o-mini"), http.StatusOK, 30*time.Second),
+		"db-less plane never converged to serve the allowed model")
+
+	warm, _, warmBody := proxyPostAt(t, base, apiKey, path, chatRequestModel("gpt-4o-mini"))
+	require.Equal(t, http.StatusOK, warm, "the allowed model must be served, warming the gateway-scoped caches: %s", warmBody)
+
+	UpdateConsumer(t, gatewayID, coID, map[string]any{
+		"name": consumerName,
+		"model_policies": []map[string]any{
+			{"registry_id": registryID, "allowed": []string{"gpt-4o-restricted-only"}},
+		},
+	})
+
+	consumerURL := fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gatewayID, coID)
+	getStatus, getBody := sendRequest(t, http.MethodGet, consumerURL, nil, nil)
+	require.Equal(t, http.StatusOK, getStatus, "admin must return the edited consumer: %v", getBody)
+	require.Contains(t, fmt.Sprintf("%v", getBody), "gpt-4o-restricted-only",
+		"control plane must persist the tightened model policy for the existing gateway: %v", getBody)
+
+	require.True(t, pollProxyStatusAt(t, base, apiKey, path, chatRequestModel("gpt-4o-mini"), http.StatusForbidden, 30*time.Second),
+		"db-less plane never converged to the in-place model-policy edit; a cache keyed by the existing gateway stayed warm")
+}

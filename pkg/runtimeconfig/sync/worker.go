@@ -52,7 +52,20 @@ type Worker[T any] struct {
 	pollInterval time.Duration
 	minBackoff   time.Duration
 	maxBackoff   time.Duration
+	onApplied    func(context.Context)
 	convergeMu   sync.Mutex
+}
+
+// WorkerOption customizes a Worker at construction time.
+type WorkerOption[T any] func(*Worker[T])
+
+// WithOnApplied registers a hook run after a new snapshot version is swapped
+// into the store. The data plane uses it to invalidate caches derived from the
+// snapshot so edits to already-served gateways take effect without a restart.
+func WithOnApplied[T any](fn func(context.Context)) WorkerOption[T] {
+	return func(w *Worker[T]) {
+		w.onApplied = fn
+	}
 }
 
 // NewWorker builds a convergence worker that drives the config-sync stream
@@ -65,6 +78,7 @@ func NewWorker[T any](
 	codec SnapshotCodec[T],
 	logger *slog.Logger,
 	cfg WorkerConfig,
+	opts ...WorkerOption[T],
 ) *Worker[T] {
 	if logger == nil {
 		logger = slog.Default()
@@ -84,7 +98,7 @@ func NewWorker[T any](
 	if maxBackoff < minBackoff {
 		maxBackoff = minBackoff
 	}
-	return &Worker[T]{
+	w := &Worker[T]{
 		fetcher:      fetcher,
 		store:        store,
 		transport:    transport,
@@ -95,6 +109,10 @@ func NewWorker[T any](
 		minBackoff:   minBackoff,
 		maxBackoff:   maxBackoff,
 	}
+	for _, opt := range opts {
+		opt(w)
+	}
+	return w
 }
 
 func (w *Worker[T]) Run(ctx context.Context) error {
@@ -141,6 +159,9 @@ func (w *Worker[T]) Converge(ctx context.Context) error {
 	}
 	versioned := &Versioned[T]{Version: version, Snapshot: snapshot, Raw: raw}
 	w.store.Swap(versioned)
+	if w.onApplied != nil {
+		w.onApplied(ctx)
+	}
 	w.persist(versioned)
 	if err := w.transport.Ack(ctx, versioned.Version); err != nil && ctx.Err() == nil {
 		w.logger.Warn("failed to ack applied version",

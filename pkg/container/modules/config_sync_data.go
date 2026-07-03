@@ -15,12 +15,14 @@
 package modules
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"log/slog"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	infrasnapshot "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
 	configsyncgrpc "github.com/NeuralTrust/TrustGate/pkg/infra/configsync/grpc"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
@@ -77,6 +79,7 @@ func ConfigSyncData(c *container.Container) error {
 		transport configsync.StreamTransport,
 		lkg *configsync.LKGStore[*readmodel.Snapshot],
 		codec configsync.SnapshotCodec[*readmodel.Snapshot],
+		cacheManager *cache.TTLMapManager,
 		logger *slog.Logger,
 		cfg *config.Config,
 	) *configsync.Worker[*readmodel.Snapshot] {
@@ -84,6 +87,10 @@ func ConfigSyncData(c *container.Container) error {
 			PollInterval: cfg.ConfigSync.PollInterval,
 			MinBackoff:   cfg.ConfigSync.GRPCMinBackoff,
 			MaxBackoff:   cfg.ConfigSync.GRPCMaxBackoff,
-		})
+		}, configsync.WithOnApplied[*readmodel.Snapshot](func(context.Context) {
+			cacheManager.ClearAllTTLMaps()
+			logger.Debug("config-sync applied new snapshot; cleared derived caches",
+				slog.String("component", "configsync"))
+		}))
 	})
 }

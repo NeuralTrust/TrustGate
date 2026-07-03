@@ -136,6 +136,34 @@ func TestWorker_Converge200Swaps(t *testing.T) {
 	assert.Equal(t, []string{store.Version()}, transport.ackedVersions())
 }
 
+func TestWorker_ConvergeInvokesOnAppliedForNewVersion(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte("fresh")
+	fetcher := &fakeFetcher{results: []fetchResult{{raw: raw, version: stringCodec{}.Version(raw)}}}
+	store := NewMemoryStore[string]()
+	var applied int
+	worker := NewWorker[string](fetcher, store, &fakeTransport{}, nil, stringCodec{}, nil, WorkerConfig{},
+		WithOnApplied[string](func(context.Context) { applied++ }))
+
+	require.NoError(t, worker.Converge(context.Background()))
+	assert.Equal(t, 1, applied)
+}
+
+func TestWorker_ConvergeSkipsOnAppliedWhenNotModified(t *testing.T) {
+	t.Parallel()
+
+	fetcher := &fakeFetcher{results: []fetchResult{{notModified: true}}}
+	store := NewMemoryStore[string]()
+	store.Swap(&Versioned[string]{Version: "v1", Snapshot: "current", Raw: []byte("current")})
+	var applied int
+	worker := NewWorker[string](fetcher, store, &fakeTransport{}, nil, stringCodec{}, nil, WorkerConfig{},
+		WithOnApplied[string](func(context.Context) { applied++ }))
+
+	require.NoError(t, worker.Converge(context.Background()))
+	assert.Equal(t, 0, applied)
+}
+
 func TestWorker_ConvergeMissingVersionRejected(t *testing.T) {
 	t.Parallel()
 
