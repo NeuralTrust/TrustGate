@@ -37,8 +37,8 @@ type DispatcherConfig struct {
 // Dispatcher compiles the config snapshot, holds it for the gRPC server to serve,
 // broadcasts the new version to connected data planes, and drains the
 // change-marker outbox that survives a control-plane restart. A committed admin
-// write leaves a durable marker; the dispatcher folds every marker at or below the
-// pre-compile frontier into one recompile and drains them in a single delete.
+// write leaves a durable marker; the dispatcher folds every marker visible before
+// the compile into one recompile and drains exactly that observed set.
 type Dispatcher struct {
 	compiler    SnapshotCompiler
 	codec       configsync.SnapshotCodec[*readmodel.Snapshot]
@@ -155,7 +155,10 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 	}
 }
 
-// Dispatch runs one dispatch cycle synchronously.
+// Dispatch runs one dispatch cycle synchronously. It must not run concurrently
+// with Run or another Dispatch: the outbox frontier (MaxSeq/DeleteUpTo) is not
+// mutually exclusive across cycles, so overlapping callers could drain against
+// different frontiers.
 func (d *Dispatcher) Dispatch(ctx context.Context) error {
 	return d.dispatch(ctx)
 }
@@ -170,15 +173,17 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 		}
 	}()
 
-	// Snapshot the marker frontier before compiling so a write that lands mid-cycle
-	// keeps a marker above the frontier and triggers the next dispatch.
-	maxSeq, err := d.outbox.MaxSeq(ctx)
+	// Capture the set of markers visible before compiling. Draining exactly this set
+	// (rather than a seq range) guarantees a marker that becomes visible mid-cycle —
+	// including a lower seq that commits after a higher one, since seq is assigned at
+	// INSERT not COMMIT — survives to trigger the next dispatch.
+	pending, err := d.outbox.Pending(ctx)
 	if err != nil {
 		if ctx.Err() == nil {
-			d.logger.Warn("outbox max seq failed; skipping drain this cycle",
+			d.logger.Warn("outbox pending read failed; skipping drain this cycle",
 				slog.String("component", component), slog.String("error", err.Error()))
 		}
-		maxSeq = 0
+		pending = nil
 	}
 
 	snapshot, err := d.compiler.Compile(ctx)
@@ -199,8 +204,8 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 	}
 	d.mu.Unlock()
 
-	if maxSeq > 0 {
-		if _, err := d.outbox.DeleteUpTo(ctx, maxSeq); err != nil && ctx.Err() == nil {
+	if len(pending) > 0 {
+		if _, err := d.outbox.DeleteSeqs(ctx, pending); err != nil && ctx.Err() == nil {
 			d.logger.Warn("outbox drain failed",
 				slog.String("component", component), slog.String("error", err.Error()))
 		}

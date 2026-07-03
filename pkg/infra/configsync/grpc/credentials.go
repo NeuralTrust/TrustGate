@@ -81,7 +81,10 @@ func clientTransportCredentials(cfg config.ConfigSyncConfig) (credentials.Transp
 
 // serverTransportCredentials builds the control-plane listener TLS credentials
 // from the configured cert/key pair. It returns nil credentials (plaintext,
-// dev-only) when no cert/key is configured.
+// dev-only) when no cert/key is configured; the deployed-environment guard that
+// forbids a plaintext control-plane listener lives in the DI provider
+// (control_config_sync.go), so callers outside that wiring must not assume this
+// constructor rejects an insecure setup.
 func serverTransportCredentials(cfg config.ConfigSyncConfig) (credentials.TransportCredentials, error) {
 	if cfg.GRPCTLSCertPath == "" && cfg.GRPCTLSKeyPath == "" {
 		return nil, nil

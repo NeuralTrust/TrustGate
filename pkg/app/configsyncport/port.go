@@ -17,12 +17,19 @@ type VersionBroadcaster interface {
 }
 
 // OutboxRepository is the change-marker outbox as seen by the dispatcher: read the
-// marker frontier, drain by processed seq, and prune under the safety bound. It
-// carries no pgx types; the in-transaction append lives in the infra Appender the
-// admin repositories consume, so the app layer never imports pgx.
+// set of markers visible before a compile, drain exactly that set once the snapshot
+// is broadcast, and prune under the safety bound. It carries no pgx types; the
+// in-transaction append lives in the infra Appender the admin repositories consume,
+// so the app layer never imports pgx.
+//
+// Drain works on the observed set rather than a seq range because BIGSERIAL seq is
+// assigned at INSERT, not COMMIT: a lower seq can become visible after a higher one,
+// so a range delete could drop a marker whose write was not yet in the compiled
+// snapshot. Deleting only the observed set lets such a late marker survive to the
+// next cycle.
 type OutboxRepository interface {
-	MaxSeq(ctx context.Context) (seq int64, err error)
+	Pending(ctx context.Context) (seqs []int64, err error)
 	PendingCount(ctx context.Context) (int64, error)
-	DeleteUpTo(ctx context.Context, seq int64) (deleted int64, err error)
+	DeleteSeqs(ctx context.Context, seqs []int64) (deleted int64, err error)
 	PruneOlderThan(ctx context.Context, cutoff time.Time, keepMax int) (deleted int64, err error)
 }

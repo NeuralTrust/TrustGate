@@ -74,43 +74,53 @@ func (b *fakeBroadcaster) broadcasted() []string {
 
 type fakeOutbox struct {
 	mu          sync.Mutex
-	maxSeq      int64
-	pending     int64
+	seqs        []int64
 	deletes     []int64
 	pruneCalls  int
 	pruneKeep   int
 	pruneCutoff time.Time
 }
 
-func (o *fakeOutbox) setMaxSeq(v int64) {
+func (o *fakeOutbox) setSeqs(seqs ...int64) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.maxSeq = v
+	o.seqs = append([]int64(nil), seqs...)
 }
 
-func (o *fakeOutbox) bump(delta int64) {
+func (o *fakeOutbox) appendSeqs(seqs ...int64) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.maxSeq += delta
+	o.seqs = append(o.seqs, seqs...)
 }
 
-func (o *fakeOutbox) MaxSeq(context.Context) (int64, error) {
+func (o *fakeOutbox) Pending(context.Context) ([]int64, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	return o.maxSeq, nil
+	return append([]int64(nil), o.seqs...), nil
 }
 
 func (o *fakeOutbox) PendingCount(context.Context) (int64, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	return o.pending, nil
+	return int64(len(o.seqs)), nil
 }
 
-func (o *fakeOutbox) DeleteUpTo(_ context.Context, seq int64) (int64, error) {
+func (o *fakeOutbox) DeleteSeqs(_ context.Context, seqs []int64) (int64, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.deletes = append(o.deletes, seq)
-	return seq, nil
+	drop := make(map[int64]struct{}, len(seqs))
+	for _, s := range seqs {
+		drop[s] = struct{}{}
+		o.deletes = append(o.deletes, s)
+	}
+	kept := o.seqs[:0:0]
+	for _, s := range o.seqs {
+		if _, ok := drop[s]; !ok {
+			kept = append(kept, s)
+		}
+	}
+	o.seqs = kept
+	return int64(len(seqs)), nil
 }
 
 func (o *fakeOutbox) PruneOlderThan(_ context.Context, cutoff time.Time, keepMax int) (int64, error) {
@@ -127,6 +137,14 @@ func (o *fakeOutbox) deletedSeqs() []int64 {
 	defer o.mu.Unlock()
 	out := make([]int64, len(o.deletes))
 	copy(out, o.deletes)
+	return out
+}
+
+func (o *fakeOutbox) remainingSeqs() []int64 {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	out := make([]int64, len(o.seqs))
+	copy(out, o.seqs)
 	return out
 }
 
@@ -161,7 +179,7 @@ func TestDispatch_BroadcastsOnceThenDedupsIdenticalData(t *testing.T) {
 	holder := appsnapshot.NewHolder()
 	broadcaster := &fakeBroadcaster{}
 	outbox := &fakeOutbox{}
-	outbox.setMaxSeq(5)
+	outbox.setSeqs(5)
 	d := appsnapshot.NewDispatcher(newDispatchCompiler(gateways), infrasnapshot.NewCodec(), holder, broadcaster, outbox, nil, appsnapshot.DispatcherConfig{})
 
 	if err := d.Dispatch(context.Background()); err != nil {
@@ -180,8 +198,8 @@ func TestDispatch_BroadcastsOnceThenDedupsIdenticalData(t *testing.T) {
 	}
 
 	deletes := outbox.deletedSeqs()
-	if len(deletes) != 2 || deletes[0] != 5 || deletes[1] != 5 {
-		t.Fatalf("both cycles must drain the frontier seq 5, got %v", deletes)
+	if len(deletes) != 1 || deletes[0] != 5 {
+		t.Fatalf("the first cycle must drain the observed marker 5 and the second must find nothing, got %v", deletes)
 	}
 }
 
@@ -219,8 +237,8 @@ func TestDispatch_DrainsPreCompileFrontierSoMidCycleMarkerSurvives(t *testing.T)
 	holder := appsnapshot.NewHolder()
 	broadcaster := &fakeBroadcaster{}
 	outbox := &fakeOutbox{}
-	outbox.setMaxSeq(3)
-	compiler := hookedCompiler{inner: newDispatchCompiler(gateways), onCompile: func() { outbox.bump(2) }}
+	outbox.setSeqs(1, 2, 3)
+	compiler := hookedCompiler{inner: newDispatchCompiler(gateways), onCompile: func() { outbox.appendSeqs(4, 5) }}
 	d := appsnapshot.NewDispatcher(compiler, infrasnapshot.NewCodec(), holder, broadcaster, outbox, nil, appsnapshot.DispatcherConfig{})
 
 	if err := d.Dispatch(context.Background()); err != nil {
@@ -228,8 +246,37 @@ func TestDispatch_DrainsPreCompileFrontierSoMidCycleMarkerSurvives(t *testing.T)
 	}
 
 	deletes := outbox.deletedSeqs()
-	if len(deletes) != 1 || deletes[0] != 3 {
-		t.Fatalf("drain must use the frontier snapshotted before compile so a mid-cycle marker survives, got %v", deletes)
+	if len(deletes) != 3 || deletes[0] != 1 || deletes[1] != 2 || deletes[2] != 3 {
+		t.Fatalf("drain must delete only the set observed before compile, got %v", deletes)
+	}
+	if remaining := outbox.remainingSeqs(); len(remaining) != 2 || remaining[0] != 4 || remaining[1] != 5 {
+		t.Fatalf("markers that appear mid-compile must survive to the next cycle, got %v", remaining)
+	}
+}
+
+func TestDispatch_DrainKeepsLowerSeqCommittedAfterObserve(t *testing.T) {
+	t.Parallel()
+	gwA := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
+	gateways := &settableGateways{items: []*gatewaydomain.Gateway{{ID: gwA}}}
+	holder := appsnapshot.NewHolder()
+	broadcaster := &fakeBroadcaster{}
+	outbox := &fakeOutbox{}
+	// A higher seq (101) is visible before compile; a lower seq (100) becomes visible
+	// only after Pending is observed, modelling BIGSERIAL assigned at INSERT while its
+	// transaction commits after a higher seq. A range delete up to 101 would drop 100.
+	outbox.setSeqs(101)
+	compiler := hookedCompiler{inner: newDispatchCompiler(gateways), onCompile: func() { outbox.appendSeqs(100) }}
+	d := appsnapshot.NewDispatcher(compiler, infrasnapshot.NewCodec(), holder, broadcaster, outbox, nil, appsnapshot.DispatcherConfig{})
+
+	if err := d.Dispatch(context.Background()); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	if deletes := outbox.deletedSeqs(); len(deletes) != 1 || deletes[0] != 101 {
+		t.Fatalf("drain must delete only the observed seq 101, got %v", deletes)
+	}
+	if remaining := outbox.remainingSeqs(); len(remaining) != 1 || remaining[0] != 100 {
+		t.Fatalf("a lower seq committing after the observe must survive the drain, got %v", remaining)
 	}
 }
 
@@ -286,8 +333,7 @@ func TestRun_BootWithPendingMarkersTriggersDispatch(t *testing.T) {
 	holder := appsnapshot.NewHolder()
 	broadcaster := &fakeBroadcaster{}
 	outbox := &fakeOutbox{}
-	outbox.pending = 1
-	outbox.setMaxSeq(1)
+	outbox.setSeqs(1)
 	d := appsnapshot.NewDispatcher(newDispatchCompiler(gateways), infrasnapshot.NewCodec(), holder, broadcaster, outbox, nil,
 		appsnapshot.DispatcherConfig{Debounce: 20 * time.Millisecond, Backstop: time.Hour})
 

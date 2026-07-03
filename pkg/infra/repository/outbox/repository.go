@@ -36,6 +36,7 @@ type Appender interface {
 
 // poolQuerier is the subset of pgxpool.Pool the drain/prune reads need, kept small to fake in tests.
 type poolQuerier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
@@ -59,13 +60,29 @@ func (r *Repository) AppendTx(ctx context.Context, tx pgx.Tx) error {
 	return nil
 }
 
-// MaxSeq returns the highest marker seq, or 0 when the outbox is empty.
-func (r *Repository) MaxSeq(ctx context.Context) (int64, error) {
-	var seq int64
-	if err := r.pool.QueryRow(ctx, `SELECT COALESCE(MAX(seq), 0) FROM config_snapshot_outbox`).Scan(&seq); err != nil {
-		return 0, fmt.Errorf("outbox: max seq: %w", err)
+// Pending returns the seqs of every marker currently visible, oldest first. The
+// dispatcher captures this set before compiling so it later drains exactly the
+// markers whose writes are guaranteed to be in the compiled snapshot; a marker that
+// becomes visible afterwards (a lower seq committing after a higher one) is absent
+// from the set and survives to the next cycle.
+func (r *Repository) Pending(ctx context.Context) ([]int64, error) {
+	rows, err := r.pool.Query(ctx, `SELECT seq FROM config_snapshot_outbox ORDER BY seq`)
+	if err != nil {
+		return nil, fmt.Errorf("outbox: pending: %w", err)
 	}
-	return seq, nil
+	defer rows.Close()
+	var seqs []int64
+	for rows.Next() {
+		var seq int64
+		if err := rows.Scan(&seq); err != nil {
+			return nil, fmt.Errorf("outbox: scan pending seq: %w", err)
+		}
+		seqs = append(seqs, seq)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("outbox: iterate pending: %w", err)
+	}
+	return seqs, nil
 }
 
 // PendingCount returns the number of markers currently in the outbox.
@@ -77,11 +94,15 @@ func (r *Repository) PendingCount(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
-// DeleteUpTo removes every marker with seq <= the given seq, returning the number deleted.
-func (r *Repository) DeleteUpTo(ctx context.Context, seq int64) (int64, error) {
-	tag, err := r.pool.Exec(ctx, `DELETE FROM config_snapshot_outbox WHERE seq <= $1`, seq)
+// DeleteSeqs removes exactly the given marker seqs, returning the number deleted. It
+// is a no-op for an empty set.
+func (r *Repository) DeleteSeqs(ctx context.Context, seqs []int64) (int64, error) {
+	if len(seqs) == 0 {
+		return 0, nil
+	}
+	tag, err := r.pool.Exec(ctx, `DELETE FROM config_snapshot_outbox WHERE seq = ANY($1)`, seqs)
 	if err != nil {
-		return 0, fmt.Errorf("outbox: delete up to %d: %w", seq, err)
+		return 0, fmt.Errorf("outbox: delete seqs: %w", err)
 	}
 	return tag.RowsAffected(), nil
 }
