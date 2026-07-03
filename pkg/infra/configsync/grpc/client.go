@@ -38,6 +38,12 @@ type Client struct {
 	instanceID string
 	logger     *slog.Logger
 
+	// streamCtx owns the lifecycle of the long-lived Sync stream so it is not
+	// bound to any single Watch/Ack caller's context; cancelling it (via Close)
+	// tears the stream down for shutdown.
+	streamCtx    context.Context
+	streamCancel context.CancelFunc
+
 	mu          sync.Mutex
 	stream      snapshotpb.ConfigSync_SyncClient
 	lastApplied string
@@ -70,16 +76,21 @@ func newClient(conn *grpc.ClientConn, instanceID string, logger *slog.Logger) *C
 	if logger == nil {
 		logger = slog.Default()
 	}
+	streamCtx, streamCancel := context.WithCancel(context.Background())
 	return &Client{
-		conn:       conn,
-		cli:        snapshotpb.NewConfigSyncClient(conn),
-		instanceID: instanceID,
-		logger:     logger,
+		conn:         conn,
+		cli:          snapshotpb.NewConfigSyncClient(conn),
+		instanceID:   instanceID,
+		logger:       logger,
+		streamCtx:    streamCtx,
+		streamCancel: streamCancel,
 	}
 }
 
-// Close tears down the underlying connection.
+// Close cancels the Sync stream context and tears down the underlying
+// connection, unblocking any in-flight stream receive.
 func (c *Client) Close() error {
+	c.streamCancel()
 	return c.conn.Close()
 }
 
@@ -127,8 +138,8 @@ func (c *Client) Fetch(ctx context.Context, etag string) ([]byte, string, bool, 
 
 // Watch blocks for the next VersionNotice on the Sync stream, reopening the
 // stream (and re-sending Hello) when it is not yet established or has broken.
-func (c *Client) Watch(ctx context.Context) (string, error) {
-	stream, err := c.ensureStream(ctx)
+func (c *Client) Watch(_ context.Context) (string, error) {
+	stream, err := c.ensureStream()
 	if err != nil {
 		return "", err
 	}
@@ -145,8 +156,8 @@ func (c *Client) Watch(ctx context.Context) (string, error) {
 }
 
 // Ack reports the applied version to the control plane over the Sync stream.
-func (c *Client) Ack(ctx context.Context, appliedVersion string) error {
-	stream, err := c.ensureStream(ctx)
+func (c *Client) Ack(_ context.Context, appliedVersion string) error {
+	stream, err := c.ensureStream()
 	if err != nil {
 		return err
 	}
@@ -161,13 +172,13 @@ func (c *Client) Ack(ctx context.Context, appliedVersion string) error {
 	return nil
 }
 
-func (c *Client) ensureStream(ctx context.Context) (snapshotpb.ConfigSync_SyncClient, error) {
+func (c *Client) ensureStream() (snapshotpb.ConfigSync_SyncClient, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.stream != nil {
 		return c.stream, nil
 	}
-	stream, err := c.cli.Sync(ctx)
+	stream, err := c.cli.Sync(c.streamCtx)
 	if err != nil {
 		return nil, fmt.Errorf("configsync: open sync stream: %w", err)
 	}

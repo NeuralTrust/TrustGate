@@ -111,7 +111,7 @@ func (c *JWKSCache) awaitFetchLocked(ctx context.Context, url string, entry *jwk
 	if fetch == nil {
 		fetch = &jwksFetch{done: make(chan struct{})}
 		entry.inflight = fetch
-		go c.runFetch(url, entry, fetch)
+		go c.runFetch(url, entry, fetch) // #nosec G118 -- shared fetch must not adopt a single caller's context; runFetch owns its own timeout
 	}
 	c.mu.Unlock()
 	select {
@@ -123,7 +123,12 @@ func (c *JWKSCache) awaitFetchLocked(ctx context.Context, url string, entry *jwk
 }
 
 func (c *JWKSCache) runFetch(url string, entry *jwksEntry, fetch *jwksFetch) {
-	keys, err := c.fetchRemote(url)
+	// The fetch is shared across awaiting callers, so it must not adopt any
+	// single caller's context; it owns a timeout so an in-flight request cannot
+	// outlive an explicit bound.
+	ctx, cancel := context.WithTimeout(context.Background(), c.fetchTimeout())
+	defer cancel()
+	keys, err := c.fetchRemote(ctx, url)
 	c.mu.Lock()
 	switch {
 	case err == nil:
@@ -141,8 +146,15 @@ func (c *JWKSCache) runFetch(url string, entry *jwksEntry, fetch *jwksFetch) {
 	close(fetch.done)
 }
 
-func (c *JWKSCache) fetchRemote(url string) (jwkSet, error) {
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+func (c *JWKSCache) fetchTimeout() time.Duration {
+	if c.client != nil && c.client.Timeout > 0 {
+		return c.client.Timeout
+	}
+	return defaultFetchTimeout
+}
+
+func (c *JWKSCache) fetchRemote(ctx context.Context, url string) (jwkSet, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return jwkSet{}, fmt.Errorf("%w: build jwks request: %v", ErrJWKSFetch, err)
 	}

@@ -25,17 +25,18 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-func TestService_SyncUnregistersOnCancel(t *testing.T) {
+func TestService_SyncUnregistersOnClose(t *testing.T) {
 	hub := NewHub(discardLogger())
 	lis, _ := newBufServer(t, NewService(hub, &fakeSource{}, discardLogger()))
 	client := dialClient(t, lis, "dp-1")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() { _, _ = client.Watch(ctx) }()
+	go func() { _, _ = client.Watch(context.Background()) }()
 
 	eventually(t, func() bool { return hub.ConnectionCount() == 1 }, "stream never registered")
-	cancel()
-	eventually(t, func() bool { return hub.ConnectionCount() == 0 }, "stream not unregistered on cancel")
+	// The Sync stream is owned by the client lifecycle, not the Watch caller's
+	// context, so tearing it down is done via Close.
+	_ = client.Close()
+	eventually(t, func() bool { return hub.ConnectionCount() == 0 }, "stream not unregistered on close")
 }
 
 func TestService_SyncNoInitialNoticeWhenUpToDate(t *testing.T) {
