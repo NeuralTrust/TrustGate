@@ -1,6 +1,21 @@
 #!/bin/sh
 echo "Running pre-commit hook..."
 
+echo "Checking comment policy..."
+HOOK_DIR=$(dirname "$0")
+if [ -x "$HOOK_DIR/../../scripts/check-comments.sh" ]; then
+  CHECK_COMMENTS="$HOOK_DIR/../../scripts/check-comments.sh"
+else
+  CHECK_COMMENTS="scripts/check-comments.sh"
+fi
+if [ -f "$CHECK_COMMENTS" ]; then
+  sh "$CHECK_COMMENTS"
+  if [ $? -ne 0 ]; then
+    echo "Comment policy check failed!"
+    exit 1
+  fi
+fi
+
 make lint
 if [ $? -ne 0 ]; then
   echo "Linting failed!"
