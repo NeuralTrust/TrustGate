@@ -171,7 +171,7 @@ func TestExecutePreRequestBlockReturns403(t *testing.T) {
 	t.Parallel()
 
 	f := &fakeGuard{response: GuardResponse{
-		Status:    statusBlock,
+		Status: statusBlock,
 		Findings: []GuardFinding{{
 			Source:  &GuardFindingSource{Kind: "detector", Plugin: "prompt_guard"},
 			Signal:  &GuardFindingSignal{Type: "prompt_injection"},
@@ -668,6 +668,278 @@ func TestExecuteRetriesOnceOn401(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&tokenHits); got != 2 {
 		t.Fatalf("token hits = %d, want 2 (initial + refresh after 401)", got)
+	}
+}
+
+func mcpToolCallJSON() []byte {
+	return []byte(`{"name":"search","arguments":{"query":"find me"}}`)
+}
+
+func mcpResultJSON() []byte {
+	return []byte(`{"content":[{"type":"text","text":"the answer"}],"isError":false}`)
+}
+
+func mcpRequestContext() *infracontext.RequestContext {
+	return &infracontext.RequestContext{
+		MCP:          true,
+		ConsumerType: "MCP",
+		GatewayID:    "gw-test",
+		SessionID:    "sess-mcp",
+		ConsumerID:   "consumer-mcp",
+		Body:         mcpToolCallJSON(),
+	}
+}
+
+func TestExecuteMCPInputBlock(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusBlock, TraceID: "trace-mcp-in"}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), mcpRequestContext(), nil)
+	res, err := p.Execute(context.Background(), in)
+	if res != nil {
+		t.Fatalf("expected nil result on block, got %+v", res)
+	}
+	if _, ok := appplugins.AsPluginError(err); !ok {
+		t.Fatalf("expected *PluginError, got %v", err)
+	}
+	got := f.captured()
+	if got.Protocol != protocolMCP {
+		t.Fatalf("protocol = %q, want %q", got.Protocol, protocolMCP)
+	}
+	if got.Direction != directionInput {
+		t.Fatalf("direction = %q, want %q", got.Direction, directionInput)
+	}
+	if got.Attributes.Model.Provider != "" {
+		t.Fatalf("provider = %q, want empty", got.Attributes.Model.Provider)
+	}
+	if got.Payload.Input != "search\nfind me" {
+		t.Fatalf("input = %q, want %q", got.Payload.Input, "search\nfind me")
+	}
+}
+
+func TestExecuteMCPInputObservePassesThrough(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusBlock, TraceID: "trace-mcp-obs"}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeObserve, settings(""), mcpRequestContext(), nil, event)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("observe mode must not error, got %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK || res.StopUpstream {
+		t.Fatalf("expected pass-through in observe mode, got %+v", res)
+	}
+	if attrs := span.PluginAttrsCopy(); attrs.Decision != decisionReported {
+		t.Fatalf("decision = %q, want %q", attrs.Decision, decisionReported)
+	}
+}
+
+func TestExecuteMCPOutputBlock(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusBlock, TraceID: "trace-mcp-out"}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: mcpResultJSON()}
+	in := execInput(policy.StagePreResponse, policy.ModeEnforce, settings(""), mcpRequestContext(), resp)
+	res, err := p.Execute(context.Background(), in)
+	if res != nil {
+		t.Fatalf("expected nil result on block, got %+v", res)
+	}
+	if _, ok := appplugins.AsPluginError(err); !ok {
+		t.Fatalf("expected *PluginError, got %v", err)
+	}
+	got := f.captured()
+	if got.Direction != directionOutput {
+		t.Fatalf("direction = %q, want %q", got.Direction, directionOutput)
+	}
+	if got.Protocol != protocolMCP {
+		t.Fatalf("protocol = %q, want %q", got.Protocol, protocolMCP)
+	}
+	if got.Payload.Input != "the answer" {
+		t.Fatalf("input = %q, want %q", got.Payload.Input, "the answer")
+	}
+}
+
+func TestExecuteMCPOutputReportPassesThrough(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusReport, TraceID: "trace-mcp-rep"}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	event, span := newEvent()
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: mcpResultJSON()}
+	in := execInputWithEvent(policy.StagePreResponse, policy.ModeEnforce, settings(""), mcpRequestContext(), resp, event)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("report mode must not error, got %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("expected pass-through, got %+v", res)
+	}
+	if attrs := span.PluginAttrsCopy(); attrs.Decision != decisionReported {
+		t.Fatalf("decision = %q, want %q", attrs.Decision, decisionReported)
+	}
+}
+
+func TestExecuteMCPProtocolFromMarkerIgnoresConsumerType(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusReport, TraceID: "trace-mcp-proto"}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	req := mcpRequestContext()
+	req.ConsumerType = ""
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), req, nil)
+	if _, err := p.Execute(context.Background(), in); err != nil {
+		t.Fatalf("report mode must not error, got %v", err)
+	}
+	if got := f.captured(); got.Protocol != protocolMCP {
+		t.Fatalf("protocol = %q, want %q", got.Protocol, protocolMCP)
+	}
+}
+
+func TestExecuteMCPInputBlockWithNilRegistry(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusBlock, TraceID: "trace-mcp-nilreg"}}
+	srv := newServer(t, f)
+	p := New(nil, srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), mcpRequestContext(), nil)
+	res, err := p.Execute(context.Background(), in)
+	if res != nil {
+		t.Fatalf("expected nil result on block, got %+v", res)
+	}
+	if _, ok := appplugins.AsPluginError(err); !ok {
+		t.Fatalf("expected *PluginError, got %v", err)
+	}
+	if got := f.captured(); got.Payload.Input != "search\nfind me" {
+		t.Fatalf("input = %q, want %q", got.Payload.Input, "search\nfind me")
+	}
+}
+
+func TestExecuteMCPOutputStreamingPassesThrough(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusBlock}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	resp := &infracontext.ResponseContext{StatusCode: 200, Streaming: true, Body: mcpResultJSON()}
+	in := execInput(policy.StagePreResponse, policy.ModeEnforce, settings(""), mcpRequestContext(), resp)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("streaming must not error, got %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("expected pass-through for streaming, got %+v", res)
+	}
+	if f.count() != 0 {
+		t.Fatalf("guard must not be called for streaming, got %d calls", f.count())
+	}
+}
+
+func TestExecuteMCPMissingGatewayIDFailsOpen(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusBlock}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	req := mcpRequestContext()
+	req.GatewayID = ""
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), req, nil)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("expected fail-open pass, got error %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK || res.StopUpstream {
+		t.Fatalf("expected pass-through on missing gateway id, got %+v", res)
+	}
+	if f.count() != 0 {
+		t.Fatalf("expected no guard call when gateway id missing, got %d hits", f.count())
+	}
+}
+
+func TestExecuteMCPGuardErrorFailsOpen(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{status: http.StatusInternalServerError, response: GuardResponse{Status: statusBlock}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), mcpRequestContext(), nil, event)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("expected fail-open pass, got error %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK || res.StopUpstream {
+		t.Fatalf("expected pass-through on guard error, got %+v", res)
+	}
+	attrs := span.PluginAttrsCopy()
+	extras, ok := attrs.Extras.(guardData)
+	if !ok {
+		t.Fatalf("extras type = %T, want guardData", attrs.Extras)
+	}
+	if !extras.FailedOpen || extras.Decision != decisionFailedOpen {
+		t.Fatalf("extras = %+v, want failed_open decision", extras)
+	}
+}
+
+func TestExecuteMCPEmptyExtractedTextPassesThrough(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusBlock}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	req := mcpRequestContext()
+	req.Body = []byte(`{"name":"","arguments":{}}`)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), req, nil)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("expected pass-through, got %+v", res)
+	}
+	if f.count() != 0 {
+		t.Fatalf("expected guard not called for empty text, got %d hits", f.count())
+	}
+}
+
+func TestExecuteMarkerOffWithoutProviderPassesThrough(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusBlock}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	req := mcpRequestContext()
+	req.MCP = false
+	req.Provider = ""
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), req, nil)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("expected pass-through when marker off and provider empty, got %+v", res)
+	}
+	if f.count() != 0 {
+		t.Fatalf("expected guard not called on LLM gate, got %d hits", f.count())
 	}
 }
 
