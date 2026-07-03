@@ -1,11 +1,21 @@
 title = "TrustGate gitleaks config"
 
+# Keep every default gitleaks rule; this file only adds an allowlist for
+# non-production values that the entropy-based rules flag as false positives.
 [extend]
 useDefault = true
 
+# A finding is allowed when it lives in one of the curated fixture paths OR its
+# value matches one of the dummy-secret regexes. The regexes match the exact
+# non-production literals used in Go test fixtures, so a real secret accidentally
+# committed elsewhere is still caught.
 [allowlist]
-description = "Curated false positives: deterministic test fixtures and historical agent transcripts/docs."
+description = "Curated false positives: deterministic test fixtures, dummy test secrets, and historical agent transcripts/docs."
 paths = [
   '''pkg/infra/crypto/cipher_test\.go''',
   '''.*cursor_phase_\d+\.md''',
+]
+regexes = [
+  '''smoke-secret-key-that-is-long-enough-\d+''',
+  '''test-secret-key-that-[a-z]-\d+''',
 ]
