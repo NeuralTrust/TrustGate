@@ -21,7 +21,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
+	"sync"
 )
 
 type MultiHandler struct {
@@ -104,70 +104,8 @@ func (h *SourceFilterHandler) WithGroup(name string) slog.Handler {
 	return NewSourceFilterHandler(h.handler.WithGroup(name))
 }
 
-type AsyncHandler struct {
-	handler slog.Handler
-	ch      chan logRecord
-	done    chan struct{}
-}
-
-type logRecord struct {
-	ctx    context.Context
-	record slog.Record
-	result chan error
-}
-
-func NewAsyncHandler(handler slog.Handler, bufferSize int) *AsyncHandler {
-	if bufferSize <= 0 {
-		bufferSize = 1000
-	}
-	ah := &AsyncHandler{
-		handler: handler,
-		ch:      make(chan logRecord, bufferSize),
-		done:    make(chan struct{}),
-	}
-	go ah.worker()
-	return ah
-}
-
-func (h *AsyncHandler) worker() {
-	for {
-		select {
-		case record := <-h.ch:
-			err := h.handler.Handle(record.ctx, record.record)
-			record.result <- err
-		case <-h.done:
-			return
-		}
-	}
-}
-
-func (h *AsyncHandler) Enabled(ctx context.Context, level slog.Level) bool {
-	return h.handler.Enabled(ctx, level)
-}
-
-func (h *AsyncHandler) Handle(ctx context.Context, r slog.Record) error {
-	result := make(chan error, 1)
-	select {
-	case h.ch <- logRecord{ctx: ctx, record: r, result: result}:
-		return <-result
-	default:
-		return h.handler.Handle(ctx, r)
-	}
-}
-
-func (h *AsyncHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return NewAsyncHandler(h.handler.WithAttrs(attrs), cap(h.ch))
-}
-
-func (h *AsyncHandler) WithGroup(name string) slog.Handler {
-	return NewAsyncHandler(h.handler.WithGroup(name), cap(h.ch))
-}
-
-func (h *AsyncHandler) Close() {
-	close(h.done)
-}
-
 type ColoredHandler struct {
+	mu     sync.Mutex
 	writer io.Writer
 	level  slog.Level
 }
@@ -205,6 +143,8 @@ func (h *ColoredHandler) Handle(_ context.Context, r slog.Record) error {
 	}
 	timeStamp := r.Time.Format("15:04:05")
 	message := fmt.Sprintf("%s%s%s | %s\n", color, timeStamp, colorReset, r.Message)
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	_, err := h.writer.Write([]byte(message))
 	return err
 }
@@ -222,10 +162,10 @@ const (
 )
 
 func NewLogger(level slog.Level) *slog.Logger {
-	return NewLoggerWithFormat(level, LogFormatJSON)
+	return NewLoggerWithFormat(level, LogFormatJSON, false)
 }
 
-func NewLoggerWithFormat(level slog.Level, format LogFormat) *slog.Logger {
+func NewLoggerWithFormat(level slog.Level, format LogFormat, fileEnabled bool) *slog.Logger {
 	handlerOpts := &slog.HandlerOptions{
 		Level:     level,
 		AddSource: true,
@@ -242,31 +182,19 @@ func NewLoggerWithFormat(level slog.Level, format LogFormat) *slog.Logger {
 	}
 
 	consoleHandler := NewSourceFilterHandler(consoleBaseHandler)
-	asyncConsoleHandler := NewAsyncHandler(consoleHandler, 1000)
 
-	if !fileLogEnabled() {
-		return slog.New(asyncConsoleHandler)
+	if !fileEnabled {
+		return slog.New(consoleHandler)
 	}
 
 	fileHandler, err := createFileHandler(handlerOpts)
 	if err != nil {
 		slog.Warn("file log sink unavailable, falling back to console-only", slog.String("error", err.Error()))
-		return slog.New(asyncConsoleHandler)
+		return slog.New(consoleHandler)
 	}
 
-	multiHandler := NewMultiHandler(asyncConsoleHandler, fileHandler)
+	multiHandler := NewMultiHandler(consoleHandler, fileHandler)
 	return slog.New(multiHandler)
-}
-
-// fileLogEnabled gates the on-disk var/log.log sink. Containers should keep this
-// off (stdout JSON only); enable locally with LOG_FILE_ENABLED=true.
-func fileLogEnabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("LOG_FILE_ENABLED"))) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
 }
 
 func createFileHandler(opts *slog.HandlerOptions) (slog.Handler, error) {
@@ -278,7 +206,5 @@ func createFileHandler(opts *slog.HandlerOptions) (slog.Handler, error) {
 		return nil, err
 	}
 	jsonHandler := slog.NewJSONHandler(logFile, opts)
-	sourceFilterHandler := NewSourceFilterHandler(jsonHandler)
-	asyncFileHandler := NewAsyncHandler(sourceFilterHandler, 1000)
-	return asyncFileHandler, nil
+	return NewSourceFilterHandler(jsonHandler), nil
 }

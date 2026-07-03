@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bootlog"
@@ -32,7 +33,8 @@ var _ EventListener = (*redisEventListener)(nil)
 type redisEventListener struct {
 	logger      *slog.Logger
 	cache       Client
-	subscribers map[reflect.Type]interface{}
+	mu          sync.RWMutex
+	subscribers map[reflect.Type]EventDispatchFunc
 	registry    map[string]reflect.Type
 }
 
@@ -44,7 +46,7 @@ func NewRedisEventListener(
 	return &redisEventListener{
 		logger:      logger,
 		cache:       cache,
-		subscribers: make(map[reflect.Type]interface{}),
+		subscribers: make(map[reflect.Type]EventDispatchFunc),
 		registry:    registry,
 	}
 }
@@ -52,11 +54,19 @@ func NewRedisEventListener(
 func RegisterEventSubscriber[T event.Event](pub EventListener, subscriber EventSubscriber[T]) {
 	var evt T
 	eventType := reflect.TypeOf(evt)
-	pub.Register(eventType, subscriber)
+	pub.Register(eventType, func(ctx context.Context, raw any) error {
+		ev, ok := raw.(T)
+		if !ok {
+			return nil
+		}
+		return subscriber.OnEvent(ctx, ev)
+	})
 }
 
-func (r *redisEventListener) Register(eventType reflect.Type, subscriber interface{}) {
-	r.subscribers[eventType] = subscriber
+func (r *redisEventListener) Register(eventType reflect.Type, dispatch EventDispatchFunc) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.subscribers[eventType] = dispatch
 }
 
 func (r *redisEventListener) Listen(ctx context.Context, channels ...channel.Channel) {
@@ -88,12 +98,17 @@ func (r *redisEventListener) listenWithReconnect(ctx context.Context, channelNam
 	pubSub := r.cache.RedisClient().Subscribe(ctx, channelNames...)
 	defer func() { _ = pubSub.Close() }()
 
-	r.logger.Debug(bootlog.RedisPubSubConnected, slog.Any("channels", channelNames))
-
+	stop := make(chan struct{})
+	defer close(stop)
 	go func() {
-		<-ctx.Done()
-		_ = pubSub.Close()
+		select {
+		case <-ctx.Done():
+			_ = pubSub.Close()
+		case <-stop:
+		}
 	}()
+
+	r.logger.Debug(bootlog.RedisPubSubConnected, slog.Any("channels", channelNames))
 
 	for msg := range pubSub.Channel() {
 		select {
@@ -106,12 +121,12 @@ func (r *redisEventListener) listenWithReconnect(ctx context.Context, channelNam
 }
 
 func (r *redisEventListener) handleMessage(ctx context.Context, payload string) {
-	r.logger.Info("received redis message", slog.String("payload", payload))
 	var envelope RedisMessage
 	if err := json.Unmarshal([]byte(payload), &envelope); err != nil {
 		r.logger.Error("error decoding redis message", slog.String("error", err.Error()))
 		return
 	}
+	r.logger.Debug("received redis message", slog.String("event_type", envelope.Type))
 
 	concreteType, err := r.getEvent(envelope.Type)
 	if err != nil {
@@ -126,33 +141,21 @@ func (r *redisEventListener) handleMessage(ctx context.Context, payload string) 
 	}
 	concreteEvent := eventPtr.Elem().Interface()
 
-	r.notifySubscribers(ctx, concreteEvent)
+	r.notifySubscribers(ctx, concreteType, concreteEvent)
 }
 
-func (r *redisEventListener) notifySubscribers(ctx context.Context, concreteEvent interface{}) {
-	for _, sub := range r.subscribers {
-		sVal := reflect.ValueOf(sub)
-		method := sVal.MethodByName("OnEvent")
-		if !method.IsValid() {
-			r.logger.Debug("subscriber does not implement OnEvent")
-			continue
-		}
-
-		expectedType := method.Type().In(1)
-		eventValue := reflect.ValueOf(concreteEvent)
-		if !eventValue.Type().AssignableTo(expectedType) {
-			continue
-		}
-
-		results := method.Call([]reflect.Value{reflect.ValueOf(ctx), eventValue})
-		if len(results) > 0 && !results[0].IsNil() {
-			if err, ok := results[0].Interface().(error); ok {
-				r.logger.Error("error executing subscriber",
-					slog.Any("event", concreteEvent),
-					slog.String("error", err.Error()),
-				)
-			}
-		}
+func (r *redisEventListener) notifySubscribers(ctx context.Context, eventType reflect.Type, concreteEvent any) {
+	r.mu.RLock()
+	dispatch, ok := r.subscribers[eventType]
+	r.mu.RUnlock()
+	if !ok {
+		return
+	}
+	if err := dispatch(ctx, concreteEvent); err != nil {
+		r.logger.Error("error executing subscriber",
+			slog.String("event_type", eventType.String()),
+			slog.String("error", err.Error()),
+		)
 	}
 }
 
