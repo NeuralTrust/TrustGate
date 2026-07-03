@@ -72,17 +72,31 @@ type ProviderInvoker interface {
 	InvokeStream(ctx context.Context, bk *registry.Registry, req *infracontext.RequestContext) (*ProviderResponse, error)
 }
 
+// providerCodec is the segregated view of the provider-format adapter registry
+// the invoker needs: decoding and cross-format adaptation of request, response
+// and stream payloads. Depending on this abstraction rather than the concrete
+// registry keeps the app layer off the infra adapter implementation and makes
+// the invoker testable in isolation.
+type providerCodec interface {
+	AdaptRequest(body []byte, source, target adapter.Format) ([]byte, error)
+	DecodeResponseFor(body []byte, providerFormat adapter.Format) (*adapter.CanonicalResponse, error)
+	AdaptResponse(body []byte, source, target adapter.Format) ([]byte, error)
+	AdaptStreamChunk(chunk []byte, source, target adapter.Format) ([][]byte, error)
+	DecodeStreamChunkFor(chunk []byte, target adapter.Format) (*adapter.CanonicalStreamChunk, error)
+	EncodeStreamChunkFor(canonical *adapter.CanonicalStreamChunk, source adapter.Format) ([][]byte, error)
+}
+
 var _ ProviderInvoker = (*providerInvoker)(nil)
 
 type providerInvoker struct {
 	locator  factory.ProviderLocator
-	registry *adapter.Registry
+	registry providerCodec
 	logger   *slog.Logger
 }
 
 func NewProviderInvoker(
 	locator factory.ProviderLocator,
-	registry *adapter.Registry,
+	registry providerCodec,
 	logger *slog.Logger,
 ) ProviderInvoker {
 	return &providerInvoker{
@@ -174,10 +188,7 @@ func (p *providerInvoker) InvokeStream(
 	body := prep.body
 	// Registries speaking the OpenAI-style API need an explicit "stream": true even
 	// when the source format (e.g. Gemini) does not carry it in the body.
-	if adapter.IsSameWireFormat(prep.targetFormat, adapter.FormatOpenAI) ||
-		prep.targetFormat == adapter.FormatOpenAIResponses ||
-		prep.targetFormat == adapter.FormatAnthropic ||
-		prep.targetFormat == adapter.FormatMistral {
+	if prep.targetFormat.SupportsCanonicalToolCalls() {
 		body = injectStreamTrue(body)
 	}
 
@@ -262,7 +273,7 @@ func (p *providerInvoker) prepare(
 		client: client,
 		cfg: &providers.Config{
 			Options:     bk.ProviderOptions(),
-			Credentials: bk.Auth().ProviderCredentials(),
+			Credentials: providers.CredentialsFromTargetAuth(bk.Auth()),
 		},
 		body:         body,
 		sentModel:    sentModel,

@@ -63,7 +63,7 @@ func provideRuntimeBase(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(func(cfg *config.Config) *slog.Logger {
-		log := logger.NewLoggerWithFormat(cfg.Logger.Level, logger.LogFormat(cfg.Logger.Format))
+		log := logger.NewLoggerWithFormat(cfg.Logger.Level, logger.LogFormat(cfg.Logger.Format), cfg.Logger.FileEnabled)
 		slog.SetDefault(log)
 		return log
 	}); err != nil {

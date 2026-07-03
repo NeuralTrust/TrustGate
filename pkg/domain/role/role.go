@@ -35,7 +35,7 @@ type Role struct {
 	Name          string           `json:"name"`
 	ModelPolicies ModelPolicies    `json:"model_policies,omitempty"`
 	MCPPolicies   *MCPPolicies     `json:"mcp_policies,omitempty"`
-	OIDCMapping    json.RawMessage  `json:"oidc_mapping,omitempty"`
+	OIDCMapping   json.RawMessage  `json:"oidc_mapping,omitempty"`
 	RegistryIDs   []ids.RegistryID `json:"registry_ids,omitempty"`
 	CreatedAt     time.Time        `json:"created_at"`
 	UpdatedAt     time.Time        `json:"updated_at"`
@@ -46,7 +46,7 @@ type CreateParams struct {
 	Name          string
 	ModelPolicies ModelPolicies
 	MCPPolicies   *MCPPolicies
-	OIDCMapping    json.RawMessage
+	OIDCMapping   json.RawMessage
 	RegistryIDs   []ids.RegistryID
 }
 
@@ -62,7 +62,7 @@ func New(params CreateParams) (*Role, error) {
 		Name:          params.Name,
 		ModelPolicies: params.ModelPolicies,
 		MCPPolicies:   params.MCPPolicies,
-		OIDCMapping:    params.OIDCMapping,
+		OIDCMapping:   params.OIDCMapping,
 		RegistryIDs:   params.RegistryIDs,
 		CreatedAt:     now,
 		UpdatedAt:     now,
@@ -89,7 +89,7 @@ func Rehydrate(
 		Name:          name,
 		ModelPolicies: modelPolicies,
 		MCPPolicies:   mcpPolicies,
-		OIDCMapping:    idpMapping,
+		OIDCMapping:   idpMapping,
 		RegistryIDs:   registryIDs,
 		CreatedAt:     createdAt,
 		UpdatedAt:     updatedAt,

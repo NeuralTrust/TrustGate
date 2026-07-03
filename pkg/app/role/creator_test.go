@@ -29,8 +29,8 @@ import (
 
 type repositoryStub struct{}
 
-func (repositoryStub) Save(context.Context, *domain.Role) error   { return nil }
-func (repositoryStub) Update(context.Context, *domain.Role) error { return nil }
+func (repositoryStub) Save(context.Context, *domain.Role) error                { return nil }
+func (repositoryStub) Update(context.Context, *domain.Role) error              { return nil }
 func (repositoryStub) Delete(context.Context, ids.GatewayID, ids.RoleID) error { return nil }
 func (repositoryStub) FindByID(context.Context, ids.RoleID) (*domain.Role, error) {
 	return nil, domain.ErrNotFound

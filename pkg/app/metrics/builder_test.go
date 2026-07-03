@@ -313,7 +313,7 @@ func TestBuilder_CostUsesServedModelForPoolRouting(t *testing.T) {
 	resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"id":"x","choices":[]}`)}
 
 	b := newBuilderWithPricing(map[string]appcatalog.Pricing{
-		"openai:pool:fast-chat": {Found: false},
+		"openai:pool:fast-chat":         {Found: false},
 		"openai:gpt-4o-mini-2024-07-18": {Found: false},
 		"openai:gpt-4o-mini": {
 			Found:       true,

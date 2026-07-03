@@ -20,7 +20,6 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
-	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
@@ -34,7 +33,7 @@ var _ Deleter = (*deleter)(nil)
 
 type deleter struct {
 	repo         domain.Repository
-	consumerRepo consumerdomain.Repository
+	consumerRepo consumerAuthRefs
 	memoryCache  *cache.TTLMap
 	keyCache     *cache.TTLMap
 	publisher    cache.EventPublisher
@@ -44,7 +43,7 @@ type deleter struct {
 
 func NewDeleter(
 	repo domain.Repository,
-	consumerRepo consumerdomain.Repository,
+	consumerRepo consumerAuthRefs,
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
 	logger *slog.Logger,

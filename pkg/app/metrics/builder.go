@@ -29,12 +29,20 @@ import (
 
 const costCurrencyUSD = "USD"
 
+// requestDecoder is the segregated view of the provider-format adapter registry
+// the metrics builder needs: decoding a raw request body into its canonical form
+// to attribute token usage. Depending on this abstraction keeps the builder off
+// the concrete infra registry.
+type requestDecoder interface {
+	DecodeRequestFor(body []byte, providerFormat adapter.Format) (*adapter.CanonicalRequest, error)
+}
+
 type Builder struct {
-	adapters *adapter.Registry
+	adapters requestDecoder
 	pricing  appcatalog.PricingResolver
 }
 
-func NewBuilder(adapters *adapter.Registry, pricing appcatalog.PricingResolver) *Builder {
+func NewBuilder(adapters requestDecoder, pricing appcatalog.PricingResolver) *Builder {
 	return &Builder{adapters: adapters, pricing: pricing}
 }
 

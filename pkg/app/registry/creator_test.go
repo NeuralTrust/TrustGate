@@ -77,6 +77,29 @@ func TestCreator_Create_Success(t *testing.T) {
 	}
 }
 
+func TestCreator_Create_RejectsInvalidProviderOptions(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	gwID := ids.New[ids.GatewayKind]()
+
+	creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger(), nil)
+
+	_, err := creator.Create(context.Background(), appregistry.CreateInput{
+		GatewayID: gwID,
+		Name:      "compat-missing-base-url",
+		LLMTarget: &domain.LLMTarget{
+			Provider: "openai_compatible",
+			Auth:     domain.NewAPIKeyAuth("sk-test"),
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, domain.ErrInvalidRegistry) {
+		t.Fatalf("err = %v, want wrap of ErrInvalidRegistry", err)
+	}
+}
+
 func TestCreator_Create_EnabledFlag(t *testing.T) {
 	t.Parallel()
 
@@ -202,7 +225,7 @@ func TestCreator_Create_AzureModes(t *testing.T) {
 			gwID := ids.New[ids.GatewayKind]()
 			repo.EXPECT().
 				Save(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
-					creds := b.Auth().ProviderCredentials()
+					creds := providers.CredentialsFromTargetAuth(b.Auth())
 					return b.GatewayID == gwID &&
 						b.Provider() == "azure" &&
 						creds.ApiKey == tt.key &&

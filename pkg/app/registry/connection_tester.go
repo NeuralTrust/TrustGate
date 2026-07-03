@@ -98,7 +98,7 @@ func (t *connectionTester) Test(ctx context.Context, in TestConnectionInput) (Te
 
 	cfg := &providers.Config{
 		Options:     options,
-		Credentials: auth.ProviderCredentials(),
+		Credentials: providers.CredentialsFromTargetAuth(auth),
 	}
 
 	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)

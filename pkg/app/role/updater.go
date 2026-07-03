@@ -33,7 +33,7 @@ type UpdateInput struct {
 	ModelPolicies  *domain.ModelPolicies
 	MCPPolicies    *domain.MCPPolicies
 	MCPPoliciesSet bool
-	OIDCMapping     *json.RawMessage
+	OIDCMapping    *json.RawMessage
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=role_updater_mock.go --case=underscore --with-expecter

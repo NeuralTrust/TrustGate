@@ -90,6 +90,11 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Registry,
 	applyLLMTargetUpdate(existing, in)
 	applyMCPTargetUpdate(existing, in)
 	existing.UpdatedAt = time.Now().UTC()
+	if !existing.IsMCP() {
+		if verr := validateProviderOptions(existing.LLMTarget); verr != nil {
+			return nil, verr
+		}
+	}
 	if err := existing.Validate(); err != nil {
 		return nil, err
 	}

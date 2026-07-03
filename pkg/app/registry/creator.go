@@ -16,12 +16,14 @@ package registry
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
 type CreateInput struct {
@@ -68,6 +70,9 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Registry,
 			in.MCPTarget,
 		)
 	} else {
+		if verr := validateProviderOptions(in.LLMTarget); verr != nil {
+			return nil, verr
+		}
 		b, err = domain.NewLLMRegistry(
 			in.GatewayID,
 			in.Name,
@@ -89,4 +94,14 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Registry,
 		c.signaler.Signal(ctx)
 	}
 	return b, nil
+}
+
+func validateProviderOptions(target *domain.LLMTarget) error {
+	if target == nil {
+		return nil
+	}
+	if err := providers.ValidateProviderOptions(target.Provider, target.ProviderOptions); err != nil {
+		return fmt.Errorf("%w: %w", domain.ErrInvalidRegistry, err)
+	}
+	return nil
 }

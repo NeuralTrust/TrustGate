@@ -44,7 +44,23 @@ func provideConsumerRepository(c *container.Container) error {
 	})
 }
 
+// provideConsumerRepositoryViews exposes the consumer repository under its
+// segregated role interfaces so use cases can depend on the narrow view they
+// need (dig resolves by exact type, so each view is registered explicitly).
+func provideConsumerRepositoryViews(c *container.Container) error {
+	if err := c.Provide(func(r domain.Repository) domain.Reader { return r }); err != nil {
+		return err
+	}
+	if err := c.Provide(func(r domain.Repository) domain.Writer { return r }); err != nil {
+		return err
+	}
+	return c.Provide(func(r domain.Repository) domain.Associator { return r })
+}
+
 func provideConsumerServices(c *container.Container) error {
+	if err := provideConsumerRepositoryViews(c); err != nil {
+		return err
+	}
 	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, roleRepo roledomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appconsumer.Creator {
 		return appconsumer.NewCreator(repo, registryRepo, roleRepo, manager, publisher, logger, sig.Signaler)
 	}); err != nil {

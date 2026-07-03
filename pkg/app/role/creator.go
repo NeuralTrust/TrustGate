@@ -26,8 +26,8 @@ import (
 )
 
 type CreateInput struct {
-	GatewayID  ids.GatewayID
-	Name       string
+	GatewayID   ids.GatewayID
+	Name        string
 	OIDCMapping json.RawMessage
 }
 
@@ -64,8 +64,8 @@ func NewCreator(
 
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Role, error) {
 	role, err := domain.New(domain.CreateParams{
-		GatewayID:  in.GatewayID,
-		Name:       in.Name,
+		GatewayID:   in.GatewayID,
+		Name:        in.Name,
 		OIDCMapping: in.OIDCMapping,
 	})
 	if err != nil {

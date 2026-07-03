@@ -17,6 +17,7 @@ package modules
 import (
 	"log/slog"
 
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
@@ -24,6 +25,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bootlog"
 	infracache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/playground"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	infratelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/kafka"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/otlp"
@@ -31,7 +33,11 @@ import (
 )
 
 func Telemetry(c *container.Container) error {
-	if err := c.Provide(appmetrics.NewBuilder); err != nil {
+	// NewBuilder depends on a segregated decoder view; the concrete adapter
+	// registry satisfies it, but dig resolves by exact type so we bind it here.
+	if err := c.Provide(func(registry *adapter.Registry, pricing appcatalog.PricingResolver) *appmetrics.Builder {
+		return appmetrics.NewBuilder(registry, pricing)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(newExporterFactory); err != nil {

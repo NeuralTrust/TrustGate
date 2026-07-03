@@ -87,8 +87,8 @@ func roleWith(t *testing.T, gw ids.GatewayID, name, group string, policies *role
 		registryIDs = append(registryIDs, reg.ID)
 	}
 	role, err := roledomain.New(roledomain.CreateParams{
-		GatewayID:  gw,
-		Name:       name,
+		GatewayID:   gw,
+		Name:        name,
 		OIDCMapping: groupMapping(t, group),
 	})
 	if err != nil {

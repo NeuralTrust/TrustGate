@@ -24,7 +24,14 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
-func referencingConsumers(ctx context.Context, consumers consumerdomain.Repository, authID ids.AuthID) ([]*consumerdomain.Consumer, error) {
+// consumerAuthRefs is the narrow slice of the consumer store that auth
+// lifecycle guards depend on: enumerating and detaching auth references.
+type consumerAuthRefs interface {
+	ListByAuthID(ctx context.Context, authID ids.AuthID) ([]*consumerdomain.Consumer, error)
+	DetachAuth(ctx context.Context, consumerID ids.ConsumerID, authID ids.AuthID) error
+}
+
+func referencingConsumers(ctx context.Context, consumers consumerAuthRefs, authID ids.AuthID) ([]*consumerdomain.Consumer, error) {
 	refs, err := consumers.ListByAuthID(ctx, authID)
 	if err != nil {
 		return nil, fmt.Errorf("auth: list consumers referencing auth: %w", err)
@@ -32,7 +39,7 @@ func referencingConsumers(ctx context.Context, consumers consumerdomain.Reposito
 	return refs, nil
 }
 
-func guardAuthTypeChange(ctx context.Context, consumers consumerdomain.Repository, authID ids.AuthID, newType domain.Type) error {
+func guardAuthTypeChange(ctx context.Context, consumers consumerAuthRefs, authID ids.AuthID, newType domain.Type) error {
 	refs, err := referencingConsumers(ctx, consumers, authID)
 	if err != nil {
 		return err
@@ -45,7 +52,7 @@ func guardAuthTypeChange(ctx context.Context, consumers consumerdomain.Repositor
 	return nil
 }
 
-func guardAuthDisable(ctx context.Context, consumers consumerdomain.Repository, auths domain.Repository, authID ids.AuthID) error {
+func guardAuthDisable(ctx context.Context, consumers consumerAuthRefs, auths domain.Repository, authID ids.AuthID) error {
 	refs, err := referencingConsumers(ctx, consumers, authID)
 	if err != nil {
 		return err
@@ -92,7 +99,7 @@ func consumerHasOtherUsableAuth(ctx context.Context, auths domain.Repository, c 
 	return false, nil
 }
 
-func detachAuthFromConsumers(ctx context.Context, consumers consumerdomain.Repository, authID ids.AuthID) error {
+func detachAuthFromConsumers(ctx context.Context, consumers consumerAuthRefs, authID ids.AuthID) error {
 	refs, err := referencingConsumers(ctx, consumers, authID)
 	if err != nil {
 		return err

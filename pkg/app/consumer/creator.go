@@ -52,7 +52,7 @@ type Creator interface {
 var _ Creator = (*creator)(nil)
 
 type creator struct {
-	repo         domain.Repository
+	repo         domain.Writer
 	registryRepo registrydomain.Repository
 	roleRepo     roledomain.Repository
 	memoryCache  *cache.TTLMap
@@ -62,7 +62,7 @@ type creator struct {
 }
 
 func NewCreator(
-	repo domain.Repository,
+	repo domain.Writer,
 	registryRepo registrydomain.Repository,
 	roleRepo roledomain.Repository,
 	manager *cache.TTLMapManager,

@@ -15,15 +15,16 @@
 package plugins
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 )
 
-var ErrStageNotSupported = fmt.Errorf("plugin: stage not supported")
-var ErrNoEffectiveStages = fmt.Errorf("plugin: no effective stages")
+var ErrStageNotSupported = errors.New("plugin: stage not supported")
+var ErrNoEffectiveStages = errors.New("plugin: no effective stages")
 
-func EffectiveStages(p Plugin, selected []policy.Stage) []policy.Stage {
+func EffectiveStages(p PluginDescriptor, selected []policy.Stage) []policy.Stage {
 	supported := p.SupportedStages()
 	out := make([]policy.Stage, 0, len(supported))
 	for _, s := range p.MandatoryStages() {
@@ -39,7 +40,7 @@ func EffectiveStages(p Plugin, selected []policy.Stage) []policy.Stage {
 	return out
 }
 
-func ValidateStages(p Plugin, selected []policy.Stage) error {
+func ValidateStages(p PluginDescriptor, selected []policy.Stage) error {
 	supported := p.SupportedStages()
 	for _, s := range selected {
 		if !containsStage(supported, s) {
