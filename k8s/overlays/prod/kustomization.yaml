@@ -13,6 +13,7 @@ patchesStrategicMerge:
 - patches/pdb-patch.yaml
 - patches/httproute-patch.yaml
 - patches/sa-annotation-patch.yaml
+- patches/config-sync-tls-patch.yaml
 commonLabels:
   app.kubernetes.io/managed-by: kustomize
   environment: prod
