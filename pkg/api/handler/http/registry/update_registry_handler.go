@@ -17,7 +17,7 @@ package registry
 import (
 	"fmt"
 
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry/response"
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
@@ -45,23 +45,23 @@ func NewUpdateRegistryHandler(updater appregistry.Updater) *UpdateRegistryHandle
 // @Param        id          path      string                        true  "Registry id"  format(uuid)
 // @Param        body        body      request.UpdateRegistryRequest  true  "Registry fields to update"
 // @Success      200         {object}  response.RegistryResponse
-// @Failure      400         {object}  helpers.ErrorBody
-// @Failure      401         {object}  helpers.ErrorBody
-// @Failure      404         {object}  helpers.ErrorBody
-// @Failure      409         {object}  helpers.ErrorBody
+// @Failure      400         {object}  httpio.ErrorBody
+// @Failure      401         {object}  httpio.ErrorBody
+// @Failure      404         {object}  httpio.ErrorBody
+// @Failure      409         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/registries/{id} [put]
 func (h *UpdateRegistryHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, id, err := helpers.ParseGatewayScopedID[ids.RegistryKind](c)
+	gatewayID, id, err := httpio.ParseGatewayScopedID[ids.RegistryKind](c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 
 	var req request.UpdateRegistryRequest
 	if err := c.BodyParser(&req); err != nil {
-		return helpers.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
+		return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
 	}
 	if err := req.Validate(); err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 
 	b, err := h.updater.Update(c.UserContext(), appregistry.UpdateInput{
@@ -77,7 +77,7 @@ func (h *UpdateRegistryHandler) Handle(c *fiber.Ctx) error {
 		MCPTarget:       req.ToMCPTarget(),
 	})
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteOK(c, response.FromRegistry(b))
+	return httpio.WriteOK(c, response.FromRegistry(b))
 }

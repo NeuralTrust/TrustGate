@@ -15,14 +15,15 @@
 package strategies
 
 import (
+	"context"
 	"crypto/rand"
 	"math/big"
 	"sync"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer/algorithm"
 )
 
 type Random struct {
@@ -34,7 +35,7 @@ func NewRandom(registries []*registry.Registry) *Random {
 	return &Random{registries: registries}
 }
 
-func (r *Random) Next(req *infracontext.RequestContext, exclude map[ids.RegistryID]struct{}) *registry.Registry {
+func (r *Random) Next(_ context.Context, _ *infracontext.RequestContext, exclude map[ids.RegistryID]struct{}) *registry.Registry {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	candidates := filterExcluded(r.registries, exclude)

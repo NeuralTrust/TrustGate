@@ -15,7 +15,6 @@
 package context
 
 import (
-	"context"
 	"net/url"
 	"strings"
 	"time"
@@ -28,7 +27,6 @@ type Attachment struct {
 }
 
 type RequestContext struct {
-	Context            context.Context
 	GatewayID          string
 	ConsumerID         string
 	ConsumerType       string

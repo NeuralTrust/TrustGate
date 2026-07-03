@@ -17,7 +17,7 @@ package registry
 import (
 	"errors"
 
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
@@ -36,19 +36,19 @@ type ListRegistryToolsResponse struct {
 }
 
 func (h *ListRegistryToolsHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, id, err := helpers.ParseGatewayScopedID[ids.RegistryKind](c)
+	gatewayID, id, err := httpio.ParseGatewayScopedID[ids.RegistryKind](c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	tools, err := h.introspector.ListRegistryTools(c.UserContext(), gatewayID, id)
 	if err != nil {
 		if errors.Is(err, appmcp.ErrUpstreamUnavailable) {
 			return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": err.Error()})
 		}
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	if tools == nil {
 		tools = []appmcp.Tool{}
 	}
-	return helpers.WriteOK(c, ListRegistryToolsResponse{Tools: tools})
+	return httpio.WriteOK(c, ListRegistryToolsResponse{Tools: tools})
 }

@@ -121,7 +121,7 @@ func runRules(ctx context.Context, eval *evalContext, mode policy.Mode, toolCall
 			if !ok {
 				continue
 			}
-			res, err := v.Evaluate(validatorInput{ctx: ctx, toolCall: tc, rule: rule, eval: eval})
+			res, err := v.Evaluate(ctx, validatorInput{toolCall: tc, rule: rule, eval: eval})
 			if err != nil || !res.matched {
 				continue
 			}

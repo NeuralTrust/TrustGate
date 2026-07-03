@@ -17,7 +17,7 @@ package policy
 import (
 	"fmt"
 
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/response"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
@@ -43,23 +43,23 @@ func NewCreatePolicyHandler(creator apppolicy.Creator) *CreatePolicyHandler {
 // @Param        gateway_id  path      string                       true  "Gateway id"  format(uuid)
 // @Param        body        body      request.CreatePolicyRequest  true  "Policy to create"
 // @Success      201         {object}  response.PolicyResponse
-// @Failure      400         {object}  helpers.ErrorBody
-// @Failure      401         {object}  helpers.ErrorBody
-// @Failure      404         {object}  helpers.ErrorBody
-// @Failure      409         {object}  helpers.ErrorBody
+// @Failure      400         {object}  httpio.ErrorBody
+// @Failure      401         {object}  httpio.ErrorBody
+// @Failure      404         {object}  httpio.ErrorBody
+// @Failure      409         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/policies [post]
 func (h *CreatePolicyHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, err := helpers.ParseGatewayID(c)
+	gatewayID, err := httpio.ParseGatewayID(c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 
 	var req request.CreatePolicyRequest
 	if err := c.BodyParser(&req); err != nil {
-		return helpers.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
+		return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
 	}
 	if err := req.Validate(); err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 
 	p, err := h.creator.Create(c.UserContext(), apppolicy.CreateInput{
@@ -75,7 +75,7 @@ func (h *CreatePolicyHandler) Handle(c *fiber.Ctx) error {
 		Mode:        req.ToMode(),
 	})
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteCreated(c, response.FromPolicy(p))
+	return httpio.WriteCreated(c, response.FromPolicy(p))
 }

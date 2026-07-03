@@ -15,12 +15,13 @@
 package strategies
 
 import (
+	"context"
 	"sync"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer/algorithm"
 )
 
 type RoundRobin struct {
@@ -33,7 +34,7 @@ func NewRoundRobin(registries []*registry.Registry) *RoundRobin {
 	return &RoundRobin{registries: registries}
 }
 
-func (rr *RoundRobin) Next(req *infracontext.RequestContext, exclude map[ids.RegistryID]struct{}) *registry.Registry {
+func (rr *RoundRobin) Next(_ context.Context, _ *infracontext.RequestContext, exclude map[ids.RegistryID]struct{}) *registry.Registry {
 	rr.mu.Lock()
 	defer rr.mu.Unlock()
 	n := len(rr.registries)

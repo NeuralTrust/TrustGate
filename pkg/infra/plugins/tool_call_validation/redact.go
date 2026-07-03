@@ -27,7 +27,7 @@ const (
 )
 
 func redactSupportsFormat(format adapter.Format) bool {
-	return format == adapter.FormatOpenAIResponses || adapter.IsSameWireFormat(format, adapter.FormatOpenAI)
+	return format.IsOpenAIFamily()
 }
 
 type redaction struct {

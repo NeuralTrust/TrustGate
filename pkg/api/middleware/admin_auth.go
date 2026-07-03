@@ -18,7 +18,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/gofiber/fiber/v2"
@@ -84,7 +84,7 @@ func (m *AdminAuthMiddleware) Middleware() fiber.Handler {
 
 func (m *AdminAuthMiddleware) unauthorized(c *fiber.Ctx, message string, err error) error {
 	m.logAuthFailure(c, message, err)
-	return c.Status(fiber.StatusUnauthorized).JSON(helpers.ErrorBody{
+	return c.Status(fiber.StatusUnauthorized).JSON(httpio.ErrorBody{
 		Error:   "unauthorized",
 		Message: message,
 	})

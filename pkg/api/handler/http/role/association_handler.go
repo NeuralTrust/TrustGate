@@ -15,7 +15,7 @@
 package role
 
 import (
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	approle "github.com/NeuralTrust/TrustGate/pkg/app/role"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
@@ -39,19 +39,19 @@ func NewAssociationHandler(associator approle.Associator) *AssociationHandler {
 // @Param        role_id      path  string  true  "Role id"      format(uuid)
 // @Param        registry_id  path  string  true  "Registry id"  format(uuid)
 // @Success      204          "No Content"
-// @Failure      400          {object}  helpers.ErrorBody
-// @Failure      401          {object}  helpers.ErrorBody
-// @Failure      404          {object}  helpers.ErrorBody
+// @Failure      400          {object}  httpio.ErrorBody
+// @Failure      401          {object}  httpio.ErrorBody
+// @Failure      404          {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/roles/{role_id}/registries/{registry_id} [post]
 func (h *AssociationHandler) AttachRegistry(c *fiber.Ctx) error {
 	gatewayID, roleID, registryID, err := parseAssociationIDs(c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	if err := h.associator.AttachRegistry(c.UserContext(), gatewayID, roleID, registryID); err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteNoContent(c)
+	return httpio.WriteNoContent(c)
 }
 
 // DetachRegistry godoc
@@ -64,32 +64,32 @@ func (h *AssociationHandler) AttachRegistry(c *fiber.Ctx) error {
 // @Param        role_id      path  string  true  "Role id"      format(uuid)
 // @Param        registry_id  path  string  true  "Registry id"  format(uuid)
 // @Success      204          "No Content"
-// @Failure      400          {object}  helpers.ErrorBody
-// @Failure      401          {object}  helpers.ErrorBody
-// @Failure      404          {object}  helpers.ErrorBody
-// @Failure      409          {object}  helpers.ErrorBody
+// @Failure      400          {object}  httpio.ErrorBody
+// @Failure      401          {object}  httpio.ErrorBody
+// @Failure      404          {object}  httpio.ErrorBody
+// @Failure      409          {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/roles/{role_id}/registries/{registry_id} [delete]
 func (h *AssociationHandler) DetachRegistry(c *fiber.Ctx) error {
 	gatewayID, roleID, registryID, err := parseAssociationIDs(c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	if err := h.associator.DetachRegistry(c.UserContext(), gatewayID, roleID, registryID); err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteNoContent(c)
+	return httpio.WriteNoContent(c)
 }
 
 func parseAssociationIDs(c *fiber.Ctx) (ids.GatewayID, ids.RoleID, ids.RegistryID, error) {
-	gatewayID, err := helpers.ParseGatewayID(c)
+	gatewayID, err := httpio.ParseGatewayID(c)
 	if err != nil {
 		return ids.GatewayID{}, ids.RoleID{}, ids.RegistryID{}, err
 	}
-	roleID, err := helpers.ParseUUIDParam[ids.RoleKind](c, "role_id")
+	roleID, err := httpio.ParseUUIDParam[ids.RoleKind](c, "role_id")
 	if err != nil {
 		return ids.GatewayID{}, ids.RoleID{}, ids.RegistryID{}, err
 	}
-	registryID, err := helpers.ParseUUIDParam[ids.RegistryKind](c, "registry_id")
+	registryID, err := httpio.ParseUUIDParam[ids.RegistryKind](c, "registry_id")
 	if err != nil {
 		return ids.GatewayID{}, ids.RoleID{}, ids.RegistryID{}, err
 	}

@@ -59,7 +59,7 @@ func (r UpdateConsumerRequest) ToRoutingMode() *domain.RoutingMode {
 	if r.RoutingMode == nil || strings.TrimSpace(*r.RoutingMode) == "" {
 		return nil
 	}
-	mode := domain.RoutingMode(*r.RoutingMode)
+	mode := domain.NewRoutingMode(*r.RoutingMode)
 	return &mode
 }
 

@@ -32,10 +32,10 @@ type Event struct {
 	OccurredOn   int64  `json:"occurred_on"`
 	EndTimestamp int64  `json:"end_timestamp"`
 
-	Consumer      Consumer `json:"consumer"`
-	SessionID string `json:"session_id,omitempty"`
-	TurnID    string `json:"turn_id,omitempty"`
-	IP        string `json:"ip,omitempty"`
+	Consumer  Consumer `json:"consumer"`
+	SessionID string   `json:"session_id,omitempty"`
+	TurnID    string   `json:"turn_id,omitempty"`
+	IP        string   `json:"ip,omitempty"`
 
 	Status    Status   `json:"status"`
 	IsFlagged bool     `json:"is_flagged"`

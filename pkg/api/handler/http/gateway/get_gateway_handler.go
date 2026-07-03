@@ -16,7 +16,7 @@ package gateway
 
 import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway/response"
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
@@ -40,18 +40,18 @@ func NewGetGatewayHandler(finder appgateway.Finder, baseDomain, mcpBaseDomain st
 // @Security     BearerAuth
 // @Param        id   path      string  true  "Gateway id"  format(uuid)
 // @Success      200  {object}  response.GatewayResponse
-// @Failure      400  {object}  helpers.ErrorBody
-// @Failure      401  {object}  helpers.ErrorBody
-// @Failure      404  {object}  helpers.ErrorBody
+// @Failure      400  {object}  httpio.ErrorBody
+// @Failure      401  {object}  httpio.ErrorBody
+// @Failure      404  {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{id} [get]
 func (h *GetGatewayHandler) Handle(c *fiber.Ctx) error {
-	id, err := helpers.ParseUUIDParam[ids.GatewayKind](c, "id")
+	id, err := httpio.ParseUUIDParam[ids.GatewayKind](c, "id")
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	g, err := h.finder.FindByID(c.UserContext(), id)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteOK(c, response.FromDomain(g, h.baseDomain, h.mcpBaseDomain))
+	return httpio.WriteOK(c, response.FromDomain(g, h.baseDomain, h.mcpBaseDomain))
 }

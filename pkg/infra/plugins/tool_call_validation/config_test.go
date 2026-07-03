@@ -15,7 +15,6 @@
 package tool_call_validation
 
 import (
-	"context"
 	"net/http"
 	"testing"
 
@@ -290,12 +289,8 @@ func TestScaffoldingValueTypes(t *testing.T) {
 	t.Parallel()
 
 	in := validatorInput{
-		ctx:      context.Background(),
 		toolCall: adapter.CanonicalToolCall{Name: "send_email", Arguments: `{"to":"a@b.com"}`},
 		rule:     RuleConfig{Validator: validatorRegex, ArgumentPath: "$.to"},
-	}
-	if in.ctx == nil {
-		t.Fatalf("expected non-nil ctx")
 	}
 	if in.toolCall.Name != "send_email" {
 		t.Fatalf("unexpected tool call name %q", in.toolCall.Name)

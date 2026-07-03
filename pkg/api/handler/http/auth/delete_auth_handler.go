@@ -15,7 +15,7 @@
 package auth
 
 import (
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
@@ -38,18 +38,18 @@ func NewDeleteAuthHandler(deleter appauth.Deleter) *DeleteAuthHandler {
 // @Param        gateway_id  path  string  true  "Gateway id"  format(uuid)
 // @Param        id          path  string  true  "Auth id"     format(uuid)
 // @Success      204         "No Content"
-// @Failure      400         {object}  helpers.ErrorBody
-// @Failure      401         {object}  helpers.ErrorBody
-// @Failure      404         {object}  helpers.ErrorBody
-// @Failure      409         {object}  helpers.ErrorBody
+// @Failure      400         {object}  httpio.ErrorBody
+// @Failure      401         {object}  httpio.ErrorBody
+// @Failure      404         {object}  httpio.ErrorBody
+// @Failure      409         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/auths/{id} [delete]
 func (h *DeleteAuthHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, id, err := helpers.ParseGatewayScopedID[ids.AuthKind](c)
+	gatewayID, id, err := httpio.ParseGatewayScopedID[ids.AuthKind](c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	if err := h.deleter.Delete(c.UserContext(), gatewayID, id); err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteNoContent(c)
+	return httpio.WriteNoContent(c)
 }

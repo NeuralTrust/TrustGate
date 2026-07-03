@@ -17,6 +17,8 @@ package adapter
 import (
 	"encoding/json"
 	"strings"
+
+	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
 )
 
 // NormalizeOpenAIRequest performs lightweight, in-place normalization of an
@@ -232,8 +234,8 @@ func hasLlamaStyleFunctionContent(m map[string]json.RawMessage) bool {
 // NormalizeRequestForProvider applies provider-specific request fixes before an
 // upstream call. Groq uses NormalizeGroqRequest; other OpenAI-wire targets use
 // NormalizeOpenAIRequest when applicable.
-func NormalizeRequestForProvider(provider string, targetFormat Format, body []byte) []byte {
-	if provider == "groq" {
+func NormalizeRequestForProvider(providerName string, targetFormat Format, body []byte) []byte {
+	if providerName == provider.Groq {
 		return NormalizeGroqRequest(body)
 	}
 	if IsSameWireFormat(targetFormat, FormatOpenAI) {

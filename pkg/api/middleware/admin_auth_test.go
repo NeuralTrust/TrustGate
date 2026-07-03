@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
@@ -58,12 +58,12 @@ func newAdminAuthAppWithLogger(t *testing.T, secret string, logger *slog.Logger)
 	return app, mgr
 }
 
-func decodeErrorBody(t *testing.T, resp *http.Response) helpers.ErrorBody {
+func decodeErrorBody(t *testing.T, resp *http.Response) httpio.ErrorBody {
 	t.Helper()
 	data, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 
-	var body helpers.ErrorBody
+	var body httpio.ErrorBody
 	require.NoError(t, json.Unmarshal(data, &body))
 	return body
 }
@@ -73,7 +73,7 @@ func TestAdminAuth_MissingHeader(t *testing.T) {
 	resp, err := app.Test(httptest.NewRequest(fiber.MethodGet, "/protected", nil))
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
-	require.Equal(t, helpers.ErrorBody{
+	require.Equal(t, httpio.ErrorBody{
 		Error:   "unauthorized",
 		Message: "Authorization required",
 	}, decodeErrorBody(t, resp))
@@ -86,7 +86,7 @@ func TestAdminAuth_InvalidFormat(t *testing.T) {
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
-	require.Equal(t, helpers.ErrorBody{
+	require.Equal(t, httpio.ErrorBody{
 		Error:   "unauthorized",
 		Message: "Invalid authorization format",
 	}, decodeErrorBody(t, resp))
@@ -99,7 +99,7 @@ func TestAdminAuth_InvalidToken(t *testing.T) {
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
-	require.Equal(t, helpers.ErrorBody{
+	require.Equal(t, httpio.ErrorBody{
 		Error:   "unauthorized",
 		Message: "Invalid token",
 	}, decodeErrorBody(t, resp))
@@ -135,7 +135,7 @@ func TestAdminAuth_PlaygroundPurposeTokenRejected(t *testing.T) {
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
-	require.Equal(t, helpers.ErrorBody{
+	require.Equal(t, httpio.ErrorBody{
 		Error:   "unauthorized",
 		Message: "Token not valid for admin API",
 	}, decodeErrorBody(t, resp))

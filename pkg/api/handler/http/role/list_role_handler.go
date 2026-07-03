@@ -15,7 +15,7 @@
 package role
 
 import (
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/role/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/role/response"
 	approle "github.com/NeuralTrust/TrustGate/pkg/app/role"
@@ -42,21 +42,21 @@ func NewListRoleHandler(finder approle.Finder) *ListRoleHandler {
 // @Param        page        query     int     false  "Page number (1-based)"
 // @Param        size        query     int     false  "Page size"
 // @Success      200         {object}  response.ListRoleResponse
-// @Failure      400         {object}  helpers.ErrorBody
-// @Failure      401         {object}  helpers.ErrorBody
+// @Failure      400         {object}  httpio.ErrorBody
+// @Failure      401         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/roles [get]
 func (h *ListRoleHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, err := helpers.ParseGatewayID(c)
+	gatewayID, err := httpio.ParseGatewayID(c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	page, err := helpers.ParsePage(c)
+	page, err := httpio.ParsePage(c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	size, err := helpers.ParseSize(c)
+	size, err := httpio.ParseSize(c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	req := request.ListRoleRequest{
 		Name: c.Query("name"),
@@ -70,7 +70,7 @@ func (h *ListRoleHandler) Handle(c *fiber.Ctx) error {
 		Size:         req.Size,
 	})
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	out := response.ListRoleResponse{
 		Items: make([]response.RoleResponse, 0, len(items)),
@@ -81,5 +81,5 @@ func (h *ListRoleHandler) Handle(c *fiber.Ctx) error {
 	for _, role := range items {
 		out.Items = append(out.Items, response.FromRole(role))
 	}
-	return helpers.WriteOK(c, out)
+	return httpio.WriteOK(c, out)
 }

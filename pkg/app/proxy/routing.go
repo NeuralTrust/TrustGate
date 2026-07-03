@@ -15,6 +15,7 @@
 package proxy
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -162,6 +163,7 @@ func registryLookup(data *appconsumer.Data) approuting.RegistryLookup {
 }
 
 func (f *forwarder) routeBackend(
+	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
 	req *infracontext.RequestContext,
 	intent routingdomain.Intent,
@@ -188,7 +190,7 @@ func (f *forwarder) routeBackend(
 		return routedBackend{}, err
 	}
 	excluded := nonCandidateRegistries(rc, candidates)
-	bk, err := lb.NextBackend(req, excluded)
+	bk, err := lb.NextBackend(ctx, req, excluded)
 	if err != nil {
 		if fallback := firstAvailableFallback(rc, excluded); fallback != nil {
 			return routedBackend{lb: lb, backend: fallback, excluded: excluded, fromFallback: true}, nil
@@ -204,9 +206,9 @@ func (f *forwarder) routeLoadBalancer(
 	candidates *routingdomain.CandidateSet,
 ) (*loadbalancer.LoadBalancer, error) {
 	if intent.IsPool() {
-		return f.poolLoadBalancerFor(rc, intent.PoolAlias, candidates)
+		return f.balancers.PoolFor(rc, intent.PoolAlias, candidates)
 	}
-	return f.loadBalancerFor(rc)
+	return f.balancers.For(rc)
 }
 
 func nonCandidateRegistries(

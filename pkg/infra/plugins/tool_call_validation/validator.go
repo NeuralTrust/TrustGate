@@ -21,11 +21,10 @@ import (
 )
 
 type Validator interface {
-	Evaluate(in validatorInput) (violation, error)
+	Evaluate(ctx context.Context, in validatorInput) (violation, error)
 }
 
 type validatorInput struct {
-	ctx      context.Context
 	toolCall adapter.CanonicalToolCall
 	rule     RuleConfig
 	eval     *evalContext

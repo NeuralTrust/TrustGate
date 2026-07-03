@@ -80,6 +80,10 @@ func main() {
 		log.Fatalf("failed to initialize container: %v", err)
 	}
 
+	if err := c.Invoke(modules.StartCacheJanitor); err != nil {
+		log.Fatalf("failed to start cache janitor: %v", err)
+	}
+
 	if !dbless {
 		if err := c.Invoke(runMigrations); err != nil {
 			log.Fatalf("failed to run migrations: %v", err)
@@ -167,6 +171,7 @@ type proxyParam struct {
 	Worker       appmetrics.Worker
 	Conn         *database.Connection
 	ConfigWorker *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
+	ConfigClient *configsyncgrpc.Client                  `optional:"true"`
 }
 
 type mcpParam struct {
@@ -175,6 +180,7 @@ type mcpParam struct {
 	Worker       appmetrics.Worker
 	Conn         *database.Connection
 	ConfigWorker *configsync.Worker[*readmodel.Snapshot] `optional:"true"`
+	ConfigClient *configsyncgrpc.Client                  `optional:"true"`
 }
 
 type allParam struct {
@@ -198,7 +204,7 @@ func runAdmin(p adminParam, logger *slog.Logger) {
 }
 
 func runMCP(p mcpParam, logger *slog.Logger) {
-	stopWorker := startConfigSyncWorker(p.ConfigWorker, logger)
+	stopWorker := startConfigSyncWorker(p.ConfigWorker, p.ConfigClient, logger)
 	defer closeResources(p.Conn, logger)
 	defer p.Worker.Shutdown()
 	defer stopWorker()
@@ -206,7 +212,7 @@ func runMCP(p mcpParam, logger *slog.Logger) {
 }
 
 func runProxy(p proxyParam, logger *slog.Logger) {
-	stopWorker := startConfigSyncWorker(p.ConfigWorker, logger)
+	stopWorker := startConfigSyncWorker(p.ConfigWorker, p.ConfigClient, logger)
 	defer closeResources(p.Conn, logger)
 	defer p.Worker.Shutdown()
 	defer stopWorker()
@@ -249,7 +255,11 @@ func startDispatcher(dispatcher *appsnapshot.Dispatcher, logger *slog.Logger) fu
 	}
 }
 
-func startConfigSyncWorker(worker *configsync.Worker[*readmodel.Snapshot], logger *slog.Logger) func() {
+func startConfigSyncWorker(
+	worker *configsync.Worker[*readmodel.Snapshot],
+	client *configsyncgrpc.Client,
+	logger *slog.Logger,
+) func() {
 	if worker == nil {
 		return func() {}
 	}
@@ -264,6 +274,13 @@ func startConfigSyncWorker(worker *configsync.Worker[*readmodel.Snapshot], logge
 	}()
 	return func() {
 		cancel()
+		// Closing the client cancels the Sync stream context, unblocking the
+		// watch loop's in-flight receive so the worker goroutine can exit.
+		if client != nil {
+			if err := client.Close(); err != nil {
+				logger.Warn("config sync client close failed", slog.String("error", err.Error()))
+			}
+		}
 		wg.Wait()
 	}
 }

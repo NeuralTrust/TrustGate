@@ -15,7 +15,6 @@
 package middleware
 
 import (
-	"context"
 	"net/url"
 	"time"
 
@@ -102,7 +101,6 @@ func (m *MetricsMiddleware) streamFinalizer(
 ) infracontext.StreamMetricsFinalizer {
 	return func(req *infracontext.RequestContext, output []byte, statusCode int, headers map[string][]string) {
 		resp := &infracontext.ResponseContext{
-			Context:    context.Background(),
 			GatewayID:  gatewayID,
 			RegistryID: req.RegistryID,
 			Headers:    headers,
@@ -159,7 +157,6 @@ func (m *MetricsMiddleware) buildRequestContext(c *fiber.Ctx, gatewayID string) 
 	})
 
 	return &infracontext.RequestContext{
-		Context:   context.Background(),
 		GatewayID: gatewayID,
 		Headers:   headers,
 		Method:    c.Method(),
@@ -199,7 +196,6 @@ func (m *MetricsMiddleware) buildResponseContext(c *fiber.Ctx, gatewayID string)
 	}
 
 	return &infracontext.ResponseContext{
-		Context:    context.Background(),
 		GatewayID:  gatewayID,
 		Headers:    headers,
 		Body:       append([]byte(nil), c.Response().Body()...),

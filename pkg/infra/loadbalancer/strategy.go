@@ -15,11 +15,13 @@
 package loadbalancer
 
 import (
+	"context"
+
 	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer/algorithm"
 )
 
 const (
@@ -31,7 +33,7 @@ const (
 )
 
 type Strategy interface {
-	Next(req *infracontext.RequestContext, exclude map[ids.RegistryID]struct{}) *registry.Registry
+	Next(ctx context.Context, req *infracontext.RequestContext, exclude map[ids.RegistryID]struct{}) *registry.Registry
 	Name() string
 }
 

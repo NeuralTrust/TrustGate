@@ -94,8 +94,11 @@ const (
 	defaultCORSAllowCredentials = false
 	defaultCORSMaxAge           = "600"
 
-	defaultLogLevel  = "INFO"
-	defaultLogFormat = "json"
+	defaultLogLevel       = "INFO"
+	defaultLogFormat      = "json"
+	defaultLogFileEnabled = false
+
+	defaultSemanticCacheVectorStore = "redis"
 
 	defaultTrustGuardTimeout = 15 * time.Second
 
@@ -124,6 +127,7 @@ type Config struct {
 	Database         DatabaseConfig
 	Redis            RedisConfig
 	Cache            CacheConfig
+	SemanticCache    SemanticCacheConfig
 	SessionStore     SessionStoreConfig
 	Kafka            KafkaConfig
 	Telemetry        TelemetryConfig
@@ -225,6 +229,12 @@ type CacheConfig struct {
 	LocalTTL time.Duration
 }
 
+// SemanticCacheConfig selects the vector store backing the semantic cache
+// plugin. VectorStore defaults to "redis".
+type SemanticCacheConfig struct {
+	VectorStore string
+}
+
 type SessionStoreConfig struct {
 	Enabled bool
 	TTL     time.Duration
@@ -295,8 +305,9 @@ type CORSConfig struct {
 }
 
 type LoggerConfig struct {
-	Level  slog.Level
-	Format string
+	Level       slog.Level
+	Format      string
+	FileEnabled bool
 }
 
 type TrustGuardConfig struct {
@@ -318,6 +329,7 @@ func LoadConfig() (*Config, error) {
 		Database:         getDatabaseConfig(),
 		Redis:            getRedisConfig(),
 		Cache:            getCacheConfig(),
+		SemanticCache:    getSemanticCacheConfig(),
 		SessionStore:     getSessionStoreConfig(),
 		Kafka:            getKafkaConfig(),
 		Telemetry:        getTelemetryConfig(),
@@ -397,6 +409,12 @@ func getRedisConfig() RedisConfig {
 func getCacheConfig() CacheConfig {
 	return CacheConfig{
 		LocalTTL: getEnvDuration("CACHE_LOCAL_TTL", defaultCacheLocalTTL),
+	}
+}
+
+func getSemanticCacheConfig() SemanticCacheConfig {
+	return SemanticCacheConfig{
+		VectorStore: getEnv("SEMANTIC_CACHE_VECTOR_STORE", defaultSemanticCacheVectorStore),
 	}
 }
 
@@ -544,8 +562,9 @@ func getCORSConfig() CORSConfig {
 
 func getLoggerConfig() LoggerConfig {
 	return LoggerConfig{
-		Level:  getLogLevel(),
-		Format: getEnv("LOG_FORMAT", defaultLogFormat),
+		Level:       getLogLevel(),
+		Format:      getEnv("LOG_FORMAT", defaultLogFormat),
+		FileEnabled: getEnvBool("LOG_FILE_ENABLED", defaultLogFileEnabled),
 	}
 }
 
