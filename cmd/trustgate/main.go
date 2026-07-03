@@ -42,13 +42,14 @@ import (
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
-	"github.com/NeuralTrust/TrustGate/pkg/configsnapshot/readmodel"
-	"github.com/NeuralTrust/TrustGate/pkg/configsync"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/container/modules"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bootlog"
+	configsyncgrpc "github.com/NeuralTrust/TrustGate/pkg/infra/configsync/grpc"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
+	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
+	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 	"github.com/NeuralTrust/TrustGate/pkg/server"
 	"github.com/joho/godotenv"
 	"go.uber.org/dig"
@@ -60,6 +61,9 @@ const (
 	serverMCP   = "mcp"
 	serverRun   = "run"
 )
+
+// serverConfigSyncGRPC names the control-plane config-sync gRPC listener in the shared serve loop.
+const serverConfigSyncGRPC = "config-sync-grpc"
 
 func main() {
 	// Local dev uses .env in cwd; k8s mounts GCP secrets at /etc/secrets/.env
@@ -151,9 +155,10 @@ func runMigrations(mgr *database.MigrationsManager, logger *slog.Logger) {
 
 type adminParam struct {
 	dig.In
-	Srv        server.Server `name:"admin"`
-	Conn       *database.Connection
-	Recompiler *appsnapshot.Recompiler `optional:"true"`
+	Srv            server.Server `name:"admin"`
+	Conn           *database.Connection
+	Dispatcher     *appsnapshot.Dispatcher
+	ConfigSyncGRPC *configsyncgrpc.Server
 }
 
 type proxyParam struct {
@@ -174,18 +179,22 @@ type mcpParam struct {
 
 type allParam struct {
 	dig.In
-	Admin      server.Server `name:"admin"`
-	Proxy      server.Server `name:"proxy"`
-	Worker     appmetrics.Worker
-	Conn       *database.Connection
-	Recompiler *appsnapshot.Recompiler `optional:"true"`
+	Admin          server.Server `name:"admin"`
+	Proxy          server.Server `name:"proxy"`
+	Worker         appmetrics.Worker
+	Conn           *database.Connection
+	Dispatcher     *appsnapshot.Dispatcher
+	ConfigSyncGRPC *configsyncgrpc.Server
 }
 
 func runAdmin(p adminParam, logger *slog.Logger) {
-	stopRecompiler := startRecompiler(p.Recompiler, logger)
+	stopDispatcher := startDispatcher(p.Dispatcher, logger)
 	defer closeResources(p.Conn, logger)
-	defer stopRecompiler()
-	runServer(p.Srv, serverAdmin, logger)
+	defer stopDispatcher()
+	runServers(logger,
+		namedServer{name: serverAdmin, srv: p.Srv},
+		namedServer{name: serverConfigSyncGRPC, srv: p.ConfigSyncGRPC},
+	)
 }
 
 func runMCP(p mcpParam, logger *slog.Logger) {
@@ -205,15 +214,23 @@ func runProxy(p proxyParam, logger *slog.Logger) {
 }
 
 func runAll(p allParam, logger *slog.Logger) {
-	stopRecompiler := startRecompiler(p.Recompiler, logger)
+	stopDispatcher := startDispatcher(p.Dispatcher, logger)
 	defer closeResources(p.Conn, logger)
-	defer stopRecompiler()
+	defer stopDispatcher()
 	defer p.Worker.Shutdown()
-	runServers(logger, namedServer{name: serverAdmin, srv: p.Admin}, namedServer{name: serverProxy, srv: p.Proxy})
+	runServers(logger,
+		namedServer{name: serverAdmin, srv: p.Admin},
+		namedServer{name: serverProxy, srv: p.Proxy},
+		namedServer{name: serverConfigSyncGRPC, srv: p.ConfigSyncGRPC},
+	)
 }
 
-func startRecompiler(recompiler *appsnapshot.Recompiler, logger *slog.Logger) func() {
-	if recompiler == nil {
+// startDispatcher runs the debounced snapshot dispatcher in its own goroutine and
+// returns a stop function that cancels its context and joins it. It signals an
+// eager initial compile so the gRPC server can serve a version shortly after boot
+// rather than waiting for the first admin write.
+func startDispatcher(dispatcher *appsnapshot.Dispatcher, logger *slog.Logger) func() {
+	if dispatcher == nil {
 		return func() {}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -221,11 +238,11 @@ func startRecompiler(recompiler *appsnapshot.Recompiler, logger *slog.Logger) fu
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := recompiler.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			logger.Error("config snapshot recompiler stopped", slog.String("error", err.Error()))
+		if err := dispatcher.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("config snapshot dispatcher stopped", slog.String("error", err.Error()))
 		}
 	}()
-	recompiler.Signal()
+	dispatcher.Signal()
 	return func() {
 		cancel()
 		wg.Wait()

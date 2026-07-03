@@ -17,6 +17,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
 	gatewayrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/gateway"
+	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	repo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -64,7 +65,8 @@ func setupRepo(t *testing.T) (*repo.Repository, *gatewayrepo.Repository, *databa
 		t.Fatalf("new cipher: %v", err)
 	}
 
-	return repo.NewRepository(conn, cipher), gatewayrepo.NewRepository(conn), conn
+	appender := outboxrepo.NewRepository(conn)
+	return repo.NewRepository(conn, cipher, appender), gatewayrepo.NewRepository(conn, appender), conn
 }
 
 func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) ids.GatewayID {

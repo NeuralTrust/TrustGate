@@ -27,6 +27,7 @@ import (
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -50,11 +51,26 @@ const roleSelectColumns = `
 var _ domain.Repository = (*Repository)(nil)
 
 type Repository struct {
-	conn *database.Connection
+	conn   *database.Connection
+	outbox outbox.Appender
 }
 
-func NewRepository(conn *database.Connection) *Repository {
-	return &Repository{conn: conn}
+// NewRepository builds the pgx role repository from the shared connection.
+// Each write commits its config-snapshot change marker in the same transaction
+// via the injected outbox appender.
+func NewRepository(conn *database.Connection, appender outbox.Appender) *Repository {
+	return &Repository{conn: conn, outbox: appender}
+}
+
+// withMarkedTx runs fn inside a transaction and, when it succeeds, appends one
+// config-snapshot change marker so the mutation and its marker commit atomically.
+func (r *Repository) withMarkedTx(ctx context.Context, fn func(pgx.Tx) error) error {
+	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+		if err := fn(tx); err != nil {
+			return err
+		}
+		return r.outbox.AppendTx(ctx, tx)
+	})
 }
 
 func (r *Repository) Save(ctx context.Context, role *domain.Role) error {
@@ -72,13 +88,15 @@ func (r *Repository) Save(ctx context.Context, role *domain.Role) error {
 	const query = `
 		INSERT INTO roles (id, gateway_id, name, model_policies, mcp_policies, oidc_mapping, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
-	if _, err := r.conn.Pool.Exec(ctx, query,
-		role.ID, role.GatewayID, role.Name, modelPoliciesBytes, nullableJSON(mcpPoliciesBytes), nullableJSON(role.OIDCMapping),
-		role.CreatedAt, role.UpdatedAt,
-	); err != nil {
-		return mapPgError(err)
-	}
-	return nil
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, query,
+			role.ID, role.GatewayID, role.Name, modelPoliciesBytes, nullableJSON(mcpPoliciesBytes), nullableJSON(role.OIDCMapping),
+			role.CreatedAt, role.UpdatedAt,
+		); err != nil {
+			return mapPgError(err)
+		}
+		return nil
+	})
 }
 
 func (r *Repository) Update(ctx context.Context, role *domain.Role) error {
@@ -101,7 +119,7 @@ func (r *Repository) Update(ctx context.Context, role *domain.Role) error {
 		       oidc_mapping    = $5,
 		       updated_at     = $6
 		 WHERE id = $1 AND gateway_id = $7`
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if err := lockRoleRow(ctx, tx, role.ID); err != nil {
 			return err
 		}
@@ -170,7 +188,7 @@ func ensureRoleRegistryRefsAssociated(ctx context.Context, tx pgx.Tx, role *doma
 
 func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.RoleID) error {
 	const query = `DELETE FROM roles WHERE id = $1 AND gateway_id = $2`
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query, id, gatewayID)
 		if err != nil {
 			return mapPgDeleteError(err)
@@ -293,10 +311,12 @@ func (r *Repository) ListByGateway(ctx context.Context, gatewayID ids.GatewayID)
 
 func (r *Repository) AttachRegistry(ctx context.Context, roleID ids.RoleID, registryID ids.RegistryID) error {
 	const query = `INSERT INTO role_registry (role_id, registry_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
-	if _, err := r.conn.Pool.Exec(ctx, query, roleID, registryID); err != nil {
-		return mapPgError(err)
-	}
-	return nil
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, query, roleID, registryID); err != nil {
+			return mapPgError(err)
+		}
+		return nil
+	})
 }
 
 func (r *Repository) DetachRegistry(ctx context.Context, roleID ids.RoleID, registryID ids.RegistryID) error {
@@ -321,7 +341,7 @@ func (r *Repository) detachRegistryIfUnreferenced(
 	checkGateway bool,
 ) (*domain.Role, error) {
 	var current *domain.Role
-	err := database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+	err := r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		role, err := lockRolePolicies(ctx, tx, roleID)
 		if err != nil {
 			return err

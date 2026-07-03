@@ -32,6 +32,14 @@ spec:
         envFrom:
         - configMapRef:
             name: agentgateway-config
+        env:
+        # Run the MCP server as a DB-less data plane: no Postgres, config pulled from
+        # the admin control plane over the config-sync gRPC transport
+        # (CONFIG_SYNC_GRPC_ENDPOINT in config.env); OAuth vault lives in Redis.
+        - name: CONFIG_SYNC_DATA_PLANE_ENABLED
+          value: "true"
+        - name: CONFIG_SYNC_TLS_INSECURE
+          value: "true"
         ports:
         - containerPort: 8082
           name: http
@@ -58,6 +66,8 @@ spec:
         - name: agentgateway-secrets
           mountPath: /etc/secrets
           readOnly: true
+        - name: config-sync-lkg
+          mountPath: /var/lib/trustgate
       securityContext: {}
       volumes:
       - name: agentgateway-secrets
@@ -66,6 +76,10 @@ spec:
           readOnly: true
           volumeAttributes:
             secretProviderClass: agentgateway-secrets
+      # Encrypted last-known-good snapshot cache; survives control-plane outages
+      # within the pod lifetime (ephemeral: repopulated from the CP pull on restart).
+      - name: config-sync-lkg
+        emptyDir: {}
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:

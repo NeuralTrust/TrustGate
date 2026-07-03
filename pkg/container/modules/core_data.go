@@ -15,9 +15,6 @@
 package modules
 
 import (
-	"github.com/NeuralTrust/TrustGate/pkg/configsnapshot/adapters"
-	"github.com/NeuralTrust/TrustGate/pkg/configsnapshot/readmodel"
-	"github.com/NeuralTrust/TrustGate/pkg/configsync"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
@@ -27,6 +24,9 @@ import (
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/adapters"
+	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
+	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 )
 
 func CoreData(c *container.Container) error {

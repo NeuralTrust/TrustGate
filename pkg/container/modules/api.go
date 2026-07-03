@@ -26,8 +26,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
-	"github.com/NeuralTrust/TrustGate/pkg/configsnapshot/readmodel"
-	"github.com/NeuralTrust/TrustGate/pkg/configsync"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/introspection"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
@@ -37,6 +35,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	playgroundstore "github.com/NeuralTrust/TrustGate/pkg/infra/metrics/playground"
 	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
+	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
+	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 	"go.uber.org/dig"
 )
 

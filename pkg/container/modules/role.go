@@ -24,6 +24,7 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	rolerepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/role"
 )
 
@@ -35,8 +36,8 @@ func Role(c *container.Container) error {
 }
 
 func provideRoleRepository(c *container.Container) error {
-	return c.Provide(func(conn *database.Connection) domain.Repository {
-		return rolerepo.NewRepository(conn)
+	return c.Provide(func(conn *database.Connection, appender outboxrepo.Appender) domain.Repository {
+		return rolerepo.NewRepository(conn, appender)
 	})
 }
 

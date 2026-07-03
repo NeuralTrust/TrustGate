@@ -20,14 +20,14 @@ import (
 	"testing"
 
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
-	"github.com/NeuralTrust/TrustGate/pkg/configsnapshot/readmodel"
-	"github.com/NeuralTrust/TrustGate/pkg/configsync"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/container/modules"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
+	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 	"github.com/NeuralTrust/TrustGate/pkg/server"
 	"github.com/alicebob/miniredis/v2"
 	"go.uber.org/dig"
@@ -94,8 +94,8 @@ func setDBLessSmokeEnv(t *testing.T) {
 	t.Setenv("GATEWAY_BASE_DOMAIN", "example.com")
 	t.Setenv("CONFIG_SYNC_DATA_PLANE_ENABLED", "true")
 	t.Setenv("CONFIG_SYNC_TOKEN", "smoke-token")
-	t.Setenv("CONFIG_SYNC_SNAPSHOT_URL", "http://admin.example.com/v1/config/snapshot")
-	t.Setenv("CONFIG_SYNC_SNAPSHOT_INSECURE", "true")
+	t.Setenv("CONFIG_SYNC_GRPC_ENDPOINT", "admin.example.com:8083")
+	t.Setenv("CONFIG_SYNC_TLS_INSECURE", "true")
 	t.Setenv("CONFIG_SYNC_LKG_PATH", t.TempDir()+"/snapshot.lkg")
 	t.Setenv("CONFIG_SYNC_LKG_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
 	t.Setenv("SERVER_SECRET_KEY", strings.Repeat("smoke-server-secret-", 3))

@@ -17,6 +17,7 @@ import (
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
 	repo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/auth"
 	gatewayrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/gateway"
+	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -55,7 +56,8 @@ func setupRepo(t *testing.T) (*repo.Repository, *gatewayrepo.Repository) {
 		pool.Close()
 	})
 
-	return repo.NewRepository(conn), gatewayrepo.NewRepository(conn)
+	appender := outboxrepo.NewRepository(conn)
+	return repo.NewRepository(conn, appender), gatewayrepo.NewRepository(conn, appender)
 }
 
 func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) ids.GatewayID {

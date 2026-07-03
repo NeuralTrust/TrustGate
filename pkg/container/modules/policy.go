@@ -18,12 +18,13 @@ import (
 	"log/slog"
 
 	policyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy"
-	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	policyrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/policy"
 )
 
@@ -35,8 +36,8 @@ func Policy(c *container.Container) error {
 }
 
 func providePolicyRepository(c *container.Container) error {
-	return c.Provide(func(conn *database.Connection) domain.Repository {
-		return policyrepo.NewRepository(conn)
+	return c.Provide(func(conn *database.Connection, appender outboxrepo.Appender) domain.Repository {
+		return policyrepo.NewRepository(conn, appender)
 	})
 }
 

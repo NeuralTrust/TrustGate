@@ -401,9 +401,7 @@ func dbLessValid() *Config {
 		ConfigSync: ConfigSyncConfig{
 			DataPlaneEnabled: true,
 			Token:            "config-sync-token",
-			SnapshotURL:      "https://control.example/internal/config/snapshot",
-			StreamKey:        defaultConfigSyncStreamKey,
-			StreamMaxLen:     defaultConfigSyncStreamMaxLen,
+			GRPCEndpoint:     "control.example:8083",
 			LKGPath:          defaultConfigSyncLKGPath,
 			LKGKey:           aes256Key(),
 			PollInterval:     5 * time.Minute,
@@ -453,27 +451,15 @@ func TestValidate_DBLessSkipsDatabaseFields(t *testing.T) {
 	}
 }
 
-func TestValidate_DBLessAllowsInsecureURLWithOverride(t *testing.T) {
-	cfg := dbLessValid()
-	cfg.ConfigSync.SnapshotURL = "http://control.example/internal/config/snapshot"
-	cfg.ConfigSync.AllowInsecureURL = true
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("http url with CONFIG_SYNC_SNAPSHOT_INSECURE should validate: %v", err)
-	}
-}
-
 func TestValidate_DBLessRequiresConfigSync(t *testing.T) {
 	tests := []struct {
 		name string
 		mut  func(cs *ConfigSyncConfig)
 	}{
 		{"missing token", func(cs *ConfigSyncConfig) { cs.Token = "" }},
-		{"missing url", func(cs *ConfigSyncConfig) { cs.SnapshotURL = "" }},
-		{"malformed url", func(cs *ConfigSyncConfig) { cs.SnapshotURL = "not-a-url" }},
-		{"url missing host", func(cs *ConfigSyncConfig) { cs.SnapshotURL = "https://" }},
-		{"insecure url without override", func(cs *ConfigSyncConfig) {
-			cs.SnapshotURL = "http://control.example/internal/config/snapshot"
-		}},
+		{"missing grpc endpoint", func(cs *ConfigSyncConfig) { cs.GRPCEndpoint = "" }},
+		{"malformed grpc endpoint", func(cs *ConfigSyncConfig) { cs.GRPCEndpoint = "not-a-host-port" }},
+		{"grpc endpoint missing port", func(cs *ConfigSyncConfig) { cs.GRPCEndpoint = "control.example" }},
 		{"missing lkg path", func(cs *ConfigSyncConfig) { cs.LKGPath = "" }},
 		{"key not base64", func(cs *ConfigSyncConfig) { cs.LKGKey = "!!!not-base64!!!" }},
 		{"key wrong length", func(cs *ConfigSyncConfig) {
@@ -481,8 +467,6 @@ func TestValidate_DBLessRequiresConfigSync(t *testing.T) {
 		}},
 		{"empty key", func(cs *ConfigSyncConfig) { cs.LKGKey = "" }},
 		{"non-positive poll", func(cs *ConfigSyncConfig) { cs.PollInterval = 0 }},
-		{"empty stream key", func(cs *ConfigSyncConfig) { cs.StreamKey = "" }},
-		{"stream maxlen below one", func(cs *ConfigSyncConfig) { cs.StreamMaxLen = 0 }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -545,17 +529,17 @@ func TestLoadConfig_ConfigSyncDefaults(t *testing.T) {
 	if cfg.ConfigSync.DataPlaneEnabled {
 		t.Errorf("ConfigSync.DataPlaneEnabled default = true, want false")
 	}
-	if cfg.ConfigSync.StreamKey != defaultConfigSyncStreamKey {
-		t.Errorf("ConfigSync.StreamKey = %q, want %q", cfg.ConfigSync.StreamKey, defaultConfigSyncStreamKey)
-	}
-	if cfg.ConfigSync.StreamMaxLen != defaultConfigSyncStreamMaxLen {
-		t.Errorf("ConfigSync.StreamMaxLen = %d, want %d", cfg.ConfigSync.StreamMaxLen, defaultConfigSyncStreamMaxLen)
-	}
 	if cfg.ConfigSync.PollInterval != defaultConfigSyncPollInterval {
 		t.Errorf("ConfigSync.PollInterval = %v, want %v", cfg.ConfigSync.PollInterval, defaultConfigSyncPollInterval)
 	}
 	if cfg.ConfigSync.RecompileDebounce != defaultConfigSyncRecompileDebounce {
 		t.Errorf("ConfigSync.RecompileDebounce = %v, want %v", cfg.ConfigSync.RecompileDebounce, defaultConfigSyncRecompileDebounce)
+	}
+	if cfg.ConfigSync.RecompileBackstop != defaultConfigSyncRecompileBackstop {
+		t.Errorf("ConfigSync.RecompileBackstop = %v, want %v", cfg.ConfigSync.RecompileBackstop, defaultConfigSyncRecompileBackstop)
+	}
+	if cfg.ConfigSync.TokenPrevious != "" {
+		t.Errorf("ConfigSync.TokenPrevious default = %q, want empty", cfg.ConfigSync.TokenPrevious)
 	}
 }
 
@@ -564,9 +548,8 @@ func TestLoadConfig_DBLessDataPlaneViaEnv(t *testing.T) {
 	t.Setenv("KAFKA_BROKERS", "kafka.example:9092")
 	t.Setenv("CONFIG_SYNC_DATA_PLANE_ENABLED", "true")
 	t.Setenv("CONFIG_SYNC_TOKEN", "config-sync-token")
-	t.Setenv("CONFIG_SYNC_SNAPSHOT_URL", "https://control.example/internal/config/snapshot")
+	t.Setenv("CONFIG_SYNC_GRPC_ENDPOINT", "control.example:8083")
 	t.Setenv("CONFIG_SYNC_LKG_KEY", aes256Key())
-	t.Setenv("CONFIG_SYNC_STREAM_MAXLEN", "2000")
 
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -581,9 +564,6 @@ func TestLoadConfig_DBLessDataPlaneViaEnv(t *testing.T) {
 	if cfg.ConfigSync.Token != "config-sync-token" {
 		t.Errorf("ConfigSync.Token = %q, want %q", cfg.ConfigSync.Token, "config-sync-token")
 	}
-	if cfg.ConfigSync.StreamMaxLen != 2000 {
-		t.Errorf("ConfigSync.StreamMaxLen = %d, want 2000", cfg.ConfigSync.StreamMaxLen)
-	}
 	if cfg.ConfigSync.InstanceID == "" {
 		t.Errorf("ConfigSync.InstanceID = empty, want a resolved host id")
 	}
@@ -593,7 +573,7 @@ func TestLoadConfig_DBLessRejectsMissingConfigSyncToken(t *testing.T) {
 	t.Setenv("REDIS_HOST", "redis.example")
 	t.Setenv("KAFKA_BROKERS", "kafka.example:9092")
 	t.Setenv("CONFIG_SYNC_DATA_PLANE_ENABLED", "true")
-	t.Setenv("CONFIG_SYNC_SNAPSHOT_URL", "https://control.example/internal/config/snapshot")
+	t.Setenv("CONFIG_SYNC_GRPC_ENDPOINT", "control.example:8083")
 	t.Setenv("CONFIG_SYNC_LKG_KEY", aes256Key())
 
 	_, err := LoadConfig()
@@ -602,5 +582,73 @@ func TestLoadConfig_DBLessRejectsMissingConfigSyncToken(t *testing.T) {
 	}
 	if !stderrors.Is(err, errors.ErrInvalidConfig) {
 		t.Errorf("error %v is not ErrInvalidConfig", err)
+	}
+}
+
+func TestLoadConfig_ConfigSyncGRPCDefaults(t *testing.T) {
+	minimumEnv(t)
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	cs := cfg.ConfigSync
+	if cs.GRPCListenAddr != defaultConfigSyncGRPCListenAddr {
+		t.Errorf("GRPCListenAddr = %q, want %q", cs.GRPCListenAddr, defaultConfigSyncGRPCListenAddr)
+	}
+	if cs.GRPCKeepaliveTime != defaultConfigSyncGRPCKeepaliveTime {
+		t.Errorf("GRPCKeepaliveTime = %v, want %v", cs.GRPCKeepaliveTime, defaultConfigSyncGRPCKeepaliveTime)
+	}
+	if cs.GRPCKeepaliveTimeout != defaultConfigSyncGRPCKeepaliveTimeout {
+		t.Errorf("GRPCKeepaliveTimeout = %v, want %v", cs.GRPCKeepaliveTimeout, defaultConfigSyncGRPCKeepaliveTimeout)
+	}
+	if cs.GRPCMinBackoff != defaultConfigSyncGRPCMinBackoff {
+		t.Errorf("GRPCMinBackoff = %v, want %v", cs.GRPCMinBackoff, defaultConfigSyncGRPCMinBackoff)
+	}
+	if cs.GRPCMaxBackoff != defaultConfigSyncGRPCMaxBackoff {
+		t.Errorf("GRPCMaxBackoff = %v, want %v", cs.GRPCMaxBackoff, defaultConfigSyncGRPCMaxBackoff)
+	}
+	if cs.OutboxRetention != defaultConfigSyncOutboxRetention {
+		t.Errorf("OutboxRetention = %v, want %v", cs.OutboxRetention, defaultConfigSyncOutboxRetention)
+	}
+	if cs.OutboxMaxRows != defaultConfigSyncOutboxMaxRows {
+		t.Errorf("OutboxMaxRows = %d, want %d", cs.OutboxMaxRows, defaultConfigSyncOutboxMaxRows)
+	}
+	if cs.TLSInsecure {
+		t.Errorf("TLSInsecure default = true, want false")
+	}
+}
+
+func TestValidate_DeployedRejectsConfigSyncTLSInsecure(t *testing.T) {
+	cfg := dbLessValid()
+	cfg.AppEnv = "production"
+	cfg.ConfigSync.TLSInsecure = true
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error for CONFIG_SYNC_TLS_INSECURE in a deployed environment")
+	}
+	if !stderrors.Is(err, errors.ErrInvalidConfig) {
+		t.Errorf("error %v is not ErrInvalidConfig", err)
+	}
+}
+
+func TestValidate_DeployedAllowsSecureConfigSync(t *testing.T) {
+	cfg := dbLessValid()
+	cfg.AppEnv = "production"
+	cfg.ConfigSync.TLSInsecure = false
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("deployed data plane with TLS enabled should validate: %v", err)
+	}
+}
+
+func TestValidate_LocalAllowsConfigSyncTLSInsecure(t *testing.T) {
+	cfg := dbLessValid()
+	cfg.AppEnv = "dev"
+	cfg.ConfigSync.TLSInsecure = true
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("local data plane should allow CONFIG_SYNC_TLS_INSECURE: %v", err)
 	}
 }

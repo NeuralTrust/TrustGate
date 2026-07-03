@@ -18,19 +18,19 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log/slog"
-	"net/http"
-	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
-	"github.com/NeuralTrust/TrustGate/pkg/configsnapshot/readmodel"
-	"github.com/NeuralTrust/TrustGate/pkg/configsync"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	infrasnapshot "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
+	configsyncgrpc "github.com/NeuralTrust/TrustGate/pkg/infra/configsync/grpc"
+	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
+	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 )
 
-const snapshotFetchTimeout = 30 * time.Second
-
+// ConfigSyncData wires the data-plane half of the config sync: the atomic snapshot store the read
+// ports resolve from, the protobuf codec, the AES-256-GCM crypto guarding the encrypted
+// last-known-good, the gRPC client that dials the control plane and serves as both the snapshot
+// fetcher and the change-notice stream transport, the LKG store, and the convergence worker.
 func ConfigSyncData(c *container.Container) error {
 	if err := c.Provide(func() configsync.ConfigStore[*readmodel.Snapshot] {
 		return configsync.NewMemoryStore[*readmodel.Snapshot]()
@@ -51,18 +51,18 @@ func ConfigSyncData(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(cfg *config.Config) configsync.ConfigFetcher {
-		return configsync.NewHTTPFetcher(
-			cfg.ConfigSync.SnapshotURL,
-			cfg.ConfigSync.Token,
-			&http.Client{Timeout: snapshotFetchTimeout},
-			cfg.ConfigSync.InstanceID,
-		)
+	if err := c.Provide(func(cfg *config.Config, logger *slog.Logger) (*configsyncgrpc.Client, error) {
+		return configsyncgrpc.NewClient(cfg.ConfigSync, logger)
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(cfg *config.Config, cc cache.Client) configsync.ChangeNotifier {
-		return configsync.NewRedisStreamNotifier(cc.RedisClient(), cfg.ConfigSync.StreamKey, cfg.ConfigSync.StreamMaxLen)
+	if err := c.Provide(func(client *configsyncgrpc.Client) configsync.ConfigFetcher {
+		return client
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(client *configsyncgrpc.Client) configsync.StreamTransport {
+		return client
 	}); err != nil {
 		return err
 	}
@@ -74,12 +74,16 @@ func ConfigSyncData(c *container.Container) error {
 	return c.Provide(func(
 		fetcher configsync.ConfigFetcher,
 		store configsync.ConfigStore[*readmodel.Snapshot],
-		notifier configsync.ChangeNotifier,
+		transport configsync.StreamTransport,
 		lkg *configsync.LKGStore[*readmodel.Snapshot],
 		codec configsync.SnapshotCodec[*readmodel.Snapshot],
 		logger *slog.Logger,
 		cfg *config.Config,
 	) *configsync.Worker[*readmodel.Snapshot] {
-		return configsync.NewWorker(fetcher, store, notifier, lkg, codec, logger, configsync.WorkerConfig{PollInterval: cfg.ConfigSync.PollInterval})
+		return configsync.NewWorker(fetcher, store, transport, lkg, codec, logger, configsync.WorkerConfig{
+			PollInterval: cfg.ConfigSync.PollInterval,
+			MinBackoff:   cfg.ConfigSync.GRPCMinBackoff,
+			MaxBackoff:   cfg.ConfigSync.GRPCMaxBackoff,
+		})
 	})
 }
