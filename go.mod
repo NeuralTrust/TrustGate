@@ -133,4 +133,8 @@ require (
 	sigs.k8s.io/yaml v1.3.0 // indirect
 )
 
+require github.com/NeuralTrust/TrustGate/pkg/metrics v0.0.0
+
+replace github.com/NeuralTrust/TrustGate/pkg/metrics => ./pkg/metrics
+
 tool google.golang.org/grpc/cmd/protoc-gen-go-grpc
