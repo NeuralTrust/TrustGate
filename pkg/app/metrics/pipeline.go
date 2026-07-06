@@ -117,7 +117,7 @@ func (p *Pipeline) resolveTargets(explicit []telemetrydomain.ExporterConfig) []E
 			continue
 		}
 		seen[e.Name] = struct{}{}
-		merged = append(merged, e)
+		merged = append(merged, overrides[e.Name])
 	}
 	if len(merged) == 0 {
 		return nil
