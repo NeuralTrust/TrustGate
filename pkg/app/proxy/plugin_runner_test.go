@@ -98,7 +98,7 @@ func TestForward_PreRequestPluginErrorShortCircuits(t *testing.T) {
 	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
-		Request:   &infracontext.RequestContext{Context: context.Background()},
+		Request:   &infracontext.RequestContext{},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 429, res.StatusCode)
@@ -130,7 +130,7 @@ func TestForward_PreRequestStopUpstreamServesCache(t *testing.T) {
 	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
-		Request:   &infracontext.RequestContext{Context: context.Background()},
+		Request:   &infracontext.RequestContext{},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 200, res.StatusCode)
@@ -169,7 +169,7 @@ func TestForward_PreRequestSeesResolvedProvider(t *testing.T) {
 	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
-		Request:   &infracontext.RequestContext{Context: context.Background()},
+		Request:   &infracontext.RequestContext{},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 200, res.StatusCode)
@@ -213,7 +213,7 @@ func TestForward_PreResponsePluginRejectsStream(t *testing.T) {
 	}
 	fwd := forwarderWithPlugin(t, invoker, p)
 
-	req := &infracontext.RequestContext{Context: context.Background(), Body: []byte(`{"stream":true}`)}
+	req := &infracontext.RequestContext{Body: []byte(`{"stream":true}`)}
 	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
@@ -257,7 +257,7 @@ func TestForward_PreResponseInfrastructureErrorBlocksEnforce(t *testing.T) {
 	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
-		Request:   &infracontext.RequestContext{Context: context.Background()},
+		Request:   &infracontext.RequestContext{},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 502, res.StatusCode)
@@ -295,7 +295,7 @@ func TestForward_PostResponseRunsAfterSyncInvoke(t *testing.T) {
 	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
-		Request:   &infracontext.RequestContext{Context: context.Background()},
+		Request:   &infracontext.RequestContext{},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 200, res.StatusCode)
@@ -363,7 +363,7 @@ func TestForward_PostResponseRunsAfterStreamDrained(t *testing.T) {
 	}
 	fwd := forwarderWithPlugin(t, invoker, p)
 
-	req := &infracontext.RequestContext{Context: context.Background(), Body: []byte(`{"stream":true}`)}
+	req := &infracontext.RequestContext{Body: []byte(`{"stream":true}`)}
 	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
@@ -430,7 +430,7 @@ func TestForward_PostResponseSkippedOnStreamAbort(t *testing.T) {
 	}
 	fwd := forwarderWithPlugin(t, invoker, p)
 
-	req := &infracontext.RequestContext{Context: context.Background(), Body: []byte(`{"stream":true}`)}
+	req := &infracontext.RequestContext{Body: []byte(`{"stream":true}`)}
 	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,

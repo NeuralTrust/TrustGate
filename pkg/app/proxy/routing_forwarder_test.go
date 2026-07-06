@@ -55,8 +55,7 @@ func TestForward_QualifiedIntentRestrictsPoolAndRewritesModel(t *testing.T) {
 		GatewayID: gatewayID,
 		Consumer:  rc,
 		Request: &infracontext.RequestContext{
-			Context: context.Background(),
-			Body:    []byte(`{"model":"@openai/gpt-5"}`),
+			Body: []byte(`{"model":"@openai/gpt-5"}`),
 		},
 	})
 	if err != nil {
@@ -83,8 +82,7 @@ func TestForward_QualifiedIntentDeniedByPolicy(t *testing.T) {
 		GatewayID: gatewayID,
 		Consumer:  rc,
 		Request: &infracontext.RequestContext{
-			Context: context.Background(),
-			Body:    []byte(`{"model":"@openai/gpt-4o"}`),
+			Body: []byte(`{"model":"@openai/gpt-4o"}`),
 		},
 	})
 	if !errors.Is(err, routingdomain.ErrModelDenied) {
@@ -102,8 +100,7 @@ func TestForward_UnknownPoolAlias(t *testing.T) {
 		GatewayID: gatewayID,
 		Consumer:  rc,
 		Request: &infracontext.RequestContext{
-			Context: context.Background(),
-			Body:    []byte(`{"model":"pool:missing"}`),
+			Body: []byte(`{"model":"pool:missing"}`),
 		},
 	})
 	if !errors.Is(err, routingdomain.ErrUnknownPoolAlias) {
@@ -141,8 +138,7 @@ func TestForward_PoolAliasRoutesToMembersOnly(t *testing.T) {
 		GatewayID: gatewayID,
 		Consumer:  rc,
 		Request: &infracontext.RequestContext{
-			Context: context.Background(),
-			Body:    []byte(`{"model":"pool:fast-chat"}`),
+			Body: []byte(`{"model":"pool:fast-chat"}`),
 		},
 	})
 	if err != nil {
@@ -195,8 +191,7 @@ func TestForward_RoleBasedPicksDirectly(t *testing.T) {
 		Data:      data,
 		RoleIDs:   []ids.RoleID{role.ID},
 		Request: &infracontext.RequestContext{
-			Context: context.Background(),
-			Body:    []byte(`{"model":"gpt-5"}`),
+			Body: []byte(`{"model":"gpt-5"}`),
 		},
 	})
 	if err != nil {
@@ -235,8 +230,7 @@ func TestForward_RoleBasedDeniedModel(t *testing.T) {
 		Data:      data,
 		RoleIDs:   []ids.RoleID{role.ID},
 		Request: &infracontext.RequestContext{
-			Context: context.Background(),
-			Body:    []byte(`{"model":"@openai/gpt-4o"}`),
+			Body: []byte(`{"model":"@openai/gpt-4o"}`),
 		},
 	})
 	if !errors.Is(err, routingdomain.ErrModelDenied) {
@@ -258,7 +252,7 @@ func TestForward_RoleBasedWithoutRolesIs503(t *testing.T) {
 	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
-		Request:   &infracontext.RequestContext{Context: context.Background()},
+		Request:   &infracontext.RequestContext{},
 	})
 	if !errors.Is(err, appproxy.ErrNoBackendsInPool) {
 		t.Fatalf("expected ErrNoBackendsInPool, got %v", err)
@@ -280,8 +274,7 @@ func TestForward_ShortModelAmbiguousAcrossProviders(t *testing.T) {
 		GatewayID: gatewayID,
 		Consumer:  rc,
 		Request: &infracontext.RequestContext{
-			Context: context.Background(),
-			Body:    []byte(`{"model":"gpt-5"}`),
+			Body: []byte(`{"model":"gpt-5"}`),
 		},
 	})
 	if !errors.Is(err, routingdomain.ErrAmbiguousModel) {
@@ -310,8 +303,7 @@ func TestForward_ShortModelSingleProviderKeepsBalancing(t *testing.T) {
 		GatewayID: gatewayID,
 		Consumer:  rc,
 		Request: &infracontext.RequestContext{
-			Context: context.Background(),
-			Body:    []byte(`{"model":"gpt-5"}`),
+			Body: []byte(`{"model":"gpt-5"}`),
 		},
 	})
 	if err != nil {
@@ -351,8 +343,7 @@ func TestForward_PoolAliasBalancesAcrossMembers(t *testing.T) {
 			GatewayID: gatewayID,
 			Consumer:  rc,
 			Request: &infracontext.RequestContext{
-				Context: context.Background(),
-				Body:    []byte(`{"model":"pool:fast-chat"}`),
+				Body: []byte(`{"model":"pool:fast-chat"}`),
 			},
 		})
 		if err != nil {
@@ -409,8 +400,7 @@ func TestForward_RoleBasedNeverEntersLBOrFallback(t *testing.T) {
 		Data:      data,
 		RoleIDs:   []ids.RoleID{role.ID},
 		Request: &infracontext.RequestContext{
-			Context: context.Background(),
-			Body:    []byte(`{"model":"gpt-5"}`),
+			Body: []byte(`{"model":"gpt-5"}`),
 		},
 	})
 	if err != nil {
@@ -496,7 +486,6 @@ func TestForward_SpanRecordsRouteSource(t *testing.T) {
 			fwd := newTestForwarder(t, invoker)
 			rt := trace.New("trace-route", trace.Metadata{})
 			ctx := trace.NewContext(context.Background(), rt)
-			in.Request.Context = ctx
 
 			_, err := fwd.Forward(ctx, in)
 			if err != nil {
@@ -528,8 +517,7 @@ func TestForward_ClientSuppliedModelIDIsRejected(t *testing.T) {
 		GatewayID: gatewayID,
 		Consumer:  rc,
 		Request: &infracontext.RequestContext{
-			Context: context.Background(),
-			Body:    body,
+			Body: body,
 		},
 	})
 	if !errors.Is(err, routingdomain.ErrInvalidModelRef) {
@@ -558,8 +546,7 @@ func TestForward_ArnInModelFieldStaysNative(t *testing.T) {
 		GatewayID: gatewayID,
 		Consumer:  rc,
 		Request: &infracontext.RequestContext{
-			Context: context.Background(),
-			Body:    []byte(`{"model":"` + arn + `","messages":[]}`),
+			Body: []byte(`{"model":"` + arn + `","messages":[]}`),
 		},
 	})
 	if err != nil {
@@ -589,8 +576,7 @@ func TestForward_SpanRecordsRequestedModel(t *testing.T) {
 		GatewayID: gatewayID,
 		Consumer:  rc,
 		Request: &infracontext.RequestContext{
-			Context: ctx,
-			Body:    []byte(`{"model":"@openai/gpt-5"}`),
+			Body: []byte(`{"model":"@openai/gpt-5"}`),
 		},
 	})
 	if err != nil {
@@ -618,8 +604,7 @@ func TestForward_InvalidModelRef(t *testing.T) {
 		GatewayID: gatewayID,
 		Consumer:  rc,
 		Request: &infracontext.RequestContext{
-			Context: context.Background(),
-			Body:    []byte(`{"model":"pool:"}`),
+			Body: []byte(`{"model":"pool:"}`),
 		},
 	})
 	if !errors.Is(err, routingdomain.ErrInvalidModelRef) {

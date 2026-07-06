@@ -47,6 +47,8 @@ definitions:
         items:
           type: string
         type: array
+      authorize_url:
+        type: string
       client_id:
         type: string
       client_secret:
@@ -64,6 +66,8 @@ definitions:
       session_mode:
         type: boolean
       subject_claim:
+        type: string
+      token_url:
         type: string
       userinfo_url:
         type: string
@@ -175,6 +179,8 @@ definitions:
         items:
           type: string
         type: array
+      authorize_url:
+        type: string
       client_id:
         type: string
       client_secret:
@@ -192,6 +198,8 @@ definitions:
       session_mode:
         type: boolean
       subject_claim:
+        type: string
+      token_url:
         type: string
       userinfo_url:
         type: string
@@ -722,7 +730,7 @@ definitions:
       total:
         type: integer
     type: object
-  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody:
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody:
     properties:
       error:
         type: string
@@ -2145,23 +2153,23 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "502":
           description: Bad Gateway
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       summary: Proxy chat completion
       tags:
       - proxy
@@ -2188,6 +2196,12 @@ paths:
       responses:
         "200":
           description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
           schema:
             additionalProperties:
               type: string
@@ -2221,11 +2235,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: List gateways
@@ -2252,15 +2266,15 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Create a gateway
@@ -2298,11 +2312,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: List auths
@@ -2335,19 +2349,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Create an auth
@@ -2377,19 +2391,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Delete an auth
@@ -2420,15 +2434,15 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Get an auth
@@ -2467,19 +2481,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Update an auth
@@ -2517,11 +2531,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: List consumers
@@ -2554,19 +2568,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Create a consumer
@@ -2596,19 +2610,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Delete a consumer
@@ -2639,15 +2653,15 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Get a consumer
@@ -2686,19 +2700,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Update a consumer
@@ -2735,15 +2749,15 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Detach an auth from a consumer
@@ -2778,15 +2792,15 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Attach an auth to a consumer
@@ -2822,15 +2836,15 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Detach a policy from a consumer
@@ -2866,15 +2880,15 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Attach a policy to a consumer
@@ -2910,15 +2924,15 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Detach a registry from a consumer
@@ -2961,15 +2975,15 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Attach a registry to a consumer
@@ -3005,15 +3019,15 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Detach a role from a consumer
@@ -3049,19 +3063,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Attach a role to a consumer
@@ -3099,11 +3113,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: List policies
@@ -3136,19 +3150,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Create a policy
@@ -3178,19 +3192,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Delete a policy
@@ -3221,15 +3235,15 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Get a policy
@@ -3268,19 +3282,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Update a policy
@@ -3315,19 +3329,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Duplicate a policy
@@ -3360,15 +3374,15 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Clear a policy's global scope
@@ -3399,15 +3413,15 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Mark a policy as global
@@ -3445,11 +3459,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: List registries
@@ -3482,19 +3496,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Create a backend
@@ -3524,19 +3538,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Delete a backend
@@ -3567,15 +3581,15 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Get a backend
@@ -3614,19 +3628,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Update a backend
@@ -3663,19 +3677,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "422":
           description: Unprocessable Entity
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Test a backend connection
@@ -3713,11 +3727,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: List roles
@@ -3751,19 +3765,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Create a role
@@ -3793,19 +3807,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Delete a role
@@ -3836,15 +3850,15 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Get a role
@@ -3884,19 +3898,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Update a role
@@ -3932,19 +3946,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Detach a registry from a role
@@ -3979,15 +3993,15 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Attach a registry to a role
@@ -4012,15 +4026,15 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Delete a gateway
@@ -4045,15 +4059,15 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Get a gateway
@@ -4086,19 +4100,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Update a gateway
@@ -4118,7 +4132,7 @@ paths:
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: List the MCP servers catalog
@@ -4147,7 +4161,7 @@ paths:
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: List model catalog
@@ -4174,15 +4188,15 @@ paths:
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Get a playground trace
@@ -4203,7 +4217,7 @@ paths:
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: List policy catalog
@@ -4226,7 +4240,7 @@ paths:
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_helpers.ErrorBody'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: List provider catalog

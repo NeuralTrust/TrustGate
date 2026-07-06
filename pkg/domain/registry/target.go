@@ -19,7 +19,6 @@ import (
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
 type AuthType string
@@ -252,46 +251,6 @@ func (a *TargetAuth) secretValues() []string {
 		v = append(v, *a.GCPServiceAccount)
 	}
 	return v
-}
-
-func (a *TargetAuth) ProviderCredentials() providers.Credentials {
-	creds := providers.Credentials{}
-	if a == nil {
-		return creds
-	}
-	switch a.Type {
-	case AuthTypeAPIKey:
-		if a.APIKey != nil {
-			creds.ApiKey = a.APIKey.APIKey
-		}
-	case AuthTypeAWS:
-		if a.AWS != nil {
-			creds.AwsBedrock = &providers.AwsBedrock{
-				Region:       a.AWS.Region,
-				AccessKey:    a.AWS.AccessKeyID,
-				SecretKey:    a.AWS.SecretAccessKey,
-				SessionToken: a.AWS.SessionToken,
-				UseRole:      a.AWS.UseRole,
-				RoleARN:      a.AWS.Role,
-			}
-		}
-	case AuthTypeAzure:
-		if a.Azure != nil {
-			mode, _ := a.Azure.CredentialMode()
-			creds.ApiKey = a.Azure.APIKey
-			creds.Azure = &providers.Azure{
-				Endpoint:     a.Azure.Endpoint,
-				ApiVersion:   a.Azure.Version,
-				AuthMode:     providers.AzureAuthMode(mode),
-				UseIdentity:  a.Azure.UseManagedIdentity,
-				TenantID:     a.Azure.TenantID,
-				ClientID:     a.Azure.ClientID,
-				ClientSecret: a.Azure.ClientSecret,
-			}
-		}
-	case AuthTypeOAuth2, AuthTypeGCPServiceAccount:
-	}
-	return creds
 }
 
 func (a *TargetAuth) Validate() error {

@@ -24,9 +24,7 @@ import (
 // canonical internal model.
 type AnthropicAdapter struct{}
 
-// ---------------------------------------------------------------------------
 // Provider-specific typed structs
-// ---------------------------------------------------------------------------
 type anthropicRequest struct {
 	Model       string                 `json:"model,omitempty"`
 	System      string                 `json:"system,omitempty"`
@@ -294,9 +292,7 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 	return out
 }
 
-// ---------------------------------------------------------------------------
 // Request: Decode (Anthropic → Canonical)
-// ---------------------------------------------------------------------------
 
 func (a *AnthropicAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 	var req anthropicRequest
@@ -348,9 +344,7 @@ func (a *AnthropicAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error)
 	return cr, nil
 }
 
-// ---------------------------------------------------------------------------
 // Request: Encode (Canonical → Anthropic)
-// ---------------------------------------------------------------------------
 
 func (a *AnthropicAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 	out := anthropicRequest{
@@ -456,9 +450,7 @@ func (a *AnthropicAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) 
 	return json.Marshal(out)
 }
 
-// ---------------------------------------------------------------------------
 // Response: Decode (Anthropic response → Canonical)
-// ---------------------------------------------------------------------------
 
 func (a *AnthropicAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) {
 	var resp anthropicResponse
@@ -515,9 +507,7 @@ func (a *AnthropicAdapter) DecodeResponse(body []byte) (*CanonicalResponse, erro
 	return cr, nil
 }
 
-// ---------------------------------------------------------------------------
 // Response: Encode (Canonical → Anthropic response)
-// ---------------------------------------------------------------------------
 
 func (a *AnthropicAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) {
 	var content []anthropicContentBlock
@@ -575,9 +565,7 @@ func (a *AnthropicAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, erro
 	return json.Marshal(out)
 }
 
-// ---------------------------------------------------------------------------
 // Stream: Decode (Anthropic SSE event → Canonical)
-// ---------------------------------------------------------------------------
 
 func (a *AnthropicAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 	var event anthropicStreamEvent
@@ -676,15 +664,43 @@ func (a *AnthropicAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChun
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Stream: Encode (Canonical → Anthropic SSE event)
 //
 // Produces a faithful Anthropic SSE stream with event: lines, including the
 // structural events that the Anthropic API emits (content_block_start,
 // content_block_stop, message_stop, etc.).
-// ---------------------------------------------------------------------------
 
 // TODO(ENG-416): propagate ServiceTier through Anthropic stream events to SSE encode — deferred from ENG-417.
+func emitToolUseBlocks(deltas []StreamToolCallDelta) [][]byte {
+	var lines [][]byte
+	for _, tc := range deltas {
+		if tc.ID != "" || tc.Name != "" {
+			cbStart := anthropicSSEContentBlockStart{
+				Type:  "content_block_start",
+				Index: tc.Index,
+				ContentBlock: anthropicSSEContentBlock{
+					Type:  "tool_use",
+					ID:    tc.ID,
+					Name:  tc.Name,
+					Input: []byte("{}"),
+				},
+			}
+			data, _ := json.Marshal(cbStart)
+			lines = append(lines, SSEEvent("content_block_start", data)...)
+		}
+		if tc.ArgumentsDelta != "" {
+			cbDelta := anthropicSSEContentBlockDelta{
+				Type:  "content_block_delta",
+				Index: tc.Index,
+				Delta: anthropicDelta{Type: "input_json_delta", PartialJSON: tc.ArgumentsDelta},
+			}
+			data, _ := json.Marshal(cbDelta)
+			lines = append(lines, SSEEvent("content_block_delta", data)...)
+		}
+	}
+	return lines
+}
+
 func (a *AnthropicAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
 	// --- message_start (when role is set) ------------------------------------
 	if chunk.Role != "" {
@@ -707,31 +723,7 @@ func (a *AnthropicAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]b
 
 		// If this chunk has tool_calls, emit tool_use block(s) instead of text block.
 		if len(chunk.ToolCallDeltas) > 0 {
-			for _, tc := range chunk.ToolCallDeltas {
-				if tc.ID != "" || tc.Name != "" {
-					cbStart := anthropicSSEContentBlockStart{
-						Type:  "content_block_start",
-						Index: tc.Index,
-						ContentBlock: anthropicSSEContentBlock{
-							Type:  "tool_use",
-							ID:    tc.ID,
-							Name:  tc.Name,
-							Input: []byte("{}"),
-						},
-					}
-					data, _ = json.Marshal(cbStart)
-					lines = append(lines, SSEEvent("content_block_start", data)...)
-				}
-				if tc.ArgumentsDelta != "" {
-					cbDelta := anthropicSSEContentBlockDelta{
-						Type:  "content_block_delta",
-						Index: tc.Index,
-						Delta: anthropicDelta{Type: "input_json_delta", PartialJSON: tc.ArgumentsDelta},
-					}
-					data, _ = json.Marshal(cbDelta)
-					lines = append(lines, SSEEvent("content_block_delta", data)...)
-				}
-			}
+			lines = append(lines, emitToolUseBlocks(chunk.ToolCallDeltas)...)
 		} else if chunk.Delta != "" {
 			// Role + text in same chunk
 			cbStart := anthropicSSEContentBlockStart{
@@ -763,33 +755,7 @@ func (a *AnthropicAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]b
 
 	// --- tool_call deltas only (no role in this chunk) -----------------------
 	if len(chunk.ToolCallDeltas) > 0 {
-		var lines [][]byte
-		for _, tc := range chunk.ToolCallDeltas {
-			if tc.ID != "" || tc.Name != "" {
-				cbStart := anthropicSSEContentBlockStart{
-					Type:  "content_block_start",
-					Index: tc.Index,
-					ContentBlock: anthropicSSEContentBlock{
-						Type:  "tool_use",
-						ID:    tc.ID,
-						Name:  tc.Name,
-						Input: []byte("{}"),
-					},
-				}
-				data, _ := json.Marshal(cbStart)
-				lines = append(lines, SSEEvent("content_block_start", data)...)
-			}
-			if tc.ArgumentsDelta != "" {
-				cbDelta := anthropicSSEContentBlockDelta{
-					Type:  "content_block_delta",
-					Index: tc.Index,
-					Delta: anthropicDelta{Type: "input_json_delta", PartialJSON: tc.ArgumentsDelta},
-				}
-				data, _ := json.Marshal(cbDelta)
-				lines = append(lines, SSEEvent("content_block_delta", data)...)
-			}
-		}
-		if len(lines) > 0 {
+		if lines := emitToolUseBlocks(chunk.ToolCallDeltas); len(lines) > 0 {
 			return lines, nil
 		}
 	}

@@ -1,0 +1,55 @@
+# Config-sync gRPC TLS for prod. The channel carries registry credentials and
+# key hashes, so it must not be plaintext in a deployed environment (config
+# validation rejects CONFIG_SYNC_TLS_INSECURE=true when APP_ENV=prod). The
+# control plane (admin) terminates TLS with a cert/key pair; the data planes
+# (proxy/mcp) verify it against the CA and the in-cluster service SNI. All three
+# PEM files are synced from GCP Secret Manager by the CSI SecretProviderClass
+# into /etc/secrets/config-sync/.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentgateway-admin
+spec:
+  template:
+    spec:
+      containers:
+      - name: admin
+        env:
+        - name: CONFIG_SYNC_GRPC_TLS_CERT
+          value: /etc/secrets/config-sync/tls.crt
+        - name: CONFIG_SYNC_GRPC_TLS_KEY
+          value: /etc/secrets/config-sync/tls.key
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentgateway-proxy
+spec:
+  template:
+    spec:
+      containers:
+      - name: proxy
+        env:
+        - name: CONFIG_SYNC_TLS_INSECURE
+          value: "false"
+        - name: CONFIG_SYNC_TLS_CA
+          value: /etc/secrets/config-sync/ca.crt
+        - name: CONFIG_SYNC_TLS_SERVER_NAME
+          value: agentgateway-admin.agentgateway.svc.cluster.local
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentgateway-mcp
+spec:
+  template:
+    spec:
+      containers:
+      - name: mcp
+        env:
+        - name: CONFIG_SYNC_TLS_INSECURE
+          value: "false"
+        - name: CONFIG_SYNC_TLS_CA
+          value: /etc/secrets/config-sync/ca.crt
+        - name: CONFIG_SYNC_TLS_SERVER_NAME
+          value: agentgateway-admin.agentgateway.svc.cluster.local

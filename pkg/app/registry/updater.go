@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -50,6 +51,7 @@ type updater struct {
 	memoryCache *cache.TTLMap
 	publisher   cache.EventPublisher
 	logger      *slog.Logger
+	signaler    configsyncport.SnapshotSignaler
 }
 
 func NewUpdater(
@@ -57,12 +59,14 @@ func NewUpdater(
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
+	signaler configsyncport.SnapshotSignaler,
 ) Updater {
 	return &updater{
 		repo:        repo,
 		memoryCache: manager.GetTTLMap(cache.RegistryTTLName),
 		publisher:   publisher,
 		logger:      logger,
+		signaler:    signaler,
 	}
 }
 
@@ -86,6 +90,11 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Registry,
 	applyLLMTargetUpdate(existing, in)
 	applyMCPTargetUpdate(existing, in)
 	existing.UpdatedAt = time.Now().UTC()
+	if !existing.IsMCP() {
+		if verr := validateProviderOptions(existing.LLMTarget); verr != nil {
+			return nil, verr
+		}
+	}
 	if err := existing.Validate(); err != nil {
 		return nil, err
 	}
@@ -94,6 +103,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Registry,
 	}
 	u.memoryCache.Set(existing.ID.String(), existing)
 	publishBackendCacheInvalidation(ctx, u.publisher, u.logger, existing.GatewayID, existing.ID)
+	if u.signaler != nil {
+		u.signaler.Signal(ctx)
+	}
 	return existing, nil
 }
 

@@ -24,17 +24,33 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	"github.com/jackc/pgx/v5"
 )
 
 var _ domain.Repository = (*Repository)(nil)
 
 type Repository struct {
-	conn *database.Connection
+	conn   *database.Connection
+	outbox outbox.Appender
 }
 
-func NewRepository(conn *database.Connection) *Repository {
-	return &Repository{conn: conn}
+// NewRepository builds the pgx catalog repository from the shared connection.
+// Each write commits its config-snapshot change marker in the same transaction
+// via the injected outbox appender.
+func NewRepository(conn *database.Connection, appender outbox.Appender) *Repository {
+	return &Repository{conn: conn, outbox: appender}
+}
+
+// withMarkedTx runs fn inside a transaction and, when it succeeds, appends one
+// config-snapshot change marker so the mutation and its marker commit atomically.
+func (r *Repository) withMarkedTx(ctx context.Context, fn func(pgx.Tx) error) error {
+	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+		if err := fn(tx); err != nil {
+			return err
+		}
+		return r.outbox.AppendTx(ctx, tx)
+	})
 }
 
 func (r *Repository) UpsertProvider(ctx context.Context, p *domain.Provider) error {
@@ -56,8 +72,10 @@ func (r *Repository) UpsertProvider(ctx context.Context, p *domain.Provider) err
 	if id.IsNil() {
 		id = ids.New[ids.ProviderKind]()
 	}
-	_, err = r.conn.Pool.Exec(ctx, query, id, p.Code, p.DisplayName, p.WireFormat, p.Source, metadata, now)
-	return err
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, query, id, p.Code, p.DisplayName, p.WireFormat, p.Source, metadata, now)
+		return err
+	})
 }
 
 func (r *Repository) UpsertModel(ctx context.Context, m *domain.Model) error {
@@ -86,11 +104,13 @@ func (r *Repository) UpsertModel(ctx context.Context, m *domain.Model) error {
 	if id.IsNil() {
 		id = ids.New[ids.ModelKind]()
 	}
-	_, err = r.conn.Pool.Exec(ctx, query,
-		id, m.ProviderID, m.Slug, m.ExternalID, m.DisplayName, m.ContextWindow, m.MaxOutput,
-		m.InputPrice, m.OutputPrice, capabilities, m.Enabled, m.Source, now,
-	)
-	return err
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, query,
+			id, m.ProviderID, m.Slug, m.ExternalID, m.DisplayName, m.ContextWindow, m.MaxOutput,
+			m.InputPrice, m.OutputPrice, capabilities, m.Enabled, m.Source, now,
+		)
+		return err
+	})
 }
 
 func (r *Repository) DisableModelsExcept(ctx context.Context, providerID ids.ProviderID, source string, keepSlugs []string) error {
@@ -101,8 +121,10 @@ func (r *Repository) DisableModelsExcept(ctx context.Context, providerID ids.Pro
 		UPDATE models_catalog
 		   SET enabled = FALSE, updated_at = $2
 		 WHERE provider_id = $1 AND source = $3 AND NOT (slug = ANY($4))`
-	_, err := r.conn.Pool.Exec(ctx, query, providerID, time.Now().UTC(), source, keepSlugs)
-	return err
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, query, providerID, time.Now().UTC(), source, keepSlugs)
+		return err
+	})
 }
 
 func (r *Repository) ListProviders(ctx context.Context) ([]domain.Provider, error) {

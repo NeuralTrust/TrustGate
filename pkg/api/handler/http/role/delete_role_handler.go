@@ -15,7 +15,7 @@
 package role
 
 import (
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	approle "github.com/NeuralTrust/TrustGate/pkg/app/role"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
@@ -38,18 +38,18 @@ func NewDeleteRoleHandler(deleter approle.Deleter) *DeleteRoleHandler {
 // @Param        gateway_id  path  string  true  "Gateway id"  format(uuid)
 // @Param        id          path  string  true  "Role id"     format(uuid)
 // @Success      204         "No Content"
-// @Failure      400         {object}  helpers.ErrorBody
-// @Failure      401         {object}  helpers.ErrorBody
-// @Failure      404         {object}  helpers.ErrorBody
-// @Failure      409         {object}  helpers.ErrorBody
+// @Failure      400         {object}  httpio.ErrorBody
+// @Failure      401         {object}  httpio.ErrorBody
+// @Failure      404         {object}  httpio.ErrorBody
+// @Failure      409         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/roles/{id} [delete]
 func (h *DeleteRoleHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, id, err := helpers.ParseGatewayScopedID[ids.RoleKind](c)
+	gatewayID, id, err := httpio.ParseGatewayScopedID[ids.RoleKind](c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	if err := h.deleter.Delete(c.UserContext(), gatewayID, id); err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteNoContent(c)
+	return httpio.WriteNoContent(c)
 }

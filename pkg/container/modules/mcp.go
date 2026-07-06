@@ -46,11 +46,6 @@ func MCP(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(conn *database.Connection, cipher vaultdomain.Encrypter) vaultdomain.Repository {
-		return vaultrepo.NewRepository(conn, cipher)
-	}); err != nil {
-		return err
-	}
 	if err := c.Provide(func(cfg *config.Config, logger *slog.Logger) (sts.TokenSigner, error) {
 		env := strings.ToLower(strings.TrimSpace(cfg.AppEnv))
 		if cfg.Server.STSSigningKey == "" && (env == "prod" || env == "production") {
@@ -138,4 +133,16 @@ func MCP(c *container.Container) error {
 		return err
 	}
 	return c.Provide(mcphttp.NewHandler)
+}
+
+func MCPVaultPostgres(c *container.Container) error {
+	return c.Provide(func(conn *database.Connection, cipher vaultdomain.Encrypter) vaultdomain.Repository {
+		return vaultrepo.NewRepository(conn, cipher)
+	})
+}
+
+func MCPVaultRedis(c *container.Container) error {
+	return c.Provide(func(cc cache.Client, cipher vaultdomain.Encrypter) vaultdomain.Repository {
+		return vaultrepo.NewRedisRepository(cc.RedisClient(), cipher)
+	})
 }

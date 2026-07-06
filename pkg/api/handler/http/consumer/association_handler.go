@@ -18,7 +18,7 @@ import (
 	"fmt"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer/request"
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -46,23 +46,23 @@ func NewAssociationHandler(associator appconsumer.Associator) *AssociationHandle
 // @Param        registry_id  path  string                          true   "Registry id"  format(uuid)
 // @Param        body         body  request.AttachRegistryRequest   false  "Optional registry weight"
 // @Success      204          "No Content"
-// @Failure      400          {object}  helpers.ErrorBody
-// @Failure      401          {object}  helpers.ErrorBody
-// @Failure      404          {object}  helpers.ErrorBody
+// @Failure      400          {object}  httpio.ErrorBody
+// @Failure      401          {object}  httpio.ErrorBody
+// @Failure      404          {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/consumers/{id}/registries/{registry_id} [post]
 func (h *AssociationHandler) AttachRegistry(c *fiber.Ctx) error {
-	gatewayID, consumerID, registryID, err := helpers.ParseConsumerAssociationID[ids.RegistryKind](c, "registry_id")
+	gatewayID, consumerID, registryID, err := httpio.ParseConsumerAssociationID[ids.RegistryKind](c, "registry_id")
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	weight, err := parseAttachRegistryWeight(c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	if err := h.associator.AttachRegistry(c.UserContext(), gatewayID, consumerID, registryID, weight); err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteNoContent(c)
+	return httpio.WriteNoContent(c)
 }
 
 func parseAttachRegistryWeight(c *fiber.Ctx) (*int, error) {
@@ -95,19 +95,19 @@ func parseAttachRegistryWeight(c *fiber.Ctx) (*int, error) {
 // @Param        id           path  string  true  "Consumer id"  format(uuid)
 // @Param        registry_id  path  string  true  "Registry id"  format(uuid)
 // @Success      204          "No Content"
-// @Failure      400          {object}  helpers.ErrorBody
-// @Failure      401          {object}  helpers.ErrorBody
-// @Failure      404          {object}  helpers.ErrorBody
+// @Failure      400          {object}  httpio.ErrorBody
+// @Failure      401          {object}  httpio.ErrorBody
+// @Failure      404          {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/consumers/{id}/registries/{registry_id} [delete]
 func (h *AssociationHandler) DetachRegistry(c *fiber.Ctx) error {
-	gatewayID, consumerID, registryID, err := helpers.ParseConsumerAssociationID[ids.RegistryKind](c, "registry_id")
+	gatewayID, consumerID, registryID, err := httpio.ParseConsumerAssociationID[ids.RegistryKind](c, "registry_id")
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	if err := h.associator.DetachRegistry(c.UserContext(), gatewayID, consumerID, registryID); err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteNoContent(c)
+	return httpio.WriteNoContent(c)
 }
 
 // AttachRole godoc
@@ -120,20 +120,20 @@ func (h *AssociationHandler) DetachRegistry(c *fiber.Ctx) error {
 // @Param        id          path  string  true  "Consumer id"  format(uuid)
 // @Param        role_id     path  string  true  "Role id"      format(uuid)
 // @Success      204         "No Content"
-// @Failure      400         {object}  helpers.ErrorBody
-// @Failure      401         {object}  helpers.ErrorBody
-// @Failure      404         {object}  helpers.ErrorBody
-// @Failure      409         {object}  helpers.ErrorBody
+// @Failure      400         {object}  httpio.ErrorBody
+// @Failure      401         {object}  httpio.ErrorBody
+// @Failure      404         {object}  httpio.ErrorBody
+// @Failure      409         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/consumers/{id}/roles/{role_id} [post]
 func (h *AssociationHandler) AttachRole(c *fiber.Ctx) error {
-	gatewayID, consumerID, roleID, err := helpers.ParseConsumerAssociationID[ids.RoleKind](c, "role_id")
+	gatewayID, consumerID, roleID, err := httpio.ParseConsumerAssociationID[ids.RoleKind](c, "role_id")
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	if err := h.associator.AttachRole(c.UserContext(), gatewayID, consumerID, roleID); err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteNoContent(c)
+	return httpio.WriteNoContent(c)
 }
 
 // DetachRole godoc
@@ -146,19 +146,19 @@ func (h *AssociationHandler) AttachRole(c *fiber.Ctx) error {
 // @Param        id          path  string  true  "Consumer id"  format(uuid)
 // @Param        role_id     path  string  true  "Role id"      format(uuid)
 // @Success      204         "No Content"
-// @Failure      400         {object}  helpers.ErrorBody
-// @Failure      401         {object}  helpers.ErrorBody
-// @Failure      404         {object}  helpers.ErrorBody
+// @Failure      400         {object}  httpio.ErrorBody
+// @Failure      401         {object}  httpio.ErrorBody
+// @Failure      404         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/consumers/{id}/roles/{role_id} [delete]
 func (h *AssociationHandler) DetachRole(c *fiber.Ctx) error {
-	gatewayID, consumerID, roleID, err := helpers.ParseConsumerAssociationID[ids.RoleKind](c, "role_id")
+	gatewayID, consumerID, roleID, err := httpio.ParseConsumerAssociationID[ids.RoleKind](c, "role_id")
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	if err := h.associator.DetachRole(c.UserContext(), gatewayID, consumerID, roleID); err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteNoContent(c)
+	return httpio.WriteNoContent(c)
 }
 
 // AttachAuth godoc
@@ -171,19 +171,19 @@ func (h *AssociationHandler) DetachRole(c *fiber.Ctx) error {
 // @Param        id          path  string  true  "Consumer id"  format(uuid)
 // @Param        auth_id     path  string  true  "Auth id"      format(uuid)
 // @Success      204         "No Content"
-// @Failure      400         {object}  helpers.ErrorBody
-// @Failure      401         {object}  helpers.ErrorBody
-// @Failure      404         {object}  helpers.ErrorBody
+// @Failure      400         {object}  httpio.ErrorBody
+// @Failure      401         {object}  httpio.ErrorBody
+// @Failure      404         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/consumers/{id}/auths/{auth_id} [post]
 func (h *AssociationHandler) AttachAuth(c *fiber.Ctx) error {
-	gatewayID, consumerID, authID, err := helpers.ParseConsumerAssociationID[ids.AuthKind](c, "auth_id")
+	gatewayID, consumerID, authID, err := httpio.ParseConsumerAssociationID[ids.AuthKind](c, "auth_id")
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	if err := h.associator.AttachAuth(c.UserContext(), gatewayID, consumerID, authID); err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteNoContent(c)
+	return httpio.WriteNoContent(c)
 }
 
 // DetachAuth godoc
@@ -196,19 +196,19 @@ func (h *AssociationHandler) AttachAuth(c *fiber.Ctx) error {
 // @Param        id          path  string  true  "Consumer id"  format(uuid)
 // @Param        auth_id     path  string  true  "Auth id"      format(uuid)
 // @Success      204         "No Content"
-// @Failure      400         {object}  helpers.ErrorBody
-// @Failure      401         {object}  helpers.ErrorBody
-// @Failure      404         {object}  helpers.ErrorBody
+// @Failure      400         {object}  httpio.ErrorBody
+// @Failure      401         {object}  httpio.ErrorBody
+// @Failure      404         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/consumers/{id}/auths/{auth_id} [delete]
 func (h *AssociationHandler) DetachAuth(c *fiber.Ctx) error {
-	gatewayID, consumerID, authID, err := helpers.ParseConsumerAssociationID[ids.AuthKind](c, "auth_id")
+	gatewayID, consumerID, authID, err := httpio.ParseConsumerAssociationID[ids.AuthKind](c, "auth_id")
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	if err := h.associator.DetachAuth(c.UserContext(), gatewayID, consumerID, authID); err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteNoContent(c)
+	return httpio.WriteNoContent(c)
 }
 
 // AttachPolicy godoc
@@ -221,19 +221,19 @@ func (h *AssociationHandler) DetachAuth(c *fiber.Ctx) error {
 // @Param        id          path  string  true  "Consumer id"  format(uuid)
 // @Param        policy_id   path  string  true  "Policy id"    format(uuid)
 // @Success      204         "No Content"
-// @Failure      400         {object}  helpers.ErrorBody
-// @Failure      401         {object}  helpers.ErrorBody
-// @Failure      404         {object}  helpers.ErrorBody
+// @Failure      400         {object}  httpio.ErrorBody
+// @Failure      401         {object}  httpio.ErrorBody
+// @Failure      404         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/consumers/{id}/policies/{policy_id} [post]
 func (h *AssociationHandler) AttachPolicy(c *fiber.Ctx) error {
-	gatewayID, consumerID, policyID, err := helpers.ParseConsumerAssociationID[ids.PolicyKind](c, "policy_id")
+	gatewayID, consumerID, policyID, err := httpio.ParseConsumerAssociationID[ids.PolicyKind](c, "policy_id")
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	if err := h.associator.AttachPolicy(c.UserContext(), gatewayID, consumerID, policyID); err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteNoContent(c)
+	return httpio.WriteNoContent(c)
 }
 
 // DetachPolicy godoc
@@ -246,17 +246,17 @@ func (h *AssociationHandler) AttachPolicy(c *fiber.Ctx) error {
 // @Param        id          path  string  true  "Consumer id"  format(uuid)
 // @Param        policy_id   path  string  true  "Policy id"    format(uuid)
 // @Success      204         "No Content"
-// @Failure      400         {object}  helpers.ErrorBody
-// @Failure      401         {object}  helpers.ErrorBody
-// @Failure      404         {object}  helpers.ErrorBody
+// @Failure      400         {object}  httpio.ErrorBody
+// @Failure      401         {object}  httpio.ErrorBody
+// @Failure      404         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/consumers/{id}/policies/{policy_id} [delete]
 func (h *AssociationHandler) DetachPolicy(c *fiber.Ctx) error {
-	gatewayID, consumerID, policyID, err := helpers.ParseConsumerAssociationID[ids.PolicyKind](c, "policy_id")
+	gatewayID, consumerID, policyID, err := httpio.ParseConsumerAssociationID[ids.PolicyKind](c, "policy_id")
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	if err := h.associator.DetachPolicy(c.UserContext(), gatewayID, consumerID, policyID); err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteNoContent(c)
+	return httpio.WriteNoContent(c)
 }

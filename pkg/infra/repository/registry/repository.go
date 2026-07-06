@@ -20,10 +20,12 @@ import (
 	"errors"
 	"fmt"
 
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -39,10 +41,25 @@ var _ domain.Repository = (*Repository)(nil)
 type Repository struct {
 	conn   *database.Connection
 	cipher vaultdomain.Encrypter
+	outbox outbox.Appender
 }
 
-func NewRepository(conn *database.Connection, cipher vaultdomain.Encrypter) *Repository {
-	return &Repository{conn: conn, cipher: cipher}
+// NewRepository builds the pgx registry repository from the shared connection.
+// Each write commits its config-snapshot change marker in the same transaction
+// via the injected outbox appender.
+func NewRepository(conn *database.Connection, cipher vaultdomain.Encrypter, appender outbox.Appender) *Repository {
+	return &Repository{conn: conn, cipher: cipher, outbox: appender}
+}
+
+// withMarkedTx runs fn inside a transaction and, when it succeeds, appends one
+// config-snapshot change marker so the mutation and its marker commit atomically.
+func (r *Repository) withMarkedTx(ctx context.Context, fn func(pgx.Tx) error) error {
+	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+		if err := fn(tx); err != nil {
+			return err
+		}
+		return r.outbox.AppendTx(ctx, tx)
+	})
 }
 
 func (r *Repository) Save(ctx context.Context, b *domain.Registry) error {
@@ -68,7 +85,7 @@ func (r *Repository) Save(ctx context.Context, b *domain.Registry) error {
 	const query = `
 		INSERT INTO registries (id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
 			b.ID, b.GatewayID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authStored, b.Description, healthChecksBytes, mcpTargetBytes, b.CreatedAt, b.UpdatedAt,
 		); err != nil {
@@ -111,7 +128,7 @@ func (r *Repository) Update(ctx context.Context, b *domain.Registry) error {
 		       mcp_target       = $10,
 		       updated_at       = $11
 		 WHERE id = $1 AND gateway_id = $12`
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query,
 			b.ID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authStored, b.Description, healthChecksBytes, mcpTargetBytes, b.UpdatedAt, b.GatewayID,
 		)
@@ -127,7 +144,7 @@ func (r *Repository) Update(ctx context.Context, b *domain.Registry) error {
 
 func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.RegistryID) error {
 	const query = `DELETE FROM registries WHERE id = $1 AND gateway_id = $2`
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 
 		if err := ensureNotInFallbackChain(ctx, tx, gatewayID, id); err != nil {
 			return err
@@ -284,24 +301,24 @@ func (r *Repository) scanRegistry(s rowScanner) (*domain.Registry, error) {
 		}
 		if len(providerOptionsRaw) > 0 {
 			if err := json.Unmarshal(providerOptionsRaw, &target.ProviderOptions); err != nil {
-				return nil, fmt.Errorf("scan provider_options: %w", err)
+				return nil, fmt.Errorf("scan provider_options: %w: %w", commonerrors.ErrCorruptData, err)
 			}
 		}
 		if len(authRaw) > 0 {
 			plain, err := r.cipher.Decrypt(string(authRaw))
 			if err != nil {
-				return nil, fmt.Errorf("decrypt auth: %w", err)
+				return nil, fmt.Errorf("decrypt auth: %w: %w", commonerrors.ErrCorruptData, err)
 			}
 			var auth domain.TargetAuth
 			if err := json.Unmarshal([]byte(plain), &auth); err != nil {
-				return nil, fmt.Errorf("scan auth: %w", err)
+				return nil, fmt.Errorf("scan auth: %w: %w", commonerrors.ErrCorruptData, err)
 			}
 			target.Auth = &auth
 		}
 		if len(healthChecksRaw) > 0 {
 			var hc domain.HealthChecks
 			if err := json.Unmarshal(healthChecksRaw, &hc); err != nil {
-				return nil, fmt.Errorf("scan health_checks: %w", err)
+				return nil, fmt.Errorf("scan health_checks: %w: %w", commonerrors.ErrCorruptData, err)
 			}
 			target.HealthChecks = &hc
 		}
@@ -311,7 +328,7 @@ func (r *Repository) scanRegistry(s rowScanner) (*domain.Registry, error) {
 	if len(mcpTargetRaw) > 0 {
 		var t domain.MCPTarget
 		if err := json.Unmarshal(mcpTargetRaw, &t); err != nil {
-			return nil, fmt.Errorf("scan mcp_target: %w", err)
+			return nil, fmt.Errorf("scan mcp_target: %w: %w", commonerrors.ErrCorruptData, err)
 		}
 		b.MCPTarget = &t
 	}

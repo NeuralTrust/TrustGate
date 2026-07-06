@@ -19,7 +19,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway/response"
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/gofiber/fiber/v2"
@@ -44,17 +44,17 @@ func NewCreateGatewayHandler(creator appgateway.Creator, baseDomain, mcpBaseDoma
 // @Security     BearerAuth
 // @Param        gateway  body      request.CreateGatewayRequest  true  "Gateway to create"
 // @Success      201      {object}  response.GatewayResponse
-// @Failure      400      {object}  helpers.ErrorBody
-// @Failure      401      {object}  helpers.ErrorBody
-// @Failure      409      {object}  helpers.ErrorBody
+// @Failure      400      {object}  httpio.ErrorBody
+// @Failure      401      {object}  httpio.ErrorBody
+// @Failure      409      {object}  httpio.ErrorBody
 // @Router       /v1/gateways [post]
 func (h *CreateGatewayHandler) Handle(c *fiber.Ctx) error {
 	var req request.CreateGatewayRequest
 	if err := c.BodyParser(&req); err != nil {
-		return helpers.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
+		return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
 	}
 	if err := req.Validate(); err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 
 	g, err := h.creator.Create(c.UserContext(), appgateway.CreateInput{
@@ -66,7 +66,7 @@ func (h *CreateGatewayHandler) Handle(c *fiber.Ctx) error {
 		SessionConfig:   req.SessionConfig,
 	})
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteCreated(c, response.FromDomain(g, h.baseDomain, h.mcpBaseDomain))
+	return httpio.WriteCreated(c, response.FromDomain(g, h.baseDomain, h.mcpBaseDomain))
 }

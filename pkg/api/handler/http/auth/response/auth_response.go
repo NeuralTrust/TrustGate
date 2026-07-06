@@ -36,7 +36,7 @@ type AuthResponse struct {
 
 type ConfigResponse struct {
 	OAuth2 *OAuth2ConfigResponse `json:"oauth2,omitempty"`
-	OIDC   *OIDCConfigResponse    `json:"oidc,omitempty"`
+	OIDC   *OIDCConfigResponse   `json:"oidc,omitempty"`
 	MTLS   *MTLSConfigResponse   `json:"mtls,omitempty"`
 }
 

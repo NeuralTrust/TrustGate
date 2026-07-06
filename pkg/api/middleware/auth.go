@@ -18,7 +18,7 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/resolver"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -155,34 +155,34 @@ func isAuthMappableError(err error) bool {
 }
 
 func unauthenticated(c *fiber.Ctx) error {
-	return c.Status(fiber.StatusUnauthorized).JSON(helpers.ErrorBody{
+	return c.Status(fiber.StatusUnauthorized).JSON(httpio.ErrorBody{
 		Error:   "unauthenticated",
 		Message: resolver.ErrUnauthenticated.Error(),
 	})
 }
 
 func forbidden(c *fiber.Ctx, err error) error {
-	return c.Status(fiber.StatusForbidden).JSON(helpers.ErrorBody{
+	return c.Status(fiber.StatusForbidden).JSON(httpio.ErrorBody{
 		Error:   "forbidden",
 		Message: err.Error(),
 	})
 }
 
 func invalidAuthRequest(c *fiber.Ctx, err error) error {
-	return c.Status(fiber.StatusBadRequest).JSON(helpers.ErrorBody{
+	return c.Status(fiber.StatusBadRequest).JSON(httpio.ErrorBody{
 		Error:   "invalid_auth_request",
 		Message: err.Error(),
 	})
 }
 
 func notFound(c *fiber.Ctx) error {
-	return c.Status(fiber.StatusNotFound).JSON(helpers.ErrorBody{
+	return c.Status(fiber.StatusNotFound).JSON(httpio.ErrorBody{
 		Error: "not_found",
 	})
 }
 
 func internalError(c *fiber.Ctx, message string) error {
-	return c.Status(fiber.StatusInternalServerError).JSON(helpers.ErrorBody{
+	return c.Status(fiber.StatusInternalServerError).JSON(httpio.ErrorBody{
 		Error:   "internal_error",
 		Message: message,
 	})

@@ -17,7 +17,7 @@ package playground
 import (
 	"context"
 
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/gofiber/fiber/v2"
 )
@@ -44,21 +44,21 @@ func NewGetTraceHandler(finder TraceFinder) *GetTraceHandler {
 // @Security     BearerAuth
 // @Param        trace_id  path      string  true  "Trace id (X-AG-Trace-Id from the proxy response)"
 // @Success      200       {object}  events.Event
-// @Failure      401       {object}  helpers.ErrorBody
-// @Failure      404       {object}  helpers.ErrorBody
-// @Failure      500       {object}  helpers.ErrorBody
+// @Failure      401       {object}  httpio.ErrorBody
+// @Failure      404       {object}  httpio.ErrorBody
+// @Failure      500       {object}  httpio.ErrorBody
 // @Router       /v1/playground/traces/{trace_id} [get]
 func (h *GetTraceHandler) Handle(c *fiber.Ctx) error {
 	traceID := c.Params("trace_id")
 	if traceID == "" {
-		return c.Status(fiber.StatusNotFound).JSON(helpers.ErrorBody{Error: "not_found"})
+		return c.Status(fiber.StatusNotFound).JSON(httpio.ErrorBody{Error: "not_found"})
 	}
 	evt, err := h.finder.Find(c.UserContext(), traceID)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	if evt == nil {
-		return c.Status(fiber.StatusNotFound).JSON(helpers.ErrorBody{Error: "not_found"})
+		return c.Status(fiber.StatusNotFound).JSON(httpio.ErrorBody{Error: "not_found"})
 	}
-	return helpers.WriteOK(c, evt)
+	return httpio.WriteOK(c, evt)
 }

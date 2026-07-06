@@ -19,7 +19,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer/response"
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -45,40 +45,40 @@ func NewUpdateConsumerHandler(updater appconsumer.Updater) *UpdateConsumerHandle
 // @Param        id          path      string                         true  "Consumer id"  format(uuid)
 // @Param        body        body      request.UpdateConsumerRequest  true  "Consumer fields to update"
 // @Success      200         {object}  response.ConsumerResponse
-// @Failure      400         {object}  helpers.ErrorBody
-// @Failure      401         {object}  helpers.ErrorBody
-// @Failure      404         {object}  helpers.ErrorBody
-// @Failure      409         {object}  helpers.ErrorBody
+// @Failure      400         {object}  httpio.ErrorBody
+// @Failure      401         {object}  httpio.ErrorBody
+// @Failure      404         {object}  httpio.ErrorBody
+// @Failure      409         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/consumers/{id} [put]
 func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, id, err := helpers.ParseGatewayScopedID[ids.ConsumerKind](c)
+	gatewayID, id, err := httpio.ParseGatewayScopedID[ids.ConsumerKind](c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 
 	var req request.UpdateConsumerRequest
 	if err := c.BodyParser(&req); err != nil {
-		return helpers.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
+		return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
 	}
 	if err := req.Validate(); err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 
 	fallback, err := req.ToFallback()
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	lbConfig, err := req.ToLBConfig()
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	modelPolicies, err := req.ToModelPolicies()
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	toolkit, err := req.ToToolkit()
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 
 	cons, err := h.updater.Update(c.UserContext(), appconsumer.UpdateInput{
@@ -96,7 +96,7 @@ func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
 		FailMode:      req.ToFailMode(),
 	})
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteOK(c, response.FromConsumer(cons))
+	return httpio.WriteOK(c, response.FromConsumer(cons))
 }

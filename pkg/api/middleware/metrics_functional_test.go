@@ -25,9 +25,9 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
-	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"

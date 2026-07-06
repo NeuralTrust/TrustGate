@@ -15,12 +15,10 @@
 package context
 
 import (
-	"context"
 	"time"
 )
 
 type ResponseContext struct {
-	Context       context.Context
 	GatewayID     string
 	RegistryID    string
 	Headers       map[string][]string

@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -32,7 +33,7 @@ type UpdateInput struct {
 	ModelPolicies  *domain.ModelPolicies
 	MCPPolicies    *domain.MCPPolicies
 	MCPPoliciesSet bool
-	OIDCMapping     *json.RawMessage
+	OIDCMapping    *json.RawMessage
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=role_updater_mock.go --case=underscore --with-expecter
@@ -47,6 +48,7 @@ type updater struct {
 	memoryCache *cache.TTLMap
 	publisher   cache.EventPublisher
 	logger      *slog.Logger
+	signaler    configsyncport.SnapshotSignaler
 }
 
 func NewUpdater(
@@ -54,12 +56,14 @@ func NewUpdater(
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
+	signaler configsyncport.SnapshotSignaler,
 ) Updater {
 	return &updater{
 		repo:        repo,
 		memoryCache: manager.GetTTLMap(cache.RoleTTLName),
 		publisher:   publisher,
 		logger:      logger,
+		signaler:    signaler,
 	}
 }
 
@@ -95,5 +99,8 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Role, err
 	}
 	u.memoryCache.Set(existing.ID.String(), existing)
 	publishGatewayDataInvalidation(ctx, u.publisher, u.logger, existing.GatewayID)
+	if u.signaler != nil {
+		u.signaler.Signal(ctx)
+	}
 	return existing, nil
 }

@@ -43,7 +43,7 @@ func TestRoleRequest_ValidateRejectsInvalidOIDCMapping(t *testing.T) {
 	t.Parallel()
 
 	req := CreateRoleRequest{
-		Name:       "analyst",
+		Name:        "analyst",
 		OIDCMapping: json.RawMessage(`{"match":"all","claims":[{"path":"groups","op":"unknown","values":["admin"]}]}`),
 	}
 

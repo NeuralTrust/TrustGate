@@ -15,6 +15,7 @@
 package config
 
 import (
+	"encoding/base64"
 	stderrors "errors"
 	"log/slog"
 	"testing"
@@ -372,6 +373,42 @@ func valid() *Config {
 	}
 }
 
+func validServer() ServerConfig {
+	return ServerConfig{
+		GatewayDiscoveryMode: GatewayDiscoveryModeHeader,
+		GatewayBaseDomain:    "gw.example",
+	}
+}
+
+func postgresValid() *Config {
+	return &Config{
+		Server:   validServer(),
+		Database: DatabaseConfig{Host: "db", User: "u", Name: "n"},
+		Redis:    RedisConfig{Host: "r"},
+		Kafka:    KafkaConfig{Brokers: []string{"k:9092"}},
+	}
+}
+
+func aes256Key() string {
+	return base64.StdEncoding.EncodeToString(make([]byte, configSyncKeyBytes))
+}
+
+func dbLessValid() *Config {
+	return &Config{
+		Server: validServer(),
+		Redis:  RedisConfig{Host: "r"},
+		Kafka:  KafkaConfig{Brokers: []string{"k:9092"}},
+		ConfigSync: ConfigSyncConfig{
+			DataPlaneEnabled: true,
+			Token:            "config-sync-token",
+			GRPCEndpoint:     "control.example:8083",
+			LKGPath:          defaultConfigSyncLKGPath,
+			LKGKey:           aes256Key(),
+			PollInterval:     5 * time.Minute,
+		},
+	}
+}
+
 func TestValidate_RejectsBlankRequiredFields(t *testing.T) {
 	tests := []struct {
 		name string
@@ -395,5 +432,223 @@ func TestValidate_RejectsBlankRequiredFields(t *testing.T) {
 				t.Errorf("error %v is not ErrInvalidConfig", err)
 			}
 		})
+	}
+}
+
+func TestValidate_PostgresGraphStillValidates(t *testing.T) {
+	if err := postgresValid().Validate(); err != nil {
+		t.Fatalf("postgres graph should validate: %v", err)
+	}
+}
+
+func TestValidate_DBLessSkipsDatabaseFields(t *testing.T) {
+	cfg := dbLessValid()
+	if cfg.Database.Host != "" || cfg.Database.User != "" || cfg.Database.Name != "" {
+		t.Fatal("dbLessValid should leave DB fields blank")
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("DB-less data plane should validate with blank DB_*: %v", err)
+	}
+}
+
+func TestValidate_DBLessRequiresConfigSync(t *testing.T) {
+	tests := []struct {
+		name string
+		mut  func(cs *ConfigSyncConfig)
+	}{
+		{"missing token", func(cs *ConfigSyncConfig) { cs.Token = "" }},
+		{"missing grpc endpoint", func(cs *ConfigSyncConfig) { cs.GRPCEndpoint = "" }},
+		{"malformed grpc endpoint", func(cs *ConfigSyncConfig) { cs.GRPCEndpoint = "not-a-host-port" }},
+		{"grpc endpoint missing port", func(cs *ConfigSyncConfig) { cs.GRPCEndpoint = "control.example" }},
+		{"missing lkg path", func(cs *ConfigSyncConfig) { cs.LKGPath = "" }},
+		{"key not base64", func(cs *ConfigSyncConfig) { cs.LKGKey = "!!!not-base64!!!" }},
+		{"key wrong length", func(cs *ConfigSyncConfig) {
+			cs.LKGKey = base64.StdEncoding.EncodeToString(make([]byte, 16))
+		}},
+		{"empty key", func(cs *ConfigSyncConfig) { cs.LKGKey = "" }},
+		{"non-positive poll", func(cs *ConfigSyncConfig) { cs.PollInterval = 0 }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := dbLessValid()
+			tc.mut(&cfg.ConfigSync)
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatalf("expected validation error for %s", tc.name)
+			}
+			if !stderrors.Is(err, errors.ErrInvalidConfig) {
+				t.Errorf("error %v is not ErrInvalidConfig", err)
+			}
+		})
+	}
+}
+
+func TestValidate_DBLessAcceptsValid32ByteKey(t *testing.T) {
+	if err := dbLessValid().ConfigSync.Validate(); err != nil {
+		t.Fatalf("valid 32-byte config-sync should pass: %v", err)
+	}
+}
+
+func TestValidate_DBLessStillRequiresRedisAndKafka(t *testing.T) {
+	tests := []struct {
+		name string
+		mut  func(c *Config)
+	}{
+		{"REDIS_HOST", func(c *Config) { c.Redis.Host = "" }},
+		{"KAFKA_BROKERS", func(c *Config) { c.Kafka.Brokers = nil }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := dbLessValid()
+			tc.mut(cfg)
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatalf("expected validation error when %s is blank on DB-less data plane", tc.name)
+			}
+			if !stderrors.Is(err, errors.ErrInvalidConfig) {
+				t.Errorf("error %v is not ErrInvalidConfig", err)
+			}
+		})
+	}
+}
+
+func TestConfigSyncValidate_DisabledIsInert(t *testing.T) {
+	cs := ConfigSyncConfig{DataPlaneEnabled: false}
+	if err := cs.Validate(); err != nil {
+		t.Fatalf("config-sync validation should be a no-op when disabled: %v", err)
+	}
+}
+
+func TestLoadConfig_ConfigSyncDefaults(t *testing.T) {
+	minimumEnv(t)
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.ConfigSync.DataPlaneEnabled {
+		t.Errorf("ConfigSync.DataPlaneEnabled default = true, want false")
+	}
+	if cfg.ConfigSync.PollInterval != defaultConfigSyncPollInterval {
+		t.Errorf("ConfigSync.PollInterval = %v, want %v", cfg.ConfigSync.PollInterval, defaultConfigSyncPollInterval)
+	}
+	if cfg.ConfigSync.RecompileDebounce != defaultConfigSyncRecompileDebounce {
+		t.Errorf("ConfigSync.RecompileDebounce = %v, want %v", cfg.ConfigSync.RecompileDebounce, defaultConfigSyncRecompileDebounce)
+	}
+	if cfg.ConfigSync.RecompileBackstop != defaultConfigSyncRecompileBackstop {
+		t.Errorf("ConfigSync.RecompileBackstop = %v, want %v", cfg.ConfigSync.RecompileBackstop, defaultConfigSyncRecompileBackstop)
+	}
+	if cfg.ConfigSync.TokenPrevious != "" {
+		t.Errorf("ConfigSync.TokenPrevious default = %q, want empty", cfg.ConfigSync.TokenPrevious)
+	}
+}
+
+func TestLoadConfig_DBLessDataPlaneViaEnv(t *testing.T) {
+	t.Setenv("REDIS_HOST", "redis.example")
+	t.Setenv("KAFKA_BROKERS", "kafka.example:9092")
+	t.Setenv("CONFIG_SYNC_DATA_PLANE_ENABLED", "true")
+	t.Setenv("CONFIG_SYNC_TOKEN", "config-sync-token")
+	t.Setenv("CONFIG_SYNC_GRPC_ENDPOINT", "control.example:8083")
+	t.Setenv("CONFIG_SYNC_LKG_KEY", aes256Key())
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig on DB-less data plane: %v", err)
+	}
+	if !cfg.ConfigSync.DataPlaneEnabled {
+		t.Errorf("ConfigSync.DataPlaneEnabled = false, want true")
+	}
+	if !DBLessDataPlaneEnabled() {
+		t.Errorf("DBLessDataPlaneEnabled() = false, want true")
+	}
+	if cfg.ConfigSync.Token != "config-sync-token" {
+		t.Errorf("ConfigSync.Token = %q, want %q", cfg.ConfigSync.Token, "config-sync-token")
+	}
+	if cfg.ConfigSync.InstanceID == "" {
+		t.Errorf("ConfigSync.InstanceID = empty, want a resolved host id")
+	}
+}
+
+func TestLoadConfig_DBLessRejectsMissingConfigSyncToken(t *testing.T) {
+	t.Setenv("REDIS_HOST", "redis.example")
+	t.Setenv("KAFKA_BROKERS", "kafka.example:9092")
+	t.Setenv("CONFIG_SYNC_DATA_PLANE_ENABLED", "true")
+	t.Setenv("CONFIG_SYNC_GRPC_ENDPOINT", "control.example:8083")
+	t.Setenv("CONFIG_SYNC_LKG_KEY", aes256Key())
+
+	_, err := LoadConfig()
+	if err == nil {
+		t.Fatal("expected validation error when CONFIG_SYNC_TOKEN is missing on DB-less data plane")
+	}
+	if !stderrors.Is(err, errors.ErrInvalidConfig) {
+		t.Errorf("error %v is not ErrInvalidConfig", err)
+	}
+}
+
+func TestLoadConfig_ConfigSyncGRPCDefaults(t *testing.T) {
+	minimumEnv(t)
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	cs := cfg.ConfigSync
+	if cs.GRPCListenAddr != defaultConfigSyncGRPCListenAddr {
+		t.Errorf("GRPCListenAddr = %q, want %q", cs.GRPCListenAddr, defaultConfigSyncGRPCListenAddr)
+	}
+	if cs.GRPCKeepaliveTime != defaultConfigSyncGRPCKeepaliveTime {
+		t.Errorf("GRPCKeepaliveTime = %v, want %v", cs.GRPCKeepaliveTime, defaultConfigSyncGRPCKeepaliveTime)
+	}
+	if cs.GRPCKeepaliveTimeout != defaultConfigSyncGRPCKeepaliveTimeout {
+		t.Errorf("GRPCKeepaliveTimeout = %v, want %v", cs.GRPCKeepaliveTimeout, defaultConfigSyncGRPCKeepaliveTimeout)
+	}
+	if cs.GRPCMinBackoff != defaultConfigSyncGRPCMinBackoff {
+		t.Errorf("GRPCMinBackoff = %v, want %v", cs.GRPCMinBackoff, defaultConfigSyncGRPCMinBackoff)
+	}
+	if cs.GRPCMaxBackoff != defaultConfigSyncGRPCMaxBackoff {
+		t.Errorf("GRPCMaxBackoff = %v, want %v", cs.GRPCMaxBackoff, defaultConfigSyncGRPCMaxBackoff)
+	}
+	if cs.OutboxRetention != defaultConfigSyncOutboxRetention {
+		t.Errorf("OutboxRetention = %v, want %v", cs.OutboxRetention, defaultConfigSyncOutboxRetention)
+	}
+	if cs.OutboxMaxRows != defaultConfigSyncOutboxMaxRows {
+		t.Errorf("OutboxMaxRows = %d, want %d", cs.OutboxMaxRows, defaultConfigSyncOutboxMaxRows)
+	}
+	if cs.TLSInsecure {
+		t.Errorf("TLSInsecure default = true, want false")
+	}
+}
+
+func TestValidate_DeployedRejectsConfigSyncTLSInsecure(t *testing.T) {
+	cfg := dbLessValid()
+	cfg.AppEnv = "production"
+	cfg.ConfigSync.TLSInsecure = true
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error for CONFIG_SYNC_TLS_INSECURE in a deployed environment")
+	}
+	if !stderrors.Is(err, errors.ErrInvalidConfig) {
+		t.Errorf("error %v is not ErrInvalidConfig", err)
+	}
+}
+
+func TestValidate_DeployedAllowsSecureConfigSync(t *testing.T) {
+	cfg := dbLessValid()
+	cfg.AppEnv = "production"
+	cfg.ConfigSync.TLSInsecure = false
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("deployed data plane with TLS enabled should validate: %v", err)
+	}
+}
+
+func TestValidate_LocalAllowsConfigSyncTLSInsecure(t *testing.T) {
+	cfg := dbLessValid()
+	cfg.AppEnv = "dev"
+	cfg.ConfigSync.TLSInsecure = true
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("local data plane should allow CONFIG_SYNC_TLS_INSECURE: %v", err)
 	}
 }

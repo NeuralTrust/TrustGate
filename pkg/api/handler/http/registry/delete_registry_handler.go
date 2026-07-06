@@ -15,7 +15,7 @@
 package registry
 
 import (
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
@@ -38,18 +38,18 @@ func NewDeleteRegistryHandler(deleter appregistry.Deleter) *DeleteRegistryHandle
 // @Param        gateway_id  path  string  true  "Gateway id"  format(uuid)
 // @Param        id          path  string  true  "Registry id"  format(uuid)
 // @Success      204         "No Content"
-// @Failure      400         {object}  helpers.ErrorBody
-// @Failure      401         {object}  helpers.ErrorBody
-// @Failure      404         {object}  helpers.ErrorBody
-// @Failure      409         {object}  helpers.ErrorBody
+// @Failure      400         {object}  httpio.ErrorBody
+// @Failure      401         {object}  httpio.ErrorBody
+// @Failure      404         {object}  httpio.ErrorBody
+// @Failure      409         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/registries/{id} [delete]
 func (h *DeleteRegistryHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, id, err := helpers.ParseGatewayScopedID[ids.RegistryKind](c)
+	gatewayID, id, err := httpio.ParseGatewayScopedID[ids.RegistryKind](c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	if err := h.deleter.Delete(c.UserContext(), gatewayID, id); err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteNoContent(c)
+	return httpio.WriteNoContent(c)
 }

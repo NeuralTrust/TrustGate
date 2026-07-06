@@ -17,9 +17,7 @@ package oauth
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"math"
 	"net/http"
@@ -41,9 +39,8 @@ var _ AuthProxy = (*authProxy)(nil)
 type authProxy struct {
 	credentials appauth.CredentialFinder
 	paths       appconsumer.PathResolver
-	client      *http.Client
 	store       FlowStore
-	idp         *metadataService
+	idp         *idpTransport
 	chainer     ConsentChainer
 	signer      appsts.TokenSigner
 	userinfo    UserInfoClient
@@ -61,12 +58,12 @@ func NewAuthProxy(
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
 	}
+	meta := &metadataService{credentials: credentials, client: client, asCache: map[string]asCacheEntry{}}
 	return &authProxy{
 		credentials: credentials,
 		paths:       paths,
-		client:      client,
 		store:       store,
-		idp:         &metadataService{credentials: credentials, client: client, asCache: map[string]asCacheEntry{}},
+		idp:         newIDPTransport(client, meta),
 		chainer:     chainer,
 		signer:      signer,
 		userinfo:    userinfo,
@@ -91,7 +88,7 @@ func (p *authProxy) Authorize(ctx context.Context, baseURL string, req Authorize
 	if err := p.validateClientRedirect(ctx, req.ClientID, req.RedirectURI); err != nil {
 		return "", err
 	}
-	endpoints, err := p.idpEndpoints(ctx, cfg)
+	endpoints, err := p.idp.endpoints(ctx, cfg)
 	if err != nil {
 		return "", err
 	}
@@ -152,7 +149,7 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 		return "", err
 	}
 	cfg := auth.Config.OAuth2
-	endpoints, err := p.idpEndpoints(ctx, cfg)
+	endpoints, err := p.idp.endpoints(ctx, cfg)
 	if err != nil {
 		return "", err
 	}
@@ -166,7 +163,7 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 	if cfg.ClientSecret != "" {
 		form.Set("client_secret", cfg.ClientSecret)
 	}
-	token, err := p.idpTokenCall(ctx, endpoints.token, form)
+	token, err := p.idp.tokenCall(ctx, endpoints.token, form)
 	if err != nil {
 		return "", err
 	}
@@ -415,7 +412,7 @@ func (p *authProxy) refresh(ctx context.Context, req TokenRequest) (map[string]a
 		return nil, err
 	}
 	cfg := auth.Config.OAuth2
-	endpoints, err := p.idpEndpoints(ctx, cfg)
+	endpoints, err := p.idp.endpoints(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -429,7 +426,7 @@ func (p *authProxy) refresh(ctx context.Context, req TokenRequest) (map[string]a
 	if scope := mergeScopes("", cfg.RequiredScopes); scope != "" {
 		form.Set("scope", scope)
 	}
-	return p.idpTokenCall(ctx, endpoints.token, form)
+	return p.idp.tokenCall(ctx, endpoints.token, form)
 }
 
 func (p *authProxy) refreshSession(ctx context.Context, rec SessionRecord) (map[string]any, error) {
@@ -453,81 +450,4 @@ func (p *authProxy) refreshSession(ctx context.Context, rec SessionRecord) (map[
 	}
 	resp["refresh_token"] = newRefresh
 	return resp, nil
-}
-
-type idpEndpoints struct {
-	authorize string
-	token     string
-}
-
-func (p *authProxy) idpEndpoints(ctx context.Context, cfg *authdomain.OAuth2Config) (*idpEndpoints, error) {
-	if cfg.AuthorizeURL != "" && cfg.TokenURL != "" {
-		return &idpEndpoints{authorize: cfg.AuthorizeURL, token: cfg.TokenURL}, nil
-	}
-	doc, err := p.idp.fetchASMetadata(ctx, cfg.Issuer)
-	if err != nil {
-		return nil, fmt.Errorf("oauth: resolve IdP endpoints: %w", err)
-	}
-	authorize, _ := doc["authorization_endpoint"].(string)
-	token, _ := doc["token_endpoint"].(string)
-	if authorize == "" || token == "" {
-		return nil, fmt.Errorf("oauth: IdP metadata for %s lacks authorization/token endpoints", cfg.Issuer)
-	}
-	return &idpEndpoints{authorize: authorize, token: token}, nil
-}
-
-func (p *authProxy) idpTokenCall(ctx context.Context, endpoint string, form url.Values) (map[string]any, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	httpReq.Header.Set("Accept", "application/json")
-	res, err := p.client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("oauth: IdP token call: %w", err)
-	}
-	defer func() { _ = res.Body.Close() }()
-	body, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
-	if err != nil {
-		return nil, fmt.Errorf("oauth: read IdP token response: %w", err)
-	}
-	doc, err := decodeTokenResponse(body)
-	if err != nil {
-		return nil, fmt.Errorf("oauth: unparseable IdP token response (status %d)", res.StatusCode)
-	}
-	if res.StatusCode != http.StatusOK {
-		code, _ := doc["error"].(string)
-		desc, _ := doc["error_description"].(string)
-		if code == "" {
-			code = "server_error"
-		}
-		return nil, oauthErr(code, desc)
-	}
-	return doc, nil
-}
-
-// decodeTokenResponse parses an OAuth token endpoint response. RFC 6749 mandates
-// a JSON body, but some identity providers (notably GitHub) answer with
-// application/x-www-form-urlencoded unless asked otherwise, so fall back to form
-// decoding when the body is not JSON.
-func decodeTokenResponse(body []byte) (map[string]any, error) {
-	var doc map[string]any
-	if json.Unmarshal(body, &doc) == nil && doc != nil {
-		return doc, nil
-	}
-	values, err := url.ParseQuery(string(body))
-	if err != nil || values.Get("access_token") == "" && values.Get("error") == "" {
-		return nil, errors.New("oauth: token response is neither JSON nor form-encoded")
-	}
-	doc = make(map[string]any, len(values))
-	for key := range values {
-		doc[key] = values.Get(key)
-	}
-	if raw, ok := doc["expires_in"].(string); ok {
-		if seconds, convErr := strconv.Atoi(raw); convErr == nil {
-			doc["expires_in"] = seconds
-		}
-	}
-	return doc, nil
 }

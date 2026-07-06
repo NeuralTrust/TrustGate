@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -218,10 +219,10 @@ func (c *client) GetGateway(ctx context.Context, id string) (*domain.Gateway, er
 	return g, nil
 }
 
-func safeStringCast(value interface{}) (string, error) {
+func safeStringCast(value any) (string, error) {
 	str, ok := value.(string)
 	if !ok {
-		return "", fmt.Errorf("invalid type assertion to string")
+		return "", errors.New("invalid type assertion to string")
 	}
 	return str, nil
 }

@@ -15,6 +15,7 @@
 package modules
 
 import (
+	"context"
 	"log/slog"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
@@ -45,6 +46,10 @@ func Cache(c *container.Container) error {
 			TLSInsecureVerify: cfg.Redis.TLSInsecureVerify,
 		}, mgr, logger)
 	})
+}
+
+func StartCacheJanitor(ctx context.Context, mgr *cache.TTLMapManager) {
+	mgr.StartJanitor(ctx, cache.JanitorInterval)
 }
 
 func initializeMemoryCache(mgr *cache.TTLMapManager) {

@@ -25,10 +25,17 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/go-redis/redis/v8"
 )
+
+// RedisProvider is the narrow cache dependency the load balancer needs: access
+// to the shared Redis client used for backend health reads and writes. It is a
+// segregated view of the broader cache client so the balancer does not depend
+// on gateway caching or TTL-map management it never uses.
+type RedisProvider interface {
+	RedisClient() *redis.Client
+}
 
 type Pool struct {
 	ID              string
@@ -39,22 +46,23 @@ type Pool struct {
 }
 
 type LoadBalancer struct {
-	strategy  Strategy
-	logger    *slog.Logger
-	cache     cache.Client
-	poolID    string
-	poolSize  int
-	successCh chan *registry.Registry
-	factory   Factory
-	done      chan struct{}
-	closeOnce sync.Once
+	strategy   Strategy
+	logger     *slog.Logger
+	cache      RedisProvider
+	poolID     string
+	poolSize   int
+	backendIDs []string
+	successCh  chan *registry.Registry
+	factory    Factory
+	done       chan struct{}
+	closeOnce  sync.Once
 }
 
 func NewLoadBalancer(
 	factory Factory,
 	pool Pool,
 	logger *slog.Logger,
-	cacheClient cache.Client,
+	cacheClient RedisProvider,
 ) (*LoadBalancer, error) {
 	ctx := context.Background()
 
@@ -75,15 +83,21 @@ func NewLoadBalancer(
 		return nil, fmt.Errorf("failed to create load balancing strategy: %w", err)
 	}
 
+	backendIDs := make([]string, 0, len(pool.Registries))
+	for _, b := range pool.Registries {
+		backendIDs = append(backendIDs, b.ID.String())
+	}
+
 	lb := &LoadBalancer{
-		strategy:  strategy,
-		logger:    logger,
-		cache:     cacheClient,
-		poolID:    pool.ID,
-		poolSize:  len(pool.Registries),
-		successCh: make(chan *registry.Registry, 1000),
-		factory:   factory,
-		done:      make(chan struct{}),
+		strategy:   strategy,
+		logger:     logger,
+		cache:      cacheClient,
+		poolID:     pool.ID,
+		poolSize:   len(pool.Registries),
+		backendIDs: backendIDs,
+		successCh:  make(chan *registry.Registry, 1000),
+		factory:    factory,
+		done:       make(chan struct{}),
 	}
 	go lb.processSuccessReports()
 	return lb, nil
@@ -95,7 +109,7 @@ func healthKey(backendID string) string {
 
 func seedInitialHealth(
 	ctx context.Context,
-	cacheClient cache.Client,
+	cacheClient RedisProvider,
 	registries []*registry.Registry,
 	logger *slog.Logger,
 ) {
@@ -115,7 +129,10 @@ func seedInitialHealth(
 			logger.Warn("failed to marshal health status for cache", slog.Any("error", err))
 			continue
 		}
-		_ = redisClient.Set(ctx, key, statusJSON, time.Hour).Err()
+		if err := redisClient.Set(ctx, key, statusJSON, time.Hour).Err(); err != nil {
+			logger.Warn("failed to seed backend health in cache",
+				slog.String("registry_id", b.ID.String()), slog.Any("error", err))
+		}
 	}
 }
 
@@ -155,12 +172,21 @@ func (lb *LoadBalancer) performSuccessUpdate(b *registry.Registry) {
 		LastError: nil,
 		Failures:  0,
 	}
-	statusJSON, _ := json.Marshal(status)
+	statusJSON, err := json.Marshal(status)
+	if err != nil {
+		lb.logger.Warn("failed to marshal backend health status",
+			slog.String("registry_id", b.ID.String()), slog.Any("error", err))
+		return
+	}
 	pipe.Set(ctx, key, statusJSON, time.Hour)
-	_, _ = pipe.Exec(ctx)
+	if _, err := pipe.Exec(ctx); err != nil {
+		lb.logger.Debug("failed to persist backend health",
+			slog.String("registry_id", b.ID.String()), slog.Any("error", err))
+	}
 }
 
 func (lb *LoadBalancer) NextBackend(
+	ctx context.Context,
 	req *infracontext.RequestContext,
 	exclude map[ids.RegistryID]struct{},
 ) (*registry.Registry, error) {
@@ -168,14 +194,15 @@ func (lb *LoadBalancer) NextBackend(
 	if attempts < 1 {
 		attempts = 1
 	}
+	health := lb.healthMap(ctx)
 	var last *registry.Registry
 	for i := 0; i < attempts; i++ {
-		b := lb.strategy.Next(req, exclude)
+		b := lb.strategy.Next(ctx, req, exclude)
 		if b == nil {
 			break
 		}
 		last = b
-		if healthy, err := lb.isBackendHealthy(req, b.ID.String()); err == nil && healthy {
+		if isHealthy(health, b.ID.String()) {
 			return b, nil
 		}
 	}
@@ -189,24 +216,47 @@ func (lb *LoadBalancer) NextBackend(
 	return nil, fmt.Errorf("no available registries")
 }
 
-func (lb *LoadBalancer) isBackendHealthy(req *infracontext.RequestContext, backendID string) (bool, error) {
+// healthMap fetches the health status of every backend in the pool with a
+// single MGET, avoiding one Redis round-trip per candidate on the hot path. It
+// returns nil when Redis is unavailable so callers fail open.
+func (lb *LoadBalancer) healthMap(ctx context.Context) map[string]bool {
 	redisClient := lb.cache.RedisClient()
-	if redisClient == nil {
-		return true, nil
+	if redisClient == nil || len(lb.backendIDs) == 0 {
+		return nil
 	}
-	ctx := context.Background()
-	if req != nil && req.Context != nil {
-		ctx = req.Context
+	keys := make([]string, len(lb.backendIDs))
+	for i, id := range lb.backendIDs {
+		keys[i] = healthKey(id)
 	}
-	val, err := redisClient.Get(ctx, healthKey(backendID)).Result()
+	vals, err := redisClient.MGet(ctx, keys...).Result()
 	if err != nil {
-		return true, nil
+		return nil
+	}
+	health := make(map[string]bool, len(lb.backendIDs))
+	for i, v := range vals {
+		health[lb.backendIDs[i]] = parseHealthy(v)
+	}
+	return health
+}
+
+func parseHealthy(v any) bool {
+	raw, ok := v.(string)
+	if !ok {
+		return true
 	}
 	var status HealthStatus
-	if err := json.Unmarshal([]byte(val), &status); err != nil {
-		return true, nil
+	if err := json.Unmarshal([]byte(raw), &status); err != nil {
+		return true
 	}
-	return status.Healthy, nil
+	return status.Healthy
+}
+
+func isHealthy(health map[string]bool, backendID string) bool {
+	if health == nil {
+		return true
+	}
+	healthy, ok := health[backendID]
+	return !ok || healthy
 }
 
 func (lb *LoadBalancer) ReportFailure(b *registry.Registry, err error) {

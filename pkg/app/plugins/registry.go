@@ -15,15 +15,16 @@
 package plugins
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 )
 
-var ErrUnknownPlugin = fmt.Errorf("plugin: unknown plugin")
-var ErrDuplicatePlugin = fmt.Errorf("plugin: duplicate registration")
-var ErrInvalidStages = fmt.Errorf("plugin: invalid declared stages")
+var ErrUnknownPlugin = errors.New("plugin: unknown plugin")
+var ErrDuplicatePlugin = errors.New("plugin: duplicate registration")
+var ErrInvalidStages = errors.New("plugin: invalid declared stages")
 
 //go:generate mockery --name=Registry --dir=. --output=./mocks --filename=registry_mock.go --case=underscore --with-expecter
 type Registry interface {

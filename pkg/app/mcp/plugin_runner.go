@@ -119,7 +119,6 @@ func (r *PluginRunner) PreResponse(
 		return nil
 	}
 	respCtx := &infracontext.ResponseContext{
-		Context:   ctx,
 		GatewayID: rc.Consumer.GatewayID.String(),
 		Body:      result,
 		Streaming: false,
@@ -175,7 +174,6 @@ func (r *PluginRunner) buildRequestContext(
 		return nil, fmt.Errorf("mcp: marshal tools/call params: %w", err)
 	}
 	return &infracontext.RequestContext{
-		Context:        ctx,
 		GatewayID:      rc.Consumer.GatewayID.String(),
 		ConsumerID:     rc.Consumer.ID.String(),
 		ConsumerType:   string(rc.Consumer.Type),

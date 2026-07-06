@@ -16,8 +16,10 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -92,12 +94,31 @@ const (
 	defaultCORSAllowCredentials = false
 	defaultCORSMaxAge           = "600"
 
-	defaultLogLevel  = "INFO"
-	defaultLogFormat = "json"
+	defaultLogLevel       = "INFO"
+	defaultLogFormat      = "json"
+	defaultLogFileEnabled = false
+
+	defaultSemanticCacheVectorStore = "redis"
 
 	defaultTrustGuardTimeout = 15 * time.Second
 
 	defaultOpenAIModerationTimeout = 15 * time.Second
+
+	defaultConfigSyncDataPlaneEnabled  = false
+	defaultConfigSyncLKGPath           = "/var/lib/trustgate/snapshot.lkg"
+	defaultConfigSyncPollInterval      = 5 * time.Minute
+	defaultConfigSyncRecompileDebounce = 2 * time.Second
+	defaultConfigSyncRecompileBackstop = 5 * time.Minute
+
+	defaultConfigSyncGRPCListenAddr             = ":8083"
+	defaultConfigSyncGRPCKeepaliveTime          = 30 * time.Second
+	defaultConfigSyncGRPCKeepaliveTimeout       = 10 * time.Second
+	defaultConfigSyncGRPCMinBackoff             = 1 * time.Second
+	defaultConfigSyncGRPCMaxBackoff             = 30 * time.Second
+	defaultConfigSyncOutboxRetention            = 24 * time.Hour
+	defaultConfigSyncOutboxMaxRows        int64 = 10000
+
+	configSyncKeyBytes = 32
 )
 
 type Config struct {
@@ -106,6 +127,7 @@ type Config struct {
 	Database         DatabaseConfig
 	Redis            RedisConfig
 	Cache            CacheConfig
+	SemanticCache    SemanticCacheConfig
 	SessionStore     SessionStoreConfig
 	Kafka            KafkaConfig
 	Telemetry        TelemetryConfig
@@ -118,6 +140,43 @@ type Config struct {
 	Logger           LoggerConfig
 	TrustGuard       TrustGuardConfig
 	OpenAIModeration OpenAIModerationConfig
+	ConfigSync       ConfigSyncConfig
+}
+
+type ConfigSyncConfig struct {
+	DataPlaneEnabled bool
+	Token            string // #nosec G117 -- config struct field, not a hardcoded credential
+	// TokenPrevious is the prior bearer accepted alongside Token so a token can be
+	// rotated without a window where in-flight data planes fail to authenticate.
+	TokenPrevious     string // #nosec G117 -- config struct field, not a hardcoded credential
+	LKGPath           string
+	LKGKey            string // #nosec G117 -- config struct field, not a hardcoded credential
+	PollInterval      time.Duration
+	RecompileDebounce time.Duration
+	// RecompileBackstop periodically recompiles even without a write signal so the
+	// control plane recovers from a failed boot compile and picks up out-of-band
+	// mutations.
+	RecompileBackstop time.Duration
+	InstanceID        string
+	// GRPCEndpoint is the control-plane host:port the data plane dials for the
+	// config-sync gRPC transport (ENG-959).
+	GRPCEndpoint string
+	// GRPCListenAddr is the control-plane listen address for the config-sync gRPC
+	// server.
+	GRPCListenAddr string
+	TLSCAPath      string
+	TLSServerName  string
+	// TLSInsecure disables transport security on the data-plane dial. It is a
+	// dev-only escape hatch and is rejected in deployed environments.
+	TLSInsecure          bool
+	GRPCTLSCertPath      string
+	GRPCTLSKeyPath       string // #nosec G117 -- config struct field, not a hardcoded credential
+	GRPCKeepaliveTime    time.Duration
+	GRPCKeepaliveTimeout time.Duration
+	GRPCMinBackoff       time.Duration
+	GRPCMaxBackoff       time.Duration
+	OutboxRetention      time.Duration
+	OutboxMaxRows        int64
 }
 
 type ServerConfig struct {
@@ -168,6 +227,12 @@ type RedisConfig struct {
 // finder contract will not change.
 type CacheConfig struct {
 	LocalTTL time.Duration
+}
+
+// SemanticCacheConfig selects the vector store backing the semantic cache
+// plugin. VectorStore defaults to "redis".
+type SemanticCacheConfig struct {
+	VectorStore string
 }
 
 type SessionStoreConfig struct {
@@ -240,8 +305,9 @@ type CORSConfig struct {
 }
 
 type LoggerConfig struct {
-	Level  slog.Level
-	Format string
+	Level       slog.Level
+	Format      string
+	FileEnabled bool
 }
 
 type TrustGuardConfig struct {
@@ -263,6 +329,7 @@ func LoadConfig() (*Config, error) {
 		Database:         getDatabaseConfig(),
 		Redis:            getRedisConfig(),
 		Cache:            getCacheConfig(),
+		SemanticCache:    getSemanticCacheConfig(),
 		SessionStore:     getSessionStoreConfig(),
 		Kafka:            getKafkaConfig(),
 		Telemetry:        getTelemetryConfig(),
@@ -275,6 +342,7 @@ func LoadConfig() (*Config, error) {
 		Logger:           getLoggerConfig(),
 		TrustGuard:       getTrustGuardConfig(),
 		OpenAIModeration: getOpenAIModerationConfig(),
+		ConfigSync:       getConfigSyncConfig(),
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -341,6 +409,12 @@ func getRedisConfig() RedisConfig {
 func getCacheConfig() CacheConfig {
 	return CacheConfig{
 		LocalTTL: getEnvDuration("CACHE_LOCAL_TTL", defaultCacheLocalTTL),
+	}
+}
+
+func getSemanticCacheConfig() SemanticCacheConfig {
+	return SemanticCacheConfig{
+		VectorStore: getEnv("SEMANTIC_CACHE_VECTOR_STORE", defaultSemanticCacheVectorStore),
 	}
 }
 
@@ -488,8 +562,9 @@ func getCORSConfig() CORSConfig {
 
 func getLoggerConfig() LoggerConfig {
 	return LoggerConfig{
-		Level:  getLogLevel(),
-		Format: getEnv("LOG_FORMAT", defaultLogFormat),
+		Level:       getLogLevel(),
+		Format:      getEnv("LOG_FORMAT", defaultLogFormat),
+		FileEnabled: getEnvBool("LOG_FILE_ENABLED", defaultLogFileEnabled),
 	}
 }
 
@@ -509,6 +584,76 @@ func getOpenAIModerationConfig() OpenAIModerationConfig {
 	}
 }
 
+func getConfigSyncConfig() ConfigSyncConfig {
+	return ConfigSyncConfig{
+		DataPlaneEnabled:     getEnvBool("CONFIG_SYNC_DATA_PLANE_ENABLED", defaultConfigSyncDataPlaneEnabled),
+		Token:                getEnv("CONFIG_SYNC_TOKEN", ""),
+		TokenPrevious:        getEnv("CONFIG_SYNC_TOKEN_PREVIOUS", ""),
+		LKGPath:              getEnv("CONFIG_SYNC_LKG_PATH", defaultConfigSyncLKGPath),
+		LKGKey:               getEnv("CONFIG_SYNC_LKG_KEY", ""),
+		PollInterval:         getEnvDuration("CONFIG_SYNC_POLL_INTERVAL", defaultConfigSyncPollInterval),
+		RecompileDebounce:    getEnvDuration("CONFIG_SYNC_RECOMPILE_DEBOUNCE", defaultConfigSyncRecompileDebounce),
+		RecompileBackstop:    getEnvDuration("CONFIG_SYNC_RECOMPILE_BACKSTOP", defaultConfigSyncRecompileBackstop),
+		InstanceID:           resolveConfigSyncInstanceID(),
+		GRPCEndpoint:         getEnv("CONFIG_SYNC_GRPC_ENDPOINT", ""),
+		GRPCListenAddr:       getEnv("CONFIG_SYNC_GRPC_LISTEN_ADDR", defaultConfigSyncGRPCListenAddr),
+		TLSCAPath:            getEnv("CONFIG_SYNC_TLS_CA", ""),
+		TLSServerName:        getEnv("CONFIG_SYNC_TLS_SERVER_NAME", ""),
+		TLSInsecure:          getEnvBool("CONFIG_SYNC_TLS_INSECURE", false),
+		GRPCTLSCertPath:      getEnv("CONFIG_SYNC_GRPC_TLS_CERT", ""),
+		GRPCTLSKeyPath:       getEnv("CONFIG_SYNC_GRPC_TLS_KEY", ""),
+		GRPCKeepaliveTime:    getEnvDuration("CONFIG_SYNC_GRPC_KEEPALIVE_TIME", defaultConfigSyncGRPCKeepaliveTime),
+		GRPCKeepaliveTimeout: getEnvDuration("CONFIG_SYNC_GRPC_KEEPALIVE_TIMEOUT", defaultConfigSyncGRPCKeepaliveTimeout),
+		GRPCMinBackoff:       getEnvDuration("CONFIG_SYNC_GRPC_MIN_BACKOFF", defaultConfigSyncGRPCMinBackoff),
+		GRPCMaxBackoff:       getEnvDuration("CONFIG_SYNC_GRPC_MAX_BACKOFF", defaultConfigSyncGRPCMaxBackoff),
+		OutboxRetention:      getEnvDuration("CONFIG_SYNC_OUTBOX_RETENTION", defaultConfigSyncOutboxRetention),
+		OutboxMaxRows:        getEnvInt64("CONFIG_SYNC_OUTBOX_MAX_ROWS", defaultConfigSyncOutboxMaxRows),
+	}
+}
+
+func resolveConfigSyncInstanceID() string {
+	if id := getEnv("CONFIG_SYNC_INSTANCE_ID", ""); id != "" {
+		return id
+	}
+	if host := os.Getenv("HOSTNAME"); host != "" {
+		return host
+	}
+	if host, err := os.Hostname(); err == nil {
+		return host
+	}
+	return ""
+}
+
+func DBLessDataPlaneEnabled() bool {
+	return getEnvBool("CONFIG_SYNC_DATA_PLANE_ENABLED", defaultConfigSyncDataPlaneEnabled)
+}
+
+func (cs ConfigSyncConfig) Validate() error {
+	if !cs.DataPlaneEnabled {
+		return nil
+	}
+	if cs.Token == "" {
+		return fmt.Errorf("%w: CONFIG_SYNC_TOKEN is required when CONFIG_SYNC_DATA_PLANE_ENABLED is true", errors.ErrInvalidConfig)
+	}
+	if cs.GRPCEndpoint == "" {
+		return fmt.Errorf("%w: CONFIG_SYNC_GRPC_ENDPOINT is required when CONFIG_SYNC_DATA_PLANE_ENABLED is true", errors.ErrInvalidConfig)
+	}
+	if host, port, err := net.SplitHostPort(cs.GRPCEndpoint); err != nil || host == "" || port == "" {
+		return fmt.Errorf("%w: CONFIG_SYNC_GRPC_ENDPOINT must be a well-formed host:port", errors.ErrInvalidConfig)
+	}
+	if cs.LKGPath == "" {
+		return fmt.Errorf("%w: CONFIG_SYNC_LKG_PATH is required when CONFIG_SYNC_DATA_PLANE_ENABLED is true", errors.ErrInvalidConfig)
+	}
+	key, err := base64.StdEncoding.DecodeString(cs.LKGKey)
+	if err != nil || len(key) != configSyncKeyBytes {
+		return fmt.Errorf("%w: CONFIG_SYNC_LKG_KEY must be base64 that decodes to exactly 32 bytes (AES-256)", errors.ErrInvalidConfig)
+	}
+	if cs.PollInterval <= 0 {
+		return fmt.Errorf("%w: CONFIG_SYNC_POLL_INTERVAL must be a positive duration", errors.ErrInvalidConfig)
+	}
+	return nil
+}
+
 func (c *Config) Validate() error {
 	if c.Server.GatewayDiscoveryMode != GatewayDiscoveryModeHeader &&
 		c.Server.GatewayDiscoveryMode != GatewayDiscoveryModeSubdomain {
@@ -520,14 +665,16 @@ func (c *Config) Validate() error {
 	if strings.Trim(strings.ToLower(strings.TrimSpace(c.Server.GatewayBaseDomain)), ".") == "" {
 		return fmt.Errorf("%w: GATEWAY_BASE_DOMAIN is required", errors.ErrInvalidConfig)
 	}
-	if c.Database.Host == "" {
-		return fmt.Errorf("%w: DB_HOST is required", errors.ErrInvalidConfig)
-	}
-	if c.Database.User == "" {
-		return fmt.Errorf("%w: DB_USER is required", errors.ErrInvalidConfig)
-	}
-	if c.Database.Name == "" {
-		return fmt.Errorf("%w: DB_NAME is required", errors.ErrInvalidConfig)
+	if !c.ConfigSync.DataPlaneEnabled {
+		if c.Database.Host == "" {
+			return fmt.Errorf("%w: DB_HOST is required", errors.ErrInvalidConfig)
+		}
+		if c.Database.User == "" {
+			return fmt.Errorf("%w: DB_USER is required", errors.ErrInvalidConfig)
+		}
+		if c.Database.Name == "" {
+			return fmt.Errorf("%w: DB_NAME is required", errors.ErrInvalidConfig)
+		}
 	}
 	if c.Redis.Host == "" {
 		return fmt.Errorf("%w: REDIS_HOST is required", errors.ErrInvalidConfig)
@@ -547,7 +694,33 @@ func (c *Config) Validate() error {
 	if c.Provider.MaxRetries < 0 {
 		return fmt.Errorf("%w: PROVIDER_MAX_RETRIES must be zero or greater", errors.ErrInvalidConfig)
 	}
+	if c.isDeployed() && c.ConfigSync.DataPlaneEnabled && c.ConfigSync.TLSInsecure {
+		return fmt.Errorf("%w: CONFIG_SYNC_TLS_INSECURE must not be true in deployed environments so the config-sync channel is not sent in cleartext", errors.ErrInvalidConfig)
+	}
+	if err := c.ConfigSync.Validate(); err != nil {
+		return err
+	}
 	return nil
+}
+
+// IsDeployed reports whether APP_ENV marks a non-local deployment (staging or
+// production), so plane wiring can enforce deployed-only requirements such as the
+// control-plane config-sync gRPC server TLS certificate.
+func (c *Config) IsDeployed() bool {
+	return c.isDeployed()
+}
+
+func (c *Config) isDeployed() bool {
+	return isDeployedEnv(c.AppEnv)
+}
+
+func isDeployedEnv(appEnv string) bool {
+	switch strings.ToLower(strings.TrimSpace(appEnv)) {
+	case "prod", "production", "staging", "stage":
+		return true
+	default:
+		return false
+	}
 }
 
 func getEnv(key, defaultValue string) string {
@@ -583,6 +756,20 @@ func getEnvInt32(key string, defaultValue int32) int32 {
 		return defaultValue
 	}
 	return int32(parsed)
+}
+
+func getEnvInt64(key string, defaultValue int64) int64 {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed < 0 {
+		slog.Warn("invalid int64 environment variable, falling back to default",
+			slog.String("key", key), slog.String("value", sanitizeLogValue(value)))
+		return defaultValue
+	}
+	return parsed
 }
 
 func getEnvBool(key string, defaultValue bool) bool {

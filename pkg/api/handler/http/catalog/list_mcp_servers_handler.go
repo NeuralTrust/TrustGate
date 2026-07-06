@@ -15,7 +15,7 @@
 package catalog
 
 import (
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/gofiber/fiber/v2"
@@ -40,8 +40,8 @@ type ListMCPServersResponse struct {
 // @Produce      json
 // @Security     BearerAuth
 // @Success      200  {object}  ListMCPServersResponse
-// @Failure      401  {object}  helpers.ErrorBody
+// @Failure      401  {object}  httpio.ErrorBody
 // @Router       /v1/mcp-servers-catalog [get]
 func (h *ListMCPServersHandler) Handle(c *fiber.Ctx) error {
-	return helpers.WriteOK(c, ListMCPServersResponse{MCPServers: h.catalog.ListMCPServers()})
+	return httpio.WriteOK(c, ListMCPServersResponse{MCPServers: h.catalog.ListMCPServers()})
 }

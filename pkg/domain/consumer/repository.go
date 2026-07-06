@@ -27,19 +27,24 @@ type ListFilter struct {
 	Size         int
 }
 
-//go:generate mockery --name=Repository --dir=. --output=./mocks --filename=consumer_repository_mock.go --case=underscore --with-expecter
-type Repository interface {
+// Reader exposes the read-only queries over the consumer store.
+type Reader interface {
+	FindByID(ctx context.Context, id ids.ConsumerID) (*Consumer, error)
+	FindActiveBySlug(ctx context.Context, slug string) (*Consumer, error)
+	List(ctx context.Context, filter ListFilter) (items []*Consumer, total int, err error)
+	ListByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*Consumer, error)
+	ListByAuthID(ctx context.Context, authID ids.AuthID) ([]*Consumer, error)
+}
+
+// Writer persists consumer aggregate lifecycle changes.
+type Writer interface {
 	Save(ctx context.Context, c *Consumer) error
 	Update(ctx context.Context, c *Consumer) error
 	Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.ConsumerID) error
-	FindByID(ctx context.Context, id ids.ConsumerID) (*Consumer, error)
-	List(ctx context.Context, filter ListFilter) (items []*Consumer, total int, err error)
+}
 
-	ListByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*Consumer, error)
-	ListByAuthID(ctx context.Context, authID ids.AuthID) ([]*Consumer, error)
-
-	FindActiveBySlug(ctx context.Context, slug string) (*Consumer, error)
-
+// Associator manages the links between a consumer and its related aggregates.
+type Associator interface {
 	AttachRegistry(ctx context.Context, consumerID ids.ConsumerID, registryID ids.RegistryID, weight *int) error
 	DetachRegistry(ctx context.Context, consumerID ids.ConsumerID, registryID ids.RegistryID) error
 	DetachRegistryIfUnreferenced(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, registryID ids.RegistryID) (*Consumer, error)
@@ -49,4 +54,11 @@ type Repository interface {
 	DetachAuth(ctx context.Context, consumerID ids.ConsumerID, authID ids.AuthID) error
 	AttachPolicy(ctx context.Context, consumerID ids.ConsumerID, policyID ids.PolicyID) error
 	DetachPolicy(ctx context.Context, consumerID ids.ConsumerID, policyID ids.PolicyID) error
+}
+
+//go:generate mockery --name=Repository --dir=. --output=./mocks --filename=consumer_repository_mock.go --case=underscore --with-expecter
+type Repository interface {
+	Reader
+	Writer
+	Associator
 }

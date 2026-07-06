@@ -19,7 +19,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer/response"
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/gofiber/fiber/v2"
@@ -43,43 +43,43 @@ func NewCreateConsumerHandler(creator appconsumer.Creator) *CreateConsumerHandle
 // @Param        gateway_id  path      string                         true  "Gateway id"  format(uuid)
 // @Param        body        body      request.CreateConsumerRequest  true  "Consumer to create"
 // @Success      201         {object}  response.ConsumerResponse
-// @Failure      400         {object}  helpers.ErrorBody
-// @Failure      401         {object}  helpers.ErrorBody
-// @Failure      404         {object}  helpers.ErrorBody
-// @Failure      409         {object}  helpers.ErrorBody
+// @Failure      400         {object}  httpio.ErrorBody
+// @Failure      401         {object}  httpio.ErrorBody
+// @Failure      404         {object}  httpio.ErrorBody
+// @Failure      409         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/consumers [post]
 func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, err := helpers.ParseGatewayID(c)
+	gatewayID, err := httpio.ParseGatewayID(c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 
 	var req request.CreateConsumerRequest
 	if err := c.BodyParser(&req); err != nil {
-		return helpers.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
+		return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
 	}
 	if err := req.Validate(); err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	fallback, err := req.ToFallback()
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	mcp, err := req.ToMCPPolicy()
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	lbConfig, err := req.ToLBConfig()
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	registryIDs, registryWeights, modelPolicies, err := req.ToRegistryBindings()
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	roleIDs, err := req.ToRoleIDs()
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 
 	cons, err := h.creator.Create(c.UserContext(), appconsumer.CreateInput{
@@ -98,7 +98,7 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 		MCP:             mcp,
 	})
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteCreated(c, response.FromConsumer(cons))
+	return httpio.WriteCreated(c, response.FromConsumer(cons))
 }

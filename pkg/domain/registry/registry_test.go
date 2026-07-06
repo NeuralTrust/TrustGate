@@ -21,7 +21,6 @@ import (
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
 func TestBackend_New_HappyPath(t *testing.T) {
@@ -106,32 +105,17 @@ func TestBackend_Validate_OpenAICompatible(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
 
-	t.Run("missing base_url is rejected", func(t *testing.T) {
-		t.Parallel()
-		_, err := NewLLMRegistry(gwID, "compat-1", "",
-			&LLMTarget{Provider: "openai_compatible", Auth: NewAPIKeyAuth("sk-test")})
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-		if !errors.Is(err, ErrInvalidRegistry) {
-			t.Fatalf("err = %v, want wrap of ErrInvalidRegistry", err)
-		}
+	b, err := NewLLMRegistry(gwID, "compat-2", "", &LLMTarget{
+		Provider:        "openai_compatible",
+		ProviderOptions: map[string]any{"base_url": "https://api.together.xyz/v1"},
+		Auth:            NewAPIKeyAuth("sk-test"),
 	})
-
-	t.Run("with base_url is accepted", func(t *testing.T) {
-		t.Parallel()
-		b, err := NewLLMRegistry(gwID, "compat-2", "", &LLMTarget{
-			Provider:        "openai_compatible",
-			ProviderOptions: map[string]any{"base_url": "https://api.together.xyz/v1"},
-			Auth:            NewAPIKeyAuth("sk-test"),
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if b.Provider() != "openai_compatible" {
-			t.Fatalf("Provider = %q, want openai_compatible", b.Provider())
-		}
-	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if b.Provider() != "openai_compatible" {
+		t.Fatalf("Provider = %q, want openai_compatible", b.Provider())
+	}
 }
 
 func TestBackend_Rehydrate(t *testing.T) {
@@ -272,78 +256,6 @@ func TestAzureAuth_CredentialMode(t *testing.T) {
 			}
 			if !tc.wantErr && got != tc.want {
 				t.Fatalf("CredentialMode() = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestTargetAuth_ProviderCredentials_Azure(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name      string
-		auth      *TargetAuth
-		wantKey   string
-		wantAzure providers.Azure
-	}{
-		{
-			name:    "api key",
-			auth:    &TargetAuth{Type: AuthTypeAzure, Azure: &AzureAuth{Endpoint: "https://x", Version: "2025-01-01", APIKey: "az-key"}},
-			wantKey: "az-key",
-			wantAzure: providers.Azure{
-				Endpoint:   "https://x",
-				ApiVersion: "2025-01-01",
-				AuthMode:   providers.AzureAuthModeAPIKey,
-			},
-		},
-		{
-			name: "service principal",
-			auth: &TargetAuth{Type: AuthTypeAzure, Azure: &AzureAuth{
-				Endpoint:     "https://x",
-				Version:      "2025-01-01",
-				ClientID:     "client",
-				ClientSecret: "secret",
-				TenantID:     "tenant",
-			}},
-			wantAzure: providers.Azure{
-				Endpoint:     "https://x",
-				ApiVersion:   "2025-01-01",
-				AuthMode:     providers.AzureAuthModeServicePrincipal,
-				ClientID:     "client",
-				ClientSecret: "secret",
-				TenantID:     "tenant",
-			},
-		},
-		{
-			name: "default azure credential",
-			auth: &TargetAuth{Type: AuthTypeAzure, Azure: &AzureAuth{
-				Endpoint:           "https://x",
-				Version:            "2025-01-01",
-				UseManagedIdentity: true,
-			}},
-			wantAzure: providers.Azure{
-				Endpoint:    "https://x",
-				ApiVersion:  "2025-01-01",
-				AuthMode:    providers.AzureAuthModeDefaultAzureCredential,
-				UseIdentity: true,
-			},
-		},
-	}
-
-	for _, tc := range tests {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			creds := tc.auth.ProviderCredentials()
-			if creds.ApiKey != tc.wantKey {
-				t.Fatalf("ApiKey = %q, want %q", creds.ApiKey, tc.wantKey)
-			}
-			if creds.Azure == nil {
-				t.Fatal("Azure credentials are nil")
-			}
-			if *creds.Azure != tc.wantAzure {
-				t.Fatalf("Azure credentials = %+v, want %+v", *creds.Azure, tc.wantAzure)
 			}
 		})
 	}

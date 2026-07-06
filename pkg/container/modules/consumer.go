@@ -15,28 +15,65 @@
 package modules
 
 import (
+	"log/slog"
+
 	consumerhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	consumerrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/consumer"
+	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 )
 
 func Consumer(c *container.Container) error {
-	if err := c.Provide(func(conn *database.Connection) domain.Repository {
-		return consumerrepo.NewRepository(conn)
+	if err := provideConsumerRepository(c); err != nil {
+		return err
+	}
+	return provideConsumerServices(c)
+}
+
+func provideConsumerRepository(c *container.Container) error {
+	return c.Provide(func(conn *database.Connection, appender outboxrepo.Appender) domain.Repository {
+		return consumerrepo.NewRepository(conn, appender)
+	})
+}
+
+// provideConsumerRepositoryViews exposes the consumer repository under its
+// segregated role interfaces so use cases can depend on the narrow view they
+// need (dig resolves by exact type, so each view is registered explicitly).
+func provideConsumerRepositoryViews(c *container.Container) error {
+	if err := c.Provide(func(r domain.Repository) domain.Reader { return r }); err != nil {
+		return err
+	}
+	if err := c.Provide(func(r domain.Repository) domain.Writer { return r }); err != nil {
+		return err
+	}
+	return c.Provide(func(r domain.Repository) domain.Associator { return r })
+}
+
+func provideConsumerServices(c *container.Container) error {
+	if err := provideConsumerRepositoryViews(c); err != nil {
+		return err
+	}
+	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, roleRepo roledomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appconsumer.Creator {
+		return appconsumer.NewCreator(repo, registryRepo, roleRepo, manager, publisher, logger, sig.Signaler)
 	}); err != nil {
 		return err
 	}
-
-	if err := c.Provide(appconsumer.NewCreator); err != nil {
+	if err := c.Provide(func(repo domain.Repository, authRepo authdomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appconsumer.Updater {
+		return appconsumer.NewUpdater(repo, authRepo, manager, publisher, logger, sig.Signaler)
+	}); err != nil {
 		return err
 	}
-	if err := c.Provide(appconsumer.NewUpdater); err != nil {
-		return err
-	}
-	if err := c.Provide(appconsumer.NewDeleter); err != nil {
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appconsumer.Deleter {
+		return appconsumer.NewDeleter(repo, manager, publisher, logger, sig.Signaler)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(appconsumer.NewFinder); err != nil {
@@ -48,7 +85,9 @@ func Consumer(c *container.Container) error {
 	if err := c.Provide(appconsumer.NewPathResolver); err != nil {
 		return err
 	}
-	if err := c.Provide(appconsumer.NewAssociator); err != nil {
+	if err := c.Provide(func(repo domain.Repository, registryRepo registrydomain.Repository, roleRepo roledomain.Repository, authRepo authdomain.Repository, policyRepo policydomain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appconsumer.Associator {
+		return appconsumer.NewAssociator(repo, registryRepo, roleRepo, authRepo, policyRepo, manager, publisher, logger, sig.Signaler)
+	}); err != nil {
 		return err
 	}
 

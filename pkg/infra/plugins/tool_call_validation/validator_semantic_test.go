@@ -146,8 +146,7 @@ func TestSemanticValidator(t *testing.T) {
 				userPrompt: "send an email to alice",
 				reasoning:  "user wants to email a colleague",
 			}
-			res, err := semanticValidator{}.Evaluate(validatorInput{
-				ctx:      context.Background(),
+			res, err := semanticValidator{}.Evaluate(context.Background(), validatorInput{
 				toolCall: toolCall,
 				eval:     eval,
 			})

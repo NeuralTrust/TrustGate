@@ -24,26 +24,15 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/logger"
+	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 )
 
 func Core(c *container.Container) error {
-	if err := c.Provide(config.LoadConfig); err != nil {
-		return err
-	}
-	if err := c.Provide(func(cfg *config.Config) *slog.Logger {
-		log := logger.NewLoggerWithFormat(cfg.Logger.Level, logger.LogFormat(cfg.Logger.Format))
-		slog.SetDefault(log)
-		return log
-	}); err != nil {
+	if err := provideRuntimeBase(c); err != nil {
 		return err
 	}
 	if err := c.Provide(func(cfg *config.Config) *config.DatabaseConfig {
 		return &cfg.Database
-	}); err != nil {
-		return err
-	}
-	if err := c.Provide(func() context.Context {
-		return context.Background()
 	}); err != nil {
 		return err
 	}
@@ -53,10 +42,39 @@ func Core(c *container.Container) error {
 	if err := c.Provide(database.NewMigrationsManagerProvider); err != nil {
 		return err
 	}
-	if err := c.Provide(func(cfg *config.Config) (vaultdomain.Encrypter, error) {
-		return crypto.NewCipher(cfg.Server.SecretKey)
+	return provideOutbox(c)
+}
+
+// provideOutbox registers the config-snapshot change-marker outbox repository and
+// binds it as the infra Appender the config-mutating admin repositories share.
+// The control plane additionally binds it as the app-side OutboxRepository the
+// dispatcher drains (in ControlConfigSync).
+func provideOutbox(c *container.Container) error {
+	if err := c.Provide(outboxrepo.NewRepository); err != nil {
+		return err
+	}
+	return c.Provide(func(r *outboxrepo.Repository) outboxrepo.Appender {
+		return r
+	})
+}
+
+func provideRuntimeBase(c *container.Container) error {
+	if err := c.Provide(config.LoadConfig); err != nil {
+		return err
+	}
+	if err := c.Provide(func(cfg *config.Config) *slog.Logger {
+		log := logger.NewLoggerWithFormat(cfg.Logger.Level, logger.LogFormat(cfg.Logger.Format), cfg.Logger.FileEnabled)
+		slog.SetDefault(log)
+		return log
 	}); err != nil {
 		return err
 	}
-	return nil
+	if err := c.Provide(func() context.Context {
+		return context.Background()
+	}); err != nil {
+		return err
+	}
+	return c.Provide(func(cfg *config.Config) (vaultdomain.Encrypter, error) {
+		return crypto.NewCipher(cfg.Server.SecretKey)
+	})
 }

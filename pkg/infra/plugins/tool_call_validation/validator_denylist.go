@@ -14,11 +14,14 @@
 
 package tool_call_validation
 
-import "strings"
+import (
+	"context"
+	"strings"
+)
 
 type denylistValidator struct{}
 
-func (denylistValidator) Evaluate(in validatorInput) (violation, error) {
+func (denylistValidator) Evaluate(_ context.Context, in validatorInput) (violation, error) {
 	value, ok := stringArgumentValue(in.toolCall.Arguments, in.rule.ArgumentPath)
 	if !ok {
 		return violation{}, nil

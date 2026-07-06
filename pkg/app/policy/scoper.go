@@ -18,6 +18,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -36,6 +37,7 @@ type scoper struct {
 	memoryCache *cache.TTLMap
 	publisher   cache.EventPublisher
 	logger      *slog.Logger
+	signaler    configsyncport.SnapshotSignaler
 }
 
 func NewScoper(
@@ -43,12 +45,14 @@ func NewScoper(
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
+	signaler configsyncport.SnapshotSignaler,
 ) Scoper {
 	return &scoper{
 		repo:        repo,
 		memoryCache: manager.GetTTLMap(cache.PolicyTTLName),
 		publisher:   publisher,
 		logger:      logger,
+		signaler:    signaler,
 	}
 }
 
@@ -77,5 +81,8 @@ func (s *scoper) setGlobal(ctx context.Context, gatewayID ids.GatewayID, id ids.
 	existing.Global = global
 	s.memoryCache.Set(existing.ID.String(), existing)
 	publishGatewayDataInvalidation(ctx, s.publisher, s.logger, existing.GatewayID)
+	if s.signaler != nil {
+		s.signaler.Signal(ctx)
+	}
 	return existing, nil
 }

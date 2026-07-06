@@ -34,6 +34,10 @@ spec:
         ports:
         - containerPort: 8080
           name: http
+        # Config-sync gRPC listener (CONFIG_SYNC_GRPC_LISTEN_ADDR): the control
+        # plane serves compiled snapshots to the DB-less proxy/mcp data planes.
+        - containerPort: 8083
+          name: grpc
         resources:
           limits:
             cpu: 200m

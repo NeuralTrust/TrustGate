@@ -14,11 +14,14 @@
 
 package tool_call_validation
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 type semanticValidator struct{}
 
-func (semanticValidator) Evaluate(in validatorInput) (violation, error) {
+func (semanticValidator) Evaluate(ctx context.Context, in validatorInput) (violation, error) {
 	if in.eval == nil || in.eval.semantic == nil || in.eval.llm == nil {
 		return violation{}, nil
 	}
@@ -26,7 +29,7 @@ func (semanticValidator) Evaluate(in validatorInput) (violation, error) {
 		return violation{}, nil
 	}
 	decision, reasoning, err := evaluateSemantic(
-		in.ctx,
+		ctx,
 		in.eval.semantic,
 		in.eval.llm,
 		in.toolCall,

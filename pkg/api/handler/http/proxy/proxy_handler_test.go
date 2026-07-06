@@ -24,7 +24,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	proxyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/proxy"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -149,9 +149,9 @@ func newProxyRequest() *http.Request {
 	return req
 }
 
-func decodeError(t *testing.T, body io.Reader) helpers.ErrorBody {
+func decodeError(t *testing.T, body io.Reader) httpio.ErrorBody {
 	t.Helper()
-	var eb helpers.ErrorBody
+	var eb httpio.ErrorBody
 	if err := json.NewDecoder(body).Decode(&eb); err != nil {
 		t.Fatalf("decode error body: %v", err)
 	}

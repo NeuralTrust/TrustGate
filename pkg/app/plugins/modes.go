@@ -15,13 +15,14 @@
 package plugins
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 )
 
-var ErrInvalidModes = fmt.Errorf("plugin: invalid declared modes")
+var ErrInvalidModes = errors.New("plugin: invalid declared modes")
 
 func validateDeclaredModes(name string, modes []policy.Mode) error {
 	if len(modes) == 0 {

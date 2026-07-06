@@ -29,14 +29,14 @@ type CreateRoleRequest struct {
 	Name          string               `json:"name"`
 	ModelPolicies []ModelPolicyRequest `json:"model_policies,omitempty"`
 	McpPolicies   *MCPPoliciesRequest  `json:"mcp_policies,omitempty"`
-	OIDCMapping    json.RawMessage      `json:"oidc_mapping,omitempty"`
+	OIDCMapping   json.RawMessage      `json:"oidc_mapping,omitempty"`
 }
 
 type UpdateRoleRequest struct {
 	Name          *string               `json:"name,omitempty"`
 	ModelPolicies *[]ModelPolicyRequest `json:"model_policies,omitempty"`
 	McpPolicies   *MCPPoliciesRequest   `json:"mcp_policies,omitempty"`
-	OIDCMapping    *json.RawMessage      `json:"oidc_mapping,omitempty"`
+	OIDCMapping   *json.RawMessage      `json:"oidc_mapping,omitempty"`
 }
 
 type MCPPoliciesRequest struct {

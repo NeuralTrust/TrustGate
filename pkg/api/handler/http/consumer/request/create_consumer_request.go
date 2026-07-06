@@ -188,7 +188,7 @@ func (r CreateConsumerRequest) ToType() domain.Type {
 }
 
 func (r CreateConsumerRequest) ToRoutingMode() domain.RoutingMode {
-	return domain.RoutingMode(r.RoutingMode)
+	return domain.NewRoutingMode(r.RoutingMode)
 }
 
 func (r CreateConsumerRequest) ToLBConfig() (*domain.LBConfig, error) {

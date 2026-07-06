@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,7 +33,7 @@ func TestProviderCredentials_AzureAPIKey(t *testing.T) {
 		},
 	}
 
-	creds := auth.ProviderCredentials()
+	creds := providers.CredentialsFromTargetAuth(auth)
 
 	require.NotNil(t, creds.Azure)
 	assert.Equal(t, "https://example.openai.azure.com", creds.Azure.Endpoint)
@@ -49,7 +50,7 @@ func TestProviderCredentials_AzureManagedIdentity(t *testing.T) {
 		},
 	}
 
-	creds := auth.ProviderCredentials()
+	creds := providers.CredentialsFromTargetAuth(auth)
 
 	require.NotNil(t, creds.Azure)
 	assert.True(t, creds.Azure.UseIdentity)

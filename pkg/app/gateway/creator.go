@@ -18,6 +18,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
@@ -45,6 +46,7 @@ type creator struct {
 	memoryCache     *cache.TTLMap
 	exporterFactory appmetrics.ExporterFactory
 	logger          *slog.Logger
+	signaler        configsyncport.SnapshotSignaler
 }
 
 func NewCreator(
@@ -52,12 +54,14 @@ func NewCreator(
 	manager *cache.TTLMapManager,
 	exporterFactory appmetrics.ExporterFactory,
 	logger *slog.Logger,
+	signaler configsyncport.SnapshotSignaler,
 ) Creator {
 	return &creator{
 		repo:            repo,
 		memoryCache:     manager.GetTTLMap(cache.GatewayTTLName),
 		exporterFactory: exporterFactory,
 		logger:          logger,
+		signaler:        signaler,
 	}
 }
 
@@ -84,5 +88,8 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, 
 		return nil, err
 	}
 	setGatewayCache(c.memoryCache, g)
+	if c.signaler != nil {
+		c.signaler.Signal(ctx)
+	}
 	return g, nil
 }

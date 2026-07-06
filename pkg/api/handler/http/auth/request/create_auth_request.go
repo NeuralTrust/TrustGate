@@ -31,7 +31,7 @@ type CreateAuthRequest struct {
 
 type ConfigRequest struct {
 	OAuth2 *OAuth2ConfigRequest `json:"oauth2,omitempty"`
-	OIDC   *OIDCConfigRequest    `json:"oidc,omitempty"`
+	OIDC   *OIDCConfigRequest   `json:"oidc,omitempty"`
 	MTLS   *MTLSConfigRequest   `json:"mtls,omitempty"`
 }
 

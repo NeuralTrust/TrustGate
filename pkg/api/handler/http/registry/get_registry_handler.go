@@ -15,7 +15,7 @@
 package registry
 
 import (
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry/response"
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -39,18 +39,18 @@ func NewGetRegistryHandler(finder appregistry.Finder) *GetRegistryHandler {
 // @Param        gateway_id  path      string  true  "Gateway id"  format(uuid)
 // @Param        id          path      string  true  "Registry id"  format(uuid)
 // @Success      200         {object}  response.RegistryResponse
-// @Failure      400         {object}  helpers.ErrorBody
-// @Failure      401         {object}  helpers.ErrorBody
-// @Failure      404         {object}  helpers.ErrorBody
+// @Failure      400         {object}  httpio.ErrorBody
+// @Failure      401         {object}  httpio.ErrorBody
+// @Failure      404         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/registries/{id} [get]
 func (h *GetRegistryHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, id, err := helpers.ParseGatewayScopedID[ids.RegistryKind](c)
+	gatewayID, id, err := httpio.ParseGatewayScopedID[ids.RegistryKind](c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	b, err := h.finder.FindByID(c.UserContext(), gatewayID, id)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteOK(c, response.FromRegistry(b))
+	return httpio.WriteOK(c, response.FromRegistry(b))
 }

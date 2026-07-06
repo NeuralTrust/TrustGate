@@ -68,7 +68,7 @@ func TestCreator_Create_Success(t *testing.T) {
 
 	mgr := newCacheManager()
 	publisher := &capturePublisher{}
-	creator := appauth.NewCreator(repo, mgr, publisher, newTestLogger())
+	creator := appauth.NewCreator(repo, mgr, publisher, newTestLogger(), nil)
 
 	a, err := creator.Create(context.Background(), appauth.CreateInput{
 		GatewayID: gwID,
@@ -106,7 +106,7 @@ func TestCreator_Create_APIKey_GeneratesKeyAndWarmsKeyCache(t *testing.T) {
 		Once()
 
 	mgr := newCacheManager()
-	creator := appauth.NewCreator(repo, mgr, cachetest.NoopPublisher(), newTestLogger())
+	creator := appauth.NewCreator(repo, mgr, cachetest.NoopPublisher(), newTestLogger(), nil)
 
 	a, err := creator.Create(context.Background(), appauth.CreateInput{
 		GatewayID: gwID,
@@ -133,7 +133,7 @@ func TestCreator_Create_APIKey_GeneratesKeyAndWarmsKeyCache(t *testing.T) {
 func TestCreator_Create_RejectsInvalid(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	creator := appauth.NewCreator(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	creator := appauth.NewCreator(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
 
 	_, err := creator.Create(context.Background(), appauth.CreateInput{
 		GatewayID: ids.New[ids.GatewayKind](),
@@ -150,7 +150,7 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(domain.ErrAlreadyExists).Once()
-	creator := appauth.NewCreator(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	creator := appauth.NewCreator(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
 
 	_, err := creator.Create(context.Background(), appauth.CreateInput{
 		GatewayID: ids.New[ids.GatewayKind](),

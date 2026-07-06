@@ -17,7 +17,7 @@ package oauth
 import (
 	"errors"
 
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/gofiber/fiber/v2"
 )
@@ -38,7 +38,7 @@ func (h *AuthorizationServerHandler) Handle(c *fiber.Ctx) error {
 		if errors.Is(err, appoauth.ErrNoAuthorizationServer) || errors.Is(err, appoauth.ErrAmbiguousAuthorizationServer) {
 			return fiber.NewError(fiber.StatusNotFound, err.Error())
 		}
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteOK(c, doc)
+	return httpio.WriteOK(c, doc)
 }

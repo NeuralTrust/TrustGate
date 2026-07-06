@@ -82,8 +82,7 @@ func TestRegexValidator(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			res, err := regexValidator{}.Evaluate(validatorInput{
-				ctx:      context.Background(),
+			res, err := regexValidator{}.Evaluate(context.Background(), validatorInput{
 				toolCall: adapter.CanonicalToolCall{Name: "send_email", Arguments: tc.arguments},
 				rule:     RuleConfig{Validator: validatorRegex, ArgumentPath: tc.path, Pattern: tc.pattern},
 			})

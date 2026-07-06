@@ -15,12 +15,13 @@
 package strategies
 
 import (
+	"context"
 	"sync"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer/algorithm"
 )
 
 type LeastConnections struct {
@@ -32,7 +33,7 @@ func NewLeastConnections(registries []*registry.Registry) *LeastConnections {
 	return &LeastConnections{registries: registries}
 }
 
-func (lc *LeastConnections) Next(_ *infracontext.RequestContext, exclude map[ids.RegistryID]struct{}) *registry.Registry {
+func (lc *LeastConnections) Next(_ context.Context, _ *infracontext.RequestContext, exclude map[ids.RegistryID]struct{}) *registry.Registry {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	n := len(lc.registries)

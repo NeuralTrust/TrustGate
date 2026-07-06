@@ -15,7 +15,7 @@
 package registry
 
 import (
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry/response"
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
@@ -42,21 +42,21 @@ func NewListRegistryHandler(finder appregistry.Finder) *ListRegistryHandler {
 // @Param        page        query     int     false  "Page number (1-based)"
 // @Param        size        query     int     false  "Page size"
 // @Success      200         {object}  response.ListRegistryResponse
-// @Failure      400         {object}  helpers.ErrorBody
-// @Failure      401         {object}  helpers.ErrorBody
+// @Failure      400         {object}  httpio.ErrorBody
+// @Failure      401         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/registries [get]
 func (h *ListRegistryHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, err := helpers.ParseGatewayID(c)
+	gatewayID, err := httpio.ParseGatewayID(c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	page, err := helpers.ParsePage(c)
+	page, err := httpio.ParsePage(c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	size, err := helpers.ParseSize(c)
+	size, err := httpio.ParseSize(c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	req := request.ListRegistryRequest{
 		Name: c.Query("name"),
@@ -71,7 +71,7 @@ func (h *ListRegistryHandler) Handle(c *fiber.Ctx) error {
 		Size:         req.Size,
 	})
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 
 	out := response.ListRegistryResponse{
@@ -83,5 +83,5 @@ func (h *ListRegistryHandler) Handle(c *fiber.Ctx) error {
 	for _, b := range items {
 		out.Items = append(out.Items, response.FromRegistry(b))
 	}
-	return helpers.WriteOK(c, out)
+	return httpio.WriteOK(c, out)
 }

@@ -62,7 +62,7 @@ func TestCreator_Create_Success(t *testing.T) {
 		Once()
 
 	mgr := newCacheManager()
-	creator := appregistry.NewCreator(repo, mgr, newTestLogger())
+	creator := appregistry.NewCreator(repo, mgr, newTestLogger(), nil)
 
 	b, err := creator.Create(context.Background(), validCreateInput(gwID, "backend-1"))
 	if err != nil {
@@ -74,6 +74,29 @@ func TestCreator_Create_Success(t *testing.T) {
 	}
 	if cached.(*domain.Registry).ID != b.ID {
 		t.Fatal("cached backend ID mismatch")
+	}
+}
+
+func TestCreator_Create_RejectsInvalidProviderOptions(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	gwID := ids.New[ids.GatewayKind]()
+
+	creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger(), nil)
+
+	_, err := creator.Create(context.Background(), appregistry.CreateInput{
+		GatewayID: gwID,
+		Name:      "compat-missing-base-url",
+		LLMTarget: &domain.LLMTarget{
+			Provider: "openai_compatible",
+			Auth:     domain.NewAPIKeyAuth("sk-test"),
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, domain.ErrInvalidRegistry) {
+		t.Fatalf("err = %v, want wrap of ErrInvalidRegistry", err)
 	}
 }
 
@@ -101,7 +124,7 @@ func TestCreator_Create_EnabledFlag(t *testing.T) {
 				Return(nil).
 				Once()
 
-			creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger())
+			creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger(), nil)
 			in := validCreateInput(gwID, "backend-"+tt.name)
 			in.Enabled = ptr(tt.enabled)
 			got, err := creator.Create(context.Background(), in)
@@ -126,7 +149,7 @@ func TestCreator_Create_EnabledDefaultsTrueWhenNil(t *testing.T) {
 		Return(nil).
 		Once()
 
-	creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger())
+	creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger(), nil)
 	in := validCreateInput(gwID, "backend-default")
 	if in.Enabled != nil {
 		t.Fatal("precondition: Enabled should be unset in validCreateInput")
@@ -202,7 +225,7 @@ func TestCreator_Create_AzureModes(t *testing.T) {
 			gwID := ids.New[ids.GatewayKind]()
 			repo.EXPECT().
 				Save(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
-					creds := b.Auth().ProviderCredentials()
+					creds := providers.CredentialsFromTargetAuth(b.Auth())
 					return b.GatewayID == gwID &&
 						b.Provider() == "azure" &&
 						creds.ApiKey == tt.key &&
@@ -212,7 +235,7 @@ func TestCreator_Create_AzureModes(t *testing.T) {
 				Return(nil).
 				Once()
 
-			creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger())
+			creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger(), nil)
 			got, err := creator.Create(context.Background(), appregistry.CreateInput{
 				GatewayID: gwID,
 				Name:      "azure-" + tt.name,
@@ -232,7 +255,7 @@ func TestCreator_Create_AzureModes(t *testing.T) {
 func TestCreator_Create_RejectsInvalid(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger())
+	creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger(), nil)
 
 	in := validCreateInput(ids.New[ids.GatewayKind](), "x")
 	in.LLMTarget.Provider = ""
@@ -246,7 +269,7 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(domain.ErrAlreadyExists).Once()
-	creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger())
+	creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger(), nil)
 
 	_, err := creator.Create(context.Background(), validCreateInput(ids.New[ids.GatewayKind](), "dupe"))
 	if !errors.Is(err, domain.ErrAlreadyExists) {

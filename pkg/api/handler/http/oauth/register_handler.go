@@ -17,7 +17,7 @@ package oauth
 import (
 	"errors"
 
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/gofiber/fiber/v2"
 )
@@ -43,7 +43,7 @@ func (h *RegisterHandler) Handle(c *fiber.Ctx) error {
 		if errors.Is(err, appoauth.ErrRegistrationUnavailable) || errors.As(err, &oauthErr) {
 			return fiber.NewError(fiber.StatusBadRequest, err.Error())
 		}
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteCreated(c, res)
+	return httpio.WriteCreated(c, res)
 }
