@@ -44,6 +44,26 @@ jobs:
     secrets:
       GH_TOKEN: ${{ secrets.GH_TOKEN }}
 
+  metrics-module:
+    name: Metrics Schema Module
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.4"
+          cache: true
+      - name: Build, vet and test pkg/metrics
+        working-directory: pkg/metrics
+        run: |
+          go build ./...
+          go vet ./...
+          go test -race ./...
+      - name: Lint pkg/metrics
+        uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: pkg/metrics
+
   functional-tests:
     name: Functional Tests
     runs-on: ubuntu-latest

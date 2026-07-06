@@ -32,6 +32,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/exportersfile"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/kafka"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/otlp"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/postgres"
 	"go.uber.org/dig"
 )
 
@@ -73,6 +74,7 @@ func newExporterFactory(logger *slog.Logger, cfg *config.Config) appmetrics.Expo
 	return infratelemetry.NewExporterLocator(
 		infratelemetry.WithExporter(kafka.ExporterName, kafka.NewKafkaTemplate(logger, cfg.Kafka)),
 		infratelemetry.WithExporter(otlp.ExporterName, otlp.NewTemplate(logger, cfg.Telemetry.OTLP)),
+		infratelemetry.WithExporter(postgres.ExporterName, postgres.NewTemplate(logger)),
 	)
 }
 
