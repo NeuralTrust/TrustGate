@@ -31,7 +31,7 @@ func TestDataClassIsSensible(t *testing.T) {
 
 func TestBuildInsertSQL(t *testing.T) {
 	t.Parallel()
-	want := "INSERT INTO sensible_records (trace_id, gateway_id, team_id, occurred_on, schema_version, request_body, response_body) " +
+	want := "INSERT INTO " + metrics.TableName + " (trace_id, gateway_id, team_id, occurred_on, schema_version, request_body, response_body) " +
 		"VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (trace_id) DO NOTHING"
 	assert.Equal(t, want, buildInsertSQL(metrics.TableName))
 }

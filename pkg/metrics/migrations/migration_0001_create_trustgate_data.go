@@ -17,8 +17,8 @@ package migrations
 func init() {
 	register(Migration{
 		ID:   "0001",
-		Name: "create_sensible_records",
-		UpSQL: `CREATE TABLE IF NOT EXISTS sensible_records (
+		Name: "create_trustgate_data",
+		UpSQL: `CREATE TABLE IF NOT EXISTS trustgate_data (
     trace_id         TEXT        NOT NULL,
     gateway_id       TEXT        NOT NULL,
     team_id          TEXT,
@@ -29,7 +29,7 @@ func init() {
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (trace_id)
 );
-CREATE INDEX IF NOT EXISTS idx_sensible_gateway_time ON sensible_records (gateway_id, occurred_on);`,
-		DownSQL: `DROP TABLE IF EXISTS sensible_records;`,
+CREATE INDEX IF NOT EXISTS idx_trustgate_data_gateway_time ON trustgate_data (gateway_id, occurred_on);`,
+		DownSQL: `DROP TABLE IF EXISTS trustgate_data;`,
 	})
 }

@@ -150,7 +150,7 @@ exporters:
     type: postgres
     settings:
       dsn_env: SENSIBLE_PG_DSN   # env var NAME, not the DSN — keeps secrets out of the file
-      table: sensible_records
+      table: trustgate_data
 ```
 
 **Loader (ENG-1016):** new YAML loader (add `gopkg.in/yaml.v3`) → `[]telemetrydomain.ExporterConfig`;
@@ -217,7 +217,7 @@ type Migration struct { ID, Name, UpSQL, DownSQL string }
 **Sensible table (v1):**
 
 ```sql
-CREATE TABLE IF NOT EXISTS sensible_records (
+CREATE TABLE IF NOT EXISTS trustgate_data (
     trace_id         TEXT        NOT NULL,
     gateway_id       TEXT        NOT NULL,
     team_id          TEXT,
@@ -228,7 +228,7 @@ CREATE TABLE IF NOT EXISTS sensible_records (
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (trace_id)
 );
-CREATE INDEX IF NOT EXISTS idx_sensible_gateway_time ON sensible_records (gateway_id, occurred_on);
+CREATE INDEX IF NOT EXISTS idx_trustgate_data_gateway_time ON trustgate_data (gateway_id, occurred_on);
 ```
 
 `trace_id` is the join key back to the metadata record in ClickHouse. `INSERT` is built from the
