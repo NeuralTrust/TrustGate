@@ -14,6 +14,8 @@
 
 package metrics
 
+import "github.com/NeuralTrust/TrustGate/pkg/metrics/migrations"
+
 // TableName is the sensible store table owned by this module.
 const TableName = "sensible_records"
 
@@ -28,39 +30,23 @@ const (
 	ColumnCreatedAt     = "created_at"
 )
 
-// Migration is a driver-free unit of schema change: forward and rollback SQL
-// kept as strings so the module stays dependency-light. The pgx-based runner
-// that executes these lives in the consuming write path, not here.
-type Migration struct {
-	ID      string
-	Name    string
-	UpSQL   string
-	DownSQL string
-}
+// Migration is a driver-free unit of schema change owned by the migrations
+// subpackage; it is re-exported here so consumers keep a single import.
+type Migration = migrations.Migration
+
+// MigrationVersionTable is the table that records which migrations have been
+// applied. A runner ensures it exists before consulting the applied set.
+const MigrationVersionTable = migrations.VersionTableName
+
+// MigrationVersionTableDDL is the idempotent DDL that creates
+// MigrationVersionTable.
+const MigrationVersionTableDDL = migrations.VersionTableDDL
 
 // Migrations returns the ordered, additive schema history for the sensible
-// store. Each statement is idempotent so a runner can apply the set safely on
-// every start.
+// store, sourced from the migrations subpackage where each change lives in its
+// own file.
 func Migrations() []Migration {
-	return []Migration{
-		{
-			ID:   "0001",
-			Name: "create_sensible_records",
-			UpSQL: `CREATE TABLE IF NOT EXISTS sensible_records (
-    trace_id         TEXT        NOT NULL,
-    gateway_id       TEXT        NOT NULL,
-    team_id          TEXT,
-    occurred_on      BIGINT      NOT NULL,
-    schema_version   INT         NOT NULL,
-    request_body     TEXT,
-    response_body    TEXT,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (trace_id)
-);
-CREATE INDEX IF NOT EXISTS idx_sensible_gateway_time ON sensible_records (gateway_id, occurred_on);`,
-			DownSQL: `DROP TABLE IF EXISTS sensible_records;`,
-		},
-	}
+	return migrations.All()
 }
 
 // InsertColumns is the ordered column contract a writer must bind when

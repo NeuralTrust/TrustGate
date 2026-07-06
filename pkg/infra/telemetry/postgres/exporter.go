@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
@@ -31,6 +32,10 @@ import (
 var _ appmetrics.Exporter = (*Exporter)(nil)
 
 var errExporterClosed = errors.New("postgres: exporter is closed")
+
+// writeTimeout bounds a single insert so a slow or hung sensible DB cannot stall
+// the metrics worker goroutine that drives Publish.
+const writeTimeout = 10 * time.Second
 
 // Exporter persists the sensible view of an event (request and response bodies
 // only) into the owner-controlled Postgres store. It is sensible-only and can
@@ -73,6 +78,8 @@ func (e *Exporter) Publish(ctx context.Context, evt *events.Event) error {
 		return errExporterClosed
 	}
 	rec := toRecord(evt.SensibleView())
+	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
+	defer cancel()
 	if _, err := e.pool.Exec(ctx, e.insertSQL,
 		rec.TraceID,
 		rec.GatewayID,

@@ -55,7 +55,7 @@ func TestRunMigrationsIsIdempotent(t *testing.T) {
 	require.NoError(t, runMigrations(ctx, pool, discardLogger()))
 
 	var count int
-	require.NoError(t, pool.QueryRow(ctx, "SELECT count(*) FROM schema_migrations").Scan(&count))
+	require.NoError(t, pool.QueryRow(ctx, "SELECT count(*) FROM "+metrics.MigrationVersionTable).Scan(&count))
 	require.Equal(t, len(metrics.Migrations()), count)
 }
 

@@ -35,7 +35,9 @@ const ExporterName = "postgres"
 type Settings struct {
 	DSN    string `mapstructure:"dsn"`
 	DSNEnv string `mapstructure:"dsn_env"`
-	Table  string `mapstructure:"table"`
+	// Table is validated against the module-owned table name; it is an explicit,
+	// forward-compatible knob and is not allowed to point anywhere else.
+	Table string `mapstructure:"table"`
 }
 
 func parseSettings(raw map[string]interface{}) (Settings, error) {

@@ -18,10 +18,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const unlockTimeout = 5 * time.Second
 
 // advisoryLockKey serializes first-time DDL across replicas that enable the
 // exporter concurrently. The value is arbitrary but must stay stable (ENG-1020).
@@ -32,19 +35,28 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger)
 	if err != nil {
 		return fmt.Errorf("postgres: acquire migration connection: %w", err)
 	}
-	defer conn.Release()
 
 	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", advisoryLockKey); err != nil {
+		conn.Release()
 		return fmt.Errorf("postgres: acquire advisory lock: %w", err)
 	}
 	defer func() {
-		if _, unlockErr := conn.Exec(ctx, "SELECT pg_advisory_unlock($1)", advisoryLockKey); unlockErr != nil {
+		// Release on a fresh context so cleanup is not tied to a possibly-expired
+		// build deadline. If unlock fails, drop the connection so the pool never
+		// hands back one that still holds the session lock.
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), unlockTimeout)
+		defer cancel()
+		if _, unlockErr := conn.Exec(cleanupCtx, "SELECT pg_advisory_unlock($1)", advisoryLockKey); unlockErr != nil {
 			logger.Warn("postgres: release advisory lock failed", slog.String("error", unlockErr.Error()))
+			if closeErr := conn.Conn().Close(cleanupCtx); closeErr != nil {
+				logger.Warn("postgres: discard locked connection failed", slog.String("error", closeErr.Error()))
+			}
 		}
+		conn.Release()
 	}()
 
-	if _, err := conn.Exec(ctx, ensureMigrationsTableSQL); err != nil {
-		return fmt.Errorf("postgres: ensure schema_migrations: %w", err)
+	if _, err := conn.Exec(ctx, metrics.MigrationVersionTableDDL); err != nil {
+		return fmt.Errorf("postgres: ensure %s: %w", metrics.MigrationVersionTable, err)
 	}
 	applied, err := appliedMigrations(ctx, conn)
 	if err != nil {
@@ -61,14 +73,8 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger)
 	return nil
 }
 
-const ensureMigrationsTableSQL = `CREATE TABLE IF NOT EXISTS schema_migrations (
-    id         TEXT        PRIMARY KEY,
-    name       TEXT        NOT NULL,
-    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);`
-
 func appliedMigrations(ctx context.Context, conn *pgxpool.Conn) (map[string]bool, error) {
-	rows, err := conn.Query(ctx, "SELECT id FROM schema_migrations")
+	rows, err := conn.Query(ctx, "SELECT id FROM "+metrics.MigrationVersionTable)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: load applied migrations: %w", err)
 	}
@@ -95,7 +101,7 @@ func applyMigration(ctx context.Context, conn *pgxpool.Conn, m metrics.Migration
 	if _, err := tx.Exec(ctx, m.UpSQL); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, "INSERT INTO schema_migrations (id, name) VALUES ($1, $2)", m.ID, m.Name); err != nil {
+	if _, err := tx.Exec(ctx, "INSERT INTO "+metrics.MigrationVersionTable+" (id, name) VALUES ($1, $2)", m.ID, m.Name); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

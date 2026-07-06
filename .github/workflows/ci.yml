@@ -149,10 +149,20 @@ jobs:
           PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres \
             -c "CREATE DATABASE trustgate_repo_test;" || true
 
+      - name: Create sensible exporter integration test database
+        run: |
+          PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres \
+            -c "CREATE DATABASE sensible_pg_test;" || true
+
       - name: Run Functional tests
         env:
           PG_TEST_URL: postgres://postgres:postgres@localhost:5432/trustgate_repo_test?sslmode=disable
         run: go test -tags functional -v -race -count=1 -p 1 ./tests/functional/...
+
+      - name: Run Postgres exporter integration tests
+        env:
+          SENSIBLE_PG_TEST_DSN: postgres://postgres:postgres@localhost:5432/sensible_pg_test?sslmode=disable
+        run: go test -tags integration -race -count=1 ./pkg/infra/telemetry/postgres/...
 
   security:
     uses: NeuralTrust/workflows/.github/workflows/sast.yml@main
