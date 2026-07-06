@@ -36,7 +36,7 @@ func TestBuildInsertSQL(t *testing.T) {
 	assert.Equal(t, want, buildInsertSQL(metrics.TableName))
 }
 
-func TestToRecordMapsSensibleViewAndStampsSchemaVersion(t *testing.T) {
+func TestToRecordMapsRawViewAndStampsSchemaVersion(t *testing.T) {
 	t.Parallel()
 
 	resp := "resp-body"
@@ -51,7 +51,7 @@ func TestToRecordMapsSensibleViewAndStampsSchemaVersion(t *testing.T) {
 		Response:      events.Response{Body: &resp, StatusCode: 200},
 	}
 
-	rec := toRecord(evt.SensibleView())
+	rec := toRecord(evt.RawView())
 
 	assert.Equal(t, "t1", rec.TraceID)
 	assert.Equal(t, "g1", rec.GatewayID)
@@ -69,7 +69,7 @@ func TestToRecordNilTeamAndResponse(t *testing.T) {
 
 	evt := events.Event{TraceID: "t2", GatewayID: "g2", Request: events.Request{Body: ""}}
 
-	rec := toRecord(evt.SensibleView())
+	rec := toRecord(evt.RawView())
 
 	assert.Nil(t, rec.TeamID)
 	assert.Nil(t, rec.ResponseBody)

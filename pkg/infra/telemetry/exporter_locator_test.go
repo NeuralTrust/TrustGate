@@ -62,7 +62,7 @@ func TestExporterLocator_Validate(t *testing.T) {
 
 	t.Run("postgres resolved through the optional type field", func(t *testing.T) {
 		err := locator.Validate(telemetrydomain.ExporterConfig{
-			Name: "sensible-pg",
+			Name: "data-pg",
 			Type: postgres.ExporterName,
 			Settings: map[string]interface{}{
 				"dsn": "postgres://user:pass@localhost:5432/telemetry?sslmode=disable",

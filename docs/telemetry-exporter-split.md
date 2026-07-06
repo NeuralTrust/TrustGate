@@ -11,7 +11,7 @@ child issue. No production code is part of this spike.
 Split every runtime event into two **data classes** and route each to a different sink:
 
 - **Metadata** → OTel connector (OTLP). Non-sensitive operational data.
-- **Sensible** → PostgreSQL, **producer-owned** (exporter + schema + migrations in this repo).
+- **Raw** → PostgreSQL, **producer-owned** (exporter + schema + migrations in this repo).
 
 Default exporters come from a **YAML file** (one place, deployment-mode friendly); per-gateway
 `telemetry.exporters[]` still merge on top (override by name, no duplication).
@@ -44,23 +44,23 @@ Two structural facts drive several decisions below:
    So today you cannot have two instances of the same type, and "override by name" actually means
    "override by type".
 2. **The exporter port receives the whole `*events.Event`.** There is no notion of a partial/projected
-   event. The OTLP mapper already carries sensible content (`trustgate.request.body`, record body =
-   response body), so today metadata and sensible are **not** separated.
+   event. The OTLP mapper already carries raw content (`trustgate.request.body`, record body =
+   response body), so today metadata and raw are **not** separated.
 
 ---
 
 ## Q1 — Data classification (field-level partition of `events.Event`)
 
 Partition is by field, computed from a **single built event** (no second builder). Correlation keys
-are duplicated into **both** views so the sensible row can be joined back to the metadata record.
+are duplicated into **both** views so the raw row can be joined back to the metadata record.
 
-**Decision (narrowed): sensible data is ONLY the request input and the response output — i.e. the two
+**Decision (narrowed): raw data is ONLY the request input and the response output — i.e. the two
 payload bodies.** Everything else is metadata.
 
 **Correlation keys (in both views):** `SchemaVersion`, `TraceID`, `GatewayID`, `TeamID`, `OccurredOn`
 (+ `Timestamp`).
 
-**Sensible (→ Postgres):** `Request.Body` (input) and `Response.Body` (output). Nothing else.
+**Raw (→ Postgres):** `Request.Body` (input) and `Response.Body` (output). Nothing else.
 
 **Metadata (→ OTLP):** everything except the two bodies — including `Request.Headers`,
 `Response.Headers`, `IP`, `Consumer{ID,Name}`, `SessionID`, `TurnID`, `Status`, `IsFlagged`, `Security`,
@@ -70,17 +70,17 @@ full `MCP` struct.
 Rationale / edge calls:
 
 - **Headers → metadata.** `RedactHeaders` already masks known credentials before the event is built,
-  so header values in metadata are already redacted; they are not treated as sensible payload.
-- **`IP` → metadata.** No longer classified as sensible.
+  so header values in metadata are already redacted; they are not treated as raw payload.
+- **`IP` → metadata.** No longer classified as raw.
 - **`MCP.Prompt` → metadata (decided).** The MCP prompt originates from the MCP server, not from the
-  end-user request payload, so it is treated as metadata, not sensible.
+  end-user request payload, so it is treated as metadata, not raw.
 
 **Implementation shape (ENG-1018):** add two projections on the event, returning shallow copies so we
 never mutate the built event and never re-run the builder:
 
 ```go
 func (e *Event) MetadataView() *Event  // Request.Body / Response.Body zeroed
-func (e *Event) SensibleView() *Event  // keeps only correlation keys + the two bodies
+func (e *Event) RawView() *Event  // keeps only correlation keys + the two bodies
 ```
 
 The `Exporter` port stays `Publish(ctx, *events.Event)` — the pipeline just hands each exporter the
@@ -94,8 +94,8 @@ across classes because the fields simply aren't present in the struct they recei
 **Invariant (decided): the data class is an intrinsic, fixed property of the exporter *type* — it is
 never user-configurable.**
 
-- `type DataClass string` with `DataClassMetadata = "metadata"`, `DataClassSensible = "sensible"`.
-- `postgres` is the **only sensible sink**: it receives **sensible data only** and can never be
+- `type DataClass string` with `DataClassMetadata = "metadata"`, `DataClassRaw = "raw"`.
+- `postgres` is the **only raw sink**: it receives **raw data only** and can never be
   reused as a metadata exporter.
 - **Every other exporter is metadata-only.** By default any exporter receives metadata.
 - There is therefore **no `data_class` field** in `ExporterConfig` or the YAML — nothing to configure,
@@ -105,14 +105,14 @@ Contract shape: the class lives on the template/exporter, not the config.
 
 ```go
 // on ExporterTemplate and on the built Exporter
-func (t *Template) DataClass() metrics.DataClass // otlp → metadata; postgres → sensible
+func (t *Template) DataClass() metrics.DataClass // otlp → metadata; postgres → raw
 ```
 
 - `otlp` (and any future metadata exporter) → `DataClassMetadata`, hardcoded.
-- `postgres` → `DataClassSensible`, hardcoded.
+- `postgres` → `DataClassRaw`, hardcoded.
 
 The pipeline reads `exporter.DataClass()` at routing time to pick the projection (Q4). Because the
-class is bound to the type, a `postgres` target **always** gets `SensibleView()` and a metadata target
+class is bound to the type, a `postgres` target **always** gets `RawView()` and a metadata target
 **always** gets `MetadataView()` — the invariant is structural, not a validation rule.
 
 ---
@@ -146,10 +146,10 @@ exporters:
     settings:
       endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT}
       protocol: grpc
-  - name: sensible-pg          # postgres → sensible-only, fixed; cannot be a metadata sink
+  - name: data-pg              # postgres → raw-only, fixed; cannot be a metadata sink
     type: postgres
     settings:
-      dsn_env: SENSIBLE_PG_DSN   # env var NAME, not the DSN — keeps secrets out of the file
+      dsn_env: DATA_PG_DSN       # env var NAME, not the DSN — keeps secrets out of the file
       table: trustgate_data
 ```
 
@@ -175,7 +175,7 @@ therefore carry the config identity alongside the built exporter instead of rely
   parallel class lookup).
 - Merge: start from gateway-resolved (by `name`), then append each default whose `name` is not already
   present.
-- Routing per target: read `exporter.DataClass()` (intrinsic to type, Q2) — `postgres` → `SensibleView()`,
+- Routing per target: read `exporter.DataClass()` (intrinsic to type, Q2) — `postgres` → `RawView()`,
   every other exporter → `MetadataView()`.
 
 Matrix to test (ENG-1017/1021):
@@ -189,7 +189,7 @@ Matrix to test (ENG-1017/1021):
 
 ---
 
-## Q5 — `pkg/metrics` nested module + sensible table
+## Q5 — `pkg/metrics` nested module + raw table
 
 **Module:** `github.com/NeuralTrust/TrustGate/pkg/metrics`, its own `go.mod`, **dependency-light**
 (stdlib only — no `pgx`, no gateway packages). Parent module adds `require` + a local
@@ -201,7 +201,7 @@ Package layout:
 ```
 pkg/metrics/
   go.mod
-  record.go      // SensibleRecord (row type, db/json tags)
+  record.go      // RawRecord (row type, db/json tags)
   schema.go      // TableName, column names, Migrations []Migration (DDL as strings)
   allowlist.go   // columns exposed to the read path (filter/select allow-list)
   version.go     // SchemaVersion const
@@ -214,7 +214,7 @@ in `infra/telemetry` (Q on migrations below):
 type Migration struct { ID, Name, UpSQL, DownSQL string }
 ```
 
-**Sensible table (v1):**
+**Raw table (v1):**
 
 ```sql
 CREATE TABLE IF NOT EXISTS trustgate_data (
@@ -255,28 +255,28 @@ row so consumers can adapt across versions.
 The write path is **identical** in both modes; only the injected DSN differs, so there is no code
 branching on deployment mode.
 
-- **Secrets stay out of the YAML.** Settings reference an **env var name** (`dsn_env: SENSIBLE_PG_DSN`),
+- **Secrets stay out of the YAML.** Settings reference an **env var name** (`dsn_env: DATA_PG_DSN`),
   not the DSN literal. The exporter reads that env var at build time. (A raw `dsn` key may be allowed
   for local/dev, but env-name is the documented default and satisfies the `.env` / no-secrets rule.)
-- **SaaS:** `SENSIBLE_PG_DSN` points to the SaaS-managed sensible Postgres (own DB/cluster, per
+- **SaaS:** `DATA_PG_DSN` points to the SaaS-managed raw-data Postgres (own DB/cluster, per
   database-per-service).
 - **Hybrid:** TrustGate runs inside the customer boundary and writes to a **customer-side** Postgres;
-  `SENSIBLE_PG_DSN` points there. DataAgent later reads that same DB in-boundary. TrustGate never
+  `DATA_PG_DSN` points there. DataAgent later reads that same DB in-boundary. TrustGate never
   reaches out of the boundary for this.
 
 ---
 
-## Migrations on-enable (sensible DB)
+## Migrations on-enable (raw DB)
 
-The sensible Postgres is a **different database** from the control-plane DB and may be provisioned
+The raw Postgres is a **different database** from the control-plane DB and may be provisioned
 lazily (and, in Hybrid, inside the customer boundary), so we **cannot** reuse
 `database.MigrationsManager` (it targets the control-plane pool + `migration_version`, and has **no
 advisory lock**). ENG-1020 adds a dedicated runner in `infra/telemetry/postgres`:
 
-- Opens the sensible pool via `pgx` from the resolved DSN.
+- Opens the raw pool via `pgx` from the resolved DSN.
 - Takes a **Postgres advisory lock** (`pg_advisory_lock(<const key>)`) so multiple replicas don't race
   the first-time DDL.
-- Ensures a `schema_migrations` table in the sensible DB and applies pending `Migration.UpSQL` from the
+- Ensures a `schema_migrations` table in the raw DB and applies pending `Migration.UpSQL` from the
   module in order, idempotently (`CREATE TABLE IF NOT EXISTS`).
 - Runs **only when the `postgres` exporter is enabled** (first build), not at global boot.
 
@@ -288,9 +288,9 @@ advisory lock**). ENG-1020 adds a dedicated runner in `infra/telemetry/postgres`
 |---|---|
 | **ENG-1016** load YAML defaults | add `gopkg.in/yaml.v3`; map to extended `ExporterConfig`; no-file → no defaults + warning |
 | **ENG-1017** merge | dedupe by config **`name`** (not `Exporter.Name()`); carry identity+class in the pipeline |
-| **ENG-1018** classify | add `MetadataView()`/`SensibleView()` projections; sensible = request+response bodies only (headers/IP/MCP → metadata); class is intrinsic to exporter type (default metadata) |
+| **ENG-1018** classify | add `MetadataView()`/`RawView()` projections; raw = request+response bodies only (headers/IP/MCP → metadata); class is intrinsic to exporter type (default metadata) |
 | **ENG-1019** OTLP metadata | metadata-only exporter (`DataClass()==metadata`); consume `MetadataView()`; drop `trustgate.request.body` + response-body-as-record-body from the metadata path |
-| **ENG-1020** Postgres exporter | sensible-only, fixed `DataClass()==sensible`, never a metadata sink; dedicated advisory-locked runner + DDL from module; parameterized INSERT from column contract |
+| **ENG-1020** Postgres exporter | raw-only, fixed `DataClass()==raw`, never a metadata sink; dedicated advisory-locked runner + DDL from module; parameterized INSERT from column contract |
 | **ENG-1021** routing + API | route by `exporter.DataClass()`; extend `validateExporters` for `type`/`postgres` (no `data_class` field); docs + example |
 | **ENG-1034** CI auto-tag | tag `pkg/metrics/vX.Y.Z` on merge to main |
 
@@ -303,6 +303,6 @@ advisory lock**). ENG-1020 adds a dedicated runner in `infra/telemetry/postgres`
 ## Decided invariants (not up for change)
 
 - Data class is **intrinsic to the exporter type**, never a config field.
-- `postgres` is **sensible-only** and can never be reused as a metadata exporter.
+- `postgres` is **raw-only** and can never be reused as a metadata exporter.
 - Every other exporter is **metadata-only**; the default class any exporter receives is metadata.
-- Sensible data = **request input body + response output body only**; everything else is metadata.
+- Raw data = **request input body + response output body only**; everything else is metadata.

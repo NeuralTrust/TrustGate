@@ -28,10 +28,10 @@ import (
 var _ infratelemetry.ExporterTemplate = (*Template)(nil)
 
 // buildTimeout bounds pool creation plus first-build migrations so an
-// unreachable sensible DB cannot block the pipeline's ExporterCache indefinitely.
+// unreachable raw DB cannot block the pipeline's ExporterCache indefinitely.
 const buildTimeout = 30 * time.Second
 
-// Template builds postgres.Exporter instances and runs the sensible-store
+// Template builds postgres.Exporter instances and runs the data-store
 // migrations the first time the exporter is built.
 type Template struct {
 	logger *slog.Logger

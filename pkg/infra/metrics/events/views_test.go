@@ -89,34 +89,34 @@ func TestEvent_MetadataView_ExcludesBodies(t *testing.T) {
 	assert.Equal(t, evt.Response.StatusCode, meta.Response.StatusCode)
 }
 
-func TestEvent_SensibleView_OnlyBodiesAndCorrelationKeys(t *testing.T) {
+func TestEvent_RawView_OnlyBodiesAndCorrelationKeys(t *testing.T) {
 	evt := fullEvent()
 
-	sensible := evt.SensibleView()
+	raw := evt.RawView()
 
-	assert.Equal(t, evt.Request.Body, sensible.Request.Body)
-	require.NotNil(t, sensible.Response.Body)
-	assert.Equal(t, *evt.Response.Body, *sensible.Response.Body)
+	assert.Equal(t, evt.Request.Body, raw.Request.Body)
+	require.NotNil(t, raw.Response.Body)
+	assert.Equal(t, *evt.Response.Body, *raw.Response.Body)
 
-	assert.Equal(t, evt.SchemaVersion, sensible.SchemaVersion)
-	assert.Equal(t, evt.TraceID, sensible.TraceID)
-	assert.Equal(t, evt.GatewayID, sensible.GatewayID)
-	assert.Equal(t, evt.TeamID, sensible.TeamID)
-	assert.Equal(t, evt.OccurredOn, sensible.OccurredOn)
+	assert.Equal(t, evt.SchemaVersion, raw.SchemaVersion)
+	assert.Equal(t, evt.TraceID, raw.TraceID)
+	assert.Equal(t, evt.GatewayID, raw.GatewayID)
+	assert.Equal(t, evt.TeamID, raw.TeamID)
+	assert.Equal(t, evt.OccurredOn, raw.OccurredOn)
 
-	assert.Empty(t, sensible.Kind)
-	assert.Empty(t, sensible.IP)
-	assert.Equal(t, events.Consumer{}, sensible.Consumer)
-	assert.Equal(t, events.Status{}, sensible.Status)
-	assert.Nil(t, sensible.Usage)
-	assert.Nil(t, sensible.Cost)
-	assert.Nil(t, sensible.Attempts)
-	assert.Nil(t, sensible.PolicyChain)
-	assert.Nil(t, sensible.MCP)
-	assert.Nil(t, sensible.Request.Headers)
-	assert.Empty(t, sensible.Request.Method)
-	assert.Nil(t, sensible.Response.Headers)
-	assert.Zero(t, sensible.Response.StatusCode)
+	assert.Empty(t, raw.Kind)
+	assert.Empty(t, raw.IP)
+	assert.Equal(t, events.Consumer{}, raw.Consumer)
+	assert.Equal(t, events.Status{}, raw.Status)
+	assert.Nil(t, raw.Usage)
+	assert.Nil(t, raw.Cost)
+	assert.Nil(t, raw.Attempts)
+	assert.Nil(t, raw.PolicyChain)
+	assert.Nil(t, raw.MCP)
+	assert.Nil(t, raw.Request.Headers)
+	assert.Empty(t, raw.Request.Method)
+	assert.Nil(t, raw.Response.Headers)
+	assert.Zero(t, raw.Response.StatusCode)
 }
 
 func TestEvent_Views_DoNotMutateOriginal(t *testing.T) {
@@ -125,7 +125,7 @@ func TestEvent_Views_DoNotMutateOriginal(t *testing.T) {
 	originalRespBody := *evt.Response.Body
 
 	_ = evt.MetadataView()
-	_ = evt.SensibleView()
+	_ = evt.RawView()
 
 	assert.Equal(t, originalReqBody, evt.Request.Body)
 	require.NotNil(t, evt.Response.Body)

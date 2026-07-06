@@ -94,14 +94,14 @@ func (p *Pipeline) publish(
 }
 
 // viewForClass projects the event to the class the exporter is fixed to, so a
-// sensible sink only ever sees request/response bodies and every other exporter
+// raw sink only ever sees request/response bodies and every other exporter
 // only sees sanitized metadata (ENG-1021).
 func viewForClass(evt *events.Event, class metricsschema.DataClass) *events.Event {
 	if evt == nil {
 		return nil
 	}
 	if class == metricsschema.Raw {
-		v := evt.SensibleView()
+		v := evt.RawView()
 		return &v
 	}
 	v := evt.MetadataView()

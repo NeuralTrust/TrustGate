@@ -25,7 +25,7 @@ import (
 )
 
 // ExporterName is the registered name of the postgres exporter template. It is
-// the only sink allowed to carry sensible data.
+// the only sink allowed to carry raw data.
 const ExporterName = "postgres"
 
 // Settings is the per-gateway configuration for the postgres exporter, decoded
@@ -58,7 +58,7 @@ func (s Settings) validate() error {
 		return errors.New("postgres: one of settings.dsn or settings.dsn_env is required")
 	}
 	if s.Table != metrics.TableName {
-		return fmt.Errorf("postgres: table %q is not the owned sensible table %q", s.Table, metrics.TableName)
+		return fmt.Errorf("postgres: table %q is not the owned raw table %q", s.Table, metrics.TableName)
 	}
 	return nil
 }

@@ -33,12 +33,12 @@ var _ appmetrics.Exporter = (*Exporter)(nil)
 
 var errExporterClosed = errors.New("postgres: exporter is closed")
 
-// writeTimeout bounds a single insert so a slow or hung sensible DB cannot stall
+// writeTimeout bounds a single insert so a slow or hung raw DB cannot stall
 // the metrics worker goroutine that drives Publish.
 const writeTimeout = 10 * time.Second
 
-// Exporter persists the sensible view of an event (request and response bodies
-// only) into the owner-controlled Postgres store. It is sensible-only and can
+// Exporter persists the raw view of an event (request and response bodies
+// only) into the owner-controlled Postgres store. It is raw-only and can
 // never be reused as a metadata sink.
 type Exporter struct {
 	pool      *pgxpool.Pool
@@ -62,13 +62,13 @@ func (e *Exporter) Name() string {
 	return ExporterName
 }
 
-// DataClass fixes this exporter to the sensible class; the pipeline uses it to
-// route only the sensible view here (ENG-1021).
+// DataClass fixes this exporter to the raw class; the pipeline uses it to
+// route only the raw view here (ENG-1021).
 func (e *Exporter) DataClass() metrics.DataClass {
 	return metrics.Raw
 }
 
-// Publish writes the sensible projection of the event as one row. The write is
+// Publish writes the raw projection of the event as one row. The write is
 // idempotent on trace_id so a retried event does not duplicate a row.
 func (e *Exporter) Publish(ctx context.Context, evt *events.Event) error {
 	if evt == nil {
@@ -77,7 +77,7 @@ func (e *Exporter) Publish(ctx context.Context, evt *events.Event) error {
 	if e.closed.Load() {
 		return errExporterClosed
 	}
-	rec := toRecord(evt.SensibleView())
+	rec := toRecord(evt.RawView())
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
 	if _, err := e.pool.Exec(ctx, e.insertSQL,
@@ -89,7 +89,7 @@ func (e *Exporter) Publish(ctx context.Context, evt *events.Event) error {
 		rec.RequestBody,
 		rec.ResponseBody,
 	); err != nil {
-		return fmt.Errorf("postgres: insert sensible record: %w", err)
+		return fmt.Errorf("postgres: insert raw record: %w", err)
 	}
 	return nil
 }
@@ -103,8 +103,8 @@ func (e *Exporter) Close() {
 	e.pool.Close()
 }
 
-func toRecord(view events.Event) metrics.SensibleRecord {
-	rec := metrics.SensibleRecord{
+func toRecord(view events.Event) metrics.RawRecord {
+	rec := metrics.RawRecord{
 		TraceID:       view.TraceID,
 		GatewayID:     view.GatewayID,
 		OccurredOn:    view.OccurredOn,

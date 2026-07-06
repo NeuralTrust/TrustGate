@@ -47,7 +47,7 @@ func (p *Exporter) Name() string {
 
 // DataClass fixes this exporter to the metadata class; the pipeline routes only
 // the sanitized metadata view here, so the full-event marshal never carries
-// sensible bodies (ENG-1021).
+// raw bodies (ENG-1021).
 func (p *Exporter) DataClass() metrics.DataClass {
 	return metrics.Metadata
 }

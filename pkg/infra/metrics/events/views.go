@@ -20,7 +20,7 @@ func (e Event) MetadataView() Event {
 	return e
 }
 
-func (e Event) SensibleView() Event {
+func (e Event) RawView() Event {
 	return Event{
 		SchemaVersion: e.SchemaVersion,
 		TraceID:       e.TraceID,

@@ -32,10 +32,10 @@ exporters:
 
   # postgres is the only raw sink. dsn_env names the environment variable holding
   # the connection string, so secrets stay out of this file. Enabling it opens a
-  # pool and runs the sensible-store migrations on first use. Remove this entry
+  # pool and runs the data-store migrations on first use. Remove this entry
   # (raw: []) if you do not want to persist raw payloads.
   raw:
-    - name: sensible-pg
+    - name: data-pg
       type: postgres
       settings:
-        dsn_env: SENSIBLE_PG_DSN
+        dsn_env: DATA_PG_DSN

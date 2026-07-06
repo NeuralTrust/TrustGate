@@ -315,9 +315,9 @@ func TestPipeline_RoutesByDataClass(t *testing.T) {
 
 	sens := byName["sens"].lastEvent
 	require.NotNil(t, sens)
-	assert.NotEmpty(t, sens.Request.Body, "sensible exporter must receive the request body")
+	assert.NotEmpty(t, sens.Request.Body, "raw exporter must receive the request body")
 	require.NotNil(t, sens.Response.Body)
-	assert.NotEmpty(t, *sens.Response.Body, "sensible exporter must receive the response body")
+	assert.NotEmpty(t, *sens.Response.Body, "raw exporter must receive the response body")
 
 	meta := byName["meta"].lastEvent
 	require.NotNil(t, meta)

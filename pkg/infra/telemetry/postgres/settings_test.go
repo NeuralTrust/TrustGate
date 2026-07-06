@@ -25,10 +25,10 @@ import (
 func TestParseSettingsDefaultsTable(t *testing.T) {
 	t.Parallel()
 
-	s, err := parseSettings(map[string]interface{}{"dsn_env": "SENSIBLE_PG_DSN"})
+	s, err := parseSettings(map[string]interface{}{"dsn_env": "DATA_PG_DSN"})
 	require.NoError(t, err)
 	assert.Equal(t, metrics.TableName, s.Table)
-	assert.Equal(t, "SENSIBLE_PG_DSN", s.DSNEnv)
+	assert.Equal(t, "DATA_PG_DSN", s.DSNEnv)
 }
 
 func TestValidate(t *testing.T) {
@@ -39,10 +39,10 @@ func TestValidate(t *testing.T) {
 		s       Settings
 		wantErr string
 	}{
-		{"dsn_env accepted", Settings{DSNEnv: "SENSIBLE_PG_DSN", Table: metrics.TableName}, ""},
+		{"dsn_env accepted", Settings{DSNEnv: "DATA_PG_DSN", Table: metrics.TableName}, ""},
 		{"literal dsn accepted", Settings{DSN: "postgres://localhost/db", Table: metrics.TableName}, ""},
 		{"neither dsn nor dsn_env", Settings{Table: metrics.TableName}, "dsn"},
-		{"foreign table rejected", Settings{DSNEnv: "SENSIBLE_PG_DSN", Table: "other_table"}, "owned"},
+		{"foreign table rejected", Settings{DSNEnv: "DATA_PG_DSN", Table: "other_table"}, "owned"},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -66,13 +66,13 @@ func TestResolveDSNPrefersLiteral(t *testing.T) {
 }
 
 func TestResolveDSNReadsEnv(t *testing.T) {
-	t.Setenv("SENSIBLE_PG_TEST_ENV", "postgres://from-env")
-	got, err := Settings{DSNEnv: "SENSIBLE_PG_TEST_ENV"}.resolveDSN()
+	t.Setenv("DATA_PG_TEST_ENV", "postgres://from-env")
+	got, err := Settings{DSNEnv: "DATA_PG_TEST_ENV"}.resolveDSN()
 	require.NoError(t, err)
 	assert.Equal(t, "postgres://from-env", got)
 }
 
 func TestResolveDSNMissingEnvFails(t *testing.T) {
-	_, err := Settings{DSNEnv: "SENSIBLE_PG_DSN_DOES_NOT_EXIST"}.resolveDSN()
+	_, err := Settings{DSNEnv: "DATA_PG_DSN_DOES_NOT_EXIST"}.resolveDSN()
 	require.Error(t, err)
 }

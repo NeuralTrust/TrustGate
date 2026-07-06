@@ -30,13 +30,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// integrationDSN returns the DSN for the sensible-store test database, or skips
+// integrationDSN returns the DSN for the data-store test database, or skips
 // the test when it is not configured so unit CI stays offline.
 func integrationDSN(t *testing.T) string {
 	t.Helper()
-	dsn := os.Getenv("SENSIBLE_PG_TEST_DSN")
+	dsn := os.Getenv("DATA_PG_TEST_DSN")
 	if dsn == "" {
-		t.Skip("SENSIBLE_PG_TEST_DSN not set; skipping postgres integration test")
+		t.Skip("DATA_PG_TEST_DSN not set; skipping postgres integration test")
 	}
 	return dsn
 }
@@ -59,7 +59,7 @@ func TestRunMigrationsIsIdempotent(t *testing.T) {
 	require.Equal(t, len(metrics.Migrations()), count)
 }
 
-func TestExporterInsertsSensibleRowIdempotently(t *testing.T) {
+func TestExporterInsertsRawRowIdempotently(t *testing.T) {
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, integrationDSN(t))
 	require.NoError(t, err)

@@ -14,7 +14,7 @@
 
 package metrics
 
-type SensibleRecord struct {
+type RawRecord struct {
 	TraceID       string  `db:"trace_id" json:"trace_id"`
 	GatewayID     string  `db:"gateway_id" json:"gateway_id"`
 	TeamID        *string `db:"team_id" json:"team_id,omitempty"`
