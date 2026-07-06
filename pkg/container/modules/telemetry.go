@@ -22,6 +22,7 @@ import (
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bootlog"
 	infracache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/playground"
@@ -94,7 +95,7 @@ func newDefaultExporters(
 	logger *slog.Logger,
 	factory appmetrics.ExporterFactory,
 	path string,
-) ([]appmetrics.Exporter, error) {
+) ([]telemetrydomain.ExporterConfig, error) {
 	configs, err := exportersfile.Load(path)
 	if err != nil {
 		if errors.Is(err, exportersfile.ErrFileNotFound) {
@@ -109,21 +110,15 @@ func newDefaultExporters(
 			slog.String("path", path))
 		return nil, nil
 	}
-	defaults := make([]appmetrics.Exporter, 0, len(configs))
 	for _, cfg := range configs {
 		if err := factory.Validate(cfg); err != nil {
 			return nil, fmt.Errorf("default telemetry exporter %q: %w", cfg.Name, err)
 		}
-		exporter, err := factory.Build(cfg)
-		if err != nil {
-			return nil, fmt.Errorf("default telemetry exporter %q: %w", cfg.Name, err)
-		}
-		logger.Info("default telemetry exporter initialized",
+		logger.Info("default telemetry exporter registered",
 			slog.String("name", cfg.Name),
 			slog.String("type", cfg.EffectiveType()))
-		defaults = append(defaults, exporter)
 	}
-	return defaults, nil
+	return configs, nil
 }
 
 // MetricsWorkerParams collects everything StartMetricsWorker needs.

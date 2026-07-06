@@ -24,6 +24,7 @@ import (
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
+	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
@@ -58,6 +59,16 @@ func (c *captureExporter) snapshot() []*events.Event {
 	return append([]*events.Event(nil), c.events...)
 }
 
+type captureFactory struct {
+	exporter appmetrics.Exporter
+}
+
+func (f captureFactory) Build(_ telemetrydomain.ExporterConfig) (appmetrics.Exporter, error) {
+	return f.exporter, nil
+}
+
+func (f captureFactory) Validate(_ telemetrydomain.ExporterConfig) error { return nil }
+
 type stubPricingResolver struct {
 	price appcatalog.Pricing
 }
@@ -74,7 +85,9 @@ func TestWorker_PublishesConsolidatedEvent(t *testing.T) {
 	builder := appmetrics.NewBuilder(adapter.NewRegistry(), stubPricingResolver{
 		price: appcatalog.Pricing{ModelLabel: "GPT-4o", InputPrice: 0.0000025, OutputPrice: 0.00001, Found: true},
 	})
-	pipeline := appmetrics.NewPipeline(builder, nil, nil, newTestLogger(), capture)
+	cache := appmetrics.NewExporterCache(captureFactory{exporter: capture}, newTestLogger())
+	pipeline := appmetrics.NewPipeline(builder, cache, nil, newTestLogger(),
+		telemetrydomain.ExporterConfig{Name: "capture"})
 
 	w := appmetrics.NewWorker(newTestLogger(), pipeline)
 	w.StartWorkers(1)

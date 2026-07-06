@@ -39,11 +39,11 @@ type PlaygroundTraceStore interface {
 }
 
 type Pipeline struct {
-	builder          *Builder
-	defaultExporters []Exporter
-	cache            *ExporterCache
-	playgroundStore  PlaygroundTraceStore
-	logger           *slog.Logger
+	builder         *Builder
+	defaultConfigs  []telemetrydomain.ExporterConfig
+	cache           *ExporterCache
+	playgroundStore PlaygroundTraceStore
+	logger          *slog.Logger
 }
 
 func NewPipeline(
@@ -51,14 +51,14 @@ func NewPipeline(
 	cache *ExporterCache,
 	playgroundStore PlaygroundTraceStore,
 	logger *slog.Logger,
-	defaults ...Exporter,
+	defaults ...telemetrydomain.ExporterConfig,
 ) *Pipeline {
 	return &Pipeline{
-		builder:          builder,
-		defaultExporters: defaults,
-		cache:            cache,
-		playgroundStore:  playgroundStore,
-		logger:           logger,
+		builder:         builder,
+		defaultConfigs:  defaults,
+		cache:           cache,
+		playgroundStore: playgroundStore,
+		logger:          logger,
 	}
 }
 
@@ -92,30 +92,42 @@ func (p *Pipeline) publish(
 }
 
 func (p *Pipeline) resolveTargets(explicit []telemetrydomain.ExporterConfig) []Exporter {
-	var resolved []Exporter
-	if len(explicit) > 0 && p.cache != nil {
-		resolved = p.cache.Resolve(explicit)
+	if p.cache == nil {
+		return nil
 	}
-	resolvedNames := make(map[string]struct{}, len(resolved))
-	for _, e := range resolved {
-		resolvedNames[e.Name()] = struct{}{}
+	overrides := make(map[string]telemetrydomain.ExporterConfig, len(explicit))
+	for _, e := range explicit {
+		overrides[e.Name] = e
 	}
-	targets := make([]Exporter, 0, len(resolved)+len(p.defaultExporters))
-	targets = append(targets, resolved...)
-	for _, d := range p.defaultExporters {
-		if _, replaced := resolvedNames[d.Name()]; !replaced {
-			targets = append(targets, d)
+	merged := make([]telemetrydomain.ExporterConfig, 0, len(p.defaultConfigs)+len(explicit))
+	seen := make(map[string]struct{}, len(p.defaultConfigs)+len(explicit))
+	for _, d := range p.defaultConfigs {
+		if _, dup := seen[d.Name]; dup {
+			continue
 		}
+		seen[d.Name] = struct{}{}
+		if override, ok := overrides[d.Name]; ok {
+			merged = append(merged, override)
+			continue
+		}
+		merged = append(merged, d)
 	}
-	return targets
+	for _, e := range explicit {
+		if _, dup := seen[e.Name]; dup {
+			continue
+		}
+		seen[e.Name] = struct{}{}
+		merged = append(merged, e)
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return p.cache.Resolve(merged)
 }
 
 func (p *Pipeline) close() {
 	if p == nil {
 		return
-	}
-	for _, d := range p.defaultExporters {
-		d.Close()
 	}
 	if p.cache != nil {
 		p.cache.CloseAll()
