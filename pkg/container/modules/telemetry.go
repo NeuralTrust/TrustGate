@@ -15,18 +15,20 @@
 package modules
 
 import (
+	"errors"
+	"fmt"
 	"log/slog"
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
-	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bootlog"
 	infracache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/playground"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	infratelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/exportersfile"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/kafka"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/otlp"
 	"go.uber.org/dig"
@@ -87,20 +89,47 @@ func buildPipeline(
 		}
 		return nil, nil
 	}
-	var defaults []appmetrics.Exporter
-	exporter, err := factory.Build(telemetrydomain.ExporterConfig{
-		Name:     kafka.ExporterName,
-		Settings: map[string]interface{}{"topic": cfg.Telemetry.KafkaTopic},
-	})
+	defaults, err := newDefaultExporters(logger, factory, cfg.Telemetry.ExportersFile)
 	if err != nil {
-		logger.Warn("failed to build default kafka exporter, default telemetry disabled",
-			slog.String("error", err.Error()))
-	} else {
-		logger.Info("metrics telemetry exporter initialized",
-			slog.String("topic", cfg.Telemetry.KafkaTopic))
-		defaults = append(defaults, exporter)
+		return nil, err
 	}
 	return appmetrics.NewPipeline(builder, cache, playgroundStore, logger, defaults...), nil
+}
+
+func newDefaultExporters(
+	logger *slog.Logger,
+	factory appmetrics.ExporterFactory,
+	path string,
+) ([]appmetrics.Exporter, error) {
+	configs, err := exportersfile.Load(path)
+	if err != nil {
+		if errors.Is(err, exportersfile.ErrFileNotFound) {
+			logger.Warn("telemetry exporters file not found; starting with no default exporters",
+				slog.String("path", path))
+			return nil, nil
+		}
+		return nil, fmt.Errorf("loading default telemetry exporters: %w", err)
+	}
+	if len(configs) == 0 {
+		logger.Warn("telemetry exporters file declares no exporters; starting with no default exporters",
+			slog.String("path", path))
+		return nil, nil
+	}
+	defaults := make([]appmetrics.Exporter, 0, len(configs))
+	for _, cfg := range configs {
+		if err := factory.Validate(cfg); err != nil {
+			return nil, fmt.Errorf("default telemetry exporter %q: %w", cfg.Name, err)
+		}
+		exporter, err := factory.Build(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("default telemetry exporter %q: %w", cfg.Name, err)
+		}
+		logger.Info("default telemetry exporter initialized",
+			slog.String("name", cfg.Name),
+			slog.String("type", cfg.EffectiveType()))
+		defaults = append(defaults, exporter)
+	}
+	return defaults, nil
 }
 
 // MetricsWorkerParams collects everything StartMetricsWorker needs.
