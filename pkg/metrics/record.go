@@ -14,9 +14,6 @@
 
 package metrics
 
-// SensibleRecord is one row of the sensible store: the raw request/response
-// bodies plus the identifiers needed to correlate back to the metadata record.
-// TeamID and ResponseBody are pointers because their columns are nullable.
 type SensibleRecord struct {
 	TraceID       string  `db:"trace_id" json:"trace_id"`
 	GatewayID     string  `db:"gateway_id" json:"gateway_id"`

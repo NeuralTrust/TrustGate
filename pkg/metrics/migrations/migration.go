@@ -13,27 +13,18 @@
 // limitations under the License.
 
 // Package migrations holds the ordered schema history for the sensible store.
-// Each change lives in its own migration_<id>_<name>.go file that self-registers
-// via register in an init; All returns the full set ordered by ID.
 package migrations
 
 import "sort"
 
-// VersionTableName is the bookkeeping table that records which migrations have
-// been applied so a runner can skip them on the next start.
 const VersionTableName = "migration_versions"
 
-// VersionTableDDL creates VersionTableName. It is idempotent so a runner can
-// execute it on every start before consulting the applied set.
 const VersionTableDDL = `CREATE TABLE IF NOT EXISTS migration_versions (
     id         TEXT        PRIMARY KEY,
     name       TEXT        NOT NULL,
     applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );`
 
-// Migration is a driver-free unit of schema change: forward and rollback SQL
-// kept as strings so the module stays dependency-light. The pgx-based runner
-// that executes these lives in the consuming write path, not here.
 type Migration struct {
 	ID      string
 	Name    string
@@ -43,8 +34,6 @@ type Migration struct {
 
 var registry []Migration
 
-// register adds a migration to the set. A duplicate ID is a build-time
-// programmer error, so it panics rather than silently shadowing.
 func register(m Migration) {
 	for _, existing := range registry {
 		if existing.ID == m.ID {
@@ -54,8 +43,6 @@ func register(m Migration) {
 	registry = append(registry, m)
 }
 
-// All returns every registered migration ordered by ID as a fresh slice, so
-// callers cannot mutate the shared registry. Every statement is idempotent.
 func All() []Migration {
 	out := make([]Migration, len(registry))
 	copy(out, registry)

@@ -12,9 +12,5 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package metrics is the dependency-light, producer-owned contract for the
-// sensible telemetry store: row types, the table/column contract, the migration
-// DDL, the read-path column allow-list, and version/data-class constants. It
-// carries no database driver so consumers (the gateway write path and external
-// readers) can import it without pulling transport dependencies.
+// Package metrics is the dependency-light contract for the sensible telemetry store.
 package metrics

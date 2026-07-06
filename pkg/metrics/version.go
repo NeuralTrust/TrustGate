@@ -14,18 +14,11 @@
 
 package metrics
 
-// SchemaVersion is the version of the sensible-store schema owned by this
-// module. It is written into every row so readers can adapt across versions,
-// and it is bumped whenever a migration changes the row contract.
 const SchemaVersion = 1
 
-// DataClass partitions telemetry by sensitivity. It is intrinsic to an exporter
-// type, never a per-record configuration value.
 type DataClass string
 
 const (
-	// Metadata is sanitized, non-sensitive telemetry shipped to external backends.
 	Metadata DataClass = "metadata"
-	// Sensible is the raw request/response body pair persisted inside the owner boundary.
 	Sensible DataClass = "sensible"
 )

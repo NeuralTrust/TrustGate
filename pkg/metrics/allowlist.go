@@ -14,9 +14,6 @@
 
 package metrics
 
-// ReadColumns is the allow-list of columns a reader may select from the
-// sensible store. It exists so the read path selects an explicit set instead of
-// `SELECT *`, keeping consumers stable across additive schema changes.
 func ReadColumns() []string {
 	return []string{
 		ColumnTraceID,
