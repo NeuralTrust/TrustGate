@@ -233,6 +233,22 @@ func TestPipeline_MergeMatrix(t *testing.T) {
 	}
 }
 
+func TestPipeline_ResolveTargetsDedupesDuplicateExplicitByName(t *testing.T) {
+	factory := &fakeFactory{}
+	cache := NewExporterCache(factory, internalTestLogger())
+	p := NewPipeline(nil, cache, nil, internalTestLogger())
+
+	targets := p.resolveTargets([]telemetrydomain.ExporterConfig{
+		{Name: "dup", Settings: map[string]interface{}{"topic": "first"}},
+		{Name: "dup", Settings: map[string]interface{}{"topic": "second"}},
+	})
+
+	require.Len(t, targets, 1)
+	built := factory.builtConfigs()
+	require.Len(t, built, 1)
+	assert.Equal(t, "second", built[0].Settings["topic"], "the last config for a duplicated name wins")
+}
+
 func TestPipeline_PublishIsolatesExporterErrors(t *testing.T) {
 	builder := NewBuilder(adapter.NewRegistry(), stubPricing{})
 	factory := &fakeFactory{publishErrByName: map[string]error{"bad": errors.New("boom")}}

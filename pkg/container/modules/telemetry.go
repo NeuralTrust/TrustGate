@@ -52,9 +52,6 @@ func Telemetry(c *container.Container) error {
 	return c.Provide(appmetrics.NewWorker)
 }
 
-// newPlaygroundTraceStore uses the raw Redis client (not the in-process TTL
-// cache) so traces get a real Redis TTL and are visible across the proxy and
-// admin planes.
 func newPlaygroundTraceStore(
 	cc infracache.Client,
 	cfg *config.Config,
@@ -121,7 +118,6 @@ func newDefaultExporters(
 	return configs, nil
 }
 
-// MetricsWorkerParams collects everything StartMetricsWorker needs.
 type MetricsWorkerParams struct {
 	dig.In
 	Logger *slog.Logger
@@ -129,8 +125,6 @@ type MetricsWorkerParams struct {
 	Worker appmetrics.Worker
 }
 
-// StartMetricsWorker starts the background metrics worker goroutines. It is
-// meant to be invoked once on the proxy plane at boot.
 func StartMetricsWorker(p MetricsWorkerParams) {
 	n := p.Cfg.Metrics.WorkerCount
 	if n <= 0 {
