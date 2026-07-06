@@ -12,5 +12,4 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package metrics is the dependency-light contract for the sensible telemetry store.
 package metrics
