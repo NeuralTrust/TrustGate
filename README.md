@@ -409,8 +409,14 @@ gateway declares its own) are loaded at boot from a declarative YAML file,
 selected by `TELEMETRY_EXPORTERS_FILE` (default `config/telemetry.yaml`).
 Exporters are grouped by data class, and the class is intrinsic to the `type`:
 **metadata** exporters (e.g. `otlp`) ship sanitized request metadata to an
-external backend, while **raw** exporters (only `postgres`, arriving with
-ENG-1020) persist sensitive payloads inside your own boundary.
+external backend, while **raw** exporters (only `postgres`) persist sensitive
+payloads inside your own boundary.
+
+At publish time each event is **projected by class**: a `postgres` exporter
+receives only the request/response bodies, and every other exporter receives
+sanitized metadata with the bodies stripped. The class is fixed by the exporter
+type, so a metadata exporter can never receive raw payloads and `postgres` can
+never receive metadata — the split is structural, not a config flag.
 
 ```yaml
 exporters:
@@ -427,6 +433,7 @@ exporters:
 Behaviour:
 
 - **`postgres` under `metadata`, or any other type under `raw` → boot aborts.**
+- **Routing is by data class:** raw payloads go only to `postgres`; every other exporter gets metadata with bodies stripped.
 - **Invalid or unknown declared exporter → boot aborts (fail-fast).**
 - **File missing or empty → warning logged, pipeline starts with no defaults.**
 - There is no hardcoded default exporter; Kafka runs as a default only if declared.

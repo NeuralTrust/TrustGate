@@ -27,6 +27,7 @@ import (
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	metricsschema "github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -37,18 +38,23 @@ func internalTestLogger() *slog.Logger {
 
 type fakeExporter struct {
 	name       string
+	class      metricsschema.DataClass
 	publishErr error
 	mu         sync.Mutex
 	published  int
+	lastEvent  *events.Event
 	closed     bool
 }
 
 func (f *fakeExporter) Name() string { return f.name }
 
-func (f *fakeExporter) Publish(_ context.Context, _ *events.Event) error {
+func (f *fakeExporter) DataClass() metricsschema.DataClass { return f.class }
+
+func (f *fakeExporter) Publish(_ context.Context, evt *events.Event) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.published++
+	f.lastEvent = evt
 	return f.publishErr
 }
 
@@ -70,6 +76,7 @@ type fakeFactory struct {
 	buildErr         error
 	built            []telemetrydomain.ExporterConfig
 	publishErrByName map[string]error
+	classByName      map[string]metricsschema.DataClass
 }
 
 func (f *fakeFactory) Build(cfg telemetrydomain.ExporterConfig) (Exporter, error) {
@@ -80,7 +87,11 @@ func (f *fakeFactory) Build(cfg telemetrydomain.ExporterConfig) (Exporter, error
 	if f.buildErr != nil {
 		return nil, f.buildErr
 	}
-	return &fakeExporter{name: cfg.Name, publishErr: f.publishErrByName[cfg.Name]}, nil
+	return &fakeExporter{
+		name:       cfg.Name,
+		class:      f.classByName[cfg.Name],
+		publishErr: f.publishErrByName[cfg.Name],
+	}, nil
 }
 
 func (f *fakeFactory) Validate(_ telemetrydomain.ExporterConfig) error { return nil }
@@ -271,6 +282,47 @@ func TestPipeline_PublishIsolatesExporterErrors(t *testing.T) {
 
 	assert.Equal(t, 1, byName["bad"].publishedCount())
 	assert.Equal(t, 1, byName["good"].publishedCount(), "a failing exporter must not prevent the others from publishing")
+}
+
+func TestPipeline_RoutesByDataClass(t *testing.T) {
+	builder := NewBuilder(adapter.NewRegistry(), stubPricing{})
+	factory := &fakeFactory{classByName: map[string]metricsschema.DataClass{
+		"meta": metricsschema.Metadata,
+		"sens": metricsschema.Raw,
+	}}
+	cache := NewExporterCache(factory, internalTestLogger())
+	p := NewPipeline(builder, cache, nil, internalTestLogger(),
+		telemetrydomain.ExporterConfig{Name: "meta"},
+		telemetrydomain.ExporterConfig{Name: "sens"})
+
+	req := &infracontext.RequestContext{
+		GatewayID: "gw-1", Method: "POST", Path: "/v1/chat/completions",
+		Body: []byte(`{"model":"gpt","messages":[{"role":"user","content":"secret prompt"}]}`),
+	}
+	resp := &infracontext.ResponseContext{
+		StatusCode: 200,
+		Body:       []byte(`{"choices":[{"message":{"content":"secret answer"}}]}`),
+	}
+
+	targets := p.resolveTargets(nil)
+	require.Len(t, targets, 2)
+	byName := make(map[string]*fakeExporter, len(targets))
+	for _, tgt := range targets {
+		byName[tgt.Name()] = tgt.(*fakeExporter)
+	}
+
+	p.publish(nil, req, resp, time.Now(), time.Now(), nil)
+
+	sens := byName["sens"].lastEvent
+	require.NotNil(t, sens)
+	assert.NotEmpty(t, sens.Request.Body, "sensible exporter must receive the request body")
+	require.NotNil(t, sens.Response.Body)
+	assert.NotEmpty(t, *sens.Response.Body, "sensible exporter must receive the response body")
+
+	meta := byName["meta"].lastEvent
+	require.NotNil(t, meta)
+	assert.Empty(t, meta.Request.Body, "metadata exporter must never receive the request body")
+	assert.Nil(t, meta.Response.Body, "metadata exporter must never receive the response body")
 }
 
 func TestPipeline_PublishCallsPlaygroundStore(t *testing.T) {

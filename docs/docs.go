@@ -5923,6 +5923,9 @@ const docTemplate = `{
                 "settings": {
                     "type": "object",
                     "additionalProperties": true
+                },
+                "type": {
+                    "type": "string"
                 }
             }
         },

@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package migrations holds the ordered schema history for the sensible store.
 package migrations
 
 import "sort"

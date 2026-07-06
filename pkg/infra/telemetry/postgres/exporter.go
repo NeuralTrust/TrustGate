@@ -65,7 +65,7 @@ func (e *Exporter) Name() string {
 // DataClass fixes this exporter to the sensible class; the pipeline uses it to
 // route only the sensible view here (ENG-1021).
 func (e *Exporter) DataClass() metrics.DataClass {
-	return metrics.Sensible
+	return metrics.Raw
 }
 
 // Publish writes the sensible projection of the event as one row. The write is

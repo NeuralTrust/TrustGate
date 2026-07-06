@@ -29,6 +29,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
+	metricsschema "github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -43,6 +44,8 @@ type captureExporter struct {
 }
 
 func (c *captureExporter) Name() string { return "capture" }
+
+func (c *captureExporter) DataClass() metricsschema.DataClass { return metricsschema.Metadata }
 
 func (c *captureExporter) Publish(_ context.Context, evt *events.Event) error {
 	c.mu.Lock()

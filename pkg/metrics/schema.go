@@ -16,7 +16,7 @@ package metrics
 
 import "github.com/NeuralTrust/TrustGate/pkg/metrics/migrations"
 
-const TableName = "sensible_records"
+const TableName = "trustgate_data"
 
 const (
 	ColumnTraceID       = "trace_id"

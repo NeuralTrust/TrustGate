@@ -86,13 +86,13 @@ func TestExporterInsertsSensibleRowIdempotently(t *testing.T) {
 	var respBody *string
 	var schemaVer int
 	require.NoError(t, pool.QueryRow(ctx,
-		"SELECT request_body, response_body, schema_version FROM sensible_records WHERE trace_id=$1", trace,
+		"SELECT request_body, response_body, schema_version FROM "+metrics.TableName+" WHERE trace_id=$1", trace,
 	).Scan(&reqBody, &respBody, &schemaVer))
 	require.Equal(t, "hello-req", reqBody)
 	require.NotNil(t, respBody)
 	require.Equal(t, "hello-resp", *respBody)
 	require.Equal(t, metrics.SchemaVersion, schemaVer)
 
-	_, err = pool.Exec(ctx, "DELETE FROM sensible_records WHERE trace_id=$1", trace)
+	_, err = pool.Exec(ctx, "DELETE FROM "+metrics.TableName+" WHERE trace_id=$1", trace)
 	require.NoError(t, err)
 }

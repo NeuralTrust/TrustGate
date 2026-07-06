@@ -23,6 +23,7 @@ import (
 	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	infratelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/kafka"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/postgres"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -34,6 +35,7 @@ func testLogger() *slog.Logger {
 func newLocator() *infratelemetry.ExporterLocator {
 	return infratelemetry.NewExporterLocator(
 		infratelemetry.WithExporter(kafka.ExporterName, kafka.NewKafkaTemplate(testLogger(), config.KafkaConfig{Brokers: []string{"localhost:9092"}})),
+		infratelemetry.WithExporter(postgres.ExporterName, postgres.NewTemplate(testLogger())),
 	)
 }
 
@@ -56,6 +58,22 @@ func TestExporterLocator_Validate(t *testing.T) {
 	t.Run("valid kafka config", func(t *testing.T) {
 		err := locator.Validate(telemetrydomain.ExporterConfig{Name: kafka.ExporterName, Settings: map[string]interface{}{"topic": "events"}})
 		require.NoError(t, err)
+	})
+
+	t.Run("postgres resolved through the optional type field", func(t *testing.T) {
+		err := locator.Validate(telemetrydomain.ExporterConfig{
+			Name: "sensible-pg",
+			Type: postgres.ExporterName,
+			Settings: map[string]interface{}{
+				"dsn": "postgres://user:pass@localhost:5432/telemetry?sslmode=disable",
+			},
+		})
+		require.NoError(t, err)
+	})
+
+	t.Run("postgres without a dsn is rejected", func(t *testing.T) {
+		err := locator.Validate(telemetrydomain.ExporterConfig{Name: postgres.ExporterName, Settings: map[string]interface{}{}})
+		require.Error(t, err)
 	})
 }
 
