@@ -23,6 +23,7 @@ import (
 
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
+	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
@@ -69,6 +70,12 @@ func newExporterWithProvider(
 
 func (e *Exporter) Name() string {
 	return ExporterName
+}
+
+// DataClass fixes this exporter to the metadata class; the pipeline uses it to
+// route only the sanitized metadata view here (ENG-1021).
+func (e *Exporter) DataClass() metrics.DataClass {
+	return metrics.Metadata
 }
 
 // Publish maps the event to an OTLP log record and enqueues it into the batch

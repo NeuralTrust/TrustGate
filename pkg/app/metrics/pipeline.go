@@ -23,10 +23,12 @@ import (
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
+	metricsschema "github.com/NeuralTrust/TrustGate/pkg/metrics"
 )
 
 type Exporter interface {
 	Name() string
+	DataClass() metricsschema.DataClass
 	Publish(ctx context.Context, evt *events.Event) error
 	Close()
 }
@@ -79,7 +81,7 @@ func (p *Pipeline) publish(
 	ctx := context.Background()
 	evt := p.builder.Build(ctx, requestTrace, req, resp, startTime, endTime)
 	for _, exporter := range targets {
-		if err := exporter.Publish(ctx, evt); err != nil {
+		if err := exporter.Publish(ctx, viewForClass(evt, exporter.DataClass())); err != nil {
 			p.logger.Error("failed to publish metrics event",
 				slog.String("gateway_id", req.GatewayID),
 				slog.String("exporter", exporter.Name()),
@@ -89,6 +91,21 @@ func (p *Pipeline) publish(
 	if p.playgroundStore != nil {
 		p.playgroundStore.Save(ctx, req, evt)
 	}
+}
+
+// viewForClass projects the event to the class the exporter is fixed to, so a
+// sensible sink only ever sees request/response bodies and every other exporter
+// only sees sanitized metadata (ENG-1021).
+func viewForClass(evt *events.Event, class metricsschema.DataClass) *events.Event {
+	if evt == nil {
+		return nil
+	}
+	if class == metricsschema.Sensible {
+		v := evt.SensibleView()
+		return &v
+	}
+	v := evt.MetadataView()
+	return &v
 }
 
 func (p *Pipeline) resolveTargets(explicit []telemetrydomain.ExporterConfig) []Exporter {
