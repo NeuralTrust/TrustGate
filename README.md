@@ -406,21 +406,27 @@ or unreachable Collector never affects request latency.
 
 The metrics pipeline's **default** exporters (applied to every gateway unless a
 gateway declares its own) are loaded at boot from a declarative YAML file,
-selected by `TELEMETRY_EXPORTERS_FILE` (default `config/telemetry.yaml`). An
-exporter's data class is intrinsic to its `type`: **metadata** exporters (e.g.
-`otlp`) ship sanitized request metadata to an external backend, while
-**sensible** exporters (e.g. the `postgres` example, arriving with ENG-1020)
-persist sensitive payloads inside your own boundary.
+selected by `TELEMETRY_EXPORTERS_FILE` (default `config/telemetry.yaml`).
+Exporters are grouped by data class, and the class is intrinsic to the `type`:
+**metadata** exporters (e.g. `otlp`) ship sanitized request metadata to an
+external backend, while **raw** exporters (only `postgres`, arriving with
+ENG-1020) persist sensitive payloads inside your own boundary.
 
 ```yaml
 exporters:
-  - name: otlp      # instance identity (used for dedupe against per-gateway config)
-    type: otlp      # template selector; defaults to name when omitted
-    settings: { endpoint: "otel-collector:4317", protocol: grpc, signal: logs }
+  metadata:           # every type EXCEPT postgres
+    - name: otlp      # instance identity (used for dedupe against per-gateway config)
+      type: otlp      # template selector; defaults to name when omitted
+      settings: { endpoint: "otel-collector:4317", protocol: grpc, signal: logs }
+  raw:                # postgres only
+    - name: postgres
+      type: postgres
+      settings: { dsn: "postgres://user:pass@localhost:5432/telemetry" }
 ```
 
 Behaviour:
 
+- **`postgres` under `metadata`, or any other type under `raw` → boot aborts.**
 - **Invalid or unknown declared exporter → boot aborts (fail-fast).**
 - **File missing or empty → warning logged, pipeline starts with no defaults.**
 - There is no hardcoded default exporter; Kafka runs as a default only if declared.
