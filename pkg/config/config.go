@@ -70,6 +70,7 @@ const (
 	defaultTelemetryKafkaTopic          = "trustgate.requests"
 	defaultTelemetryEnableRequestTraces = true
 	defaultTelemetryEnablePluginTraces  = true
+	defaultTelemetryExportersFile       = "config/telemetry.yaml"
 
 	defaultMetricsEnabled       = true
 	defaultMetricsQueueSize     = 1000
@@ -182,6 +183,7 @@ type KafkaConfig struct {
 type TelemetryConfig struct {
 	Enabled             bool
 	KafkaTopic          string
+	ExportersFile       string
 	EnableRequestTraces bool
 	EnablePluginTraces  bool
 	OTLP                OTLPConfig
@@ -359,6 +361,7 @@ func getTelemetryConfig() TelemetryConfig {
 	return TelemetryConfig{
 		Enabled:             getEnvBool("TELEMETRY_ENABLED", defaultTelemetryEnabled),
 		KafkaTopic:          getEnv("TELEMETRY_KAFKA_TOPIC", defaultTelemetryKafkaTopic),
+		ExportersFile:       getEnv("TELEMETRY_EXPORTERS_FILE", defaultTelemetryExportersFile),
 		EnableRequestTraces: getEnvBool("TELEMETRY_ENABLE_REQUEST_TRACES", defaultTelemetryEnableRequestTraces),
 		EnablePluginTraces:  getEnvBool("TELEMETRY_ENABLE_PLUGIN_TRACES", defaultTelemetryEnablePluginTraces),
 		OTLP:                getOTLPConfig(),
