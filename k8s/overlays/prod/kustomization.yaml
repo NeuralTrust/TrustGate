@@ -6,6 +6,9 @@ resources:
 - ../../base
 - secretproviderclass/agentgateway-secrets.yaml
 - cloudflare-backendpolicy.yaml
+# config-sync gRPC public endpoint (hybrid data planes) + its cert-manager cert
+- service-configsync-external.yaml
+- config-sync-cert.yaml
 # - patches/hpa-patch.yaml
 patchesStrategicMerge:
 - patches/replicas-patch.yaml

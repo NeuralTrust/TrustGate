@@ -5,6 +5,9 @@ metadata:
 resources:
 - ../../base
 - secretproviderclass/agentgateway-secrets.yaml
+# config-sync gRPC public endpoint (hybrid data planes) + its cert-manager cert
+- service-configsync-external.yaml
+- config-sync-cert.yaml
 # - patches/hpa-patch.yaml
 patchesStrategicMerge:
 - patches/replicas-patch.yaml
@@ -12,6 +15,7 @@ patchesStrategicMerge:
 - patches/pdb-patch.yaml
 - patches/httproute-patch.yaml
 - patches/sa-annotation-patch.yaml
+- patches/config-sync-tls-patch.yaml
 commonLabels:
   app.kubernetes.io/managed-by: kustomize
   environment: dev

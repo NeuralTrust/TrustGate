@@ -1,18 +1,14 @@
-# Config-sync gRPC TLS for prod. The channel carries registry credentials and
-# key hashes, so it must not be plaintext in a deployed environment (config
-# validation rejects CONFIG_SYNC_TLS_INSECURE=true when APP_ENV=prod).
+# Config-sync gRPC TLS for dev. Mirrors prod so the whole TLS path (public LE
+# cert, SNI override, hot-reload, external L4 endpoint) can be tested end-to-end.
+# APP_ENV=dev does not force TLS, but we opt in here by giving the admin a
+# cert/key and flipping the data planes off plaintext.
 #
-# The cert/key/CA are managed by cert-manager (Let's Encrypt via Cloudflare
-# DNS-01), NOT GCP Secret Manager: config-sync-cert.yaml issues a public server
-# cert for agentgateway-configsync.neuraltrust.ai. The admin (control plane)
-# mounts that Secret and terminates TLS; every data plane (proxy/mcp in-cluster
-# and remote hybrid) trusts the public root store (CONFIG_SYNC_TLS_CA empty) and
-# pins the public SNI.
-#
-# In-cluster data planes keep dialing the internal Service (no hairpin via the
-# external LB) but override the SNI to the public hostname so the single public
-# leaf validates - the dial target (CONFIG_SYNC_GRPC_ENDPOINT, in config.env) and
-# the verified name (CONFIG_SYNC_TLS_SERVER_NAME) are independent.
+# The cert/key are managed by cert-manager (Let's Encrypt via Cloudflare
+# DNS-01): config-sync-cert.yaml issues a public server cert for
+# agentgateway-configsync.dev.neuraltrust.ai. The admin mounts that Secret and
+# terminates TLS; the data planes (proxy/mcp) trust the public root store
+# (CONFIG_SYNC_TLS_CA empty) and pin the public SNI while still dialing the
+# internal Service (CONFIG_SYNC_GRPC_ENDPOINT in config.env).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -55,7 +51,7 @@ spec:
         # Override the verified name to the public cert SAN while still dialing
         # the internal Service (CONFIG_SYNC_GRPC_ENDPOINT in config.env).
         - name: CONFIG_SYNC_TLS_SERVER_NAME
-          value: agentgateway-configsync.neuraltrust.ai
+          value: agentgateway-configsync.dev.neuraltrust.ai
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -72,4 +68,4 @@ spec:
         - name: CONFIG_SYNC_TLS_CA
           value: ""
         - name: CONFIG_SYNC_TLS_SERVER_NAME
-          value: agentgateway-configsync.neuraltrust.ai
+          value: agentgateway-configsync.dev.neuraltrust.ai
