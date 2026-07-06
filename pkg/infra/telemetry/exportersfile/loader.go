@@ -25,8 +25,6 @@ import (
 
 var ErrFileNotFound = errors.New("telemetry exporters file not found")
 
-// rawExporterType is the only type accepted for raw (sensible) payloads; the
-// data class is intrinsic to the type, so the file grouping is validated against it.
 const rawExporterType = "postgres"
 
 type fileSpec struct {
