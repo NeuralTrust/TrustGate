@@ -20,5 +20,5 @@ type DataClass string
 
 const (
 	Metadata DataClass = "metadata"
-	Sensible DataClass = "sensible"
+	Raw      DataClass = "raw"
 )

@@ -100,7 +100,7 @@ func viewForClass(evt *events.Event, class metricsschema.DataClass) *events.Even
 	if evt == nil {
 		return nil
 	}
-	if class == metricsschema.Sensible {
+	if class == metricsschema.Raw {
 		v := evt.SensibleView()
 		return &v
 	}

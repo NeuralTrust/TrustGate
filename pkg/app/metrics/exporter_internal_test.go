@@ -288,7 +288,7 @@ func TestPipeline_RoutesByDataClass(t *testing.T) {
 	builder := NewBuilder(adapter.NewRegistry(), stubPricing{})
 	factory := &fakeFactory{classByName: map[string]metricsschema.DataClass{
 		"meta": metricsschema.Metadata,
-		"sens": metricsschema.Sensible,
+		"sens": metricsschema.Raw,
 	}}
 	cache := NewExporterCache(factory, internalTestLogger())
 	p := NewPipeline(builder, cache, nil, internalTestLogger(),

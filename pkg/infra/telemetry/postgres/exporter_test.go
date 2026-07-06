@@ -24,9 +24,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDataClassIsSensible(t *testing.T) {
+func TestDataClassIsRaw(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, metrics.Sensible, (&Exporter{}).DataClass())
+	assert.Equal(t, metrics.Raw, (&Exporter{}).DataClass())
 }
 
 func TestBuildInsertSQL(t *testing.T) {
