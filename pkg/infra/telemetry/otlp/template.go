@@ -67,5 +67,5 @@ func (t *Template) WithSettings(settings map[string]interface{}) (appmetrics.Exp
 	if err != nil {
 		return nil, err
 	}
-	return newExporterWithProvider(provider, t.logger, s.MaxBodyBytes, s.Timeout), nil
+	return newExporterWithProvider(provider, t.logger, s.Timeout), nil
 }
