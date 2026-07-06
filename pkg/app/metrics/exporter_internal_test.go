@@ -65,22 +65,33 @@ func (f *fakeExporter) publishedCount() int {
 }
 
 type fakeFactory struct {
-	mu       sync.Mutex
-	builds   int
-	buildErr error
+	mu               sync.Mutex
+	builds           int
+	buildErr         error
+	built            []telemetrydomain.ExporterConfig
+	publishErrByName map[string]error
 }
 
 func (f *fakeFactory) Build(cfg telemetrydomain.ExporterConfig) (Exporter, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.builds++
+	f.built = append(f.built, cfg)
 	if f.buildErr != nil {
 		return nil, f.buildErr
 	}
-	return &fakeExporter{name: cfg.Name}, nil
+	return &fakeExporter{name: cfg.Name, publishErr: f.publishErrByName[cfg.Name]}, nil
 }
 
 func (f *fakeFactory) Validate(_ telemetrydomain.ExporterConfig) error { return nil }
+
+func (f *fakeFactory) builtConfigs() []telemetrydomain.ExporterConfig {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]telemetrydomain.ExporterConfig, len(f.built))
+	copy(out, f.built)
+	return out
+}
 
 type fakePlaygroundStore struct {
 	mu     sync.Mutex
@@ -148,15 +159,18 @@ func TestExporterCache_CloseAllClosesInstances(t *testing.T) {
 func TestPipeline_ResolveTargetsOverrideByName(t *testing.T) {
 	factory := &fakeFactory{}
 	cache := NewExporterCache(factory, internalTestLogger())
-	defaultKafka := &fakeExporter{name: "kafka"}
-	p := NewPipeline(nil, cache, nil, internalTestLogger(), defaultKafka)
+	p := NewPipeline(nil, cache, nil, internalTestLogger(),
+		telemetrydomain.ExporterConfig{Name: "kafka", Settings: map[string]interface{}{"topic": "default"}})
 
 	overridden := p.resolveTargets([]telemetrydomain.ExporterConfig{
 		{Name: "kafka", Settings: map[string]interface{}{"topic": "other"}},
 	})
 	require.Len(t, overridden, 1)
 	assert.Equal(t, "kafka", overridden[0].Name())
-	assert.NotSame(t, defaultKafka, overridden[0], "explicit kafka must replace the default kafka")
+
+	built := factory.builtConfigs()
+	require.Len(t, built, 1)
+	assert.Equal(t, "other", built[0].Settings["topic"], "kafka must be built from the gateway config, not the default")
 
 	added := p.resolveTargets([]telemetrydomain.ExporterConfig{
 		{Name: "other", Settings: map[string]interface{}{"topic": "x"}},
@@ -164,43 +178,115 @@ func TestPipeline_ResolveTargetsOverrideByName(t *testing.T) {
 	require.Len(t, added, 2, "a differently-named exporter is added on top of the default")
 }
 
-func TestPipeline_OverrideFailureKeepsDefault(t *testing.T) {
+func TestPipeline_OverrideFailureSkipsTarget(t *testing.T) {
 	factory := &fakeFactory{buildErr: errors.New("boom")}
 	cache := NewExporterCache(factory, internalTestLogger())
-	defaultKafka := &fakeExporter{name: "kafka"}
-	p := NewPipeline(nil, cache, nil, internalTestLogger(), defaultKafka)
+	p := NewPipeline(nil, cache, nil, internalTestLogger(),
+		telemetrydomain.ExporterConfig{Name: "kafka", Settings: map[string]interface{}{"topic": "default"}})
 
 	targets := p.resolveTargets([]telemetrydomain.ExporterConfig{
 		{Name: "kafka", Settings: map[string]interface{}{"topic": "bad"}},
 	})
 
+	require.Empty(t, targets, "a failed override is skipped with no default fallback")
+	assert.Equal(t, 1, factory.buildCount(), "only the single merged kafka config is attempted")
+}
+
+func TestPipeline_MergeMatrix(t *testing.T) {
+	t.Parallel()
+	cfg := func(name string) telemetrydomain.ExporterConfig {
+		return telemetrydomain.ExporterConfig{Name: name, Settings: map[string]interface{}{"topic": name}}
+	}
+	tests := []struct {
+		name     string
+		defaults []telemetrydomain.ExporterConfig
+		explicit []telemetrydomain.ExporterConfig
+		want     []string
+	}{
+		{name: "empty defaults and no gateway exporters yield no targets", defaults: nil, explicit: nil, want: nil},
+		{name: "default only", defaults: []telemetrydomain.ExporterConfig{cfg("otlp-a")}, explicit: nil, want: []string{"otlp-a"}},
+		{name: "gateway only", defaults: nil, explicit: []telemetrydomain.ExporterConfig{cfg("otlp-a")}, want: []string{"otlp-a"}},
+		{name: "override same name gateway wins", defaults: []telemetrydomain.ExporterConfig{cfg("otlp-a")}, explicit: []telemetrydomain.ExporterConfig{cfg("otlp-a")}, want: []string{"otlp-a"}},
+		{name: "same type different name both run in file-then-gateway order", defaults: []telemetrydomain.ExporterConfig{cfg("otlp-a")}, explicit: []telemetrydomain.ExporterConfig{cfg("otlp-b")}, want: []string{"otlp-a", "otlp-b"}},
+		{name: "override by name keeps other defaults", defaults: []telemetrydomain.ExporterConfig{cfg("otlp-a"), cfg("kafka-x")}, explicit: []telemetrydomain.ExporterConfig{cfg("otlp-a")}, want: []string{"otlp-a", "kafka-x"}},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			factory := &fakeFactory{}
+			cache := NewExporterCache(factory, internalTestLogger())
+			p := NewPipeline(nil, cache, nil, internalTestLogger(), tt.defaults...)
+
+			targets := p.resolveTargets(tt.explicit)
+
+			if tt.want == nil {
+				require.Nil(t, targets)
+				return
+			}
+			got := make([]string, len(targets))
+			for i, e := range targets {
+				got[i] = e.Name()
+			}
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestPipeline_ResolveTargetsDedupesDuplicateExplicitByName(t *testing.T) {
+	factory := &fakeFactory{}
+	cache := NewExporterCache(factory, internalTestLogger())
+	p := NewPipeline(nil, cache, nil, internalTestLogger())
+
+	targets := p.resolveTargets([]telemetrydomain.ExporterConfig{
+		{Name: "dup", Settings: map[string]interface{}{"topic": "first"}},
+		{Name: "dup", Settings: map[string]interface{}{"topic": "second"}},
+	})
+
 	require.Len(t, targets, 1)
-	assert.Same(t, defaultKafka, targets[0], "default must survive when the overriding exporter fails to build")
+	built := factory.builtConfigs()
+	require.Len(t, built, 1)
+	assert.Equal(t, "second", built[0].Settings["topic"], "the last config for a duplicated name wins")
 }
 
 func TestPipeline_PublishIsolatesExporterErrors(t *testing.T) {
 	builder := NewBuilder(adapter.NewRegistry(), stubPricing{})
-	bad := &fakeExporter{name: "bad", publishErr: errors.New("boom")}
-	good := &fakeExporter{name: "good"}
-	p := NewPipeline(builder, nil, nil, internalTestLogger(), bad, good)
+	factory := &fakeFactory{publishErrByName: map[string]error{"bad": errors.New("boom")}}
+	cache := NewExporterCache(factory, internalTestLogger())
+	p := NewPipeline(builder, cache, nil, internalTestLogger(),
+		telemetrydomain.ExporterConfig{Name: "bad"},
+		telemetrydomain.ExporterConfig{Name: "good"})
 
 	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/v1/chat/completions"}
 	resp := &infracontext.ResponseContext{StatusCode: 200}
 
+	targets := p.resolveTargets(nil)
+	require.Len(t, targets, 2)
+	byName := make(map[string]*fakeExporter, len(targets))
+	for _, tgt := range targets {
+		byName[tgt.Name()] = tgt.(*fakeExporter)
+	}
+
 	p.publish(nil, req, resp, time.Now(), time.Now(), nil)
 
-	assert.Equal(t, 1, bad.publishedCount())
-	assert.Equal(t, 1, good.publishedCount(), "a failing exporter must not prevent the others from publishing")
+	assert.Equal(t, 1, byName["bad"].publishedCount())
+	assert.Equal(t, 1, byName["good"].publishedCount(), "a failing exporter must not prevent the others from publishing")
 }
 
 func TestPipeline_PublishCallsPlaygroundStore(t *testing.T) {
 	builder := NewBuilder(adapter.NewRegistry(), stubPricing{})
-	exporter := &fakeExporter{name: "kafka"}
+	factory := &fakeFactory{}
+	cache := NewExporterCache(factory, internalTestLogger())
 	store := &fakePlaygroundStore{}
-	p := NewPipeline(builder, nil, store, internalTestLogger(), exporter)
+	p := NewPipeline(builder, cache, store, internalTestLogger(),
+		telemetrydomain.ExporterConfig{Name: "kafka"})
 
 	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/v1/chat/completions"}
 	resp := &infracontext.ResponseContext{StatusCode: 200}
+
+	targets := p.resolveTargets(nil)
+	require.Len(t, targets, 1)
+	exporter := targets[0].(*fakeExporter)
 
 	p.publish(nil, req, resp, time.Now(), time.Now(), nil)
 

@@ -132,14 +132,10 @@ func newMetricsApp(t *testing.T, gw *gatewaydomain.Gateway, rec *eventRecorder) 
 		infratelemetry.WithExporter("broken", &memTemplate{name: "broken", rec: rec, fail: true}),
 	)
 	cache := appmetrics.NewExporterCache(factory, logger)
-	def, err := factory.Build(telemetrydomain.ExporterConfig{
-		Name:     "kafka",
-		Settings: map[string]interface{}{"topic": defaultTopic},
-	})
-	require.NoError(t, err)
 
 	builder := appmetrics.NewBuilder(adapter.NewRegistry(), zeroPricing{})
-	pipeline := appmetrics.NewPipeline(builder, cache, nil, logger, def)
+	pipeline := appmetrics.NewPipeline(builder, cache, nil, logger,
+		telemetrydomain.ExporterConfig{Name: "kafka", Settings: map[string]interface{}{"topic": defaultTopic}})
 	worker := appmetrics.NewWorker(logger, pipeline)
 	worker.StartWorkers(2)
 	t.Cleanup(worker.Shutdown)

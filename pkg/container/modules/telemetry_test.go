@@ -15,7 +15,6 @@
 package modules
 
 import (
-	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -23,22 +22,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/app/metrics/mocks"
 	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
-
-type fakeExporter struct {
-	name string
-}
-
-func (f *fakeExporter) Name() string                                 { return f.name }
-func (f *fakeExporter) Publish(context.Context, *events.Event) error { return nil }
-func (f *fakeExporter) Close()                                       {}
 
 func TestNewDefaultExporters(t *testing.T) {
 	t.Parallel()
@@ -48,10 +37,10 @@ func TestNewDefaultExporters(t *testing.T) {
 		write   bool
 		content string
 		setup   func(factory *mocks.ExporterFactory)
-		assert  func(t *testing.T, exporters []appmetrics.Exporter, err error)
+		assert  func(t *testing.T, configs []telemetrydomain.ExporterConfig, err error)
 	}{
 		{
-			name:  "valid entries are built in file order",
+			name:  "valid entries are returned as configs in file order and not built",
 			write: true,
 			content: `exporters:
   - name: otlp
@@ -61,15 +50,11 @@ func TestNewDefaultExporters(t *testing.T) {
 `,
 			setup: func(factory *mocks.ExporterFactory) {
 				factory.EXPECT().Validate(mock.Anything).Return(nil)
-				factory.EXPECT().Build(mock.Anything).RunAndReturn(
-					func(cfg telemetrydomain.ExporterConfig) (appmetrics.Exporter, error) {
-						return &fakeExporter{name: cfg.Name}, nil
-					})
 			},
-			assert: func(t *testing.T, exporters []appmetrics.Exporter, err error) {
+			assert: func(t *testing.T, configs []telemetrydomain.ExporterConfig, err error) {
 				require.NoError(t, err)
-				require.Len(t, exporters, 2)
-				assert.Equal(t, []string{"otlp", "kafka"}, []string{exporters[0].Name(), exporters[1].Name()})
+				require.Len(t, configs, 2)
+				assert.Equal(t, []string{"otlp", "kafka"}, []string{configs[0].Name, configs[1].Name})
 			},
 		},
 		{
@@ -82,36 +67,19 @@ func TestNewDefaultExporters(t *testing.T) {
 			setup: func(factory *mocks.ExporterFactory) {
 				factory.EXPECT().Validate(mock.Anything).Return(errors.New("invalid settings"))
 			},
-			assert: func(t *testing.T, exporters []appmetrics.Exporter, err error) {
+			assert: func(t *testing.T, configs []telemetrydomain.ExporterConfig, err error) {
 				require.Error(t, err)
 				assert.ErrorContains(t, err, "brokenexporter")
-				assert.Nil(t, exporters)
-			},
-		},
-		{
-			name:  "build failure aborts boot naming the entry",
-			write: true,
-			content: `exporters:
-  - name: otlp
-    type: otlp
-`,
-			setup: func(factory *mocks.ExporterFactory) {
-				factory.EXPECT().Validate(mock.Anything).Return(nil)
-				factory.EXPECT().Build(mock.Anything).Return(nil, errors.New("dial failed"))
-			},
-			assert: func(t *testing.T, exporters []appmetrics.Exporter, err error) {
-				require.Error(t, err)
-				assert.ErrorContains(t, err, "otlp")
-				assert.Nil(t, exporters)
+				assert.Nil(t, configs)
 			},
 		},
 		{
 			name:  "missing file yields no defaults and no error",
 			write: false,
 			setup: func(factory *mocks.ExporterFactory) {},
-			assert: func(t *testing.T, exporters []appmetrics.Exporter, err error) {
+			assert: func(t *testing.T, configs []telemetrydomain.ExporterConfig, err error) {
 				require.NoError(t, err)
-				assert.Empty(t, exporters)
+				assert.Empty(t, configs)
 			},
 		},
 		{
@@ -119,9 +87,9 @@ func TestNewDefaultExporters(t *testing.T) {
 			write:   true,
 			content: "",
 			setup:   func(factory *mocks.ExporterFactory) {},
-			assert: func(t *testing.T, exporters []appmetrics.Exporter, err error) {
+			assert: func(t *testing.T, configs []telemetrydomain.ExporterConfig, err error) {
 				require.NoError(t, err)
-				assert.Empty(t, exporters)
+				assert.Empty(t, configs)
 			},
 		},
 	}
@@ -140,8 +108,8 @@ func TestNewDefaultExporters(t *testing.T) {
 			tt.setup(factory)
 
 			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-			exporters, err := newDefaultExporters(logger, factory, path)
-			tt.assert(t, exporters, err)
+			configs, err := newDefaultExporters(logger, factory, path)
+			tt.assert(t, configs, err)
 		})
 	}
 }
