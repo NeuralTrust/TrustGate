@@ -35,10 +35,11 @@ func (e *InvalidParamsError) Error() string { return "mcp: invalid params: " + e
 
 type RPCGateway struct {
 	composer appmcp.Composer
+	plugins  *appmcp.PluginRunner
 }
 
-func NewRPCGateway(composer appmcp.Composer) *RPCGateway {
-	return &RPCGateway{composer: composer}
+func NewRPCGateway(composer appmcp.Composer, plugins *appmcp.PluginRunner) *RPCGateway {
+	return &RPCGateway{composer: composer, plugins: plugins}
 }
 
 func (g *RPCGateway) Dispatch(ctx context.Context, rc *appconsumer.RoutableConsumer, method string, params json.RawMessage) (any, error) {
@@ -133,7 +134,17 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		if err := json.Unmarshal(params, &p); err != nil || p.Name == "" {
 			return nil, &InvalidParamsError{Reason: "tools/call requires params.name"}
 		}
-		return g.composer.CallTool(ctx, rc, p.Name, p.Arguments)
+		if err := g.plugins.PreRequest(ctx, rc, p.Name, p.Arguments); err != nil {
+			return nil, err
+		}
+		result, err := g.composer.CallTool(ctx, rc, p.Name, p.Arguments)
+		if err != nil {
+			return nil, err
+		}
+		if err := g.plugins.PreResponse(ctx, rc, p.Name, p.Arguments, result); err != nil {
+			return nil, err
+		}
+		return result, nil
 	case "resources/list":
 		resources, err := g.composer.ListResources(ctx, rc)
 		if err != nil {

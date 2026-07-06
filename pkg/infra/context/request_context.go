@@ -49,6 +49,9 @@ type RequestContext struct {
 	AllowedModels      []string
 	DefaultModel       string
 	RequestedModel     string
+	// MCP marks a native MCP tools/call payload so protocol-aware plugins
+	// inspect it via the MCP text path instead of the LLM canonical decoders.
+	MCP bool
 }
 
 // HeaderValue returns the first non-empty value of the named header, matched

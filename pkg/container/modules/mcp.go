@@ -123,6 +123,9 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(registryhttp.NewListRegistryToolsHandler); err != nil {
 		return err
 	}
+	if err := c.Provide(appmcp.NewPluginRunner); err != nil {
+		return err
+	}
 	if err := c.Provide(mcphttp.NewRPCGateway); err != nil {
 		return err
 	}

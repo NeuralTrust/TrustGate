@@ -15,10 +15,45 @@
 package trustguard
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 )
+
+func TestGuardFindingJSONRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	raw := `{"source":{"kind":"gate","gate_name":"max_tokens","policy_id":"pol-1"},"signal":{"type":"gate_block"},"outcome":{"action":"block"},"evidence":{"matched":"true"}}`
+	var f GuardFinding
+	if err := json.Unmarshal([]byte(raw), &f); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if f.Source == nil || f.Source.Kind != "gate" || f.Source.GateName != "max_tokens" || f.Source.PolicyID != "pol-1" {
+		t.Fatalf("source = %+v", f.Source)
+	}
+	if f.Signal == nil || f.Signal.Type != "gate_block" {
+		t.Fatalf("signal = %+v", f.Signal)
+	}
+	if f.Outcome == nil || f.Outcome.Action != "block" {
+		t.Fatalf("outcome = %+v", f.Outcome)
+	}
+	if f.Evidence["matched"] != "true" {
+		t.Fatalf("evidence = %+v", f.Evidence)
+	}
+
+	encoded, err := json.Marshal(f)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var again GuardFinding
+	if err := json.Unmarshal(encoded, &again); err != nil {
+		t.Fatalf("round-trip unmarshal: %v", err)
+	}
+	if again.Source == nil || again.Source.GateName != "max_tokens" {
+		t.Fatalf("round-trip source = %+v", again.Source)
+	}
+}
 
 func TestGuardOutcomeDecision(t *testing.T) {
 	t.Parallel()
