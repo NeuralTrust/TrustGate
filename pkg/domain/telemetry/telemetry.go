@@ -30,7 +30,15 @@ type Telemetry struct {
 
 type ExporterConfig struct {
 	Name     string                 `json:"name"`
+	Type     string                 `json:"type"`
 	Settings map[string]interface{} `json:"settings"`
+}
+
+func (c ExporterConfig) EffectiveType() string {
+	if c.Type != "" {
+		return c.Type
+	}
+	return c.Name
 }
 
 func (t Telemetry) Value() (driver.Value, error) {

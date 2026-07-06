@@ -48,23 +48,23 @@ func NewExporterLocator(opts ...ExporterLocatorOption) *ExporterLocator {
 }
 
 func (l *ExporterLocator) Build(cfg telemetrydomain.ExporterConfig) (appmetrics.Exporter, error) {
-	template, ok := l.templates[cfg.Name]
+	template, ok := l.templates[cfg.EffectiveType()]
 	if !ok {
-		return nil, fmt.Errorf("unknown exporter %q", cfg.Name)
+		return nil, fmt.Errorf("unknown exporter %q", cfg.EffectiveType())
 	}
 	if err := template.ValidateConfig(cfg.Settings); err != nil {
-		return nil, fmt.Errorf("exporter %q: %w", cfg.Name, err)
+		return nil, fmt.Errorf("exporter %q: %w", cfg.EffectiveType(), err)
 	}
 	return template.WithSettings(cfg.Settings)
 }
 
 func (l *ExporterLocator) Validate(cfg telemetrydomain.ExporterConfig) error {
-	template, ok := l.templates[cfg.Name]
+	template, ok := l.templates[cfg.EffectiveType()]
 	if !ok {
-		return fmt.Errorf("unknown exporter %q", cfg.Name)
+		return fmt.Errorf("unknown exporter %q", cfg.EffectiveType())
 	}
 	if err := template.ValidateConfig(cfg.Settings); err != nil {
-		return fmt.Errorf("exporter %q: %w", cfg.Name, err)
+		return fmt.Errorf("exporter %q: %w", cfg.EffectiveType(), err)
 	}
 	return nil
 }
