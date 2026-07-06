@@ -42,7 +42,6 @@ type Exporter struct {
 	provider        *sdklog.LoggerProvider
 	logger          otellog.Logger
 	slog            *slog.Logger
-	maxBodyBytes    int
 	shutdownTimeout time.Duration
 	closed          atomic.Bool
 }
@@ -52,7 +51,6 @@ type Exporter struct {
 func newExporterWithProvider(
 	provider *sdklog.LoggerProvider,
 	logger *slog.Logger,
-	maxBodyBytes int,
 	shutdownTimeout time.Duration,
 ) *Exporter {
 	if logger == nil {
@@ -65,7 +63,6 @@ func newExporterWithProvider(
 		provider:        provider,
 		logger:          provider.Logger(loggerScope),
 		slog:            logger,
-		maxBodyBytes:    maxBodyBytes,
 		shutdownTimeout: shutdownTimeout,
 	}
 }
@@ -84,7 +81,8 @@ func (e *Exporter) Publish(ctx context.Context, evt *events.Event) error {
 	if e.closed.Load() {
 		return errExporterClosed
 	}
-	e.logger.Emit(ctx, eventToRecord(evt, e.maxBodyBytes))
+	metadata := evt.MetadataView()
+	e.logger.Emit(ctx, eventToRecord(&metadata))
 	return nil
 }
 

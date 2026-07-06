@@ -8,30 +8,35 @@
 #
 # Copy this file to config/telemetry.yaml to get started.
 #
-# Each exporter's data class is intrinsic to its type: metadata exporters (like
-# otlp) ship sanitized, non-sensitive request metadata to an external backend,
-# while sensible exporters (like the postgres example below, arriving with
-# ENG-1020) persist sensitive payloads to a store inside your own boundary.
+# Exporters are grouped by data class, and the class is intrinsic to the type:
+#   - metadata: ships sanitized, non-sensitive request metadata to an external
+#     backend. Accepts every type EXCEPT postgres (e.g. otlp).
+#   - raw: persists sensitive request/response payloads inside your own
+#     boundary. Accepts ONLY postgres.
+# Declaring postgres under metadata, or any other type under raw, aborts boot.
 
 exporters:
-  - name: otlp
-    type: otlp
-    settings:
-      endpoint: "otel-collector:4317"
-      protocol: "grpc"
-      signal: "logs"
-      compression: "gzip"
-      timeout: "10s"
-      insecure: false
-      max_body_bytes: 4096
-      headers:
-        x-scope-orgid: "trustgate"
+  metadata:
+    - name: otlp
+      type: otlp
+      settings:
+        endpoint: "otel-collector:4317"
+        protocol: "grpc"
+        signal: "logs"
+        compression: "gzip"
+        timeout: "10s"
+        insecure: false
+        max_body_bytes: 4096
+        headers:
+          x-scope-orgid: "trustgate"
 
-# postgres is a sensible exporter documented for ENG-1020 and is NOT registered
-# yet. Uncommenting it today aborts boot at factory.Validate (unknown exporter
-# "postgres"). It persists sensitive telemetry payloads inside your own store.
-#  - name: postgres
-#    type: postgres
-#    settings:
-#      dsn: "postgres://user:pass@localhost:5432/telemetry?sslmode=disable"
-#      table: "telemetry_events"
+  # postgres is the raw sink documented for ENG-1020 and is NOT registered yet.
+  # Uncommenting it today aborts boot at factory.Validate (unknown exporter
+  # "postgres"). It persists sensitive telemetry payloads inside your own store.
+  raw: []
+#  raw:
+#    - name: postgres
+#      type: postgres
+#      settings:
+#        dsn: "postgres://user:pass@localhost:5432/telemetry?sslmode=disable"
+#        table: "telemetry_events"

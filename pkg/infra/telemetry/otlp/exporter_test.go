@@ -75,7 +75,7 @@ func TestExporter_PublishEmitsOneRecord(t *testing.T) {
 	t.Parallel()
 	mem := &memExporter{}
 	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(mem)))
-	exp := newExporterWithProvider(provider, testLogger(), 4096, time.Second)
+	exp := newExporterWithProvider(provider, testLogger(), time.Second)
 	defer exp.Close()
 
 	assert.Equal(t, ExporterName, exp.Name())
@@ -91,11 +91,27 @@ func TestExporter_PublishEmitsOneRecord(t *testing.T) {
 	assert.Equal(t, "trace-123", trace.AsString())
 }
 
+func TestExporter_PublishNeverEmitsBodies(t *testing.T) {
+	t.Parallel()
+	mem := &memExporter{}
+	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(mem)))
+	exp := newExporterWithProvider(provider, testLogger(), time.Second)
+	defer exp.Close()
+
+	require.NoError(t, exp.Publish(context.Background(), fullEvent()))
+
+	records := mem.all()
+	require.Len(t, records, 1)
+	assert.Empty(t, records[0].Body().AsString())
+	_, hasRequestBody := recordAttr(records[0], "trustgate.request.body")
+	assert.False(t, hasRequestBody)
+}
+
 func TestExporter_NilEventIsNoOp(t *testing.T) {
 	t.Parallel()
 	mem := &memExporter{}
 	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(mem)))
-	exp := newExporterWithProvider(provider, testLogger(), 4096, time.Second)
+	exp := newExporterWithProvider(provider, testLogger(), time.Second)
 	defer exp.Close()
 
 	require.NoError(t, exp.Publish(context.Background(), nil))
@@ -106,7 +122,7 @@ func TestExporter_CloseFlushesBufferedRecords(t *testing.T) {
 	t.Parallel()
 	mem := &memExporter{}
 	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewBatchProcessor(mem)))
-	exp := newExporterWithProvider(provider, testLogger(), 4096, 2*time.Second)
+	exp := newExporterWithProvider(provider, testLogger(), 2*time.Second)
 
 	require.NoError(t, exp.Publish(context.Background(), fullEvent()))
 	exp.Close()
@@ -118,7 +134,7 @@ func TestExporter_PublishAfterCloseErrors(t *testing.T) {
 	t.Parallel()
 	mem := &memExporter{}
 	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(mem)))
-	exp := newExporterWithProvider(provider, testLogger(), 4096, time.Second)
+	exp := newExporterWithProvider(provider, testLogger(), time.Second)
 
 	exp.Close()
 	err := exp.Publish(context.Background(), fullEvent())

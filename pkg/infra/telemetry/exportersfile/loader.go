@@ -25,8 +25,15 @@ import (
 
 var ErrFileNotFound = errors.New("telemetry exporters file not found")
 
+const rawExporterType = "postgres"
+
 type fileSpec struct {
-	Exporters []exporterEntry `yaml:"exporters"`
+	Exporters exporterGroups `yaml:"exporters"`
+}
+
+type exporterGroups struct {
+	Metadata []exporterEntry `yaml:"metadata"`
+	Raw      []exporterEntry `yaml:"raw"`
 }
 
 type exporterEntry struct {
@@ -47,13 +54,29 @@ func Load(path string) ([]telemetrydomain.ExporterConfig, error) {
 	if err := yaml.Unmarshal(data, &spec); err != nil {
 		return nil, fmt.Errorf("parsing telemetry exporters file %q: %w", path, err)
 	}
-	configs := make([]telemetrydomain.ExporterConfig, 0, len(spec.Exporters))
-	for _, e := range spec.Exporters {
-		configs = append(configs, telemetrydomain.ExporterConfig{
-			Name:     e.Name,
-			Type:     e.Type,
-			Settings: e.Settings,
-		})
+
+	configs := make([]telemetrydomain.ExporterConfig, 0, len(spec.Exporters.Metadata)+len(spec.Exporters.Raw))
+	for _, e := range spec.Exporters.Metadata {
+		cfg := e.toConfig()
+		if cfg.EffectiveType() == rawExporterType {
+			return nil, fmt.Errorf("telemetry exporter %q: %q is raw-only and cannot be declared under exporters.metadata", cfg.Name, rawExporterType)
+		}
+		configs = append(configs, cfg)
+	}
+	for _, e := range spec.Exporters.Raw {
+		cfg := e.toConfig()
+		if cfg.EffectiveType() != rawExporterType {
+			return nil, fmt.Errorf("telemetry exporter %q: exporters.raw only accepts %q, got %q", cfg.Name, rawExporterType, cfg.EffectiveType())
+		}
+		configs = append(configs, cfg)
 	}
 	return configs, nil
+}
+
+func (e exporterEntry) toConfig() telemetrydomain.ExporterConfig {
+	return telemetrydomain.ExporterConfig{
+		Name:     e.Name,
+		Type:     e.Type,
+		Settings: e.Settings,
+	}
 }

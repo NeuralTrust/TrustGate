@@ -36,14 +36,15 @@ func TestLoad(t *testing.T) {
 		assert  func(t *testing.T, configs []telemetrydomain.ExporterConfig, err error)
 	}{
 		{
-			name:  "valid single otlp",
+			name:  "valid single metadata otlp",
 			write: true,
 			content: `exporters:
-  - name: otlp
-    type: otlp
-    settings:
-      endpoint: "otel-collector:4317"
-      protocol: "grpc"
+  metadata:
+    - name: otlp
+      type: otlp
+      settings:
+        endpoint: "otel-collector:4317"
+        protocol: "grpc"
 `,
 			assert: func(t *testing.T, configs []telemetrydomain.ExporterConfig, err error) {
 				require.NoError(t, err)
@@ -55,21 +56,84 @@ func TestLoad(t *testing.T) {
 			},
 		},
 		{
-			name:  "valid multiple preserves order",
+			name:  "metadata first then raw, order preserved within groups",
 			write: true,
 			content: `exporters:
-  - name: first
-    type: otlp
-  - name: second
-    type: kafka
-  - name: third
-    type: postgres
+  metadata:
+    - name: first
+      type: otlp
+    - name: second
+      type: kafka
+  raw:
+    - name: third
+      type: postgres
 `,
 			assert: func(t *testing.T, configs []telemetrydomain.ExporterConfig, err error) {
 				require.NoError(t, err)
 				require.Len(t, configs, 3)
 				assert.Equal(t, []string{"first", "second", "third"}, []string{configs[0].Name, configs[1].Name, configs[2].Name})
 				assert.Equal(t, []string{"otlp", "kafka", "postgres"}, []string{configs[0].Type, configs[1].Type, configs[2].Type})
+			},
+		},
+		{
+			name:  "postgres under metadata aborts",
+			write: true,
+			content: `exporters:
+  metadata:
+    - name: raw-pg
+      type: postgres
+`,
+			assert: func(t *testing.T, configs []telemetrydomain.ExporterConfig, err error) {
+				require.Error(t, err)
+				assert.ErrorContains(t, err, "raw-pg")
+				assert.ErrorContains(t, err, "metadata")
+				assert.Nil(t, configs)
+			},
+		},
+		{
+			name:  "non-postgres under raw aborts",
+			write: true,
+			content: `exporters:
+  raw:
+    - name: leaky
+      type: otlp
+`,
+			assert: func(t *testing.T, configs []telemetrydomain.ExporterConfig, err error) {
+				require.Error(t, err)
+				assert.ErrorContains(t, err, "leaky")
+				assert.ErrorContains(t, err, "raw")
+				assert.Nil(t, configs)
+			},
+		},
+		{
+			name:  "postgres under raw parses",
+			write: true,
+			content: `exporters:
+  raw:
+    - name: raw-pg
+      type: postgres
+      settings:
+        dsn: "postgres://localhost:5432/telemetry"
+`,
+			assert: func(t *testing.T, configs []telemetrydomain.ExporterConfig, err error) {
+				require.NoError(t, err)
+				require.Len(t, configs, 1)
+				assert.Equal(t, "raw-pg", configs[0].Name)
+				assert.Equal(t, "postgres", configs[0].Type)
+			},
+		},
+		{
+			name:  "raw class derived from name when type omitted",
+			write: true,
+			content: `exporters:
+  raw:
+    - name: postgres
+`,
+			assert: func(t *testing.T, configs []telemetrydomain.ExporterConfig, err error) {
+				require.NoError(t, err)
+				require.Len(t, configs, 1)
+				assert.Equal(t, "postgres", configs[0].Name)
+				assert.Equal(t, "", configs[0].Type)
 			},
 		},
 		{
@@ -100,9 +164,9 @@ func TestLoad(t *testing.T) {
 			},
 		},
 		{
-			name:    "empty exporters list returns no entries",
+			name:    "empty exporters mapping returns no entries",
 			write:   true,
-			content: "exporters: []\n",
+			content: "exporters: {}\n",
 			assert: func(t *testing.T, configs []telemetrydomain.ExporterConfig, err error) {
 				require.NoError(t, err)
 				assert.Empty(t, configs)
@@ -119,11 +183,12 @@ func TestLoad(t *testing.T) {
 			},
 		},
 		{
-			name:  "unknown type still parses",
+			name:  "unknown metadata type still parses",
 			write: true,
 			content: `exporters:
-  - name: sink
-    type: datadog
+  metadata:
+    - name: sink
+      type: datadog
 `,
 			assert: func(t *testing.T, configs []telemetrydomain.ExporterConfig, err error) {
 				require.NoError(t, err)
@@ -133,10 +198,11 @@ func TestLoad(t *testing.T) {
 			},
 		},
 		{
-			name:  "type omitted keeps empty type and name",
+			name:  "metadata type omitted keeps empty type and name",
 			write: true,
 			content: `exporters:
-  - name: kafka
+  metadata:
+    - name: kafka
 `,
 			assert: func(t *testing.T, configs []telemetrydomain.ExporterConfig, err error) {
 				require.NoError(t, err)

@@ -43,10 +43,11 @@ func TestNewDefaultExporters(t *testing.T) {
 			name:  "valid entries are returned as configs in file order and not built",
 			write: true,
 			content: `exporters:
-  - name: otlp
-    type: otlp
-  - name: kafka
-    type: kafka
+  metadata:
+    - name: otlp
+      type: otlp
+    - name: kafka
+      type: kafka
 `,
 			setup: func(factory *mocks.ExporterFactory) {
 				factory.EXPECT().Validate(mock.Anything).Return(nil)
@@ -61,8 +62,9 @@ func TestNewDefaultExporters(t *testing.T) {
 			name:  "entry failing validation aborts boot naming the entry",
 			write: true,
 			content: `exporters:
-  - name: brokenexporter
-    type: brokenexporter
+  metadata:
+    - name: brokenexporter
+      type: brokenexporter
 `,
 			setup: func(factory *mocks.ExporterFactory) {
 				factory.EXPECT().Validate(mock.Anything).Return(errors.New("invalid settings"))
