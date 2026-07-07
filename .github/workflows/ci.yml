@@ -60,8 +60,13 @@ jobs:
           go vet ./...
           go test -race ./...
       - name: Lint pkg/metrics
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v8
         with:
+          version: v2.12.2
+          # Released golangci-lint binaries are built with go1.25 and refuse to
+          # lint this module's go1.26.4 directive; goinstall recompiles it with
+          # the active setup-go toolchain so the versions match.
+          install-mode: goinstall
           working-directory: pkg/metrics
 
   functional-tests:
@@ -163,6 +168,14 @@ jobs:
         env:
           SENSIBLE_PG_TEST_DSN: postgres://postgres:postgres@localhost:5432/sensible_pg_test?sslmode=disable
         run: go test -tags integration -race -count=1 ./pkg/infra/telemetry/postgres/...
+
+  scripts-tests:
+    name: CI Scripts Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test metrics module version bump
+        run: bash .github/scripts/next-metrics-version.test.sh
 
   security:
     uses: NeuralTrust/workflows/.github/workflows/sast.yml@main
