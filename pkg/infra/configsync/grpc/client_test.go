@@ -17,6 +17,8 @@ package grpc
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"net"
 	"sync"
 	"testing"
@@ -25,7 +27,9 @@ import (
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 )
 
@@ -212,14 +216,44 @@ func TestClient_WatchReconnectsOnStreamBreak(t *testing.T) {
 
 	gsrv.Stop()
 
-	if _, err := client.Watch(ctx); err == nil {
+	_, err := client.Watch(ctx)
+	if err == nil {
 		t.Fatal("Watch after stream break: nil error, want failure")
+	}
+	if !errors.Is(err, configsync.ErrTransportUnavailable) {
+		t.Fatalf("Watch after stream break: err = %v, want configsync.ErrTransportUnavailable", err)
 	}
 	client.mu.Lock()
 	streamReset := client.stream == nil
 	client.mu.Unlock()
 	if !streamReset {
 		t.Fatal("stream was not reset after break; reconnect would reuse a dead stream")
+	}
+}
+
+func TestStreamErr_ClassifiesRecoverableDisconnects(t *testing.T) {
+	tests := []struct {
+		name        string
+		err         error
+		recoverable bool
+	}{
+		{name: "graceful goaway unavailable", err: status.Error(codes.Unavailable, "closing transport due to graceful_stop"), recoverable: true},
+		{name: "canceled code", err: status.Error(codes.Canceled, "context canceled"), recoverable: true},
+		{name: "stream eof", err: io.EOF, recoverable: true},
+		{name: "context canceled", err: context.Canceled, recoverable: true},
+		{name: "internal fault", err: status.Error(codes.Internal, "boom"), recoverable: false},
+		{name: "plain error", err: errors.New("boom"), recoverable: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := streamErr("watch recv", tc.err)
+			if errors.Is(got, configsync.ErrTransportUnavailable) != tc.recoverable {
+				t.Fatalf("streamErr(%v) recoverable = %v, want %v", tc.err, !tc.recoverable, tc.recoverable)
+			}
+			if !errors.Is(got, tc.err) {
+				t.Fatalf("streamErr must wrap the original error %v", tc.err)
+			}
+		})
 	}
 }
 
