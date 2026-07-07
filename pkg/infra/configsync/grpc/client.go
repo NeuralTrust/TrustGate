@@ -24,8 +24,11 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
+	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
 )
 
 // Client is the data-plane end of the config-sync transport. It implements
@@ -155,7 +158,7 @@ func (c *Client) Watch(_ context.Context) (string, error) {
 		msg, err := stream.Recv()
 		if err != nil {
 			c.resetStream()
-			return "", fmt.Errorf("configsync: watch recv: %w", err)
+			return "", streamErr("watch recv", err)
 		}
 		if notice := msg.GetNotice(); notice != nil {
 			return notice.GetVersion(), nil
@@ -188,14 +191,14 @@ func (c *Client) ensureStream() (snapshotpb.ConfigSync_SyncClient, error) {
 	}
 	stream, err := c.cli.Sync(c.streamCtx)
 	if err != nil {
-		return nil, fmt.Errorf("configsync: open sync stream: %w", err)
+		return nil, streamErr("open sync stream", err)
 	}
 	hello := &snapshotpb.ClientMessage{Msg: &snapshotpb.ClientMessage_Hello{Hello: &snapshotpb.Hello{
 		InstanceId:         c.instanceID,
 		LastAppliedVersion: c.lastApplied,
 	}}}
 	if err := stream.Send(hello); err != nil {
-		return nil, fmt.Errorf("configsync: send hello: %w", err)
+		return nil, streamErr("send hello", err)
 	}
 	c.stream = stream
 	return stream, nil
@@ -205,4 +208,29 @@ func (c *Client) resetStream() {
 	c.mu.Lock()
 	c.stream = nil
 	c.mu.Unlock()
+}
+
+// streamErr wraps a broken Sync-stream error under op, tagging it with
+// configsync.ErrTransportUnavailable when the disconnect is expected and
+// self-healing so the worker logs a reconnect at WARN instead of ERROR.
+func streamErr(op string, err error) error {
+	if recoverableStreamErr(err) {
+		return fmt.Errorf("configsync: %s: %w: %w", op, configsync.ErrTransportUnavailable, err)
+	}
+	return fmt.Errorf("configsync: %s: %w", op, err)
+}
+
+// recoverableStreamErr reports whether a Sync-stream error is an expected,
+// self-healing disconnect: a control-plane restart/rollout (graceful GOAWAY
+// surfaces as codes.Unavailable), a cancelled stream, or a clean EOF.
+func recoverableStreamErr(err error) bool {
+	if errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	switch status.Code(err) {
+	case codes.Unavailable, codes.Canceled:
+		return true
+	default:
+		return false
+	}
 }
