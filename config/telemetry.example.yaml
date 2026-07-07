@@ -1,0 +1,50 @@
+# Default telemetry exporters for the metrics pipeline (ENG-1016).
+#
+# This file declares the exporters applied to every gateway unless a gateway
+# declares its own. It is selected by TELEMETRY_EXPORTERS_FILE (default
+# config/telemetry.yaml) and loaded at boot: valid entries are validated and
+# built fail-fast, a missing or empty file logs a warning and starts with no
+# defaults, and invalid config aborts boot.
+#
+# Copy this file to config/telemetry.yaml to get started.
+#
+# Exporters are grouped by data class, and the group selects the class:
+#   - metadata: ships sanitized, non-sensitive request metadata to an external
+#     backend. Accepts every type EXCEPT postgres (e.g. otlp).
+#   - raw: carries sensitive request/response payloads. Accepts postgres (to
+#     persist inside your own boundary) or otlp (to ship payloads to an OTel
+#     Collector). An otlp exporter declared here emits the payloads instead of
+#     the sanitized metadata view.
+# Declaring postgres under metadata, or any other type under raw, aborts boot.
+
+exporters:
+  metadata:
+    - name: otlp
+      type: otlp
+      settings:
+        endpoint: "otel-collector:4317"
+        protocol: "grpc"
+        signal: "logs"
+        compression: "gzip"
+        timeout: "10s"
+        insecure: false
+        max_body_bytes: 4096
+        headers:
+          x-scope-orgid: "trustgate"
+
+  # raw sinks accept postgres or otlp. dsn_env names the environment variable
+  # holding the postgres connection string, so secrets stay out of this file;
+  # enabling it opens a pool and runs the sensible-store migrations on first use.
+  # An otlp entry here ships the raw payloads to an OTel Collector. Remove the
+  # group (raw: []) if you do not want to move raw payloads at all.
+  raw:
+    - name: sensible-pg
+      type: postgres
+      settings:
+        dsn_env: SENSIBLE_PG_DSN
+    # - name: raw-otlp
+    #   type: otlp
+    #   settings:
+    #     endpoint: "otel-collector:4317"
+    #     protocol: "grpc"
+    #     signal: "logs"

@@ -344,16 +344,17 @@ OTEL_EXPORTER_OTLP_PROTOCOL=grpc
 
 See [`.env.example`](.env.example) for the full set with safe defaults.
 
-### Telemetry exporters (Kafka default + OTLP opt-in)
+### Telemetry exporters (OTLP)
 
 Every completed request is turned into a sanitized business event and fanned out
-to one or more exporters. **Kafka is the config-driven default** (feeds
-`kafka-connect → ClickHouse → data-plane-api`). A gateway can additionally opt
-into the **`otlp`** exporter, which ships the same event to an external
+to one or more exporters. Default exporters are declared in a YAML file (see
+[Default telemetry exporters](#default-telemetry-exporters) below); the
+recommended metadata default is **`otlp`**, which ships the event to an external
 [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/) as a single
 OTLP **log record** per request (`event.name="gateway.request"`); the Collector
-fans out to any vendor backend. Enabling `otlp` does not replace Kafka — both
-fire (explicit exporters merge with the global defaults).
+fans out to any vendor backend. A gateway can add or override exporters via its
+`telemetry.exporters`, which merge with the defaults. Kafka is being retired and
+is no longer a hardcoded default.
 
 Add it to a gateway's `telemetry.exporters`:
 
@@ -377,9 +378,6 @@ Add it to a gateway's `telemetry.exporters`:
 }
 ```
 
-With Kafka still configured, the event is delivered to the Collector **and**
-Kafka (the ClickHouse path keeps populating with `schema_version=2` intact).
-
 **`otlp` settings**
 
 | Key | Type | Default | Notes |
@@ -402,7 +400,46 @@ Any key absent from a gateway's settings falls back to the process-level
 milliseconds per the OpenTelemetry spec (e.g. `10000`); a Go duration string
 (e.g. `10s`) is also accepted. Settings are validated structurally on gateway create/update with
 no network I/O; export is non-blocking (bounded queue, drop-on-full) so a slow
-or unreachable Collector never affects request latency or the Kafka path.
+or unreachable Collector never affects request latency.
+
+### Default telemetry exporters
+
+The metrics pipeline's **default** exporters (applied to every gateway unless a
+gateway declares its own) are loaded at boot from a declarative YAML file,
+selected by `TELEMETRY_EXPORTERS_FILE` (default `config/telemetry.yaml`).
+Exporters are grouped by data class, and the class is intrinsic to the `type`:
+**metadata** exporters (e.g. `otlp`) ship sanitized request metadata to an
+external backend, while **raw** exporters (only `postgres`) persist sensitive
+payloads inside your own boundary.
+
+At publish time each event is **projected by class**: a `postgres` exporter
+receives only the request/response bodies, and every other exporter receives
+sanitized metadata with the bodies stripped. The class is fixed by the exporter
+type, so a metadata exporter can never receive raw payloads and `postgres` can
+never receive metadata — the split is structural, not a config flag.
+
+```yaml
+exporters:
+  metadata:           # every type EXCEPT postgres
+    - name: otlp      # instance identity (used for dedupe against per-gateway config)
+      type: otlp      # template selector; defaults to name when omitted
+      settings: { endpoint: "otel-collector:4317", protocol: grpc, signal: logs }
+  raw:                # postgres only
+    - name: postgres
+      type: postgres
+      settings: { dsn: "postgres://user:pass@localhost:5432/telemetry" }
+```
+
+Behaviour:
+
+- **`postgres` under `metadata`, or any other type under `raw` → boot aborts.**
+- **Routing is by data class:** raw payloads go only to `postgres`; every other exporter gets metadata with bodies stripped.
+- **Invalid or unknown declared exporter → boot aborts (fail-fast).**
+- **File missing or empty → warning logged, pipeline starts with no defaults.**
+- There is no hardcoded default exporter; Kafka runs as a default only if declared.
+
+Copy [`config/telemetry.example.yaml`](config/telemetry.example.yaml) to
+`config/telemetry.yaml` to get started.
 
 ### Migrations
 

@@ -36,6 +36,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	infratelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
+	metricsschema "github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -81,6 +82,8 @@ type memExporter struct {
 }
 
 func (e *memExporter) Name() string { return e.name }
+
+func (e *memExporter) DataClass() metricsschema.DataClass { return metricsschema.Metadata }
 
 func (e *memExporter) Publish(_ context.Context, evt *events.Event) error {
 	if e.fail {
@@ -132,14 +135,10 @@ func newMetricsApp(t *testing.T, gw *gatewaydomain.Gateway, rec *eventRecorder) 
 		infratelemetry.WithExporter("broken", &memTemplate{name: "broken", rec: rec, fail: true}),
 	)
 	cache := appmetrics.NewExporterCache(factory, logger)
-	def, err := factory.Build(telemetrydomain.ExporterConfig{
-		Name:     "kafka",
-		Settings: map[string]interface{}{"topic": defaultTopic},
-	})
-	require.NoError(t, err)
 
 	builder := appmetrics.NewBuilder(adapter.NewRegistry(), zeroPricing{})
-	pipeline := appmetrics.NewPipeline(builder, cache, nil, logger, def)
+	pipeline := appmetrics.NewPipeline(builder, cache, nil, logger,
+		telemetrydomain.ExporterConfig{Name: "kafka", Settings: map[string]interface{}{"topic": defaultTopic}})
 	worker := appmetrics.NewWorker(logger, pipeline)
 	worker.StartWorkers(2)
 	t.Cleanup(worker.Shutdown)

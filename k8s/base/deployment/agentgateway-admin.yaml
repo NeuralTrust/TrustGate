@@ -34,10 +34,6 @@ spec:
         ports:
         - containerPort: 8080
           name: http
-        # Config-sync gRPC listener (CONFIG_SYNC_GRPC_LISTEN_ADDR): the admin
-        # control plane serves compiled snapshots to the DB-less data planes.
-        - containerPort: 8083
-          name: grpc
         # Config-sync gRPC listener (CONFIG_SYNC_GRPC_LISTEN_ADDR): the control
         # plane serves compiled snapshots to the DB-less proxy/mcp data planes.
         - containerPort: 8083
@@ -65,6 +61,9 @@ spec:
         - name: agentgateway-secrets
           mountPath: /etc/secrets
           readOnly: true
+        - name: telemetry-exporters
+          mountPath: /etc/telemetry
+          readOnly: true
       securityContext: {}
       volumes:
       - name: agentgateway-secrets
@@ -73,6 +72,11 @@ spec:
           readOnly: true
           volumeAttributes:
             secretProviderClass: agentgateway-secrets
+      # Default telemetry exporters (TELEMETRY_EXPORTERS_FILE); generated per
+      # overlay from telemetry.yaml so each environment can ship its own set.
+      - name: telemetry-exporters
+        configMap:
+          name: agentgateway-telemetry
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:

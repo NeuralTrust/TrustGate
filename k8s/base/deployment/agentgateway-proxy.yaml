@@ -68,6 +68,9 @@ spec:
           readOnly: true
         - name: config-sync-lkg
           mountPath: /var/lib/trustgate
+        - name: telemetry-exporters
+          mountPath: /etc/telemetry
+          readOnly: true
       securityContext: {}
       volumes:
       - name: agentgateway-secrets
@@ -76,6 +79,11 @@ spec:
           readOnly: true
           volumeAttributes:
             secretProviderClass: agentgateway-secrets
+      # Default telemetry exporters (TELEMETRY_EXPORTERS_FILE); generated per
+      # overlay from telemetry.yaml so each environment can ship its own set.
+      - name: telemetry-exporters
+        configMap:
+          name: agentgateway-telemetry
       # Encrypted last-known-good snapshot cache; survives control-plane outages
       # within the pod lifetime (ephemeral: repopulated from the CP pull on restart).
       - name: config-sync-lkg

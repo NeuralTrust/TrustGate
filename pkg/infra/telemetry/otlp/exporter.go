@@ -23,6 +23,7 @@ import (
 
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
+	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
@@ -36,14 +37,15 @@ var _ appmetrics.Exporter = (*Exporter)(nil)
 
 var errExporterClosed = errors.New("otlp: exporter is closed")
 
-// Exporter ships sanitized business events to an OTel Collector as OTLP log
-// records through a dedicated, non-global LoggerProvider.
+// Exporter ships business events to an OTel Collector as OTLP log records
+// through a dedicated, non-global LoggerProvider. It serves the metadata class by
+// default and the raw class when declared under exporters.raw.
 type Exporter struct {
 	provider        *sdklog.LoggerProvider
 	logger          otellog.Logger
 	slog            *slog.Logger
-	maxBodyBytes    int
 	shutdownTimeout time.Duration
+	class           metrics.DataClass
 	closed          atomic.Bool
 }
 
@@ -52,7 +54,6 @@ type Exporter struct {
 func newExporterWithProvider(
 	provider *sdklog.LoggerProvider,
 	logger *slog.Logger,
-	maxBodyBytes int,
 	shutdownTimeout time.Duration,
 ) *Exporter {
 	if logger == nil {
@@ -65,7 +66,6 @@ func newExporterWithProvider(
 		provider:        provider,
 		logger:          provider.Logger(loggerScope),
 		slog:            logger,
-		maxBodyBytes:    maxBodyBytes,
 		shutdownTimeout: shutdownTimeout,
 	}
 }
@@ -74,9 +74,23 @@ func (e *Exporter) Name() string {
 	return ExporterName
 }
 
-// Publish maps the event to an OTLP log record and enqueues it into the batch
-// processor without blocking on Collector latency. It returns an error only if
-// the exporter has already been closed.
+// DataClass reports the class this exporter is bound to. It defaults to metadata
+// and becomes raw when SetDataClass is called at build time.
+func (e *Exporter) DataClass() metrics.DataClass {
+	if e.class == metrics.Raw {
+		return metrics.Raw
+	}
+	return metrics.Metadata
+}
+
+// SetDataClass binds the exporter to a data class before it serves traffic.
+func (e *Exporter) SetDataClass(class metrics.DataClass) {
+	e.class = class
+}
+
+// Publish maps the event to an OTLP log record and enqueues it without blocking
+// on Collector latency. A raw-class exporter emits request/response payloads;
+// other classes emit sanitized metadata. It errors only if already closed.
 func (e *Exporter) Publish(ctx context.Context, evt *events.Event) error {
 	if evt == nil {
 		return nil
@@ -84,7 +98,13 @@ func (e *Exporter) Publish(ctx context.Context, evt *events.Event) error {
 	if e.closed.Load() {
 		return errExporterClosed
 	}
-	e.logger.Emit(ctx, eventToRecord(evt, e.maxBodyBytes))
+	if e.class == metrics.Raw {
+		raw := evt.SensibleView()
+		e.logger.Emit(ctx, rawEventToRecord(&raw))
+		return nil
+	}
+	metadata := evt.MetadataView()
+	e.logger.Emit(ctx, eventToRecord(&metadata))
 	return nil
 }
 

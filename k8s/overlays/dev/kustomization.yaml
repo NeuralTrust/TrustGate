@@ -29,3 +29,7 @@ configMapGenerator:
   envs:
   - config.env
   name: agentgateway-config
+- behavior: create
+  files:
+  - telemetry.yaml
+  name: agentgateway-telemetry

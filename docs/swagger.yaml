@@ -1806,6 +1806,8 @@ definitions:
       settings:
         additionalProperties: true
         type: object
+      type:
+        type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry:
     properties:

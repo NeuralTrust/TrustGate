@@ -17,7 +17,6 @@ package otlp
 import (
 	"encoding/json"
 	"time"
-	"unicode/utf8"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	otellog "go.opentelemetry.io/otel/log"
@@ -75,16 +74,19 @@ const (
 	attrLatencyGatewayMs     = "trustgate.latency.gateway_ms"
 	attrIsFlagged            = "trustgate.is_flagged"
 	attrSecurity             = "trustgate.security"
-	attrRequestBody          = "trustgate.request.body"
 	attrPolicyChain          = "trustgate.policy_chain"
 	attrAttempts             = "trustgate.attempts"
 	attrAttemptsCount        = "trustgate.attempts.count"
+	attrRequestBody          = "trustgate.request.body"
+	attrResponseBody         = "trustgate.response.body"
 )
+
+const rawEventName = "gateway.request.raw"
 
 // eventToRecord is the single, semconv-pinned (semconv/v1.41.0) mapping from a
 // sanitized business Event to an OTLP log record. Standard fields use GenAI/HTTP
 // semantic conventions; gateway-specific fields use the trustgate.* namespace.
-func eventToRecord(evt *events.Event, maxBodyBytes int) otellog.Record {
+func eventToRecord(evt *events.Event) otellog.Record {
 	var rec otellog.Record
 	if evt == nil {
 		return rec
@@ -96,10 +98,6 @@ func eventToRecord(evt *events.Event, maxBodyBytes int) otellog.Record {
 	}
 	rec.SetObservedTimestamp(time.Now())
 	rec.SetSeverity(severityForStatus(evt.Status.Code))
-
-	if body := responseBody(evt, maxBodyBytes); body != "" {
-		rec.SetBody(otellog.StringValue(body))
-	}
 
 	attrs := make([]otellog.KeyValue, 0, 32)
 	appendStr := func(key, value string) {
@@ -193,9 +191,6 @@ func eventToRecord(evt *events.Event, maxBodyBytes int) otellog.Record {
 	if len(evt.Security) > 0 {
 		attrs = append(attrs, otellog.Slice(attrSecurity, stringValues(evt.Security)...))
 	}
-	if requestBody := truncate(evt.Request.Body, maxBodyBytes); requestBody != "" {
-		attrs = append(attrs, otellog.String(attrRequestBody, requestBody))
-	}
 	if len(evt.PolicyChain) > 0 {
 		if encoded := jsonString(evt.PolicyChain); encoded != "" {
 			attrs = append(attrs, otellog.String(attrPolicyChain, encoded))
@@ -212,6 +207,38 @@ func eventToRecord(evt *events.Event, maxBodyBytes int) otellog.Record {
 	return rec
 }
 
+func rawEventToRecord(evt *events.Event) otellog.Record {
+	var rec otellog.Record
+	if evt == nil {
+		return rec
+	}
+
+	rec.SetEventName(rawEventName)
+	if evt.OccurredOn > 0 {
+		rec.SetTimestamp(time.UnixMilli(evt.OccurredOn))
+	}
+	rec.SetObservedTimestamp(time.Now())
+
+	attrs := make([]otellog.KeyValue, 0, 6)
+	appendStr := func(key, value string) {
+		if value != "" {
+			attrs = append(attrs, otellog.String(key, value))
+		}
+	}
+
+	attrs = append(attrs, otellog.Int(attrSchemaVersion, evt.SchemaVersion))
+	appendStr(attrTraceID, evt.TraceID)
+	appendStr(attrGatewayID, evt.GatewayID)
+	appendStr(attrTeamID, evt.TeamID)
+	appendStr(attrRequestBody, evt.Request.Body)
+	if evt.Response.Body != nil {
+		appendStr(attrResponseBody, *evt.Response.Body)
+	}
+
+	rec.AddAttributes(attrs...)
+	return rec
+}
+
 func severityForStatus(code int) otellog.Severity {
 	switch {
 	case code >= 500:
@@ -221,26 +248,6 @@ func severityForStatus(code int) otellog.Severity {
 	default:
 		return otellog.SeverityInfo
 	}
-}
-
-func responseBody(evt *events.Event, maxBodyBytes int) string {
-	if evt.Response.Body == nil {
-		return ""
-	}
-	return truncate(*evt.Response.Body, maxBodyBytes)
-}
-
-// truncate caps s at maxBytes, trimming back to the last valid UTF-8 boundary so
-// the emitted attribute is never a malformed string.
-func truncate(s string, maxBytes int) string {
-	if maxBytes <= 0 || len(s) <= maxBytes {
-		return s
-	}
-	truncated := s[:maxBytes]
-	for len(truncated) > 0 && !utf8.ValidString(truncated) {
-		truncated = truncated[:len(truncated)-1]
-	}
-	return truncated
 }
 
 func stringValues(in []string) []otellog.Value {
