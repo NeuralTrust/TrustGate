@@ -163,6 +163,10 @@ func (w *Worker[T]) Converge(ctx context.Context) error {
 		w.onApplied(ctx)
 	}
 	w.persist(versioned)
+	w.logger.Info("applied config snapshot",
+		slog.String("component", component),
+		slog.String("version", versioned.Version),
+		slog.Int("bytes", len(raw)))
 	if err := w.transport.Ack(ctx, versioned.Version); err != nil && ctx.Err() == nil {
 		w.logger.Warn("failed to ack applied version",
 			slog.String("component", component),
