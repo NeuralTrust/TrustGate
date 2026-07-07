@@ -27,6 +27,7 @@ import (
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -44,6 +45,8 @@ type fakeExporter struct {
 }
 
 func (f *fakeExporter) Name() string { return f.name }
+
+func (f *fakeExporter) DataClass() metrics.DataClass { return metrics.Metadata }
 
 func (f *fakeExporter) Publish(_ context.Context, _ *events.Event) error {
 	f.mu.Lock()

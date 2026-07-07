@@ -19,6 +19,7 @@ import (
 
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 )
 
 type ExporterTemplate interface {
@@ -48,18 +49,28 @@ func NewExporterLocator(opts ...ExporterLocatorOption) *ExporterLocator {
 }
 
 func (l *ExporterLocator) Build(cfg telemetrydomain.ExporterConfig) (appmetrics.Exporter, error) {
-	template, ok := l.templates[cfg.Name]
+	if err := cfg.ValidateClass(); err != nil {
+		return nil, err
+	}
+	template, ok := l.templates[cfg.EffectiveType()]
 	if !ok {
 		return nil, fmt.Errorf("unknown exporter %q", cfg.Name)
 	}
 	if err := template.ValidateConfig(cfg.Settings); err != nil {
 		return nil, fmt.Errorf("exporter %q: %w", cfg.Name, err)
 	}
-	return template.WithSettings(cfg.Settings)
+	exporter, err := template.WithSettings(cfg.Settings)
+	if err != nil {
+		return nil, err
+	}
+	return withDataClass(exporter, cfg.EffectiveClass()), nil
 }
 
 func (l *ExporterLocator) Validate(cfg telemetrydomain.ExporterConfig) error {
-	template, ok := l.templates[cfg.Name]
+	if err := cfg.ValidateClass(); err != nil {
+		return err
+	}
+	template, ok := l.templates[cfg.EffectiveType()]
 	if !ok {
 		return fmt.Errorf("unknown exporter %q", cfg.Name)
 	}
@@ -67,4 +78,29 @@ func (l *ExporterLocator) Validate(cfg telemetrydomain.ExporterConfig) error {
 		return fmt.Errorf("exporter %q: %w", cfg.Name, err)
 	}
 	return nil
+}
+
+type classSetter interface {
+	SetDataClass(metrics.DataClass)
+}
+
+type classOverride struct {
+	appmetrics.Exporter
+	class metrics.DataClass
+}
+
+func (c classOverride) DataClass() metrics.DataClass { return c.class }
+
+func withDataClass(exporter appmetrics.Exporter, class metrics.DataClass) appmetrics.Exporter {
+	if exporter == nil {
+		return exporter
+	}
+	if setter, ok := exporter.(classSetter); ok {
+		setter.SetDataClass(class)
+		return exporter
+	}
+	if exporter.DataClass() == class {
+		return exporter
+	}
+	return classOverride{Exporter: exporter, class: class}
 }

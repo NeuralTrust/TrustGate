@@ -23,10 +23,12 @@ import (
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
+	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 )
 
 type Exporter interface {
 	Name() string
+	DataClass() metrics.DataClass
 	Publish(ctx context.Context, evt *events.Event) error
 	Close()
 }
@@ -79,7 +81,7 @@ func (p *Pipeline) publish(
 	ctx := context.Background()
 	evt := p.builder.Build(ctx, requestTrace, req, resp, startTime, endTime)
 	for _, exporter := range targets {
-		if err := exporter.Publish(ctx, evt); err != nil {
+		if err := exporter.Publish(ctx, viewForClass(evt, exporter.DataClass())); err != nil {
 			p.logger.Error("failed to publish metrics event",
 				slog.String("gateway_id", req.GatewayID),
 				slog.String("exporter", exporter.Name()),
@@ -108,6 +110,13 @@ func (p *Pipeline) resolveTargets(explicit []telemetrydomain.ExporterConfig) []E
 		}
 	}
 	return targets
+}
+
+func viewForClass(evt *events.Event, class metrics.DataClass) *events.Event {
+	if class == metrics.Raw {
+		return evt
+	}
+	return events.MetadataView(evt)
 }
 
 func (p *Pipeline) close() {

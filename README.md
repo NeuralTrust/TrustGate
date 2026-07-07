@@ -349,11 +349,13 @@ See [`.env.example`](.env.example) for the full set with safe defaults.
 Every completed request is turned into a sanitized business event and fanned out
 to one or more exporters. **Kafka is the config-driven default** (feeds
 `kafka-connect → ClickHouse → data-plane-api`). A gateway can additionally opt
-into the **`otlp`** exporter, which ships the same event to an external
+into the **`otlp`** exporter, which ships the event to an external
 [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/) as a single
-OTLP **log record** per request (`event.name="gateway.request"`); the Collector
-fans out to any vendor backend. Enabling `otlp` does not replace Kafka — both
-fire (explicit exporters merge with the global defaults).
+OTLP **log record** per request (`EventName: trustgate.<version>.<class>`, e.g.
+`trustgate.3.metadata` / `trustgate.3.raw`); the Collector fans out to any vendor
+backend. Contract details: [`docs/telemetry/otlp-metadata-contract.md`](docs/telemetry/otlp-metadata-contract.md).
+Enabling `otlp` does not replace Kafka — both fire (explicit exporters merge with the
+global defaults).
 
 Add it to a gateway's `telemetry.exporters`:
 
@@ -363,6 +365,7 @@ Add it to a gateway's `telemetry.exporters`:
     "exporters": [
       {
         "name": "otlp",
+        "class": "metadata",
         "settings": {
           "endpoint": "collector:4317",
           "protocol": "grpc",
@@ -379,6 +382,14 @@ Add it to a gateway's `telemetry.exporters`:
 
 With Kafka still configured, the event is delivered to the Collector **and**
 Kafka (the ClickHouse path keeps populating with `schema_version=2` intact).
+
+**Exporter fields**
+
+| Key | Type | Default | Notes |
+|-----|------|---------|-------|
+| `name` | string | — | Exporter type: `otlp`, `kafka` |
+| `class` | string | `metadata` | `metadata` (no bodies) or `raw` (includes body attributes) |
+| `settings` | object | — | Exporter-specific settings |
 
 **`otlp` settings**
 

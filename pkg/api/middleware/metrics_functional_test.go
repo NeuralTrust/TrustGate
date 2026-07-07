@@ -36,6 +36,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	infratelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -81,6 +82,8 @@ type memExporter struct {
 }
 
 func (e *memExporter) Name() string { return e.name }
+
+func (e *memExporter) DataClass() metrics.DataClass { return metrics.Metadata }
 
 func (e *memExporter) Publish(_ context.Context, evt *events.Event) error {
 	if e.fail {

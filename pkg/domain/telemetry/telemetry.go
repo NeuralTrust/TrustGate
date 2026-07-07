@@ -18,6 +18,8 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+
+	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 )
 
 type Telemetry struct {
@@ -29,8 +31,33 @@ type Telemetry struct {
 }
 
 type ExporterConfig struct {
-	Name     string                 `json:"name"`
+	Name string `json:"name"`
+	Type string `json:"type,omitempty"`
+	// Class fixes which projection of the event this exporter receives. When
+	// empty it defaults to metadata for every exporter type.
+	Class    metrics.DataClass      `json:"class,omitempty"`
 	Settings map[string]interface{} `json:"settings"`
+}
+
+func (c ExporterConfig) EffectiveType() string {
+	if c.Type != "" {
+		return c.Type
+	}
+	return c.Name
+}
+
+func (c ExporterConfig) EffectiveClass() metrics.DataClass {
+	if c.Class != "" {
+		return c.Class
+	}
+	return metrics.Metadata
+}
+
+func (c ExporterConfig) ValidateClass() error {
+	if c.Class != "" && c.Class != metrics.Metadata && c.Class != metrics.Raw {
+		return fmt.Errorf("telemetry exporter %q: invalid data class %q", c.Name, c.Class)
+	}
+	return nil
 }
 
 func (t Telemetry) Value() (driver.Value, error) {

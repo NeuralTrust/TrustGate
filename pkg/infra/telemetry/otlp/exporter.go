@@ -23,6 +23,7 @@ import (
 
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
+	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
@@ -44,6 +45,7 @@ type Exporter struct {
 	slog            *slog.Logger
 	maxBodyBytes    int
 	shutdownTimeout time.Duration
+	class           metrics.DataClass
 	closed          atomic.Bool
 }
 
@@ -67,12 +69,17 @@ func newExporterWithProvider(
 		slog:            logger,
 		maxBodyBytes:    maxBodyBytes,
 		shutdownTimeout: shutdownTimeout,
+		class:           metrics.Metadata,
 	}
 }
 
 func (e *Exporter) Name() string {
 	return ExporterName
 }
+
+func (e *Exporter) DataClass() metrics.DataClass { return e.class }
+
+func (e *Exporter) SetDataClass(class metrics.DataClass) { e.class = class }
 
 // Publish maps the event to an OTLP log record and enqueues it into the batch
 // processor without blocking on Collector latency. It returns an error only if
@@ -84,7 +91,7 @@ func (e *Exporter) Publish(ctx context.Context, evt *events.Event) error {
 	if e.closed.Load() {
 		return errExporterClosed
 	}
-	e.logger.Emit(ctx, eventToRecord(evt, e.maxBodyBytes))
+	e.logger.Emit(ctx, eventToRecord(evt, e.class, e.maxBodyBytes))
 	return nil
 }
 

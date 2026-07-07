@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
+	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -50,7 +51,7 @@ func TestEventToRecord_MCPAttributes(t *testing.T) {
 		},
 	}
 
-	rec := eventToRecord(evt, 4096)
+	rec := eventToRecord(evt, metrics.Metadata, 4096)
 	attrs := attrsOf(rec)
 
 	assert.Equal(t, events.KindMCP, attrs[attrKind].AsString())
@@ -71,7 +72,7 @@ func TestEventToRecord_LLMKindNoMCP(t *testing.T) {
 	evt := fullEvent()
 	evt.Kind = events.KindLLM
 
-	rec := eventToRecord(evt, 4096)
+	rec := eventToRecord(evt, metrics.Metadata, 4096)
 	attrs := attrsOf(rec)
 
 	assert.Equal(t, events.KindLLM, attrs[attrKind].AsString())

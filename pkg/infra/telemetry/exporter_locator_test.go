@@ -53,6 +53,12 @@ func TestExporterLocator_Validate(t *testing.T) {
 		assert.Contains(t, err.Error(), "topic")
 	})
 
+	t.Run("invalid data class", func(t *testing.T) {
+		err := locator.Validate(telemetrydomain.ExporterConfig{Name: kafka.ExporterName, Class: "bogus", Settings: map[string]interface{}{"topic": "events"}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid data class")
+	})
+
 	t.Run("valid kafka config", func(t *testing.T) {
 		err := locator.Validate(telemetrydomain.ExporterConfig{Name: kafka.ExporterName, Settings: map[string]interface{}{"topic": "events"}})
 		require.NoError(t, err)

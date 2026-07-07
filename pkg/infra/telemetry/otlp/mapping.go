@@ -16,15 +16,23 @@ package otlp
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
+	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	otellog "go.opentelemetry.io/otel/log"
 	semconv "go.opentelemetry.io/otel/semconv/v1.41.0"
 )
 
-const eventName = "gateway.request"
+func eventName(schemaVersion int, class metrics.DataClass) string {
+	if schemaVersion <= 0 {
+		schemaVersion = events.SchemaVersion
+	}
+	return fmt.Sprintf("trustgate.%d.%s", schemaVersion, class)
+}
 
 // genAIRequestStreamKey is not part of stable semconv; it is kept local so a
 // semconv bump does not silently move it.
@@ -76,7 +84,9 @@ const (
 	attrIsFlagged            = "trustgate.is_flagged"
 	attrSecurity             = "trustgate.security"
 	attrRequestBody          = "trustgate.request.body"
+	attrResponseBody         = "trustgate.response.body"
 	attrPolicyChain          = "trustgate.policy_chain"
+	attrPluginChain          = "trustgate.plugin_chain"
 	attrAttempts             = "trustgate.attempts"
 	attrAttemptsCount        = "trustgate.attempts.count"
 )
@@ -84,22 +94,18 @@ const (
 // eventToRecord is the single, semconv-pinned (semconv/v1.41.0) mapping from a
 // sanitized business Event to an OTLP log record. Standard fields use GenAI/HTTP
 // semantic conventions; gateway-specific fields use the trustgate.* namespace.
-func eventToRecord(evt *events.Event, maxBodyBytes int) otellog.Record {
+func eventToRecord(evt *events.Event, class metrics.DataClass, maxBodyBytes int) otellog.Record {
 	var rec otellog.Record
 	if evt == nil {
 		return rec
 	}
 
-	rec.SetEventName(eventName)
+	rec.SetEventName(eventName(evt.SchemaVersion, class))
 	if evt.OccurredOn > 0 {
 		rec.SetTimestamp(time.UnixMilli(evt.OccurredOn))
 	}
 	rec.SetObservedTimestamp(time.Now())
 	rec.SetSeverity(severityForStatus(evt.Status.Code))
-
-	if body := responseBody(evt, maxBodyBytes); body != "" {
-		rec.SetBody(otellog.StringValue(body))
-	}
 
 	attrs := make([]otellog.KeyValue, 0, 32)
 	appendStr := func(key, value string) {
@@ -193,12 +199,20 @@ func eventToRecord(evt *events.Event, maxBodyBytes int) otellog.Record {
 	if len(evt.Security) > 0 {
 		attrs = append(attrs, otellog.Slice(attrSecurity, stringValues(evt.Security)...))
 	}
-	if requestBody := truncate(evt.Request.Body, maxBodyBytes); requestBody != "" {
-		attrs = append(attrs, otellog.String(attrRequestBody, requestBody))
+	if class == metrics.Raw {
+		if requestBody := truncate(evt.Request.Body, maxBodyBytes); requestBody != "" {
+			attrs = append(attrs, otellog.String(attrRequestBody, requestBody))
+		}
+		if body := responseBody(evt, maxBodyBytes); body != "" {
+			attrs = append(attrs, otellog.String(attrResponseBody, body))
+		}
 	}
 	if len(evt.PolicyChain) > 0 {
-		if encoded := jsonString(evt.PolicyChain); encoded != "" {
+		if encoded := jsonString(policyChain(evt.PolicyChain)); encoded != "" && encoded != "null" {
 			attrs = append(attrs, otellog.String(attrPolicyChain, encoded))
+		}
+		if encoded := jsonString(pluginChainForOTLP(evt.PolicyChain)); encoded != "" && encoded != "null" {
+			attrs = append(attrs, otellog.String(attrPluginChain, encoded))
 		}
 	}
 	if len(evt.Attempts) > 0 {
@@ -210,6 +224,64 @@ func eventToRecord(evt *events.Event, maxBodyBytes int) otellog.Record {
 
 	rec.AddAttributes(attrs...)
 	return rec
+}
+
+type policyChainElement struct {
+	Source     policyChainSource  `json:"source"`
+	Signal     policyChainSignal  `json:"signal"`
+	Outcome    policyChainOutcome `json:"outcome"`
+	ReportOnly bool               `json:"report_only"`
+}
+
+type policyChainSource struct {
+	Plugin string `json:"plugin"`
+}
+
+type policyChainSignal struct {
+	Type       string  `json:"type"`
+	Confidence float64 `json:"confidence"`
+}
+
+type policyChainOutcome struct {
+	Action string `json:"action"`
+}
+
+func policyChain(chain []events.PolicyEntry) []policyChainElement {
+	out := make([]policyChainElement, 0, len(chain))
+	for _, entry := range chain {
+		element := policyChainElement{
+			Source:     policyChainSource{Plugin: entry.Name},
+			ReportOnly: isReportOnlyDecision(entry.Decision),
+		}
+		confidence := 0.0
+		if entry.Score != nil {
+			confidence = *entry.Score
+		}
+		element.Signal = policyChainSignal{Type: entry.ScoreLabel, Confidence: confidence}
+		if entry.Decision != "" {
+			element.Outcome = policyChainOutcome{Action: entry.Decision}
+		}
+		out = append(out, element)
+	}
+	return out
+}
+
+func pluginChainForOTLP(chain []events.PolicyEntry) []events.PolicyEntry {
+	out := make([]events.PolicyEntry, len(chain))
+	for i, entry := range chain {
+		out[i] = entry
+		out[i].Extras = nil
+	}
+	return out
+}
+
+func isReportOnlyDecision(decision string) bool {
+	switch strings.ToLower(decision) {
+	case "report", "reported":
+		return true
+	default:
+		return false
+	}
 }
 
 func severityForStatus(code int) otellog.Severity {

@@ -26,6 +26,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	infratelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 )
 
 const ExporterName = "kafka"
@@ -43,6 +44,8 @@ func NewKafkaTemplate(logger *slog.Logger, kafkaCfg config.KafkaConfig) *Exporte
 func (p *Exporter) Name() string {
 	return ExporterName
 }
+
+func (p *Exporter) DataClass() metrics.DataClass { return metrics.Metadata }
 
 func (p *Exporter) ValidateConfig(settings map[string]interface{}) error {
 	cfg, err := p.ResolveBaseConfig(settings)

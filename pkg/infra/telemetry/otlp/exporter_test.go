@@ -25,6 +25,7 @@ import (
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
+	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -83,12 +84,27 @@ func TestExporter_PublishEmitsOneRecord(t *testing.T) {
 
 	records := mem.all()
 	require.Len(t, records, 1)
-	assert.Equal(t, eventName, records[0].EventName())
+	assert.Equal(t, "trustgate.3.metadata", records[0].EventName())
 	assert.Equal(t, otellog.SeverityInfo, records[0].Severity())
 
 	trace, ok := recordAttr(records[0], attrTraceID)
 	require.True(t, ok)
 	assert.Equal(t, "trace-123", trace.AsString())
+}
+
+func TestExporter_RawClassEmitsRawEventName(t *testing.T) {
+	t.Parallel()
+	mem := &memExporter{}
+	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(mem)))
+	exp := newExporterWithProvider(provider, testLogger(), 4096, time.Second)
+	defer exp.Close()
+
+	exp.SetDataClass(metrics.Raw)
+	require.NoError(t, exp.Publish(context.Background(), fullEvent()))
+
+	records := mem.all()
+	require.Len(t, records, 1)
+	assert.Equal(t, "trustgate.3.raw", records[0].EventName())
 }
 
 func TestExporter_NilEventIsNoOp(t *testing.T) {

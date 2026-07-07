@@ -29,6 +29,7 @@ import (
 	infratelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/kafka"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/otlp"
+	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"go.uber.org/dig"
 )
 
@@ -90,6 +91,7 @@ func buildPipeline(
 	var defaults []appmetrics.Exporter
 	exporter, err := factory.Build(telemetrydomain.ExporterConfig{
 		Name:     kafka.ExporterName,
+		Class:    metrics.Raw,
 		Settings: map[string]interface{}{"topic": cfg.Telemetry.KafkaTopic},
 	})
 	if err != nil {
