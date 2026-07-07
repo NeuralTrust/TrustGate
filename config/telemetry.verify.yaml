@@ -1,0 +1,28 @@
+exporters:
+  metadata:
+    - name: otlp
+      type: otlp
+      settings:
+        endpoint: "localhost:14317"
+        protocol: "grpc"
+        signal: "logs"
+        insecure: true
+        compression: "none"
+        timeout: "10s"
+        max_body_bytes: 65536
+
+  raw:
+    - name: raw-otlp
+      type: otlp
+      settings:
+        endpoint: "localhost:14317"
+        protocol: "grpc"
+        signal: "logs"
+        insecure: true
+        compression: "none"
+        timeout: "10s"
+        max_body_bytes: 65536
+    - name: sensible-pg
+      type: postgres
+      settings:
+        dsn_env: SENSIBLE_PG_DSN

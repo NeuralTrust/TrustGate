@@ -351,10 +351,16 @@ to one or more exporters. Default exporters are declared in a YAML file (see
 [Default telemetry exporters](#default-telemetry-exporters) below); the
 recommended metadata default is **`otlp`**, which ships the event to an external
 [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/) as a single
-OTLP **log record** per request (`event.name="gateway.request"`); the Collector
-fans out to any vendor backend. A gateway can add or override exporters via its
+OTLP **log record** per request. The record's `event.name` follows
+`trustgate.<version>.<verb>` (`resource.version.verb`) — e.g. `trustgate.3.metadata`
+for the metadata class and `trustgate.3.raw` for the raw class of the same trace; the
+Collector fans out to any vendor backend. A gateway can add or override exporters via its
 `telemetry.exporters`, which merge with the defaults. Kafka is being retired and
 is no longer a hardcoded default.
+
+The exported log record is documented field-by-field in
+[`docs/telemetry/otlp-metadata-contract.md`](docs/telemetry/otlp-metadata-contract.md),
+with per-sink example records under [`docs/telemetry/examples/`](docs/telemetry/examples).
 
 Add it to a gateway's `telemetry.exporters`:
 

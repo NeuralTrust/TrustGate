@@ -1,0 +1,42 @@
+{
+  "_comment": "Sink 2 — raw OTLP exporter (exporters.raw with type otlp) — same trace_id, carries request/response bodies and join keys only (no metadata attrs). Schema-accurate representative record, not a live capture.",
+  "_destination": "OTEL_EXPORTER_OTLP_ENDPOINT → OpenTelemetry Collector (raw class)",
+  "_trace_id": "b1c8a71f-35d8-4aff-a8da-dcb78d05cac9",
+  "resource": {
+    "service.name": "trustgate",
+    "schema_url": "https://opentelemetry.io/schemas/1.41.0"
+  },
+  "scope": "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/otlp",
+  "logRecord": {
+    "eventName": "trustgate.3.raw",
+    "body": "",
+    "attributes": {
+      "trustgate.schema_version": 3,
+      "trustgate.trace_id": "b1c8a71f-35d8-4aff-a8da-dcb78d05cac9",
+      "trustgate.gateway_id": "gw-support-chat",
+      "trustgate.team_id": "00000000-0000-0000-0000-000000000001",
+      "trustgate.request.body": {
+        "model": "gpt-4o",
+        "messages": [
+          { "role": "user", "content": "Reset the account for john.doe@example.com please" }
+        ]
+      },
+      "trustgate.response.body": {
+        "id": "chatcmpl-9xY",
+        "object": "chat.completion",
+        "model": "gpt-4o",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+              "role": "assistant",
+              "content": "Sure — I've started the reset for [MASKED_EMAIL]."
+            }
+          }
+        ],
+        "usage": { "prompt_tokens": 42, "completion_tokens": 18, "total_tokens": 60 }
+      }
+    }
+  }
+}

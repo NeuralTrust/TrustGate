@@ -1,0 +1,18 @@
+# OTel Collector for local telemetry sink verification.
+# Usage: docker compose -f docker-compose.yaml -f docker-compose.telemetry.yaml up -d
+name: agentgateway
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.120.0
+    command: ["--config=/etc/otel-collector.yaml"]
+    volumes:
+      - ./config/otel-collector.yaml:/etc/otel-collector.yaml:ro
+    ports:
+      - "${OTEL_VERIFY_GRPC_PORT:-14317}:4317"
+      - "${OTEL_VERIFY_HTTP_PORT:-14318}:4318"
+    healthcheck:
+      test: ["CMD", "/otelcol-contrib", "validate", "--config=/etc/otel-collector.yaml"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

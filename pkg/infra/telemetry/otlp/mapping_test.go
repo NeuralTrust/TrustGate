@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
+	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/stretchr/testify/assert"
 	otellog "go.opentelemetry.io/otel/log"
 )
@@ -80,7 +81,7 @@ func TestEventToRecord_StandardAndProprietaryCoexist(t *testing.T) {
 	t.Parallel()
 	rec := eventToRecord(fullEvent())
 
-	assert.Equal(t, eventName, rec.EventName())
+	assert.Equal(t, eventName(events.SchemaVersion, metrics.Metadata), rec.EventName())
 	assert.Equal(t, otellog.SeverityInfo, rec.Severity())
 
 	attrs := attrsOf(rec)
@@ -203,7 +204,7 @@ func TestEventToRecord_EmptyTrace(t *testing.T) {
 	attrs := attrsOf(rec)
 	_, ok := attrs["trustgate.trace_id"]
 	assert.False(t, ok)
-	assert.Equal(t, eventName, rec.EventName())
+	assert.Equal(t, eventName(events.SchemaVersion, metrics.Metadata), rec.EventName())
 }
 
 func TestEventToRecord_Nil(t *testing.T) {
