@@ -23,6 +23,7 @@ import (
 
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
+	infratelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
@@ -101,25 +102,13 @@ func (e *Exporter) Publish(ctx context.Context, evt *events.Event) error {
 	if e.class == metrics.Raw {
 		raw := evt.SensibleView()
 		e.logger.Emit(ctx, rawEventToRecord(&raw))
-		e.logPublished(metrics.Raw, rawEventName, &raw)
+		infratelemetry.LogPublish(e.slog, ExporterName, metrics.Raw, &raw)
 		return nil
 	}
 	metadata := evt.MetadataView()
 	e.logger.Emit(ctx, eventToRecord(&metadata))
-	e.logPublished(metrics.Metadata, eventName, &metadata)
+	infratelemetry.LogPublish(e.slog, ExporterName, metrics.Metadata, &metadata)
 	return nil
-}
-
-func (e *Exporter) logPublished(class metrics.DataClass, name string, evt *events.Event) {
-	e.slog.Debug("otlp event published to collector",
-		slog.String("exporter", ExporterName),
-		slog.String("class", string(class)),
-		slog.String("event", name),
-		slog.Int("schema_version", evt.SchemaVersion),
-		slog.String("trace_id", evt.TraceID),
-		slog.String("gateway_id", evt.GatewayID),
-		slog.String("team_id", evt.TeamID),
-	)
 }
 
 // Close flushes buffered records then shuts the provider down, bounded by the

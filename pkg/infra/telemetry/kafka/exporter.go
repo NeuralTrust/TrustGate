@@ -25,8 +25,8 @@ import (
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
-	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	infratelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 )
 
 const ExporterName = "kafka"
@@ -91,9 +91,9 @@ func (p *Exporter) Publish(_ context.Context, evt *events.Event) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal event: %w", err)
 	}
-	p.Logger.Debug("publishing event to kafka",
-		slog.String("topic", p.Topic),
-		slog.String("event", string(data)),
-	)
-	return p.Produce(data)
+	if err := p.Produce(data); err != nil {
+		return err
+	}
+	infratelemetry.LogPublish(p.Logger, ExporterName, p.DataClass(), evt)
+	return nil
 }

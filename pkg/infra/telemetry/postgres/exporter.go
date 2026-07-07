@@ -25,6 +25,7 @@ import (
 
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
+	infratelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -77,7 +78,8 @@ func (e *Exporter) Publish(ctx context.Context, evt *events.Event) error {
 	if e.closed.Load() {
 		return errExporterClosed
 	}
-	rec := toRecord(evt.SensibleView())
+	raw := evt.SensibleView()
+	rec := toRecord(raw)
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
 	if _, err := e.pool.Exec(ctx, e.insertSQL,
@@ -91,6 +93,7 @@ func (e *Exporter) Publish(ctx context.Context, evt *events.Event) error {
 	); err != nil {
 		return fmt.Errorf("postgres: insert sensible record: %w", err)
 	}
+	infratelemetry.LogPublish(e.logger, ExporterName, metrics.Raw, &raw)
 	return nil
 }
 
