@@ -20,6 +20,8 @@ import (
 	"crypto/x509"
 	"fmt"
 	"os"
+	"sync"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"google.golang.org/grpc/credentials"
@@ -79,12 +81,73 @@ func clientTransportCredentials(cfg config.ConfigSyncConfig) (credentials.Transp
 	return credentials.NewTLS(tlsConfig), nil
 }
 
+// serverCertReloadInterval bounds how often the control-plane listener re-reads
+// the TLS keypair from disk. cert-manager rewrites the mounted Secret on renewal
+// (~15 days before expiry) and the kubelet syncs the projected files within ~1
+// minute, so reloading on this cadence picks up the renewed leaf without a
+// process restart. gRPC invokes GetCertificate on every TLS handshake, so new
+// connections converge onto the renewed cert automatically.
+const serverCertReloadInterval = time.Minute
+
+// reloadingKeypair serves the control-plane server certificate, reloading it
+// from disk once the cached copy is older than the reload interval. On a reload
+// error it keeps serving the last good certificate, so a transient bad read
+// mid-rotation never breaks the listener.
+type reloadingKeypair struct {
+	certPath string
+	keyPath  string
+	interval time.Duration
+
+	mu       sync.RWMutex
+	cert     *tls.Certificate
+	loadedAt time.Time
+}
+
+// newReloadingKeypair loads the keypair once so a misconfigured cert/key fails
+// fast at startup, preserving the previous load-at-construction behavior.
+func newReloadingKeypair(certPath, keyPath string, interval time.Duration) (*reloadingKeypair, error) {
+	rk := &reloadingKeypair{certPath: certPath, keyPath: keyPath, interval: interval}
+	if _, err := rk.reload(); err != nil {
+		return nil, err
+	}
+	return rk, nil
+}
+
+func (rk *reloadingKeypair) reload() (*tls.Certificate, error) {
+	cert, err := tls.LoadX509KeyPair(rk.certPath, rk.keyPath)
+	if err != nil {
+		return nil, err
+	}
+	rk.mu.Lock()
+	rk.cert = &cert
+	rk.loadedAt = time.Now()
+	rk.mu.Unlock()
+	return &cert, nil
+}
+
+// getCertificate is the tls.Config.GetCertificate callback.
+func (rk *reloadingKeypair) getCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+	rk.mu.RLock()
+	cert, loadedAt := rk.cert, rk.loadedAt
+	rk.mu.RUnlock()
+	if time.Since(loadedAt) < rk.interval {
+		return cert, nil
+	}
+	reloaded, err := rk.reload()
+	if err != nil {
+		// Keep serving the last good cert; the renewal overlap covers transient errors.
+		return cert, nil
+	}
+	return reloaded, nil
+}
+
 // serverTransportCredentials builds the control-plane listener TLS credentials
 // from the configured cert/key pair. It returns nil credentials (plaintext,
 // dev-only) when no cert/key is configured; the deployed-environment guard that
 // forbids a plaintext control-plane listener lives in the DI provider
 // (control_config_sync.go), so callers outside that wiring must not assume this
-// constructor rejects an insecure setup.
+// constructor rejects an insecure setup. The keypair is reloaded from disk on a
+// bounded cadence so cert-manager renewals are served without a process restart.
 func serverTransportCredentials(cfg config.ConfigSyncConfig) (credentials.TransportCredentials, error) {
 	if cfg.GRPCTLSCertPath == "" && cfg.GRPCTLSKeyPath == "" {
 		return nil, nil
@@ -92,12 +155,12 @@ func serverTransportCredentials(cfg config.ConfigSyncConfig) (credentials.Transp
 	if cfg.GRPCTLSCertPath == "" || cfg.GRPCTLSKeyPath == "" {
 		return nil, fmt.Errorf("configsync: CONFIG_SYNC_GRPC_TLS_CERT and CONFIG_SYNC_GRPC_TLS_KEY must be set together")
 	}
-	cert, err := tls.LoadX509KeyPair(cfg.GRPCTLSCertPath, cfg.GRPCTLSKeyPath)
+	kp, err := newReloadingKeypair(cfg.GRPCTLSCertPath, cfg.GRPCTLSKeyPath, serverCertReloadInterval)
 	if err != nil {
 		return nil, fmt.Errorf("configsync: load server TLS keypair: %w", err)
 	}
 	return credentials.NewTLS(&tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
+		GetCertificate: kp.getCertificate,
+		MinVersion:     tls.VersionTLS12,
 	}), nil
 }

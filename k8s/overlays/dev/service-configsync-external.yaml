@@ -1,0 +1,29 @@
+# L4 (raw TCP) LoadBalancer that exposes the admin (control-plane) config-sync
+# gRPC listener to data planes running OUTSIDE this cluster (hybrid customer
+# clusters). Deliberately NOT an HTTPRoute/Gateway: the gke-l7-* gateway
+# terminates TLS, which would break the app-terminated gRPC TLS the admin
+# serves. This Service hands the raw TLS handshake to the pod.
+#
+# The admin presents the cert-manager-issued Let's Encrypt cert for
+# agentgateway-configsync.dev.neuraltrust.ai (see config-sync-cert.yaml). Point a
+# public DNS-only (grey-cloud) A record for that hostname at this Service's
+# external IP once provisioned.
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentgateway-configsync-external
+  labels:
+    app.kubernetes.io/instance: agentgateway
+    app.kubernetes.io/component: admin
+    component: admin
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/instance: agentgateway
+    app.kubernetes.io/component: admin
+    component: admin
+  ports:
+    - name: grpc-tls
+      port: 443
+      targetPort: 8083
+      protocol: TCP

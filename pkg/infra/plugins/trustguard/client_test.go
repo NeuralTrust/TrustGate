@@ -54,7 +54,7 @@ func TestGuardDecodesResponses(t *testing.T) {
 		{
 			name:          "block verdict",
 			statusCode:    http.StatusOK,
-			respBody:      `{"status":"block","trace_id":"t1","request_id":"r1","findings":[{"detection_type":"pii","confidence":0.9,"action":"block"}]}`,
+			respBody:      `{"status":"block","trace_id":"t1","request_id":"r1","findings":[{"source":{"kind":"detector","plugin":"data_loss_prevention"},"signal":{"type":"pii","confidence":0.9},"outcome":{"action":"block"}}]}`,
 			wantStatus:    "block",
 			wantFindings:  1,
 			wantTraceID:   "t1",
@@ -129,6 +129,18 @@ func TestGuardDecodesResponses(t *testing.T) {
 			}
 			if len(resp.Findings) != tt.wantFindings {
 				t.Errorf("findings = %d, want %d", len(resp.Findings), tt.wantFindings)
+			}
+			if tt.name == "block verdict" {
+				f := resp.Findings[0]
+				if f.Source == nil || f.Source.Kind != "detector" || f.Source.Plugin != "data_loss_prevention" {
+					t.Errorf("finding source = %+v, want detector/data_loss_prevention", f.Source)
+				}
+				if f.Signal == nil || f.Signal.Type != "pii" || f.Signal.Confidence != 0.9 {
+					t.Errorf("finding signal = %+v, want type=pii confidence=0.9", f.Signal)
+				}
+				if f.Outcome == nil || f.Outcome.Action != "block" {
+					t.Errorf("finding outcome = %+v, want action=block", f.Outcome)
+				}
 			}
 			if resp.TraceID != tt.wantTraceID {
 				t.Errorf("trace_id = %q, want %q", resp.TraceID, tt.wantTraceID)

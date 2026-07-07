@@ -23,6 +23,7 @@ const (
 	RedisPubSubConnected       = "📡 redis pubsub connected"
 	RedisPubSubShuttingDown    = "📴 redis pubsub listener shutting down"
 	CatalogSyncCompleted       = "📚 catalog sync completed"
+	ConfigSyncWorkerStarted    = "🔄 config sync worker started"
 	MetricsWorkerStarted       = "📊 metrics worker started"
 	MetricsWorkersShuttingDown = "📉 shutting down metrics workers"
 	MetricsWorkersStopped      = "✅ metrics workers stopped"

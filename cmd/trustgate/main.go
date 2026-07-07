@@ -272,6 +272,11 @@ func startConfigSyncWorker(
 			logger.Error("config sync worker stopped", slog.String("error", err.Error()))
 		}
 	}()
+	startAttrs := []any{}
+	if client != nil {
+		startAttrs = append(startAttrs, slog.String("endpoint", client.Endpoint()))
+	}
+	logger.Info(bootlog.ConfigSyncWorkerStarted, startAttrs...)
 	return func() {
 		cancel()
 		// Closing the client cancels the Sync stream context, unblocking the

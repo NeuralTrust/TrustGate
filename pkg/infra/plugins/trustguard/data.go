@@ -59,15 +59,33 @@ type GuardResponse struct {
 	RequestID          string         `json:"request_id"`
 }
 
+// GuardFindingSource identifies who produced a guard finding.
+type GuardFindingSource struct {
+	Kind         string `json:"kind,omitempty"`
+	Plugin       string `json:"plugin,omitempty"`
+	DetectorID   string `json:"detector_id,omitempty"`
+	DetectorName string `json:"detector_name,omitempty"`
+	PolicyID     string `json:"policy_id,omitempty"`
+	GateName     string `json:"gate_name,omitempty"`
+}
+
+// GuardFindingSignal is the detection signal when a plugin or gate matched.
+type GuardFindingSignal struct {
+	Type       string  `json:"type,omitempty"`
+	Confidence float64 `json:"confidence,omitempty"`
+}
+
+// GuardFindingOutcome is the enforcement action applied to a real detection.
+type GuardFindingOutcome struct {
+	Action string `json:"action,omitempty"`
+}
+
+// GuardFinding is one TrustGuard finding in the guard wire contract.
 type GuardFinding struct {
-	DetectionType string  `json:"detection_type,omitempty"`
-	Confidence    float64 `json:"confidence,omitempty"`
-	RuleName      string  `json:"rule_name,omitempty"`
-	Status        string  `json:"status,omitempty"`
-	PolicyID      string  `json:"policy_id,omitempty"`
-	DetectorID    string  `json:"detector_id,omitempty"`
-	Action        string  `json:"action,omitempty"`
-	Details       any     `json:"details,omitempty"`
+	Source   *GuardFindingSource  `json:"source,omitempty"`
+	Signal   *GuardFindingSignal  `json:"signal,omitempty"`
+	Outcome  *GuardFindingOutcome `json:"outcome,omitempty"`
+	Evidence map[string]any       `json:"evidence,omitempty"`
 }
 
 type guardData struct {

@@ -26,6 +26,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	mcpmocks "github.com/NeuralTrust/TrustGate/pkg/app/mcp/mocks"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	appmetricsmocks "github.com/NeuralTrust/TrustGate/pkg/app/metrics/mocks"
@@ -78,7 +79,7 @@ func TestMCPPipeline_ToolsCallBuildsMCPEvent(t *testing.T) {
 		CallTool(mock.Anything, mock.Anything, "echo", mock.Anything).
 		Return(json.RawMessage(`{"content":[]}`), nil).
 		Once()
-	gateway := mcphttp.NewRPCGateway(composer)
+	gateway := mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(nil, nil))
 
 	gatewayID := ids.New[ids.GatewayKind]()
 	app := fiber.New()

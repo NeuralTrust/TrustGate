@@ -36,6 +36,7 @@ type Client struct {
 	conn       *grpc.ClientConn
 	cli        snapshotpb.ConfigSyncClient
 	instanceID string
+	endpoint   string
 	logger     *slog.Logger
 
 	// streamCtx owns the lifecycle of the long-lived Sync stream so it is not
@@ -69,7 +70,14 @@ func NewClient(cfg config.ConfigSyncConfig, logger *slog.Logger) (*Client, error
 	if err != nil {
 		return nil, fmt.Errorf("configsync: dial %q: %w", cfg.GRPCEndpoint, err)
 	}
-	return newClient(conn, cfg.InstanceID, logger), nil
+	c := newClient(conn, cfg.InstanceID, logger)
+	c.endpoint = cfg.GRPCEndpoint
+	return c, nil
+}
+
+// Endpoint returns the control-plane gRPC address the client dials.
+func (c *Client) Endpoint() string {
+	return c.endpoint
 }
 
 func newClient(conn *grpc.ClientConn, instanceID string, logger *slog.Logger) *Client {

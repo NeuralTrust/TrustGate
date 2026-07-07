@@ -18,6 +18,7 @@ const (
 	trustGuardFunctionalCollectorID  = "11111111-1111-4111-8111-111111111111"
 	trustGuardFunctionalAccessToken  = "functional-trustguard-access-token"
 	trustGuardBlockWord              = "sql-injection-flag"
+	trustGuardErrorWord              = "guard-boom-flag"
 )
 
 var TrustGuardFunctionalStub *trustGuardStub
@@ -145,9 +146,13 @@ func (s *trustGuardStub) handleGuard(w http.ResponseWriter, r *http.Request) {
 	s.lastGuardAuth = r.Header.Get("Authorization")
 	s.mu.Unlock()
 
+	if strings.Contains(strings.ToLower(req.Payload.Input), trustGuardErrorWord) {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	if strings.Contains(strings.ToLower(req.Payload.Input), trustGuardBlockWord) {
-		_, _ = io.WriteString(w, `{"status":"block","findings":[{"detection_type":"prompt_injection","action":"block"}],"trace_id":"tg-trace-1","request_id":"tg-req-1"}`)
+		_, _ = io.WriteString(w, `{"status":"block","findings":[{"source":{"kind":"detector","plugin":"prompt_guard"},"signal":{"type":"prompt_injection"},"outcome":{"action":"block"}}],"trace_id":"tg-trace-1","request_id":"tg-req-1"}`)
 		return
 	}
 	_, _ = io.WriteString(w, `{"status":"allowed","findings":[],"trace_id":"tg-trace-2","request_id":"tg-req-2"}`)
