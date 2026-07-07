@@ -25,6 +25,7 @@ import (
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -84,7 +85,7 @@ func TestExporter_PublishEmitsOneRecord(t *testing.T) {
 
 	records := mem.all()
 	require.Len(t, records, 1)
-	assert.Equal(t, eventName, records[0].EventName())
+	assert.Equal(t, eventName(events.SchemaVersion, metrics.Metadata), records[0].EventName())
 	assert.Equal(t, otellog.SeverityInfo, records[0].Severity())
 
 	trace, ok := recordAttr(records[0], attrTraceID)
@@ -128,7 +129,7 @@ func TestExporter_RawClassEmitsBodies(t *testing.T) {
 
 	records := mem.all()
 	require.Len(t, records, 1)
-	assert.Equal(t, rawEventName, records[0].EventName())
+	assert.Equal(t, eventName(events.SchemaVersion, metrics.Raw), records[0].EventName())
 
 	reqBody, ok := recordAttr(records[0], attrRequestBody)
 	require.True(t, ok)

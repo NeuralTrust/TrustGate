@@ -16,14 +16,25 @@ package otlp
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
+	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	otellog "go.opentelemetry.io/otel/log"
 	semconv "go.opentelemetry.io/otel/semconv/v1.41.0"
 )
 
-const eventName = "gateway.request"
+// eventName is the OTLP LogRecord routing key downstream consumers key on. It
+// follows resource.version.verb: the resource is always trustgate, the version
+// tracks the event schema, and the verb is the data class (metadata or raw), so
+// a single trace produces trustgate.1.metadata and trustgate.1.raw.
+func eventName(schemaVersion int, class metrics.DataClass) string {
+	if schemaVersion <= 0 {
+		schemaVersion = metrics.SchemaVersion
+	}
+	return fmt.Sprintf("trustgate.%d.%s", schemaVersion, class)
+}
 
 // genAIRequestStreamKey is not part of stable semconv; it is kept local so a
 // semconv bump does not silently move it.
@@ -81,8 +92,6 @@ const (
 	attrResponseBody         = "trustgate.response.body"
 )
 
-const rawEventName = "gateway.request.raw"
-
 // eventToRecord is the single, semconv-pinned (semconv/v1.41.0) mapping from a
 // sanitized business Event to an OTLP log record. Standard fields use GenAI/HTTP
 // semantic conventions; gateway-specific fields use the trustgate.* namespace.
@@ -92,7 +101,7 @@ func eventToRecord(evt *events.Event) otellog.Record {
 		return rec
 	}
 
-	rec.SetEventName(eventName)
+	rec.SetEventName(eventName(evt.SchemaVersion, metrics.Metadata))
 	if evt.OccurredOn > 0 {
 		rec.SetTimestamp(time.UnixMilli(evt.OccurredOn))
 	}
@@ -213,7 +222,7 @@ func rawEventToRecord(evt *events.Event) otellog.Record {
 		return rec
 	}
 
-	rec.SetEventName(rawEventName)
+	rec.SetEventName(eventName(evt.SchemaVersion, metrics.Raw))
 	if evt.OccurredOn > 0 {
 		rec.SetTimestamp(time.UnixMilli(evt.OccurredOn))
 	}
