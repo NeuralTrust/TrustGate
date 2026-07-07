@@ -1,0 +1,51 @@
+# Auto-tags the nested pkg/metrics Go module on merge to main (ENG-1034).
+#
+# When a change to pkg/metrics/** lands on main, this computes the next
+# semantic version from the latest pkg/metrics/vX.Y.Z tag + conventional
+# commits and pushes the path-prefixed tag. The push uses GH_TOKEN (PAT) so it
+# triggers downstream consumer automation (ENG-1033); the default GITHUB_TOKEN
+# would not. The module tag namespace (pkg/metrics/v*) never collides with the
+# root release namespace (v*), and the concurrency guard serializes runs.
+
+name: Metrics Module Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pkg/metrics/**'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: metrics-module-release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Tag pkg/metrics
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_TOKEN }}
+
+      - name: Compute next module version
+        id: version
+        run: bash .github/scripts/next-metrics-version.sh
+
+      - name: Create and push tag
+        if: steps.version.outputs.changed == 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "tag ${TAG} already exists; nothing to do"
+            exit 0
+          fi
+          git config user.name "neuraltrust-bot"
+          git config user.email "bot@neuraltrust.ai"
+          git tag -a "${TAG}" -m "release ${TAG}"
+          git push origin "refs/tags/${TAG}"

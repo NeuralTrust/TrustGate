@@ -164,6 +164,14 @@ jobs:
           SENSIBLE_PG_TEST_DSN: postgres://postgres:postgres@localhost:5432/sensible_pg_test?sslmode=disable
         run: go test -tags integration -race -count=1 ./pkg/infra/telemetry/postgres/...
 
+  scripts-tests:
+    name: CI Scripts Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test metrics module version bump
+        run: bash .github/scripts/next-metrics-version.test.sh
+
   security:
     uses: NeuralTrust/workflows/.github/workflows/sast.yml@main
     with:
