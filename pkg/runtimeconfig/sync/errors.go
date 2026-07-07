@@ -23,3 +23,11 @@ var ErrReadOnly = errors.New("configsync: store is read-only")
 var ErrNotReady = errors.New("configsync: snapshot not ready")
 
 var ErrIntegrity = errors.New("configsync: snapshot integrity mismatch")
+
+// ErrTransportUnavailable marks a config-sync transport disconnect that is
+// expected and self-healing: a control-plane restart or rollout (graceful
+// GOAWAY, surfaced by gRPC as codes.Unavailable), a transient network blip, or
+// a clean stream EOF. Adapters wrap such errors with this sentinel so the watch
+// loop demotes them to WARN and simply reconnects, instead of raising ERROR
+// alarms on routine control-plane rollouts.
+var ErrTransportUnavailable = errors.New("configsync: transport unavailable")

@@ -17,6 +17,8 @@ package configsync
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -25,6 +27,35 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type recordingHandler struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (h *recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *recordingHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	h.records = append(h.records, r)
+	h.mu.Unlock()
+	return nil
+}
+
+func (h *recordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+
+func (h *recordingHandler) WithGroup(string) slog.Handler { return h }
+
+func (h *recordingHandler) levelFor(msg string) (slog.Level, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, r := range h.records {
+		if r.Message == msg {
+			return r.Level, true
+		}
+	}
+	return 0, false
+}
 
 type fetchResult struct {
 	raw         []byte
@@ -440,6 +471,35 @@ func TestWorker_RestoreLKGCorruptDiscarded(t *testing.T) {
 
 	_, ok := store.Load()
 	assert.False(t, ok)
+}
+
+func TestWorker_LogWatchErrorDemotesTransportUnavailable(t *testing.T) {
+	t.Parallel()
+
+	h := &recordingHandler{}
+	worker := NewWorker[string](&fakeFetcher{}, NewMemoryStore[string](), &fakeTransport{}, nil, stringCodec{}, slog.New(h), WorkerConfig{})
+
+	worker.logWatchError(fmt.Errorf("configsync: watch recv: %w: transport is closing", ErrTransportUnavailable))
+
+	level, ok := h.levelFor("config stream disconnected; reconnecting")
+	require.True(t, ok, "expected recoverable disconnect to be logged as a reconnect")
+	assert.Equal(t, slog.LevelWarn, level)
+
+	_, alarmed := h.levelFor("change stream watch failed")
+	assert.False(t, alarmed, "recoverable disconnect must not log an ERROR alarm")
+}
+
+func TestWorker_LogWatchErrorKeepsUnexpectedAtError(t *testing.T) {
+	t.Parallel()
+
+	h := &recordingHandler{}
+	worker := NewWorker[string](&fakeFetcher{}, NewMemoryStore[string](), &fakeTransport{}, nil, stringCodec{}, slog.New(h), WorkerConfig{})
+
+	worker.logWatchError(errors.New("unexpected boom"))
+
+	level, ok := h.levelFor("change stream watch failed")
+	require.True(t, ok, "expected unexpected failure to be logged")
+	assert.Equal(t, slog.LevelError, level)
 }
 
 func TestJittered_StaysWithinSpread(t *testing.T) {

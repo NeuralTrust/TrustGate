@@ -229,8 +229,7 @@ func (w *Worker[T]) watchLoop(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			w.logger.Error("change stream watch failed",
-				slog.String("component", component), slog.String("error", err.Error()))
+			w.logWatchError(err)
 			if !sleep(ctx, backoff) {
 				return
 			}
@@ -243,6 +242,20 @@ func (w *Worker[T]) watchLoop(ctx context.Context) {
 				slog.String("component", component), slog.String("error", err.Error()))
 		}
 	}
+}
+
+// logWatchError records a broken watch stream, demoting expected, self-healing
+// disconnects (control-plane rollout GOAWAY, transient unavailability) to WARN
+// so routine control-plane restarts do not raise ERROR alarms; unexpected
+// failures stay at ERROR.
+func (w *Worker[T]) logWatchError(err error) {
+	if errors.Is(err, ErrTransportUnavailable) {
+		w.logger.Warn("config stream disconnected; reconnecting",
+			slog.String("component", component), slog.String("error", err.Error()))
+		return
+	}
+	w.logger.Error("change stream watch failed",
+		slog.String("component", component), slog.String("error", err.Error()))
 }
 
 func (w *Worker[T]) backstopLoop(ctx context.Context) {
