@@ -23,6 +23,7 @@ import (
 
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
+	infratelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
@@ -101,10 +102,12 @@ func (e *Exporter) Publish(ctx context.Context, evt *events.Event) error {
 	if e.class == metrics.Raw {
 		raw := evt.SensibleView()
 		e.logger.Emit(ctx, rawEventToRecord(&raw))
+		infratelemetry.LogPublish(e.slog, ExporterName, metrics.Raw, &raw)
 		return nil
 	}
 	metadata := evt.MetadataView()
 	e.logger.Emit(ctx, eventToRecord(&metadata))
+	infratelemetry.LogPublish(e.slog, ExporterName, metrics.Metadata, &metadata)
 	return nil
 }
 
