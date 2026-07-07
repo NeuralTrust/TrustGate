@@ -77,7 +77,11 @@ const (
 	attrPolicyChain          = "trustgate.policy_chain"
 	attrAttempts             = "trustgate.attempts"
 	attrAttemptsCount        = "trustgate.attempts.count"
+	attrRequestBody          = "trustgate.request.body"
+	attrResponseBody         = "trustgate.response.body"
 )
+
+const rawEventName = "gateway.request.raw"
 
 // eventToRecord is the single, semconv-pinned (semconv/v1.41.0) mapping from a
 // sanitized business Event to an OTLP log record. Standard fields use GenAI/HTTP
@@ -197,6 +201,38 @@ func eventToRecord(evt *events.Event) otellog.Record {
 			attrs = append(attrs, otellog.String(attrAttempts, encoded))
 		}
 		attrs = append(attrs, otellog.Int(attrAttemptsCount, len(evt.Attempts)))
+	}
+
+	rec.AddAttributes(attrs...)
+	return rec
+}
+
+func rawEventToRecord(evt *events.Event) otellog.Record {
+	var rec otellog.Record
+	if evt == nil {
+		return rec
+	}
+
+	rec.SetEventName(rawEventName)
+	if evt.OccurredOn > 0 {
+		rec.SetTimestamp(time.UnixMilli(evt.OccurredOn))
+	}
+	rec.SetObservedTimestamp(time.Now())
+
+	attrs := make([]otellog.KeyValue, 0, 6)
+	appendStr := func(key, value string) {
+		if value != "" {
+			attrs = append(attrs, otellog.String(key, value))
+		}
+	}
+
+	attrs = append(attrs, otellog.Int(attrSchemaVersion, evt.SchemaVersion))
+	appendStr(attrTraceID, evt.TraceID)
+	appendStr(attrGatewayID, evt.GatewayID)
+	appendStr(attrTeamID, evt.TeamID)
+	appendStr(attrRequestBody, evt.Request.Body)
+	if evt.Response.Body != nil {
+		appendStr(attrResponseBody, *evt.Response.Body)
 	}
 
 	rec.AddAttributes(attrs...)

@@ -20,12 +20,16 @@ import (
 	"os"
 
 	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	metricsschema "github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"gopkg.in/yaml.v3"
 )
 
 var ErrFileNotFound = errors.New("telemetry exporters file not found")
 
-const rawExporterType = "postgres"
+const (
+	postgresExporterType = "postgres"
+	otelExporterType     = "otlp"
+)
 
 type fileSpec struct {
 	Exporters exporterGroups `yaml:"exporters"`
@@ -58,16 +62,20 @@ func Load(path string) ([]telemetrydomain.ExporterConfig, error) {
 	configs := make([]telemetrydomain.ExporterConfig, 0, len(spec.Exporters.Metadata)+len(spec.Exporters.Raw))
 	for _, e := range spec.Exporters.Metadata {
 		cfg := e.toConfig()
-		if cfg.EffectiveType() == rawExporterType {
-			return nil, fmt.Errorf("telemetry exporter %q: %q is raw-only and cannot be declared under exporters.metadata", cfg.Name, rawExporterType)
+		if cfg.EffectiveType() == postgresExporterType {
+			return nil, fmt.Errorf("telemetry exporter %q: %q is raw-only and cannot be declared under exporters.metadata", cfg.Name, postgresExporterType)
 		}
+		cfg.Class = metricsschema.Metadata
 		configs = append(configs, cfg)
 	}
 	for _, e := range spec.Exporters.Raw {
 		cfg := e.toConfig()
-		if cfg.EffectiveType() != rawExporterType {
-			return nil, fmt.Errorf("telemetry exporter %q: exporters.raw only accepts %q, got %q", cfg.Name, rawExporterType, cfg.EffectiveType())
+		switch cfg.EffectiveType() {
+		case postgresExporterType, otelExporterType:
+		default:
+			return nil, fmt.Errorf("telemetry exporter %q: exporters.raw only accepts %q or %q, got %q", cfg.Name, postgresExporterType, otelExporterType, cfg.EffectiveType())
 		}
+		cfg.Class = metricsschema.Raw
 		configs = append(configs, cfg)
 	}
 	return configs, nil

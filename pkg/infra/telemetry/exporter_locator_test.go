@@ -15,18 +15,44 @@
 package telemetry_test
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"testing"
 
+	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	infratelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/kafka"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/postgres"
+	metricsschema "github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type classAwareExporter struct {
+	class    metricsschema.DataClass
+	setCalls int
+}
+
+func (e *classAwareExporter) Name() string                                 { return "fake" }
+func (e *classAwareExporter) DataClass() metricsschema.DataClass           { return e.class }
+func (e *classAwareExporter) Publish(context.Context, *events.Event) error { return nil }
+func (e *classAwareExporter) Close()                                       {}
+func (e *classAwareExporter) SetDataClass(c metricsschema.DataClass) {
+	e.class = c
+	e.setCalls++
+}
+
+type classAwareTemplate struct{ exp *classAwareExporter }
+
+func (t *classAwareTemplate) Name() string                                { return "fake" }
+func (t *classAwareTemplate) ValidateConfig(map[string]interface{}) error { return nil }
+func (t *classAwareTemplate) WithSettings(map[string]interface{}) (appmetrics.Exporter, error) {
+	return t.exp, nil
+}
 
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -84,4 +110,28 @@ func TestExporterLocator_BuildUnknownExporter(t *testing.T) {
 	exporter, err := locator.Build(telemetrydomain.ExporterConfig{Name: "datadog"})
 	require.Error(t, err)
 	assert.Nil(t, exporter)
+}
+
+func TestExporterLocator_BuildInjectsDeclaredClass(t *testing.T) {
+	t.Parallel()
+
+	t.Run("declared class is injected into class-aware exporters", func(t *testing.T) {
+		exp := &classAwareExporter{}
+		locator := infratelemetry.NewExporterLocator(infratelemetry.WithExporter("fake", &classAwareTemplate{exp: exp}))
+
+		_, err := locator.Build(telemetrydomain.ExporterConfig{Name: "fake", Class: metricsschema.Raw})
+		require.NoError(t, err)
+		assert.Equal(t, metricsschema.Raw, exp.DataClass())
+		assert.Equal(t, 1, exp.setCalls)
+	})
+
+	t.Run("empty class leaves the exporter untouched", func(t *testing.T) {
+		exp := &classAwareExporter{class: metricsschema.Metadata}
+		locator := infratelemetry.NewExporterLocator(infratelemetry.WithExporter("fake", &classAwareTemplate{exp: exp}))
+
+		_, err := locator.Build(telemetrydomain.ExporterConfig{Name: "fake"})
+		require.NoError(t, err)
+		assert.Equal(t, metricsschema.Metadata, exp.DataClass())
+		assert.Equal(t, 0, exp.setCalls)
+	})
 }
