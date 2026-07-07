@@ -22,6 +22,7 @@ import (
 
 	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/exportersfile"
+	metricsschema "github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -51,6 +52,7 @@ func TestLoad(t *testing.T) {
 				require.Len(t, configs, 1)
 				assert.Equal(t, "otlp", configs[0].Name)
 				assert.Equal(t, "otlp", configs[0].Type)
+				assert.Equal(t, metricsschema.Metadata, configs[0].Class)
 				assert.Equal(t, "otel-collector:4317", configs[0].Settings["endpoint"])
 				assert.Equal(t, "grpc", configs[0].Settings["protocol"])
 			},
@@ -91,12 +93,12 @@ func TestLoad(t *testing.T) {
 			},
 		},
 		{
-			name:  "non-postgres under raw aborts",
+			name:  "disallowed type under raw aborts",
 			write: true,
 			content: `exporters:
   raw:
     - name: leaky
-      type: otlp
+      type: kafka
 `,
 			assert: func(t *testing.T, configs []telemetrydomain.ExporterConfig, err error) {
 				require.Error(t, err)
@@ -120,6 +122,25 @@ func TestLoad(t *testing.T) {
 				require.Len(t, configs, 1)
 				assert.Equal(t, "raw-pg", configs[0].Name)
 				assert.Equal(t, "postgres", configs[0].Type)
+				assert.Equal(t, metricsschema.Raw, configs[0].Class)
+			},
+		},
+		{
+			name:  "otlp under raw parses as raw class",
+			write: true,
+			content: `exporters:
+  raw:
+    - name: raw-otlp
+      type: otlp
+      settings:
+        endpoint: "otel-collector:4317"
+`,
+			assert: func(t *testing.T, configs []telemetrydomain.ExporterConfig, err error) {
+				require.NoError(t, err)
+				require.Len(t, configs, 1)
+				assert.Equal(t, "raw-otlp", configs[0].Name)
+				assert.Equal(t, "otlp", configs[0].Type)
+				assert.Equal(t, metricsschema.Raw, configs[0].Class)
 			},
 		},
 		{

@@ -25,6 +25,7 @@ import (
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
+	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -105,6 +106,43 @@ func TestExporter_PublishNeverEmitsBodies(t *testing.T) {
 	assert.Empty(t, records[0].Body().AsString())
 	_, hasRequestBody := recordAttr(records[0], "trustgate.request.body")
 	assert.False(t, hasRequestBody)
+}
+
+func TestExporter_DataClassDefaultsToMetadata(t *testing.T) {
+	t.Parallel()
+	exp := newExporterWithProvider(sdklog.NewLoggerProvider(), testLogger(), time.Second)
+	defer exp.Close()
+	assert.Equal(t, metrics.Metadata, exp.DataClass())
+}
+
+func TestExporter_RawClassEmitsBodies(t *testing.T) {
+	t.Parallel()
+	mem := &memExporter{}
+	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(mem)))
+	exp := newExporterWithProvider(provider, testLogger(), time.Second)
+	defer exp.Close()
+
+	exp.SetDataClass(metrics.Raw)
+	assert.Equal(t, metrics.Raw, exp.DataClass())
+	require.NoError(t, exp.Publish(context.Background(), fullEvent()))
+
+	records := mem.all()
+	require.Len(t, records, 1)
+	assert.Equal(t, rawEventName, records[0].EventName())
+
+	reqBody, ok := recordAttr(records[0], attrRequestBody)
+	require.True(t, ok)
+	assert.Equal(t, "request-body", reqBody.AsString())
+	respBody, ok := recordAttr(records[0], attrResponseBody)
+	require.True(t, ok)
+	assert.Equal(t, "hello world", respBody.AsString())
+
+	trace, ok := recordAttr(records[0], attrTraceID)
+	require.True(t, ok)
+	assert.Equal(t, "trace-123", trace.AsString())
+
+	_, hasMethod := recordAttr(records[0], "http.request.method")
+	assert.False(t, hasMethod, "raw record must not carry sanitized metadata attributes")
 }
 
 func TestExporter_NilEventIsNoOp(t *testing.T) {

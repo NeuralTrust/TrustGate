@@ -18,6 +18,8 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+
+	metricsschema "github.com/NeuralTrust/TrustGate/pkg/metrics"
 )
 
 type Telemetry struct {
@@ -32,6 +34,10 @@ type ExporterConfig struct {
 	Name     string                 `json:"name"`
 	Type     string                 `json:"type"`
 	Settings map[string]interface{} `json:"settings"`
+
+	// Class binds the exporter to a data class, set from the group it is declared
+	// under in the defaults file. Empty for per-gateway configs.
+	Class metricsschema.DataClass `json:"class,omitempty"`
 }
 
 func (c ExporterConfig) EffectiveType() string {
