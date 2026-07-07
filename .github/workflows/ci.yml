@@ -60,8 +60,13 @@ jobs:
           go vet ./...
           go test -race ./...
       - name: Lint pkg/metrics
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v8
         with:
+          version: v2.12.2
+          # Released golangci-lint binaries are built with go1.25 and refuse to
+          # lint this module's go1.26.4 directive; goinstall recompiles it with
+          # the active setup-go toolchain so the versions match.
+          install-mode: goinstall
           working-directory: pkg/metrics
 
   functional-tests:
