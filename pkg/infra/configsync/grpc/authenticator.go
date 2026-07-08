@@ -116,6 +116,32 @@ func (j *jwtAuthenticator) authenticate(bearer string) (string, error) {
 	return scope, nil
 }
 
+// compositeAuthenticator accepts either a signed per-tenant JWT (external data
+// planes → scoped snapshot) or the shared bearer token (in-cluster data plane →
+// global snapshot). The JWT is verified first; only a bearer that fails JWT
+// verification is compared against the shared token in constant time. This lets a
+// single control plane serve an internal shared fleet and external per-tenant
+// data planes at once, without the shared secret ever leaving the cluster.
+type compositeAuthenticator struct {
+	jwt    *jwtAuthenticator
+	shared *sharedAuthenticator
+}
+
+func newCompositeAuthenticator(cfg config.ConfigSyncConfig) (*compositeAuthenticator, error) {
+	jwtAuth, err := newJWTAuthenticator(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &compositeAuthenticator{jwt: jwtAuth, shared: newSharedAuthenticator(cfg)}, nil
+}
+
+func (c *compositeAuthenticator) authenticate(bearer string) (string, error) {
+	if scope, err := c.jwt.authenticate(bearer); err == nil {
+		return scope, nil
+	}
+	return c.shared.authenticate(bearer)
+}
+
 func parsePKIXPublicKeyPEM(pemStr string) (any, error) {
 	block, _ := pem.Decode([]byte(pemStr))
 	if block == nil {
