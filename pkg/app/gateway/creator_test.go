@@ -160,6 +160,30 @@ func TestCreator_Create_RejectsDuplicateExporter(t *testing.T) {
 	}
 }
 
+func TestCreator_Create_StripsClientProvidedTeamID(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().
+		Save(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+			return g.TeamID() == "" && g.Metadata["env"] == "prod"
+		})).
+		Return(nil).
+		Once()
+
+	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil)
+
+	g, err := creator.Create(context.Background(), appgateway.CreateInput{
+		Slug:     "prod",
+		Metadata: map[string]string{domain.MetadataTeamIDKey: "attacker-team", "env": "prod"},
+	})
+	if err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+	if g.TeamID() != "" {
+		t.Fatalf("client-provided team_id was not stripped: %q", g.TeamID())
+	}
+}
+
 func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)

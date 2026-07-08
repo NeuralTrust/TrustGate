@@ -179,3 +179,68 @@ func TestClientTLSConfig_NilRoundTrip(t *testing.T) {
 		t.Fatalf("Value = %v, want nil for nil ClientTLSConfig", v)
 	}
 }
+
+func TestSanitizeClientMetadata(t *testing.T) {
+	t.Parallel()
+
+	t.Run("strips server-only team_id", func(t *testing.T) {
+		t.Parallel()
+		in := map[string]string{MetadataTeamIDKey: "attacker-team", "env": "prod"}
+		out := SanitizeClientMetadata(in)
+		if _, ok := out[MetadataTeamIDKey]; ok {
+			t.Fatalf("team_id survived sanitization: %v", out)
+		}
+		if out["env"] != "prod" {
+			t.Fatalf("non-reserved key dropped: %v", out)
+		}
+		if _, ok := in[MetadataTeamIDKey]; !ok {
+			t.Fatal("input map mutated; sanitize must copy")
+		}
+	})
+
+	t.Run("nil input stays nil", func(t *testing.T) {
+		t.Parallel()
+		if out := SanitizeClientMetadata(nil); out != nil {
+			t.Fatalf("nil input produced %v, want nil", out)
+		}
+	})
+
+	t.Run("only reserved keys collapse to nil", func(t *testing.T) {
+		t.Parallel()
+		if out := SanitizeClientMetadata(map[string]string{MetadataTeamIDKey: "x"}); out != nil {
+			t.Fatalf("expected nil after removing sole reserved key, got %v", out)
+		}
+	})
+}
+
+func TestWithTeamID(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty team leaves metadata untouched", func(t *testing.T) {
+		t.Parallel()
+		in := map[string]string{"env": "prod"}
+		out := WithTeamID(in, "")
+		if _, ok := out[MetadataTeamIDKey]; ok {
+			t.Fatalf("empty teamID injected a key: %v", out)
+		}
+	})
+
+	t.Run("sets team_id while preserving other keys", func(t *testing.T) {
+		t.Parallel()
+		out := WithTeamID(map[string]string{"env": "prod"}, "team-1")
+		if out[MetadataTeamIDKey] != "team-1" {
+			t.Fatalf("team_id = %q, want team-1", out[MetadataTeamIDKey])
+		}
+		if out["env"] != "prod" {
+			t.Fatalf("existing key lost: %v", out)
+		}
+	})
+
+	t.Run("initializes nil metadata", func(t *testing.T) {
+		t.Parallel()
+		out := WithTeamID(nil, "team-1")
+		if out[MetadataTeamIDKey] != "team-1" {
+			t.Fatalf("team_id = %q, want team-1", out[MetadataTeamIDKey])
+		}
+	})
+}

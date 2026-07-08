@@ -152,6 +152,38 @@ func TestUpdater_Update_Partial_PreservesStatus(t *testing.T) {
 	}
 }
 
+func TestUpdater_Update_TeamIDIsServerOnlyAndImmutable(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	existing := domain.Rehydrate(id, "old", "active", "", nil, nil, nil, now, now)
+	existing.Metadata = map[string]string{domain.MetadataTeamIDKey: "acme", "env": "prod"}
+
+	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+	repo.EXPECT().
+		Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+			return g.TeamID() == "acme" && g.Metadata["env"] == "staging"
+		})).
+		Return(nil).
+		Once()
+
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil)
+	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
+		ID:       id,
+		Metadata: map[string]string{domain.MetadataTeamIDKey: "globex", "env": "staging"},
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.TeamID() != "acme" {
+		t.Fatalf("team_id mutated by client: got %q, want the immutable acme", got.TeamID())
+	}
+	if got.Metadata["env"] != "staging" {
+		t.Fatalf("non-reserved metadata was not updated: %+v", got.Metadata)
+	}
+}
+
 func TestUpdater_Update_RejectsEmptySlug(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)

@@ -48,6 +48,38 @@ func (g *Gateway) TeamID() string {
 	return g.Metadata[MetadataTeamIDKey]
 }
 
+func isReservedMetadataKey(key string) bool {
+	return key == MetadataTeamIDKey
+}
+
+func SanitizeClientMetadata(metadata map[string]string) map[string]string {
+	if metadata == nil {
+		return nil
+	}
+	out := make(map[string]string, len(metadata))
+	for key, value := range metadata {
+		if isReservedMetadataKey(key) {
+			continue
+		}
+		out[key] = value
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func WithTeamID(metadata map[string]string, teamID string) map[string]string {
+	if teamID == "" {
+		return metadata
+	}
+	if metadata == nil {
+		metadata = make(map[string]string, 1)
+	}
+	metadata[MetadataTeamIDKey] = teamID
+	return metadata
+}
+
 type SessionConfig struct {
 	Enabled       *bool  `json:"enabled,omitempty"`
 	HeaderName    string `json:"header_name,omitempty"`

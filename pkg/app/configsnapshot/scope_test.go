@@ -33,6 +33,15 @@ func gatewayWithTeam(id ids.GatewayID, team string) *gatewaydomain.Gateway {
 	return &gatewaydomain.Gateway{ID: id, Metadata: map[string]string{gatewaydomain.MetadataTeamIDKey: team}}
 }
 
+func mustID[K ids.Kind](t *testing.T, s string) ids.ID[K] {
+	t.Helper()
+	id, err := ids.Parse[K](s)
+	if err != nil {
+		t.Fatalf("parse id %q: %v", s, err)
+	}
+	return id
+}
+
 func twoTenantCompiler(t *testing.T, acme, globex ids.GatewayID, acmeConsumer, globexConsumer ids.ConsumerID) *appsnapshot.Compiler {
 	t.Helper()
 	return appsnapshot.NewCompiler(
@@ -113,6 +122,70 @@ func TestCompilerCompileAllPartitionsAndIsolates(t *testing.T) {
 	globexSnap := scoped["globex"]
 	if gws := globexSnap.Data().Gateways; len(gws) != 1 || gws[0].ID != globex {
 		t.Fatalf("globex scope leaked other gateways: %+v", gws)
+	}
+}
+
+func TestCompileForIsolatesEveryChildObjectType(t *testing.T) {
+	acme := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
+	globex := mustGatewayID(t, "22222222-2222-2222-2222-222222222222")
+
+	acmeRegistry := mustID[ids.RegistryKind](t, "aaaa1111-1111-1111-1111-111111111111")
+	globexRegistry := mustID[ids.RegistryKind](t, "bbbb2222-2222-2222-2222-222222222222")
+	acmePolicy := mustID[ids.PolicyKind](t, "aaaa3333-3333-3333-3333-333333333333")
+	globexPolicy := mustID[ids.PolicyKind](t, "bbbb4444-4444-4444-4444-444444444444")
+	acmeAuth := mustID[ids.AuthKind](t, "aaaa5555-5555-5555-5555-555555555555")
+	globexAuth := mustID[ids.AuthKind](t, "bbbb6666-6666-6666-6666-666666666666")
+	acmeRole := mustID[ids.RoleKind](t, "aaaa7777-7777-7777-7777-777777777777")
+	globexRole := mustID[ids.RoleKind](t, "bbbb8888-8888-8888-8888-888888888888")
+
+	compiler := appsnapshot.NewCompiler(
+		fakeGateways{items: []*gatewaydomain.Gateway{
+			gatewayWithTeam(acme, "acme"),
+			gatewayWithTeam(globex, "globex"),
+		}},
+		fakeConsumers{byGateway: map[string][]*consumerdomain.Consumer{}},
+		fakeRegistries{byGateway: map[string][]*registrydomain.Registry{
+			acme.String():   {{ID: acmeRegistry, GatewayID: acme}},
+			globex.String(): {{ID: globexRegistry, GatewayID: globex}},
+		}},
+		fakePolicies{byGateway: map[string][]*policydomain.Policy{
+			acme.String():   {{ID: acmePolicy, GatewayID: acme}},
+			globex.String(): {{ID: globexPolicy, GatewayID: globex}},
+		}},
+		fakeAuths{byGateway: map[string][]*authdomain.Auth{
+			acme.String():   {{ID: acmeAuth, GatewayID: acme}},
+			globex.String(): {{ID: globexAuth, GatewayID: globex}},
+		}},
+		fakeRoles{byGateway: map[string][]*roledomain.Role{
+			acme.String():   {{ID: acmeRole, GatewayID: acme}},
+			globex.String(): {{ID: globexRole, GatewayID: globex}},
+		}},
+		fakeCatalog{},
+		nil,
+	)
+
+	snap, err := compiler.CompileFor(context.Background(), "acme")
+	if err != nil {
+		t.Fatalf("compile for acme: %v", err)
+	}
+	data := snap.Data()
+
+	if len(data.Registries) != 1 || data.Registries[0].ID != acmeRegistry {
+		t.Fatalf("registries leaked across scope: %+v", data.Registries)
+	}
+	if len(data.Policies) != 1 || data.Policies[0].ID != acmePolicy {
+		t.Fatalf("policies leaked across scope: %+v", data.Policies)
+	}
+	if len(data.Auths) != 1 || data.Auths[0].ID != acmeAuth {
+		t.Fatalf("auths leaked across scope: %+v", data.Auths)
+	}
+	if len(data.Roles) != 1 || data.Roles[0].ID != acmeRole {
+		t.Fatalf("roles leaked across scope: %+v", data.Roles)
+	}
+	for _, r := range data.Registries {
+		if r.GatewayID == globex {
+			t.Fatal("globex registry surfaced in the acme scope")
+		}
 	}
 }
 
