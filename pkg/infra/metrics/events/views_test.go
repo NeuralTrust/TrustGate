@@ -29,7 +29,7 @@ func fullEvent() events.Event {
 		Kind:          events.KindLLM,
 		TraceID:       "trace-1",
 		GatewayID:     "gw-1",
-		TeamID:        "team-1",
+		TenantID:        "team-1",
 		Timestamp:     "2026-07-06T00:00:00Z",
 		OccurredOn:    1751760000,
 		EndTimestamp:  1751760001,
@@ -74,7 +74,7 @@ func TestEvent_MetadataView_ExcludesBodies(t *testing.T) {
 	assert.Equal(t, evt.Kind, meta.Kind)
 	assert.Equal(t, evt.TraceID, meta.TraceID)
 	assert.Equal(t, evt.GatewayID, meta.GatewayID)
-	assert.Equal(t, evt.TeamID, meta.TeamID)
+	assert.Equal(t, evt.TenantID, meta.TenantID)
 	assert.Equal(t, evt.IP, meta.IP)
 	assert.Equal(t, evt.Consumer, meta.Consumer)
 	assert.Equal(t, evt.Status, meta.Status)
@@ -101,7 +101,7 @@ func TestEvent_SensibleView_OnlyBodiesAndCorrelationKeys(t *testing.T) {
 	assert.Equal(t, evt.SchemaVersion, sensible.SchemaVersion)
 	assert.Equal(t, evt.TraceID, sensible.TraceID)
 	assert.Equal(t, evt.GatewayID, sensible.GatewayID)
-	assert.Equal(t, evt.TeamID, sensible.TeamID)
+	assert.Equal(t, evt.TenantID, sensible.TenantID)
 	assert.Equal(t, evt.OccurredOn, sensible.OccurredOn)
 
 	assert.Empty(t, sensible.Kind)

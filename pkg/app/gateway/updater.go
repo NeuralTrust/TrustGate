@@ -91,7 +91,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 		g.Domain = *in.Domain
 	}
 	if in.Metadata != nil {
-		g.Metadata = in.Metadata
+		g.Metadata = domain.WithTenantID(domain.SanitizeClientMetadata(in.Metadata), old.TenantID())
 	}
 	if in.Telemetry != nil {
 		g.Telemetry = in.Telemetry

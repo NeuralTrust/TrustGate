@@ -94,7 +94,7 @@ func (m *MCPMetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string
 		Kind:      events.KindMCP,
 	}
 	if gw != nil {
-		meta.TeamID = gw.TeamID()
+		meta.TenantID = gw.TenantID()
 	}
 	return meta
 }

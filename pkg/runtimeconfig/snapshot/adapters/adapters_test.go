@@ -55,7 +55,7 @@ func newFixture() fixture {
 		Slug:      "gw-one",
 		Status:    "active",
 		Domain:    "one.example.com",
-		Metadata:  map[string]string{"team_id": "team-1"},
+		Metadata:  map[string]string{"tenant_id": "team-1"},
 		CreatedAt: baseTime,
 	}
 	reg := registrydomain.Registry{
@@ -117,10 +117,10 @@ func TestGatewayAdapterReads(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, f.gateway.ID, got.ID)
 
-	got.Metadata["team_id"] = "mutated"
+	got.Metadata["tenant_id"] = "mutated"
 	fresh, err := repo.FindByID(ctx, f.gateway.ID)
 	require.NoError(t, err)
-	assert.Equal(t, "team-1", fresh.Metadata["team_id"], "returned gateway must be a deep clone")
+	assert.Equal(t, "team-1", fresh.Metadata["tenant_id"], "returned gateway must be a deep clone")
 
 	_, err = repo.FindByDomain(ctx, "unknown.example.com")
 	assert.ErrorIs(t, err, gatewaydomain.ErrNotFound)

@@ -21,7 +21,7 @@ func init() {
 		UpSQL: `CREATE TABLE IF NOT EXISTS trustgate_data (
     trace_id         TEXT        NOT NULL,
     gateway_id       TEXT        NOT NULL,
-    team_id          TEXT,
+    tenant_id          TEXT,
     occurred_on      BIGINT      NOT NULL,
     schema_version   INT         NOT NULL,
     request_body     TEXT,

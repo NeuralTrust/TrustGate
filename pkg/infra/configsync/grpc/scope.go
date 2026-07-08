@@ -12,14 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package metrics
+package grpc
 
-type SensibleRecord struct {
-	TraceID       string  `db:"trace_id" json:"trace_id"`
-	GatewayID     string  `db:"gateway_id" json:"gateway_id"`
-	TenantID        *string `db:"tenant_id" json:"tenant_id,omitempty"`
-	OccurredOn    int64   `db:"occurred_on" json:"occurred_on"`
-	SchemaVersion int     `db:"schema_version" json:"schema_version"`
-	RequestBody   string  `db:"request_body" json:"request_body"`
-	ResponseBody  *string `db:"response_body" json:"response_body,omitempty"`
+import "context"
+
+type scopeContextKeyType struct{}
+
+var scopeContextKey scopeContextKeyType
+
+func WithScope(ctx context.Context, scope string) context.Context {
+	return context.WithValue(ctx, scopeContextKey, scope)
+}
+
+func ScopeFromContext(ctx context.Context) string {
+	scope, _ := ctx.Value(scopeContextKey).(string)
+	return scope
 }

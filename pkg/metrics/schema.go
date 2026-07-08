@@ -21,7 +21,7 @@ const TableName = "trustgate_data"
 const (
 	ColumnTraceID       = "trace_id"
 	ColumnGatewayID     = "gateway_id"
-	ColumnTeamID        = "team_id"
+	ColumnTenantID        = "tenant_id"
 	ColumnOccurredOn    = "occurred_on"
 	ColumnSchemaVersion = "schema_version"
 	ColumnRequestBody   = "request_body"
@@ -43,7 +43,7 @@ func InsertColumns() []string {
 	return []string{
 		ColumnTraceID,
 		ColumnGatewayID,
-		ColumnTeamID,
+		ColumnTenantID,
 		ColumnOccurredOn,
 		ColumnSchemaVersion,
 		ColumnRequestBody,

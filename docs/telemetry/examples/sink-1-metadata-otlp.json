@@ -26,7 +26,7 @@
       "trustgate.kind": "llm",
       "trustgate.trace_id": "b1c8a71f-35d8-4aff-a8da-dcb78d05cac9",
       "trustgate.gateway_id": "gw-support-chat",
-      "trustgate.team_id": "00000000-0000-0000-0000-000000000001",
+      "trustgate.tenant_id": "00000000-0000-0000-0000-000000000001",
       "trustgate.consumer.id": "consumer-42",
       "trustgate.consumer.name": "acme-web",
       "trustgate.session_id": "sess-7c9c",

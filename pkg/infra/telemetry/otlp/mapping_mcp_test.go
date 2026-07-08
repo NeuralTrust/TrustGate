@@ -28,7 +28,7 @@ func TestEventToRecord_MCPAttributes(t *testing.T) {
 		Kind:          events.KindMCP,
 		TraceID:       "trace-mcp",
 		GatewayID:     "gw-1",
-		TeamID:        "team-1",
+		TenantID:        "team-1",
 		Consumer:      events.Consumer{ID: "c-1", Name: "agent"},
 		Status:        events.Status{Code: 200},
 		Request:       events.Request{Method: "POST", Path: "/mcp"},

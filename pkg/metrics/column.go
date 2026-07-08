@@ -39,7 +39,7 @@ func RawColumns() []Column {
 	return []Column{
 		{Name: ColumnTraceID, Type: ColumnTypeString},
 		{Name: ColumnGatewayID, Type: ColumnTypeString},
-		{Name: ColumnTeamID, Type: ColumnTypeString, Nullable: true},
+		{Name: ColumnTenantID, Type: ColumnTypeString, Nullable: true},
 		{Name: ColumnOccurredOn, Type: ColumnTypeInt64},
 		{Name: ColumnSchemaVersion, Type: ColumnTypeInt32},
 		{Name: ColumnRequestBody, Type: ColumnTypeString},

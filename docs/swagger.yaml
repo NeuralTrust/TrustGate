@@ -1801,6 +1801,12 @@ definitions:
     type: object
   github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.ExporterConfig:
     properties:
+      class:
+        allOf:
+        - $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_metrics.DataClass'
+        description: |-
+          Class binds the exporter to a data class, set from the group it is declared
+          under in the defaults file. Empty for per-gateway configs.
       name:
         type: string
       settings:
@@ -1911,7 +1917,7 @@ definitions:
         type: string
       status:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Status'
-      team_id:
+      tenant_id:
         type: string
       timestamp:
         type: string
@@ -2068,6 +2074,14 @@ definitions:
       total_tokens:
         type: integer
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_metrics.DataClass:
+    enum:
+    - metadata
+    - raw
+    type: string
+    x-enum-varnames:
+    - Metadata
+    - Raw
   github_com_NeuralTrust_TrustGate_pkg_version.Info:
     properties:
       app_name:

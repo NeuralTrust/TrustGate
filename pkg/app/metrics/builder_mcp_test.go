@@ -36,7 +36,7 @@ func mcpSpan(name string, attrs *trace.MCPAttrs, latency time.Duration) *trace.S
 func TestBuilder_MCPFoldsUpstreamAndLatency(t *testing.T) {
 	rt := trace.New("trace-mcp", trace.Metadata{
 		GatewayID:    "gw-1",
-		TeamID:       "team-9",
+		TenantID:       "team-9",
 		ConsumerID:   "c-1",
 		ConsumerName: "agent",
 		Kind:         events.KindMCP,
@@ -62,7 +62,7 @@ func TestBuilder_MCPFoldsUpstreamAndLatency(t *testing.T) {
 	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, end)
 
 	assert.Equal(t, events.KindMCP, evt.Kind)
-	assert.Equal(t, "team-9", evt.TeamID)
+	assert.Equal(t, "team-9", evt.TenantID)
 	assert.Equal(t, "c-1", evt.Consumer.ID)
 	require.NotNil(t, evt.MCP)
 	assert.Equal(t, "tools/call", evt.MCP.Method)

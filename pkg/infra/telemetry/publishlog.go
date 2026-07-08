@@ -34,6 +34,6 @@ func LogPublish(logger *slog.Logger, exporter string, class metrics.DataClass, e
 		slog.Int("schema_version", evt.SchemaVersion),
 		slog.String("trace_id", evt.TraceID),
 		slog.String("gateway_id", evt.GatewayID),
-		slog.String("team_id", evt.TeamID),
+		slog.String("tenant_id", evt.TenantID),
 	)
 }

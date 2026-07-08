@@ -73,7 +73,7 @@ func TestExporterInsertsSensibleRowIdempotently(t *testing.T) {
 	evt := &events.Event{
 		TraceID:    trace,
 		GatewayID:  "g",
-		TeamID:     "tm",
+		TenantID:     "tm",
 		OccurredOn: time.Now().UnixMilli(),
 		Request:    events.Request{Body: "hello-req"},
 		Response:   events.Response{Body: &resp},

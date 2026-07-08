@@ -168,11 +168,11 @@ func postChat(t *testing.T, app *fiber.App) {
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
 }
 
-func TestMetricsFunctional_DefaultPlusExtraAndTeamID(t *testing.T) {
+func TestMetricsFunctional_DefaultPlusExtraAndTenantID(t *testing.T) {
 	rec := newEventRecorder()
 	gw := &gatewaydomain.Gateway{
 		ID:       ids.New[ids.GatewayKind](),
-		Metadata: map[string]string{gatewaydomain.MetadataTeamIDKey: "team-9"},
+		Metadata: map[string]string{gatewaydomain.MetadataTenantIDKey: "team-9"},
 		Telemetry: &telemetrydomain.Telemetry{
 			Exporters: []telemetrydomain.ExporterConfig{
 				{Name: "memory", Settings: map[string]interface{}{"topic": "team-metrics"}},
@@ -186,8 +186,8 @@ func TestMetricsFunctional_DefaultPlusExtraAndTeamID(t *testing.T) {
 		return rec.count("kafka/"+defaultTopic) == 1 && rec.count("memory/team-metrics") == 1
 	}, 2*time.Second, 10*time.Millisecond)
 
-	assert.Equal(t, "team-9", rec.first("kafka/"+defaultTopic).TeamID)
-	assert.Equal(t, "team-9", rec.first("memory/team-metrics").TeamID)
+	assert.Equal(t, "team-9", rec.first("kafka/"+defaultTopic).TenantID)
+	assert.Equal(t, "team-9", rec.first("memory/team-metrics").TenantID)
 }
 
 func TestMetricsFunctional_OverrideByNameRedirectsDefault(t *testing.T) {

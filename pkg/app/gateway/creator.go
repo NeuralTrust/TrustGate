@@ -74,7 +74,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, 
 		return nil, err
 	}
 	g.Domain = in.Domain
-	g.Metadata = in.Metadata
+	g.Metadata = domain.SanitizeClientMetadata(in.Metadata)
 	g.Telemetry = in.Telemetry
 	g.ClientTLSConfig = in.ClientTLSConfig
 	g.SessionConfig = in.SessionConfig

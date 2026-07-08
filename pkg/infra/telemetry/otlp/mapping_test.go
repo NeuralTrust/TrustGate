@@ -39,7 +39,7 @@ func fullEvent() *events.Event {
 		SchemaVersion: events.SchemaVersion,
 		TraceID:       "trace-123",
 		GatewayID:     "gw-1",
-		TeamID:        "team-1",
+		TenantID:        "team-1",
 		OccurredOn:    1_700_000_000_000,
 		Consumer:      events.Consumer{ID: "c-1", Name: "alice"},
 		SessionID:     "sess-1",
@@ -101,7 +101,7 @@ func TestEventToRecord_StandardAndProprietaryCoexist(t *testing.T) {
 	assert.Equal(t, int64(events.SchemaVersion), attrs["trustgate.schema_version"].AsInt64())
 	assert.Equal(t, "trace-123", attrs["trustgate.trace_id"].AsString())
 	assert.Equal(t, "gw-1", attrs["trustgate.gateway_id"].AsString())
-	assert.Equal(t, "team-1", attrs["trustgate.team_id"].AsString())
+	assert.Equal(t, "team-1", attrs["trustgate.tenant_id"].AsString())
 	assert.Equal(t, "c-1", attrs["trustgate.consumer.id"].AsString())
 	assert.Equal(t, "alice", attrs["trustgate.consumer.name"].AsString())
 	assert.InDelta(t, 0.01, attrs["trustgate.cost.total_usd"].AsFloat64(), 1e-9)

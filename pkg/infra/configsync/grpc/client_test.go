@@ -46,7 +46,7 @@ type fakeSource struct {
 	ok      bool
 }
 
-func (f *fakeSource) Snapshot() ([]byte, string, bool) {
+func (f *fakeSource) SnapshotFor(string) ([]byte, string, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.raw, f.version, f.ok

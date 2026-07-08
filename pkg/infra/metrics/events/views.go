@@ -25,7 +25,7 @@ func (e Event) SensibleView() Event {
 		SchemaVersion: e.SchemaVersion,
 		TraceID:       e.TraceID,
 		GatewayID:     e.GatewayID,
-		TeamID:        e.TeamID,
+		TenantID:        e.TenantID,
 		OccurredOn:    e.OccurredOn,
 		Request:       Request{Body: e.Request.Body},
 		Response:      Response{Body: e.Response.Body},

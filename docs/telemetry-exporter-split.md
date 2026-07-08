@@ -57,7 +57,7 @@ are duplicated into **both** views so the sensible row can be joined back to the
 **Decision (narrowed): sensible data is ONLY the request input and the response output — i.e. the two
 payload bodies.** Everything else is metadata.
 
-**Correlation keys (in both views):** `SchemaVersion`, `TraceID`, `GatewayID`, `TeamID`, `OccurredOn`
+**Correlation keys (in both views):** `SchemaVersion`, `TraceID`, `GatewayID`, `TenantID`, `OccurredOn`
 (+ `Timestamp`).
 
 **Sensible (→ Postgres):** `Request.Body` (input) and `Response.Body` (output). Nothing else.
@@ -220,7 +220,7 @@ type Migration struct { ID, Name, UpSQL, DownSQL string }
 CREATE TABLE IF NOT EXISTS trustgate_data (
     trace_id         TEXT        NOT NULL,
     gateway_id       TEXT        NOT NULL,
-    team_id          TEXT,
+    tenant_id          TEXT,
     occurred_on      BIGINT      NOT NULL,          -- epoch millis, from Event.OccurredOn
     schema_version   INT         NOT NULL,
     request_body     TEXT,                          -- input

@@ -27,10 +27,15 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func testInterceptor(token, previous string) *AuthInterceptor {
+func testInterceptor(t *testing.T, token, previous string) *AuthInterceptor {
+	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cfg := &config.Config{ConfigSync: config.ConfigSyncConfig{Token: token, TokenPrevious: previous}}
-	return NewAuthInterceptor(cfg, logger)
+	interceptor, err := NewAuthInterceptor(cfg, logger)
+	if err != nil {
+		t.Fatalf("NewAuthInterceptor: %v", err)
+	}
+	return interceptor
 }
 
 func contextWithAuth(header string, set bool) context.Context {
@@ -83,7 +88,7 @@ func TestAuthInterceptor_Unary(t *testing.T) {
 	for _, tc := range authCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			interceptor := testInterceptor(tc.token, tc.previous)
+			interceptor := testInterceptor(t, tc.token, tc.previous)
 			ctx := contextWithAuth(tc.header, tc.setMeta)
 			called := false
 			handler := func(context.Context, any) (any, error) {
@@ -105,7 +110,7 @@ func TestAuthInterceptor_Stream(t *testing.T) {
 	for _, tc := range authCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			interceptor := testInterceptor(tc.token, tc.previous)
+			interceptor := testInterceptor(t, tc.token, tc.previous)
 			ctx := contextWithAuth(tc.header, tc.setMeta)
 			called := false
 			handler := func(any, grpc.ServerStream) error {

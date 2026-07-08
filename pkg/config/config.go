@@ -144,12 +144,22 @@ type Config struct {
 	ConfigSync       ConfigSyncConfig
 }
 
+const (
+	ConfigSyncAuthModeShared = "shared"
+	ConfigSyncAuthModeSigned = "signed"
+)
+
 type ConfigSyncConfig struct {
 	DataPlaneEnabled bool
 	Token            string // #nosec G117 -- config struct field, not a hardcoded credential
 	// TokenPrevious is the prior bearer accepted alongside Token so a token can be
 	// rotated without a window where in-flight data planes fail to authenticate.
 	TokenPrevious     string // #nosec G117 -- config struct field, not a hardcoded credential
+	AuthMode          string
+	JWTPublicKey      string // #nosec G117 -- config struct field, not a hardcoded credential
+	JWTJWKSURL        string
+	JWTIssuer         string
+	JWTAudience       string
 	LKGPath           string
 	LKGKey            string // #nosec G117 -- config struct field, not a hardcoded credential
 	PollInterval      time.Duration
@@ -592,6 +602,11 @@ func getConfigSyncConfig() ConfigSyncConfig {
 		DataPlaneEnabled:     getEnvBool("CONFIG_SYNC_DATA_PLANE_ENABLED", defaultConfigSyncDataPlaneEnabled),
 		Token:                getEnv("CONFIG_SYNC_TOKEN", ""),
 		TokenPrevious:        getEnv("CONFIG_SYNC_TOKEN_PREVIOUS", ""),
+		AuthMode:             normalizeConfigSyncAuthMode(getEnv("CONFIG_SYNC_AUTH_MODE", ConfigSyncAuthModeShared)),
+		JWTPublicKey:         getEnv("CONFIG_SYNC_JWT_PUBLIC_KEY", ""),
+		JWTJWKSURL:           getEnv("CONFIG_SYNC_JWT_JWKS_URL", ""),
+		JWTIssuer:            getEnv("CONFIG_SYNC_JWT_ISSUER", ""),
+		JWTAudience:          getEnv("CONFIG_SYNC_JWT_AUDIENCE", ""),
 		LKGPath:              getEnv("CONFIG_SYNC_LKG_PATH", defaultConfigSyncLKGPath),
 		LKGKey:               getEnv("CONFIG_SYNC_LKG_KEY", ""),
 		PollInterval:         getEnvDuration("CONFIG_SYNC_POLL_INTERVAL", defaultConfigSyncPollInterval),
@@ -612,6 +627,10 @@ func getConfigSyncConfig() ConfigSyncConfig {
 		OutboxRetention:      getEnvDuration("CONFIG_SYNC_OUTBOX_RETENTION", defaultConfigSyncOutboxRetention),
 		OutboxMaxRows:        getEnvInt64("CONFIG_SYNC_OUTBOX_MAX_ROWS", defaultConfigSyncOutboxMaxRows),
 	}
+}
+
+func normalizeConfigSyncAuthMode(mode string) string {
+	return strings.ToLower(strings.TrimSpace(mode))
 }
 
 func resolveConfigSyncInstanceID() string {
@@ -700,10 +719,33 @@ func (c *Config) Validate() error {
 	if c.isDeployed() && c.ConfigSync.DataPlaneEnabled && c.ConfigSync.TLSInsecure {
 		return fmt.Errorf("%w: CONFIG_SYNC_TLS_INSECURE must not be true in deployed environments so the config-sync channel is not sent in cleartext", errors.ErrInvalidConfig)
 	}
+	if err := c.ConfigSync.validateAuthMode(); err != nil {
+		return err
+	}
 	if err := c.ConfigSync.Validate(); err != nil {
 		return err
 	}
 	return nil
+}
+
+func (cs ConfigSyncConfig) validateAuthMode() error {
+	switch cs.AuthMode {
+	case "", ConfigSyncAuthModeShared:
+		return nil
+	case ConfigSyncAuthModeSigned:
+		if cs.JWTPublicKey == "" {
+			if cs.JWTJWKSURL != "" {
+				return fmt.Errorf("%w: CONFIG_SYNC_AUTH_MODE=signed with JWKS is not yet supported; set CONFIG_SYNC_JWT_PUBLIC_KEY", errors.ErrInvalidConfig)
+			}
+			return fmt.Errorf("%w: CONFIG_SYNC_AUTH_MODE=signed requires CONFIG_SYNC_JWT_PUBLIC_KEY", errors.ErrInvalidConfig)
+		}
+		if cs.JWTIssuer == "" || cs.JWTAudience == "" {
+			return fmt.Errorf("%w: CONFIG_SYNC_AUTH_MODE=signed requires CONFIG_SYNC_JWT_ISSUER and CONFIG_SYNC_JWT_AUDIENCE", errors.ErrInvalidConfig)
+		}
+		return nil
+	default:
+		return fmt.Errorf("%w: CONFIG_SYNC_AUTH_MODE must be %q or %q", errors.ErrInvalidConfig, ConfigSyncAuthModeShared, ConfigSyncAuthModeSigned)
+	}
 }
 
 // IsDeployed reports whether APP_ENV marks a non-local deployment (staging or

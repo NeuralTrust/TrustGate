@@ -85,7 +85,7 @@ func (e *Exporter) Publish(ctx context.Context, evt *events.Event) error {
 	if _, err := e.pool.Exec(ctx, e.insertSQL,
 		rec.TraceID,
 		rec.GatewayID,
-		rec.TeamID,
+		rec.TenantID,
 		rec.OccurredOn,
 		rec.SchemaVersion,
 		rec.RequestBody,
@@ -115,8 +115,8 @@ func toRecord(view events.Event) metrics.SensibleRecord {
 		RequestBody:   view.Request.Body,
 		ResponseBody:  view.Response.Body,
 	}
-	if team := strings.TrimSpace(view.TeamID); team != "" {
-		rec.TeamID = &team
+	if team := strings.TrimSpace(view.TenantID); team != "" {
+		rec.TenantID = &team
 	}
 	return rec
 }
