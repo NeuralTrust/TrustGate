@@ -35,7 +35,10 @@ func startServer(t *testing.T, token string, src SnapshotSource) *Server {
 		GRPCKeepaliveTime:    30 * time.Second,
 		GRPCKeepaliveTimeout: 10 * time.Second,
 	}
-	auth := NewAuthInterceptor(&config.Config{ConfigSync: config.ConfigSyncConfig{Token: token}}, discardLogger())
+	auth, err := NewAuthInterceptor(&config.Config{ConfigSync: config.ConfigSyncConfig{Token: token}}, discardLogger())
+	if err != nil {
+		t.Fatalf("NewAuthInterceptor: %v", err)
+	}
 	svc := NewService(NewHub(discardLogger()), src, discardLogger())
 	srv, err := NewServer(cfg, svc, auth, discardLogger())
 	if err != nil {

@@ -41,7 +41,10 @@ type recordingStream struct {
 func (s *recordingStream) Context() context.Context { return s.ctx }
 
 func TestStreamInterceptorInjectsScope(t *testing.T) {
-	auth := NewAuthInterceptor(&config.Config{ConfigSync: config.ConfigSyncConfig{Token: "tok"}}, discardLogger())
+	auth, err := NewAuthInterceptor(&config.Config{ConfigSync: config.ConfigSyncConfig{Token: "tok"}}, discardLogger())
+	if err != nil {
+		t.Fatalf("NewAuthInterceptor: %v", err)
+	}
 	md := metadata.New(map[string]string{authMetadataKey: bearerPrefix + "tok"})
 	ctx := metadata.NewIncomingContext(context.Background(), md)
 

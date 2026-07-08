@@ -19,8 +19,7 @@ package grpc
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
+	"errors"
 	"log/slog"
 	"strings"
 
@@ -37,32 +36,40 @@ const (
 	component       = "configsync-grpc"
 )
 
-// AuthInterceptor authenticates config-sync RPCs by comparing the presented
-// bearer token digest against the configured current and previous token digests
-// with a constant-time compare. It fails closed when no token is configured.
+// AuthInterceptor authenticates config-sync RPCs with the configured strategy
+// (shared token or signed JWT) and propagates the resolved partition scope down
+// the request context. It fails closed when auth is not configured.
 type AuthInterceptor struct {
-	tokenDigests [][32]byte
-	logger       *slog.Logger
+	authenticator scopeAuthenticator
+	logger        *slog.Logger
 }
 
-// NewAuthInterceptor builds an AuthInterceptor from the config-sync tokens,
-// warning once when no token is configured so the operator learns the transport
-// will reject every RPC.
-func NewAuthInterceptor(cfg *config.Config, logger *slog.Logger) *AuthInterceptor {
+// NewAuthInterceptor builds an AuthInterceptor for the configured auth mode.
+// signed mode returns an error when the JWT verification key cannot be loaded so
+// the process fails at boot rather than silently rejecting every RPC. shared
+// mode warns once when no token is configured.
+func NewAuthInterceptor(cfg *config.Config, logger *slog.Logger) (*AuthInterceptor, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	interceptor := &AuthInterceptor{logger: logger}
-	if cfg.ConfigSync.Token != "" {
-		interceptor.tokenDigests = append(interceptor.tokenDigests, sha256.Sum256([]byte(cfg.ConfigSync.Token)))
-		if cfg.ConfigSync.TokenPrevious != "" {
-			interceptor.tokenDigests = append(interceptor.tokenDigests, sha256.Sum256([]byte(cfg.ConfigSync.TokenPrevious)))
+	switch cfg.ConfigSync.AuthMode {
+	case config.ConfigSyncAuthModeSigned:
+		authenticator, err := newJWTAuthenticator(cfg.ConfigSync)
+		if err != nil {
+			return nil, err
 		}
-	} else {
-		logger.Warn("config-sync token is not configured; the gRPC transport will reject every RPC and no data plane can converge",
-			slog.String("component", component))
+		interceptor.authenticator = authenticator
+		logger.Info("config-sync auth: signed JWT mode enabled", slog.String("component", component))
+	default:
+		shared := newSharedAuthenticator(cfg.ConfigSync)
+		if !shared.configured() {
+			logger.Warn("config-sync token is not configured; the gRPC transport will reject every RPC and no data plane can converge",
+				slog.String("component", component))
+		}
+		interceptor.authenticator = shared
 	}
-	return interceptor
+	return interceptor, nil
 }
 
 // UnaryServerInterceptor authenticates unary RPCs before the handler runs and
@@ -90,27 +97,20 @@ func (a *AuthInterceptor) StreamServerInterceptor() grpc.StreamServerInterceptor
 }
 
 // authorize validates the bearer token and returns a context carrying the
-// resolved partition scope. In the shared-token mode the scope is empty, which
-// downstream resolves to the whole, unpartitioned config.
+// resolved partition scope. In shared mode the scope is empty, which downstream
+// resolves to the whole, unpartitioned config; in signed mode the scope is the
+// opaque claim extracted from the verified JWT.
 func (a *AuthInterceptor) authorize(ctx context.Context) (context.Context, error) {
-	if len(a.tokenDigests) == 0 {
-		a.logger.Debug("config-sync token is not configured; rejecting RPC",
-			slog.String("component", component))
-		return ctx, status.Error(codes.Unauthenticated, "config-sync token is not configured")
-	}
-	provided := bearerFromContext(ctx)
-	if provided == "" {
+	scope, err := a.authenticator.authenticate(bearerFromContext(ctx))
+	if err != nil {
+		if errors.Is(err, errAuthNotConfigured) {
+			a.logger.Debug("config-sync auth is not configured; rejecting RPC",
+				slog.String("component", component))
+			return ctx, status.Error(codes.Unauthenticated, "config-sync auth is not configured")
+		}
 		return ctx, status.Error(codes.Unauthenticated, "missing or invalid config-sync token")
 	}
-	providedDigest := sha256.Sum256([]byte(provided))
-	matched := 0
-	for _, digest := range a.tokenDigests {
-		matched |= subtle.ConstantTimeCompare(providedDigest[:], digest[:])
-	}
-	if matched != 1 {
-		return ctx, status.Error(codes.Unauthenticated, "missing or invalid config-sync token")
-	}
-	return WithScope(ctx, ""), nil
+	return WithScope(ctx, scope), nil
 }
 
 // scopedServerStream overrides the stream context so handlers observe the scope
