@@ -29,9 +29,6 @@ const (
 	snapshotChunkSize = 1 << 20
 )
 
-// SnapshotSource yields the compiled snapshot bytes and version for a given
-// partition scope. An empty scope means the whole, unpartitioned config. The
-// control-plane Holder satisfies it.
 type SnapshotSource interface {
 	SnapshotFor(scope string) (raw []byte, version string, ok bool)
 }

@@ -67,16 +67,10 @@ func NewCompiler(
 	}
 }
 
-// Compile builds the whole, unpartitioned snapshot (every gateway). It is the
-// scope-agnostic path used by shared-token deployments.
 func (c *Compiler) Compile(ctx context.Context) (*readmodel.Snapshot, error) {
 	return c.CompileFor(ctx, "")
 }
 
-// CompileFor builds a snapshot restricted to a partition scope: only gateways
-// whose metadata.team_id equals scope (and all their associated config) are
-// included. An empty scope includes every gateway (the whole config). Shared
-// catalog data (providers/models) is included in every scope.
 func (c *Compiler) CompileFor(ctx context.Context, scope string) (*readmodel.Snapshot, error) {
 	gateways, err := c.listGateways(ctx)
 	if err != nil {
@@ -119,10 +113,6 @@ func (c *Compiler) CompileFor(ctx context.Context, scope string) (*readmodel.Sna
 	return readmodel.Build(data), nil
 }
 
-// CompileAll builds the whole snapshot plus one snapshot per non-empty scope in a
-// single pass over the gateways, so serving partitioned data planes does not cost
-// one full gateway listing per scope. The returned map is keyed by scope
-// (metadata.team_id) and each per-scope snapshot carries the shared catalog.
 func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[string]*readmodel.Snapshot, error) {
 	gateways, err := c.listGateways(ctx)
 	if err != nil {

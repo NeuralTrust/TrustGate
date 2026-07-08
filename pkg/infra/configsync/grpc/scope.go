@@ -20,15 +20,10 @@ type scopeContextKeyType struct{}
 
 var scopeContextKey scopeContextKeyType
 
-// WithScope returns a context carrying the config-sync partition scope key. An
-// empty scope denotes the whole, unpartitioned config, which preserves the
-// single-tenant behavior.
 func WithScope(ctx context.Context, scope string) context.Context {
 	return context.WithValue(ctx, scopeContextKey, scope)
 }
 
-// ScopeFromContext returns the partition scope key set upstream by the auth
-// interceptor, or "" when none is present (unpartitioned / single-tenant).
 func ScopeFromContext(ctx context.Context) string {
 	scope, _ := ctx.Value(scopeContextKey).(string)
 	return scope

@@ -144,9 +144,6 @@ type Config struct {
 	ConfigSync       ConfigSyncConfig
 }
 
-// Config-sync control-plane auth modes. shared keeps the historical
-// constant-time shared-token compare; signed verifies a signed JWT and extracts
-// its opaque scope claim.
 const (
 	ConfigSyncAuthModeShared = "shared"
 	ConfigSyncAuthModeSigned = "signed"
@@ -157,19 +154,10 @@ type ConfigSyncConfig struct {
 	Token            string // #nosec G117 -- config struct field, not a hardcoded credential
 	// TokenPrevious is the prior bearer accepted alongside Token so a token can be
 	// rotated without a window where in-flight data planes fail to authenticate.
-	TokenPrevious string // #nosec G117 -- config struct field, not a hardcoded credential
-	// AuthMode selects how the control plane verifies the data-plane bearer:
-	// ConfigSyncAuthModeShared (constant-time compare against the shared token)
-	// or ConfigSyncAuthModeSigned (verify a signed JWT and extract its opaque
-	// scope claim). It is chosen explicitly; there is no auto-detection and no
-	// fallback from signed to shared.
-	AuthMode string
-	// JWTPublicKey is the PEM-encoded PKIX public key that verifies signed
-	// tokens. Required when AuthMode is signed.
-	JWTPublicKey string // #nosec G117 -- config struct field, not a hardcoded credential
-	// JWTJWKSURL is reserved for JWKS-based verification (not yet wired).
-	JWTJWKSURL string
-	// JWTIssuer and JWTAudience are the expected iss/aud claims in signed mode.
+	TokenPrevious     string // #nosec G117 -- config struct field, not a hardcoded credential
+	AuthMode          string
+	JWTPublicKey      string // #nosec G117 -- config struct field, not a hardcoded credential
+	JWTJWKSURL        string
 	JWTIssuer         string
 	JWTAudience       string
 	LKGPath           string
@@ -740,9 +728,6 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// validateAuthMode checks the control-plane config-sync auth strategy. signed
-// mode fails closed at boot when its verification key or expected claims are
-// missing; an unknown mode is rejected outright.
 func (cs ConfigSyncConfig) validateAuthMode() error {
 	switch cs.AuthMode {
 	case "", ConfigSyncAuthModeShared:

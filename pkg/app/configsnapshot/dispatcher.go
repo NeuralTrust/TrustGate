@@ -40,9 +40,6 @@ type SnapshotCompiler interface {
 	Compile(ctx context.Context) (*readmodel.Snapshot, error)
 }
 
-// PartitionedCompiler additionally compiles one snapshot per partition scope in a
-// single pass. A compiler that implements it makes the dispatcher publish
-// per-scope snapshots alongside the whole snapshot.
 type PartitionedCompiler interface {
 	CompileAll(ctx context.Context) (*readmodel.Snapshot, map[string]*readmodel.Snapshot, error)
 }
@@ -233,8 +230,6 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 	return nil
 }
 
-// compile encodes the whole snapshot and, when the compiler is partitioned, the
-// per-scope snapshots. A nil scoped map means the whole-snapshot-only path.
 func (d *Dispatcher) compile(ctx context.Context) (raw []byte, version string, scoped map[string]ScopedSnapshot, err error) {
 	if partitioned, ok := d.compiler.(PartitionedCompiler); ok {
 		global, scopedSnaps, cerr := partitioned.CompileAll(ctx)

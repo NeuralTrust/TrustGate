@@ -26,8 +26,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// signedTokenAlgorithms is the allowlist of JWT signing algorithms accepted in
-// signed mode. "none" is deliberately excluded so an unsigned token is rejected.
 var signedTokenAlgorithms = []string{"EdDSA", "ES256", "RS256"}
 
 var (
@@ -35,15 +33,10 @@ var (
 	errUnauthenticated   = errors.New("missing or invalid config-sync token")
 )
 
-// scopeAuthenticator validates a presented bearer and returns the partition
-// scope it authorizes. An empty scope denotes the whole, unpartitioned config.
 type scopeAuthenticator interface {
 	authenticate(bearer string) (scope string, err error)
 }
 
-// sharedAuthenticator compares the presented bearer, in constant time, against
-// the configured current and previous shared-token digests. It never grants a
-// scope: the shared token identifies no partition, so the scope is always empty.
 type sharedAuthenticator struct {
 	tokenDigests [][32]byte
 }
@@ -79,10 +72,6 @@ func (s *sharedAuthenticator) authenticate(bearer string) (string, error) {
 	return "", nil
 }
 
-// jwtAuthenticator verifies a signed JWT (allowlisted algorithm, expected
-// issuer/audience, required expiry) and extracts its opaque scope claim. It
-// fails closed: any verification failure or a missing scope yields an
-// unauthenticated error and never falls back to shared-token behavior.
 type jwtAuthenticator struct {
 	parser  *jwt.Parser
 	keyfunc jwt.Keyfunc

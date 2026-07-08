@@ -21,15 +21,11 @@ type snapshotState struct {
 	version string
 }
 
-// ScopedSnapshot is a compiled snapshot for a single partition scope.
 type ScopedSnapshot struct {
 	Raw     []byte
 	Version string
 }
 
-// Holder stores the current compiled snapshot(s) for the gRPC server to serve.
-// It always holds the whole, unpartitioned snapshot (scope "") and, when
-// partitioned compilation is active, a per-scope map. Reads are lock-free.
 type Holder struct {
 	current atomic.Pointer[snapshotState]
 	scoped  atomic.Pointer[map[string]snapshotState]
@@ -39,15 +35,10 @@ func NewHolder() *Holder {
 	return &Holder{}
 }
 
-// Set replaces the whole, unpartitioned snapshot and leaves the per-scope map
-// untouched.
 func (h *Holder) Set(raw []byte, version string) {
 	h.current.Store(&snapshotState{raw: raw, version: version})
 }
 
-// SetPartitioned atomically replaces the whole snapshot and the entire per-scope
-// map, so scopes that no longer exist stop being served (fail-closed) on the next
-// dispatch.
 func (h *Holder) SetPartitioned(raw []byte, version string, scoped map[string]ScopedSnapshot) {
 	next := make(map[string]snapshotState, len(scoped))
 	for scope, snap := range scoped {
@@ -65,10 +56,6 @@ func (h *Holder) Snapshot() (raw []byte, version string, ok bool) {
 	return state.raw, state.version, true
 }
 
-// SnapshotFor returns the compiled snapshot for a partition scope. An empty scope
-// returns the whole, unpartitioned snapshot. A non-empty scope returns only that
-// scope's snapshot and never falls back to the whole snapshot: an unknown scope
-// yields ok=false so the transport denies it rather than leaking global config.
 func (h *Holder) SnapshotFor(scope string) (raw []byte, version string, ok bool) {
 	if scope == "" {
 		return h.Snapshot()

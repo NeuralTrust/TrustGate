@@ -36,18 +36,11 @@ const (
 	component       = "configsync-grpc"
 )
 
-// AuthInterceptor authenticates config-sync RPCs with the configured strategy
-// (shared token or signed JWT) and propagates the resolved partition scope down
-// the request context. It fails closed when auth is not configured.
 type AuthInterceptor struct {
 	authenticator scopeAuthenticator
 	logger        *slog.Logger
 }
 
-// NewAuthInterceptor builds an AuthInterceptor for the configured auth mode.
-// signed mode returns an error when the JWT verification key cannot be loaded so
-// the process fails at boot rather than silently rejecting every RPC. shared
-// mode warns once when no token is configured.
 func NewAuthInterceptor(cfg *config.Config, logger *slog.Logger) (*AuthInterceptor, error) {
 	if logger == nil {
 		logger = slog.Default()
@@ -72,8 +65,6 @@ func NewAuthInterceptor(cfg *config.Config, logger *slog.Logger) (*AuthIntercept
 	return interceptor, nil
 }
 
-// UnaryServerInterceptor authenticates unary RPCs before the handler runs and
-// propagates the resolved partition scope down the context.
 func (a *AuthInterceptor) UnaryServerInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		scoped, err := a.authorize(ctx)
@@ -84,8 +75,6 @@ func (a *AuthInterceptor) UnaryServerInterceptor() grpc.UnaryServerInterceptor {
 	}
 }
 
-// StreamServerInterceptor authenticates streaming RPCs before the handler runs
-// and propagates the resolved partition scope down the stream context.
 func (a *AuthInterceptor) StreamServerInterceptor() grpc.StreamServerInterceptor {
 	return func(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		scoped, err := a.authorize(ss.Context())
@@ -96,10 +85,6 @@ func (a *AuthInterceptor) StreamServerInterceptor() grpc.StreamServerInterceptor
 	}
 }
 
-// authorize validates the bearer token and returns a context carrying the
-// resolved partition scope. In shared mode the scope is empty, which downstream
-// resolves to the whole, unpartitioned config; in signed mode the scope is the
-// opaque claim extracted from the verified JWT.
 func (a *AuthInterceptor) authorize(ctx context.Context) (context.Context, error) {
 	scope, err := a.authenticator.authenticate(bearerFromContext(ctx))
 	if err != nil {
@@ -113,8 +98,6 @@ func (a *AuthInterceptor) authorize(ctx context.Context) (context.Context, error
 	return WithScope(ctx, scope), nil
 }
 
-// scopedServerStream overrides the stream context so handlers observe the scope
-// resolved by the interceptor.
 type scopedServerStream struct {
 	grpc.ServerStream
 	ctx context.Context
