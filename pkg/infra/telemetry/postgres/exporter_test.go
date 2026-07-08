@@ -31,7 +31,7 @@ func TestDataClassIsRaw(t *testing.T) {
 
 func TestBuildInsertSQL(t *testing.T) {
 	t.Parallel()
-	want := "INSERT INTO " + metrics.TableName + " (trace_id, gateway_id, team_id, occurred_on, schema_version, request_body, response_body) " +
+	want := "INSERT INTO " + metrics.TableName + " (trace_id, gateway_id, tenant_id, occurred_on, schema_version, request_body, response_body) " +
 		"VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (trace_id) DO NOTHING"
 	assert.Equal(t, want, buildInsertSQL(metrics.TableName))
 }
@@ -44,7 +44,7 @@ func TestToRecordMapsSensibleViewAndStampsSchemaVersion(t *testing.T) {
 		SchemaVersion: events.SchemaVersion,
 		TraceID:       "t1",
 		GatewayID:     "g1",
-		TeamID:        "team1",
+		TenantID:        "team1",
 		OccurredOn:    42,
 		IP:            "1.2.3.4",
 		Request:       events.Request{Body: "req-body", Headers: map[string][]string{"h": {"v"}}},
@@ -55,8 +55,8 @@ func TestToRecordMapsSensibleViewAndStampsSchemaVersion(t *testing.T) {
 
 	assert.Equal(t, "t1", rec.TraceID)
 	assert.Equal(t, "g1", rec.GatewayID)
-	require.NotNil(t, rec.TeamID)
-	assert.Equal(t, "team1", *rec.TeamID)
+	require.NotNil(t, rec.TenantID)
+	assert.Equal(t, "team1", *rec.TenantID)
 	assert.Equal(t, int64(42), rec.OccurredOn)
 	assert.Equal(t, metrics.SchemaVersion, rec.SchemaVersion)
 	assert.Equal(t, "req-body", rec.RequestBody)
@@ -71,7 +71,7 @@ func TestToRecordNilTeamAndResponse(t *testing.T) {
 
 	rec := toRecord(evt.SensibleView())
 
-	assert.Nil(t, rec.TeamID)
+	assert.Nil(t, rec.TenantID)
 	assert.Nil(t, rec.ResponseBody)
 	assert.Empty(t, rec.RequestBody)
 }

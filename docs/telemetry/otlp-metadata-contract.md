@@ -46,7 +46,7 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.kind` | `kind` |
 | `trustgate.trace_id` | `trace_id` |
 | `trustgate.gateway_id` | `gateway_id` |
-| `trustgate.team_id` | `team_id` |
+| `trustgate.tenant_id` | `tenant_id` |
 | `trustgate.consumer.id` | `consumer.id` |
 | `trustgate.consumer.name` | `consumer.name` |
 | `trustgate.session_id` | `session_id` |
@@ -85,10 +85,10 @@ exporter declared under `exporters.raw[]`:
 |------|---------|
 | PostgreSQL `trustgate_data` | `request_body` + `response_body` only |
 | OTLP (`otlp` under `raw`) | `trustgate.request.body` / `trustgate.response.body` + join keys |
-| Join keys | `trace_id`, `gateway_id`, `team_id`, `occurred_on` |
+| Join keys | `trace_id`, `gateway_id`, `tenant_id`, `occurred_on` |
 
 The raw OTLP record emits `trustgate.schema_version`, `trustgate.trace_id`,
-`trustgate.gateway_id`, `trustgate.team_id`, `trustgate.request.body`, and
+`trustgate.gateway_id`, `trustgate.tenant_id`, `trustgate.request.body`, and
 `trustgate.response.body` — no metadata attributes, no policy chain.
 
 ## Severity

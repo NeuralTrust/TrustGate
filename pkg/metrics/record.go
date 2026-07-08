@@ -17,7 +17,7 @@ package metrics
 type SensibleRecord struct {
 	TraceID       string  `db:"trace_id" json:"trace_id"`
 	GatewayID     string  `db:"gateway_id" json:"gateway_id"`
-	TeamID        *string `db:"team_id" json:"team_id,omitempty"`
+	TenantID        *string `db:"tenant_id" json:"tenant_id,omitempty"`
 	OccurredOn    int64   `db:"occurred_on" json:"occurred_on"`
 	SchemaVersion int     `db:"schema_version" json:"schema_version"`
 	RequestBody   string  `db:"request_body" json:"request_body"`

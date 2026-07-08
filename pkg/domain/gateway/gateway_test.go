@@ -183,17 +183,17 @@ func TestClientTLSConfig_NilRoundTrip(t *testing.T) {
 func TestSanitizeClientMetadata(t *testing.T) {
 	t.Parallel()
 
-	t.Run("strips server-only team_id", func(t *testing.T) {
+	t.Run("strips server-only tenant_id", func(t *testing.T) {
 		t.Parallel()
-		in := map[string]string{MetadataTeamIDKey: "attacker-team", "env": "prod"}
+		in := map[string]string{MetadataTenantIDKey: "attacker-team", "env": "prod"}
 		out := SanitizeClientMetadata(in)
-		if _, ok := out[MetadataTeamIDKey]; ok {
-			t.Fatalf("team_id survived sanitization: %v", out)
+		if _, ok := out[MetadataTenantIDKey]; ok {
+			t.Fatalf("tenant_id survived sanitization: %v", out)
 		}
 		if out["env"] != "prod" {
 			t.Fatalf("non-reserved key dropped: %v", out)
 		}
-		if _, ok := in[MetadataTeamIDKey]; !ok {
+		if _, ok := in[MetadataTenantIDKey]; !ok {
 			t.Fatal("input map mutated; sanitize must copy")
 		}
 	})
@@ -207,29 +207,29 @@ func TestSanitizeClientMetadata(t *testing.T) {
 
 	t.Run("only reserved keys collapse to nil", func(t *testing.T) {
 		t.Parallel()
-		if out := SanitizeClientMetadata(map[string]string{MetadataTeamIDKey: "x"}); out != nil {
+		if out := SanitizeClientMetadata(map[string]string{MetadataTenantIDKey: "x"}); out != nil {
 			t.Fatalf("expected nil after removing sole reserved key, got %v", out)
 		}
 	})
 }
 
-func TestWithTeamID(t *testing.T) {
+func TestWithTenantID(t *testing.T) {
 	t.Parallel()
 
 	t.Run("empty team leaves metadata untouched", func(t *testing.T) {
 		t.Parallel()
 		in := map[string]string{"env": "prod"}
-		out := WithTeamID(in, "")
-		if _, ok := out[MetadataTeamIDKey]; ok {
+		out := WithTenantID(in, "")
+		if _, ok := out[MetadataTenantIDKey]; ok {
 			t.Fatalf("empty teamID injected a key: %v", out)
 		}
 	})
 
-	t.Run("sets team_id while preserving other keys", func(t *testing.T) {
+	t.Run("sets tenant_id while preserving other keys", func(t *testing.T) {
 		t.Parallel()
-		out := WithTeamID(map[string]string{"env": "prod"}, "team-1")
-		if out[MetadataTeamIDKey] != "team-1" {
-			t.Fatalf("team_id = %q, want team-1", out[MetadataTeamIDKey])
+		out := WithTenantID(map[string]string{"env": "prod"}, "team-1")
+		if out[MetadataTenantIDKey] != "team-1" {
+			t.Fatalf("tenant_id = %q, want team-1", out[MetadataTenantIDKey])
 		}
 		if out["env"] != "prod" {
 			t.Fatalf("existing key lost: %v", out)
@@ -238,9 +238,9 @@ func TestWithTeamID(t *testing.T) {
 
 	t.Run("initializes nil metadata", func(t *testing.T) {
 		t.Parallel()
-		out := WithTeamID(nil, "team-1")
-		if out[MetadataTeamIDKey] != "team-1" {
-			t.Fatalf("team_id = %q, want team-1", out[MetadataTeamIDKey])
+		out := WithTenantID(nil, "team-1")
+		if out[MetadataTenantIDKey] != "team-1" {
+			t.Fatalf("tenant_id = %q, want team-1", out[MetadataTenantIDKey])
 		}
 	})
 }

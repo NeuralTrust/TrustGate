@@ -134,7 +134,7 @@ func (m *MetricsMiddleware) attachTrace(c *fiber.Ctx, requestTrace *trace.Reques
 func (m *MetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string, gw *gatewaydomain.Gateway) trace.Metadata {
 	meta := trace.Metadata{
 		GatewayID: gatewayID,
-		TeamID:    gw.TeamID(),
+		TenantID:    gw.TenantID(),
 		Path:      c.Path(),
 		Method:    c.Method(),
 		IP:        c.IP(),

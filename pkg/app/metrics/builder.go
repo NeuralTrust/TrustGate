@@ -65,7 +65,7 @@ func (b *Builder) Build(
 		Kind:          events.KindLLM,
 		TraceID:       traceID,
 		GatewayID:     meta.GatewayID,
-		TeamID:        meta.TeamID,
+		TenantID:        meta.TenantID,
 		Timestamp:     startTime.UTC().Format(time.RFC3339),
 		OccurredOn:    startTime.UnixMilli(),
 		EndTimestamp:  endTime.UnixMilli(),

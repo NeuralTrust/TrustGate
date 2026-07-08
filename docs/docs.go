@@ -5917,6 +5917,14 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.ExporterConfig": {
             "type": "object",
             "properties": {
+                "class": {
+                    "description": "Class binds the exporter to a data class, set from the group it is declared\nunder in the defaults file. Empty for per-gateway configs.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_metrics.DataClass"
+                        }
+                    ]
+                },
                 "name": {
                     "type": "string"
                 },
@@ -6084,7 +6092,7 @@ const docTemplate = `{
                 "status": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Status"
                 },
-                "team_id": {
+                "tenant_id": {
                     "type": "string"
                 },
                 "timestamp": {
@@ -6322,6 +6330,17 @@ const docTemplate = `{
                     "type": "integer"
                 }
             }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_metrics.DataClass": {
+            "type": "string",
+            "enum": [
+                "metadata",
+                "raw"
+            ],
+            "x-enum-varnames": [
+                "Metadata",
+                "Raw"
+            ]
         },
         "github_com_NeuralTrust_TrustGate_pkg_version.Info": {
             "type": "object",

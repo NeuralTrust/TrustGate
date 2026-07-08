@@ -68,8 +68,8 @@ func (m *AdminAuthMiddleware) Middleware() fiber.Handler {
 			return m.unauthorized(c, "Token not valid for admin API", nil)
 		}
 
-		if claims.TeamID != "" {
-			c.Locals(string(infracontext.TeamIDContextKey), claims.TeamID)
+		if claims.TenantID != "" {
+			c.Locals(string(infracontext.TenantIDContextKey), claims.TenantID)
 		}
 		if claims.UserID != "" {
 			c.Locals(string(infracontext.UserIDContextKey), claims.UserID)

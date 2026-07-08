@@ -18,7 +18,7 @@ func ReadColumns() []string {
 	return []string{
 		ColumnTraceID,
 		ColumnGatewayID,
-		ColumnTeamID,
+		ColumnTenantID,
 		ColumnOccurredOn,
 		ColumnSchemaVersion,
 		ColumnRequestBody,

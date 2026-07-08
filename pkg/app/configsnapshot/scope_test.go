@@ -30,7 +30,7 @@ import (
 )
 
 func gatewayWithTeam(id ids.GatewayID, team string) *gatewaydomain.Gateway {
-	return &gatewaydomain.Gateway{ID: id, Metadata: map[string]string{gatewaydomain.MetadataTeamIDKey: team}}
+	return &gatewaydomain.Gateway{ID: id, Metadata: map[string]string{gatewaydomain.MetadataTenantIDKey: team}}
 }
 
 func mustID[K ids.Kind](t *testing.T, s string) ids.ID[K] {

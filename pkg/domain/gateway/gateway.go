@@ -26,7 +26,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 )
 
-const MetadataTeamIDKey = "team_id"
+const MetadataTenantIDKey = "tenant_id"
 
 type Gateway struct {
 	ID              ids.GatewayID        `json:"id"`
@@ -41,15 +41,15 @@ type Gateway struct {
 	UpdatedAt       time.Time            `json:"updated_at"`
 }
 
-func (g *Gateway) TeamID() string {
+func (g *Gateway) TenantID() string {
 	if g == nil || g.Metadata == nil {
 		return ""
 	}
-	return g.Metadata[MetadataTeamIDKey]
+	return g.Metadata[MetadataTenantIDKey]
 }
 
 func isReservedMetadataKey(key string) bool {
-	return key == MetadataTeamIDKey
+	return key == MetadataTenantIDKey
 }
 
 func SanitizeClientMetadata(metadata map[string]string) map[string]string {
@@ -69,14 +69,14 @@ func SanitizeClientMetadata(metadata map[string]string) map[string]string {
 	return out
 }
 
-func WithTeamID(metadata map[string]string, teamID string) map[string]string {
-	if teamID == "" {
+func WithTenantID(metadata map[string]string, tenantID string) map[string]string {
+	if tenantID == "" {
 		return metadata
 	}
 	if metadata == nil {
 		metadata = make(map[string]string, 1)
 	}
-	metadata[MetadataTeamIDKey] = teamID
+	metadata[MetadataTenantIDKey] = tenantID
 	return metadata
 }
 

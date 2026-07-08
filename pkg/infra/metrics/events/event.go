@@ -26,7 +26,7 @@ type Event struct {
 	Kind          string `json:"kind"`
 	TraceID       string `json:"trace_id"`
 	GatewayID     string `json:"gateway_id"`
-	TeamID        string `json:"team_id,omitempty"`
+	TenantID        string `json:"tenant_id,omitempty"`
 
 	Timestamp    string `json:"timestamp"`
 	OccurredOn   int64  `json:"occurred_on"`

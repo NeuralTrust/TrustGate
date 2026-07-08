@@ -2,7 +2,7 @@
 	"info": {
 		"_postman_id": "e2e00000-tg-tguard-0000-collection-0001",
 		"name": "TrustGate + TrustGuard E2E",
-		"description": "End-to-end flows wiring TrustGate to TrustGuard through the `trustguard` plugin.\n\nTwo self-contained scenarios (run one folder with Collection Runner):\n- **Flow - injection_protection (SQLi)**: `injection_protection` detector, SQL-injection KO, optional direct `/v1/guard` via `collector_key`.\n- **Flow - prompt_guard (jailbreak)**: `prompt_guard` detector via NeuralTrust Firewall; requires `firewall_base_url` + `firewall_token`.\n\nShared setup per flow: TrustGate gateway/registry/consumer, TrustGuard platform tenant + collector (`metadata.gateway_id`), TrustGate `trustguard` plugin policy with `collector_id`.\n\nAuth:\n- TrustGate admin: `Authorization: Bearer {{tg_admin_token}}`.\n- TrustGuard admin: `Authorization: Bearer {{admin_jwt}}` (auto-minted from `admin_jwt_secret` + `team_id`).\n- Runtime TrustGate\u2194TrustGuard: server-side platform OAuth2 (`TRUSTGUARD_CLIENT_ID`/`SECRET` on TrustGate = `TRUSTGUARD_PLATFORM_CLIENT_ID`/`SECRET` on TrustGuard).\n\nVariables: tg_base_url, tg_proxy_url, tg_admin_token, guard_base_url, admin_jwt_secret, team_id, openai_api_key; prompt_guard also needs firewall_base_url, firewall_token.",
+		"description": "End-to-end flows wiring TrustGate to TrustGuard through the `trustguard` plugin.\n\nTwo self-contained scenarios (run one folder with Collection Runner):\n- **Flow - injection_protection (SQLi)**: `injection_protection` detector, SQL-injection KO, optional direct `/v1/guard` via `collector_key`.\n- **Flow - prompt_guard (jailbreak)**: `prompt_guard` detector via NeuralTrust Firewall; requires `firewall_base_url` + `firewall_token`.\n\nShared setup per flow: TrustGate gateway/registry/consumer, TrustGuard platform tenant + collector (`metadata.gateway_id`), TrustGate `trustguard` plugin policy with `collector_id`.\n\nAuth:\n- TrustGate admin: `Authorization: Bearer {{tg_admin_token}}`.\n- TrustGuard admin: `Authorization: Bearer {{admin_jwt}}` (auto-minted from `admin_jwt_secret` + `tenant_id`).\n- Runtime TrustGate\u2194TrustGuard: server-side platform OAuth2 (`TRUSTGUARD_CLIENT_ID`/`SECRET` on TrustGate = `TRUSTGUARD_PLATFORM_CLIENT_ID`/`SECRET` on TrustGuard).\n\nVariables: tg_base_url, tg_proxy_url, tg_admin_token, guard_base_url, admin_jwt_secret, tenant_id, openai_api_key; prompt_guard also needs firewall_base_url, firewall_token.",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"event": [
@@ -11,7 +11,7 @@
 			"script": {
 				"type": "text/javascript",
 				"exec": [
-					"// Auto-mint admin_jwt (HS256) from team_id + user_id + admin_jwt_secret for the TrustGuard admin API.",
+					"// Auto-mint admin_jwt (HS256) from tenant_id + user_id + admin_jwt_secret for the TrustGuard admin API.",
 					"// If admin_jwt_secret is empty, the admin_jwt you set manually is used as-is.",
 					"var CryptoJS = require('crypto-js');",
 					"var secret = pm.environment.get('admin_jwt_secret') || pm.collectionVariables.get('admin_jwt_secret');",
@@ -19,7 +19,7 @@
 					"    var b64 = function (wa) { return CryptoJS.enc.Base64.stringify(wa).replace(/=+$/, '').replace(/\\+/g, '-').replace(/\\//g, '_'); };",
 					"    var b64s = function (s) { return b64(CryptoJS.enc.Utf8.parse(s)); };",
 					"    var header = b64s(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));",
-					"    var claims = { team_id: pm.environment.get('team_id') || pm.collectionVariables.get('team_id') || '' };",
+					"    var claims = { tenant_id: pm.environment.get('tenant_id') || pm.collectionVariables.get('tenant_id') || '' };",
 					"    var uid = pm.environment.get('user_id') || pm.collectionVariables.get('user_id'); if (uid) { claims.user_id = uid; }",
 					"    claims.exp = Math.floor(Date.now() / 1000) + 3600;",
 					"    var payload = b64s(JSON.stringify(claims));",
@@ -373,7 +373,7 @@
 										"tenants"
 									]
 								},
-								"description": "The team is taken from the admin JWT (team_id), never the body. One team owns one tenant, so this may 409 on a seeded environment; the rest of the folder still works against the team's existing tenant. scope=platform issues no service_client credentials."
+								"description": "The team is taken from the admin JWT (tenant_id), never the body. One team owns one tenant, so this may 409 on a seeded environment; the rest of the folder still works against the team's existing tenant. scope=platform issues no service_client credentials."
 							}
 						},
 						{
@@ -1342,7 +1342,7 @@
 										"tenants"
 									]
 								},
-								"description": "The team is taken from the admin JWT (team_id), never the body. One team owns one tenant, so this may 409 on a seeded environment; the rest of the folder still works against the team's existing tenant. scope=platform issues no service_client credentials."
+								"description": "The team is taken from the admin JWT (tenant_id), never the body. One team owns one tenant, so this may 409 on a seeded environment; the rest of the folder still works against the team's existing tenant. scope=platform issues no service_client credentials."
 							}
 						},
 						{
@@ -1857,7 +1857,7 @@
 			"type": "string"
 		},
 		{
-			"key": "team_id",
+			"key": "tenant_id",
 			"value": "11111111-1111-1111-1111-111111111111",
 			"type": "string"
 		},

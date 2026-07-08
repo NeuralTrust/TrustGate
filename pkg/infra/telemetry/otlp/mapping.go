@@ -63,7 +63,7 @@ const (
 	attrStatusIsTimeout      = "trustgate.status.is_timeout"
 	attrTraceID              = "trustgate.trace_id"
 	attrGatewayID            = "trustgate.gateway_id"
-	attrTeamID               = "trustgate.team_id"
+	attrTenantID               = "trustgate.tenant_id"
 	attrConsumerID           = "trustgate.consumer.id"
 	attrConsumerName         = "trustgate.consumer.name"
 	attrSessionID            = "trustgate.session_id"
@@ -168,7 +168,7 @@ func eventToRecord(evt *events.Event) otellog.Record {
 	}
 	appendStr(attrTraceID, evt.TraceID)
 	appendStr(attrGatewayID, evt.GatewayID)
-	appendStr(attrTeamID, evt.TeamID)
+	appendStr(attrTenantID, evt.TenantID)
 	appendStr(attrConsumerID, evt.Consumer.ID)
 	appendStr(attrConsumerName, evt.Consumer.Name)
 	appendStr(attrSessionID, evt.SessionID)
@@ -238,7 +238,7 @@ func rawEventToRecord(evt *events.Event) otellog.Record {
 	attrs = append(attrs, otellog.Int(attrSchemaVersion, evt.SchemaVersion))
 	appendStr(attrTraceID, evt.TraceID)
 	appendStr(attrGatewayID, evt.GatewayID)
-	appendStr(attrTeamID, evt.TeamID)
+	appendStr(attrTenantID, evt.TenantID)
 	appendStr(attrRequestBody, evt.Request.Body)
 	if evt.Response.Body != nil {
 		appendStr(attrResponseBody, *evt.Response.Body)
