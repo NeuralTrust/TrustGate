@@ -67,15 +67,29 @@ func NewCompiler(
 	}
 }
 
+// Compile builds the whole, unpartitioned snapshot (every gateway). It is the
+// scope-agnostic path used by shared-token deployments.
 func (c *Compiler) Compile(ctx context.Context) (*readmodel.Snapshot, error) {
+	return c.CompileFor(ctx, "")
+}
+
+// CompileFor builds a snapshot restricted to a partition scope: only gateways
+// whose metadata.team_id equals scope (and all their associated config) are
+// included. An empty scope includes every gateway (the whole config). Shared
+// catalog data (providers/models) is included in every scope.
+func (c *Compiler) CompileFor(ctx context.Context, scope string) (*readmodel.Snapshot, error) {
 	gateways, err := c.listGateways(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	data := readmodel.Data{}
-	var skipped int
+	var skipped, considered int
 	for i := range gateways {
+		if scope != "" && gateways[i].TeamID() != scope {
+			continue
+		}
+		considered++
 		var gwData readmodel.Data
 		if err := c.collectGateway(ctx, gateways[i].ID, &gwData); err != nil {
 			if errors.Is(err, commonerrors.ErrCorruptData) {
@@ -88,24 +102,101 @@ func (c *Compiler) Compile(ctx context.Context) (*readmodel.Snapshot, error) {
 			}
 			return nil, err
 		}
-		data.Gateways = append(data.Gateways, gateways[i])
-		data.Consumers = append(data.Consumers, gwData.Consumers...)
-		data.Registries = append(data.Registries, gwData.Registries...)
-		data.Policies = append(data.Policies, gwData.Policies...)
-		data.Auths = append(data.Auths, gwData.Auths...)
-		data.Roles = append(data.Roles, gwData.Roles...)
+		appendGatewayData(&data, gateways[i], gwData)
 	}
 
-	if skipped > 0 && len(data.Gateways) == 0 {
+	if skipped > 0 && skipped == considered {
 		return nil, fmt.Errorf("configsnapshot: every gateway (%d) skipped due to corrupt persisted config; refusing to publish empty snapshot: %w", skipped, commonerrors.ErrCorruptData)
 	}
 
-	if err := c.collectCatalog(ctx, &data); err != nil {
+	cat, err := c.collectCatalogData(ctx)
+	if err != nil {
 		return nil, err
 	}
+	mergeCatalog(&data, cat)
 
 	sortData(&data)
 	return readmodel.Build(data), nil
+}
+
+// CompileAll builds the whole snapshot plus one snapshot per non-empty scope in a
+// single pass over the gateways, so serving partitioned data planes does not cost
+// one full gateway listing per scope. The returned map is keyed by scope
+// (metadata.team_id) and each per-scope snapshot carries the shared catalog.
+func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[string]*readmodel.Snapshot, error) {
+	gateways, err := c.listGateways(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	global := readmodel.Data{}
+	buckets := map[string]*readmodel.Data{}
+	var skipped int
+	for i := range gateways {
+		var gwData readmodel.Data
+		if err := c.collectGateway(ctx, gateways[i].ID, &gwData); err != nil {
+			if errors.Is(err, commonerrors.ErrCorruptData) {
+				c.logger.Warn("skipping gateway with corrupt persisted config from snapshot",
+					slog.String("component", component),
+					slog.String("gateway_id", gateways[i].ID.String()),
+					slog.String("error", err.Error()))
+				skipped++
+				continue
+			}
+			return nil, nil, err
+		}
+		appendGatewayData(&global, gateways[i], gwData)
+		if scope := gateways[i].TeamID(); scope != "" {
+			bucket, ok := buckets[scope]
+			if !ok {
+				bucket = &readmodel.Data{}
+				buckets[scope] = bucket
+			}
+			appendGatewayData(bucket, gateways[i], gwData)
+		}
+	}
+
+	if skipped > 0 && len(global.Gateways) == 0 {
+		return nil, nil, fmt.Errorf("configsnapshot: every gateway (%d) skipped due to corrupt persisted config; refusing to publish empty snapshot: %w", skipped, commonerrors.ErrCorruptData)
+	}
+
+	cat, err := c.collectCatalogData(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	mergeCatalog(&global, cat)
+	sortData(&global)
+
+	scoped := make(map[string]*readmodel.Snapshot, len(buckets))
+	for scope, bucket := range buckets {
+		mergeCatalog(bucket, cat)
+		sortData(bucket)
+		scoped[scope] = readmodel.Build(*bucket)
+	}
+	return readmodel.Build(global), scoped, nil
+}
+
+func appendGatewayData(dst *readmodel.Data, gateway gatewaydomain.Gateway, gwData readmodel.Data) {
+	dst.Gateways = append(dst.Gateways, gateway)
+	dst.Consumers = append(dst.Consumers, gwData.Consumers...)
+	dst.Registries = append(dst.Registries, gwData.Registries...)
+	dst.Policies = append(dst.Policies, gwData.Policies...)
+	dst.Auths = append(dst.Auths, gwData.Auths...)
+	dst.Roles = append(dst.Roles, gwData.Roles...)
+}
+
+func mergeCatalog(dst *readmodel.Data, catalog readmodel.Data) {
+	dst.Providers = append(dst.Providers, catalog.Providers...)
+	dst.CatalogModels = append(dst.CatalogModels, catalog.CatalogModels...)
+}
+
+func (c *Compiler) collectCatalogData(ctx context.Context) (readmodel.Data, error) {
+	var data readmodel.Data
+	if err := c.collectCatalog(ctx, &data); err != nil {
+		return readmodel.Data{}, err
+	}
+	return data, nil
 }
 
 func (c *Compiler) listGateways(ctx context.Context) ([]gatewaydomain.Gateway, error) {

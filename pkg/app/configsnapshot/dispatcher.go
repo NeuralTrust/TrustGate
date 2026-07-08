@@ -40,6 +40,13 @@ type SnapshotCompiler interface {
 	Compile(ctx context.Context) (*readmodel.Snapshot, error)
 }
 
+// PartitionedCompiler additionally compiles one snapshot per partition scope in a
+// single pass. A compiler that implements it makes the dispatcher publish
+// per-scope snapshots alongside the whole snapshot.
+type PartitionedCompiler interface {
+	CompileAll(ctx context.Context) (*readmodel.Snapshot, map[string]*readmodel.Snapshot, error)
+}
+
 // DispatcherConfig tunes the debounce/backstop cadence and the outbox safety bound.
 type DispatcherConfig struct {
 	Debounce  time.Duration
@@ -200,19 +207,18 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 		pending = nil
 	}
 
-	snapshot, err := d.compiler.Compile(ctx)
+	raw, version, scoped, err := d.compile(ctx)
 	if err != nil {
-		return fmt.Errorf("configsnapshot: compile: %w", err)
+		return err
 	}
-	raw, err := d.codec.Encode(snapshot)
-	if err != nil {
-		return fmt.Errorf("configsnapshot: encode: %w", err)
-	}
-	version := d.codec.Version(raw)
 
 	d.mu.Lock()
 	if version != d.published {
-		d.holder.Set(raw, version)
+		if scoped != nil {
+			d.holder.SetPartitioned(raw, version, scoped)
+		} else {
+			d.holder.Set(raw, version)
+		}
 		d.broadcaster.Broadcast(version)
 		d.published = version
 	}
@@ -225,4 +231,46 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// compile encodes the whole snapshot and, when the compiler is partitioned, the
+// per-scope snapshots. A nil scoped map means the whole-snapshot-only path.
+func (d *Dispatcher) compile(ctx context.Context) (raw []byte, version string, scoped map[string]ScopedSnapshot, err error) {
+	if partitioned, ok := d.compiler.(PartitionedCompiler); ok {
+		global, scopedSnaps, cerr := partitioned.CompileAll(ctx)
+		if cerr != nil {
+			return nil, "", nil, fmt.Errorf("configsnapshot: compile: %w", cerr)
+		}
+		raw, version, err = d.encode(global)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		scoped = make(map[string]ScopedSnapshot, len(scopedSnaps))
+		for scope, snap := range scopedSnaps {
+			scopedRaw, scopedVersion, eerr := d.encode(snap)
+			if eerr != nil {
+				return nil, "", nil, eerr
+			}
+			scoped[scope] = ScopedSnapshot{Raw: scopedRaw, Version: scopedVersion}
+		}
+		return raw, version, scoped, nil
+	}
+
+	snapshot, cerr := d.compiler.Compile(ctx)
+	if cerr != nil {
+		return nil, "", nil, fmt.Errorf("configsnapshot: compile: %w", cerr)
+	}
+	raw, version, err = d.encode(snapshot)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	return raw, version, nil, nil
+}
+
+func (d *Dispatcher) encode(snapshot *readmodel.Snapshot) ([]byte, string, error) {
+	raw, err := d.codec.Encode(snapshot)
+	if err != nil {
+		return nil, "", fmt.Errorf("configsnapshot: encode: %w", err)
+	}
+	return raw, d.codec.Version(raw), nil
 }
