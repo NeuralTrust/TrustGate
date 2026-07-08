@@ -33,6 +33,7 @@ import (
 	infrasnapshot "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
 	configsyncgrpc "github.com/NeuralTrust/TrustGate/pkg/infra/configsync/grpc"
+	configsyncconnrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/configsyncconn"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
@@ -77,8 +78,16 @@ func ControlConfigSync(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(logger *slog.Logger) *configsyncgrpc.Hub {
-		return configsyncgrpc.NewHub(logger)
+	if err := c.Provide(configsyncconnrepo.NewRepository); err != nil {
+		return err
+	}
+	if err := c.Provide(func(r *configsyncconnrepo.Repository) configsyncgrpc.ConnectionStore {
+		return r
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(logger *slog.Logger, store configsyncgrpc.ConnectionStore) *configsyncgrpc.Hub {
+		return configsyncgrpc.NewHub(logger, store)
 	}); err != nil {
 		return err
 	}

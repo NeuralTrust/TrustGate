@@ -63,10 +63,11 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 	if hello == nil {
 		return status.Error(codes.InvalidArgument, "first Sync message must be Hello")
 	}
-	conn := s.hub.register(hello.GetInstanceId())
-	defer s.hub.unregister(conn)
-
 	scope := ScopeFromContext(ctx)
+	conn := s.hub.register(scope, hello.GetInstanceId())
+	defer s.hub.unregister(conn)
+	defer s.hub.markDisconnected(conn)
+
 	if _, version, ok := s.source.SnapshotFor(scope); ok && version != hello.GetLastAppliedVersion() {
 		conn.enqueue(version)
 	}
@@ -80,7 +81,7 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 				return
 			}
 			if ack := msg.GetAck(); ack != nil {
-				conn.recordAck(ack.GetAppliedVersion())
+				s.hub.markAck(conn, ack.GetAppliedVersion())
 			}
 		}
 	}()

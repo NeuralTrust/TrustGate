@@ -21,6 +21,7 @@ import (
 	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
 	authhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth"
 	cataloghttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/catalog"
+	configsynchttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/configsync"
 	consumerhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer"
 	gatewayhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway"
 	playgroundhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/playground"
@@ -30,6 +31,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	configsyncconnrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/configsyncconn"
 	"github.com/NeuralTrust/TrustGate/pkg/server"
 	"github.com/NeuralTrust/TrustGate/pkg/server/router"
 	"go.uber.org/dig"
@@ -109,6 +111,8 @@ type adminRouterParams struct {
 	ListMCPServersCatalog *cataloghttp.ListMCPServersHandler
 
 	GetTrace *playgroundhttp.GetTraceHandler
+
+	ListConfigSyncConnections *configsynchttp.ListConnectionsHandler
 }
 
 type adminServerParams struct {
@@ -120,6 +124,11 @@ type adminServerParams struct {
 
 func ServerAdmin(c *container.Container) error {
 	if err := c.Provide(adminTransport, dig.Name("admin")); err != nil {
+		return err
+	}
+	if err := c.Provide(func(repo *configsyncconnrepo.Repository) *configsynchttp.ListConnectionsHandler {
+		return configsynchttp.NewListConnectionsHandler(repo)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(
@@ -172,6 +181,8 @@ func ServerAdmin(c *container.Container) error {
 				ListMCPServersCatalog: p.ListMCPServersCatalog,
 
 				GetTrace: p.GetTrace,
+
+				ListConfigSyncConnections: p.ListConfigSyncConnections,
 			})
 		},
 		dig.Name("admin"),

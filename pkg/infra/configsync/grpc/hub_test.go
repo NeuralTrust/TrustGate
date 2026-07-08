@@ -15,6 +15,8 @@
 package grpc
 
 import (
+	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"sync"
@@ -26,9 +28,44 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+type recordingStore struct {
+	mu           sync.Mutex
+	connected    []string
+	acked        []string
+	disconnected []string
+	err          error
+}
+
+func (s *recordingStore) MarkConnected(_ context.Context, scope, instanceID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.connected = append(s.connected, scope+"/"+instanceID)
+	return s.err
+}
+
+func (s *recordingStore) MarkAck(_ context.Context, scope, instanceID, appliedVersion string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.acked = append(s.acked, scope+"/"+instanceID+"="+appliedVersion)
+	return s.err
+}
+
+func (s *recordingStore) MarkDisconnected(_ context.Context, scope, instanceID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.disconnected = append(s.disconnected, scope+"/"+instanceID)
+	return s.err
+}
+
+func (s *recordingStore) snapshot() ([]string, []string, []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.connected...), append([]string(nil), s.acked...), append([]string(nil), s.disconnected...)
+}
+
 func TestHub_BroadcastLatestOnlyDropsOldest(t *testing.T) {
-	h := NewHub(discardLogger())
-	conn := h.register("dp-1")
+	h := NewHub(discardLogger(), nil)
+	conn := h.register("", "dp-1")
 	defer h.unregister(conn)
 
 	h.Broadcast("v1")
@@ -51,8 +88,8 @@ func TestHub_BroadcastLatestOnlyDropsOldest(t *testing.T) {
 }
 
 func TestHub_BroadcastNeverBlocksSlowConsumer(t *testing.T) {
-	h := NewHub(discardLogger())
-	conn := h.register("dp-slow")
+	h := NewHub(discardLogger(), nil)
+	conn := h.register("", "dp-slow")
 	defer h.unregister(conn)
 
 	done := make(chan struct{})
@@ -70,7 +107,7 @@ func TestHub_BroadcastNeverBlocksSlowConsumer(t *testing.T) {
 }
 
 func TestHub_ConcurrentRegisterBroadcastAck(t *testing.T) {
-	h := NewHub(discardLogger())
+	h := NewHub(discardLogger(), nil)
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
 
@@ -97,7 +134,7 @@ func TestHub_ConcurrentRegisterBroadcastAck(t *testing.T) {
 					return
 				default:
 				}
-				conn := h.register("dp")
+				conn := h.register("", "dp")
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
@@ -119,4 +156,80 @@ func TestHub_ConcurrentRegisterBroadcastAck(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	close(stop)
 	wg.Wait()
+}
+
+func TestHub_RegisterCarriesScopeAndMarksConnected(t *testing.T) {
+	store := &recordingStore{}
+	h := NewHub(discardLogger(), store)
+
+	conn := h.register("tenant-a", "dp-1")
+	defer h.unregister(conn)
+
+	if conn.scope != "tenant-a" {
+		t.Fatalf("connection.scope = %q, want tenant-a", conn.scope)
+	}
+	connected, _, _ := store.snapshot()
+	if len(connected) != 1 || connected[0] != "tenant-a/dp-1" {
+		t.Fatalf("MarkConnected = %v, want [tenant-a/dp-1]", connected)
+	}
+}
+
+func TestHub_MarkAckPersistsAppliedVersion(t *testing.T) {
+	store := &recordingStore{}
+	h := NewHub(discardLogger(), store)
+
+	conn := h.register("tenant-a", "dp-1")
+	defer h.unregister(conn)
+
+	h.markAck(conn, "v42")
+
+	if got := conn.acked(); got != "v42" {
+		t.Fatalf("conn.acked() = %q, want v42", got)
+	}
+	_, acked, _ := store.snapshot()
+	if len(acked) != 1 || acked[0] != "tenant-a/dp-1=v42" {
+		t.Fatalf("MarkAck = %v, want [tenant-a/dp-1=v42]", acked)
+	}
+}
+
+func TestHub_MarkDisconnected(t *testing.T) {
+	store := &recordingStore{}
+	h := NewHub(discardLogger(), store)
+
+	conn := h.register("tenant-a", "dp-1")
+	h.markDisconnected(conn)
+	h.unregister(conn)
+
+	_, _, disconnected := store.snapshot()
+	if len(disconnected) != 1 || disconnected[0] != "tenant-a/dp-1" {
+		t.Fatalf("MarkDisconnected = %v, want [tenant-a/dp-1]", disconnected)
+	}
+}
+
+func TestHub_StoreErrorsAreSwallowed(t *testing.T) {
+	store := &recordingStore{err: errors.New("db down")}
+	h := NewHub(discardLogger(), store)
+
+	conn := h.register("tenant-a", "dp-1")
+	h.markAck(conn, "v1")
+	h.markDisconnected(conn)
+	h.unregister(conn)
+
+	connected, acked, disconnected := store.snapshot()
+	if len(connected) != 1 || len(acked) != 1 || len(disconnected) != 1 {
+		t.Fatalf("store writes were attempted but errors must not abort: connected=%v acked=%v disconnected=%v", connected, acked, disconnected)
+	}
+}
+
+func TestHub_NilStoreIsNoOp(t *testing.T) {
+	h := NewHub(discardLogger(), nil)
+
+	conn := h.register("tenant-a", "dp-1")
+	h.markAck(conn, "v1")
+	h.markDisconnected(conn)
+	h.unregister(conn)
+
+	if got := conn.acked(); got != "v1" {
+		t.Fatalf("conn.acked() = %q, want v1 (ack recording must work without a store)", got)
+	}
 }
