@@ -29,10 +29,11 @@ const (
 	snapshotChunkSize = 1 << 20
 )
 
-// SnapshotSource yields the current compiled snapshot bytes and version. The
+// SnapshotSource yields the compiled snapshot bytes and version for a given
+// partition scope. An empty scope means the whole, unpartitioned config. The
 // control-plane Holder satisfies it.
 type SnapshotSource interface {
-	Snapshot() (raw []byte, version string, ok bool)
+	SnapshotFor(scope string) (raw []byte, version string, ok bool)
 }
 
 // Service implements the ConfigSync gRPC server: the bidi Sync control channel
@@ -68,7 +69,8 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 	conn := s.hub.register(hello.GetInstanceId())
 	defer s.hub.unregister(conn)
 
-	if _, version, ok := s.source.Snapshot(); ok && version != hello.GetLastAppliedVersion() {
+	scope := ScopeFromContext(ctx)
+	if _, version, ok := s.source.SnapshotFor(scope); ok && version != hello.GetLastAppliedVersion() {
 		conn.enqueue(version)
 	}
 
@@ -107,7 +109,8 @@ func (s *Service) Sync(stream snapshotpb.ConfigSync_SyncServer) error {
 // GetSnapshot answers not_modified when the DP's applied_version matches current,
 // otherwise streams a SnapshotHeader followed by fixed-size data chunks.
 func (s *Service) GetSnapshot(req *snapshotpb.GetSnapshotRequest, stream snapshotpb.ConfigSync_GetSnapshotServer) error {
-	raw, version, ok := s.source.Snapshot()
+	scope := ScopeFromContext(stream.Context())
+	raw, version, ok := s.source.SnapshotFor(scope)
 	if !ok {
 		return status.Error(codes.Unavailable, "no snapshot available yet")
 	}

@@ -65,35 +65,42 @@ func NewAuthInterceptor(cfg *config.Config, logger *slog.Logger) *AuthIntercepto
 	return interceptor
 }
 
-// UnaryServerInterceptor authenticates unary RPCs before the handler runs.
+// UnaryServerInterceptor authenticates unary RPCs before the handler runs and
+// propagates the resolved partition scope down the context.
 func (a *AuthInterceptor) UnaryServerInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		if err := a.authorize(ctx); err != nil {
+		scoped, err := a.authorize(ctx)
+		if err != nil {
 			return nil, err
 		}
-		return handler(ctx, req)
+		return handler(scoped, req)
 	}
 }
 
-// StreamServerInterceptor authenticates streaming RPCs before the handler runs.
+// StreamServerInterceptor authenticates streaming RPCs before the handler runs
+// and propagates the resolved partition scope down the stream context.
 func (a *AuthInterceptor) StreamServerInterceptor() grpc.StreamServerInterceptor {
 	return func(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		if err := a.authorize(ss.Context()); err != nil {
+		scoped, err := a.authorize(ss.Context())
+		if err != nil {
 			return err
 		}
-		return handler(srv, ss)
+		return handler(srv, &scopedServerStream{ServerStream: ss, ctx: scoped})
 	}
 }
 
-func (a *AuthInterceptor) authorize(ctx context.Context) error {
+// authorize validates the bearer token and returns a context carrying the
+// resolved partition scope. In the shared-token mode the scope is empty, which
+// downstream resolves to the whole, unpartitioned config.
+func (a *AuthInterceptor) authorize(ctx context.Context) (context.Context, error) {
 	if len(a.tokenDigests) == 0 {
 		a.logger.Debug("config-sync token is not configured; rejecting RPC",
 			slog.String("component", component))
-		return status.Error(codes.Unauthenticated, "config-sync token is not configured")
+		return ctx, status.Error(codes.Unauthenticated, "config-sync token is not configured")
 	}
 	provided := bearerFromContext(ctx)
 	if provided == "" {
-		return status.Error(codes.Unauthenticated, "missing or invalid config-sync token")
+		return ctx, status.Error(codes.Unauthenticated, "missing or invalid config-sync token")
 	}
 	providedDigest := sha256.Sum256([]byte(provided))
 	matched := 0
@@ -101,10 +108,19 @@ func (a *AuthInterceptor) authorize(ctx context.Context) error {
 		matched |= subtle.ConstantTimeCompare(providedDigest[:], digest[:])
 	}
 	if matched != 1 {
-		return status.Error(codes.Unauthenticated, "missing or invalid config-sync token")
+		return ctx, status.Error(codes.Unauthenticated, "missing or invalid config-sync token")
 	}
-	return nil
+	return WithScope(ctx, ""), nil
 }
+
+// scopedServerStream overrides the stream context so handlers observe the scope
+// resolved by the interceptor.
+type scopedServerStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (s *scopedServerStream) Context() context.Context { return s.ctx }
 
 func bearerFromContext(ctx context.Context) string {
 	md, ok := metadata.FromIncomingContext(ctx)

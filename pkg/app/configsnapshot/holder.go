@@ -41,6 +41,13 @@ func (h *Holder) Snapshot() (raw []byte, version string, ok bool) {
 	return state.raw, state.version, true
 }
 
+// SnapshotFor returns the compiled snapshot for the given partition scope. This
+// single-snapshot holder is scope-agnostic and returns the same snapshot for
+// every scope; per-scope compilation is layered on top separately.
+func (h *Holder) SnapshotFor(_ string) (raw []byte, version string, ok bool) {
+	return h.Snapshot()
+}
+
 func (h *Holder) Version() string {
 	state := h.current.Load()
 	if state == nil {
