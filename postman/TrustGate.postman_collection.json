@@ -393,6 +393,25 @@
               ]
             }
           }
+        },
+        {
+          "name": "List Config Sync Connections",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/config-sync/connections",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "config-sync",
+                "connections"
+              ]
+            },
+            "description": "List the currently connected config-sync data planes (self-hosted gateways streaming config). Admin-authed."
+          }
         }
       ]
     },
@@ -1178,6 +1197,41 @@
                 "global"
               ]
             }
+          }
+        },
+        {
+          "name": "Duplicate Policy",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('duplicated_policy_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies/{{policy_id}}/duplicate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "policies",
+                "{{policy_id}}",
+                "duplicate"
+              ]
+            },
+            "description": "Duplicate an existing policy. No body: the copy reuses the plugin configuration (slug, settings, stages, enabled, priority, parallel) with a fresh id and an auto-generated name (suffix 2, 3, 4...). The copy has no consumer associations and is not global. Returns 201 with the new policy."
           }
         }
       ]
@@ -2080,6 +2134,42 @@
                 }
               ]
             }
+          }
+        },
+        {
+          "name": "List Policies Catalog",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/policies-catalog",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "policies-catalog"
+              ]
+            },
+            "description": "List the available policy plugins (slugs + schemas) that can be attached to a gateway."
+          }
+        },
+        {
+          "name": "List MCP Servers Catalog",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/mcp-servers-catalog",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "mcp-servers-catalog"
+              ]
+            },
+            "description": "List the known MCP servers that can back an MCP registry."
           }
         }
       ]
