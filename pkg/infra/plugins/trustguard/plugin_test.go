@@ -91,7 +91,7 @@ func (f *fakeGuard) handler() http.HandlerFunc {
 		f.lastPath = r.URL.Path
 		f.lastAuth = r.Header.Get("Authorization")
 		f.lastCT = r.Header.Get("Content-Type")
-		if r.URL.Path != guardPath {
+		if r.URL.Path != evaluatePath {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -532,8 +532,8 @@ func TestExecuteForwardsFullGuardRequest(t *testing.T) {
 	if method != http.MethodPost {
 		t.Fatalf("method = %q, want POST", method)
 	}
-	if path != guardPath {
-		t.Fatalf("path = %q, want %q", path, guardPath)
+	if path != evaluatePath {
+		t.Fatalf("path = %q, want %q", path, evaluatePath)
 	}
 	if got := f.captured().GatewayID; got != "gw-test" {
 		t.Fatalf("gateway_id = %q, want gw-test", got)
@@ -641,7 +641,7 @@ func TestExecuteRetriesOnceOn401(t *testing.T) {
 			atomic.AddInt32(&tokenHits, 1)
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "tok", TokenType: "Bearer", ExpiresIn: 3600})
-		case guardPath:
+		case evaluatePath:
 			if atomic.AddInt32(&guardHits, 1) == 1 {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
