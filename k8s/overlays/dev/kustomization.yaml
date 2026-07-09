@@ -16,6 +16,7 @@ patchesStrategicMerge:
 - patches/httproute-patch.yaml
 - patches/sa-annotation-patch.yaml
 - patches/config-sync-tls-patch.yaml
+- patches/config-sync-internal-lb-patch.yaml
 commonLabels:
   app.kubernetes.io/managed-by: kustomize
   environment: dev
