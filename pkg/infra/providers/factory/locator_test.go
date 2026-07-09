@@ -38,6 +38,7 @@ func TestProviderLocator_Get(t *testing.T) {
 		ProviderXAI,
 		ProviderCerebras,
 		ProviderOpenRouter,
+		ProviderCohere,
 	} {
 		t.Run(provider, func(t *testing.T) {
 			client, err := locator.Get(provider)

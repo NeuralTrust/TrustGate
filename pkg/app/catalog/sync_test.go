@@ -123,8 +123,8 @@ func TestSyncer_Sync(t *testing.T) {
 	if len(repo.providers) != len(seedProviders) {
 		t.Fatalf("expected %d providers seeded, got %d", len(seedProviders), len(repo.providers))
 	}
-	if len(repo.upsertedModels) != 2 {
-		t.Fatalf("expected 2 mapped models upserted (unknown vendor skipped), got %d", len(repo.upsertedModels))
+	if len(repo.upsertedModels) != 2+len(cohereSeedModels) {
+		t.Fatalf("expected %d mapped models upserted (unknown vendor skipped), got %d", 2+len(cohereSeedModels), len(repo.upsertedModels))
 	}
 	for _, m := range repo.upsertedModels {
 		if !m.Enabled {

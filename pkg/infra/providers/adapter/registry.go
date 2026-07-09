@@ -103,6 +103,10 @@ func NewRegistry() *Registry {
 	r.Register(FormatGemini, &GeminiAdapter{})
 	r.Register(FormatBedrock, &BedrockAdapter{})
 	r.Register(FormatMistral, &MistralAdapter{})
+	r.Register(FormatCohere, &CohereAdapter{})
+	r.Register(FormatOpenAIEmbeddings, &OpenAIEmbeddingsAdapter{})
+	r.Register(FormatCohereEmbed, &CohereEmbedAdapter{})
+	r.Register(FormatCohereRerank, &CohereRerankAdapter{})
 	return r
 }
 

@@ -258,6 +258,7 @@ var providerAuthCatalog = map[string][]AuthTypeOption{
 	providers.ProviderXAI:              {apiKeyAuthOption},
 	providers.ProviderCerebras:         {apiKeyAuthOption},
 	providers.ProviderOpenRouter:       {apiKeyAuthOption},
+	providers.ProviderCohere:           {apiKeyAuthOption},
 }
 
 func ProviderAuthOptions(code string) []AuthTypeOption {

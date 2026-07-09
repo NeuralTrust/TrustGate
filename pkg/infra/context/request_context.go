@@ -46,6 +46,7 @@ type RequestContext struct {
 	Provider           string
 	SourceFormat       string
 	TargetFormat       string
+	ProxyCapability    string
 	AllowedModels      []string
 	DefaultModel       string
 	RequestedModel     string
