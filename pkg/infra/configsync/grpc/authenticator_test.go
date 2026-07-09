@@ -154,6 +154,66 @@ func TestSharedAuthenticator(t *testing.T) {
 	}
 }
 
+func TestCompositeAuthenticator(t *testing.T) {
+	cfg, priv := newSignedTestConfig(t)
+	cfg.AuthMode = config.ConfigSyncAuthModeComposite
+	cfg.Token = "shared-tok"
+	cfg.TokenPrevious = "old-tok"
+	auth, err := newCompositeAuthenticator(cfg)
+	if err != nil {
+		t.Fatalf("newCompositeAuthenticator: %v", err)
+	}
+
+	scope, err := auth.authenticate(mint(t, priv, jwt.SigningMethodEdDSA, validClaims()))
+	if err != nil {
+		t.Fatalf("jwt authenticate: %v", err)
+	}
+	if scope != "org_1" {
+		t.Fatalf("jwt scope = %q, want org_1", scope)
+	}
+
+	for _, tok := range []string{"shared-tok", "old-tok"} {
+		scope, err := auth.authenticate(tok)
+		if err != nil {
+			t.Fatalf("shared authenticate(%q): %v", tok, err)
+		}
+		if scope != "" {
+			t.Fatalf("shared scope = %q, want empty (global)", scope)
+		}
+	}
+
+	_, otherPriv, _ := ed25519.GenerateKey(nil)
+	for name, bearer := range map[string]string{
+		"empty":         "",
+		"garbage":       "not-a-jwt",
+		"wrong_token":   "nope",
+		"bad_signature": mint(t, otherPriv, jwt.SigningMethodEdDSA, validClaims()),
+		"expired": mint(t, priv, jwt.SigningMethodEdDSA, jwt.MapClaims{
+			"iss": testIssuer, "aud": testAudience, "scope": "org_1",
+			"exp": time.Now().Add(-time.Hour).Unix(),
+		}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := auth.authenticate(bearer); err == nil {
+				t.Fatalf("expected rejection for %s", name)
+			}
+		})
+	}
+}
+
+func TestNewAuthInterceptor_Composite(t *testing.T) {
+	cfg, _ := newSignedTestConfig(t)
+	cfg.AuthMode = config.ConfigSyncAuthModeComposite
+	cfg.Token = "shared-tok"
+	interceptor, err := NewAuthInterceptor(&config.Config{ConfigSync: cfg}, discardLogger())
+	if err != nil {
+		t.Fatalf("NewAuthInterceptor composite: %v", err)
+	}
+	if _, ok := interceptor.authenticator.(*compositeAuthenticator); !ok {
+		t.Fatalf("authenticator = %T, want *compositeAuthenticator", interceptor.authenticator)
+	}
+}
+
 func TestNewAuthInterceptor_SignedRequiresValidKey(t *testing.T) {
 	_, err := NewAuthInterceptor(&config.Config{ConfigSync: config.ConfigSyncConfig{
 		AuthMode:     config.ConfigSyncAuthModeSigned,

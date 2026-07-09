@@ -147,6 +147,10 @@ type Config struct {
 const (
 	ConfigSyncAuthModeShared = "shared"
 	ConfigSyncAuthModeSigned = "signed"
+	// ConfigSyncAuthModeComposite accepts both a signed per-tenant JWT (external
+	// data planes → scoped snapshot) and the shared bearer token (in-cluster data
+	// plane → global snapshot) on a single control plane.
+	ConfigSyncAuthModeComposite = "composite"
 )
 
 type ConfigSyncConfig struct {
@@ -733,19 +737,28 @@ func (cs ConfigSyncConfig) validateAuthMode() error {
 	case "", ConfigSyncAuthModeShared:
 		return nil
 	case ConfigSyncAuthModeSigned:
-		if cs.JWTPublicKey == "" {
-			if cs.JWTJWKSURL != "" {
-				return fmt.Errorf("%w: CONFIG_SYNC_AUTH_MODE=signed with JWKS is not yet supported; set CONFIG_SYNC_JWT_PUBLIC_KEY", errors.ErrInvalidConfig)
-			}
-			return fmt.Errorf("%w: CONFIG_SYNC_AUTH_MODE=signed requires CONFIG_SYNC_JWT_PUBLIC_KEY", errors.ErrInvalidConfig)
+		return cs.validateSignedJWTParams()
+	case ConfigSyncAuthModeComposite:
+		if cs.Token == "" {
+			return fmt.Errorf("%w: CONFIG_SYNC_AUTH_MODE=composite requires CONFIG_SYNC_TOKEN for the in-cluster data plane that pulls the global snapshot", errors.ErrInvalidConfig)
 		}
-		if cs.JWTIssuer == "" || cs.JWTAudience == "" {
-			return fmt.Errorf("%w: CONFIG_SYNC_AUTH_MODE=signed requires CONFIG_SYNC_JWT_ISSUER and CONFIG_SYNC_JWT_AUDIENCE", errors.ErrInvalidConfig)
-		}
-		return nil
+		return cs.validateSignedJWTParams()
 	default:
-		return fmt.Errorf("%w: CONFIG_SYNC_AUTH_MODE must be %q or %q", errors.ErrInvalidConfig, ConfigSyncAuthModeShared, ConfigSyncAuthModeSigned)
+		return fmt.Errorf("%w: CONFIG_SYNC_AUTH_MODE must be %q, %q or %q", errors.ErrInvalidConfig, ConfigSyncAuthModeShared, ConfigSyncAuthModeSigned, ConfigSyncAuthModeComposite)
 	}
+}
+
+func (cs ConfigSyncConfig) validateSignedJWTParams() error {
+	if cs.JWTPublicKey == "" {
+		if cs.JWTJWKSURL != "" {
+			return fmt.Errorf("%w: CONFIG_SYNC_AUTH_MODE=%s with JWKS is not yet supported; set CONFIG_SYNC_JWT_PUBLIC_KEY", errors.ErrInvalidConfig, cs.AuthMode)
+		}
+		return fmt.Errorf("%w: CONFIG_SYNC_AUTH_MODE=%s requires CONFIG_SYNC_JWT_PUBLIC_KEY", errors.ErrInvalidConfig, cs.AuthMode)
+	}
+	if cs.JWTIssuer == "" || cs.JWTAudience == "" {
+		return fmt.Errorf("%w: CONFIG_SYNC_AUTH_MODE=%s requires CONFIG_SYNC_JWT_ISSUER and CONFIG_SYNC_JWT_AUDIENCE", errors.ErrInvalidConfig, cs.AuthMode)
+	}
+	return nil
 }
 
 // IsDeployed reports whether APP_ENV marks a non-local deployment (staging or

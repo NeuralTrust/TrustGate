@@ -54,6 +54,13 @@ func NewAuthInterceptor(cfg *config.Config, logger *slog.Logger) (*AuthIntercept
 		}
 		interceptor.authenticator = authenticator
 		logger.Info("config-sync auth: signed JWT mode enabled", slog.String("component", component))
+	case config.ConfigSyncAuthModeComposite:
+		authenticator, err := newCompositeAuthenticator(cfg.ConfigSync)
+		if err != nil {
+			return nil, err
+		}
+		interceptor.authenticator = authenticator
+		logger.Info("config-sync auth: composite mode enabled (shared token + signed JWT)", slog.String("component", component))
 	default:
 		shared := newSharedAuthenticator(cfg.ConfigSync)
 		if !shared.configured() {

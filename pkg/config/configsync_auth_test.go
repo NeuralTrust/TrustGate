@@ -33,6 +33,9 @@ func TestConfigSyncValidateAuthMode(t *testing.T) {
 		{name: "signed jwks only", cfg: ConfigSyncConfig{AuthMode: ConfigSyncAuthModeSigned, JWTJWKSURL: "https://x/jwks", JWTIssuer: "i", JWTAudience: "a"}, wantErr: true},
 		{name: "signed without iss/aud", cfg: ConfigSyncConfig{AuthMode: ConfigSyncAuthModeSigned, JWTPublicKey: "pem"}, wantErr: true},
 		{name: "signed complete", cfg: ConfigSyncConfig{AuthMode: ConfigSyncAuthModeSigned, JWTPublicKey: "pem", JWTIssuer: "i", JWTAudience: "a"}, wantErr: false},
+		{name: "composite complete", cfg: ConfigSyncConfig{AuthMode: ConfigSyncAuthModeComposite, Token: "t", JWTPublicKey: "pem", JWTIssuer: "i", JWTAudience: "a"}, wantErr: false},
+		{name: "composite without token", cfg: ConfigSyncConfig{AuthMode: ConfigSyncAuthModeComposite, JWTPublicKey: "pem", JWTIssuer: "i", JWTAudience: "a"}, wantErr: true},
+		{name: "composite without jwt", cfg: ConfigSyncConfig{AuthMode: ConfigSyncAuthModeComposite, Token: "t"}, wantErr: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
