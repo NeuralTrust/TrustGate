@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	guardPath        = "/v1/guard"
+	evaluatePath     = "/v1/evaluate"
 	maxResponseBytes = 1 << 20
 )
 
@@ -46,7 +46,7 @@ func (c *client) Guard(ctx context.Context, baseURL, token string, body GuardReq
 	if err != nil {
 		return nil, fmt.Errorf("trustguard: marshal request: %w", err)
 	}
-	endpoint := strings.TrimRight(baseURL, "/") + guardPath
+	endpoint := strings.TrimRight(baseURL, "/") + evaluatePath
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("trustguard: build request: %w", err)

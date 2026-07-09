@@ -104,7 +104,7 @@ func newTrustGuardStubServer() *trustGuardStub {
 		switch r.URL.Path {
 		case "/v1/token":
 			s.handleToken(w, r)
-		case "/v1/guard":
+		case "/v1/evaluate":
 			s.handleGuard(w, r)
 		default:
 			http.NotFound(w, r)

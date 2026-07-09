@@ -86,8 +86,8 @@ func TestGuardDecodesResponses(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != guardPath {
-					t.Errorf("path = %q, want %q", r.URL.Path, guardPath)
+				if r.URL.Path != evaluatePath {
+					t.Errorf("path = %q, want %q", r.URL.Path, evaluatePath)
 				}
 				if got := r.Header.Get("Authorization"); got != "Bearer secret-key" {
 					t.Errorf("authorization header = %q, want %q", got, "Bearer secret-key")
@@ -155,8 +155,8 @@ func TestGuardDecodesResponses(t *testing.T) {
 func TestGuardTrimsTrailingSlash(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != guardPath {
-			t.Errorf("path = %q, want %q", r.URL.Path, guardPath)
+		if r.URL.Path != evaluatePath {
+			t.Errorf("path = %q, want %q", r.URL.Path, evaluatePath)
 		}
 		_, _ = io.WriteString(w, `{"status":""}`)
 	}))
