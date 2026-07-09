@@ -256,6 +256,7 @@ var providerAuthCatalog = map[string][]AuthTypeOption{
 	providers.ProviderGroq:             {apiKeyAuthOption},
 	providers.ProviderDeepSeek:         {apiKeyAuthOption},
 	providers.ProviderXAI:              {apiKeyAuthOption},
+	providers.ProviderCerebras:         {apiKeyAuthOption},
 }
 
 func ProviderAuthOptions(code string) []AuthTypeOption {
