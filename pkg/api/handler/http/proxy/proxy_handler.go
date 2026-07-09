@@ -332,6 +332,7 @@ func buildRequestContext(c *fiber.Ctx, gatewayID ids.GatewayID, route apiresolve
 		IP:           c.IP(),
 		SessionID:    sessionIDFromContext(c),
 		SourceFormat: string(route.SourceFormat),
+		ProxyCapability: string(route.Capability),
 	}
 }
 

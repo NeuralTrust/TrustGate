@@ -114,6 +114,26 @@ func DecodeVertexOptions(options map[string]any) (VertexOptions, error) {
 	return opts, nil
 }
 
+type CohereOptions struct {
+	BaseURL string `mapstructure:"base_url"`
+}
+
+func DecodeCohereOptions(options map[string]any) (CohereOptions, error) {
+	var opts CohereOptions
+	if len(options) > 0 {
+		if err := mapstructure.Decode(options, &opts); err != nil {
+			return CohereOptions{}, fmt.Errorf("cohere: invalid provider_options: %w", err)
+		}
+	}
+	opts.BaseURL = strings.TrimSpace(opts.BaseURL)
+	if opts.BaseURL != "" {
+		if err := validateHTTPBaseURL(opts.BaseURL); err != nil {
+			return CohereOptions{}, fmt.Errorf("cohere: %w", err)
+		}
+	}
+	return opts, nil
+}
+
 func validateHTTPBaseURL(raw string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
