@@ -184,6 +184,66 @@ func TestUpdater_Update_TenantIDIsServerOnlyAndImmutable(t *testing.T) {
 	}
 }
 
+func TestUpdater_Update_HealsEmptyTenantFromContext(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	existing := domain.Rehydrate(id, "old", "active", "", nil, nil, nil, now, now)
+	existing.Metadata = map[string]string{"env": "prod"}
+
+	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+	repo.EXPECT().
+		Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+			return g.TenantID() == "acme" && g.Metadata["env"] == "prod"
+		})).
+		Return(nil).
+		Once()
+
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil)
+	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
+		ID:       id,
+		TenantID: "acme",
+		Slug:     ptr("renamed"),
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.TenantID() != "acme" {
+		t.Fatalf("empty tenant_id was not healed from context: got %q, want acme", got.TenantID())
+	}
+}
+
+func TestUpdater_Update_ContextTenantDoesNotOverrideExisting(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	existing := domain.Rehydrate(id, "old", "active", "", nil, nil, nil, now, now)
+	existing.Metadata = map[string]string{domain.MetadataTenantIDKey: "acme"}
+
+	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+	repo.EXPECT().
+		Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+			return g.TenantID() == "acme"
+		})).
+		Return(nil).
+		Once()
+
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil)
+	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
+		ID:       id,
+		TenantID: "globex",
+		Slug:     ptr("renamed"),
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.TenantID() != "acme" {
+		t.Fatalf("existing tenant_id must win over context: got %q, want acme", got.TenantID())
+	}
+}
+
 func TestUpdater_Update_RejectsEmptySlug(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)

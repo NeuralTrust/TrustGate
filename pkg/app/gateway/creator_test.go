@@ -184,6 +184,31 @@ func TestCreator_Create_StripsClientProvidedTenantID(t *testing.T) {
 	}
 }
 
+func TestCreator_Create_StampsTenantIDFromContext(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().
+		Save(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+			return g.TenantID() == "acme" && g.Metadata["env"] == "prod"
+		})).
+		Return(nil).
+		Once()
+
+	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil)
+
+	g, err := creator.Create(context.Background(), appgateway.CreateInput{
+		Slug:     "prod",
+		TenantID: "acme",
+		Metadata: map[string]string{domain.MetadataTenantIDKey: "attacker-team", "env": "prod"},
+	})
+	if err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+	if g.TenantID() != "acme" {
+		t.Fatalf("tenant_id from context was not stamped: got %q, want acme", g.TenantID())
+	}
+}
+
 func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)

@@ -28,6 +28,7 @@ import (
 type CreateInput struct {
 	Slug            string
 	Domain          string
+	TenantID        string
 	Metadata        map[string]string
 	Telemetry       *telemetry.Telemetry
 	ClientTLSConfig domain.ClientTLSConfig
@@ -74,7 +75,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, 
 		return nil, err
 	}
 	g.Domain = in.Domain
-	g.Metadata = domain.SanitizeClientMetadata(in.Metadata)
+	g.Metadata = domain.WithTenantID(domain.SanitizeClientMetadata(in.Metadata), in.TenantID)
 	g.Telemetry = in.Telemetry
 	g.ClientTLSConfig = in.ClientTLSConfig
 	g.SessionConfig = in.SessionConfig

@@ -70,6 +70,7 @@ func (h *UpdateGatewayHandler) Handle(c *fiber.Ctx) error {
 		Slug:            req.Slug,
 		Status:          req.Status,
 		Domain:          req.Domain,
+		TenantID:        tenantIDFromContext(c),
 		Metadata:        req.Metadata,
 		Telemetry:       req.Telemetry,
 		ClientTLSConfig: req.ClientTLSConfig,

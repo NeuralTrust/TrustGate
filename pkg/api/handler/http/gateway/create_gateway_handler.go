@@ -22,6 +22,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -60,6 +61,7 @@ func (h *CreateGatewayHandler) Handle(c *fiber.Ctx) error {
 	g, err := h.creator.Create(c.UserContext(), appgateway.CreateInput{
 		Slug:            req.Slug,
 		Domain:          req.Domain,
+		TenantID:        tenantIDFromContext(c),
 		Metadata:        req.Metadata,
 		Telemetry:       req.Telemetry,
 		ClientTLSConfig: req.ClientTLSConfig,
@@ -69,4 +71,13 @@ func (h *CreateGatewayHandler) Handle(c *fiber.Ctx) error {
 		return httpio.WriteError(c, err)
 	}
 	return httpio.WriteCreated(c, response.FromDomain(g, h.baseDomain, h.mcpBaseDomain))
+}
+
+// tenantIDFromContext returns the tenant identifier stamped by the admin auth
+// middleware from the JWT claim. It is empty when the token carries no tenant.
+func tenantIDFromContext(c *fiber.Ctx) string {
+	if v, ok := c.Locals(string(infracontext.TenantIDContextKey)).(string); ok {
+		return v
+	}
+	return ""
 }
