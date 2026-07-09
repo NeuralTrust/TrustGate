@@ -134,6 +134,8 @@ func resolveProviderWireFormat(providerName string) Format {
 		return FormatGroq
 	case provider.DeepSeek:
 		return FormatDeepSeek
+	case provider.Cerebras:
+		return FormatOpenAI
 	case provider.OpenAICompatible:
 		return FormatOpenAI
 	default:
@@ -161,7 +163,7 @@ func ResolveAgentFormat(providerName, sourceFormat string, providerOptions map[s
 		return Format(sourceFormat), nil
 	}
 	switch providerName {
-	case provider.OpenAI, provider.OpenAICompatible, provider.Azure, provider.Groq, provider.DeepSeek:
+	case provider.OpenAI, provider.OpenAICompatible, provider.Azure, provider.Groq, provider.DeepSeek, provider.Cerebras:
 		return ResolveTargetFormat(providerName, providerOptions), nil
 	case provider.Anthropic:
 		return FormatAnthropic, nil
