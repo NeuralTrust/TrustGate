@@ -34,7 +34,8 @@ const (
 	FormatGroq            Format = "groq"  // wire-compatible with OpenAI Chat Completions
 	FormatVertex          Format = "vertex"
 	FormatMistral         Format = "mistral"
-	FormatDeepSeek        Format = "deepseek" // wire-compatible with OpenAI Chat Completions
+	FormatDeepSeek        Format = "deepseek"   // wire-compatible with OpenAI Chat Completions
+	FormatOpenRouter      Format = "openrouter" // wire-compatible with OpenAI Chat Completions
 )
 
 // GeminiModelsRoutePrefix is the fixed Gemini route segment that carries the
@@ -111,7 +112,7 @@ func (f Format) IsOpenAIFamily() bool {
 func SupportedSourceFormat(f Format) bool {
 	switch f {
 	case FormatOpenAI, FormatOpenAIResponses, FormatAnthropic, FormatGemini,
-		FormatAzure, FormatGroq, FormatVertex, FormatMistral, FormatDeepSeek:
+		FormatAzure, FormatGroq, FormatVertex, FormatMistral, FormatDeepSeek, FormatOpenRouter:
 		return true
 	default:
 		return false
@@ -134,6 +135,8 @@ func resolveProviderWireFormat(providerName string) Format {
 		return FormatGroq
 	case provider.DeepSeek:
 		return FormatDeepSeek
+	case provider.OpenRouter:
+		return FormatOpenRouter
 	case provider.OpenAICompatible:
 		return FormatOpenAI
 	default:
@@ -161,7 +164,7 @@ func ResolveAgentFormat(providerName, sourceFormat string, providerOptions map[s
 		return Format(sourceFormat), nil
 	}
 	switch providerName {
-	case provider.OpenAI, provider.OpenAICompatible, provider.Azure, provider.Groq, provider.DeepSeek:
+	case provider.OpenAI, provider.OpenAICompatible, provider.Azure, provider.Groq, provider.DeepSeek, provider.OpenRouter:
 		return ResolveTargetFormat(providerName, providerOptions), nil
 	case provider.Anthropic:
 		return FormatAnthropic, nil
@@ -186,7 +189,7 @@ func IsSameWireFormat(a, b Format) bool {
 
 func normalizeFormat(f Format) Format {
 	switch f {
-	case FormatAzure, FormatGroq, FormatDeepSeek:
+	case FormatAzure, FormatGroq, FormatDeepSeek, FormatOpenRouter:
 		return FormatOpenAI
 	case FormatVertex:
 		return FormatGemini

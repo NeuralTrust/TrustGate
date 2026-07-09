@@ -44,6 +44,7 @@ var seedProviders = []seedProvider{
 	{providers.ProviderMistral, "Mistral", "openai"},
 	{providers.ProviderGroq, "Groq", "openai"},
 	{providers.ProviderDeepSeek, "DeepSeek", "openai"},
+	{providers.ProviderOpenRouter, "OpenRouter", "openai"},
 }
 
 // modelsDevProviderToCode maps models.dev provider keys to the gateway provider
