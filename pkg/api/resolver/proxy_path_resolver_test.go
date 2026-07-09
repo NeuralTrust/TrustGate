@@ -24,16 +24,20 @@ import (
 func TestResolveProxyPath(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		path       string
-		wantSlug   string
-		wantFormat adapter.Format
+		path             string
+		wantSlug         string
+		wantFormat       adapter.Format
+		wantCapability   ProxyCapability
 	}{
-		{"/X84Yhsy8/v1/chat/completions", "X84Yhsy8", adapter.FormatOpenAI},
-		{"/X84Yhsy8/v1/chat/completions/", "X84Yhsy8", adapter.FormatOpenAI},
-		{"/X84Yhsy8/v1/messages", "X84Yhsy8", adapter.FormatAnthropic},
-		{"/X84Yhsy8/v1/responses", "X84Yhsy8", adapter.FormatOpenAIResponses},
-		{"/X84Yhsy8/v1beta/models/gemini-pro:generateContent", "X84Yhsy8", adapter.FormatGemini},
-		{"/X84Yhsy8/v1beta/models/gemini-pro:streamGenerateContent", "X84Yhsy8", adapter.FormatGemini},
+		{"/X84Yhsy8/v1/chat/completions", "X84Yhsy8", adapter.FormatOpenAI, CapabilityChat},
+		{"/X84Yhsy8/v1/chat/completions/", "X84Yhsy8", adapter.FormatOpenAI, CapabilityChat},
+		{"/X84Yhsy8/v1/messages", "X84Yhsy8", adapter.FormatAnthropic, CapabilityChat},
+		{"/X84Yhsy8/v1/responses", "X84Yhsy8", adapter.FormatOpenAIResponses, CapabilityChat},
+		{"/X84Yhsy8/v2/chat", "X84Yhsy8", adapter.FormatCohere, CapabilityChat},
+		{"/X84Yhsy8/v1/embeddings", "X84Yhsy8", adapter.FormatOpenAIEmbeddings, CapabilityEmbeddings},
+		{"/X84Yhsy8/v1/rerank", "X84Yhsy8", adapter.FormatCohereRerank, CapabilityRerank},
+		{"/X84Yhsy8/v1beta/models/gemini-pro:generateContent", "X84Yhsy8", adapter.FormatGemini, CapabilityChat},
+		{"/X84Yhsy8/v1beta/models/gemini-pro:streamGenerateContent", "X84Yhsy8", adapter.FormatGemini, CapabilityChat},
 	}
 	for _, tc := range cases {
 		route, err := ResolveProxyPath(tc.path)
@@ -46,6 +50,9 @@ func TestResolveProxyPath(t *testing.T) {
 		if route.SourceFormat != tc.wantFormat {
 			t.Fatalf("ResolveProxyPath(%q).SourceFormat = %q, want %q", tc.path, route.SourceFormat, tc.wantFormat)
 		}
+		if route.Capability != tc.wantCapability {
+			t.Fatalf("ResolveProxyPath(%q).Capability = %q, want %q", tc.path, route.Capability, tc.wantCapability)
+		}
 	}
 }
 
@@ -55,7 +62,6 @@ func TestResolveProxyPath_UnknownRoutes(t *testing.T) {
 		"/",
 		"/X84Yhsy8",
 		"/X84Yhsy8/",
-		"/X84Yhsy8/v1/embeddings",
 		"/X84Yhsy8/v2/chat/completions",
 		"/X84Yhsy8/v1beta/models/",
 		"/X84Yhsy8/v1beta/models/:generateContent",
@@ -70,12 +76,12 @@ func TestResolveProxyPath_UnknownRoutes(t *testing.T) {
 func TestGeminiModelFromPath(t *testing.T) {
 	t.Parallel()
 	cases := map[string]string{
-		"/v1beta/models/gemini-pro:generateContent":             "gemini-pro",
+		"/v1beta/models/gemini-pro:generateContent":               "gemini-pro",
 		"/v1beta/models/gemini-1.5-flash:streamGenerateContent": "gemini-1.5-flash",
-		"/v1beta/models/gemini-pro":                             "gemini-pro",
+		"/v1beta/models/gemini-pro":                               "gemini-pro",
 		"/slug/v1beta/models/gemini-pro:generateContent":        "gemini-pro",
-		"/v1beta/models/:generateContent":                       "",
-		"/v1/chat/completions":                                  "",
+		"/v1beta/models/:generateContent":                         "",
+		"/v1/chat/completions":                                    "",
 	}
 	for rest, want := range cases {
 		if got := adapter.GeminiModelFromPath(rest); got != want {

@@ -26,11 +26,19 @@ import (
 )
 
 const sourceModelsDev = "models.dev"
+const sourceManualSeed = "seed"
 
 type seedProvider struct {
 	code        string
 	displayName string
 	wireFormat  string
+}
+
+type seedModel struct {
+	slug         string
+	externalID   string
+	displayName  string
+	capabilities map[string]any
 }
 
 var seedProviders = []seedProvider{
@@ -45,6 +53,37 @@ var seedProviders = []seedProvider{
 	{providers.ProviderGroq, "Groq", "openai"},
 	{providers.ProviderDeepSeek, "DeepSeek", "openai"},
 	{providers.ProviderXAI, "xAI", "openai"},
+	{providers.ProviderCerebras, "Cerebras", "openai"},
+	{providers.ProviderOpenRouter, "OpenRouter", "openai"},
+	{providers.ProviderCohere, "Cohere", "cohere"},
+}
+
+var cohereSeedModels = []seedModel{
+	{
+		slug:        "command-r-plus",
+		externalID:  "command-r-plus",
+		displayName: "Command R+",
+		capabilities: map[string]any{
+			"chat":   true,
+			"rerank": true,
+		},
+	},
+	{
+		slug:        "embed-english-v3.0",
+		externalID:  "embed-english-v3.0",
+		displayName: "Embed English v3.0",
+		capabilities: map[string]any{
+			"embed": true,
+		},
+	},
+	{
+		slug:        "rerank-english-v3.0",
+		externalID:  "rerank-english-v3.0",
+		displayName: "Rerank English v3.0",
+		capabilities: map[string]any{
+			"rerank": true,
+		},
+	},
 }
 
 // modelsDevProviderToCode maps models.dev provider keys to the gateway provider
@@ -60,6 +99,9 @@ var modelsDevProviderToCode = map[string]string{
 	"groq":           providers.ProviderGroq,
 	"deepseek":       providers.ProviderDeepSeek,
 	"xai":            providers.ProviderXAI,
+	"cerebras":       providers.ProviderCerebras,
+	"openrouter":     providers.ProviderOpenRouter,
+	"cohere":         providers.ProviderCohere,
 }
 
 //go:generate mockery --name=Syncer --dir=. --output=./mocks --filename=catalog_syncer_mock.go --case=underscore --with-expecter
@@ -87,6 +129,10 @@ func (s *syncer) Sync(ctx context.Context) error {
 
 	codeToProvider, err := s.providerIndex(ctx)
 	if err != nil {
+		return err
+	}
+
+	if err := s.seedManualModels(ctx, codeToProvider); err != nil {
 		return err
 	}
 
@@ -147,6 +193,28 @@ func (s *syncer) seedProviders(ctx context.Context) error {
 			Source:      "seed",
 		}
 		if err := s.repo.UpsertProvider(ctx, entity); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *syncer) seedManualModels(ctx context.Context, codeToProvider map[string]domain.Provider) error {
+	provider, ok := codeToProvider[providers.ProviderCohere]
+	if !ok {
+		return nil
+	}
+	for _, m := range cohereSeedModels {
+		entity := &domain.Model{
+			ProviderID:    provider.ID,
+			Slug:          m.slug,
+			ExternalID:    m.externalID,
+			DisplayName:   m.displayName,
+			Capabilities:  m.capabilities,
+			Enabled:       true,
+			Source:        sourceManualSeed,
+		}
+		if err := s.repo.UpsertModel(ctx, entity); err != nil {
 			return err
 		}
 	}

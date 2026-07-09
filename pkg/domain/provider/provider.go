@@ -29,6 +29,9 @@ const (
 	Groq             = "groq"
 	DeepSeek         = "deepseek"
 	XAI              = "xai"
+	Cerebras         = "cerebras"
+	OpenRouter       = "openrouter"
+	Cohere           = "cohere"
 )
 
 // Supported returns every provider name the gateway can route to.
@@ -45,6 +48,9 @@ func Supported() []string {
 		Groq,
 		DeepSeek,
 		XAI,
+		Cerebras,
+		OpenRouter,
+		Cohere,
 	}
 }
 
@@ -61,7 +67,10 @@ func IsValid(name string) bool {
 		Mistral,
 		Groq,
 		DeepSeek,
-		XAI:
+		XAI,
+		Cerebras,
+		OpenRouter,
+		Cohere:
 		return true
 	default:
 		return false

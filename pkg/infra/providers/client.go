@@ -36,6 +36,9 @@ const (
 	ProviderGroq             = provider.Groq
 	ProviderDeepSeek         = provider.DeepSeek
 	ProviderXAI              = provider.XAI
+	ProviderCerebras         = provider.Cerebras
+	ProviderOpenRouter       = provider.OpenRouter
+	ProviderCohere           = provider.Cohere
 )
 
 type Config struct {
@@ -99,4 +102,14 @@ type Client interface {
 		config *Config,
 		reqBody []byte,
 	) (iter.Seq2[[]byte, error], error)
+}
+
+// EmbeddingsClient performs non-streaming embedding requests.
+type EmbeddingsClient interface {
+	Embeddings(ctx context.Context, config *Config, reqBody []byte) ([]byte, error)
+}
+
+// RerankClient performs non-streaming rerank requests.
+type RerankClient interface {
+	Rerank(ctx context.Context, config *Config, reqBody []byte) ([]byte, error)
 }

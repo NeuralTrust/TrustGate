@@ -34,8 +34,13 @@ const (
 	FormatGroq            Format = "groq"  // wire-compatible with OpenAI Chat Completions
 	FormatVertex          Format = "vertex"
 	FormatMistral         Format = "mistral"
-	FormatDeepSeek        Format = "deepseek" // wire-compatible with OpenAI Chat Completions
-	FormatXAI             Format = "xai"      // wire-compatible with OpenAI Chat Completions
+	FormatDeepSeek         Format = "deepseek"   // wire-compatible with OpenAI Chat Completions
+	FormatXAI              Format = "xai"        // wire-compatible with OpenAI Chat Completions
+	FormatOpenRouter       Format = "openrouter" // wire-compatible with OpenAI Chat Completions
+	FormatCohere           Format = "cohere"
+	FormatOpenAIEmbeddings Format = "openai_embeddings"
+	FormatCohereEmbed      Format = "cohere_embed"
+	FormatCohereRerank     Format = "cohere_rerank"
 )
 
 // GeminiModelsRoutePrefix is the fixed Gemini route segment that carries the
@@ -100,7 +105,8 @@ func (f Format) SupportsCanonicalToolCalls() bool {
 	return IsSameWireFormat(f, FormatOpenAI) ||
 		f == FormatOpenAIResponses ||
 		f == FormatAnthropic ||
-		f == FormatMistral
+		f == FormatMistral ||
+		f == FormatCohere
 }
 
 // IsOpenAIFamily reports whether the format speaks an OpenAI-compatible wire
@@ -112,7 +118,8 @@ func (f Format) IsOpenAIFamily() bool {
 func SupportedSourceFormat(f Format) bool {
 	switch f {
 	case FormatOpenAI, FormatOpenAIResponses, FormatAnthropic, FormatGemini,
-		FormatAzure, FormatGroq, FormatVertex, FormatMistral, FormatDeepSeek, FormatXAI:
+		FormatAzure, FormatGroq, FormatVertex, FormatMistral, FormatDeepSeek, FormatXAI, FormatOpenRouter,
+		FormatCohere, FormatOpenAIEmbeddings, FormatCohereEmbed, FormatCohereRerank:
 		return true
 	default:
 		return false
@@ -137,6 +144,12 @@ func resolveProviderWireFormat(providerName string) Format {
 		return FormatDeepSeek
 	case provider.XAI:
 		return FormatXAI
+	case provider.Cerebras:
+		return FormatOpenAI
+	case provider.OpenRouter:
+		return FormatOpenRouter
+	case provider.Cohere:
+		return FormatCohere
 	case provider.OpenAICompatible:
 		return FormatOpenAI
 	default:
@@ -164,7 +177,7 @@ func ResolveAgentFormat(providerName, sourceFormat string, providerOptions map[s
 		return Format(sourceFormat), nil
 	}
 	switch providerName {
-	case provider.OpenAI, provider.OpenAICompatible, provider.Azure, provider.Groq, provider.DeepSeek, provider.XAI:
+	case provider.OpenAI, provider.OpenAICompatible, provider.Azure, provider.Groq, provider.DeepSeek, provider.XAI, provider.Cerebras, provider.OpenRouter:
 		return ResolveTargetFormat(providerName, providerOptions), nil
 	case provider.Anthropic:
 		return FormatAnthropic, nil
@@ -174,10 +187,27 @@ func ResolveAgentFormat(providerName, sourceFormat string, providerOptions map[s
 		return FormatBedrock, nil
 	case provider.Mistral:
 		return FormatMistral, nil
+	case provider.Cohere:
+		return FormatCohere, nil
 	case provider.Vertex:
 		return FormatVertex, nil
 	default:
 		return "", fmt.Errorf("unsupported provider: %s", providerName)
+	}
+}
+
+// ResolveTargetFormatForCapability picks the provider wire format for a proxy capability.
+func ResolveTargetFormatForCapability(providerName string, capability string, providerOptions map[string]any) Format {
+	switch capability {
+	case "embeddings":
+		if providerName == provider.Cohere {
+			return FormatCohereEmbed
+		}
+		return FormatOpenAIEmbeddings
+	case "rerank":
+		return FormatCohereRerank
+	default:
+		return ResolveTargetFormat(providerName, providerOptions)
 	}
 }
 
@@ -189,7 +219,7 @@ func IsSameWireFormat(a, b Format) bool {
 
 func normalizeFormat(f Format) Format {
 	switch f {
-	case FormatAzure, FormatGroq, FormatDeepSeek, FormatXAI:
+	case FormatAzure, FormatGroq, FormatDeepSeek, FormatXAI, FormatOpenRouter:
 		return FormatOpenAI
 	case FormatVertex:
 		return FormatGemini

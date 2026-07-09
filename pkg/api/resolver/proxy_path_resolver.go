@@ -29,11 +29,22 @@ const (
 	RouteChatCompletions = "/v1/chat/completions"
 	RouteMessages        = "/v1/messages"
 	RouteResponses       = "/v1/responses"
+	RouteCohereChat      = "/v2/chat"
+	RouteEmbeddings      = "/v1/embeddings"
+	RouteRerank          = "/v1/rerank"
 )
 
 const pathSeparator = "/"
 
 var ErrUnknownProxyPath = errors.New("no fixed proxy route matches the request path")
+
+type ProxyCapability string
+
+const (
+	CapabilityChat       ProxyCapability = "chat"
+	CapabilityEmbeddings ProxyCapability = "embeddings"
+	CapabilityRerank     ProxyCapability = "rerank"
+)
 
 // ProxyRoute is the result of parsing a proxy request path of the form
 // /{consumer_slug}/{fixed route}, where the fixed route determines the
@@ -41,6 +52,7 @@ var ErrUnknownProxyPath = errors.New("no fixed proxy route matches the request p
 type ProxyRoute struct {
 	ConsumerSlug string
 	SourceFormat adapter.Format
+	Capability   ProxyCapability
 	Rest         string
 }
 
@@ -54,24 +66,35 @@ func ResolveProxyPath(path string) (ProxyRoute, error) {
 	if len(rest) > 1 {
 		rest = strings.TrimRight(rest, pathSeparator)
 	}
-	format, err := formatForRoute(rest)
+	format, capability, err := formatForRoute(rest)
 	if err != nil {
 		return ProxyRoute{}, err
 	}
-	return ProxyRoute{ConsumerSlug: slug, SourceFormat: format, Rest: rest}, nil
+	return ProxyRoute{
+		ConsumerSlug: slug,
+		SourceFormat: format,
+		Capability:   capability,
+		Rest:         rest,
+	}, nil
 }
 
-func formatForRoute(rest string) (adapter.Format, error) {
+func formatForRoute(rest string) (adapter.Format, ProxyCapability, error) {
 	switch rest {
 	case RouteChatCompletions:
-		return adapter.FormatOpenAI, nil
+		return adapter.FormatOpenAI, CapabilityChat, nil
 	case RouteMessages:
-		return adapter.FormatAnthropic, nil
+		return adapter.FormatAnthropic, CapabilityChat, nil
 	case RouteResponses:
-		return adapter.FormatOpenAIResponses, nil
+		return adapter.FormatOpenAIResponses, CapabilityChat, nil
+	case RouteCohereChat:
+		return adapter.FormatCohere, CapabilityChat, nil
+	case RouteEmbeddings:
+		return adapter.FormatOpenAIEmbeddings, CapabilityEmbeddings, nil
+	case RouteRerank:
+		return adapter.FormatCohereRerank, CapabilityRerank, nil
 	}
 	if strings.HasPrefix(rest, adapter.GeminiModelsRoutePrefix) && adapter.GeminiModelFromPath(rest) != "" {
-		return adapter.FormatGemini, nil
+		return adapter.FormatGemini, CapabilityChat, nil
 	}
-	return "", ErrUnknownProxyPath
+	return "", "", ErrUnknownProxyPath
 }
