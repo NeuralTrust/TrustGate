@@ -37,6 +37,7 @@ const (
 	ProviderDeepSeek         = provider.DeepSeek
 	ProviderXAI              = provider.XAI
 	ProviderCerebras         = provider.Cerebras
+	ProviderOpenRouter       = provider.OpenRouter
 )
 
 type Config struct {

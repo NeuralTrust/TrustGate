@@ -97,6 +97,7 @@ func NewRegistry() *Registry {
 	r.Register(FormatOpenAI, &OpenAIAdapter{})
 	r.Register(FormatGroq, &OpenAIAdapter{})
 	r.Register(FormatDeepSeek, &OpenAIAdapter{})
+	r.Register(FormatOpenRouter, &OpenRouterAdapter{})
 	r.Register(FormatOpenAIResponses, &OpenAIResponsesAdapter{})
 	r.Register(FormatAnthropic, &AnthropicAdapter{})
 	r.Register(FormatGemini, &GeminiAdapter{})
@@ -112,6 +113,9 @@ func (r *Registry) Register(f Format, a ProviderAdapter) {
 
 // GetAdapter returns the adapter for a format, resolving aliases.
 func (r *Registry) GetAdapter(f Format) (ProviderAdapter, error) {
+	if a, ok := r.adapters[f]; ok {
+		return a, nil
+	}
 	f = normalizeFormat(f)
 	a, ok := r.adapters[f]
 	if !ok {
@@ -141,7 +145,7 @@ func (r *Registry) DecodeRequestFor(body []byte, providerFormat Format) (*Canoni
 }
 
 func (r *Registry) AdaptRequest(body []byte, source, target Format) ([]byte, error) {
-	if IsSameWireFormat(source, target) {
+	if ShouldPassthroughSameWireFormat(source, target) {
 		return body, nil
 	}
 
@@ -161,6 +165,7 @@ func (r *Registry) AdaptRequest(body []byte, source, target Format) ([]byte, err
 		}
 		return nil, fmt.Errorf("adapter request decode (%s): %w", source, err)
 	}
+	dropRequestExtensionsForCrossFormat(source, target, canonical)
 
 	out, err := dstAdapter.EncodeRequest(canonical)
 	if err != nil {
@@ -283,16 +288,21 @@ func (r *Registry) AdaptStreamChunk(chunk []byte, source, target Format) ([][]by
 }
 
 // ShouldPassthroughSameWireFormat reports whether request/response bodies can be
-// forwarded without canonical adaptation. Groq is OpenAI-compatible but not
-// identical (e.g. x_groq), so openai↔groq still goes through the adapter.
+// forwarded without canonical adaptation. Groq and OpenRouter are OpenAI-compatible
+// but not identical, so openai↔groq/openrouter still goes through the adapter.
 func ShouldPassthroughSameWireFormat(source, target Format) bool {
 	if !IsSameWireFormat(source, target) {
 		return false
 	}
-	if source != target && (source == FormatGroq || target == FormatGroq) {
+	if source != target && formatUsesExtensionAdapter(source, target) {
 		return false
 	}
 	return true
+}
+
+func formatUsesExtensionAdapter(source, target Format) bool {
+	return source == FormatGroq || target == FormatGroq ||
+		source == FormatOpenRouter || target == FormatOpenRouter
 }
 
 func dropProviderExtensionsForCrossFormat(source, target Format, resp *CanonicalResponse) {
@@ -310,5 +320,14 @@ func dropStreamProviderExtensionsForCrossFormat(source, target Format, chunk *Ca
 	}
 	if source != target {
 		chunk.ProviderExtensions = nil
+	}
+}
+
+func dropRequestExtensionsForCrossFormat(source, target Format, req *CanonicalRequest) {
+	if req == nil {
+		return
+	}
+	if source != target {
+		req.RequestExtensions = nil
 	}
 }

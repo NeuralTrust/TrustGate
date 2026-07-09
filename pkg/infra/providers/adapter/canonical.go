@@ -34,8 +34,9 @@ type CanonicalRequest struct {
 	TopK           *int                   `json:"top_k,omitempty"`
 	Stop           []string               `json:"stop,omitempty"`
 	Stream         bool                   `json:"stream,omitempty"`
-	ResponseFormat *CanonicalRespFormat   `json:"response_format,omitempty"`
-	Metadata       map[string]interface{} `json:"metadata,omitempty"`
+	ResponseFormat *CanonicalRespFormat          `json:"response_format,omitempty"`
+	Metadata       map[string]interface{}        `json:"metadata,omitempty"`
+	RequestExtensions map[string]json.RawMessage   `json:"request_extensions,omitempty"`
 }
 
 // CanonicalMessage represents a single turn in the conversation.
