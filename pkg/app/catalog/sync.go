@@ -44,6 +44,7 @@ var seedProviders = []seedProvider{
 	{providers.ProviderMistral, "Mistral", "openai"},
 	{providers.ProviderGroq, "Groq", "openai"},
 	{providers.ProviderDeepSeek, "DeepSeek", "openai"},
+	{providers.ProviderXAI, "xAI", "openai"},
 }
 
 // modelsDevProviderToCode maps models.dev provider keys to the gateway provider
@@ -58,6 +59,7 @@ var modelsDevProviderToCode = map[string]string{
 	"mistral":        providers.ProviderMistral,
 	"groq":           providers.ProviderGroq,
 	"deepseek":       providers.ProviderDeepSeek,
+	"xai":            providers.ProviderXAI,
 }
 
 //go:generate mockery --name=Syncer --dir=. --output=./mocks --filename=catalog_syncer_mock.go --case=underscore --with-expecter

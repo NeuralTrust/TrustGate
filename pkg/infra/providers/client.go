@@ -35,6 +35,7 @@ const (
 	ProviderMistral          = provider.Mistral
 	ProviderGroq             = provider.Groq
 	ProviderDeepSeek         = provider.DeepSeek
+	ProviderXAI              = provider.XAI
 )
 
 type Config struct {

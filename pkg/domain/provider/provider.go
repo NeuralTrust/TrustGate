@@ -28,6 +28,7 @@ const (
 	Mistral          = "mistral"
 	Groq             = "groq"
 	DeepSeek         = "deepseek"
+	XAI              = "xai"
 )
 
 // Supported returns every provider name the gateway can route to.
@@ -43,6 +44,7 @@ func Supported() []string {
 		Mistral,
 		Groq,
 		DeepSeek,
+		XAI,
 	}
 }
 
@@ -58,7 +60,8 @@ func IsValid(name string) bool {
 		Azure,
 		Mistral,
 		Groq,
-		DeepSeek:
+		DeepSeek,
+		XAI:
 		return true
 	default:
 		return false
