@@ -29,6 +29,9 @@ import (
 // Current normalizations:
 //   - Ensures every tool_call object inside messages has "type": "function".
 //     The Mistral SDK omits this field, but OpenAI returns 400 without it.
+//   - Ensures every tools[].function.parameters is a non-empty JSON Schema object.
+//     Gemini cross-format requests often omit parameters; strict OpenAI-wire
+//     upstreams (e.g. Cerebras gpt-oss) reject tools without it.
 //
 // The function is a no-op (returns the original body) when no changes are
 // needed, so it is safe to call unconditionally on every OpenAI-bound request.
@@ -38,44 +41,55 @@ func NormalizeOpenAIRequest(body []byte) []byte {
 		return body
 	}
 
-	msgsRaw, ok := raw["messages"]
-	if !ok {
-		return body
-	}
-
-	var msgs []map[string]json.RawMessage
-	if err := json.Unmarshal(msgsRaw, &msgs); err != nil {
-		return body
-	}
-
 	changed := false
-	for i := range msgs {
-		tcRaw, hasTCs := msgs[i]["tool_calls"]
-		if !hasTCs {
-			continue
-		}
 
-		var tcs []map[string]json.RawMessage
-		if err := json.Unmarshal(tcRaw, &tcs); err != nil {
-			continue
-		}
+	if msgsRaw, ok := raw["messages"]; ok {
+		var msgs []map[string]json.RawMessage
+		if err := json.Unmarshal(msgsRaw, &msgs); err == nil {
+			msgsChanged := false
+			for i := range msgs {
+				tcRaw, hasTCs := msgs[i]["tool_calls"]
+				if !hasTCs {
+					continue
+				}
 
-		tcChanged := false
-		for j := range tcs {
-			typeRaw, hasType := tcs[j]["type"]
-			if !hasType || isEmptyOrNull(typeRaw) {
-				b, _ := json.Marshal("function")
-				tcs[j]["type"] = b
-				tcChanged = true
+				var tcs []map[string]json.RawMessage
+				if err := json.Unmarshal(tcRaw, &tcs); err != nil {
+					continue
+				}
+
+				tcChanged := false
+				for j := range tcs {
+					typeRaw, hasType := tcs[j]["type"]
+					if !hasType || isEmptyOrNull(typeRaw) {
+						b, _ := json.Marshal("function")
+						tcs[j]["type"] = b
+						tcChanged = true
+					}
+				}
+
+				if tcChanged {
+					b, err := json.Marshal(tcs)
+					if err == nil {
+						msgs[i]["tool_calls"] = b
+						msgsChanged = true
+					}
+				}
+			}
+			if msgsChanged {
+				b, err := json.Marshal(msgs)
+				if err == nil {
+					raw["messages"] = b
+					changed = true
+				}
 			}
 		}
+	}
 
-		if tcChanged {
-			b, err := json.Marshal(tcs)
-			if err == nil {
-				msgs[i]["tool_calls"] = b
-				changed = true
-			}
+	if toolsRaw, ok := raw["tools"]; ok {
+		if b, toolsChanged := normalizeToolsFunctionParameters(toolsRaw); toolsChanged {
+			raw["tools"] = b
+			changed = true
 		}
 	}
 
@@ -83,17 +97,55 @@ func NormalizeOpenAIRequest(body []byte) []byte {
 		return body
 	}
 
-	b, err := json.Marshal(msgs)
-	if err != nil {
-		return body
-	}
-	raw["messages"] = b
-
 	out, err := json.Marshal(raw)
 	if err != nil {
 		return body
 	}
 	return out
+}
+
+func normalizeToolsFunctionParameters(toolsRaw json.RawMessage) (json.RawMessage, bool) {
+	if len(toolsRaw) == 0 || string(toolsRaw) == "null" {
+		return toolsRaw, false
+	}
+	var tools []map[string]json.RawMessage
+	if err := json.Unmarshal(toolsRaw, &tools); err != nil {
+		return toolsRaw, false
+	}
+	defaultParams, _ := json.Marshal(map[string]interface{}{
+		"type":       "object",
+		"properties": map[string]interface{}{},
+	})
+	changed := false
+	for i := range tools {
+		fnRaw, ok := tools[i]["function"]
+		if !ok || isEmptyOrNull(fnRaw) {
+			continue
+		}
+		var fn map[string]json.RawMessage
+		if err := json.Unmarshal(fnRaw, &fn); err != nil {
+			continue
+		}
+		paramsRaw, hasParams := fn["parameters"]
+		if hasParams && !isEmptyOrNull(paramsRaw) && string(paramsRaw) != "{}" {
+			continue
+		}
+		fn["parameters"] = defaultParams
+		fnBytes, err := json.Marshal(fn)
+		if err != nil {
+			continue
+		}
+		tools[i]["function"] = fnBytes
+		changed = true
+	}
+	if !changed {
+		return toolsRaw, false
+	}
+	b, err := json.Marshal(tools)
+	if err != nil {
+		return toolsRaw, false
+	}
+	return b, true
 }
 
 // NormalizeGroqRequest applies OpenAI-compatible fixes plus Groq-specific
