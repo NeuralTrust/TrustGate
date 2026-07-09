@@ -23,7 +23,10 @@ export async function mintAdminToken(): Promise<string> {
   }
 
   const claims: Record<string, string> = {};
-  if (process.env.ADMIN_TEAM_ID) claims.team_id = process.env.ADMIN_TEAM_ID;
+  const tenantId =
+    process.env.ADMIN_TENANT_ID?.trim() ||
+    process.env.ADMIN_TEAM_ID?.trim();
+  if (tenantId) claims.tenant_id = tenantId;
   if (process.env.ADMIN_USER_ID) claims.user_id = process.env.ADMIN_USER_ID;
 
   const expiresAt = now + TOKEN_TTL_SECONDS;
