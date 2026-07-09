@@ -32,6 +32,7 @@ type UpdateInput struct {
 	Slug            *string
 	Status          *string
 	Domain          *string
+	TenantID        string
 	Metadata        map[string]string
 	Telemetry       *telemetry.Telemetry
 	ClientTLSConfig *domain.ClientTLSConfig
@@ -90,8 +91,14 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	if in.Domain != nil {
 		g.Domain = *in.Domain
 	}
+	tenantID := old.TenantID()
+	if tenantID == "" {
+		tenantID = in.TenantID
+	}
 	if in.Metadata != nil {
-		g.Metadata = domain.WithTenantID(domain.SanitizeClientMetadata(in.Metadata), old.TenantID())
+		g.Metadata = domain.WithTenantID(domain.SanitizeClientMetadata(in.Metadata), tenantID)
+	} else if old.TenantID() == "" {
+		g.Metadata = domain.WithTenantID(g.Metadata, tenantID)
 	}
 	if in.Telemetry != nil {
 		g.Telemetry = in.Telemetry
