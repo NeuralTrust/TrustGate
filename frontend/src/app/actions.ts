@@ -19,14 +19,11 @@ export async function setActiveGateway(gatewayId: string): Promise<void> {
 }
 
 export async function createGatewayAction(formData: FormData): Promise<{ error?: string }> {
-  const name = String(formData.get("name") ?? "").trim();
-  if (!name) {
-    return { error: "Gateway name is required." };
-  }
+  const slug = String(formData.get("slug") ?? "").trim();
 
   const res = await adminFetch("/v1/gateways", {
     method: "POST",
-    body: JSON.stringify({ name }),
+    body: JSON.stringify(slug ? { slug } : {}),
   });
 
   if (res.status >= 400) {
