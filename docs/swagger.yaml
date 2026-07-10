@@ -281,6 +281,28 @@ definitions:
       wire_format:
         type: string
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_configsync_response.ConnectionResponse:
+    properties:
+      applied_version:
+        type: string
+      first_seen:
+        type: string
+      instance_id:
+        type: string
+      last_seen:
+        type: string
+      scope:
+        type: string
+      state:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_configsync_response.ListConnectionsResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_configsync_response.ConnectionResponse'
+        type: array
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.APIKeyAuthRequest:
     properties:
       api_key:
@@ -658,6 +680,9 @@ definitions:
       session_config:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.SessionConfig'
       slug:
+        description: Slug is optional; when omitted the server generates a unique
+          random slug. If provided it must be a lowercase DNS label.
+        example: acme-prod
         type: string
       telemetry:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry'
@@ -2225,6 +2250,35 @@ paths:
       summary: Readiness probe
       tags:
       - system
+  /v1/config-sync/connections:
+    get:
+      description: Returns the observed data-plane Sync connections, optionally filtered
+        by opaque scope. Answers "is this data plane online?".
+      parameters:
+      - description: Filter by opaque scope (exact match); omit for all
+        in: query
+        name: scope
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_configsync_response.ListConnectionsResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List config-sync data-plane connections
+      tags:
+      - config-sync
   /v1/gateways:
     get:
       description: Returns a paginated list of gateways.
@@ -2264,7 +2318,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Creates a new gateway.
+      description: 'Creates a new gateway. The slug is optional: when omitted the
+        server generates a unique random slug. If provided it must be a lowercase
+        DNS label and unique.'
       parameters:
       - description: Gateway to create
         in: body

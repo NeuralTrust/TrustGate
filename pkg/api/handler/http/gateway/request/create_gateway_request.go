@@ -24,7 +24,8 @@ import (
 )
 
 type CreateGatewayRequest struct {
-	Slug            string                 `json:"slug"`
+	// Slug is optional; when omitted the server generates a unique random slug. If provided it must be a lowercase DNS label.
+	Slug            string                 `json:"slug,omitempty" example:"acme-prod"`
 	Domain          string                 `json:"domain,omitempty"`
 	Metadata        map[string]string      `json:"metadata,omitempty"`
 	Telemetry       *telemetry.Telemetry   `json:"telemetry,omitempty"`
@@ -32,9 +33,12 @@ type CreateGatewayRequest struct {
 	SessionConfig   *domain.SessionConfig  `json:"session_config,omitempty"`
 }
 
+// Validate checks the create request. The slug is optional: when omitted the
+// server generates a unique random slug at creation time. A provided slug must
+// still be a valid lowercase DNS label.
 func (r CreateGatewayRequest) Validate() error {
 	if strings.TrimSpace(r.Slug) == "" {
-		return fmt.Errorf("slug is required: %w", commonerrors.ErrValidation)
+		return nil
 	}
 	if !domain.IsValidSlug(domain.NormalizeSlug(r.Slug)) {
 		return fmt.Errorf("slug must be a lowercase DNS label: %w", commonerrors.ErrValidation)

@@ -48,16 +48,37 @@ func TestNew(t *testing.T) {
 		}
 	})
 
-	t.Run("empty slug rejected", func(t *testing.T) {
+	t.Run("empty slug is auto-generated", func(t *testing.T) {
 		t.Parallel()
 		g, err := New("")
-		if err == nil {
-			t.Fatal("expected error for empty slug, got nil")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
-		if g != nil {
-			t.Fatalf("expected nil aggregate on error, got %+v", g)
+		if g == nil {
+			t.Fatal("expected gateway, got nil")
+		}
+		if !IsValidSlug(g.Slug) {
+			t.Fatalf("generated slug %q is not a valid DNS label", g.Slug)
 		}
 	})
+}
+
+func TestNewSlug(t *testing.T) {
+	t.Parallel()
+	seen := make(map[string]struct{}, 100)
+	for i := 0; i < 100; i++ {
+		slug, err := NewSlug()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !IsValidSlug(slug) {
+			t.Fatalf("generated slug %q is not a valid DNS label", slug)
+		}
+		if _, dup := seen[slug]; dup {
+			t.Fatalf("generated duplicate slug %q", slug)
+		}
+		seen[slug] = struct{}{}
+	}
 }
 
 func TestValidate_InvalidSlug(t *testing.T) {

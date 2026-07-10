@@ -104,10 +104,18 @@ func DefaultSessionConfig() *SessionConfig {
 var slugPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 func New(slug string) (*Gateway, error) {
+	normalized := NormalizeSlug(slug)
+	if normalized == "" {
+		generated, err := NewSlug()
+		if err != nil {
+			return nil, err
+		}
+		normalized = generated
+	}
 	now := time.Now().UTC()
 	g := &Gateway{
 		ID:        ids.New[ids.GatewayKind](),
-		Slug:      NormalizeSlug(slug),
+		Slug:      normalized,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
