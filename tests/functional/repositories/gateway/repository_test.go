@@ -18,6 +18,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
 	repo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/gateway"
+	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -60,7 +61,7 @@ func setupRepo(t *testing.T) (*repo.Repository, *database.Connection) {
 		pool.Close()
 	})
 
-	return repo.NewRepository(conn), conn
+	return repo.NewRepository(conn, outboxrepo.NewRepository(conn)), conn
 }
 
 func TestRepository_SaveAndFindByID(t *testing.T) {

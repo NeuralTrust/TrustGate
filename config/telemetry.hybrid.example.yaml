@@ -1,0 +1,27 @@
+# Hybrid (customer-boundary) telemetry exporters — reference profile (ENG-1016).
+#
+# Same TrustGate image as SaaS; only this file (mounted via ConfigMap) and the
+# env vars differ per deployment. The customer's Helm release (neuraltrust-
+# platform) should ship a telemetry.yaml shaped like this and point
+# TELEMETRY_EXPORTERS_FILE at its mount path.
+#
+# Difference from the SaaS profile (config/telemetry.example.yaml):
+#   - metadata: still shipped to an OTel Collector over OTLP (connection from
+#     the OTEL_EXPORTER_OTLP_* env vars, so nothing is hardcoded here).
+#   - raw: NOT sent to OTLP. Sensitive request/response payloads are persisted
+#     in a customer-side Postgres that never leaves the customer boundary. The
+#     postgres exporter runs its migrations (advisory-locked) on first use.
+#
+# Secrets stay out of this file: dsn_env names the env var that holds the DSN;
+# the release injects SENSIBLE_PG_DSN per customer.
+
+exporters:
+  metadata:
+    - name: metadata-otlp
+      type: otlp
+
+  raw:
+    - name: sensible-pg
+      type: postgres
+      settings:
+        dsn_env: SENSIBLE_PG_DSN

@@ -43,7 +43,7 @@ func newAssociator(
 ) appconsumer.Associator {
 	return appconsumer.NewAssociator(
 		repo, registryRepo, &roleRepositoryStub{}, authRepo, policyRepo,
-		newCacheManager(), cachetest.NoopPublisher(), newTestLogger(),
+		newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil,
 	)
 }
 
@@ -52,8 +52,8 @@ type roleRepositoryStub struct {
 	err  error
 }
 
-func (s *roleRepositoryStub) Save(context.Context, *roledomain.Role) error   { return nil }
-func (s *roleRepositoryStub) Update(context.Context, *roledomain.Role) error { return nil }
+func (s *roleRepositoryStub) Save(context.Context, *roledomain.Role) error            { return nil }
+func (s *roleRepositoryStub) Update(context.Context, *roledomain.Role) error          { return nil }
 func (s *roleRepositoryStub) Delete(context.Context, ids.GatewayID, ids.RoleID) error { return nil }
 func (s *roleRepositoryStub) FindByID(context.Context, ids.RoleID) (*roledomain.Role, error) {
 	if s.err != nil {

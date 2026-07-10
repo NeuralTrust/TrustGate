@@ -15,6 +15,7 @@
 package cache
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -168,6 +169,51 @@ func TestTTLMap_OnEvict_FiresOnDeleteClearAndExpiry(t *testing.T) {
 			t.Fatal("expiry did not trigger eviction callback")
 		}
 	})
+}
+
+func TestTTLMap_SweepExpired_FiresOnEvictWithoutAccess(t *testing.T) {
+	t.Parallel()
+	m := NewTTLMap(10 * time.Millisecond)
+	got := make(chan any, 1)
+	m.SetOnEvict(func(v any) { got <- v })
+	m.Set("idle", "v")
+
+	time.Sleep(20 * time.Millisecond)
+	m.sweepExpired(time.Now())
+
+	select {
+	case v := <-got:
+		if v != "v" {
+			t.Fatalf("sweep eviction = %v, want v", v)
+		}
+	default:
+		t.Fatal("sweepExpired did not fire onEvict for an idle expired entry")
+	}
+	if got := m.Len(); got != 0 {
+		t.Fatalf("Len after sweep = %d, want 0", got)
+	}
+}
+
+func TestManager_StartJanitor_EvictsIdleEntries(t *testing.T) {
+	t.Parallel()
+	mgr := NewTTLMapManager(10 * time.Millisecond)
+	tm := mgr.CreateTTLMap("lb", 10*time.Millisecond)
+	evicted := make(chan any, 1)
+	tm.SetOnEvict(func(v any) { evicted <- v })
+	tm.Set("idle", "closed")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	mgr.StartJanitor(ctx, 5*time.Millisecond)
+
+	select {
+	case v := <-evicted:
+		if v != "closed" {
+			t.Fatalf("janitor eviction = %v, want closed", v)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("janitor did not evict an idle expired entry")
+	}
 }
 
 func TestManager_NamespaceIsolation(t *testing.T) {

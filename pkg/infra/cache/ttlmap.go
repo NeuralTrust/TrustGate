@@ -144,6 +144,27 @@ func (m *TTLMap) DeleteByPrefix(prefix string) {
 	}
 }
 
+func (m *TTLMap) sweepExpired(now time.Time) {
+	var (
+		evicted []any
+		onEvict func(any)
+	)
+	m.mu.Lock()
+	onEvict = m.onEvict
+	for k, entry := range m.data {
+		if now.After(entry.ExpiresAt) {
+			if onEvict != nil {
+				evicted = append(evicted, entry.Value)
+			}
+			delete(m.data, k)
+		}
+	}
+	m.mu.Unlock()
+	for _, value := range evicted {
+		onEvict(value)
+	}
+}
+
 func (m *TTLMap) Len() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

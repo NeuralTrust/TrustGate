@@ -16,7 +16,7 @@ package consumer
 
 import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer/response"
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
@@ -39,18 +39,18 @@ func NewGetConsumerHandler(finder appconsumer.Finder) *GetConsumerHandler {
 // @Param        gateway_id  path      string  true  "Gateway id"   format(uuid)
 // @Param        id          path      string  true  "Consumer id"  format(uuid)
 // @Success      200         {object}  response.ConsumerResponse
-// @Failure      400         {object}  helpers.ErrorBody
-// @Failure      401         {object}  helpers.ErrorBody
-// @Failure      404         {object}  helpers.ErrorBody
+// @Failure      400         {object}  httpio.ErrorBody
+// @Failure      401         {object}  httpio.ErrorBody
+// @Failure      404         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/consumers/{id} [get]
 func (h *GetConsumerHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, id, err := helpers.ParseGatewayScopedID[ids.ConsumerKind](c)
+	gatewayID, id, err := httpio.ParseGatewayScopedID[ids.ConsumerKind](c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	cons, err := h.finder.FindByID(c.UserContext(), gatewayID, id)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteOK(c, response.FromConsumer(cons))
+	return httpio.WriteOK(c, response.FromConsumer(cons))
 }

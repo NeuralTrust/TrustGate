@@ -21,7 +21,9 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 )
 
+type EventDispatchFunc func(ctx context.Context, event any) error
+
 type EventListener interface {
 	Listen(ctx context.Context, channels ...channel.Channel)
-	Register(eventType reflect.Type, subscriber interface{})
+	Register(eventType reflect.Type, dispatch EventDispatchFunc)
 }

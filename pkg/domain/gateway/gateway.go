@@ -26,7 +26,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 )
 
-const MetadataTeamIDKey = "team_id"
+const MetadataTenantIDKey = "tenant_id"
 
 type Gateway struct {
 	ID              ids.GatewayID        `json:"id"`
@@ -41,11 +41,43 @@ type Gateway struct {
 	UpdatedAt       time.Time            `json:"updated_at"`
 }
 
-func (g *Gateway) TeamID() string {
+func (g *Gateway) TenantID() string {
 	if g == nil || g.Metadata == nil {
 		return ""
 	}
-	return g.Metadata[MetadataTeamIDKey]
+	return g.Metadata[MetadataTenantIDKey]
+}
+
+func isReservedMetadataKey(key string) bool {
+	return key == MetadataTenantIDKey
+}
+
+func SanitizeClientMetadata(metadata map[string]string) map[string]string {
+	if metadata == nil {
+		return nil
+	}
+	out := make(map[string]string, len(metadata))
+	for key, value := range metadata {
+		if isReservedMetadataKey(key) {
+			continue
+		}
+		out[key] = value
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func WithTenantID(metadata map[string]string, tenantID string) map[string]string {
+	if tenantID == "" {
+		return metadata
+	}
+	if metadata == nil {
+		metadata = make(map[string]string, 1)
+	}
+	metadata[MetadataTenantIDKey] = tenantID
+	return metadata
 }
 
 type SessionConfig struct {
@@ -72,10 +104,18 @@ func DefaultSessionConfig() *SessionConfig {
 var slugPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 func New(slug string) (*Gateway, error) {
+	normalized := NormalizeSlug(slug)
+	if normalized == "" {
+		generated, err := NewSlug()
+		if err != nil {
+			return nil, err
+		}
+		normalized = generated
+	}
 	now := time.Now().UTC()
 	g := &Gateway{
 		ID:        ids.New[ids.GatewayKind](),
-		Slug:      NormalizeSlug(slug),
+		Slug:      normalized,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}

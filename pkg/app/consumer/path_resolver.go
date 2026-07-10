@@ -43,7 +43,7 @@ type PathResolver interface {
 var _ PathResolver = (*pathResolver)(nil)
 
 type pathResolver struct {
-	consumers domain.Repository
+	consumers domain.Reader
 	auths     authdomain.Repository
 	gateways  gatewaydomain.Repository
 	cache     *cache.TTLMap
@@ -52,7 +52,7 @@ type pathResolver struct {
 }
 
 func NewPathResolver(
-	consumers domain.Repository,
+	consumers domain.Reader,
 	auths authdomain.Repository,
 	gateways gatewaydomain.Repository,
 	manager *cache.TTLMapManager,

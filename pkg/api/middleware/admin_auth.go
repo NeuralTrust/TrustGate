@@ -18,7 +18,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/gofiber/fiber/v2"
@@ -68,8 +68,8 @@ func (m *AdminAuthMiddleware) Middleware() fiber.Handler {
 			return m.unauthorized(c, "Token not valid for admin API", nil)
 		}
 
-		if claims.TeamID != "" {
-			c.Locals(string(infracontext.TeamIDContextKey), claims.TeamID)
+		if claims.TenantID != "" {
+			c.Locals(string(infracontext.TenantIDContextKey), claims.TenantID)
 		}
 		if claims.UserID != "" {
 			c.Locals(string(infracontext.UserIDContextKey), claims.UserID)
@@ -84,7 +84,7 @@ func (m *AdminAuthMiddleware) Middleware() fiber.Handler {
 
 func (m *AdminAuthMiddleware) unauthorized(c *fiber.Ctx, message string, err error) error {
 	m.logAuthFailure(c, message, err)
-	return c.Status(fiber.StatusUnauthorized).JSON(helpers.ErrorBody{
+	return c.Status(fiber.StatusUnauthorized).JSON(httpio.ErrorBody{
 		Error:   "unauthorized",
 		Message: message,
 	})

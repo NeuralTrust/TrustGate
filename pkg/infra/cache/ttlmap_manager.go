@@ -15,9 +15,12 @@
 package cache
 
 import (
+	"context"
 	"sync"
 	"time"
 )
+
+const JanitorInterval = 1 * time.Minute
 
 const (
 	GatewayTTLName      = "gateway"
@@ -92,3 +95,33 @@ func (m *TTLMapManager) ClearAllTTLMaps() {
 }
 
 func (m *TTLMapManager) DefaultTTL() time.Duration { return m.defaultTTL }
+
+func (m *TTLMapManager) StartJanitor(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = JanitorInterval
+	}
+	ticker := time.NewTicker(interval)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-ticker.C:
+				m.sweep(now)
+			}
+		}
+	}()
+}
+
+func (m *TTLMapManager) sweep(now time.Time) {
+	m.mu.Lock()
+	maps := make([]*TTLMap, 0, len(m.maps))
+	for _, tm := range m.maps {
+		maps = append(maps, tm)
+	}
+	m.mu.Unlock()
+	for _, tm := range maps {
+		tm.sweepExpired(now)
+	}
+}

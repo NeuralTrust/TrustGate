@@ -15,17 +15,32 @@
 package modules
 
 import (
+	"log/slog"
+
 	proxyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/proxy"
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 )
 
 func Proxy(c *container.Container) error {
 	if err := c.Provide(approuting.NewResolver); err != nil {
 		return err
 	}
-	if err := c.Provide(appproxy.NewProviderInvoker); err != nil {
+	// NewProviderInvoker depends on a segregated codec view; the concrete adapter
+	// registry satisfies it, but dig resolves by exact type so we bind it here.
+	if err := c.Provide(func(locator factory.ProviderLocator, registry *adapter.Registry, logger *slog.Logger) appproxy.ProviderInvoker {
+		return appproxy.NewProviderInvoker(locator, registry, logger)
+	}); err != nil {
+		return err
+	}
+	// The forwarder's load balancer only needs the Redis accessor; expose the
+	// cache client under that narrow view (dig resolves by exact type).
+	if err := c.Provide(func(client cache.Client) loadbalancer.RedisProvider { return client }); err != nil {
 		return err
 	}
 	if err := c.Provide(appproxy.NewForwarder); err != nil {

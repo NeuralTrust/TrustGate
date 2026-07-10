@@ -15,23 +15,33 @@
 package modules
 
 import (
+	"errors"
+	"fmt"
 	"log/slog"
 
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/bootlog"
 	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/bootlog"
 	infracache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/playground"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	infratelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/exportersfile"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/kafka"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/otlp"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/postgres"
 	"go.uber.org/dig"
 )
 
 func Telemetry(c *container.Container) error {
-	if err := c.Provide(appmetrics.NewBuilder); err != nil {
+	// NewBuilder depends on a segregated decoder view; the concrete adapter
+	// registry satisfies it, but dig resolves by exact type so we bind it here.
+	if err := c.Provide(func(registry *adapter.Registry, pricing appcatalog.PricingResolver) *appmetrics.Builder {
+		return appmetrics.NewBuilder(registry, pricing)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(newExporterFactory); err != nil {
@@ -64,6 +74,7 @@ func newExporterFactory(logger *slog.Logger, cfg *config.Config) appmetrics.Expo
 	return infratelemetry.NewExporterLocator(
 		infratelemetry.WithExporter(kafka.ExporterName, kafka.NewKafkaTemplate(logger, cfg.Kafka)),
 		infratelemetry.WithExporter(otlp.ExporterName, otlp.NewTemplate(logger, cfg.Telemetry.OTLP)),
+		infratelemetry.WithExporter(postgres.ExporterName, postgres.NewTemplate(logger)),
 	)
 }
 
@@ -81,20 +92,41 @@ func buildPipeline(
 		}
 		return nil, nil
 	}
-	var defaults []appmetrics.Exporter
-	exporter, err := factory.Build(telemetrydomain.ExporterConfig{
-		Name:     kafka.ExporterName,
-		Settings: map[string]interface{}{"topic": cfg.Telemetry.KafkaTopic},
-	})
+	defaults, err := newDefaultExporters(logger, factory, cfg.Telemetry.ExportersFile)
 	if err != nil {
-		logger.Warn("failed to build default kafka exporter, default telemetry disabled",
-			slog.String("error", err.Error()))
-	} else {
-		logger.Info("metrics telemetry exporter initialized",
-			slog.String("topic", cfg.Telemetry.KafkaTopic))
-		defaults = append(defaults, exporter)
+		return nil, err
 	}
 	return appmetrics.NewPipeline(builder, cache, playgroundStore, logger, defaults...), nil
+}
+
+func newDefaultExporters(
+	logger *slog.Logger,
+	factory appmetrics.ExporterFactory,
+	path string,
+) ([]telemetrydomain.ExporterConfig, error) {
+	configs, err := exportersfile.Load(path)
+	if err != nil {
+		if errors.Is(err, exportersfile.ErrFileNotFound) {
+			logger.Warn("telemetry exporters file not found; starting with no default exporters",
+				slog.String("path", path))
+			return nil, nil
+		}
+		return nil, fmt.Errorf("loading default telemetry exporters: %w", err)
+	}
+	if len(configs) == 0 {
+		logger.Warn("telemetry exporters file declares no exporters; starting with no default exporters",
+			slog.String("path", path))
+		return nil, nil
+	}
+	for _, cfg := range configs {
+		if err := factory.Validate(cfg); err != nil {
+			return nil, fmt.Errorf("default telemetry exporter %q: %w", cfg.Name, err)
+		}
+		logger.Info("default telemetry exporter registered",
+			slog.String("name", cfg.Name),
+			slog.String("type", cfg.EffectiveType()))
+	}
+	return configs, nil
 }
 
 // MetricsWorkerParams collects everything StartMetricsWorker needs.

@@ -17,7 +17,7 @@ package gateway
 import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway/response"
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/gofiber/fiber/v2"
@@ -43,17 +43,17 @@ func NewListGatewayHandler(finder appgateway.Finder, baseDomain, mcpBaseDomain s
 // @Param        page  query     int     false  "Page number (1-based)"
 // @Param        size  query     int     false  "Page size"
 // @Success      200   {object}  response.ListGatewayResponse
-// @Failure      400   {object}  helpers.ErrorBody
-// @Failure      401   {object}  helpers.ErrorBody
+// @Failure      400   {object}  httpio.ErrorBody
+// @Failure      401   {object}  httpio.ErrorBody
 // @Router       /v1/gateways [get]
 func (h *ListGatewayHandler) Handle(c *fiber.Ctx) error {
-	page, err := helpers.ParsePage(c)
+	page, err := httpio.ParsePage(c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	size, err := helpers.ParseSize(c)
+	size, err := httpio.ParseSize(c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	req := request.ListGatewayRequest{
 		Slug: c.Query("slug"),
@@ -67,7 +67,7 @@ func (h *ListGatewayHandler) Handle(c *fiber.Ctx) error {
 		Size:         req.Size,
 	})
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 
 	out := response.ListGatewayResponse{
@@ -79,5 +79,5 @@ func (h *ListGatewayHandler) Handle(c *fiber.Ctx) error {
 	for _, g := range items {
 		out.Items = append(out.Items, response.FromDomain(g, h.baseDomain, h.mcpBaseDomain))
 	}
-	return helpers.WriteOK(c, out)
+	return httpio.WriteOK(c, out)
 }

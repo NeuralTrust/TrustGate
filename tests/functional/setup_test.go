@@ -55,6 +55,11 @@ const (
 	dbName     = "trustgate_functional"
 	redisAddr  = "localhost:6379"
 	redisDBIdx = 9
+
+	// serverConfigSyncGRPCPort is the loopback port the harness control plane
+	// binds its config-sync gRPC listener on so the DB-less data plane can dial
+	// it over plaintext (see dblessOverrides).
+	serverConfigSyncGRPCPort = 8083
 )
 
 func TestMain(m *testing.M) {
@@ -116,13 +121,17 @@ func setupTestEnvironment() {
 	}
 	AdminToken = token
 
-	killProcessesOnPorts([]int{cfg.Server.AdminPort, cfg.Server.ProxyPort, cfg.Server.MCPPort})
+	killProcessesOnPorts([]int{cfg.Server.AdminPort, cfg.Server.ProxyPort, cfg.Server.MCPPort, serverConfigSyncGRPCPort})
 
 	dropTestDB(dbName)
 	createTestDB(dbName)
 
 	redisDB = redis.NewClient(&redis.Options{Addr: redisAddr, DB: redisDBIdx})
 	_ = redisDB.FlushDB(context.Background()).Err()
+
+	_ = os.Setenv("CONFIG_SYNC_TOKEN", dblessConfigSyncToken)
+	_ = os.Setenv("CONFIG_SYNC_RECOMPILE_DEBOUNCE", "500ms")
+	_ = os.Setenv("CONFIG_SYNC_GRPC_LISTEN_ADDR", fmt.Sprintf(":%d", serverConfigSyncGRPCPort))
 
 	trustGuardStubURL := StartTrustGuardFunctionalStub()
 	cmdEnv := buildCmdEnv(trustGuardStubURL)

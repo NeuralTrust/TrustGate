@@ -15,12 +15,13 @@
 package strategies
 
 import (
+	"context"
 	"sync"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer/algorithm"
 )
 
 type WeightedRoundRobin struct {
@@ -52,7 +53,7 @@ func (wrr *WeightedRoundRobin) effectiveWeight(b *registry.Registry) int {
 	return 1
 }
 
-func (wrr *WeightedRoundRobin) Next(_ *infracontext.RequestContext, exclude map[ids.RegistryID]struct{}) *registry.Registry {
+func (wrr *WeightedRoundRobin) Next(_ context.Context, _ *infracontext.RequestContext, exclude map[ids.RegistryID]struct{}) *registry.Registry {
 	wrr.mu.Lock()
 	defer wrr.mu.Unlock()
 	if len(wrr.registries) == 0 {

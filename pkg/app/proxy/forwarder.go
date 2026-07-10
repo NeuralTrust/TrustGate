@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
-	"strings"
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -35,9 +34,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer/algorithm"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
-	"golang.org/x/sync/singleflight"
 )
 
 var (
@@ -80,10 +77,7 @@ type Forwarder interface {
 var _ Forwarder = (*forwarder)(nil)
 
 type forwarder struct {
-	factory    loadbalancer.Factory
-	cache      cache.Client
-	lbCache    *cache.TTLMap
-	lbGroup    singleflight.Group
+	balancers  *loadBalancerCache
 	invoker    ProviderInvoker
 	executor   appplugins.Executor
 	sessions   appsession.Store
@@ -94,7 +88,7 @@ type forwarder struct {
 
 func NewForwarder(
 	factory loadbalancer.Factory,
-	cacheClient cache.Client,
+	cacheClient loadbalancer.RedisProvider,
 	manager *cache.TTLMapManager,
 	invoker ProviderInvoker,
 	executor appplugins.Executor,
@@ -104,9 +98,7 @@ func NewForwarder(
 	logger *slog.Logger,
 ) Forwarder {
 	return &forwarder{
-		factory:    factory,
-		cache:      cacheClient,
-		lbCache:    manager.GetTTLMap(cache.LoadBalancerTTLName),
+		balancers:  newLoadBalancerCache(factory, cacheClient, manager.GetTTLMap(cache.LoadBalancerTTLName), logger),
 		invoker:    invoker,
 		executor:   executor,
 		sessions:   sessions,
@@ -137,14 +129,13 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	f.stampConsumerScope(in)
 	f.stampContinuation(ctx, in.Request)
 
-	route, err := f.routeBackend(in.Consumer, in.Request, intent, candidates)
+	route, err := f.routeBackend(ctx, in.Consumer, in.Request, intent, candidates)
 	if err != nil {
 		return nil, err
 	}
 
 	stampTarget(in.Request, route.backend)
 	resp := &infracontext.ResponseContext{
-		Context:    ctx,
 		GatewayID:  in.Request.GatewayID,
 		RegistryID: in.Request.RegistryID,
 	}
@@ -246,7 +237,7 @@ func (f *forwarder) invokeWithFailover(
 		if route.pinned {
 			break
 		}
-		current, fromFallback = f.nextCandidate(lb, rc, dto.request, excluded, triggers.allowsFallback(lastKind))
+		current, fromFallback = f.nextCandidate(ctx, lb, rc, dto.request, excluded, triggers.allowsFallback(lastKind))
 	}
 
 	return f.relayLast(ctx, dto, last)
@@ -283,6 +274,7 @@ func (f *forwarder) attemptsPerBackend() int {
 }
 
 func (f *forwarder) nextCandidate(
+	ctx context.Context,
 	lb *loadbalancer.LoadBalancer,
 	rc *appconsumer.RoutableConsumer,
 	req *infracontext.RequestContext,
@@ -293,7 +285,7 @@ func (f *forwarder) nextCandidate(
 		return nil, false
 	}
 	if lb != nil {
-		if bk, err := lb.NextBackend(req, excluded); err == nil && bk != nil {
+		if bk, err := lb.NextBackend(ctx, req, excluded); err == nil && bk != nil {
 			if _, seen := excluded[bk.ID]; !seen {
 				return bk, false
 			}
@@ -480,12 +472,12 @@ func (f *forwarder) finalizeStream(
 	startedAt time.Time,
 ) *ForwardResult {
 	pluginResp := dto.response
-	mergeProviderResponse(pluginResp, providerResp, true)
+	mergeStreamingResponse(pluginResp, providerResp)
 	if pe := f.runPreResponseGated(ctx, dto.policies, dto.plan, dto.request, pluginResp); pe != nil {
-		go drainStream(providerResp.Stream)
+		f.drainAsync(providerResp.Stream)
 		return pluginErrorResult(pe)
 	}
-	out := f.wrapStreamWithPostResponse(dto.policies, dto.plan, dto.request, pluginResp, providerResp.Stream)
+	out := f.wrapStreamWithPostResponse(ctx, dto.policies, dto.plan, dto.request, pluginResp, providerResp.Stream)
 	out = retimeSpanOnStreamEnd(out, span, startedAt)
 	out = f.recordSessionOnStreamEnd(ctx, dto.request, span, providerResp.StatusCode, out)
 	return &ForwardResult{
@@ -517,24 +509,30 @@ func retimeSpanOnStreamEnd(
 	}
 }
 
+// drainAsync drains an abandoned provider stream in the background so the
+// backend connection is released. The goroutine owns its panic: a drain panic
+// is recovered and logged rather than crashing the process.
+func (f *forwarder) drainAsync(stream iter.Seq2[[]byte, error]) {
+	if stream == nil {
+		return
+	}
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				f.logger.Error("panic draining abandoned provider stream", slog.Any("panic", r))
+			}
+		}()
+		drainStream(stream)
+	}()
+}
+
 func (f *forwarder) finalizeBody(
 	ctx context.Context,
 	dto *forwardRequestDTO,
 	providerResp *ProviderResponse,
 ) *ForwardResult {
-	pluginResp := dto.response
-	pluginResp.Headers = cloneHeaders(dto.baseHeaders)
-	mergeProviderResponse(pluginResp, providerResp, false)
-	if pe := f.runPreResponseGated(ctx, dto.policies, dto.plan, dto.request, pluginResp); pe != nil {
-		return pluginErrorResult(pe)
-	}
-	f.firePostResponse(dto.policies, dto.plan, dto.request, pluginResp)
-	f.recordSession(ctx, dto.request, providerResp.ResponseID, dto.backend.Provider(), providerResp.Model, providerResp.StatusCode)
-	return &ForwardResult{
-		StatusCode: pluginResp.StatusCode,
-		Headers:    pluginResp.Headers,
-		Body:       pluginResp.Body,
-	}
+	result, _ := f.finalizeBodyGated(ctx, dto, providerResp)
+	return result
 }
 
 func (f *forwarder) finalizeBodyGated(
@@ -544,106 +542,15 @@ func (f *forwarder) finalizeBodyGated(
 ) (*ForwardResult, *appplugins.PluginError) {
 	pluginResp := dto.response
 	pluginResp.Headers = cloneHeaders(dto.baseHeaders)
-	mergeProviderResponse(pluginResp, providerResp, false)
+	mergeBufferedResponse(pluginResp, providerResp)
 	if pe := f.runPreResponseGated(ctx, dto.policies, dto.plan, dto.request, pluginResp); pe != nil {
 		return pluginErrorResult(pe), pe
 	}
-	f.firePostResponse(dto.policies, dto.plan, dto.request, pluginResp)
+	f.firePostResponse(ctx, dto.policies, dto.plan, dto.request, pluginResp)
 	f.recordSession(ctx, dto.request, providerResp.ResponseID, dto.backend.Provider(), providerResp.Model, providerResp.StatusCode)
 	return &ForwardResult{
 		StatusCode: pluginResp.StatusCode,
 		Headers:    pluginResp.Headers,
 		Body:       pluginResp.Body,
 	}, nil
-}
-
-func (f *forwarder) loadBalancerFor(rc *appconsumer.RoutableConsumer) (*loadbalancer.LoadBalancer, error) {
-	key := loadBalancerCacheKey(rc.Consumer.GatewayID, rc.Consumer.ID)
-	return f.cachedOrBuildLoadBalancer(key, func() loadbalancer.Pool {
-		lbAlgorithm, embeddingConfig := lbSettings(rc)
-		return loadbalancer.Pool{
-			ID:              key,
-			Registries:      rc.Registries,
-			Weights:         rc.Consumer.RegistryWeights,
-			Algorithm:       lbAlgorithm,
-			EmbeddingConfig: embeddingConfig,
-		}
-	})
-}
-
-func (f *forwarder) poolLoadBalancerFor(
-	rc *appconsumer.RoutableConsumer,
-	alias string,
-	candidates *routingdomain.CandidateSet,
-) (*loadbalancer.LoadBalancer, error) {
-	key := poolLoadBalancerCacheKey(rc.Consumer.GatewayID, rc.Consumer.ID, alias)
-	return f.cachedOrBuildLoadBalancer(key, func() loadbalancer.Pool {
-		lbAlgorithm, embeddingConfig := lbSettings(rc)
-		return loadbalancer.Pool{
-			ID:              key,
-			Registries:      candidates.Registries(),
-			Weights:         rc.Consumer.RegistryWeights,
-			Algorithm:       lbAlgorithm,
-			EmbeddingConfig: embeddingConfig,
-		}
-	})
-}
-
-func lbSettings(rc *appconsumer.RoutableConsumer) (string, *domain.EmbeddingConfig) {
-	lbAlgorithm := algorithm.RoundRobin
-	var embeddingConfig *domain.EmbeddingConfig
-	if lbCfg := rc.Consumer.LBConfig; lbCfg != nil && lbCfg.Enabled {
-		if lbCfg.Algorithm != "" {
-			lbAlgorithm = lbCfg.Algorithm
-		}
-		embeddingConfig = lbCfg.EmbeddingConfig
-	}
-	return lbAlgorithm, embeddingConfig
-}
-
-func (f *forwarder) cachedOrBuildLoadBalancer(
-	key string,
-	buildPool func() loadbalancer.Pool,
-) (*loadbalancer.LoadBalancer, error) {
-	if lb, ok := f.cachedLoadBalancer(key); ok {
-		return lb, nil
-	}
-	built, err, _ := f.lbGroup.Do(key, func() (interface{}, error) {
-		if lb, ok := f.cachedLoadBalancer(key); ok {
-			return lb, nil
-		}
-		lb, err := loadbalancer.NewLoadBalancer(f.factory, buildPool(), f.logger, f.cache)
-		if err != nil {
-			return nil, err
-		}
-		f.lbCache.Set(key, lb)
-		return lb, nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return built.(*loadbalancer.LoadBalancer), nil
-}
-
-func (f *forwarder) cachedLoadBalancer(key string) (*loadbalancer.LoadBalancer, bool) {
-	cached, ok := f.lbCache.Get(key)
-	if !ok {
-		return nil, false
-	}
-	lb, ok := cached.(*loadbalancer.LoadBalancer)
-	if !ok {
-		f.logger.Warn("load balancer cache entry failed type assertion; rebuilding",
-			slog.String("lb_key", key))
-		f.lbCache.Delete(key)
-		return nil, false
-	}
-	return lb, true
-}
-
-func loadBalancerCacheKey(gatewayID ids.GatewayID, consumerID ids.ConsumerID) string {
-	return gatewayID.String() + ":" + consumerID.String()
-}
-
-func poolLoadBalancerCacheKey(gatewayID ids.GatewayID, consumerID ids.ConsumerID, alias string) string {
-	return gatewayID.String() + ":" + consumerID.String() + ":pool:" + strings.ToLower(alias)
 }

@@ -17,57 +17,29 @@ package providers
 import (
 	"context"
 	"iter"
+
+	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
 )
 
 // Provider name constants. Use these as keys for HTTPClientPool.Get() and
-// anywhere a provider needs to be identified by name.
+// anywhere a provider needs to be identified by name. They alias the domain
+// provider source of truth.
 const (
-	ProviderOpenAI           = "openai"
-	ProviderOpenAICompatible = "openai_compatible"
-	ProviderGoogle           = "google"
-	ProviderVertex           = "vertex"
-	ProviderAnthropic        = "anthropic"
-	ProviderBedrock          = "bedrock"
-	ProviderAzure            = "azure"
-	ProviderMistral          = "mistral"
-	ProviderGroq             = "groq"
-	ProviderDeepSeek         = "deepseek"
+	ProviderOpenAI           = provider.OpenAI
+	ProviderOpenAICompatible = provider.OpenAICompatible
+	ProviderGoogle           = provider.Google
+	ProviderVertex           = provider.Vertex
+	ProviderAnthropic        = provider.Anthropic
+	ProviderBedrock          = provider.Bedrock
+	ProviderAzure            = provider.Azure
+	ProviderMistral          = provider.Mistral
+	ProviderGroq             = provider.Groq
+	ProviderDeepSeek         = provider.DeepSeek
+	ProviderXAI              = provider.XAI
+	ProviderCerebras         = provider.Cerebras
+	ProviderOpenRouter       = provider.OpenRouter
+	ProviderCohere           = provider.Cohere
 )
-
-// SupportedProviders returns every provider name the gateway can route to.
-func SupportedProviders() []string {
-	return []string{
-		ProviderOpenAI,
-		ProviderOpenAICompatible,
-		ProviderGoogle,
-		ProviderVertex,
-		ProviderAnthropic,
-		ProviderBedrock,
-		ProviderAzure,
-		ProviderMistral,
-		ProviderGroq,
-		ProviderDeepSeek,
-	}
-}
-
-// IsValidProvider reports whether name is a supported provider.
-func IsValidProvider(name string) bool {
-	switch name {
-	case ProviderOpenAI,
-		ProviderOpenAICompatible,
-		ProviderGoogle,
-		ProviderVertex,
-		ProviderAnthropic,
-		ProviderBedrock,
-		ProviderAzure,
-		ProviderMistral,
-		ProviderGroq,
-		ProviderDeepSeek:
-		return true
-	default:
-		return false
-	}
-}
 
 type Config struct {
 	Credentials   Credentials    `json:"credentials"`
@@ -130,4 +102,14 @@ type Client interface {
 		config *Config,
 		reqBody []byte,
 	) (iter.Seq2[[]byte, error], error)
+}
+
+// EmbeddingsClient performs non-streaming embedding requests.
+type EmbeddingsClient interface {
+	Embeddings(ctx context.Context, config *Config, reqBody []byte) ([]byte, error)
+}
+
+// RerankClient performs non-streaming rerank requests.
+type RerankClient interface {
+	Rerank(ctx context.Context, config *Config, reqBody []byte) ([]byte, error)
 }

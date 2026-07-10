@@ -21,7 +21,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer/algorithm"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 )
 
 type LBPoolMember struct {

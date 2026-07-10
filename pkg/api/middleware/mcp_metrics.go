@@ -15,14 +15,13 @@
 package middleware
 
 import (
-	"context"
 	"time"
 
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -95,7 +94,7 @@ func (m *MCPMetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string
 		Kind:      events.KindMCP,
 	}
 	if gw != nil {
-		meta.TeamID = gw.TeamID()
+		meta.TenantID = gw.TenantID()
 	}
 	return meta
 }
@@ -107,7 +106,6 @@ func (m *MCPMetricsMiddleware) buildRequestContext(c *fiber.Ctx, gatewayID strin
 	}
 
 	return &infracontext.RequestContext{
-		Context:   context.Background(),
 		GatewayID: gatewayID,
 		Headers:   headers,
 		Method:    c.Method(),
@@ -124,7 +122,6 @@ func (m *MCPMetricsMiddleware) buildResponseContext(c *fiber.Ctx, gatewayID stri
 	}
 
 	return &infracontext.ResponseContext{
-		Context:    context.Background(),
 		GatewayID:  gatewayID,
 		Headers:    headers,
 		Body:       append([]byte(nil), c.Response().Body()...),

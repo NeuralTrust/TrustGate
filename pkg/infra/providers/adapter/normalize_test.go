@@ -273,6 +273,89 @@ func TestNormalizeOpenAIRequest_PreservesOtherFields(t *testing.T) {
 	assert.Equal(t, "search", fn["name"])
 }
 
+func TestNormalizeOpenAIRequest_InjectsToolFunctionParametersWhenMissing(t *testing.T) {
+	input := `{
+		"model": "gpt-oss-120b",
+		"messages": [{"role": "user", "content": "hello"}],
+		"tools": [
+			{
+				"type": "function",
+				"function": {
+					"name": "list_all_clients",
+					"description": "List clients"
+				}
+			}
+		]
+	}`
+
+	out := NormalizeOpenAIRequest([]byte(input))
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(out, &result))
+
+	tools := result["tools"].([]interface{})
+	require.Len(t, tools, 1)
+	fn := tools[0].(map[string]interface{})["function"].(map[string]interface{})
+	params := fn["parameters"].(map[string]interface{})
+	assert.Equal(t, "object", params["type"])
+	assert.NotNil(t, params["properties"])
+}
+
+func TestNormalizeOpenAIRequest_PreservesExistingToolFunctionParameters(t *testing.T) {
+	input := `{
+		"model": "gpt-oss-120b",
+		"messages": [{"role": "user", "content": "hello"}],
+		"tools": [
+			{
+				"type": "function",
+				"function": {
+					"name": "search",
+					"description": "Search",
+					"parameters": {
+						"type": "object",
+						"properties": {"q": {"type": "string"}},
+						"required": ["q"]
+					}
+				}
+			}
+		]
+	}`
+
+	out := NormalizeOpenAIRequest([]byte(input))
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(out, &result))
+
+	tools := result["tools"].([]interface{})
+	fn := tools[0].(map[string]interface{})["function"].(map[string]interface{})
+	params := fn["parameters"].(map[string]interface{})
+	props := params["properties"].(map[string]interface{})
+	assert.Contains(t, props, "q")
+}
+
+func TestNormalizeRequestForProvider_Cerebras_InjectsToolParameters(t *testing.T) {
+	input := `{
+		"model": "gpt-oss-120b",
+		"messages": [{"role": "user", "content": "hello"}],
+		"tools": [
+			{
+				"type": "function",
+				"function": {"name": "list_all_clients", "description": "List clients"}
+			}
+		]
+	}`
+
+	out := NormalizeRequestForProvider("cerebras", FormatOpenAI, []byte(input))
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(out, &result))
+
+	tools := result["tools"].([]interface{})
+	fn := tools[0].(map[string]interface{})["function"].(map[string]interface{})
+	params := fn["parameters"].(map[string]interface{})
+	assert.Equal(t, "object", params["type"])
+}
+
 // ---------------------------------------------------------------------------
 // isEmptyOrNull
 // ---------------------------------------------------------------------------

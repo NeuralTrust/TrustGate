@@ -21,7 +21,7 @@ import (
 	"net/textproto"
 	"net/url"
 
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	apiresolver "github.com/NeuralTrust/TrustGate/pkg/api/resolver"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
@@ -91,11 +91,11 @@ func NewForwardedHandler(forwarder appproxy.Forwarder) *ForwardedHandler {
 // @Param        X-AG-Gateway-Slug  header string  false  "Gateway slug when using header-based gateway discovery"
 // @Param        body               body   object  true   "OpenAI Chat Completions request body"
 // @Success      200                {object}  map[string]interface{}
-// @Failure      400                {object}  helpers.ErrorBody
-// @Failure      401                {object}  helpers.ErrorBody
-// @Failure      403                {object}  helpers.ErrorBody
-// @Failure      404                {object}  helpers.ErrorBody
-// @Failure      502                {object}  helpers.ErrorBody
+// @Failure      400                {object}  httpio.ErrorBody
+// @Failure      401                {object}  httpio.ErrorBody
+// @Failure      403                {object}  httpio.ErrorBody
+// @Failure      404                {object}  httpio.ErrorBody
+// @Failure      502                {object}  httpio.ErrorBody
 // @Router       /{consumer_slug}/v1/chat/completions [post]
 func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 	route, err := proxyRoute(c)
@@ -323,7 +323,6 @@ func buildRequestContext(c *fiber.Ctx, gatewayID ids.GatewayID, route apiresolve
 	})
 
 	return &infracontext.RequestContext{
-		Context:      c.UserContext(),
 		GatewayID:    gatewayID.String(),
 		Headers:      headers,
 		Method:       c.Method(),
@@ -333,6 +332,7 @@ func buildRequestContext(c *fiber.Ctx, gatewayID ids.GatewayID, route apiresolve
 		IP:           c.IP(),
 		SessionID:    sessionIDFromContext(c),
 		SourceFormat: string(route.SourceFormat),
+		ProxyCapability: string(route.Capability),
 	}
 }
 
@@ -354,36 +354,36 @@ func writeProxyError(c *fiber.Ctx, err error) error {
 	return c.Status(status).JSON(body)
 }
 
-func mapProxyError(err error) (int, helpers.ErrorBody) {
+func mapProxyError(err error) (int, httpio.ErrorBody) {
 	if pe, ok := appplugins.AsPluginError(err); ok {
-		return pe.StatusCode, helpers.ErrorBody{Error: errCodePluginRejected, Message: pe.Message}
+		return pe.StatusCode, httpio.ErrorBody{Error: errCodePluginRejected, Message: pe.Message}
 	}
 	switch {
 	case errors.Is(err, errNotAuthenticated):
-		return fiber.StatusUnauthorized, helpers.ErrorBody{Error: errCodeUnauthenticated, Message: err.Error()}
+		return fiber.StatusUnauthorized, httpio.ErrorBody{Error: errCodeUnauthenticated, Message: err.Error()}
 	case errors.Is(err, errForbidden):
-		return fiber.StatusForbidden, helpers.ErrorBody{Error: errCodeForbidden, Message: err.Error()}
+		return fiber.StatusForbidden, httpio.ErrorBody{Error: errCodeForbidden, Message: err.Error()}
 	case errors.Is(err, errPathNotFound),
 		errors.Is(err, commonerrors.ErrNotFound):
-		return fiber.StatusNotFound, helpers.ErrorBody{Error: errCodeNotFound}
+		return fiber.StatusNotFound, httpio.ErrorBody{Error: errCodeNotFound}
 	case errors.Is(err, appproxy.ErrNoBackendAvailable),
 		errors.Is(err, appproxy.ErrNoBackendsInPool):
-		return fiber.StatusServiceUnavailable, helpers.ErrorBody{Error: errCodeNoBackendAvailable, Message: err.Error()}
+		return fiber.StatusServiceUnavailable, httpio.ErrorBody{Error: errCodeNoBackendAvailable, Message: err.Error()}
 	case errors.Is(err, appproxy.ErrInvalidRequestPayload):
-		return fiber.StatusBadRequest, helpers.ErrorBody{Error: errCodeInvalidRequest, Message: err.Error()}
+		return fiber.StatusBadRequest, httpio.ErrorBody{Error: errCodeInvalidRequest, Message: err.Error()}
 	case errors.Is(err, routingdomain.ErrInvalidModelRef),
 		errors.Is(err, routingdomain.ErrUnknownPoolAlias),
 		errors.Is(err, routingdomain.ErrAmbiguousModel):
-		return fiber.StatusBadRequest, helpers.ErrorBody{Error: errCodeInvalidModel, Message: err.Error()}
+		return fiber.StatusBadRequest, httpio.ErrorBody{Error: errCodeInvalidModel, Message: err.Error()}
 	case errors.Is(err, routingdomain.ErrModelDenied),
 		errors.Is(err, appproxy.ErrModelNotAllowed):
-		return fiber.StatusForbidden, helpers.ErrorBody{Error: errCodeModelNotAllowed, Message: err.Error()}
+		return fiber.StatusForbidden, httpio.ErrorBody{Error: errCodeModelNotAllowed, Message: err.Error()}
 	case errors.Is(err, registrydomain.ErrCredentialAcquisition):
-		return fiber.StatusBadGateway, helpers.ErrorBody{
+		return fiber.StatusBadGateway, httpio.ErrorBody{
 			Error:   errCodeProviderCredential,
 			Message: registrydomain.ErrCredentialAcquisition.Error(),
 		}
 	default:
-		return fiber.StatusBadGateway, helpers.ErrorBody{Error: errCodeBackendError}
+		return fiber.StatusBadGateway, httpio.ErrorBody{Error: errCodeBackendError}
 	}
 }

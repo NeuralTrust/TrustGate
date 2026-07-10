@@ -17,7 +17,7 @@ package oauth
 import (
 	"errors"
 
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/resolver"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/gofiber/fiber/v2"
@@ -50,7 +50,7 @@ func (h *TokenHandler) Handle(c *fiber.Ctx) error {
 		return writeOAuthError(c, err)
 	}
 	c.Set(fiber.HeaderCacheControl, "no-store")
-	return helpers.WriteOK(c, token)
+	return httpio.WriteOK(c, token)
 }
 
 func writeOAuthError(c *fiber.Ctx, err error) error {
@@ -65,5 +65,5 @@ func writeOAuthError(c *fiber.Ctx, err error) error {
 	if errors.Is(err, appoauth.ErrNoAuthorizationServer) || errors.Is(err, appoauth.ErrAmbiguousAuthorizationServer) {
 		return c.Status(fiber.StatusNotFound).JSON(appoauth.OAuthError{Code: "invalid_request", Description: err.Error()})
 	}
-	return helpers.WriteError(c, err)
+	return httpio.WriteError(c, err)
 }

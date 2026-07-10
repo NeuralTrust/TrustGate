@@ -39,6 +39,10 @@ const (
 
 	responsesTurnIDPrefix = "resp_"
 	fieldPreviousResponse = "previous_response_id"
+
+	capabilityChat       = "chat"
+	capabilityEmbeddings = "embeddings"
+	capabilityRerank     = "rerank"
 )
 
 var ErrInvalidRequestPayload = errors.New("invalid request payload")
@@ -72,17 +76,31 @@ type ProviderInvoker interface {
 	InvokeStream(ctx context.Context, bk *registry.Registry, req *infracontext.RequestContext) (*ProviderResponse, error)
 }
 
+// providerCodec is the segregated view of the provider-format adapter registry
+// the invoker needs: decoding and cross-format adaptation of request, response
+// and stream payloads. Depending on this abstraction rather than the concrete
+// registry keeps the app layer off the infra adapter implementation and makes
+// the invoker testable in isolation.
+type providerCodec interface {
+	AdaptRequest(body []byte, source, target adapter.Format) ([]byte, error)
+	DecodeResponseFor(body []byte, providerFormat adapter.Format) (*adapter.CanonicalResponse, error)
+	AdaptResponse(body []byte, source, target adapter.Format) ([]byte, error)
+	AdaptStreamChunk(chunk []byte, source, target adapter.Format) ([][]byte, error)
+	DecodeStreamChunkFor(chunk []byte, target adapter.Format) (*adapter.CanonicalStreamChunk, error)
+	EncodeStreamChunkFor(canonical *adapter.CanonicalStreamChunk, source adapter.Format) ([][]byte, error)
+}
+
 var _ ProviderInvoker = (*providerInvoker)(nil)
 
 type providerInvoker struct {
 	locator  factory.ProviderLocator
-	registry *adapter.Registry
+	registry providerCodec
 	logger   *slog.Logger
 }
 
 func NewProviderInvoker(
 	locator factory.ProviderLocator,
-	registry *adapter.Registry,
+	registry providerCodec,
 	logger *slog.Logger,
 ) ProviderInvoker {
 	return &providerInvoker{
@@ -103,6 +121,7 @@ type preparedInvocation struct {
 	sourceFormat adapter.Format
 	targetFormat adapter.Format
 	crossFormat  bool
+	capability   string
 }
 
 func (p *providerInvoker) Invoke(
@@ -115,7 +134,7 @@ func (p *providerInvoker) Invoke(
 		return nil, err
 	}
 
-	respBody, err := prep.client.Completions(ctx, prep.cfg, prep.body)
+	respBody, err := p.invokeUpstream(ctx, prep)
 	if err != nil {
 		if be, ok := registry.IsBackendError(err); ok {
 			return &ProviderResponse{
@@ -124,13 +143,14 @@ func (p *providerInvoker) Invoke(
 				Body:       be.Body,
 			}, nil
 		}
-		return nil, fmt.Errorf("provider completions: %w", err)
+		return nil, err
 	}
 
 	usage, model, finishReason, responseID := p.decodeResponseMeta(respBody, prep.targetFormat)
 
 	if prep.crossFormat {
-		if adapted, aerr := p.registry.AdaptResponse(respBody, prep.sourceFormat, prep.targetFormat); aerr != nil {
+		adapted, aerr := p.adaptResponseBody(respBody, prep)
+		if aerr != nil {
 			p.logger.Warn("failed to adapt response, returning raw",
 				slog.String("error", aerr.Error()))
 		} else {
@@ -174,10 +194,7 @@ func (p *providerInvoker) InvokeStream(
 	body := prep.body
 	// Registries speaking the OpenAI-style API need an explicit "stream": true even
 	// when the source format (e.g. Gemini) does not carry it in the body.
-	if adapter.IsSameWireFormat(prep.targetFormat, adapter.FormatOpenAI) ||
-		prep.targetFormat == adapter.FormatOpenAIResponses ||
-		prep.targetFormat == adapter.FormatAnthropic ||
-		prep.targetFormat == adapter.FormatMistral {
+	if prep.targetFormat.SupportsCanonicalToolCalls() {
 		body = injectStreamTrue(body)
 	}
 
@@ -219,7 +236,8 @@ func (p *providerInvoker) prepare(
 	}
 
 	sourceFormat := sourceFormatFromRequest(req)
-	targetFormat := adapter.ResolveTargetFormat(bk.Provider(), bk.ProviderOptions())
+	capability := capabilityFromRequest(req)
+	targetFormat := adapter.ResolveTargetFormatForCapability(bk.Provider(), capability, bk.ProviderOptions())
 
 	req.Provider = bk.Provider()
 	req.SourceFormat = string(sourceFormat)
@@ -229,7 +247,7 @@ func (p *providerInvoker) prepare(
 
 	body := req.Body
 	if crossFormat {
-		body, err = p.registry.AdaptRequest(req.Body, sourceFormat, targetFormat)
+		body, err = p.adaptRequestBody(req.Body, sourceFormat, targetFormat, capability)
 		if err != nil {
 			if adapter.IsRequestDecodeError(err) {
 				return nil, fmt.Errorf("%w: %s", ErrInvalidRequestPayload, err.Error())
@@ -262,14 +280,99 @@ func (p *providerInvoker) prepare(
 		client: client,
 		cfg: &providers.Config{
 			Options:     bk.ProviderOptions(),
-			Credentials: bk.Auth().ProviderCredentials(),
+			Credentials: providers.CredentialsFromTargetAuth(bk.Auth()),
 		},
 		body:         body,
 		sentModel:    sentModel,
 		sourceFormat: sourceFormat,
 		targetFormat: targetFormat,
 		crossFormat:  crossFormat,
+		capability:   capability,
 	}, nil
+}
+
+func capabilityFromRequest(req *infracontext.RequestContext) string {
+	switch req.ProxyCapability {
+	case capabilityEmbeddings:
+		return capabilityEmbeddings
+	case capabilityRerank:
+		return capabilityRerank
+	default:
+		return capabilityChat
+	}
+}
+
+func (p *providerInvoker) adaptRequestBody(
+	body []byte,
+	sourceFormat, targetFormat adapter.Format,
+	capability string,
+) ([]byte, error) {
+	switch capability {
+	case capabilityEmbeddings:
+		reg, ok := p.registry.(*adapter.Registry)
+		if !ok {
+			return nil, fmt.Errorf("embedding adaptation requires concrete adapter registry")
+		}
+		return adapter.AdaptEmbeddingRequest(reg, body, sourceFormat, targetFormat)
+	case capabilityRerank:
+		reg, ok := p.registry.(*adapter.Registry)
+		if !ok {
+			return nil, fmt.Errorf("rerank adaptation requires concrete adapter registry")
+		}
+		return adapter.AdaptRerankRequest(reg, body, sourceFormat, targetFormat)
+	default:
+		return p.registry.AdaptRequest(body, sourceFormat, targetFormat)
+	}
+}
+
+func (p *providerInvoker) adaptResponseBody(body []byte, prep *preparedInvocation) ([]byte, error) {
+	switch prep.capability {
+	case capabilityEmbeddings:
+		reg, ok := p.registry.(*adapter.Registry)
+		if !ok {
+			return nil, fmt.Errorf("embedding adaptation requires concrete adapter registry")
+		}
+		return adapter.AdaptEmbeddingResponse(reg, body, prep.sourceFormat, prep.targetFormat)
+	case capabilityRerank:
+		reg, ok := p.registry.(*adapter.Registry)
+		if !ok {
+			return nil, fmt.Errorf("rerank adaptation requires concrete adapter registry")
+		}
+		return adapter.AdaptRerankResponse(reg, body, prep.sourceFormat, prep.targetFormat)
+	default:
+		return p.registry.AdaptResponse(body, prep.sourceFormat, prep.targetFormat)
+	}
+}
+
+func (p *providerInvoker) invokeUpstream(ctx context.Context, prep *preparedInvocation) ([]byte, error) {
+	switch prep.capability {
+	case capabilityEmbeddings:
+		embedder, ok := prep.client.(providers.EmbeddingsClient)
+		if !ok {
+			return nil, fmt.Errorf("provider does not support embeddings")
+		}
+		respBody, err := embedder.Embeddings(ctx, prep.cfg, prep.body)
+		if err != nil {
+			return nil, fmt.Errorf("provider embeddings: %w", err)
+		}
+		return respBody, nil
+	case capabilityRerank:
+		reranker, ok := prep.client.(providers.RerankClient)
+		if !ok {
+			return nil, fmt.Errorf("provider does not support rerank")
+		}
+		respBody, err := reranker.Rerank(ctx, prep.cfg, prep.body)
+		if err != nil {
+			return nil, fmt.Errorf("provider rerank: %w", err)
+		}
+		return respBody, nil
+	default:
+		respBody, err := prep.client.Completions(ctx, prep.cfg, prep.body)
+		if err != nil {
+			return nil, fmt.Errorf("provider completions: %w", err)
+		}
+		return respBody, nil
+	}
 }
 
 func injectPreviousResponseID(body []byte, targetFormat adapter.Format, previousResponseID string) []byte {

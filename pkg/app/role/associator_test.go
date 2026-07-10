@@ -82,6 +82,7 @@ func TestAssociator_DetachRegistry_RejectsModelPolicyReference(t *testing.T) {
 		cache.NewTTLMapManager(cache.RoleCacheTTL),
 		cachetest.NoopPublisher(),
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		nil,
 	)
 
 	err := associator.DetachRegistry(context.Background(), gwID, roleID, registryID)

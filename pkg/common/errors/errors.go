@@ -24,4 +24,5 @@ var (
 	ErrValidation    = errors.New("validation failed")
 	ErrInvalidConfig = errors.New("invalid configuration")
 	ErrBoot          = errors.New("boot failure")
+	ErrCorruptData   = errors.New("corrupt persisted data")
 )

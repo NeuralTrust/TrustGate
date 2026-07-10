@@ -1,0 +1,33 @@
+{
+  "_comment": "Sink 3 — postgres exporter (exporters.raw with type postgres). NOT OTLP: one SQL INSERT into table trustgate_data, idempotent on trace_id. Bodies + join keys only. Schema-accurate representative row, not a live capture.",
+  "_destination": "postgres DSN → trustgate DB → table trustgate_data",
+  "_table": "trustgate_data",
+  "trace_id": "b1c8a71f-35d8-4aff-a8da-dcb78d05cac9",
+  "gateway_id": "gw-support-chat",
+  "tenant_id": "00000000-0000-0000-0000-000000000001",
+  "occurred_on": 1783420474000,
+  "schema_version": 1,
+  "created_at": "2026-07-07T10:34:34.504770+00:00",
+  "request_body": {
+    "model": "gpt-4o",
+    "messages": [
+      { "role": "user", "content": "Reset the account for john.doe@example.com please" }
+    ]
+  },
+  "response_body": {
+    "id": "chatcmpl-9xY",
+    "object": "chat.completion",
+    "model": "gpt-4o",
+    "choices": [
+      {
+        "index": 0,
+        "finish_reason": "stop",
+        "message": {
+          "role": "assistant",
+          "content": "Sure — I've started the reset for [MASKED_EMAIL]."
+        }
+      }
+    ],
+    "usage": { "prompt_tokens": 42, "completion_tokens": 18, "total_tokens": 60 }
+  }
+}

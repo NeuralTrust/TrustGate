@@ -57,7 +57,7 @@ func NewJwtManager(config *config.ServerConfig) Manager {
 const PurposePlayground = "playground"
 
 type Claims struct {
-	TeamID    string `json:"team_id,omitempty"`
+	TenantID    string `json:"tenant_id,omitempty"`
 	UserID    string `json:"user_id,omitempty"`
 	UserEmail string `json:"user_email,omitempty"`
 	// Purpose restricts where a token is accepted. Empty means a regular

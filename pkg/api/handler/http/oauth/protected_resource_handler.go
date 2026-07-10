@@ -17,7 +17,7 @@ package oauth
 import (
 	"strings"
 
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/gofiber/fiber/v2"
 )
@@ -39,7 +39,7 @@ func (h *ProtectedResourceHandler) Handle(c *fiber.Ctx) error {
 	}
 	meta, err := h.metadata.ProtectedResource(c.UserContext(), c.BaseURL(), resource)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteOK(c, meta)
+	return httpio.WriteOK(c, meta)
 }

@@ -28,7 +28,8 @@ Copy `.env.example` to `.env.local` for local development:
 | ------------------- | -------- | --------------------------------------------------------------------------- |
 | `SERVER_SECRET_KEY` | yes      | HS256 secret used to sign admin JWTs. **Must match the admin server's key.** |
 | `ADMIN_API_URL`     | no       | Admin API base URL. Defaults to `http://localhost:8080`.                    |
-| `ADMIN_TEAM_ID`     | no       | Optional `team_id` claim forwarded to the admin API.                        |
+| `ADMIN_TENANT_ID` | no       | Optional `tenant_id` claim forwarded to the admin API. |
+| `ADMIN_TEAM_ID`   | no       | Legacy alias for `ADMIN_TENANT_ID`.                      |
 | `ADMIN_USER_ID`     | no       | Optional `user_id` claim forwarded to the admin API.                        |
 
 ## Local development

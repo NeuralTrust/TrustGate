@@ -17,7 +17,7 @@ package policy
 import (
 	"fmt"
 
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy/response"
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
@@ -45,23 +45,23 @@ func NewUpdatePolicyHandler(updater apppolicy.Updater) *UpdatePolicyHandler {
 // @Param        id          path      string                       true  "Policy id"   format(uuid)
 // @Param        body        body      request.UpdatePolicyRequest  true  "Policy fields to update"
 // @Success      200         {object}  response.PolicyResponse
-// @Failure      400         {object}  helpers.ErrorBody
-// @Failure      401         {object}  helpers.ErrorBody
-// @Failure      404         {object}  helpers.ErrorBody
-// @Failure      409         {object}  helpers.ErrorBody
+// @Failure      400         {object}  httpio.ErrorBody
+// @Failure      401         {object}  httpio.ErrorBody
+// @Failure      404         {object}  httpio.ErrorBody
+// @Failure      409         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/policies/{id} [put]
 func (h *UpdatePolicyHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, id, err := helpers.ParseGatewayScopedID[ids.PolicyKind](c)
+	gatewayID, id, err := httpio.ParseGatewayScopedID[ids.PolicyKind](c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 
 	var req request.UpdatePolicyRequest
 	if err := c.BodyParser(&req); err != nil {
-		return helpers.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
+		return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
 	}
 	if err := req.Validate(); err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 
 	p, err := h.updater.Update(c.UserContext(), apppolicy.UpdateInput{
@@ -78,7 +78,7 @@ func (h *UpdatePolicyHandler) Handle(c *fiber.Ctx) error {
 		Mode:        req.ToMode(),
 	})
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteOK(c, response.FromPolicy(p))
+	return httpio.WriteOK(c, response.FromPolicy(p))
 }

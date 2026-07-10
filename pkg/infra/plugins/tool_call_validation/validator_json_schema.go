@@ -15,6 +15,7 @@
 package tool_call_validation
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -23,7 +24,7 @@ import (
 
 type jsonSchemaValidator struct{}
 
-func (jsonSchemaValidator) Evaluate(in validatorInput) (violation, error) {
+func (jsonSchemaValidator) Evaluate(_ context.Context, in validatorInput) (violation, error) {
 	if in.eval == nil {
 		return violation{}, nil
 	}

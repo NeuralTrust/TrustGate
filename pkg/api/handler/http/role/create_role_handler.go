@@ -17,7 +17,7 @@ package role
 import (
 	"fmt"
 
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/role/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/role/response"
 	approle "github.com/NeuralTrust/TrustGate/pkg/app/role"
@@ -43,30 +43,30 @@ func NewCreateRoleHandler(creator approle.Creator) *CreateRoleHandler {
 // @Param        gateway_id  path      string                   true  "Gateway id"  format(uuid)
 // @Param        body        body      request.CreateRoleRequest  true  "Role to create"
 // @Success      201         {object}  response.RoleResponse
-// @Failure      400         {object}  helpers.ErrorBody
-// @Failure      401         {object}  helpers.ErrorBody
-// @Failure      404         {object}  helpers.ErrorBody
-// @Failure      409         {object}  helpers.ErrorBody
+// @Failure      400         {object}  httpio.ErrorBody
+// @Failure      401         {object}  httpio.ErrorBody
+// @Failure      404         {object}  httpio.ErrorBody
+// @Failure      409         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/roles [post]
 func (h *CreateRoleHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, err := helpers.ParseGatewayID(c)
+	gatewayID, err := httpio.ParseGatewayID(c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	var req request.CreateRoleRequest
 	if err := c.BodyParser(&req); err != nil {
-		return helpers.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
+		return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
 	}
 	if err := req.Validate(); err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	role, err := h.creator.Create(c.UserContext(), approle.CreateInput{
-		GatewayID:  gatewayID,
-		Name:       req.Name,
+		GatewayID:   gatewayID,
+		Name:        req.Name,
 		OIDCMapping: req.OIDCMapping,
 	})
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteCreated(c, response.FromRole(role))
+	return httpio.WriteCreated(c, response.FromRole(role))
 }

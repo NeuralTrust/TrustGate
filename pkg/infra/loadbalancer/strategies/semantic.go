@@ -24,10 +24,15 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer/algorithm"
 )
+
+type backendVector struct {
+	value     []float64
+	magnitude float64
+}
 
 type Semantic struct {
 	mu              sync.RWMutex
@@ -35,6 +40,9 @@ type Semantic struct {
 	embeddingRepo   embedding.Repository
 	serviceLocator  factory.EmbeddingServiceLocator
 	embeddingConfig *embedding.Config
+
+	vecMu    sync.Mutex
+	vecCache map[string]*backendVector
 }
 
 func NewSemantic(
@@ -48,10 +56,11 @@ func NewSemantic(
 		embeddingRepo:   embeddingRepo,
 		serviceLocator:  serviceLocator,
 		embeddingConfig: embeddingCfg,
+		vecCache:        make(map[string]*backendVector),
 	}
 }
 
-func (s *Semantic) Next(req *infracontext.RequestContext, exclude map[ids.RegistryID]struct{}) *registry.Registry {
+func (s *Semantic) Next(ctx context.Context, req *infracontext.RequestContext, exclude map[ids.RegistryID]struct{}) *registry.Registry {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -70,11 +79,11 @@ func (s *Semantic) Next(req *infracontext.RequestContext, exclude map[ids.Regist
 	if err != nil {
 		return candidates[0]
 	}
-	promptEmbedding, err := s.generateEmbedding(req.Context, prompt)
+	promptEmbedding, err := s.generateEmbedding(ctx, prompt)
 	if err != nil {
 		return candidates[0]
 	}
-	return s.findBestRegistry(req.Context, promptEmbedding, candidates)
+	return s.findBestRegistry(ctx, promptEmbedding, candidates)
 }
 
 func (s *Semantic) Name() string {
@@ -124,17 +133,18 @@ func (s *Semantic) findBestRegistry(
 	promptEmbedding []float64,
 	candidates []*registry.Registry,
 ) *registry.Registry {
+	promptMagnitude := magnitude(promptEmbedding)
 	var bestBackend *registry.Registry
 	bestSimilarity := -1.0
 	for _, b := range candidates {
 		if b.Description == "" {
 			continue
 		}
-		backendEmbedding, err := s.embeddingRepo.GetByTargetID(ctx, b.ID.String())
-		if err != nil {
+		bv := s.backendVector(ctx, b.ID.String())
+		if bv == nil {
 			continue
 		}
-		similarity := cosineSimilarity(promptEmbedding, backendEmbedding.Value)
+		similarity := cosineSimilarity(promptEmbedding, promptMagnitude, bv.value, bv.magnitude)
 		if similarity > bestSimilarity {
 			bestSimilarity = similarity
 			bestBackend = b
@@ -146,20 +156,45 @@ func (s *Semantic) findBestRegistry(
 	return bestBackend
 }
 
-func cosineSimilarity(a, b []float64) float64 {
-	if len(a) != len(b) {
+// backendVector returns the target's embedding and its precomputed magnitude,
+// fetching from the repository only once per target: backend embeddings are
+// immutable for the lifetime of a strategy instance, so caching avoids a
+// repository round-trip and a magnitude recomputation on every request.
+func (s *Semantic) backendVector(ctx context.Context, targetID string) *backendVector {
+	s.vecMu.Lock()
+	if bv, ok := s.vecCache[targetID]; ok {
+		s.vecMu.Unlock()
+		return bv
+	}
+	s.vecMu.Unlock()
+
+	emb, err := s.embeddingRepo.GetByTargetID(ctx, targetID)
+	if err != nil {
+		return nil
+	}
+	bv := &backendVector{value: emb.Value, magnitude: magnitude(emb.Value)}
+
+	s.vecMu.Lock()
+	s.vecCache[targetID] = bv
+	s.vecMu.Unlock()
+	return bv
+}
+
+func magnitude(v []float64) float64 {
+	var sum float64
+	for _, x := range v {
+		sum += x * x
+	}
+	return math.Sqrt(sum)
+}
+
+func cosineSimilarity(a []float64, magnitudeA float64, b []float64, magnitudeB float64) float64 {
+	if len(a) != len(b) || magnitudeA == 0 || magnitudeB == 0 {
 		return 0
 	}
-	var dotProduct, magnitudeA, magnitudeB float64
+	var dotProduct float64
 	for i := range a {
 		dotProduct += a[i] * b[i]
-		magnitudeA += a[i] * a[i]
-		magnitudeB += b[i] * b[i]
-	}
-	magnitudeA = math.Sqrt(magnitudeA)
-	magnitudeB = math.Sqrt(magnitudeB)
-	if magnitudeA == 0 || magnitudeB == 0 {
-		return 0
 	}
 	return dotProduct / (magnitudeA * magnitudeB)
 }

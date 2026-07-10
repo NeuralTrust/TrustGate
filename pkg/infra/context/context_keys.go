@@ -24,8 +24,8 @@ const (
 	// middleware from the per-gateway session configuration.
 	SessionContextKey          ContextKey = "session_id"
 	SessionGeneratedContextKey ContextKey = "session_id_generated"
-	// TeamIDContextKey holds the team identifier decoded from an admin JWT.
-	TeamIDContextKey ContextKey = "team_id"
+	// TenantIDContextKey holds the tenant identifier decoded from an admin JWT.
+	TenantIDContextKey ContextKey = "tenant_id"
 	// UserIDContextKey holds the user identifier decoded from an admin JWT.
 	UserIDContextKey ContextKey = "user_id"
 	// UserEmailContextKey holds the user email decoded from an admin JWT.

@@ -19,8 +19,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
-	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
@@ -43,19 +43,21 @@ var _ Updater = (*updater)(nil)
 
 type updater struct {
 	repo         domain.Repository
-	consumerRepo consumerdomain.Repository
+	consumerRepo consumerAuthRefs
 	memoryCache  *cache.TTLMap
 	keyCache     *cache.TTLMap
 	publisher    cache.EventPublisher
 	logger       *slog.Logger
+	signaler     configsyncport.SnapshotSignaler
 }
 
 func NewUpdater(
 	repo domain.Repository,
-	consumerRepo consumerdomain.Repository,
+	consumerRepo consumerAuthRefs,
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
+	signaler configsyncport.SnapshotSignaler,
 ) Updater {
 	return &updater{
 		repo:         repo,
@@ -64,6 +66,7 @@ func NewUpdater(
 		keyCache:     manager.GetTTLMap(cache.AuthKeyTTLName),
 		publisher:    publisher,
 		logger:       logger,
+		signaler:     signaler,
 	}
 }
 
@@ -115,5 +118,8 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Auth, err
 		u.keyCache.Set(existing.KeyHash, existing)
 	}
 	publishGatewayDataInvalidation(ctx, u.publisher, u.logger, existing.GatewayID)
+	if u.signaler != nil {
+		u.signaler.Signal(ctx)
+	}
 	return existing, nil
 }

@@ -37,7 +37,7 @@ type DataFinder interface {
 var _ DataFinder = (*dataFinder)(nil)
 
 type dataFinder struct {
-	repo           domain.Repository
+	repo           domain.Reader
 	registryRepo   registrydomain.Repository
 	policyRepo     policydomain.Repository
 	authRepo       authdomain.Repository
@@ -49,7 +49,7 @@ type dataFinder struct {
 }
 
 func NewDataFinder(
-	repo domain.Repository,
+	repo domain.Reader,
 	registryRepo registrydomain.Repository,
 	policyRepo policydomain.Repository,
 	authRepo authdomain.Repository,

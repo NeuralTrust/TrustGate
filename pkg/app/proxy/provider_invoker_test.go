@@ -64,7 +64,7 @@ func TestProviderInvoke_SameFormatPassthrough(t *testing.T) {
 
 	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
 
-	req := &infracontext.RequestContext{Context: context.Background(), Body: []byte(openaiRequestBody)}
+	req := &infracontext.RequestContext{Body: []byte(openaiRequestBody)}
 	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), req)
 
 	require.NoError(t, err)
@@ -89,7 +89,7 @@ func TestProviderInvoke_DecodesUsageOnFinish(t *testing.T) {
 
 	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
 
-	req := &infracontext.RequestContext{Context: context.Background(), Body: []byte(openaiRequestBody)}
+	req := &infracontext.RequestContext{Body: []byte(openaiRequestBody)}
 	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), req)
 
 	require.NoError(t, err)
@@ -111,7 +111,7 @@ func TestProviderInvoke_DecodesUsageOnFinishCrossFormat(t *testing.T) {
 
 	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
 
-	req := &infracontext.RequestContext{Context: context.Background(), Body: []byte(openaiRequestBody)}
+	req := &infracontext.RequestContext{Body: []byte(openaiRequestBody)}
 	resp, err := inv.Invoke(context.Background(), apiKeyTarget("anthropic"), req)
 
 	require.NoError(t, err)
@@ -137,7 +137,7 @@ func TestProviderInvoke_CrossFormatAdapt(t *testing.T) {
 
 	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
 
-	req := &infracontext.RequestContext{Context: context.Background(), Body: []byte(openaiRequestBody)}
+	req := &infracontext.RequestContext{Body: []byte(openaiRequestBody)}
 	resp, err := inv.Invoke(context.Background(), apiKeyTarget("anthropic"), req)
 
 	require.NoError(t, err)
@@ -170,7 +170,7 @@ func TestProviderInvoke_BackendErrorPassthrough(t *testing.T) {
 
 	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
 
-	req := &infracontext.RequestContext{Context: context.Background(), Body: []byte(openaiRequestBody)}
+	req := &infracontext.RequestContext{Body: []byte(openaiRequestBody)}
 	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), req)
 
 	require.NoError(t, err)
@@ -190,7 +190,7 @@ func TestProviderInvoke_SourceFormatFromPath(t *testing.T) {
 		locator.EXPECT().Get("openai").Return(client, nil).Once()
 
 		inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
-		req := &infracontext.RequestContext{Context: context.Background(), Body: []byte(openaiRequestBody)}
+		req := &infracontext.RequestContext{Body: []byte(openaiRequestBody)}
 		_, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), req)
 
 		require.NoError(t, err)
@@ -210,7 +210,6 @@ func TestProviderInvoke_SourceFormatFromPath(t *testing.T) {
 
 		inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
 		req := &infracontext.RequestContext{
-			Context:      context.Background(),
 			Body:         []byte(anthropicRequestBody),
 			SourceFormat: string(adapter.FormatAnthropic),
 		}

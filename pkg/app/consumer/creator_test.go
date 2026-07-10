@@ -56,7 +56,7 @@ func TestCreator_Create_Success(t *testing.T) {
 		Once()
 
 	mgr := newCacheManager()
-	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), rolemocks.NewRepository(t), mgr, cachetest.NoopPublisher(), newTestLogger())
+	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), rolemocks.NewRepository(t), mgr, cachetest.NoopPublisher(), newTestLogger(), nil)
 
 	c, err := creator.Create(context.Background(), appconsumer.CreateInput{
 		GatewayID: gwID,
@@ -98,7 +98,7 @@ func TestCreator_Create_WithRegistries_BindsAtomically(t *testing.T) {
 		Return([]*registrydomain.Registry{{ID: registryID, GatewayID: gwID}}, nil).
 		Once()
 
-	creator := appconsumer.NewCreator(repo, registryRepo, rolemocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	creator := appconsumer.NewCreator(repo, registryRepo, rolemocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
 
 	c, err := creator.Create(context.Background(), appconsumer.CreateInput{
 		GatewayID:     gwID,
@@ -135,7 +135,7 @@ func TestCreator_Create_WithRoles_BindsAtomically(t *testing.T) {
 		Return([]*roledomain.Role{{ID: roleID, GatewayID: gwID}}, nil).
 		Once()
 
-	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), roleRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), roleRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
 
 	c, err := creator.Create(context.Background(), appconsumer.CreateInput{
 		GatewayID:   gwID,
@@ -163,7 +163,7 @@ func TestCreator_Create_RejectsRoleFromAnotherGateway(t *testing.T) {
 		Return(nil, nil).
 		Once()
 
-	creator := appconsumer.NewCreator(repomocks.NewRepository(t), registrymocks.NewRepository(t), roleRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	creator := appconsumer.NewCreator(repomocks.NewRepository(t), registrymocks.NewRepository(t), roleRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
 
 	_, err := creator.Create(context.Background(), appconsumer.CreateInput{
 		GatewayID:   gwID,
@@ -179,7 +179,7 @@ func TestCreator_Create_RejectsRoleFromAnotherGateway(t *testing.T) {
 
 func TestCreator_Create_RejectsRolesInInlineMode(t *testing.T) {
 	t.Parallel()
-	creator := appconsumer.NewCreator(repomocks.NewRepository(t), registrymocks.NewRepository(t), rolemocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	creator := appconsumer.NewCreator(repomocks.NewRepository(t), registrymocks.NewRepository(t), rolemocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
 
 	_, err := creator.Create(context.Background(), appconsumer.CreateInput{
 		GatewayID:   ids.New[ids.GatewayKind](),
@@ -204,7 +204,7 @@ func TestCreator_Create_RejectsRegistryFromAnotherGateway(t *testing.T) {
 		Return(nil, nil).
 		Once()
 
-	creator := appconsumer.NewCreator(repomocks.NewRepository(t), registryRepo, rolemocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	creator := appconsumer.NewCreator(repomocks.NewRepository(t), registryRepo, rolemocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
 
 	_, err := creator.Create(context.Background(), appconsumer.CreateInput{
 		GatewayID:   gwID,
@@ -263,7 +263,7 @@ func TestCreator_Create_RejectsRegistryReferencesBeforeAssociation(t *testing.T)
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			creator := appconsumer.NewCreator(repomocks.NewRepository(t), registrymocks.NewRepository(t), rolemocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+			creator := appconsumer.NewCreator(repomocks.NewRepository(t), registrymocks.NewRepository(t), rolemocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
 			tc.input.GatewayID = gwID
 			tc.input.Name = "chat"
 			tc.input.Type = domain.TypeLLM
@@ -278,7 +278,7 @@ func TestCreator_Create_RejectsRegistryReferencesBeforeAssociation(t *testing.T)
 
 func TestCreator_Create_RejectsInvalidDomain(t *testing.T) {
 	t.Parallel()
-	creator := appconsumer.NewCreator(repomocks.NewRepository(t), registrymocks.NewRepository(t), rolemocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	creator := appconsumer.NewCreator(repomocks.NewRepository(t), registrymocks.NewRepository(t), rolemocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
 
 	_, err := creator.Create(context.Background(), appconsumer.CreateInput{
 		GatewayID: ids.New[ids.GatewayKind](),
@@ -296,7 +296,7 @@ func TestCreator_Create_RetriesOnSlugCollision(t *testing.T) {
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(domain.ErrSlugAlreadyExists).Once()
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
 
-	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), rolemocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), rolemocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
 
 	c, err := creator.Create(context.Background(), appconsumer.CreateInput{
 		GatewayID: ids.New[ids.GatewayKind](),
@@ -316,7 +316,7 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(domain.ErrAlreadyExists).Once()
 
-	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), rolemocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), rolemocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
 
 	_, err := creator.Create(context.Background(), appconsumer.CreateInput{
 		GatewayID: ids.New[ids.GatewayKind](),

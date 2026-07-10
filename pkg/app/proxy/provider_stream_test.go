@@ -75,7 +75,7 @@ func TestInvokeStream_PassthroughStream(t *testing.T) {
 		Once()
 
 	inv := newStreamInvoker(t, "openai", client)
-	req := &infracontext.RequestContext{Context: context.Background(), Body: []byte(openaiRequestBody)}
+	req := &infracontext.RequestContext{Body: []byte(openaiRequestBody)}
 
 	resp, err := inv.InvokeStream(context.Background(), apiKeyTarget("openai"), req)
 	require.NoError(t, err)
@@ -102,7 +102,7 @@ func TestInvokeStream_CrossFormatAdapt(t *testing.T) {
 		Once()
 
 	inv := newStreamInvoker(t, "anthropic", client)
-	req := &infracontext.RequestContext{Context: context.Background(), Body: []byte(openaiRequestBody)}
+	req := &infracontext.RequestContext{Body: []byte(openaiRequestBody)}
 
 	resp, err := inv.InvokeStream(context.Background(), apiKeyTarget("anthropic"), req)
 	require.NoError(t, err)
@@ -130,7 +130,6 @@ func TestInvokeStream_GeminiToolCallAccumulation(t *testing.T) {
 
 	inv := newStreamInvoker(t, "openai", client)
 	req := &infracontext.RequestContext{
-		Context:      context.Background(),
 		Body:         []byte(geminiRequestBody),
 		SourceFormat: "google",
 	}
@@ -152,7 +151,7 @@ func TestInvokeStream_PreStreamBackendErrorPassthrough(t *testing.T) {
 		Once()
 
 	inv := newStreamInvoker(t, "openai", client)
-	req := &infracontext.RequestContext{Context: context.Background(), Body: []byte(openaiRequestBody)}
+	req := &infracontext.RequestContext{Body: []byte(openaiRequestBody)}
 
 	resp, err := inv.InvokeStream(context.Background(), apiKeyTarget("openai"), req)
 	require.NoError(t, err)
@@ -174,7 +173,7 @@ func TestInvokeStream_UsageObserverRecordsFinalUsage(t *testing.T) {
 		Once()
 
 	inv := newStreamInvoker(t, "openai", client)
-	req := &infracontext.RequestContext{Context: context.Background(), Body: []byte(openaiRequestBody)}
+	req := &infracontext.RequestContext{Body: []byte(openaiRequestBody)}
 
 	rt := trace.New("trace-1", trace.Metadata{})
 	span := rt.StartSpan(trace.SpanLLM, "openai")

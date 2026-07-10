@@ -1,0 +1,27 @@
+# cert-manager server certificate for the config-sync gRPC endpoint. Issued by
+# the cluster-wide Let's Encrypt ClusterIssuer (ACME DNS-01 via Cloudflare), so
+# every data plane - in-cluster and remote hybrid - verifies it against the
+# public root store with no CA distribution. The admin (control plane) mounts the
+# resulting Secret (keys tls.crt / tls.key); data planes leave CONFIG_SYNC_TLS_CA
+# empty and pin the SNI below.
+#
+# The 90-day leaf auto-renews (renewBefore 15d); the public hostname and root
+# chain never change, so rotation is transparent to data planes. The admin
+# hot-reloads the keypair from disk (GetCertificate), so renewals are served on
+# new connections with no pod restart.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: agentgateway-config-sync-tls
+spec:
+  secretName: agentgateway-config-sync-tls
+  duration: 2160h # 90d
+  renewBefore: 360h # 15d
+  privateKey:
+    algorithm: ECDSA
+    size: 384
+  dnsNames:
+    - agentgateway-configsync.dev.neuraltrust.ai
+  issuerRef:
+    name: letsencrypt
+    kind: ClusterIssuer

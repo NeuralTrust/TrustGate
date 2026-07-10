@@ -16,7 +16,6 @@ package modules
 
 import (
 	"log/slog"
-	"os"
 
 	cataloghttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/catalog"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
@@ -49,8 +48,6 @@ import (
 	"go.uber.org/dig"
 )
 
-const vectorStoreEnv = "SEMANTIC_CACHE_VECTOR_STORE"
-
 type pluginParams struct {
 	dig.In
 	Cache    cache.Client
@@ -82,7 +79,7 @@ func Plugins(c *container.Container) error {
 func newPluginRegistry(p pluginParams) (appplugins.Registry, error) {
 	reg := appplugins.NewRegistry()
 	redisClient := p.Cache.RedisClient()
-	store, err := semantic.NewStore(vectorStoreKind(), semantic.Deps{
+	store, err := semantic.NewStore(p.Cfg.SemanticCache.VectorStore, semantic.Deps{
 		Redis:  redisClient,
 		Pool:   poolOrNil(p.DB),
 		Logger: p.Logger,
@@ -115,13 +112,6 @@ func newPluginRegistry(p pluginParams) (appplugins.Registry, error) {
 		}
 	}
 	return reg, nil
-}
-
-func vectorStoreKind() string {
-	if kind := os.Getenv(vectorStoreEnv); kind != "" {
-		return kind
-	}
-	return "redis"
 }
 
 func poolOrNil(db *database.Connection) *pgxpool.Pool {

@@ -19,7 +19,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway/response"
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -46,23 +46,23 @@ func NewUpdateGatewayHandler(updater appgateway.Updater, baseDomain, mcpBaseDoma
 // @Param        id       path      string                        true  "Gateway id"  format(uuid)
 // @Param        gateway  body      request.UpdateGatewayRequest  true  "Gateway fields to update"
 // @Success      200      {object}  response.GatewayResponse
-// @Failure      400      {object}  helpers.ErrorBody
-// @Failure      401      {object}  helpers.ErrorBody
-// @Failure      404      {object}  helpers.ErrorBody
-// @Failure      409      {object}  helpers.ErrorBody
+// @Failure      400      {object}  httpio.ErrorBody
+// @Failure      401      {object}  httpio.ErrorBody
+// @Failure      404      {object}  httpio.ErrorBody
+// @Failure      409      {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{id} [put]
 func (h *UpdateGatewayHandler) Handle(c *fiber.Ctx) error {
-	id, err := helpers.ParseUUIDParam[ids.GatewayKind](c, "id")
+	id, err := httpio.ParseUUIDParam[ids.GatewayKind](c, "id")
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 
 	var req request.UpdateGatewayRequest
 	if err := c.BodyParser(&req); err != nil {
-		return helpers.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
+		return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
 	}
 	if err := req.Validate(); err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 
 	g, err := h.updater.Update(c.UserContext(), appgateway.UpdateInput{
@@ -70,13 +70,14 @@ func (h *UpdateGatewayHandler) Handle(c *fiber.Ctx) error {
 		Slug:            req.Slug,
 		Status:          req.Status,
 		Domain:          req.Domain,
+		TenantID:        tenantIDFromContext(c),
 		Metadata:        req.Metadata,
 		Telemetry:       req.Telemetry,
 		ClientTLSConfig: req.ClientTLSConfig,
 		SessionConfig:   req.SessionConfig,
 	})
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteOK(c, response.FromDomain(g, h.baseDomain, h.mcpBaseDomain))
+	return httpio.WriteOK(c, response.FromDomain(g, h.baseDomain, h.mcpBaseDomain))
 }

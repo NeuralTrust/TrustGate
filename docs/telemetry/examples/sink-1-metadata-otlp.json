@@ -1,0 +1,58 @@
+{
+  "_comment": "Sink 1 — metadata OTLP exporter (exporters.metadata.otlp) — no request/response bodies. Schema-accurate representative record (OpenAI chat completion flagged by a PII policy), not a live capture.",
+  "_destination": "OTEL_EXPORTER_OTLP_ENDPOINT → OpenTelemetry Collector",
+  "_trace_id": "b1c8a71f-35d8-4aff-a8da-dcb78d05cac9",
+  "resource": {
+    "service.name": "trustgate",
+    "schema_url": "https://opentelemetry.io/schemas/1.41.0"
+  },
+  "scope": "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/otlp",
+  "logRecord": {
+    "eventName": "trustgate.3.metadata",
+    "severity": "Info",
+    "body": "",
+    "attributes": {
+      "http.request.method": "POST",
+      "http.response.status_code": 200,
+      "url.path": "/v1/chat/completions",
+      "gen_ai.provider.name": "openai",
+      "gen_ai.request.model": "gpt-4o",
+      "gen_ai.response.finish_reasons": ["stop"],
+      "gen_ai.request.stream": false,
+      "gen_ai.usage.input_tokens": 42,
+      "gen_ai.usage.output_tokens": 18,
+      "trustgate.usage.total_tokens": 60,
+      "trustgate.schema_version": 3,
+      "trustgate.kind": "llm",
+      "trustgate.trace_id": "b1c8a71f-35d8-4aff-a8da-dcb78d05cac9",
+      "trustgate.gateway_id": "gw-support-chat",
+      "trustgate.tenant_id": "00000000-0000-0000-0000-000000000001",
+      "trustgate.consumer.id": "consumer-42",
+      "trustgate.consumer.name": "acme-web",
+      "trustgate.session_id": "sess-7c9c",
+      "trustgate.ip": "203.0.113.10",
+      "trustgate.requested_model": "gpt-4o",
+      "trustgate.model_label": "default",
+      "trustgate.status.outcome": "transform",
+      "trustgate.cost.total_usd": 0.00042,
+      "trustgate.cost.prompt_usd": 0.00021,
+      "trustgate.cost.completion_usd": 0.00021,
+      "trustgate.cost.currency": "USD",
+      "trustgate.latency.total_ms": 812,
+      "trustgate.latency.provider_ms": 760,
+      "trustgate.latency.policies_ms": 34,
+      "trustgate.latency.routing_ms": 3,
+      "trustgate.latency.gateway_ms": 15,
+      "trustgate.is_flagged": true,
+      "trustgate.security": ["pii"],
+      "trustgate.policy_chain": [
+        {
+          "source": { "plugin": "data_loss_prevention" },
+          "signal": { "type": "pii", "confidence": 0 },
+          "outcome": { "action": "transform" },
+          "report_only": false
+        }
+      ]
+    }
+  }
+}

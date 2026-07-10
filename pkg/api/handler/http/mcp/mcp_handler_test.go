@@ -17,6 +17,7 @@ package mcp_test
 import (
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -35,6 +36,15 @@ import (
 const mcpPath = "/virtual/mcp"
 
 func newApp(t *testing.T, composer appmcp.Composer, consumerType consumerdomain.Type, authorized bool) *fiber.App {
+	t.Helper()
+	return newAppWithRunner(t, composer, noopRunner(), consumerType, authorized)
+}
+
+func noopRunner() *appmcp.PluginRunner {
+	return appmcp.NewPluginRunner(nil, discardLogger())
+}
+
+func newAppWithRunner(t *testing.T, composer appmcp.Composer, plugins *appmcp.PluginRunner, consumerType consumerdomain.Type, authorized bool) *fiber.App {
 	t.Helper()
 	authID := ids.New[ids.AuthKind]()
 	gwID := ids.New[ids.GatewayKind]()
@@ -58,10 +68,14 @@ func newApp(t *testing.T, composer appmcp.Composer, consumerType consumerdomain.
 		c.SetUserContext(ctx)
 		return c.Next()
 	})
-	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(composer), appmcp.NewRoleScoper(approle.NewOIDCResolver()))
+	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(composer, plugins), appmcp.NewRoleScoper(approle.NewOIDCResolver()))
 	app.Post(mcpPath, handler.Handle)
 	app.Get(mcpPath, handler.MethodNotAllowed)
 	return app
+}
+
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
 func rpcCall(t *testing.T, app *fiber.App, body string) (int, map[string]any) {

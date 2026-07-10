@@ -14,11 +14,14 @@
 
 package tool_call_validation
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 type notInAllowedListValidator struct{}
 
-func (notInAllowedListValidator) Evaluate(in validatorInput) (violation, error) {
+func (notInAllowedListValidator) Evaluate(_ context.Context, in validatorInput) (violation, error) {
 	if in.eval == nil || len(in.eval.allowed) == 0 {
 		return violation{}, nil
 	}

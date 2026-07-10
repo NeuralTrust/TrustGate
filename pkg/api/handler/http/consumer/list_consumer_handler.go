@@ -17,7 +17,7 @@ package consumer
 import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/consumer/response"
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/gofiber/fiber/v2"
@@ -42,21 +42,21 @@ func NewListConsumerHandler(finder appconsumer.Finder) *ListConsumerHandler {
 // @Param        page        query     int     false  "Page number (1-based)"
 // @Param        size        query     int     false  "Page size"
 // @Success      200         {object}  response.ListConsumerResponse
-// @Failure      400         {object}  helpers.ErrorBody
-// @Failure      401         {object}  helpers.ErrorBody
+// @Failure      400         {object}  httpio.ErrorBody
+// @Failure      401         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/consumers [get]
 func (h *ListConsumerHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, err := helpers.ParseGatewayID(c)
+	gatewayID, err := httpio.ParseGatewayID(c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	page, err := helpers.ParsePage(c)
+	page, err := httpio.ParsePage(c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	size, err := helpers.ParseSize(c)
+	size, err := httpio.ParseSize(c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	req := request.ListConsumerRequest{
 		Name: c.Query("name"),
@@ -71,7 +71,7 @@ func (h *ListConsumerHandler) Handle(c *fiber.Ctx) error {
 		Size:         req.Size,
 	})
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 
 	out := response.ListConsumerResponse{
@@ -83,5 +83,5 @@ func (h *ListConsumerHandler) Handle(c *fiber.Ctx) error {
 	for _, cons := range items {
 		out.Items = append(out.Items, response.FromConsumer(cons))
 	}
-	return helpers.WriteOK(c, out)
+	return httpio.WriteOK(c, out)
 }

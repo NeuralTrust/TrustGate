@@ -21,13 +21,17 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/anthropic"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/azure"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/bedrock"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/cerebras"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/cohere"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/deepseek"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/google"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/groq"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/mistral"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openrouter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openaicompat"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/vertex"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/xai"
 )
 
 // Provider name constants — aliased from the providers package so callers that
@@ -43,6 +47,10 @@ const (
 	ProviderMistral          = providers.ProviderMistral
 	ProviderGroq             = providers.ProviderGroq
 	ProviderDeepSeek         = providers.ProviderDeepSeek
+	ProviderXAI              = providers.ProviderXAI
+	ProviderCerebras         = providers.ProviderCerebras
+	ProviderOpenRouter       = providers.ProviderOpenRouter
+	ProviderCohere           = providers.ProviderCohere
 )
 
 //go:generate mockery --name=ProviderLocator --dir=. --output=./mocks --filename=provider_locator_mock.go --case=underscore --with-expecter
@@ -73,7 +81,11 @@ func NewProviderLocator() ProviderLocator {
 			ProviderMistral:          mistral.NewMistralClient(),
 			ProviderGroq:             groq.NewGroqClient(),
 			ProviderDeepSeek:         deepseek.NewDeepSeekClient(),
+			ProviderXAI:              xai.NewXAIClient(),
+			ProviderCerebras:         cerebras.NewCerebrasClient(),
+			ProviderOpenRouter:       openrouter.NewOpenRouterClient(),
 			ProviderVertex:           vertex.NewVertexClient(),
+			ProviderCohere:           cohere.NewCohereClient(),
 		},
 	}
 }

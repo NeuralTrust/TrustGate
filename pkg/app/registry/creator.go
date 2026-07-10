@@ -16,11 +16,14 @@ package registry
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
 type CreateInput struct {
@@ -44,13 +47,15 @@ type creator struct {
 	repo        domain.Repository
 	memoryCache *cache.TTLMap
 	logger      *slog.Logger
+	signaler    configsyncport.SnapshotSignaler
 }
 
-func NewCreator(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger) Creator {
+func NewCreator(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger, signaler configsyncport.SnapshotSignaler) Creator {
 	return &creator{
 		repo:        repo,
 		memoryCache: manager.GetTTLMap(cache.RegistryTTLName),
 		logger:      logger,
+		signaler:    signaler,
 	}
 }
 
@@ -65,6 +70,9 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Registry,
 			in.MCPTarget,
 		)
 	} else {
+		if verr := validateProviderOptions(in.LLMTarget); verr != nil {
+			return nil, verr
+		}
 		b, err = domain.NewLLMRegistry(
 			in.GatewayID,
 			in.Name,
@@ -82,5 +90,18 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Registry,
 		return nil, err
 	}
 	c.memoryCache.Set(b.ID.String(), b)
+	if c.signaler != nil {
+		c.signaler.Signal(ctx)
+	}
 	return b, nil
+}
+
+func validateProviderOptions(target *domain.LLMTarget) error {
+	if target == nil {
+		return nil
+	}
+	if err := providers.ValidateProviderOptions(target.Provider, target.ProviderOptions); err != nil {
+		return fmt.Errorf("%w: %w", domain.ErrInvalidRegistry, err)
+	}
+	return nil
 }

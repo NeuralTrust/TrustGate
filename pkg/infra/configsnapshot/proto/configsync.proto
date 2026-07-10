@@ -1,0 +1,77 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package snapshotpb;
+
+option go_package = "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto;snapshotpb";
+
+// ConfigSync is the DP-initiated config-sync transport. The data plane dials the
+// control plane (egress-only) and holds one long-lived Sync stream for change
+// notices and acks; it pulls the compiled snapshot out-of-band via GetSnapshot.
+service ConfigSync {
+  // Sync is the long-lived control channel: the data plane sends Hello, then reads
+  // VersionNotice messages and replies with Ack after each successful swap.
+  rpc Sync(stream ClientMessage) returns (stream ServerMessage);
+
+  // GetSnapshot streams the current compiled snapshot as ordered byte chunks. The
+  // first message is a SnapshotHeader; when the applied version already matches the
+  // header carries not_modified=true and no data chunks follow.
+  rpc GetSnapshot(GetSnapshotRequest) returns (stream SnapshotChunk);
+}
+
+message ClientMessage {
+  oneof msg {
+    Hello hello = 1;
+    Ack ack = 2;
+  }
+}
+
+message Hello {
+  string instance_id = 1;
+  string last_applied_version = 2;
+}
+
+message Ack {
+  string applied_version = 1;
+}
+
+message ServerMessage {
+  oneof msg {
+    VersionNotice notice = 1;
+  }
+}
+
+message VersionNotice {
+  string version = 1;
+}
+
+message GetSnapshotRequest {
+  string applied_version = 1;
+  string instance_id = 2;
+}
+
+message SnapshotChunk {
+  oneof payload {
+    SnapshotHeader header = 1;
+    bytes data = 2;
+  }
+}
+
+message SnapshotHeader {
+  string version = 1;
+  bool not_modified = 2;
+  int64 total_bytes = 3;
+}

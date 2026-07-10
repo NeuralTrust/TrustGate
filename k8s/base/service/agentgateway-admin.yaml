@@ -13,6 +13,10 @@ spec:
     targetPort: 8080
     protocol: TCP
     name: http
+  - port: 8083
+    targetPort: 8083
+    protocol: TCP
+    name: grpc
   selector:
     app.kubernetes.io/instance: agentgateway
     app.kubernetes.io/component: admin

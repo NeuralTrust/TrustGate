@@ -1,4 +1,4 @@
-.PHONY: help build run run-admin run-proxy run-mcp run-all run-proxy-sandbox run-servers up down logs local-dns test test-race test-cover test-functional test-repositories lint fmt tidy generate gen-mocks tools swagger openapi docs license license-check \
+.PHONY: help build run run-admin run-proxy run-mcp run-all run-proxy-sandbox run-servers up down logs local-dns test test-race test-cover test-functional test-repositories lint fmt tidy generate proto gen-mocks tools swagger openapi docs license license-check \
         install-pre-commit \
         docker-build docker-push compose-up compose-down compose-logs
 
@@ -75,10 +75,12 @@ logs: ## Tail logs from the full stack
 test: ## Run unit tests
 	@$(info $(M) Running unit tests ...)
 	go test -cover -v ./pkg/...
+	cd pkg/metrics && go test -cover ./...
 
 test-race: ## Run unit tests with the race detector
 	@$(info $(M) Running unit tests with -race ...)
 	go test -race ./pkg/...
+	cd pkg/metrics && go test -race ./...
 
 test-cover: ## Run unit tests with coverage profile
 	@$(info $(M) Running unit tests with coverage ...)
@@ -96,6 +98,7 @@ test-repositories: ## Run repository integration tests (requires PG_TEST_URL poi
 lint: ## Run golangci-lint
 	@$(info $(M) Running golangci-lint ...)
 	@PATH="$$HOME/go/bin:$$PATH" golangci-lint run ./...
+	@cd pkg/metrics && PATH="$$HOME/go/bin:$$PATH" golangci-lint run ./...
 
 fmt: ## Run gofmt + go vet
 	@$(info $(M) Running gofmt + go vet ...)
@@ -109,6 +112,10 @@ tidy: ## Run go mod tidy
 generate: ## Run go generate
 	@$(info $(M) Running go generate ...)
 	go generate ./...
+
+proto: ## Regenerate protobuf bindings from .proto files via buf
+	@$(info $(M) Generating protobuf bindings ...)
+	cd pkg/infra/configsnapshot/proto && go run github.com/bufbuild/buf/cmd/buf@v1.50.0 generate
 
 tools: ## Install Go dev tools pinned in tools/tools.go
 	@$(info $(M) Installing dev tools ...)

@@ -65,7 +65,6 @@ func moderationPolicy(mode policy.Mode) *policy.Policy {
 
 func moderationRequest() *infracontext.RequestContext {
 	return &infracontext.RequestContext{
-		Context:      context.Background(),
 		SourceFormat: "openai",
 		Body:         []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"i hate you"}]}`),
 	}

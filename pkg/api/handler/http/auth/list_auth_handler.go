@@ -17,7 +17,7 @@ package auth
 import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth/response"
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/gofiber/fiber/v2"
@@ -42,21 +42,21 @@ func NewListAuthHandler(finder appauth.Finder) *ListAuthHandler {
 // @Param        page        query     int     false  "Page number (1-based)"
 // @Param        size        query     int     false  "Page size"
 // @Success      200         {object}  response.ListAuthResponse
-// @Failure      400         {object}  helpers.ErrorBody
-// @Failure      401         {object}  helpers.ErrorBody
+// @Failure      400         {object}  httpio.ErrorBody
+// @Failure      401         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/auths [get]
 func (h *ListAuthHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, err := helpers.ParseGatewayID(c)
+	gatewayID, err := httpio.ParseGatewayID(c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	page, err := helpers.ParsePage(c)
+	page, err := httpio.ParsePage(c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	size, err := helpers.ParseSize(c)
+	size, err := httpio.ParseSize(c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	req := request.ListAuthRequest{
 		Name: c.Query("name"),
@@ -71,7 +71,7 @@ func (h *ListAuthHandler) Handle(c *fiber.Ctx) error {
 		Size:         req.Size,
 	})
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 
 	out := response.ListAuthResponse{
@@ -83,5 +83,5 @@ func (h *ListAuthHandler) Handle(c *fiber.Ctx) error {
 	for _, a := range items {
 		out.Items = append(out.Items, response.FromAuth(a))
 	}
-	return helpers.WriteOK(c, out)
+	return httpio.WriteOK(c, out)
 }

@@ -78,8 +78,7 @@ func TestJSONSchemaValidator(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			eval := &evalContext{toolByName: map[string]adapter.CanonicalTool{tc.tool.Name: tc.tool}}
-			res, err := jsonSchemaValidator{}.Evaluate(validatorInput{
-				ctx:      context.Background(),
+			res, err := jsonSchemaValidator{}.Evaluate(context.Background(), validatorInput{
 				toolCall: tc.toolCall,
 				eval:     eval,
 			})

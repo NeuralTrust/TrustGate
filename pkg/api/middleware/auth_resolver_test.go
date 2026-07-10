@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/api/resolver"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
@@ -543,16 +543,16 @@ func matchingOIDCVerifier() fakeOIDCVerifier {
 	}
 }
 
-func decodeAuthErrorBody(t *testing.T, resp *http.Response) helpers.ErrorBody {
+func decodeAuthErrorBody(t *testing.T, resp *http.Response) httpio.ErrorBody {
 	t.Helper()
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	return decodeErrorBytes(t, body)
 }
 
-func decodeErrorBytes(t *testing.T, body []byte) helpers.ErrorBody {
+func decodeErrorBytes(t *testing.T, body []byte) httpio.ErrorBody {
 	t.Helper()
-	var eb helpers.ErrorBody
+	var eb httpio.ErrorBody
 	require.NoError(t, json.NewDecoder(strings.NewReader(string(body))).Decode(&eb))
 	return eb
 }

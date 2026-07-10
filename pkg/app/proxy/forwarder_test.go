@@ -139,7 +139,7 @@ func TestForward_PoolFailoverOn503(t *testing.T) {
 	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
-		Request:   &infracontext.RequestContext{Context: context.Background()},
+		Request:   &infracontext.RequestContext{},
 	})
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
@@ -171,7 +171,7 @@ func TestForward_FallbackChainAfterPoolExhausted(t *testing.T) {
 	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
-		Request:   &infracontext.RequestContext{Context: context.Background()},
+		Request:   &infracontext.RequestContext{},
 	})
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
@@ -202,8 +202,7 @@ func TestForward_QualifiedPinSkipsFallback(t *testing.T) {
 		GatewayID: gatewayID,
 		Consumer:  rc,
 		Request: &infracontext.RequestContext{
-			Context: context.Background(),
-			Body:    []byte(`{"model":"@openai/gpt-5"}`),
+			Body: []byte(`{"model":"@openai/gpt-5"}`),
 		},
 	})
 	if err != nil {
@@ -231,7 +230,7 @@ func TestForward_AllCandidatesFailRelaysLast5xx(t *testing.T) {
 	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
-		Request:   &infracontext.RequestContext{Context: context.Background()},
+		Request:   &infracontext.RequestContext{},
 	})
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
@@ -352,7 +351,7 @@ func TestForward_FallbackTriggerGating(t *testing.T) {
 			res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 				GatewayID: gatewayID,
 				Consumer:  rc,
-				Request:   &infracontext.RequestContext{Context: context.Background()},
+				Request:   &infracontext.RequestContext{},
 			})
 			if tc.wantErr {
 				require.Error(t, err, "the failure must be relayed as an error without fallback")
@@ -383,7 +382,7 @@ func TestForward_CredentialAcquisitionFailureIsTerminal(t *testing.T) {
 	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
-		Request:   &infracontext.RequestContext{Context: context.Background()},
+		Request:   &infracontext.RequestContext{},
 	})
 	require.ErrorIs(t, err, registrydomain.ErrCredentialAcquisition,
 		"a credential misconfiguration must fail fast without retries or fallback")
@@ -410,7 +409,7 @@ func TestForward_LBFailoverNotGatedByTriggers(t *testing.T) {
 	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
-		Request:   &infracontext.RequestContext{Context: context.Background()},
+		Request:   &infracontext.RequestContext{},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 429, res.StatusCode, "both LB members must be tried, chain must not (429 not in triggers)")
@@ -432,7 +431,7 @@ func TestForward_SyncSuccess(t *testing.T) {
 	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
-		Request:   &infracontext.RequestContext{Context: context.Background()},
+		Request:   &infracontext.RequestContext{},
 	})
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
@@ -459,7 +458,7 @@ func TestForward_DisabledLBConfigIsIgnored(t *testing.T) {
 	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
-		Request:   &infracontext.RequestContext{Context: context.Background()},
+		Request:   &infracontext.RequestContext{},
 	})
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
@@ -493,7 +492,7 @@ func TestForward_RecordsLLMSpanWithUsage(t *testing.T) {
 	_, err := fwd.Forward(ctx, appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
-		Request:   &infracontext.RequestContext{Context: ctx},
+		Request:   &infracontext.RequestContext{},
 	})
 	require.NoError(t, err)
 
@@ -529,7 +528,7 @@ func TestForward_RecordsSessionTurnOnSuccess(t *testing.T) {
 	_, err := fwd.Forward(ctx, appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
-		Request:   &infracontext.RequestContext{Context: ctx, GatewayID: gatewayID.String(), SessionID: "sess-1"},
+		Request:   &infracontext.RequestContext{GatewayID: gatewayID.String(), SessionID: "sess-1"},
 	})
 	require.NoError(t, err)
 
@@ -557,7 +556,7 @@ func TestForward_DoesNotRecordWithoutSession(t *testing.T) {
 	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
-		Request:   &infracontext.RequestContext{Context: context.Background(), GatewayID: gatewayID.String()},
+		Request:   &infracontext.RequestContext{GatewayID: gatewayID.String()},
 	})
 	require.NoError(t, err)
 	assert.Empty(t, store.recorded, "no session id means nothing to record")
@@ -577,7 +576,7 @@ func TestForward_StampsContinuationFromStore(t *testing.T) {
 	store := &fakeSessionStore{last: "resp_prev"}
 	fwd := newTestForwarderWithStore(t, invoker, store)
 
-	req := &infracontext.RequestContext{Context: context.Background(), GatewayID: gatewayID.String(), SessionID: "sess-1"}
+	req := &infracontext.RequestContext{GatewayID: gatewayID.String(), SessionID: "sess-1"}
 	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{GatewayID: gatewayID, Consumer: rc, Request: req})
 	require.NoError(t, err)
 
@@ -605,7 +604,7 @@ func TestForward_BackendErrorStatusPassthrough(t *testing.T) {
 	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
-		Request:   &infracontext.RequestContext{Context: context.Background()},
+		Request:   &infracontext.RequestContext{},
 	})
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
@@ -641,8 +640,7 @@ func TestForward_StreamingRequestInvokesStream(t *testing.T) {
 		GatewayID: gatewayID,
 		Consumer:  rc,
 		Request: &infracontext.RequestContext{
-			Context: context.Background(),
-			Body:    []byte(`{"model":"gpt-4","stream":true}`),
+			Body: []byte(`{"model":"gpt-4","stream":true}`),
 		},
 	})
 	if err != nil {
@@ -673,7 +671,7 @@ func TestForward_ProviderErrorPropagates(t *testing.T) {
 	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
-		Request:   &infracontext.RequestContext{Context: context.Background()},
+		Request:   &infracontext.RequestContext{},
 	})
 	if !errors.Is(err, errProvider) {
 		t.Fatalf("err = %v, want errProvider", err)
@@ -690,7 +688,7 @@ func TestForward_NoBackendsInPool(t *testing.T) {
 	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
-		Request:   &infracontext.RequestContext{Context: context.Background()},
+		Request:   &infracontext.RequestContext{},
 	})
 	if !errors.Is(err, appproxy.ErrNoBackendsInPool) {
 		t.Fatalf("err = %v, want ErrNoBackendsInPool", err)
@@ -704,7 +702,7 @@ func TestForward_NilConsumer(t *testing.T) {
 	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: ids.New[ids.GatewayKind](),
 		Consumer:  nil,
-		Request:   &infracontext.RequestContext{Context: context.Background()},
+		Request:   &infracontext.RequestContext{},
 	})
 	if !errors.Is(err, appproxy.ErrNoBackendsInPool) {
 		t.Fatalf("err = %v, want ErrNoBackendsInPool", err)

@@ -15,10 +15,10 @@
 package otlp
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
+	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/stretchr/testify/assert"
 	otellog "go.opentelemetry.io/otel/log"
 )
@@ -39,7 +39,7 @@ func fullEvent() *events.Event {
 		SchemaVersion: events.SchemaVersion,
 		TraceID:       "trace-123",
 		GatewayID:     "gw-1",
-		TeamID:        "team-1",
+		TenantID:        "team-1",
 		OccurredOn:    1_700_000_000_000,
 		Consumer:      events.Consumer{ID: "c-1", Name: "alice"},
 		SessionID:     "sess-1",
@@ -79,11 +79,10 @@ func fullEvent() *events.Event {
 
 func TestEventToRecord_StandardAndProprietaryCoexist(t *testing.T) {
 	t.Parallel()
-	rec := eventToRecord(fullEvent(), 4096)
+	rec := eventToRecord(fullEvent())
 
-	assert.Equal(t, eventName, rec.EventName())
+	assert.Equal(t, eventName(events.SchemaVersion, metrics.Metadata), rec.EventName())
 	assert.Equal(t, otellog.SeverityInfo, rec.Severity())
-	assert.Equal(t, "hello world", rec.Body().AsString())
 
 	attrs := attrsOf(rec)
 
@@ -102,7 +101,7 @@ func TestEventToRecord_StandardAndProprietaryCoexist(t *testing.T) {
 	assert.Equal(t, int64(events.SchemaVersion), attrs["trustgate.schema_version"].AsInt64())
 	assert.Equal(t, "trace-123", attrs["trustgate.trace_id"].AsString())
 	assert.Equal(t, "gw-1", attrs["trustgate.gateway_id"].AsString())
-	assert.Equal(t, "team-1", attrs["trustgate.team_id"].AsString())
+	assert.Equal(t, "team-1", attrs["trustgate.tenant_id"].AsString())
 	assert.Equal(t, "c-1", attrs["trustgate.consumer.id"].AsString())
 	assert.Equal(t, "alice", attrs["trustgate.consumer.name"].AsString())
 	assert.InDelta(t, 0.01, attrs["trustgate.cost.total_usd"].AsFloat64(), 1e-9)
@@ -113,7 +112,20 @@ func TestEventToRecord_StandardAndProprietaryCoexist(t *testing.T) {
 	assert.Contains(t, attrs["trustgate.policy_chain"].AsString(), "rate-limit")
 	assert.Equal(t, int64(1), attrs["trustgate.attempts.count"].AsInt64())
 	assert.Contains(t, attrs["trustgate.attempts"].AsString(), "openai")
-	assert.Equal(t, "request-body", attrs["trustgate.request.body"].AsString())
+}
+
+func TestEventToRecord_OmitsBodies(t *testing.T) {
+	t.Parallel()
+	evt := fullEvent()
+	evt.Request.Body = "request-body"
+	evt.Response.Body = strptr("hello world")
+
+	rec := eventToRecord(evt)
+	attrs := attrsOf(rec)
+
+	assert.Empty(t, rec.Body().AsString())
+	_, hasRequestBody := attrs["trustgate.request.body"]
+	assert.False(t, hasRequestBody)
 }
 
 func TestEventToRecord_Severity(t *testing.T) {
@@ -133,7 +145,7 @@ func TestEventToRecord_Severity(t *testing.T) {
 			t.Parallel()
 			evt := fullEvent()
 			evt.Status.Code = tc.code
-			rec := eventToRecord(evt, 4096)
+			rec := eventToRecord(evt)
 			assert.Equal(t, tc.want, rec.Severity())
 		})
 	}
@@ -143,7 +155,7 @@ func TestEventToRecord_StatusFields(t *testing.T) {
 	t.Parallel()
 	evt := fullEvent()
 	evt.Status = events.Status{Code: 504, IsTimeout: true, Outcome: "timeout", Reason: "upstream deadline"}
-	rec := eventToRecord(evt, 4096)
+	rec := eventToRecord(evt)
 	attrs := attrsOf(rec)
 
 	assert.Equal(t, "timeout", attrs["trustgate.status.outcome"].AsString())
@@ -153,7 +165,7 @@ func TestEventToRecord_StatusFields(t *testing.T) {
 
 func TestEventToRecord_StatusTimeoutOmittedWhenFalse(t *testing.T) {
 	t.Parallel()
-	rec := eventToRecord(fullEvent(), 4096)
+	rec := eventToRecord(fullEvent())
 	attrs := attrsOf(rec)
 	_, ok := attrs["trustgate.status.is_timeout"]
 	assert.False(t, ok)
@@ -164,7 +176,7 @@ func TestEventToRecord_NoUsage(t *testing.T) {
 	evt := fullEvent()
 	evt.Usage = nil
 	evt.Cost = nil
-	rec := eventToRecord(evt, 4096)
+	rec := eventToRecord(evt)
 	attrs := attrsOf(rec)
 
 	_, hasInput := attrs["gen_ai.usage.input_tokens"]
@@ -179,32 +191,24 @@ func TestEventToRecord_Streaming(t *testing.T) {
 	t.Parallel()
 	evt := fullEvent()
 	evt.Request.Stream = true
-	rec := eventToRecord(evt, 4096)
+	rec := eventToRecord(evt)
 	attrs := attrsOf(rec)
 	assert.True(t, attrs["gen_ai.request.stream"].AsBool())
-}
-
-func TestEventToRecord_BodyTruncation(t *testing.T) {
-	t.Parallel()
-	evt := fullEvent()
-	evt.Response.Body = strptr(strings.Repeat("x", 100))
-	rec := eventToRecord(evt, 10)
-	assert.Equal(t, 10, len(rec.Body().AsString()))
 }
 
 func TestEventToRecord_EmptyTrace(t *testing.T) {
 	t.Parallel()
 	evt := fullEvent()
 	evt.TraceID = ""
-	rec := eventToRecord(evt, 4096)
+	rec := eventToRecord(evt)
 	attrs := attrsOf(rec)
 	_, ok := attrs["trustgate.trace_id"]
 	assert.False(t, ok)
-	assert.Equal(t, eventName, rec.EventName())
+	assert.Equal(t, eventName(events.SchemaVersion, metrics.Metadata), rec.EventName())
 }
 
 func TestEventToRecord_Nil(t *testing.T) {
 	t.Parallel()
-	rec := eventToRecord(nil, 4096)
+	rec := eventToRecord(nil)
 	assert.Equal(t, "", rec.EventName())
 }

@@ -145,17 +145,13 @@ func (a *toolCallAccumulator) Flush() []adapter.StreamToolCallDelta {
 // paths. Outer/mid-stream errors from raw are propagated as the sequence error.
 func adaptStream(
 	raw iter.Seq2[[]byte, error],
-	registry *adapter.Registry,
+	registry providerCodec,
 	source, target adapter.Format,
 	logger *slog.Logger,
 	onChunk func(*adapter.CanonicalStreamChunk),
 ) iter.Seq2[[]byte, error] {
 	crossFormat := !adapter.ShouldPassthroughSameWireFormat(source, target)
-	geminiToolCalls := source == adapter.FormatGemini &&
-		(adapter.IsSameWireFormat(target, adapter.FormatOpenAI) ||
-			target == adapter.FormatOpenAIResponses ||
-			target == adapter.FormatAnthropic ||
-			target == adapter.FormatMistral)
+	geminiToolCalls := source == adapter.FormatGemini && target.SupportsCanonicalToolCalls()
 	// On the cross-format path the adapter re-encodes payload chunks but never
 	// produces the terminating "data: [DONE]" sentinel. OpenAI-wire clients
 	// (openai, azure) rely on it to detect end-of-stream, so re-emit it when the
@@ -259,7 +255,7 @@ func dataPayload(line []byte) ([]byte, bool) {
 // the first/last chunks; the observer accumulates them. Decode failures are
 // ignored: observation is best-effort.
 func observeChunk(
-	registry *adapter.Registry,
+	registry providerCodec,
 	payload []byte,
 	target adapter.Format,
 	onChunk func(*adapter.CanonicalStreamChunk),
@@ -279,7 +275,7 @@ func observeChunk(
 // returns false when the consumer stopped (yield returned false).
 func emitGeminiToolCalls(
 	emit func([][]byte) bool,
-	registry *adapter.Registry,
+	registry providerCodec,
 	payload []byte,
 	source, target adapter.Format,
 	acc *toolCallAccumulator,
@@ -321,7 +317,7 @@ func emitGeminiToolCalls(
 
 func encodeAndEmit(
 	emit func([][]byte) bool,
-	registry *adapter.Registry,
+	registry providerCodec,
 	chunk *adapter.CanonicalStreamChunk,
 	format adapter.Format,
 ) bool {

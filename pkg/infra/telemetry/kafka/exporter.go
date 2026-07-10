@@ -26,6 +26,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	infratelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 )
 
 const ExporterName = "kafka"
@@ -42,6 +43,13 @@ func NewKafkaTemplate(logger *slog.Logger, kafkaCfg config.KafkaConfig) *Exporte
 
 func (p *Exporter) Name() string {
 	return ExporterName
+}
+
+// DataClass fixes this exporter to the metadata class; the pipeline routes only
+// the sanitized metadata view here, so the full-event marshal never carries
+// sensible bodies (ENG-1021).
+func (p *Exporter) DataClass() metrics.DataClass {
+	return metrics.Metadata
 }
 
 func (p *Exporter) ValidateConfig(settings map[string]interface{}) error {
@@ -83,9 +91,9 @@ func (p *Exporter) Publish(_ context.Context, evt *events.Event) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal event: %w", err)
 	}
-	p.Logger.Debug("publishing event to kafka",
-		slog.String("topic", p.Topic),
-		slog.String("event", string(data)),
-	)
-	return p.Produce(data)
+	if err := p.Produce(data); err != nil {
+		return err
+	}
+	infratelemetry.LogPublish(p.Logger, ExporterName, p.DataClass(), evt)
+	return nil
 }

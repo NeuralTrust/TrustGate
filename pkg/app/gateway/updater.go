@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -31,6 +32,7 @@ type UpdateInput struct {
 	Slug            *string
 	Status          *string
 	Domain          *string
+	TenantID        string
 	Metadata        map[string]string
 	Telemetry       *telemetry.Telemetry
 	ClientTLSConfig *domain.ClientTLSConfig
@@ -50,6 +52,7 @@ type updater struct {
 	publisher       cache.EventPublisher
 	exporterFactory appmetrics.ExporterFactory
 	logger          *slog.Logger
+	signaler        configsyncport.SnapshotSignaler
 }
 
 func NewUpdater(
@@ -58,6 +61,7 @@ func NewUpdater(
 	publisher cache.EventPublisher,
 	exporterFactory appmetrics.ExporterFactory,
 	logger *slog.Logger,
+	signaler configsyncport.SnapshotSignaler,
 ) Updater {
 	return &updater{
 		repo:            repo,
@@ -65,6 +69,7 @@ func NewUpdater(
 		publisher:       publisher,
 		exporterFactory: exporterFactory,
 		logger:          logger,
+		signaler:        signaler,
 	}
 }
 
@@ -86,8 +91,14 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	if in.Domain != nil {
 		g.Domain = *in.Domain
 	}
+	tenantID := old.TenantID()
+	if tenantID == "" {
+		tenantID = in.TenantID
+	}
 	if in.Metadata != nil {
-		g.Metadata = in.Metadata
+		g.Metadata = domain.WithTenantID(domain.SanitizeClientMetadata(in.Metadata), tenantID)
+	} else if old.TenantID() == "" {
+		g.Metadata = domain.WithTenantID(g.Metadata, tenantID)
 	}
 	if in.Telemetry != nil {
 		g.Telemetry = in.Telemetry
@@ -108,5 +119,8 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	deleteGatewayCache(u.memoryCache, &old)
 	setGatewayCache(u.memoryCache, g)
 	publishGatewayDataInvalidation(ctx, u.publisher, u.logger, g.ID)
+	if u.signaler != nil {
+		u.signaler.Signal(ctx)
+	}
 	return g, nil
 }

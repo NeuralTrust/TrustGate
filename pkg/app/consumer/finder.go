@@ -32,12 +32,12 @@ type Finder interface {
 var _ Finder = (*finder)(nil)
 
 type finder struct {
-	repo        domain.Repository
+	repo        domain.Reader
 	memoryCache *cache.TTLMap
 	logger      *slog.Logger
 }
 
-func NewFinder(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger) Finder {
+func NewFinder(repo domain.Reader, manager *cache.TTLMapManager, logger *slog.Logger) Finder {
 	return &finder{
 		repo:        repo,
 		memoryCache: manager.GetTTLMap(cache.ConsumerTTLName),

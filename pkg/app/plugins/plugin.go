@@ -23,6 +23,26 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 )
 
+// PluginDescriptor is the static contract of a plugin: its identity, the
+// stages and modes it declares, the response dimensions it mutates, and its
+// configuration validation. Consumers that only inspect plugin metadata
+// (catalog building, stage planning, registration checks) depend on this
+// rather than the full executable Plugin.
+type PluginDescriptor interface {
+	Name() string
+	// MandatoryStages are the stages the plugin always runs on, regardless of
+	// the policy configuration. They must be a subset of SupportedStages.
+	MandatoryStages() []policy.Stage
+	// SupportedStages are every stage the plugin can run on. A policy may opt
+	// into any subset of these; mandatory stages are always included.
+	SupportedStages() []policy.Stage
+	SupportedModes() []policy.Mode
+	ValidateConfig(settings map[string]any) error
+	MutatesRequestBody() bool
+	MutatesResponseBody() bool
+	MutatesMetadata() bool
+}
+
 // Plugin is a single unit of request/response processing. Each plugin declares
 // the fixed stages it runs on via Stages; the executor drives it only at those
 // stages and ignores the stage recorded in the policy configuration.
@@ -33,19 +53,8 @@ import (
 //
 //go:generate mockery --name=Plugin --dir=. --output=./mocks --filename=plugin_mock.go --case=underscore --with-expecter
 type Plugin interface {
-	Name() string
-	// MandatoryStages are the stages the plugin always runs on, regardless of
-	// the policy configuration. They must be a subset of SupportedStages.
-	MandatoryStages() []policy.Stage
-	// SupportedStages are every stage the plugin can run on. A policy may opt
-	// into any subset of these; mandatory stages are always included.
-	SupportedStages() []policy.Stage
-	SupportedModes() []policy.Mode
-	ValidateConfig(settings map[string]any) error
+	PluginDescriptor
 	Execute(ctx context.Context, in ExecInput) (*Result, error)
-	MutatesRequestBody() bool
-	MutatesResponseBody() bool
-	MutatesMetadata() bool
 }
 
 // ExecInput is the immutable input handed to a plugin for a single stage run.

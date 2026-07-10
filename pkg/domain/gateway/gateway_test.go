@@ -48,16 +48,37 @@ func TestNew(t *testing.T) {
 		}
 	})
 
-	t.Run("empty slug rejected", func(t *testing.T) {
+	t.Run("empty slug is auto-generated", func(t *testing.T) {
 		t.Parallel()
 		g, err := New("")
-		if err == nil {
-			t.Fatal("expected error for empty slug, got nil")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
-		if g != nil {
-			t.Fatalf("expected nil aggregate on error, got %+v", g)
+		if g == nil {
+			t.Fatal("expected gateway, got nil")
+		}
+		if !IsValidSlug(g.Slug) {
+			t.Fatalf("generated slug %q is not a valid DNS label", g.Slug)
 		}
 	})
+}
+
+func TestNewSlug(t *testing.T) {
+	t.Parallel()
+	seen := make(map[string]struct{}, 100)
+	for i := 0; i < 100; i++ {
+		slug, err := NewSlug()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !IsValidSlug(slug) {
+			t.Fatalf("generated slug %q is not a valid DNS label", slug)
+		}
+		if _, dup := seen[slug]; dup {
+			t.Fatalf("generated duplicate slug %q", slug)
+		}
+		seen[slug] = struct{}{}
+	}
 }
 
 func TestValidate_InvalidSlug(t *testing.T) {
@@ -178,4 +199,69 @@ func TestClientTLSConfig_NilRoundTrip(t *testing.T) {
 	if v != nil {
 		t.Fatalf("Value = %v, want nil for nil ClientTLSConfig", v)
 	}
+}
+
+func TestSanitizeClientMetadata(t *testing.T) {
+	t.Parallel()
+
+	t.Run("strips server-only tenant_id", func(t *testing.T) {
+		t.Parallel()
+		in := map[string]string{MetadataTenantIDKey: "attacker-team", "env": "prod"}
+		out := SanitizeClientMetadata(in)
+		if _, ok := out[MetadataTenantIDKey]; ok {
+			t.Fatalf("tenant_id survived sanitization: %v", out)
+		}
+		if out["env"] != "prod" {
+			t.Fatalf("non-reserved key dropped: %v", out)
+		}
+		if _, ok := in[MetadataTenantIDKey]; !ok {
+			t.Fatal("input map mutated; sanitize must copy")
+		}
+	})
+
+	t.Run("nil input stays nil", func(t *testing.T) {
+		t.Parallel()
+		if out := SanitizeClientMetadata(nil); out != nil {
+			t.Fatalf("nil input produced %v, want nil", out)
+		}
+	})
+
+	t.Run("only reserved keys collapse to nil", func(t *testing.T) {
+		t.Parallel()
+		if out := SanitizeClientMetadata(map[string]string{MetadataTenantIDKey: "x"}); out != nil {
+			t.Fatalf("expected nil after removing sole reserved key, got %v", out)
+		}
+	})
+}
+
+func TestWithTenantID(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty team leaves metadata untouched", func(t *testing.T) {
+		t.Parallel()
+		in := map[string]string{"env": "prod"}
+		out := WithTenantID(in, "")
+		if _, ok := out[MetadataTenantIDKey]; ok {
+			t.Fatalf("empty teamID injected a key: %v", out)
+		}
+	})
+
+	t.Run("sets tenant_id while preserving other keys", func(t *testing.T) {
+		t.Parallel()
+		out := WithTenantID(map[string]string{"env": "prod"}, "team-1")
+		if out[MetadataTenantIDKey] != "team-1" {
+			t.Fatalf("tenant_id = %q, want team-1", out[MetadataTenantIDKey])
+		}
+		if out["env"] != "prod" {
+			t.Fatalf("existing key lost: %v", out)
+		}
+	})
+
+	t.Run("initializes nil metadata", func(t *testing.T) {
+		t.Parallel()
+		out := WithTenantID(nil, "team-1")
+		if out[MetadataTenantIDKey] != "team-1" {
+			t.Fatalf("tenant_id = %q, want team-1", out[MetadataTenantIDKey])
+		}
+	})
 }

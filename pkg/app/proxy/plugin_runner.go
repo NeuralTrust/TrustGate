@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"iter"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/textproto"
 	"time"
@@ -30,6 +31,8 @@ import (
 )
 
 const postResponseTimeout = 30 * time.Second
+
+const maxPostResponseBufferBytes = 8 * 1024 * 1024
 
 func (f *forwarder) runPreRequest(
 	ctx context.Context,
@@ -123,6 +126,7 @@ func hasPostResponse(plan *appplugins.StagePlan) bool {
 }
 
 func (f *forwarder) firePostResponse(
+	ctx context.Context,
 	policies []*policy.Policy,
 	plan *appplugins.StagePlan,
 	req *infracontext.RequestContext,
@@ -131,14 +135,14 @@ func (f *forwarder) firePostResponse(
 	if f.executor == nil || !hasPostResponse(plan) {
 		return
 	}
-	rt := trace.FromContext(req.Context)
+	rt := trace.FromContext(ctx)
 	reqCopy := snapshotRequest(req)
 	respCopy := snapshotResponse(resp)
 
 	if rt != nil {
 		rt.AddAsync()
 	}
-	go func() {
+	go func() { // #nosec G118 -- post-response must outlive the request context, which is cancelled once the response is sent; the goroutine owns its own timeout
 		ctx, cancel := context.WithTimeout(context.Background(), postResponseTimeout)
 		defer cancel()
 		if rt != nil {
@@ -158,6 +162,7 @@ func (f *forwarder) firePostResponse(
 }
 
 func (f *forwarder) wrapStreamWithPostResponse(
+	ctx context.Context,
 	policies []*policy.Policy,
 	plan *appplugins.StagePlan,
 	req *infracontext.RequestContext,
@@ -170,11 +175,16 @@ func (f *forwarder) wrapStreamWithPostResponse(
 	return func(yield func([]byte, error) bool) {
 		var body []byte
 		completed := true
+		truncated := false
 		for line, err := range stream {
 
-			if err == nil && len(line) > 0 {
-				body = append(body, line...)
-				body = append(body, '\n')
+			if err == nil && len(line) > 0 && !truncated {
+				if len(body)+len(line)+1 > maxPostResponseBufferBytes {
+					truncated = true
+				} else {
+					body = append(body, line...)
+					body = append(body, '\n')
+				}
 			}
 			if !yield(line, err) {
 				completed = false
@@ -182,10 +192,16 @@ func (f *forwarder) wrapStreamWithPostResponse(
 			}
 		}
 
-		if completed {
-			resp.Body = body
-			f.firePostResponse(policies, plan, req, resp)
+		if !completed {
+			return
 		}
+		if truncated {
+			f.logger.Warn("post_response skipped: streamed body exceeded buffer cap",
+				slog.Int("cap_bytes", maxPostResponseBufferBytes))
+			return
+		}
+		resp.Body = body
+		f.firePostResponse(ctx, policies, plan, req, resp)
 	}
 }
 
@@ -248,12 +264,19 @@ func cloneResponseHeaders(headers map[string][]string) map[string][]string {
 	return out
 }
 
-func mergeProviderResponse(resp *infracontext.ResponseContext, provider *ProviderResponse, streaming bool) {
+func mergeStreamingResponse(resp *infracontext.ResponseContext, provider *ProviderResponse) {
+	mergeResponseMeta(resp, provider)
+	resp.Streaming = true
+}
+
+func mergeBufferedResponse(resp *infracontext.ResponseContext, provider *ProviderResponse) {
+	mergeResponseMeta(resp, provider)
+	resp.Streaming = false
+	resp.Body = provider.Body
+}
+
+func mergeResponseMeta(resp *infracontext.ResponseContext, provider *ProviderResponse) {
 	resp.StatusCode = provider.StatusCode
-	resp.Streaming = streaming
-	if !streaming {
-		resp.Body = provider.Body
-	}
 	if resp.Headers == nil {
 		resp.Headers = make(map[string][]string, len(provider.Headers))
 	}
@@ -264,12 +287,11 @@ func mergeProviderResponse(resp *infracontext.ResponseContext, provider *Provide
 
 func snapshotRequest(req *infracontext.RequestContext) *infracontext.RequestContext {
 	if req == nil {
-		return &infracontext.RequestContext{Context: context.Background()}
+		return &infracontext.RequestContext{}
 	}
 	clone := *req
-	clone.Context = context.Background()
 	clone.Body = append([]byte(nil), req.Body...)
-	clone.Metadata = copyMetadata(req.Metadata)
+	clone.Metadata = maps.Clone(req.Metadata)
 	return &clone
 }
 
@@ -278,10 +300,9 @@ func snapshotResponse(resp *infracontext.ResponseContext) *infracontext.Response
 		return &infracontext.ResponseContext{}
 	}
 	clone := *resp
-	clone.Context = context.Background()
 	clone.Body = append([]byte(nil), resp.Body...)
 	clone.Headers = nil
-	clone.Metadata = copyMetadata(resp.Metadata)
+	clone.Metadata = maps.Clone(resp.Metadata)
 	return &clone
 }
 
@@ -294,17 +315,6 @@ func cloneHeaders(headers map[string][]string) map[string][]string {
 	out := make(map[string][]string, len(headers))
 	for name, values := range headers {
 		out[name] = append([]string(nil), values...)
-	}
-	return out
-}
-
-func copyMetadata(in map[string]interface{}) map[string]interface{} {
-	if in == nil {
-		return nil
-	}
-	out := make(map[string]interface{}, len(in))
-	for k, v := range in {
-		out[k] = v
 	}
 	return out
 }

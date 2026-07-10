@@ -15,7 +15,7 @@
 package role
 
 import (
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/role/response"
 	approle "github.com/NeuralTrust/TrustGate/pkg/app/role"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -39,18 +39,18 @@ func NewGetRoleHandler(finder approle.Finder) *GetRoleHandler {
 // @Param        gateway_id  path  string  true  "Gateway id"  format(uuid)
 // @Param        id          path  string  true  "Role id"     format(uuid)
 // @Success      200         {object}  response.RoleResponse
-// @Failure      400         {object}  helpers.ErrorBody
-// @Failure      401         {object}  helpers.ErrorBody
-// @Failure      404         {object}  helpers.ErrorBody
+// @Failure      400         {object}  httpio.ErrorBody
+// @Failure      401         {object}  httpio.ErrorBody
+// @Failure      404         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/roles/{id} [get]
 func (h *GetRoleHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, id, err := helpers.ParseGatewayScopedID[ids.RoleKind](c)
+	gatewayID, id, err := httpio.ParseGatewayScopedID[ids.RoleKind](c)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	role, err := h.finder.FindByID(c.UserContext(), gatewayID, id)
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
-	return helpers.WriteOK(c, response.FromRole(role))
+	return httpio.WriteOK(c, response.FromRole(role))
 }

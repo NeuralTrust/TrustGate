@@ -130,7 +130,11 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return passThrough(), nil
 	}
 
-	if in.Request == nil || p.registry == nil || in.Request.Provider == "" {
+	if in.Request == nil {
+		return passThrough(), nil
+	}
+	mcpMode := in.Request.MCP
+	if !mcpMode && (p.registry == nil || in.Request.Provider == "") {
 		return passThrough(), nil
 	}
 
@@ -149,39 +153,56 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return passThrough(), nil
 	}
 
-	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
-	if err != nil {
-		return passThrough(), nil
-	}
-
 	var text string
-	if direction == directionInput {
-		if len(in.Request.Body) == 0 {
-			return passThrough(), nil
+	if mcpMode {
+		if direction == directionInput {
+			if len(in.Request.Body) == 0 {
+				return passThrough(), nil
+			}
+			text = mcpInputText(in.Request.Body)
+		} else {
+			if in.Response == nil || in.Response.Streaming || len(in.Response.Body) == 0 {
+				return passThrough(), nil
+			}
+			text = mcpOutputText(in.Response.Body)
 		}
-		creq, decErr := p.registry.DecodeRequestFor(in.Request.Body, format)
-		if decErr != nil || creq == nil {
-			return passThrough(), nil
-		}
-		text = joinRequestText(creq)
 	} else {
-		if in.Response == nil || in.Response.Streaming || len(in.Response.Body) == 0 {
+		format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
+		if err != nil {
 			return passThrough(), nil
 		}
-		cresp, decErr := p.registry.DecodeResponseFor(in.Response.Body, format)
-		if decErr != nil || cresp == nil {
-			return passThrough(), nil
+		if direction == directionInput {
+			if len(in.Request.Body) == 0 {
+				return passThrough(), nil
+			}
+			creq, decErr := p.registry.DecodeRequestFor(in.Request.Body, format)
+			if decErr != nil || creq == nil {
+				return passThrough(), nil
+			}
+			text = joinRequestText(creq)
+		} else {
+			if in.Response == nil || in.Response.Streaming || len(in.Response.Body) == 0 {
+				return passThrough(), nil
+			}
+			cresp, decErr := p.registry.DecodeResponseFor(in.Response.Body, format)
+			if decErr != nil || cresp == nil {
+				return passThrough(), nil
+			}
+			text = cresp.Content
 		}
-		text = cresp.Content
 	}
 	if strings.TrimSpace(text) == "" {
 		return passThrough(), nil
 	}
 
+	protocol := protocolFor(in.Request.ConsumerType)
+	if mcpMode {
+		protocol = protocolMCP
+	}
 	body := GuardRequest{
 		Payload:    GuardPayload{Input: text},
 		Direction:  direction,
-		Protocol:   protocolFor(in.Request.ConsumerType),
+		Protocol:   protocol,
 		GatewayID:  in.Request.GatewayID,
 		SessionID:  in.Request.SessionID,
 		ConsumerID: in.Request.ConsumerID,

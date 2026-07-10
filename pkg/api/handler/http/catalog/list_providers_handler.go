@@ -16,7 +16,7 @@ package catalog
 
 import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/catalog/response"
-	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	"github.com/gofiber/fiber/v2"
 )
@@ -36,16 +36,16 @@ func NewListProvidersHandler(service appcatalog.Service) *ListProvidersHandler {
 // @Produce      json
 // @Security     BearerAuth
 // @Success      200  {object}  map[string][]response.ProviderResponse
-// @Failure      401  {object}  helpers.ErrorBody
+// @Failure      401  {object}  httpio.ErrorBody
 // @Router       /v1/providers-catalog [get]
 func (h *ListProvidersHandler) Handle(c *fiber.Ctx) error {
 	providers, err := h.service.ListProviders(c.UserContext())
 	if err != nil {
-		return helpers.WriteError(c, err)
+		return httpio.WriteError(c, err)
 	}
 	out := make([]response.ProviderResponse, 0, len(providers))
 	for _, p := range providers {
 		out = append(out, response.FromProvider(p))
 	}
-	return helpers.WriteOK(c, fiber.Map{"items": out})
+	return httpio.WriteOK(c, fiber.Map{"items": out})
 }

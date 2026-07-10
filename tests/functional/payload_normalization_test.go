@@ -151,7 +151,7 @@ func TestProxyPaths_FixedRoutes(t *testing.T) {
 		up := newJSONUpstream(t, "must-not-serve")
 		apiKey, slug := setupSlugRoute(t, up, []string{"gpt-4o-mini"}, "")
 
-		status, _, _ := proxyPost(t, apiKey, "/"+slug+"/v1/embeddings", chatRequest(false))
+		status, _, _ := proxyPost(t, apiKey, "/"+slug+"/v2/chat/completions", chatRequest(false))
 
 		assert.Equal(t, http.StatusNotFound, status)
 		assert.Equal(t, 0, up.Hits())

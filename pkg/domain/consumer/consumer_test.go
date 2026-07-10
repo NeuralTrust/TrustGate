@@ -32,6 +32,23 @@ func validParams() CreateParams {
 	}
 }
 
+func TestNewRoutingMode_Normalizes(t *testing.T) {
+	t.Parallel()
+	cases := map[string]RoutingMode{
+		"inline":       RoutingModeInline,
+		"  inline  ":   RoutingModeInline,
+		"INLINE":       RoutingModeInline,
+		"Role_Based":   RoutingModeRoleBased,
+		" role_based ": RoutingModeRoleBased,
+		"":             RoutingMode(""),
+	}
+	for raw, want := range cases {
+		if got := NewRoutingMode(raw); got != want {
+			t.Errorf("NewRoutingMode(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
 func TestConsumer_New_HappyPath(t *testing.T) {
 	t.Parallel()
 	p := validParams()

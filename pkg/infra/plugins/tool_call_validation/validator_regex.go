@@ -14,11 +14,14 @@
 
 package tool_call_validation
 
-import "regexp"
+import (
+	"context"
+	"regexp"
+)
 
 type regexValidator struct{}
 
-func (regexValidator) Evaluate(in validatorInput) (violation, error) {
+func (regexValidator) Evaluate(_ context.Context, in validatorInput) (violation, error) {
 	value, ok := stringArgumentValue(in.toolCall.Arguments, in.rule.ArgumentPath)
 	if !ok {
 		return violation{}, nil

@@ -55,8 +55,7 @@ func TestNotInAllowedListValidator(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			res, err := notInAllowedListValidator{}.Evaluate(validatorInput{
-				ctx:      context.Background(),
+			res, err := notInAllowedListValidator{}.Evaluate(context.Background(), validatorInput{
 				toolCall: adapter.CanonicalToolCall{Name: tc.toolName},
 				eval:     &evalContext{allowed: tc.allowed},
 			})

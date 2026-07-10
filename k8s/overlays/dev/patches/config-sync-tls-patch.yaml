@@ -1,0 +1,71 @@
+# Config-sync gRPC TLS for dev. Mirrors prod so the whole TLS path (public LE
+# cert, SNI override, hot-reload, external L4 endpoint) can be tested end-to-end.
+# APP_ENV=dev does not force TLS, but we opt in here by giving the admin a
+# cert/key and flipping the data planes off plaintext.
+#
+# The cert/key are managed by cert-manager (Let's Encrypt via Cloudflare
+# DNS-01): config-sync-cert.yaml issues a public server cert for
+# agentgateway-configsync.dev.neuraltrust.ai. The admin mounts that Secret and
+# terminates TLS; the data planes (proxy/mcp) trust the public root store
+# (CONFIG_SYNC_TLS_CA empty) and pin the public SNI while still dialing the
+# internal Service (CONFIG_SYNC_GRPC_ENDPOINT in config.env).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentgateway-admin
+spec:
+  template:
+    spec:
+      containers:
+      - name: admin
+        env:
+        - name: CONFIG_SYNC_GRPC_TLS_CERT
+          value: /etc/config-sync-tls/tls.crt
+        - name: CONFIG_SYNC_GRPC_TLS_KEY
+          value: /etc/config-sync-tls/tls.key
+        volumeMounts:
+        - name: config-sync-tls
+          mountPath: /etc/config-sync-tls
+          readOnly: true
+      volumes:
+      - name: config-sync-tls
+        secret:
+          secretName: agentgateway-config-sync-tls
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentgateway-proxy
+spec:
+  template:
+    spec:
+      containers:
+      - name: proxy
+        env:
+        - name: CONFIG_SYNC_TLS_INSECURE
+          value: "false"
+        # Empty CA => verify against the system root store (Let's Encrypt is
+        # publicly trusted). No CA file is mounted on the data plane.
+        - name: CONFIG_SYNC_TLS_CA
+          value: ""
+        # Override the verified name to the public cert SAN while still dialing
+        # the internal Service (CONFIG_SYNC_GRPC_ENDPOINT in config.env).
+        - name: CONFIG_SYNC_TLS_SERVER_NAME
+          value: agentgateway-configsync.dev.neuraltrust.ai
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentgateway-mcp
+spec:
+  template:
+    spec:
+      containers:
+      - name: mcp
+        env:
+        - name: CONFIG_SYNC_TLS_INSECURE
+          value: "false"
+        - name: CONFIG_SYNC_TLS_CA
+          value: ""
+        - name: CONFIG_SYNC_TLS_SERVER_NAME
+          value: agentgateway-configsync.dev.neuraltrust.ai

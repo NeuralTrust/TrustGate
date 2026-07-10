@@ -18,8 +18,8 @@ import (
 	"fmt"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer/algorithm"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer/strategies"
 )
 

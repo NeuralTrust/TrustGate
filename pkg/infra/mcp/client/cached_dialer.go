@@ -23,6 +23,7 @@ import (
 	"log/slog"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
@@ -61,13 +62,13 @@ func (d *cachedDialer) Connect(ctx context.Context, target appmcp.Target) (appmc
 	}
 	key := target.PinKey + ":" + credentialFingerprint(target.Headers)
 	if sess := d.lookup(key); sess != nil {
-		return &cachedUpstream{dialer: d, key: key, target: target, session: sess}, nil
+		return newCachedUpstream(d, key, target, sess), nil
 	}
 	sess, err := d.connectAndStore(ctx, key, target)
 	if err != nil {
 		return nil, err
 	}
-	return &cachedUpstream{dialer: d, key: key, target: target, session: sess}, nil
+	return newCachedUpstream(d, key, target, sess), nil
 }
 
 func (d *cachedDialer) lookup(key string) *Session {
@@ -153,67 +154,76 @@ type cachedUpstream struct {
 	dialer  *cachedDialer
 	key     string
 	target  appmcp.Target
-	session *Session
+	session atomic.Pointer[Session]
 }
 
+func newCachedUpstream(d *cachedDialer, key string, target appmcp.Target, sess *Session) *cachedUpstream {
+	u := &cachedUpstream{dialer: d, key: key, target: target}
+	u.session.Store(sess)
+	return u
+}
+
+func (u *cachedUpstream) sess() *Session { return u.session.Load() }
+
 func (u *cachedUpstream) ListTools(ctx context.Context) ([]appmcp.Tool, error) {
-	out, err := u.session.ListTools(ctx)
+	out, err := u.sess().ListTools(ctx)
 	if u.refresh(ctx, err) {
-		return u.session.ListTools(ctx)
+		return u.sess().ListTools(ctx)
 	}
 	return out, err
 }
 
 func (u *cachedUpstream) CallTool(ctx context.Context, name string, arguments json.RawMessage) (json.RawMessage, error) {
-	res, err := u.session.CallTool(ctx, name, arguments)
+	sess := u.sess()
+	res, err := sess.CallTool(ctx, name, arguments)
 	if err != nil && shouldDrop(ctx, err) {
-		u.dialer.drop(ctx, u.key, u.session)
+		u.dialer.drop(ctx, u.key, sess)
 	}
 	return res, err
 }
 
 func (u *cachedUpstream) ListResources(ctx context.Context) ([]appmcp.Resource, error) {
-	out, err := u.session.ListResources(ctx)
+	out, err := u.sess().ListResources(ctx)
 	if u.refresh(ctx, err) {
-		return u.session.ListResources(ctx)
+		return u.sess().ListResources(ctx)
 	}
 	return out, err
 }
 
 func (u *cachedUpstream) ListResourceTemplates(ctx context.Context) ([]appmcp.ResourceTemplate, error) {
-	out, err := u.session.ListResourceTemplates(ctx)
+	out, err := u.sess().ListResourceTemplates(ctx)
 	if u.refresh(ctx, err) {
-		return u.session.ListResourceTemplates(ctx)
+		return u.sess().ListResourceTemplates(ctx)
 	}
 	return out, err
 }
 
 func (u *cachedUpstream) ReadResource(ctx context.Context, uri string) (json.RawMessage, error) {
-	res, err := u.session.ReadResource(ctx, uri)
+	res, err := u.sess().ReadResource(ctx, uri)
 	if u.refresh(ctx, err) {
-		return u.session.ReadResource(ctx, uri)
+		return u.sess().ReadResource(ctx, uri)
 	}
 	return res, err
 }
 
 func (u *cachedUpstream) ListPrompts(ctx context.Context) ([]appmcp.Prompt, error) {
-	out, err := u.session.ListPrompts(ctx)
+	out, err := u.sess().ListPrompts(ctx)
 	if u.refresh(ctx, err) {
-		return u.session.ListPrompts(ctx)
+		return u.sess().ListPrompts(ctx)
 	}
 	return out, err
 }
 
 func (u *cachedUpstream) GetPrompt(ctx context.Context, name string, arguments map[string]string) (json.RawMessage, error) {
-	res, err := u.session.GetPrompt(ctx, name, arguments)
+	res, err := u.sess().GetPrompt(ctx, name, arguments)
 	if u.refresh(ctx, err) {
-		return u.session.GetPrompt(ctx, name, arguments)
+		return u.sess().GetPrompt(ctx, name, arguments)
 	}
 	return res, err
 }
 
-func (u *cachedUpstream) SupportsResources() bool { return u.session.SupportsResources() }
-func (u *cachedUpstream) SupportsPrompts() bool   { return u.session.SupportsPrompts() }
+func (u *cachedUpstream) SupportsResources() bool { return u.sess().SupportsResources() }
+func (u *cachedUpstream) SupportsPrompts() bool   { return u.sess().SupportsPrompts() }
 
 func (u *cachedUpstream) Close(context.Context) {
 }
@@ -222,14 +232,14 @@ func (u *cachedUpstream) refresh(ctx context.Context, err error) bool {
 	if err == nil || !shouldDrop(ctx, err) {
 		return false
 	}
-	u.dialer.drop(ctx, u.key, u.session)
+	u.dialer.drop(ctx, u.key, u.sess())
 	sess, connErr := u.dialer.connectAndStore(ctx, u.key, u.target)
 	if connErr != nil {
 		u.dialer.logger.Warn("mcp cached dialer: session refresh failed",
 			"target", u.target.URL, "error", connErr)
 		return false
 	}
-	u.session = sess
+	u.session.Store(sess)
 	return true
 }
 

@@ -12,7 +12,7 @@ export interface ApiError {
 
 export interface Gateway {
   id: string;
-  name: string;
+  slug: string;
   status: string;
   session_config?: SessionConfig | null;
   created_at: string;

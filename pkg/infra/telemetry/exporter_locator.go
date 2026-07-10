@@ -19,12 +19,17 @@ import (
 
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	metricsschema "github.com/NeuralTrust/TrustGate/pkg/metrics"
 )
 
 type ExporterTemplate interface {
 	Name() string
 	ValidateConfig(settings map[string]interface{}) error
 	WithSettings(settings map[string]interface{}) (appmetrics.Exporter, error)
+}
+
+type dataClassAware interface {
+	SetDataClass(metricsschema.DataClass)
 }
 
 type ExporterLocator struct {
@@ -48,23 +53,32 @@ func NewExporterLocator(opts ...ExporterLocatorOption) *ExporterLocator {
 }
 
 func (l *ExporterLocator) Build(cfg telemetrydomain.ExporterConfig) (appmetrics.Exporter, error) {
-	template, ok := l.templates[cfg.Name]
+	template, ok := l.templates[cfg.EffectiveType()]
 	if !ok {
-		return nil, fmt.Errorf("unknown exporter %q", cfg.Name)
+		return nil, fmt.Errorf("unknown exporter %q", cfg.EffectiveType())
 	}
 	if err := template.ValidateConfig(cfg.Settings); err != nil {
-		return nil, fmt.Errorf("exporter %q: %w", cfg.Name, err)
+		return nil, fmt.Errorf("exporter %q: %w", cfg.EffectiveType(), err)
 	}
-	return template.WithSettings(cfg.Settings)
+	exporter, err := template.WithSettings(cfg.Settings)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Class != "" {
+		if aware, ok := exporter.(dataClassAware); ok {
+			aware.SetDataClass(cfg.Class)
+		}
+	}
+	return exporter, nil
 }
 
 func (l *ExporterLocator) Validate(cfg telemetrydomain.ExporterConfig) error {
-	template, ok := l.templates[cfg.Name]
+	template, ok := l.templates[cfg.EffectiveType()]
 	if !ok {
-		return fmt.Errorf("unknown exporter %q", cfg.Name)
+		return fmt.Errorf("unknown exporter %q", cfg.EffectiveType())
 	}
 	if err := template.ValidateConfig(cfg.Settings); err != nil {
-		return fmt.Errorf("exporter %q: %w", cfg.Name, err)
+		return fmt.Errorf("exporter %q: %w", cfg.EffectiveType(), err)
 	}
 	return nil
 }

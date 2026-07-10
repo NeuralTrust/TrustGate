@@ -17,6 +17,7 @@ package plugins
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -191,7 +192,7 @@ func isolateRequest(src *infracontext.RequestContext) *infracontext.RequestConte
 	}
 	clone := *src
 	clone.Headers = cloneHeaders(src.Headers)
-	clone.Metadata = copyAnyMap(src.Metadata)
+	clone.Metadata = maps.Clone(src.Metadata)
 	return &clone
 }
 
@@ -201,7 +202,7 @@ func isolateResponse(src *infracontext.ResponseContext) *infracontext.ResponseCo
 	}
 	clone := *src
 	clone.Headers = cloneHeaders(src.Headers)
-	clone.Metadata = copyAnyMap(src.Metadata)
+	clone.Metadata = maps.Clone(src.Metadata)
 	return &clone
 }
 
@@ -217,17 +218,6 @@ func mergeIsolated(
 		resp.Metadata = mergeAnyMap(resp.Metadata, isoResp.Metadata)
 		resp.Headers = mergeHeaderMap(resp.Headers, isoResp.Headers)
 	}
-}
-
-func copyAnyMap(in map[string]interface{}) map[string]interface{} {
-	if in == nil {
-		return nil
-	}
-	out := make(map[string]interface{}, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
 }
 
 func mergeAnyMap(dst, src map[string]interface{}) map[string]interface{} {

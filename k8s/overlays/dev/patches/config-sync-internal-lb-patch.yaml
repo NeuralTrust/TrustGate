@@ -1,0 +1,15 @@
+# Dev-only: expose the config-sync gRPC endpoint as a GKE internal passthrough L4
+# LB (VPC IP in the 10.0.0.x range) instead of a public NLB. Safe only while dev
+# data planes dial in from inside the VPC; remote/hybrid data planes outside the
+# VPC cannot reach an internal LB.
+#
+# TLS is unaffected: the endpoint presents a public Let's Encrypt leaf issued via
+# DNS-01 for agentgateway-configsync.dev.neuraltrust.ai, so it stays valid behind
+# a private IP. Data planes keep the same SNI/hostname; only the A record (a Cloud
+# DNS private zone) and the LB scope change. Prod keeps the public LB from base.
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentgateway-configsync-external
+  annotations:
+    networking.gke.io/load-balancer-type: "Internal"

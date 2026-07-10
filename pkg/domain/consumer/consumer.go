@@ -49,6 +49,13 @@ const (
 	RoutingModeRoleBased RoutingMode = "role_based"
 )
 
+// NewRoutingMode normalizes a raw routing_mode string (trimming surrounding
+// whitespace and lowercasing) into a RoutingMode. It does not validate;
+// callers rely on IsValid or Consumer.Validate for that.
+func NewRoutingMode(raw string) RoutingMode {
+	return RoutingMode(strings.ToLower(strings.TrimSpace(raw)))
+}
+
 func (m RoutingMode) IsValid() bool {
 	switch m {
 	case RoutingModeInline, RoutingModeRoleBased:

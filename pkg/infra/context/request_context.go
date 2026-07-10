@@ -15,7 +15,6 @@
 package context
 
 import (
-	"context"
 	"net/url"
 	"strings"
 	"time"
@@ -28,7 +27,6 @@ type Attachment struct {
 }
 
 type RequestContext struct {
-	Context            context.Context
 	GatewayID          string
 	ConsumerID         string
 	ConsumerType       string
@@ -48,9 +46,13 @@ type RequestContext struct {
 	Provider           string
 	SourceFormat       string
 	TargetFormat       string
+	ProxyCapability    string
 	AllowedModels      []string
 	DefaultModel       string
 	RequestedModel     string
+	// MCP marks a native MCP tools/call payload so protocol-aware plugins
+	// inspect it via the MCP text path instead of the LLM canonical decoders.
+	MCP bool
 }
 
 // HeaderValue returns the first non-empty value of the named header, matched

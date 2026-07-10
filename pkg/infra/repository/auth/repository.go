@@ -23,6 +23,7 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -36,11 +37,26 @@ const (
 var _ domain.Repository = (*Repository)(nil)
 
 type Repository struct {
-	conn *database.Connection
+	conn   *database.Connection
+	outbox outbox.Appender
 }
 
-func NewRepository(conn *database.Connection) *Repository {
-	return &Repository{conn: conn}
+// NewRepository builds the pgx auth repository from the shared connection.
+// Each write commits its config-snapshot change marker in the same transaction
+// via the injected outbox appender.
+func NewRepository(conn *database.Connection, appender outbox.Appender) *Repository {
+	return &Repository{conn: conn, outbox: appender}
+}
+
+// withMarkedTx runs fn inside a transaction and, when it succeeds, appends one
+// config-snapshot change marker so the mutation and its marker commit atomically.
+func (r *Repository) withMarkedTx(ctx context.Context, fn func(pgx.Tx) error) error {
+	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+		if err := fn(tx); err != nil {
+			return err
+		}
+		return r.outbox.AppendTx(ctx, tx)
+	})
 }
 
 func (r *Repository) Save(ctx context.Context, a *domain.Auth) error {
@@ -54,7 +70,7 @@ func (r *Repository) Save(ctx context.Context, a *domain.Auth) error {
 	const query = `
 		INSERT INTO auths (id, gateway_id, name, type, enabled, config, key_hash, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
 			a.ID, a.GatewayID, a.Name, string(a.Type), a.Enabled, configBytes, nullableString(a.KeyHash), a.CreatedAt, a.UpdatedAt,
 		); err != nil {
@@ -81,7 +97,7 @@ func (r *Repository) Update(ctx context.Context, a *domain.Auth) error {
 		       key_hash   = $6,
 		       updated_at = $7
 		 WHERE id = $1 AND gateway_id = $8`
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query, a.ID, a.Name, string(a.Type), a.Enabled, configBytes, nullableString(a.KeyHash), a.UpdatedAt, a.GatewayID)
 		if err != nil {
 			return mapPgError(err)
@@ -95,7 +111,7 @@ func (r *Repository) Update(ctx context.Context, a *domain.Auth) error {
 
 func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.AuthID) error {
 	const query = `DELETE FROM auths WHERE id = $1 AND gateway_id = $2`
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query, id, gatewayID)
 		if err != nil {
 			return mapPgDeleteError(err)

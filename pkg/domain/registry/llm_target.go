@@ -17,7 +17,7 @@ package registry
 import (
 	"fmt"
 
-	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
 )
 
 type LLMTarget struct {
@@ -34,11 +34,8 @@ func (t *LLMTarget) Validate() error {
 	if t.Provider == "" {
 		return fmt.Errorf("%w: provider is required", ErrInvalidRegistry)
 	}
-	if !providers.IsValidProvider(t.Provider) {
+	if !provider.IsValid(t.Provider) {
 		return fmt.Errorf("%w: unsupported provider %q", ErrInvalidRegistry, t.Provider)
-	}
-	if err := providers.ValidateProviderOptions(t.Provider, t.ProviderOptions); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidRegistry, err)
 	}
 	if t.Auth == nil {
 		return fmt.Errorf("%w: auth is required", ErrInvalidRegistry)

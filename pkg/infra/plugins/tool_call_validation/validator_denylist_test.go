@@ -67,8 +67,7 @@ func TestDenylistValidator(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			res, err := denylistValidator{}.Evaluate(validatorInput{
-				ctx:      context.Background(),
+			res, err := denylistValidator{}.Evaluate(context.Background(), validatorInput{
 				toolCall: adapter.CanonicalToolCall{Name: "run_shell", Arguments: tc.arguments},
 				rule:     RuleConfig{Validator: validatorDenylist, ArgumentPath: tc.path, Denylist: tc.denylist},
 			})

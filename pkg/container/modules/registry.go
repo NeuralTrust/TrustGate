@@ -15,29 +15,46 @@
 package modules
 
 import (
+	"log/slog"
+
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	registryrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/registry"
 )
 
 func Registry(c *container.Container) error {
-	if err := c.Provide(func(conn *database.Connection, enc vaultdomain.Encrypter) domain.Repository {
-		return registryrepo.NewRepository(conn, enc)
+	if err := provideRegistryRepository(c); err != nil {
+		return err
+	}
+	return provideRegistryServices(c)
+}
+
+func provideRegistryRepository(c *container.Container) error {
+	return c.Provide(func(conn *database.Connection, enc vaultdomain.Encrypter, appender outboxrepo.Appender) domain.Repository {
+		return registryrepo.NewRepository(conn, enc, appender)
+	})
+}
+
+func provideRegistryServices(c *container.Container) error {
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger, sig snapshotSignalParams) appregistry.Creator {
+		return appregistry.NewCreator(repo, manager, logger, sig.Signaler)
 	}); err != nil {
 		return err
 	}
-
-	if err := c.Provide(appregistry.NewCreator); err != nil {
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appregistry.Updater {
+		return appregistry.NewUpdater(repo, manager, publisher, logger, sig.Signaler)
+	}); err != nil {
 		return err
 	}
-	if err := c.Provide(appregistry.NewUpdater); err != nil {
-		return err
-	}
-	if err := c.Provide(appregistry.NewDeleter); err != nil {
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appregistry.Deleter {
+		return appregistry.NewDeleter(repo, manager, publisher, logger, sig.Signaler)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(appregistry.NewFinder); err != nil {

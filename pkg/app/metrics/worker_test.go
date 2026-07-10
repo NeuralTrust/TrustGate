@@ -24,10 +24,12 @@ import (
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
+	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
+	metricsschema "github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -43,6 +45,8 @@ type captureExporter struct {
 
 func (c *captureExporter) Name() string { return "capture" }
 
+func (c *captureExporter) DataClass() metricsschema.DataClass { return metricsschema.Metadata }
+
 func (c *captureExporter) Publish(_ context.Context, evt *events.Event) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -57,6 +61,16 @@ func (c *captureExporter) snapshot() []*events.Event {
 	defer c.mu.Unlock()
 	return append([]*events.Event(nil), c.events...)
 }
+
+type captureFactory struct {
+	exporter appmetrics.Exporter
+}
+
+func (f captureFactory) Build(_ telemetrydomain.ExporterConfig) (appmetrics.Exporter, error) {
+	return f.exporter, nil
+}
+
+func (f captureFactory) Validate(_ telemetrydomain.ExporterConfig) error { return nil }
 
 type stubPricingResolver struct {
 	price appcatalog.Pricing
@@ -74,7 +88,9 @@ func TestWorker_PublishesConsolidatedEvent(t *testing.T) {
 	builder := appmetrics.NewBuilder(adapter.NewRegistry(), stubPricingResolver{
 		price: appcatalog.Pricing{ModelLabel: "GPT-4o", InputPrice: 0.0000025, OutputPrice: 0.00001, Found: true},
 	})
-	pipeline := appmetrics.NewPipeline(builder, nil, nil, newTestLogger(), capture)
+	cache := appmetrics.NewExporterCache(captureFactory{exporter: capture}, newTestLogger())
+	pipeline := appmetrics.NewPipeline(builder, cache, nil, newTestLogger(),
+		telemetrydomain.ExporterConfig{Name: "capture"})
 
 	w := appmetrics.NewWorker(newTestLogger(), pipeline)
 	w.StartWorkers(1)

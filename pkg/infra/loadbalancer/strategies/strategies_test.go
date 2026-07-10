@@ -15,6 +15,7 @@
 package strategies
 
 import (
+	"context"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -34,7 +35,7 @@ func TestRoundRobin_RotatesThroughBackends(t *testing.T) {
 	rr := NewRoundRobin(makeBackends("a", "b", "c"))
 	got := []string{}
 	for i := 0; i < 6; i++ {
-		got = append(got, rr.Next(nil, nil).Name)
+		got = append(got, rr.Next(context.Background(), nil, nil).Name)
 	}
 	want := []string{"a", "b", "c", "a", "b", "c"}
 	for i := range want {
@@ -50,7 +51,7 @@ func TestRoundRobin_SkipsExcluded(t *testing.T) {
 	rr := NewRoundRobin(registries)
 	exclude := map[ids.RegistryID]struct{}{registries[0].ID: {}, registries[1].ID: {}}
 	for i := 0; i < 4; i++ {
-		b := rr.Next(nil, exclude)
+		b := rr.Next(context.Background(), nil, exclude)
 		if b == nil || b.Name != "c" {
 			t.Fatalf("step %d: expected only non-excluded backend 'c', got %+v", i, b)
 		}
@@ -62,7 +63,7 @@ func TestRoundRobin_AllExcludedReturnsNil(t *testing.T) {
 	registries := makeBackends("a", "b")
 	rr := NewRoundRobin(registries)
 	exclude := map[ids.RegistryID]struct{}{registries[0].ID: {}, registries[1].ID: {}}
-	if rr.Next(nil, exclude) != nil {
+	if rr.Next(context.Background(), nil, exclude) != nil {
 		t.Fatal("expected nil when every backend is excluded")
 	}
 }
@@ -72,7 +73,7 @@ func TestWeightedRoundRobin_AllExcludedReturnsNil(t *testing.T) {
 	registries := makeBackends("a", "b")
 	wrr := NewWeightedRoundRobin(registries, nil)
 	exclude := map[ids.RegistryID]struct{}{registries[0].ID: {}, registries[1].ID: {}}
-	if wrr.Next(nil, exclude) != nil {
+	if wrr.Next(context.Background(), nil, exclude) != nil {
 		t.Fatal("expected nil when every weighted backend is excluded")
 	}
 }
@@ -82,7 +83,7 @@ func TestLeastConnections_SkipsExcluded(t *testing.T) {
 	registries := makeBackends("a", "b", "c")
 	lc := NewLeastConnections(registries)
 	exclude := map[ids.RegistryID]struct{}{registries[0].ID: {}}
-	b := lc.Next(nil, exclude)
+	b := lc.Next(context.Background(), nil, exclude)
 	if b == nil || b.Name == "a" {
 		t.Fatalf("expected a non-excluded backend, got %+v", b)
 	}
@@ -91,7 +92,7 @@ func TestLeastConnections_SkipsExcluded(t *testing.T) {
 func TestRoundRobin_EmptyReturnsNil(t *testing.T) {
 	t.Parallel()
 	rr := NewRoundRobin(nil)
-	if rr.Next(nil, nil) != nil {
+	if rr.Next(context.Background(), nil, nil) != nil {
 		t.Fatal("Next on empty must return nil")
 	}
 }
@@ -108,7 +109,7 @@ func TestRandom_PicksOneOfTheBackends(t *testing.T) {
 	r := NewRandom(makeBackends("a", "b", "c"))
 	seen := map[string]bool{}
 	for i := 0; i < 30; i++ {
-		b := r.Next(nil, nil)
+		b := r.Next(context.Background(), nil, nil)
 		if b == nil {
 			break
 		}
@@ -126,7 +127,7 @@ func TestRandom_PicksOneOfTheBackends(t *testing.T) {
 
 func TestRandom_EmptyReturnsNil(t *testing.T) {
 	t.Parallel()
-	if NewRandom(nil).Next(nil, nil) != nil {
+	if NewRandom(nil).Next(context.Background(), nil, nil) != nil {
 		t.Fatal("Random on empty must return nil")
 	}
 }
@@ -151,7 +152,7 @@ func TestWeightedRoundRobin_RespectsWeights(t *testing.T) {
 	wrr := NewWeightedRoundRobin(registries, weights)
 	counts := map[string]int{}
 	for i := 0; i < 40; i++ {
-		b := wrr.Next(nil, nil)
+		b := wrr.Next(context.Background(), nil, nil)
 		if b == nil {
 			break
 		}
@@ -170,7 +171,7 @@ func TestWeightedRoundRobin_ZeroWeightsServeAsWeightOne(t *testing.T) {
 	}, nil)
 	counts := map[string]int{}
 	for i := 0; i < 10; i++ {
-		b := wrr.Next(nil, nil)
+		b := wrr.Next(context.Background(), nil, nil)
 		if b == nil {
 			t.Fatal("WRR with zero weights must keep serving traffic (weight 0 acts as 1)")
 		}
@@ -196,7 +197,7 @@ func TestLeastConnections_NameAndRotation(t *testing.T) {
 	}
 	got := []string{}
 	for i := 0; i < 3; i++ {
-		got = append(got, lc.Next(nil, nil).Name)
+		got = append(got, lc.Next(context.Background(), nil, nil).Name)
 	}
 	if got[0] != "a" || got[1] != "b" || got[2] != "c" {
 		t.Fatalf("expected a,b,c got %v", got)
@@ -206,7 +207,7 @@ func TestLeastConnections_NameAndRotation(t *testing.T) {
 func TestSemantic_NoConfigReturnsFirstRegistry(t *testing.T) {
 	t.Parallel()
 	s := NewSemantic(nil, makeBackends("a", "b"), nil, nil)
-	b := s.Next(nil, nil)
+	b := s.Next(context.Background(), nil, nil)
 	if b == nil || b.Name != "a" {
 		t.Fatalf("expected first backend a, got %+v", b)
 	}
@@ -221,7 +222,7 @@ func TestSemantic_Name(t *testing.T) {
 
 func TestSemantic_EmptyReturnsNil(t *testing.T) {
 	t.Parallel()
-	if NewSemantic(nil, nil, nil, nil).Next(nil, nil) != nil {
+	if NewSemantic(nil, nil, nil, nil).Next(context.Background(), nil, nil) != nil {
 		t.Fatal("empty Semantic.Next must return nil")
 	}
 }
@@ -229,7 +230,7 @@ func TestSemantic_EmptyReturnsNil(t *testing.T) {
 func TestSemantic_SingleRegistry(t *testing.T) {
 	t.Parallel()
 	s := NewSemantic(nil, makeBackends("only"), nil, nil)
-	got := s.Next(nil, nil)
+	got := s.Next(context.Background(), nil, nil)
 	if got == nil || got.Name != "only" {
 		t.Fatalf("expected 'only', got %+v", got)
 	}

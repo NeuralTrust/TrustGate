@@ -41,9 +41,9 @@ type OIDCMapping struct {
 }
 
 type OIDCClaimRule struct {
-	Path   string     `json:"path"`
+	Path   string      `json:"path"`
 	Op     OIDCClaimOp `json:"op"`
-	Values []string   `json:"values"`
+	Values []string    `json:"values"`
 }
 
 func ParseOIDCMapping(raw json.RawMessage) (*OIDCMapping, error) {

@@ -72,7 +72,7 @@ func TestCreator_Create_Success(t *testing.T) {
 		Once()
 
 	mgr := newCacheManager()
-	creator := apppolicy.NewCreator(repo, newRegistryMock(t, nil), mgr, newTestLogger())
+	creator := apppolicy.NewCreator(repo, newRegistryMock(t, nil), mgr, newTestLogger(), nil)
 
 	p, err := creator.Create(context.Background(), validCreateInput(gwID))
 	if err != nil {
@@ -90,7 +90,7 @@ func TestCreator_Create_Success(t *testing.T) {
 func TestCreator_Create_RejectsInvalid(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	creator := apppolicy.NewCreator(repo, newRegistryMock(t, nil), newCacheManager(), newTestLogger())
+	creator := apppolicy.NewCreator(repo, newRegistryMock(t, nil), newCacheManager(), newTestLogger(), nil)
 
 	in := validCreateInput(ids.New[ids.GatewayKind]())
 	in.Name = ""
@@ -104,7 +104,7 @@ func TestCreator_Create_RejectsUnsupportedStage(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	sentinel := errors.New("stage not supported")
-	creator := apppolicy.NewCreator(repo, newRegistryMock(t, sentinel), newCacheManager(), newTestLogger())
+	creator := apppolicy.NewCreator(repo, newRegistryMock(t, sentinel), newCacheManager(), newTestLogger(), nil)
 
 	_, err := creator.Create(context.Background(), validCreateInput(ids.New[ids.GatewayKind]()))
 	if !errors.Is(err, sentinel) {
@@ -116,7 +116,7 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(domain.ErrAlreadyExists).Once()
-	creator := apppolicy.NewCreator(repo, newRegistryMock(t, nil), newCacheManager(), newTestLogger())
+	creator := apppolicy.NewCreator(repo, newRegistryMock(t, nil), newCacheManager(), newTestLogger(), nil)
 
 	in := validCreateInput(ids.New[ids.GatewayKind]())
 	in.Name = "dupe"
@@ -130,7 +130,7 @@ func TestCreator_Create_DefaultsToNonGlobal(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
-	creator := apppolicy.NewCreator(repo, newRegistryMock(t, nil), newCacheManager(), newTestLogger())
+	creator := apppolicy.NewCreator(repo, newRegistryMock(t, nil), newCacheManager(), newTestLogger(), nil)
 
 	p, err := creator.Create(context.Background(), validCreateInput(ids.New[ids.GatewayKind]()))
 	if err != nil {
