@@ -100,17 +100,59 @@ func TestCreator_Create_PreservesExplicitSessionConfig(t *testing.T) {
 	}
 }
 
-func TestCreator_Create_RejectsEmptySlug(t *testing.T) {
+func TestCreator_Create_GeneratesSlugWhenEmpty(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
+	repo.EXPECT().
+		Save(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+			return domain.IsValidSlug(g.Slug)
+		})).
+		Return(nil).
+		Once()
+
 	mgr := newCacheManager()
 	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger(), nil)
 
-	_, err := creator.Create(context.Background(), appgateway.CreateInput{
+	g, err := creator.Create(context.Background(), appgateway.CreateInput{
 		Slug: "",
 	})
-	if err == nil {
-		t.Fatal("expected validation error, got nil")
+	if err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+	if !domain.IsValidSlug(g.Slug) {
+		t.Fatalf("expected auto-generated valid slug, got %q", g.Slug)
+	}
+}
+
+func TestCreator_Create_RetriesOnGeneratedSlugCollision(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(domain.ErrAlreadyExists).Once()
+	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
+
+	mgr := newCacheManager()
+	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger(), nil)
+
+	g, err := creator.Create(context.Background(), appgateway.CreateInput{Slug: ""})
+	if err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+	if !domain.IsValidSlug(g.Slug) {
+		t.Fatalf("expected valid slug after retry, got %q", g.Slug)
+	}
+}
+
+func TestCreator_Create_DoesNotRetryOnProvidedSlugCollision(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(domain.ErrAlreadyExists).Once()
+
+	mgr := newCacheManager()
+	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger(), nil)
+
+	_, err := creator.Create(context.Background(), appgateway.CreateInput{Slug: "prod"})
+	if !errors.Is(err, domain.ErrAlreadyExists) {
+		t.Fatalf("expected ErrAlreadyExists for client-provided slug, got %v", err)
 	}
 }
 

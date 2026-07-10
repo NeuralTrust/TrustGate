@@ -38,7 +38,7 @@ func NewCreateGatewayHandler(creator appgateway.Creator, baseDomain, mcpBaseDoma
 
 // Handle godoc
 // @Summary      Create a gateway
-// @Description  Creates a new gateway.
+// @Description  Creates a new gateway. The slug is optional: when omitted the server generates a unique random slug. If provided it must be a lowercase DNS label and unique.
 // @Tags         gateways
 // @Accept       json
 // @Produce      json

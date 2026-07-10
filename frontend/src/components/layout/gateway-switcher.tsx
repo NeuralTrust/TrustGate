@@ -37,7 +37,7 @@ export function GatewaySwitcher() {
             className="flex items-center gap-2 rounded-(--radius) border border-border bg-surface-2 h-9 pl-2.5 pr-2 text-[13px] text-fg hover:border-border-strong transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent/40 max-w-56"
           >
             <Layers className="h-4 w-4 text-accent shrink-0" />
-            <span className="truncate font-medium">{active.name}</span>
+            <span className="truncate font-medium">{active.slug}</span>
             <ChevronsUpDown className="h-3.5 w-3.5 text-faint shrink-0" />
           </button>
         </DropdownMenu.Trigger>
@@ -66,7 +66,7 @@ export function GatewaySwitcher() {
                   >
                     <Check className="h-3.5 w-3.5" />
                   </span>
-                  <span className="truncate flex-1">{g.name}</span>
+                  <span className="truncate flex-1">{g.slug}</span>
                 </DropdownMenu.Item>
               ))}
             </div>
@@ -101,18 +101,18 @@ function CreateGatewayDialog({
 }) {
   const router = useRouter();
   const { toast } = useToast();
-  const [name, setName] = useState("");
+  const [slug, setSlug] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   async function submit() {
-    if (!name.trim()) return;
     setSubmitting(true);
     try {
-      const gw = await api.post<Gateway>("/v1/gateways", { name: name.trim() });
+      const trimmed = slug.trim();
+      const gw = await api.post<Gateway>("/v1/gateways", trimmed ? { slug: trimmed } : {});
       await setActiveGateway(gw.id);
-      toast({ variant: "success", title: "Gateway created", description: gw.name });
+      toast({ variant: "success", title: "Gateway created", description: gw.slug });
       onOpenChange(false);
-      setName("");
+      setSlug("");
       router.refresh();
     } catch (err) {
       toast({
@@ -130,11 +130,11 @@ function CreateGatewayDialog({
       <DialogContent>
         <DialogHeader title="Create gateway" description="A gateway is an isolated routing environment." />
         <DialogBody>
-          <Field label="Name">
+          <Field label="Slug" hint="Optional — auto-generated if empty">
             <Input
               autoFocus
-              value={name}
-              onChange={(e) => setName(e.target.value)}
+              value={slug}
+              onChange={(e) => setSlug(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && submit()}
               placeholder="e.g. staging-gateway"
             />

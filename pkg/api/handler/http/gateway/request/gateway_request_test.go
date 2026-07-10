@@ -23,7 +23,7 @@ func TestCreateGatewayRequest_ValidateSlug(t *testing.T) {
 		req     CreateGatewayRequest
 		wantErr bool
 	}{
-		{name: "empty slug is rejected", req: CreateGatewayRequest{Slug: ""}, wantErr: true},
+		{name: "empty slug is accepted (auto-generated)", req: CreateGatewayRequest{Slug: ""}},
 		{name: "valid slug is accepted", req: CreateGatewayRequest{Slug: "acme-prod"}},
 		{name: "invalid slug is rejected", req: CreateGatewayRequest{Slug: "-bad"}, wantErr: true},
 	}

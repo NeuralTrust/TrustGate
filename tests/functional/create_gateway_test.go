@@ -37,13 +37,23 @@ func TestCreateGateway_Conflict(t *testing.T) {
 	assert.Equal(t, "already_exists", body["error"])
 }
 
-func TestCreateGateway_ValidationEmptySlug(t *testing.T) {
+func TestCreateGateway_GeneratesSlugWhenEmpty(t *testing.T) {
 	defer Track(t, "CreateGateway")()
 	status, body := sendRequest(t, http.MethodPost, AdminURL+"/v1/gateways", nil, map[string]any{
 		"slug": "",
 	})
-	require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
-	assert.Equal(t, "validation_failed", body["error"])
+	require.Equal(t, http.StatusCreated, status, "body=%v", body)
+	assert.NotEmpty(t, body["slug"])
+	assert.Equal(t, "active", body["status"])
+	assert.NotEmpty(t, body["id"])
+}
+
+func TestCreateGateway_GeneratesSlugWhenOmitted(t *testing.T) {
+	defer Track(t, "CreateGateway")()
+	status, body := sendRequest(t, http.MethodPost, AdminURL+"/v1/gateways", nil, map[string]any{})
+	require.Equal(t, http.StatusCreated, status, "body=%v", body)
+	assert.NotEmpty(t, body["slug"])
+	assert.Equal(t, "active", body["status"])
 }
 
 func TestCreateGateway_InvalidBody(t *testing.T) {
