@@ -28,6 +28,11 @@ import (
 
 const MetadataTenantIDKey = "tenant_id"
 
+// MetadataLegacyTeamIDKey is the pre-tenant client key. It is never persisted:
+// callers that still send it have their value dropped so tenant partitioning
+// relies solely on the server-stamped tenant_id.
+const MetadataLegacyTeamIDKey = "team_id"
+
 type Gateway struct {
 	ID              ids.GatewayID        `json:"id"`
 	Slug            string               `json:"slug"`
@@ -49,7 +54,7 @@ func (g *Gateway) TenantID() string {
 }
 
 func isReservedMetadataKey(key string) bool {
-	return key == MetadataTenantIDKey
+	return key == MetadataTenantIDKey || key == MetadataLegacyTeamIDKey
 }
 
 func SanitizeClientMetadata(metadata map[string]string) map[string]string {
