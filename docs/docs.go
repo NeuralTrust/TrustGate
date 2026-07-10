@@ -94,6 +94,51 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/config-sync/connections": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the observed data-plane Sync connections, optionally filtered by opaque scope. Answers \"is this data plane online?\".",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "config-sync"
+                ],
+                "summary": "List config-sync data-plane connections",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by opaque scope (exact match); omit for all",
+                        "name": "scope",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_configsync_response.ListConnectionsResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/gateways": {
             "get": {
                 "security": [
@@ -156,7 +201,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Creates a new gateway.",
+                "description": "Creates a new gateway. The slug is optional: when omitted the server generates a unique random slug. If provided it must be a lowercase DNS label and unique.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3692,6 +3737,40 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_configsync_response.ConnectionResponse": {
+            "type": "object",
+            "properties": {
+                "applied_version": {
+                    "type": "string"
+                },
+                "first_seen": {
+                    "type": "string"
+                },
+                "instance_id": {
+                    "type": "string"
+                },
+                "last_seen": {
+                    "type": "string"
+                },
+                "scope": {
+                    "type": "string"
+                },
+                "state": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_configsync_response.ListConnectionsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_configsync_response.ConnectionResponse"
+                    }
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.APIKeyAuthRequest": {
             "type": "object",
             "properties": {
@@ -4261,7 +4340,9 @@ const docTemplate = `{
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.SessionConfig"
                 },
                 "slug": {
-                    "type": "string"
+                    "description": "Slug is optional; when omitted the server generates a unique random slug. If provided it must be a lowercase DNS label.",
+                    "type": "string",
+                    "example": "acme-prod"
                 },
                 "telemetry": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry"
