@@ -52,8 +52,7 @@ design, tasks, apply). Record the issue id so it lands in the PR body and any
   user to answer them. The ONLY blocking user gates are task approval (step 6)
   and final archive/worktree cleanup confirmation (step 10).
 - All work happens inside the worktree. Never touch the user's current checkout.
-- Honor the repo's no-comments policy (`/.agents/AGENT.md`): strip narrative code
-  comments after every phase and once more before the PR.
+- Honor the repo's no-comments policy (`/.agents/AGENT.md` or `.cursor/rules/go-comments.mdc`): after every apply phase delegate `clean-comments` on touched Go files (keeps `//go:*`, `//nolint`, Swagger `// @`, licenses). **Never inline** — use a WRITE subagent on **`composer-2.5-fast`** (see [Comment cleanup](#comment-cleanup-delegate)).
 - One `change-name` (kebab-case, derived from the request) is used for every phase
   and the branch.
 - Pick the artifact mode once: `openspec` if `openspec/config.yaml` exists, else
@@ -69,6 +68,28 @@ design, tasks, apply). Record the issue id so it lands in the PR body and any
 | Workload forecast says >400 lines / chained PRs | Surface the chain strategy choice to the user with the tasks |
 | A phase's code review finds CRITICAL/WARNING(real) | Apply fixes, re-review until clean, then advance |
 | PR is open and Linear close-out comment is posted | Ask the user whether they want more changes/checks, and whether to archive + remove the worktree |
+
+## Comment cleanup (delegate)
+
+Comment stripping is a **mechanical WRITE** task — do not run it in the orchestrator
+thread and do not use a reasoning model.
+
+After each apply-phase review (step 7) and again before ship (step 8), launch a
+**separate** `Task` subagent:
+
+| Parameter | Value |
+|-----------|--------|
+| `model` | `composer-2.5-fast` (**required**) |
+| Skill | Load `~/.cursor/skills/clean-comments/SKILL.md` |
+| Scope | Files changed in the phase diff, or full `git diff origin/develop...HEAD` before ship |
+| Mode | WRITE — edits comments only; zero logic/behavior change |
+
+Prompt must include: worktree path, file list or diff scope, and repo comment policy
+from `AGENT.md` when present. Wait for the subagent to finish before commit (per
+phase) or before push (final pass).
+
+If the repo ships `scripts/clean-comments/main.go`, the subagent may run it when
+scope is broad; otherwise edit files per the skill.
 
 ## Execution Steps
 
@@ -101,12 +122,12 @@ design, tasks, apply). Record the issue id so it lands in the PR body and any
    - Run a code review of that phase's diff (Task `bugbot`, or the `code-review`
      skill) that also checks compliance with `.agents/AGENT.md` and `golang-pro`,
      and apply all CRITICAL + WARNING(real) fixes; re-review until clean.
-   - Strip leftover code comments per the no-comments policy.
+   - Delegate `clean-comments` via `Task` with `model: "composer-2.5-fast"` on the phase diff; wait, then commit.
    - Commit the phase as one work unit, then continue to the next phase.
 8. **Feature-wide review.** After every phase is applied, run a code review over
    the whole feature diff (`git diff origin/develop...HEAD`) — including
-   `.agents/AGENT.md` + `golang-pro` compliance — apply the fixes, and strip any
-   remaining surplus comments.
+   `.agents/AGENT.md` + `golang-pro` compliance — apply the fixes, then delegate
+   `clean-comments` via `Task` with `model: "composer-2.5-fast"` on the full diff before ship.
 9. **Ship.** Push the branch (`git push -u origin <branch>`) and open the PR
    targeting `develop` (`gh pr create`), with the Linear issue id in the body.
    Move the Linear issue to `In Review` (`linear.update_issue`). Do NOT archive
@@ -139,6 +160,7 @@ Report to the user:
 
 - `.agents/AGENT.md` — repo conventions, no-comments policy, branch/PR rules.
   Binding for every Go-touching phase.
+- `~/.cursor/skills/clean-comments/SKILL.md` — strip comments after each apply phase; **always delegate on `composer-2.5-fast`**.
 - `~/.agents/skills/golang-pro/SKILL.md` — idiomatic Go standards (concurrency,
   error wrapping, context, lint/vet/race). Binding for design, apply, and review.
 - `~/.cursor/skills/sdd-*/SKILL.md` — the delegated phase sub-agents, including
