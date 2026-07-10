@@ -1,0 +1,4 @@
+# Fake, non-production secrets used only in Go test fixtures. These are dummy
+# values with no access to any system; gitleaks flags them on entropy alone.
+# di_smoke_test.go SERVER_SECRET_KEY smoke-test value (generic-api-key).
+354c4fffbfee19851254dffc7677725fc42add4d:pkg/container/di_smoke_test.go:generic-api-key:96
