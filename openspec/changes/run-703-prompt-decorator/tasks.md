@@ -7,13 +7,13 @@
 | Estimated additions + deletions | 1,850–2,650 |
 | 400-line budget risk | High |
 | Chained PRs recommended | Yes |
-| Suggested split | Nine stacked slices: PR 1 targets `develop`; PRs 2–9 target their immediate predecessor |
-| Delivery strategy | ask-on-risk |
-| Chain strategy | Recommend predecessor-based stack to `develop`; approval pending |
+| Suggested split | Nine stacked slices |
+| Delivery strategy | One final PR to `develop`, explicitly requested by the user |
+| Size exception | Required: the feature is one cross-layer contract and the phase commits preserve review boundaries |
 
-Decision needed before apply: Yes
+Decision needed before apply: No
 Chained PRs recommended: Yes
-Chain strategy: pending
+Chain strategy: declined in favor of one final PR
 400-line budget risk: High
 
 ### Suggested Work Units
@@ -30,7 +30,7 @@ Chain strategy: pending
 | 8 | Catalog/DI activation | 160–260 |
 | 9 | Functional acceptance | 260–400 |
 
-One commit/PR per phase. PR 1 targets `develop`; each later PR targets the preceding phase branch and lands in order. Phases 1–7 merge dormant or compatibility-only.
+One commit per phase preserves the proposed review units inside the final PR to `develop`.
 
 ## Phase 1: Immutable Original Request
 
@@ -74,5 +74,5 @@ One commit/PR per phase. PR 1 targets `develop`; each later PR targets the prece
 
 ## Phase 9: Functional Acceptance
 
-- [ ] 9.1 Create `tests/functional/plugin_prompt_decorator_test.go` for scope, modes, protocols, ordering, exact rejection/no upstream, and Bedrock targets.
-- [ ] 9.2 Verify: `go test -tags functional -run 'TestPluginE2E_PromptDecorator' ./tests/functional/...`; then `make fmt`, `go vet ./...`, `make lint`, and `make test-race`.
+- [x] 9.1 Create `tests/functional/plugin_prompt_decorator_test.go` and `plugin_prompt_decorator_bedrock_test.go` for scope, modes, protocols, ordering, exact rejection/no upstream, and Bedrock targets.
+- [ ] 9.2 Verify: `go test -tags functional -run 'TestPluginE2E_PromptDecorator' ./tests/functional/...`; then `make fmt`, `go vet ./...`, `make lint`, and `make test-race`. Runtime scenarios are blocked by local PostgreSQL authentication (`SQLSTATE 28P01`); compile, fmt, vet, lint, and race checks pass.
