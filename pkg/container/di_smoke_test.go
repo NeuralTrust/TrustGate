@@ -54,6 +54,10 @@ func TestDISmoke_PlaneAwareModuleSets_Register(t *testing.T) {
 
 func TestDISmoke_DBLessDataPlane_ResolvesRepositoriesWithoutPool(t *testing.T) {
 	t.Setenv("POSTGRES_LOGIN", "aws")
+	t.Setenv("CONFIG_SYNC_DATA_PLANE_ENABLED", "true")
+	t.Setenv("CONFIG_SYNC_TOKEN", "smoke-token")
+	t.Setenv("CONFIG_SYNC_GRPC_ENDPOINT", "admin.example.com:8083")
+	t.Setenv("CONFIG_SYNC_LKG_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
 	for _, key := range []string{
 		"AWS_REGION",
 		"AWS_DEFAULT_REGION",

@@ -726,6 +726,12 @@ func (c *Config) Validate() error {
 		if c.Database.Name == "" {
 			return fmt.Errorf("%w: DB_NAME is required", errors.ErrInvalidConfig)
 		}
+		if c.Database.Login == postgresLoginAWS {
+			c.Database.SSLMode = strings.ToLower(strings.TrimSpace(c.Database.SSLMode))
+			if c.Database.SSLMode != "require" && c.Database.SSLMode != "verify-ca" && c.Database.SSLMode != "verify-full" {
+				return fmt.Errorf("%w: DB_SSL_MODE must be %q, %q or %q when POSTGRES_LOGIN=%q", errors.ErrInvalidConfig, "require", "verify-ca", "verify-full", postgresLoginAWS)
+			}
+		}
 	}
 	if c.Redis.Host == "" {
 		return fmt.Errorf("%w: REDIS_HOST is required", errors.ErrInvalidConfig)

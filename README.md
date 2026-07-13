@@ -348,7 +348,7 @@ See [`.env.example`](.env.example) for the full set with safe defaults.
 
 `POSTGRES_LOGIN=default` (the default) authenticates the primary PostgreSQL pool with `DB_PASSWORD`.
 
-`POSTGRES_LOGIN=aws` uses the AWS SDK v2 default credential chain, including IRSA, and its resolved region. `DB_HOST` must be the native RDS or Aurora endpoint, and the existing PostgreSQL TLS settings must validate it. A fresh IAM token is created before each physical connection; tokens are not retained in the pool configuration, and authentication failures never fall back to `DB_PASSWORD`.
+`POSTGRES_LOGIN=aws` uses the AWS SDK v2 default credential chain, including IRSA, and its resolved region. `DB_HOST` must be the native RDS or Aurora endpoint, and `DB_SSL_MODE` must be `require`, `verify-ca`, or `verify-full`. A fresh IAM token is created before each physical connection; tokens are not retained in the pool configuration, and authentication failures never fall back to `DB_PASSWORD`.
 
 ### Telemetry exporters (OTLP)
 
