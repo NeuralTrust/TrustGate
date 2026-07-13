@@ -33,6 +33,7 @@ var builtinSlugs = []string{
 	"cost_cap",
 	"semantic_cache",
 	"model_allowlist",
+	"prompt_decorator",
 	"prompt_template",
 	"tool_allowlist",
 }
@@ -52,6 +53,7 @@ func registerBuiltins(t *testing.T) Registry {
 		{"cost_cap", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}},
 		{"semantic_cache", []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}, []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}},
 		{"model_allowlist", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}},
+		{"prompt_decorator", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}},
 		{"prompt_template", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}},
 		{"tool_allowlist", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}},
 	}
@@ -80,7 +82,7 @@ func TestCatalogService_GroupsAndOrder(t *testing.T) {
 	assert.ElementsMatch(t, []string{"rate_limiter", "request_size_limiter", "cors"}, byType[groupTrafficControl])
 	assert.ElementsMatch(t, []string{"token_rate_limiter", "cost_cap"}, byType[groupQuota])
 	assert.ElementsMatch(t, []string{"semantic_cache", "model_allowlist", "tool_allowlist"}, byType[groupRouting])
-	assert.Equal(t, []string{"prompt_template"}, byType[groupPromptManagement])
+	assert.Equal(t, []string{"prompt_decorator", "prompt_template"}, byType[groupPromptManagement])
 }
 
 func TestCatalogService_EntriesHaveStagesAndSchema(t *testing.T) {
@@ -168,6 +170,14 @@ func enumLabels(options []EnumOption) []string {
 		labels[i] = o.Label
 	}
 	return labels
+}
+
+func fieldKeys(fields []Field) []string {
+	keys := make([]string, len(fields))
+	for i, field := range fields {
+		keys[i] = field.Key
+	}
+	return keys
 }
 
 func TestTokenRateLimiterSchema_BudgetTree(t *testing.T) {
@@ -577,6 +587,64 @@ func TestPluginCatalogMeta_CoversBuiltins(t *testing.T) {
 	}
 }
 
+func TestPromptDecoratorSchema_Tree(t *testing.T) {
+	meta, ok := pluginCatalogMeta["prompt_decorator"]
+	require.True(t, ok)
+	assert.Equal(t, "Prompt Decorator", meta.name)
+	assert.Equal(t, groupPromptManagement, meta.group)
+	assert.Equal(t, "Apply ordered static prompt decorators and optionally require an original system message. Scope is informational; effective scope is policy-owned.", meta.description)
+	assert.NotContains(t, meta.description, "template")
+	assert.NotContains(t, meta.description, "version")
+	assert.Equal(t, []string{"scope", "decorators", "require_system_message"}, fieldKeys(meta.schema.Fields))
+
+	scope, ok := fieldByKey(meta.schema.Fields, "scope")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeEnum, scope.Type)
+	assert.Equal(t, []string{"consumer", "global"}, enumValues(scope.Enum))
+	assert.Equal(t, "Informational; effective scope derives from policy ownership.", scope.Description)
+	assert.Nil(t, scope.Default)
+
+	decorators, ok := fieldByKey(meta.schema.Fields, "decorators")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeArray, decorators.Type)
+	assert.False(t, decorators.Required)
+	assert.Equal(t, "Ordered static messages. At least one decorator or Require System Message must be configured.", decorators.Description)
+	require.NotNil(t, decorators.Item)
+	assert.Equal(t, FieldTypeObject, decorators.Item.Type)
+	assert.Equal(t, []string{"position", "role", "content", "on_existing_system"}, fieldKeys(decorators.Item.Fields))
+
+	position, ok := fieldByKey(decorators.Item.Fields, "position")
+	require.True(t, ok)
+	assert.True(t, position.Required)
+	assert.Equal(t, []string{"start", "end", "after_system", "before_last_user", "system"}, enumValues(position.Enum))
+	assert.Equal(t, "Placement in the prompt. System requires the system role; all other positions require user or assistant.", position.Description)
+
+	role, ok := fieldByKey(decorators.Item.Fields, "role")
+	require.True(t, ok)
+	assert.True(t, role.Required)
+	assert.Equal(t, []string{"system", "user", "assistant"}, enumValues(role.Enum))
+	assert.Equal(t, "Message role. System is valid only with the system position.", role.Description)
+
+	content, ok := fieldByKey(decorators.Item.Fields, "content")
+	require.True(t, ok)
+	assert.True(t, content.Required)
+	assert.Equal(t, FieldTypeString, content.Type)
+	assert.Equal(t, "Static, nonblank message content.", content.Description)
+
+	onExisting, ok := fieldByKey(decorators.Item.Fields, "on_existing_system")
+	require.True(t, ok)
+	assert.False(t, onExisting.Required)
+	assert.Equal(t, []string{"merge", "replace", "append", "skip"}, enumValues(onExisting.Enum))
+	assert.Equal(t, "Required with the system position and forbidden with every other position.", onExisting.Description)
+	assert.Nil(t, onExisting.Default)
+
+	requireSystem, ok := fieldByKey(meta.schema.Fields, "require_system_message")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeBoolean, requireSystem.Type)
+	assert.False(t, requireSystem.Required)
+	assert.Equal(t, false, requireSystem.Default)
+}
+
 func TestPromptTemplate_CatalogEntry(t *testing.T) {
 	svc := NewCatalogService(registerBuiltins(t))
 	catalog := svc.Catalog()
@@ -608,8 +676,20 @@ func TestPromptTemplateSchema_Tree(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "Prompt Template", meta.name)
 	assert.Equal(t, groupPromptManagement, meta.group)
+	assert.Equal(t, "Inject context-bound system prompts (Mode A) and/or render client-referenced named, versioned templates (Mode B) into the request before it reaches the model.", meta.description)
 
 	fields := meta.schema.Fields
+	assert.Equal(t, []string{
+		"template_engine",
+		"context_variables",
+		"inject_templates",
+		"named_templates",
+		"allow_untemplated_requests",
+		"on_missing_context_variable",
+		"on_missing_client_variable",
+		"default_label",
+		"escape_json_control_chars",
+	}, fieldKeys(fields))
 
 	engineField, ok := fieldByKey(fields, "template_engine")
 	require.True(t, ok)

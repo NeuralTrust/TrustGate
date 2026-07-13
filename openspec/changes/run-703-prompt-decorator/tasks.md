@@ -69,8 +69,8 @@ One commit/PR per phase. PR 1 targets `develop`; each later PR targets the prece
 
 ## Phase 8: Catalog and DI Activation
 
-- [ ] 8.1 Register `prompt_decorator` in `pkg/container/modules/plugins.go`; add schema/catalog expectations in `pkg/app/plugins/catalog_metadata.go` and `catalog_test.go`.
-- [ ] 8.2 Prove registration resolves and `prompt_template` is unchanged. Verify: `go test ./pkg/app/plugins ./pkg/container/modules ./pkg/infra/plugins/promptdecorator`.
+- [x] 8.1 Register `prompt_decorator` in `pkg/container/modules/plugins.go`; add schema/catalog expectations in `pkg/app/plugins/catalog_metadata.go` and `catalog_test.go`.
+- [x] 8.2 Prove registration resolves and `prompt_template` is unchanged. Verify: `go test ./pkg/app/plugins ./pkg/container/modules ./pkg/infra/plugins/promptdecorator`.
 
 ## Phase 9: Functional Acceptance
 

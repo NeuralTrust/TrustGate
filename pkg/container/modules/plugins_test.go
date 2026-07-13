@@ -21,8 +21,11 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/openaimoderation"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/promptdecorator"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/prompttemplate"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/tool_call_validation"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/stretchr/testify/assert"
@@ -42,6 +45,132 @@ func newTestPluginRegistry(t *testing.T) appplugins.Registry {
 	})
 	require.NoError(t, err)
 	return reg
+}
+
+func TestNewPluginRegistry_PromptManagementPlugins(t *testing.T) {
+	reg := newTestPluginRegistry(t)
+	assert.Equal(t, []string{
+		"azure_content_safety",
+		"bedrock_guardrail",
+		"cors",
+		"cost_cap",
+		"model_allowlist",
+		"openai_moderation",
+		"per_tool_rate_limiter",
+		"prompt_decorator",
+		"prompt_template",
+		"rate_limiter",
+		"request_size_limiter",
+		"semantic_cache",
+		"token_rate_limiter",
+		"tool_allowlist",
+		"tool_call_validation",
+		"tool_definition_transformation",
+		"trustguard",
+	}, reg.Names())
+
+	decorator, ok := reg.Get(promptdecorator.PluginName)
+	require.True(t, ok)
+	assert.IsType(t, &promptdecorator.Plugin{}, decorator)
+	assert.Equal(t, promptdecorator.PluginName, decorator.Name())
+	assert.Equal(t, []policy.Stage{policy.StagePreRequest}, decorator.MandatoryStages())
+	assert.Equal(t, []policy.Stage{policy.StagePreRequest}, decorator.SupportedStages())
+	assert.Equal(t, []policy.Mode{policy.ModeEnforce, policy.ModeObserve}, decorator.SupportedModes())
+	assert.True(t, decorator.MutatesRequestBody())
+	assert.False(t, decorator.MutatesResponseBody())
+	assert.False(t, decorator.MutatesMetadata())
+
+	template, ok := reg.Get(prompttemplate.PluginName)
+	require.True(t, ok)
+	assert.IsType(t, &prompttemplate.Plugin{}, template)
+	assert.Equal(t, prompttemplate.PluginName, template.Name())
+	assert.Equal(t, []policy.Stage{policy.StagePreRequest}, template.MandatoryStages())
+	assert.Equal(t, []policy.Stage{policy.StagePreRequest}, template.SupportedStages())
+	assert.Equal(t, []policy.Mode{policy.ModeEnforce, policy.ModeObserve}, template.SupportedModes())
+	assert.True(t, template.MutatesRequestBody())
+	assert.False(t, template.MutatesResponseBody())
+	assert.False(t, template.MutatesMetadata())
+	require.NoError(t, template.ValidateConfig(map[string]any{
+		"inject_templates": []any{map[string]any{"id": "t1", "content": "unchanged"}},
+	}))
+
+	entries := make(map[string]appplugins.CatalogEntry)
+	for _, group := range appplugins.NewCatalogService(reg).Catalog().Groups {
+		for _, entry := range group.Items {
+			entries[entry.Slug] = entry
+		}
+	}
+
+	decoratorEntry, ok := entries[promptdecorator.PluginName]
+	require.True(t, ok)
+	assert.Equal(t, "Prompt Decorator", decoratorEntry.Name)
+	assert.Equal(t, "Apply ordered static prompt decorators and optionally require an original system message. Scope is informational; effective scope is policy-owned.", decoratorEntry.Description)
+	assert.Equal(t, []policy.Stage{policy.StagePreRequest}, decoratorEntry.SupportedStages)
+	assert.Equal(t, []policy.Mode{policy.ModeEnforce, policy.ModeObserve}, decoratorEntry.SupportedModes)
+	require.Len(t, decoratorEntry.SettingsSchema.Fields, 3)
+
+	templateEntry, ok := entries[prompttemplate.PluginName]
+	require.True(t, ok)
+	assert.Equal(t, "Prompt Template", templateEntry.Name)
+	assert.Equal(t, "Inject context-bound system prompts (Mode A) and/or render client-referenced named, versioned templates (Mode B) into the request before it reaches the model.", templateEntry.Description)
+	assert.Equal(t, []policy.Stage{policy.StagePreRequest}, templateEntry.SupportedStages)
+	assert.Equal(t, []policy.Mode{policy.ModeEnforce, policy.ModeObserve}, templateEntry.SupportedModes)
+	require.Len(t, templateEntry.SettingsSchema.Fields, 9)
+}
+
+func TestNewPluginRegistry_PromptDecoratorValidation(t *testing.T) {
+	reg := newTestPluginRegistry(t)
+	valid := []map[string]any{
+		{"require_system_message": true},
+		{
+			"scope": "consumer",
+			"decorators": []any{
+				map[string]any{"position": "start", "role": "user", "content": "context"},
+			},
+		},
+		{
+			"scope": "global",
+			"decorators": []any{
+				map[string]any{
+					"position":           "system",
+					"role":               "system",
+					"content":            "guardrail",
+					"on_existing_system": "append",
+				},
+			},
+		},
+	}
+	for _, settings := range valid {
+		require.NoError(t, reg.Validate(promptdecorator.PluginName, settings))
+	}
+
+	invalid := []map[string]any{
+		{},
+		{"unknown": true},
+		{
+			"decorators": []any{
+				map[string]any{"position": "system", "role": "system", "content": "guardrail"},
+			},
+		},
+		{
+			"decorators": []any{
+				map[string]any{"position": "start", "role": "system", "content": "guardrail"},
+			},
+		},
+		{
+			"decorators": []any{
+				map[string]any{
+					"position":           "end",
+					"role":               "assistant",
+					"content":            "guardrail",
+					"on_existing_system": "merge",
+				},
+			},
+		},
+	}
+	for _, settings := range invalid {
+		require.Error(t, reg.Validate(promptdecorator.PluginName, settings))
+	}
 }
 
 func TestNewPluginRegistry_RegistersToolCallValidation(t *testing.T) {

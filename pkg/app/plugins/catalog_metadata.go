@@ -1014,6 +1014,72 @@ var pluginCatalogMeta = map[string]catalogMeta{
 			},
 		},
 	},
+	"prompt_decorator": {
+		name:        "Prompt Decorator",
+		group:       groupPromptManagement,
+		description: "Apply ordered static prompt decorators and optionally require an original system message. Scope is informational; effective scope is policy-owned.",
+		schema: SettingsSchema{
+			Fields: []Field{
+				{
+					Key:         "scope",
+					Label:       "Scope",
+					Type:        FieldTypeEnum,
+					Description: "Informational; effective scope derives from policy ownership.",
+					Enum:        enumOptions("consumer", "global"),
+				},
+				{
+					Key:         "decorators",
+					Label:       "Decorators",
+					Type:        FieldTypeArray,
+					Description: "Ordered static messages. At least one decorator or Require System Message must be configured.",
+					Item: &Field{
+						Key:   "decorator",
+						Label: "Decorator",
+						Type:  FieldTypeObject,
+						Fields: []Field{
+							{
+								Key:         "position",
+								Label:       "Position",
+								Type:        FieldTypeEnum,
+								Description: "Placement in the prompt. System requires the system role; all other positions require user or assistant.",
+								Required:    true,
+								Enum:        enumOptions("start", "end", "after_system", "before_last_user", "system"),
+							},
+							{
+								Key:         "role",
+								Label:       "Role",
+								Type:        FieldTypeEnum,
+								Description: "Message role. System is valid only with the system position.",
+								Required:    true,
+								Enum:        enumOptions("system", "user", "assistant"),
+							},
+							{
+								Key:         "content",
+								Label:       "Content",
+								Type:        FieldTypeString,
+								Description: "Static, nonblank message content.",
+								Required:    true,
+							},
+							{
+								Key:         "on_existing_system",
+								Label:       "On Existing System",
+								Type:        FieldTypeEnum,
+								Description: "Required with the system position and forbidden with every other position.",
+								Enum:        enumOptions("merge", "replace", "append", "skip"),
+							},
+						},
+					},
+				},
+				{
+					Key:         "require_system_message",
+					Label:       "Require System Message",
+					Type:        FieldTypeBoolean,
+					Description: "Require nonblank system content in the original client request before decoration.",
+					Default:     false,
+				},
+			},
+		},
+	},
 	"tool_definition_transformation": {
 		name:        "Tool Definition Transformation",
 		group:       groupToolGovernance,
