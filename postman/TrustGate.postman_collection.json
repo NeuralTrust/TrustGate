@@ -11074,7 +11074,7 @@
         },
         {
           "name": "Per-tool rate limiter",
-          "description": "Exercises the `per_tool_rate_limiter` plugin across `pre_request`, `pre_response` and `post_response`. The model is forced (via `tool_choice`) to call `get_weather` on every request, and the plugin counts each actual tool call at `post_response`. The rule allows 2 calls of `get_weather` per 1m window, scoped per consumer. Steps 8-9 stay within the limit (200, tool call forwarded). Step 10 is over the limit and, with `behavior: reject_response`, short-circuits at `pre_request` with `429`, a `tool \"get_weather\" rate limit exceeded` body, a `Retry-After` and an `X-RateLimit-Tool` header; upstream is never contacted. Steps 11-12 flip the behavior to `inject_error_result` and prove that, instead of rejecting, the plugin removes the over-limit tool call from the response at `pre_response` and injects a `... is rate limited and was not executed` message (200). The third behavior, `strip_tool_from_request`, removes the tool from the outbound request before it reaches upstream. Set `openai_api_key` to a real key and run top-to-bottom.",
+          "description": "Exercises the `per_tool_rate_limiter` plugin at `pre_request` and `pre_response`. The plugin counts real tool executions at `pre_request` from the `role:\"tool\"` results the client returns on the next request, deduplicated by `tool_call_id`; a tool call is only charged after it is executed, never when the model first requests it. The rule allows 2 executions of `get_weather` per 1m window, scoped per consumer. The model is forced (via `tool_choice`) to call `get_weather` on every request; while under the limit the tool call is forwarded (200) and the execution is charged once the client sends back the `role:\"tool\"` result. Once the budget is spent, `behavior: reject_response` short-circuits at `pre_request` with `429`, a `tool \"get_weather\" rate limit exceeded` body, a `Retry-After` and an `X-RateLimit-Tool` header; upstream is never contacted. `inject_error_result` instead removes the over-limit tool call from the response at `pre_response` and injects a `... is rate limited and was not executed` message (200). The third behavior, `strip_tool_from_request`, removes the tool from the outbound request before it reaches upstream. Set `openai_api_key` to a real key and run top-to-bottom.",
           "item": [
             {
               "name": "1. Create Gateway",
@@ -11185,7 +11185,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"per-tool-rate-limiter-reject-{{$guid}}\",\n  \"slug\": \"per_tool_rate_limiter\",\n  \"enabled\": true,\n  \"priority\": 10,\n  \"parallel\": false,\n  \"stages\": [\"pre_request\", \"pre_response\", \"post_response\"],\n  \"settings\": {\n    \"scope\": \"consumer\",\n    \"behavior_default\": \"reject_response\",\n    \"rules\": [\n      {\n        \"tool\": \"get_weather\",\n        \"windows\": [ { \"duration\": \"1m\", \"max\": 2 } ]\n      }\n    ]\n  }\n}"
+                  "raw": "{\n  \"name\": \"per-tool-rate-limiter-reject-{{$guid}}\",\n  \"slug\": \"per_tool_rate_limiter\",\n  \"enabled\": true,\n  \"priority\": 10,\n  \"parallel\": false,\n  \"stages\": [\"pre_request\", \"pre_response\"],\n  \"settings\": {\n    \"scope\": \"consumer\",\n    \"behavior_default\": \"reject_response\",\n    \"rules\": [\n      {\n        \"tool\": \"get_weather\",\n        \"windows\": [ { \"duration\": \"1m\", \"max\": 2 } ]\n      }\n    ]\n  }\n}"
                 },
                 "url": {
                   "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies",
@@ -11199,7 +11199,7 @@
                     "policies"
                   ]
                 },
-                "description": "The policy `slug` must equal the plugin name `per_tool_rate_limiter`, and the plugin declares all three stages as mandatory (`pre_request` enforces, `post_response` counts actual tool calls). The single rule allows 2 calls of `get_weather` per 1m window; `behavior_default: reject_response` returns a `429` once the limit is reached."
+                "description": "The policy `slug` must equal the plugin name `per_tool_rate_limiter`. The plugin enforces and counts at `pre_request` (real executions taken from the returned `role:\"tool\"` results) and can inject at `pre_response`. The single rule allows 2 executions of `get_weather` per 1m window; `behavior_default: reject_response` returns a `429` once the limit is reached."
               }
             },
             {
@@ -11406,7 +11406,7 @@
                     "completions"
                   ]
                 },
-                "description": "`tool_choice` forces the model to call `get_weather`. First call inside the window: the counter is below the limit, so the request is forwarded and the tool call reaches the client. The actual call is counted at `post_response` (counter -> 1)."
+                "description": "`tool_choice` forces the model to call `get_weather`. The counter is below the limit, so the request is forwarded and the tool call reaches the client. The execution is counted at `pre_request` on the following request, once the client returns the `get_weather` `role:\"tool\"` result."
               }
             },
             {
@@ -11458,7 +11458,7 @@
                     "completions"
                   ]
                 },
-                "description": "Second (last) allowed call of `get_weather` inside the window; counted at `post_response` (counter -> 2, now at the limit)."
+                "description": "Another forced `get_weather` call inside the window; each returned execution result is counted at `pre_request`, spending the 2-per-window budget."
               }
             },
             {
@@ -11538,7 +11538,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"per-tool-rate-limiter-inject-{{$guid}}\",\n  \"slug\": \"per_tool_rate_limiter\",\n  \"enabled\": true,\n  \"priority\": 10,\n  \"parallel\": false,\n  \"stages\": [\"pre_request\", \"pre_response\", \"post_response\"],\n  \"settings\": {\n    \"scope\": \"consumer\",\n    \"behavior_default\": \"inject_error_result\",\n    \"rules\": [\n      {\n        \"tool\": \"get_weather\",\n        \"windows\": [ { \"duration\": \"1m\", \"max\": 2 } ]\n      }\n    ]\n  }\n}"
+                  "raw": "{\n  \"name\": \"per-tool-rate-limiter-inject-{{$guid}}\",\n  \"slug\": \"per_tool_rate_limiter\",\n  \"enabled\": true,\n  \"priority\": 10,\n  \"parallel\": false,\n  \"stages\": [\"pre_request\", \"pre_response\"],\n  \"settings\": {\n    \"scope\": \"consumer\",\n    \"behavior_default\": \"inject_error_result\",\n    \"rules\": [\n      {\n        \"tool\": \"get_weather\",\n        \"windows\": [ { \"duration\": \"1m\", \"max\": 2 } ]\n      }\n    ]\n  }\n}"
                 },
                 "url": {
                   "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies/{{policy_id}}",

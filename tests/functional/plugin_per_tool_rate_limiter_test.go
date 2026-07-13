@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -82,6 +81,30 @@ func chatRequestWithTools(tools ...string) map[string]any {
 	}
 }
 
+func chatRequestWithToolResult(callID, toolName string, declared ...string) map[string]any {
+	body := map[string]any{
+		"model": "gpt-4o-mini",
+		"messages": []map[string]any{
+			{"role": "user", "content": "Hello"},
+			{"role": "assistant", "content": "", "tool_calls": []map[string]any{
+				{"id": callID, "type": "function", "function": map[string]any{"name": toolName, "arguments": "{}"}},
+			}},
+			{"role": "tool", "tool_call_id": callID, "content": "ok"},
+		},
+	}
+	if len(declared) > 0 {
+		specs := make([]map[string]any, 0, len(declared))
+		for _, name := range declared {
+			specs = append(specs, map[string]any{
+				"type":     "function",
+				"function": map[string]any{"name": name, "parameters": map[string]any{"type": "object"}},
+			})
+		}
+		body["tools"] = specs
+	}
+	return body
+}
+
 func forwardedToolNames(t *testing.T, raw []byte) []string {
 	t.Helper()
 	var parsed struct {
@@ -109,22 +132,16 @@ func TestPluginE2E_PerToolRateLimiter_RejectResponse(t *testing.T) {
 		}),
 	)
 
-	body := mustJSON(t, chatRequestWithTools("get_weather"))
+	proposal := mustJSON(t, chatRequestWithTools("get_weather"))
+	status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, proposal)
+	require.Equal(t, http.StatusOK, status, "proposal turn is under the limit, body: %s", raw)
 
-	status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
-	require.Equal(t, http.StatusOK, status, "first call is under the limit, body: %s", raw)
+	execution := mustJSON(t, chatRequestWithToolResult("call_1", "get_weather"))
+	status, _, raw = proxyRequest(t, http.MethodPost, apiKey, path, nil, execution)
+	require.Equal(t, http.StatusOK, status, "executed-result turn charges the counter and passes through, body: %s", raw)
 
-	var rlHeaders http.Header
-	require.Eventually(t, func() bool {
-		s, h, _ := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
-		if s == http.StatusTooManyRequests {
-			rlHeaders = h
-			return true
-		}
-		return false
-	}, 5*time.Second, 100*time.Millisecond,
-		"once the tool's window is exhausted the next request must be rejected")
-
+	status, rlHeaders, _ := proxyRequest(t, http.MethodPost, apiKey, path, nil, proposal)
+	require.Equal(t, http.StatusTooManyRequests, status, "once the tool's window is exhausted the next request must be rejected")
 	assert.Equal(t, "get_weather", rlHeaders.Get("X-RateLimit-Tool"))
 	assert.Equal(t, "1", rlHeaders.Get("X-RateLimit-consumer-Limit"))
 	assert.Equal(t, "60", rlHeaders.Get("Retry-After"))
@@ -140,28 +157,20 @@ func TestPluginE2E_PerToolRateLimiter_InjectErrorResult(t *testing.T) {
 		}),
 	)
 
-	body := mustJSON(t, chatRequest(false))
-
-	status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
+	underLimit := mustJSON(t, chatRequest(false))
+	status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, underLimit)
 	require.Equal(t, http.StatusOK, status, "first call is under the limit, body: %s", raw)
 	first := decodePerToolResponse(t, raw)
 	require.Len(t, first.Choices[0].Message.ToolCalls, 1, "under-limit response keeps the tool_call, body: %s", raw)
 
-	var injected perToolChatResponse
-	require.Eventually(t, func() bool {
-		s, _, r := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
-		if s != http.StatusOK {
-			return false
-		}
-		resp := decodePerToolResponse(t, r)
-		if len(resp.Choices[0].Message.ToolCalls) == 0 {
-			injected = resp
-			return true
-		}
-		return false
-	}, 5*time.Second, 100*time.Millisecond,
-		"once the window is exhausted the tool_call must be injected away")
+	execution := mustJSON(t, chatRequestWithToolResult("call_1", "get_weather"))
+	status, _, raw = proxyRequest(t, http.MethodPost, apiKey, path, nil, execution)
+	require.Equal(t, http.StatusOK, status, "executed-result turn charges the counter, body: %s", raw)
 
+	status, _, raw = proxyRequest(t, http.MethodPost, apiKey, path, nil, underLimit)
+	require.Equal(t, http.StatusOK, status, "over-budget turn returns 200 with the tool_call injected away, body: %s", raw)
+	injected := decodePerToolResponse(t, raw)
+	require.Len(t, injected.Choices[0].Message.ToolCalls, 0, "once the window is exhausted the tool_call must be injected away, body: %s", raw)
 	assert.Equal(t, "stop", injected.Choices[0].FinishReason)
 	assert.True(t, strings.Contains(injected.Choices[0].Message.Content, "get_weather"),
 		"the injected assistant message must reference the rate-limited tool")
@@ -177,17 +186,17 @@ func TestPluginE2E_PerToolRateLimiter_StripToolFromRequest(t *testing.T) {
 		}),
 	)
 
-	body := mustJSON(t, chatRequestWithTools("get_weather", "lookup"))
+	execution := mustJSON(t, chatRequestWithToolResult("call_1", "get_weather"))
+	status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, execution)
+	require.Equal(t, http.StatusOK, status, "executed-result turn charges the counter, body: %s", raw)
 
-	status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
-	require.Equal(t, http.StatusOK, status, "first call is under the limit, body: %s", raw)
+	overBudget := mustJSON(t, chatRequestWithTools("get_weather", "lookup"))
+	status, _, raw = proxyRequest(t, http.MethodPost, apiKey, path, nil, overBudget)
+	require.Equal(t, http.StatusOK, status, "strip returns 200 with the tool removed, body: %s", raw)
 
-	require.Eventually(t, func() bool {
-		_, _, _ = proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
-		tools := forwardedToolNames(t, up.LastBody())
-		return len(tools) == 1 && tools[0] == "lookup"
-	}, 5*time.Second, 100*time.Millisecond,
-		"once over budget, get_weather must be stripped from the forwarded tools while lookup remains")
+	tools := forwardedToolNames(t, up.LastBody())
+	require.Len(t, tools, 1)
+	assert.Equal(t, "lookup", tools[0], "once over budget, get_weather must be stripped while lookup remains")
 }
 
 func TestPluginE2E_PerToolRateLimiter_GlobMatchUsesDefaultBehavior(t *testing.T) {
@@ -201,21 +210,12 @@ func TestPluginE2E_PerToolRateLimiter_GlobMatchUsesDefaultBehavior(t *testing.T)
 		}),
 	)
 
-	body := mustJSON(t, chatRequestWithTools("get_weather"))
+	execution := mustJSON(t, chatRequestWithToolResult("call_1", "get_weather"))
+	status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, execution)
+	require.Equal(t, http.StatusOK, status, "executed-result turn charges the counter, body: %s", raw)
 
-	status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
-	require.Equal(t, http.StatusOK, status, "first call is under the limit, body: %s", raw)
-
-	var rlHeaders http.Header
-	require.Eventually(t, func() bool {
-		s, h, _ := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
-		if s == http.StatusTooManyRequests {
-			rlHeaders = h
-			return true
-		}
-		return false
-	}, 5*time.Second, 100*time.Millisecond,
-		"glob-matched tool must use the default reject behavior once exhausted")
-
+	proposal := mustJSON(t, chatRequestWithTools("get_weather"))
+	status, rlHeaders, _ := proxyRequest(t, http.MethodPost, apiKey, path, nil, proposal)
+	require.Equal(t, http.StatusTooManyRequests, status, "glob-matched tool must use the default reject behavior once exhausted")
 	assert.Equal(t, "get_weather", rlHeaders.Get("X-RateLimit-Tool"))
 }
