@@ -197,28 +197,28 @@ Depends only on Phase 1's `SupportedProtocols` + `ProtocolResolver`. Catalog unt
 Depends only on Phase 1's `SupportedProtocols()`. Additive.
 
 ### 3.1 Catalog field
-- [ ] **[P]** In `pkg/app/plugins/catalog.go`, add
+- [x] **[P]** In `pkg/app/plugins/catalog.go`, add
   `SupportedProtocols []Protocol \`json:"supported_protocols"\`` to `CatalogEntry`
   (struct lines 76-85), after `SupportedModes`. No comment. (design §7)
 
 ### 3.2 Populate in the catalog service
-- [ ] **[P]** In `catalogService.Catalog()`, at the `CatalogEntry{...}` literal
+- [x] **[P]** In `catalogService.Catalog()`, at the `CatalogEntry{...}` literal
   (lines 135-144), set `SupportedProtocols: plugin.SupportedProtocols()` after
   `SupportedModes`. Behavioural (from the descriptor), NOT from `catalog_metadata.go`. (design §7)
 
 ### 3.3 Catalog test
-- [ ] **[T]** In `pkg/app/plugins/catalog_test.go`, assert each catalog entry includes
+- [x] **[T]** In `pkg/app/plugins/catalog_test.go`, assert each catalog entry includes
   `supported_protocols` matching the plugin's matrix row (spot-check dual, LLM-only,
   MCP-only). (spec: "Catalog reports supported_protocols per plugin", Q5)
 
 ### 3.4 Regenerate Swagger + OpenAPI
-- [ ] **[G]** Run `make swagger` then `make openapi` → regenerates
+- [x] **[G]** Run `make swagger` then `make openapi` → regenerates
   `docs/swagger.json`, `docs/swagger.yaml`, `docs/docs.go`, `docs/openapi.json` with
   the new `supported_protocols` field. Do NOT hand-edit generated files. No
   `@Failure` annotation change needed (AttachPolicy already documents 400/401/404). (design §8)
 
 ### 3.5 Phase 3 gate
-- [ ] Run `go build ./...`, `go vet ./...`, `golangci-lint run`,
+- [x] Run `go build ./...`, `go vet ./...`, `golangci-lint run`,
   `go test -race ./...` — all green. Confirm `make license` applied to any new file.
 
 ---
