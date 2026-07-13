@@ -76,6 +76,9 @@ func (r *registry) Register(p Plugin) error {
 	if err := validateDeclaredModes(name, p.SupportedModes()); err != nil {
 		return err
 	}
+	if err := validateDeclaredProtocols(name, p.SupportedProtocols()); err != nil {
+		return err
+	}
 	r.plugins[name] = p
 	return nil
 }

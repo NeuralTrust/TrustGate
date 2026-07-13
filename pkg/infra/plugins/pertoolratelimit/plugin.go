@@ -106,6 +106,10 @@ func (p *Plugin) SupportedStages() []policy.Stage {
 	return []policy.Stage{policy.StagePreRequest, policy.StagePreResponse}
 }
 
+func (p *Plugin) SupportedProtocols() []appplugins.Protocol {
+	return []appplugins.Protocol{appplugins.ProtocolLLM, appplugins.ProtocolMCP}
+}
+
 func (p *Plugin) SupportedModes() []policy.Mode {
 	return []policy.Mode{policy.ModeEnforce}
 }

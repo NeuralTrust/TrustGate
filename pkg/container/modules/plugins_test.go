@@ -44,6 +44,34 @@ func newTestPluginRegistry(t *testing.T) appplugins.Registry {
 	return reg
 }
 
+func TestNewPluginRegistry_SupportedProtocolsMatrix(t *testing.T) {
+	reg := newTestPluginRegistry(t)
+	want := map[string][]appplugins.Protocol{
+		"cors":                           {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
+		"request_size_limiter":           {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
+		"rate_limiter":                   {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
+		"trustguard":                     {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
+		"per_tool_rate_limiter":          {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
+		"cost_cap":                       {appplugins.ProtocolLLM},
+		"token_rate_limiter":             {appplugins.ProtocolLLM},
+		"model_allowlist":                {appplugins.ProtocolLLM},
+		"prompt_template":                {appplugins.ProtocolLLM},
+		"tool_definition_transformation": {appplugins.ProtocolLLM},
+		"tool_allowlist":                 {appplugins.ProtocolLLM},
+		"tool_call_validation":           {appplugins.ProtocolLLM},
+		"openai_moderation":              {appplugins.ProtocolLLM},
+		"bedrock_guardrail":              {appplugins.ProtocolLLM},
+		"azure_content_safety":           {appplugins.ProtocolLLM},
+		"semantic_cache":                 {appplugins.ProtocolLLM},
+	}
+	for slug, protocols := range want {
+		p, ok := reg.Get(slug)
+		require.Truef(t, ok, "plugin %q not registered", slug)
+		assert.ElementsMatchf(t, protocols, p.SupportedProtocols(), "slug %q protocol set", slug)
+		assert.NotContainsf(t, p.SupportedProtocols(), appplugins.ProtocolA2A, "slug %q must not report A2A", slug)
+	}
+}
+
 func TestNewPluginRegistry_RegistersToolCallValidation(t *testing.T) {
 	reg := newTestPluginRegistry(t)
 

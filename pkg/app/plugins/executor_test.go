@@ -48,6 +48,7 @@ func (f *fakePlugin) Name() string                        { return f.name }
 func (f *fakePlugin) MandatoryStages() []policy.Stage     { return f.stages }
 func (f *fakePlugin) SupportedStages() []policy.Stage     { return f.stages }
 func (f *fakePlugin) SupportedModes() []policy.Mode       { return []policy.Mode{policy.ModeEnforce} }
+func (f *fakePlugin) SupportedProtocols() []Protocol      { return []Protocol{ProtocolLLM} }
 func (f *fakePlugin) ValidateConfig(map[string]any) error { return f.validErr }
 func (f *fakePlugin) MutatesRequestBody() bool            { return f.mutReq }
 func (f *fakePlugin) MutatesResponseBody() bool           { return f.mutResp }
@@ -124,6 +125,7 @@ func (s *scopeCapturePlugin) SupportedStages() []policy.Stage {
 	return []policy.Stage{policy.StagePreRequest}
 }
 func (s *scopeCapturePlugin) SupportedModes() []policy.Mode       { return []policy.Mode{policy.ModeEnforce} }
+func (s *scopeCapturePlugin) SupportedProtocols() []Protocol      { return []Protocol{ProtocolLLM} }
 func (s *scopeCapturePlugin) ValidateConfig(map[string]any) error { return nil }
 func (s *scopeCapturePlugin) MutatesRequestBody() bool            { return false }
 func (s *scopeCapturePlugin) MutatesResponseBody() bool           { return false }

@@ -55,19 +55,20 @@ func registerBuiltins(t *testing.T) Registry {
 		name      string
 		mandatory []policy.Stage
 		supported []policy.Stage
+		protocols []Protocol
 	}{
-		{"rate_limiter", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}},
-		{"request_size_limiter", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}},
-		{"cors", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}},
-		{"token_rate_limiter", []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}, []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}},
-		{"cost_cap", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}},
-		{"semantic_cache", []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}, []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}},
-		{"model_allowlist", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}},
-		{"prompt_template", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}},
-		{"tool_allowlist", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}},
+		{"rate_limiter", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}, []Protocol{ProtocolLLM, ProtocolMCP}},
+		{"request_size_limiter", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}, []Protocol{ProtocolLLM, ProtocolMCP}},
+		{"cors", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}, []Protocol{ProtocolLLM, ProtocolMCP}},
+		{"token_rate_limiter", []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}, []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}, []Protocol{ProtocolLLM}},
+		{"cost_cap", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}, []Protocol{ProtocolLLM}},
+		{"semantic_cache", []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}, []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}, []Protocol{ProtocolLLM}},
+		{"model_allowlist", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}, []Protocol{ProtocolLLM}},
+		{"prompt_template", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}, []Protocol{ProtocolLLM}},
+		{"tool_allowlist", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}, []Protocol{ProtocolLLM}},
 	}
 	for _, s := range specs {
-		require.NoError(t, reg.Register(&stagePlugin{name: s.name, mandatory: s.mandatory, supported: s.supported}))
+		require.NoError(t, reg.Register(&stagePlugin{name: s.name, mandatory: s.mandatory, supported: s.supported, protocols: s.protocols}))
 	}
 	return reg
 }
@@ -127,6 +128,48 @@ func TestCatalogService_EntriesHaveStagesAndSchema(t *testing.T) {
 		[]policy.Stage{policy.StagePreRequest, policy.StagePostResponse},
 		entries["token_rate_limiter"].SupportedStages,
 	)
+}
+
+func TestCatalogService_EntriesHaveSupportedProtocols(t *testing.T) {
+	svc := NewCatalogService(registerBuiltins(t))
+	catalog := svc.Catalog()
+
+	entries := make(map[string]CatalogEntry)
+	for _, g := range catalog.Groups {
+		for _, item := range g.Items {
+			entries[item.Slug] = item
+		}
+	}
+
+	for _, slug := range catalogVisibleSlugs() {
+		entry, ok := entries[slug]
+		require.Truef(t, ok, "slug %q missing from catalog", slug)
+		assert.NotEmptyf(t, entry.SupportedProtocols, "slug %q has no supported protocols", slug)
+	}
+
+	assert.ElementsMatch(t, []Protocol{ProtocolLLM, ProtocolMCP}, entries["cors"].SupportedProtocols)
+	assert.ElementsMatch(t, []Protocol{ProtocolLLM}, entries["cost_cap"].SupportedProtocols)
+
+	reg := NewRegistry()
+	require.NoError(t, reg.Register(&stagePlugin{
+		name:      "per_tool_rate_limiter",
+		mandatory: []policy.Stage{policy.StagePreRequest},
+		supported: []policy.Stage{policy.StagePreRequest},
+		protocols: []Protocol{ProtocolLLM, ProtocolMCP},
+	}))
+
+	var ptrlEntry CatalogEntry
+	found := false
+	for _, g := range NewCatalogService(reg).Catalog().Groups {
+		for _, item := range g.Items {
+			if item.Slug == "per_tool_rate_limiter" {
+				ptrlEntry = item
+				found = true
+			}
+		}
+	}
+	require.True(t, found, "per_tool_rate_limiter missing from catalog")
+	assert.ElementsMatch(t, []Protocol{ProtocolLLM, ProtocolMCP}, ptrlEntry.SupportedProtocols)
 }
 
 func TestCatalogService_OnlyRegisteredPlugins(t *testing.T) {

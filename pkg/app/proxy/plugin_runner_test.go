@@ -43,10 +43,13 @@ type stubPlugin struct {
 	seen   chan appplugins.ExecInput
 }
 
-func (s *stubPlugin) Name() string                        { return s.name }
-func (s *stubPlugin) MandatoryStages() []policy.Stage     { return s.stages }
-func (s *stubPlugin) SupportedStages() []policy.Stage     { return s.stages }
-func (s *stubPlugin) SupportedModes() []policy.Mode       { return []policy.Mode{policy.ModeEnforce} }
+func (s *stubPlugin) Name() string                    { return s.name }
+func (s *stubPlugin) MandatoryStages() []policy.Stage { return s.stages }
+func (s *stubPlugin) SupportedStages() []policy.Stage { return s.stages }
+func (s *stubPlugin) SupportedModes() []policy.Mode   { return []policy.Mode{policy.ModeEnforce} }
+func (s *stubPlugin) SupportedProtocols() []appplugins.Protocol {
+	return []appplugins.Protocol{appplugins.ProtocolLLM}
+}
 func (s *stubPlugin) ValidateConfig(map[string]any) error { return nil }
 func (s *stubPlugin) MutatesRequestBody() bool            { return false }
 func (s *stubPlugin) MutatesResponseBody() bool           { return false }
@@ -313,10 +316,13 @@ type capturePlugin struct {
 	seen   chan appplugins.ExecInput
 }
 
-func (c *capturePlugin) Name() string                        { return c.name }
-func (c *capturePlugin) MandatoryStages() []policy.Stage     { return c.stages }
-func (c *capturePlugin) SupportedStages() []policy.Stage     { return c.stages }
-func (c *capturePlugin) SupportedModes() []policy.Mode       { return []policy.Mode{policy.ModeEnforce} }
+func (c *capturePlugin) Name() string                    { return c.name }
+func (c *capturePlugin) MandatoryStages() []policy.Stage { return c.stages }
+func (c *capturePlugin) SupportedStages() []policy.Stage { return c.stages }
+func (c *capturePlugin) SupportedModes() []policy.Mode   { return []policy.Mode{policy.ModeEnforce} }
+func (c *capturePlugin) SupportedProtocols() []appplugins.Protocol {
+	return []appplugins.Protocol{appplugins.ProtocolLLM}
+}
 func (c *capturePlugin) ValidateConfig(map[string]any) error { return nil }
 func (c *capturePlugin) MutatesRequestBody() bool            { return false }
 func (c *capturePlugin) MutatesResponseBody() bool           { return false }

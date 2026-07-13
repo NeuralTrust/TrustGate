@@ -74,14 +74,15 @@ type SettingsSchema struct {
 // CatalogEntry describes a single available policy/plugin and the schema needed
 // to configure it.
 type CatalogEntry struct {
-	Slug            string         `json:"slug"`
-	Name            string         `json:"name"`
-	Description     string         `json:"description,omitempty"`
-	MandatoryStages []policy.Stage `json:"mandatory_stages"`
-	SupportedStages []policy.Stage `json:"supported_stages"`
-	SupportedModes  []policy.Mode  `json:"supported_modes"`
-	DefaultMode     policy.Mode    `json:"default_mode"`
-	SettingsSchema  SettingsSchema `json:"settings_schema"`
+	Slug               string         `json:"slug"`
+	Name               string         `json:"name"`
+	Description        string         `json:"description,omitempty"`
+	MandatoryStages    []policy.Stage `json:"mandatory_stages"`
+	SupportedStages    []policy.Stage `json:"supported_stages"`
+	SupportedModes     []policy.Mode  `json:"supported_modes"`
+	SupportedProtocols []Protocol     `json:"supported_protocols"`
+	DefaultMode        policy.Mode    `json:"default_mode"`
+	SettingsSchema     SettingsSchema `json:"settings_schema"`
 }
 
 // CatalogGroup buckets policies by their product category.
@@ -136,14 +137,15 @@ func (s *catalogService) Catalog() Catalog {
 			displayName = name
 		}
 		buckets[meta.group] = append(buckets[meta.group], CatalogEntry{
-			Slug:            name,
-			Name:            displayName,
-			Description:     meta.description,
-			MandatoryStages: plugin.MandatoryStages(),
-			SupportedStages: plugin.SupportedStages(),
-			SupportedModes:  plugin.SupportedModes(),
-			DefaultMode:     policy.DefaultMode,
-			SettingsSchema:  meta.schema,
+			Slug:               name,
+			Name:               displayName,
+			Description:        meta.description,
+			MandatoryStages:    plugin.MandatoryStages(),
+			SupportedStages:    plugin.SupportedStages(),
+			SupportedModes:     plugin.SupportedModes(),
+			SupportedProtocols: plugin.SupportedProtocols(),
+			DefaultMode:        policy.DefaultMode,
+			SettingsSchema:     meta.schema,
 		})
 	}
 
