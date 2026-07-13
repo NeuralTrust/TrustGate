@@ -114,7 +114,7 @@ func TestGuardDecodesResponses(t *testing.T) {
 			defer srv.Close()
 
 			c := newClient(2 * time.Second)
-			resp, err := c.Guard(context.Background(), srv.URL, "secret-key", sampleRequest())
+			resp, err := c.Guard(context.Background(), srv.URL, "secret-key", "", sampleRequest())
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("expected error, got nil")
@@ -163,7 +163,7 @@ func TestGuardTrimsTrailingSlash(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient(time.Second)
-	if _, err := c.Guard(context.Background(), srv.URL+"/", "k", sampleRequest()); err != nil {
+	if _, err := c.Guard(context.Background(), srv.URL+"/", "k", "", sampleRequest()); err != nil {
 		t.Fatalf("Guard returned error: %v", err)
 	}
 }
@@ -174,7 +174,7 @@ func TestGuardTransportError(t *testing.T) {
 	srv.Close()
 
 	c := newClient(time.Second)
-	if _, err := c.Guard(context.Background(), srv.URL, "k", sampleRequest()); err == nil {
+	if _, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest()); err == nil {
 		t.Fatal("expected transport error, got nil")
 	}
 }
@@ -187,7 +187,7 @@ func TestGuardUnauthorizedReturnsSentinel(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient(time.Second)
-	_, err := c.Guard(context.Background(), srv.URL, "stale-token", sampleRequest())
+	_, err := c.Guard(context.Background(), srv.URL, "stale-token", "", sampleRequest())
 	if !errors.Is(err, errUnauthorized) {
 		t.Fatalf("err = %v, want errUnauthorized", err)
 	}
@@ -204,7 +204,40 @@ func TestGuardContextCanceled(t *testing.T) {
 	cancel()
 
 	c := newClient(time.Second)
-	if _, err := c.Guard(ctx, srv.URL, "k", sampleRequest()); err == nil {
+	if _, err := c.Guard(ctx, srv.URL, "k", "", sampleRequest()); err == nil {
 		t.Fatal("expected context error, got nil")
+	}
+}
+
+func TestGuardSetsTraceIDHeader(t *testing.T) {
+	t.Parallel()
+	const wantTraceID = "gateway-trace-abc123"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get(traceIDHeader); got != wantTraceID {
+			t.Errorf("X-Trace-ID header = %q, want %q", got, wantTraceID)
+		}
+		_, _ = io.WriteString(w, `{"status":""}`)
+	}))
+	defer srv.Close()
+
+	c := newClient(time.Second)
+	if _, err := c.Guard(context.Background(), srv.URL, "k", wantTraceID, sampleRequest()); err != nil {
+		t.Fatalf("Guard returned error: %v", err)
+	}
+}
+
+func TestGuardOmitsTraceIDHeaderWhenEmpty(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get(traceIDHeader); got != "" {
+			t.Errorf("X-Trace-ID header = %q, want empty", got)
+		}
+		_, _ = io.WriteString(w, `{"status":""}`)
+	}))
+	defer srv.Close()
+
+	c := newClient(time.Second)
+	if _, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest()); err != nil {
+		t.Fatalf("Guard returned error: %v", err)
 	}
 }

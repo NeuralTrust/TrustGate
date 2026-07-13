@@ -20,6 +20,7 @@ type PerToolRateLimiterData struct {
 	Stage         string `json:"stage"`
 	CounterKey    string `json:"counter_key"`
 	Tool          string `json:"tool"`
+	ToolCallID    string `json:"tool_call_id,omitempty"`
 	Dimension     string `json:"dimension"`
 	Subject       string `json:"subject"`
 	WindowMax     int    `json:"window_max"`

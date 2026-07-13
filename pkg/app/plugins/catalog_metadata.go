@@ -38,6 +38,12 @@ var groupOrder = []string{
 	groupOther,
 }
 
+// hiddenCatalogSlugs stay registered and executable but are excluded from the catalog.
+var hiddenCatalogSlugs = map[string]struct{}{
+	"model_allowlist": {},
+	"tool_allowlist":  {},
+}
+
 // catalogMeta is the curated, UI-facing metadata for a plugin slug. Stage data
 // is intentionally excluded; it is read from the plugin implementations so the
 // catalog cannot drift from the executor's behaviour.
@@ -418,7 +424,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"per_tool_rate_limiter": {
 		name:        "Per-Tool Rate Limiter",
 		group:       groupTrafficControl,
-		description: "Count and enforce limits per observed tool call in model responses. The limit applies gateway-wide when the policy is global, otherwise per consumer.",
+		description: "Count and enforce limits per real tool execution. For LLM traffic, executions are counted on pre_request from the tool results (role \"tool\") the client returns on the next request. For native MCP traffic, each tools/call is enforced on pre_request and counted once on pre_response after the upstream call succeeds; all configured behaviors collapse to deny/block on MCP. The limit applies gateway-wide when the policy is global, otherwise per consumer.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{

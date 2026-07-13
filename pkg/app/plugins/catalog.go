@@ -118,6 +118,9 @@ func NewCatalogService(registry Registry) CatalogService {
 func (s *catalogService) Catalog() Catalog {
 	buckets := make(map[string][]CatalogEntry)
 	for _, name := range s.registry.Names() {
+		if _, hidden := hiddenCatalogSlugs[name]; hidden {
+			continue
+		}
 		plugin, ok := s.registry.Get(name)
 		if !ok {
 			continue
