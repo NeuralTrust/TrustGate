@@ -68,35 +68,11 @@ func TestLoadConfig_PostgresLoginModes(t *testing.T) {
 		wantLogin    string
 		wantPassword string
 	}{
-		{
-			name:         "blank defaults to default",
-			wantLogin:    postgresLoginDefault,
-			wantPassword: defaultDBPassword,
-		},
-		{
-			name:         "whitespace defaults to default",
-			login:        " \t ",
-			wantLogin:    postgresLoginDefault,
-			wantPassword: defaultDBPassword,
-		},
-		{
-			name:         "default is trimmed and lowercased",
-			login:        " DeFaUlT ",
-			wantLogin:    postgresLoginDefault,
-			wantPassword: defaultDBPassword,
-		},
-		{
-			name:         "default preserves configured password",
-			login:        postgresLoginDefault,
-			password:     "configured-password",
-			wantLogin:    postgresLoginDefault,
-			wantPassword: "configured-password",
-		},
-		{
-			name:      "aws is trimmed and lowercased without password",
-			login:     " AwS ",
-			wantLogin: postgresLoginAWS,
-		},
+		{name: "blank defaults to default", wantLogin: postgresLoginDefault, wantPassword: defaultDBPassword},
+		{name: "whitespace defaults to default", login: " \t ", wantLogin: postgresLoginDefault, wantPassword: defaultDBPassword},
+		{name: "default is trimmed and lowercased", login: " DeFaUlT ", wantLogin: postgresLoginDefault, wantPassword: defaultDBPassword},
+		{name: "default preserves configured password", login: postgresLoginDefault, password: "configured-password", wantLogin: postgresLoginDefault, wantPassword: "configured-password"},
+		{name: "aws is normalized and drops configured password", login: " AwS ", password: "configured-password", wantLogin: postgresLoginAWS},
 	}
 
 	for _, tc := range tests {

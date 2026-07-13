@@ -399,9 +399,9 @@ func getServerConfig() ServerConfig {
 
 func getDatabaseConfig() DatabaseConfig {
 	login := normalizePostgresLogin(os.Getenv("POSTGRES_LOGIN"))
-	passwordDefault := defaultDBPassword
+	password := getEnv("DB_PASSWORD", defaultDBPassword)
 	if login == postgresLoginAWS {
-		passwordDefault = ""
+		password = ""
 	}
 
 	return DatabaseConfig{
@@ -409,7 +409,7 @@ func getDatabaseConfig() DatabaseConfig {
 		Host:              getEnv("DB_HOST", defaultDBHost),
 		Port:              getEnvInt("DB_PORT", defaultDBPort),
 		User:              getEnv("DB_USER", defaultDBUser),
-		Password:          getEnv("DB_PASSWORD", passwordDefault),
+		Password:          password,
 		Name:              getEnv("DB_NAME", defaultDBName),
 		SSLMode:           getEnv("DB_SSL_MODE", defaultDBSSLMode),
 		SSLRootCert:       getEnv("DB_SSL_ROOT_CERT", ""),

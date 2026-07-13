@@ -53,6 +53,17 @@ func TestDISmoke_PlaneAwareModuleSets_Register(t *testing.T) {
 }
 
 func TestDISmoke_DBLessDataPlane_ResolvesRepositoriesWithoutPool(t *testing.T) {
+	t.Setenv("POSTGRES_LOGIN", "aws")
+	for _, key := range []string{
+		"AWS_REGION",
+		"AWS_DEFAULT_REGION",
+		"DB_HOST",
+		"DB_USER",
+		"DB_PASSWORD",
+		"DB_NAME",
+	} {
+		t.Setenv(key, "")
+	}
 	for _, plane := range []string{"proxy", "mcp"} {
 		t.Run(plane, func(t *testing.T) {
 			c, err := container.New(modules.All(plane, true)...)
