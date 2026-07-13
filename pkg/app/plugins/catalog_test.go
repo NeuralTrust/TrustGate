@@ -37,6 +37,17 @@ var builtinSlugs = []string{
 	"tool_allowlist",
 }
 
+func catalogVisibleSlugs() []string {
+	visible := make([]string, 0, len(builtinSlugs))
+	for _, slug := range builtinSlugs {
+		if _, hidden := hiddenCatalogSlugs[slug]; hidden {
+			continue
+		}
+		visible = append(visible, slug)
+	}
+	return visible
+}
+
 func registerBuiltins(t *testing.T) Registry {
 	t.Helper()
 	reg := NewRegistry()
@@ -79,7 +90,7 @@ func TestCatalogService_GroupsAndOrder(t *testing.T) {
 	}
 	assert.ElementsMatch(t, []string{"rate_limiter", "request_size_limiter", "cors"}, byType[groupTrafficControl])
 	assert.ElementsMatch(t, []string{"token_rate_limiter", "cost_cap"}, byType[groupQuota])
-	assert.ElementsMatch(t, []string{"semantic_cache", "model_allowlist", "tool_allowlist"}, byType[groupRouting])
+	assert.ElementsMatch(t, []string{"semantic_cache"}, byType[groupRouting])
 	assert.Equal(t, []string{"prompt_template"}, byType[groupPromptManagement])
 }
 
@@ -94,8 +105,13 @@ func TestCatalogService_EntriesHaveStagesAndSchema(t *testing.T) {
 		}
 	}
 
-	require.Len(t, entries, len(builtinSlugs))
-	for _, slug := range builtinSlugs {
+	visibleSlugs := catalogVisibleSlugs()
+	require.Len(t, entries, len(visibleSlugs))
+	for slug := range hiddenCatalogSlugs {
+		_, ok := entries[slug]
+		assert.Falsef(t, ok, "hidden slug %q must not appear in the catalog", slug)
+	}
+	for _, slug := range visibleSlugs {
 		entry, ok := entries[slug]
 		require.Truef(t, ok, "slug %q missing from catalog", slug)
 		assert.NotEmptyf(t, entry.Name, "slug %q has empty display name", slug)

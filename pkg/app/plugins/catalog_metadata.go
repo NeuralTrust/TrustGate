@@ -38,6 +38,12 @@ var groupOrder = []string{
 	groupOther,
 }
 
+// hiddenCatalogSlugs stay registered and executable but are excluded from the catalog.
+var hiddenCatalogSlugs = map[string]struct{}{
+	"model_allowlist": {},
+	"tool_allowlist":  {},
+}
+
 // catalogMeta is the curated, UI-facing metadata for a plugin slug. Stage data
 // is intentionally excluded; it is read from the plugin implementations so the
 // catalog cannot drift from the executor's behaviour.
