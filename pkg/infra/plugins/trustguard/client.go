@@ -28,6 +28,7 @@ import (
 
 const (
 	evaluatePath     = "/v1/evaluate"
+	traceIDHeader    = "X-Trace-ID"
 	maxResponseBytes = 1 << 20
 )
 
@@ -41,7 +42,7 @@ func newClient(timeout time.Duration) *client {
 	return &client{http: &http.Client{Timeout: timeout}}
 }
 
-func (c *client) Guard(ctx context.Context, baseURL, token string, body GuardRequest) (*GuardResponse, error) {
+func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body GuardRequest) (*GuardResponse, error) {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("trustguard: marshal request: %w", err)
@@ -53,6 +54,9 @@ func (c *client) Guard(ctx context.Context, baseURL, token string, body GuardReq
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", contentTypeJSON)
+	if traceID != "" {
+		req.Header.Set(traceIDHeader, traceID)
+	}
 	res, err := c.http.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("trustguard: guard call: %w", err)
