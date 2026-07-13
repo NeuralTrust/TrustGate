@@ -51,7 +51,7 @@ func TestNewPluginRegistry_SupportedProtocolsMatrix(t *testing.T) {
 		"request_size_limiter":           {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
 		"rate_limiter":                   {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
 		"trustguard":                     {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
-		"per_tool_rate_limiter":          {appplugins.ProtocolMCP},
+		"per_tool_rate_limiter":          {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
 		"cost_cap":                       {appplugins.ProtocolLLM},
 		"token_rate_limiter":             {appplugins.ProtocolLLM},
 		"model_allowlist":                {appplugins.ProtocolLLM},

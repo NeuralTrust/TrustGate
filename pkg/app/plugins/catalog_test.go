@@ -141,7 +141,7 @@ func TestCatalogService_EntriesHaveSupportedProtocols(t *testing.T) {
 		}
 	}
 
-	for _, slug := range builtinSlugs {
+	for _, slug := range catalogVisibleSlugs() {
 		entry, ok := entries[slug]
 		require.Truef(t, ok, "slug %q missing from catalog", slug)
 		assert.NotEmptyf(t, entry.SupportedProtocols, "slug %q has no supported protocols", slug)
@@ -155,21 +155,21 @@ func TestCatalogService_EntriesHaveSupportedProtocols(t *testing.T) {
 		name:      "per_tool_rate_limiter",
 		mandatory: []policy.Stage{policy.StagePreRequest},
 		supported: []policy.Stage{policy.StagePreRequest},
-		protocols: []Protocol{ProtocolMCP},
+		protocols: []Protocol{ProtocolLLM, ProtocolMCP},
 	}))
 
-	var mcpEntry CatalogEntry
+	var ptrlEntry CatalogEntry
 	found := false
 	for _, g := range NewCatalogService(reg).Catalog().Groups {
 		for _, item := range g.Items {
 			if item.Slug == "per_tool_rate_limiter" {
-				mcpEntry = item
+				ptrlEntry = item
 				found = true
 			}
 		}
 	}
 	require.True(t, found, "per_tool_rate_limiter missing from catalog")
-	assert.ElementsMatch(t, []Protocol{ProtocolMCP}, mcpEntry.SupportedProtocols)
+	assert.ElementsMatch(t, []Protocol{ProtocolLLM, ProtocolMCP}, ptrlEntry.SupportedProtocols)
 }
 
 func TestCatalogService_OnlyRegisteredPlugins(t *testing.T) {
