@@ -50,7 +50,7 @@ One commit/PR per phase. PR 1 targets `develop`; each later PR targets the prece
 ## Phase 4: Private Anthropic Document
 
 - [x] 4.1 Land the independently verified core slice: `anthropic_document.go`, `anthropic_message_sequence.go`, `anthropic_system.go`, and `anthropic_document_core_test.go`. This production-heavy slice uses the documented size exception and lands with 4.2 unchecked.
-- [ ] 4.2 Stack `anthropic_document_placement_test.go`, `anthropic_document_system_strategy_test.go`, `anthropic_document_system_edge_test.go`, and `anthropic_document_fidelity_test.go` in that order; the final slice checks 4.2 after exact-key, 2,048-merge stress, fidelity, alias, OpenAI regression, race, and fuzz verification.
+- [x] 4.2 Stack `anthropic_document_placement_test.go`, `anthropic_document_system_strategy_test.go`, `anthropic_document_system_edge_test.go`, and `anthropic_document_fidelity_test.go` in that order; the final slice checks 4.2 after exact-key, 2,048-merge stress, fidelity, alias, OpenAI regression, race, and fuzz verification.
 
 ## Phase 5: Pure Plugin Execution
 
