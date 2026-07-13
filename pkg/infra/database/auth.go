@@ -67,6 +67,11 @@ func newPoolAuthStrategy(ctx context.Context, login string, dependencies authDep
 					return fmt.Errorf("run database connection hook: %w", err)
 				}
 			}
+			if connConfig.ConnectTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, connConfig.ConnectTimeout)
+				defer cancel()
+			}
 			endpoint := net.JoinHostPort(connConfig.Host, strconv.Itoa(int(connConfig.Port)))
 			token, err := buildToken(ctx, endpoint, region, connConfig.User, credentials)
 			if err != nil {

@@ -91,6 +91,7 @@ func TestAWSAuthStrategyHookBehavior(t *testing.T) {
 	poolConfig.HealthCheckPeriod = 11 * time.Second
 	poolConfig.BeforeConnect = func(_ context.Context, config *pgx.ConnConfig) error {
 		config.Host, config.Port, config.User = "2001:db8::1", 6432, "hook-user"
+		config.ConnectTimeout = 5 * time.Second
 		return nil
 	}
 	settings := []any{poolConfig.ConnConfig.TLSConfig, poolConfig.MaxConns, poolConfig.MinConns, poolConfig.MaxConnLifetime, poolConfig.MaxConnIdleTime, poolConfig.HealthCheckPeriod}
@@ -105,11 +106,11 @@ func TestAWSAuthStrategyHookBehavior(t *testing.T) {
 		require.Equal(t, fmt.Sprintf("token-%d", index), config.Password)
 	}
 	require.Len(t, calls, 2)
-	for _, call := range calls {
-		require.Equal(t, []string{"[2001:db8::1]:6432", "eu-west-1", "hook-user"}, []string{call.endpoint, call.region, call.user})
-		require.Equal(t, provider, call.credentials)
+	for index, call := range calls {
+		require.Equal(t, []any{"[2001:db8::1]:6432", "eu-west-1", "hook-user", provider, index + 1}, []any{call.endpoint, call.region, call.user, call.credentials, call.ctx.Value(contextKey{})})
+		_, ok := call.ctx.Deadline()
+		require.True(t, ok)
 	}
-	require.Equal(t, []any{1, 2}, []any{calls[0].ctx.Value(contextKey{}), calls[1].ctx.Value(contextKey{})})
 	const concurrentHooks = 32
 	t.Cleanup(func() { require.Len(t, calls, concurrentHooks+2) })
 	for index := range concurrentHooks {
