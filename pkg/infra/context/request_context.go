@@ -36,6 +36,7 @@ type RequestContext struct {
 	Path               string
 	Query              url.Values
 	Body               []byte
+	OriginalBody       []byte
 	Messages           []string
 	Attachments        []Attachment
 	Metadata           map[string]interface{}

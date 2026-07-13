@@ -15,6 +15,8 @@
 package proxy_test
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -405,6 +407,76 @@ func TestHandle_Success_RelaysResponse(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if string(body) != `{"ok":true}` {
 		t.Fatalf("body = %q", string(body))
+	}
+}
+
+func TestHandle_RequestBodySnapshotsDoNotAlias(t *testing.T) {
+	payload := []byte(`{"model":"gpt","messages":[]}`)
+	original := bytes.Clone(payload)
+	var fiberBody []byte
+
+	fwd := proxymocks.NewForwarder(t)
+	app := fiber.New()
+	app.Use(authStub(ids.New[ids.GatewayKind](), consumerSlug))
+	app.Use(func(c *fiber.Ctx) error {
+		fiberBody = c.Body()
+		return c.Next()
+	})
+	handler := proxyhttp.NewForwardedHandler(fwd)
+	app.All("/*", handler.Handle)
+
+	assertEqual := func(name string, got, want []byte) {
+		t.Helper()
+		if !bytes.Equal(got, want) {
+			t.Fatalf("%s = %q, want %q", name, got, want)
+		}
+	}
+
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.Anything).
+		Run(func(_ context.Context, in appproxy.ForwardInput) {
+			if in.Request == nil {
+				t.Fatal("request context is nil")
+			}
+			assertEqual("body", in.Request.Body, original)
+			assertEqual("original body", in.Request.OriginalBody, original)
+			assertEqual("fiber body", fiberBody, original)
+			assertEqual("input payload", payload, original)
+
+			in.Request.Body[0] = '!'
+			assertEqual("original body after body mutation", in.Request.OriginalBody, original)
+			assertEqual("fiber body after body mutation", fiberBody, original)
+			assertEqual("input payload after body mutation", payload, original)
+			in.Request.Body[0] = original[0]
+
+			in.Request.OriginalBody[1] = '!'
+			assertEqual("body after original body mutation", in.Request.Body, original)
+			assertEqual("fiber body after original body mutation", fiberBody, original)
+			assertEqual("input payload after original body mutation", payload, original)
+			in.Request.OriginalBody[1] = original[1]
+
+			fiberBody[2] = '!'
+			assertEqual("body after fiber body mutation", in.Request.Body, original)
+			assertEqual("original body after fiber body mutation", in.Request.OriginalBody, original)
+			assertEqual("input payload after fiber body mutation", payload, original)
+			fiberBody[2] = original[2]
+
+			payload[3] = '!'
+			assertEqual("body after input payload mutation", in.Request.Body, original)
+			assertEqual("original body after input payload mutation", in.Request.OriginalBody, original)
+			assertEqual("fiber body after input payload mutation", fiberBody, original)
+		}).
+		Return(&appproxy.ForwardResult{StatusCode: fiber.StatusOK, Body: []byte(`{"ok":true}`)}, nil).
+		Once()
+
+	req := httptest.NewRequest(http.MethodPost, proxyPath, bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 }
 

@@ -322,16 +322,18 @@ func buildRequestContext(c *fiber.Ctx, gatewayID ids.GatewayID, route apiresolve
 		query.Add(string(key), string(value))
 	})
 
+	incomingBody := c.Body()
 	return &infracontext.RequestContext{
-		GatewayID:    gatewayID.String(),
-		Headers:      headers,
-		Method:       c.Method(),
-		Path:         c.Path(),
-		Query:        query,
-		Body:         c.Body(),
-		IP:           c.IP(),
-		SessionID:    sessionIDFromContext(c),
-		SourceFormat: string(route.SourceFormat),
+		GatewayID:       gatewayID.String(),
+		Headers:         headers,
+		Method:          c.Method(),
+		Path:            c.Path(),
+		Query:           query,
+		Body:            bytes.Clone(incomingBody),
+		OriginalBody:    bytes.Clone(incomingBody),
+		IP:              c.IP(),
+		SessionID:       sessionIDFromContext(c),
+		SourceFormat:    string(route.SourceFormat),
 		ProxyCapability: string(route.Capability),
 	}
 }
