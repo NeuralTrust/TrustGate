@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -197,6 +199,47 @@ func TestPluginE2E_PerToolRateLimiter_StripToolFromRequest(t *testing.T) {
 	tools := forwardedToolNames(t, up.LastBody())
 	require.Len(t, tools, 1)
 	assert.Equal(t, "lookup", tools[0], "once over budget, get_weather must be stripped while lookup remains")
+}
+
+func attachPerToolMCPPolicy(t *testing.T, gatewayID, consumerID string, settings map[string]any) {
+	t.Helper()
+	payload := map[string]any{
+		"name":     uniqueName("mcp-ptrl-pol"),
+		"slug":     "per_tool_rate_limiter",
+		"enabled":  true,
+		"priority": 0,
+		"settings": settings,
+	}
+	policyID := CreatePolicy(t, gatewayID, payload)
+	AttachPolicy(t, gatewayID, consumerID, policyID)
+}
+
+func TestPluginE2E_PerToolRateLimiter_MCPToolCallDeny(t *testing.T) {
+	defer Track(t, "PluginPerToolRateLimiter")()
+
+	var calls int64
+	upstream := startMCPUpstream(t, func(s *sdk.Server) { addCountingFixedTool(s, "send_email", "sent", &calls) })
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
+	registryID := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-reg"), upstream.URL))
+	consumerID, key := createMCPConsumer(t, gatewayID, []string{registryID}, nil, "")
+	headers := apiKeyHeaders(key)
+	attachPerToolMCPPolicy(t, gatewayID, consumerID, map[string]any{
+		"rules": []any{perToolRule("send_email", 1, "reject_response")},
+	})
+
+	statusList, bodyList := mcpRPC(t, gatewayID, consumerID, headers, "tools/list", map[string]any{})
+	_ = rpcResult(t, statusList, bodyList)
+	require.Zero(t, atomic.LoadInt64(&calls), "tools/list must not invoke the upstream tool")
+
+	status, body := mcpRPC(t, gatewayID, consumerID, headers, "tools/call",
+		map[string]any{"name": "send_email", "arguments": map[string]any{}})
+	_ = rpcResult(t, status, body)
+	require.Equal(t, int64(1), atomic.LoadInt64(&calls), "first tools/call is under budget and reaches the upstream")
+
+	status, body = mcpRPC(t, gatewayID, consumerID, headers, "tools/call",
+		map[string]any{"name": "send_email", "arguments": map[string]any{}})
+	require.Equal(t, rpcCodePolicyBlocked, rpcErrorCode(t, status, body), "over-budget tools/call must be denied with -32001")
+	require.Equal(t, int64(1), atomic.LoadInt64(&calls), "over-budget tools/call must not reach the upstream CallTool")
 }
 
 func TestPluginE2E_PerToolRateLimiter_GlobMatchUsesDefaultBehavior(t *testing.T) {

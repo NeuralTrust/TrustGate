@@ -251,7 +251,7 @@ type mcpToolCallBody struct {
 	Name string `json:"name"`
 }
 
-func (p *Plugin) mcpToolName(body []byte) string {
+func mcpToolName(body []byte) string {
 	var b mcpToolCallBody
 	if err := json.Unmarshal(body, &b); err != nil {
 		return ""
@@ -268,7 +268,7 @@ func (p *Plugin) mcpPreRequest(
 	if in.Request == nil || len(in.Request.Body) == 0 {
 		return okResult(), nil
 	}
-	tool := p.mcpToolName(in.Request.Body)
+	tool := mcpToolName(in.Request.Body)
 	if tool == "" {
 		return okResult(), nil
 	}
@@ -283,7 +283,7 @@ func (p *Plugin) mcpPreRequest(
 	if ws == nil {
 		return okResult(), nil
 	}
-	setExtras(in.Event, p.data(policy.StagePreRequest, ws, tool, dimension, subject, effectiveBehavior(rule, cfg), true))
+	setExtras(in.Event, p.data(policy.StagePreRequest, ws, tool, "", dimension, subject, effectiveBehavior(rule, cfg), true))
 	return p.reject(ctx, tool, ws, dimension)
 }
 ```
@@ -308,7 +308,7 @@ func (p *Plugin) mcpPreResponse(
 	if in.Request == nil || len(in.Request.Body) == 0 {
 		return okResult(), nil
 	}
-	tool := p.mcpToolName(in.Request.Body)
+	tool := mcpToolName(in.Request.Body)
 	if tool == "" {
 		return okResult(), nil
 	}
@@ -316,16 +316,26 @@ func (p *Plugin) mcpPreResponse(
 	if !ok {
 		return okResult(), nil
 	}
+	keys := make([]string, 0, len(rule.Windows))
+	args := make([]any, 0, len(rule.Windows))
+	for i := range rule.Windows {
+		keys = append(keys, counterKey(in.Config.ID, dimension, subject, tool, i))
+		args = append(args, rule.Windows[i].windowSeconds())
+	}
+	res, err := recordWindowsScript.Run(ctx, p.redis, keys, args...).Result()
+	if err != nil {
+		return nil, fmt.Errorf("per_tool_rate_limiter: %w", err)
+	}
+	totals, _ := res.([]any)
 	behavior := effectiveBehavior(rule, cfg)
 	for i := range rule.Windows {
-		w := rule.Windows[i]
-		key := counterKey(in.Config.ID, dimension, subject, tool, i)
-		total, err := recordScript.Run(ctx, p.redis, []string{key}, 1, w.windowSeconds()).Int64()
-		if err != nil {
-			return nil, fmt.Errorf("per_tool_rate_limiter: record: %w", err)
+		if i >= len(totals) {
+			break
 		}
-		ws := &windowState{key: key, window: w, total: int(total)}
-		setExtras(in.Event, p.data(policy.StagePreResponse, ws, tool, dimension, subject, behavior, int(total) >= w.Max))
+		total, _ := totals[i].(int64)
+		w := rule.Windows[i]
+		ws := &windowState{key: keys[i], window: w, total: int(total)}
+		setExtras(in.Event, p.data(policy.StagePreResponse, ws, tool, "", dimension, subject, behavior, int(total) >= w.Max))
 	}
 	return okResult(), nil
 }
@@ -337,10 +347,10 @@ func (p *Plugin) mcpPreResponse(
   into a block; the MCP runner treats a non-error `PreResponse` as pass-through.
 
 > PHASE 1 removed the standalone `recordScript`. The MCP `pre_response` counting
-> (PHASE 2, not yet implemented) will INCR the window counters via an atomic Lua
-> script with no dedupe key (a single-key variant of `countOnceScript`); the sketch
-> above uses `recordScript` only to describe the per-window `INCRBY`+conditional
-> `EXPIRE` semantics.
+> uses `recordWindowsScript`: a single atomic Lua call over all of a tool's window
+> keys that `INCRBY 1` each key and sets `EXPIRE` only when `TTL == -1`, returning
+> the per-window totals. It is the dedupe-free counterpart of `countOnceScript`
+> (no `SET NX` gate) since every `tools/call` is exactly one execution.
 
 ### 2.8 Kept unchanged
 
@@ -348,7 +358,8 @@ func (p *Plugin) mcpPreResponse(
 `graftChangedFields`, `inject`/`rateLimitTemplate`, `matchRule`/`matchToolPattern`,
 `effectiveBehavior`, scope/subject via `RuntimeScope.Subject()`, `setLimitHeaders`
 and all `X-RateLimit-*` headers, and the full config schema. (`recordScript` is
-replaced by the atomic `countOnceScript`; see §2.3 / §3.)
+replaced by the atomic `countOnceScript` for LLM counting and by
+`recordWindowsScript` for MCP counting; see §2.3 / §2.7 / §3.)
 
 ---
 

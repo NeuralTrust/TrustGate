@@ -162,6 +162,13 @@ preserved.
 
 ## PHASE 2 — MCP execution counting (stacked on PHASE 1)
 
+**Status: [x] DONE (2.1–2.8).** Applied in worktree (branch
+`fix/per-tool-rate-limiter-executions`). Verified: `gofmt` clean on edited files,
+`golangci-lint run ./pkg/infra/plugins/pertoolratelimit/... ./pkg/app/plugins/...`
+0 issues, `go test -race ./pkg/infra/plugins/pertoolratelimit/...` ok, `go build
+-tags functional ./tests/functional/...` ok. 2.5 confirmed read-only (no diff to
+`plugin_runner.go`/`rpc_dispatcher.go`). Zero code comments added.
+
 Teach the plugin to detect `in.Request.MCP`, enforce in `pre_request` (deny) and
 count once in `pre_response` (after upstream `CallTool` success). All MCP
 behaviors collapse to deny/block. Satisfies `PTRL-8/9/10/11`, with

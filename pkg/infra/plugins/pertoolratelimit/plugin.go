@@ -52,6 +52,18 @@ end
 return totals
 `)
 
+var recordWindowsScript = redis.NewScript(`
+local totals = {}
+for i = 1, #KEYS do
+    local total = redis.call('INCRBY', KEYS[i], 1)
+    if redis.call('TTL', KEYS[i]) == -1 then
+        redis.call('EXPIRE', KEYS[i], tonumber(ARGV[i]))
+    end
+    totals[#totals + 1] = total
+end
+return totals
+`)
+
 var _ appplugins.Plugin = (*Plugin)(nil)
 
 type Plugin struct {
@@ -104,7 +116,7 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 }
 
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
-	if p.redis == nil || p.registry == nil {
+	if p.redis == nil {
 		return okResult(), nil
 	}
 	cfg, err := parseConfig(in.Config.Settings)
@@ -113,6 +125,19 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 	dimension, subject, err := in.Scope.Subject()
 	if err != nil {
+		return okResult(), nil
+	}
+	if in.Request != nil && in.Request.MCP {
+		switch in.Stage {
+		case policy.StagePreRequest:
+			return p.mcpPreRequest(ctx, cfg, in, dimension, subject)
+		case policy.StagePreResponse:
+			return p.mcpPreResponse(ctx, cfg, in, dimension, subject)
+		default:
+			return okResult(), nil
+		}
+	}
+	if p.registry == nil {
 		return okResult(), nil
 	}
 	switch in.Stage {
@@ -331,6 +356,90 @@ func (p *Plugin) inject(
 		return nil, fmt.Errorf("per_tool_rate_limiter: inject: %w", err)
 	}
 	return &appplugins.Result{StatusCode: http.StatusOK, Body: body, StopUpstream: true}, nil
+}
+
+type mcpToolCallBody struct {
+	Name string `json:"name"`
+}
+
+func mcpToolName(body []byte) string {
+	var b mcpToolCallBody
+	if err := json.Unmarshal(body, &b); err != nil {
+		return ""
+	}
+	return b.Name
+}
+
+func (p *Plugin) mcpPreRequest(
+	ctx context.Context,
+	cfg *config,
+	in appplugins.ExecInput,
+	dimension, subject string,
+) (*appplugins.Result, error) {
+	if in.Request == nil || len(in.Request.Body) == 0 {
+		return okResult(), nil
+	}
+	tool := mcpToolName(in.Request.Body)
+	if tool == "" {
+		return okResult(), nil
+	}
+	rule, ok := matchRule(cfg.Rules, tool)
+	if !ok {
+		return okResult(), nil
+	}
+	ws, err := p.overLimit(ctx, in.Config.ID, dimension, subject, tool, rule)
+	if err != nil {
+		return nil, fmt.Errorf("per_tool_rate_limiter: %w", err)
+	}
+	if ws == nil {
+		return okResult(), nil
+	}
+	setExtras(in.Event, p.data(policy.StagePreRequest, ws, tool, "", dimension, subject, effectiveBehavior(rule, cfg), true))
+	return p.reject(ctx, tool, ws, dimension)
+}
+
+func (p *Plugin) mcpPreResponse(
+	ctx context.Context,
+	cfg *config,
+	in appplugins.ExecInput,
+	dimension, subject string,
+) (*appplugins.Result, error) {
+	if in.Request == nil || len(in.Request.Body) == 0 {
+		return okResult(), nil
+	}
+	tool := mcpToolName(in.Request.Body)
+	if tool == "" {
+		return okResult(), nil
+	}
+	rule, ok := matchRule(cfg.Rules, tool)
+	if !ok {
+		return okResult(), nil
+	}
+	keys := make([]string, 0, len(rule.Windows))
+	args := make([]any, 0, len(rule.Windows))
+	for i := range rule.Windows {
+		keys = append(keys, counterKey(in.Config.ID, dimension, subject, tool, i))
+		args = append(args, rule.Windows[i].windowSeconds())
+	}
+	res, err := recordWindowsScript.Run(ctx, p.redis, keys, args...).Result()
+	if err != nil {
+		return nil, fmt.Errorf("per_tool_rate_limiter: %w", err)
+	}
+	totals, ok := res.([]any)
+	if !ok {
+		return okResult(), nil
+	}
+	behavior := effectiveBehavior(rule, cfg)
+	for i := range rule.Windows {
+		if i >= len(totals) {
+			break
+		}
+		total, _ := totals[i].(int64)
+		w := rule.Windows[i]
+		ws := &windowState{key: keys[i], window: w, total: int(total)}
+		setExtras(in.Event, p.data(policy.StagePreResponse, ws, tool, "", dimension, subject, behavior, int(total) >= w.Max))
+	}
+	return okResult(), nil
 }
 
 func toolCallNames(messages []adapter.CanonicalMessage) map[string]string {

@@ -458,6 +458,17 @@ func consumerDedupeKey(toolCallID string) string {
 	return dedupeKey("pt-1", "consumer", "c-1", toolCallID)
 }
 
+func mcpBody(t *testing.T, name string) []byte {
+	t.Helper()
+	b, err := json.Marshal(map[string]any{"name": name, "arguments": map[string]any{}})
+	require.NoError(t, err)
+	return b
+}
+
+func mcpReq(body []byte) *infracontext.RequestContext {
+	return &infracontext.RequestContext{MCP: true, Body: body}
+}
+
 func TestPlugin_PreRequest_CountsExecutedResult(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1021,6 +1032,150 @@ func TestPlugin_FullCycle_CountThenReject(t *testing.T) {
 	pe, ok := appplugins.AsPluginError(err)
 	require.True(t, ok)
 	assert.Equal(t, http.StatusTooManyRequests, pe.StatusCode)
+}
+
+func TestPlugin_MCP_ToolName(t *testing.T) {
+	tests := []struct {
+		name string
+		body []byte
+		want string
+	}{
+		{name: "tools/call body", body: mcpBody(t, "send_email"), want: "send_email"},
+		{name: "no name field", body: []byte(`{"arguments":{}}`), want: ""},
+		{name: "garbage body", body: []byte("{not-json"), want: ""},
+		{name: "empty body", body: nil, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, mcpToolName(tt.body))
+		})
+	}
+}
+
+func TestPlugin_MCP_PreRequest_DenyCollapsesAllBehaviors(t *testing.T) {
+	behaviors := []string{"reject_response", "strip_tool_from_request", "inject_error_result"}
+	for _, behavior := range behaviors {
+		t.Run(behavior, func(t *testing.T) {
+			p, rdb := newPluginRedis(t)
+			settings := ruleSettings("send_email", behavior, "1m", 5)
+			seed(t, rdb, consumerKey("send_email", 0), 5)
+
+			_, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, mcpReq(mcpBody(t, "send_email")), nil))
+			pe, ok := appplugins.AsPluginError(err)
+			require.True(t, ok)
+			assert.Equal(t, http.StatusTooManyRequests, pe.StatusCode)
+			assert.Equal(t, `tool "send_email" rate limit exceeded`, pe.Message)
+			assert.Equal(t, []string{"send_email"}, pe.Headers["X-RateLimit-Tool"])
+			assert.Equal(t, []string{"5"}, pe.Headers["X-RateLimit-consumer-Limit"])
+		})
+	}
+}
+
+func TestPlugin_MCP_PreRequest_UnderBudgetOk(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 5)
+	seed(t, rdb, consumerKey("send_email", 0), 4)
+
+	res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, mcpReq(mcpBody(t, "send_email")), nil))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+}
+
+func TestPlugin_MCP_PreRequest_NoMatchOrEmptyOk(t *testing.T) {
+	tests := []struct {
+		name string
+		body []byte
+	}{
+		{name: "unmatched tool", body: mcpBody(t, "lookup")},
+		{name: "empty name", body: mcpBody(t, "")},
+		{name: "garbage body", body: []byte("{not-json")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, rdb := newPluginRedis(t)
+			settings := ruleSettings("send_email", "reject_response", "1m", 5)
+			seed(t, rdb, consumerKey("send_email", 0), 5)
+
+			res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, mcpReq(tt.body), nil))
+			require.NoError(t, err)
+			assert.Equal(t, http.StatusOK, res.StatusCode)
+		})
+	}
+}
+
+func TestPlugin_MCP_PreResponse_CountsPerCall(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 5)
+
+	for i := 0; i < 2; i++ {
+		res, err := p.Execute(context.Background(), input(policy.StagePreResponse, settings, mcpReq(mcpBody(t, "send_email")), nil))
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, res.StatusCode)
+		assert.False(t, res.StopUpstream)
+	}
+
+	val, err := rdb.Get(context.Background(), consumerKey("send_email", 0)).Result()
+	require.NoError(t, err)
+	assert.Equal(t, "2", val)
+
+	ttl, err := rdb.TTL(context.Background(), consumerKey("send_email", 0)).Result()
+	require.NoError(t, err)
+	assert.Greater(t, ttl, time.Duration(0))
+
+	dedupe := rdb.Keys(context.Background(), "pertoolrl:dedupe:*").Val()
+	assert.Empty(t, dedupe)
+}
+
+func TestPlugin_MCP_PreResponse_NonToolCallNoCount(t *testing.T) {
+	tests := []struct {
+		name string
+		body []byte
+	}{
+		{name: "empty name", body: mcpBody(t, "")},
+		{name: "unmatched tool", body: mcpBody(t, "lookup")},
+		{name: "garbage body", body: []byte("{not-json")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, rdb := newPluginRedis(t)
+			settings := ruleSettings("send_email", "reject_response", "1m", 5)
+
+			res, err := p.Execute(context.Background(), input(policy.StagePreResponse, settings, mcpReq(tt.body), nil))
+			require.NoError(t, err)
+			assert.Equal(t, http.StatusOK, res.StatusCode)
+
+			_, err = rdb.Get(context.Background(), consumerKey("send_email", 0)).Result()
+			assert.ErrorIs(t, err, redis.Nil)
+		})
+	}
+}
+
+func TestPlugin_MCP_PreRequestDoesNotCount(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 5)
+
+	res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, mcpReq(mcpBody(t, "send_email")), nil))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+
+	_, err = rdb.Get(context.Background(), consumerKey("send_email", 0)).Result()
+	assert.ErrorIs(t, err, redis.Nil)
+}
+
+func TestPlugin_MCP_PreResponse_WorksWithoutRegistry(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	p := New(rdb, nil)
+	settings := ruleSettings("send_email", "reject_response", "1m", 5)
+
+	res, err := p.Execute(context.Background(), input(policy.StagePreResponse, settings, mcpReq(mcpBody(t, "send_email")), nil))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+
+	val, err := rdb.Get(context.Background(), consumerKey("send_email", 0)).Result()
+	require.NoError(t, err)
+	assert.Equal(t, "1", val)
 }
 
 func TestPlugin_PreRequest_NoopPaths(t *testing.T) {
