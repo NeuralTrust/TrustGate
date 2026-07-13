@@ -410,7 +410,7 @@ func TestHandle_Success_RelaysResponse(t *testing.T) {
 	}
 }
 
-func TestHandle_RequestBodySnapshotsDoNotAlias(t *testing.T) {
+func TestHandle_RequestBodyIsClonedOnceAndOriginalIsLazy(t *testing.T) {
 	payload := []byte(`{"model":"gpt","messages":[]}`)
 	original := bytes.Clone(payload)
 	var fiberBody []byte
@@ -439,31 +439,24 @@ func TestHandle_RequestBodySnapshotsDoNotAlias(t *testing.T) {
 				t.Fatal("request context is nil")
 			}
 			assertEqual("body", in.Request.Body, original)
-			assertEqual("original body", in.Request.OriginalBody, original)
+			if in.Request.OriginalBody != nil {
+				t.Fatalf("original body = %q, want nil", in.Request.OriginalBody)
+			}
 			assertEqual("fiber body", fiberBody, original)
 			assertEqual("input payload", payload, original)
 
 			in.Request.Body[0] = '!'
-			assertEqual("original body after body mutation", in.Request.OriginalBody, original)
 			assertEqual("fiber body after body mutation", fiberBody, original)
 			assertEqual("input payload after body mutation", payload, original)
 			in.Request.Body[0] = original[0]
 
-			in.Request.OriginalBody[1] = '!'
-			assertEqual("body after original body mutation", in.Request.Body, original)
-			assertEqual("fiber body after original body mutation", fiberBody, original)
-			assertEqual("input payload after original body mutation", payload, original)
-			in.Request.OriginalBody[1] = original[1]
-
 			fiberBody[2] = '!'
 			assertEqual("body after fiber body mutation", in.Request.Body, original)
-			assertEqual("original body after fiber body mutation", in.Request.OriginalBody, original)
 			assertEqual("input payload after fiber body mutation", payload, original)
 			fiberBody[2] = original[2]
 
 			payload[3] = '!'
 			assertEqual("body after input payload mutation", in.Request.Body, original)
-			assertEqual("original body after input payload mutation", in.Request.OriginalBody, original)
 			assertEqual("fiber body after input payload mutation", fiberBody, original)
 		}).
 		Return(&appproxy.ForwardResult{StatusCode: fiber.StatusOK, Body: []byte(`{"ok":true}`)}, nil).

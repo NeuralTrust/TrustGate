@@ -93,6 +93,70 @@ func TestPluginExecuteEnforceReturnsStableBodyFreeRequestErrors(t *testing.T) {
 			errorType:    typeInvalidRequestBody,
 		},
 		{
+			name:         "duplicate OpenAI untouched nested field",
+			sourceFormat: sourceFormatOpenAI,
+			body:         []byte(`{"extension":{"secret":"folded-secret","secret":"other"},"messages":[]}`),
+			originalBody: []byte(`{"messages":[]}`),
+			settings:     pluginDecoratorSettings("decorator-secret"),
+			errorType:    typeInvalidRequestBody,
+		},
+		{
+			name:         "duplicate Anthropic untouched message field",
+			sourceFormat: sourceFormatAnthropic,
+			body:         []byte(`{"messages":[{"role":"user","content":"hello","future":"folded-secret","future":"other"}]}`),
+			originalBody: []byte(`{"messages":[]}`),
+			settings:     pluginDecoratorSettings("decorator-secret"),
+			errorType:    typeInvalidRequestBody,
+		},
+		{
+			name:         "OpenAI top-level field alias",
+			sourceFormat: sourceFormatOpenAI,
+			body:         []byte(`{"Messages":[{"role":"user","content":"folded-secret"}]}`),
+			originalBody: []byte(`{"messages":[]}`),
+			settings:     pluginDecoratorSettings("decorator-secret"),
+			errorType:    typeInvalidRequestBody,
+		},
+		{
+			name:         "OpenAI message field alias",
+			sourceFormat: sourceFormatOpenAI,
+			body:         []byte(`{"messages":[{"Role":"user","content":"folded-secret"}]}`),
+			originalBody: []byte(`{"messages":[]}`),
+			settings:     pluginDecoratorSettings("decorator-secret"),
+			errorType:    typeInvalidRequestBody,
+		},
+		{
+			name:         "Anthropic top-level field alias",
+			sourceFormat: sourceFormatAnthropic,
+			body:         []byte(`{"System":"folded-secret","messages":[]}`),
+			originalBody: []byte(`{"messages":[]}`),
+			settings:     pluginDecoratorSettings("decorator-secret"),
+			errorType:    typeInvalidRequestBody,
+		},
+		{
+			name:         "Anthropic message field alias",
+			sourceFormat: sourceFormatAnthropic,
+			body:         []byte(`{"messages":[{"role":"user","Content":"folded-secret"}]}`),
+			originalBody: []byte(`{"messages":[]}`),
+			settings:     pluginDecoratorSettings("decorator-secret"),
+			errorType:    typeInvalidRequestBody,
+		},
+		{
+			name:         "OpenAI content block field alias",
+			sourceFormat: sourceFormatOpenAI,
+			body:         []byte(`{"messages":[{"role":"user","content":[{"Type":"text","text":"folded-secret"}]}]}`),
+			originalBody: []byte(`{"messages":[]}`),
+			settings:     pluginDecoratorSettings("decorator-secret"),
+			errorType:    typeInvalidRequestBody,
+		},
+		{
+			name:         "Anthropic content block field alias",
+			sourceFormat: sourceFormatAnthropic,
+			body:         []byte(`{"messages":[{"role":"user","content":[{"type":"text","Text":"folded-secret"}]}]}`),
+			originalBody: []byte(`{"messages":[]}`),
+			settings:     pluginDecoratorSettings("decorator-secret"),
+			errorType:    typeInvalidRequestBody,
+		},
+		{
 			name:         "required system on unsupported source",
 			sourceFormat: "bedrock",
 			body:         []byte(`folded-secret`),
@@ -188,6 +252,62 @@ func TestPluginExecuteObserveSuppressesMalformedRequestErrors(t *testing.T) {
 			originalBody: []byte(`{"system":"original-secret","system":"other"}`),
 			settings:     map[string]any{"require_system_message": true},
 		},
+		{
+			name:         "duplicate OpenAI untouched nested field",
+			sourceFormat: sourceFormatOpenAI,
+			body:         []byte(`{"extension":{"secret":"folded-secret","secret":"other"},"messages":[]}`),
+			originalBody: []byte(`{"messages":[]}`),
+			settings:     pluginDecoratorSettings("decorator-secret"),
+		},
+		{
+			name:         "duplicate Anthropic untouched message field",
+			sourceFormat: sourceFormatAnthropic,
+			body:         []byte(`{"messages":[{"role":"user","content":"hello","future":"folded-secret","future":"other"}]}`),
+			originalBody: []byte(`{"messages":[]}`),
+			settings:     pluginDecoratorSettings("decorator-secret"),
+		},
+		{
+			name:         "OpenAI top-level field alias",
+			sourceFormat: sourceFormatOpenAI,
+			body:         []byte(`{"Messages":[{"role":"user","content":"folded-secret"}]}`),
+			originalBody: []byte(`{"messages":[]}`),
+			settings:     pluginDecoratorSettings("decorator-secret"),
+		},
+		{
+			name:         "OpenAI message field alias",
+			sourceFormat: sourceFormatOpenAI,
+			body:         []byte(`{"messages":[{"Role":"user","content":"folded-secret"}]}`),
+			originalBody: []byte(`{"messages":[]}`),
+			settings:     pluginDecoratorSettings("decorator-secret"),
+		},
+		{
+			name:         "Anthropic top-level field alias",
+			sourceFormat: sourceFormatAnthropic,
+			body:         []byte(`{"System":"folded-secret","messages":[]}`),
+			originalBody: []byte(`{"messages":[]}`),
+			settings:     pluginDecoratorSettings("decorator-secret"),
+		},
+		{
+			name:         "Anthropic message field alias",
+			sourceFormat: sourceFormatAnthropic,
+			body:         []byte(`{"messages":[{"role":"user","Content":"folded-secret"}]}`),
+			originalBody: []byte(`{"messages":[]}`),
+			settings:     pluginDecoratorSettings("decorator-secret"),
+		},
+		{
+			name:         "OpenAI content block field alias",
+			sourceFormat: sourceFormatOpenAI,
+			body:         []byte(`{"messages":[{"role":"user","content":[{"Type":"text","text":"folded-secret"}]}]}`),
+			originalBody: []byte(`{"messages":[]}`),
+			settings:     pluginDecoratorSettings("decorator-secret"),
+		},
+		{
+			name:         "Anthropic content block field alias",
+			sourceFormat: sourceFormatAnthropic,
+			body:         []byte(`{"messages":[{"role":"user","content":[{"type":"text","Text":"folded-secret"}]}]}`),
+			originalBody: []byte(`{"messages":[]}`),
+			settings:     pluginDecoratorSettings("decorator-secret"),
+		},
 	}
 
 	for _, test := range tests {
@@ -229,6 +349,39 @@ func TestPluginExecuteObserveSuppressesMalformedRequestErrors(t *testing.T) {
 			require.NotContains(t, string(encoded), "unexpected")
 			require.Equal(t, bodyBefore, test.body)
 			require.Equal(t, originalBefore, test.originalBody)
+		})
+	}
+}
+
+func TestPluginExecuteRuntimeInvalidConfigReturnsStableTypedError(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
+		mode := mode
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			body := []byte(`{"messages":[{"role":"user","content":"client-secret"}]}`)
+			bodyBefore := append([]byte(nil), body...)
+			event, span := pluginEvent()
+			input := pluginInput(
+				mode,
+				sourceFormatOpenAI,
+				body,
+				nil,
+				map[string]any{"unexpected": "config-secret"},
+			)
+			input.Event = event
+
+			result, err := New().Execute(context.Background(), input)
+
+			require.Nil(t, result)
+			pluginError := requireBodyFreePluginError(t, err, typeInvalidPluginConfig)
+			require.Equal(t, typeInvalidPluginConfig, pluginError.Message)
+			encoded, marshalErr := json.Marshal(span.PluginAttrsCopy())
+			require.NoError(t, marshalErr)
+			require.NotContains(t, string(encoded), "config-secret")
+			require.NotContains(t, string(encoded), "client-secret")
+			require.Equal(t, bodyBefore, body)
 		})
 	}
 }

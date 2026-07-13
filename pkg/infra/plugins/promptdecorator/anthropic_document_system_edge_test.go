@@ -163,84 +163,50 @@ func TestAnthropicOriginalSystemDetection(t *testing.T) {
 	}
 }
 
-func TestAnthropicOriginalSystemDetectionUsesExactFieldCasing(t *testing.T) {
-	tests := []struct {
-		name     string
-		body     string
-		expected bool
-	}{
-		{name: "lowercase string control", body: `{"system":"rules"}`, expected: true},
-		{name: "uppercase system", body: `{"SYSTEM":"rules"}`},
-		{name: "titlecase system", body: `{"System":"rules"}`},
-		{name: "lowercase block control", body: `{"system":[{"type":"text","text":"rules"}]}`, expected: true},
-		{name: "uppercase block keys", body: `{"system":[{"TYPE":"text","TEXT":"rules"}]}`},
-		{name: "uppercase type", body: `{"system":[{"TYPE":"text","text":"rules"}]}`},
-		{name: "uppercase text", body: `{"system":[{"type":"text","TEXT":"rules"}]}`},
-		{name: "uppercase system cannot override lowercase blank", body: `{"SYSTEM":"rules","system":" "}`},
+func TestAnthropicOriginalSystemDetectionRejectsFieldAliases(t *testing.T) {
+	tests := map[string]string{
+		"uppercase system":  `{"SYSTEM":"rules"}`,
+		"titlecase system":  `{"System":"rules"}`,
+		"uppercase block":   `{"system":[{"TYPE":"text","TEXT":"rules"}]}`,
+		"uppercase type":    `{"system":[{"TYPE":"text","text":"rules"}]}`,
+		"uppercase text":    `{"system":[{"type":"text","TEXT":"rules"}]}`,
+		"mixed exact/alias": `{"SYSTEM":"rules","system":" "}`,
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			detected, err := hasAnthropicOriginalSystem([]byte(test.body))
-			require.NoError(t, err)
-			require.Equal(t, test.expected, detected)
+	for name, body := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := hasAnthropicOriginalSystem([]byte(body))
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "invalid field alias")
 		})
 	}
 }
 
-func TestAnthropicDocumentSystemStrategiesUseExactFieldCasing(t *testing.T) {
+func TestAnthropicDocumentSystemStrategiesRejectFieldAliases(t *testing.T) {
 	output, err := decorateAnthropicBody(
-		[]byte(`{"SYSTEM":"uppercase","messages":[]}`),
-		[]decorator{anthropicTestSystemDecorator(systemStrategySkip, "lowercase")},
-	)
-	require.NoError(t, err)
-	fields, _ := decodeAnthropicTestOutput(t, output)
-	require.JSONEq(t, `"uppercase"`, string(fields["SYSTEM"]))
-	require.JSONEq(t, `"lowercase"`, string(fields["system"]))
-
-	output, err = decorateAnthropicBody(
 		[]byte(`{"system":[{"type":"text","text":"base"}],"messages":[]}`),
 		[]decorator{anthropicTestSystemDecorator(systemStrategyMerge, "new")},
 	)
 	require.NoError(t, err)
-	fields, _ = decodeAnthropicTestOutput(t, output)
+	fields, _ := decodeAnthropicTestOutput(t, output)
 	require.JSONEq(
 		t,
 		`[{"type":"text","text":"base"},{"type":"text","text":"\n\nnew"}]`,
 		string(fields["system"]),
 	)
 
-	body := []byte(`{"system":[{"TYPE":"text","TEXT":"base","cache_control":{"type":"ephemeral"}}],"messages":[]}`)
-	tests := []struct {
-		strategy systemStrategy
-		expected string
-	}{
-		{
-			strategy: systemStrategyMerge,
-			expected: `[{"TYPE":"text","TEXT":"base","cache_control":{"type":"ephemeral"}},{"type":"text","text":"new"}]`,
-		},
-		{
-			strategy: systemStrategyAppend,
-			expected: `[{"TYPE":"text","TEXT":"base","cache_control":{"type":"ephemeral"}},{"type":"text","text":"new"}]`,
-		},
-		{
-			strategy: systemStrategyReplace,
-			expected: `[{"type":"text","text":"new"}]`,
-		},
-		{
-			strategy: systemStrategySkip,
-			expected: `[{"TYPE":"text","TEXT":"base","cache_control":{"type":"ephemeral"}}]`,
-		},
+	tests := map[string][]byte{
+		"top-level system": []byte(`{"SYSTEM":"uppercase","messages":[]}`),
+		"block fields":     []byte(`{"system":[{"TYPE":"text","TEXT":"base"}],"messages":[]}`),
 	}
-	for _, test := range tests {
-		t.Run(string(test.strategy), func(t *testing.T) {
-			output, err := decorateAnthropicBody(
+	for name, body := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := decorateAnthropicBody(
 				body,
-				[]decorator{anthropicTestSystemDecorator(test.strategy, "new")},
+				[]decorator{anthropicTestSystemDecorator(systemStrategyMerge, "new")},
 			)
-			require.NoError(t, err)
-			fields, _ := decodeAnthropicTestOutput(t, output)
-			require.JSONEq(t, test.expected, string(fields["system"]))
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "invalid field alias")
 		})
 	}
 }

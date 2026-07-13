@@ -56,7 +56,7 @@ func decodeAnthropicDocument(body []byte) (*anthropicDocument, error) {
 		if !isJSONObject(messages[i]) {
 			return nil, fmt.Errorf("prompt_decorator: Anthropic messages[%d] must be an object", i)
 		}
-		if _, err := decodeProtocolObject(messages[i], "Anthropic message", "role"); err != nil {
+		if _, err := decodeProtocolMessage(messages[i], "Anthropic message"); err != nil {
 			return nil, fmt.Errorf("prompt_decorator: decode Anthropic messages[%d]: %w", i, err)
 		}
 	}

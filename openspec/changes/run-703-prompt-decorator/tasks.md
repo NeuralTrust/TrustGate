@@ -32,10 +32,10 @@ Chain strategy: declined in favor of one final PR
 
 One commit per phase preserves the proposed review units inside the final PR to `develop`.
 
-## Phase 1: Immutable Original Request
+## Phase 1: Lazy Immutable Original Request
 
-- [x] 1.1 Add `OriginalBody` in `pkg/infra/context/request_context.go`; independently allocate it and `Body` in `pkg/api/handler/http/proxy/proxy_handler.go`.
-- [x] 1.2 Extend `proxy_handler_test.go` to mutate either slice and prove bidirectional non-aliasing. Verify: `go test -race ./pkg/api/handler/http/proxy`.
+- [x] 1.1 Add `OriginalBody` in `pkg/infra/context/request_context.go`; clone the Fiber body once into `Body`, and leave `OriginalBody` unset at proxy construction.
+- [x] 1.2 At the executor boundary, lazily move the owned `Body` buffer into `OriginalBody` and clone `Body` before any plugin in a mutating pre-request stage executes. Preserve caller-provided originals and separate aliased slices. Verify proxy and executor allocation/non-aliasing behavior with race tests.
 
 ## Phase 2: Strict Configuration
 
@@ -76,3 +76,20 @@ One commit per phase preserves the proposed review units inside the final PR to 
 
 - [x] 9.1 Create `tests/functional/plugin_prompt_decorator_test.go` and `plugin_prompt_decorator_bedrock_test.go` for scope, modes, protocols, ordering, exact rejection/no upstream, and Bedrock targets.
 - [ ] 9.2 Verify: `go test -tags functional -run 'TestPluginE2E_PromptDecorator' ./tests/functional/...`; then `make fmt`, `go vet ./...`, `make lint`, and `make test-race`. Runtime scenarios are blocked by local PostgreSQL authentication (`SQLSTATE 28P01`); compile, fmt, vet, lint, and race checks pass.
+
+## Phase 10: Final Review Corrections
+
+- [x] 10.1 Reject every exact duplicate JSON object member recursively before map collapse and reject case-insensitive aliases of protocol keys at request, message, and block levels. Preserve unique unknown fields and rich content; enforce with body-free `invalid_request_body` and observe with redacted `parse_error`.
+- [x] 10.2 Preserve Anthropic native block merge representation while flattening block boundaries without an extra newline. Verify real prompt-decorator output through canonical translation into Bedrock Claude and OpenAI-compatible requests.
+- [x] 10.3 Move original-body capture from eager proxy construction to the executor boundary, preserve caller-provided originals, separate aliases, retain sequential/parallel folding, remove the flagged Bedrock comment, and return body-free `invalid_plugin_config` for runtime config failures.
+- [x] 10.4 Run focused and full race tests, all four fuzz targets, cross-provider adapter tests, functional compilation, format, vet, lint, and diff checks. Keep the external 9.2 PostgreSQL blocker unchanged.
+
+## Phase 11: Envelope-Scoped Alias Validation
+
+- [x] 11.1 Keep recursive exact-duplicate rejection at every object depth while limiting case-insensitive alias rejection to the tracked keys of request, message, and text-block envelopes.
+- [x] 11.2 Prove nested metadata, tool arguments, JSON schemas, and extension objects preserve protocol-like capitalized keys across OpenAI/Anthropic decoration and Anthropic translation, while tracked envelope aliases retain enforce/observe rejection contracts.
+
+## Phase 12: Safe Snapshot Simplification
+
+- [x] 12.1 Remove overlap detection from snapshot preparation; preserve an existing `OriginalBody` and always clone the working `Body` before any plugin in a mutating pre-request stage.
+- [x] 12.2 Prove lazy no-mutator behavior, identical/partial/disjoint caller storage independence, preexisting-original preservation, and pre-parallel snapshot timing; run focused race, vet, lint, format, and diff checks.

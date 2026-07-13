@@ -45,6 +45,24 @@ func TestAnthropicDocumentPreservesUnknownTopLevelSystemAndRichMessages(t *testi
 	require.JSONEq(t, `{"role":"user","content":"new"}`, string(messages[2]))
 }
 
+func TestAnthropicDocumentPreservesProtocolLikeKeysInsideUserObjects(t *testing.T) {
+	metadata := json.RawMessage(`{"Role":"audit","Type":"trace","Content":{"Messages":[],"System":"nested"}}`)
+	tools := json.RawMessage(`[{"name":"lookup","input_schema":{"type":"object","properties":{"Role":{"Type":"string"},"Content":{"Messages":[],"System":"schema"}}}}]`)
+	system := json.RawMessage(`[{"type":"text","text":"rules","cache_control":{"Type":"ephemeral","Content":{"Messages":[],"System":"cache"}}}]`)
+	message := json.RawMessage(`{"role":"assistant","content":[{"type":"tool_use","id":"tool-1","name":"lookup","input":{"Role":"operator","Type":"query","Content":{"Messages":[],"System":"argument"}},"extension":{"Role":"assistant-data","Type":"block","Content":{"Messages":[],"System":"extension"}}}],"extension":{"Role":"message-data","Type":"message","Content":{"Messages":[],"System":"message"}}}`)
+	body := []byte(`{"metadata":` + string(metadata) + `,"tools":` + string(tools) + `,"system":` + string(system) + `,"messages":[` + string(message) + `]}`)
+
+	output, err := decorateAnthropicBody(body, []decorator{anthropicTestDecorator(positionEnd, roleUser, "new")})
+
+	require.NoError(t, err)
+	fields, messages := decodeAnthropicTestOutput(t, output)
+	require.Equal(t, metadata, fields["metadata"])
+	require.Equal(t, tools, fields["tools"])
+	require.Equal(t, system, fields["system"])
+	require.Len(t, messages, 2)
+	require.Equal(t, message, messages[0])
+}
+
 func TestAnthropicDocumentPreservesOpaqueSystemOnNonSystemPlacement(t *testing.T) {
 	system := json.RawMessage(`{"vendor": "opaque", "nested":[1,true,null]}`)
 	output, err := decorateAnthropicBody(
@@ -242,8 +260,7 @@ func FuzzAnthropicDocumentPreservesUntouchedMessage(f *testing.F) {
 		if !json.Valid(message) || !isJSONObject(message) {
 			return
 		}
-		var object map[string]json.RawMessage
-		if err := json.Unmarshal(message, &object); err != nil || object == nil {
+		if _, err := decodeProtocolMessage(message, "fuzz Anthropic message"); err != nil {
 			return
 		}
 		body := []byte(fmt.Sprintf(`{"messages":[%s]}`, message))

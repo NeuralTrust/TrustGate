@@ -65,6 +65,53 @@ func TestPluginExecuteEnforceDecoratesSupportedFormats(t *testing.T) {
 	}
 }
 
+func TestPluginExecutePreservesProtocolLikeKeysInsideUserObjects(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		sourceFormat string
+		body         []byte
+		expected     string
+	}{
+		{
+			name:         "OpenAI",
+			sourceFormat: sourceFormatOpenAI,
+			body:         []byte(`{"metadata":{"Role":"audit","Type":"trace","Content":{"Messages":[],"System":"nested"}},"messages":[{"role":"user","content":[{"type":"text","text":"hello","extension":{"Role":"viewer","Type":"custom","Content":{"Messages":[],"System":"block"}}}]}]}`),
+			expected:     `{"metadata":{"Role":"audit","Type":"trace","Content":{"Messages":[],"System":"nested"}},"messages":[{"role":"user","content":[{"type":"text","text":"hello","extension":{"Role":"viewer","Type":"custom","Content":{"Messages":[],"System":"block"}}}]},{"role":"assistant","content":"safe"}]}`,
+		},
+		{
+			name:         "Anthropic",
+			sourceFormat: sourceFormatAnthropic,
+			body:         []byte(`{"metadata":{"Role":"audit","Type":"trace","Content":{"Messages":[],"System":"nested"}},"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"tool-1","name":"lookup","input":{"Role":"operator","Type":"query","Content":{"Messages":[],"System":"argument"}}}]}]}`),
+			expected:     `{"metadata":{"Role":"audit","Type":"trace","Content":{"Messages":[],"System":"nested"}},"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"tool-1","name":"lookup","input":{"Role":"operator","Type":"query","Content":{"Messages":[],"System":"argument"}}}]},{"role":"assistant","content":"safe"}]}`,
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		for _, mode := range []policy.Mode{policy.ModeEnforce, policy.ModeObserve} {
+			mode := mode
+			t.Run(test.name+"/"+string(mode), func(t *testing.T) {
+				t.Parallel()
+				bodyBefore := append([]byte(nil), test.body...)
+				result, err := New().Execute(
+					context.Background(),
+					pluginInput(mode, test.sourceFormat, test.body, test.body, pluginDecoratorSettings("safe")),
+				)
+
+				require.NoError(t, err)
+				require.Equal(t, bodyBefore, test.body)
+				if mode == policy.ModeObserve {
+					require.Nil(t, result.RequestBody)
+					return
+				}
+				require.JSONEq(t, test.expected, string(result.RequestBody))
+			})
+		}
+	}
+}
+
 func TestPluginExecuteRequiredSystemUsesOnlyOriginalBody(t *testing.T) {
 	t.Parallel()
 
@@ -135,6 +182,7 @@ func TestPluginExecuteRequiredSystemRejectsMissingOriginalForms(t *testing.T) {
 		name         string
 		sourceFormat string
 		originalBody []byte
+		errorType    string
 	}{
 		{name: "nil OpenAI original", sourceFormat: sourceFormatOpenAI},
 		{name: "empty OpenAI original", sourceFormat: sourceFormatOpenAI, originalBody: []byte{}},
@@ -142,14 +190,14 @@ func TestPluginExecuteRequiredSystemRejectsMissingOriginalForms(t *testing.T) {
 		{name: "blank OpenAI system", sourceFormat: sourceFormatOpenAI, originalBody: []byte(`{"messages":[{"role":"system","content":"  "}]}`)},
 		{name: "opaque OpenAI system", sourceFormat: sourceFormatOpenAI, originalBody: []byte(`{"messages":[{"role":"system","content":{"text":"rules"}}]}`)},
 		{name: "wrong-case OpenAI role", sourceFormat: sourceFormatOpenAI, originalBody: []byte(`{"messages":[{"role":"System","content":"rules"}]}`)},
-		{name: "wrong-case OpenAI messages key", sourceFormat: sourceFormatOpenAI, originalBody: []byte(`{"Messages":[{"role":"system","content":"rules"}]}`)},
-		{name: "wrong-case OpenAI role key", sourceFormat: sourceFormatOpenAI, originalBody: []byte(`{"messages":[{"Role":"system","content":"rules"}]}`)},
-		{name: "wrong-case OpenAI content key", sourceFormat: sourceFormatOpenAI, originalBody: []byte(`{"messages":[{"role":"system","Content":"rules"}]}`)},
+		{name: "wrong-case OpenAI messages key", sourceFormat: sourceFormatOpenAI, originalBody: []byte(`{"Messages":[{"role":"system","content":"rules"}]}`), errorType: typeInvalidRequestBody},
+		{name: "wrong-case OpenAI role key", sourceFormat: sourceFormatOpenAI, originalBody: []byte(`{"messages":[{"Role":"system","content":"rules"}]}`), errorType: typeInvalidRequestBody},
+		{name: "wrong-case OpenAI content key", sourceFormat: sourceFormatOpenAI, originalBody: []byte(`{"messages":[{"role":"system","Content":"rules"}]}`), errorType: typeInvalidRequestBody},
 		{name: "nil Anthropic original", sourceFormat: sourceFormatAnthropic},
 		{name: "empty Anthropic original", sourceFormat: sourceFormatAnthropic, originalBody: []byte{}},
 		{name: "blank Anthropic system", sourceFormat: sourceFormatAnthropic, originalBody: []byte(`{"system":"  ","messages":[]}`)},
 		{name: "opaque Anthropic system", sourceFormat: sourceFormatAnthropic, originalBody: []byte(`{"system":{"text":"rules"},"messages":[]}`)},
-		{name: "wrong-case Anthropic key", sourceFormat: sourceFormatAnthropic, originalBody: []byte(`{"System":"rules","messages":[]}`)},
+		{name: "wrong-case Anthropic key", sourceFormat: sourceFormatAnthropic, originalBody: []byte(`{"System":"rules","messages":[]}`), errorType: typeInvalidRequestBody},
 	}
 
 	for _, test := range tests {
@@ -165,6 +213,11 @@ func TestPluginExecuteRequiredSystemRejectsMissingOriginalForms(t *testing.T) {
 			)
 			result, err := New().Execute(context.Background(), input)
 			require.Nil(t, result)
+			if test.errorType == typeInvalidRequestBody {
+				pluginError := requireBodyFreePluginError(t, err, typeInvalidRequestBody)
+				require.Equal(t, typeInvalidRequestBody, pluginError.Message)
+				return
+			}
 			requireRequiredSystemError(t, err)
 		})
 	}

@@ -20,30 +20,50 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestOpenAIOriginalSystemExtractionIsExactCaseSensitive(t *testing.T) {
+func TestOpenAIOriginalSystemExtractionRejectsProtocolAliases(t *testing.T) {
+	t.Parallel()
+
+	hasSystem, err := hasOpenAIOriginalSystem(
+		[]byte(`{"messages":[{"role":"system","content":"rules"}]}`),
+	)
+	require.NoError(t, err)
+	require.True(t, hasSystem)
+
+	tests := map[string][]byte{
+		"top-level messages": []byte(`{"Messages":[{"role":"system","content":"rules"}]}`),
+		"message role":       []byte(`{"messages":[{"Role":"system","content":"rules"}]}`),
+		"message content":    []byte(`{"messages":[{"role":"system","Content":"rules"}]}`),
+	}
+
+	for name, body := range tests {
+		body := body
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := hasOpenAIOriginalSystem(body)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "invalid field alias")
+		})
+	}
+}
+
+func TestOpenAIPlacementRejectsProtocolAliases(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name string
 		body []byte
-		want bool
 	}{
 		{
-			name: "exact protocol keys",
-			body: []byte(`{"messages":[{"role":"system","content":"rules"}]}`),
-			want: true,
+			name: "top-level messages",
+			body: []byte(`{"Messages":[{"role":"system","content":"opaque"}]}`),
 		},
 		{
-			name: "wrong-case messages",
-			body: []byte(`{"Messages":[{"role":"system","content":"rules"}]}`),
+			name: "message role",
+			body: []byte(`{"messages":[{"Role":"system","content":"opaque"},{"role":"user","content":"exact"}]}`),
 		},
 		{
-			name: "wrong-case role",
-			body: []byte(`{"messages":[{"Role":"system","content":"rules"}]}`),
-		},
-		{
-			name: "wrong-case content",
-			body: []byte(`{"messages":[{"role":"system","Content":"rules"}]}`),
+			name: "message content",
+			body: []byte(`{"messages":[{"role":"user","Content":"opaque"}]}`),
 		},
 	}
 
@@ -51,49 +71,12 @@ func TestOpenAIOriginalSystemExtractionIsExactCaseSensitive(t *testing.T) {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := hasOpenAIOriginalSystem(test.body)
-			require.NoError(t, err)
-			require.Equal(t, test.want, got)
-		})
-	}
-}
-
-func TestOpenAIPlacementIgnoresWrongCaseProtocolKeys(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name      string
-		body      []byte
-		decorator decorator
-		expected  string
-	}{
-		{
-			name:      "wrong-case top-level messages remain opaque",
-			body:      []byte(`{"Messages":[{"role":"system","content":"opaque"}]}`),
-			decorator: openAITestDecorator(positionAfterSystem, roleAssistant, "added"),
-			expected:  `{"Messages":[{"role":"system","content":"opaque"}],"messages":[{"role":"assistant","content":"added"}]}`,
-		},
-		{
-			name:      "wrong-case role is not a system anchor",
-			body:      []byte(`{"messages":[{"Role":"system","Content":"opaque"},{"role":"user","content":"exact"}]}`),
-			decorator: openAITestDecorator(positionAfterSystem, roleAssistant, "added"),
-			expected:  `{"messages":[{"role":"assistant","content":"added"},{"Role":"system","Content":"opaque"},{"role":"user","content":"exact"}]}`,
-		},
-		{
-			name:      "wrong-case role is not a user anchor",
-			body:      []byte(`{"messages":[{"role":"user","content":"exact"},{"Role":"user","Content":"opaque"}]}`),
-			decorator: openAITestDecorator(positionBeforeLastUser, roleAssistant, "added"),
-			expected:  `{"messages":[{"role":"assistant","content":"added"},{"role":"user","content":"exact"},{"Role":"user","Content":"opaque"}]}`,
-		},
-	}
-
-	for _, test := range tests {
-		test := test
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			output, err := decorateOpenAIBody(test.body, []decorator{test.decorator})
-			require.NoError(t, err)
-			require.JSONEq(t, test.expected, string(output))
+			_, err := decorateOpenAIBody(
+				test.body,
+				[]decorator{openAITestDecorator(positionEnd, roleAssistant, "added")},
+			)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "invalid field alias")
 		})
 	}
 }
@@ -141,6 +124,38 @@ func TestProtocolDocumentsRejectDuplicateExactKeys(t *testing.T) {
 		{
 			name: "Anthropic duplicate system transformation",
 			body: []byte(`{"system":"first","system":"second","messages":[]}`),
+			transform: func(body []byte) error {
+				_, err := decorateAnthropicBody(body, []decorator{anthropicTestDecorator(positionEnd, roleUser, "added")})
+				return err
+			},
+		},
+		{
+			name: "OpenAI duplicate untouched top-level field",
+			body: []byte(`{"future":{"enabled":true},"future":{"enabled":false},"messages":[]}`),
+			transform: func(body []byte) error {
+				_, err := decorateOpenAIBody(body, []decorator{openAITestDecorator(positionEnd, roleUser, "added")})
+				return err
+			},
+		},
+		{
+			name: "OpenAI duplicate untouched nested field",
+			body: []byte(`{"extension":{"nested":{"secret":"first","secret":"second"}},"messages":[]}`),
+			transform: func(body []byte) error {
+				_, err := decorateOpenAIBody(body, []decorator{openAITestDecorator(positionEnd, roleUser, "added")})
+				return err
+			},
+		},
+		{
+			name: "Anthropic duplicate untouched message field",
+			body: []byte(`{"messages":[{"role":"user","content":"hello","extension":1,"extension":2}]}`),
+			transform: func(body []byte) error {
+				_, err := decorateAnthropicBody(body, []decorator{anthropicTestDecorator(positionEnd, roleUser, "added")})
+				return err
+			},
+		},
+		{
+			name: "Anthropic duplicate untouched nested block field",
+			body: []byte(`{"system":[{"type":"text","text":"rules","cache":{"ttl":1,"ttl":2}}],"messages":[]}`),
 			transform: func(body []byte) error {
 				_, err := decorateAnthropicBody(body, []decorator{anthropicTestDecorator(positionEnd, roleUser, "added")})
 				return err

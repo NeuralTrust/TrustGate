@@ -95,44 +95,20 @@ func TestAnthropicDocumentPlacesMessagesAtAnchorsAndFallbacks(t *testing.T) {
 	}
 }
 
-func TestAnthropicBeforeLastUserUsesExactRoleFieldCasing(t *testing.T) {
-	tests := []struct {
-		name     string
-		body     string
-		expected []string
-	}{
-		{
-			name:     "lowercase control",
-			body:     `{"messages":[{"role":"assistant","content":"a"},{"role":"user","content":"lower"},{"role":"assistant","content":"tail"}]}`,
-			expected: []string{"a", "new", "lower", "tail"},
-		},
-		{
-			name:     "uppercase and titlecase roles are ignored",
-			body:     `{"messages":[{"ROLE":"user","content":"upper"},{"role":"user","content":"lower"},{"Role":"user","content":"title"}]}`,
-			expected: []string{"upper", "new", "lower", "title"},
-		},
-		{
-			name:     "uppercase-only role falls back to end",
-			body:     `{"messages":[{"ROLE":"user","content":"upper"},{"Role":"user","content":"title"}]}`,
-			expected: []string{"upper", "title", "new"},
-		},
+func TestAnthropicBeforeLastUserRejectsRoleAliases(t *testing.T) {
+	tests := map[string]string{
+		"uppercase role": `{"messages":[{"ROLE":"user","content":"upper"}]}`,
+		"titlecase role": `{"messages":[{"Role":"user","content":"title"}]}`,
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			output, err := decorateAnthropicBody(
-				[]byte(test.body),
+	for name, body := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := decorateAnthropicBody(
+				[]byte(body),
 				[]decorator{anthropicTestDecorator(positionBeforeLastUser, roleAssistant, "new")},
 			)
-			require.NoError(t, err)
-			_, messages := decodeAnthropicTestOutput(t, output)
-			contents := make([]string, len(messages))
-			for i := range messages {
-				fields := make(map[string]json.RawMessage)
-				require.NoError(t, json.Unmarshal(messages[i], &fields))
-				require.NoError(t, json.Unmarshal(fields["content"], &contents[i]))
-			}
-			require.Equal(t, test.expected, contents)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "invalid field alias")
 		})
 	}
 }

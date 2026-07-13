@@ -20,21 +20,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSystemBlockExtractionUsesExactCaseSensitiveFields(t *testing.T) {
+func TestSystemBlockExtractionRejectsFieldAliases(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		body         []byte
-		hasSystem    func([]byte) (bool, error)
-		assertOpaque func(*testing.T, []byte)
-		transform    func([]byte) ([]byte, error)
+		name      string
+		body      []byte
+		hasSystem func([]byte) (bool, error)
+		transform func([]byte) ([]byte, error)
 	}{
 		{
-			name:         "OpenAI wrong-case type",
-			body:         []byte(`{"messages":[{"role":"system","content":[{"Type":"text","text":"prompt-secret"}]}]}`),
-			hasSystem:    hasOpenAIOriginalSystem,
-			assertOpaque: assertOpenAIBlockOpaque,
+			name:      "OpenAI wrong-case type",
+			body:      []byte(`{"messages":[{"role":"system","content":[{"Type":"text","text":"prompt-secret"}]}]}`),
+			hasSystem: hasOpenAIOriginalSystem,
 			transform: func(body []byte) ([]byte, error) {
 				return decorateOpenAIBody(
 					body,
@@ -43,10 +41,9 @@ func TestSystemBlockExtractionUsesExactCaseSensitiveFields(t *testing.T) {
 			},
 		},
 		{
-			name:         "OpenAI wrong-case text",
-			body:         []byte(`{"messages":[{"role":"system","content":[{"type":"text","Text":"prompt-secret"}]}]}`),
-			hasSystem:    hasOpenAIOriginalSystem,
-			assertOpaque: assertOpenAIBlockOpaque,
+			name:      "OpenAI wrong-case text",
+			body:      []byte(`{"messages":[{"role":"system","content":[{"type":"text","Text":"prompt-secret"}]}]}`),
+			hasSystem: hasOpenAIOriginalSystem,
 			transform: func(body []byte) ([]byte, error) {
 				return decorateOpenAIBody(
 					body,
@@ -55,10 +52,9 @@ func TestSystemBlockExtractionUsesExactCaseSensitiveFields(t *testing.T) {
 			},
 		},
 		{
-			name:         "Anthropic wrong-case type",
-			body:         []byte(`{"system":[{"Type":"text","text":"prompt-secret"}],"messages":[]}`),
-			hasSystem:    hasAnthropicOriginalSystem,
-			assertOpaque: assertAnthropicBlockOpaque,
+			name:      "Anthropic wrong-case type",
+			body:      []byte(`{"system":[{"Type":"text","text":"prompt-secret"}],"messages":[]}`),
+			hasSystem: hasAnthropicOriginalSystem,
 			transform: func(body []byte) ([]byte, error) {
 				return decorateAnthropicBody(
 					body,
@@ -67,10 +63,9 @@ func TestSystemBlockExtractionUsesExactCaseSensitiveFields(t *testing.T) {
 			},
 		},
 		{
-			name:         "Anthropic wrong-case text",
-			body:         []byte(`{"system":[{"type":"text","Text":"prompt-secret"}],"messages":[]}`),
-			hasSystem:    hasAnthropicOriginalSystem,
-			assertOpaque: assertAnthropicBlockOpaque,
+			name:      "Anthropic wrong-case text",
+			body:      []byte(`{"system":[{"type":"text","Text":"prompt-secret"}],"messages":[]}`),
+			hasSystem: hasAnthropicOriginalSystem,
 			transform: func(body []byte) ([]byte, error) {
 				return decorateAnthropicBody(
 					body,
@@ -84,31 +79,58 @@ func TestSystemBlockExtractionUsesExactCaseSensitiveFields(t *testing.T) {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			hasSystem, err := test.hasSystem(test.body)
-			require.NoError(t, err)
-			require.False(t, hasSystem)
-			test.assertOpaque(t, test.body)
+			_, err := test.hasSystem(test.body)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "invalid field alias")
 
-			output, err := test.transform(test.body)
-			require.NoError(t, err)
-			require.Contains(t, string(output), "prompt-secret")
-			require.Contains(t, string(output), "added")
+			_, err = test.transform(test.body)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "invalid field alias")
 		})
 	}
 }
 
-func assertOpenAIBlockOpaque(t *testing.T, body []byte) {
-	t.Helper()
-	document, err := decodeOpenAIDocument(body)
-	require.NoError(t, err)
-	require.Equal(t, openAISystemContentOpaque, document.metadata[0].systemContentState)
-}
+func TestMessageContentBlocksRejectFieldAliases(t *testing.T) {
+	t.Parallel()
 
-func assertAnthropicBlockOpaque(t *testing.T, body []byte) {
-	t.Helper()
-	document, err := decodeAnthropicDocument(body)
-	require.NoError(t, err)
-	require.Equal(t, anthropicSystemOpaque, document.loadSystemState())
+	tests := []struct {
+		name      string
+		body      []byte
+		transform func([]byte) ([]byte, error)
+	}{
+		{
+			name: "OpenAI content block type",
+			body: []byte(`{"messages":[{"role":"user","content":[{"Type":"text","text":"prompt-secret"}]}]}`),
+			transform: func(body []byte) ([]byte, error) {
+				return decorateOpenAIBody(
+					body,
+					[]decorator{openAITestDecorator(positionEnd, roleAssistant, "added")},
+				)
+			},
+		},
+		{
+			name: "Anthropic content block text",
+			body: []byte(`{"messages":[{"role":"user","content":[{"type":"text","Text":"prompt-secret"}]}]}`),
+			transform: func(body []byte) ([]byte, error) {
+				return decorateAnthropicBody(
+					body,
+					[]decorator{anthropicTestDecorator(positionEnd, roleAssistant, "added")},
+				)
+			},
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			output, err := test.transform(test.body)
+			require.Nil(t, output)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "invalid field alias")
+			require.NotContains(t, err.Error(), "prompt-secret")
+		})
+	}
 }
 
 func TestSystemBlockExtractionRejectsDuplicateExactFields(t *testing.T) {

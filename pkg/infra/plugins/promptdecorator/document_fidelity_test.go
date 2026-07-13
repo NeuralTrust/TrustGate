@@ -56,6 +56,22 @@ func TestOpenAIDocumentPreservesUnknownTopLevelAndUntouchedMessages(t *testing.T
 	require.Equal(t, untouched, messages[0])
 }
 
+func TestOpenAIDocumentPreservesProtocolLikeKeysInsideUserObjects(t *testing.T) {
+	metadata := json.RawMessage(`{"Role":"audit","Type":"trace","Content":{"Messages":[],"System":"nested"}}`)
+	tools := json.RawMessage(`[{"type":"function","function":{"name":"lookup","parameters":{"type":"object","properties":{"Role":{"Type":"string"},"Content":{"Messages":[],"System":"schema"}}}}}]`)
+	message := json.RawMessage(`{"role":"user","content":[{"type":"text","text":"hello","extension":{"Role":"viewer","Type":"custom","Content":{"Messages":[],"System":"block"}}}],"tool_calls":[{"type":"function","function":{"name":"lookup","arguments":{"Role":"operator","Type":"query","Content":{"Messages":[],"System":"argument"}}}}],"extension":{"Role":"user-data","Type":"message","Content":{"Messages":[],"System":"extension"}}}`)
+	body := []byte(`{"metadata":` + string(metadata) + `,"tools":` + string(tools) + `,"messages":[` + string(message) + `]}`)
+
+	output, err := decorateOpenAIBody(body, []decorator{openAITestDecorator(positionEnd, roleAssistant, "new")})
+
+	require.NoError(t, err)
+	fields, messages := decodeOpenAITestOutput(t, output)
+	require.Equal(t, metadata, fields["metadata"])
+	require.Equal(t, tools, fields["tools"])
+	require.Len(t, messages, 2)
+	require.Equal(t, message, messages[0])
+}
+
 func TestOpenAIDocumentClearsDecodedRawMessagesUntilMarshal(t *testing.T) {
 	document, err := decodeOpenAIDocument([]byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"u1"}]}`))
 	require.NoError(t, err)
@@ -252,8 +268,7 @@ func FuzzOpenAIDocumentPreservesUntouchedMessage(f *testing.F) {
 		if !json.Valid(message) || !isJSONObject(message) {
 			return
 		}
-		var object map[string]json.RawMessage
-		if err := json.Unmarshal(message, &object); err != nil || object == nil {
+		if _, err := decodeProtocolMessage(message, "fuzz OpenAI message"); err != nil {
 			return
 		}
 		body := []byte(fmt.Sprintf(`{"messages":[%s]}`, message))

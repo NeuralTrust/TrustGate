@@ -15,6 +15,7 @@
 package plugins
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"maps"
@@ -71,6 +72,9 @@ func (e *executor) RunStage(ctx context.Context, in StageInput) (*StageOutcome, 
 	if len(batches) == 0 {
 		return outcome, nil
 	}
+	if in.Stage == policy.StagePreRequest && batchesMutateRequestBody(batches) {
+		prepareRequestBodySnapshot(in.Request)
+	}
 
 	for _, batch := range batches {
 		results, err := e.runBatch(ctx, in.Stage, in.Request, in.Response, batch)
@@ -82,6 +86,27 @@ func (e *executor) RunStage(ctx context.Context, in StageInput) (*StageOutcome, 
 		}
 	}
 	return outcome, nil
+}
+
+func batchesMutateRequestBody(batches [][]chainEntry) bool {
+	for _, batch := range batches {
+		for _, entry := range batch {
+			if entry.plugin.MutatesRequestBody() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func prepareRequestBodySnapshot(req *infracontext.RequestContext) {
+	if req == nil {
+		return
+	}
+	if req.OriginalBody == nil {
+		req.OriginalBody = req.Body
+	}
+	req.Body = bytes.Clone(req.Body)
 }
 
 func (e *executor) runBatch(

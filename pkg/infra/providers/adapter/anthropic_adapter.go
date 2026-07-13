@@ -104,7 +104,7 @@ type anthropicUsage struct {
 func decodeAnthropicObject(
 	body []byte,
 	name string,
-	uniqueKeys ...string,
+	trackedKeys ...string,
 ) (map[string]json.RawMessage, error) {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	token, err := decoder.Token()
@@ -115,11 +115,11 @@ func decodeAnthropicObject(
 		return nil, fmt.Errorf("%s must be a JSON object", name)
 	}
 
-	unique := make(map[string]struct{}, len(uniqueKeys))
-	for _, key := range uniqueKeys {
-		unique[key] = struct{}{}
+	tracked := make(map[string]struct{}, len(trackedKeys))
+	for _, key := range trackedKeys {
+		tracked[key] = struct{}{}
 	}
-	seen := make(map[string]struct{}, len(uniqueKeys))
+	seen := make(map[string]struct{})
 	fields := make(map[string]json.RawMessage)
 	for decoder.More() {
 		keyToken, err := decoder.Token()
@@ -130,22 +130,24 @@ func decodeAnthropicObject(
 		if !ok {
 			return nil, fmt.Errorf("%s field name must be a string", name)
 		}
-		_, tracked := unique[key]
-		if !tracked {
-			for canonical := range unique {
+		if _, duplicate := seen[key]; duplicate {
+			return nil, fmt.Errorf("%s contains duplicate field %q", name, key)
+		}
+		seen[key] = struct{}{}
+		_, exact := tracked[key]
+		if !exact {
+			for canonical := range tracked {
 				if strings.EqualFold(key, canonical) {
 					return nil, fmt.Errorf("%s contains invalid field alias %q", name, key)
 				}
 			}
-		} else {
-			if _, duplicate := seen[key]; duplicate {
-				return nil, fmt.Errorf("%s contains duplicate field %q", name, key)
-			}
-			seen[key] = struct{}{}
 		}
 		var value json.RawMessage
 		if err := decoder.Decode(&value); err != nil {
 			return nil, fmt.Errorf("decode %s JSON", name)
+		}
+		if err := validateAnthropicJSONValue(value, name); err != nil {
+			return nil, err
 		}
 		fields[key] = value
 	}
@@ -159,6 +161,55 @@ func decodeAnthropicObject(
 		return nil, fmt.Errorf("%s contains a trailing JSON value", name)
 	}
 	return fields, nil
+}
+
+func validateAnthropicJSONValue(raw json.RawMessage, name string) error {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return fmt.Errorf("decode %s JSON", name)
+	}
+	switch trimmed[0] {
+	case '{':
+		_, err := decodeAnthropicObject(trimmed, name)
+		return err
+	case '[':
+		var values []json.RawMessage
+		if err := json.Unmarshal(trimmed, &values); err != nil {
+			return fmt.Errorf("decode %s JSON", name)
+		}
+		for i := range values {
+			if err := validateAnthropicJSONValue(values[i], name); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateAnthropicContentBlocks(raw json.RawMessage, name string) error {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '[' {
+		return nil
+	}
+	var blocks []json.RawMessage
+	if err := json.Unmarshal(trimmed, &blocks); err != nil {
+		return fmt.Errorf("decode %s JSON", name)
+	}
+	for index, block := range blocks {
+		trimmedBlock := bytes.TrimSpace(block)
+		if len(trimmedBlock) == 0 || trimmedBlock[0] != '{' {
+			continue
+		}
+		if _, err := decodeAnthropicObject(
+			block,
+			fmt.Sprintf("%s block %d", name, index),
+			"type",
+			"text",
+		); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func decodeAnthropicSystem(raw json.RawMessage) (string, error) {
@@ -176,7 +227,9 @@ func decodeAnthropicSystem(raw json.RawMessage) (string, error) {
 		return "", fmt.Errorf("anthropic system must be a string or an array of text blocks")
 	}
 
-	parts := make([]string, 0, len(blocks))
+	var system strings.Builder
+	hasText := false
+	endsWithNewline := false
 	for index, block := range blocks {
 		fields, err := decodeAnthropicObject(
 			block,
@@ -201,10 +254,15 @@ func decodeAnthropicSystem(raw json.RawMessage) (string, error) {
 			return "", fmt.Errorf("anthropic system block %d must contain string text", index)
 		}
 		if strings.TrimSpace(blockText) != "" {
-			parts = append(parts, blockText)
+			if hasText && !endsWithNewline && !strings.HasPrefix(blockText, "\n") {
+				system.WriteByte('\n')
+			}
+			system.WriteString(blockText)
+			hasText = true
+			endsWithNewline = strings.HasSuffix(blockText, "\n")
 		}
 	}
-	return strings.Join(parts, "\n"), nil
+	return system.String(), nil
 }
 
 func decodeAnthropicField(
@@ -236,6 +294,9 @@ func decodeAnthropicMessages(raw json.RawMessage) ([]anthropicMessage, error) {
 		name := fmt.Sprintf("anthropic message %d", index)
 		fields, err := decodeAnthropicObject(rawMessage, name, "role", "content")
 		if err != nil {
+			return nil, err
+		}
+		if err := validateAnthropicContentBlocks(fields["content"], name+" content"); err != nil {
 			return nil, err
 		}
 

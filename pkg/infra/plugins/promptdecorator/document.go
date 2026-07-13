@@ -402,7 +402,7 @@ func marshalOpenAIMessage(fields map[string]json.RawMessage) (json.RawMessage, e
 }
 
 func decodeOpenAIMessageMetadata(raw json.RawMessage) (openAIMessageMetadata, error) {
-	fields, err := decodeProtocolObject(raw, "OpenAI message", "role", "content")
+	fields, err := decodeProtocolMessage(raw, "OpenAI message")
 	if err != nil {
 		return openAIMessageMetadata{}, err
 	}
@@ -583,7 +583,7 @@ func decodeOpenAIMessageArray(body []byte) ([]json.RawMessage, error) {
 	return messages, nil
 }
 
-func decodeProtocolObject(body []byte, name string, uniqueKeys ...string) (map[string]json.RawMessage, error) {
+func decodeProtocolObject(body []byte, name string, trackedKeys ...string) (map[string]json.RawMessage, error) {
 	trimmed := bytes.TrimSpace(body)
 	if len(trimmed) == 0 {
 		return nil, fmt.Errorf("prompt_decorator: decode %s: empty body", name)
@@ -597,11 +597,11 @@ func decodeProtocolObject(body []byte, name string, uniqueKeys ...string) (map[s
 	if _, err := decoder.Token(); err != nil {
 		return nil, fmt.Errorf("prompt_decorator: decode %s: %w", name, err)
 	}
-	unique := make(map[string]struct{}, len(uniqueKeys))
-	for _, key := range uniqueKeys {
-		unique[key] = struct{}{}
+	tracked := make(map[string]struct{}, len(trackedKeys))
+	for _, key := range trackedKeys {
+		tracked[key] = struct{}{}
 	}
-	seen := make(map[string]struct{}, len(uniqueKeys))
+	seen := make(map[string]struct{})
 	fields := make(map[string]json.RawMessage)
 	for decoder.More() {
 		token, err := decoder.Token()
@@ -612,15 +612,28 @@ func decodeProtocolObject(body []byte, name string, uniqueKeys ...string) (map[s
 		if !valid {
 			return nil, fmt.Errorf("prompt_decorator: decode %s: object key must be a string", name)
 		}
-		if _, exact := unique[key]; exact {
-			if _, duplicate := seen[key]; duplicate {
-				return nil, fmt.Errorf("prompt_decorator: decode %s: duplicate field %q", name, key)
+		if _, duplicate := seen[key]; duplicate {
+			return nil, fmt.Errorf("prompt_decorator: decode %s: duplicate field %q", name, key)
+		}
+		seen[key] = struct{}{}
+		if _, exact := tracked[key]; !exact {
+			for canonical := range tracked {
+				if !strings.EqualFold(key, canonical) {
+					continue
+				}
+				return nil, fmt.Errorf(
+					"prompt_decorator: decode %s: invalid field alias %q",
+					name,
+					key,
+				)
 			}
-			seen[key] = struct{}{}
 		}
 		var value json.RawMessage
 		if err := decoder.Decode(&value); err != nil {
 			return nil, fmt.Errorf("prompt_decorator: decode %s: %w", name, err)
+		}
+		if err := validateProtocolJSONValue(value, name); err != nil {
+			return nil, err
 		}
 		fields[key] = value
 	}
@@ -634,6 +647,64 @@ func decodeProtocolObject(body []byte, name string, uniqueKeys ...string) (map[s
 		return nil, fmt.Errorf("prompt_decorator: decode %s: trailing JSON value", name)
 	}
 	return fields, nil
+}
+
+func decodeProtocolMessage(raw json.RawMessage, name string) (map[string]json.RawMessage, error) {
+	fields, err := decodeProtocolObject(raw, name, "role", "content")
+	if err != nil {
+		return nil, err
+	}
+	if err := validateProtocolContentBlocks(fields["content"], name+" content"); err != nil {
+		return nil, err
+	}
+	return fields, nil
+}
+
+func validateProtocolContentBlocks(raw json.RawMessage, name string) error {
+	if !isJSONArray(raw) {
+		return nil
+	}
+	var blocks []json.RawMessage
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return fmt.Errorf("prompt_decorator: decode %s: %w", name, err)
+	}
+	for i := range blocks {
+		if !isJSONObject(blocks[i]) {
+			continue
+		}
+		if _, err := decodeProtocolObject(
+			blocks[i],
+			fmt.Sprintf("%s block %d", name, i),
+			"type",
+			"text",
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateProtocolJSONValue(raw json.RawMessage, name string) error {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return fmt.Errorf("prompt_decorator: decode %s: empty JSON value", name)
+	}
+	switch trimmed[0] {
+	case '{':
+		_, err := decodeProtocolObject(trimmed, name)
+		return err
+	case '[':
+		var values []json.RawMessage
+		if err := json.Unmarshal(trimmed, &values); err != nil {
+			return fmt.Errorf("prompt_decorator: decode %s: %w", name, err)
+		}
+		for i := range values {
+			if err := validateProtocolJSONValue(values[i], name); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func isJSONArray(raw []byte) bool {

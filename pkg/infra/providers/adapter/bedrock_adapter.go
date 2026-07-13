@@ -78,8 +78,6 @@ func isAnthropicSystemShape(raw json.RawMessage) bool {
 	return json.Unmarshal(raw, &blocks) == nil
 }
 
-// detectFamilyFromRequestBody inspects the JSON body to determine the model
-// family heuristically.
 func detectFamilyFromRequestBody(body []byte) string {
 	var probe struct {
 		InputText        json.RawMessage `json:"inputText"`
@@ -101,8 +99,6 @@ func detectFamilyFromRequestBody(body []byte) string {
 		}
 		return bfMistral
 	}
-	// Has "messages" — distinguish Claude (Anthropic) from OpenAI-compat.
-	// Anthropic format has top-level "system" string/array or "anthropic_version".
 	if probe.Messages != nil {
 		if probe.AnthropicVersion != nil {
 			return bfClaude
@@ -110,7 +106,6 @@ func detectFamilyFromRequestBody(body []byte) string {
 		if isAnthropicSystemShape(probe.System) {
 			return bfClaude
 		}
-		// messages without system/anthropic_version → OpenAI-compat (DeepSeek, etc.)
 		return bfOpenAI
 	}
 	return bfClaude

@@ -12,9 +12,11 @@ Add `prompt_decorator` as a pure `pre_request` transform implementing the existi
 | Add locks or another scheduler | Duplicates established ordering/folding | Reject; advertise `MutatesRequestBody() == true` and use `StagePlan` |
 | Canonical decode/edit/encode | Simple, but loses rich/unknown fields | Reject; edit a narrow source-format RawMessage document |
 | Extend `prompt_template` | Couples static decoration to RUN-702 | Reject; use a distinct plugin |
-| Snapshot original client bytes | One extra allocation | Choose; independently allocate `Body` and `OriginalBody` at HTTP context creation |
+| Snapshot original client bytes | One extra allocation only when mutation is planned | Choose; clone Fiber bytes once into `Body`, then lazily capture `OriginalBody` at the executor boundary before a pre-request stage containing a body mutator |
 
 OpenAI edits raw `messages`; Anthropic edits raw top-level `system` and `messages`. Entries see prior entries in configuration order. Anchors remain: `start=0`, `end=len`, `after_system` follows the full leading system prefix/top-level system and otherwise starts at zero, and `before_last_user` falls back to end.
+
+Every JSON object is token-scanned recursively so exact duplicate members fail before map collapse. Case-insensitive alias rejection is envelope-local: each request, message, or text-block decoder compares only the protocol keys tracked for that envelope. Nested metadata, tool arguments, schemas, and extension objects receive duplicate validation without inheriting protocol-key aliases from their parent.
 
 For `position=system`, `merge` uses a blank-line separator within the existing representation; `replace` overwrites its text; `append` creates a following system message/block; `skip` inserts only if absent. Whitespace-only original system text is absent.
 
@@ -27,8 +29,9 @@ sequenceDiagram
     participant E as Executor
     participant D as prompt_decorator
     participant A as Provider adapter
-    H->>H: allocate Body and OriginalBody separately
+    H->>H: clone Fiber body once into Body
     P->>P: order; split request-body mutators into serial batches
+    E->>E: if stage mutates body, move owned Body to OriginalBody and clone Body
     E->>D: read-only current folded Body + OriginalBody
     D->>D: copy/parse; validate original; decorate current
     alt observe
@@ -42,11 +45,12 @@ sequenceDiagram
     end
 ```
 
-`StagePlan` already sorts by priority, slug, and policy ID and permits at most one request-body mutator per parallel batch. Thus policies marked parallel are still serialized against `prompt_decorator`; a safe read-only plugin may share its batch and sees that batch's input. The executor folds the result before the next mutator, which observes the decorated body. No executor or planner semantic change is planned; existing composition coverage is retained.
+`StagePlan` already sorts by priority, slug, and policy ID and permits at most one request-body mutator per parallel batch. Before any plugin in a pre-request stage executes, the executor scans that stage's batches. If any entry mutates the request body, it captures the original exactly once: an unset `OriginalBody` takes ownership of the existing `Body` slice, while a caller-provided `OriginalBody` is preserved. The executor then always clones `Body`, regardless of whether the caller-provided slices are identical, overlapping, or disjoint. Stages without a request-body mutator do not allocate or set `OriginalBody`. Policies marked parallel remain serialized against `prompt_decorator`; a safe read-only plugin may share its batch and sees the pre-plugin snapshot. The executor folds the result before the next mutator, which observes the decorated body.
 
 ## Invariants and Error Handling
 
 - Decoration reads current folded `Body`; `require_system_message` reads only immutable `OriginalBody`.
+- The proxy performs one body allocation. The executor performs the second allocation lazily only for a pre-request stage whose plan contains a request-body mutator, before read-only or mutating plugins can execute.
 - The plugin never writes contexts or mutates input bytes, RawMessages, maps, or slices. Private parsed state and returned bytes do not alias input.
 - Only executor result folding assigns `Body`. Observe returns no `RequestBody`.
 - Roles are `system|user|assistant`; system role requires `position=system`. Content, strategy, combinations, and unknown config are validated strictly. Informational `scope` never overrides policy scope.
@@ -64,8 +68,10 @@ sequenceDiagram
 | `pkg/infra/plugins/promptdecorator/plugin_test.go` | Create | Modes, original validation, exact errors |
 | `pkg/infra/plugins/promptdecorator/composition_test.go` | Create | StagePlan/executor composition and non-aliasing |
 | `pkg/infra/context/request_context.go` | Modify | Add immutable `OriginalBody` |
-| `pkg/api/handler/http/proxy/proxy_handler.go` | Modify | Allocate independent bodies |
-| `pkg/api/handler/http/proxy/proxy_handler_test.go` | Modify | Creation non-aliasing |
+| `pkg/api/handler/http/proxy/proxy_handler.go` | Modify | Clone Fiber body once; leave original unset |
+| `pkg/api/handler/http/proxy/proxy_handler_test.go` | Modify | One-copy creation and lazy-original contract |
+| `pkg/app/plugins/executor.go` | Modify | Lazy pre-stage original capture and unconditional working-body clone |
+| `pkg/app/plugins/executor_test.go` | Modify | Allocation, preservation, alias, sequential, and parallel coverage |
 | `pkg/infra/providers/adapter/anthropic_adapter.go` | Modify | Decode text-block systems for translation |
 | `pkg/infra/providers/adapter/anthropic_adapter_test.go` | Modify | Block translation |
 | `pkg/infra/providers/adapter/bedrock_adapter_test.go` | Modify | Claude/OpenAI-compatible targets |
@@ -74,11 +80,11 @@ sequenceDiagram
 | `pkg/app/plugins/catalog_test.go` | Modify | Catalog expectations |
 | `tests/functional/plugin_prompt_decorator_test.go` | Create | Scope/protocol/upstream behavior |
 
-No executor/planner files or semantics change; no files are deleted.
+The planner and body-folding semantics do not change; the executor adds only lazy snapshot ownership before pre-request execution. No files are deleted.
 
 ## Testing, Compatibility, and Rollout
 
-Unit tests mutate input/output after execution to prove bidirectional non-aliasing, verify input maps/bytes remain byte-identical, and cover every anchor/strategy/order. Composition tests combine preceding and following body mutators, including `parallel=true`, proving deterministic folding and immutable original validation; read-only parallel execution remains allowed. Adapter, functional, fuzz, and `go test -race ./...` coverage validates protocols, rich fields, Bedrock families, exact rejection, and no upstream call.
+Unit tests prove one proxy body copy, no second allocation or `OriginalBody` without a mutator, lazy independent snapshots before all plugins in a mutating stage, preservation of caller-provided originals, and bidirectional non-aliasing. Composition tests combine preceding and following body mutators, including `parallel=true`, proving deterministic folding and immutable original validation; read-only parallel execution remains allowed. Adapter, functional, fuzz, and `go test -race ./...` coverage validates protocols, rich fields, Bedrock families, exact rejection, and no upstream call.
 
 No migration is required. Ship dormant until policies reference the slug; rollback removes those policies. Risks remain raw-JSON fidelity, prompt growth, and an over-400-line implementation requiring reviewable task slices.
 

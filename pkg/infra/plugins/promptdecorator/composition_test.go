@@ -93,9 +93,8 @@ func TestCompositionFoldsAroundPromptDecoratorWithoutContextWrites(t *testing.T)
 
 	originalBody := []byte(`{"messages":[{"role":"system","content":"client-system"},{"role":"user","content":"client-user"}]}`)
 	body := append([]byte(nil), originalBody...)
-	original := append([]byte(nil), originalBody...)
 	bodyBefore := append([]byte(nil), body...)
-	originalBefore := append([]byte(nil), original...)
+	originalBefore := append([]byte(nil), body...)
 	probeInput := make(chan capturedRequest, 2)
 	followingInput := make(chan capturedRequest, 1)
 	started := make(chan string, 2)
@@ -133,7 +132,6 @@ func TestCompositionFoldsAroundPromptDecoratorWithoutContextWrites(t *testing.T)
 	}
 	req := &infracontext.RequestContext{
 		Body:         body,
-		OriginalBody: original,
 		SourceFormat: "openai",
 		Headers:      map[string][]string{"X-Test": {"original"}},
 		Metadata:     map[string]interface{}{"tenant": "consumer"},
@@ -222,8 +220,7 @@ func TestCompositionRejectsSystemInjectedAfterOriginalSnapshot(t *testing.T) {
 		compositionPolicy(t, "00000000-0000-0000-0000-000000000002", promptdecorator.PluginName, 20, true, map[string]any{"require_system_message": true}),
 	}
 	req := &infracontext.RequestContext{
-		Body:         append([]byte(nil), original...),
-		OriginalBody: original,
+		Body:         original,
 		SourceFormat: "openai",
 	}
 

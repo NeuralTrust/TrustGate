@@ -330,7 +330,6 @@ func buildRequestContext(c *fiber.Ctx, gatewayID ids.GatewayID, route apiresolve
 		Path:            c.Path(),
 		Query:           query,
 		Body:            bytes.Clone(incomingBody),
-		OriginalBody:    bytes.Clone(incomingBody),
 		IP:              c.IP(),
 		SessionID:       sessionIDFromContext(c),
 		SourceFormat:    string(route.SourceFormat),

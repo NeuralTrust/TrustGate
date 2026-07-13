@@ -15,6 +15,7 @@
 package plugins
 
 import (
+	"bytes"
 	"context"
 	"sync/atomic"
 	"testing"
@@ -635,4 +636,188 @@ func TestExecutor_RunStage_ParallelMetadataWriterReadersRaceSafe(t *testing.T) {
 	assert.Equal(t, []byte(`{"mutated":true}`), req.Body, "the single body mutator's write is folded into the request")
 	assert.Equal(t, map[string]interface{}{"by": "a_meta"}, resp.Metadata["written"], "the single metadata writer's nested write is merged back")
 	assert.Equal(t, map[string]interface{}{"k": "v"}, resp.Metadata["shared"], "pre-existing nested metadata read concurrently must survive untouched")
+}
+
+func TestExecutor_RunStage_NoRequestBodyMutatorLeavesOriginalUnset(t *testing.T) {
+	body := []byte(`{"original":true}`)
+	req := &infracontext.RequestContext{Body: body}
+	reader := &fakePlugin{
+		name:   "reader",
+		stages: []policy.Stage{policy.StagePreRequest},
+		result: &Result{StatusCode: 200},
+	}
+	exec := NewExecutor(newRegistry(t, reader), nil)
+
+	_, err := exec.RunStage(context.Background(), StageInput{
+		Stage:    policy.StagePreRequest,
+		Policies: policies(t, polSpec{slug: "reader", enabled: true}),
+		Request:  req,
+	})
+
+	require.NoError(t, err)
+	require.Nil(t, req.OriginalBody)
+	requireSameFirstByteAddress(t, body, req.Body)
+	body[0] = '!'
+	require.Equal(t, byte('!'), req.Body[0])
+}
+
+func TestExecutor_RunStage_CapturesOriginalBeforeParallelBatch(t *testing.T) {
+	type snapshot struct {
+		body         []byte
+		originalBody []byte
+	}
+	seen := make(chan snapshot, 2)
+	capture := func(in ExecInput) {
+		seen <- snapshot{
+			body:         in.Request.Body,
+			originalBody: in.Request.OriginalBody,
+		}
+	}
+	reader := &fakePlugin{
+		name:   "a_reader",
+		stages: []policy.Stage{policy.StagePreRequest},
+		execFn: func(in ExecInput) (*Result, error) {
+			capture(in)
+			return &Result{StatusCode: 200}, nil
+		},
+	}
+	mutator := &fakePlugin{
+		name:   "b_mutator",
+		stages: []policy.Stage{policy.StagePreRequest},
+		mutReq: true,
+		execFn: func(in ExecInput) (*Result, error) {
+			capture(in)
+			return &Result{StatusCode: 200}, nil
+		},
+	}
+	ownedBody := []byte("client")
+	req := &infracontext.RequestContext{Body: ownedBody}
+	exec := NewExecutor(newRegistry(t, reader, mutator), nil)
+
+	_, err := exec.RunStage(context.Background(), StageInput{
+		Stage: policy.StagePreRequest,
+		Policies: policies(t,
+			polSpec{slug: "a_reader", enabled: true, priority: 1, parallel: true},
+			polSpec{slug: "b_mutator", enabled: true, priority: 1, parallel: true},
+		),
+		Request: req,
+	})
+
+	require.NoError(t, err)
+	for range 2 {
+		got := <-seen
+		require.Equal(t, []byte("client"), got.body)
+		require.Equal(t, []byte("client"), got.originalBody)
+		requireDifferentFirstByteAddress(t, got.body, got.originalBody)
+	}
+	requireSameFirstByteAddress(t, ownedBody, req.OriginalBody)
+	requireDifferentFirstByteAddress(t, ownedBody, req.Body)
+	ownedBody[0] = 'O'
+	require.Equal(t, []byte("Olient"), req.OriginalBody)
+	require.Equal(t, []byte("client"), req.Body)
+	ownedBody[0] = 'c'
+	requireIndependentByteSlices(t, req.Body, req.OriginalBody)
+}
+
+func TestExecutor_RunStage_AlwaysClonesBodyWithPreexistingOriginal(t *testing.T) {
+	tests := []struct {
+		name         string
+		setup        func() ([]byte, []byte)
+		expectedBody []byte
+		expectedOrig []byte
+	}{
+		{
+			name: "identical",
+			setup: func() ([]byte, []byte) {
+				shared := []byte("shared")
+				return shared, shared
+			},
+			expectedBody: []byte("shared"),
+			expectedOrig: []byte("shared"),
+		},
+		{
+			name: "partially overlapping",
+			setup: func() ([]byte, []byte) {
+				shared := []byte("abcdef")
+				return shared[1:5], shared[2:6]
+			},
+			expectedBody: []byte("bcde"),
+			expectedOrig: []byte("cdef"),
+		},
+		{
+			name: "disjoint",
+			setup: func() ([]byte, []byte) {
+				return []byte("current"), []byte("preserved")
+			},
+			expectedBody: []byte("current"),
+			expectedOrig: []byte("preserved"),
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			body, original := test.setup()
+			req := &infracontext.RequestContext{
+				Body:         body,
+				OriginalBody: original,
+			}
+			mutator := &fakePlugin{
+				name:   "mutator",
+				stages: []policy.Stage{policy.StagePreRequest},
+				mutReq: true,
+				execFn: func(in ExecInput) (*Result, error) {
+					requireSameFirstByteAddress(t, original, in.Request.OriginalBody)
+					requireDifferentFirstByteAddress(t, body, in.Request.Body)
+					return &Result{StatusCode: 200}, nil
+				},
+			}
+			exec := NewExecutor(newRegistry(t, mutator), nil)
+
+			_, err := exec.RunStage(context.Background(), StageInput{
+				Stage:    policy.StagePreRequest,
+				Policies: policies(t, polSpec{slug: "mutator", enabled: true}),
+				Request:  req,
+			})
+
+			require.NoError(t, err)
+			require.Equal(t, test.expectedBody, req.Body)
+			require.Equal(t, test.expectedOrig, req.OriginalBody)
+			requireSameFirstByteAddress(t, original, req.OriginalBody)
+			requireDifferentFirstByteAddress(t, body, req.Body)
+			requireIndependentByteSlices(t, req.Body, req.OriginalBody)
+		})
+	}
+}
+
+func requireSameFirstByteAddress(t *testing.T, left, right []byte) {
+	t.Helper()
+	require.NotEmpty(t, left)
+	require.NotEmpty(t, right)
+	if &left[0] != &right[0] {
+		t.Fatal("byte slices do not start at the same address")
+	}
+}
+
+func requireDifferentFirstByteAddress(t *testing.T, left, right []byte) {
+	t.Helper()
+	require.NotEmpty(t, left)
+	require.NotEmpty(t, right)
+	if &left[0] == &right[0] {
+		t.Fatal("byte slices start at the same address")
+	}
+}
+
+func requireIndependentByteSlices(t *testing.T, left, right []byte) {
+	t.Helper()
+	leftBefore := bytes.Clone(left)
+	rightBefore := bytes.Clone(right)
+
+	left[0] ^= 0xff
+	require.Equal(t, rightBefore, right)
+	copy(left, leftBefore)
+
+	right[0] ^= 0xff
+	require.Equal(t, leftBefore, left)
+	copy(right, rightBefore)
 }

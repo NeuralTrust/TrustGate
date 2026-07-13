@@ -57,7 +57,7 @@ func pluginBlockProtocolFixtures() []pluginBlockProtocolFixture {
 	}
 }
 
-func TestPluginSystemBlockWrongCaseFieldsRemainNonqualifying(t *testing.T) {
+func TestPluginSystemBlockFieldAliasesFollowModeContracts(t *testing.T) {
 	t.Parallel()
 
 	for _, fixture := range pluginBlockProtocolFixtures() {
@@ -82,8 +82,8 @@ func TestPluginSystemBlockWrongCaseFieldsRemainNonqualifying(t *testing.T) {
 				)
 				result, err := New().Execute(context.Background(), input)
 				require.Nil(t, result)
-				requireRequiredSystemError(t, err)
-				require.NotContains(t, err.Error(), "prompt-secret")
+				pluginError := requireBodyFreePluginError(t, err, typeInvalidRequestBody)
+				require.NotContains(t, pluginError.Error(), "prompt-secret")
 			})
 			t.Run(fixture.name+"/"+test.name+"/observe", func(t *testing.T) {
 				t.Parallel()
@@ -104,9 +104,9 @@ func TestPluginSystemBlockWrongCaseFieldsRemainNonqualifying(t *testing.T) {
 				require.False(t, result.StopUpstream)
 				data, ok := span.PluginAttrsCopy().Extras.(promptDecoratorData)
 				require.True(t, ok)
-				require.Equal(t, decisionObserved, data.Decision)
-				require.True(t, data.WouldReject)
-				require.False(t, data.ParseError)
+				require.Equal(t, decisionParseError, data.Decision)
+				require.False(t, data.WouldReject)
+				require.True(t, data.ParseError)
 				encoded, marshalErr := json.Marshal(span.PluginAttrsCopy())
 				require.NoError(t, marshalErr)
 				require.NotContains(t, string(encoded), "prompt-secret")

@@ -17,7 +17,6 @@ package promptdecorator
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"net/http"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -39,6 +38,7 @@ const (
 	decisionUnsupported = "unsupported_source_format"
 
 	typeSystemMessageRequired = "system_message_required"
+	typeInvalidPluginConfig   = "invalid_plugin_config"
 	typeInvalidRequestBody    = "invalid_request_body"
 	typeUnsupportedSource     = "unsupported_source_format"
 )
@@ -103,7 +103,12 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {
-		return nil, fmt.Errorf("prompt_decorator: %w", err)
+		setExecutionData(in.Event, in.Mode, promptDecoratorData{
+			Decision:     decisionRejected,
+			SourceFormat: in.Request.SourceFormat,
+			ErrorType:    typeInvalidPluginConfig,
+		})
+		return nil, bodyFreeRequestError(typeInvalidPluginConfig)
 	}
 
 	data := promptDecoratorData{

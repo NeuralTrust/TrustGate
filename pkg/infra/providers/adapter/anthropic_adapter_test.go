@@ -100,6 +100,14 @@ func TestAnthropicDecodeRequest_SystemRepresentations(t *testing.T) {
 			wantSystem: "First\nSecond",
 		},
 		{
+			name: "next block supplies merge boundary",
+			system: `[
+				{"type":"text","text":"Base"},
+				{"type":"text","text":"\n\nDecorated"}
+			]`,
+			wantSystem: "Base\n\nDecorated",
+		},
+		{
 			name: "blank blocks are omitted",
 			system: `[
 				{"type":"text","text":"First"},
@@ -183,12 +191,12 @@ func TestAnthropicDecodeRequest_InvalidSystemArrays(t *testing.T) {
 		{
 			name:      "duplicate block type",
 			body:      `{"system":[{"type":"text","type":"text","text":"secret"}],"messages":[],"max_tokens":64}`,
-			wantCause: `anthropic system block 0 contains duplicate field "type"`,
+			wantCause: `anthropic request contains duplicate field "type"`,
 		},
 		{
 			name:      "duplicate block text",
 			body:      `{"system":[{"type":"text","text":"secret","text":"other"}],"messages":[],"max_tokens":64}`,
-			wantCause: `anthropic system block 0 contains duplicate field "text"`,
+			wantCause: `anthropic request contains duplicate field "text"`,
 		},
 		{
 			name:      "block type alias",
@@ -323,6 +331,75 @@ func TestAnthropicDecodeRequest_StrictMessagesPreserveRichContent(t *testing.T) 
 	assert.JSONEq(t, `{"query":"value"}`, canonical.Messages[1].ToolCalls[0].Arguments)
 }
 
+func TestAnthropicDecodeRequest_PreservesProtocolLikeKeysInsideUserObjects(t *testing.T) {
+	body := []byte(`{
+		"model":"claude",
+		"system":[{"type":"text","text":"Rules","cache_control":{"Type":"ephemeral","Content":{"Messages":[],"System":"cache"}}}],
+		"metadata":{"Role":"audit","Type":"trace","Content":{"Messages":[],"System":"metadata"}},
+		"tools":[{
+			"name":"lookup",
+			"input_schema":{
+				"type":"object",
+				"properties":{
+					"Role":{"Type":"string"},
+					"Content":{"Messages":[],"System":"schema"}
+				}
+			}
+		}],
+		"messages":[{
+			"role":"assistant",
+			"content":[
+				{"type":"text","text":"Answer","extension":{"Role":"viewer","Type":"custom","Content":{"Messages":[],"System":"block"}}},
+				{"type":"tool_use","id":"tool_1","name":"lookup","input":{"Role":"operator","Type":"query","Content":{"Messages":[],"System":"argument"}}}
+			],
+			"message_extension":{"Role":"assistant-data","Type":"message","Content":{"Messages":[],"System":"extension"}}
+		}],
+		"max_tokens":64
+	}`)
+
+	canonical, err := (&AnthropicAdapter{}).DecodeRequest(body)
+
+	require.NoError(t, err)
+	require.Equal(t, "Rules", canonical.System)
+	metadata, err := json.Marshal(canonical.Metadata)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"Role":"audit","Type":"trace","Content":{"Messages":[],"System":"metadata"}}`, string(metadata))
+	require.Len(t, canonical.Tools, 1)
+	schema, err := json.Marshal(canonical.Tools[0].Schema)
+	require.NoError(t, err)
+	require.JSONEq(
+		t,
+		`{"type":"object","properties":{"Role":{"Type":"string"},"Content":{"Messages":[],"System":"schema"}}}`,
+		string(schema),
+	)
+	require.Len(t, canonical.Messages, 1)
+	require.Equal(t, "Answer", canonical.Messages[0].Content)
+	require.Len(t, canonical.Messages[0].ToolCalls, 1)
+	require.JSONEq(
+		t,
+		`{"Role":"operator","Type":"query","Content":{"Messages":[],"System":"argument"}}`,
+		canonical.Messages[0].ToolCalls[0].Arguments,
+	)
+}
+
+func TestAnthropicDecodeRequest_RejectsAllExactObjectDuplicates(t *testing.T) {
+	tests := map[string]string{
+		"untouched top-level field": `{"future":"private prompt","future":"other","messages":[]}`,
+		"untouched message field":   `{"messages":[{"role":"user","content":"hello","future":"private prompt","future":"other"}]}`,
+		"nested content extension":  `{"messages":[{"role":"user","content":[{"type":"text","text":"hello","cache":{"ttl":"private prompt","ttl":"other"}}]}]}`,
+		"nested tool input":         `{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"1","name":"lookup","input":{"query":"private prompt","query":"other"}}]}]}`,
+	}
+
+	for name, body := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := (&AnthropicAdapter{}).DecodeRequest([]byte(body))
+
+			decodeError := requireAnthropicRequestDecodeError(t, err, "private prompt", "other")
+			require.Contains(t, errors.Unwrap(decodeError).Error(), "duplicate field")
+		})
+	}
+}
+
 func TestAnthropicDecodeRequest_RejectsInvalidMessageEnvelopes(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -337,12 +414,12 @@ func TestAnthropicDecodeRequest_RejectsInvalidMessageEnvelopes(t *testing.T) {
 		{
 			name:      "duplicate role",
 			message:   `{"role":"user","role":"assistant","content":"private prompt"}`,
-			wantCause: `anthropic message 0 contains duplicate field "role"`,
+			wantCause: `anthropic request contains duplicate field "role"`,
 		},
 		{
 			name:      "duplicate content",
 			message:   `{"role":"user","content":"private prompt","content":"other"}`,
-			wantCause: `anthropic message 0 contains duplicate field "content"`,
+			wantCause: `anthropic request contains duplicate field "content"`,
 		},
 		{
 			name:      "role alias",
@@ -353,6 +430,16 @@ func TestAnthropicDecodeRequest_RejectsInvalidMessageEnvelopes(t *testing.T) {
 			name:      "content mixed-case duplicate",
 			message:   `{"role":"user","content":"private prompt","Content":"other"}`,
 			wantCause: `anthropic message 0 contains invalid field alias "Content"`,
+		},
+		{
+			name:      "content block type alias",
+			message:   `{"role":"user","content":[{"Type":"text","text":"private prompt"}]}`,
+			wantCause: `anthropic message 0 content block 0 contains invalid field alias "Type"`,
+		},
+		{
+			name:      "content block text alias",
+			message:   `{"role":"user","content":[{"type":"text","Text":"private prompt"}]}`,
+			wantCause: `anthropic message 0 content block 0 contains invalid field alias "Text"`,
 		},
 		{
 			name:      "missing role",
