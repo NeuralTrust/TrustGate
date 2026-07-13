@@ -276,7 +276,7 @@ advisory lock**). ENG-1020 adds a dedicated runner in `infra/telemetry/postgres`
 - Opens the sensible pool via `pgx` from the resolved DSN.
 - Takes a **Postgres advisory lock** (`pg_advisory_lock(<const key>)`) so multiple replicas don't race
   the first-time DDL.
-- Ensures a `schema_migrations` table in the sensible DB and applies pending `Migration.UpSQL` from the
+- Ensures a `trustgate_migration_versions` table in the sensible DB and applies pending `Migration.UpSQL` from the
   module in order, idempotently (`CREATE TABLE IF NOT EXISTS`).
 - Runs **only when the `postgres` exporter is enabled** (first build), not at global boot.
 

@@ -30,6 +30,10 @@ const unlockTimeout = 5 * time.Second
 // exporter concurrently. The value is arbitrary but must stay stable (ENG-1020).
 const advisoryLockKey int64 = 942_020
 
+// legacyVersionTableName is the shared tracking table used before it was
+// namespaced per service; kept only to migrate existing deployments.
+const legacyVersionTableName = "migration_versions"
+
 func runMigrations(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger) error {
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
@@ -55,6 +59,11 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger)
 		conn.Release()
 	}()
 
+	// Must run before ensuring the namespaced table: otherwise the CREATE below
+	// would leave an empty ledger and force every migration to re-run.
+	if err := renameLegacyVersionTable(ctx, conn); err != nil {
+		return err
+	}
 	if _, err := conn.Exec(ctx, metrics.MigrationVersionTableDDL); err != nil {
 		return fmt.Errorf("postgres: ensure %s: %w", metrics.MigrationVersionTable, err)
 	}
@@ -69,6 +78,22 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger)
 		if err := applyMigration(ctx, conn, m); err != nil {
 			return fmt.Errorf("postgres: apply migration %q: %w", m.ID, err)
 		}
+	}
+	return nil
+}
+
+func renameLegacyVersionTable(ctx context.Context, conn *pgxpool.Conn) error {
+	if legacyVersionTableName == metrics.MigrationVersionTable {
+		return nil
+	}
+	sql := fmt.Sprintf(`DO $$
+BEGIN
+    IF to_regclass('%[1]s') IS NOT NULL AND to_regclass('%[2]s') IS NULL THEN
+        ALTER TABLE %[1]s RENAME TO %[2]s;
+    END IF;
+END $$;`, legacyVersionTableName, metrics.MigrationVersionTable)
+	if _, err := conn.Exec(ctx, sql); err != nil {
+		return fmt.Errorf("postgres: rename legacy %s to %s: %w", legacyVersionTableName, metrics.MigrationVersionTable, err)
 	}
 	return nil
 }
