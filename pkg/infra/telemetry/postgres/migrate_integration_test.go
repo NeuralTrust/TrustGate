@@ -59,6 +59,38 @@ func TestRunMigrationsIsIdempotent(t *testing.T) {
 	require.Equal(t, len(metrics.Migrations()), count)
 }
 
+func TestRunMigrationsRenamesLegacyVersionTable(t *testing.T) {
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, integrationDSN(t))
+	require.NoError(t, err)
+	defer pool.Close()
+
+	_, err = pool.Exec(ctx, "DROP TABLE IF EXISTS "+metrics.MigrationVersionTable+", "+legacyVersionTableName)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), "DROP TABLE IF EXISTS "+legacyVersionTableName)
+	})
+
+	_, err = pool.Exec(ctx, "CREATE TABLE "+legacyVersionTableName+` (
+    id         TEXT        PRIMARY KEY,
+    name       TEXT        NOT NULL,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);`)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, "INSERT INTO "+legacyVersionTableName+" (id, name) VALUES ('0001', 'create_trustgate_data')")
+	require.NoError(t, err)
+
+	require.NoError(t, runMigrations(ctx, pool, discardLogger()))
+
+	var legacy *string
+	require.NoError(t, pool.QueryRow(ctx, "SELECT to_regclass('"+legacyVersionTableName+"')::text").Scan(&legacy))
+	require.Nil(t, legacy)
+
+	var count int
+	require.NoError(t, pool.QueryRow(ctx, "SELECT count(*) FROM "+metrics.MigrationVersionTable).Scan(&count))
+	require.Equal(t, len(metrics.Migrations()), count)
+}
+
 func TestExporterInsertsSensibleRowIdempotently(t *testing.T) {
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, integrationDSN(t))

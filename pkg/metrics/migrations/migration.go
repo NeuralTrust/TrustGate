@@ -16,9 +16,9 @@ package migrations
 
 import "sort"
 
-const VersionTableName = "migration_versions"
+const VersionTableName = "trustgate_migration_versions"
 
-const VersionTableDDL = `CREATE TABLE IF NOT EXISTS migration_versions (
+const VersionTableDDL = `CREATE TABLE IF NOT EXISTS trustgate_migration_versions (
     id         TEXT        PRIMARY KEY,
     name       TEXT        NOT NULL,
     applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
