@@ -27,6 +27,7 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
 const PluginName = "trustguard"
@@ -215,7 +216,8 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		},
 	}
 
-	resp, err := p.guard(ctx, baseURL, cfg.CollectorID, body)
+	traceID := gatewayTraceID(ctx)
+	resp, err := p.guard(ctx, baseURL, cfg.CollectorID, traceID, body)
 	if err != nil {
 		p.warn(ctx, "trustguard call failed, failing open",
 			slog.String("plugin", PluginName),
@@ -276,7 +278,15 @@ func configCacheKey(settings map[string]any) string {
 	return fmt.Sprintf("%v\x00%v", settings["inspect"], settings["collector_id"])
 }
 
-func (p *Plugin) guard(ctx context.Context, baseURL, collectorID string, body GuardRequest) (*GuardResponse, error) {
+func gatewayTraceID(ctx context.Context) string {
+	rt := trace.FromContext(ctx)
+	if rt == nil {
+		return ""
+	}
+	return rt.TraceID()
+}
+
+func (p *Plugin) guard(ctx context.Context, baseURL, collectorID, traceID string, body GuardRequest) (*GuardResponse, error) {
 	params := tokenParams{
 		baseURL:     baseURL,
 		collectorID: collectorID,
@@ -286,7 +296,7 @@ func (p *Plugin) guard(ctx context.Context, baseURL, collectorID string, body Gu
 	if err != nil {
 		return nil, err
 	}
-	resp, err := p.client.Guard(ctx, baseURL, token, body)
+	resp, err := p.client.Guard(ctx, baseURL, token, traceID, body)
 	if err == nil {
 		return resp, nil
 	}
@@ -298,7 +308,7 @@ func (p *Plugin) guard(ctx context.Context, baseURL, collectorID string, body Gu
 	if err != nil {
 		return nil, err
 	}
-	return p.client.Guard(ctx, baseURL, token, body)
+	return p.client.Guard(ctx, baseURL, token, traceID, body)
 }
 
 func (p *Plugin) warn(ctx context.Context, msg string, attrs ...any) {
