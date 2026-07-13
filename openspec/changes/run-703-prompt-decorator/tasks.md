@@ -39,8 +39,8 @@ One commit/PR per phase. PR 1 targets `develop`; each later PR targets the prece
 
 ## Phase 2: Strict Configuration
 
-- [ ] 2.1 Create `pkg/infra/plugins/promptdecorator/config.go` with strict fields, enums, pairings, content, scope metadata, useful-action validation, and no caps.
-- [ ] 2.2 Cover the valid/invalid matrix in `config_test.go`. Verify: `go test ./pkg/infra/plugins/promptdecorator -run Config`.
+- [x] 2.1 Create `pkg/infra/plugins/promptdecorator/config.go` with strict fields, enums, pairings, content, scope metadata, useful-action validation, and no caps.
+- [x] 2.2 Cover the valid/invalid matrix in `config_test.go`. Verify: `go test ./pkg/infra/plugins/promptdecorator -run Config`.
 
 ## Phase 3: Private OpenAI Document
 
