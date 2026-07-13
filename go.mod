@@ -133,7 +133,10 @@ require (
 	sigs.k8s.io/yaml v1.3.0 // indirect
 )
 
-require github.com/NeuralTrust/TrustGate/pkg/metrics v0.0.0
+require (
+	github.com/NeuralTrust/TrustGate/pkg/metrics v0.0.0
+	github.com/aws/aws-sdk-go-v2/feature/rds/auth v1.6.25
+)
 
 replace github.com/NeuralTrust/TrustGate/pkg/metrics => ./pkg/metrics
 

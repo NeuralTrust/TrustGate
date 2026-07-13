@@ -31,9 +31,9 @@ type Connection struct {
 }
 
 func NewConnection(ctx context.Context, cfg *config.DatabaseConfig) (*Connection, error) {
-	conf, err := buildPoolConfig(cfg)
+	conf, err := buildPoolConfig(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("%w: build pool config: %v", errors.ErrBoot, err)
+		return nil, fmt.Errorf("%w: build pool config: %w", errors.ErrBoot, err)
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, conf)
 	if err != nil {
@@ -58,10 +58,14 @@ func (c *Connection) HealthCheck(ctx context.Context) error {
 	return c.Pool.Ping(ctx)
 }
 
-func buildPoolConfig(cfg *config.DatabaseConfig) (*pgxpool.Config, error) {
+func buildPoolConfig(ctx context.Context, cfg *config.DatabaseConfig) (*pgxpool.Config, error) {
+	password := cfg.Password
+	if cfg.Login == "aws" {
+		password = ""
+	}
 	dsn := fmt.Sprintf(
 		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.Name, cfg.SSLMode,
+		cfg.Host, cfg.Port, cfg.User, password, cfg.Name, cfg.SSLMode,
 	)
 	if cfg.SSLRootCert != "" {
 		dsn += " sslrootcert=" + cfg.SSLRootCert
@@ -77,5 +81,10 @@ func buildPoolConfig(cfg *config.DatabaseConfig) (*pgxpool.Config, error) {
 	conf.MaxConnIdleTime = cfg.MaxConnIdleTime
 	conf.HealthCheckPeriod = cfg.HealthCheckPeriod
 	conf.ConnConfig.ConnectTimeout = cfg.ConnectTimeout
+	strategy, err := newPoolAuthStrategy(ctx, cfg.Login, defaultAuthDependencies())
+	if err != nil {
+		return nil, fmt.Errorf("configure database authentication: %w", err)
+	}
+	strategy(conf)
 	return conf, nil
 }
