@@ -94,6 +94,47 @@ var providerOptionsCatalog = map[string][]ProviderOptionField{
 			Default:     "v1",
 		},
 	},
+	providers.ProviderDatabricks: {
+		{
+			Key:         "base_url",
+			Label:       "Serving endpoint URL",
+			Type:        OptionFieldTypeString,
+			Description: "Databricks Model Serving base URL up to the endpoint name (e.g. https://adb-123.azuredatabricks.net/serving-endpoints/my-llm).",
+			Required:    true,
+		},
+		{
+			Key:         "headers",
+			Label:       "Headers",
+			Type:        OptionFieldTypeMap,
+			Description: "Extra HTTP headers sent with every upstream request.",
+		},
+	},
+	providers.ProviderOracle: {
+		{
+			Key:         "region",
+			Label:       "OCI Region",
+			Type:        OptionFieldTypeString,
+			Description: "OCI region for Generative AI (e.g. us-chicago-1). Required unless Base URL is set.",
+		},
+		{
+			Key:         "project",
+			Label:       "Generative AI Project OCID",
+			Type:        OptionFieldTypeString,
+			Description: "Optional OCI Generative AI project OCID (sent as OpenAI-Project header).",
+		},
+		{
+			Key:         "base_url",
+			Label:       "Base URL",
+			Type:        OptionFieldTypeString,
+			Description: "Optional override for the OCI OpenAI-compatible base URL (http/https).",
+		},
+		{
+			Key:         "headers",
+			Label:       "Headers",
+			Type:        OptionFieldTypeMap,
+			Description: "Extra HTTP headers sent with every upstream request.",
+		},
+	},
 }
 
 func ProviderOptions(code string) []ProviderOptionField {

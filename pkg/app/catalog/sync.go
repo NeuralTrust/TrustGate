@@ -73,6 +73,10 @@ var seedProviders = []seedProvider{
 	{providers.ProviderCerebras, "Cerebras", "openai"},
 	{providers.ProviderOpenRouter, "OpenRouter", "openai"},
 	{providers.ProviderCohere, "Cohere", "cohere"},
+	{providers.ProviderPerplexity, "Perplexity", "openai"},
+	{providers.ProviderFireworks, "Fireworks", "openai"},
+	{providers.ProviderDatabricks, "Databricks", "openai"},
+	{providers.ProviderOracle, "Oracle OCI", "openai"},
 }
 
 var cohereSeedModels = []seedModel{
