@@ -53,6 +53,7 @@ type Client interface {
 type Config struct {
 	Host              string
 	Port              int
+	Username          string
 	Password          string // #nosec G117 -- Config field for Redis password
 	DB                int
 	TLSEnabled        bool
@@ -71,6 +72,7 @@ type client struct {
 func NewClient(config Config, manager *TTLMapManager, logger *slog.Logger) (Client, error) {
 	options := &redis.Options{
 		Addr:     fmt.Sprintf("%s:%d", config.Host, config.Port),
+		Username: config.Username,
 		Password: config.Password,
 		DB:       config.DB,
 	}

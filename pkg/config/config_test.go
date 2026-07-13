@@ -158,6 +158,9 @@ func TestLoadConfig_B1RuntimeDefaultsAndOverrides(t *testing.T) {
 	if cfg.Redis.TLSEnabled {
 		t.Errorf("Redis.TLSEnabled default = true, want false")
 	}
+	if cfg.Redis.Username != "" {
+		t.Errorf("Redis.Username default = %q, want empty", cfg.Redis.Username)
+	}
 	if cfg.Telemetry.KafkaTopic != defaultTelemetryKafkaTopic {
 		t.Errorf("Telemetry.KafkaTopic = %q, want %q", cfg.Telemetry.KafkaTopic, defaultTelemetryKafkaTopic)
 	}
@@ -173,6 +176,7 @@ func TestLoadConfig_B1RuntimeDefaultsAndOverrides(t *testing.T) {
 
 	t.Setenv("REDIS_TLS_ENABLED", "true")
 	t.Setenv("REDIS_TLS_INSECURE_VERIFY", "true")
+	t.Setenv("REDIS_USERNAME", "cacheuser")
 	t.Setenv("TELEMETRY_KAFKA_TOPIC", "custom.requests")
 	t.Setenv("METRICS_QUEUE_SIZE", "42")
 	t.Setenv("METRICS_WORKER_COUNT", "3")
@@ -188,6 +192,9 @@ func TestLoadConfig_B1RuntimeDefaultsAndOverrides(t *testing.T) {
 	}
 	if !cfg.Redis.TLSEnabled || !cfg.Redis.TLSInsecureVerify {
 		t.Errorf("Redis TLS override not applied: %+v", cfg.Redis)
+	}
+	if cfg.Redis.Username != "cacheuser" {
+		t.Errorf("Redis.Username override = %q, want %q", cfg.Redis.Username, "cacheuser")
 	}
 	if cfg.Telemetry.KafkaTopic != "custom.requests" {
 		t.Errorf("Telemetry override not applied: %+v", cfg.Telemetry)
