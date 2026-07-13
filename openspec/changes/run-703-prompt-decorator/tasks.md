@@ -59,8 +59,8 @@ One commit/PR per phase. PR 1 targets `develop`; each later PR targets the prece
 
 ## Phase 6: Existing Composition Contract
 
-- [ ] 6.1 Create `composition_test.go` with preceding/following body mutators, including `parallel=true`; prove StagePlan serialization and executor-folded deterministic inputs.
-- [ ] 6.2 Prove read-only parallel safety and original-vs-folded semantics. Do not change planner/executor production code; stop for redesign on a proven gap. Verify: `go test -race ./pkg/infra/plugins/promptdecorator`.
+- [x] 6.1 Create `composition_test.go` with preceding/following body mutators, including `parallel=true`; prove StagePlan serialization and executor-folded deterministic inputs.
+- [x] 6.2 Prove read-only parallel safety and original-vs-folded semantics. Do not change planner/executor production code; stop for redesign on a proven gap. Verify: `go test -race ./pkg/infra/plugins/promptdecorator`.
 
 ## Phase 7: Provider Translation
 
