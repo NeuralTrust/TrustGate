@@ -8,7 +8,7 @@ import (
 
 	gateway "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	cache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
-	redis "github.com/go-redis/redis/v8"
+	redis "github.com/redis/go-redis/v9"
 	mock "github.com/stretchr/testify/mock"
 )
 

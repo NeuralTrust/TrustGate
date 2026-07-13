@@ -26,7 +26,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
 
 // RedisProvider is the narrow cache dependency the load balancer needs: access

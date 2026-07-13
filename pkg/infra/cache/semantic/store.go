@@ -30,7 +30,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
