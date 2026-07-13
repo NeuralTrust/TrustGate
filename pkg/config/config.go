@@ -231,6 +231,7 @@ type DatabaseConfig struct {
 type RedisConfig struct {
 	Host              string
 	Port              int
+	Username          string
 	Password          string
 	DB                int
 	TLSEnabled        bool
@@ -415,6 +416,7 @@ func getRedisConfig() RedisConfig {
 	return RedisConfig{
 		Host:              getEnv("REDIS_HOST", defaultRedisHost),
 		Port:              getEnvInt("REDIS_PORT", defaultRedisPort),
+		Username:          getEnv("REDIS_USERNAME", ""),
 		Password:          getEnv("REDIS_PASSWORD", ""),
 		DB:                getEnvInt("REDIS_DB", defaultRedisDB),
 		TLSEnabled:        getEnvBool("REDIS_TLS_ENABLED", defaultRedisTLS),

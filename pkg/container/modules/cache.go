@@ -40,6 +40,7 @@ func Cache(c *container.Container) error {
 		return cache.NewClient(cache.Config{
 			Host:              cfg.Redis.Host,
 			Port:              cfg.Redis.Port,
+			Username:          cfg.Redis.Username,
 			Password:          cfg.Redis.Password,
 			DB:                cfg.Redis.DB,
 			TLSEnabled:        cfg.Redis.TLSEnabled,
