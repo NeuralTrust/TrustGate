@@ -15,7 +15,9 @@
 package adapter
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -64,6 +66,18 @@ func detectFamilyByModel(model string) string {
 	}
 }
 
+func isAnthropicSystemShape(raw json.RawMessage) bool {
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return false
+	}
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return true
+	}
+	var blocks []json.RawMessage
+	return json.Unmarshal(raw, &blocks) == nil
+}
+
 // detectFamilyFromRequestBody inspects the JSON body to determine the model
 // family heuristically.
 func detectFamilyFromRequestBody(body []byte) string {
@@ -88,16 +102,13 @@ func detectFamilyFromRequestBody(body []byte) string {
 		return bfMistral
 	}
 	// Has "messages" — distinguish Claude (Anthropic) from OpenAI-compat.
-	// Anthropic format has top-level "system" string or "anthropic_version".
+	// Anthropic format has top-level "system" string/array or "anthropic_version".
 	if probe.Messages != nil {
 		if probe.AnthropicVersion != nil {
 			return bfClaude
 		}
-		if probe.System != nil {
-			var s string
-			if json.Unmarshal(probe.System, &s) == nil {
-				return bfClaude
-			}
+		if isAnthropicSystemShape(probe.System) {
+			return bfClaude
 		}
 		// messages without system/anthropic_version → OpenAI-compat (DeepSeek, etc.)
 		return bfOpenAI
@@ -175,7 +186,18 @@ func (a *BedrockAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 	case bfMistral:
 		return a.mistral.DecodeRequest(body)
 	default:
-		return a.claude.DecodeRequest(body)
+		request, err := a.claude.DecodeRequest(body)
+		if err == nil {
+			return request, nil
+		}
+		var decodeError *RequestDecodeError
+		if errors.As(err, &decodeError) {
+			return nil, &RequestDecodeError{
+				Format: FormatBedrock,
+				Cause:  decodeError.Cause,
+			}
+		}
+		return nil, err
 	}
 }
 

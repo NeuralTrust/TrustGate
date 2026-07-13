@@ -64,8 +64,8 @@ One commit/PR per phase. PR 1 targets `develop`; each later PR targets the prece
 
 ## Phase 7: Provider Translation
 
-- [ ] 7.1 Update `pkg/infra/providers/adapter/anthropic_adapter.go` to translate copied system string/text arrays without unrelated changes.
-- [ ] 7.2 Extend `anthropic_adapter_test.go` and `bedrock_adapter_test.go` for Claude/OpenAI-compatible targets. Verify: `go test ./pkg/infra/providers/adapter`.
+- [x] 7.1 Update `pkg/infra/providers/adapter/anthropic_adapter.go` to translate copied system string/text arrays without unrelated changes.
+- [x] 7.2 Extend `anthropic_adapter_test.go` and `bedrock_adapter_test.go` for Claude/OpenAI-compatible targets. Verify: `go test ./pkg/infra/providers/adapter`.
 
 ## Phase 8: Catalog and DI Activation
 

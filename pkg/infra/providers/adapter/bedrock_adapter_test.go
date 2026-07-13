@@ -16,11 +16,37 @@ package adapter
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func requireBedrockRequestDecodeError(
+	t *testing.T,
+	err error,
+	secrets ...string,
+) *RequestDecodeError {
+	t.Helper()
+	var decodeError *RequestDecodeError
+	require.ErrorAs(t, err, &decodeError)
+	require.Equal(t, FormatBedrock, decodeError.Format)
+	require.EqualError(
+		t,
+		decodeError,
+		`invalid request body for format "bedrock": the payload could not be parsed as a valid bedrock API request`,
+	)
+	for current := err; current != nil; current = errors.Unwrap(current) {
+		if nested, ok := current.(*RequestDecodeError); ok {
+			assert.Equal(t, FormatBedrock, nested.Format)
+		}
+		for _, secret := range secrets {
+			assert.NotContains(t, current.Error(), secret)
+		}
+	}
+	return decodeError
+}
 
 // ---------------------------------------------------------------------------
 // Bedrock Titan: OpenAI → Bedrock (Titan model)
@@ -87,6 +113,161 @@ func TestBedrock_Titan_StreamChunkDecode(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, sc)
 	assert.Equal(t, "Hello from Titan", sc.Delta)
+}
+
+func TestAdaptRequest_DecoratedChatToBedrockClaude(t *testing.T) {
+	tests := []struct {
+		name       string
+		source     Format
+		input      string
+		wantSystem string
+	}{
+		{
+			name:   "Anthropic text blocks",
+			source: FormatAnthropic,
+			input: `{
+				"model":"anthropic.claude-3-5-sonnet-20241022-v2:0",
+				"system":[
+					{"type":"text","text":"Base","cache_control":{"type":"ephemeral"}},
+					{"type":"text","text":"Decorated","future_field":true}
+				],
+				"messages":[
+					{"role":"user","content":"Question"},
+					{"role":"assistant","content":"Answer"},
+					{"role":"user","content":"Follow-up"}
+				],
+				"max_tokens":128
+			}`,
+			wantSystem: "Base\nDecorated",
+		},
+		{
+			name:   "OpenAI system messages",
+			source: FormatOpenAI,
+			input: `{
+				"model":"anthropic.claude-3-5-sonnet-20241022-v2:0",
+				"messages":[
+					{"role":"system","content":"Base"},
+					{"role":"system","content":"Decorated"},
+					{"role":"user","content":"Question"},
+					{"role":"assistant","content":"Answer"},
+					{"role":"user","content":"Follow-up"}
+				],
+				"max_tokens":128
+			}`,
+			wantSystem: "Base\nDecorated",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			input := []byte(test.input)
+			original := append([]byte(nil), input...)
+
+			output, err := testRegistry().AdaptRequest(input, test.source, FormatBedrock)
+
+			require.NoError(t, err)
+			assert.Equal(t, original, input)
+			var result struct {
+				AnthropicVersion string             `json:"anthropic_version"`
+				System           string             `json:"system"`
+				Messages         []anthropicMessage `json:"messages"`
+			}
+			require.NoError(t, json.Unmarshal(output, &result))
+			assert.Equal(t, "bedrock-2023-05-31", result.AnthropicVersion)
+			assert.Equal(t, test.wantSystem, result.System)
+			require.Len(t, result.Messages, 3)
+			assert.Equal(t, []string{"user", "assistant", "user"}, []string{
+				result.Messages[0].Role,
+				result.Messages[1].Role,
+				result.Messages[2].Role,
+			})
+			assert.JSONEq(t, `"Question"`, string(result.Messages[0].Content))
+			assert.JSONEq(t, `"Answer"`, string(result.Messages[1].Content))
+			assert.JSONEq(t, `"Follow-up"`, string(result.Messages[2].Content))
+		})
+	}
+}
+
+func TestAdaptRequest_DecoratedAnthropicToBedrockOpenAICompatible(t *testing.T) {
+	input := []byte(`{
+		"model":"us.deepseek.deepseek-r1-v1:0",
+		"system":[
+			{"type":"text","text":"Base"},
+			{"type":"text","text":" "},
+			{"type":"text","text":"Decorated"}
+		],
+		"messages":[
+			{"role":"user","content":"Question"},
+			{"role":"assistant","content":"Answer"}
+		],
+		"max_tokens":128
+	}`)
+
+	output, err := testRegistry().AdaptRequest(input, FormatAnthropic, FormatBedrock)
+
+	require.NoError(t, err)
+	var result openaiRequest
+	require.NoError(t, json.Unmarshal(output, &result))
+	require.Len(t, result.Messages, 3)
+	assert.Equal(t, []string{"system", "user", "assistant"}, []string{
+		result.Messages[0].Role,
+		result.Messages[1].Role,
+		result.Messages[2].Role,
+	})
+	assert.JSONEq(t, `"Base\nDecorated"`, string(result.Messages[0].Content))
+	assert.JSONEq(t, `"Question"`, string(result.Messages[1].Content))
+	assert.JSONEq(t, `"Answer"`, string(result.Messages[2].Content))
+	require.NotNil(t, result.MaxTokens)
+	assert.Equal(t, 128, *result.MaxTokens)
+}
+
+func TestBedrockDecodeRequest_ClaudeFailuresUseBedrockFormat(t *testing.T) {
+	failures := []struct {
+		name      string
+		body      string
+		wantCause string
+	}{
+		{
+			name:      "malformed string system",
+			body:      `{"system":"private prompt","messages":[`,
+			wantCause: "decode anthropic request JSON",
+		},
+		{
+			name:      "malformed array system",
+			body:      `{"system":[{"type":"image","text":"private prompt"}],"messages":[]}`,
+			wantCause: "anthropic system block 0 has unsupported type",
+		},
+	}
+	paths := []struct {
+		name string
+		run  func([]byte) error
+	}{
+		{
+			name: "DecodeRequestFor",
+			run: func(body []byte) error {
+				_, err := testRegistry().DecodeRequestFor(body, FormatBedrock)
+				return err
+			},
+		},
+		{
+			name: "AdaptRequest",
+			run: func(body []byte) error {
+				_, err := testRegistry().AdaptRequest(body, FormatBedrock, FormatOpenAI)
+				return err
+			},
+		},
+	}
+
+	for _, failure := range failures {
+		for _, path := range paths {
+			t.Run(failure.name+"/"+path.name, func(t *testing.T) {
+				err := path.run([]byte(failure.body))
+
+				decodeError := requireBedrockRequestDecodeError(t, err, "private prompt")
+				require.EqualError(t, errors.Unwrap(decodeError), failure.wantCause)
+			})
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -366,6 +547,15 @@ func TestDetectFamilyFromRequestBody_OpenAICompat(t *testing.T) {
 	// Claude body: has "messages" + "system" string.
 	claudeBody := `{"model":"claude-3","messages":[{"role":"user","content":"hi"}],"system":"be helpful","max_tokens":100}`
 	assert.Equal(t, bfClaude, detectFamilyFromRequestBody([]byte(claudeBody)))
+
+	claudeArrayBody := `{"model":"claude-3","messages":[{"role":"user","content":"hi"}],"system":[{"type":"text","text":"be helpful"}],"max_tokens":100}`
+	assert.Equal(t, bfClaude, detectFamilyFromRequestBody([]byte(claudeArrayBody)))
+
+	claudeEmptyArrayBody := `{"model":"claude-3","messages":[{"role":"user","content":"hi"}],"system":[],"max_tokens":100}`
+	assert.Equal(t, bfClaude, detectFamilyFromRequestBody([]byte(claudeEmptyArrayBody)))
+
+	openAINullSystemBody := `{"model":"deepseek-r1","messages":[{"role":"user","content":"hi"}],"system":null,"max_tokens":100}`
+	assert.Equal(t, bfOpenAI, detectFamilyFromRequestBody([]byte(openAINullSystemBody)))
 
 	// Claude body: has "anthropic_version".
 	claudeBody2 := `{"messages":[{"role":"user","content":"hi"}],"anthropic_version":"bedrock-2023-05-31","max_tokens":100}`

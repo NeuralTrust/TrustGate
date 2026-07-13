@@ -15,8 +15,10 @@
 package adapter
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 )
 
@@ -27,7 +29,7 @@ type AnthropicAdapter struct{}
 // Provider-specific typed structs
 type anthropicRequest struct {
 	Model       string                 `json:"model,omitempty"`
-	System      string                 `json:"system,omitempty"`
+	System      json.RawMessage        `json:"system,omitempty"`
 	Messages    []anthropicMessage     `json:"messages"`
 	MaxTokens   int                    `json:"max_tokens"`
 	Temperature *float64               `json:"temperature,omitempty"`
@@ -97,6 +99,213 @@ type anthropicUsage struct {
 	CacheCreation            *anthropicCacheCreation `json:"cache_creation,omitempty"`
 	ServiceTier              string                  `json:"service_tier,omitempty"`
 	InferenceGeo             string                  `json:"inference_geo,omitempty"`
+}
+
+func decodeAnthropicObject(
+	body []byte,
+	name string,
+	uniqueKeys ...string,
+) (map[string]json.RawMessage, error) {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, fmt.Errorf("decode %s JSON", name)
+	}
+	if delimiter, ok := token.(json.Delim); !ok || delimiter != '{' {
+		return nil, fmt.Errorf("%s must be a JSON object", name)
+	}
+
+	unique := make(map[string]struct{}, len(uniqueKeys))
+	for _, key := range uniqueKeys {
+		unique[key] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(uniqueKeys))
+	fields := make(map[string]json.RawMessage)
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return nil, fmt.Errorf("decode %s JSON", name)
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s field name must be a string", name)
+		}
+		_, tracked := unique[key]
+		if !tracked {
+			for canonical := range unique {
+				if strings.EqualFold(key, canonical) {
+					return nil, fmt.Errorf("%s contains invalid field alias %q", name, key)
+				}
+			}
+		} else {
+			if _, duplicate := seen[key]; duplicate {
+				return nil, fmt.Errorf("%s contains duplicate field %q", name, key)
+			}
+			seen[key] = struct{}{}
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return nil, fmt.Errorf("decode %s JSON", name)
+		}
+		fields[key] = value
+	}
+	if _, err := decoder.Token(); err != nil {
+		return nil, fmt.Errorf("decode %s JSON", name)
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		if err != nil {
+			return nil, fmt.Errorf("decode %s JSON", name)
+		}
+		return nil, fmt.Errorf("%s contains a trailing JSON value", name)
+	}
+	return fields, nil
+}
+
+func decodeAnthropicSystem(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return "", nil
+	}
+
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return text, nil
+	}
+
+	var blocks []json.RawMessage
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return "", fmt.Errorf("anthropic system must be a string or an array of text blocks")
+	}
+
+	parts := make([]string, 0, len(blocks))
+	for index, block := range blocks {
+		fields, err := decodeAnthropicObject(
+			block,
+			fmt.Sprintf("anthropic system block %d", index),
+			"type",
+			"text",
+		)
+		if err != nil {
+			return "", err
+		}
+
+		var blockType string
+		if rawType, exists := fields["type"]; !exists || json.Unmarshal(rawType, &blockType) != nil {
+			return "", fmt.Errorf("anthropic system block %d must contain a string type", index)
+		}
+		if blockType != "text" {
+			return "", fmt.Errorf("anthropic system block %d has unsupported type", index)
+		}
+
+		var blockText string
+		if rawText, exists := fields["text"]; !exists || json.Unmarshal(rawText, &blockText) != nil {
+			return "", fmt.Errorf("anthropic system block %d must contain string text", index)
+		}
+		if strings.TrimSpace(blockText) != "" {
+			parts = append(parts, blockText)
+		}
+	}
+	return strings.Join(parts, "\n"), nil
+}
+
+func decodeAnthropicField(
+	fields map[string]json.RawMessage,
+	key string,
+	target any,
+) error {
+	raw, exists := fields[key]
+	if !exists {
+		return nil
+	}
+	if err := json.Unmarshal(raw, target); err != nil {
+		return fmt.Errorf("anthropic request field %q has invalid type", key)
+	}
+	return nil
+}
+
+func decodeAnthropicMessages(raw json.RawMessage) ([]anthropicMessage, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var rawMessages []json.RawMessage
+	if err := json.Unmarshal(raw, &rawMessages); err != nil {
+		return nil, fmt.Errorf(`anthropic request field "messages" has invalid type`)
+	}
+
+	messages := make([]anthropicMessage, 0, len(rawMessages))
+	for index, rawMessage := range rawMessages {
+		name := fmt.Sprintf("anthropic message %d", index)
+		fields, err := decodeAnthropicObject(rawMessage, name, "role", "content")
+		if err != nil {
+			return nil, err
+		}
+
+		rawRole, exists := fields["role"]
+		if !exists {
+			return nil, fmt.Errorf("%s must contain a string role", name)
+		}
+		var role string
+		if err := json.Unmarshal(rawRole, &role); err != nil {
+			return nil, fmt.Errorf("%s must contain a string role", name)
+		}
+		if role != "user" && role != "assistant" {
+			return nil, fmt.Errorf("%s has unsupported role", name)
+		}
+
+		messages = append(messages, anthropicMessage{
+			Role:    role,
+			Content: fields["content"],
+		})
+	}
+	return messages, nil
+}
+
+func decodeAnthropicRequest(body []byte) (anthropicRequest, error) {
+	keys := []string{
+		"model",
+		"system",
+		"messages",
+		"max_tokens",
+		"temperature",
+		"top_p",
+		"top_k",
+		"stream",
+		"stop_sequences",
+		"tools",
+		"tool_choice",
+		"metadata",
+	}
+	fields, err := decodeAnthropicObject(body, "anthropic request", keys...)
+	if err != nil {
+		return anthropicRequest{}, err
+	}
+
+	var request anthropicRequest
+	request.System = fields["system"]
+	request.Messages, err = decodeAnthropicMessages(fields["messages"])
+	if err != nil {
+		return anthropicRequest{}, err
+	}
+	targets := []struct {
+		key   string
+		value any
+	}{
+		{key: "model", value: &request.Model},
+		{key: "max_tokens", value: &request.MaxTokens},
+		{key: "temperature", value: &request.Temperature},
+		{key: "top_p", value: &request.TopP},
+		{key: "top_k", value: &request.TopK},
+		{key: "stream", value: &request.Stream},
+		{key: "stop_sequences", value: &request.StopSeqs},
+		{key: "tools", value: &request.Tools},
+		{key: "tool_choice", value: &request.ToolChoice},
+		{key: "metadata", value: &request.Metadata},
+	}
+	for _, target := range targets {
+		if err := decodeAnthropicField(fields, target.key, target.value); err != nil {
+			return anthropicRequest{}, err
+		}
+	}
+	return request, nil
 }
 
 type anthropicCacheCreation struct {
@@ -295,14 +504,18 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 // Request: Decode (Anthropic → Canonical)
 
 func (a *AnthropicAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
-	var req anthropicRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		return nil, err
+	req, err := decodeAnthropicRequest(body)
+	if err != nil {
+		return nil, &RequestDecodeError{Format: FormatAnthropic, Cause: err}
+	}
+	system, err := decodeAnthropicSystem(req.System)
+	if err != nil {
+		return nil, &RequestDecodeError{Format: FormatAnthropic, Cause: err}
 	}
 
 	cr := &CanonicalRequest{
 		Model:       req.Model,
-		System:      req.System,
+		System:      system,
 		MaxTokens:   req.MaxTokens,
 		Temperature: req.Temperature,
 		TopP:        req.TopP,
@@ -349,12 +562,14 @@ func (a *AnthropicAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error)
 func (a *AnthropicAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 	out := anthropicRequest{
 		Model:       req.Model,
-		System:      req.System,
 		Temperature: req.Temperature,
 		TopP:        req.TopP,
 		TopK:        req.TopK,
 		StopSeqs:    req.Stop,
 		Metadata:    req.Metadata,
+	}
+	if req.System != "" {
+		out.System = stringToContent(req.System)
 	}
 
 	if req.Stream {

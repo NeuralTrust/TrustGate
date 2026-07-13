@@ -17,11 +17,34 @@ package adapter
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func requireAnthropicRequestDecodeError(
+	t *testing.T,
+	err error,
+	secrets ...string,
+) *RequestDecodeError {
+	t.Helper()
+	var decodeError *RequestDecodeError
+	require.ErrorAs(t, err, &decodeError)
+	require.Equal(t, FormatAnthropic, decodeError.Format)
+	require.EqualError(
+		t,
+		decodeError,
+		`invalid request body for format "anthropic": the payload could not be parsed as a valid anthropic API request`,
+	)
+	for current := err; current != nil; current = errors.Unwrap(current) {
+		for _, secret := range secrets {
+			assert.NotContains(t, current.Error(), secret)
+		}
+	}
+	return decodeError
+}
 
 // ---------------------------------------------------------------------------
 // Canonical roundtrip: Anthropic → Canonical → Anthropic
@@ -55,6 +78,343 @@ func TestCanonical_Anthropic_Roundtrip(t *testing.T) {
 	assert.Equal(t, "You are helpful.", result["system"])
 	msgs := result["messages"].([]interface{})
 	assert.Len(t, msgs, 1)
+}
+
+func TestAnthropicDecodeRequest_SystemRepresentations(t *testing.T) {
+	tests := []struct {
+		name       string
+		system     string
+		wantSystem string
+	}{
+		{
+			name:       "string remains exact",
+			system:     `"  Keep exact bytes.\nNext line.  "`,
+			wantSystem: "  Keep exact bytes.\nNext line.  ",
+		},
+		{
+			name: "ordered text blocks",
+			system: `[
+				{"type":"text","text":"First"},
+				{"type":"text","text":"Second"}
+			]`,
+			wantSystem: "First\nSecond",
+		},
+		{
+			name: "blank blocks are omitted",
+			system: `[
+				{"type":"text","text":"First"},
+				{"type":"text","text":" \n\t "},
+				{"type":"text","text":"Second"}
+			]`,
+			wantSystem: "First\nSecond",
+		},
+		{
+			name: "all-whitespace blocks produce empty canonical system",
+			system: `[
+				{"type":"text","text":" "},
+				{"type":"text","text":"\n\t"}
+			]`,
+			wantSystem: "",
+		},
+		{
+			name: "plugin-produced text block extensions are permitted",
+			system: `[
+				{"type":"text","text":"Cached","cache_control":{"type":"ephemeral"}},
+				{"type":"text","text":"Decorated","future_field":true}
+			]`,
+			wantSystem: "Cached\nDecorated",
+		},
+	}
+
+	adapter := &AnthropicAdapter{}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			body := []byte(`{"model":"claude","system":` + test.system + `,"messages":[{"role":"user","content":"User message"}],"max_tokens":64}`)
+			original := append([]byte(nil), body...)
+
+			canonical, err := adapter.DecodeRequest(body)
+
+			require.NoError(t, err)
+			assert.Equal(t, test.wantSystem, canonical.System)
+			require.Len(t, canonical.Messages, 1)
+			assert.Equal(t, "user", canonical.Messages[0].Role)
+			assert.Equal(t, "User message", canonical.Messages[0].Content)
+			assert.Equal(t, original, body)
+		})
+	}
+}
+
+func TestAnthropicDecodeRequest_InvalidSystemArrays(t *testing.T) {
+	tests := []struct {
+		name      string
+		body      string
+		wantCause string
+	}{
+		{
+			name:      "system is object",
+			body:      `{"system":{"type":"text","text":"secret"},"messages":[],"max_tokens":64}`,
+			wantCause: "anthropic system must be a string or an array of text blocks",
+		},
+		{
+			name:      "block is not object",
+			body:      `{"system":["secret"],"messages":[],"max_tokens":64}`,
+			wantCause: "anthropic system block 0 must be a JSON object",
+		},
+		{
+			name:      "missing block type",
+			body:      `{"system":[{"text":"secret"}],"messages":[],"max_tokens":64}`,
+			wantCause: "anthropic system block 0 must contain a string type",
+		},
+		{
+			name:      "unsupported block type",
+			body:      `{"system":[{"type":"image","text":"secret"}],"messages":[],"max_tokens":64}`,
+			wantCause: "anthropic system block 0 has unsupported type",
+		},
+		{
+			name:      "block type is strict lowercase",
+			body:      `{"system":[{"type":"Text","text":"secret"}],"messages":[],"max_tokens":64}`,
+			wantCause: "anthropic system block 0 has unsupported type",
+		},
+		{
+			name:      "non-string block text",
+			body:      `{"system":[{"type":"text","text":{"value":"secret"}}],"messages":[],"max_tokens":64}`,
+			wantCause: "anthropic system block 0 must contain string text",
+		},
+		{
+			name:      "duplicate block type",
+			body:      `{"system":[{"type":"text","type":"text","text":"secret"}],"messages":[],"max_tokens":64}`,
+			wantCause: `anthropic system block 0 contains duplicate field "type"`,
+		},
+		{
+			name:      "duplicate block text",
+			body:      `{"system":[{"type":"text","text":"secret","text":"other"}],"messages":[],"max_tokens":64}`,
+			wantCause: `anthropic system block 0 contains duplicate field "text"`,
+		},
+		{
+			name:      "block type alias",
+			body:      `{"system":[{"Type":"text","text":"secret"}],"messages":[],"max_tokens":64}`,
+			wantCause: `anthropic system block 0 contains invalid field alias "Type"`,
+		},
+		{
+			name:      "block text mixed-case duplicate",
+			body:      `{"system":[{"type":"text","text":"secret","Text":"other"}],"messages":[],"max_tokens":64}`,
+			wantCause: `anthropic system block 0 contains invalid field alias "Text"`,
+		},
+		{
+			name:      "duplicate top-level system",
+			body:      `{"system":"secret","system":[{"type":"text","text":"other"}],"messages":[],"max_tokens":64}`,
+			wantCause: `anthropic request contains duplicate field "system"`,
+		},
+		{
+			name:      "duplicate top-level messages",
+			body:      `{"system":"secret","messages":[],"messages":[],"max_tokens":64}`,
+			wantCause: `anthropic request contains duplicate field "messages"`,
+		},
+		{
+			name:      "top-level system alias",
+			body:      `{"System":"secret","messages":[],"max_tokens":64}`,
+			wantCause: `anthropic request contains invalid field alias "System"`,
+		},
+		{
+			name:      "top-level system mixed-case duplicate",
+			body:      `{"system":"secret","sYsTeM":"other","messages":[],"max_tokens":64}`,
+			wantCause: `anthropic request contains invalid field alias "sYsTeM"`,
+		},
+		{
+			name:      "top-level messages mixed-case duplicate",
+			body:      `{"system":"secret","messages":[],"Messages":[],"max_tokens":64}`,
+			wantCause: `anthropic request contains invalid field alias "Messages"`,
+		},
+		{
+			name:      "top-level model alias",
+			body:      `{"Model":"secret","messages":[],"max_tokens":64}`,
+			wantCause: `anthropic request contains invalid field alias "Model"`,
+		},
+	}
+
+	adapter := &AnthropicAdapter{}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := adapter.DecodeRequest([]byte(test.body))
+
+			decodeError := requireAnthropicRequestDecodeError(t, err, "secret", "other")
+			require.EqualError(t, errors.Unwrap(decodeError), test.wantCause)
+		})
+	}
+}
+
+func TestAnthropicDecodeRequest_FailuresUseSanitizedTypedPath(t *testing.T) {
+	tests := []struct {
+		name      string
+		body      string
+		wantCause string
+		run       func([]byte) error
+	}{
+		{
+			name:      "syntax",
+			body:      `{"system":"private prompt","messages":[`,
+			wantCause: "decode anthropic request JSON",
+			run: func(body []byte) error {
+				_, err := testRegistry().DecodeRequestFor(body, FormatAnthropic)
+				return err
+			},
+		},
+		{
+			name:      "type",
+			body:      `{"system":"private prompt","messages":"private messages"}`,
+			wantCause: `anthropic request field "messages" has invalid type`,
+			run: func(body []byte) error {
+				_, err := testRegistry().DecodeRequestFor(body, FormatAnthropic)
+				return err
+			},
+		},
+		{
+			name:      "semantic through adaptation",
+			body:      `{"system":[{"type":"image","text":"private prompt"}],"messages":[]}`,
+			wantCause: "anthropic system block 0 has unsupported type",
+			run: func(body []byte) error {
+				_, err := testRegistry().AdaptRequest(body, FormatAnthropic, FormatOpenAI)
+				return err
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.run([]byte(test.body))
+
+			decodeError := requireAnthropicRequestDecodeError(t, err, "private prompt", "private messages")
+			require.EqualError(t, errors.Unwrap(decodeError), test.wantCause)
+		})
+	}
+}
+
+func TestAnthropicDecodeRequest_StrictMessagesPreserveRichContent(t *testing.T) {
+	body := []byte(`{
+		"model":"claude",
+		"messages":[
+			{
+				"role":"user",
+				"content":[{"type":"text","text":"Question","cache_control":{"type":"ephemeral"},"future_field":true}],
+				"message_extension":{"enabled":true}
+			},
+			{
+				"role":"assistant",
+				"content":[
+					{"type":"text","text":"Answer","future_field":true},
+					{"type":"tool_use","id":"tool_1","name":"lookup","input":{"query":"value"},"future_field":true}
+				]
+			}
+		],
+		"max_tokens":64
+	}`)
+
+	canonical, err := (&AnthropicAdapter{}).DecodeRequest(body)
+
+	require.NoError(t, err)
+	require.Len(t, canonical.Messages, 2)
+	assert.Equal(t, "user", canonical.Messages[0].Role)
+	assert.Equal(t, "Question", canonical.Messages[0].Content)
+	assert.Equal(t, "assistant", canonical.Messages[1].Role)
+	assert.Equal(t, "Answer", canonical.Messages[1].Content)
+	require.Len(t, canonical.Messages[1].ToolCalls, 1)
+	assert.Equal(t, "tool_1", canonical.Messages[1].ToolCalls[0].ID)
+	assert.Equal(t, "lookup", canonical.Messages[1].ToolCalls[0].Name)
+	assert.JSONEq(t, `{"query":"value"}`, canonical.Messages[1].ToolCalls[0].Arguments)
+}
+
+func TestAnthropicDecodeRequest_RejectsInvalidMessageEnvelopes(t *testing.T) {
+	tests := []struct {
+		name      string
+		message   string
+		wantCause string
+	}{
+		{
+			name:      "message is not object",
+			message:   `"private prompt"`,
+			wantCause: "anthropic message 0 must be a JSON object",
+		},
+		{
+			name:      "duplicate role",
+			message:   `{"role":"user","role":"assistant","content":"private prompt"}`,
+			wantCause: `anthropic message 0 contains duplicate field "role"`,
+		},
+		{
+			name:      "duplicate content",
+			message:   `{"role":"user","content":"private prompt","content":"other"}`,
+			wantCause: `anthropic message 0 contains duplicate field "content"`,
+		},
+		{
+			name:      "role alias",
+			message:   `{"Role":"user","content":"private prompt"}`,
+			wantCause: `anthropic message 0 contains invalid field alias "Role"`,
+		},
+		{
+			name:      "content mixed-case duplicate",
+			message:   `{"role":"user","content":"private prompt","Content":"other"}`,
+			wantCause: `anthropic message 0 contains invalid field alias "Content"`,
+		},
+		{
+			name:      "missing role",
+			message:   `{"content":"private prompt"}`,
+			wantCause: "anthropic message 0 must contain a string role",
+		},
+		{
+			name:      "invalid role type",
+			message:   `{"role":{"value":"user"},"content":"private prompt"}`,
+			wantCause: "anthropic message 0 must contain a string role",
+		},
+		{
+			name:      "nested system",
+			message:   `{"role":"system","content":"private prompt"}`,
+			wantCause: "anthropic message 0 has unsupported role",
+		},
+		{
+			name:      "nested tool",
+			message:   `{"role":"tool","content":"private prompt"}`,
+			wantCause: "anthropic message 0 has unsupported role",
+		},
+		{
+			name:      "wrong-case user",
+			message:   `{"role":"User","content":"private prompt"}`,
+			wantCause: "anthropic message 0 has unsupported role",
+		},
+		{
+			name:      "wrong-case assistant",
+			message:   `{"role":"Assistant","content":"private prompt"}`,
+			wantCause: "anthropic message 0 has unsupported role",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			body := []byte(`{"messages":[` + test.message + `],"max_tokens":64}`)
+
+			_, err := (&AnthropicAdapter{}).DecodeRequest(body)
+
+			decodeError := requireAnthropicRequestDecodeError(t, err, "private prompt", "other")
+			require.EqualError(t, errors.Unwrap(decodeError), test.wantCause)
+		})
+	}
+}
+
+func TestAnthropicAdaptRequest_RejectsNestedSystemAuthority(t *testing.T) {
+	body := []byte(`{
+		"model":"anthropic.claude-3-5-sonnet-20241022-v2:0",
+		"messages":[{"role":"system","content":"private authority"}],
+		"max_tokens":64
+	}`)
+
+	for _, target := range []Format{FormatOpenAI, FormatBedrock} {
+		t.Run(string(target), func(t *testing.T) {
+			output, err := testRegistry().AdaptRequest(body, FormatAnthropic, target)
+
+			assert.Nil(t, output)
+			decodeError := requireAnthropicRequestDecodeError(t, err, "private authority")
+			require.Equal(t, FormatAnthropic, decodeError.Format)
+			require.EqualError(t, errors.Unwrap(decodeError), "anthropic message 0 has unsupported role")
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
