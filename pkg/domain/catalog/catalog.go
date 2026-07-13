@@ -45,8 +45,15 @@ type Model struct {
 	Capabilities  map[string]any
 	Enabled       bool
 	Source        string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	// ReleaseDate is the provider release date; nil when unknown. Models are
+	// listed most-recent release first, with unknown dates last.
+	ReleaseDate *time.Time
+	// InputModalities and OutputModalities list the accepted/produced content
+	// types (e.g. "text", "image", "audio").
+	InputModalities  []string
+	OutputModalities []string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 type Repository interface {

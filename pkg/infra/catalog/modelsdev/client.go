@@ -46,6 +46,13 @@ type Model struct {
 	MaxOutput     int
 	InputPrice    string
 	OutputPrice   string
+	// ReleaseDate is the provider release date as published by models.dev
+	// ("YYYY-MM-DD"); empty when models.dev does not report one.
+	ReleaseDate string
+	// InputModalities and OutputModalities list the accepted/produced content
+	// types (e.g. "text", "image", "audio"); empty when unreported.
+	InputModalities  []string
+	OutputModalities []string
 }
 
 type Client struct {
@@ -74,6 +81,11 @@ type apiModel struct {
 		Input  float64 `json:"input"`
 		Output float64 `json:"output"`
 	} `json:"cost"`
+	ReleaseDate string `json:"release_date"`
+	Modalities  struct {
+		Input  []string `json:"input"`
+		Output []string `json:"output"`
+	} `json:"modalities"`
 }
 
 type apiProvider struct {
@@ -121,14 +133,17 @@ func (c *Client) ListModels(ctx context.Context) ([]Model, error) {
 				displayName = id
 			}
 			out = append(out, Model{
-				ProviderCode:  providerCode,
-				Slug:          id,
-				ExternalID:    providerCode + "/" + id,
-				DisplayName:   displayName,
-				ContextWindow: m.Limit.Context,
-				MaxOutput:     m.Limit.Output,
-				InputPrice:    formatPerTokenPrice(m.Cost.Input),
-				OutputPrice:   formatPerTokenPrice(m.Cost.Output),
+				ProviderCode:     providerCode,
+				Slug:             id,
+				ExternalID:       providerCode + "/" + id,
+				DisplayName:      displayName,
+				ContextWindow:    m.Limit.Context,
+				MaxOutput:        m.Limit.Output,
+				InputPrice:       formatPerTokenPrice(m.Cost.Input),
+				OutputPrice:      formatPerTokenPrice(m.Cost.Output),
+				ReleaseDate:      m.ReleaseDate,
+				InputModalities:  m.Modalities.Input,
+				OutputModalities: m.Modalities.Output,
 			})
 		}
 	}

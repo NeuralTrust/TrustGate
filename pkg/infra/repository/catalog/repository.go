@@ -86,28 +86,43 @@ func (r *Repository) UpsertModel(ctx context.Context, m *domain.Model) error {
 	const query = `
 		INSERT INTO models_catalog (
 			id, provider_id, slug, external_id, display_name, context_window, max_output,
-			input_price, output_price, capabilities, enabled, source, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13)
+			input_price, output_price, capabilities, enabled, source, release_date,
+			input_modalities, output_modalities, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $16)
 		ON CONFLICT (provider_id, slug) DO UPDATE SET
-			external_id    = EXCLUDED.external_id,
-			display_name   = EXCLUDED.display_name,
-			context_window = EXCLUDED.context_window,
-			max_output     = EXCLUDED.max_output,
-			input_price    = EXCLUDED.input_price,
-			output_price   = EXCLUDED.output_price,
-			capabilities   = EXCLUDED.capabilities,
-			enabled        = EXCLUDED.enabled,
-			source         = EXCLUDED.source,
-			updated_at     = EXCLUDED.updated_at`
+			external_id       = EXCLUDED.external_id,
+			display_name      = EXCLUDED.display_name,
+			context_window    = EXCLUDED.context_window,
+			max_output        = EXCLUDED.max_output,
+			input_price       = EXCLUDED.input_price,
+			output_price      = EXCLUDED.output_price,
+			capabilities      = EXCLUDED.capabilities,
+			enabled           = EXCLUDED.enabled,
+			source            = EXCLUDED.source,
+			release_date      = EXCLUDED.release_date,
+			input_modalities  = EXCLUDED.input_modalities,
+			output_modalities = EXCLUDED.output_modalities,
+			updated_at        = EXCLUDED.updated_at`
 	now := time.Now().UTC()
 	id := m.ID
 	if id.IsNil() {
 		id = ids.New[ids.ModelKind]()
 	}
+	// The modality columns are NOT NULL DEFAULT '{}', so coalesce nil slices to
+	// empty arrays — pgx encodes a nil slice as SQL NULL, which the column rejects.
+	inputModalities := m.InputModalities
+	if inputModalities == nil {
+		inputModalities = []string{}
+	}
+	outputModalities := m.OutputModalities
+	if outputModalities == nil {
+		outputModalities = []string{}
+	}
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, query,
 			id, m.ProviderID, m.Slug, m.ExternalID, m.DisplayName, m.ContextWindow, m.MaxOutput,
-			m.InputPrice, m.OutputPrice, capabilities, m.Enabled, m.Source, now,
+			m.InputPrice, m.OutputPrice, capabilities, m.Enabled, m.Source, m.ReleaseDate,
+			inputModalities, outputModalities, now,
 		)
 		return err
 	})
@@ -143,11 +158,12 @@ func (r *Repository) ListProviders(ctx context.Context) ([]domain.Provider, erro
 func (r *Repository) ListModelsByProviderCode(ctx context.Context, providerCode string) ([]domain.Model, error) {
 	const query = `
 		SELECT m.id, m.provider_id, m.slug, m.external_id, m.display_name, m.context_window, m.max_output,
-		       m.input_price, m.output_price, m.capabilities, m.enabled, m.source, m.created_at, m.updated_at
+		       m.input_price, m.output_price, m.capabilities, m.enabled, m.source, m.release_date,
+		       m.input_modalities, m.output_modalities, m.created_at, m.updated_at
 		  FROM models_catalog m
 		  JOIN providers_catalog p ON p.id = m.provider_id
 		 WHERE ($1 = '' OR p.code = $1)
-		 ORDER BY p.code, m.slug`
+		 ORDER BY m.release_date DESC NULLS LAST, p.code, m.slug`
 	rows, err := r.conn.Pool.Query(ctx, query, providerCode)
 	if err != nil {
 		return nil, err
@@ -159,7 +175,8 @@ func (r *Repository) ListModelsByProviderCode(ctx context.Context, providerCode 
 func (r *Repository) FindModel(ctx context.Context, providerCode, slug string) (*domain.Model, error) {
 	const query = `
 		SELECT m.id, m.provider_id, m.slug, m.external_id, m.display_name, m.context_window, m.max_output,
-		       m.input_price, m.output_price, m.capabilities, m.enabled, m.source, m.created_at, m.updated_at
+		       m.input_price, m.output_price, m.capabilities, m.enabled, m.source, m.release_date,
+		       m.input_modalities, m.output_modalities, m.created_at, m.updated_at
 		  FROM models_catalog m
 		  JOIN providers_catalog p ON p.id = m.provider_id
 		 WHERE p.code = $1 AND m.slug = $2`
@@ -205,7 +222,8 @@ func scanModels(rows pgx.Rows) ([]domain.Model, error) {
 		var capabilitiesRaw []byte
 		if err := rows.Scan(
 			&m.ID, &m.ProviderID, &m.Slug, &m.ExternalID, &m.DisplayName, &m.ContextWindow, &m.MaxOutput,
-			&m.InputPrice, &m.OutputPrice, &capabilitiesRaw, &m.Enabled, &m.Source, &m.CreatedAt, &m.UpdatedAt,
+			&m.InputPrice, &m.OutputPrice, &capabilitiesRaw, &m.Enabled, &m.Source, &m.ReleaseDate,
+			&m.InputModalities, &m.OutputModalities, &m.CreatedAt, &m.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
