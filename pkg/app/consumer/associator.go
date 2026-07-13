@@ -55,6 +55,7 @@ type associator struct {
 	publisher    cache.EventPublisher
 	logger       *slog.Logger
 	signaler     configsyncport.SnapshotSignaler
+	resolver     pluginProtocolResolver
 }
 
 func NewAssociator(
@@ -67,6 +68,7 @@ func NewAssociator(
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
+	resolver pluginProtocolResolver,
 ) Associator {
 	return &associator{
 		repo:         repo,
@@ -79,6 +81,7 @@ func NewAssociator(
 		publisher:    publisher,
 		logger:       logger,
 		signaler:     signaler,
+		resolver:     resolver,
 	}
 }
 
@@ -197,7 +200,11 @@ func (a *associator) AttachPolicy(ctx context.Context, gatewayID ids.GatewayID, 
 	if err != nil {
 		return err
 	}
-	if err := a.policyInGateway(ctx, gatewayID, policyID); err != nil {
+	pol, err := a.policyInGateway(ctx, gatewayID, policyID)
+	if err != nil {
+		return err
+	}
+	if err := a.validatePolicyProtocol(cons, pol); err != nil {
 		return err
 	}
 	if err := a.repo.AttachPolicy(ctx, consumerID, policyID); err != nil {
@@ -206,6 +213,25 @@ func (a *associator) AttachPolicy(ctx context.Context, gatewayID ids.GatewayID, 
 	a.invalidate(ctx, cons)
 	a.policyCache.Delete(policyID.String())
 	return nil
+}
+
+func (a *associator) validatePolicyProtocol(cons *domain.Consumer, pol *policydomain.Policy) error {
+	if pol.IsGlobal() {
+		return nil
+	}
+	if cons.Type != domain.TypeLLM && cons.Type != domain.TypeMCP {
+		return nil
+	}
+	protocols, ok := a.resolver.SupportedProtocols(pol.Slug)
+	if !ok {
+		return nil
+	}
+	for _, protocol := range protocols {
+		if protocol == string(cons.Type) {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: plugin %s does not support consumer protocol %s", domain.ErrPolicyProtocolMismatch, pol.Slug, cons.Type)
 }
 
 func (a *associator) DetachPolicy(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, policyID ids.PolicyID) error {
@@ -265,15 +291,15 @@ func (a *associator) authInGateway(ctx context.Context, gatewayID ids.GatewayID,
 	return au, nil
 }
 
-func (a *associator) policyInGateway(ctx context.Context, gatewayID ids.GatewayID, policyID ids.PolicyID) error {
+func (a *associator) policyInGateway(ctx context.Context, gatewayID ids.GatewayID, policyID ids.PolicyID) (*policydomain.Policy, error) {
 	pol, err := a.policyRepo.FindByID(ctx, policyID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if pol.GatewayID != gatewayID {
-		return policydomain.ErrNotFound
+		return nil, policydomain.ErrNotFound
 	}
-	return nil
+	return pol, nil
 }
 
 func (a *associator) invalidate(ctx context.Context, cons *domain.Consumer) {

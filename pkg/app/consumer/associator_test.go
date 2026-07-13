@@ -40,11 +40,25 @@ func newAssociator(
 	registryRepo *backendmocks.Repository,
 	authRepo *authmocks.Repository,
 	policyRepo *policymocks.Repository,
+	resolver ...*fakeProtocolResolver,
 ) appconsumer.Associator {
+	res := &fakeProtocolResolver{}
+	if len(resolver) > 0 {
+		res = resolver[0]
+	}
 	return appconsumer.NewAssociator(
 		repo, registryRepo, &roleRepositoryStub{}, authRepo, policyRepo,
-		newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil,
+		newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil, res,
 	)
+}
+
+type fakeProtocolResolver struct {
+	protocols map[string][]string
+}
+
+func (f *fakeProtocolResolver) SupportedProtocols(slug string) ([]string, bool) {
+	p, ok := f.protocols[slug]
+	return p, ok
 }
 
 type roleRepositoryStub struct {
@@ -211,16 +225,122 @@ func TestAssociator_AttachPolicy_Success(t *testing.T) {
 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, consumerID).
-		Return(&domain.Consumer{ID: consumerID, GatewayID: gwID}, nil).Once()
+		Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, Type: domain.TypeLLM}, nil).Once()
 	repo.EXPECT().AttachPolicy(mock.Anything, consumerID, policyID).Return(nil).Once()
 
 	policyRepo := policymocks.NewRepository(t)
 	policyRepo.EXPECT().FindByID(mock.Anything, policyID).
-		Return(&policydomain.Policy{ID: policyID, GatewayID: gwID}, nil).Once()
+		Return(&policydomain.Policy{ID: policyID, GatewayID: gwID, Slug: "cors"}, nil).Once()
 
-	a := newAssociator(repo, backendmocks.NewRepository(t), authmocks.NewRepository(t), policyRepo)
+	resolver := &fakeProtocolResolver{protocols: map[string][]string{"cors": {"LLM", "MCP"}}}
+	a := newAssociator(repo, backendmocks.NewRepository(t), authmocks.NewRepository(t), policyRepo, resolver)
 	if err := a.AttachPolicy(context.Background(), gwID, consumerID, policyID); err != nil {
 		t.Fatalf("AttachPolicy error: %v", err)
+	}
+}
+
+func TestAssociator_AttachPolicy_ProtocolValidation(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name              string
+		consumerType      domain.Type
+		global            bool
+		slug              string
+		resolverProtocols map[string][]string
+		wantAttach        bool
+		wantMismatch      bool
+	}{
+		{
+			name:              "reject llm-only policy for mcp consumer",
+			consumerType:      domain.TypeMCP,
+			slug:              "cost_cap",
+			resolverProtocols: map[string][]string{"cost_cap": {"LLM"}},
+			wantMismatch:      true,
+		},
+		{
+			name:              "reject mcp-only policy for llm consumer",
+			consumerType:      domain.TypeLLM,
+			slug:              "per_tool_rate_limiter",
+			resolverProtocols: map[string][]string{"per_tool_rate_limiter": {"MCP"}},
+			wantMismatch:      true,
+		},
+		{
+			name:              "allow dual-protocol policy for llm consumer",
+			consumerType:      domain.TypeLLM,
+			slug:              "trustguard",
+			resolverProtocols: map[string][]string{"trustguard": {"LLM", "MCP"}},
+			wantAttach:        true,
+		},
+		{
+			name:              "allow dual-protocol policy for mcp consumer",
+			consumerType:      domain.TypeMCP,
+			slug:              "cors",
+			resolverProtocols: map[string][]string{"cors": {"LLM", "MCP"}},
+			wantAttach:        true,
+		},
+		{
+			name:              "allow matching single-protocol policy",
+			consumerType:      domain.TypeLLM,
+			slug:              "cost_cap",
+			resolverProtocols: map[string][]string{"cost_cap": {"LLM"}},
+			wantAttach:        true,
+		},
+		{
+			name:              "skip validation for global policy",
+			consumerType:      domain.TypeMCP,
+			global:            true,
+			slug:              "cost_cap",
+			resolverProtocols: map[string][]string{"cost_cap": {"LLM"}},
+			wantAttach:        true,
+		},
+		{
+			name:              "skip validation for a2a consumer",
+			consumerType:      domain.TypeA2A,
+			slug:              "cost_cap",
+			resolverProtocols: map[string][]string{"cost_cap": {"LLM"}},
+			wantAttach:        true,
+		},
+		{
+			name:              "skip validation for unknown slug",
+			consumerType:      domain.TypeMCP,
+			slug:              "unknown",
+			resolverProtocols: map[string][]string{},
+			wantAttach:        true,
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			gwID := ids.New[ids.GatewayKind]()
+			consumerID := ids.New[ids.ConsumerKind]()
+			policyID := ids.New[ids.PolicyKind]()
+
+			repo := repomocks.NewRepository(t)
+			repo.EXPECT().FindByID(mock.Anything, consumerID).
+				Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, Type: tt.consumerType}, nil).Once()
+			if tt.wantAttach {
+				repo.EXPECT().AttachPolicy(mock.Anything, consumerID, policyID).Return(nil).Once()
+			}
+
+			policyRepo := policymocks.NewRepository(t)
+			policyRepo.EXPECT().FindByID(mock.Anything, policyID).
+				Return(&policydomain.Policy{ID: policyID, GatewayID: gwID, Slug: tt.slug, Global: tt.global}, nil).Once()
+
+			resolver := &fakeProtocolResolver{protocols: tt.resolverProtocols}
+			a := newAssociator(repo, backendmocks.NewRepository(t), authmocks.NewRepository(t), policyRepo, resolver)
+
+			err := a.AttachPolicy(context.Background(), gwID, consumerID, policyID)
+			if tt.wantMismatch {
+				if !errors.Is(err, domain.ErrPolicyProtocolMismatch) {
+					t.Fatalf("err = %v, want ErrPolicyProtocolMismatch", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("AttachPolicy error: %v", err)
+			}
+		})
 	}
 }
 

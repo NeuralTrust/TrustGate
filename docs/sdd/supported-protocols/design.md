@@ -399,8 +399,9 @@ apply):
 	ErrPolicyProtocolMismatch = fmt.Errorf("consumer: policy protocol mismatch: %w", commonerrors.ErrValidation)
 ```
 
-Wraps `commonerrors.ErrValidation` → `httpio.WriteError` maps to **400**
-(decision 8), matching the existing consumer validation sentinels
+Wraps `commonerrors.ErrValidation` → `httpio.WriteError` maps to **422**
+(`StatusUnprocessableEntity`, decision 8 — the codebase maps `ErrValidation` to
+422, not 400), matching the existing consumer validation sentinels
 (`ErrInvalidType`, etc.). The message at the call site adds the
 `plugin <slug> does not support consumer protocol <type>` detail via a second
 `%w` wrap, so both `errors.Is(err, ErrPolicyProtocolMismatch)` and
@@ -437,7 +438,7 @@ sequenceDiagram
         else string(cons.Type) in protocols
             A-->>A: allow (nil)
         else mismatch
-            A-->>H: ErrPolicyProtocolMismatch (400)
+            A-->>H: ErrPolicyProtocolMismatch (422)
         end
     end
     A->>Repo: repo.AttachPolicy (only if no error)

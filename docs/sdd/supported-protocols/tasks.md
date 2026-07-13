@@ -104,14 +104,14 @@ first (grep `pkg/app/plugins"`); use that file's alias if it differs. (design §
 Depends only on Phase 1's `SupportedProtocols` + `ProtocolResolver`. Catalog untouched.
 
 ### 2.1 Consumer-side narrow port
-- [ ] **[P]** Create `pkg/app/consumer/plugin_protocol_resolver.go` (package
+- [x] **[P]** Create `pkg/app/consumer/plugin_protocol_resolver.go` (package
   `consumer`, license header, no comment): unexported
   `pluginProtocolResolver interface { SupportedProtocols(slug string) ([]string, bool) }`.
   Its own file (AGENT.md §10.1). Returns `[]string` so `app/consumer` never imports
   `app/plugins`. (design §5.1)
 
 ### 2.2 Exported adapter over the registry
-- [ ] **[P]** Create `pkg/app/plugins/protocol_resolver.go` (package `plugins`,
+- [x] **[P]** Create `pkg/app/plugins/protocol_resolver.go` (package `plugins`,
   license header, no comment): `type ProtocolResolver struct { registry Registry }`;
   `NewProtocolResolver(registry Registry) *ProtocolResolver`;
   `(*ProtocolResolver) SupportedProtocols(slug string) ([]string, bool)` — `registry.Get(slug)`,
@@ -119,24 +119,24 @@ Depends only on Phase 1's `SupportedProtocols` + `ProtocolResolver`. Catalog unt
   satisfies `consumer.pluginProtocolResolver`. (design §5.2)
 
 ### 2.3 Error sentinel
-- [ ] **[P]** In `pkg/domain/consumer/errors.go`, add to the existing sentinel block:
+- [x] **[P]** In `pkg/domain/consumer/errors.go`, add to the existing sentinel block:
   `ErrPolicyProtocolMismatch = fmt.Errorf("consumer: policy protocol mismatch: %w", commonerrors.ErrValidation)`.
-  Wraps `ErrValidation` → maps to HTTP 400. (design §6.4)
+  Wraps `ErrValidation` → maps to HTTP 422. (design §6.4)
 
 ### 2.4 `NewAssociator` signature + struct field
-- [ ] **[P]** In `pkg/app/consumer/associator.go`: add `resolver pluginProtocolResolver`
+- [x] **[P]** In `pkg/app/consumer/associator.go`: add `resolver pluginProtocolResolver`
   to the `associator` struct (after `signaler`, line 57) and as a trailing
   `NewAssociator` parameter (after `signaler`, line 69); assign it in the returned
   struct literal. (design §5.3)
 
 ### 2.5 `policyInGateway` returns the policy
-- [ ] **[P]** Change `policyInGateway` (lines 268-277) to return
+- [x] **[P]** Change `policyInGateway` (lines 268-277) to return
   `(*policydomain.Policy, error)`: return `pol` on success, `nil, err` on repo error,
   `nil, policydomain.ErrNotFound` on gateway mismatch. Only `AttachPolicy` calls it,
   so the change is local. (design §6.1)
 
 ### 2.6 `validatePolicyProtocol` helper
-- [ ] **[P]** Add `validatePolicyProtocol(cons *domain.Consumer, pol *policydomain.Policy) error`
+- [x] **[P]** Add `validatePolicyProtocol(cons *domain.Consumer, pol *policydomain.Policy) error`
   to `associator.go`: return nil if `pol.IsGlobal()`; return nil if `cons.Type` is
   neither `TypeLLM` nor `TypeMCP` (covers A2A); resolve
   `a.resolver.SupportedProtocols(pol.Slug)` — skip (nil) if `ok==false`; return nil if
@@ -144,40 +144,40 @@ Depends only on Phase 1's `SupportedProtocols` + `ProtocolResolver`. Catalog unt
   `fmt.Errorf("%w: plugin %s does not support consumer protocol %s", domain.ErrPolicyProtocolMismatch, pol.Slug, cons.Type)`. (design §6.3)
 
 ### 2.7 Wire validation into `AttachPolicy`
-- [ ] **[P]** Update `AttachPolicy` (lines 195-209): capture `pol` from the new
+- [x] **[P]** Update `AttachPolicy` (lines 195-209): capture `pol` from the new
   `policyInGateway`, call `validatePolicyProtocol(cons, pol)` and return on error,
   **before** `repo.AttachPolicy`. Keep the existing `invalidate` + `policyCache.Delete`
   on success. (design §6.2)
 
 ### 2.8 dig wiring — plugins module
-- [ ] **[P]** In `pkg/container/modules/plugins.go` `Plugins(c)` (after the registry
+- [x] **[P]** In `pkg/container/modules/plugins.go` `Plugins(c)` (after the registry
   provider, lines 63-65), add `c.Provide(appplugins.NewProtocolResolver)` with error
   check. dig resolves it from the existing `Registry` provider. (design §5.4)
 
 ### 2.9 dig wiring — consumer module
-- [ ] **[P]** In `pkg/container/modules/consumer.go` Associator provider (lines 88-92),
+- [x] **[P]** In `pkg/container/modules/consumer.go` Associator provider (lines 88-92),
   add the `resolver *appplugins.ProtocolResolver` parameter and pass it as the trailing
   arg to `appconsumer.NewAssociator(...)`; add the `appplugins` import. (design §5.4)
 
 ### 2.10 `NewAssociator` call-site sweep
-- [ ] **[P/T]** `grep -rn "NewAssociator(" pkg/` before finishing. Known sites: the
+- [x] **[P/T]** `grep -rn "NewAssociator(" pkg/` before finishing. Known sites: the
   dig provider (`consumer.go:88`, task 2.9) and `associator_test.go`'s `newAssociator`
   helper (task 2.12). Update any additional caller found. (design §10 risk 1)
 
 ### 2.11 Test fake resolver
-- [ ] **[T]** In `pkg/app/consumer/associator_test.go` (external `consumer_test`
+- [x] **[T]** In `pkg/app/consumer/associator_test.go` (external `consumer_test`
   package), add `fakeProtocolResolver{ protocols map[string][]string }` implementing
   `SupportedProtocols(slug) ([]string,bool)` structurally. (design §9 Phase 2)
 
 ### 2.12 Update `newAssociator` helper + existing success test
-- [ ] **[T]** Update the `newAssociator` test helper to pass the fake resolver; update
+- [x] **[T]** Update the `newAssociator` test helper to pass the fake resolver; update
   `AttachPolicy_Success` so its `policyRepo.FindByID` stub returns a policy with a
   `Slug` and the resolver is stubbed to match. (design §9 Phase 2; spec: "Matching
   single-protocol policy is allowed")
 
 ### 2.13 Associator behaviour tests (Q1–Q4)
-- [ ] **[T]** Add `-race` table tests to `associator_test.go`:
-  - reject LLM-only policy → MCP consumer with `ErrPolicyProtocolMismatch` (400), no
+- [x] **[T]** Add `-race` table tests to `associator_test.go`:
+  - reject LLM-only policy → MCP consumer with `ErrPolicyProtocolMismatch` (422), no
     `repo.AttachPolicy` call (Q1)
   - reject MCP-only (`per_tool_rate_limiter`) → LLM consumer (Q2)
   - allow dual-protocol (`trustguard`/`cors`) → both LLM and MCP consumers (Q3)
@@ -187,7 +187,7 @@ Depends only on Phase 1's `SupportedProtocols` + `ProtocolResolver`. Catalog unt
   (spec: attach reject/allow/skip requirements; design §6.3)
 
 ### 2.14 Phase 2 gate
-- [ ] Run `go build ./...`, `go vet ./...`, `golangci-lint run`,
+- [x] Run `go build ./...`, `go vet ./...`, `golangci-lint run`,
   `go test -race ./...` — all green.
 
 ---
