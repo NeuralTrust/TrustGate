@@ -45,7 +45,7 @@ One commit/PR per phase. PR 1 targets `develop`; each later PR targets the prece
 ## Phase 3: Private OpenAI Document
 
 - [x] 3.1 Create `document.go` to copy current `Body` into private RawMessages, preserve unknown/rich fields, and marshal separately allocated output without input edits.
-- [ ] 3.2 Add OpenAI anchors, strategies, ordering, fidelity, fuzz, and bidirectional alias tests in `document_test.go`. Verify: `go test -race ./pkg/infra/plugins/promptdecorator`.
+- [x] 3.2 Add OpenAI anchors, strategies, ordering, fidelity, fuzz, and bidirectional alias tests in `document_test.go`. Verify: `go test -race ./pkg/infra/plugins/promptdecorator`.
 
 ## Phase 4: Private Anthropic Document
 
