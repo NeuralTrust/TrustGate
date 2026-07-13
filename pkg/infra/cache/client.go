@@ -73,20 +73,36 @@ type client struct {
 }
 
 func NewClient(config Config, manager *TTLMapManager, logger *slog.Logger) (Client, error) {
-	options := &redis.Options{
-		Addr:     fmt.Sprintf("%s:%d", config.Host, config.Port),
-		Password: config.Password,
-		DB:       config.DB,
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	provider, err := newCredentialsProvider(ctx, &config, defaultRedisAuthDependencies())
+	if err != nil {
+		return nil, fmt.Errorf("configure redis authentication: %w", err)
 	}
-	if config.TLSEnabled {
+
+	options := &redis.Options{
+		Addr: fmt.Sprintf("%s:%d", config.Host, config.Port),
+		DB:   config.DB,
+	}
+	if provider == nil {
+		options.Password = config.Password
+		if config.TLSEnabled {
+			options.TLSConfig = &tls.Config{
+				InsecureSkipVerify: config.TLSInsecureVerify, // #nosec G402 -- callers opt in via config
+			}
+		}
+	} else {
+		options.Username = config.Username
+		options.Password = ""
+		options.CredentialsProviderContext = provider
 		options.TLSConfig = &tls.Config{
+			MinVersion:         tls.VersionTLS12,
 			InsecureSkipVerify: config.TLSInsecureVerify, // #nosec G402 -- callers opt in via config
 		}
 	}
 	redisClient := redis.NewClient(options)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 	if err := redisClient.Ping(ctx).Err(); err != nil {
 		logger.Error("failed to connect to redis",
 			slog.String("host", config.Host),
