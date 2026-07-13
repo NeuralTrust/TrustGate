@@ -29,7 +29,9 @@ type anthropicSystem struct {
 	kind         anthropicSystemKind
 	present      bool
 	loaded       bool
+	validated    bool
 	dirty        bool
+	loadErr      error
 }
 
 type anthropicSystemBlock struct {
@@ -60,6 +62,9 @@ func newAnthropicSystem(raw json.RawMessage, present bool) anthropicSystem {
 
 func (s *anthropicSystem) apply(content string, strategy systemStrategy) error {
 	s.load()
+	if s.loadErr != nil {
+		return s.loadErr
+	}
 	if s.state == anthropicSystemAbsent {
 		s.setString(content)
 		return nil
@@ -102,6 +107,9 @@ func (s *anthropicSystem) replace(content string) {
 		s.markChanged()
 		return
 	}
+	if s.kind == anthropicSystemKindString && strings.Join(s.textSegments, "\n\n") == content {
+		return
+	}
 	s.setString(content)
 }
 
@@ -133,12 +141,27 @@ func (s *anthropicSystem) setString(content string) {
 func (s *anthropicSystem) markChanged() {
 	s.present = true
 	s.loaded = true
+	s.validated = true
 	s.dirty = true
 	s.state = anthropicSystemNonblank
 }
 
+func (s *anthropicSystem) validate() error {
+	if s.validated {
+		return s.loadErr
+	}
+	s.load()
+	s.validated = true
+	s.loaded = false
+	return s.loadErr
+}
+
 func (s *anthropicSystem) load() anthropicSystemState {
 	if s.loaded {
+		return s.state
+	}
+	if s.validated {
+		s.loaded = true
 		return s.state
 	}
 	s.loaded = true
@@ -173,7 +196,10 @@ func (s *anthropicSystem) load() anthropicSystemState {
 	for i := range rawBlocks {
 		s.blocks[i] = anthropicSystemBlock{raw: rawBlocks[i]}
 	}
-	s.state = anthropicBlocksContentState(rawBlocks)
+	s.state, s.loadErr = anthropicBlocksContentState(rawBlocks)
+	if s.loadErr != nil {
+		s.state = anthropicSystemOpaque
+	}
 	return s.state
 }
 
@@ -224,34 +250,43 @@ func marshalAnthropicTextBlock(text string) (json.RawMessage, error) {
 	return block, nil
 }
 
-func anthropicSystemStateOf(raw json.RawMessage) anthropicSystemState {
+func anthropicSystemStateOf(raw json.RawMessage) (anthropicSystemState, error) {
 	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		return anthropicSystemAbsent
+		return anthropicSystemAbsent, nil
 	}
 	var text string
 	if err := json.Unmarshal(raw, &text); err == nil {
 		if strings.TrimSpace(text) == "" {
-			return anthropicSystemAbsent
+			return anthropicSystemAbsent, nil
 		}
-		return anthropicSystemNonblank
+		return anthropicSystemNonblank, nil
 	}
 	if !isJSONArray(raw) {
-		return anthropicSystemOpaque
+		return anthropicSystemOpaque, nil
 	}
 	var blocks []json.RawMessage
 	if err := json.Unmarshal(raw, &blocks); err != nil {
-		return anthropicSystemOpaque
+		return anthropicSystemOpaque, nil
 	}
 	return anthropicBlocksContentState(blocks)
 }
 
-func anthropicBlocksContentState(blocks []json.RawMessage) anthropicSystemState {
+func anthropicBlocksContentState(blocks []json.RawMessage) (anthropicSystemState, error) {
+	hasText := false
 	hasUnsupported := false
 	for i := range blocks {
-		fields := make(map[string]json.RawMessage)
-		if err := json.Unmarshal(blocks[i], &fields); err != nil {
+		if !isJSONObject(blocks[i]) {
 			hasUnsupported = true
 			continue
+		}
+		fields, err := decodeProtocolObject(
+			blocks[i],
+			"Anthropic system content block",
+			"type",
+			"text",
+		)
+		if err != nil {
+			return anthropicSystemOpaque, err
 		}
 		rawType, typeExists := fields["type"]
 		rawText, textExists := fields["text"]
@@ -270,11 +305,14 @@ func anthropicBlocksContentState(blocks []json.RawMessage) anthropicSystemState 
 			continue
 		}
 		if strings.TrimSpace(text) != "" {
-			return anthropicSystemNonblank
+			hasText = true
 		}
 	}
-	if hasUnsupported {
-		return anthropicSystemOpaque
+	if hasText {
+		return anthropicSystemNonblank, nil
 	}
-	return anthropicSystemAbsent
+	if hasUnsupported {
+		return anthropicSystemOpaque, nil
+	}
+	return anthropicSystemAbsent, nil
 }

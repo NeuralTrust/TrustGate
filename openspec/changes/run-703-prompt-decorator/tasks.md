@@ -54,8 +54,8 @@ One commit/PR per phase. PR 1 targets `develop`; each later PR targets the prece
 
 ## Phase 5: Pure Plugin Execution
 
-- [ ] 5.1 Create `plugin.go`: read folded `Body`, validate only `OriginalBody`, return new `Result.RequestBody`, expose `MutatesRequestBody=true`, and never write context/backing data.
-- [ ] 5.2 In `plugin_test.go`, prove enforce/observe, exact 400, malformed JSON, unchanged input, and independent result storage. Verify: `go test -race ./pkg/infra/plugins/promptdecorator`.
+- [x] 5.1 Create `plugin.go`: read folded `Body`, validate only `OriginalBody`, return new `Result.RequestBody`, expose `MutatesRequestBody=true`, and never write context/backing data.
+- [x] 5.2 In `plugin_test.go`, prove enforce/observe, exact 400, malformed JSON, unchanged input, and independent result storage. Verify: `go test -race ./pkg/infra/plugins/promptdecorator`.
 
 ## Phase 6: Existing Composition Contract
 

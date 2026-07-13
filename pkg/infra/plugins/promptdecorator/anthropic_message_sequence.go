@@ -25,6 +25,7 @@ type anthropicMessageSequence struct {
 	lastUser      *anthropicMessageNode
 	lastUserKnown bool
 	length        int
+	dirty         bool
 }
 
 type anthropicMessageNode struct {
@@ -40,6 +41,7 @@ func newAnthropicMessageSequence(messages []json.RawMessage) anthropicMessageSeq
 	for i := range messages {
 		sequence.append(&anthropicMessageNode{raw: messages[i]})
 	}
+	sequence.dirty = false
 	return sequence
 }
 
@@ -87,6 +89,7 @@ func (s *anthropicMessageSequence) prepend(node *anthropicMessageNode) {
 	}
 	s.head = node
 	s.length++
+	s.dirty = true
 	if s.lastUserKnown && s.lastUser == nil && node.roleKnown && node.role == roleUser {
 		s.lastUser = node
 	}
@@ -102,6 +105,7 @@ func (s *anthropicMessageSequence) append(node *anthropicMessageNode) {
 	}
 	s.tail = node
 	s.length++
+	s.dirty = true
 	if s.lastUserKnown && node.roleKnown && node.role == roleUser {
 		s.lastUser = node
 	}
@@ -117,6 +121,7 @@ func (s *anthropicMessageSequence) insertBefore(target, node *anthropicMessageNo
 	}
 	target.previous = node
 	s.length++
+	s.dirty = true
 }
 
 func (s *anthropicMessageSequence) ensureLastUser() {

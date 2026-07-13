@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 )
@@ -26,6 +27,7 @@ type openAIDocument struct {
 	fields   map[string]json.RawMessage
 	messages []json.RawMessage
 	metadata []openAIMessageMetadata
+	dirty    bool
 }
 
 type openAIMessageMetadata struct {
@@ -42,17 +44,9 @@ const (
 )
 
 func decodeOpenAIDocument(body []byte) (*openAIDocument, error) {
-	trimmed := bytes.TrimSpace(body)
-	if len(trimmed) == 0 {
-		return nil, fmt.Errorf("prompt_decorator: decode OpenAI request: empty body")
-	}
-	if trimmed[0] != '{' {
-		return nil, fmt.Errorf("prompt_decorator: OpenAI request must be a JSON object")
-	}
-
-	fields := make(map[string]json.RawMessage)
-	if err := json.Unmarshal(body, &fields); err != nil {
-		return nil, fmt.Errorf("prompt_decorator: decode OpenAI request: %w", err)
+	fields, err := decodeProtocolObject(body, "OpenAI request", "messages")
+	if err != nil {
+		return nil, err
 	}
 
 	document := &openAIDocument{fields: fields}
@@ -72,7 +66,10 @@ func decodeOpenAIDocument(body []byte) (*openAIDocument, error) {
 		if !isJSONObject(document.messages[i]) {
 			return nil, fmt.Errorf("prompt_decorator: OpenAI messages[%d] must be an object", i)
 		}
-		document.metadata[i] = decodeOpenAIMessageMetadata(document.messages[i])
+		document.metadata[i], err = decodeOpenAIMessageMetadata(document.messages[i])
+		if err != nil {
+			return nil, fmt.Errorf("prompt_decorator: decode OpenAI messages[%d]: %w", i, err)
+		}
 	}
 	delete(document.fields, "messages")
 	return document, nil
@@ -89,13 +86,34 @@ func decorateOpenAIBody(body []byte, decorators []decorator) ([]byte, error) {
 	return document.marshal()
 }
 
+func transformOpenAIBody(body []byte, decorators []decorator, marshalOutput bool) ([]byte, bool, error) {
+	document, err := decodeOpenAIDocument(body)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := document.apply(decorators); err != nil {
+		return nil, false, err
+	}
+	if !document.dirty || !marshalOutput {
+		return nil, document.dirty, nil
+	}
+	output, err := document.marshal()
+	if err != nil {
+		return nil, false, err
+	}
+	return output, true, nil
+}
+
 func hasOpenAIOriginalSystem(body []byte) (bool, error) {
 	messages, err := decodeOpenAIMessageArray(body)
 	if err != nil {
 		return false, err
 	}
 	for i := range messages {
-		metadata := decodeOpenAIMessageMetadata(messages[i])
+		metadata, err := decodeOpenAIMessageMetadata(messages[i])
+		if err != nil {
+			return false, fmt.Errorf("prompt_decorator: decode OpenAI messages[%d]: %w", i, err)
+		}
 		if metadata.role == roleSystem && metadata.systemContentState == openAISystemContentNonblank {
 			return true, nil
 		}
@@ -159,12 +177,20 @@ func (d *openAIDocument) applySystemDecorator(item decorator) error {
 		d.insert(index+1, message, newOpenAIMessageMetadata(roleSystem))
 		return nil
 	case systemStrategyMerge, systemStrategyReplace:
-		updated, err := rewriteOpenAISystemMessage(d.messages[index], item.Content, *item.OnExistingSystem)
+		updated, changed, err := rewriteOpenAISystemMessage(
+			d.messages[index],
+			item.Content,
+			*item.OnExistingSystem,
+		)
 		if err != nil {
 			return err
 		}
+		if !changed {
+			return nil
+		}
 		d.messages[index] = updated
 		d.metadata[index] = newOpenAIMessageMetadata(roleSystem)
+		d.dirty = true
 		return nil
 	default:
 		return fmt.Errorf("unsupported existing-system strategy %q", *item.OnExistingSystem)
@@ -178,6 +204,7 @@ func (d *openAIDocument) insert(index int, message json.RawMessage, metadata ope
 	d.metadata = append(d.metadata, openAIMessageMetadata{})
 	copy(d.metadata[index+1:], d.metadata[index:])
 	d.metadata[index] = metadata
+	d.dirty = true
 }
 
 func (d *openAIDocument) reserveInsertions(decorators []decorator) {
@@ -276,20 +303,25 @@ func newOpenAIMessage(messageRole role, content string) (json.RawMessage, error)
 	return message, nil
 }
 
-func rewriteOpenAISystemMessage(raw json.RawMessage, content string, strategy systemStrategy) (json.RawMessage, error) {
-	fields := make(map[string]json.RawMessage)
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return nil, fmt.Errorf("decode OpenAI system message: %w", err)
+func rewriteOpenAISystemMessage(
+	raw json.RawMessage,
+	content string,
+	strategy systemStrategy,
+) (json.RawMessage, bool, error) {
+	fields, err := decodeProtocolObject(raw, "OpenAI system message", "role", "content")
+	if err != nil {
+		return nil, false, err
 	}
 
 	rawContent, exists := fields["content"]
 	if !exists || bytes.Equal(bytes.TrimSpace(rawContent), []byte("null")) {
 		encoded, err := json.Marshal(content)
 		if err != nil {
-			return nil, fmt.Errorf("encode OpenAI system content: %w", err)
+			return nil, false, fmt.Errorf("encode OpenAI system content: %w", err)
 		}
 		fields["content"] = encoded
-		return marshalOpenAIMessage(fields)
+		updated, err := marshalOpenAIMessage(fields)
+		return updated, true, err
 	}
 
 	var text string
@@ -301,49 +333,64 @@ func rewriteOpenAISystemMessage(raw json.RawMessage, content string, strategy sy
 		}
 		encoded, err := json.Marshal(text)
 		if err != nil {
-			return nil, fmt.Errorf("encode OpenAI system content: %w", err)
+			return nil, false, fmt.Errorf("encode OpenAI system content: %w", err)
+		}
+		if bytes.Equal(bytes.TrimSpace(rawContent), encoded) {
+			return raw, false, nil
 		}
 		fields["content"] = encoded
-		return marshalOpenAIMessage(fields)
+		updated, err := marshalOpenAIMessage(fields)
+		return updated, true, err
 	}
 
 	if isJSONArray(rawContent) {
 		var blocks []json.RawMessage
 		if err := json.Unmarshal(rawContent, &blocks); err != nil {
-			return nil, fmt.Errorf("decode OpenAI system content blocks: %w", err)
+			return nil, false, fmt.Errorf("decode OpenAI system content blocks: %w", err)
 		}
 		if strategy == systemStrategyReplace {
 			blocks = nil
 		}
 		prefix := ""
-		if strategy == systemStrategyMerge && openAIBlocksHaveText(blocks) {
-			prefix = "\n\n"
+		if strategy == systemStrategyMerge {
+			hasText, err := openAIBlocksHaveText(blocks)
+			if err != nil {
+				return nil, false, err
+			}
+			if hasText {
+				prefix = "\n\n"
+			}
 		}
 		block, err := json.Marshal(struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		}{Type: "text", Text: prefix + content})
 		if err != nil {
-			return nil, fmt.Errorf("encode OpenAI system content block: %w", err)
+			return nil, false, fmt.Errorf("encode OpenAI system content block: %w", err)
 		}
 		blocks = append(blocks, block)
 		encoded, err := json.Marshal(blocks)
 		if err != nil {
-			return nil, fmt.Errorf("encode OpenAI system content blocks: %w", err)
+			return nil, false, fmt.Errorf("encode OpenAI system content blocks: %w", err)
+		}
+		if bytes.Equal(bytes.TrimSpace(rawContent), encoded) {
+			return raw, false, nil
 		}
 		fields["content"] = encoded
-		return marshalOpenAIMessage(fields)
+		updated, err := marshalOpenAIMessage(fields)
+		return updated, true, err
 	}
 
 	if strategy == systemStrategyReplace {
 		encoded, err := json.Marshal(content)
 		if err != nil {
-			return nil, fmt.Errorf("encode OpenAI system content: %w", err)
+			return nil, false, fmt.Errorf("encode OpenAI system content: %w", err)
 		}
 		fields["content"] = encoded
-		return marshalOpenAIMessage(fields)
+		updated, err := marshalOpenAIMessage(fields)
+		return updated, true, err
 	}
-	return nil, fmt.Errorf("OpenAI system content must be a string or array")
+	return nil, false, fmt.Errorf("OpenAI system content must be a string or array")
 }
 
 func marshalOpenAIMessage(fields map[string]json.RawMessage) (json.RawMessage, error) {
@@ -354,20 +401,26 @@ func marshalOpenAIMessage(fields map[string]json.RawMessage) (json.RawMessage, e
 	return encoded, nil
 }
 
-func decodeOpenAIMessageMetadata(raw json.RawMessage) openAIMessageMetadata {
-	var message struct {
-		Role    role            `json:"role"`
-		Content json.RawMessage `json:"content"`
+func decodeOpenAIMessageMetadata(raw json.RawMessage) (openAIMessageMetadata, error) {
+	fields, err := decodeProtocolObject(raw, "OpenAI message", "role", "content")
+	if err != nil {
+		return openAIMessageMetadata{}, err
 	}
-	if err := json.Unmarshal(raw, &message); err != nil {
-		return openAIMessageMetadata{}
+	var messageRole role
+	if rawRole, exists := fields["role"]; exists {
+		if err := json.Unmarshal(rawRole, &messageRole); err != nil {
+			return openAIMessageMetadata{}, nil
+		}
 	}
-	metadata := openAIMessageMetadata{role: message.Role}
-	if message.Role != roleSystem {
-		return metadata
+	metadata := openAIMessageMetadata{role: messageRole}
+	if messageRole != roleSystem {
+		return metadata, nil
 	}
-	metadata.systemContentState = openAISystemContentStateOf(message.Content)
-	return metadata
+	metadata.systemContentState, err = openAISystemContentStateOf(fields["content"])
+	if err != nil {
+		return openAIMessageMetadata{}, err
+	}
+	return metadata, nil
 }
 
 func newOpenAIMessageMetadata(messageRole role) openAIMessageMetadata {
@@ -378,56 +431,77 @@ func newOpenAIMessageMetadata(messageRole role) openAIMessageMetadata {
 	return metadata
 }
 
-func openAISystemContentStateOf(raw json.RawMessage) openAISystemContentState {
+func openAISystemContentStateOf(raw json.RawMessage) (openAISystemContentState, error) {
 	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		return openAISystemContentAbsent
+		return openAISystemContentAbsent, nil
 	}
 	var text string
 	if err := json.Unmarshal(raw, &text); err == nil {
 		if strings.TrimSpace(text) == "" {
-			return openAISystemContentAbsent
+			return openAISystemContentAbsent, nil
 		}
-		return openAISystemContentNonblank
+		return openAISystemContentNonblank, nil
 	}
 	if !isJSONArray(raw) {
-		return openAISystemContentOpaque
+		return openAISystemContentOpaque, nil
 	}
 
 	var blocks []json.RawMessage
 	if err := json.Unmarshal(raw, &blocks); err != nil {
-		return openAISystemContentOpaque
+		return openAISystemContentOpaque, nil
 	}
 	return openAIBlocksContentState(blocks)
 }
 
-func openAIBlocksContentState(blocks []json.RawMessage) openAISystemContentState {
+func openAIBlocksContentState(blocks []json.RawMessage) (openAISystemContentState, error) {
+	hasText := false
 	hasUnsupported := false
 	for i := range blocks {
-		var block struct {
-			Type string          `json:"type"`
-			Text json.RawMessage `json:"text"`
+		if !isJSONObject(blocks[i]) {
+			hasUnsupported = true
+			continue
 		}
-		if err := json.Unmarshal(blocks[i], &block); err != nil || block.Type != "text" {
+		fields, err := decodeProtocolObject(
+			blocks[i],
+			"OpenAI system content block",
+			"type",
+			"text",
+		)
+		if err != nil {
+			return openAISystemContentOpaque, err
+		}
+		rawType, typeExists := fields["type"]
+		rawText, textExists := fields["text"]
+		if !typeExists || !textExists {
+			hasUnsupported = true
+			continue
+		}
+		var blockType string
+		if err := json.Unmarshal(rawType, &blockType); err != nil || blockType != "text" {
 			hasUnsupported = true
 			continue
 		}
 		var text string
-		if err := json.Unmarshal(block.Text, &text); err != nil {
+		if err := json.Unmarshal(rawText, &text); err != nil {
 			hasUnsupported = true
 			continue
 		}
 		if strings.TrimSpace(text) != "" {
-			return openAISystemContentNonblank
+			hasText = true
 		}
 	}
-	if hasUnsupported {
-		return openAISystemContentOpaque
+	if hasText {
+		return openAISystemContentNonblank, nil
 	}
-	return openAISystemContentAbsent
+	if hasUnsupported {
+		return openAISystemContentOpaque, nil
+	}
+	return openAISystemContentAbsent, nil
 }
 
-func openAIBlocksHaveText(blocks []json.RawMessage) bool {
-	return openAIBlocksContentState(blocks) == openAISystemContentNonblank
+func openAIBlocksHaveText(blocks []json.RawMessage) (bool, error) {
+	state, err := openAIBlocksContentState(blocks)
+	return state == openAISystemContentNonblank, err
 }
 
 func marshalRawArray(values []json.RawMessage) []byte {
@@ -482,37 +556,84 @@ func marshalRawObject(fields map[string]json.RawMessage) ([]byte, error) {
 }
 
 func decodeOpenAIMessageArray(body []byte) ([]json.RawMessage, error) {
-	trimmed := bytes.TrimSpace(body)
-	if len(trimmed) == 0 {
-		return nil, fmt.Errorf("prompt_decorator: decode OpenAI request: empty body")
+	fields, err := decodeProtocolObject(body, "OpenAI request", "messages")
+	if err != nil {
+		return nil, err
 	}
-	if trimmed[0] != '{' {
-		return nil, fmt.Errorf("prompt_decorator: OpenAI request must be a JSON object")
-	}
-
-	var request struct {
-		Messages json.RawMessage `json:"messages"`
-	}
-	if err := json.Unmarshal(body, &request); err != nil {
-		return nil, fmt.Errorf("prompt_decorator: decode OpenAI request: %w", err)
-	}
-	if request.Messages == nil {
+	rawMessages, exists := fields["messages"]
+	if !exists {
 		return []json.RawMessage{}, nil
 	}
-	if !isJSONArray(request.Messages) {
+	if !isJSONArray(rawMessages) {
 		return nil, fmt.Errorf("prompt_decorator: OpenAI messages must be an array")
 	}
 
 	var messages []json.RawMessage
-	if err := json.Unmarshal(request.Messages, &messages); err != nil {
+	if err := json.Unmarshal(rawMessages, &messages); err != nil {
 		return nil, fmt.Errorf("prompt_decorator: decode OpenAI messages: %w", err)
 	}
 	for i := range messages {
 		if !isJSONObject(messages[i]) {
 			return nil, fmt.Errorf("prompt_decorator: OpenAI messages[%d] must be an object", i)
 		}
+		if _, err := decodeOpenAIMessageMetadata(messages[i]); err != nil {
+			return nil, fmt.Errorf("prompt_decorator: decode OpenAI messages[%d]: %w", i, err)
+		}
 	}
 	return messages, nil
+}
+
+func decodeProtocolObject(body []byte, name string, uniqueKeys ...string) (map[string]json.RawMessage, error) {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 {
+		return nil, fmt.Errorf("prompt_decorator: decode %s: empty body", name)
+	}
+	if trimmed[0] != '{' {
+		return nil, fmt.Errorf("prompt_decorator: %s must be a JSON object", name)
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	if _, err := decoder.Token(); err != nil {
+		return nil, fmt.Errorf("prompt_decorator: decode %s: %w", name, err)
+	}
+	unique := make(map[string]struct{}, len(uniqueKeys))
+	for _, key := range uniqueKeys {
+		unique[key] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(uniqueKeys))
+	fields := make(map[string]json.RawMessage)
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return nil, fmt.Errorf("prompt_decorator: decode %s: %w", name, err)
+		}
+		key, valid := token.(string)
+		if !valid {
+			return nil, fmt.Errorf("prompt_decorator: decode %s: object key must be a string", name)
+		}
+		if _, exact := unique[key]; exact {
+			if _, duplicate := seen[key]; duplicate {
+				return nil, fmt.Errorf("prompt_decorator: decode %s: duplicate field %q", name, key)
+			}
+			seen[key] = struct{}{}
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return nil, fmt.Errorf("prompt_decorator: decode %s: %w", name, err)
+		}
+		fields[key] = value
+	}
+	if _, err := decoder.Token(); err != nil {
+		return nil, fmt.Errorf("prompt_decorator: decode %s: %w", name, err)
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		if err != nil {
+			return nil, fmt.Errorf("prompt_decorator: decode %s: %w", name, err)
+		}
+		return nil, fmt.Errorf("prompt_decorator: decode %s: trailing JSON value", name)
+	}
+	return fields, nil
 }
 
 func isJSONArray(raw []byte) bool {

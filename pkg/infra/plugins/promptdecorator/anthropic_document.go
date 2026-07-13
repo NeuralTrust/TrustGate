@@ -15,10 +15,8 @@
 package promptdecorator
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 )
 
 type anthropicDocument struct {
@@ -35,13 +33,14 @@ func decodeAnthropicDocument(body []byte) (*anthropicDocument, error) {
 
 	rawSystem, systemPresent := fields["system"]
 	delete(fields, "system")
+	system := newAnthropicSystem(rawSystem, systemPresent)
 
 	rawMessages, messagesPresent := fields["messages"]
 	delete(fields, "messages")
 	if !messagesPresent {
 		return &anthropicDocument{
 			fields:   fields,
-			system:   newAnthropicSystem(rawSystem, systemPresent),
+			system:   system,
 			messages: newAnthropicMessageSequence(nil),
 		}, nil
 	}
@@ -57,10 +56,13 @@ func decodeAnthropicDocument(body []byte) (*anthropicDocument, error) {
 		if !isJSONObject(messages[i]) {
 			return nil, fmt.Errorf("prompt_decorator: Anthropic messages[%d] must be an object", i)
 		}
+		if _, err := decodeProtocolObject(messages[i], "Anthropic message", "role"); err != nil {
+			return nil, fmt.Errorf("prompt_decorator: decode Anthropic messages[%d]: %w", i, err)
+		}
 	}
 	return &anthropicDocument{
 		fields:   fields,
-		system:   newAnthropicSystem(rawSystem, systemPresent),
+		system:   system,
 		messages: newAnthropicMessageSequence(messages),
 	}, nil
 }
@@ -76,108 +78,47 @@ func decorateAnthropicBody(body []byte, decorators []decorator) ([]byte, error) 
 	return document.marshal()
 }
 
+func transformAnthropicBody(body []byte, decorators []decorator, marshalOutput bool) ([]byte, bool, error) {
+	document, err := decodeAnthropicDocument(body)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := document.apply(decorators); err != nil {
+		return nil, false, err
+	}
+	changed := document.system.dirty || document.messages.dirty
+	if !changed || !marshalOutput {
+		return nil, changed, nil
+	}
+	output, err := document.marshal()
+	if err != nil {
+		return nil, false, err
+	}
+	return output, true, nil
+}
+
 func hasAnthropicOriginalSystem(body []byte) (bool, error) {
 	rawSystem, err := decodeExactAnthropicSystem(body)
 	if err != nil {
 		return false, err
 	}
-	return anthropicSystemStateOf(rawSystem) == anthropicSystemNonblank, nil
+	state, err := anthropicSystemStateOf(rawSystem)
+	if err != nil {
+		return false, err
+	}
+	return state == anthropicSystemNonblank, nil
 }
 
 func decodeAnthropicFields(body []byte) (map[string]json.RawMessage, error) {
-	if err := validateAnthropicObject(body); err != nil {
-		return nil, err
-	}
-	fields := make(map[string]json.RawMessage)
-	if err := json.Unmarshal(body, &fields); err != nil {
-		return nil, fmt.Errorf("prompt_decorator: decode Anthropic request: %w", err)
-	}
-	return fields, nil
-}
-
-func validateAnthropicObject(body []byte) error {
-	trimmed := bytes.TrimSpace(body)
-	if len(trimmed) == 0 {
-		return fmt.Errorf("prompt_decorator: decode Anthropic request: empty body")
-	}
-	if trimmed[0] != '{' {
-		return fmt.Errorf("prompt_decorator: Anthropic request must be a JSON object")
-	}
-	return nil
+	return decodeProtocolObject(body, "Anthropic request", "system", "messages")
 }
 
 func decodeExactAnthropicSystem(body []byte) (json.RawMessage, error) {
-	if err := validateAnthropicObject(body); err != nil {
+	fields, err := decodeProtocolObject(body, "Anthropic request", "system")
+	if err != nil {
 		return nil, err
 	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.UseNumber()
-	if _, err := decoder.Token(); err != nil {
-		return nil, fmt.Errorf("prompt_decorator: decode Anthropic request: %w", err)
-	}
-
-	var system json.RawMessage
-	for decoder.More() {
-		token, err := decoder.Token()
-		if err != nil {
-			return nil, fmt.Errorf("prompt_decorator: decode Anthropic request: %w", err)
-		}
-		key, valid := token.(string)
-		if !valid {
-			return nil, fmt.Errorf("prompt_decorator: decode Anthropic request: object key must be a string")
-		}
-		if key == "system" {
-			if err := decoder.Decode(&system); err != nil {
-				return nil, fmt.Errorf("prompt_decorator: decode Anthropic request: %w", err)
-			}
-			continue
-		}
-		if err := skipJSONValue(decoder); err != nil {
-			return nil, fmt.Errorf("prompt_decorator: decode Anthropic request: %w", err)
-		}
-	}
-	if _, err := decoder.Token(); err != nil {
-		return nil, fmt.Errorf("prompt_decorator: decode Anthropic request: %w", err)
-	}
-	if _, err := decoder.Token(); err != io.EOF {
-		if err != nil {
-			return nil, fmt.Errorf("prompt_decorator: decode Anthropic request: %w", err)
-		}
-		return nil, fmt.Errorf("prompt_decorator: decode Anthropic request: trailing JSON value")
-	}
-	return system, nil
-}
-
-func skipJSONValue(decoder *json.Decoder) error {
-	token, err := decoder.Token()
-	if err != nil {
-		return err
-	}
-	delimiter, nested := token.(json.Delim)
-	if !nested {
-		return nil
-	}
-	switch delimiter {
-	case '{':
-		for decoder.More() {
-			if _, err := decoder.Token(); err != nil {
-				return err
-			}
-			if err := skipJSONValue(decoder); err != nil {
-				return err
-			}
-		}
-	case '[':
-		for decoder.More() {
-			if err := skipJSONValue(decoder); err != nil {
-				return err
-			}
-		}
-	default:
-		return fmt.Errorf("unexpected JSON delimiter %q", delimiter)
-	}
-	_, err = decoder.Token()
-	return err
+	return fields["system"], nil
 }
 
 func decodeExactJSONObjectField(raw json.RawMessage, key string) (json.RawMessage, bool) {
@@ -190,6 +131,9 @@ func decodeExactJSONObjectField(raw json.RawMessage, key string) (json.RawMessag
 }
 
 func (d *anthropicDocument) apply(decorators []decorator) error {
+	if err := d.system.validate(); err != nil {
+		return fmt.Errorf("prompt_decorator: decode Anthropic system: %w", err)
+	}
 	for i := range decorators {
 		if err := d.applyDecorator(decorators[i]); err != nil {
 			return fmt.Errorf("prompt_decorator: apply decorators[%d]: %w", i, err)
