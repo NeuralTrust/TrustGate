@@ -56,6 +56,9 @@ const (
 	defaultDBHealthCheckPeriod       = time.Minute
 	defaultDBConnectTimeout          = 5 * time.Second
 
+	postgresLoginDefault = "default"
+	postgresLoginAWS     = "aws"
+
 	defaultRedisHost = "localhost"
 	defaultRedisPort = 6379
 	defaultRedisDB   = 3
@@ -213,6 +216,7 @@ type ServerConfig struct {
 }
 
 type DatabaseConfig struct {
+	Login             string
 	Host              string
 	Port              int
 	User              string
@@ -394,11 +398,18 @@ func getServerConfig() ServerConfig {
 }
 
 func getDatabaseConfig() DatabaseConfig {
+	login := normalizePostgresLogin(os.Getenv("POSTGRES_LOGIN"))
+	passwordDefault := defaultDBPassword
+	if login == postgresLoginAWS {
+		passwordDefault = ""
+	}
+
 	return DatabaseConfig{
+		Login:             login,
 		Host:              getEnv("DB_HOST", defaultDBHost),
 		Port:              getEnvInt("DB_PORT", defaultDBPort),
 		User:              getEnv("DB_USER", defaultDBUser),
-		Password:          getEnv("DB_PASSWORD", defaultDBPassword),
+		Password:          getEnv("DB_PASSWORD", passwordDefault),
 		Name:              getEnv("DB_NAME", defaultDBName),
 		SSLMode:           getEnv("DB_SSL_MODE", defaultDBSSLMode),
 		SSLRootCert:       getEnv("DB_SSL_ROOT_CERT", ""),
@@ -409,6 +420,14 @@ func getDatabaseConfig() DatabaseConfig {
 		HealthCheckPeriod: getEnvDuration("DB_HEALTH_CHECK_PERIOD", defaultDBHealthCheckPeriod),
 		ConnectTimeout:    getEnvDuration("DB_CONNECT_TIMEOUT", defaultDBConnectTimeout),
 	}
+}
+
+func normalizePostgresLogin(login string) string {
+	normalized := strings.ToLower(strings.TrimSpace(login))
+	if normalized == "" {
+		return postgresLoginDefault
+	}
+	return normalized
 }
 
 func getRedisConfig() RedisConfig {
@@ -681,6 +700,12 @@ func (cs ConfigSyncConfig) Validate() error {
 }
 
 func (c *Config) Validate() error {
+	c.Database.Login = normalizePostgresLogin(c.Database.Login)
+	switch c.Database.Login {
+	case postgresLoginDefault, postgresLoginAWS:
+	default:
+		return fmt.Errorf("%w: POSTGRES_LOGIN must be %q or %q", errors.ErrInvalidConfig, postgresLoginDefault, postgresLoginAWS)
+	}
 	if c.Server.GatewayDiscoveryMode != GatewayDiscoveryModeHeader &&
 		c.Server.GatewayDiscoveryMode != GatewayDiscoveryModeSubdomain {
 		return fmt.Errorf(

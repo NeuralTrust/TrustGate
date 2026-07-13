@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	stderrors "errors"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 
 func minimumEnv(t *testing.T) {
 	t.Helper()
+	t.Setenv("POSTGRES_LOGIN", "")
 	t.Setenv("DB_HOST", "db.example")
 	t.Setenv("DB_USER", "u")
 	t.Setenv("DB_NAME", "n")
@@ -55,6 +57,99 @@ func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	}
 	if cfg.Database.MaxConns != defaultDBMaxConns {
 		t.Errorf("DB.MaxConns default = %d, want %d", cfg.Database.MaxConns, defaultDBMaxConns)
+	}
+}
+
+func TestLoadConfig_PostgresLoginModes(t *testing.T) {
+	tests := []struct {
+		name         string
+		login        string
+		password     string
+		wantLogin    string
+		wantPassword string
+	}{
+		{
+			name:         "blank defaults to default",
+			wantLogin:    postgresLoginDefault,
+			wantPassword: defaultDBPassword,
+		},
+		{
+			name:         "whitespace defaults to default",
+			login:        " \t ",
+			wantLogin:    postgresLoginDefault,
+			wantPassword: defaultDBPassword,
+		},
+		{
+			name:         "default is trimmed and lowercased",
+			login:        " DeFaUlT ",
+			wantLogin:    postgresLoginDefault,
+			wantPassword: defaultDBPassword,
+		},
+		{
+			name:         "default preserves configured password",
+			login:        postgresLoginDefault,
+			password:     "configured-password",
+			wantLogin:    postgresLoginDefault,
+			wantPassword: "configured-password",
+		},
+		{
+			name:      "aws is trimmed and lowercased without password",
+			login:     " AwS ",
+			wantLogin: postgresLoginAWS,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			minimumEnv(t)
+			t.Setenv("POSTGRES_LOGIN", tc.login)
+			t.Setenv("DB_PASSWORD", tc.password)
+
+			cfg, err := LoadConfig()
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if cfg.Database.Login != tc.wantLogin {
+				t.Errorf("Database.Login = %q, want %q", cfg.Database.Login, tc.wantLogin)
+			}
+			if cfg.Database.Password != tc.wantPassword {
+				t.Errorf("Database.Password = %q, want %q", cfg.Database.Password, tc.wantPassword)
+			}
+		})
+	}
+}
+
+func TestLoadConfig_RejectsInvalidPostgresLogin(t *testing.T) {
+	tests := []struct {
+		name   string
+		dbLess bool
+	}{
+		{name: "postgres graph"},
+		{name: "DB-less graph", dbLess: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			minimumEnv(t)
+			t.Setenv("POSTGRES_LOGIN", " unsupported ")
+			if tc.dbLess {
+				t.Setenv("CONFIG_SYNC_DATA_PLANE_ENABLED", "true")
+				t.Setenv("CONFIG_SYNC_TOKEN", "config-sync-token")
+				t.Setenv("CONFIG_SYNC_GRPC_ENDPOINT", "control.example:8083")
+				t.Setenv("CONFIG_SYNC_LKG_KEY", aes256Key())
+			}
+
+			_, err := LoadConfig()
+			if err == nil {
+				t.Fatal("expected validation error for POSTGRES_LOGIN")
+			}
+			if !stderrors.Is(err, errors.ErrInvalidConfig) {
+				t.Errorf("error %v is not ErrInvalidConfig", err)
+			}
+			if !strings.Contains(err.Error(), "POSTGRES_LOGIN") {
+				t.Errorf("error %q does not name POSTGRES_LOGIN", err)
+			}
+		})
 	}
 }
 
