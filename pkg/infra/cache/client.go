@@ -51,12 +51,16 @@ type Client interface {
 }
 
 type Config struct {
+	Login             string
 	Host              string
 	Port              int
 	Password          string // #nosec G117 -- Config field for Redis password
 	DB                int
 	TLSEnabled        bool
 	TLSInsecureVerify bool
+	Username          string
+	CacheName         string
+	AWSServerless     bool
 }
 
 var _ Client = (*client)(nil)
