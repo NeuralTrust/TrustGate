@@ -22,7 +22,6 @@ import (
 	"math"
 	"net/http"
 	"strconv"
-	"time"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -247,11 +246,10 @@ func (p *Plugin) budgetGate(
 	setTokenExtras(event, data)
 	appplugins.SetDecision(event, mode)
 
-	return p.handleExceeded(ctx, cfg, reportWindow, scope, model, req, mode, headers)
+	return p.handleExceeded(cfg, reportWindow, scope, model, req, mode, headers)
 }
 
 func (p *Plugin) handleExceeded(
-	ctx context.Context,
 	cfg *config,
 	w budgetWindow,
 	scope, model string,
@@ -259,18 +257,11 @@ func (p *Plugin) handleExceeded(
 	mode policy.Mode,
 	headers map[string][]string,
 ) (*appplugins.Result, error) {
-	if appplugins.Throttles(mode) {
-		return p.throttle(ctx, w, headers)
-	}
 	if !appplugins.Blocks(mode) {
 		return &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}, nil
 	}
 
 	switch cfg.BehaviorOnExceeded {
-	case behaviorThrottle:
-		return p.throttle(ctx, w, headers)
-	case behaviorAlertOnly:
-		return &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}, nil
 	case behaviorDowngradeModel:
 		if _, body, hdr, ok := llmcost.ApplyDowngrade(req, model, cfg.DowngradeTo); ok {
 			return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: body, Headers: mergeHeaderValues(headers, hdr)}, nil
@@ -279,13 +270,6 @@ func (p *Plugin) handleExceeded(
 	default:
 		return nil, budgetExceededError(cfg.Unit, scope, w.label, withBudgetMeta(headers, cfg.Unit, scope, w.label))
 	}
-}
-
-func (p *Plugin) throttle(ctx context.Context, w budgetWindow, headers map[string][]string) (*appplugins.Result, error) {
-	if err := appplugins.Throttle(ctx, time.Duration(w.windowSec)*time.Second); err != nil {
-		return nil, err
-	}
-	return &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}, nil
 }
 
 func (p *Plugin) budgetHeaders(ctx context.Context, cfg *config, w budgetWindow, consumed int64, scope string) map[string][]string {

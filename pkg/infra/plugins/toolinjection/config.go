@@ -12,11 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tooltransform
+package toolinjection
 
 import (
 	"fmt"
-	"path"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 )
@@ -49,17 +48,10 @@ type injectDef struct {
 	Function fnDef  `mapstructure:"function"`
 }
 
-type transformDef struct {
-	Tool                string                 `mapstructure:"tool"`
-	SchemaPatch         map[string]interface{} `mapstructure:"schema_patch"`
-	DescriptionOverride *string                `mapstructure:"description_override"`
-}
-
 type config struct {
-	Scope          string         `mapstructure:"scope"`
-	TransformTools []transformDef `mapstructure:"transform_tools"`
-	InjectTools    []injectDef    `mapstructure:"inject_tools"`
-	OnConflict     string         `mapstructure:"on_conflict"`
+	Scope       string      `mapstructure:"scope"`
+	InjectTools []injectDef `mapstructure:"inject_tools"`
+	OnConflict  string      `mapstructure:"on_conflict"`
 }
 
 func parseConfig(settings map[string]any) (*config, error) {
@@ -76,30 +68,21 @@ func parseConfig(settings map[string]any) (*config, error) {
 func (c *config) validate() error {
 	if c.Scope != "" {
 		if _, ok := validScopes[c.Scope]; !ok {
-			return fmt.Errorf("tool_definition_transformation: scope must be one of consumer, global")
+			return fmt.Errorf("tool_injection: scope must be one of consumer, global")
 		}
 	}
 	if c.OnConflict != "" {
 		if _, ok := validConflicts[c.OnConflict]; !ok {
-			return fmt.Errorf("tool_definition_transformation: on_conflict must be one of gateway_wins, client_wins, reject")
-		}
-	}
-	for i := range c.TransformTools {
-		tool := c.TransformTools[i].Tool
-		if tool == "" {
-			return fmt.Errorf("tool_definition_transformation: transform_tools[%d]: tool must not be empty", i)
-		}
-		if _, err := path.Match(tool, ""); err != nil {
-			return fmt.Errorf("tool_definition_transformation: transform_tools[%d]: invalid tool pattern %q: %w", i, tool, err)
+			return fmt.Errorf("tool_injection: on_conflict must be one of gateway_wins, client_wins, reject")
 		}
 	}
 	for i := range c.InjectTools {
 		if c.InjectTools[i].Function.Name == "" {
-			return fmt.Errorf("tool_definition_transformation: inject_tools[%d]: function.name must not be empty", i)
+			return fmt.Errorf("tool_injection: inject_tools[%d]: function.name must not be empty", i)
 		}
 	}
-	if len(c.TransformTools) == 0 && len(c.InjectTools) == 0 {
-		return fmt.Errorf("tool_definition_transformation: at least one of transform_tools or inject_tools must be set")
+	if len(c.InjectTools) == 0 {
+		return fmt.Errorf("tool_injection: inject_tools must contain at least one tool")
 	}
 	return nil
 }

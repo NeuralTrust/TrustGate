@@ -28,5 +28,4 @@ type PromptTemplateData struct {
 	SkippedIDs       []string `json:"skipped_ids,omitempty"`
 	UnresolvedIDs    []string `json:"unresolved_variables,omitempty"`
 	ResolvedTemplate string   `json:"resolved_template,omitempty"`
-	ResolvedVersion  string   `json:"resolved_version,omitempty"`
 }

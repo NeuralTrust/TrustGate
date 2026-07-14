@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func toolTransformChatRequest(toolName string) map[string]any {
+func toolInjectionChatRequest(toolName string) map[string]any {
 	return map[string]any{
 		"model":    "gpt-4o-mini",
 		"messages": []map[string]string{{"role": "user", "content": "Hello"}},
@@ -24,8 +24,7 @@ func toolTransformChatRequest(toolName string) map[string]any {
 					"parameters": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"query":         map[string]any{"type": "string"},
-							"internal_only": map[string]any{"type": "boolean"},
+							"query": map[string]any{"type": "string"},
 						},
 					},
 				},
@@ -60,21 +59,11 @@ func findForwardedTool(tools []forwardedTool, name string) (forwardedTool, bool)
 	return forwardedTool{}, false
 }
 
-func TestPluginE2E_ToolDefinitionTransformation_PatchAndInject(t *testing.T) {
-	defer Track(t, "PluginToolDefinitionTransformation")()
+func TestPluginE2E_ToolInjection_AppendsGatewayTool(t *testing.T) {
+	defer Track(t, "PluginToolInjection")()
 
 	up := newJSONUpstream(t, "ok")
 	settings := map[string]any{
-		"transform_tools": []any{
-			map[string]any{
-				"tool": "search_*",
-				"schema_patch": map[string]any{
-					"properties": map[string]any{"internal_only": nil},
-					"required":   []any{"query"},
-				},
-				"description_override": "patched description",
-			},
-		},
 		"inject_tools": []any{
 			map[string]any{
 				"type": "function",
@@ -86,31 +75,23 @@ func TestPluginE2E_ToolDefinitionTransformation_PatchAndInject(t *testing.T) {
 			},
 		},
 	}
-	apiKey, path := setupPolicyRoute(t, up, policyPlugin("tool_definition_transformation", settings))
+	apiKey, path := setupPolicyRoute(t, up, policyPlugin("tool_injection", settings))
 
-	status, _, raw := proxyPost(t, apiKey, path, toolTransformChatRequest("search_docs"))
+	status, _, raw := proxyPost(t, apiKey, path, toolInjectionChatRequest("search_docs"))
 	require.Equal(t, http.StatusOK, status, "body: %s", raw)
 
 	tools := forwardedTools(t, up.LastBody())
 
-	transformed, ok := findForwardedTool(tools, "search_docs")
-	require.Truef(t, ok, "transformed tool missing from forwarded body: %s", up.LastBody())
-	assert.Equal(t, "patched description", transformed.Function.Description)
+	_, clientKept := findForwardedTool(tools, "search_docs")
+	assert.Truef(t, clientKept, "client tool missing from forwarded body: %s", up.LastBody())
 
-	properties, ok := transformed.Function.Parameters["properties"].(map[string]any)
-	require.Truef(t, ok, "transformed parameters missing properties: %#v", transformed.Function.Parameters)
-	_, hasInternalOnly := properties["internal_only"]
-	assert.False(t, hasInternalOnly, "schema_patch null must delete internal_only")
-	_, hasQuery := properties["query"]
-	assert.True(t, hasQuery, "schema_patch must preserve sibling query property")
-	assert.Equal(t, []any{"query"}, transformed.Function.Parameters["required"])
-
-	_, injected := findForwardedTool(tools, "safety_check")
-	assert.Truef(t, injected, "injected tool missing from forwarded body: %s", up.LastBody())
+	injected, ok := findForwardedTool(tools, "safety_check")
+	require.Truef(t, ok, "injected tool missing from forwarded body: %s", up.LastBody())
+	assert.Equal(t, "injected by gateway", injected.Function.Description)
 }
 
-func TestPluginE2E_ToolDefinitionTransformation_RejectCollision(t *testing.T) {
-	defer Track(t, "PluginToolDefinitionTransformation")()
+func TestPluginE2E_ToolInjection_RejectCollision(t *testing.T) {
+	defer Track(t, "PluginToolInjection")()
 
 	up := newJSONUpstream(t, "ok")
 	settings := map[string]any{
@@ -125,9 +106,9 @@ func TestPluginE2E_ToolDefinitionTransformation_RejectCollision(t *testing.T) {
 			},
 		},
 	}
-	apiKey, path := setupPolicyRoute(t, up, policyPlugin("tool_definition_transformation", settings))
+	apiKey, path := setupPolicyRoute(t, up, policyPlugin("tool_injection", settings))
 
-	status, _, raw := proxyPost(t, apiKey, path, toolTransformChatRequest("search_docs"))
+	status, _, raw := proxyPost(t, apiKey, path, toolInjectionChatRequest("search_docs"))
 	require.Equal(t, http.StatusBadRequest, status, "body: %s", raw)
 
 	var decoded struct {

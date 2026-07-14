@@ -146,7 +146,6 @@ func buildData(decision string, a modeAOutcome, b modeBResult) PromptTemplateDat
 		SkippedIDs:       a.skipped,
 		UnresolvedIDs:    a.unresolved,
 		ResolvedTemplate: b.resolvedTemplate,
-		ResolvedVersion:  b.resolvedVersion,
 	}
 }
 

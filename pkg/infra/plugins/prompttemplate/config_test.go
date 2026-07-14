@@ -36,7 +36,6 @@ func namedTemplateConfig() map[string]any {
 				"name": "support-bot",
 				"versions": []any{
 					map[string]any{
-						"version": "v1",
 						"labels":  []any{"stable"},
 						"content": "answer as {{persona}}",
 						"required_variables": map[string]any{
@@ -187,19 +186,18 @@ func TestConfigValidate(t *testing.T) {
 			name: "duplicate named template name rejected",
 			settings: map[string]any{
 				"named_templates": []any{
-					map[string]any{"name": "a", "versions": []any{map[string]any{"version": "v1", "content": "x"}}},
-					map[string]any{"name": "a", "versions": []any{map[string]any{"version": "v1", "content": "x"}}},
+					map[string]any{"name": "a", "versions": []any{map[string]any{"labels": []any{"stable"}, "content": "x"}}},
+					map[string]any{"name": "a", "versions": []any{map[string]any{"labels": []any{"latest"}, "content": "x"}}},
 				},
 			},
 			wantErr: true,
 		},
 		{
-			name: "duplicate version rejected",
+			name: "version without labels rejected",
 			settings: map[string]any{
 				"named_templates": []any{
 					map[string]any{"name": "a", "versions": []any{
-						map[string]any{"version": "v1", "content": "x"},
-						map[string]any{"version": "v1", "content": "y"},
+						map[string]any{"content": "x"},
 					}},
 				},
 			},
@@ -210,8 +208,8 @@ func TestConfigValidate(t *testing.T) {
 			settings: map[string]any{
 				"named_templates": []any{
 					map[string]any{"name": "a", "versions": []any{
-						map[string]any{"version": "v1", "labels": []any{"stable"}, "content": "x"},
-						map[string]any{"version": "v2", "labels": []any{"stable"}, "content": "y"},
+						map[string]any{"labels": []any{"stable"}, "content": "x"},
+						map[string]any{"labels": []any{"stable"}, "content": "y"},
 					}},
 				},
 			},
@@ -222,7 +220,7 @@ func TestConfigValidate(t *testing.T) {
 			settings: map[string]any{
 				"named_templates": []any{
 					map[string]any{"name": "a", "versions": []any{
-						map[string]any{"version": "v1", "labels": []any{"stable"}, "content": "x"},
+						map[string]any{"labels": []any{"stable"}, "content": "x"},
 					}},
 				},
 				"default_label": "canary",
@@ -234,7 +232,7 @@ func TestConfigValidate(t *testing.T) {
 			settings: map[string]any{
 				"named_templates": []any{
 					map[string]any{"name": "a", "versions": []any{
-						map[string]any{"version": "v1", "content": "{{p}}", "required_variables": map[string]any{
+						map[string]any{"labels": []any{"stable"}, "content": "{{p}}", "required_variables": map[string]any{
 							"p": map[string]any{"type": "date"},
 						}},
 					}},
@@ -247,7 +245,7 @@ func TestConfigValidate(t *testing.T) {
 			settings: map[string]any{
 				"named_templates": []any{
 					map[string]any{"name": "a", "versions": []any{
-						map[string]any{"version": "v1", "content": "{{p}}", "required_variables": map[string]any{
+						map[string]any{"labels": []any{"stable"}, "content": "{{p}}", "required_variables": map[string]any{
 							"p": map[string]any{"type": "string", "max_length": -1},
 						}},
 					}},
@@ -260,7 +258,7 @@ func TestConfigValidate(t *testing.T) {
 			settings: map[string]any{
 				"named_templates": []any{
 					map[string]any{"name": "a", "versions": []any{
-						map[string]any{"version": "v1", "content": "{{p}}", "required_variables": map[string]any{
+						map[string]any{"labels": []any{"stable"}, "content": "{{p}}", "required_variables": map[string]any{
 							"p": map[string]any{"type": "string", "enum": []any{"a", "  "}},
 						}},
 					}},
@@ -273,7 +271,7 @@ func TestConfigValidate(t *testing.T) {
 			settings: map[string]any{
 				"named_templates": []any{
 					map[string]any{"name": "a", "versions": []any{
-						map[string]any{"version": "v1", "labels": []any{"stable"}, "content": `[{"role":"system","content":"hi {{p}}"}]`, "required_variables": map[string]any{
+						map[string]any{"labels": []any{"stable"}, "content": `[{"role":"system","content":"hi {{p}}"}]`, "required_variables": map[string]any{
 							"p": map[string]any{"type": "string"},
 						}},
 					}},
@@ -286,7 +284,7 @@ func TestConfigValidate(t *testing.T) {
 			settings: map[string]any{
 				"named_templates": []any{
 					map[string]any{"name": "a", "versions": []any{
-						map[string]any{"version": "v1", "content": `[{"role":"system"`},
+						map[string]any{"labels": []any{"stable"}, "content": `[{"role":"system"`},
 					}},
 				},
 			},
@@ -297,7 +295,7 @@ func TestConfigValidate(t *testing.T) {
 			settings: map[string]any{
 				"named_templates": []any{
 					map[string]any{"name": "a", "versions": []any{
-						map[string]any{"version": "v1", "content": `["not an object"]`},
+						map[string]any{"labels": []any{"stable"}, "content": `["not an object"]`},
 					}},
 				},
 			},

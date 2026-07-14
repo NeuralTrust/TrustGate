@@ -26,7 +26,6 @@ type modeBResult struct {
 	hasReference     bool
 	changed          bool
 	resolvedTemplate string
-	resolvedVersion  string
 }
 
 func applyModeB(cfg *config, rb *requestBody, clientVars map[string]any, ctxVars map[string]string) (modeBResult, error) {
@@ -48,7 +47,7 @@ func applyModeB(cfg *config, rb *requestBody, clientVars map[string]any, ctxVars
 		return modeBResult{hasReference: true}, reject(http.StatusBadRequest, typeNotFound, fmt.Sprintf("template %q label could not be resolved", ref.name))
 	}
 
-	result := modeBResult{hasReference: true, resolvedTemplate: nt.Name, resolvedVersion: version.Version}
+	result := modeBResult{hasReference: true, resolvedTemplate: nt.Name}
 
 	if err := validateClientVars(version, clientVars); err != nil {
 		return result, err
@@ -89,9 +88,6 @@ func resolveVersion(nt namedTemplate, label, defaultLabel string) (*templateVers
 			if l == effective {
 				return &nt.Versions[i], true
 			}
-		}
-		if nt.Versions[i].Version == effective {
-			return &nt.Versions[i], true
 		}
 	}
 	return nil, false

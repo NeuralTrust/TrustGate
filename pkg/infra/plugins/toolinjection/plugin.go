@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tooltransform
+package toolinjection
 
 import (
 	"bytes"
@@ -27,7 +27,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
-const PluginName = "tool_definition_transformation"
+const PluginName = "tool_injection"
 
 var _ appplugins.Plugin = (*Plugin)(nil)
 
@@ -74,7 +74,7 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 	}
 	cfg, err := parseConfig(in.Config.Settings)
 	if err != nil {
-		return nil, fmt.Errorf("tool_definition_transformation: %w", err)
+		return nil, fmt.Errorf("tool_injection: %w", err)
 	}
 	switch in.Stage {
 	case policy.StagePreRequest:
@@ -96,18 +96,12 @@ func (p *Plugin) preRequest(cfg *config, in appplugins.ExecInput) (*appplugins.R
 	if err != nil || canonical == nil {
 		return okResult(), nil
 	}
-	if len(canonical.Tools) == 0 && len(cfg.InjectTools) == 0 {
-		return okResult(), nil
-	}
 
 	ad, err := p.registry.GetAdapter(adapter.Format(format))
 	if err != nil {
 		return okResult(), nil
 	}
 	baseline, baselineErr := ad.EncodeRequest(canonical)
-
-	before := toolNames(canonical.Tools)
-	changed := applyTransforms(canonical.Tools, cfg.TransformTools)
 
 	tools, outcomes, err := applyInjections(canonical.Tools, cfg.InjectTools, cfg.onConflict())
 	if err != nil {
@@ -118,12 +112,11 @@ func (p *Plugin) preRequest(cfg *config, in appplugins.ExecInput) (*appplugins.R
 	}
 	canonical.Tools = tools
 
-	if changed || len(outcomes) > 0 {
-		transformedNames := matchedToolNames(before, cfg.TransformTools)
-		setExtras(in.Event, data(string(policy.StagePreRequest), transformedNames, outcomes))
+	if len(outcomes) > 0 {
+		setExtras(in.Event, data(string(policy.StagePreRequest), outcomes))
 	}
 
-	if !changed && !injectionChanged(outcomes) {
+	if !injectionChanged(outcomes) {
 		return okResult(), nil
 	}
 
@@ -138,7 +131,7 @@ func (p *Plugin) encodeAndGraft(
 ) (*appplugins.Result, error) {
 	encoded, err := ad.EncodeRequest(mutated)
 	if err != nil {
-		return nil, fmt.Errorf("tool_definition_transformation: graft: %w", err)
+		return nil, fmt.Errorf("tool_injection: graft: %w", err)
 	}
 	if baselineErr != nil {
 		return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: encoded}, nil
@@ -157,30 +150,6 @@ func injectionChanged(outcomes []injectOutcome) bool {
 		}
 	}
 	return false
-}
-
-func toolNames(tools []adapter.CanonicalTool) []string {
-	out := make([]string, 0, len(tools))
-	for i := range tools {
-		out = append(out, tools[i].Name)
-	}
-	return out
-}
-
-func matchedToolNames(before []string, entries []transformDef) []string {
-	if len(entries) == 0 {
-		return nil
-	}
-	var out []string
-	for _, name := range before {
-		for j := range entries {
-			if matchToolPattern(entries[j].Tool, name) {
-				out = append(out, name)
-				break
-			}
-		}
-	}
-	return out
 }
 
 func reservedName(pe *appplugins.PluginError) string {

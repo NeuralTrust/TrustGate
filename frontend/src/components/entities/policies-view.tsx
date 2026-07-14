@@ -29,7 +29,6 @@ const KNOWN_SLUGS = [
   "token_rate_limiter",
   "request_size_limiter",
   "semantic_cache",
-  "cors",
 ];
 
 const STAGES: PolicyStage[] = ["pre_request", "post_request", "pre_response", "post_response"];
@@ -43,7 +42,7 @@ export function PoliciesView() {
   return (
     <div>
       <PageHeader
-        description="Policies are plugin instances (rate limiting, CORS, caching…). Attach them to consumers or mark them global to apply gateway-wide."
+        description="Policies are plugin instances (rate limiting, budgets, caching…). Attach them to consumers or mark them global to apply gateway-wide."
         action={
           <Button
             variant="primary"

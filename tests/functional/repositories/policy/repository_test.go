@@ -162,7 +162,7 @@ func TestRepository_SaveAndFindByID_EmptySettings(t *testing.T) {
 	ctx := context.Background()
 	gwID := seedGateway(t, gw, "pgw-empty")
 
-	p, err := domain.NewPolicy(gwID, "empty", "cors", true, 0, false, nil, nil, "", domain.ModeEnforce)
+	p, err := domain.NewPolicy(gwID, "empty", "rate_limiter", true, 0, false, nil, nil, "", domain.ModeEnforce)
 	if err != nil {
 		t.Fatalf("domain.NewPolicy: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestRepository_Update(t *testing.T) {
 	}
 
 	p.Name = "alpha-renamed"
-	p.Slug = "cors"
+	p.Slug = "rate_limiter"
 	p.Enabled = false
 	p.Stages = []domain.Stage{domain.StagePostResponse}
 	p.UpdatedAt = time.Now().UTC()
@@ -245,7 +245,7 @@ func TestRepository_Update(t *testing.T) {
 	if got.Name != "alpha-renamed" {
 		t.Fatalf("Name = %q, want alpha-renamed", got.Name)
 	}
-	if got.Slug != "cors" || got.Enabled {
+	if got.Slug != "rate_limiter" || got.Enabled {
 		t.Fatalf("update not persisted: %+v", got)
 	}
 	if len(got.Stages) != 1 || got.Stages[0] != domain.StagePostResponse {

@@ -66,7 +66,7 @@ func (p *Plugin) SupportedProtocols() []appplugins.Protocol {
 }
 
 func (p *Plugin) SupportedModes() []policy.Mode {
-	return []policy.Mode{policy.ModeEnforce, policy.ModeThrottle, policy.ModeObserve}
+	return []policy.Mode{policy.ModeEnforce, policy.ModeObserve}
 }
 
 func (p *Plugin) ValidateConfig(settings map[string]any) error {
@@ -117,7 +117,7 @@ func (p *Plugin) preRequest(
 		capTel = llmcost.TelemetryFrom(dec)
 		if dec.Kind == llmcost.DecisionViolation {
 			appplugins.SetDecision(event, mode)
-			if appplugins.Blocks(mode) && !appplugins.Throttles(mode) {
+			if appplugins.Blocks(mode) {
 				if cfg.CostCap.BehaviorOnViolation == llmcost.BehaviorDowngrade {
 					newModel, body, hdr, ok := llmcost.ApplyDowngrade(req, model, cfg.CostCap.DowngradeTo)
 					if !ok {

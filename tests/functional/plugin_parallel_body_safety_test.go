@@ -89,8 +89,8 @@ func TestPolicyE2E_ParallelRequestBodyMutatorsBothSurvive(t *testing.T) {
 
 // A request-body mutator flagged parallel alongside a non-mutator at the same
 // priority is allowed to stay a real concurrent batch (one body mutator per
-// batch is fine). cors only contributes response headers, model_allowlist only
-// rewrites the request body, so they run together and BOTH effects survive.
+// batch is fine). rate_limiter only contributes response headers, model_allowlist
+// only rewrites the request body, so they run together and BOTH effects survive.
 func TestPolicyE2E_RequestBodyMutatorParallelWithNonMutator(t *testing.T) {
 	defer Track(t, "ParallelBodySafety")()
 
@@ -98,17 +98,16 @@ func TestPolicyE2E_RequestBodyMutatorParallelWithNonMutator(t *testing.T) {
 	gatewayID, backendID := setupGatewayBackend(t, up)
 	model := createScopedPolicy(t, gatewayID, "model_allowlist",
 		substituteModelSettings("gpt-5*", "gpt-5"), 0, true)
-	cors := createScopedPolicy(t, gatewayID, "cors", corsSimpleSettings(), 0, true)
-	path, apiKey := addConsumerRoute(t, gatewayID, backendID, model, cors)
+	rl := createScopedPolicy(t, gatewayID, "rate_limiter", rateLimitSettings(100), 0, true)
+	path, apiKey := addConsumerRoute(t, gatewayID, backendID, model, rl)
 
 	body := mustJSON(t, chatRequestModel("claude-opus-4-5"))
-	allowed := map[string]string{"Origin": "https://allowed.com"}
 
-	status, headers, raw := proxyRequest(t, http.MethodPost, apiKey, path, allowed, body)
+	status, headers, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
 	require.Equal(t, http.StatusOK, status, "body: %s", raw)
 	require.Equal(t, 1, up.Hits())
 
-	assert.Equal(t, "https://allowed.com", headers.Get("Access-Control-Allow-Origin"),
+	assert.Equal(t, "100", headers.Get("X-RateLimit-consumer-Limit"),
 		"the non-mutator's parallel response header must survive")
 	assert.Contains(t, string(up.LastBody()), `"model":"gpt-5"`,
 		"the body mutator must still rewrite the request when batched with a non-mutator")
