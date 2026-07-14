@@ -219,6 +219,18 @@ func TestSanitizeClientMetadata(t *testing.T) {
 		}
 	})
 
+	t.Run("strips legacy team_id", func(t *testing.T) {
+		t.Parallel()
+		in := map[string]string{MetadataLegacyTeamIDKey: "team-1", "env": "prod"}
+		out := SanitizeClientMetadata(in)
+		if _, ok := out[MetadataLegacyTeamIDKey]; ok {
+			t.Fatalf("legacy team_id survived sanitization: %v", out)
+		}
+		if out["env"] != "prod" {
+			t.Fatalf("non-reserved key dropped: %v", out)
+		}
+	})
+
 	t.Run("nil input stays nil", func(t *testing.T) {
 		t.Parallel()
 		if out := SanitizeClientMetadata(nil); out != nil {
@@ -228,8 +240,9 @@ func TestSanitizeClientMetadata(t *testing.T) {
 
 	t.Run("only reserved keys collapse to nil", func(t *testing.T) {
 		t.Parallel()
-		if out := SanitizeClientMetadata(map[string]string{MetadataTenantIDKey: "x"}); out != nil {
-			t.Fatalf("expected nil after removing sole reserved key, got %v", out)
+		in := map[string]string{MetadataTenantIDKey: "x", MetadataLegacyTeamIDKey: "y"}
+		if out := SanitizeClientMetadata(in); out != nil {
+			t.Fatalf("expected nil after removing sole reserved keys, got %v", out)
 		}
 	})
 }

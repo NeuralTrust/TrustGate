@@ -41,11 +41,11 @@ func Cache(c *container.Container) error {
 			Login:             cfg.Redis.Login,
 			Host:              cfg.Redis.Host,
 			Port:              cfg.Redis.Port,
+			Username:          cfg.Redis.Username,
 			Password:          cfg.Redis.Password,
 			DB:                cfg.Redis.DB,
 			TLSEnabled:        cfg.Redis.TLSEnabled,
 			TLSInsecureVerify: cfg.Redis.TLSInsecureVerify,
-			Username:          cfg.Redis.Username,
 			CacheName:         cfg.Redis.CacheName,
 			AWSServerless:     cfg.Redis.AWSServerless,
 		}, mgr, logger)

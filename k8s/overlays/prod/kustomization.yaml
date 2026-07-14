@@ -2,11 +2,11 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 metadata:
   name: agentgateway
+# config-sync gRPC public endpoint (hybrid data planes) + its cert-manager cert
 resources:
 - ../../base
 - secretproviderclass/agentgateway-secrets.yaml
 - cloudflare-backendpolicy.yaml
-# config-sync gRPC public endpoint (hybrid data planes) + its cert-manager cert
 - service-configsync-external.yaml
 - config-sync-cert.yaml
 # - patches/hpa-patch.yaml
@@ -24,7 +24,7 @@ namespace: agentgateway
 images:
 - name: agentgateway
   newName: europe-west1-docker.pkg.dev/neuraltrust-app-prod/nt-docker/agentgateway
-  newTag: v0.3.3
+  newTag: v0.3.5
 configMapGenerator:
 - behavior: create
   envs:
