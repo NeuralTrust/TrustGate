@@ -57,7 +57,7 @@ func (c *client) Completions(
 	cfg *providers.Config,
 	reqBody []byte,
 ) ([]byte, error) {
-	model := c.resolveModel(reqBody, cfg.DefaultModel)
+	model := c.resolveModel(reqBody, cfg)
 	if model == "" {
 		return nil, fmt.Errorf("model is required")
 	}
@@ -89,7 +89,7 @@ func (c *client) CompletionsStream(
 	cfg *providers.Config,
 	reqBody []byte,
 ) (iter.Seq2[[]byte, error], error) {
-	model := c.resolveModel(reqBody, cfg.DefaultModel)
+	model := c.resolveModel(reqBody, cfg)
 	if model == "" {
 		return nil, fmt.Errorf("model is required")
 	}
@@ -327,19 +327,20 @@ func stripBedrockFields(body []byte) []byte {
 	return out
 }
 
-// resolveModel extracts the model from the request body. Falls back to
-// defaultModel when the body doesn't contain a model field. Strips a leading
-// region prefix (e.g. "eu.") so the value passed to InvokeModel is the standard
-// Bedrock model ID.
-func (c *client) resolveModel(reqBody []byte, defaultModel string) string {
+// Cross-format adaptation strips the model from the body (Bedrock resolves it
+// from the InvokeModel path), so it falls back to cfg. The "eu." region prefix
+// is trimmed to the standard Bedrock model ID.
+func (c *client) resolveModel(reqBody []byte, cfg *providers.Config) string {
 	if modelID, err := extractBedrockModelID(reqBody); err == nil && modelID != "" {
 		return modelID
 	}
-	m := defaultModel
 	if extracted, err := adapter.ExtractModel(reqBody); err == nil && extracted != "" {
-		m = extracted
+		return bedrockModelID(extracted)
 	}
-	return bedrockModelID(m)
+	if cfg.Model != "" {
+		return bedrockModelID(cfg.Model)
+	}
+	return bedrockModelID(cfg.DefaultModel)
 }
 
 func extractBedrockModelID(body []byte) (string, error) {
