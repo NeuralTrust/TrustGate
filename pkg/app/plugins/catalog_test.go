@@ -475,6 +475,53 @@ func TestAzureContentSafetySchema(t *testing.T) {
 	assert.False(t, message.Required)
 }
 
+func TestRegexReplaceSchema(t *testing.T) {
+	meta, ok := pluginCatalogMeta["regex_replace"]
+	require.True(t, ok)
+	assert.Equal(t, "Regex Replace", meta.name)
+	assert.Equal(t, groupGuardrails, meta.group)
+
+	fields := meta.schema.Fields
+
+	target, ok := fieldByKey(fields, "target")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeEnum, target.Type)
+	assert.True(t, target.Required)
+	assert.Equal(t, []string{"request", "response"}, enumValues(target.Enum))
+	assert.Equal(t, []string{"Request", "Response"}, enumLabels(target.Enum))
+
+	rules, ok := fieldByKey(fields, "rules")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeArray, rules.Type)
+	assert.True(t, rules.Required)
+	require.NotNil(t, rules.Item)
+	assert.Equal(t, FieldTypeObject, rules.Item.Type)
+	for _, k := range []string{"pattern", "replacement", "case_insensitive", "multiline"} {
+		_, ok := fieldByKey(rules.Item.Fields, k)
+		assert.Truef(t, ok, "rules item missing %q", k)
+	}
+
+	pattern, ok := fieldByKey(rules.Item.Fields, "pattern")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeString, pattern.Type)
+	assert.True(t, pattern.Required)
+
+	replacement, ok := fieldByKey(rules.Item.Fields, "replacement")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeString, replacement.Type)
+	assert.False(t, replacement.Required)
+
+	caseInsensitive, ok := fieldByKey(rules.Item.Fields, "case_insensitive")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeBoolean, caseInsensitive.Type)
+	assert.False(t, caseInsensitive.Required)
+
+	multiline, ok := fieldByKey(rules.Item.Fields, "multiline")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeBoolean, multiline.Type)
+	assert.False(t, multiline.Required)
+}
+
 func TestSemanticCacheSchema(t *testing.T) {
 	meta, ok := pluginCatalogMeta["semantic_cache"]
 	require.True(t, ok)
