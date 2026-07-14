@@ -3674,16 +3674,33 @@
                 "id": {
                     "type": "string"
                 },
+                "input_modalities": {
+                    "description": "InputModalities and OutputModalities list the accepted/produced content\ntypes (e.g. \"text\", \"image\", \"audio\").",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "input_price": {
                     "type": "string"
                 },
                 "max_output": {
                     "type": "integer"
                 },
+                "output_modalities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "output_price": {
                     "type": "string"
                 },
                 "provider_id": {
+                    "type": "string"
+                },
+                "release_date": {
+                    "description": "ReleaseDate is the provider release date (\"YYYY-MM-DD\"); empty when unknown.\nModels are returned most-recent release first.",
                     "type": "string"
                 },
                 "slug": {
@@ -5593,6 +5610,12 @@
                         "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_policy.Mode"
                     }
                 },
+                "supported_protocols": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_plugins.Protocol"
+                    }
+                },
                 "supported_stages": {
                     "type": "array",
                     "items": {
@@ -5706,6 +5729,19 @@
                 "FieldTypeObject",
                 "FieldTypeArray",
                 "FieldTypeMap"
+            ]
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_app_plugins.Protocol": {
+            "type": "string",
+            "enum": [
+                "LLM",
+                "MCP",
+                "A2A"
+            ],
+            "x-enum-varnames": [
+                "ProtocolLLM",
+                "ProtocolMCP",
+                "ProtocolA2A"
             ]
         },
         "github_com_NeuralTrust_TrustGate_pkg_app_plugins.SettingsSchema": {

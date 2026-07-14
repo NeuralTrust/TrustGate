@@ -28,6 +28,7 @@ type stagePlugin struct {
 	name      string
 	mandatory []policy.Stage
 	supported []policy.Stage
+	protocols []Protocol
 }
 
 func (s *stagePlugin) Name() string                                        { return s.name }
@@ -39,6 +40,13 @@ func (s *stagePlugin) Execute(context.Context, ExecInput) (*Result, error) { ret
 func (s *stagePlugin) MutatesRequestBody() bool                            { return false }
 func (s *stagePlugin) MutatesResponseBody() bool                           { return false }
 func (s *stagePlugin) MutatesMetadata() bool                               { return false }
+
+func (s *stagePlugin) SupportedProtocols() []Protocol {
+	if s.protocols != nil {
+		return s.protocols
+	}
+	return []Protocol{ProtocolLLM}
+}
 
 func TestRegistry_Register(t *testing.T) {
 	tests := []struct {
@@ -116,6 +124,28 @@ func TestRegistry_Register_RejectsMandatoryOutsideSupported(t *testing.T) {
 		supported: []policy.Stage{policy.StagePreRequest},
 	})
 	require.ErrorIs(t, err, ErrInvalidStages)
+}
+
+func TestRegistry_Register_RejectsInvalidProtocols(t *testing.T) {
+	tests := []struct {
+		name      string
+		protocols []Protocol
+	}{
+		{name: "empty protocols", protocols: []Protocol{}},
+		{name: "invalid protocol", protocols: []Protocol{"WS"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reg := NewRegistry()
+			err := reg.Register(&stagePlugin{
+				name:      "proto",
+				mandatory: []policy.Stage{policy.StagePreRequest},
+				supported: []policy.Stage{policy.StagePreRequest},
+				protocols: tt.protocols,
+			})
+			require.ErrorIs(t, err, ErrInvalidProtocols)
+		})
+	}
 }
 
 func TestRegistry_ValidateStages(t *testing.T) {

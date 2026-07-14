@@ -244,13 +244,29 @@ definitions:
         type: string
       id:
         type: string
+      input_modalities:
+        description: |-
+          InputModalities and OutputModalities list the accepted/produced content
+          types (e.g. "text", "image", "audio").
+        items:
+          type: string
+        type: array
       input_price:
         type: string
       max_output:
         type: integer
+      output_modalities:
+        items:
+          type: string
+        type: array
       output_price:
         type: string
       provider_id:
+        type: string
+      release_date:
+        description: |-
+          ReleaseDate is the provider release date ("YYYY-MM-DD"); empty when unknown.
+          Models are returned most-recent release first.
         type: string
       slug:
         type: string
@@ -1518,6 +1534,10 @@ definitions:
         items:
           $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_policy.Mode'
         type: array
+      supported_protocols:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_plugins.Protocol'
+        type: array
       supported_stages:
         items:
           $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_policy.Stage'
@@ -1598,6 +1618,16 @@ definitions:
     - FieldTypeObject
     - FieldTypeArray
     - FieldTypeMap
+  github_com_NeuralTrust_TrustGate_pkg_app_plugins.Protocol:
+    enum:
+    - LLM
+    - MCP
+    - A2A
+    type: string
+    x-enum-varnames:
+    - ProtocolLLM
+    - ProtocolMCP
+    - ProtocolA2A
   github_com_NeuralTrust_TrustGate_pkg_app_plugins.SettingsSchema:
     properties:
       fields:

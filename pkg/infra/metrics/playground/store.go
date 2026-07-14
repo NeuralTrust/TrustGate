@@ -29,7 +29,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
 
 // headerPlaygroundToken mirrors resolver.HeaderPlaygroundToken, duplicated so

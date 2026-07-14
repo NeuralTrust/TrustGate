@@ -31,7 +31,7 @@ import (
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
 
 const PluginName = "per_tool_rate_limiter"
@@ -104,6 +104,10 @@ func (p *Plugin) MandatoryStages() []policy.Stage {
 
 func (p *Plugin) SupportedStages() []policy.Stage {
 	return []policy.Stage{policy.StagePreRequest, policy.StagePreResponse}
+}
+
+func (p *Plugin) SupportedProtocols() []appplugins.Protocol {
+	return []appplugins.Protocol{appplugins.ProtocolLLM, appplugins.ProtocolMCP}
 }
 
 func (p *Plugin) SupportedModes() []policy.Mode {

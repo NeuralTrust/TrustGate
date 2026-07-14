@@ -59,6 +59,9 @@ func Plugins(c *container.Container) error {
 	if err := c.Provide(newPluginRegistry); err != nil {
 		return err
 	}
+	if err := c.Provide(appplugins.NewProtocolResolver); err != nil {
+		return err
+	}
 	if err := c.Provide(func(reg appplugins.Registry, logger *slog.Logger) appplugins.Executor {
 		return appplugins.NewExecutor(reg, logger)
 	}); err != nil {

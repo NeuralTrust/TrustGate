@@ -37,6 +37,7 @@ type PluginDescriptor interface {
 	// into any subset of these; mandatory stages are always included.
 	SupportedStages() []policy.Stage
 	SupportedModes() []policy.Mode
+	SupportedProtocols() []Protocol
 	ValidateConfig(settings map[string]any) error
 	MutatesRequestBody() bool
 	MutatesResponseBody() bool

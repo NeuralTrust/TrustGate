@@ -59,6 +59,9 @@ const (
 	postgresLoginDefault = "default"
 	postgresLoginAWS     = "aws"
 
+	redisLoginDefault = "default"
+	redisLoginAWS     = "aws"
+
 	defaultRedisHost = "localhost"
 	defaultRedisPort = 6379
 	defaultRedisDB   = 3
@@ -233,12 +236,16 @@ type DatabaseConfig struct {
 }
 
 type RedisConfig struct {
+	Login             string
 	Host              string
 	Port              int
 	Password          string
 	DB                int
 	TLSEnabled        bool
 	TLSInsecureVerify bool
+	Username          string
+	CacheName         string
+	AWSServerless     bool
 }
 
 // CacheConfig drives the in-process TTL cache used by app-layer
@@ -431,14 +438,32 @@ func normalizePostgresLogin(login string) string {
 }
 
 func getRedisConfig() RedisConfig {
+	login := normalizeRedisLogin(os.Getenv("REDIS_LOGIN"))
+	password := getEnv("REDIS_PASSWORD", "")
+	if login == redisLoginAWS {
+		password = ""
+	}
+
 	return RedisConfig{
+		Login:             login,
 		Host:              getEnv("REDIS_HOST", defaultRedisHost),
 		Port:              getEnvInt("REDIS_PORT", defaultRedisPort),
-		Password:          getEnv("REDIS_PASSWORD", ""),
+		Password:          password,
 		DB:                getEnvInt("REDIS_DB", defaultRedisDB),
 		TLSEnabled:        getEnvBool("REDIS_TLS_ENABLED", defaultRedisTLS),
 		TLSInsecureVerify: getEnvBool("REDIS_TLS_INSECURE_VERIFY", false),
+		Username:          strings.TrimSpace(getEnv("REDIS_USERNAME", "")),
+		CacheName:         strings.TrimSpace(getEnv("REDIS_CACHE_NAME", "")),
+		AWSServerless:     getEnvBool("REDIS_AWS_SERVERLESS", false),
 	}
+}
+
+func normalizeRedisLogin(login string) string {
+	normalized := strings.ToLower(strings.TrimSpace(login))
+	if normalized == "" {
+		return redisLoginDefault
+	}
+	return normalized
 }
 
 func getCacheConfig() CacheConfig {
@@ -733,8 +758,26 @@ func (c *Config) Validate() error {
 			}
 		}
 	}
+	c.Redis.Login = normalizeRedisLogin(c.Redis.Login)
+	switch c.Redis.Login {
+	case redisLoginDefault, redisLoginAWS:
+	default:
+		return fmt.Errorf("%w: REDIS_LOGIN must be %q or %q", errors.ErrInvalidConfig, redisLoginDefault, redisLoginAWS)
+	}
 	if c.Redis.Host == "" {
 		return fmt.Errorf("%w: REDIS_HOST is required", errors.ErrInvalidConfig)
+	}
+	if c.Redis.Login == redisLoginAWS {
+		c.Redis.Password = ""
+		if !c.Redis.TLSEnabled {
+			return fmt.Errorf("%w: REDIS_TLS_ENABLED must be true when REDIS_LOGIN=%q", errors.ErrInvalidConfig, redisLoginAWS)
+		}
+		if c.Redis.CacheName == "" {
+			return fmt.Errorf("%w: REDIS_CACHE_NAME is required when REDIS_LOGIN=%q", errors.ErrInvalidConfig, redisLoginAWS)
+		}
+		if c.Redis.Username == "" {
+			return fmt.Errorf("%w: REDIS_USERNAME is required when REDIS_LOGIN=%q", errors.ErrInvalidConfig, redisLoginAWS)
+		}
 	}
 	if len(c.Kafka.Brokers) == 0 {
 		return fmt.Errorf("%w: KAFKA_BROKERS must contain at least one broker", errors.ErrInvalidConfig)

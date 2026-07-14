@@ -12,17 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tokenratelimit
+package consumer
 
-import "github.com/redis/go-redis/v9"
-
-var recordScript = redis.NewScript(`
-local key        = KEYS[1]
-local tokens     = tonumber(ARGV[1])
-local window_sec = tonumber(ARGV[2])
-local total = redis.call('INCRBY', key, tokens)
-if redis.call('TTL', key) == -1 then
-    redis.call('EXPIRE', key, window_sec)
-end
-return total
-`)
+type pluginProtocolResolver interface {
+	SupportedProtocols(slug string) ([]string, bool)
+}

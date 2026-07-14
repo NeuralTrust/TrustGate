@@ -12,17 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tokenratelimit
+package plugins
 
-import "github.com/redis/go-redis/v9"
+type ProtocolResolver struct {
+	registry Registry
+}
 
-var recordScript = redis.NewScript(`
-local key        = KEYS[1]
-local tokens     = tonumber(ARGV[1])
-local window_sec = tonumber(ARGV[2])
-local total = redis.call('INCRBY', key, tokens)
-if redis.call('TTL', key) == -1 then
-    redis.call('EXPIRE', key, window_sec)
-end
-return total
-`)
+func NewProtocolResolver(registry Registry) *ProtocolResolver {
+	return &ProtocolResolver{registry: registry}
+}
+
+func (r *ProtocolResolver) SupportedProtocols(slug string) ([]string, bool) {
+	p, ok := r.registry.Get(slug)
+	if !ok {
+		return nil, false
+	}
+	protocols := p.SupportedProtocols()
+	out := make([]string, 0, len(protocols))
+	for _, protocol := range protocols {
+		out = append(out, string(protocol))
+	}
+	return out, true
+}
