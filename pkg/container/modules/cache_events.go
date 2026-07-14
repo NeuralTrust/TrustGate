@@ -54,6 +54,7 @@ type CacheEventListenerParams struct {
 	Listener         cache.EventListener
 	GatewayDataSub   cache.EventSubscriber[event.InvalidateGatewayDataEvent]
 	RegistryCacheSub cache.EventSubscriber[event.InvalidateRegistryCacheEvent]
+	SnapshotDirtySub cache.EventSubscriber[event.SnapshotDirtyEvent] `optional:"true"`
 }
 
 // StartCacheEventListener registers the cache invalidation subscribers and
@@ -62,6 +63,9 @@ type CacheEventListenerParams struct {
 func StartCacheEventListener(ctx context.Context, p CacheEventListenerParams) {
 	cache.RegisterEventSubscriber(p.Listener, p.GatewayDataSub)
 	cache.RegisterEventSubscriber(p.Listener, p.RegistryCacheSub)
+	if p.SnapshotDirtySub != nil {
+		cache.RegisterEventSubscriber(p.Listener, p.SnapshotDirtySub)
+	}
 
 	go p.Listener.Listen(ctx, channel.GatewayEventsChannel)
 	p.Logger.Info(bootlog.CacheListenerStarted, slog.String("channel", string(channel.GatewayEventsChannel)))

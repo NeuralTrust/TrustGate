@@ -30,6 +30,8 @@ import (
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/subscriber"
 	infrasnapshot "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
 	configsyncgrpc "github.com/NeuralTrust/TrustGate/pkg/infra/configsync/grpc"
@@ -140,7 +142,15 @@ func ControlConfigSync(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	return c.Provide(func(p *appsnapshot.SnapshotVersionPublisher) configsyncport.SnapshotSignaler {
-		return p
-	})
+	if err := c.Provide(func(p *appsnapshot.SnapshotVersionPublisher, publisher cache.EventPublisher, logger *slog.Logger) configsyncport.SnapshotSignaler {
+		return infrasnapshot.NewDistributedSignaler(p, publisher, logger)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(d *appsnapshot.Dispatcher) subscriber.SnapshotSignaler {
+		return d
+	}); err != nil {
+		return err
+	}
+	return c.Provide(subscriber.NewSnapshotDirtyEventSubscriber)
 }
