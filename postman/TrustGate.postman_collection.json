@@ -1055,6 +1055,34 @@
           }
         },
         {
+          "name": "Create Policy (regex_replace)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"regex-replace-request-{{$guid}}\",\n  \"slug\": \"regex_replace\",\n  \"enabled\": true,\n  \"priority\": 0,\n  \"parallel\": false,\n  \"stages\": [\n    \"pre_request\"\n  ],\n  \"settings\": {\n    \"target\": \"request\",\n    \"rules\": [\n      {\n        \"pattern\": \"(?i)password\\\\s*[:=]\\\\s*\\\\S+\",\n        \"replacement\": \"password: [REDACTED]\"\n      }\n    ]\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "policies"
+              ]
+            }
+          }
+        },
+        {
           "name": "List Policies",
           "request": {
             "method": "GET",
