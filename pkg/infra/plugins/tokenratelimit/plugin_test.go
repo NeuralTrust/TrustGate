@@ -125,7 +125,7 @@ func TestPlugin_PostResponse_RecordsTokensAndPreRequestRejects(t *testing.T) {
 
 func TestPlugin_PreRequest_ObserveDoesNotReject(t *testing.T) {
 	p := newTestPlugin(t)
-	assert.Equal(t, []policy.Mode{policy.ModeEnforce, policy.ModeThrottle, policy.ModeObserve}, p.SupportedModes())
+	assert.Equal(t, []policy.Mode{policy.ModeEnforce, policy.ModeObserve}, p.SupportedModes())
 
 	settings := map[string]any{"window": map[string]any{"unit": "minute", "max": 10}}
 	req := &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", IP: "2.2.2.2"}

@@ -84,7 +84,6 @@ type requiredVar struct {
 }
 
 type templateVersion struct {
-	Version           string                 `mapstructure:"version"`
 	Labels            []string               `mapstructure:"labels"`
 	Content           string                 `mapstructure:"content"`
 	RequiredVariables map[string]requiredVar `mapstructure:"required_variables"`
@@ -252,19 +251,14 @@ func (c *config) validateNamedTemplates() error {
 }
 
 func validateVersions(nt namedTemplate, labels map[string]struct{}) error {
-	versions := map[string]struct{}{}
 	for j := range nt.Versions {
 		v := nt.Versions[j]
-		if strings.TrimSpace(v.Version) == "" {
-			return fmt.Errorf("prompt_template: named_templates[%q].versions[%d].version must not be blank", nt.Name, j)
+		if len(v.Labels) == 0 {
+			return fmt.Errorf("prompt_template: named_templates[%q].versions[%d] must have at least one label", nt.Name, j)
 		}
-		if _, dup := versions[v.Version]; dup {
-			return fmt.Errorf("prompt_template: named_templates[%q] version %q is duplicated", nt.Name, v.Version)
-		}
-		versions[v.Version] = struct{}{}
 		for _, label := range v.Labels {
 			if strings.TrimSpace(label) == "" {
-				return fmt.Errorf("prompt_template: named_templates[%q].versions[%q] has a blank label", nt.Name, v.Version)
+				return fmt.Errorf("prompt_template: named_templates[%q].versions[%d] has a blank label", nt.Name, j)
 			}
 			if _, dup := labels[label]; dup {
 				return fmt.Errorf("prompt_template: named_templates[%q] label %q points to more than one version", nt.Name, label)
@@ -272,34 +266,34 @@ func validateVersions(nt namedTemplate, labels map[string]struct{}) error {
 			labels[label] = struct{}{}
 		}
 		if strings.TrimSpace(v.Content) == "" {
-			return fmt.Errorf("prompt_template: named_templates[%q].versions[%q].content must not be blank", nt.Name, v.Version)
+			return fmt.Errorf("prompt_template: named_templates[%q].versions[%d].content must not be blank", nt.Name, j)
 		}
 		if err := validatePlaceholders(v.Content); err != nil {
-			return fmt.Errorf("prompt_template: named_templates[%q].versions[%q].content: %w", nt.Name, v.Version, err)
+			return fmt.Errorf("prompt_template: named_templates[%q].versions[%d].content: %w", nt.Name, j, err)
 		}
 		if err := validateVersionContent(v.Content); err != nil {
-			return fmt.Errorf("prompt_template: named_templates[%q].versions[%q].content: %w", nt.Name, v.Version, err)
+			return fmt.Errorf("prompt_template: named_templates[%q].versions[%d].content: %w", nt.Name, j, err)
 		}
-		if err := validateRequiredVars(nt, v); err != nil {
+		if err := validateRequiredVars(nt, v, j); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func validateRequiredVars(nt namedTemplate, v templateVersion) error {
+func validateRequiredVars(nt namedTemplate, v templateVersion, idx int) error {
 	for name, rv := range v.RequiredVariables {
 		switch rv.Type {
 		case "string", "number", "boolean":
 		default:
-			return fmt.Errorf("prompt_template: named_templates[%q].versions[%q].required_variables[%q].type %q must be string, number, or boolean", nt.Name, v.Version, name, rv.Type)
+			return fmt.Errorf("prompt_template: named_templates[%q].versions[%d].required_variables[%q].type %q must be string, number, or boolean", nt.Name, idx, name, rv.Type)
 		}
 		if rv.MaxLength < 0 {
-			return fmt.Errorf("prompt_template: named_templates[%q].versions[%q].required_variables[%q].max_length must be >= 0", nt.Name, v.Version, name)
+			return fmt.Errorf("prompt_template: named_templates[%q].versions[%d].required_variables[%q].max_length must be >= 0", nt.Name, idx, name)
 		}
 		for _, e := range rv.Enum {
 			if strings.TrimSpace(e) == "" {
-				return fmt.Errorf("prompt_template: named_templates[%q].versions[%q].required_variables[%q] has a blank enum entry", nt.Name, v.Version, name)
+				return fmt.Errorf("prompt_template: named_templates[%q].versions[%d].required_variables[%q] has a blank enum entry", nt.Name, idx, name)
 			}
 		}
 	}

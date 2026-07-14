@@ -161,27 +161,6 @@ func TestPlugin_CostCap_RunsBeforeBudgetGate(t *testing.T) {
 	assert.Equal(t, "model_too_expensive", parsed.Error.Type)
 }
 
-func TestPlugin_CostCap_ThrottleDoesNotReject(t *testing.T) {
-	p := newTestPlugin(t)
-	settings := map[string]any{
-		"pricing_table":  "custom",
-		"custom_pricing": map[string]any{"gpt-4o": map[string]any{"input": 0.001, "output": 0.002}},
-		"cost_cap": map[string]any{
-			"enabled":                      true,
-			"max_input_cost_per_1k_tokens": 0.5,
-			"behavior_on_violation":        "reject",
-		},
-	}
-	req := &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: []byte(`{"model":"gpt-4o"}`)}
-
-	in := input(policy.StagePreRequest, settings, req, &infracontext.ResponseContext{})
-	in.Mode = policy.ModeThrottle
-	res, err := p.Execute(context.Background(), in)
-	require.NoError(t, err, "throttle must not 403 a stateless cost-cap violation; only enforce rejects")
-	require.NotNil(t, res)
-	assert.Equal(t, 200, res.StatusCode)
-}
-
 func TestPlugin_CostCap_DatedModelUsesBaseOverride(t *testing.T) {
 	p := newTestPlugin(t)
 	settings := map[string]any{

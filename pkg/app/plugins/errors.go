@@ -17,7 +17,7 @@ package plugins
 import "errors"
 
 // PluginError is returned by a plugin to reject a request and short-circuit the
-// chain with a specific HTTP status (e.g. rate limit 429, CORS preflight 204).
+// chain with a specific HTTP status (e.g. rate limit 429, request too large 413).
 type PluginError struct {
 	StatusCode int
 	Type       string

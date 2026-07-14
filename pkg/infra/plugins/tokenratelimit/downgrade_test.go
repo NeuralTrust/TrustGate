@@ -130,24 +130,6 @@ func TestPlugin_Budget_DowngradeModelOnExceed(t *testing.T) {
 	assert.Contains(t, string(req.Body), `"model":"gpt-4o"`, "the downgrade must not mutate the context body in place")
 }
 
-func TestPlugin_Budget_AlertOnlyDoesNotBlock(t *testing.T) {
-	p := newTestPlugin(t)
-	settings := map[string]any{
-		"aggregate":            map[string]any{"max": 10, "time_window": "1m"},
-		"behavior_on_exceeded": "alert_only",
-	}
-	req := &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: []byte(`{"model":"gpt-4o"}`)}
-	resp := &infracontext.ResponseContext{StatusCode: 200, Body: usageResponseBody()}
-
-	_, err := p.Execute(context.Background(), input(policy.StagePostResponse, settings, req, resp))
-	require.NoError(t, err)
-
-	res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, req, &infracontext.ResponseContext{}))
-	require.NoError(t, err, "alert_only must record the breach without blocking under enforce")
-	require.NotNil(t, res)
-	assert.Equal(t, 200, res.StatusCode)
-}
-
 func TestPlugin_Budget_TokenExceededBodyAndHeaders(t *testing.T) {
 	p := newTestPlugin(t)
 	settings := map[string]any{

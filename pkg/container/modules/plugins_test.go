@@ -23,7 +23,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/openaimoderation"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/tool_call_validation"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -42,45 +41,6 @@ func newTestPluginRegistry(t *testing.T) appplugins.Registry {
 	})
 	require.NoError(t, err)
 	return reg
-}
-
-func TestNewPluginRegistry_RegistersToolCallValidation(t *testing.T) {
-	reg := newTestPluginRegistry(t)
-
-	plugin, ok := reg.Get(tool_call_validation.PluginName)
-	require.Truef(t, ok, "plugin %q is not registered", tool_call_validation.PluginName)
-	assert.Equal(t, tool_call_validation.PluginName, plugin.Name())
-	assert.Contains(t, reg.Names(), tool_call_validation.PluginName)
-}
-
-func TestNewPluginRegistry_ToolCallValidationCatalogMetadata(t *testing.T) {
-	reg := newTestPluginRegistry(t)
-
-	catalog := appplugins.NewCatalogService(reg).Catalog()
-
-	var entry appplugins.CatalogEntry
-	found := false
-	for _, group := range catalog.Groups {
-		for _, item := range group.Items {
-			if item.Slug == tool_call_validation.PluginName {
-				entry = item
-				found = true
-			}
-		}
-	}
-
-	require.Truef(t, found, "catalog has no entry for %q", tool_call_validation.PluginName)
-	assert.NotEmpty(t, entry.Name)
-	assert.NotEmpty(t, entry.Description)
-	assert.NotEmpty(t, entry.SettingsSchema.Fields)
-	assert.NotEmpty(t, entry.SupportedStages)
-	assert.NotEmpty(t, entry.SupportedModes)
-
-	keys := make([]string, 0, len(entry.SettingsSchema.Fields))
-	for _, f := range entry.SettingsSchema.Fields {
-		keys = append(keys, f.Key)
-	}
-	assert.ElementsMatch(t, []string{"scope", "semantic", "rules"}, keys)
 }
 
 func TestNewPluginRegistry_RegistersOpenAIModeration(t *testing.T) {

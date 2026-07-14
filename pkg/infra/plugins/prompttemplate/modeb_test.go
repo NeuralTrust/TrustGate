@@ -28,9 +28,8 @@ func supportBot() namedTemplate {
 	return namedTemplate{
 		Name: "support-bot",
 		Versions: []templateVersion{
-			{Version: "v1", Labels: []string{"old"}, Content: `[{"role":"system","content":"v1"}]`},
+			{Labels: []string{"old"}, Content: `[{"role":"system","content":"v1"}]`},
 			{
-				Version: "v3",
 				Labels:  []string{"stable", "latest"},
 				Content: `[{"role":"system","content":"You are a {{persona}} bot for {{tenant}}."}]`,
 				RequiredVariables: map[string]requiredVar{
@@ -60,19 +59,18 @@ func TestResolveVersion(t *testing.T) {
 	t.Run("label resolves to version", func(t *testing.T) {
 		v, ok := resolveVersion(nt, "stable", "")
 		require.True(t, ok)
-		assert.Equal(t, "v3", v.Version)
+		assert.Contains(t, v.Labels, "stable")
 	})
 
 	t.Run("default_label fallback when label empty", func(t *testing.T) {
 		v, ok := resolveVersion(nt, "", "old")
 		require.True(t, ok)
-		assert.Equal(t, "v1", v.Version)
+		assert.Contains(t, v.Labels, "old")
 	})
 
-	t.Run("literal version string resolves", func(t *testing.T) {
-		v, ok := resolveVersion(nt, "v3", "")
-		require.True(t, ok)
-		assert.Equal(t, "v3", v.Version)
+	t.Run("non-label value does not resolve", func(t *testing.T) {
+		_, ok := resolveVersion(nt, "v3", "")
+		assert.False(t, ok)
 	})
 
 	t.Run("unknown label does not resolve", func(t *testing.T) {
@@ -105,7 +103,6 @@ func TestApplyModeBRenderReplaces(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, outcome.changed)
 	assert.Equal(t, "support-bot", outcome.resolvedTemplate)
-	assert.Equal(t, "v3", outcome.resolvedVersion)
 	out, err := rb.marshal()
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"model":"gpt-4","messages":[{"role":"system","content":"You are a friendly bot for acme."}]}`, string(out))
@@ -169,7 +166,7 @@ func TestApplyModeBNonRequiredMissing(t *testing.T) {
 	nt := namedTemplate{
 		Name: "tpl",
 		Versions: []templateVersion{
-			{Version: "v1", Labels: []string{"stable"}, Content: `[{"role":"system","content":"hi {{extra}}"}]`},
+			{Labels: []string{"stable"}, Content: `[{"role":"system","content":"hi {{extra}}"}]`},
 		},
 	}
 	enabled := true
@@ -210,7 +207,7 @@ func TestRenderTemplateContentEscapesControlChars(t *testing.T) {
 func TestApplyModeBBareStringWrap(t *testing.T) {
 	nt := namedTemplate{
 		Name:     "tpl",
-		Versions: []templateVersion{{Version: "v1", Labels: []string{"stable"}, Content: "You are a {{persona}} bot."}},
+		Versions: []templateVersion{{Labels: []string{"stable"}, Content: "You are a {{persona}} bot."}},
 	}
 	enabled := true
 	cfg := &config{TemplateEngine: engineMustache, NamedTemplates: []namedTemplate{nt}, DefaultLabel: "stable", OnMissingClientVariable: onMissingClientError, EscapeJSONControlChars: &enabled}
@@ -225,8 +222,8 @@ func TestApplyModeBBareStringWrap(t *testing.T) {
 
 func TestApplyModeBUsesFirstReference(t *testing.T) {
 	enabled := true
-	first := namedTemplate{Name: "first", Versions: []templateVersion{{Version: "v1", Labels: []string{"stable"}, Content: `[{"role":"system","content":"FIRST"}]`}}}
-	second := namedTemplate{Name: "second", Versions: []templateVersion{{Version: "v1", Labels: []string{"stable"}, Content: `[{"role":"system","content":"SECOND"}]`}}}
+	first := namedTemplate{Name: "first", Versions: []templateVersion{{Labels: []string{"stable"}, Content: `[{"role":"system","content":"FIRST"}]`}}}
+	second := namedTemplate{Name: "second", Versions: []templateVersion{{Labels: []string{"stable"}, Content: `[{"role":"system","content":"SECOND"}]`}}}
 	cfg := &config{TemplateEngine: engineMustache, NamedTemplates: []namedTemplate{first, second}, DefaultLabel: "stable", OnMissingClientVariable: onMissingClientError, EscapeJSONControlChars: &enabled}
 	rb, err := decodeBody([]byte(`{"messages":[{"role":"user","content":"{template://first}"},{"role":"user","content":"{template://second}"}]}`))
 	require.NoError(t, err)
@@ -255,7 +252,7 @@ func TestApplyModeBJSONInjectionContained(t *testing.T) {
 	nt := namedTemplate{
 		Name: "tpl",
 		Versions: []templateVersion{
-			{Version: "v1", Labels: []string{"stable"}, Content: `[{"role":"system","content":"You are a {{persona}} bot."}]`,
+			{Labels: []string{"stable"}, Content: `[{"role":"system","content":"You are a {{persona}} bot."}]`,
 				RequiredVariables: map[string]requiredVar{"persona": {Type: "string"}}},
 		},
 	}
@@ -279,7 +276,7 @@ func TestApplyModeBJSONInjectionContained(t *testing.T) {
 }
 
 func TestApplyModeBRenderFailure(t *testing.T) {
-	nt := namedTemplate{Name: "tpl", Versions: []templateVersion{{Version: "v1", Labels: []string{"stable"}, Content: `[{"role":"system"`}}}
+	nt := namedTemplate{Name: "tpl", Versions: []templateVersion{{Labels: []string{"stable"}, Content: `[{"role":"system"`}}}
 	enabled := true
 	cfg := &config{TemplateEngine: engineMustache, NamedTemplates: []namedTemplate{nt}, DefaultLabel: "stable", OnMissingClientVariable: onMissingClientError, EscapeJSONControlChars: &enabled}
 	rb, err := decodeBody([]byte(`{"messages":[{"role":"user","content":"{template://tpl}"}]}`))

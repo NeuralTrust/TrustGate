@@ -28,8 +28,6 @@ import (
 	embeddingfactory "github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/azurecontentsafety"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/bedrockguardrail"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/cors"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/costcap"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/modelallowlist"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/openaimoderation"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pertoolratelimit"
@@ -38,12 +36,10 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/requestsize"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/semanticcache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/tokenratelimit"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/tool_call_validation"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/toolallowlist"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/tooltransform"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/toolinjection"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/trustguard"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/dig"
 )
@@ -91,16 +87,13 @@ func newPluginRegistry(p pluginParams) (appplugins.Registry, error) {
 	catalog := []appplugins.Plugin{
 		ratelimit.New(redisClient),
 		tokenratelimit.New(redisClient, p.Adapters, p.Pricing),
-		costcap.New(p.Pricing),
 		pertoolratelimit.New(redisClient, p.Adapters),
 		requestsize.New(),
-		cors.New(),
 		semanticcache.New(store, p.Locator, p.Adapters),
 		modelallowlist.New(),
 		prompttemplate.New(),
 		toolallowlist.New(p.Adapters),
-		tool_call_validation.New(p.Adapters, openai.NewOpenaiClient(), p.Logger),
-		tooltransform.New(p.Adapters),
+		toolinjection.New(p.Adapters),
 		trustguard.New(p.Adapters, p.Cfg.TrustGuard.BaseURL, p.Cfg.TrustGuard.Timeout, p.Cfg.TrustGuard.ClientID, p.Cfg.TrustGuard.ClientSecret, p.Logger),
 		openaimoderation.New(p.Adapters, p.Cfg.OpenAIModeration.BaseURL, p.Cfg.OpenAIModeration.Timeout, p.Logger),
 		azurecontentsafety.New(p.Adapters, p.Logger),

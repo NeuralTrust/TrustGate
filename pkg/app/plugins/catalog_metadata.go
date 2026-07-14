@@ -134,62 +134,6 @@ var pluginCatalogMeta = map[string]catalogMeta{
 			},
 		},
 	},
-	"cors": {
-		name:        "CORS",
-		group:       groupTrafficControl,
-		description: "Validate request origins and apply Cross-Origin Resource Sharing response headers.",
-		schema: SettingsSchema{
-			Fields: []Field{
-				{
-					Key:         "allowed_origins",
-					Label:       "Allowed Origins",
-					Type:        FieldTypeArray,
-					Description: "Origins permitted to access the resource. Use * to allow any origin.",
-					Required:    true,
-					Item:        &Field{Key: "origin", Label: "Origin", Type: FieldTypeString},
-				},
-				{
-					Key:         "allowed_methods",
-					Label:       "Allowed Methods",
-					Type:        FieldTypeArray,
-					Description: "HTTP methods permitted in cross-origin requests.",
-					Item: &Field{
-						Key:   "method",
-						Label: "Method",
-						Type:  FieldTypeEnum,
-						Enum:  enumOptions("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"),
-					},
-				},
-				{
-					Key:         "allow_credentials",
-					Label:       "Allow Credentials",
-					Type:        FieldTypeBoolean,
-					Description: "Allow cookies and credentials in cross-origin requests.",
-					Default:     false,
-				},
-				{
-					Key:         "expose_headers",
-					Label:       "Expose Headers",
-					Type:        FieldTypeArray,
-					Description: "Response headers exposed to the browser.",
-					Item:        &Field{Key: "header", Label: "Header", Type: FieldTypeString},
-				},
-				{
-					Key:         "max_age",
-					Label:       "Max Age",
-					Type:        FieldTypeDuration,
-					Description: "How long the preflight response may be cached (e.g. 1h).",
-				},
-				{
-					Key:         "log_violations",
-					Label:       "Log Violations",
-					Type:        FieldTypeBoolean,
-					Description: "Log requests from disallowed origins.",
-					Default:     false,
-				},
-			},
-		},
-	},
 	"token_rate_limiter": {
 		name:        "LLM Budget",
 		group:       groupQuota,
@@ -271,7 +215,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "Behavior On Exceeded",
 					Type:        FieldTypeEnum,
 					Description: "Action taken when a budget is exceeded under enforce mode.",
-					Enum:        enumOptions("reject", "throttle", "downgrade_model", "alert_only"),
+					Enum:        enumOptions("reject", "downgrade_model"),
 					Default:     "reject",
 				},
 				{
@@ -324,99 +268,6 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "Group By Header",
 					Type:        FieldTypeString,
 					Description: "Optional request header whose value sub-partitions the budget within the policy scope (e.g. X-User-Id). When empty, the budget is counted per gateway (global) or per consumer.",
-				},
-			},
-		},
-	},
-	"cost_cap": {
-		name:        "LLM Cost Cap",
-		group:       groupQuota,
-		description: "Stateless per-request guard that rejects or downgrades models whose list price per 1k tokens exceeds a configured ceiling.",
-		schema: SettingsSchema{
-			Fields: []Field{
-				{
-					Key:         "max_input_cost_per_1k_tokens",
-					Label:       "Max Input Cost Per 1k Tokens",
-					Type:        FieldTypeNumber,
-					Description: "Global input-price ceiling in USD per 1k tokens.",
-				},
-				{
-					Key:         "max_output_cost_per_1k_tokens",
-					Label:       "Max Output Cost Per 1k Tokens",
-					Type:        FieldTypeNumber,
-					Description: "Global output-price ceiling in USD per 1k tokens.",
-				},
-				{
-					Key:         "per_model_overrides",
-					Label:       "Per-Model Overrides",
-					Type:        FieldTypeMap,
-					Description: "Per-model ceilings keyed by model slug or wildcard pattern. The most specific pattern wins.",
-					Value: &Field{
-						Key:   "ceiling",
-						Label: "Ceiling",
-						Type:  FieldTypeObject,
-						Fields: []Field{
-							{
-								Key:         "max_input_cost_per_1k_tokens",
-								Label:       "Max Input Cost Per 1k Tokens",
-								Type:        FieldTypeNumber,
-								Description: "Input-price ceiling in USD per 1k tokens.",
-							},
-							{
-								Key:         "max_output_cost_per_1k_tokens",
-								Label:       "Max Output Cost Per 1k Tokens",
-								Type:        FieldTypeNumber,
-								Description: "Output-price ceiling in USD per 1k tokens.",
-							},
-						},
-					},
-				},
-				{
-					Key:         "behavior_on_violation",
-					Label:       "Behavior On Violation",
-					Type:        FieldTypeEnum,
-					Description: "Action taken when a model exceeds its cost ceiling under enforce mode.",
-					Enum:        enumOptions("reject", "downgrade"),
-					Default:     "reject",
-				},
-				{
-					Key:         "downgrade_to",
-					Label:       "Downgrade To",
-					Type:        FieldTypeString,
-					Description: "Target model used when behavior is downgrade. Must be on the same provider.",
-				},
-				{
-					Key:         "unknown_model",
-					Label:       "Unknown Model",
-					Type:        FieldTypeEnum,
-					Description: "How to treat a model with no resolvable price.",
-					Enum:        enumOptions("reject", "pass_through", "assume_max"),
-					Default:     "reject",
-				},
-				{
-					Key:         "custom_pricing",
-					Label:       "Custom Pricing",
-					Type:        FieldTypeMap,
-					Description: "Per-token USD rates keyed by model slug or wildcard pattern, consulted before the builtin table.",
-					Value: &Field{
-						Key:   "price",
-						Label: "Price",
-						Type:  FieldTypeObject,
-						Fields: []Field{
-							{
-								Key:         "input",
-								Label:       "Input",
-								Type:        FieldTypeNumber,
-								Description: "Input price in USD per token.",
-							},
-							{
-								Key:         "output",
-								Label:       "Output",
-								Type:        FieldTypeNumber,
-								Description: "Output price in USD per token.",
-							},
-						},
-					},
 				},
 			},
 		},
@@ -697,111 +548,6 @@ var pluginCatalogMeta = map[string]catalogMeta{
 			},
 		},
 	},
-	"tool_call_validation": {
-		name:        "Tool Call Validation",
-		group:       groupToolGovernance,
-		description: "Validate the tool calls an LLM returns against per-tool rules, rejecting or redacting responses that violate them.",
-		schema: SettingsSchema{
-			Fields: []Field{
-				{
-					Key:         "scope",
-					Label:       "Scope",
-					Type:        FieldTypeString,
-					Description: "Reserved for future use; currently inert and ignored by the plugin.",
-				},
-				{
-					Key:         "semantic",
-					Label:       "Semantic",
-					Type:        FieldTypeObject,
-					Description: "LLM provider settings used by semantic validators. Required when any rule uses the semantic validator.",
-					Fields: []Field{
-						{
-							Key:         "provider",
-							Label:       "Provider",
-							Type:        FieldTypeEnum,
-							Description: "LLM provider backing semantic validation.",
-							Enum:        enumOptions("openai"),
-							Default:     "openai",
-						},
-						{
-							Key:         "api_key",
-							Label:       "API Key",
-							Type:        FieldTypeString,
-							Description: "Credential for the semantic provider. Required when the semantic block is used.",
-						},
-						{
-							Key:         "model",
-							Label:       "Model",
-							Type:        FieldTypeString,
-							Description: "Model name used for semantic validation.",
-							Default:     "gpt-4o-mini",
-						},
-					},
-				},
-				{
-					Key:         "rules",
-					Label:       "Rules",
-					Type:        FieldTypeArray,
-					Description: "Ordered validation rules. At least one rule is required.",
-					Required:    true,
-					Item: &Field{
-						Key:   "rule",
-						Label: "Rule",
-						Type:  FieldTypeObject,
-						Fields: []Field{
-							{
-								Key:         "tool",
-								Label:       "Tool",
-								Type:        FieldTypeString,
-								Description: "Name of the tool the rule applies to. Empty applies the rule to every tool.",
-							},
-							{
-								Key:         "validator",
-								Label:       "Validator",
-								Type:        FieldTypeEnum,
-								Description: "Validation strategy applied to the tool call.",
-								Required:    true,
-								Enum:        enumOptions("not_in_allowed_list", "json_schema", "semantic", "regex", "denylist"),
-							},
-							{
-								Key:         "argument_path",
-								Label:       "Argument Path",
-								Type:        FieldTypeString,
-								Description: "JSONPath into the tool call arguments. Only used by the regex and denylist validators.",
-							},
-							{
-								Key:         "pattern",
-								Label:       "Pattern",
-								Type:        FieldTypeString,
-								Description: "Regular expression the argument value must match. Required for the regex validator.",
-							},
-							{
-								Key:         "denylist",
-								Label:       "Denylist",
-								Type:        FieldTypeArray,
-								Description: "Forbidden substrings. Required for the denylist validator.",
-								Item:        &Field{Key: "value", Label: "Value", Type: FieldTypeString},
-							},
-							{
-								Key:         "behavior",
-								Label:       "Behavior",
-								Type:        FieldTypeEnum,
-								Description: "Action taken when the rule matches. Redact, mask, and replace_with apply only to the regex and denylist validators.",
-								Enum:        enumOptions("reject_response", "redact", "mask", "replace_with"),
-								Default:     "reject_response",
-							},
-							{
-								Key:         "redact_with",
-								Label:       "Redact With",
-								Type:        FieldTypeString,
-								Description: "Replacement value used by the redact, mask, and replace_with behaviors.",
-							},
-						},
-					},
-				},
-			},
-		},
-	},
 	"prompt_template": {
 		name:        "Prompt Template",
 		group:       groupPromptManagement,
@@ -922,18 +668,12 @@ var pluginCatalogMeta = map[string]catalogMeta{
 									Type:  FieldTypeObject,
 									Fields: []Field{
 										{
-											Key:         "version",
-											Label:       "Version",
-											Type:        FieldTypeString,
-											Description: "Unique version identifier within the template.",
-											Required:    true,
-										},
-										{
 											Key:         "labels",
 											Label:       "Labels",
 											Type:        FieldTypeArray,
-											Description: "Labels that resolve to this version (e.g. stable).",
+											Description: "Labels that resolve to this version (e.g. stable). At least one is required to address the version.",
 											Item:        &Field{Key: "label", Label: "Label", Type: FieldTypeString},
+											Required:    true,
 										},
 										{
 											Key:         "content",
@@ -1020,49 +760,18 @@ var pluginCatalogMeta = map[string]catalogMeta{
 			},
 		},
 	},
-	"tool_definition_transformation": {
-		name:        "Tool Definition Transformation",
+	"tool_injection": {
+		name:        "Tool Injection",
 		group:       groupToolGovernance,
-		description: "Reshape tool definitions on the request leg before they reach the model: patch a matched tool's JSON schema, override its description, and inject operator-authored tools. This is a governance and steering layer, not an access gate.",
+		description: "Inject operator-authored tools into the request leg before it reaches the model. Name collisions with client tools are resolved by the on_conflict policy. This is a governance and steering layer, not an access gate.",
 		schema: SettingsSchema{
 			Fields: []Field{
-				{
-					Key:         "transform_tools",
-					Label:       "Transform Tools",
-					Type:        FieldTypeArray,
-					Description: "Rules applied to matching client tools. All matching rules apply in declaration order; schema patches accrue and the last description override wins.",
-					Item: &Field{
-						Key:   "transform",
-						Label: "Transform",
-						Type:  FieldTypeObject,
-						Fields: []Field{
-							{
-								Key:         "tool",
-								Label:       "Tool",
-								Type:        FieldTypeString,
-								Description: "Glob pattern matched against the tool name (e.g. search_*).",
-								Required:    true,
-							},
-							{
-								Key:         "schema_patch",
-								Label:       "Schema Patch",
-								Type:        FieldTypeObject,
-								Description: "RFC 7386 JSON merge patch applied to the matched tool's parameter schema. Free-form JSON; edited as a raw object.",
-							},
-							{
-								Key:         "description_override",
-								Label:       "Description Override",
-								Type:        FieldTypeString,
-								Description: "Replacement description for the matched tool.",
-							},
-						},
-					},
-				},
 				{
 					Key:         "inject_tools",
 					Label:       "Inject Tools",
 					Type:        FieldTypeArray,
 					Description: "Operator-authored tools appended to the request. Name collisions are resolved by the on_conflict policy.",
+					Required:    true,
 					Item: &Field{
 						Key:   "inject",
 						Label: "Inject",

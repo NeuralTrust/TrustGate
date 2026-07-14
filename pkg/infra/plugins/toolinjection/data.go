@@ -12,20 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tooltransform
+package toolinjection
 
 import "github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 
-type ToolTransformData struct {
+type ToolInjectionData struct {
 	Stage        string            `json:"stage"`
-	Transformed  []TransformedTool `json:"transformed,omitempty"`
 	Injected     []InjectedOutcome `json:"injected,omitempty"`
 	Rejected     bool              `json:"rejected,omitempty"`
 	RejectedName string            `json:"rejected_name,omitempty"`
-}
-
-type TransformedTool struct {
-	Name string `json:"name"`
 }
 
 type InjectedOutcome struct {
@@ -33,22 +28,19 @@ type InjectedOutcome struct {
 	Outcome string `json:"outcome"`
 }
 
-func data(stage string, transformedNames []string, outcomes []injectOutcome) ToolTransformData {
-	d := ToolTransformData{Stage: stage}
-	for _, name := range transformedNames {
-		d.Transformed = append(d.Transformed, TransformedTool{Name: name})
-	}
+func data(stage string, outcomes []injectOutcome) ToolInjectionData {
+	d := ToolInjectionData{Stage: stage}
 	for i := range outcomes {
 		d.Injected = append(d.Injected, InjectedOutcome{Name: outcomes[i].Name, Outcome: outcomes[i].Outcome})
 	}
 	return d
 }
 
-func rejectData(stage, name string) ToolTransformData {
-	return ToolTransformData{Stage: stage, Rejected: true, RejectedName: name}
+func rejectData(stage, name string) ToolInjectionData {
+	return ToolInjectionData{Stage: stage, Rejected: true, RejectedName: name}
 }
 
-func setExtras(event *metrics.EventContext, data ToolTransformData) {
+func setExtras(event *metrics.EventContext, data ToolInjectionData) {
 	if event == nil {
 		return
 	}

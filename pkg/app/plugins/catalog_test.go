@@ -28,9 +28,7 @@ import (
 var builtinSlugs = []string{
 	"rate_limiter",
 	"request_size_limiter",
-	"cors",
 	"token_rate_limiter",
-	"cost_cap",
 	"semantic_cache",
 	"model_allowlist",
 	"prompt_template",
@@ -58,9 +56,7 @@ func registerBuiltins(t *testing.T) Registry {
 	}{
 		{"rate_limiter", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}},
 		{"request_size_limiter", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}},
-		{"cors", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}},
 		{"token_rate_limiter", []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}, []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}},
-		{"cost_cap", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}},
 		{"semantic_cache", []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}, []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}},
 		{"model_allowlist", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}},
 		{"prompt_template", []policy.Stage{policy.StagePreRequest}, []policy.Stage{policy.StagePreRequest}},
@@ -88,8 +84,8 @@ func TestCatalogService_GroupsAndOrder(t *testing.T) {
 			byType[g.Type] = append(byType[g.Type], item.Slug)
 		}
 	}
-	assert.ElementsMatch(t, []string{"rate_limiter", "request_size_limiter", "cors"}, byType[groupTrafficControl])
-	assert.ElementsMatch(t, []string{"token_rate_limiter", "cost_cap"}, byType[groupQuota])
+	assert.ElementsMatch(t, []string{"rate_limiter", "request_size_limiter"}, byType[groupTrafficControl])
+	assert.ElementsMatch(t, []string{"token_rate_limiter"}, byType[groupQuota])
 	assert.ElementsMatch(t, []string{"semantic_cache"}, byType[groupRouting])
 	assert.Equal(t, []string{"prompt_template"}, byType[groupPromptManagement])
 }
@@ -207,9 +203,8 @@ func TestTokenRateLimiterSchema_BudgetTree(t *testing.T) {
 	behavior, ok := fieldByKey(fields, "behavior_on_exceeded")
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeEnum, behavior.Type)
-	assert.Equal(t, []string{"reject", "throttle", "downgrade_model", "alert_only"}, enumValues(behavior.Enum))
-	assert.Equal(t, []string{"Reject", "Throttle", "Downgrade Model", "Alert Only"}, enumLabels(behavior.Enum))
-	assert.Contains(t, enumValues(behavior.Enum), "alert_only")
+	assert.Equal(t, []string{"reject", "downgrade_model"}, enumValues(behavior.Enum))
+	assert.Equal(t, []string{"Reject", "Downgrade Model"}, enumLabels(behavior.Enum))
 
 	for _, k := range []string{"downgrade_to", "stream_usage_injection", "count_cache_reads", "custom_pricing", "group_by_header"} {
 		_, ok := fieldByKey(fields, k)
@@ -260,46 +255,10 @@ func TestTokenRateLimiterSchema_CustomPricingMap(t *testing.T) {
 	}
 }
 
-func TestCostCapSchema(t *testing.T) {
-	meta, ok := pluginCatalogMeta["cost_cap"]
-	require.True(t, ok)
-	assert.Equal(t, "LLM Cost Cap", meta.name)
-	assert.Equal(t, groupQuota, meta.group)
-
-	fields := meta.schema.Fields
-
-	for _, k := range []string{"max_input_cost_per_1k_tokens", "max_output_cost_per_1k_tokens", "downgrade_to", "custom_pricing"} {
-		_, ok := fieldByKey(fields, k)
-		assert.Truef(t, ok, "cost_cap missing top-level field %q", k)
-	}
-
-	// The standalone cost cap has no on/off toggle; its presence enables it.
-	_, ok = fieldByKey(fields, "enabled")
-	assert.False(t, ok, "cost_cap must not expose an enabled toggle")
-
-	behaviorOnViolation, ok := fieldByKey(fields, "behavior_on_violation")
-	require.True(t, ok)
-	assert.Equal(t, []string{"reject", "downgrade"}, enumValues(behaviorOnViolation.Enum))
-
-	unknownModel, ok := fieldByKey(fields, "unknown_model")
-	require.True(t, ok)
-	assert.Equal(t, []string{"reject", "pass_through", "assume_max"}, enumValues(unknownModel.Enum))
-
-	overrides, ok := fieldByKey(fields, "per_model_overrides")
-	require.True(t, ok)
-	assert.Equal(t, FieldTypeMap, overrides.Type)
-	require.NotNil(t, overrides.Value)
-	assert.Equal(t, FieldTypeObject, overrides.Value.Type)
-	for _, k := range []string{"max_input_cost_per_1k_tokens", "max_output_cost_per_1k_tokens"} {
-		_, ok := fieldByKey(overrides.Value.Fields, k)
-		assert.Truef(t, ok, "override missing %q", k)
-	}
-}
-
-func TestToolDefinitionTransformation_CatalogEntry(t *testing.T) {
+func TestToolInjection_CatalogEntry(t *testing.T) {
 	reg := NewRegistry()
 	require.NoError(t, reg.Register(&stagePlugin{
-		name:      "tool_definition_transformation",
+		name:      "tool_injection",
 		mandatory: []policy.Stage{policy.StagePreRequest},
 		supported: []policy.Stage{policy.StagePreRequest},
 	}))
@@ -311,40 +270,23 @@ func TestToolDefinitionTransformation_CatalogEntry(t *testing.T) {
 	require.Len(t, group.Items, 1)
 
 	entry := group.Items[0]
-	assert.Equal(t, "tool_definition_transformation", entry.Slug)
-	assert.Equal(t, "Tool Definition Transformation", entry.Name)
+	assert.Equal(t, "tool_injection", entry.Slug)
+	assert.Equal(t, "Tool Injection", entry.Name)
 	assert.Equal(t, []policy.Stage{policy.StagePreRequest}, entry.MandatoryStages)
 	assert.Equal(t, []policy.Stage{policy.StagePreRequest}, entry.SupportedStages)
 	assert.Equal(t, []policy.Mode{policy.ModeEnforce}, entry.SupportedModes)
 }
 
-func TestToolDefinitionTransformationSchema_Fields(t *testing.T) {
-	meta, ok := pluginCatalogMeta["tool_definition_transformation"]
+func TestToolInjectionSchema_Fields(t *testing.T) {
+	meta, ok := pluginCatalogMeta["tool_injection"]
 	require.True(t, ok)
-	assert.Equal(t, "Tool Definition Transformation", meta.name)
+	assert.Equal(t, "Tool Injection", meta.name)
 	assert.Equal(t, groupToolGovernance, meta.group)
 
 	fields := meta.schema.Fields
 
-	transformTools, ok := fieldByKey(fields, "transform_tools")
-	require.True(t, ok)
-	assert.Equal(t, FieldTypeArray, transformTools.Type)
-	require.NotNil(t, transformTools.Item)
-	assert.Equal(t, FieldTypeObject, transformTools.Item.Type)
-
-	tool, ok := fieldByKey(transformTools.Item.Fields, "tool")
-	require.True(t, ok)
-	assert.Equal(t, FieldTypeString, tool.Type)
-	assert.True(t, tool.Required)
-
-	schemaPatch, ok := fieldByKey(transformTools.Item.Fields, "schema_patch")
-	require.True(t, ok)
-	assert.Equal(t, FieldTypeObject, schemaPatch.Type)
-	assert.Empty(t, schemaPatch.Fields)
-
-	descriptionOverride, ok := fieldByKey(transformTools.Item.Fields, "description_override")
-	require.True(t, ok)
-	assert.Equal(t, FieldTypeString, descriptionOverride.Type)
+	_, hasTransform := fieldByKey(fields, "transform_tools")
+	assert.False(t, hasTransform, "tool_injection must not expose transform_tools")
 
 	injectTools, ok := fieldByKey(fields, "inject_tools")
 	require.True(t, ok)
@@ -671,7 +613,7 @@ func TestPromptTemplateSchema_Tree(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeArray, versions.Type)
 	require.NotNil(t, versions.Item)
-	for _, k := range []string{"version", "labels", "content", "required_variables"} {
+	for _, k := range []string{"labels", "content", "required_variables"} {
 		_, ok := fieldByKey(versions.Item.Fields, k)
 		assert.Truef(t, ok, "version item missing %q", k)
 	}

@@ -35,14 +35,14 @@ func TestConfigNormalizePreservesExplicitValues(t *testing.T) {
 	c := &config{
 		Unit:               unitDollars,
 		Counting:           countingInput,
-		BehaviorOnExceeded: behaviorThrottle,
+		BehaviorOnExceeded: behaviorDowngradeModel,
 		Aggregate:          &aggregateConfig{Max: 5, TimeWindow: "1h"},
 	}
 	c.normalize()
 
 	assert.Equal(t, unitDollars, c.Unit)
 	assert.Equal(t, countingInput, c.Counting)
-	assert.Equal(t, behaviorThrottle, c.BehaviorOnExceeded)
+	assert.Equal(t, behaviorDowngradeModel, c.BehaviorOnExceeded)
 }
 
 func TestConfigNormalizeSynthesizesAggregateFromLegacyWindow(t *testing.T) {
