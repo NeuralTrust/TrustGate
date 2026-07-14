@@ -17,6 +17,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -143,7 +144,7 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 	if len(registries) == 0 {
 		return nil, ErrNoMCPRegistries
 	}
-	failOpen := rc.Consumer.FailMode() == consumerdomain.FailModeOpen
+	failOpen := rc.Consumer.FailMode() != consumerdomain.FailModeClosed
 	toolkit := rc.Consumer.Toolkit()
 
 	var candidates []binding
@@ -153,6 +154,10 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
+			}
+			var consentErr *ConsentRequiredError
+			if errors.As(err, &consentErr) {
+				return nil, err
 			}
 			if !failOpen {
 				return nil, fmt.Errorf("%w: registry %q: %w", ErrUpstreamUnavailable, reg.Name, err)
