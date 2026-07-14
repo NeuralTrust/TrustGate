@@ -103,6 +103,14 @@ func (f *fakeDialer) Connect(_ context.Context, target Target) (Upstream, error)
 	return up, nil
 }
 
+type fakeCreds struct {
+	err error
+}
+
+func (f *fakeCreds) Apply(context.Context, *appconsumer.RoutableConsumer, *registrydomain.Registry, *Target) error {
+	return f.err
+}
+
 func mcpRegistry(t *testing.T, name, url string) *registrydomain.Registry {
 	t.Helper()
 	reg, err := registrydomain.NewMCPRegistry(
@@ -277,6 +285,23 @@ func TestComposer_FailMode(t *testing.T) {
 			t.Fatalf("tools = %v, want [alive]", names)
 		}
 	})
+}
+
+func TestComposer_ConsentRequiredBypassesFailOpen(t *testing.T) {
+	t.Parallel()
+	regA := mcpRegistry(t, "coda", "https://a.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://a.example.com/mcp": {tools: tools("x")},
+	}}
+	creds := &fakeCreds{err: &ConsentRequiredError{Provider: "coda", Ticket: "tk", Path: "/p/mcp"}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+
+	consumer := &consumerdomain.Consumer{Type: consumerdomain.TypeMCP, MCP: &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen}}
+	_, err := c.ListTools(context.Background(), routable(consumer, regA))
+	var consentErr *ConsentRequiredError
+	if !errors.As(err, &consentErr) {
+		t.Fatalf("error = %v, want ConsentRequiredError to propagate even in fail-open", err)
+	}
 }
 
 func TestComposer_CallTool_RoutesToOwningUpstream(t *testing.T) {

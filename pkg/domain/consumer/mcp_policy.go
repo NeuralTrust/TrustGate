@@ -23,7 +23,7 @@ type MCPPolicy struct {
 
 func (p *MCPPolicy) Validate(known map[ids.RegistryID]struct{}) error {
 	if p.FailMode == "" {
-		p.FailMode = FailModeClosed
+		p.FailMode = FailModeOpen
 	}
 	if err := p.FailMode.Validate(); err != nil {
 		return err

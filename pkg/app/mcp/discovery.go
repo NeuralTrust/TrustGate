@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -43,7 +44,7 @@ func federate[T any](
 	if len(registries) == 0 {
 		return nil, ErrNoMCPRegistries
 	}
-	failOpen := rc.Consumer.FailMode() == consumerdomain.FailModeOpen
+	failOpen := rc.Consumer.FailMode() != consumerdomain.FailModeClosed
 
 	var out []T
 	reachable := 0
@@ -52,6 +53,10 @@ func federate[T any](
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
+			}
+			var consentErr *ConsentRequiredError
+			if errors.As(err, &consentErr) {
+				return nil, err
 			}
 			if !failOpen {
 				return nil, fmt.Errorf("%w: registry %q: %w", ErrUpstreamUnavailable, reg.Name, err)
