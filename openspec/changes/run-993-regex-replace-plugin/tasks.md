@@ -66,11 +66,11 @@ Neither slice stays under 400; the chain only bounds reviewer diff-per-PR.
 
 ## Phase 2: Plugin behavior
 
-- [ ] 2.1 Create `plugin.go`: `Plugin{registry,logger}`, `New(*adapter.Registry,*slog.Logger)`, descriptor methods — `SupportedStages=[pre_request,pre_response]`, `MandatoryStages=[]`, `SupportedModes=[Enforce,Observe]`, `SupportedProtocols=[ProtocolLLM]`, `MutatesRequestBody/ResponseBody=true`, `MutatesMetadata=false`, `ValidateConfig`. [spec: Descriptor & stage registration; Modes]
-- [ ] 2.2 In `plugin.go` add `Execute` dispatch by stage+`target` (`passThrough` no-op on mismatch) + `executeRequest` (rewrite `System`+all `Messages[].Content`, `Result{RequestBody}`) + `rewriteRequest`. [spec: Request-leg rewrite; Provider-agnostic behavior]
-- [ ] 2.3 In `plugin.go` add `executeResponse` (streaming pass-through guard, rewrite `CanonicalResponse.Content`, `Result{Body,StopUpstream:true}`) + `rewriteResponse`. [spec: Response-leg rewrite]
-- [ ] 2.4 Create `data.go`: `Data` struct + `setExtras` via `in.Event.SetExtras`; wire `decision` (`rewritten`/`observed`/`no_match`) and `SetDecisionFromOutcome`. [spec: Modes]
-- [ ] 2.5 Create `plugin_test.go` (`-race`, real `adapter.NewRegistry()`): descriptor values, stage/target no-op both ways, request leg rewrite, response leg `Body`+`StopUpstream`, observe no-mutate, streaming pass-through, no-match extras, cross-provider (OpenAI+Anthropic), nil guards. [spec: all Requirement scenarios]
+- [x] 2.1 Create `plugin.go`: `Plugin{registry,logger}`, `New(*adapter.Registry,*slog.Logger)`, descriptor methods — `SupportedStages=[pre_request,pre_response]`, `MandatoryStages=[]`, `SupportedModes=[Enforce,Observe]`, `SupportedProtocols=[ProtocolLLM]`, `MutatesRequestBody/ResponseBody=true`, `MutatesMetadata=false`, `ValidateConfig`. [spec: Descriptor & stage registration; Modes]
+- [x] 2.2 In `plugin.go` add `Execute` dispatch by stage+`target` (`passThrough` no-op on mismatch) + `executeRequest` (rewrite `System`+all `Messages[].Content`, `Result{RequestBody}`) + `rewriteRequest`. [spec: Request-leg rewrite; Provider-agnostic behavior]
+- [x] 2.3 In `plugin.go` add `executeResponse` (streaming pass-through guard, rewrite `CanonicalResponse.Content`, `Result{Body,StopUpstream:true}`) + `rewriteResponse`. [spec: Response-leg rewrite]
+- [x] 2.4 Create `data.go`: `Data` struct + `setExtras` via `in.Event.SetExtras`; wire `decision` (`rewritten`/`observed`/`no_match`) and `SetDecisionFromOutcome`. [spec: Modes]
+- [x] 2.5 Create `plugin_test.go` (`-race`, real `adapter.NewRegistry()`): descriptor values, stage/target no-op both ways, request leg rewrite, response leg `Body`+`StopUpstream`, observe no-mutate, streaming pass-through, no-match extras, cross-provider (OpenAI+Anthropic), nil guards. [spec: all Requirement scenarios]
 
 ## Phase 3: Wiring + catalog
 

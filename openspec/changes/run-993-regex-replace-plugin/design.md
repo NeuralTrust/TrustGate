@@ -34,6 +34,16 @@ One plugin descriptor registered once, driven on two stages, gated by a required
 - Streaming responses pass through unchanged.
 - Regexes are compiled **once at config parse** and cached on the parsed config
   (`compiledRule`), never per request.
+- **Fail-open on transport errors (intentional).** If format resolution, canonical
+  decode, or re-encode fails, the plugin passes the leg through unchanged (telemetry
+  only, no error surfaced). `regex_replace` is a redaction/normalization aid, not an
+  access gate (per RUN-993), so it must never take down a request/response it cannot
+  parse. This mirrors the `bedrock_guardrail` rewrite path. Config errors are the
+  exception: they surface at `ValidateConfig`/`Execute` before any traffic flows.
+- **Non-text fields are preserved.** The canonical model carries `model`, sampling
+  params, `tools`, and unmodeled provider fields (`RequestExtensions` /
+  `ProviderExtensions`), so the decode→rewrite→encode round-trip only alters matched
+  text; everything else survives (locked by `TestRequestRewritePreservesNonTextFields`).
 
 ### Rejected alternatives
 
