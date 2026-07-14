@@ -17,16 +17,13 @@ package grpc
 import (
 	"crypto/sha256"
 	"crypto/subtle"
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
-	"fmt"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/golang-jwt/jwt/v5"
 )
 
-var signedTokenAlgorithms = []string{"EdDSA", "ES256", "RS256"}
+var signedTokenAlgorithms = []string{"HS256"}
 
 var (
 	errAuthNotConfigured = errors.New("config-sync auth is not configured")
@@ -74,16 +71,16 @@ func (s *sharedAuthenticator) authenticate(bearer string) (string, error) {
 
 type jwtAuthenticator struct {
 	parser  *jwt.Parser
-	keyfunc jwt.Keyfunc
+	secrets [][]byte
 }
 
 func newJWTAuthenticator(cfg config.ConfigSyncConfig) (*jwtAuthenticator, error) {
-	if cfg.JWTPublicKey == "" {
-		return nil, errors.New("config-sync signed mode requires a JWT public key")
+	if cfg.JWTSecret == "" {
+		return nil, errors.New("config-sync signed mode requires a JWT shared secret")
 	}
-	key, err := parsePKIXPublicKeyPEM(cfg.JWTPublicKey)
-	if err != nil {
-		return nil, fmt.Errorf("parse config-sync JWT public key: %w", err)
+	secrets := [][]byte{[]byte(cfg.JWTSecret)}
+	if cfg.JWTSecretPrevious != "" {
+		secrets = append(secrets, []byte(cfg.JWTSecretPrevious))
 	}
 	opts := []jwt.ParserOption{
 		jwt.WithValidMethods(signedTokenAlgorithms),
@@ -97,7 +94,7 @@ func newJWTAuthenticator(cfg config.ConfigSyncConfig) (*jwtAuthenticator, error)
 	}
 	return &jwtAuthenticator{
 		parser:  jwt.NewParser(opts...),
-		keyfunc: func(*jwt.Token) (any, error) { return key, nil },
+		secrets: secrets,
 	}, nil
 }
 
@@ -105,15 +102,18 @@ func (j *jwtAuthenticator) authenticate(bearer string) (string, error) {
 	if bearer == "" {
 		return "", errUnauthenticated
 	}
-	claims := jwt.MapClaims{}
-	if _, err := j.parser.ParseWithClaims(bearer, claims, j.keyfunc); err != nil {
-		return "", errUnauthenticated
+	for _, secret := range j.secrets {
+		claims := jwt.MapClaims{}
+		if _, err := j.parser.ParseWithClaims(bearer, claims, func(*jwt.Token) (any, error) { return secret, nil }); err != nil {
+			continue
+		}
+		scope, ok := claims["scope"].(string)
+		if !ok || scope == "" {
+			return "", errUnauthenticated
+		}
+		return scope, nil
 	}
-	scope, ok := claims["scope"].(string)
-	if !ok || scope == "" {
-		return "", errUnauthenticated
-	}
-	return scope, nil
+	return "", errUnauthenticated
 }
 
 // compositeAuthenticator accepts either a signed per-tenant JWT (external data
@@ -140,16 +140,4 @@ func (c *compositeAuthenticator) authenticate(bearer string) (string, error) {
 		return scope, nil
 	}
 	return c.shared.authenticate(bearer)
-}
-
-func parsePKIXPublicKeyPEM(pemStr string) (any, error) {
-	block, _ := pem.Decode([]byte(pemStr))
-	if block == nil {
-		return nil, errors.New("no PEM block found")
-	}
-	key, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		return nil, err
-	}
-	return key, nil
 }

@@ -164,10 +164,14 @@ type ConfigSyncConfig struct {
 	Token            string // #nosec G117 -- config struct field, not a hardcoded credential
 	// TokenPrevious is the prior bearer accepted alongside Token so a token can be
 	// rotated without a window where in-flight data planes fail to authenticate.
-	TokenPrevious     string // #nosec G117 -- config struct field, not a hardcoded credential
-	AuthMode          string
-	JWTPublicKey      string // #nosec G117 -- config struct field, not a hardcoded credential
-	JWTJWKSURL        string
+	TokenPrevious string // #nosec G117 -- config struct field, not a hardcoded credential
+	AuthMode      string
+	// JWTSecret is the HS256 shared secret used to verify config-sync credentials
+	// minted by DataCore. JWTSecretPrevious is the prior secret accepted alongside
+	// it so the secret can be rotated without a window where data planes fail to
+	// authenticate.
+	JWTSecret         string // #nosec G117 -- config struct field, not a hardcoded credential
+	JWTSecretPrevious string // #nosec G117 -- config struct field, not a hardcoded credential
 	JWTIssuer         string
 	JWTAudience       string
 	LKGPath           string
@@ -651,8 +655,8 @@ func getConfigSyncConfig() ConfigSyncConfig {
 		Token:                getEnv("CONFIG_SYNC_TOKEN", ""),
 		TokenPrevious:        getEnv("CONFIG_SYNC_TOKEN_PREVIOUS", ""),
 		AuthMode:             normalizeConfigSyncAuthMode(getEnv("CONFIG_SYNC_AUTH_MODE", ConfigSyncAuthModeShared)),
-		JWTPublicKey:         getEnv("CONFIG_SYNC_JWT_PUBLIC_KEY", ""),
-		JWTJWKSURL:           getEnv("CONFIG_SYNC_JWT_JWKS_URL", ""),
+		JWTSecret:            getEnv("CONFIG_SYNC_JWT_SECRET", ""),
+		JWTSecretPrevious:    getEnv("CONFIG_SYNC_JWT_SECRET_PREVIOUS", ""),
 		JWTIssuer:            getEnv("CONFIG_SYNC_JWT_ISSUER", ""),
 		JWTAudience:          getEnv("CONFIG_SYNC_JWT_AUDIENCE", ""),
 		LKGPath:              getEnv("CONFIG_SYNC_LKG_PATH", defaultConfigSyncLKGPath),
@@ -823,11 +827,8 @@ func (cs ConfigSyncConfig) validateAuthMode() error {
 }
 
 func (cs ConfigSyncConfig) validateSignedJWTParams() error {
-	if cs.JWTPublicKey == "" {
-		if cs.JWTJWKSURL != "" {
-			return fmt.Errorf("%w: CONFIG_SYNC_AUTH_MODE=%s with JWKS is not yet supported; set CONFIG_SYNC_JWT_PUBLIC_KEY", errors.ErrInvalidConfig, cs.AuthMode)
-		}
-		return fmt.Errorf("%w: CONFIG_SYNC_AUTH_MODE=%s requires CONFIG_SYNC_JWT_PUBLIC_KEY", errors.ErrInvalidConfig, cs.AuthMode)
+	if cs.JWTSecret == "" {
+		return fmt.Errorf("%w: CONFIG_SYNC_AUTH_MODE=%s requires CONFIG_SYNC_JWT_SECRET", errors.ErrInvalidConfig, cs.AuthMode)
 	}
 	if cs.JWTIssuer == "" || cs.JWTAudience == "" {
 		return fmt.Errorf("%w: CONFIG_SYNC_AUTH_MODE=%s requires CONFIG_SYNC_JWT_ISSUER and CONFIG_SYNC_JWT_AUDIENCE", errors.ErrInvalidConfig, cs.AuthMode)

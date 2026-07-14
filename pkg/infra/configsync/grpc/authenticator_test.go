@@ -15,9 +15,6 @@
 package grpc
 
 import (
-	"crypto/ed25519"
-	"crypto/x509"
-	"encoding/pem"
 	"testing"
 	"time"
 
@@ -28,29 +25,21 @@ import (
 const (
 	testIssuer   = "datacore"
 	testAudience = "trustgate-config-sync"
+	testSecret   = "config-sync-shared-secret"
+	otherSecret  = "a-different-secret"
 )
 
-func newSignedTestConfig(t *testing.T) (config.ConfigSyncConfig, ed25519.PrivateKey) {
+func newSignedTestConfig(t *testing.T) config.ConfigSyncConfig {
 	t.Helper()
-	pub, priv, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		t.Fatalf("generate key: %v", err)
+	return config.ConfigSyncConfig{
+		AuthMode:    config.ConfigSyncAuthModeSigned,
+		JWTSecret:   testSecret,
+		JWTIssuer:   testIssuer,
+		JWTAudience: testAudience,
 	}
-	der, err := x509.MarshalPKIXPublicKey(pub)
-	if err != nil {
-		t.Fatalf("marshal public key: %v", err)
-	}
-	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
-	cfg := config.ConfigSyncConfig{
-		AuthMode:     config.ConfigSyncAuthModeSigned,
-		JWTPublicKey: string(pemBytes),
-		JWTIssuer:    testIssuer,
-		JWTAudience:  testAudience,
-	}
-	return cfg, priv
 }
 
-func mint(t *testing.T, priv ed25519.PrivateKey, method jwt.SigningMethod, claims jwt.MapClaims) string {
+func mint(t *testing.T, secret string, method jwt.SigningMethod, claims jwt.MapClaims) string {
 	t.Helper()
 	token := jwt.NewWithClaims(method, claims)
 	var (
@@ -60,7 +49,7 @@ func mint(t *testing.T, priv ed25519.PrivateKey, method jwt.SigningMethod, claim
 	if method == jwt.SigningMethodNone {
 		signed, err = token.SignedString(jwt.UnsafeAllowNoneSignatureType)
 	} else {
-		signed, err = token.SignedString(priv)
+		signed, err = token.SignedString([]byte(secret))
 	}
 	if err != nil {
 		t.Fatalf("sign token: %v", err)
@@ -78,12 +67,11 @@ func validClaims() jwt.MapClaims {
 }
 
 func TestJWTAuthenticator_ValidTokenExtractsScope(t *testing.T) {
-	cfg, priv := newSignedTestConfig(t)
-	auth, err := newJWTAuthenticator(cfg)
+	auth, err := newJWTAuthenticator(newSignedTestConfig(t))
 	if err != nil {
 		t.Fatalf("newJWTAuthenticator: %v", err)
 	}
-	scope, err := auth.authenticate(mint(t, priv, jwt.SigningMethodEdDSA, validClaims()))
+	scope, err := auth.authenticate(mint(t, testSecret, jwt.SigningMethodHS256, validClaims()))
 	if err != nil {
 		t.Fatalf("authenticate: %v", err)
 	}
@@ -92,35 +80,52 @@ func TestJWTAuthenticator_ValidTokenExtractsScope(t *testing.T) {
 	}
 }
 
-func TestJWTAuthenticator_Rejects(t *testing.T) {
-	cfg, priv := newSignedTestConfig(t)
+func TestJWTAuthenticator_RotationAcceptsPreviousSecret(t *testing.T) {
+	cfg := newSignedTestConfig(t)
+	cfg.JWTSecret = "new-secret"
+	cfg.JWTSecretPrevious = testSecret
 	auth, err := newJWTAuthenticator(cfg)
 	if err != nil {
 		t.Fatalf("newJWTAuthenticator: %v", err)
 	}
-	_, otherPriv, _ := ed25519.GenerateKey(nil)
+	for _, secret := range []string{"new-secret", testSecret} {
+		scope, err := auth.authenticate(mint(t, secret, jwt.SigningMethodHS256, validClaims()))
+		if err != nil {
+			t.Fatalf("authenticate with %q: %v", secret, err)
+		}
+		if scope != "org_1" {
+			t.Fatalf("scope = %q, want org_1", scope)
+		}
+	}
+}
+
+func TestJWTAuthenticator_Rejects(t *testing.T) {
+	auth, err := newJWTAuthenticator(newSignedTestConfig(t))
+	if err != nil {
+		t.Fatalf("newJWTAuthenticator: %v", err)
+	}
 
 	cases := map[string]string{
 		"empty":         "",
 		"garbage":       "not-a-jwt",
-		"alg_none":      mint(t, priv, jwt.SigningMethodNone, validClaims()),
-		"bad_signature": mint(t, otherPriv, jwt.SigningMethodEdDSA, validClaims()),
-		"expired": mint(t, priv, jwt.SigningMethodEdDSA, jwt.MapClaims{
+		"alg_none":      mint(t, testSecret, jwt.SigningMethodNone, validClaims()),
+		"bad_signature": mint(t, otherSecret, jwt.SigningMethodHS256, validClaims()),
+		"expired": mint(t, testSecret, jwt.SigningMethodHS256, jwt.MapClaims{
 			"iss": testIssuer, "aud": testAudience, "scope": "org_1",
 			"exp": time.Now().Add(-time.Hour).Unix(),
 		}),
-		"no_exp": mint(t, priv, jwt.SigningMethodEdDSA, jwt.MapClaims{
+		"no_exp": mint(t, testSecret, jwt.SigningMethodHS256, jwt.MapClaims{
 			"iss": testIssuer, "aud": testAudience, "scope": "org_1",
 		}),
-		"wrong_issuer": mint(t, priv, jwt.SigningMethodEdDSA, jwt.MapClaims{
+		"wrong_issuer": mint(t, testSecret, jwt.SigningMethodHS256, jwt.MapClaims{
 			"iss": "evil", "aud": testAudience, "scope": "org_1",
 			"exp": time.Now().Add(time.Hour).Unix(),
 		}),
-		"wrong_audience": mint(t, priv, jwt.SigningMethodEdDSA, jwt.MapClaims{
+		"wrong_audience": mint(t, testSecret, jwt.SigningMethodHS256, jwt.MapClaims{
 			"iss": testIssuer, "aud": "other", "scope": "org_1",
 			"exp": time.Now().Add(time.Hour).Unix(),
 		}),
-		"missing_scope": mint(t, priv, jwt.SigningMethodEdDSA, jwt.MapClaims{
+		"missing_scope": mint(t, testSecret, jwt.SigningMethodHS256, jwt.MapClaims{
 			"iss": testIssuer, "aud": testAudience,
 			"exp": time.Now().Add(time.Hour).Unix(),
 		}),
@@ -155,7 +160,7 @@ func TestSharedAuthenticator(t *testing.T) {
 }
 
 func TestCompositeAuthenticator(t *testing.T) {
-	cfg, priv := newSignedTestConfig(t)
+	cfg := newSignedTestConfig(t)
 	cfg.AuthMode = config.ConfigSyncAuthModeComposite
 	cfg.Token = "shared-tok"
 	cfg.TokenPrevious = "old-tok"
@@ -164,7 +169,7 @@ func TestCompositeAuthenticator(t *testing.T) {
 		t.Fatalf("newCompositeAuthenticator: %v", err)
 	}
 
-	scope, err := auth.authenticate(mint(t, priv, jwt.SigningMethodEdDSA, validClaims()))
+	scope, err := auth.authenticate(mint(t, testSecret, jwt.SigningMethodHS256, validClaims()))
 	if err != nil {
 		t.Fatalf("jwt authenticate: %v", err)
 	}
@@ -182,13 +187,12 @@ func TestCompositeAuthenticator(t *testing.T) {
 		}
 	}
 
-	_, otherPriv, _ := ed25519.GenerateKey(nil)
 	for name, bearer := range map[string]string{
 		"empty":         "",
 		"garbage":       "not-a-jwt",
 		"wrong_token":   "nope",
-		"bad_signature": mint(t, otherPriv, jwt.SigningMethodEdDSA, validClaims()),
-		"expired": mint(t, priv, jwt.SigningMethodEdDSA, jwt.MapClaims{
+		"bad_signature": mint(t, otherSecret, jwt.SigningMethodHS256, validClaims()),
+		"expired": mint(t, testSecret, jwt.SigningMethodHS256, jwt.MapClaims{
 			"iss": testIssuer, "aud": testAudience, "scope": "org_1",
 			"exp": time.Now().Add(-time.Hour).Unix(),
 		}),
@@ -202,7 +206,7 @@ func TestCompositeAuthenticator(t *testing.T) {
 }
 
 func TestNewAuthInterceptor_Composite(t *testing.T) {
-	cfg, _ := newSignedTestConfig(t)
+	cfg := newSignedTestConfig(t)
 	cfg.AuthMode = config.ConfigSyncAuthModeComposite
 	cfg.Token = "shared-tok"
 	interceptor, err := NewAuthInterceptor(&config.Config{ConfigSync: cfg}, discardLogger())
@@ -214,14 +218,13 @@ func TestNewAuthInterceptor_Composite(t *testing.T) {
 	}
 }
 
-func TestNewAuthInterceptor_SignedRequiresValidKey(t *testing.T) {
+func TestNewAuthInterceptor_SignedRequiresSecret(t *testing.T) {
 	_, err := NewAuthInterceptor(&config.Config{ConfigSync: config.ConfigSyncConfig{
-		AuthMode:     config.ConfigSyncAuthModeSigned,
-		JWTPublicKey: "-----BEGIN PUBLIC KEY-----\nnot-base64\n-----END PUBLIC KEY-----",
-		JWTIssuer:    testIssuer,
-		JWTAudience:  testAudience,
+		AuthMode:    config.ConfigSyncAuthModeSigned,
+		JWTIssuer:   testIssuer,
+		JWTAudience: testAudience,
 	}}, discardLogger())
 	if err == nil {
-		t.Fatal("expected error for malformed public key")
+		t.Fatal("expected error when signed mode has no shared secret")
 	}
 }
