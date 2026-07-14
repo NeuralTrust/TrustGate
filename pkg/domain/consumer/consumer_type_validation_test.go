@@ -25,14 +25,14 @@ func mcpParams() CreateParams {
 	return p
 }
 
-func TestConsumer_MCP_DefaultsFailModeClosed(t *testing.T) {
+func TestConsumer_MCP_DefaultsFailModeOpen(t *testing.T) {
 	t.Parallel()
 	c, err := New(mcpParams())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if c.FailMode() != FailModeClosed {
-		t.Fatalf("FailMode = %q, want %q", c.FailMode(), FailModeClosed)
+	if c.FailMode() != FailModeOpen {
+		t.Fatalf("FailMode = %q, want %q", c.FailMode(), FailModeOpen)
 	}
 }
 

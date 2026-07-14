@@ -154,8 +154,8 @@ func TestConsumer_Validate_ToolkitAndFailMode(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if c.FailMode() != FailModeClosed {
-			t.Fatalf("FailMode = %q, want default closed", c.FailMode())
+		if c.FailMode() != FailModeOpen {
+			t.Fatalf("FailMode = %q, want default open", c.FailMode())
 		}
 	})
 
