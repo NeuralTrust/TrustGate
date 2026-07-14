@@ -106,6 +106,115 @@ func TestLoadConfig_RejectsInvalidPostgresLogin(t *testing.T) {
 	}
 }
 
+func TestNormalizeRedisLogin(t *testing.T) {
+	tests := []struct {
+		name, in, want string
+	}{
+		{name: "empty defaults to default", in: "", want: redisLoginDefault},
+		{name: "whitespace defaults to default", in: " \t ", want: redisLoginDefault},
+		{name: "default is trimmed and lowercased", in: " DeFaUlT ", want: redisLoginDefault},
+		{name: "aws is trimmed and lowercased", in: " AWS ", want: redisLoginAWS},
+		{name: "unknown is preserved for validation", in: " iam ", want: "iam"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := normalizeRedisLogin(tc.in); got != tc.want {
+				t.Errorf("normalizeRedisLogin(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLoadConfig_RedisLoginModes(t *testing.T) {
+	tests := []struct {
+		name, login, password, wantLogin, wantPassword string
+		awsExtras                                       bool
+	}{
+		{name: "blank defaults to default and preserves password", password: "configured-password", wantLogin: redisLoginDefault, wantPassword: "configured-password"},
+		{name: "whitespace defaults to default", login: " \t ", password: "configured-password", wantLogin: redisLoginDefault, wantPassword: "configured-password"},
+		{name: "default is trimmed and lowercased", login: " DeFaUlT ", wantLogin: redisLoginDefault},
+		{name: "aws is normalized and drops configured password", login: " AwS ", password: "configured-password", wantLogin: redisLoginAWS, awsExtras: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			minimumEnv(t)
+			t.Setenv("REDIS_LOGIN", tc.login)
+			t.Setenv("REDIS_PASSWORD", tc.password)
+			if tc.awsExtras {
+				t.Setenv("REDIS_TLS_ENABLED", "true")
+				t.Setenv("REDIS_CACHE_NAME", "cache.example")
+				t.Setenv("REDIS_USERNAME", "rbac-user")
+			}
+			cfg, err := LoadConfig()
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if cfg.Redis.Login != tc.wantLogin || cfg.Redis.Password != tc.wantPassword {
+				t.Errorf("redis login/password = %q/%q, want %q/%q", cfg.Redis.Login, cfg.Redis.Password, tc.wantLogin, tc.wantPassword)
+			}
+		})
+	}
+}
+
+func redisAWSValid() *Config {
+	cfg := postgresValid()
+	cfg.Redis = RedisConfig{
+		Login:      redisLoginAWS,
+		Host:       "r",
+		Password:   "static-password",
+		TLSEnabled: true,
+		CacheName:  "cache.example",
+		Username:   "rbac-user",
+	}
+	return cfg
+}
+
+func TestValidate_RedisAWSGatePasses(t *testing.T) {
+	cfg := redisAWSValid()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("aws redis config should validate: %v", err)
+	}
+	if cfg.Redis.Password != "" {
+		t.Errorf("Redis.Password = %q, want blanked on aws login", cfg.Redis.Password)
+	}
+}
+
+func TestValidate_RedisAWSGateRejects(t *testing.T) {
+	tests := []struct {
+		name, wantContains string
+		mut                func(c *Config)
+	}{
+		{"invalid login", "REDIS_LOGIN", func(c *Config) { c.Redis.Login = "iam" }},
+		{"tls disabled", "REDIS_TLS_ENABLED", func(c *Config) { c.Redis.TLSEnabled = false }},
+		{"empty cache name", "REDIS_CACHE_NAME", func(c *Config) { c.Redis.CacheName = "" }},
+		{"empty username", "REDIS_USERNAME", func(c *Config) { c.Redis.Username = "" }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := redisAWSValid()
+			tc.mut(cfg)
+			err := cfg.Validate()
+			if err == nil || !stderrors.Is(err, errors.ErrInvalidConfig) || !strings.Contains(err.Error(), tc.wantContains) {
+				t.Fatalf("error %q must be ErrInvalidConfig naming %s", err, tc.wantContains)
+			}
+		})
+	}
+}
+
+func TestValidate_RedisDefaultPreservesPassword(t *testing.T) {
+	cfg := postgresValid()
+	cfg.Redis = RedisConfig{Login: redisLoginDefault, Host: "r", Password: "static-password"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("default redis config should validate: %v", err)
+	}
+	if cfg.Redis.Password != "static-password" {
+		t.Errorf("Redis.Password = %q, want preserved on default login", cfg.Redis.Password)
+	}
+	if cfg.Redis.Username != "" {
+		t.Errorf("Redis.Username = %q, want empty allowed on default login", cfg.Redis.Username)
+	}
+}
+
 func TestLoadConfig_EnvOverridesDefault(t *testing.T) {
 	minimumEnv(t)
 	t.Setenv("SERVER_ADMIN_PORT", "9090")

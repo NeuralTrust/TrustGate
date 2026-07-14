@@ -27,7 +27,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	vaultrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/vault"
 	"github.com/alicebob/miniredis/v2"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
 
 func newRedisVaultRepo(t *testing.T) (vaultdomain.Repository, *miniredis.Miniredis, vaultdomain.Encrypter) {

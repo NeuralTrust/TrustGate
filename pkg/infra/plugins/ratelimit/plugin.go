@@ -23,7 +23,7 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 	"github.com/google/uuid"
 )
 
@@ -189,7 +189,7 @@ func (p *Plugin) record(ctx context.Context, key string, now time.Time, window t
 
 	pipe := p.redis.TxPipeline()
 	pipe.ZRemRangeByScore(ctx, key, "0", strconv.FormatInt(windowStart, 10))
-	pipe.ZAdd(ctx, key, &redis.Z{Score: float64(now.Unix()), Member: member})
+	pipe.ZAdd(ctx, key, redis.Z{Score: float64(now.Unix()), Member: member})
 	pipe.Expire(ctx, key, window)
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("rate_limiter: record request: %w", err)
