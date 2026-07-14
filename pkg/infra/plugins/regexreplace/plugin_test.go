@@ -399,7 +399,7 @@ func TestExecuteGuardPassThroughs(t *testing.T) {
 func TestRequestRewritePreservesNonTextFields(t *testing.T) {
 	t.Parallel()
 	p := New(adapter.NewRegistry(), nil)
-	body := []byte(`{"model":"gpt-4o","temperature":0.7,"tools":[{"type":"function","function":{"name":"get_weather","description":"d","parameters":{"type":"object"}}}],"messages":[{"role":"user","content":"my secret code"}]}`)
+	body := []byte(`{"model":"gpt-4o","temperature":0.7,"top_p":0.9,"stop":["END"],"seed":42,"tools":[{"type":"function","function":{"name":"get_weather","description":"d","parameters":{"type":"object"}}}],"messages":[{"role":"user","content":"my secret code"}]}`)
 	set := settings(targetRequest, maskRule("secret", "[REDACTED]"))
 	event, _ := newEvent()
 	in := execInput(policy.StagePreRequest, policy.ModeEnforce, set, reqCtx(openAIProvider, openAIProvider, body), nil, event)
@@ -411,13 +411,16 @@ func TestRequestRewritePreservesNonTextFields(t *testing.T) {
 	if res == nil || len(res.RequestBody) == 0 {
 		t.Fatalf("expected rewritten request body, got %+v", res)
 	}
-	for _, want := range []string{"gpt-4o", "temperature", "get_weather", "[REDACTED]"} {
+	for _, want := range []string{"gpt-4o", "temperature", "top_p", "stop", "get_weather", "[REDACTED]"} {
 		if !bytes.Contains(res.RequestBody, []byte(want)) {
-			t.Fatalf("rewritten body missing %q: %s", want, res.RequestBody)
+			t.Fatalf("rewritten body missing modeled field %q: %s", want, res.RequestBody)
 		}
 	}
 	if bytes.Contains(res.RequestBody, []byte("my secret code")) {
 		t.Fatalf("rewritten body still contains original secret: %s", res.RequestBody)
+	}
+	if bytes.Contains(res.RequestBody, []byte("seed")) {
+		t.Fatalf("canonical re-encode is expected to drop unmodeled fields; seed unexpectedly survived: %s", res.RequestBody)
 	}
 }
 

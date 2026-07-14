@@ -11,13 +11,18 @@ leg per instance: the request prompt (`pre_request`) XOR the LLM response
 ### Requirement: Descriptor & stage registration
 
 The plugin MUST register ONE descriptor with `SupportedStages=[pre_request, pre_response]`,
-`MandatoryStages=[]`, catalog group `Guardrails`, and appear in `catalog_test` `builtinSlugs`.
+`MandatoryStages=[]`, catalog group `Guardrails`, and MUST be covered by a dedicated
+schema test. Following the existing Guardrails convention (`bedrock_guardrail`,
+`azure_content_safety`, `trustguard`), the slug is validated by a standalone
+`TestRegexReplaceSchema` and is deliberately NOT added to `catalog_test` `builtinSlugs`
+(that curated fixture drives `TestCatalogService_EntriesHaveStagesAndSchema`, whose
+`len(entries)==len(visibleSlugs)` assertion would break otherwise).
 
 #### Scenario: Catalog exposure
 - GIVEN the plugin registry is initialized
 - WHEN the catalog is listed
 - THEN `regex_replace` appears under group `Guardrails` with both supported stages
-- AND `catalog_test` asserts the slug is a builtin
+- AND `TestRegexReplaceSchema` asserts the catalog metadata (target enum + rules schema)
 
 ### Requirement: Config validation
 

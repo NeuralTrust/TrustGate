@@ -40,10 +40,15 @@ One plugin descriptor registered once, driven on two stages, gated by a required
   access gate (per RUN-993), so it must never take down a request/response it cannot
   parse. This mirrors the `bedrock_guardrail` rewrite path. Config errors are the
   exception: they surface at `ValidateConfig`/`Execute` before any traffic flows.
-- **Non-text fields are preserved.** The canonical model carries `model`, sampling
-  params, `tools`, and unmodeled provider fields (`RequestExtensions` /
-  `ProviderExtensions`), so the decode→rewrite→encode round-trip only alters matched
-  text; everything else survives (locked by `TestRequestRewritePreservesNonTextFields`).
+- **Modeled fields are preserved; unmodeled provider fields are dropped on rewrite
+  (known limitation).** When a rule matches, the leg is re-encoded from the canonical
+  model, so fields the canonical model represents (`model`, `messages`, `system`,
+  `temperature`, `top_p`, `max_tokens`, `stop`, `tools`, `response_format`, …) survive,
+  but provider-specific fields NOT in the canonical model (e.g. `seed`, `user`,
+  `presence_penalty`, `logit_bias`) are dropped. This matches `bedrock_guardrail`'s
+  canonical-rewrite path. No-match traffic forwards the original bytes untouched, so
+  only matched requests/responses are affected. Behavior is locked by
+  `TestRequestRewritePreservesNonTextFields`.
 
 ### Rejected alternatives
 

@@ -159,9 +159,16 @@ func (p *Plugin) decide(in appplugins.ExecInput, cfg Settings, changed bool, bod
 	setExtras(in.Event, data)
 	appplugins.SetDecisionFromOutcome(in.Event, decisionRewritten)
 	if isResponse {
-		return &appplugins.Result{StatusCode: http.StatusOK, Body: body, StopUpstream: true}
+		return &appplugins.Result{StatusCode: responseStatus(in), Body: body, StopUpstream: true}
 	}
 	return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: body}
+}
+
+func responseStatus(in appplugins.ExecInput) int {
+	if in.Response != nil && in.Response.StatusCode != 0 {
+		return in.Response.StatusCode
+	}
+	return http.StatusOK
 }
 
 func (p *Plugin) debug(ctx context.Context, msg string, attrs ...any) {

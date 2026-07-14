@@ -23,12 +23,11 @@ const (
 )
 
 type Data struct {
-	Target       string `json:"target,omitempty"`
-	Stage        string `json:"stage,omitempty"`
-	Mode         string `json:"mode,omitempty"`
-	Decision     string `json:"decision,omitempty"`
-	RulesMatched int    `json:"rules_matched,omitempty"`
-	Changed      bool   `json:"changed,omitempty"`
+	Target   string `json:"target,omitempty"`
+	Stage    string `json:"stage,omitempty"`
+	Mode     string `json:"mode,omitempty"`
+	Decision string `json:"decision,omitempty"`
+	Changed  bool   `json:"changed,omitempty"`
 }
 
 func setExtras(event *metrics.EventContext, data *Data) {
