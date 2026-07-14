@@ -36,6 +36,24 @@ func renderToString(t *testing.T, handler fiber.Handler) string {
 	return string(body)
 }
 
+func TestRenderedPagesAreNotCacheable(t *testing.T) {
+	t.Parallel()
+	app := fiber.New()
+	app.Get("/page", func(c *fiber.Ctx) error {
+		return renderConnectPage(c, &appoauth.ConnectPage{
+			ConsumerPath: "/v1/mcp/dev",
+			Providers:    []appoauth.ProviderStatus{{Provider: "linear", Registry: "linear-mcp"}},
+		}, "tk", "")
+	})
+	res, err := app.Test(httptest.NewRequest("GET", "/page", nil))
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if got := res.Header.Get(fiber.HeaderCacheControl); !strings.Contains(got, "no-store") {
+		t.Fatalf("connect page must send a no-store Cache-Control, got %q", got)
+	}
+}
+
 func TestConnectPage_RendersCustomSchemeResume(t *testing.T) {
 	t.Parallel()
 	body := renderToString(t, func(c *fiber.Ctx) error {

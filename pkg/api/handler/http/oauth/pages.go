@@ -213,5 +213,10 @@ func renderHTML(c *fiber.Ctx, tmpl *template.Template, data any) error {
 		return err
 	}
 	c.Set(fiber.HeaderContentType, fiber.MIMETextHTMLCharsetUTF8)
+	// Ticket- and principal-scoped OAuth pages must never be reused from a
+	// browser/proxy cache: a reload (same ticket URL) would otherwise show a
+	// stale provider list after registries or linked accounts change.
+	c.Set(fiber.HeaderCacheControl, "no-store, must-revalidate")
+	c.Set(fiber.HeaderPragma, "no-cache")
 	return c.Status(fiber.StatusOK).Send(buf.Bytes())
 }

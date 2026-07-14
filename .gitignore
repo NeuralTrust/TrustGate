@@ -43,3 +43,4 @@ scripts/secret/
 # .vscode/
 .DS_Store
 .cursor/sdd
+docs/internal/*
