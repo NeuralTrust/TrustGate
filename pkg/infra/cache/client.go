@@ -72,6 +72,31 @@ type client struct {
 	logger      *slog.Logger
 }
 
+func buildRedisOptions(config Config, provider credentialsProvider) *redis.Options {
+	options := &redis.Options{
+		Addr: fmt.Sprintf("%s:%d", config.Host, config.Port),
+		DB:   config.DB,
+	}
+	if provider == nil {
+		options.Username = config.Username
+		options.Password = config.Password
+		if config.TLSEnabled {
+			options.TLSConfig = &tls.Config{
+				InsecureSkipVerify: config.TLSInsecureVerify, // #nosec G402 -- callers opt in via config
+			}
+		}
+		return options
+	}
+	options.Username = config.Username
+	options.Password = ""
+	options.CredentialsProviderContext = provider
+	options.TLSConfig = &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: config.TLSInsecureVerify, // #nosec G402 -- callers opt in via config
+	}
+	return options
+}
+
 func NewClient(config Config, manager *TTLMapManager, logger *slog.Logger) (Client, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -81,26 +106,7 @@ func NewClient(config Config, manager *TTLMapManager, logger *slog.Logger) (Clie
 		return nil, fmt.Errorf("configure redis authentication: %w", err)
 	}
 
-	options := &redis.Options{
-		Addr: fmt.Sprintf("%s:%d", config.Host, config.Port),
-		DB:   config.DB,
-	}
-	if provider == nil {
-		options.Password = config.Password
-		if config.TLSEnabled {
-			options.TLSConfig = &tls.Config{
-				InsecureSkipVerify: config.TLSInsecureVerify, // #nosec G402 -- callers opt in via config
-			}
-		}
-	} else {
-		options.Username = config.Username
-		options.Password = ""
-		options.CredentialsProviderContext = provider
-		options.TLSConfig = &tls.Config{
-			MinVersion:         tls.VersionTLS12,
-			InsecureSkipVerify: config.TLSInsecureVerify, // #nosec G402 -- callers opt in via config
-		}
-	}
+	options := buildRedisOptions(config, provider)
 	redisClient := redis.NewClient(options)
 
 	if err := redisClient.Ping(ctx).Err(); err != nil {
