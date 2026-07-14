@@ -22,7 +22,7 @@ import (
 	"time"
 
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/session"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
 
 const (

@@ -22,7 +22,7 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/session"
 	sessionrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/session"
 	"github.com/alicebob/miniredis/v2"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

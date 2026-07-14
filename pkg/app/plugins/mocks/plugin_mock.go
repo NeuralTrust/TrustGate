@@ -356,6 +356,53 @@ func (_c *Plugin_SupportedModes_Call) RunAndReturn(run func() []policy.Mode) *Pl
 	return _c
 }
 
+// SupportedProtocols provides a mock function with no fields
+func (_m *Plugin) SupportedProtocols() []plugins.Protocol {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for SupportedProtocols")
+	}
+
+	var r0 []plugins.Protocol
+	if rf, ok := ret.Get(0).(func() []plugins.Protocol); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]plugins.Protocol)
+		}
+	}
+
+	return r0
+}
+
+// Plugin_SupportedProtocols_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SupportedProtocols'
+type Plugin_SupportedProtocols_Call struct {
+	*mock.Call
+}
+
+// SupportedProtocols is a helper method to define mock.On call
+func (_e *Plugin_Expecter) SupportedProtocols() *Plugin_SupportedProtocols_Call {
+	return &Plugin_SupportedProtocols_Call{Call: _e.mock.On("SupportedProtocols")}
+}
+
+func (_c *Plugin_SupportedProtocols_Call) Run(run func()) *Plugin_SupportedProtocols_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *Plugin_SupportedProtocols_Call) Return(_a0 []plugins.Protocol) *Plugin_SupportedProtocols_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Plugin_SupportedProtocols_Call) RunAndReturn(run func() []plugins.Protocol) *Plugin_SupportedProtocols_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // SupportedStages provides a mock function with no fields
 func (_m *Plugin) SupportedStages() []policy.Stage {
 	ret := _m.Called()

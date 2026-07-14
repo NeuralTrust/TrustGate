@@ -23,22 +23,22 @@ func TestUpdatePolicy_Success(t *testing.T) {
 	url := fmt.Sprintf("%s/v1/gateways/%s/policies/%s", AdminURL, gwID, id)
 	status, body := sendRequest(t, http.MethodPut, url, nil, map[string]any{
 		"name":    updated,
-		"slug":    "cors",
+		"slug":    "request_size_limiter",
 		"enabled": false,
 		"settings": map[string]any{
-			"allowed_origins": []string{"https://example.com"},
-			"allowed_methods": []string{"GET"},
+			"allowed_payload_size": 1024,
+			"size_unit":            "bytes",
 		},
 	})
 	require.Equal(t, http.StatusOK, status, "body=%v", body)
 	assert.Equal(t, updated, body["name"])
-	assert.Equal(t, "cors", body["slug"])
+	assert.Equal(t, "request_size_limiter", body["slug"])
 	assert.Equal(t, false, body["enabled"])
 
 	status, body = sendRequest(t, http.MethodGet, url, nil, nil)
 	require.Equal(t, http.StatusOK, status)
 	assert.Equal(t, updated, body["name"])
-	assert.Equal(t, "cors", body["slug"])
+	assert.Equal(t, "request_size_limiter", body["slug"])
 }
 
 func TestUpdatePolicy_Partial(t *testing.T) {

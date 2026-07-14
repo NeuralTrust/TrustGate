@@ -48,15 +48,6 @@ func requestSizeSettings(maxBytes int) map[string]any {
 	}
 }
 
-// corsSimpleSettings allows a single origin so a success request carries the
-// CORS allow-origin header and a foreign origin is rejected with 403.
-func corsSimpleSettings() map[string]any {
-	return map[string]any{
-		"allowed_origins": []string{"https://allowed.com"},
-		"allowed_methods": []string{"GET", "POST"},
-	}
-}
-
 // ---- admin-plane helpers ----------------------------------------------------
 
 // policyPayload builds a single-plugin policy body with explicit priority and
@@ -195,29 +186,31 @@ func TestPolicyE2E_GlobalAndConsumerComposeDifferentSlugs(t *testing.T) {
 
 	up := newJSONUpstream(t, "compose-different")
 	gatewayID, backendID := setupGatewayBackend(t, up)
-	createGlobalPolicy(t, gatewayID, "cors", corsSimpleSettings())
+	createGlobalPolicy(t, gatewayID, "request_size_limiter", requestSizeSettings(1000))
 	rl := createScopedPolicy(t, gatewayID, "rate_limiter", rateLimitSettings(2), 10, false)
 	path, apiKey := addConsumerRoute(t, gatewayID, backendID, rl)
 
 	body := mustJSON(t, chatRequest(false))
-	allowed := map[string]string{"Origin": "https://allowed.com"}
+	oversized := mustJSON(t, map[string]any{
+		"model":    "gpt-4o-mini",
+		"messages": []map[string]string{{"role": "user", "content": strings.Repeat("a", 4000)}},
+	})
 
-	// Both ran: CORS contributed the allow-origin header (global) and the rate
-	// limiter contributed its quota header (consumer-scoped).
-	status, headers, raw := proxyRequest(t, http.MethodPost, apiKey, path, allowed, body)
+	// Both ran: the global request-size limiter gates the body while the
+	// consumer rate limiter contributes its quota header.
+	status, headers, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
 	require.Equal(t, http.StatusOK, status, "body: %s", raw)
-	assert.Equal(t, "https://allowed.com", headers.Get("Access-Control-Allow-Origin"), "global CORS must run")
 	assert.Equal(t, "2", headers.Get("X-RateLimit-consumer-Limit"), "consumer rate limiter must run")
 
-	// The global CORS rejection still fires for a foreign origin.
-	statusBad, _, _ := proxyRequest(t, http.MethodPost, apiKey, path,
-		map[string]string{"Origin": "https://evil.com"}, body)
-	assert.Equal(t, http.StatusForbidden, statusBad, "global CORS must reject a disallowed origin")
+	// The global request-size rejection still fires for an oversized body, and
+	// short-circuits before the consumer rate limiter records it.
+	statusBad, _, _ := proxyRequest(t, http.MethodPost, apiKey, path, nil, oversized)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, statusBad, "global request-size limiter must reject an oversized body")
 
 	// And the consumer rate limit still enforces (1 budget left after the first OK).
-	status2, _, _ := proxyRequest(t, http.MethodPost, apiKey, path, allowed, body)
+	status2, _, _ := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
 	require.Equal(t, http.StatusOK, status2)
-	status3, _, _ := proxyRequest(t, http.MethodPost, apiKey, path, allowed, body)
+	status3, _, _ := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
 	assert.Equal(t, http.StatusTooManyRequests, status3, "consumer rate limit must reject after its budget")
 }
 
@@ -296,24 +289,23 @@ func TestPolicyE2E_ParallelBatchBothApply(t *testing.T) {
 
 	up := newJSONUpstream(t, "parallel")
 	gatewayID, backendID := setupGatewayBackend(t, up)
-	cors := createScopedPolicy(t, gatewayID, "cors", corsSimpleSettings(), 0, true)
-	rl := createScopedPolicy(t, gatewayID, "rate_limiter", rateLimitSettings(2), 0, true)
-	path, apiKey := addConsumerRoute(t, gatewayID, backendID, cors, rl)
+	tok := createScopedPolicy(t, gatewayID, "token_rate_limiter",
+		map[string]any{"window": map[string]any{"unit": "minute", "max": 100000}}, 0, true)
+	rl := createScopedPolicy(t, gatewayID, "rate_limiter", rateLimitSettings(1), 0, true)
+	path, apiKey := addConsumerRoute(t, gatewayID, backendID, tok, rl)
 
 	body := mustJSON(t, chatRequest(false))
-	allowed := map[string]string{"Origin": "https://allowed.com"}
 
 	// Both parallel plugins ran and both header sets were merged back into the
 	// shared response (exercises the executor's per-plugin isolation + merge).
-	status, headers, raw := proxyRequest(t, http.MethodPost, apiKey, path, allowed, body)
+	status, headers, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
 	require.Equal(t, http.StatusOK, status, "body: %s", raw)
-	assert.Equal(t, "https://allowed.com", headers.Get("Access-Control-Allow-Origin"), "parallel CORS header must survive")
-	assert.Equal(t, "2", headers.Get("X-RateLimit-consumer-Limit"), "parallel rate-limiter header must survive")
+	assert.Equal(t, "1", headers.Get("X-RateLimit-consumer-Limit"), "parallel rate-limiter header must survive")
+	assert.NotEmpty(t, headers.Get("X-Ratelimit-Limit-Tokens"), "parallel token-budget header must survive")
 
 	// A rejection from any plugin in the parallel batch still short-circuits.
-	statusBad, _, _ := proxyRequest(t, http.MethodPost, apiKey, path,
-		map[string]string{"Origin": "https://evil.com"}, body)
-	assert.Equal(t, http.StatusForbidden, statusBad, "a parallel CORS rejection must short-circuit")
+	statusBad, _, _ := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
+	assert.Equal(t, http.StatusTooManyRequests, statusBad, "a parallel rate-limit rejection must short-circuit")
 }
 
 // ---- multi-stage plugin in the chain ----------------------------------------

@@ -70,6 +70,7 @@ type fakeGuard struct {
 	lastPath    string
 	lastAuth    string
 	lastCT      string
+	lastTraceID string
 	directions  []string
 	status      int
 	response    GuardResponse
@@ -91,6 +92,7 @@ func (f *fakeGuard) handler() http.HandlerFunc {
 		f.lastPath = r.URL.Path
 		f.lastAuth = r.Header.Get("Authorization")
 		f.lastCT = r.Header.Get("Content-Type")
+		f.lastTraceID = r.Header.Get(traceIDHeader)
 		if r.URL.Path != evaluatePath {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -117,6 +119,12 @@ func (f *fakeGuard) http() (method, path, auth, contentType string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.lastMethod, f.lastPath, f.lastAuth, f.lastCT
+}
+
+func (f *fakeGuard) traceID() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastTraceID
 }
 
 func (f *fakeGuard) seenDirections() []string {
@@ -510,6 +518,41 @@ func TestProtocolFor(t *testing.T) {
 		if got := protocolFor(raw); got != want {
 			t.Fatalf("protocolFor(%q) = %q, want %q", raw, got, want)
 		}
+	}
+}
+
+func TestExecutePropagatesGatewayTraceID(t *testing.T) {
+	t.Parallel()
+
+	const wantTraceID = "gate-trace-xyz789"
+	f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	rt := trace.New(wantTraceID, trace.Metadata{})
+	ctx := trace.NewContext(context.Background(), rt)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil)
+	if _, err := p.Execute(ctx, in); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := f.traceID(); got != wantTraceID {
+		t.Fatalf("X-Trace-ID = %q, want %q", got, wantTraceID)
+	}
+}
+
+func TestExecuteOmitsTraceIDWithoutRequestTrace(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil)
+	if _, err := p.Execute(context.Background(), in); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := f.traceID(); got != "" {
+		t.Fatalf("X-Trace-ID = %q, want empty", got)
 	}
 }
 

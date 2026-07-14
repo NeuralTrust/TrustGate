@@ -44,6 +44,13 @@ type ModelResponse struct {
 	Capabilities  map[string]any `json:"capabilities,omitempty"`
 	Enabled       bool           `json:"enabled"`
 	Source        string         `json:"source"`
+	// ReleaseDate is the provider release date ("YYYY-MM-DD"); empty when unknown.
+	// Models are returned most-recent release first.
+	ReleaseDate string `json:"release_date,omitempty"`
+	// InputModalities and OutputModalities list the accepted/produced content
+	// types (e.g. "text", "image", "audio").
+	InputModalities  []string `json:"input_modalities,omitempty"`
+	OutputModalities []string `json:"output_modalities,omitempty"`
 }
 
 func FromProvider(p domain.Provider) ProviderResponse {
@@ -61,18 +68,25 @@ func FromProvider(p domain.Provider) ProviderResponse {
 }
 
 func FromModel(m domain.Model) ModelResponse {
+	releaseDate := ""
+	if m.ReleaseDate != nil {
+		releaseDate = m.ReleaseDate.Format("2006-01-02")
+	}
 	return ModelResponse{
-		ID:            m.ID,
-		ProviderID:    m.ProviderID,
-		Slug:          m.Slug,
-		ExternalID:    m.ExternalID,
-		DisplayName:   m.DisplayName,
-		ContextWindow: m.ContextWindow,
-		MaxOutput:     m.MaxOutput,
-		InputPrice:    m.InputPrice,
-		OutputPrice:   m.OutputPrice,
-		Capabilities:  m.Capabilities,
-		Enabled:       m.Enabled,
-		Source:        m.Source,
+		ID:               m.ID,
+		ProviderID:       m.ProviderID,
+		Slug:             m.Slug,
+		ExternalID:       m.ExternalID,
+		DisplayName:      m.DisplayName,
+		ContextWindow:    m.ContextWindow,
+		MaxOutput:        m.MaxOutput,
+		InputPrice:       m.InputPrice,
+		OutputPrice:      m.OutputPrice,
+		Capabilities:     m.Capabilities,
+		Enabled:          m.Enabled,
+		Source:           m.Source,
+		ReleaseDate:      releaseDate,
+		InputModalities:  m.InputModalities,
+		OutputModalities: m.OutputModalities,
 	}
 }

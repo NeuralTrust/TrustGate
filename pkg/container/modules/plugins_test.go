@@ -23,7 +23,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/openaimoderation"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/tool_call_validation"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -44,43 +43,29 @@ func newTestPluginRegistry(t *testing.T) appplugins.Registry {
 	return reg
 }
 
-func TestNewPluginRegistry_RegistersToolCallValidation(t *testing.T) {
+func TestNewPluginRegistry_SupportedProtocolsMatrix(t *testing.T) {
 	reg := newTestPluginRegistry(t)
-
-	plugin, ok := reg.Get(tool_call_validation.PluginName)
-	require.Truef(t, ok, "plugin %q is not registered", tool_call_validation.PluginName)
-	assert.Equal(t, tool_call_validation.PluginName, plugin.Name())
-	assert.Contains(t, reg.Names(), tool_call_validation.PluginName)
-}
-
-func TestNewPluginRegistry_ToolCallValidationCatalogMetadata(t *testing.T) {
-	reg := newTestPluginRegistry(t)
-
-	catalog := appplugins.NewCatalogService(reg).Catalog()
-
-	var entry appplugins.CatalogEntry
-	found := false
-	for _, group := range catalog.Groups {
-		for _, item := range group.Items {
-			if item.Slug == tool_call_validation.PluginName {
-				entry = item
-				found = true
-			}
-		}
+	want := map[string][]appplugins.Protocol{
+		"request_size_limiter":  {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
+		"rate_limiter":          {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
+		"trustguard":            {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
+		"per_tool_rate_limiter": {appplugins.ProtocolLLM, appplugins.ProtocolMCP},
+		"token_rate_limiter":    {appplugins.ProtocolLLM},
+		"model_allowlist":       {appplugins.ProtocolLLM},
+		"prompt_template":       {appplugins.ProtocolLLM},
+		"tool_injection":        {appplugins.ProtocolLLM},
+		"tool_allowlist":        {appplugins.ProtocolLLM},
+		"openai_moderation":     {appplugins.ProtocolLLM},
+		"bedrock_guardrail":     {appplugins.ProtocolLLM},
+		"azure_content_safety":  {appplugins.ProtocolLLM},
+		"semantic_cache":        {appplugins.ProtocolLLM},
 	}
-
-	require.Truef(t, found, "catalog has no entry for %q", tool_call_validation.PluginName)
-	assert.NotEmpty(t, entry.Name)
-	assert.NotEmpty(t, entry.Description)
-	assert.NotEmpty(t, entry.SettingsSchema.Fields)
-	assert.NotEmpty(t, entry.SupportedStages)
-	assert.NotEmpty(t, entry.SupportedModes)
-
-	keys := make([]string, 0, len(entry.SettingsSchema.Fields))
-	for _, f := range entry.SettingsSchema.Fields {
-		keys = append(keys, f.Key)
+	for slug, protocols := range want {
+		p, ok := reg.Get(slug)
+		require.Truef(t, ok, "plugin %q not registered", slug)
+		assert.ElementsMatchf(t, protocols, p.SupportedProtocols(), "slug %q protocol set", slug)
+		assert.NotContainsf(t, p.SupportedProtocols(), appplugins.ProtocolA2A, "slug %q must not report A2A", slug)
 	}
-	assert.ElementsMatch(t, []string{"scope", "semantic", "rules"}, keys)
 }
 
 func TestNewPluginRegistry_RegistersOpenAIModeration(t *testing.T) {

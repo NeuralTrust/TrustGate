@@ -17,6 +17,7 @@ package catalog
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
@@ -24,6 +25,22 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/catalog/modelsdev"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
+
+// releaseDateLayout is the "YYYY-MM-DD" format models.dev publishes for release_date.
+const releaseDateLayout = "2006-01-02"
+
+// parseReleaseDate turns a models.dev release_date string into a date, returning
+// nil for empty or unparseable values so the model simply sorts last.
+func parseReleaseDate(raw string) *time.Time {
+	if raw == "" {
+		return nil
+	}
+	t, err := time.Parse(releaseDateLayout, raw)
+	if err != nil {
+		return nil
+	}
+	return &t
+}
 
 const sourceModelsDev = "models.dev"
 const sourceManualSeed = "seed"
@@ -152,16 +169,19 @@ func (s *syncer) Sync(ctx context.Context) error {
 			continue
 		}
 		entity := &domain.Model{
-			ProviderID:    provider.ID,
-			Slug:          m.Slug,
-			ExternalID:    m.ExternalID,
-			DisplayName:   m.DisplayName,
-			ContextWindow: m.ContextWindow,
-			MaxOutput:     m.MaxOutput,
-			InputPrice:    m.InputPrice,
-			OutputPrice:   m.OutputPrice,
-			Enabled:       true,
-			Source:        sourceModelsDev,
+			ProviderID:       provider.ID,
+			Slug:             m.Slug,
+			ExternalID:       m.ExternalID,
+			DisplayName:      m.DisplayName,
+			ContextWindow:    m.ContextWindow,
+			MaxOutput:        m.MaxOutput,
+			InputPrice:       m.InputPrice,
+			OutputPrice:      m.OutputPrice,
+			ReleaseDate:      parseReleaseDate(m.ReleaseDate),
+			InputModalities:  m.InputModalities,
+			OutputModalities: m.OutputModalities,
+			Enabled:          true,
+			Source:           sourceModelsDev,
 		}
 		if err := s.repo.UpsertModel(ctx, entity); err != nil {
 			return err

@@ -76,7 +76,6 @@ func modeBSettings(allowUntemplated bool) map[string]any {
 				"name": "support-bot",
 				"versions": []any{
 					map[string]any{
-						"version": "v3",
 						"labels":  []any{"stable"},
 						"content": `[{"role":"system","content":"You are a {{persona}} bot."}]`,
 						"required_variables": map[string]any{

@@ -152,7 +152,6 @@ func TestPluginE2E_PromptTemplate_ModeBRenderReplacesMessages(t *testing.T) {
 				"name": "support-bot",
 				"versions": []map[string]any{
 					{
-						"version": "v3",
 						"labels":  []string{"stable"},
 						"content": `[{"role":"system","content":"You are {{persona}} support."},{"role":"user","content":"{{question}}"}]`,
 						"required_variables": map[string]any{
@@ -189,7 +188,6 @@ func TestPluginE2E_PromptTemplate_ErrorCodes(t *testing.T) {
 			"name": "support-bot",
 			"versions": []map[string]any{
 				{
-					"version": "v3",
 					"labels":  []string{"stable"},
 					"content": `[{"role":"system","content":"You are {{persona}} support."}]`,
 					"required_variables": map[string]any{
