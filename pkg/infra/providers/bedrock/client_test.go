@@ -82,17 +82,22 @@ func TestResolveModel(t *testing.T) {
 	c := &client{}
 
 	t.Run("uses exact modelId before default model", func(t *testing.T) {
-		model := c.resolveModel([]byte(`{"modelId":"eu.amazon.nova-micro-v1:0","messages":[]}`), "anthropic.claude-sonnet-4-20250514-v1:0")
+		model := c.resolveModel([]byte(`{"modelId":"eu.amazon.nova-micro-v1:0","messages":[]}`), &providers.Config{DefaultModel: "anthropic.claude-sonnet-4-20250514-v1:0"})
 		assert.Equal(t, "eu.amazon.nova-micro-v1:0", model)
 	})
 
+	t.Run("falls back to config model", func(t *testing.T) {
+		model := c.resolveModel([]byte(`{"messages":[]}`), &providers.Config{Model: "openai.gpt-oss-120b"})
+		assert.Equal(t, "openai.gpt-oss-120b", model)
+	})
+
 	t.Run("falls back to default model", func(t *testing.T) {
-		model := c.resolveModel([]byte(`{"messages":[]}`), "anthropic.claude-sonnet-4-20250514-v1:0")
+		model := c.resolveModel([]byte(`{"messages":[]}`), &providers.Config{DefaultModel: "anthropic.claude-sonnet-4-20250514-v1:0"})
 		assert.Equal(t, "anthropic.claude-sonnet-4-20250514-v1:0", model)
 	})
 
 	t.Run("no model returns empty", func(t *testing.T) {
-		assert.Equal(t, "", c.resolveModel([]byte(`{}`), ""))
+		assert.Equal(t, "", c.resolveModel([]byte(`{}`), &providers.Config{}))
 	})
 }
 
