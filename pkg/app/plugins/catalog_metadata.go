@@ -137,7 +137,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"token_rate_limiter": {
 		name:        "LLM Budget",
 		group:       groupQuota,
-		description: "Cap LLM spend with token or dollar budgets over time windows, either as one aggregate counter or per-model rules. Applies gateway-wide for global policies, otherwise per consumer.",
+		description: "Cap LLM spend with token or dollar budgets over time windows, as one aggregate counter or per-model rules. Applies gateway-wide for global policies, otherwise per consumer.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -275,7 +275,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"per_tool_rate_limiter": {
 		name:        "Per-Tool Rate Limiter",
 		group:       groupTrafficControl,
-		description: "Count and enforce limits per real tool execution. For LLM traffic, executions are counted on pre_request from the tool results (role \"tool\") the client returns on the next request. For native MCP traffic, each tools/call is enforced on pre_request and counted once on pre_response after the upstream call succeeds; all configured behaviors collapse to deny/block on MCP. The limit applies gateway-wide when the policy is global, otherwise per consumer.",
+		description: "Count and enforce limits per real tool execution across LLM and native MCP traffic. The limit applies gateway-wide when the policy is global, otherwise per consumer.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -355,7 +355,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"semantic_cache": {
 		name:        "Semantic Cache",
 		group:       groupRouting,
-		description: "Serve cached responses for exact or semantically similar requests. Supports exact, semantic, or both match modes, consumer or global scope, and Redis, pgvector, or in-memory vector stores.",
+		description: "Serve cached responses for exact or semantically similar requests, with configurable match mode, scope, and vector store.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -763,7 +763,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"tool_injection": {
 		name:        "Tool Injection",
 		group:       groupToolGovernance,
-		description: "Inject operator-authored tools into the request leg before it reaches the model. Name collisions with client tools are resolved by the on_conflict policy. This is a governance and steering layer, not an access gate.",
+		description: "Inject operator-authored tools into the request before it reaches the model; name collisions are resolved by the on_conflict policy. A governance layer, not an access gate.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -836,7 +836,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"trustguard": {
 		name:        "TrustGuard",
 		group:       groupGuardrails,
-		description: "Inspect request and/or response content with the external TrustGuard guardrail service and block content it flags. Fails open on any transport error, timeout, non-2xx response, or missing base URL. Streaming responses cannot be blocked in realtime.",
+		description: "Inspect request and/or response content with the external TrustGuard service and block flagged content. Fails open on any error; streaming responses cannot be blocked in realtime.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -860,7 +860,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"openai_moderation": {
 		name:        "OpenAI Moderation",
 		group:       groupGuardrails,
-		description: "Screen request and/or response text with the OpenAI Moderations API and block content that crosses configured category thresholds. Fails closed (HTTP 502) in enforce mode on any moderator error; observe mode records and passes through. Streaming responses cannot be inspected in realtime. Text-only.",
+		description: "Screen request and/or response text with the OpenAI Moderations API and block content that crosses configured category thresholds. Fails closed in enforce mode. Text-only.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -995,7 +995,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"bedrock_guardrail": {
 		name:        "AWS Bedrock Guardrail",
 		group:       groupGuardrails,
-		description: "Apply an AWS Bedrock guardrail to request prompts (PreRequest) and/or responses (PreResponse). Inspects the topic, content, word, sensitive-information (PII) and contextual-grounding policy families configured on the guardrail; blocks with a 403 or anonymizes PII in place. Streaming responses are passed through untouched.",
+		description: "Apply an AWS Bedrock guardrail to request prompts and/or responses, blocking flagged content with a 403 or anonymizing PII in place. Streaming responses are passed through untouched.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -1085,7 +1085,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"regex_replace": {
 		name:        "Regex Replace",
 		group:       groupGuardrails,
-		description: "Rewrite text with RE2 regular expressions on one leg: the request prompt or the LLM response. Rules apply in declaration order and chain, so each rule sees the previous rule's output. Response rewrites short-circuit later pre-response plugins, so order a response-side instance last in its chain. Streaming responses pass through untouched.",
+		description: "Rewrite the request prompt or the LLM response with ordered RE2 regular expressions that chain, each rule seeing the previous rule's output. Streaming responses pass through untouched.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
