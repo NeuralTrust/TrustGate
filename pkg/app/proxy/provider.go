@@ -274,13 +274,16 @@ func (p *providerInvoker) prepare(
 
 	body = injectPreviousResponseID(body, targetFormat, req.PreviousResponseID)
 
-	sentModel, _ := adapter.ExtractModel(body)
+	sentModel := resolveSentModel(body, req)
 
 	return &preparedInvocation{
 		client: client,
 		cfg: &providers.Config{
-			Options:     bk.ProviderOptions(),
-			Credentials: providers.CredentialsFromTargetAuth(bk.Auth()),
+			Options:       bk.ProviderOptions(),
+			Credentials:   providers.CredentialsFromTargetAuth(bk.Auth()),
+			Model:         sentModel,
+			DefaultModel:  req.DefaultModel,
+			AllowedModels: req.AllowedModels,
 		},
 		body:         body,
 		sentModel:    sentModel,
@@ -289,6 +292,18 @@ func (p *providerInvoker) prepare(
 		crossFormat:  crossFormat,
 		capability:   capability,
 	}, nil
+}
+
+// Bedrock/Vertex strip the model from the adapted body (it travels out of band),
+// so fall back to the post-routing request body and then the binding default.
+func resolveSentModel(body []byte, req *infracontext.RequestContext) string {
+	if m, err := adapter.ExtractModel(body); err == nil && m != "" {
+		return m
+	}
+	if m, err := adapter.ExtractModel(req.Body); err == nil && m != "" {
+		return m
+	}
+	return req.DefaultModel
 }
 
 func capabilityFromRequest(req *infracontext.RequestContext) string {
