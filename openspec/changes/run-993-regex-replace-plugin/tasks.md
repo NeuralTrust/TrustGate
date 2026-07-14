@@ -80,7 +80,7 @@ Neither slice stays under 400; the chain only bounds reviewer diff-per-PR.
 
 ## Phase 4: Functional test + docs
 
-- [ ] 4.1 Create `tests/functional/plugin_regex_replace_test.go`: request-side asserts `up.LastBody()` shows rewrite; response-side asserts client raw body rewritten; use `setupPolicyRoute`/`policyPlugin`/`proxyRequest`/`newJSONUpstream`. [spec: Non-functional; Request/Response-leg rewrite]
-- [ ] 4.2 `docs/policies.json`: add a `regex_replace` policy entry mirroring existing plugin docs (target + rules). [spec: Descriptor & stage registration]
-- [ ] 4.3 `postman/TrustGate.postman_collection.json`: add a `regex_replace` policy example mirroring existing plugin requests. [spec: Descriptor & stage registration]
-- [ ] 4.4 Run `go test -race ./...` + confirm no code comments in production files; `go vet`/`golangci-lint` clean. [spec: Non-functional coverage gate]
+- [x] 4.1 Create `tests/functional/plugin_regex_replace_test.go`: request-side asserts `up.LastBody()` shows rewrite; response-side asserts client raw body rewritten; use `setupPolicyRoute`/`policyPlugin`/`proxyRequest`/`newJSONUpstream`. [spec: Non-functional; Request/Response-leg rewrite]
+- [x] 4.2 `docs/policies.json`: add a `regex_replace` policy entry mirroring existing plugin docs (target + rules). [spec: Descriptor & stage registration]
+- [x] 4.3 `postman/TrustGate.postman_collection.json`: add a `regex_replace` policy example mirroring existing plugin requests. [spec: Descriptor & stage registration]
+- [x] 4.4 Run `go test -race ./...` + confirm no code comments in production files; `go vet`/`golangci-lint` clean. [spec: Non-functional coverage gate]

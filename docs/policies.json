@@ -579,6 +579,83 @@
           }
         }
       ]
+    },
+    {
+      "type": "Guardrails",
+      "items": [
+        {
+          "slug": "regex_replace",
+          "name": "Regex Replace",
+          "description": "Rewrite text with RE2 regular expressions on one leg: the request prompt or the LLM response. Rules apply in declaration order and chain, so each rule sees the previous rule's output. Response rewrites short-circuit later pre-response plugins, so order a response-side instance last in its chain. Streaming responses pass through untouched.",
+          "mandatory_stages": [],
+          "supported_stages": [
+            "pre_request",
+            "pre_response"
+          ],
+          "settings_schema": {
+            "fields": [
+              {
+                "key": "target",
+                "label": "Target",
+                "type": "enum",
+                "description": "Which leg to rewrite. A single instance rewrites the request prompt or the LLM response, not both.",
+                "required": true,
+                "enum": [
+                  {
+                    "value": "request",
+                    "label": "Request"
+                  },
+                  {
+                    "value": "response",
+                    "label": "Response"
+                  }
+                ]
+              },
+              {
+                "key": "rules",
+                "label": "Rules",
+                "type": "array",
+                "description": "Ordered replacement rules. Each rule's output feeds the next.",
+                "required": true,
+                "item": {
+                  "key": "rule",
+                  "label": "Rule",
+                  "type": "object",
+                  "fields": [
+                    {
+                      "key": "pattern",
+                      "label": "Pattern",
+                      "type": "string",
+                      "description": "RE2 regular expression. Backreferences and lookaround are not supported.",
+                      "required": true
+                    },
+                    {
+                      "key": "replacement",
+                      "label": "Replacement",
+                      "type": "string",
+                      "description": "Replacement text. Use $1 or ${name} to reference capture groups. Empty removes the match."
+                    },
+                    {
+                      "key": "case_insensitive",
+                      "label": "Case Insensitive",
+                      "type": "boolean",
+                      "description": "Match without regard to letter case ((?i)).",
+                      "default": false
+                    },
+                    {
+                      "key": "multiline",
+                      "label": "Multiline",
+                      "type": "boolean",
+                      "description": "^ and $ match at line boundaries ((?m)).",
+                      "default": false
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
     }
   ]
 }
