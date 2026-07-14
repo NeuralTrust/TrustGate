@@ -182,6 +182,13 @@ var (
 		Required:    true,
 		Secret:      true,
 	}
+	awsSessionTokenField = AuthField{
+		Key:         "session_token",
+		Label:       "Session Token",
+		Type:        AuthFieldTypeString,
+		Description: "Temporary session token for STS credentials.",
+		Secret:      true,
+	}
 
 	awsAuthOptions = []AuthTypeOption{
 		{
@@ -192,13 +199,7 @@ var (
 				awsRegionField,
 				awsAccessKeyField,
 				awsSecretKeyField,
-				{
-					Key:         "session_token",
-					Label:       "Session Token",
-					Type:        AuthFieldTypeString,
-					Description: "Temporary session token for STS credentials.",
-					Secret:      true,
-				},
+				awsSessionTokenField,
 			},
 		},
 		{
@@ -209,6 +210,7 @@ var (
 				awsRegionField,
 				awsAccessKeyField,
 				awsSecretKeyField,
+				awsSessionTokenField,
 				{
 					Key:         "role",
 					Label:       "Role ARN",

@@ -89,6 +89,9 @@ func TestProviderAuthOptions_BedrockVariants(t *testing.T) {
 	if fieldRequired(accessKey.Fields, "use_role") {
 		t.Fatalf("access_key variant must not require use_role: %+v", accessKey.Fields)
 	}
+	if !fieldPresent(accessKey.Fields, "session_token") {
+		t.Fatalf("access_key missing session_token: %+v", accessKey.Fields)
+	}
 
 	assumeRole := variants["assume_role"]
 	for _, key := range []string{"region", "access_key_id", "secret_access_key", "role", "use_role"} {
@@ -98,6 +101,12 @@ func TestProviderAuthOptions_BedrockVariants(t *testing.T) {
 	}
 	if defaultVal, ok := fieldDefault(assumeRole.Fields, "use_role"); !ok || defaultVal != true {
 		t.Fatalf("use_role default = %#v, want true", defaultVal)
+	}
+	if !fieldPresent(assumeRole.Fields, "session_token") {
+		t.Fatalf("assume_role missing session_token: %+v", assumeRole.Fields)
+	}
+	if fieldRequired(assumeRole.Fields, "session_token") {
+		t.Fatalf("assume_role must not require session_token: %+v", assumeRole.Fields)
 	}
 }
 

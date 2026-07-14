@@ -96,7 +96,7 @@ func (c *client) BuildClient(
 	}
 
 	if useRole && roleARN != "" {
-		creds, err := assumeRole(ctx, accessKey, secretKey, roleARN, region, sessionName)
+		creds, err := assumeRole(ctx, accessKey, secretKey, sessionToken, roleARN, region, sessionName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to assume role: %v", err)
 		}
@@ -137,8 +137,8 @@ func loadAWSConfig(ctx context.Context, accessKey, secretKey, sessionToken, regi
 	)
 }
 
-func assumeRole(ctx context.Context, accessKey, secretKey, roleARN, region, sessionName string) (*types.Credentials, error) {
-	baseCfg, err := loadAWSConfig(ctx, accessKey, secretKey, "", region)
+func assumeRole(ctx context.Context, accessKey, secretKey, sessionToken, roleARN, region, sessionName string) (*types.Credentials, error) {
+	baseCfg, err := loadAWSConfig(ctx, accessKey, secretKey, sessionToken, region)
 	if err != nil {
 		return nil, fmt.Errorf("unable to load base AWS config: %w", err)
 	}

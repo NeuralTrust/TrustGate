@@ -261,15 +261,17 @@ func buildAwsConfig(ctx context.Context, credentials providers.Credentials) (aws
 	accessKey := credentials.AwsBedrock.AccessKey
 	secretKey := credentials.AwsBedrock.SecretKey
 
+	sessionToken := credentials.AwsBedrock.SessionToken
+
 	if credentials.AwsBedrock.UseRole && credentials.AwsBedrock.RoleARN != "" {
-		creds, err := assumeRole(ctx, accessKey, secretKey, credentials.AwsBedrock.RoleARN, region)
+		creds, err := assumeRole(ctx, accessKey, secretKey, sessionToken, credentials.AwsBedrock.RoleARN, region)
 		if err != nil {
 			return aws.Config{}, err
 		}
 		return loadAWSConfig(ctx, *creds.AccessKeyId, *creds.SecretAccessKey, *creds.SessionToken, region)
 	}
 
-	return loadAWSConfig(ctx, accessKey, secretKey, "", region)
+	return loadAWSConfig(ctx, accessKey, secretKey, sessionToken, region)
 }
 
 func loadAWSConfig(ctx context.Context, accessKey, secretKey, sessionToken, region string) (aws.Config, error) {
@@ -287,8 +289,8 @@ func loadAWSConfig(ctx context.Context, accessKey, secretKey, sessionToken, regi
 	)
 }
 
-func assumeRole(ctx context.Context, accessKey, secretKey, roleARN, region string, sessionName ...string) (*stsTypes.Credentials, error) {
-	baseCfg, err := loadAWSConfig(ctx, accessKey, secretKey, "", region)
+func assumeRole(ctx context.Context, accessKey, secretKey, sessionToken, roleARN, region string, sessionName ...string) (*stsTypes.Credentials, error) {
+	baseCfg, err := loadAWSConfig(ctx, accessKey, secretKey, sessionToken, region)
 	if err != nil {
 		return nil, fmt.Errorf("unable to load base AWS config: %w", err)
 	}

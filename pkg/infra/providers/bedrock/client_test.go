@@ -137,3 +137,20 @@ func TestCompletions_MissingModel(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "model is required")
 }
+
+func TestBuildAwsConfig_PreservesSessionTokenWhenUseRoleDisabled(t *testing.T) {
+	cfg, err := buildAwsConfig(context.Background(), providers.Credentials{
+		AwsBedrock: &providers.AwsBedrock{
+			Region:       "eu-west-1",
+			AccessKey:    "ASIATEST",
+			SecretKey:    "secret",
+			SessionToken: "session-token",
+			UseRole:      false,
+		},
+	})
+	require.NoError(t, err)
+
+	creds, err := cfg.Credentials.Retrieve(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "session-token", creds.SessionToken)
+}
