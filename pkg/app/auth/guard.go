@@ -57,12 +57,16 @@ func guardAuthDisable(ctx context.Context, consumers consumerAuthRefs, auths dom
 	if err != nil {
 		return err
 	}
+	return evaluateAuthRemoval(ctx, auths, refs, authID, "disabling")
+}
+
+func evaluateAuthRemoval(ctx context.Context, auths domain.Repository, refs []*consumerdomain.Consumer, authID ids.AuthID, action string) error {
 	for _, c := range refs {
 		switch {
 		case c.RoutingMode == consumerdomain.RoutingModeRoleBased:
 			return fmt.Errorf(
-				"%w: auth is the only identity provider of role_based consumer %q; reassign it before disabling",
-				commonerrors.ErrConflict, c.Slug,
+				"%w: auth is the only identity provider of role_based consumer %q; reassign it before %s",
+				commonerrors.ErrConflict, c.Slug, action,
 			)
 		case c.Type == consumerdomain.TypeMCP:
 			hasAlternative, err := consumerHasOtherUsableAuth(ctx, auths, c, authID)
@@ -71,8 +75,8 @@ func guardAuthDisable(ctx context.Context, consumers consumerAuthRefs, auths dom
 			}
 			if !hasAlternative {
 				return fmt.Errorf(
-					"%w: auth is the only usable identity provider of MCP consumer %q; reassign it before disabling",
-					commonerrors.ErrConflict, c.Slug,
+					"%w: auth is the only usable identity provider of MCP consumer %q; reassign it before %s",
+					commonerrors.ErrConflict, c.Slug, action,
 				)
 			}
 		}
@@ -99,9 +103,12 @@ func consumerHasOtherUsableAuth(ctx context.Context, auths domain.Repository, c 
 	return false, nil
 }
 
-func detachAuthFromConsumers(ctx context.Context, consumers consumerAuthRefs, authID ids.AuthID) error {
+func guardAndDetachAuth(ctx context.Context, consumers consumerAuthRefs, auths domain.Repository, authID ids.AuthID) error {
 	refs, err := referencingConsumers(ctx, consumers, authID)
 	if err != nil {
+		return err
+	}
+	if err := evaluateAuthRemoval(ctx, auths, refs, authID, "deleting"); err != nil {
 		return err
 	}
 	for _, c := range refs {
