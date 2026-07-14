@@ -74,9 +74,9 @@ Neither slice stays under 400; the chain only bounds reviewer diff-per-PR.
 
 ## Phase 3: Wiring + catalog
 
-- [ ] 3.1 `pkg/container/modules/plugins.go`: add `regexreplace` import + `regexreplace.New(p.Adapters, p.Logger)` in the catalog slice. [spec: Descriptor & stage registration]
-- [ ] 3.2 `pkg/app/plugins/catalog_metadata.go`: add `pluginCatalogMeta["regex_replace"]`, group `groupGuardrails`, `target` enum (required, `enumOptions("request","response")`) + `rules` array of objects {pattern (required), replacement, case_insensitive, multiline}. [spec: Descriptor & stage registration]
-- [ ] 3.3 `pkg/app/plugins/catalog_test.go`: add dedicated `TestRegexReplaceSchema` reading `pluginCatalogMeta["regex_replace"]` (mirror `TestAzureContentSafetySchema`). Do NOT add to `builtinSlugs`/`registerBuiltins`. [spec: Descriptor & stage registration]
+- [x] 3.1 `pkg/container/modules/plugins.go`: add `regexreplace` import + `regexreplace.New(p.Adapters, p.Logger)` in the catalog slice. [spec: Descriptor & stage registration]
+- [x] 3.2 `pkg/app/plugins/catalog_metadata.go`: add `pluginCatalogMeta["regex_replace"]`, group `groupGuardrails`, `target` enum (required, `enumOptions("request","response")`) + `rules` array of objects {pattern (required), replacement, case_insensitive, multiline}. [spec: Descriptor & stage registration]
+- [x] 3.3 `pkg/app/plugins/catalog_test.go`: add dedicated `TestRegexReplaceSchema` reading `pluginCatalogMeta["regex_replace"]` (mirror `TestAzureContentSafetySchema`). Do NOT add to `builtinSlugs`/`registerBuiltins`. [spec: Descriptor & stage registration]
 
 ## Phase 4: Functional test + docs
 

@@ -35,6 +35,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pertoolratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/prompttemplate"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/ratelimit"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/regexreplace"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/requestsize"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/semanticcache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/tokenratelimit"
@@ -108,6 +109,7 @@ func newPluginRegistry(p pluginParams) (appplugins.Registry, error) {
 		openaimoderation.New(p.Adapters, p.Cfg.OpenAIModeration.BaseURL, p.Cfg.OpenAIModeration.Timeout, p.Logger),
 		azurecontentsafety.New(p.Adapters, p.Logger),
 		bedrockguardrail.New(p.Adapters, p.Logger),
+		regexreplace.New(p.Adapters, p.Logger),
 	}
 	for _, plugin := range catalog {
 		if err := reg.Register(plugin); err != nil {

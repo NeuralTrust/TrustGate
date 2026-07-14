@@ -1373,4 +1373,62 @@ var pluginCatalogMeta = map[string]catalogMeta{
 			},
 		},
 	},
+	"regex_replace": {
+		name:        "Regex Replace",
+		group:       groupGuardrails,
+		description: "Rewrite text with RE2 regular expressions on one leg: the request prompt or the LLM response. Rules apply in declaration order and chain, so each rule sees the previous rule's output. Response rewrites short-circuit later pre-response plugins, so order a response-side instance last in its chain. Streaming responses pass through untouched.",
+		schema: SettingsSchema{
+			Fields: []Field{
+				{
+					Key:         "target",
+					Label:       "Target",
+					Type:        FieldTypeEnum,
+					Description: "Which leg to rewrite. A single instance rewrites the request prompt or the LLM response, not both.",
+					Required:    true,
+					Enum:        enumOptions("request", "response"),
+				},
+				{
+					Key:         "rules",
+					Label:       "Rules",
+					Type:        FieldTypeArray,
+					Description: "Ordered replacement rules. Each rule's output feeds the next.",
+					Required:    true,
+					Item: &Field{
+						Key:   "rule",
+						Label: "Rule",
+						Type:  FieldTypeObject,
+						Fields: []Field{
+							{
+								Key:         "pattern",
+								Label:       "Pattern",
+								Type:        FieldTypeString,
+								Description: "RE2 regular expression. Backreferences and lookaround are not supported.",
+								Required:    true,
+							},
+							{
+								Key:         "replacement",
+								Label:       "Replacement",
+								Type:        FieldTypeString,
+								Description: "Replacement text. Use $1 or ${name} to reference capture groups. Empty removes the match.",
+							},
+							{
+								Key:         "case_insensitive",
+								Label:       "Case Insensitive",
+								Type:        FieldTypeBoolean,
+								Description: "Match without regard to letter case ((?i)).",
+								Default:     false,
+							},
+							{
+								Key:         "multiline",
+								Label:       "Multiline",
+								Type:        FieldTypeBoolean,
+								Description: "^ and $ match at line boundaries ((?m)).",
+								Default:     false,
+							},
+						},
+					},
+				},
+			},
+		},
+	},
 }
