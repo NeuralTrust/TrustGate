@@ -21,7 +21,7 @@ gate that enforces it.
   `exclude` directive.
 - **Versioning:** semver via **path-prefixed tags** `pkg/metrics/vX.Y.Z`, created
   automatically on merge to `main` by
-  [`metrics-module-release.yml`](../.github/workflows/metrics-module-release.yml)
+  [`metrics-module-release.yml`](../../.github/workflows/metrics-module-release.yml)
   (ENG-1034). The bump level is derived from the Conventional Commit messages
   that touched the module (`feat` → minor, `type!:`/`BREAKING CHANGE` → major,
   otherwise patch).
@@ -56,7 +56,7 @@ protects the *Go import*, `SchemaVersion` protects the *stored data*.
 
 ## The CI compatibility gate
 
-Job **`metrics-compat-gate`** in [`ci.yml`](../.github/workflows/ci.yml) runs on
+Job **`metrics-compat-gate`** in [`ci.yml`](../../.github/workflows/ci.yml) runs on
 every PR (it is safe to make it a required status). It self-skips when the PR does
 not touch `pkg/metrics`.
 
@@ -79,10 +79,10 @@ When `pkg/metrics` changes, the gate:
 | — | decreased | — | **fail** |
 
 The pure decision logic lives in
-[`.github/scripts/metrics-compat-lib.sh`](../.github/scripts/metrics-compat-lib.sh)
+[`.github/scripts/metrics-compat-lib.sh`](../../.github/scripts/metrics-compat-lib.sh)
 and is unit-tested by `metrics-compat-lib.test.sh` (run in the `scripts-tests`
 job). The orchestration (git, worktrees, apidiff) lives in
-[`.github/scripts/metrics-compat-gate.sh`](../.github/scripts/metrics-compat-gate.sh).
+[`.github/scripts/metrics-compat-gate.sh`](../../.github/scripts/metrics-compat-gate.sh).
 
 ### Making a breaking change on purpose
 
