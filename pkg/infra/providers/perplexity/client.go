@@ -22,7 +22,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
 )
 
-const chatCompletionsURL = "https://api.perplexity.ai/v1/chat/completions"
+// Perplexity accepts OpenAI-style POST /chat/completions; /v1/chat/completions returns 404.
+const chatCompletionsURL = "https://api.perplexity.ai/chat/completions"
 
 type client struct {
 	chat *openai.ChatCompletionsClient
