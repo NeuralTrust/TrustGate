@@ -30,6 +30,8 @@ var/
 # env files
 .env
 .env.functional
+.env.hybrid
+.env.local
 
 # k8s per-overlay secret blobs (real sensitive data; only *.example is committed)
 secret.env
