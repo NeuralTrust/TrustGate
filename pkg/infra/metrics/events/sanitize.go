@@ -17,7 +17,6 @@ package events
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"mime"
 	"mime/multipart"
 	"strings"
@@ -27,45 +26,75 @@ const (
 	multipartPlaceholder = `{"_multipart": true}`
 	truncatedSuffix      = "...[truncated]"
 
-	// maxSanitizedBodyBytes caps the body representation stored in an event so a
-	// large payload cannot produce an oversized Kafka message or blow up memory.
 	maxSanitizedBodyBytes = 64 * 1024
-	// maxMultipartFieldValueBytes caps the captured value of a multipart form field.
 	maxMultipartFieldValueBytes = 256
 
 	redactedValue = "[REDACTED]"
+
+	bearerRedacted = "Bearer " + redactedValue
+	basicRedacted  = "Basic " + redactedValue
 )
 
-// sensitiveHeaders are stored lower-cased; their values are never exported to a
-// telemetry exporter to avoid leaking credentials/PII into the metrics topic.
+var credentialBodyKeys = map[string]struct{}{
+	"password":       {},
+	"passwd":           {},
+	"secret":           {},
+	"token":            {},
+	"api_key":          {},
+	"apikey":           {},
+	"authorization":    {},
+	"credential":       {},
+	"access_token":     {},
+	"refresh_token":    {},
+	"client_secret":    {},
+	"private_key":      {},
+}
+
 var sensitiveHeaders = map[string]struct{}{
 	"authorization":         {},
 	"proxy-authorization":   {},
+	"www-authenticate":      {},
+	"authentication":        {},
 	"cookie":                {},
 	"set-cookie":            {},
 	"x-api-key":             {},
+	"api-key":               {},
+	"x-tg-api-key":          {},
 	"x-ag-api-key":          {},
 	"x-ag-playground-token": {},
-	"api-key":               {},
 	"x-auth-token":          {},
 	"x-access-token":        {},
 	"x-amz-security-token":  {},
+	"x-amz-credential":      {},
+	"x-goog-api-key":        {},
+	"x-csrf-token":          {},
+	"x-xsrf-token":          {},
 }
 
 // SanitizeBody returns a loggable representation of a request/response body.
-// Multipart payloads are reduced to their field names and file metadata so raw
-// file contents never reach an exporter, and oversized bodies are truncated to
-// maxSanitizedBodyBytes.
 func SanitizeBody(body []byte, headers map[string][]string) string {
 	return sanitizeBody(body, headers, maxSanitizedBodyBytes)
 }
 
-// SanitizeBodyFull behaves like SanitizeBody but never truncates by size, so the
-// full body is preserved (e.g. complete streamed responses). Multipart payloads
-// are still reduced to field/file metadata so raw file contents never reach an
-// exporter.
+// SanitizeBodyFull behaves like SanitizeBody but never truncates by size.
 func SanitizeBodyFull(body []byte, headers map[string][]string) string {
 	return sanitizeBody(body, headers, 0)
+}
+
+// SanitizeExtras redacts credential-shaped keys from plugin extras before export.
+func SanitizeExtras(extras any) any {
+	if extras == nil {
+		return nil
+	}
+	raw, err := json.Marshal(extras)
+	if err != nil {
+		return nil
+	}
+	var generic any
+	if err := json.Unmarshal(raw, &generic); err != nil {
+		return nil
+	}
+	return stripCredentialBodyValue(generic)
 }
 
 func sanitizeBody(body []byte, headers map[string][]string, maxBytes int) string {
@@ -75,11 +104,17 @@ func sanitizeBody(body []byte, headers map[string][]string, maxBytes int) string
 
 	contentType := lookupHeader(headers, "Content-Type")
 	if contentType == "" {
+		if stripped, ok := tryStripJSONCredentials(body); ok {
+			return capBody(stripped, maxBytes)
+		}
 		return capBody(body, maxBytes)
 	}
 
 	mediaType, params, err := mime.ParseMediaType(contentType)
 	if err != nil {
+		if stripped, ok := tryStripJSONCredentials(body); ok {
+			return capBody(stripped, maxBytes)
+		}
 		return capBody(body, maxBytes)
 	}
 
@@ -87,19 +122,146 @@ func sanitizeBody(body []byte, headers map[string][]string, maxBytes int) string
 		return extractMultipartFileNames(body, params["boundary"])
 	}
 
+	if isJSONMediaType(mediaType) {
+		return capBody(stripCredentialJSONBody(body), maxBytes)
+	}
+
 	return capBody(body, maxBytes)
 }
 
-// RedactHeaders returns a copy of headers with the values of sensitive headers
-// replaced by a redaction marker. The original map is never mutated.
+func isJSONMediaType(mediaType string) bool {
+	return mediaType == "application/json" || strings.HasSuffix(mediaType, "+json")
+}
+
+func tryStripJSONCredentials(body []byte) ([]byte, bool) {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 {
+		return nil, false
+	}
+	switch trimmed[0] {
+	case '{', '[':
+	default:
+		return nil, false
+	}
+	return stripCredentialJSONBody(trimmed), true
+}
+
+func stripCredentialJSONBody(body []byte) []byte {
+	if len(body) == 0 {
+		return body
+	}
+	var generic any
+	if err := json.Unmarshal(body, &generic); err != nil {
+		return body
+	}
+	if !containsCredentialKeys(generic) {
+		return body
+	}
+	stripped := stripCredentialBodyValue(generic)
+	out, err := json.Marshal(stripped)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
+func containsCredentialKeys(v any) bool {
+	switch t := v.(type) {
+	case map[string]any:
+		for key, val := range t {
+			if isCredentialBodyKey(key) {
+				return true
+			}
+			if containsCredentialKeys(val) {
+				return true
+			}
+		}
+	case []any:
+		for _, val := range t {
+			if containsCredentialKeys(val) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func stripCredentialBodyValue(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		for key, val := range t {
+			if isCredentialBodyKey(key) {
+				t[key] = stripCredentialBodyLeaf(val)
+			} else {
+				t[key] = stripCredentialBodyValue(val)
+			}
+		}
+		return t
+	case []any:
+		for i := range t {
+			t[i] = stripCredentialBodyValue(t[i])
+		}
+		return t
+	default:
+		return v
+	}
+}
+
+func stripCredentialBodyLeaf(v any) any {
+	switch t := v.(type) {
+	case string:
+		return redactedValue
+	case []any:
+		for i := range t {
+			t[i] = stripCredentialBodyLeaf(t[i])
+		}
+		return t
+	case map[string]any:
+		return stripCredentialBodyValue(t)
+	default:
+		return v
+	}
+}
+
+func isCredentialBodyKey(key string) bool {
+	lower := strings.ToLower(strings.TrimSpace(key))
+	if _, ok := credentialBodyKeys[lower]; ok {
+		return true
+	}
+	switch {
+	case lower == "apikey":
+		return true
+	case strings.HasSuffix(lower, "_api_key"):
+		return true
+	case strings.HasSuffix(lower, "-api-key"):
+		return true
+	case strings.HasSuffix(lower, "_apikey"):
+		return true
+	}
+	return false
+}
+
+func isSensitiveHeader(key string) bool {
+	lower := strings.ToLower(key)
+	if _, ok := sensitiveHeaders[lower]; ok {
+		return true
+	}
+	return strings.HasSuffix(lower, "-api-key") || lower == "apikey"
+}
+
+// RedactHeaders returns a copy of headers with sensitive values replaced.
 func RedactHeaders(headers map[string][]string) map[string][]string {
 	if headers == nil {
 		return nil
 	}
 	out := make(map[string][]string, len(headers))
 	for key, values := range headers {
-		if _, sensitive := sensitiveHeaders[strings.ToLower(key)]; sensitive {
-			out[key] = []string{redactedValue}
+		if isSensitiveHeader(key) {
+			redacted := make([]string, len(values))
+			for i, v := range values {
+				redacted[i] = redactCredentialHeaderValue(key, v)
+			}
+			out[key] = redacted
 			continue
 		}
 		out[key] = values
@@ -107,8 +269,21 @@ func RedactHeaders(headers map[string][]string) map[string][]string {
 	return out
 }
 
-// capBody truncates body to maxBytes, appending a marker. A non-positive maxBytes
-// disables truncation and returns the full body.
+func redactCredentialHeaderValue(headerKey, value string) string {
+	switch strings.ToLower(headerKey) {
+	case "authorization", "proxy-authorization":
+		trimmed := strings.TrimSpace(value)
+		lower := strings.ToLower(trimmed)
+		if strings.HasPrefix(lower, "bearer ") {
+			return bearerRedacted
+		}
+		if strings.HasPrefix(lower, "basic ") {
+			return basicRedacted
+		}
+	}
+	return redactedValue
+}
+
 func capBody(body []byte, maxBytes int) string {
 	if maxBytes <= 0 || len(body) <= maxBytes {
 		return string(body)
@@ -139,10 +314,7 @@ func extractMultipartFileNames(body []byte, boundary string) string {
 				"filename": filename,
 			}
 		} else if fieldname != "" {
-			value, _ := io.ReadAll(io.LimitReader(part, maxMultipartFieldValueBytes+1))
-			if len(value) > 0 {
-				result[fieldname] = capMultipartValue(value)
-			}
+			result[fieldname] = redactedValue
 		}
 		_ = part.Close()
 	}
@@ -157,13 +329,6 @@ func extractMultipartFileNames(body []byte, boundary string) string {
 	}
 
 	return string(jsonBytes)
-}
-
-func capMultipartValue(value []byte) string {
-	if len(value) > maxMultipartFieldValueBytes {
-		return string(value[:maxMultipartFieldValueBytes]) + truncatedSuffix
-	}
-	return string(value)
 }
 
 func lookupHeader(headers map[string][]string, name string) string {

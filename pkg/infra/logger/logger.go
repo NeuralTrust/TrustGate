@@ -181,7 +181,7 @@ func NewLoggerWithFormat(level slog.Level, format LogFormat, fileEnabled bool) *
 		consoleBaseHandler = slog.NewJSONHandler(os.Stdout, handlerOpts)
 	}
 
-	consoleHandler := NewSourceFilterHandler(consoleBaseHandler)
+	consoleHandler := NewSourceFilterHandler(NewCredentialRedactHandler(consoleBaseHandler))
 
 	if !fileEnabled {
 		return slog.New(consoleHandler)
@@ -206,5 +206,5 @@ func createFileHandler(opts *slog.HandlerOptions) (slog.Handler, error) {
 		return nil, err
 	}
 	jsonHandler := slog.NewJSONHandler(logFile, opts)
-	return NewSourceFilterHandler(jsonHandler), nil
+	return NewSourceFilterHandler(NewCredentialRedactHandler(jsonHandler)), nil
 }
