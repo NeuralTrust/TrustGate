@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/logredact"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/google/uuid"
 )
@@ -158,7 +159,7 @@ func (s *Span) StatusCode() int {
 func (s *Span) SetError(msg string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.errMsg = msg
+	s.errMsg = logredact.RedactLogString(msg)
 }
 
 func (s *Span) Error() string {
