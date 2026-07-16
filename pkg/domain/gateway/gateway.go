@@ -42,6 +42,7 @@ type Gateway struct {
 	Telemetry       *telemetry.Telemetry `json:"telemetry,omitempty"`
 	ClientTLSConfig ClientTLSConfig      `json:"client_tls,omitempty"`
 	SessionConfig   *SessionConfig       `json:"session_config,omitempty"`
+	Entitlements    Entitlements         `json:"entitlements"`
 	CreatedAt       time.Time            `json:"created_at"`
 	UpdatedAt       time.Time            `json:"updated_at"`
 }
@@ -119,10 +120,11 @@ func New(slug string) (*Gateway, error) {
 	}
 	now := time.Now().UTC()
 	g := &Gateway{
-		ID:        ids.New[ids.GatewayKind](),
-		Slug:      normalized,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:           ids.New[ids.GatewayKind](),
+		Slug:         normalized,
+		Entitlements: DefaultEntitlements(),
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 	if err := g.Validate(); err != nil {
 		return nil, err

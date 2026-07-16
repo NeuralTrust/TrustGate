@@ -26,6 +26,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcp/mocks"
+	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	approle "github.com/NeuralTrust/TrustGate/pkg/app/role"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -45,6 +46,11 @@ func noopRunner() *appmcp.PluginRunner {
 }
 
 func newAppWithRunner(t *testing.T, composer appmcp.Composer, plugins *appmcp.PluginRunner, consumerType consumerdomain.Type, authorized bool) *fiber.App {
+	t.Helper()
+	return newAppWithRunnerAndLimiter(t, composer, plugins, nil, consumerType, authorized)
+}
+
+func newAppWithRunnerAndLimiter(t *testing.T, composer appmcp.Composer, plugins *appmcp.PluginRunner, limiter ratelimitapp.Checker, consumerType consumerdomain.Type, authorized bool) *fiber.App {
 	t.Helper()
 	authID := ids.New[ids.AuthKind]()
 	gwID := ids.New[ids.GatewayKind]()
@@ -68,7 +74,7 @@ func newAppWithRunner(t *testing.T, composer appmcp.Composer, plugins *appmcp.Pl
 		c.SetUserContext(ctx)
 		return c.Next()
 	})
-	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(composer, plugins), appmcp.NewRoleScoper(approle.NewOIDCResolver()))
+	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(composer, plugins, limiter), appmcp.NewRoleScoper(approle.NewOIDCResolver()))
 	app.Post(mcpPath, handler.Handle)
 	app.Get(mcpPath, handler.MethodNotAllowed)
 	return app

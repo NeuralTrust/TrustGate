@@ -22,6 +22,7 @@ import (
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
+	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
@@ -36,10 +37,17 @@ func (e *InvalidParamsError) Error() string { return "mcp: invalid params: " + e
 type RPCGateway struct {
 	composer appmcp.Composer
 	plugins  *appmcp.PluginRunner
+	limiter  ratelimitapp.Checker
 }
 
-func NewRPCGateway(composer appmcp.Composer, plugins *appmcp.PluginRunner) *RPCGateway {
-	return &RPCGateway{composer: composer, plugins: plugins}
+// NewRPCGateway wires the MCP dispatch path. A nil limiter defaults to the
+// noop checker (rate limiting disabled), keeping callers that don't care about
+// plan limits unaffected.
+func NewRPCGateway(composer appmcp.Composer, plugins *appmcp.PluginRunner, limiter ratelimitapp.Checker) *RPCGateway {
+	if limiter == nil {
+		limiter = ratelimitapp.NewNoopChecker()
+	}
+	return &RPCGateway{composer: composer, plugins: plugins, limiter: limiter}
 }
 
 func (g *RPCGateway) Dispatch(ctx context.Context, rc *appconsumer.RoutableConsumer, method string, params json.RawMessage) (any, error) {
@@ -115,6 +123,31 @@ func mcpRequestAttrs(method string, params json.RawMessage) (operation, tool, pr
 	}
 }
 
+// checkRateLimit enforces the gateway plan burst/quota before the tool call
+// reaches the upstream. An exceeded limit maps to a -32004 JSON-RPC error with
+// the standard rate-limit headers; an unavailable plan (unknown/missing tier)
+// propagates as-is so writeAppError maps it to an internal error, matching how
+// the TrustGuard plugin path treats an unusable guard.
+func (g *RPCGateway) checkRateLimit(ctx context.Context, rc *appconsumer.RoutableConsumer) error {
+	if rc == nil || rc.Consumer == nil {
+		return nil
+	}
+	err := g.limiter.Check(ctx, rc.Consumer.GatewayID)
+	if err == nil {
+		return nil
+	}
+	var exceeded *ratelimitapp.Exceeded
+	if errors.As(err, &exceeded) {
+		return &appmcp.RPCError{
+			Code:        appmcp.CodeRateLimited,
+			Message:     exceeded.Error(),
+			Data:        json.RawMessage(exceeded.Body()),
+			HTTPHeaders: exceeded.Headers(),
+		}
+	}
+	return err
+}
+
 func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsumer, method string, params json.RawMessage) (any, error) {
 	switch method {
 	case "tools/list":
@@ -133,6 +166,9 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		}
 		if err := json.Unmarshal(params, &p); err != nil || p.Name == "" {
 			return nil, &InvalidParamsError{Reason: "tools/call requires params.name"}
+		}
+		if err := g.checkRateLimit(ctx, rc); err != nil {
+			return nil, err
 		}
 		if err := g.plugins.PreRequest(ctx, rc, p.Name, p.Arguments); err != nil {
 			return nil, err

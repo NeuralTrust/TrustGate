@@ -32,9 +32,10 @@ import (
 // -32002 and -32003 are already used elsewhere in the MCP handler.
 const codePolicyBlocked int64 = -32001
 
-// codeRateLimited is returned when TrustGuard (or another plugin) rejects with
-// HTTP 429 so MCP clients can distinguish plan throttle from content blocks.
-const codeRateLimited int64 = -32004
+// CodeRateLimited is returned when TrustGuard (or another plugin, including the
+// gateway plan rate limiter) rejects with HTTP 429 so MCP clients can
+// distinguish plan throttle from content blocks.
+const CodeRateLimited int64 = -32004
 
 const (
 	directionInput  = "input"
@@ -194,7 +195,7 @@ func (r *PluginRunner) buildRequestContext(
 func blockToRPCError(pe *appplugins.PluginError) *RPCError {
 	code := codePolicyBlocked
 	if pe != nil && pe.StatusCode == http.StatusTooManyRequests {
-		code = codeRateLimited
+		code = CodeRateLimited
 	}
 	var headers map[string][]string
 	if pe != nil && len(pe.Headers) > 0 {

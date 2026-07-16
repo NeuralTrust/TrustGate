@@ -79,7 +79,7 @@ func TestMCPPipeline_ToolsCallBuildsMCPEvent(t *testing.T) {
 		CallTool(mock.Anything, mock.Anything, "echo", mock.Anything).
 		Return(json.RawMessage(`{"content":[]}`), nil).
 		Once()
-	gateway := mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(nil, nil))
+	gateway := mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(nil, nil), nil)
 
 	gatewayID := ids.New[ids.GatewayKind]()
 	app := fiber.New()

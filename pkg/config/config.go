@@ -117,6 +117,8 @@ const (
 	defaultConfigSyncRecompileDebounce = 2 * time.Second
 	defaultConfigSyncRecompileBackstop = 5 * time.Minute
 
+	defaultRateLimitEnabled = false
+
 	defaultConfigSyncGRPCListenAddr             = ":8083"
 	defaultConfigSyncGRPCKeepaliveTime          = 30 * time.Second
 	defaultConfigSyncGRPCKeepaliveTimeout       = 10 * time.Second
@@ -148,6 +150,7 @@ type Config struct {
 	TrustGuard       TrustGuardConfig
 	OpenAIModeration OpenAIModerationConfig
 	ConfigSync       ConfigSyncConfig
+	RateLimit        RateLimitConfig
 }
 
 const (
@@ -353,6 +356,12 @@ type OpenAIModerationConfig struct {
 	Timeout time.Duration
 }
 
+// RateLimitConfig gates the gateway plan (burst/quota) rate limiter, enforced
+// per gateway after resolve and before the request reaches the upstream.
+type RateLimitConfig struct {
+	Enabled bool
+}
+
 func LoadConfig() (*Config, error) {
 	cfg := &Config{
 		AppEnv:           getEnv("APP_ENV", defaultAppEnv),
@@ -374,6 +383,7 @@ func LoadConfig() (*Config, error) {
 		TrustGuard:       getTrustGuardConfig(),
 		OpenAIModeration: getOpenAIModerationConfig(),
 		ConfigSync:       getConfigSyncConfig(),
+		RateLimit:        getRateLimitConfig(),
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -678,6 +688,12 @@ func getConfigSyncConfig() ConfigSyncConfig {
 		GRPCMaxBackoff:       getEnvDuration("CONFIG_SYNC_GRPC_MAX_BACKOFF", defaultConfigSyncGRPCMaxBackoff),
 		OutboxRetention:      getEnvDuration("CONFIG_SYNC_OUTBOX_RETENTION", defaultConfigSyncOutboxRetention),
 		OutboxMaxRows:        getEnvInt64("CONFIG_SYNC_OUTBOX_MAX_ROWS", defaultConfigSyncOutboxMaxRows),
+	}
+}
+
+func getRateLimitConfig() RateLimitConfig {
+	return RateLimitConfig{
+		Enabled: getEnvBool("RATE_LIMIT_ENABLED", defaultRateLimitEnabled),
 	}
 }
 

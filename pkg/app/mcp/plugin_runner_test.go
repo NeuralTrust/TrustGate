@@ -98,7 +98,7 @@ func TestPluginRunner_PreRequest(t *testing.T) {
 				Body:       []byte(`{"error":"rate limit exceeded","reason":"burst"}`),
 				Headers:    map[string][]string{"Retry-After": {"42"}, "X-RateLimit-Reason": {"burst"}},
 			},
-			wantRPCCode: codeRateLimited,
+			wantRPCCode: CodeRateLimited,
 			wantRPCData: `{"error":"rate limit exceeded","reason":"burst"}`,
 		},
 		{
@@ -132,7 +132,7 @@ func TestPluginRunner_PreRequest(t *testing.T) {
 				require.NoError(t, err)
 			case tt.wantRPCCode != 0:
 				rpcErr := assertRPCError(t, err, tt.wantRPCCode, tt.wantRPCData)
-				if tt.wantRPCCode == codeRateLimited {
+				if tt.wantRPCCode == CodeRateLimited {
 					require.Equal(t, []string{"42"}, rpcErr.HTTPHeaders["Retry-After"])
 					require.Equal(t, []string{"burst"}, rpcErr.HTTPHeaders["X-RateLimit-Reason"])
 				}
