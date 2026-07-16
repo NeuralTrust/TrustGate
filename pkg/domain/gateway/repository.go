@@ -35,4 +35,5 @@ type Repository interface {
 	FindByDomain(ctx context.Context, domain string) (*Gateway, error)
 	FindBySlug(ctx context.Context, slug string) (*Gateway, error)
 	List(ctx context.Context, filter ListFilter) (items []*Gateway, total int, err error)
+	CountByTenantID(ctx context.Context, tenantID string) (int, error)
 }

@@ -23,6 +23,63 @@ func (_m *Repository) EXPECT() *Repository_Expecter {
 	return &Repository_Expecter{mock: &_m.Mock}
 }
 
+// CountByTenantID provides a mock function with given fields: ctx, tenantID
+func (_m *Repository) CountByTenantID(ctx context.Context, tenantID string) (int, error) {
+	ret := _m.Called(ctx, tenantID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CountByTenantID")
+	}
+
+	var r0 int
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string) (int, error)); ok {
+		return rf(ctx, tenantID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string) int); ok {
+		r0 = rf(ctx, tenantID)
+	} else {
+		r0 = ret.Get(0).(int)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = rf(ctx, tenantID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Repository_CountByTenantID_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CountByTenantID'
+type Repository_CountByTenantID_Call struct {
+	*mock.Call
+}
+
+// CountByTenantID is a helper method to define mock.On call
+//   - ctx context.Context
+//   - tenantID string
+func (_e *Repository_Expecter) CountByTenantID(ctx interface{}, tenantID interface{}) *Repository_CountByTenantID_Call {
+	return &Repository_CountByTenantID_Call{Call: _e.mock.On("CountByTenantID", ctx, tenantID)}
+}
+
+func (_c *Repository_CountByTenantID_Call) Run(run func(ctx context.Context, tenantID string)) *Repository_CountByTenantID_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string))
+	})
+	return _c
+}
+
+func (_c *Repository_CountByTenantID_Call) Return(_a0 int, _a1 error) *Repository_CountByTenantID_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Repository_CountByTenantID_Call) RunAndReturn(run func(context.Context, string) (int, error)) *Repository_CountByTenantID_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Delete provides a mock function with given fields: ctx, id
 func (_m *Repository) Delete(ctx context.Context, id ids.ID[ids.GatewayKind]) error {
 	ret := _m.Called(ctx, id)

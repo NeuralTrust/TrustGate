@@ -27,6 +27,7 @@ import (
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/gateway/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/stretchr/testify/mock"
@@ -229,6 +230,7 @@ func TestCreator_Create_StripsClientProvidedTenantID(t *testing.T) {
 func TestCreator_Create_StampsTenantIDFromContext(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
+	repo.EXPECT().CountByTenantID(mock.Anything, "acme").Return(0, nil).Once()
 	repo.EXPECT().
 		Save(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
 			return g.TenantID() == "acme" && g.Metadata["env"] == "prod"
@@ -270,5 +272,112 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 	}
 	if !errors.Is(err, commonerrors.ErrAlreadyExists) {
 		t.Fatalf("expected wrapped commonerrors.ErrAlreadyExists, got %v", err)
+	}
+}
+
+func TestCreator_Create_RejectsSecondGatewayOnFreeTier(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().CountByTenantID(mock.Anything, "acme").Return(1, nil).Once()
+
+	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil)
+
+	_, err := creator.Create(context.Background(), appgateway.CreateInput{
+		Slug:     "prod-2",
+		TenantID: "acme",
+	})
+	if !errors.Is(err, ratelimit.ErrInstanceLimit) {
+		t.Fatalf("expected ErrInstanceLimit, got %v", err)
+	}
+	if !errors.Is(err, commonerrors.ErrConflict) {
+		t.Fatalf("expected wrapped commonerrors.ErrConflict, got %v", err)
+	}
+}
+
+func TestCreator_Create_AllowsSecondGatewayOnStandardTier(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().CountByTenantID(mock.Anything, "acme").Return(1, nil).Once()
+	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
+
+	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil)
+
+	entitlements := domain.Entitlements{Tier: "standard"}
+	g, err := creator.Create(context.Background(), appgateway.CreateInput{
+		Slug:         "prod-2",
+		TenantID:     "acme",
+		Entitlements: &entitlements,
+	})
+	if err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+	if g.Entitlements.Tier != "standard" {
+		t.Fatalf("Entitlements.Tier = %q, want standard", g.Entitlements.Tier)
+	}
+}
+
+func TestCreator_Create_AllowsUnlimitedInstancesOnEnterpriseTier(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
+
+	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil)
+
+	entitlements := domain.Entitlements{Tier: "enterprise"}
+	_, err := creator.Create(context.Background(), appgateway.CreateInput{
+		Slug:         "prod-51",
+		TenantID:     "acme",
+		Entitlements: &entitlements,
+	})
+	if err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+	repo.AssertNotCalled(t, "CountByTenantID")
+}
+
+func TestCreator_Create_SkipsInstanceLimitWhenTenantEmpty(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
+
+	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil)
+
+	_, err := creator.Create(context.Background(), appgateway.CreateInput{Slug: "prod"})
+	if err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+	repo.AssertNotCalled(t, "CountByTenantID")
+}
+
+func TestCreator_Create_AllowsFirstGatewayOnFreeTier(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().CountByTenantID(mock.Anything, "acme").Return(0, nil).Once()
+	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
+
+	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil)
+
+	_, err := creator.Create(context.Background(), appgateway.CreateInput{
+		Slug:     "prod",
+		TenantID: "acme",
+	})
+	if err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+}
+
+func TestCreator_Create_PropagatesCountByTenantIDError(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().CountByTenantID(mock.Anything, "acme").Return(0, errors.New("db down")).Once()
+
+	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil)
+
+	_, err := creator.Create(context.Background(), appgateway.CreateInput{
+		Slug:     "prod",
+		TenantID: "acme",
+	})
+	if err == nil || err.Error() != "db down" {
+		t.Fatalf("expected repo error to propagate, got %v", err)
 	}
 }

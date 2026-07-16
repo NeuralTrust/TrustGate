@@ -246,6 +246,48 @@ func TestRepository_Delete(t *testing.T) {
 	}
 }
 
+func TestRepository_CountByTenantID(t *testing.T) {
+	r, _ := setupRepo(t)
+	ctx := context.Background()
+
+	for _, slug := range []string{"acme-a", "acme-b"} {
+		g, _ := domain.New(slug)
+		g.Metadata = domain.WithTenantID(nil, "acme")
+		if err := r.Save(ctx, g); err != nil {
+			t.Fatalf("Save %s: %v", slug, err)
+		}
+	}
+	g, _ := domain.New("globex-a")
+	g.Metadata = domain.WithTenantID(nil, "globex")
+	if err := r.Save(ctx, g); err != nil {
+		t.Fatalf("Save globex-a: %v", err)
+	}
+
+	count, err := r.CountByTenantID(ctx, "acme")
+	if err != nil {
+		t.Fatalf("CountByTenantID: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("count = %d, want 2", count)
+	}
+
+	count, err = r.CountByTenantID(ctx, "globex")
+	if err != nil {
+		t.Fatalf("CountByTenantID: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("count = %d, want 1", count)
+	}
+
+	count, err = r.CountByTenantID(ctx, "unknown-tenant")
+	if err != nil {
+		t.Fatalf("CountByTenantID: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("count = %d, want 0", count)
+	}
+}
+
 func TestRepository_List(t *testing.T) {
 	r, _ := setupRepo(t)
 	ctx := context.Background()

@@ -52,13 +52,13 @@ func (s *stubCounter) IncrQuota(context.Context, ids.GatewayID, string) (int64, 
 }
 
 func TestCheckerBurstExceeded(t *testing.T) {
-	c := NewChecker(stubTiers{tier: "free"}, &stubCounter{burst: 121, burstTTL: 42 * time.Second}, nil)
+	c := NewChecker(stubTiers{tier: "free"}, &stubCounter{burst: 61, burstTTL: 42 * time.Second}, nil)
 	err := c.Check(context.Background(), ids.New[ids.GatewayKind]())
 	var ex *Exceeded
 	if !errors.As(err, &ex) {
 		t.Fatalf("err = %v, want Exceeded", err)
 	}
-	if ex.Reason != ReasonBurst || ex.Limit != 120 {
+	if ex.Reason != ReasonBurst || ex.Limit != 60 {
 		t.Fatalf("got %+v", ex)
 	}
 	if ex.Remaining != 0 {
@@ -70,7 +70,7 @@ func TestCheckerBurstExceeded(t *testing.T) {
 }
 
 func TestCheckerBurstAtLimitAllowed(t *testing.T) {
-	counter := &stubCounter{burst: 120, burstTTL: time.Minute, quota: 1}
+	counter := &stubCounter{burst: 60, burstTTL: time.Minute, quota: 1}
 	c := NewChecker(stubTiers{tier: "free"}, counter, nil)
 	if err := c.Check(context.Background(), ids.New[ids.GatewayKind]()); err != nil {
 		t.Fatalf("count==limit must allow, got %v", err)
@@ -81,32 +81,32 @@ func TestCheckerBurstAtLimitAllowed(t *testing.T) {
 }
 
 func TestCheckerQuotaExceeded(t *testing.T) {
-	c := NewChecker(stubTiers{tier: "free"}, &stubCounter{burst: 1, burstTTL: time.Minute, quota: 25_001}, nil)
+	c := NewChecker(stubTiers{tier: "free"}, &stubCounter{burst: 1, burstTTL: time.Minute, quota: 10_001}, nil)
 	err := c.Check(context.Background(), ids.New[ids.GatewayKind]())
 	var ex *Exceeded
 	if !errors.As(err, &ex) {
 		t.Fatalf("err = %v, want Exceeded", err)
 	}
-	if ex.Reason != ReasonQuota || ex.Limit != 25_000 {
+	if ex.Reason != ReasonQuota || ex.Limit != 10_000 {
 		t.Fatalf("got %+v", ex)
 	}
 }
 
 func TestCheckerQuotaAtLimitAllowed(t *testing.T) {
-	c := NewChecker(stubTiers{tier: "free"}, &stubCounter{burst: 1, burstTTL: time.Minute, quota: 25_000}, nil)
+	c := NewChecker(stubTiers{tier: "free"}, &stubCounter{burst: 1, burstTTL: time.Minute, quota: 10_000}, nil)
 	if err := c.Check(context.Background(), ids.New[ids.GatewayKind]()); err != nil {
 		t.Fatalf("quota==limit must allow, got %v", err)
 	}
 }
 
 func TestCheckerStandardLimits(t *testing.T) {
-	c := NewChecker(stubTiers{tier: "standard"}, &stubCounter{burst: 601, burstTTL: time.Second}, nil)
+	c := NewChecker(stubTiers{tier: "standard"}, &stubCounter{burst: 301, burstTTL: time.Second}, nil)
 	err := c.Check(context.Background(), ids.New[ids.GatewayKind]())
 	var ex *Exceeded
 	if !errors.As(err, &ex) {
 		t.Fatalf("err = %v, want Exceeded", err)
 	}
-	if ex.Reason != ReasonBurst || ex.Limit != 600 {
+	if ex.Reason != ReasonBurst || ex.Limit != 300 {
 		t.Fatalf("got %+v", ex)
 	}
 }
@@ -123,13 +123,13 @@ func TestCheckerEnterpriseSkipsQuota(t *testing.T) {
 }
 
 func TestCheckerEnterpriseBurstExceeded(t *testing.T) {
-	c := NewChecker(stubTiers{tier: "enterprise"}, &stubCounter{burst: 5_001, burstTTL: 15 * time.Second}, nil)
+	c := NewChecker(stubTiers{tier: "enterprise"}, &stubCounter{burst: 1_001, burstTTL: 15 * time.Second}, nil)
 	err := c.Check(context.Background(), ids.New[ids.GatewayKind]())
 	var ex *Exceeded
 	if !errors.As(err, &ex) {
 		t.Fatalf("err = %v, want Exceeded", err)
 	}
-	if ex.Reason != ReasonBurst || ex.Limit != 5_000 {
+	if ex.Reason != ReasonBurst || ex.Limit != 1_000 {
 		t.Fatalf("got %+v", ex)
 	}
 }
@@ -170,7 +170,7 @@ func TestCheckerQuotaRedisFailOpen(t *testing.T) {
 }
 
 func TestCheckerBurstBlocksBeforeQuota(t *testing.T) {
-	counter := &stubCounter{burst: 121, burstTTL: time.Second, quota: 1}
+	counter := &stubCounter{burst: 61, burstTTL: time.Second, quota: 1}
 	c := NewChecker(stubTiers{tier: "free"}, counter, nil)
 	err := c.Check(context.Background(), ids.New[ids.GatewayKind]())
 	var ex *Exceeded

@@ -274,6 +274,15 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	return items, total, nil
 }
 
+func (r *Repository) CountByTenantID(ctx context.Context, tenantID string) (int, error) {
+	const query = `SELECT COUNT(*) FROM gateways WHERE metadata->>'tenant_id' = $1`
+	var count int
+	if err := r.conn.Pool.QueryRow(ctx, query, tenantID).Scan(&count); err != nil {
+		return 0, fmt.Errorf("gateway repository: count by tenant: %w", err)
+	}
+	return count, nil
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }

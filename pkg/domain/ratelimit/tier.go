@@ -22,16 +22,17 @@ const (
 	TierEnterprise = "enterprise"
 )
 
-// Limits are plan caps; QuotaPerMonth == 0 means unlimited.
+// Limits are plan caps; QuotaPerMonth == 0 means unlimited, MaxInstances == 0 means unlimited.
 type Limits struct {
 	BurstPerMin   int
 	QuotaPerMonth int
+	MaxInstances  int
 }
 
 var tiers = map[string]Limits{
-	TierFree:       {BurstPerMin: 120, QuotaPerMonth: 25_000},
-	TierStandard:   {BurstPerMin: 600, QuotaPerMonth: 250_000},
-	TierEnterprise: {BurstPerMin: 5_000, QuotaPerMonth: 0},
+	TierFree:       {BurstPerMin: 60, QuotaPerMonth: 10_000, MaxInstances: 1},
+	TierStandard:   {BurstPerMin: 300, QuotaPerMonth: 100_000, MaxInstances: 2},
+	TierEnterprise: {BurstPerMin: 1_000, QuotaPerMonth: 0, MaxInstances: 0},
 }
 
 func LimitsFor(tier string) (Limits, bool) {
@@ -41,4 +42,8 @@ func LimitsFor(tier string) (Limits, bool) {
 
 func (l Limits) HasMonthlyQuota() bool {
 	return l.QuotaPerMonth > 0
+}
+
+func (l Limits) HasInstanceCap() bool {
+	return l.MaxInstances > 0
 }

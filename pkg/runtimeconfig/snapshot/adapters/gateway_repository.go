@@ -83,4 +83,8 @@ func (r *gatewayRepository) List(_ context.Context, _ domain.ListFilter) ([]*dom
 	return nil, 0, configsync.ErrReadOnly
 }
 
+func (r *gatewayRepository) CountByTenantID(_ context.Context, _ string) (int, error) {
+	return 0, configsync.ErrReadOnly
+}
+
 var _ domain.Repository = (*gatewayRepository)(nil)
