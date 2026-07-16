@@ -100,7 +100,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, 
 		g.SessionConfig = domain.DefaultSessionConfig()
 	}
 	// Platform admins (empty JWT tenant / PlatformAdmin) may set entitlements; tenant callers cannot.
-	if in.Entitlements != nil && !(in.PlatformAdmin || in.TenantID == "") {
+	if in.Entitlements != nil && !in.PlatformAdmin && in.TenantID != "" {
 		return nil, fmt.Errorf("entitlements may only be set by platform admins: %w", commonerrors.ErrValidation)
 	}
 	if in.Entitlements != nil && (in.PlatformAdmin || in.TenantID == "") {
