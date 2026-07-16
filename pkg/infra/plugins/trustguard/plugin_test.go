@@ -281,6 +281,74 @@ func TestExecutePreRequestRateLimitReturns429(t *testing.T) {
 	}
 }
 
+func TestExecutePreResponseRateLimitReturns429(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{
+		status: http.StatusTooManyRequests,
+		headers: map[string]string{
+			"Retry-After":           "10",
+			"X-RateLimit-Limit":     "10000",
+			"X-RateLimit-Remaining": "0",
+			"X-RateLimit-Reason":    "quota",
+		},
+	}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: openAIResponseBody()}
+	in := execInput(policy.StagePreResponse, policy.ModeEnforce, settings(""), requestContext(), resp)
+	res, err := p.Execute(context.Background(), in)
+	if res != nil {
+		t.Fatalf("expected nil result on rate limit, got %+v", res)
+	}
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("expected *PluginError, got %v", err)
+	}
+	if pe.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", pe.StatusCode)
+	}
+	if got := pe.Headers["X-RateLimit-Reason"]; len(got) != 1 || got[0] != "quota" {
+		t.Fatalf("X-RateLimit-Reason = %v, want [quota]", got)
+	}
+}
+
+func TestExecuteRateLimitDoesNotFailOpen(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{status: http.StatusTooManyRequests}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	in := execInput(policy.StagePreRequest, policy.ModeObserve, settings(""), requestContext(), nil)
+	_, err := p.Execute(context.Background(), in)
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("rate limit must not fail-open even in observe mode, got %v", err)
+	}
+	if pe.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", pe.StatusCode)
+	}
+}
+
+func TestExecuteServerErrorStillFailsOpen(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{status: http.StatusInternalServerError}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("expected fail-open pass on 500, got error %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK || res.StopUpstream {
+		t.Fatalf("expected pass-through on 500, got %+v", res)
+	}
+}
+
 func TestExecutePreResponseBlockReturns403(t *testing.T) {
 	t.Parallel()
 

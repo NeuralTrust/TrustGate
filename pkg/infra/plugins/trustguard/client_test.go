@@ -223,6 +223,56 @@ func TestGuardRateLimitedReturnsTypedError(t *testing.T) {
 	}
 }
 
+func TestGuardRateLimitedWithoutHeaders(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":"rate limit exceeded"}`)
+	}))
+	defer srv.Close()
+
+	c := newClient(time.Second)
+	_, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest())
+	var limited *rateLimitedError
+	if !errors.As(err, &limited) {
+		t.Fatalf("err = %v, want *rateLimitedError", err)
+	}
+	if len(limited.headers) != 0 {
+		t.Fatalf("headers = %v, want empty", limited.headers)
+	}
+	if len(limited.body) == 0 {
+		t.Fatal("expected body preserved")
+	}
+}
+
+func TestGuardRateLimitedIgnoresUnrelatedHeaders(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "5")
+		w.Header().Set("X-RateLimit-Reason", "burst")
+		w.Header().Set("X-Secret-Internal", "nope")
+		w.Header().Set("Set-Cookie", "session=abc")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	c := newClient(time.Second)
+	_, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest())
+	var limited *rateLimitedError
+	if !errors.As(err, &limited) {
+		t.Fatalf("err = %v, want *rateLimitedError", err)
+	}
+	if _, ok := limited.headers["X-Secret-Internal"]; ok {
+		t.Fatal("must not forward unrelated headers")
+	}
+	if _, ok := limited.headers["Set-Cookie"]; ok {
+		t.Fatal("must not forward Set-Cookie")
+	}
+	if got := limited.headers["Retry-After"]; len(got) != 1 || got[0] != "5" {
+		t.Fatalf("Retry-After = %v", got)
+	}
+}
+
 func TestGuardContextCanceled(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
