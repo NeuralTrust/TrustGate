@@ -360,6 +360,9 @@ func scanGateway(s rowScanner) (*domain.Gateway, error) {
 		if err := json.Unmarshal(entitlementsRaw, &e); err != nil {
 			return nil, fmt.Errorf("scan entitlements: %w", err)
 		}
+		if strings.TrimSpace(e.Tier) == "" {
+			e = domain.DefaultEntitlements()
+		}
 		g.Entitlements = e
 	}
 
