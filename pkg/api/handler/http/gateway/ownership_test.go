@@ -22,6 +22,7 @@ import (
 	"time"
 
 	gatewayhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	appgatewaymocks "github.com/NeuralTrust/TrustGate/pkg/app/gateway/mocks"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -171,4 +172,74 @@ func TestListGatewayHandler_TenantCaller_FiltersByTenant(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+}
+
+func TestCreateGatewayHandler_PlatformAdmin_UsesBodyTenantID(t *testing.T) {
+	t.Parallel()
+	creator := appgatewaymocks.NewCreator(t)
+	creator.EXPECT().
+		Create(mock.Anything, mock.MatchedBy(func(in appgateway.CreateInput) bool {
+			return in.TenantID == "acme" &&
+				in.PlatformAdmin &&
+				in.Entitlements != nil &&
+				in.Entitlements.Tier == "standard"
+		})).
+		Return(ownedGateway(ids.New[ids.GatewayKind](), "acme"), nil).
+		Once()
+
+	app := fiber.New()
+	app.Use(tenantMiddleware(""))
+	app.Post("/", gatewayhttp.NewCreateGatewayHandler(creator, "gw.local", "mcp.local").Handle)
+
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(
+		`{"slug":"prod","tenant_id":"acme","entitlements":{"tier":"standard"}}`,
+	))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, -1)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, fiber.StatusCreated, resp.StatusCode)
+}
+
+func TestCreateGatewayHandler_TenantJWT_BodyTenantMismatch_Rejected(t *testing.T) {
+	t.Parallel()
+	creator := appgatewaymocks.NewCreator(t)
+
+	app := fiber.New()
+	app.Use(tenantMiddleware("acme"))
+	app.Post("/", gatewayhttp.NewCreateGatewayHandler(creator, "gw.local", "mcp.local").Handle)
+
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(
+		`{"slug":"prod","tenant_id":"globex"}`,
+	))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, -1)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, fiber.StatusUnprocessableEntity, resp.StatusCode)
+	creator.AssertNotCalled(t, "Create", mock.Anything, mock.Anything)
+}
+
+func TestCreateGatewayHandler_TenantJWT_MatchingBodyTenant_Allowed(t *testing.T) {
+	t.Parallel()
+	creator := appgatewaymocks.NewCreator(t)
+	creator.EXPECT().
+		Create(mock.Anything, mock.MatchedBy(func(in appgateway.CreateInput) bool {
+			return in.TenantID == "acme" && !in.PlatformAdmin
+		})).
+		Return(ownedGateway(ids.New[ids.GatewayKind](), "acme"), nil).
+		Once()
+
+	app := fiber.New()
+	app.Use(tenantMiddleware("acme"))
+	app.Post("/", gatewayhttp.NewCreateGatewayHandler(creator, "gw.local", "mcp.local").Handle)
+
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(
+		`{"slug":"prod","tenant_id":"acme"}`,
+	))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, -1)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, fiber.StatusCreated, resp.StatusCode)
 }

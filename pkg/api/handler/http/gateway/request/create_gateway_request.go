@@ -25,8 +25,10 @@ import (
 
 type CreateGatewayRequest struct {
 	// Slug is optional; when omitted the server generates a unique random slug. If provided it must be a lowercase DNS label.
-	Slug            string                 `json:"slug,omitempty" example:"acme-prod"`
-	Domain          string                 `json:"domain,omitempty"`
+	Slug   string `json:"slug,omitempty" example:"acme-prod"`
+	Domain string `json:"domain,omitempty"`
+	// TenantID is optional ownership for platform (empty JWT) create-for-tenant; tenant JWTs must match or omit it.
+	TenantID        string                 `json:"tenant_id,omitempty"`
 	Metadata        map[string]string      `json:"metadata,omitempty"`
 	Telemetry       *telemetry.Telemetry   `json:"telemetry,omitempty"`
 	ClientTLSConfig domain.ClientTLSConfig `json:"client_tls,omitempty"`

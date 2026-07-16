@@ -23,6 +23,7 @@ const (
 )
 
 // Limits are plan caps; QuotaPerMonth == 0 means unlimited, MaxInstances == 0 means unlimited.
+// Create inherits the highest sibling tier so MaxInstances stays consistent under immutable entitlements.
 type Limits struct {
 	BurstPerMin   int
 	QuotaPerMonth int

@@ -28,7 +28,10 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
-const maxSlugCollisionRetries = 3
+const (
+	maxSlugCollisionRetries = 3
+	siblingListPageSize     = 100
+)
 
 type CreateInput struct {
 	Slug            string
@@ -40,6 +43,8 @@ type CreateInput struct {
 	SessionConfig   *domain.SessionConfig
 	// Entitlements overrides the default free tier when the admin API sets it explicitly.
 	Entitlements *domain.Entitlements
+	// PlatformAdmin is true when the JWT has no tenant claim (may set entitlements even when TenantID is stamped from the body).
+	PlatformAdmin bool
 }
 
 //go:generate mockery --name=Creator --dir=. --output=./mocks --filename=gateway_creator_mock.go --case=underscore --with-expecter
@@ -95,9 +100,19 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, 
 	if g.SessionConfig == nil {
 		g.SessionConfig = domain.DefaultSessionConfig()
 	}
-	// Only platform admins (empty tenant) may set entitlements unless mutation is explicitly enabled.
-	if in.Entitlements != nil && (in.TenantID == "" || c.entitlementsMutable) {
+	// Platform admins (empty JWT tenant) may set entitlements; tenant callers need ENTITLEMENTS_MUTABLE.
+	if in.Entitlements != nil && (in.PlatformAdmin || in.TenantID == "" || c.entitlementsMutable) {
 		g.Entitlements = *in.Entitlements
+	}
+	// Under immutable entitlements, a new gateway still inherits the tenant's highest sibling tier so MaxInstances matches the plan.
+	if in.TenantID != "" && isDefaultFreeTier(g.Entitlements) {
+		inherited, err := c.highestSiblingTier(ctx, in.TenantID)
+		if err != nil {
+			return nil, err
+		}
+		if !isDefaultFreeTier(inherited) {
+			g.Entitlements = inherited
+		}
 	}
 	if err := g.Validate(); err != nil {
 		return nil, err
@@ -127,6 +142,47 @@ func instanceCap(tenantID string, entitlements domain.Entitlements) int {
 		return 0
 	}
 	return limits.MaxInstances
+}
+
+func isDefaultFreeTier(ent domain.Entitlements) bool {
+	tier := strings.ToLower(strings.TrimSpace(ent.Tier))
+	return tier == "" || tier == ratelimit.TierFree
+}
+
+func tierRank(tier string) int {
+	switch strings.ToLower(strings.TrimSpace(tier)) {
+	case ratelimit.TierEnterprise:
+		return 3
+	case ratelimit.TierStandard:
+		return 2
+	default:
+		return 1
+	}
+}
+
+func (c *creator) highestSiblingTier(ctx context.Context, tenantID string) (domain.Entitlements, error) {
+	highest := domain.DefaultEntitlements()
+	for page := 1; ; page++ {
+		items, total, err := c.repo.List(ctx, domain.ListFilter{
+			TenantID: tenantID,
+			Page:     page,
+			Size:     siblingListPageSize,
+		})
+		if err != nil {
+			return domain.Entitlements{}, err
+		}
+		for _, sibling := range items {
+			if sibling == nil {
+				continue
+			}
+			if tierRank(sibling.Entitlements.Tier) > tierRank(highest.Tier) {
+				highest = domain.Entitlements{Tier: strings.ToLower(strings.TrimSpace(sibling.Entitlements.Tier))}
+			}
+		}
+		if len(items) == 0 || page*siblingListPageSize >= total {
+			return highest, nil
+		}
+	}
 }
 
 // saveWithSlugRetry inserts g via the repository's tenant-cap-locked save, retrying with a fresh slug on collision when one wasn't requested.

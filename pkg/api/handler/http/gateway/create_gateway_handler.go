@@ -16,6 +16,7 @@ package gateway
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway/response"
@@ -59,10 +60,17 @@ func (h *CreateGatewayHandler) Handle(c *fiber.Ctx) error {
 		return httpio.WriteError(c, err)
 	}
 
+	callerTenant := tenantIDFromContext(c)
+	effectiveTenant, err := resolveCreateTenantID(callerTenant, req.TenantID)
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
+
 	g, err := h.creator.Create(c.UserContext(), appgateway.CreateInput{
 		Slug:            req.Slug,
 		Domain:          req.Domain,
-		TenantID:        tenantIDFromContext(c),
+		TenantID:        effectiveTenant,
+		PlatformAdmin:   callerTenant == "",
 		Metadata:        req.Metadata,
 		Telemetry:       req.Telemetry,
 		ClientTLSConfig: req.ClientTLSConfig,
@@ -73,6 +81,18 @@ func (h *CreateGatewayHandler) Handle(c *fiber.Ctx) error {
 		return httpio.WriteError(c, err)
 	}
 	return httpio.WriteCreated(c, response.FromDomain(g, h.baseDomain, h.mcpBaseDomain))
+}
+
+// resolveCreateTenantID picks ownership tenant: JWT wins; platform may stamp body tenant_id; mismatched body is rejected.
+func resolveCreateTenantID(callerTenant, bodyTenant string) (string, error) {
+	bodyTenant = strings.TrimSpace(bodyTenant)
+	if callerTenant != "" {
+		if bodyTenant != "" && bodyTenant != callerTenant {
+			return "", fmt.Errorf("tenant_id does not match authenticated tenant: %w", commonerrors.ErrValidation)
+		}
+		return callerTenant, nil
+	}
+	return bodyTenant, nil
 }
 
 // tenantIDFromContext returns the tenant identifier stamped by the admin auth
