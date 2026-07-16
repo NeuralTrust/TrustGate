@@ -481,7 +481,45 @@
                 "gateways"
               ]
             },
-            "description": "Optional `slug` (lowercase DNS label): when omitted the server generates a unique random slug. The slug identifies the gateway on the proxy plane: `X-AG-Gateway-Slug` header (GATEWAY_DISCOVERY_MODE=header, default) or `{slug}.<GATEWAY_BASE_DOMAIN>` host (subdomain mode)."
+            "description": "Optional slug (lowercase DNS label); omitted \u2192 server generates. Tenant JWT must not send entitlements (422). Platform may stamp entitlements.tier and body tenant_id (create-for-tenant). With RATE_LIMIT_ENABLED, 409 at MaxInstances; free create inherits highest sibling tier."
+          }
+        },
+        {
+          "name": "Create Gateway with entitlements (tenant \u2192 422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('tenant cannot stamp entitlements', function () { pm.response.to.have.status(422); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"slug\": \"team-a-ent-{{$randomInt}}\",\n  \"entitlements\": {\"tier\": \"standard\"}\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways"
+              ]
+            },
+            "description": "Tenant JWT must not send entitlements; only platform admins may stamp tier. Expect 422 when using a tenant-scoped admin token."
           }
         },
         {
@@ -558,7 +596,8 @@
                 "gateways",
                 "{{gateway_id}}"
               ]
-            }
+            },
+            "description": "Update gateway fields. Tenant JWT + entitlements \u2192 422. Platform tier downgrade when count > new MaxInstances \u2192 409 (delete excess first)."
           }
         },
         {
