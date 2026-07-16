@@ -80,7 +80,7 @@ func (c *Compiler) CompileFor(ctx context.Context, scope string) (*readmodel.Sna
 	data := readmodel.Data{}
 	var skipped, considered int
 	for i := range gateways {
-		if scope != "" && gateways[i].TenantID() != scope {
+		if scope != "" && gateways[i].ID.String() != scope {
 			continue
 		}
 		considered++
@@ -136,7 +136,7 @@ func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[str
 			return nil, nil, err
 		}
 		appendGatewayData(&global, gateways[i], gwData)
-		if scope := gateways[i].TenantID(); scope != "" {
+		if scope := gateways[i].ID.String(); scope != "" {
 			bucket, ok := buckets[scope]
 			if !ok {
 				bucket = &readmodel.Data{}
