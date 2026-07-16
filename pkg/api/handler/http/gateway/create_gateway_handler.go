@@ -40,7 +40,7 @@ func NewCreateGatewayHandler(creator appgateway.Creator, baseDomain, mcpBaseDoma
 
 // Handle godoc
 // @Summary      Create a gateway
-// @Description  Creates a new gateway. The slug is optional: when omitted the server generates a unique random slug. If provided it must be a lowercase DNS label and unique.
+// @Description  Creates a new gateway. The slug is optional: when omitted the server generates a unique random slug. If provided it must be a lowercase DNS label and unique. Tenant JWTs may not send entitlements (422); only platform admins may stamp tier. With RATE_LIMIT_ENABLED, create returns 409 when the tenant is already at MaxInstances for the effective tier.
 // @Tags         gateways
 // @Accept       json
 // @Produce      json
@@ -50,6 +50,7 @@ func NewCreateGatewayHandler(creator appgateway.Creator, baseDomain, mcpBaseDoma
 // @Failure      400      {object}  httpio.ErrorBody
 // @Failure      401      {object}  httpio.ErrorBody
 // @Failure      409      {object}  httpio.ErrorBody
+// @Failure      422      {object}  httpio.ErrorBody
 // @Router       /v1/gateways [post]
 func (h *CreateGatewayHandler) Handle(c *fiber.Ctx) error {
 	var req request.CreateGatewayRequest

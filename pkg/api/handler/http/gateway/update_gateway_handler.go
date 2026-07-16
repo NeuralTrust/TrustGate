@@ -40,7 +40,7 @@ func NewUpdateGatewayHandler(updater appgateway.Updater, finder appgateway.Finde
 
 // Handle godoc
 // @Summary      Update a gateway
-// @Description  Updates an existing gateway.
+// @Description  Updates an existing gateway. Tenant JWTs may not send entitlements (422). Platform tier downgrades that would leave the tenant over the new MaxInstances return 409 — delete excess gateways first.
 // @Tags         gateways
 // @Accept       json
 // @Produce      json
@@ -52,6 +52,7 @@ func NewUpdateGatewayHandler(updater appgateway.Updater, finder appgateway.Finde
 // @Failure      401      {object}  httpio.ErrorBody
 // @Failure      404      {object}  httpio.ErrorBody
 // @Failure      409      {object}  httpio.ErrorBody
+// @Failure      422      {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{id} [put]
 func (h *UpdateGatewayHandler) Handle(c *fiber.Ctx) error {
 	id, err := httpio.ParseUUIDParam[ids.GatewayKind](c, "id")
@@ -83,7 +84,8 @@ func (h *UpdateGatewayHandler) Handle(c *fiber.Ctx) error {
 		Slug:            req.Slug,
 		Status:          req.Status,
 		Domain:          req.Domain,
-		TenantID:        tenantIDFromContext(c),
+		TenantID:        caller,
+		PlatformAdmin:   caller == "",
 		Metadata:        req.Metadata,
 		Telemetry:       req.Telemetry,
 		ClientTLSConfig: req.ClientTLSConfig,

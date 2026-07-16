@@ -513,6 +513,55 @@ func (_c *Repository_Update_Call) RunAndReturn(run func(context.Context, *gatewa
 	return _c
 }
 
+// UpdateWithTenantCap provides a mock function with given fields: ctx, g, tenantID, maxInstances
+func (_m *Repository) UpdateWithTenantCap(ctx context.Context, g *gateway.Gateway, tenantID string, maxInstances int) error {
+	ret := _m.Called(ctx, g, tenantID, maxInstances)
+
+	if len(ret) == 0 {
+		panic("no return value specified for UpdateWithTenantCap")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, *gateway.Gateway, string, int) error); ok {
+		r0 = rf(ctx, g, tenantID, maxInstances)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Repository_UpdateWithTenantCap_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'UpdateWithTenantCap'
+type Repository_UpdateWithTenantCap_Call struct {
+	*mock.Call
+}
+
+// UpdateWithTenantCap is a helper method to define mock.On call
+//   - ctx context.Context
+//   - g *gateway.Gateway
+//   - tenantID string
+//   - maxInstances int
+func (_e *Repository_Expecter) UpdateWithTenantCap(ctx interface{}, g interface{}, tenantID interface{}, maxInstances interface{}) *Repository_UpdateWithTenantCap_Call {
+	return &Repository_UpdateWithTenantCap_Call{Call: _e.mock.On("UpdateWithTenantCap", ctx, g, tenantID, maxInstances)}
+}
+
+func (_c *Repository_UpdateWithTenantCap_Call) Run(run func(ctx context.Context, g *gateway.Gateway, tenantID string, maxInstances int)) *Repository_UpdateWithTenantCap_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(*gateway.Gateway), args[2].(string), args[3].(int))
+	})
+	return _c
+}
+
+func (_c *Repository_UpdateWithTenantCap_Call) Return(_a0 error) *Repository_UpdateWithTenantCap_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Repository_UpdateWithTenantCap_Call) RunAndReturn(run func(context.Context, *gateway.Gateway, string, int) error) *Repository_UpdateWithTenantCap_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // NewRepository creates a new instance of Repository. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewRepository(t interface {

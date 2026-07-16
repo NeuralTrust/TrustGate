@@ -31,7 +31,9 @@ type UpdateGatewayRequest struct {
 	Telemetry       *telemetry.Telemetry    `json:"telemetry,omitempty"`
 	ClientTLSConfig *domain.ClientTLSConfig `json:"client_tls,omitempty"`
 	SessionConfig   *domain.SessionConfig   `json:"session_config,omitempty"`
-	// Entitlements.Tier is optional; when omitted the gateway's tier is left unchanged.
+	// Entitlements.Tier is optional; only platform admins may set it (tenant callers get 422).
+	// When omitted the gateway's tier is left unchanged. Downgrading when the tenant already
+	// has more gateways than the new tier's MaxInstances returns 409 — delete excess first.
 	Entitlements *domain.Entitlements `json:"entitlements,omitempty"`
 }
 

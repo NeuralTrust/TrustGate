@@ -333,7 +333,7 @@ func TestRPCGateway_PromptsGet_GatewayPlanExceeded_ReturnsRPCError(t *testing.T)
 	composer.AssertNotCalled(t, "GetPrompt", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
-func TestRPCGateway_ToolsCall_GatewayPlanUnavailable_PropagatesError(t *testing.T) {
+func TestRPCGateway_ToolsCall_GatewayPlanUnavailable_ReturnsRPCError(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
 	limiter := ratelimitmocks.NewChecker(t)
@@ -346,6 +346,8 @@ func TestRPCGateway_ToolsCall_GatewayPlanUnavailable_PropagatesError(t *testing.
 	res, err := g.Dispatch(context.Background(), rc, "tools/call", json.RawMessage(`{"name":"echo"}`))
 
 	assert.Nil(t, res)
-	require.True(t, errors.Is(err, ratelimitapp.ErrUnavailable))
+	var rpcErr *appmcp.RPCError
+	require.True(t, errors.As(err, &rpcErr), "want *appmcp.RPCError, got %v", err)
+	assert.Equal(t, appmcp.CodeUnavailable, rpcErr.Code)
 	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }

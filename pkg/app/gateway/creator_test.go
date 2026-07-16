@@ -410,26 +410,20 @@ func TestCreator_Create_RateLimitDisabled_PassesUnlimitedCap(t *testing.T) {
 	}
 }
 
-func TestCreator_Create_IgnoresClientEntitlementsWhenTenantSet(t *testing.T) {
+func TestCreator_Create_RejectsClientEntitlementsWhenTenantSet(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	expectNoSiblingGateways(repo, "acme")
-	// Tenant-scoped caller cannot upgrade its own tier; cap stays at the free-tier 1.
-	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "acme", 1).Return(nil).Once()
 
 	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil, true)
 
 	entitlements := domain.Entitlements{Tier: "enterprise"}
-	g, err := creator.Create(context.Background(), appgateway.CreateInput{
+	_, err := creator.Create(context.Background(), appgateway.CreateInput{
 		Slug:         "prod",
 		TenantID:     "acme",
 		Entitlements: &entitlements,
 	})
-	if err != nil {
-		t.Fatalf("Create error: %v", err)
-	}
-	if g.Entitlements.Tier != domain.TierFree {
-		t.Fatalf("tenant-set entitlements must be ignored: got %q, want free", g.Entitlements.Tier)
+	if !errors.Is(err, commonerrors.ErrValidation) {
+		t.Fatalf("expected ErrValidation rejecting tenant entitlements, got %v", err)
 	}
 }
 

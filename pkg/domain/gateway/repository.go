@@ -40,4 +40,6 @@ type Repository interface {
 	CountByTenantID(ctx context.Context, tenantID string) (int, error)
 	// SaveWithTenantCap atomically enforces maxInstances for tenantID before inserting g; maxInstances <= 0 means unlimited.
 	SaveWithTenantCap(ctx context.Context, g *Gateway, tenantID string, maxInstances int) error
+	// UpdateWithTenantCap updates g under the same tenant advisory lock used by SaveWithTenantCap when maxInstances > 0.
+	UpdateWithTenantCap(ctx context.Context, g *Gateway, tenantID string, maxInstances int) error
 }

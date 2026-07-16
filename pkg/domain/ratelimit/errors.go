@@ -21,4 +21,6 @@ import (
 )
 
 // ErrInstanceLimit is returned when a tenant already has the tier's max instances.
+// On tier downgrade this means the tenant still has more gateways than the new
+// tier allows — delete excess gateways (or keep them on a higher tier) before lowering the plan.
 var ErrInstanceLimit = fmt.Errorf("ratelimit: instance limit reached: %w", commonerrors.ErrConflict)
