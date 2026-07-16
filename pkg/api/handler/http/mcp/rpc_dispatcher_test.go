@@ -284,6 +284,54 @@ func TestRPCGateway_ToolsCall_GatewayPlanExceeded_ReturnsRPCErrorWithHeaders(t *
 	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
+func TestRPCGateway_ResourcesRead_GatewayPlanExceeded_ReturnsRPCError(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	limiter := ratelimitmocks.NewChecker(t)
+	limiter.EXPECT().Check(mock.Anything, mock.Anything).Return(&ratelimitapp.Exceeded{
+		Reason:     ratelimitapp.ReasonBurst,
+		Limit:      60,
+		Remaining:  0,
+		RetryAfter: 5 * time.Second,
+	}).Once()
+
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), limiter)
+	rc := &appconsumer.RoutableConsumer{
+		Consumer: &consumerdomain.Consumer{Type: consumerdomain.TypeMCP, GatewayID: ids.New[ids.GatewayKind]()},
+	}
+	res, err := g.Dispatch(context.Background(), rc, "resources/read", json.RawMessage(`{"uri":"file://x"}`))
+
+	assert.Nil(t, res)
+	var rpcErr *appmcp.RPCError
+	require.True(t, errors.As(err, &rpcErr), "want *appmcp.RPCError, got %v", err)
+	assert.Equal(t, appmcp.CodeRateLimited, rpcErr.Code)
+	composer.AssertNotCalled(t, "ReadResource", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestRPCGateway_PromptsGet_GatewayPlanExceeded_ReturnsRPCError(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	limiter := ratelimitmocks.NewChecker(t)
+	limiter.EXPECT().Check(mock.Anything, mock.Anything).Return(&ratelimitapp.Exceeded{
+		Reason:     ratelimitapp.ReasonBurst,
+		Limit:      60,
+		Remaining:  0,
+		RetryAfter: 5 * time.Second,
+	}).Once()
+
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), limiter)
+	rc := &appconsumer.RoutableConsumer{
+		Consumer: &consumerdomain.Consumer{Type: consumerdomain.TypeMCP, GatewayID: ids.New[ids.GatewayKind]()},
+	}
+	res, err := g.Dispatch(context.Background(), rc, "prompts/get", json.RawMessage(`{"name":"greet"}`))
+
+	assert.Nil(t, res)
+	var rpcErr *appmcp.RPCError
+	require.True(t, errors.As(err, &rpcErr), "want *appmcp.RPCError, got %v", err)
+	assert.Equal(t, appmcp.CodeRateLimited, rpcErr.Code)
+	composer.AssertNotCalled(t, "GetPrompt", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
 func TestRPCGateway_ToolsCall_GatewayPlanUnavailable_PropagatesError(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)

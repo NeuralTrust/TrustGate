@@ -199,6 +199,9 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		if err := json.Unmarshal(params, &p); err != nil || p.URI == "" {
 			return nil, &InvalidParamsError{Reason: "resources/read requires params.uri"}
 		}
+		if err := g.checkRateLimit(ctx, rc); err != nil {
+			return nil, err
+		}
 		return g.composer.ReadResource(ctx, rc, p.URI)
 	case "prompts/list":
 		prompts, err := g.composer.ListPrompts(ctx, rc)
@@ -216,6 +219,9 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		}
 		if err := json.Unmarshal(params, &p); err != nil || p.Name == "" {
 			return nil, &InvalidParamsError{Reason: "prompts/get requires params.name"}
+		}
+		if err := g.checkRateLimit(ctx, rc); err != nil {
+			return nil, err
 		}
 		return g.composer.GetPrompt(ctx, rc, p.Name, p.Arguments)
 	default:

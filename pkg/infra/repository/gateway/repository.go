@@ -270,9 +270,10 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	const countQuery = `
 		SELECT COUNT(*)
 		  FROM gateways
-		 WHERE ($1 = '' OR lower(slug) LIKE '%' || lower($1) || '%')`
+		 WHERE ($1 = '' OR lower(slug) LIKE '%' || lower($1) || '%')
+		   AND ($2 = '' OR metadata->>'tenant_id' = $2)`
 	var total int
-	if err := r.conn.Pool.QueryRow(ctx, countQuery, filter.SlugContains).Scan(&total); err != nil {
+	if err := r.conn.Pool.QueryRow(ctx, countQuery, filter.SlugContains, filter.TenantID).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("gateway repository: count: %w", err)
 	}
 
@@ -280,9 +281,10 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at
 		  FROM gateways
 		 WHERE ($1 = '' OR lower(slug) LIKE '%' || lower($1) || '%')
+		   AND ($2 = '' OR metadata->>'tenant_id' = $2)
 		 ORDER BY created_at DESC, id
-		 LIMIT $2 OFFSET $3`
-	rows, err := r.conn.Pool.Query(ctx, listQuery, filter.SlugContains, filter.Size, offset)
+		 LIMIT $3 OFFSET $4`
+	rows, err := r.conn.Pool.Query(ctx, listQuery, filter.SlugContains, filter.TenantID, filter.Size, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("gateway repository: list: %w", err)
 	}

@@ -22,8 +22,10 @@ import (
 
 type ListFilter struct {
 	SlugContains string
-	Page         int
-	Size         int
+	// TenantID scopes results to one tenant; empty means no tenant filter (platform-wide).
+	TenantID string
+	Page     int
+	Size     int
 }
 
 //go:generate mockery --name=Repository --dir=. --output=./mocks --filename=gateway_repository_mock.go --case=underscore --with-expecter

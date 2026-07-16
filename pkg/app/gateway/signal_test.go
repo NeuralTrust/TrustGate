@@ -31,7 +31,7 @@ func TestCreator_Create_SignalsOnSuccess(t *testing.T) {
 	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "", 0).Return(nil).Once()
 
 	signaler := &configsynctest.FakeSignaler{}
-	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), signaler)
+	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), signaler, true, false)
 
 	if _, err := creator.Create(context.Background(), appgateway.CreateInput{Slug: "prod"}); err != nil {
 		t.Fatalf("Create error: %v", err)
@@ -47,7 +47,7 @@ func TestCreator_Create_DoesNotSignalOnFailure(t *testing.T) {
 	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "", 0).Return(domain.ErrAlreadyExists).Once()
 
 	signaler := &configsynctest.FakeSignaler{}
-	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), signaler)
+	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), signaler, true, false)
 
 	if _, err := creator.Create(context.Background(), appgateway.CreateInput{Slug: "prod"}); err == nil {
 		t.Fatal("expected error, got nil")
@@ -62,7 +62,7 @@ func TestCreator_Create_NilSignalerIsSafe(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "", 0).Return(nil).Once()
 
-	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil)
+	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil, true, false)
 
 	if _, err := creator.Create(context.Background(), appgateway.CreateInput{Slug: "prod"}); err != nil {
 		t.Fatalf("Create error: %v", err)

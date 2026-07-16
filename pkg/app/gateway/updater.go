@@ -23,6 +23,7 @@ import (
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
@@ -48,12 +49,14 @@ type Updater interface {
 var _ Updater = (*updater)(nil)
 
 type updater struct {
-	repo            domain.Repository
-	memoryCache     *cache.TTLMap
-	publisher       cache.EventPublisher
-	exporterFactory appmetrics.ExporterFactory
-	logger          *slog.Logger
-	signaler        configsyncport.SnapshotSignaler
+	repo                domain.Repository
+	memoryCache         *cache.TTLMap
+	publisher           cache.EventPublisher
+	exporterFactory     appmetrics.ExporterFactory
+	logger              *slog.Logger
+	signaler            configsyncport.SnapshotSignaler
+	rateLimitEnabled    bool
+	entitlementsMutable bool
 }
 
 func NewUpdater(
@@ -63,14 +66,18 @@ func NewUpdater(
 	exporterFactory appmetrics.ExporterFactory,
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
+	rateLimitEnabled bool,
+	entitlementsMutable bool,
 ) Updater {
 	return &updater{
-		repo:            repo,
-		memoryCache:     manager.GetTTLMap(cache.GatewayTTLName),
-		publisher:       publisher,
-		exporterFactory: exporterFactory,
-		logger:          logger,
-		signaler:        signaler,
+		repo:                repo,
+		memoryCache:         manager.GetTTLMap(cache.GatewayTTLName),
+		publisher:           publisher,
+		exporterFactory:     exporterFactory,
+		logger:              logger,
+		signaler:            signaler,
+		rateLimitEnabled:    rateLimitEnabled,
+		entitlementsMutable: entitlementsMutable,
 	}
 }
 
@@ -110,11 +117,15 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	if in.SessionConfig != nil {
 		g.SessionConfig = in.SessionConfig
 	}
-	if in.Entitlements != nil {
+	// Only platform admins (empty caller tenant) may change entitlements unless mutation is explicitly enabled.
+	if in.Entitlements != nil && (in.TenantID == "" || u.entitlementsMutable) {
 		g.Entitlements = *in.Entitlements
 	}
 	g.UpdatedAt = time.Now().UTC()
 	if err := g.Validate(); err != nil {
+		return nil, err
+	}
+	if err := u.enforceInstanceCap(ctx, tenantID, old.Entitlements, g.Entitlements); err != nil {
 		return nil, err
 	}
 	if err := u.repo.Update(ctx, g); err != nil {
@@ -127,4 +138,24 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 		u.signaler.Signal(ctx)
 	}
 	return g, nil
+}
+
+// enforceInstanceCap rejects a tier change that would leave the tenant over the new tier's instance cap.
+// The count includes the current gateway, so N gateways under a cap of N is allowed and N under N-1 rejects.
+func (u *updater) enforceInstanceCap(ctx context.Context, tenantID string, oldEnt, newEnt domain.Entitlements) error {
+	if !u.rateLimitEnabled || tenantID == "" || oldEnt.Tier == newEnt.Tier {
+		return nil
+	}
+	limits, ok := ratelimit.LimitsFor(newEnt.Tier)
+	if !ok || !limits.HasInstanceCap() {
+		return nil
+	}
+	count, err := u.repo.CountByTenantID(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	if count > limits.MaxInstances {
+		return ratelimit.ErrInstanceLimit
+	}
+	return nil
 }

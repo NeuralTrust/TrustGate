@@ -22,6 +22,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/gofiber/fiber/v2"
 )
@@ -81,4 +82,11 @@ func tenantIDFromContext(c *fiber.Ctx) string {
 		return v
 	}
 	return ""
+}
+
+// callerOwnsGateway reports whether a caller may act on the loaded gateway.
+// A tenant-scoped caller only sees gateways stamped with its own tenant; a
+// platform admin (empty tenant claim) sees every gateway.
+func callerOwnsGateway(caller string, g *domain.Gateway) bool {
+	return caller == "" || (g != nil && g.TenantID() == caller)
 }

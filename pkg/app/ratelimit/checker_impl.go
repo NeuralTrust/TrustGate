@@ -22,15 +22,19 @@ import (
 	"time"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
-	domain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 type checker struct {
-	tiers   GatewayTierLoader
-	counter Counter
-	logger  *slog.Logger
-	now     func() time.Time
+	tiers    GatewayTierLoader
+	counter  Counter
+	logger   *slog.Logger
+	now      func() time.Time
+	failOpen metric.Int64Counter
 }
 
 // NewChecker builds the plan rate limiter (fail-open on Redis errors).
@@ -38,7 +42,23 @@ func NewChecker(tiers GatewayTierLoader, counter Counter, logger *slog.Logger) C
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &checker{tiers: tiers, counter: counter, logger: logger, now: time.Now}
+	failOpen, err := otel.Meter("trustgate/ratelimit").Int64Counter(
+		"trustgate.ratelimit.fail_open",
+		metric.WithDescription("requests allowed because rate-limit enforcement failed open"),
+	)
+	if err != nil {
+		logger.Warn("failed to create rate-limit fail-open counter; fail-open will only be logged",
+			slog.String("error", err.Error()))
+		failOpen = nil
+	}
+	return &checker{tiers: tiers, counter: counter, logger: logger, now: time.Now, failOpen: failOpen}
+}
+
+func (c *checker) recordFailOpen(ctx context.Context, reason string) {
+	if c.failOpen == nil {
+		return
+	}
+	c.failOpen.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", reason)))
 }
 
 func (c *checker) Check(ctx context.Context, gatewayID ids.GatewayID) error {
@@ -50,6 +70,7 @@ func (c *checker) Check(ctx context.Context, gatewayID ids.GatewayID) error {
 		c.logger.Warn("rate limit: failed to load entitlements; fail-open",
 			slog.String("gateway_id", gatewayID.String()),
 			slog.Any("error", err))
+		c.recordFailOpen(ctx, "tier_load")
 		return nil
 	}
 
@@ -63,6 +84,7 @@ func (c *checker) Check(ctx context.Context, gatewayID ids.GatewayID) error {
 		c.logger.Warn("rate limit: burst incr failed; fail-open",
 			slog.String("gateway_id", gatewayID.String()),
 			slog.Any("error", err))
+		c.recordFailOpen(ctx, "burst_incr")
 		return nil
 	}
 	if int(burstCount) > limits.BurstPerMin {
@@ -88,6 +110,7 @@ func (c *checker) Check(ctx context.Context, gatewayID ids.GatewayID) error {
 		c.logger.Warn("rate limit: quota incr failed; fail-open",
 			slog.String("gateway_id", gatewayID.String()),
 			slog.Any("error", err))
+		c.recordFailOpen(ctx, "quota_incr")
 		return nil
 	}
 	if int(quotaCount) > limits.QuotaPerMonth {
