@@ -14,7 +14,15 @@
 
 package gateway
 
-const TierFree = "free"
+import (
+	"fmt"
+	"strings"
+
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
+)
+
+const TierFree = ratelimit.TierFree
 
 type Entitlements struct {
 	Tier string `json:"tier"`
@@ -22,4 +30,16 @@ type Entitlements struct {
 
 func DefaultEntitlements() Entitlements {
 	return Entitlements{Tier: TierFree}
+}
+
+// ValidateTier normalizes tier and rejects anything outside the known rate-limit tiers; empty means free.
+func ValidateTier(tier string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(tier))
+	if normalized == "" {
+		return TierFree, nil
+	}
+	if _, ok := ratelimit.LimitsFor(normalized); !ok {
+		return "", fmt.Errorf("gateway: entitlements.tier must be one of free, standard, enterprise: %w", commonerrors.ErrValidation)
+	}
+	return normalized, nil
 }

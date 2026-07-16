@@ -66,6 +66,7 @@ func (h *CreateGatewayHandler) Handle(c *fiber.Ctx) error {
 		Telemetry:       req.Telemetry,
 		ClientTLSConfig: req.ClientTLSConfig,
 		SessionConfig:   req.SessionConfig,
+		Entitlements:    req.Entitlements,
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)

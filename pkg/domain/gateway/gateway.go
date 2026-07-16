@@ -148,6 +148,7 @@ func Rehydrate(
 		Telemetry:       tel,
 		ClientTLSConfig: clientTLS,
 		SessionConfig:   session,
+		Entitlements:    DefaultEntitlements(),
 		CreatedAt:       createdAt,
 		UpdatedAt:       updatedAt,
 	}

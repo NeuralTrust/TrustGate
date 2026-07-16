@@ -244,6 +244,63 @@ func TestUpdater_Update_ContextTenantDoesNotOverrideExisting(t *testing.T) {
 	}
 }
 
+func TestUpdater_Update_PersistsEntitlementsWhenProvided(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	existing := domain.Rehydrate(id, "old", "active", "", nil, nil, nil, now, now)
+
+	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+	repo.EXPECT().
+		Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+			return g.Entitlements.Tier == "standard"
+		})).
+		Return(nil).
+		Once()
+
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil)
+	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
+		ID:           id,
+		Entitlements: &domain.Entitlements{Tier: "standard"},
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.Entitlements.Tier != "standard" {
+		t.Fatalf("Entitlements.Tier = %q, want standard", got.Entitlements.Tier)
+	}
+}
+
+func TestUpdater_Update_PreservesEntitlementsWhenOmitted(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	existing := domain.Rehydrate(id, "old", "active", "", nil, nil, nil, now, now)
+	existing.Entitlements = domain.Entitlements{Tier: "enterprise"}
+
+	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+	repo.EXPECT().
+		Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+			return g.Entitlements.Tier == "enterprise"
+		})).
+		Return(nil).
+		Once()
+
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil)
+	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
+		ID:   id,
+		Slug: ptr("renamed"),
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.Entitlements.Tier != "enterprise" {
+		t.Fatalf("Entitlements.Tier = %q, want unchanged enterprise", got.Entitlements.Tier)
+	}
+}
+
 func TestUpdater_Update_RejectsEmptySlug(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)

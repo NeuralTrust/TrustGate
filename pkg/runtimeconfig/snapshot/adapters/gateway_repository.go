@@ -71,6 +71,10 @@ func (r *gatewayRepository) Save(_ context.Context, _ *domain.Gateway) error {
 	return configsync.ErrReadOnly
 }
 
+func (r *gatewayRepository) SaveWithTenantCap(_ context.Context, _ *domain.Gateway, _ string, _ int) error {
+	return configsync.ErrReadOnly
+}
+
 func (r *gatewayRepository) Update(_ context.Context, _ *domain.Gateway) error {
 	return configsync.ErrReadOnly
 }

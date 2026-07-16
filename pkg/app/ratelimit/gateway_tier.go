@@ -37,7 +37,7 @@ func (l *gatewayTierLoader) Tier(ctx context.Context, gatewayID ids.GatewayID) (
 		if gw == nil {
 			return "", gatewaydomain.ErrNotFound
 		}
-		return strings.TrimSpace(gw.Entitlements.Tier), nil
+		return tierOrDefault(gw), nil
 	}
 	gw, err := l.finder.FindByID(ctx, gatewayID)
 	if err != nil {
@@ -46,5 +46,14 @@ func (l *gatewayTierLoader) Tier(ctx context.Context, gatewayID ids.GatewayID) (
 	if gw == nil {
 		return "", gatewaydomain.ErrNotFound
 	}
-	return strings.TrimSpace(gw.Entitlements.Tier), nil
+	return tierOrDefault(gw), nil
+}
+
+// tierOrDefault falls back to the free tier when the gateway carries no entitlements (e.g. stale snapshot data).
+func tierOrDefault(gw *gatewaydomain.Gateway) string {
+	tier := strings.TrimSpace(gw.Entitlements.Tier)
+	if tier == "" {
+		return gatewaydomain.DefaultEntitlements().Tier
+	}
+	return tier
 }

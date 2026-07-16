@@ -36,4 +36,6 @@ type Repository interface {
 	FindBySlug(ctx context.Context, slug string) (*Gateway, error)
 	List(ctx context.Context, filter ListFilter) (items []*Gateway, total int, err error)
 	CountByTenantID(ctx context.Context, tenantID string) (int, error)
+	// SaveWithTenantCap atomically enforces maxInstances for tenantID before inserting g; maxInstances <= 0 means unlimited.
+	SaveWithTenantCap(ctx context.Context, g *Gateway, tenantID string, maxInstances int) error
 }

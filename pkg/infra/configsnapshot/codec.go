@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
@@ -151,6 +152,9 @@ func fromProto(msg *snapshotpb.Snapshot) (readmodel.Data, error) {
 		var g gatewaydomain.Gateway
 		if err := json.Unmarshal(m.GetJson(), &g); err != nil {
 			return readmodel.Data{}, fmt.Errorf("configsnapshot: unmarshal gateway: %w", err)
+		}
+		if strings.TrimSpace(g.Entitlements.Tier) == "" {
+			g.Entitlements = gatewaydomain.DefaultEntitlements()
 		}
 		data.Gateways = append(data.Gateways, g)
 	}

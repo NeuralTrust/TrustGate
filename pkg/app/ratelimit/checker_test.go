@@ -196,13 +196,13 @@ func TestExceededErrorString(t *testing.T) {
 }
 
 func TestExceededHeaders(t *testing.T) {
-	err := &Exceeded{Reason: ReasonBurst, Limit: 120, Remaining: 0, RetryAfter: 42 * time.Second}
+	err := &Exceeded{Reason: ReasonBurst, Limit: 60, Remaining: 0, RetryAfter: 42 * time.Second}
 	headers := err.Headers()
 	if got := headers["Retry-After"]; len(got) != 1 || got[0] != "42" {
 		t.Fatalf("Retry-After = %v, want [42]", got)
 	}
-	if got := headers["X-RateLimit-Limit"]; len(got) != 1 || got[0] != "120" {
-		t.Fatalf("X-RateLimit-Limit = %v, want [120]", got)
+	if got := headers["X-RateLimit-Limit"]; len(got) != 1 || got[0] != "60" {
+		t.Fatalf("X-RateLimit-Limit = %v, want [60]", got)
 	}
 	if got := headers["X-RateLimit-Remaining"]; len(got) != 1 || got[0] != "0" {
 		t.Fatalf("X-RateLimit-Remaining = %v, want [0]", got)

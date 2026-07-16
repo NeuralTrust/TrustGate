@@ -19,6 +19,8 @@ import (
 	"encoding/hex"
 	"testing"
 
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	"github.com/stretchr/testify/assert"
@@ -118,4 +120,18 @@ func TestDecodeInvalidBytes(t *testing.T) {
 	codec := configsnapshot.NewCodec()
 	_, err := codec.Decode([]byte{0xff, 0xff, 0xff, 0xff})
 	assert.Error(t, err)
+}
+
+func TestDecodeDefaultsEmptyEntitlementsToFree(t *testing.T) {
+	t.Parallel()
+	codec := configsnapshot.NewCodec()
+
+	gw := gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
+	raw, err := codec.Encode(readmodel.Build(readmodel.Data{Gateways: []gatewaydomain.Gateway{gw}}))
+	require.NoError(t, err)
+
+	snap, err := codec.Decode(raw)
+	require.NoError(t, err)
+	require.Len(t, snap.Data().Gateways, 1)
+	assert.Equal(t, gatewaydomain.TierFree, snap.Data().Gateways[0].Entitlements.Tier)
 }

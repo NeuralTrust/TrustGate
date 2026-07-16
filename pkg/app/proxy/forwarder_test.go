@@ -163,7 +163,7 @@ func TestForward_RateLimitExceeded_Returns429WithHeaders(t *testing.T) {
 	limiter := ratelimitmocks.NewChecker(t)
 	limiter.EXPECT().Check(mock.Anything, gatewayID).Return(&ratelimitapp.Exceeded{
 		Reason:     ratelimitapp.ReasonQuota,
-		Limit:      25_000,
+		Limit:      10_000,
 		Remaining:  0,
 		RetryAfter: 10 * time.Second,
 	}).Once()
@@ -179,7 +179,7 @@ func TestForward_RateLimitExceeded_Returns429WithHeaders(t *testing.T) {
 	require.NotNil(t, res)
 	assert.Equal(t, http.StatusTooManyRequests, res.StatusCode)
 	assert.Equal(t, []string{"10"}, res.Headers["Retry-After"])
-	assert.Equal(t, []string{"25000"}, res.Headers["X-RateLimit-Limit"])
+	assert.Equal(t, []string{"10000"}, res.Headers["X-RateLimit-Limit"])
 	assert.Equal(t, []string{"0"}, res.Headers["X-RateLimit-Remaining"])
 	assert.Equal(t, []string{ratelimitapp.ReasonQuota}, res.Headers["X-RateLimit-Reason"])
 	invoker.AssertNotCalled(t, "Invoke", mock.Anything, mock.Anything, mock.Anything)

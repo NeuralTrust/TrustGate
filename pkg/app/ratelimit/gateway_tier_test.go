@@ -59,6 +59,40 @@ func TestGatewayTierLoader_FallsBackToFinder(t *testing.T) {
 	}
 }
 
+func TestGatewayTierLoader_EmptyTierFromContextDefaultsToFree(t *testing.T) {
+	finder := gatewaymocks.NewFinder(t)
+	loader := NewGatewayTierLoader(finder)
+
+	gatewayID := ids.New[ids.GatewayKind]()
+	gw := &gatewaydomain.Gateway{ID: gatewayID}
+	ctx := appgateway.WithGateway(context.Background(), gw)
+
+	tier, err := loader.Tier(ctx, gatewayID)
+	if err != nil {
+		t.Fatalf("Tier: %v", err)
+	}
+	if tier != gatewaydomain.TierFree {
+		t.Fatalf("tier = %q, want default %q", tier, gatewaydomain.TierFree)
+	}
+	finder.AssertNotCalled(t, "FindByID")
+}
+
+func TestGatewayTierLoader_EmptyTierFromFinderDefaultsToFree(t *testing.T) {
+	finder := gatewaymocks.NewFinder(t)
+	gatewayID := ids.New[ids.GatewayKind]()
+	gw := &gatewaydomain.Gateway{ID: gatewayID}
+	finder.EXPECT().FindByID(context.Background(), gatewayID).Return(gw, nil).Once()
+
+	loader := NewGatewayTierLoader(finder)
+	tier, err := loader.Tier(context.Background(), gatewayID)
+	if err != nil {
+		t.Fatalf("Tier: %v", err)
+	}
+	if tier != gatewaydomain.TierFree {
+		t.Fatalf("tier = %q, want default %q", tier, gatewaydomain.TierFree)
+	}
+}
+
 func TestGatewayTierLoader_FinderErrorPropagates(t *testing.T) {
 	finder := gatewaymocks.NewFinder(t)
 	gatewayID := ids.New[ids.GatewayKind]()

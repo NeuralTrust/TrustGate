@@ -23,6 +23,7 @@ import (
 
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
@@ -66,6 +67,35 @@ func (r *Repository) Save(ctx context.Context, g *domain.Gateway) error {
 	if g == nil {
 		return errors.New("gateway repository: nil gateway")
 	}
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		return insertGatewayTx(ctx, tx, g)
+	})
+}
+
+// SaveWithTenantCap serializes the count-then-insert behind a tenant-keyed Postgres advisory lock so concurrent creates can't both pass the cap check.
+func (r *Repository) SaveWithTenantCap(ctx context.Context, g *domain.Gateway, tenantID string, maxInstances int) error {
+	if g == nil {
+		return errors.New("gateway repository: nil gateway")
+	}
+	if tenantID == "" || maxInstances <= 0 {
+		return r.Save(ctx, g)
+	}
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, tenantID); err != nil {
+			return fmt.Errorf("gateway repository: acquire tenant lock: %w", err)
+		}
+		var count int
+		if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM gateways WHERE metadata->>'tenant_id' = $1`, tenantID).Scan(&count); err != nil {
+			return fmt.Errorf("gateway repository: count by tenant: %w", err)
+		}
+		if count >= maxInstances {
+			return ratelimit.ErrInstanceLimit
+		}
+		return insertGatewayTx(ctx, tx, g)
+	})
+}
+
+func insertGatewayTx(ctx context.Context, tx pgx.Tx, g *domain.Gateway) error {
 	metadataBytes, err := marshalJSON(g.Metadata)
 	if err != nil {
 		return fmt.Errorf("gateway repository: marshal metadata: %w", err)
@@ -89,14 +119,12 @@ func (r *Repository) Save(ctx context.Context, g *domain.Gateway) error {
 	const query = `
 		INSERT INTO gateways (id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, query,
-			g.ID, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, entitlementsBytes, g.CreatedAt, g.UpdatedAt,
-		); err != nil {
-			return mapPgError(err)
-		}
-		return nil
-	})
+	if _, err := tx.Exec(ctx, query,
+		g.ID, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, entitlementsBytes, g.CreatedAt, g.UpdatedAt,
+	); err != nil {
+		return mapPgError(err)
+	}
+	return nil
 }
 
 func (r *Repository) Update(ctx context.Context, g *domain.Gateway) error {

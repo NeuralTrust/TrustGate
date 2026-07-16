@@ -28,7 +28,7 @@ import (
 func TestCreator_Create_SignalsOnSuccess(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
+	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "", 0).Return(nil).Once()
 
 	signaler := &configsynctest.FakeSignaler{}
 	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), signaler)
@@ -44,7 +44,7 @@ func TestCreator_Create_SignalsOnSuccess(t *testing.T) {
 func TestCreator_Create_DoesNotSignalOnFailure(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(domain.ErrAlreadyExists).Once()
+	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "", 0).Return(domain.ErrAlreadyExists).Once()
 
 	signaler := &configsynctest.FakeSignaler{}
 	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), signaler)
@@ -60,7 +60,7 @@ func TestCreator_Create_DoesNotSignalOnFailure(t *testing.T) {
 func TestCreator_Create_NilSignalerIsSafe(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
+	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "", 0).Return(nil).Once()
 
 	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil)
 

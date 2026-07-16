@@ -417,6 +417,55 @@ func (_c *Repository_Save_Call) RunAndReturn(run func(context.Context, *gateway.
 	return _c
 }
 
+// SaveWithTenantCap provides a mock function with given fields: ctx, g, tenantID, maxInstances
+func (_m *Repository) SaveWithTenantCap(ctx context.Context, g *gateway.Gateway, tenantID string, maxInstances int) error {
+	ret := _m.Called(ctx, g, tenantID, maxInstances)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SaveWithTenantCap")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, *gateway.Gateway, string, int) error); ok {
+		r0 = rf(ctx, g, tenantID, maxInstances)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Repository_SaveWithTenantCap_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SaveWithTenantCap'
+type Repository_SaveWithTenantCap_Call struct {
+	*mock.Call
+}
+
+// SaveWithTenantCap is a helper method to define mock.On call
+//   - ctx context.Context
+//   - g *gateway.Gateway
+//   - tenantID string
+//   - maxInstances int
+func (_e *Repository_Expecter) SaveWithTenantCap(ctx interface{}, g interface{}, tenantID interface{}, maxInstances interface{}) *Repository_SaveWithTenantCap_Call {
+	return &Repository_SaveWithTenantCap_Call{Call: _e.mock.On("SaveWithTenantCap", ctx, g, tenantID, maxInstances)}
+}
+
+func (_c *Repository_SaveWithTenantCap_Call) Run(run func(ctx context.Context, g *gateway.Gateway, tenantID string, maxInstances int)) *Repository_SaveWithTenantCap_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(*gateway.Gateway), args[2].(string), args[3].(int))
+	})
+	return _c
+}
+
+func (_c *Repository_SaveWithTenantCap_Call) Return(_a0 error) *Repository_SaveWithTenantCap_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Repository_SaveWithTenantCap_Call) RunAndReturn(run func(context.Context, *gateway.Gateway, string, int) error) *Repository_SaveWithTenantCap_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Update provides a mock function with given fields: ctx, g
 func (_m *Repository) Update(ctx context.Context, g *gateway.Gateway) error {
 	ret := _m.Called(ctx, g)

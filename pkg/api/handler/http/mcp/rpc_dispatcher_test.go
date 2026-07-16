@@ -262,7 +262,7 @@ func TestRPCGateway_ToolsCall_GatewayPlanExceeded_ReturnsRPCErrorWithHeaders(t *
 	limiter := ratelimitmocks.NewChecker(t)
 	limiter.EXPECT().Check(mock.Anything, mock.Anything).Return(&ratelimitapp.Exceeded{
 		Reason:     ratelimitapp.ReasonBurst,
-		Limit:      120,
+		Limit:      60,
 		Remaining:  0,
 		RetryAfter: 5 * time.Second,
 	}).Once()
@@ -278,7 +278,7 @@ func TestRPCGateway_ToolsCall_GatewayPlanExceeded_ReturnsRPCErrorWithHeaders(t *
 	require.True(t, errors.As(err, &rpcErr), "want *appmcp.RPCError, got %v", err)
 	assert.Equal(t, appmcp.CodeRateLimited, rpcErr.Code)
 	assert.Equal(t, []string{"5"}, rpcErr.HTTPHeaders["Retry-After"])
-	assert.Equal(t, []string{"120"}, rpcErr.HTTPHeaders["X-RateLimit-Limit"])
+	assert.Equal(t, []string{"60"}, rpcErr.HTTPHeaders["X-RateLimit-Limit"])
 	assert.Equal(t, []string{"0"}, rpcErr.HTTPHeaders["X-RateLimit-Remaining"])
 	assert.Equal(t, []string{ratelimitapp.ReasonBurst}, rpcErr.HTTPHeaders["X-RateLimit-Reason"])
 	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything, mock.Anything)

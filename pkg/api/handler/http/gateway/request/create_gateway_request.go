@@ -31,12 +31,21 @@ type CreateGatewayRequest struct {
 	Telemetry       *telemetry.Telemetry   `json:"telemetry,omitempty"`
 	ClientTLSConfig domain.ClientTLSConfig `json:"client_tls,omitempty"`
 	SessionConfig   *domain.SessionConfig  `json:"session_config,omitempty"`
+	// Entitlements.Tier is optional; when omitted the gateway defaults to the free tier.
+	Entitlements *domain.Entitlements `json:"entitlements,omitempty"`
 }
 
 // Validate checks the create request. The slug is optional: when omitted the
 // server generates a unique random slug at creation time. A provided slug must
 // still be a valid lowercase DNS label.
 func (r CreateGatewayRequest) Validate() error {
+	if r.Entitlements != nil {
+		tier, err := domain.ValidateTier(r.Entitlements.Tier)
+		if err != nil {
+			return err
+		}
+		r.Entitlements.Tier = tier
+	}
 	if strings.TrimSpace(r.Slug) == "" {
 		return nil
 	}

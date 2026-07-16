@@ -46,11 +46,11 @@ func TestCreator_Create_Success(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	tel := &telemetry.Telemetry{ExtraParams: map[string]string{"env": "prod"}}
 	repo.EXPECT().
-		Save(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+		SaveWithTenantCap(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
 			return g.Slug == "prod" &&
 				g.Status == "active" &&
 				g.Telemetry == tel
-		})).
+		}), "", 0).
 		Return(nil).
 		Once()
 
@@ -84,7 +84,7 @@ func TestCreator_Create_PreservesExplicitSessionConfig(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	disabled := false
-	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
+	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "", 0).Return(nil).Once()
 
 	mgr := newCacheManager()
 	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger(), nil)
@@ -105,9 +105,9 @@ func TestCreator_Create_GeneratesSlugWhenEmpty(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().
-		Save(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+		SaveWithTenantCap(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
 			return domain.IsValidSlug(g.Slug)
-		})).
+		}), "", 0).
 		Return(nil).
 		Once()
 
@@ -128,8 +128,8 @@ func TestCreator_Create_GeneratesSlugWhenEmpty(t *testing.T) {
 func TestCreator_Create_RetriesOnGeneratedSlugCollision(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(domain.ErrAlreadyExists).Once()
-	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
+	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "", 0).Return(domain.ErrAlreadyExists).Once()
+	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "", 0).Return(nil).Once()
 
 	mgr := newCacheManager()
 	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger(), nil)
@@ -146,7 +146,7 @@ func TestCreator_Create_RetriesOnGeneratedSlugCollision(t *testing.T) {
 func TestCreator_Create_DoesNotRetryOnProvidedSlugCollision(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(domain.ErrAlreadyExists).Once()
+	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "", 0).Return(domain.ErrAlreadyExists).Once()
 
 	mgr := newCacheManager()
 	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger(), nil)
@@ -207,9 +207,9 @@ func TestCreator_Create_StripsClientProvidedTenantID(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().
-		Save(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+		SaveWithTenantCap(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
 			return g.TenantID() == "" && g.Metadata["env"] == "prod"
-		})).
+		}), "", 0).
 		Return(nil).
 		Once()
 
@@ -230,11 +230,10 @@ func TestCreator_Create_StripsClientProvidedTenantID(t *testing.T) {
 func TestCreator_Create_StampsTenantIDFromContext(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().CountByTenantID(mock.Anything, "acme").Return(0, nil).Once()
 	repo.EXPECT().
-		Save(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+		SaveWithTenantCap(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
 			return g.TenantID() == "acme" && g.Metadata["env"] == "prod"
-		})).
+		}), "acme", 1).
 		Return(nil).
 		Once()
 
@@ -257,7 +256,7 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().
-		Save(mock.Anything, mock.Anything).
+		SaveWithTenantCap(mock.Anything, mock.Anything, "", 0).
 		Return(domain.ErrAlreadyExists).
 		Once()
 
@@ -278,7 +277,7 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 func TestCreator_Create_RejectsSecondGatewayOnFreeTier(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().CountByTenantID(mock.Anything, "acme").Return(1, nil).Once()
+	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "acme", 1).Return(ratelimit.ErrInstanceLimit).Once()
 
 	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil)
 
@@ -297,8 +296,7 @@ func TestCreator_Create_RejectsSecondGatewayOnFreeTier(t *testing.T) {
 func TestCreator_Create_AllowsSecondGatewayOnStandardTier(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().CountByTenantID(mock.Anything, "acme").Return(1, nil).Once()
-	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
+	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "acme", 2).Return(nil).Once()
 
 	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil)
 
@@ -319,7 +317,7 @@ func TestCreator_Create_AllowsSecondGatewayOnStandardTier(t *testing.T) {
 func TestCreator_Create_AllowsUnlimitedInstancesOnEnterpriseTier(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
+	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "acme", 0).Return(nil).Once()
 
 	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil)
 
@@ -332,13 +330,12 @@ func TestCreator_Create_AllowsUnlimitedInstancesOnEnterpriseTier(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create error: %v", err)
 	}
-	repo.AssertNotCalled(t, "CountByTenantID")
 }
 
 func TestCreator_Create_SkipsInstanceLimitWhenTenantEmpty(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
+	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "", 0).Return(nil).Once()
 
 	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil)
 
@@ -346,14 +343,12 @@ func TestCreator_Create_SkipsInstanceLimitWhenTenantEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create error: %v", err)
 	}
-	repo.AssertNotCalled(t, "CountByTenantID")
 }
 
 func TestCreator_Create_AllowsFirstGatewayOnFreeTier(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().CountByTenantID(mock.Anything, "acme").Return(0, nil).Once()
-	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
+	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "acme", 1).Return(nil).Once()
 
 	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil)
 
@@ -366,10 +361,10 @@ func TestCreator_Create_AllowsFirstGatewayOnFreeTier(t *testing.T) {
 	}
 }
 
-func TestCreator_Create_PropagatesCountByTenantIDError(t *testing.T) {
+func TestCreator_Create_PropagatesSaveWithTenantCapError(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().CountByTenantID(mock.Anything, "acme").Return(0, errors.New("db down")).Once()
+	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "acme", 1).Return(errors.New("db down")).Once()
 
 	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil)
 
