@@ -37,6 +37,10 @@ const codePolicyBlocked int64 = -32001
 // that return HTTP 429 (e.g. per_tool_rate_limiter) keep codePolicyBlocked (-32001).
 const CodeRateLimited int64 = -32004
 
+// CodeUnavailable is returned when gateway plan entitlements cannot be resolved
+// (unknown/empty tier). Aligns with HTTP 503 on the proxy path.
+const CodeUnavailable int64 = -32005
+
 const trustGuardRateLimitedType = "trustguard_rate_limited"
 
 const (

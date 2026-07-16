@@ -17,11 +17,13 @@ package gateway
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
@@ -98,6 +100,9 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, 
 		g.SessionConfig = domain.DefaultSessionConfig()
 	}
 	// Platform admins (empty JWT tenant / PlatformAdmin) may set entitlements; tenant callers cannot.
+	if in.Entitlements != nil && !(in.PlatformAdmin || in.TenantID == "") {
+		return nil, fmt.Errorf("entitlements may only be set by platform admins: %w", commonerrors.ErrValidation)
+	}
 	if in.Entitlements != nil && (in.PlatformAdmin || in.TenantID == "") {
 		g.Entitlements = *in.Entitlements
 	}

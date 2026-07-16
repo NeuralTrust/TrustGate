@@ -1,26 +1,14 @@
-// Copyright 2026 NeuralTrust
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package gateway
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
@@ -34,6 +22,8 @@ type UpdateInput struct {
 	Status          *string
 	Domain          *string
 	TenantID        string
+	// PlatformAdmin is true when the JWT has no tenant claim (may set entitlements).
+	PlatformAdmin   bool
 	Metadata        map[string]string
 	Telemetry       *telemetry.Telemetry
 	ClientTLSConfig *domain.ClientTLSConfig
@@ -114,18 +104,29 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	if in.SessionConfig != nil {
 		g.SessionConfig = in.SessionConfig
 	}
-	// Only platform admins (empty caller tenant) may change entitlements.
-	if in.Entitlements != nil && in.TenantID == "" {
+	if in.Entitlements != nil && !(in.PlatformAdmin || in.TenantID == "") {
+		return nil, fmt.Errorf("entitlements may only be set by platform admins: %w", commonerrors.ErrValidation)
+	}
+	if in.Entitlements != nil && (in.PlatformAdmin || in.TenantID == "") {
 		g.Entitlements = *in.Entitlements
 	}
 	g.UpdatedAt = time.Now().UTC()
 	if err := g.Validate(); err != nil {
 		return nil, err
 	}
-	if err := u.enforceInstanceCap(ctx, tenantID, old.Entitlements, g.Entitlements); err != nil {
-		return nil, err
+	maxInstances := 0
+	if u.rateLimitEnabled && tenantID != "" && old.Entitlements.Tier != g.Entitlements.Tier {
+		limits, ok := ratelimit.LimitsFor(g.Entitlements.Tier)
+		if ok && limits.HasInstanceCap() {
+			maxInstances = limits.MaxInstances
+		}
 	}
-	if err := u.repo.Update(ctx, g); err != nil {
+	if maxInstances > 0 {
+		err = u.repo.UpdateWithTenantCap(ctx, g, tenantID, maxInstances)
+	} else {
+		err = u.repo.Update(ctx, g)
+	}
+	if err != nil {
 		return nil, err
 	}
 	deleteGatewayCache(u.memoryCache, &old)
@@ -135,24 +136,4 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 		u.signaler.Signal(ctx)
 	}
 	return g, nil
-}
-
-// enforceInstanceCap rejects a tier change that would leave the tenant over the new tier's instance cap.
-// The count includes the current gateway, so N gateways under a cap of N is allowed and N under N-1 rejects.
-func (u *updater) enforceInstanceCap(ctx context.Context, tenantID string, oldEnt, newEnt domain.Entitlements) error {
-	if !u.rateLimitEnabled || tenantID == "" || oldEnt.Tier == newEnt.Tier {
-		return nil
-	}
-	limits, ok := ratelimit.LimitsFor(newEnt.Tier)
-	if !ok || !limits.HasInstanceCap() {
-		return nil
-	}
-	count, err := u.repo.CountByTenantID(ctx, tenantID)
-	if err != nil {
-		return err
-	}
-	if count > limits.MaxInstances {
-		return ratelimit.ErrInstanceLimit
-	}
-	return nil
 }

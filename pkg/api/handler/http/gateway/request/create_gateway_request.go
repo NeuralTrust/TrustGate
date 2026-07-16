@@ -33,7 +33,8 @@ type CreateGatewayRequest struct {
 	Telemetry       *telemetry.Telemetry   `json:"telemetry,omitempty"`
 	ClientTLSConfig domain.ClientTLSConfig `json:"client_tls,omitempty"`
 	SessionConfig   *domain.SessionConfig  `json:"session_config,omitempty"`
-	// Entitlements.Tier is optional; when omitted the gateway defaults to the free tier.
+	// Entitlements.Tier is optional; only platform admins may set it. Tenant callers sending
+	// entitlements receive 422. When omitted the gateway defaults to free (or inherits sibling tier).
 	Entitlements *domain.Entitlements `json:"entitlements,omitempty"`
 }
 

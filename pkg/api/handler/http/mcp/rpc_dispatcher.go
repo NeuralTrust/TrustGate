@@ -138,6 +138,12 @@ func (g *RPCGateway) checkRateLimit(ctx context.Context, rc *appconsumer.Routabl
 			HTTPHeaders: exceeded.Headers(),
 		}
 	}
+	if errors.Is(err, ratelimitapp.ErrUnavailable) {
+		return &appmcp.RPCError{
+			Code:    appmcp.CodeUnavailable,
+			Message: err.Error(),
+		}
+	}
 	return err
 }
 

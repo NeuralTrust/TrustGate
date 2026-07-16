@@ -22,6 +22,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
+	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -224,6 +225,8 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 		return writeRPCError(c, id, codeResourceNotFound, err.Error())
 	case errors.Is(err, appmcp.ErrNoMCPRegistries):
 		return writeRPCError(c, id, codeInvalidRequest, err.Error())
+	case errors.Is(err, ratelimitapp.ErrUnavailable):
+		return writeRPCError(c, id, int(appmcp.CodeUnavailable), err.Error())
 	default:
 		return writeRPCError(c, id, codeInternalError, err.Error())
 	}

@@ -177,6 +177,70 @@ func (r *Repository) Update(ctx context.Context, g *domain.Gateway) error {
 	})
 }
 
+// UpdateWithTenantCap serializes the count-then-update behind the same tenant advisory lock as SaveWithTenantCap.
+func (r *Repository) UpdateWithTenantCap(ctx context.Context, g *domain.Gateway, tenantID string, maxInstances int) error {
+	if g == nil {
+		return errors.New("gateway repository: nil gateway")
+	}
+	if tenantID == "" || maxInstances <= 0 {
+		return r.Update(ctx, g)
+	}
+	metadataBytes, err := marshalJSON(g.Metadata)
+	if err != nil {
+		return fmt.Errorf("gateway repository: marshal metadata: %w", err)
+	}
+	telemetryBytes, err := marshalJSON(g.Telemetry)
+	if err != nil {
+		return fmt.Errorf("gateway repository: marshal telemetry: %w", err)
+	}
+	clientTLSBytes, err := marshalJSON(g.ClientTLSConfig)
+	if err != nil {
+		return fmt.Errorf("gateway repository: marshal client_tls: %w", err)
+	}
+	sessionBytes, err := marshalJSON(g.SessionConfig)
+	if err != nil {
+		return fmt.Errorf("gateway repository: marshal session_config: %w", err)
+	}
+	entitlementsBytes, err := marshalJSON(g.Entitlements)
+	if err != nil {
+		return fmt.Errorf("gateway repository: marshal entitlements: %w", err)
+	}
+	const query = `
+		UPDATE gateways
+		   SET slug           = $2,
+		       status         = $3,
+		       domain         = $4,
+		       metadata       = $5,
+		       telemetry      = $6,
+		       client_tls     = $7,
+		       session_config = $8,
+		       entitlements   = $9,
+		       updated_at     = $10
+		 WHERE id = $1`
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, tenantID); err != nil {
+			return fmt.Errorf("gateway repository: acquire tenant lock: %w", err)
+		}
+		var count int
+		if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM gateways WHERE metadata->>'tenant_id' = $1`, tenantID).Scan(&count); err != nil {
+			return fmt.Errorf("gateway repository: count by tenant: %w", err)
+		}
+		if count > maxInstances {
+			return ratelimit.ErrInstanceLimit
+		}
+		cmd, err := tx.Exec(ctx, query,
+			g.ID, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, entitlementsBytes, g.UpdatedAt,
+		)
+		if err != nil {
+			return mapPgError(err)
+		}
+		if cmd.RowsAffected() == 0 {
+			return domain.ErrNotFound
+		}
+		return nil
+	})
+}
+
 // cascadeDeleteStatements removes every resource that belongs to the gateway
 // before the gateway row itself. The order respects the ON DELETE RESTRICT
 // foreign keys on the junction tables (consumer_auth.auth_id,

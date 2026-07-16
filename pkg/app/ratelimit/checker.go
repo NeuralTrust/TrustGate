@@ -29,7 +29,7 @@ const (
 	ReasonQuota = "quota"
 )
 
-// ErrUnavailable means the gateway has no usable tier (HTTP 503 / MCP internal error).
+// ErrUnavailable means the gateway has no usable tier (HTTP 503 / JSON-RPC -32005).
 var ErrUnavailable = errors.New("rate limit entitlements unavailable")
 
 // Exceeded is returned when a plan limit is hit (HTTP 429 / JSON-RPC -32004).
