@@ -22,18 +22,20 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 
 type UpdateGatewayHandler struct {
 	updater       appgateway.Updater
+	finder        appgateway.Finder
 	baseDomain    string
 	mcpBaseDomain string
 }
 
-func NewUpdateGatewayHandler(updater appgateway.Updater, baseDomain, mcpBaseDomain string) *UpdateGatewayHandler {
-	return &UpdateGatewayHandler{updater: updater, baseDomain: baseDomain, mcpBaseDomain: mcpBaseDomain}
+func NewUpdateGatewayHandler(updater appgateway.Updater, finder appgateway.Finder, baseDomain, mcpBaseDomain string) *UpdateGatewayHandler {
+	return &UpdateGatewayHandler{updater: updater, finder: finder, baseDomain: baseDomain, mcpBaseDomain: mcpBaseDomain}
 }
 
 // Handle godoc
@@ -65,6 +67,17 @@ func (h *UpdateGatewayHandler) Handle(c *fiber.Ctx) error {
 		return httpio.WriteError(c, err)
 	}
 
+	caller := tenantIDFromContext(c)
+	if caller != "" {
+		existing, err := h.finder.FindByID(c.UserContext(), id)
+		if err != nil {
+			return httpio.WriteError(c, err)
+		}
+		if !callerOwnsGateway(caller, existing) {
+			return httpio.WriteError(c, domain.ErrNotFound)
+		}
+	}
+
 	g, err := h.updater.Update(c.UserContext(), appgateway.UpdateInput{
 		ID:              id,
 		Slug:            req.Slug,
@@ -75,6 +88,7 @@ func (h *UpdateGatewayHandler) Handle(c *fiber.Ctx) error {
 		Telemetry:       req.Telemetry,
 		ClientTLSConfig: req.ClientTLSConfig,
 		SessionConfig:   req.SessionConfig,
+		Entitlements:    req.Entitlements,
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)

@@ -40,7 +40,7 @@ func TestRPCGateway_Dispatch_RecordsToolSpan(t *testing.T) {
 	rt := trace.New("t-1", trace.Metadata{Kind: events.KindMCP})
 	ctx := trace.NewContext(context.Background(), rt)
 
-	g := mcphttp.NewRPCGateway(composer, noopRunner())
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), nil)
 	_, err := g.Dispatch(ctx, &appconsumer.RoutableConsumer{}, "tools/call", json.RawMessage(`{"name":"echo"}`))
 	require.NoError(t, err)
 
@@ -65,7 +65,7 @@ func TestRPCGateway_Dispatch_RecordsErrorStatus(t *testing.T) {
 	rt := trace.New("t-2", trace.Metadata{Kind: events.KindMCP})
 	ctx := trace.NewContext(context.Background(), rt)
 
-	g := mcphttp.NewRPCGateway(composer, noopRunner())
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), nil)
 	_, err := g.Dispatch(ctx, &appconsumer.RoutableConsumer{}, "tools/list", nil)
 	require.Error(t, err)
 

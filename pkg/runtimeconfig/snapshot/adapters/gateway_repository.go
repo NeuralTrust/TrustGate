@@ -71,6 +71,10 @@ func (r *gatewayRepository) Save(_ context.Context, _ *domain.Gateway) error {
 	return configsync.ErrReadOnly
 }
 
+func (r *gatewayRepository) SaveWithTenantCap(_ context.Context, _ *domain.Gateway, _ string, _ int) error {
+	return configsync.ErrReadOnly
+}
+
 func (r *gatewayRepository) Update(_ context.Context, _ *domain.Gateway) error {
 	return configsync.ErrReadOnly
 }
@@ -81,6 +85,10 @@ func (r *gatewayRepository) Delete(_ context.Context, _ ids.GatewayID) error {
 
 func (r *gatewayRepository) List(_ context.Context, _ domain.ListFilter) ([]*domain.Gateway, int, error) {
 	return nil, 0, configsync.ErrReadOnly
+}
+
+func (r *gatewayRepository) CountByTenantID(_ context.Context, _ string) (int, error) {
+	return 0, configsync.ErrReadOnly
 }
 
 var _ domain.Repository = (*gatewayRepository)(nil)

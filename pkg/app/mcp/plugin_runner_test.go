@@ -91,6 +91,29 @@ func TestPluginRunner_PreRequest(t *testing.T) {
 			wantRPCData: `{"trace_id":"t2"}`,
 		},
 		{
+			name: "trustguard plan rate limit via plugin error",
+			execErr: &appplugins.PluginError{
+				StatusCode: 429,
+				Type:       "trustguard_rate_limited",
+				Message:    "rate limit exceeded",
+				Body:       []byte(`{"error":"rate limit exceeded","reason":"burst"}`),
+				Headers:    map[string][]string{"Retry-After": {"42"}, "X-RateLimit-Reason": {"burst"}},
+			},
+			wantRPCCode: CodeRateLimited,
+			wantRPCData: `{"error":"rate limit exceeded","reason":"burst"}`,
+		},
+		{
+			name: "policy rate limit 429 stays policy-blocked",
+			execErr: &appplugins.PluginError{
+				StatusCode: 429,
+				Message:    "tool rate limit exceeded",
+				Body:       []byte(`{"error":"rate limit exceeded"}`),
+				Headers:    map[string][]string{"X-RateLimit-Tool": {"send_email"}},
+			},
+			wantRPCCode: codePolicyBlocked,
+			wantRPCData: `{"error":"rate limit exceeded"}`,
+		},
+		{
 			name:    "generic executor error fails open",
 			execErr: errors.New("boom"),
 			wantNil: true,
@@ -120,7 +143,11 @@ func TestPluginRunner_PreRequest(t *testing.T) {
 			case tt.wantNil:
 				require.NoError(t, err)
 			case tt.wantRPCCode != 0:
-				assertRPCError(t, err, tt.wantRPCCode, tt.wantRPCData)
+				rpcErr := assertRPCError(t, err, tt.wantRPCCode, tt.wantRPCData)
+				if tt.wantRPCCode == CodeRateLimited {
+					require.Equal(t, []string{"42"}, rpcErr.HTTPHeaders["Retry-After"])
+					require.Equal(t, []string{"burst"}, rpcErr.HTTPHeaders["X-RateLimit-Reason"])
+				}
 			}
 		})
 	}
@@ -211,7 +238,7 @@ func TestPluginRunner_PreResponse(t *testing.T) {
 			case tt.wantNil:
 				require.NoError(t, err)
 			case tt.wantRPCCode != 0:
-				assertRPCError(t, err, tt.wantRPCCode, tt.wantRPCData)
+				_ = assertRPCError(t, err, tt.wantRPCCode, tt.wantRPCData)
 			}
 		})
 	}
@@ -244,7 +271,7 @@ func assertStageInput(t *testing.T, in appplugins.StageInput, stage policydomain
 	assert.JSONEq(t, `{"name":"`+testToolName+`","arguments":`+testToolArgs+`}`, string(in.Request.Body))
 }
 
-func assertRPCError(t *testing.T, err error, code int64, data string) {
+func assertRPCError(t *testing.T, err error, code int64, data string) *RPCError {
 	t.Helper()
 	var rpcErr *RPCError
 	require.True(t, errors.As(err, &rpcErr), "expected *RPCError, got %v", err)
@@ -252,4 +279,5 @@ func assertRPCError(t *testing.T, err error, code int64, data string) {
 	if data != "" {
 		assert.JSONEq(t, data, string(rpcErr.Data))
 	}
+	return rpcErr
 }

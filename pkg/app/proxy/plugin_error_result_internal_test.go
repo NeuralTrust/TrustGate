@@ -24,6 +24,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestPluginErrorResult_PreservesRateLimitHeaders(t *testing.T) {
+	pe := &appplugins.PluginError{
+		StatusCode: http.StatusTooManyRequests,
+		Type:       "trustguard_rate_limited",
+		Message:    "rate limit exceeded",
+		Headers: map[string][]string{
+			"Retry-After":           {"42"},
+			"X-RateLimit-Limit":     {"60"},
+			"X-RateLimit-Remaining": {"0"},
+			"X-RateLimit-Reason":    {"burst"},
+		},
+		Body: []byte(`{"error":"rate limit exceeded","reason":"burst"}`),
+	}
+
+	res := pluginErrorResult(pe)
+	require.NotNil(t, res)
+	assert.Equal(t, http.StatusTooManyRequests, res.StatusCode)
+	assert.Equal(t, []string{"42"}, res.Headers["Retry-After"])
+	assert.Equal(t, []string{"60"}, res.Headers["X-RateLimit-Limit"])
+	assert.Equal(t, []string{"0"}, res.Headers["X-RateLimit-Remaining"])
+	assert.Equal(t, []string{"burst"}, res.Headers["X-RateLimit-Reason"])
+	assert.Equal(t, []string{"application/json"}, res.Headers["Content-Type"])
+	assert.JSONEq(t, `{"error":"rate limit exceeded","reason":"burst"}`, string(res.Body))
+}
+
 func TestPluginErrorResult_IncludesTypeWhenSet(t *testing.T) {
 	pe := &appplugins.PluginError{
 		StatusCode: 403,

@@ -18,8 +18,10 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 func TestNew(t *testing.T) {
@@ -277,4 +279,46 @@ func TestWithTenantID(t *testing.T) {
 			t.Fatalf("tenant_id = %q, want team-1", out[MetadataTenantIDKey])
 		}
 	})
+}
+
+func TestRehydrate_DefaultsEntitlements(t *testing.T) {
+	t.Parallel()
+	g := Rehydrate(ids.New[ids.GatewayKind](), "acme", "active", "", nil, nil, nil, time.Now().UTC(), time.Now().UTC())
+	if g.Entitlements.Tier != TierFree {
+		t.Fatalf("Entitlements.Tier = %q, want default %q", g.Entitlements.Tier, TierFree)
+	}
+}
+
+func TestValidateTier(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{name: "empty defaults to free", in: "", want: TierFree},
+		{name: "free", in: "free", want: "free"},
+		{name: "standard", in: "standard", want: "standard"},
+		{name: "enterprise mixed case is normalized", in: " Enterprise ", want: "enterprise"},
+		{name: "unknown tier is rejected", in: "gold", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := ValidateTier(tt.in)
+			if tt.wantErr {
+				if !errors.Is(err, commonerrors.ErrValidation) {
+					t.Fatalf("err = %v, want wrapped commonerrors.ErrValidation", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("ValidateTier(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
 }

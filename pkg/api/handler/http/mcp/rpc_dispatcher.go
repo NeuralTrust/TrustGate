@@ -22,6 +22,7 @@ import (
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
+	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
@@ -36,10 +37,15 @@ func (e *InvalidParamsError) Error() string { return "mcp: invalid params: " + e
 type RPCGateway struct {
 	composer appmcp.Composer
 	plugins  *appmcp.PluginRunner
+	limiter  ratelimitapp.Checker
 }
 
-func NewRPCGateway(composer appmcp.Composer, plugins *appmcp.PluginRunner) *RPCGateway {
-	return &RPCGateway{composer: composer, plugins: plugins}
+// NewRPCGateway wires MCP dispatch; nil limiter defaults to noop.
+func NewRPCGateway(composer appmcp.Composer, plugins *appmcp.PluginRunner, limiter ratelimitapp.Checker) *RPCGateway {
+	if limiter == nil {
+		limiter = ratelimitapp.NewNoopChecker()
+	}
+	return &RPCGateway{composer: composer, plugins: plugins, limiter: limiter}
 }
 
 func (g *RPCGateway) Dispatch(ctx context.Context, rc *appconsumer.RoutableConsumer, method string, params json.RawMessage) (any, error) {
@@ -115,6 +121,26 @@ func mcpRequestAttrs(method string, params json.RawMessage) (operation, tool, pr
 	}
 }
 
+func (g *RPCGateway) checkRateLimit(ctx context.Context, rc *appconsumer.RoutableConsumer) error {
+	if rc == nil || rc.Consumer == nil {
+		return nil
+	}
+	err := g.limiter.Check(ctx, rc.Consumer.GatewayID)
+	if err == nil {
+		return nil
+	}
+	var exceeded *ratelimitapp.Exceeded
+	if errors.As(err, &exceeded) {
+		return &appmcp.RPCError{
+			Code:        appmcp.CodeRateLimited,
+			Message:     exceeded.Error(),
+			Data:        json.RawMessage(exceeded.Body()),
+			HTTPHeaders: exceeded.Headers(),
+		}
+	}
+	return err
+}
+
 func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsumer, method string, params json.RawMessage) (any, error) {
 	switch method {
 	case "tools/list":
@@ -133,6 +159,9 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		}
 		if err := json.Unmarshal(params, &p); err != nil || p.Name == "" {
 			return nil, &InvalidParamsError{Reason: "tools/call requires params.name"}
+		}
+		if err := g.checkRateLimit(ctx, rc); err != nil {
+			return nil, err
 		}
 		if err := g.plugins.PreRequest(ctx, rc, p.Name, p.Arguments); err != nil {
 			return nil, err
@@ -170,6 +199,9 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		if err := json.Unmarshal(params, &p); err != nil || p.URI == "" {
 			return nil, &InvalidParamsError{Reason: "resources/read requires params.uri"}
 		}
+		if err := g.checkRateLimit(ctx, rc); err != nil {
+			return nil, err
+		}
 		return g.composer.ReadResource(ctx, rc, p.URI)
 	case "prompts/list":
 		prompts, err := g.composer.ListPrompts(ctx, rc)
@@ -187,6 +219,9 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		}
 		if err := json.Unmarshal(params, &p); err != nil || p.Name == "" {
 			return nil, &InvalidParamsError{Reason: "prompts/get requires params.name"}
+		}
+		if err := g.checkRateLimit(ctx, rc); err != nil {
+			return nil, err
 		}
 		return g.composer.GetPrompt(ctx, rc, p.Name, p.Arguments)
 	default:

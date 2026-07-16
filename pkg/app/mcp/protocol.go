@@ -147,9 +147,10 @@ type Target struct {
 }
 
 type RPCError struct {
-	Code    int64           `json:"code"`
-	Message string          `json:"message"`
-	Data    json.RawMessage `json:"data,omitempty"`
+	Code        int64
+	Message     string
+	Data        json.RawMessage
+	HTTPHeaders map[string][]string
 }
 
 func (e *RPCError) Error() string {

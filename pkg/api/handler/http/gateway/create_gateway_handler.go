@@ -16,12 +16,14 @@ package gateway
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway/request"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway/response"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/gofiber/fiber/v2"
 )
@@ -58,19 +60,39 @@ func (h *CreateGatewayHandler) Handle(c *fiber.Ctx) error {
 		return httpio.WriteError(c, err)
 	}
 
+	callerTenant := tenantIDFromContext(c)
+	effectiveTenant, err := resolveCreateTenantID(callerTenant, req.TenantID)
+	if err != nil {
+		return httpio.WriteError(c, err)
+	}
+
 	g, err := h.creator.Create(c.UserContext(), appgateway.CreateInput{
 		Slug:            req.Slug,
 		Domain:          req.Domain,
-		TenantID:        tenantIDFromContext(c),
+		TenantID:        effectiveTenant,
+		PlatformAdmin:   callerTenant == "",
 		Metadata:        req.Metadata,
 		Telemetry:       req.Telemetry,
 		ClientTLSConfig: req.ClientTLSConfig,
 		SessionConfig:   req.SessionConfig,
+		Entitlements:    req.Entitlements,
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
 	return httpio.WriteCreated(c, response.FromDomain(g, h.baseDomain, h.mcpBaseDomain))
+}
+
+// resolveCreateTenantID picks ownership tenant: JWT wins; platform may stamp body tenant_id; mismatched body is rejected.
+func resolveCreateTenantID(callerTenant, bodyTenant string) (string, error) {
+	bodyTenant = strings.TrimSpace(bodyTenant)
+	if callerTenant != "" {
+		if bodyTenant != "" && bodyTenant != callerTenant {
+			return "", fmt.Errorf("tenant_id does not match authenticated tenant: %w", commonerrors.ErrValidation)
+		}
+		return callerTenant, nil
+	}
+	return bodyTenant, nil
 }
 
 // tenantIDFromContext returns the tenant identifier stamped by the admin auth
@@ -80,4 +102,11 @@ func tenantIDFromContext(c *fiber.Ctx) string {
 		return v
 	}
 	return ""
+}
+
+// callerOwnsGateway reports whether a caller may act on the loaded gateway.
+// A tenant-scoped caller only sees gateways stamped with its own tenant; a
+// platform admin (empty tenant claim) sees every gateway.
+func callerOwnsGateway(caller string, g *domain.Gateway) bool {
+	return caller == "" || (g != nil && g.TenantID() == caller)
 }

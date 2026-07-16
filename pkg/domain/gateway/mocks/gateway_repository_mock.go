@@ -23,6 +23,63 @@ func (_m *Repository) EXPECT() *Repository_Expecter {
 	return &Repository_Expecter{mock: &_m.Mock}
 }
 
+// CountByTenantID provides a mock function with given fields: ctx, tenantID
+func (_m *Repository) CountByTenantID(ctx context.Context, tenantID string) (int, error) {
+	ret := _m.Called(ctx, tenantID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CountByTenantID")
+	}
+
+	var r0 int
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string) (int, error)); ok {
+		return rf(ctx, tenantID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string) int); ok {
+		r0 = rf(ctx, tenantID)
+	} else {
+		r0 = ret.Get(0).(int)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = rf(ctx, tenantID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Repository_CountByTenantID_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CountByTenantID'
+type Repository_CountByTenantID_Call struct {
+	*mock.Call
+}
+
+// CountByTenantID is a helper method to define mock.On call
+//   - ctx context.Context
+//   - tenantID string
+func (_e *Repository_Expecter) CountByTenantID(ctx interface{}, tenantID interface{}) *Repository_CountByTenantID_Call {
+	return &Repository_CountByTenantID_Call{Call: _e.mock.On("CountByTenantID", ctx, tenantID)}
+}
+
+func (_c *Repository_CountByTenantID_Call) Run(run func(ctx context.Context, tenantID string)) *Repository_CountByTenantID_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string))
+	})
+	return _c
+}
+
+func (_c *Repository_CountByTenantID_Call) Return(_a0 int, _a1 error) *Repository_CountByTenantID_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Repository_CountByTenantID_Call) RunAndReturn(run func(context.Context, string) (int, error)) *Repository_CountByTenantID_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Delete provides a mock function with given fields: ctx, id
 func (_m *Repository) Delete(ctx context.Context, id ids.ID[ids.GatewayKind]) error {
 	ret := _m.Called(ctx, id)
@@ -356,6 +413,55 @@ func (_c *Repository_Save_Call) Return(_a0 error) *Repository_Save_Call {
 }
 
 func (_c *Repository_Save_Call) RunAndReturn(run func(context.Context, *gateway.Gateway) error) *Repository_Save_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// SaveWithTenantCap provides a mock function with given fields: ctx, g, tenantID, maxInstances
+func (_m *Repository) SaveWithTenantCap(ctx context.Context, g *gateway.Gateway, tenantID string, maxInstances int) error {
+	ret := _m.Called(ctx, g, tenantID, maxInstances)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SaveWithTenantCap")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, *gateway.Gateway, string, int) error); ok {
+		r0 = rf(ctx, g, tenantID, maxInstances)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Repository_SaveWithTenantCap_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SaveWithTenantCap'
+type Repository_SaveWithTenantCap_Call struct {
+	*mock.Call
+}
+
+// SaveWithTenantCap is a helper method to define mock.On call
+//   - ctx context.Context
+//   - g *gateway.Gateway
+//   - tenantID string
+//   - maxInstances int
+func (_e *Repository_Expecter) SaveWithTenantCap(ctx interface{}, g interface{}, tenantID interface{}, maxInstances interface{}) *Repository_SaveWithTenantCap_Call {
+	return &Repository_SaveWithTenantCap_Call{Call: _e.mock.On("SaveWithTenantCap", ctx, g, tenantID, maxInstances)}
+}
+
+func (_c *Repository_SaveWithTenantCap_Call) Run(run func(ctx context.Context, g *gateway.Gateway, tenantID string, maxInstances int)) *Repository_SaveWithTenantCap_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(*gateway.Gateway), args[2].(string), args[3].(int))
+	})
+	return _c
+}
+
+func (_c *Repository_SaveWithTenantCap_Call) Return(_a0 error) *Repository_SaveWithTenantCap_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Repository_SaveWithTenantCap_Call) RunAndReturn(run func(context.Context, *gateway.Gateway, string, int) error) *Repository_SaveWithTenantCap_Call {
 	_c.Call.Return(run)
 	return _c
 }
