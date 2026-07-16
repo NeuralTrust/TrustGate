@@ -226,6 +226,7 @@ func TestHandler_ToolsCall_RateLimitPropagatesHeaders(t *testing.T) {
 	exec := pluginmocks.NewExecutor(t)
 	exec.EXPECT().RunStage(mock.Anything, mock.Anything).Return(nil, &appplugins.PluginError{
 		StatusCode: 429,
+		Type:       "trustguard_rate_limited",
 		Message:    "rate limit exceeded",
 		Body:       []byte(`{"error":"rate limit exceeded","reason":"quota"}`),
 		Headers: map[string][]string{

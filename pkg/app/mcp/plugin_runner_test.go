@@ -91,15 +91,27 @@ func TestPluginRunner_PreRequest(t *testing.T) {
 			wantRPCData: `{"trace_id":"t2"}`,
 		},
 		{
-			name: "rate limit via plugin error",
+			name: "trustguard plan rate limit via plugin error",
 			execErr: &appplugins.PluginError{
 				StatusCode: 429,
+				Type:       "trustguard_rate_limited",
 				Message:    "rate limit exceeded",
 				Body:       []byte(`{"error":"rate limit exceeded","reason":"burst"}`),
 				Headers:    map[string][]string{"Retry-After": {"42"}, "X-RateLimit-Reason": {"burst"}},
 			},
 			wantRPCCode: CodeRateLimited,
 			wantRPCData: `{"error":"rate limit exceeded","reason":"burst"}`,
+		},
+		{
+			name: "policy rate limit 429 stays policy-blocked",
+			execErr: &appplugins.PluginError{
+				StatusCode: 429,
+				Message:    "tool rate limit exceeded",
+				Body:       []byte(`{"error":"rate limit exceeded"}`),
+				Headers:    map[string][]string{"X-RateLimit-Tool": {"send_email"}},
+			},
+			wantRPCCode: codePolicyBlocked,
+			wantRPCData: `{"error":"rate limit exceeded"}`,
 		},
 		{
 			name:    "generic executor error fails open",
