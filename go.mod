@@ -5,7 +5,6 @@ go 1.26.5
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.21.1
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.13.1
-	github.com/PaesslerAG/jsonpath v0.1.1
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/aws/aws-sdk-go-v2 v1.41.9
 	github.com/aws/aws-sdk-go-v2/config v1.32.20
@@ -18,7 +17,7 @@ require (
 	github.com/gofiber/swagger v1.1.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/addlicense v1.2.0
-	github.com/google/jsonschema-go v0.4.3
+	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/joho/godotenv v1.5.1
@@ -45,7 +44,6 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0 // indirect
 	github.com/AzureAD/microsoft-authentication-library-for-go v1.6.0 // indirect
 	github.com/KyleBanks/depth v1.2.1 // indirect
-	github.com/PaesslerAG/gval v1.0.0 // indirect
 	github.com/PuerkitoBio/purell v1.1.1 // indirect
 	github.com/PuerkitoBio/urlesc v0.0.0-20170810143723-de5bf2ad4578 // indirect
 	github.com/andybalholm/brotli v1.1.0 // indirect
@@ -112,7 +110,6 @@ require (
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
-	go.opentelemetry.io/otel/metric v1.44.0 // indirect
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
@@ -136,6 +133,7 @@ require (
 	github.com/NeuralTrust/TrustGate/pkg/metrics v0.0.0
 	github.com/aws/aws-sdk-go-v2/feature/rds/auth v1.6.25
 	github.com/redis/go-redis/v9 v9.21.0
+	go.opentelemetry.io/otel/metric v1.44.0
 )
 
 replace github.com/NeuralTrust/TrustGate/pkg/metrics => ./pkg/metrics

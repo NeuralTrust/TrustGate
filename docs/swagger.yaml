@@ -689,6 +689,12 @@ definitions:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.ClientTLSConfig'
       domain:
         type: string
+      entitlements:
+        allOf:
+        - $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Entitlements'
+        description: |-
+          Entitlements.Tier is optional; only platform admins may set it. Tenant callers sending
+          entitlements receive 422. When omitted the gateway defaults to free (or inherits sibling tier).
       metadata:
         additionalProperties:
           type: string
@@ -702,6 +708,10 @@ definitions:
         type: string
       telemetry:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry'
+      tenant_id:
+        description: TenantID is optional ownership for platform (empty JWT) create-for-tenant;
+          tenant JWTs must match or omit it.
+        type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_request.UpdateGatewayRequest:
     properties:
@@ -709,6 +719,13 @@ definitions:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.ClientTLSConfig'
       domain:
         type: string
+      entitlements:
+        allOf:
+        - $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Entitlements'
+        description: |-
+          Entitlements.Tier is optional; only platform admins may set it (tenant callers get 422).
+          When omitted the gateway's tier is left unchanged. Downgrading when the tenant already
+          has more gateways than the new tier's MaxInstances returns 409 — delete excess first.
       metadata:
         additionalProperties:
           type: string
@@ -737,6 +754,8 @@ definitions:
         type: string
       domain:
         type: string
+      entitlements:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Entitlements'
       hosts:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_response.GatewayHosts'
       id:
@@ -1812,6 +1831,11 @@ definitions:
         type: integer
       type: array
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Entitlements:
+    properties:
+      tier:
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_domain_gateway.SessionConfig:
     properties:
       body_param_name:
@@ -2350,7 +2374,9 @@ paths:
       - application/json
       description: 'Creates a new gateway. The slug is optional: when omitted the
         server generates a unique random slug. If provided it must be a lowercase
-        DNS label and unique.'
+        DNS label and unique. Tenant JWTs may not send entitlements (422); only platform
+        admins may stamp tier. With RATE_LIMIT_ENABLED, create returns 409 when the
+        tenant is already at MaxInstances for the effective tier.'
       parameters:
       - description: Gateway to create
         in: body
@@ -2375,6 +2401,10 @@ paths:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
           description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
@@ -4178,7 +4208,9 @@ paths:
     put:
       consumes:
       - application/json
-      description: Updates an existing gateway.
+      description: Updates an existing gateway. Tenant JWTs may not send entitlements
+        (422). Platform tier downgrades that would leave the tenant over the new MaxInstances
+        return 409 — delete excess gateways first.
       parameters:
       - description: Gateway id
         format: uuid
@@ -4213,6 +4245,10 @@ paths:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "409":
           description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:

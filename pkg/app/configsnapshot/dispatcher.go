@@ -70,8 +70,9 @@ type Dispatcher struct {
 	maxRows     int
 	trigger     chan struct{}
 
-	mu        sync.Mutex
-	published string
+	mu              sync.Mutex
+	publishedGlobal string
+	publishedScoped map[string]string
 }
 
 // NewDispatcher builds the control-plane snapshot dispatcher.
@@ -113,8 +114,9 @@ func NewDispatcher(
 		debounce:    debounce,
 		backstop:    backstop,
 		retention:   retention,
-		maxRows:     maxRows,
-		trigger:     make(chan struct{}, 1),
+		maxRows:         maxRows,
+		trigger:         make(chan struct{}, 1),
+		publishedScoped: make(map[string]string),
 	}
 }
 
@@ -209,15 +211,30 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 		return err
 	}
 
+	// The global snapshot is derived from every gateway plus the shared catalog, so
+	// any change bumps the global version; that makes it a safe outer gate for the
+	// scoped diff below. A change to one gateway bumps only the global version and
+	// that gateway's scoped version, so only that scope's pods are notified.
 	d.mu.Lock()
-	if version != d.published {
+	if version != d.publishedGlobal {
 		if scoped != nil {
 			d.holder.SetPartitioned(raw, version, scoped)
 		} else {
 			d.holder.Set(raw, version)
 		}
-		d.broadcaster.Broadcast(version)
-		d.published = version
+		d.broadcaster.BroadcastScope("", version)
+		d.publishedGlobal = version
+		for scope, snap := range scoped {
+			if d.publishedScoped[scope] != snap.Version {
+				d.broadcaster.BroadcastScope(scope, snap.Version)
+				d.publishedScoped[scope] = snap.Version
+			}
+		}
+		for scope := range d.publishedScoped {
+			if _, ok := scoped[scope]; !ok {
+				delete(d.publishedScoped, scope)
+			}
+		}
 	}
 	d.mu.Unlock()
 

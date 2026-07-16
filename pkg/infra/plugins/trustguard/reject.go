@@ -22,8 +22,10 @@ import (
 )
 
 const typeBlocked = "trustguard_blocked"
+const typeRateLimited = "trustguard_rate_limited"
 
 const blockMessage = "request blocked due to a policy infraction"
+const rateLimitMessage = "rate limit exceeded"
 
 func blockError(resp *GuardResponse) *appplugins.PluginError {
 	return &appplugins.PluginError{
@@ -31,6 +33,20 @@ func blockError(resp *GuardResponse) *appplugins.PluginError {
 		Type:       typeBlocked,
 		Message:    blockMessage,
 		Body:       blockBody(resp),
+	}
+}
+
+func rateLimitError(err *rateLimitedError) *appplugins.PluginError {
+	body := err.body
+	if len(body) == 0 {
+		body = []byte(`{"error":"rate limit exceeded"}`)
+	}
+	return &appplugins.PluginError{
+		StatusCode: http.StatusTooManyRequests,
+		Type:       typeRateLimited,
+		Message:    rateLimitMessage,
+		Headers:    err.headers,
+		Body:       body,
 	}
 }
 

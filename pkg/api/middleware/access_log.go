@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/logredact"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/requestid"
 )
@@ -68,7 +69,7 @@ func (m *AccessLogMiddleware) Middleware() fiber.Handler {
 			if errors.As(err, &fe) {
 				status = fe.Code
 			}
-			attrs = append(attrs, slog.String("error", err.Error()))
+			attrs = append(attrs, slog.String("error", logredact.RedactLogString(err.Error())))
 		}
 		m.logger.Info("http access", append([]any{slog.Int("status", status)}, attrs...)...)
 		return err

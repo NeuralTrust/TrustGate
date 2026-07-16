@@ -24,6 +24,7 @@ import (
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
 	appsession "github.com/NeuralTrust/TrustGate/pkg/app/session"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
@@ -82,10 +83,12 @@ type forwarder struct {
 	executor   appplugins.Executor
 	sessions   appsession.Store
 	resolver   approuting.Resolver
+	limiter    ratelimitapp.Checker
 	maxRetries int
 	logger     *slog.Logger
 }
 
+// NewForwarder builds the proxy forwarder; nil limiter defaults to noop.
 func NewForwarder(
 	factory loadbalancer.Factory,
 	cacheClient loadbalancer.RedisProvider,
@@ -94,15 +97,20 @@ func NewForwarder(
 	executor appplugins.Executor,
 	sessions appsession.Store,
 	resolver approuting.Resolver,
+	limiter ratelimitapp.Checker,
 	cfg *config.Config,
 	logger *slog.Logger,
 ) Forwarder {
+	if limiter == nil {
+		limiter = ratelimitapp.NewNoopChecker()
+	}
 	return &forwarder{
 		balancers:  newLoadBalancerCache(factory, cacheClient, manager.GetTTLMap(cache.LoadBalancerTTLName), logger),
 		invoker:    invoker,
 		executor:   executor,
 		sessions:   sessions,
 		resolver:   resolver,
+		limiter:    limiter,
 		maxRetries: maxRetriesFromConfig(cfg),
 		logger:     logger,
 	}
@@ -118,6 +126,10 @@ func maxRetriesFromConfig(cfg *config.Config) int {
 func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResult, error) {
 	if in.Consumer == nil || in.Consumer.Consumer == nil {
 		return nil, ErrNoBackendsInPool
+	}
+
+	if result, err := f.checkRateLimit(ctx, in.GatewayID); result != nil || err != nil {
+		return result, err
 	}
 
 	intent, candidates, err := f.resolveRouting(in)

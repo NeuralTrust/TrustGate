@@ -73,6 +73,7 @@ type fakeGuard struct {
 	lastTraceID string
 	directions  []string
 	status      int
+	headers     map[string]string
 	response    GuardResponse
 	responseFor map[string]GuardResponse
 }
@@ -110,6 +111,9 @@ func (f *fakeGuard) handler() http.HandlerFunc {
 			resp = r
 		}
 		w.Header().Set("Content-Type", "application/json")
+		for k, v := range f.headers {
+			w.Header().Set(k, v)
+		}
 		w.WriteHeader(status)
 		_ = json.NewEncoder(w).Encode(resp)
 	}
@@ -227,6 +231,121 @@ func TestExecutePreRequestBlockReturns403(t *testing.T) {
 	}
 	if got.Payload.Input != "be safe\nhello world" {
 		t.Fatalf("input = %q, want %q", got.Payload.Input, "be safe\nhello world")
+	}
+}
+
+func TestExecutePreRequestRateLimitReturns429(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{
+		status: http.StatusTooManyRequests,
+		headers: map[string]string{
+			"Retry-After":           "42",
+			"X-RateLimit-Limit":     "60",
+			"X-RateLimit-Remaining": "0",
+			"X-RateLimit-Reason":    "burst",
+		},
+	}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil)
+	res, err := p.Execute(context.Background(), in)
+	if res != nil {
+		t.Fatalf("expected nil result on rate limit, got %+v", res)
+	}
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("expected *PluginError, got %v", err)
+	}
+	if pe.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d", pe.StatusCode, http.StatusTooManyRequests)
+	}
+	if pe.Type != typeRateLimited {
+		t.Fatalf("type = %q, want %q", pe.Type, typeRateLimited)
+	}
+	if got := pe.Headers["Retry-After"]; len(got) != 1 || got[0] != "42" {
+		t.Fatalf("Retry-After = %v, want [42]", got)
+	}
+	if got := pe.Headers["X-RateLimit-Reason"]; len(got) != 1 || got[0] != "burst" {
+		t.Fatalf("X-RateLimit-Reason = %v, want [burst]", got)
+	}
+	if got := pe.Headers["X-RateLimit-Limit"]; len(got) != 1 || got[0] != "60" {
+		t.Fatalf("X-RateLimit-Limit = %v, want [60]", got)
+	}
+	if got := pe.Headers["X-RateLimit-Remaining"]; len(got) != 1 || got[0] != "0" {
+		t.Fatalf("X-RateLimit-Remaining = %v, want [0]", got)
+	}
+	if len(pe.Body) == 0 {
+		t.Fatal("expected non-empty rate limit body")
+	}
+}
+
+func TestExecutePreResponseRateLimitReturns429(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{
+		status: http.StatusTooManyRequests,
+		headers: map[string]string{
+			"Retry-After":           "10",
+			"X-RateLimit-Limit":     "10000",
+			"X-RateLimit-Remaining": "0",
+			"X-RateLimit-Reason":    "quota",
+		},
+	}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: openAIResponseBody()}
+	in := execInput(policy.StagePreResponse, policy.ModeEnforce, settings(""), requestContext(), resp)
+	res, err := p.Execute(context.Background(), in)
+	if res != nil {
+		t.Fatalf("expected nil result on rate limit, got %+v", res)
+	}
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("expected *PluginError, got %v", err)
+	}
+	if pe.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", pe.StatusCode)
+	}
+	if got := pe.Headers["X-RateLimit-Reason"]; len(got) != 1 || got[0] != "quota" {
+		t.Fatalf("X-RateLimit-Reason = %v, want [quota]", got)
+	}
+}
+
+func TestExecuteRateLimitDoesNotFailOpen(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{status: http.StatusTooManyRequests}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	in := execInput(policy.StagePreRequest, policy.ModeObserve, settings(""), requestContext(), nil)
+	_, err := p.Execute(context.Background(), in)
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("rate limit must not fail-open even in observe mode, got %v", err)
+	}
+	if pe.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", pe.StatusCode)
+	}
+}
+
+func TestExecuteServerErrorStillFailsOpen(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{status: http.StatusInternalServerError}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("expected fail-open pass on 500, got error %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK || res.StopUpstream {
+		t.Fatalf("expected pass-through on 500, got %+v", res)
 	}
 }
 

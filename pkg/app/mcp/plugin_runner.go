@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -30,6 +31,17 @@ import (
 // -32000..-32099 range) used when the plugin chain blocks a tools/call;
 // -32002 and -32003 are already used elsewhere in the MCP handler.
 const codePolicyBlocked int64 = -32001
+
+// CodeRateLimited is returned for gateway plan throttle (rpc_dispatcher) and for
+// TrustGuard evaluate 429 (plugin Type trustguard_rate_limited). Policy plugins
+// that return HTTP 429 (e.g. per_tool_rate_limiter) keep codePolicyBlocked (-32001).
+const CodeRateLimited int64 = -32004
+
+// CodeUnavailable is returned when gateway plan entitlements cannot be resolved
+// (unknown/empty tier). Aligns with HTTP 503 on the proxy path.
+const CodeUnavailable int64 = -32005
+
+const trustGuardRateLimitedType = "trustguard_rate_limited"
 
 const (
 	directionInput  = "input"
@@ -187,9 +199,27 @@ func (r *PluginRunner) buildRequestContext(
 }
 
 func blockToRPCError(pe *appplugins.PluginError) *RPCError {
+	code := codePolicyBlocked
+	// Only TrustGuard plan-limit 429 maps to -32004; policy rate limiters stay -32001.
+	if pe != nil && pe.StatusCode == http.StatusTooManyRequests && pe.Type == trustGuardRateLimitedType {
+		code = CodeRateLimited
+	}
+	var headers map[string][]string
+	if pe != nil && len(pe.Headers) > 0 {
+		headers = pe.Headers
+	}
+	msg := "request blocked by policy"
+	var body json.RawMessage
+	if pe != nil {
+		if pe.Message != "" {
+			msg = pe.Message
+		}
+		body = pe.Body
+	}
 	return &RPCError{
-		Code:    codePolicyBlocked,
-		Message: pe.Message,
-		Data:    pe.Body,
+		Code:        code,
+		Message:     msg,
+		Data:        body,
+		HTTPHeaders: headers,
 	}
 }

@@ -25,6 +25,7 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/gateway/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/cachetest"
 	"github.com/stretchr/testify/mock"
@@ -48,7 +49,7 @@ func TestUpdater_Update_Success(t *testing.T) {
 		Once()
 
 	mgr := newCacheManager()
-	updater := appgateway.NewUpdater(repo, mgr, cachetest.NoopPublisher(), nil, newTestLogger(), nil)
+	updater := appgateway.NewUpdater(repo, mgr, cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
 
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:     id,
@@ -88,7 +89,7 @@ func TestUpdater_UpdateSlug_InvalidatesOldSlugCache(t *testing.T) {
 
 	mgr := newCacheManager()
 	mgr.GetTTLMap(cache.GatewayTTLName).Set("slug:old", existing)
-	updater := appgateway.NewUpdater(repo, mgr, cachetest.NoopPublisher(), nil, newTestLogger(), nil)
+	updater := appgateway.NewUpdater(repo, mgr, cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
 
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
@@ -114,7 +115,7 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 	id := ids.New[ids.GatewayKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil)
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
 	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
 		Slug: ptr("x"),
@@ -139,7 +140,7 @@ func TestUpdater_Update_Partial_PreservesStatus(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil)
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
 		Slug: ptr("renamed"),
@@ -168,7 +169,7 @@ func TestUpdater_Update_TenantIDIsServerOnlyAndImmutable(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil)
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:       id,
 		Metadata: map[string]string{domain.MetadataTenantIDKey: "globex", "env": "staging"},
@@ -200,7 +201,7 @@ func TestUpdater_Update_HealsEmptyTenantFromContext(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil)
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:       id,
 		TenantID: "acme",
@@ -230,7 +231,7 @@ func TestUpdater_Update_ContextTenantDoesNotOverrideExisting(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil)
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:       id,
 		TenantID: "globex",
@@ -244,6 +245,177 @@ func TestUpdater_Update_ContextTenantDoesNotOverrideExisting(t *testing.T) {
 	}
 }
 
+func TestUpdater_Update_PersistsEntitlementsWhenProvided(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	existing := domain.Rehydrate(id, "old", "active", "", nil, nil, nil, now, now)
+
+	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+	repo.EXPECT().
+		Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+			return g.Entitlements.Tier == "standard"
+		})).
+		Return(nil).
+		Once()
+
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
+	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
+		ID:           id,
+		Entitlements: &domain.Entitlements{Tier: "standard"},
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.Entitlements.Tier != "standard" {
+		t.Fatalf("Entitlements.Tier = %q, want standard", got.Entitlements.Tier)
+	}
+}
+
+func TestUpdater_Update_PreservesEntitlementsWhenOmitted(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	existing := domain.Rehydrate(id, "old", "active", "", nil, nil, nil, now, now)
+	existing.Entitlements = domain.Entitlements{Tier: "enterprise"}
+
+	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+	repo.EXPECT().
+		Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+			return g.Entitlements.Tier == "enterprise"
+		})).
+		Return(nil).
+		Once()
+
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
+	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
+		ID:   id,
+		Slug: ptr("renamed"),
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.Entitlements.Tier != "enterprise" {
+		t.Fatalf("Entitlements.Tier = %q, want unchanged enterprise", got.Entitlements.Tier)
+	}
+}
+
+func TestUpdater_Update_RejectsEntitlementsForTenantCaller(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	existing := domain.Rehydrate(id, "old", "active", "", nil, nil, nil, now, now)
+	existing.Metadata = map[string]string{domain.MetadataTenantIDKey: "acme"}
+
+	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
+	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
+		ID:           id,
+		TenantID:     "acme",
+		Entitlements: &domain.Entitlements{Tier: "enterprise"},
+	})
+	if !errors.Is(err, commonerrors.ErrValidation) {
+		t.Fatalf("expected ErrValidation rejecting tenant entitlements, got %v", err)
+	}
+}
+
+func TestUpdater_Update_AllowsEntitlementsForPlatformAdmin(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	existing := domain.Rehydrate(id, "old", "active", "", nil, nil, nil, now, now)
+	existing.Metadata = map[string]string{domain.MetadataTenantIDKey: "acme"}
+
+	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+	repo.EXPECT().
+		Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+			return g.Entitlements.Tier == "standard"
+		})).
+		Return(nil).
+		Once()
+
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
+	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
+		ID:            id,
+		TenantID:      "",
+		PlatformAdmin: true,
+		Entitlements:  &domain.Entitlements{Tier: "standard"},
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.Entitlements.Tier != "standard" {
+		t.Fatalf("platform entitlements must be honored: got %q, want standard", got.Entitlements.Tier)
+	}
+}
+
+func TestUpdater_Update_RejectsTierChangeOverInstanceCap(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	existing := domain.Rehydrate(id, "old", "active", "", nil, nil, nil, now, now)
+	existing.Metadata = map[string]string{domain.MetadataTenantIDKey: "acme"}
+	existing.Entitlements = domain.Entitlements{Tier: "enterprise"}
+
+	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+	repo.EXPECT().
+		UpdateWithTenantCap(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+			return g.Entitlements.Tier == "free"
+		}), "acme", 1).
+		Return(ratelimit.ErrInstanceLimit).
+		Once()
+
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, true)
+	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
+		ID:            id,
+		PlatformAdmin: true,
+		Entitlements:  &domain.Entitlements{Tier: "free"},
+	})
+	if !errors.Is(err, ratelimit.ErrInstanceLimit) {
+		t.Fatalf("expected ErrInstanceLimit downgrading over the cap, got %v", err)
+	}
+	if !errors.Is(err, commonerrors.ErrConflict) {
+		t.Fatalf("expected wrapped commonerrors.ErrConflict, got %v", err)
+	}
+}
+
+func TestUpdater_Update_AllowsTierChangeWithinInstanceCap(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	existing := domain.Rehydrate(id, "old", "active", "", nil, nil, nil, now, now)
+	existing.Metadata = map[string]string{domain.MetadataTenantIDKey: "acme"}
+	existing.Entitlements = domain.Entitlements{Tier: "enterprise"}
+
+	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+	repo.EXPECT().
+		UpdateWithTenantCap(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+			return g.Entitlements.Tier == "free"
+		}), "acme", 1).
+		Return(nil).
+		Once()
+
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, true)
+	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
+		ID:            id,
+		PlatformAdmin: true,
+		Entitlements:  &domain.Entitlements{Tier: "free"},
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.Entitlements.Tier != "free" {
+		t.Fatalf("Entitlements.Tier = %q, want free", got.Entitlements.Tier)
+	}
+}
+
 func TestUpdater_Update_RejectsEmptySlug(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
@@ -253,7 +425,7 @@ func TestUpdater_Update_RejectsEmptySlug(t *testing.T) {
 
 	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil)
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
 	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
 		Slug: ptr(""),

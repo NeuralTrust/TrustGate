@@ -68,3 +68,39 @@ func TestBlockBodyOmitsFindingsFromClientResponse(t *testing.T) {
 		t.Fatalf("trace/request ids = %q / %q", traceID, requestID)
 	}
 }
+
+func TestRateLimitErrorForwardsHeadersAndBody(t *testing.T) {
+	t.Parallel()
+
+	pe := rateLimitError(&rateLimitedError{
+		headers: map[string][]string{
+			"Retry-After":        {"7"},
+			"X-RateLimit-Reason": {"quota"},
+		},
+		body: []byte(`{"error":"rate limit exceeded","reason":"quota"}`),
+	})
+	if pe.StatusCode != 429 {
+		t.Fatalf("status = %d, want 429", pe.StatusCode)
+	}
+	if pe.Type != typeRateLimited {
+		t.Fatalf("type = %q, want %q", pe.Type, typeRateLimited)
+	}
+	if got := pe.Headers["Retry-After"]; len(got) != 1 || got[0] != "7" {
+		t.Fatalf("Retry-After = %v", got)
+	}
+	if string(pe.Body) != `{"error":"rate limit exceeded","reason":"quota"}` {
+		t.Fatalf("body = %s", pe.Body)
+	}
+}
+
+func TestRateLimitErrorEmptyBodyFallback(t *testing.T) {
+	t.Parallel()
+
+	pe := rateLimitError(&rateLimitedError{})
+	if pe.StatusCode != 429 {
+		t.Fatalf("status = %d, want 429", pe.StatusCode)
+	}
+	if string(pe.Body) != `{"error":"rate limit exceeded"}` {
+		t.Fatalf("body = %s", pe.Body)
+	}
+}

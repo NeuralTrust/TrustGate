@@ -139,6 +139,8 @@ func TestGatewayAdapterNotReadyAndReadOnly(t *testing.T) {
 	assert.ErrorIs(t, repo.Delete(ctx, ids.New[ids.GatewayKind]()), configsync.ErrReadOnly)
 	_, _, err = repo.List(ctx, gatewaydomain.ListFilter{})
 	assert.ErrorIs(t, err, configsync.ErrReadOnly)
+	_, err = repo.CountByTenantID(ctx, "acme")
+	assert.ErrorIs(t, err, configsync.ErrReadOnly)
 }
 
 func TestConsumerAdapter(t *testing.T) {

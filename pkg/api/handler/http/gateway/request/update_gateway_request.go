@@ -31,6 +31,10 @@ type UpdateGatewayRequest struct {
 	Telemetry       *telemetry.Telemetry    `json:"telemetry,omitempty"`
 	ClientTLSConfig *domain.ClientTLSConfig `json:"client_tls,omitempty"`
 	SessionConfig   *domain.SessionConfig   `json:"session_config,omitempty"`
+	// Entitlements.Tier is optional; only platform admins may set it (tenant callers get 422).
+	// When omitted the gateway's tier is left unchanged. Downgrading when the tenant already
+	// has more gateways than the new tier's MaxInstances returns 409 — delete excess first.
+	Entitlements *domain.Entitlements `json:"entitlements,omitempty"`
 }
 
 func (r UpdateGatewayRequest) Validate() error {
@@ -41,6 +45,13 @@ func (r UpdateGatewayRequest) Validate() error {
 		if !domain.IsValidSlug(domain.NormalizeSlug(*r.Slug)) {
 			return fmt.Errorf("slug must be a lowercase DNS label: %w", commonerrors.ErrValidation)
 		}
+	}
+	if r.Entitlements != nil {
+		tier, err := domain.ValidateTier(r.Entitlements.Tier)
+		if err != nil {
+			return err
+		}
+		r.Entitlements.Tier = tier
 	}
 	return nil
 }

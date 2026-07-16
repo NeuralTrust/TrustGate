@@ -83,6 +83,21 @@ func (h *Hub) Broadcast(version string) {
 	}
 }
 
+// BroadcastScope delivers version only to connections registered under scope,
+// coalescing to the newest version per connection and never blocking. Multiple
+// pods sharing one instance scope all receive the notice; other scopes are left
+// undisturbed. An empty scope targets the in-cluster shared/composite data
+// planes that serve the global snapshot.
+func (h *Hub) BroadcastScope(scope, version string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for conn := range h.conns {
+		if conn.scope == scope {
+			conn.enqueue(version)
+		}
+	}
+}
+
 // ConnectionCount reports the number of registered data-plane streams.
 func (h *Hub) ConnectionCount() int {
 	h.mu.Lock()

@@ -20,12 +20,15 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"testing"
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
 	proxymocks "github.com/NeuralTrust/TrustGate/pkg/app/proxy/mocks"
+	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
+	ratelimitmocks "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit/mocks"
 	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
 	appsession "github.com/NeuralTrust/TrustGate/pkg/app/session"
 	domainconsumer "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -82,10 +85,14 @@ func backendFor(gatewayID ids.GatewayID, provider string) *registrydomain.Regist
 }
 
 func newTestForwarder(t *testing.T, invoker appproxy.ProviderInvoker) appproxy.Forwarder {
+	return newTestForwarderWithLimiter(t, invoker, nil)
+}
+
+func newTestForwarderWithLimiter(t *testing.T, invoker appproxy.ProviderInvoker, limiter ratelimitapp.Checker) appproxy.Forwarder {
 	mgr := cache.NewTTLMapManager(time.Minute)
 	return appproxy.NewForwarder(
 		loadbalancer.NewBaseFactory(nil, nil),
-		newPermissiveCache(t), mgr, invoker, nil, nil, approuting.NewResolver(), nil, newTestLogger(),
+		newPermissiveCache(t), mgr, invoker, nil, nil, approuting.NewResolver(), limiter, nil, newTestLogger(),
 	)
 }
 
@@ -106,7 +113,7 @@ func newTestForwarderWithStore(t *testing.T, invoker appproxy.ProviderInvoker, s
 	mgr := cache.NewTTLMapManager(time.Minute)
 	return appproxy.NewForwarder(
 		loadbalancer.NewBaseFactory(nil, nil),
-		newPermissiveCache(t), mgr, invoker, nil, store, approuting.NewResolver(), nil, newTestLogger(),
+		newPermissiveCache(t), mgr, invoker, nil, store, approuting.NewResolver(), nil, nil, newTestLogger(),
 	)
 }
 
@@ -147,6 +154,54 @@ func TestForward_PoolFailoverOn503(t *testing.T) {
 	if res.StatusCode != 200 || string(res.Body) != "ok" {
 		t.Fatalf("expected failover to 200/ok, got %d/%q", res.StatusCode, string(res.Body))
 	}
+}
+
+func TestForward_RateLimitExceeded_Returns429WithHeaders(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	rc := routableConsumerWith(gatewayID)
+
+	limiter := ratelimitmocks.NewChecker(t)
+	limiter.EXPECT().Check(mock.Anything, gatewayID).Return(&ratelimitapp.Exceeded{
+		Reason:     ratelimitapp.ReasonQuota,
+		Limit:      10_000,
+		Remaining:  0,
+		RetryAfter: 10 * time.Second,
+	}).Once()
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	fwd := newTestForwarderWithLimiter(t, invoker, limiter)
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   &infracontext.RequestContext{},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, http.StatusTooManyRequests, res.StatusCode)
+	assert.Equal(t, []string{"10"}, res.Headers["Retry-After"])
+	assert.Equal(t, []string{"10000"}, res.Headers["X-RateLimit-Limit"])
+	assert.Equal(t, []string{"0"}, res.Headers["X-RateLimit-Remaining"])
+	assert.Equal(t, []string{ratelimitapp.ReasonQuota}, res.Headers["X-RateLimit-Reason"])
+	invoker.AssertNotCalled(t, "Invoke", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestForward_RateLimitUnavailable_PropagatesError(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	rc := routableConsumerWith(gatewayID)
+
+	limiter := ratelimitmocks.NewChecker(t)
+	limiter.EXPECT().Check(mock.Anything, gatewayID).Return(ratelimitapp.ErrUnavailable).Once()
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	fwd := newTestForwarderWithLimiter(t, invoker, limiter)
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   &infracontext.RequestContext{},
+	})
+	require.Nil(t, res)
+	require.True(t, errors.Is(err, ratelimitapp.ErrUnavailable))
+	invoker.AssertNotCalled(t, "Invoke", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestForward_FallbackChainAfterPoolExhausted(t *testing.T) {

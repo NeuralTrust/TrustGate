@@ -223,6 +223,11 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	traceID := gatewayTraceID(ctx)
 	resp, err := p.guard(ctx, baseURL, cfg.CollectorID, traceID, body)
 	if err != nil {
+		var limited *rateLimitedError
+		if errors.As(err, &limited) {
+			setExtras(in.Event, guardData{Direction: direction, Decision: decisionBlocked})
+			return nil, rateLimitError(limited)
+		}
 		p.warn(ctx, "trustguard call failed, failing open",
 			slog.String("plugin", PluginName),
 			slog.String("stage", string(in.Stage)),

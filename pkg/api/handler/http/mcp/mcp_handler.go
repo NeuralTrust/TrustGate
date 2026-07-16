@@ -22,6 +22,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
+	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -188,6 +189,7 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 	)
 	switch {
 	case errors.As(err, &rpcErr):
+		applyRPCErrorHeaders(c, rpcErr)
 		return writeJSON(c, rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
@@ -223,6 +225,8 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 		return writeRPCError(c, id, codeResourceNotFound, err.Error())
 	case errors.Is(err, appmcp.ErrNoMCPRegistries):
 		return writeRPCError(c, id, codeInvalidRequest, err.Error())
+	case errors.Is(err, ratelimitapp.ErrUnavailable):
+		return writeRPCError(c, id, int(appmcp.CodeUnavailable), err.Error())
 	default:
 		return writeRPCError(c, id, codeInternalError, err.Error())
 	}
@@ -254,6 +258,17 @@ func writeRPCError(c *fiber.Ctx, id json.RawMessage, code int, message string) e
 
 func writeJSON(c *fiber.Ctx, body any) error {
 	return c.Status(fiber.StatusOK).JSON(body)
+}
+
+func applyRPCErrorHeaders(c *fiber.Ctx, err *appmcp.RPCError) {
+	if err == nil {
+		return
+	}
+	for name, values := range err.HTTPHeaders {
+		for _, value := range values {
+			c.Response().Header.Add(name, value)
+		}
+	}
 }
 
 func normalizeID(id json.RawMessage) json.RawMessage {

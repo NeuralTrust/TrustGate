@@ -25,18 +25,30 @@ import (
 
 type CreateGatewayRequest struct {
 	// Slug is optional; when omitted the server generates a unique random slug. If provided it must be a lowercase DNS label.
-	Slug            string                 `json:"slug,omitempty" example:"acme-prod"`
-	Domain          string                 `json:"domain,omitempty"`
+	Slug   string `json:"slug,omitempty" example:"acme-prod"`
+	Domain string `json:"domain,omitempty"`
+	// TenantID is optional ownership for platform (empty JWT) create-for-tenant; tenant JWTs must match or omit it.
+	TenantID        string                 `json:"tenant_id,omitempty"`
 	Metadata        map[string]string      `json:"metadata,omitempty"`
 	Telemetry       *telemetry.Telemetry   `json:"telemetry,omitempty"`
 	ClientTLSConfig domain.ClientTLSConfig `json:"client_tls,omitempty"`
 	SessionConfig   *domain.SessionConfig  `json:"session_config,omitempty"`
+	// Entitlements.Tier is optional; only platform admins may set it. Tenant callers sending
+	// entitlements receive 422. When omitted the gateway defaults to free (or inherits sibling tier).
+	Entitlements *domain.Entitlements `json:"entitlements,omitempty"`
 }
 
 // Validate checks the create request. The slug is optional: when omitted the
 // server generates a unique random slug at creation time. A provided slug must
 // still be a valid lowercase DNS label.
 func (r CreateGatewayRequest) Validate() error {
+	if r.Entitlements != nil {
+		tier, err := domain.ValidateTier(r.Entitlements.Tier)
+		if err != nil {
+			return err
+		}
+		r.Entitlements.Tier = tier
+	}
 	if strings.TrimSpace(r.Slug) == "" {
 		return nil
 	}

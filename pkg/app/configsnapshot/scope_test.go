@@ -70,7 +70,7 @@ func TestCompilerCompileForIsolatesScope(t *testing.T) {
 
 	compiler := twoTenantCompiler(t, acme, globex, acmeConsumer, globexConsumer)
 
-	snap, err := compiler.CompileFor(context.Background(), "acme")
+	snap, err := compiler.CompileFor(context.Background(), acme.String())
 	if err != nil {
 		t.Fatalf("compile for acme: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestCompilerCompileAllPartitionsAndIsolates(t *testing.T) {
 	if len(scoped) != 2 {
 		t.Fatalf("expected 2 scopes, got %d", len(scoped))
 	}
-	acmeSnap, ok := scoped["acme"]
+	acmeSnap, ok := scoped[acme.String()]
 	if !ok {
 		t.Fatal("missing acme scope")
 	}
@@ -119,7 +119,7 @@ func TestCompilerCompileAllPartitionsAndIsolates(t *testing.T) {
 	if len(acmeSnap.Data().Providers) != 1 {
 		t.Fatalf("expected shared catalog in acme scope, got %d", len(acmeSnap.Data().Providers))
 	}
-	globexSnap := scoped["globex"]
+	globexSnap := scoped[globex.String()]
 	if gws := globexSnap.Data().Gateways; len(gws) != 1 || gws[0].ID != globex {
 		t.Fatalf("globex scope leaked other gateways: %+v", gws)
 	}
@@ -164,7 +164,7 @@ func TestCompileForIsolatesEveryChildObjectType(t *testing.T) {
 		nil,
 	)
 
-	snap, err := compiler.CompileFor(context.Background(), "acme")
+	snap, err := compiler.CompileFor(context.Background(), acme.String())
 	if err != nil {
 		t.Fatalf("compile for acme: %v", err)
 	}

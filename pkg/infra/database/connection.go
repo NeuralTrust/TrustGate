@@ -63,10 +63,19 @@ func buildPoolConfig(ctx context.Context, cfg *config.DatabaseConfig) (*pgxpool.
 	if cfg.Login == "aws" {
 		password = ""
 	}
+	// Omit empty password= from the DSN. pgx keyword parsing treats
+	// `password= dbname=foo` as Password="dbname=foo" and Database="", so IAM
+	// (empty password) would drop the database name and fall back to the username.
 	dsn := fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		cfg.Host, cfg.Port, cfg.User, password, cfg.Name, cfg.SSLMode,
+		"host=%s port=%d user=%s dbname=%s sslmode=%s",
+		cfg.Host, cfg.Port, cfg.User, cfg.Name, cfg.SSLMode,
 	)
+	if password != "" {
+		dsn = fmt.Sprintf(
+			"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+			cfg.Host, cfg.Port, cfg.User, password, cfg.Name, cfg.SSLMode,
+		)
+	}
 	if cfg.SSLRootCert != "" {
 		dsn += " sslrootcert=" + cfg.SSLRootCert
 	}

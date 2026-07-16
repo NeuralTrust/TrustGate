@@ -201,7 +201,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Creates a new gateway. The slug is optional: when omitted the server generates a unique random slug. If provided it must be a lowercase DNS label and unique.",
+                "description": "Creates a new gateway. The slug is optional: when omitted the server generates a unique random slug. If provided it must be a lowercase DNS label and unique. Tenant JWTs may not send entitlements (422); only platform admins may stamp tier. With RATE_LIMIT_ENABLED, create returns 409 when the tenant is already at MaxInstances for the effective tier.",
                 "consumes": [
                     "application/json"
                 ],
@@ -244,6 +244,12 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -2910,7 +2916,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Updates an existing gateway.",
+                "description": "Updates an existing gateway. Tenant JWTs may not send entitlements (422). Platform tier downgrades that would leave the tenant over the new MaxInstances return 409 — delete excess gateways first.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2967,6 +2973,12 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -4347,6 +4359,14 @@ const docTemplate = `{
                 "domain": {
                     "type": "string"
                 },
+                "entitlements": {
+                    "description": "Entitlements.Tier is optional; only platform admins may set it. Tenant callers sending\nentitlements receive 422. When omitted the gateway defaults to free (or inherits sibling tier).",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Entitlements"
+                        }
+                    ]
+                },
                 "metadata": {
                     "type": "object",
                     "additionalProperties": {
@@ -4363,6 +4383,10 @@ const docTemplate = `{
                 },
                 "telemetry": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry"
+                },
+                "tenant_id": {
+                    "description": "TenantID is optional ownership for platform (empty JWT) create-for-tenant; tenant JWTs must match or omit it.",
+                    "type": "string"
                 }
             }
         },
@@ -4374,6 +4398,14 @@ const docTemplate = `{
                 },
                 "domain": {
                     "type": "string"
+                },
+                "entitlements": {
+                    "description": "Entitlements.Tier is optional; only platform admins may set it (tenant callers get 422).\nWhen omitted the gateway's tier is left unchanged. Downgrading when the tenant already\nhas more gateways than the new tier's MaxInstances returns 409 — delete excess first.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Entitlements"
+                        }
+                    ]
                 },
                 "metadata": {
                     "type": "object",
@@ -4417,6 +4449,9 @@ const docTemplate = `{
                 },
                 "domain": {
                     "type": "string"
+                },
+                "entitlements": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Entitlements"
                 },
                 "hosts": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_response.GatewayHosts"
@@ -5970,6 +6005,14 @@ const docTemplate = `{
                 "type": "array",
                 "items": {
                     "type": "integer"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Entitlements": {
+            "type": "object",
+            "properties": {
+                "tier": {
+                    "type": "string"
                 }
             }
         },

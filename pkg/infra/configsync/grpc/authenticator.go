@@ -107,8 +107,8 @@ func (j *jwtAuthenticator) authenticate(bearer string) (string, error) {
 		if _, err := j.parser.ParseWithClaims(bearer, claims, func(*jwt.Token) (any, error) { return secret, nil }); err != nil {
 			continue
 		}
-		scope, ok := claims["scope"].(string)
-		if !ok || scope == "" {
+		scope := instanceScope(claims)
+		if scope == "" {
 			return "", errUnauthenticated
 		}
 		return scope, nil
@@ -116,12 +116,16 @@ func (j *jwtAuthenticator) authenticate(bearer string) (string, error) {
 	return "", errUnauthenticated
 }
 
-// compositeAuthenticator accepts either a signed per-tenant JWT (external data
-// planes → scoped snapshot) or the shared bearer token (in-cluster data plane →
-// global snapshot). The JWT is verified first; only a bearer that fails JWT
-// verification is compared against the shared token in constant time. This lets a
-// single control plane serve an internal shared fleet and external per-tenant
-// data planes at once, without the shared secret ever leaving the cluster.
+func instanceScope(claims jwt.MapClaims) string {
+	if instanceID, ok := claims["instance_id"].(string); ok && instanceID != "" {
+		return instanceID
+	}
+	if scope, ok := claims["scope"].(string); ok {
+		return scope
+	}
+	return ""
+}
+
 type compositeAuthenticator struct {
 	jwt    *jwtAuthenticator
 	shared *sharedAuthenticator

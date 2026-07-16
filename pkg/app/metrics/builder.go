@@ -179,7 +179,7 @@ func (b *Builder) foldPluginSpans(requestTrace *trace.RequestTrace) ([]events.Po
 			Flagged:    flagged,
 			Score:      attrs.Score,
 			ScoreLabel: attrs.ScoreLabel,
-			Extras:     attrs.Extras,
+			Extras:     events.SanitizeExtras(attrs.Extras),
 		})
 	}
 	return chain, pluginsMs, anyFlagged, security

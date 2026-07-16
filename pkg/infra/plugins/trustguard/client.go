@@ -34,6 +34,23 @@ const (
 
 var errUnauthorized = errors.New("trustguard: unauthorized")
 
+// rateLimitHeaderNames are forwarded from TrustGuard evaluate 429 to the gateway client.
+var rateLimitHeaderNames = []string{
+	"Retry-After",
+	"X-RateLimit-Limit",
+	"X-RateLimit-Remaining",
+	"X-RateLimit-Reason",
+}
+
+type rateLimitedError struct {
+	headers map[string][]string
+	body    []byte
+}
+
+func (e *rateLimitedError) Error() string {
+	return "trustguard: rate limit exceeded"
+}
+
 type client struct {
 	http *http.Client
 }
@@ -72,6 +89,12 @@ func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body
 	if res.StatusCode == http.StatusUnauthorized {
 		return nil, errUnauthorized
 	}
+	if res.StatusCode == http.StatusTooManyRequests {
+		return nil, &rateLimitedError{
+			headers: copyRateLimitHeaders(res.Header),
+			body:    append([]byte(nil), raw...),
+		}
+	}
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
 		return nil, fmt.Errorf("trustguard: unexpected status %d", res.StatusCode)
 	}
@@ -80,4 +103,16 @@ func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body
 		return nil, fmt.Errorf("trustguard: decode response: %w", err)
 	}
 	return &out, nil
+}
+
+func copyRateLimitHeaders(h http.Header) map[string][]string {
+	out := make(map[string][]string, len(rateLimitHeaderNames))
+	for _, name := range rateLimitHeaderNames {
+		values := h.Values(name)
+		if len(values) == 0 {
+			continue
+		}
+		out[name] = append([]string(nil), values...)
+	}
+	return out
 }

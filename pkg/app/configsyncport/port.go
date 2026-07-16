@@ -27,7 +27,13 @@ type SnapshotSignaler interface {
 // gRPC hub implements it; the dispatcher depends only on this port so the app layer
 // never imports gRPC.
 type VersionBroadcaster interface {
+	// Broadcast delivers version to every connected data plane.
 	Broadcast(version string)
+	// BroadcastScope delivers version only to connections registered under scope,
+	// so a change to one instance wakes only that instance's pods. An empty scope
+	// targets the in-cluster shared/composite data planes that serve the global
+	// snapshot.
+	BroadcastScope(scope, version string)
 }
 
 // OutboxRepository is the change-marker outbox as seen by the dispatcher: read the

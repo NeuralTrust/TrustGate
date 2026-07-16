@@ -28,6 +28,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
+	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domainconsumer "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -47,16 +48,17 @@ var errPathNotFound = errors.New("no consumer matches the request path")
 var errForbidden = errors.New("credential is not authorized for the matched consumer")
 
 const (
-	errCodePluginRejected     = "plugin_rejected"
-	errCodeUnauthenticated    = "unauthenticated"
-	errCodeForbidden          = "forbidden"
-	errCodeNotFound           = "not_found"
-	errCodeNoBackendAvailable = "no_backend_available"
-	errCodeInvalidRequest     = "invalid_request"
-	errCodeInvalidModel       = "invalid_model"
-	errCodeModelNotAllowed    = "model_not_allowed"
-	errCodeProviderCredential = "provider_credential_error"
-	errCodeBackendError       = "backend_error"
+	errCodePluginRejected       = "plugin_rejected"
+	errCodeUnauthenticated      = "unauthenticated"
+	errCodeForbidden            = "forbidden"
+	errCodeNotFound             = "not_found"
+	errCodeNoBackendAvailable   = "no_backend_available"
+	errCodeInvalidRequest       = "invalid_request"
+	errCodeInvalidModel         = "invalid_model"
+	errCodeModelNotAllowed      = "model_not_allowed"
+	errCodeProviderCredential   = "provider_credential_error"
+	errCodeBackendError         = "backend_error"
+	errCodeRateLimitUnavailable = "rate_limit_unavailable"
 )
 
 var hopByHopHeaders = map[string]struct{}{
@@ -323,15 +325,15 @@ func buildRequestContext(c *fiber.Ctx, gatewayID ids.GatewayID, route apiresolve
 	})
 
 	return &infracontext.RequestContext{
-		GatewayID:    gatewayID.String(),
-		Headers:      headers,
-		Method:       c.Method(),
-		Path:         c.Path(),
-		Query:        query,
-		Body:         c.Body(),
-		IP:           c.IP(),
-		SessionID:    sessionIDFromContext(c),
-		SourceFormat: string(route.SourceFormat),
+		GatewayID:       gatewayID.String(),
+		Headers:         headers,
+		Method:          c.Method(),
+		Path:            c.Path(),
+		Query:           query,
+		Body:            c.Body(),
+		IP:              c.IP(),
+		SessionID:       sessionIDFromContext(c),
+		SourceFormat:    string(route.SourceFormat),
 		ProxyCapability: string(route.Capability),
 	}
 }
@@ -369,6 +371,8 @@ func mapProxyError(err error) (int, httpio.ErrorBody) {
 	case errors.Is(err, appproxy.ErrNoBackendAvailable),
 		errors.Is(err, appproxy.ErrNoBackendsInPool):
 		return fiber.StatusServiceUnavailable, httpio.ErrorBody{Error: errCodeNoBackendAvailable, Message: err.Error()}
+	case errors.Is(err, ratelimitapp.ErrUnavailable):
+		return fiber.StatusServiceUnavailable, httpio.ErrorBody{Error: errCodeRateLimitUnavailable, Message: err.Error()}
 	case errors.Is(err, appproxy.ErrInvalidRequestPayload):
 		return fiber.StatusBadRequest, httpio.ErrorBody{Error: errCodeInvalidRequest, Message: err.Error()}
 	case errors.Is(err, routingdomain.ErrInvalidModelRef),
