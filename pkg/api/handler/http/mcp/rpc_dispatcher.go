@@ -40,9 +40,7 @@ type RPCGateway struct {
 	limiter  ratelimitapp.Checker
 }
 
-// NewRPCGateway wires the MCP dispatch path. A nil limiter defaults to the
-// noop checker (rate limiting disabled), keeping callers that don't care about
-// plan limits unaffected.
+// NewRPCGateway wires MCP dispatch; nil limiter defaults to noop.
 func NewRPCGateway(composer appmcp.Composer, plugins *appmcp.PluginRunner, limiter ratelimitapp.Checker) *RPCGateway {
 	if limiter == nil {
 		limiter = ratelimitapp.NewNoopChecker()
@@ -123,11 +121,6 @@ func mcpRequestAttrs(method string, params json.RawMessage) (operation, tool, pr
 	}
 }
 
-// checkRateLimit enforces the gateway plan burst/quota before the tool call
-// reaches the upstream. An exceeded limit maps to a -32004 JSON-RPC error with
-// the standard rate-limit headers; an unavailable plan (unknown/missing tier)
-// propagates as-is so writeAppError maps it to an internal error, matching how
-// the TrustGuard plugin path treats an unusable guard.
 func (g *RPCGateway) checkRateLimit(ctx context.Context, rc *appconsumer.RoutableConsumer) error {
 	if rc == nil || rc.Consumer == nil {
 		return nil

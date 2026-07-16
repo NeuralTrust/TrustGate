@@ -356,8 +356,7 @@ type OpenAIModerationConfig struct {
 	Timeout time.Duration
 }
 
-// RateLimitConfig gates the gateway plan (burst/quota) rate limiter, enforced
-// per gateway after resolve and before the request reaches the upstream.
+// RateLimitConfig gates the per-gateway plan rate limiter.
 type RateLimitConfig struct {
 	Enabled bool
 }

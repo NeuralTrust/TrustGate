@@ -33,7 +33,7 @@ type checker struct {
 	now     func() time.Time
 }
 
-// NewChecker builds the gateway plan rate limiter (fail-open on Redis errors).
+// NewChecker builds the plan rate limiter (fail-open on Redis errors).
 func NewChecker(tiers GatewayTierLoader, counter Counter, logger *slog.Logger) Checker {
 	if logger == nil {
 		logger = slog.Default()
@@ -111,7 +111,7 @@ func timeUntilNextUTCMonth(now time.Time) time.Duration {
 	return d
 }
 
-// RetryAfterSeconds converts a retry duration to whole seconds, rounding up.
+// RetryAfterSeconds rounds a retry duration up to whole seconds.
 func RetryAfterSeconds(d time.Duration) int {
 	sec := int(math.Ceil(d.Seconds()))
 	if sec < 1 {

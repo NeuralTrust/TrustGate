@@ -25,9 +25,6 @@ import (
 	inforatelimit "github.com/NeuralTrust/TrustGate/pkg/infra/ratelimit"
 )
 
-// RateLimit wires the gateway plan rate limiter shared by the proxy Forwarder
-// and the MCP RPCGateway. It reuses the process Redis client (already
-// selecting DB 3) rather than opening a dedicated connection.
 func RateLimit(c *container.Container) error {
 	if err := c.Provide(func(finder appgateway.Finder) ratelimitapp.GatewayTierLoader {
 		return ratelimitapp.NewGatewayTierLoader(finder)

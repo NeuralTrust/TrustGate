@@ -16,12 +16,10 @@ package gateway
 
 const TierFree = "free"
 
-// Entitlements is the plan attached to a gateway.
 type Entitlements struct {
 	Tier string `json:"tier"`
 }
 
-// DefaultEntitlements returns the free tier used on create and migration backfill.
 func DefaultEntitlements() Entitlements {
 	return Entitlements{Tier: TierFree}
 }

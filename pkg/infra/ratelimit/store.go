@@ -30,7 +30,7 @@ const (
 	burstWindow     = time.Minute
 )
 
-// Atomic INCR + PEXPIRE on first hit so counters never use get/set races.
+// INCR + PEXPIRE on first hit (avoids get/set races).
 var incrExpireScript = redis.NewScript(`
 local n = redis.call("INCR", KEYS[1])
 if n == 1 then
@@ -39,21 +39,19 @@ end
 return n
 `)
 
-// Store is the Redis-backed plan counter (INCR).
 type Store struct {
 	redis  *redis.Client
 	logger *slog.Logger
 	now    func() time.Time
 }
 
-// NewStore creates a Redis counter store. Nil redis is treated as unavailable (caller fail-open).
+// NewStore creates a Redis plan counter; nil redis is unavailable (caller fail-open).
 func NewStore(rc *redis.Client, logger *slog.Logger) *Store {
 	return &Store{redis: rc, logger: logger, now: time.Now}
 }
 
 func (s *Store) available() bool { return s != nil && s.redis != nil }
 
-// IncrBurst atomically increments the 1-minute burst counter for a gateway.
 func (s *Store) IncrBurst(ctx context.Context, gatewayID ids.GatewayID) (int64, time.Duration, error) {
 	if !s.available() {
 		return 0, 0, fmt.Errorf("redis unavailable")
@@ -73,7 +71,6 @@ func (s *Store) IncrBurst(ctx context.Context, gatewayID ids.GatewayID) (int64, 
 	return n, ttl, nil
 }
 
-// IncrQuota atomically increments the UTC monthly quota counter for a gateway.
 func (s *Store) IncrQuota(ctx context.Context, gatewayID ids.GatewayID, month string) (int64, error) {
 	if !s.available() {
 		return 0, fmt.Errorf("redis unavailable")

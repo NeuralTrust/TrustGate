@@ -27,9 +27,7 @@ type gatewayTierLoader struct {
 	finder appgateway.Finder
 }
 
-// NewGatewayTierLoader adapts the gateway Finder to the rate-limit port. It
-// prefers the gateway already resolved onto the request context (stamped by
-// the auth middleware) over an extra Finder round trip.
+// NewGatewayTierLoader prefers the gateway on ctx over Finder.
 func NewGatewayTierLoader(finder appgateway.Finder) GatewayTierLoader {
 	return &gatewayTierLoader{finder: finder}
 }

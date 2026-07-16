@@ -88,9 +88,7 @@ type forwarder struct {
 	logger     *slog.Logger
 }
 
-// NewForwarder builds the proxy forwarder. A nil limiter defaults to the noop
-// checker (rate limiting disabled), keeping callers that don't care about plan
-// limits unaffected.
+// NewForwarder builds the proxy forwarder; nil limiter defaults to noop.
 func NewForwarder(
 	factory loadbalancer.Factory,
 	cacheClient loadbalancer.RedisProvider,

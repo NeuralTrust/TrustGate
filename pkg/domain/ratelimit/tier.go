@@ -22,7 +22,7 @@ const (
 	TierEnterprise = "enterprise"
 )
 
-// Limits are fixed plan caps. QuotaPerMonth == 0 means unlimited (skip quota check).
+// Limits are plan caps; QuotaPerMonth == 0 means unlimited.
 type Limits struct {
 	BurstPerMin   int
 	QuotaPerMonth int
@@ -34,13 +34,11 @@ var tiers = map[string]Limits{
 	TierEnterprise: {BurstPerMin: 5_000, QuotaPerMonth: 0},
 }
 
-// LimitsFor returns plan limits for a known tier name.
 func LimitsFor(tier string) (Limits, bool) {
 	limits, ok := tiers[strings.ToLower(strings.TrimSpace(tier))]
 	return limits, ok
 }
 
-// HasMonthlyQuota reports whether the tier enforces a monthly Redis quota counter.
 func (l Limits) HasMonthlyQuota() bool {
 	return l.QuotaPerMonth > 0
 }
