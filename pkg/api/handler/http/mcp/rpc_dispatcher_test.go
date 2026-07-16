@@ -18,6 +18,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
@@ -210,5 +213,41 @@ func TestHandler_ToolsCall_PreRequestBlock_RendersJSONRPCErrorAt200(t *testing.T
 	if rpcErr["code"].(float64) != -32001 {
 		t.Fatalf("code = %v, want -32001 policy blocked", rpcErr["code"])
 	}
+	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestHandler_ToolsCall_RateLimitPropagatesHeaders(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	exec := pluginmocks.NewExecutor(t)
+	exec.EXPECT().RunStage(mock.Anything, mock.Anything).Return(nil, &appplugins.PluginError{
+		StatusCode: 429,
+		Message:    "rate limit exceeded",
+		Body:       []byte(`{"error":"rate limit exceeded","reason":"quota"}`),
+		Headers: map[string][]string{
+			"Retry-After":        {"30"},
+			"X-RateLimit-Reason": {"quota"},
+			"X-RateLimit-Limit":  {"10000"},
+		},
+	}).Once()
+
+	appFiber := newAppWithRunner(t, composer, appmcp.NewPluginRunner(exec, discardLogger()), consumerdomain.TypeMCP, true)
+	req := httptest.NewRequest(http.MethodPost, mcpPath, strings.NewReader(
+		`{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"echo"}}`,
+	))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := appFiber.Test(req, -1)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+	require.Equal(t, "30", resp.Header.Get("Retry-After"))
+	require.Equal(t, "quota", resp.Header.Get("X-RateLimit-Reason"))
+	require.Equal(t, "10000", resp.Header.Get("X-RateLimit-Limit"))
+
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	rpcErr := body["error"].(map[string]any)
+	require.Equal(t, float64(-32004), rpcErr["code"])
 	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }

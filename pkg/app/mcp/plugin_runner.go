@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -30,6 +31,10 @@ import (
 // -32000..-32099 range) used when the plugin chain blocks a tools/call;
 // -32002 and -32003 are already used elsewhere in the MCP handler.
 const codePolicyBlocked int64 = -32001
+
+// codeRateLimited is returned when TrustGuard (or another plugin) rejects with
+// HTTP 429 so MCP clients can distinguish plan throttle from content blocks.
+const codeRateLimited int64 = -32004
 
 const (
 	directionInput  = "input"
@@ -187,9 +192,26 @@ func (r *PluginRunner) buildRequestContext(
 }
 
 func blockToRPCError(pe *appplugins.PluginError) *RPCError {
+	code := codePolicyBlocked
+	if pe != nil && pe.StatusCode == http.StatusTooManyRequests {
+		code = codeRateLimited
+	}
+	var headers map[string][]string
+	if pe != nil && len(pe.Headers) > 0 {
+		headers = pe.Headers
+	}
+	msg := "request blocked by policy"
+	var body json.RawMessage
+	if pe != nil {
+		if pe.Message != "" {
+			msg = pe.Message
+		}
+		body = pe.Body
+	}
 	return &RPCError{
-		Code:    codePolicyBlocked,
-		Message: pe.Message,
-		Data:    pe.Body,
+		Code:        code,
+		Message:     msg,
+		Data:        body,
+		HTTPHeaders: headers,
 	}
 }
