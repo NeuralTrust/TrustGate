@@ -226,7 +226,7 @@ func TestPluginRunner_PreResponse(t *testing.T) {
 			case tt.wantNil:
 				require.NoError(t, err)
 			case tt.wantRPCCode != 0:
-				assertRPCError(t, err, tt.wantRPCCode, tt.wantRPCData)
+				_ = assertRPCError(t, err, tt.wantRPCCode, tt.wantRPCData)
 			}
 		})
 	}
