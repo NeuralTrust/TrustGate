@@ -49,14 +49,13 @@ type Updater interface {
 var _ Updater = (*updater)(nil)
 
 type updater struct {
-	repo                domain.Repository
-	memoryCache         *cache.TTLMap
-	publisher           cache.EventPublisher
-	exporterFactory     appmetrics.ExporterFactory
-	logger              *slog.Logger
-	signaler            configsyncport.SnapshotSignaler
-	rateLimitEnabled    bool
-	entitlementsMutable bool
+	repo             domain.Repository
+	memoryCache      *cache.TTLMap
+	publisher        cache.EventPublisher
+	exporterFactory  appmetrics.ExporterFactory
+	logger           *slog.Logger
+	signaler         configsyncport.SnapshotSignaler
+	rateLimitEnabled bool
 }
 
 func NewUpdater(
@@ -67,17 +66,15 @@ func NewUpdater(
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
 	rateLimitEnabled bool,
-	entitlementsMutable bool,
 ) Updater {
 	return &updater{
-		repo:                repo,
-		memoryCache:         manager.GetTTLMap(cache.GatewayTTLName),
-		publisher:           publisher,
-		exporterFactory:     exporterFactory,
-		logger:              logger,
-		signaler:            signaler,
-		rateLimitEnabled:    rateLimitEnabled,
-		entitlementsMutable: entitlementsMutable,
+		repo:             repo,
+		memoryCache:      manager.GetTTLMap(cache.GatewayTTLName),
+		publisher:        publisher,
+		exporterFactory:  exporterFactory,
+		logger:           logger,
+		signaler:         signaler,
+		rateLimitEnabled: rateLimitEnabled,
 	}
 }
 
@@ -117,8 +114,8 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	if in.SessionConfig != nil {
 		g.SessionConfig = in.SessionConfig
 	}
-	// Only platform admins (empty caller tenant) may change entitlements unless mutation is explicitly enabled.
-	if in.Entitlements != nil && (in.TenantID == "" || u.entitlementsMutable) {
+	// Only platform admins (empty caller tenant) may change entitlements.
+	if in.Entitlements != nil && in.TenantID == "" {
 		g.Entitlements = *in.Entitlements
 	}
 	g.UpdatedAt = time.Now().UTC()

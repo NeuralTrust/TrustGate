@@ -117,8 +117,7 @@ const (
 	defaultConfigSyncRecompileDebounce = 2 * time.Second
 	defaultConfigSyncRecompileBackstop = 5 * time.Minute
 
-	defaultRateLimitEnabled    = false
-	defaultEntitlementsMutable = false
+	defaultRateLimitEnabled = false
 
 	defaultConfigSyncGRPCListenAddr             = ":8083"
 	defaultConfigSyncGRPCKeepaliveTime          = 30 * time.Second
@@ -360,8 +359,6 @@ type OpenAIModerationConfig struct {
 // RateLimitConfig gates the per-gateway plan rate limiter.
 type RateLimitConfig struct {
 	Enabled bool
-	// EntitlementsMutable lets tenant-scoped callers set entitlements; off by default so only platform admins can.
-	EntitlementsMutable bool
 }
 
 func LoadConfig() (*Config, error) {
@@ -695,8 +692,7 @@ func getConfigSyncConfig() ConfigSyncConfig {
 
 func getRateLimitConfig() RateLimitConfig {
 	return RateLimitConfig{
-		Enabled:             getEnvBool("RATE_LIMIT_ENABLED", defaultRateLimitEnabled),
-		EntitlementsMutable: getEnvBool("ENTITLEMENTS_MUTABLE", defaultEntitlementsMutable),
+		Enabled: getEnvBool("RATE_LIMIT_ENABLED", defaultRateLimitEnabled),
 	}
 }
 

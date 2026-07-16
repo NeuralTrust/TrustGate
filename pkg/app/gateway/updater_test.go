@@ -49,7 +49,7 @@ func TestUpdater_Update_Success(t *testing.T) {
 		Once()
 
 	mgr := newCacheManager()
-	updater := appgateway.NewUpdater(repo, mgr, cachetest.NoopPublisher(), nil, newTestLogger(), nil, false, false)
+	updater := appgateway.NewUpdater(repo, mgr, cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
 
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:     id,
@@ -89,7 +89,7 @@ func TestUpdater_UpdateSlug_InvalidatesOldSlugCache(t *testing.T) {
 
 	mgr := newCacheManager()
 	mgr.GetTTLMap(cache.GatewayTTLName).Set("slug:old", existing)
-	updater := appgateway.NewUpdater(repo, mgr, cachetest.NoopPublisher(), nil, newTestLogger(), nil, false, false)
+	updater := appgateway.NewUpdater(repo, mgr, cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
 
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
@@ -115,7 +115,7 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 	id := ids.New[ids.GatewayKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false, false)
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
 	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
 		Slug: ptr("x"),
@@ -140,7 +140,7 @@ func TestUpdater_Update_Partial_PreservesStatus(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false, false)
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
 		Slug: ptr("renamed"),
@@ -169,7 +169,7 @@ func TestUpdater_Update_TenantIDIsServerOnlyAndImmutable(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false, false)
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:       id,
 		Metadata: map[string]string{domain.MetadataTenantIDKey: "globex", "env": "staging"},
@@ -201,7 +201,7 @@ func TestUpdater_Update_HealsEmptyTenantFromContext(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false, false)
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:       id,
 		TenantID: "acme",
@@ -231,7 +231,7 @@ func TestUpdater_Update_ContextTenantDoesNotOverrideExisting(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false, false)
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:       id,
 		TenantID: "globex",
@@ -260,7 +260,7 @@ func TestUpdater_Update_PersistsEntitlementsWhenProvided(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false, false)
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:           id,
 		Entitlements: &domain.Entitlements{Tier: "standard"},
@@ -289,7 +289,7 @@ func TestUpdater_Update_PreservesEntitlementsWhenOmitted(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false, false)
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
 		Slug: ptr("renamed"),
@@ -318,7 +318,7 @@ func TestUpdater_Update_IgnoresEntitlementsForTenantCaller(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false, false)
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:           id,
 		TenantID:     "acme",
@@ -348,17 +348,17 @@ func TestUpdater_Update_AllowsEntitlementsForTenantCallerWhenMutable(t *testing.
 		Return(nil).
 		Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false, true)
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:           id,
-		TenantID:     "acme",
+		TenantID:     "",
 		Entitlements: &domain.Entitlements{Tier: "standard"},
 	})
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
 	if got.Entitlements.Tier != "standard" {
-		t.Fatalf("mutable entitlements must be honored: got %q, want standard", got.Entitlements.Tier)
+		t.Fatalf("platform entitlements must be honored: got %q, want standard", got.Entitlements.Tier)
 	}
 }
 
@@ -374,7 +374,7 @@ func TestUpdater_Update_RejectsTierChangeOverInstanceCap(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
 	repo.EXPECT().CountByTenantID(mock.Anything, "acme").Return(2, nil).Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, true, false)
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, true)
 	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:           id,
 		Entitlements: &domain.Entitlements{Tier: "free"},
@@ -405,7 +405,7 @@ func TestUpdater_Update_AllowsTierChangeWithinInstanceCap(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, true, false)
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, true)
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:           id,
 		Entitlements: &domain.Entitlements{Tier: "free"},
@@ -427,7 +427,7 @@ func TestUpdater_Update_RejectsEmptySlug(t *testing.T) {
 
 	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false, false)
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
 	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
 		Slug: ptr(""),

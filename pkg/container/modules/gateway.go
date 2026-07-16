@@ -44,12 +44,12 @@ func provideGatewayRepository(c *container.Container) error {
 
 func provideGatewayServices(c *container.Container) error {
 	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, exporterFactory appmetrics.ExporterFactory, logger *slog.Logger, sig snapshotSignalParams, cfg *config.Config) appgateway.Creator {
-		return appgateway.NewCreator(repo, manager, exporterFactory, logger, sig.Signaler, cfg.RateLimit.Enabled, cfg.RateLimit.EntitlementsMutable)
+		return appgateway.NewCreator(repo, manager, exporterFactory, logger, sig.Signaler, cfg.RateLimit.Enabled)
 	}); err != nil {
 		return err
 	}
 	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, exporterFactory appmetrics.ExporterFactory, logger *slog.Logger, sig snapshotSignalParams, cfg *config.Config) appgateway.Updater {
-		return appgateway.NewUpdater(repo, manager, publisher, exporterFactory, logger, sig.Signaler, cfg.RateLimit.Enabled, cfg.RateLimit.EntitlementsMutable)
+		return appgateway.NewUpdater(repo, manager, publisher, exporterFactory, logger, sig.Signaler, cfg.RateLimit.Enabled)
 	}); err != nil {
 		return err
 	}

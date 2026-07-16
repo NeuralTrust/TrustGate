@@ -55,13 +55,12 @@ type Creator interface {
 var _ Creator = (*creator)(nil)
 
 type creator struct {
-	repo                domain.Repository
-	memoryCache         *cache.TTLMap
-	exporterFactory     appmetrics.ExporterFactory
-	logger              *slog.Logger
-	signaler            configsyncport.SnapshotSignaler
-	rateLimitEnabled    bool
-	entitlementsMutable bool
+	repo             domain.Repository
+	memoryCache      *cache.TTLMap
+	exporterFactory  appmetrics.ExporterFactory
+	logger           *slog.Logger
+	signaler         configsyncport.SnapshotSignaler
+	rateLimitEnabled bool
 }
 
 func NewCreator(
@@ -71,16 +70,14 @@ func NewCreator(
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
 	rateLimitEnabled bool,
-	entitlementsMutable bool,
 ) Creator {
 	return &creator{
-		repo:                repo,
-		memoryCache:         manager.GetTTLMap(cache.GatewayTTLName),
-		exporterFactory:     exporterFactory,
-		logger:              logger,
-		signaler:            signaler,
-		rateLimitEnabled:    rateLimitEnabled,
-		entitlementsMutable: entitlementsMutable,
+		repo:             repo,
+		memoryCache:      manager.GetTTLMap(cache.GatewayTTLName),
+		exporterFactory:  exporterFactory,
+		logger:           logger,
+		signaler:         signaler,
+		rateLimitEnabled: rateLimitEnabled,
 	}
 }
 
@@ -100,8 +97,8 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, 
 	if g.SessionConfig == nil {
 		g.SessionConfig = domain.DefaultSessionConfig()
 	}
-	// Platform admins (empty JWT tenant) may set entitlements; tenant callers need ENTITLEMENTS_MUTABLE.
-	if in.Entitlements != nil && (in.PlatformAdmin || in.TenantID == "" || c.entitlementsMutable) {
+	// Platform admins (empty JWT tenant / PlatformAdmin) may set entitlements; tenant callers cannot.
+	if in.Entitlements != nil && (in.PlatformAdmin || in.TenantID == "") {
 		g.Entitlements = *in.Entitlements
 	}
 	// Under immutable entitlements, a new gateway still inherits the tenant's highest sibling tier so MaxInstances matches the plan.
