@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Plus, Pencil, Trash2, ShieldCheck, Globe } from "lucide-react";
 import { api, gatewayScope } from "@/lib/admin-client";
 import { useActiveGatewayId } from "@/components/layout/gateway-context";
-import { useList, useInvalidate, errorMessage } from "@/lib/hooks";
+import { useList, useInvalidate, usePolicyCatalog, errorMessage } from "@/lib/hooks";
 import { useToast } from "@/components/ui/toast";
 import { PageHeader, ConfirmDialog, useDisclosure } from "@/components/ui/page";
 import { Button } from "@/components/ui/button";
@@ -18,20 +18,22 @@ import {
   DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
-import { Field, Input, Select, Label } from "@/components/ui/field";
+import { Field, Input, Select } from "@/components/ui/field";
 import { Section, SwitchRow, Grid2, Divider } from "@/components/ui/form-bits";
-import { JsonEditor } from "@/components/ui/json-editor";
+import {
+  PolicySettingsForm,
+  buildSettingsDefaults,
+  coerceSettings,
+} from "@/components/entities/policy-settings-form";
 import { cn } from "@/lib/cn";
-import type { Policy, PolicyStage } from "@/lib/types";
+import type { Policy, PolicyStage, PolicyCatalogEntry } from "@/lib/types";
 
-const KNOWN_SLUGS = [
+const FALLBACK_SLUGS = [
   "rate_limiter",
   "token_rate_limiter",
   "request_size_limiter",
   "semantic_cache",
 ];
-
-const STAGES: PolicyStage[] = ["pre_request", "post_request", "pre_response", "post_response"];
 
 export function PoliciesView() {
   const { data: policies, isLoading } = useList<Policy>("policies");
@@ -220,53 +222,77 @@ function PolicyFormDialog({
   const gatewayId = useActiveGatewayId();
   const invalidate = useInvalidate();
   const { toast } = useToast();
+  const { data: catalogGroups } = usePolicyCatalog();
   const isEdit = policy !== null;
 
+  const entries: PolicyCatalogEntry[] = (catalogGroups ?? []).flatMap((g) => g.items);
+  const slugOptions = entries.length > 0 ? entries.map((e) => e.slug) : FALLBACK_SLUGS;
+
   const [name, setName] = useState(policy?.name ?? "");
-  const [slug, setSlug] = useState(policy?.slug ?? KNOWN_SLUGS[0]!);
+  const [slug, setSlug] = useState(policy?.slug ?? slugOptions[0]!);
+  const [mode, setMode] = useState(policy?.mode ?? "");
   const [enabled, setEnabled] = useState(policy?.enabled ?? true);
-  const [parallel, setParallel] = useState(policy?.parallel ?? false);
-  const [priority, setPriority] = useState(String(policy?.priority ?? 0));
   const [stages, setStages] = useState<PolicyStage[]>(policy?.stages ?? ["pre_request"]);
-  const [settings, setSettings] = useState(
-    policy?.settings ? JSON.stringify(policy.settings, null, 2) : "{\n  \n}",
-  );
-  const [settingsValid, setSettingsValid] = useState(true);
+  const [settings, setSettings] = useState<Record<string, unknown>>(policy?.settings ?? {});
   const [submitting, setSubmitting] = useState(false);
 
-  function toggleStage(stage: PolicyStage) {
-    setStages((prev) =>
-      prev.includes(stage) ? prev.filter((s) => s !== stage) : [...prev, stage],
+  const entry = entries.find((e) => e.slug === slug);
+  const supportedModes = entry?.supported_modes ?? [];
+  const settingsFields = entry?.settings_schema?.fields ?? [];
+
+  // When creating, derive stages, mode and default settings from the selected
+  // plugin's catalog schema. Editing keeps the persisted policy values.
+  useEffect(() => {
+    if (isEdit) return;
+    const catalogEntry = entries.find((e) => e.slug === slug);
+    if (!catalogEntry) return;
+    setStages(
+      catalogEntry.mandatory_stages.length > 0
+        ? catalogEntry.mandatory_stages
+        : catalogEntry.supported_stages.slice(0, 1),
     );
-  }
+    setMode(catalogEntry.default_mode || "");
+    setSettings(buildSettingsDefaults(catalogEntry.settings_schema?.fields ?? []));
+    // entries is derived from catalogGroups; depend on the stable query data.
+  }, [slug, isEdit, catalogGroups]);
 
   async function submit() {
     if (!name.trim() || !slug.trim()) {
       toast({ variant: "error", title: "Name and plugin are required" });
       return;
     }
-    if (!settingsValid) {
-      toast({ variant: "error", title: "Settings JSON is invalid" });
-      return;
+
+    let parsedSettings: Record<string, unknown>;
+    if (settingsFields.length > 0) {
+      try {
+        parsedSettings = coerceSettings(settingsFields, settings);
+      } catch {
+        toast({
+          variant: "error",
+          title: "Invalid settings",
+          description: "Check the free-form JSON fields.",
+        });
+        return;
+      }
+    } else {
+      // Schema not loaded (or plugin has none): preserve settings as-is.
+      parsedSettings = settings;
     }
 
-    let parsedSettings: Record<string, unknown> | undefined;
-    try {
-      parsedSettings = settings.trim() ? JSON.parse(settings) : undefined;
-    } catch {
-      toast({ variant: "error", title: "Settings JSON is invalid" });
-      return;
-    }
+    const finalStages = entry
+      ? Array.from(new Set([...entry.mandatory_stages, ...stages]))
+      : stages;
 
     const body: Record<string, unknown> = {
       name: name.trim(),
       slug: slug.trim(),
       enabled,
-      parallel,
-      priority: Number(priority) || 0,
-      stages,
+      parallel: policy?.parallel ?? false,
+      priority: policy?.priority ?? 0,
+      stages: finalStages,
     };
-    if (parsedSettings) body.settings = parsedSettings;
+    if (mode.trim()) body.mode = mode.trim();
+    if (Object.keys(parsedSettings).length > 0) body.settings = parsedSettings;
 
     setSubmitting(true);
     try {
@@ -300,60 +326,53 @@ function PolicyFormDialog({
               <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="global-rate-limit" />
             </Field>
             <Field label="Plugin">
-              <Select value={slug} onChange={(e) => setSlug(e.target.value)}>
-                {KNOWN_SLUGS.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </Select>
+              {catalogGroups && catalogGroups.length > 0 ? (
+                <Select value={slug} onChange={(e) => setSlug(e.target.value)} disabled={isEdit}>
+                  {catalogGroups.map((group) => (
+                    <optgroup key={group.type} label={group.type}>
+                      {group.items.map((it) => (
+                        <option key={it.slug} value={it.slug}>
+                          {it.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </Select>
+              ) : (
+                <Select value={slug} onChange={(e) => setSlug(e.target.value)} disabled={isEdit}>
+                  {slugOptions.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </Select>
+              )}
             </Field>
           </Grid2>
 
+          {entry?.description && <p className="text-[12px] text-muted -mt-2">{entry.description}</p>}
+
           <Grid2>
-            <Field label="Priority" hint="lower runs first">
-              <Input type="number" value={priority} onChange={(e) => setPriority(e.target.value)} />
-            </Field>
+            {supportedModes.length > 0 && (
+              <Field label="Mode">
+                <Select value={mode} onChange={(e) => setMode(e.target.value)}>
+                  {supportedModes.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            )}
             <div className="flex flex-col gap-2 justify-end">
               <SwitchRow label="Enabled" checked={enabled} onCheckedChange={setEnabled} />
             </div>
           </Grid2>
 
-          <SwitchRow
-            label="Parallel"
-            description="Run this policy concurrently with others in the same stage."
-            checked={parallel}
-            onCheckedChange={setParallel}
-          />
-
-          <div className="flex flex-col gap-2">
-            <Label>Stages</Label>
-            <div className="grid grid-cols-2 gap-2">
-              {STAGES.map((stage) => {
-                const active = stages.includes(stage);
-                return (
-                  <button
-                    key={stage}
-                    type="button"
-                    onClick={() => toggleStage(stage)}
-                    className={cn(
-                      "rounded-(--radius) border px-3 h-9 text-[13px] text-left transition-colors",
-                      active
-                        ? "border-accent/50 bg-accent/10 text-fg"
-                        : "border-border bg-surface-2/40 text-muted hover:text-fg",
-                    )}
-                  >
-                    {stage}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
           <Divider />
 
-          <Section title="Settings" description="Plugin-specific configuration as JSON.">
-            <JsonEditor value={settings} onChange={setSettings} onValidityChange={setSettingsValid} rows={9} />
+          <Section title="Settings" description="Plugin-specific configuration.">
+            <PolicySettingsForm fields={settingsFields} value={settings} onChange={setSettings} />
           </Section>
         </DialogBody>
         <DialogFooter>

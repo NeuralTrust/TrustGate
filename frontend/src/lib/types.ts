@@ -10,10 +10,21 @@ export interface ApiError {
   message?: string;
 }
 
+export interface GatewayHosts {
+  proxy?: string;
+  mcp?: string;
+}
+
 export interface Gateway {
   id: string;
   slug: string;
   status: string;
+  version?: string;
+  domain?: string;
+  hosts?: GatewayHosts | null;
+  metadata?: Record<string, string> | null;
+  telemetry?: Record<string, unknown> | null;
+  client_tls?: Record<string, unknown> | null;
   session_config?: SessionConfig | null;
   created_at: string;
   updated_at: string;
@@ -123,7 +134,7 @@ export interface Registry {
   provider: string;
   provider_options?: Record<string, unknown>;
   description?: string;
-  weight?: number;
+  enabled?: boolean;
   auth?: TargetAuth | null;
   health_checks?: HealthChecks | null;
   mcp_target?: MCPTarget | null;
@@ -132,6 +143,7 @@ export interface Registry {
 }
 
 export type ConsumerType = "LLM" | "MCP" | "A2A";
+export type RoutingMode = "inline" | "role_based";
 export type Algorithm =
   | "round-robin"
   | "random"
@@ -139,15 +151,56 @@ export type Algorithm =
   | "least-connections"
   | "semantic";
 
+export interface EmbeddingAuth {
+  api_key?: string;
+  header_name?: string;
+  header_value?: string;
+  param_name?: string;
+  param_value?: string;
+  param_location?: string;
+}
+
 export interface EmbeddingConfig {
   provider: string;
   model: string;
+  auth?: EmbeddingAuth | null;
+}
+
+export interface LBPoolMember {
+  registry_id: string;
+  models?: string[];
+}
+
+export interface LBConfig {
+  enabled: boolean;
+  algorithm?: Algorithm;
+  pool_alias?: string;
+  members?: LBPoolMember[];
+  embedding_config?: EmbeddingConfig | null;
+}
+
+export interface RegistryWeight {
+  registry_id: string;
+  weight: number;
+}
+
+export interface ModelPolicy {
+  registry_id: string;
+  allowed?: string[];
+  default?: string;
+}
+
+export interface ToolkitEntry {
+  registry_id: string;
+  tool?: string;
+  prompt?: string;
+  resource?: string;
+  expose_as?: string;
 }
 
 export interface FallbackBudget {
   max_attempts: number;
   max_total_latency_ms?: number;
-  max_cost_usd?: number;
 }
 
 export interface Fallback {
@@ -157,40 +210,29 @@ export interface Fallback {
   chain: string[];
 }
 
-export interface ModelPolicy {
-  allowed?: string[];
-  default?: string;
-}
-
-export interface RegistryBinding {
-  id: string;
-  model_policies?: ModelPolicy | null;
-}
-
-export interface ConsumerWeight {
-  registry_id: string;
-  weight: number;
-}
-
 export interface Consumer {
   id: string;
   gateway_id: string;
   name: string;
   type: ConsumerType;
-  path: string;
-  algorithm: Algorithm;
-  embedding_config?: EmbeddingConfig | null;
+  slug: string;
+  routing_mode: RoutingMode;
+  lb_config?: LBConfig | null;
   headers?: Record<string, string>;
   active: boolean;
-  registries: RegistryBinding[];
+  registry_ids: string[];
+  registry_weights?: RegistryWeight[];
+  role_ids: string[];
   auth_ids: string[];
   fallback?: Fallback | null;
-  weights?: ConsumerWeight[];
+  model_policies?: ModelPolicy[];
+  toolkit?: ToolkitEntry[];
+  fail_mode?: string;
   created_at: string;
   updated_at: string;
 }
 
-export type AuthType = "api_key" | "oauth2" | "mtls";
+export type AuthType = "api_key" | "oauth2" | "oidc" | "mtls";
 
 export interface OAuth2Config {
   issuer: string;
@@ -201,6 +243,21 @@ export interface OAuth2Config {
   client_secret?: string;
   required_scopes?: string[];
   allowed_algorithms?: string[];
+  session_mode?: boolean;
+  userinfo_url?: string;
+  subject_claim?: string;
+  authorize_url?: string;
+  token_url?: string;
+}
+
+export interface OidcConfig {
+  issuer: string;
+  audiences?: string[];
+  jwks_url?: string;
+  public_keys?: string[];
+  required_scopes?: string[];
+  allowed_algorithms?: string[];
+  subject_claim?: string;
 }
 
 export interface MtlsConfig {
@@ -212,7 +269,13 @@ export interface MtlsConfig {
 
 export interface AuthConfig {
   oauth2?: OAuth2Config;
+  oidc?: OidcConfig;
   mtls?: MtlsConfig;
+}
+
+// Auth types that can drive role-based (identity-provider) consumer routing.
+export function isIdentityProviderAuth(type: AuthType): boolean {
+  return type === "oauth2" || type === "oidc";
 }
 
 export interface Auth {
@@ -227,7 +290,53 @@ export interface Auth {
   updated_at: string;
 }
 
+export type OidcMatch = "any" | "all";
+export type OidcClaimOp = "equals" | "contains_any" | "contains_all";
+
+export interface OidcClaim {
+  path: string;
+  op: OidcClaimOp;
+  values: string[];
+}
+
+export interface OidcMapping {
+  match: OidcMatch;
+  claims: OidcClaim[];
+}
+
+export interface RoleModelPolicy {
+  registry_id: string;
+  allowed?: string[];
+  default?: string;
+}
+
+export interface RoleToolkitEntry {
+  registry_id: string;
+  tool?: string;
+  prompt?: string;
+  resource?: string;
+  expose_as?: string;
+}
+
+export interface RoleMcpPolicies {
+  toolkit?: RoleToolkitEntry[];
+  fail_mode?: string;
+}
+
+export interface Role {
+  id: string;
+  gateway_id: string;
+  name: string;
+  model_policies?: RoleModelPolicy[];
+  mcp_policies?: RoleMcpPolicies | null;
+  oidc_mapping?: OidcMapping | null;
+  registry_ids: string[];
+  created_at: string;
+  updated_at: string;
+}
+
 export type PolicyStage = "pre_request" | "post_request" | "pre_response" | "post_response";
+export type PolicyMode = "enforce" | "throttle" | "observe";
 
 export interface Policy {
   id: string;
@@ -235,14 +344,56 @@ export interface Policy {
   consumer_ids?: string[];
   name: string;
   slug: string;
+  description?: string;
   enabled: boolean;
   global: boolean;
   priority: number;
   parallel?: boolean;
+  mode?: string;
   settings?: Record<string, unknown>;
   stages?: PolicyStage[];
   created_at: string;
   updated_at: string;
+}
+
+export interface PolicyCatalogEnumOption {
+  value: string;
+  label: string;
+}
+
+export interface PolicyCatalogField {
+  key: string;
+  label: string;
+  type: "string" | "integer" | "number" | "boolean" | "duration" | "enum" | "object" | "array" | "map";
+  description?: string;
+  required?: boolean;
+  default?: unknown;
+  enum?: PolicyCatalogEnumOption[];
+  fields?: PolicyCatalogField[];
+  item?: Record<string, unknown>;
+  key_options?: string[];
+  value?: Record<string, unknown>;
+}
+
+export interface PolicyCatalogEntry {
+  slug: string;
+  name: string;
+  description?: string;
+  mandatory_stages: PolicyStage[];
+  supported_stages: PolicyStage[];
+  supported_modes: PolicyMode[];
+  supported_protocols: string[];
+  default_mode: string;
+  settings_schema?: { fields?: PolicyCatalogField[] } | null;
+}
+
+export interface PolicyCatalogGroup {
+  type: string;
+  items: PolicyCatalogEntry[];
+}
+
+export interface PolicyCatalog {
+  groups: PolicyCatalogGroup[];
 }
 
 export type AuthFieldType = "string" | "boolean";
@@ -290,9 +441,18 @@ export interface Model {
   id: string;
   provider_id: string;
   slug: string;
+  external_id?: string;
   display_name?: string;
   context_window?: number;
+  max_output?: number;
+  input_price?: string;
+  output_price?: string;
+  capabilities?: Record<string, unknown>;
   enabled: boolean;
+  source?: string;
+  release_date?: string;
+  input_modalities?: string[];
+  output_modalities?: string[];
 }
 
 export type MCPAuthHint = "none" | "static" | "oauth";
