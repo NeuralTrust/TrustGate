@@ -119,3 +119,8 @@ func hasPlaygroundToken(headers map[string][]string) bool {
 	}
 	return false
 }
+
+// IsPlaygroundRequest reports whether the proxy request carries a playground token.
+func IsPlaygroundRequest(headers map[string][]string) bool {
+	return hasPlaygroundToken(headers)
+}
