@@ -346,3 +346,30 @@ func TestPipeline_PublishCallsPlaygroundStore(t *testing.T) {
 	saved := store.saved()
 	require.Len(t, saved, 1, "playground store must receive the event after the exporters run")
 }
+
+func TestPipeline_PlaygroundSkipsExportersKeepsStore(t *testing.T) {
+	builder := NewBuilder(adapter.NewRegistry(), stubPricing{})
+	factory := &fakeFactory{}
+	cache := NewExporterCache(factory, internalTestLogger())
+	store := &fakePlaygroundStore{}
+	p := NewPipeline(builder, cache, store, internalTestLogger(),
+		telemetrydomain.ExporterConfig{Name: "kafka"})
+
+	req := &infracontext.RequestContext{
+		GatewayID: "gw-1",
+		Method:    "POST",
+		Path:      "/v1/chat/completions",
+		Headers:   map[string][]string{"X-AG-Playground-Token": {"a.jwt.token"}},
+	}
+	resp := &infracontext.ResponseContext{StatusCode: 200}
+
+	targets := p.resolveTargets(nil)
+	require.Len(t, targets, 1)
+	exporter := targets[0].(*fakeExporter)
+
+	p.publish(nil, req, resp, time.Now(), time.Now(), nil)
+
+	assert.Equal(t, 0, exporter.publishedCount(), "playground must not publish to Activity exporters")
+	saved := store.saved()
+	require.Len(t, saved, 1, "playground store must still receive the event for the panel")
+}

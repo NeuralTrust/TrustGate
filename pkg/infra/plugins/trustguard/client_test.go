@@ -115,7 +115,7 @@ func TestGuardDecodesResponses(t *testing.T) {
 			defer srv.Close()
 
 			c := newClient(2 * time.Second)
-			resp, err := c.Guard(context.Background(), srv.URL, "secret-key", "", sampleRequest())
+			resp, err := c.Guard(context.Background(), srv.URL, "secret-key", "", sampleRequest(), false)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("expected error, got nil")
@@ -164,7 +164,7 @@ func TestGuardTrimsTrailingSlash(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient(time.Second)
-	if _, err := c.Guard(context.Background(), srv.URL+"/", "k", "", sampleRequest()); err != nil {
+	if _, err := c.Guard(context.Background(), srv.URL+"/", "k", "", sampleRequest(), false); err != nil {
 		t.Fatalf("Guard returned error: %v", err)
 	}
 }
@@ -175,7 +175,7 @@ func TestGuardTransportError(t *testing.T) {
 	srv.Close()
 
 	c := newClient(time.Second)
-	if _, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest()); err == nil {
+	if _, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest(), false); err == nil {
 		t.Fatal("expected transport error, got nil")
 	}
 }
@@ -188,7 +188,7 @@ func TestGuardUnauthorizedReturnsSentinel(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient(time.Second)
-	_, err := c.Guard(context.Background(), srv.URL, "stale-token", "", sampleRequest())
+	_, err := c.Guard(context.Background(), srv.URL, "stale-token", "", sampleRequest(), false)
 	if !errors.Is(err, errUnauthorized) {
 		t.Fatalf("err = %v, want errUnauthorized", err)
 	}
@@ -203,7 +203,7 @@ func TestGuardUnavailableReturnsTypedError(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient(time.Second)
-	_, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest())
+	_, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest(), false)
 	var unavailable *entitlementsUnavailableError
 	if !errors.As(err, &unavailable) {
 		t.Fatalf("err = %v, want *entitlementsUnavailableError", err)
@@ -226,7 +226,7 @@ func TestGuardRateLimitedReturnsTypedError(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient(time.Second)
-	_, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest())
+	_, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest(), false)
 	var limited *rateLimitedError
 	if !errors.As(err, &limited) {
 		t.Fatalf("err = %v, want *rateLimitedError", err)
@@ -251,7 +251,7 @@ func TestGuardRateLimitedWithoutHeaders(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient(time.Second)
-	_, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest())
+	_, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest(), false)
 	var limited *rateLimitedError
 	if !errors.As(err, &limited) {
 		t.Fatalf("err = %v, want *rateLimitedError", err)
@@ -276,7 +276,7 @@ func TestGuardRateLimitedIgnoresUnrelatedHeaders(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient(time.Second)
-	_, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest())
+	_, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest(), false)
 	var limited *rateLimitedError
 	if !errors.As(err, &limited) {
 		t.Fatalf("err = %v, want *rateLimitedError", err)
@@ -303,7 +303,7 @@ func TestGuardContextCanceled(t *testing.T) {
 	cancel()
 
 	c := newClient(time.Second)
-	if _, err := c.Guard(ctx, srv.URL, "k", "", sampleRequest()); err == nil {
+	if _, err := c.Guard(ctx, srv.URL, "k", "", sampleRequest(), false); err == nil {
 		t.Fatal("expected context error, got nil")
 	}
 }
@@ -320,7 +320,7 @@ func TestGuardSetsTraceIDHeader(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient(time.Second)
-	if _, err := c.Guard(context.Background(), srv.URL, "k", wantTraceID, sampleRequest()); err != nil {
+	if _, err := c.Guard(context.Background(), srv.URL, "k", wantTraceID, sampleRequest(), false); err != nil {
 		t.Fatalf("Guard returned error: %v", err)
 	}
 }
@@ -336,7 +336,7 @@ func TestGuardOmitsTraceIDHeaderWhenEmpty(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient(time.Second)
-	if _, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest()); err != nil {
+	if _, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest(), false); err != nil {
 		t.Fatalf("Guard returned error: %v", err)
 	}
 }
