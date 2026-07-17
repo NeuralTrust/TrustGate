@@ -359,7 +359,6 @@ function RegistryFormDialog({
     const body: Record<string, unknown> = {
       name,
       provider,
-      weight: 1,
       auth: buildTargetAuth(selectedOption, fieldValues),
     };
     if (provider === PROVIDER_OPTIONS_PROVIDER) {

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Plus, Pencil, Trash2, ShieldCheck, Globe } from "lucide-react";
 import { api, gatewayScope } from "@/lib/admin-client";
 import { useActiveGatewayId } from "@/components/layout/gateway-context";
-import { useList, useInvalidate, errorMessage } from "@/lib/hooks";
+import { useList, useInvalidate, usePolicyCatalog, errorMessage } from "@/lib/hooks";
 import { useToast } from "@/components/ui/toast";
 import { PageHeader, ConfirmDialog, useDisclosure } from "@/components/ui/page";
 import { Button } from "@/components/ui/button";
@@ -22,9 +22,9 @@ import { Field, Input, Select, Label } from "@/components/ui/field";
 import { Section, SwitchRow, Grid2, Divider } from "@/components/ui/form-bits";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { cn } from "@/lib/cn";
-import type { Policy, PolicyStage } from "@/lib/types";
+import type { Policy, PolicyStage, PolicyCatalogEntry } from "@/lib/types";
 
-const KNOWN_SLUGS = [
+const FALLBACK_SLUGS = [
   "rate_limiter",
   "token_rate_limiter",
   "request_size_limiter",
@@ -220,10 +220,15 @@ function PolicyFormDialog({
   const gatewayId = useActiveGatewayId();
   const invalidate = useInvalidate();
   const { toast } = useToast();
+  const { data: catalogGroups } = usePolicyCatalog();
   const isEdit = policy !== null;
 
+  const entries: PolicyCatalogEntry[] = (catalogGroups ?? []).flatMap((g) => g.items);
+  const slugOptions = entries.length > 0 ? entries.map((e) => e.slug) : FALLBACK_SLUGS;
+
   const [name, setName] = useState(policy?.name ?? "");
-  const [slug, setSlug] = useState(policy?.slug ?? KNOWN_SLUGS[0]!);
+  const [slug, setSlug] = useState(policy?.slug ?? slugOptions[0]!);
+  const [mode, setMode] = useState(policy?.mode ?? "");
   const [enabled, setEnabled] = useState(policy?.enabled ?? true);
   const [parallel, setParallel] = useState(policy?.parallel ?? false);
   const [priority, setPriority] = useState(String(policy?.priority ?? 0));
@@ -233,6 +238,22 @@ function PolicyFormDialog({
   );
   const [settingsValid, setSettingsValid] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+
+  const entry = entries.find((e) => e.slug === slug);
+  const supportedModes = entry?.supported_modes ?? [];
+  const settingsFields = entry?.settings_schema?.fields ?? [];
+
+  function selectSlug(next: string) {
+    setSlug(next);
+    const catalogEntry = entries.find((e) => e.slug === next);
+    if (!catalogEntry) return;
+    if (catalogEntry.mandatory_stages.length > 0) {
+      setStages(catalogEntry.mandatory_stages);
+    } else if (catalogEntry.supported_stages.length > 0) {
+      setStages([catalogEntry.supported_stages[0]!]);
+    }
+    setMode(catalogEntry.default_mode || "");
+  }
 
   function toggleStage(stage: PolicyStage) {
     setStages((prev) =>
@@ -258,14 +279,20 @@ function PolicyFormDialog({
       return;
     }
 
+    // Mandatory stages must always be present regardless of the toggles.
+    const finalStages = entry
+      ? Array.from(new Set([...entry.mandatory_stages, ...stages]))
+      : stages;
+
     const body: Record<string, unknown> = {
       name: name.trim(),
       slug: slug.trim(),
       enabled,
       parallel,
       priority: Number(priority) || 0,
-      stages,
+      stages: finalStages,
     };
+    if (mode.trim()) body.mode = mode.trim();
     if (parsedSettings) body.settings = parsedSettings;
 
     setSubmitting(true);
@@ -300,24 +327,56 @@ function PolicyFormDialog({
               <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="global-rate-limit" />
             </Field>
             <Field label="Plugin">
-              <Select value={slug} onChange={(e) => setSlug(e.target.value)}>
-                {KNOWN_SLUGS.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </Select>
+              {catalogGroups && catalogGroups.length > 0 ? (
+                <Select value={slug} onChange={(e) => selectSlug(e.target.value)} disabled={isEdit}>
+                  {catalogGroups.map((group) => (
+                    <optgroup key={group.type} label={group.type}>
+                      {group.items.map((it) => (
+                        <option key={it.slug} value={it.slug}>
+                          {it.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </Select>
+              ) : (
+                <Select value={slug} onChange={(e) => selectSlug(e.target.value)} disabled={isEdit}>
+                  {slugOptions.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </Select>
+              )}
             </Field>
           </Grid2>
+
+          {entry?.description && <p className="text-[12px] text-muted -mt-2">{entry.description}</p>}
 
           <Grid2>
             <Field label="Priority" hint="lower runs first">
               <Input type="number" value={priority} onChange={(e) => setPriority(e.target.value)} />
             </Field>
-            <div className="flex flex-col gap-2 justify-end">
-              <SwitchRow label="Enabled" checked={enabled} onCheckedChange={setEnabled} />
-            </div>
+            {supportedModes.length > 0 ? (
+              <Field label="Mode">
+                <Select value={mode} onChange={(e) => setMode(e.target.value)}>
+                  {supportedModes.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            ) : (
+              <div className="flex flex-col gap-2 justify-end">
+                <SwitchRow label="Enabled" checked={enabled} onCheckedChange={setEnabled} />
+              </div>
+            )}
           </Grid2>
+
+          {supportedModes.length > 0 && (
+            <SwitchRow label="Enabled" checked={enabled} onCheckedChange={setEnabled} />
+          )}
 
           <SwitchRow
             label="Parallel"
@@ -353,6 +412,20 @@ function PolicyFormDialog({
           <Divider />
 
           <Section title="Settings" description="Plugin-specific configuration as JSON.">
+            {settingsFields.length > 0 && (
+              <div className="rounded-(--radius) border border-border bg-surface-2/30 px-3 py-2.5 flex flex-col gap-1">
+                <p className="text-[11px] font-medium uppercase tracking-wider text-faint">Available fields</p>
+                <ul className="flex flex-col gap-0.5">
+                  {settingsFields.map((f) => (
+                    <li key={f.key} className="text-[12px] text-muted">
+                      <code className="text-accent">{f.key}</code>
+                      <span className="text-faint"> · {f.type}{f.required ? " · required" : ""}</span>
+                      {f.description ? <span className="text-faint"> — {f.description}</span> : null}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <JsonEditor value={settings} onChange={setSettings} onValidityChange={setSettingsValid} rows={9} />
           </Section>
         </DialogBody>

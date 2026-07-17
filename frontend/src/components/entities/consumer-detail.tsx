@@ -2,25 +2,31 @@
 
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Server, KeyRound, ShieldCheck, ArrowUp, ArrowDown, X } from "lucide-react";
+import { Check, Server, KeyRound, ShieldCheck, ArrowUp, ArrowDown, X, UsersRound } from "lucide-react";
 import { api, gatewayScope } from "@/lib/admin-client";
 import { useActiveGatewayId } from "@/components/layout/gateway-context";
 import { useList, useInvalidate, errorMessage } from "@/lib/hooks";
 import { useToast } from "@/components/ui/toast";
-import { Dialog, DialogContent, DialogHeader, DialogBody, DialogFooter, DialogClose } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogBody } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabTrigger, TabContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select } from "@/components/ui/field";
 import { Grid2 } from "@/components/ui/form-bits";
 import { PageLoader, Badge } from "@/components/ui/misc";
 import { cn } from "@/lib/cn";
-import type { Consumer, Registry, Auth, Policy, Algorithm } from "@/lib/types";
+import {
+  ModelPolicyEditor,
+  buildModelPolicies,
+  modelPolicyStateFrom,
+} from "./model-policy-editor";
+import type { Consumer, Registry, Auth, Policy, Role, Algorithm, ModelPolicy, RoutingMode } from "@/lib/types";
 
 const TRIGGERS = ["http_5xx", "http_429", "timeout", "provider_error", "plugin_rejection"];
 
 // Routing "strategy" is a UI-level concept layered over the backend's
-// (algorithm + fallback) model: "single"/"fallback" need no distribution
-// config, while the distribution strategies map onto load-balancing algorithms.
+// (lb_config + fallback) model: "single"/"fallback" keep load balancing
+// disabled, while the distribution strategies enable lb_config with the mapped
+// algorithm.
 type Strategy =
   | "single"
   | "fallback"
@@ -31,23 +37,28 @@ type Strategy =
   | "semantic";
 
 const STRATEGY_META: Record<Strategy, { label: string; hint: string }> = {
-  single: { label: "Single target", hint: "Route every request to the attached provider." },
+  single: { label: "Single target", hint: "Route every request to the attached registry." },
   fallback: {
     label: "Fallback",
     hint: "Try providers in declared order; on failure, route to the next. Order matters.",
   },
-  "round-robin": { label: "Round robin", hint: "Even rotation across the attached providers." },
+  "round-robin": { label: "Round robin", hint: "Even rotation across the attached registries." },
   weighted: {
     label: "Weighted",
-    hint: "Distribute requests across providers by configurable per-provider weights.",
+    hint: "Distribute requests across registries by configurable per-registry weights.",
   },
   "least-connections": {
     label: "Least connections",
-    hint: "Prefer the provider with the fewest in-flight requests.",
+    hint: "Prefer the registry with the fewest in-flight requests.",
   },
-  random: { label: "Random", hint: "Pick an attached provider at random." },
+  random: { label: "Random", hint: "Pick an attached registry at random." },
   semantic: { label: "Semantic", hint: "Route by embedding similarity (requires an embedding model)." },
 };
+
+// A strategy that enables lb_config (anything other than single/fallback).
+function isLoadBalanced(s: Strategy): boolean {
+  return s !== "single" && s !== "fallback";
+}
 
 function algorithmFor(s: Strategy): Algorithm {
   switch (s) {
@@ -68,7 +79,8 @@ function algorithmFor(s: Strategy): Algorithm {
 
 function strategyOf(c: Consumer): Strategy {
   if (c.fallback?.enabled) return "fallback";
-  switch (c.algorithm) {
+  if (!c.lb_config?.enabled) return "single";
+  switch (c.lb_config.algorithm) {
     case "weighted-round-robin":
       return "weighted";
     case "least-connections":
@@ -102,7 +114,7 @@ export function ConsumerDetail({
       <DialogContent size="xl">
         <DialogHeader
           title={consumer ? consumer.name : "Consumer"}
-          description={consumer?.path}
+          description={consumer ? `/${consumer.slug}` : undefined}
         />
         {isLoading || !consumer ? (
           <DialogBody>
@@ -146,16 +158,28 @@ function useConsumerInvalidate(consumerId: string) {
 }
 
 function BindingsTab({ consumer }: { consumer: Consumer }) {
+  const roleBased = consumer.routing_mode === "role_based";
   return (
     <div className="flex flex-col gap-6">
-      <BindingSection
-        consumer={consumer}
-        kind="registries"
-        title="Registries"
-        icon={<Server className="h-4 w-4" />}
-        boundIds={consumer.registries.map((r) => r.id)}
-        useItems={() => useList<Registry>("registries")}
-      />
+      {roleBased ? (
+        <BindingSection
+          consumer={consumer}
+          kind="roles"
+          title="Roles"
+          icon={<UsersRound className="h-4 w-4" />}
+          boundIds={consumer.role_ids}
+          useItems={() => useList<Role>("roles")}
+        />
+      ) : (
+        <BindingSection
+          consumer={consumer}
+          kind="registries"
+          title="Registries"
+          icon={<Server className="h-4 w-4" />}
+          boundIds={consumer.registry_ids}
+          useItems={() => useList<Registry>("registries")}
+        />
+      )}
       <BindingSection
         consumer={consumer}
         kind="auths"
@@ -194,7 +218,7 @@ function BindingSection<T extends NamedEntity>({
   isPolicyBound,
 }: {
   consumer: Consumer;
-  kind: "registries" | "auths" | "policies";
+  kind: "registries" | "roles" | "auths" | "policies";
   title: string;
   icon: React.ReactNode;
   boundIds: string[];
@@ -275,24 +299,40 @@ function BindingSection<T extends NamedEntity>({
   );
 }
 
+// Model policies (registry_id → allowed/default) are required for every member
+// of an enabled lb_config pool. This merges the consumer's existing policies
+// with a bare entry for any attached registry that lacks one, so enabling load
+// balancing never fails validation.
+function poolModelPolicies(consumer: Consumer, attached: Registry[]): ModelPolicy[] {
+  const existing = new Map((consumer.model_policies ?? []).map((p) => [p.registry_id, p]));
+  return attached.map((r) => {
+    const current = existing.get(r.id);
+    const policy: ModelPolicy = { registry_id: r.id };
+    if (current?.allowed && current.allowed.length > 0) policy.allowed = current.allowed;
+    if (current?.default) policy.default = current.default;
+    return policy;
+  });
+}
+
 function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => void }) {
   const gatewayId = useActiveGatewayId();
   const invalidate = useConsumerInvalidate(consumer.id);
   const { toast } = useToast();
   const { data: registries } = useList<Registry>("registries");
 
-  const attached = (registries ?? []).filter((r) => consumer.registries.some((b) => b.id === r.id));
+  const attached = (registries ?? []).filter((r) => consumer.registry_ids.includes(r.id));
 
+  const emb = consumer.lb_config?.embedding_config;
+  const [mode, setMode] = useState<RoutingMode>(consumer.routing_mode);
   const [strategy, setStrategy] = useState<Strategy>(strategyOf(consumer));
-  const [embProvider, setEmbProvider] = useState(consumer.embedding_config?.provider ?? "");
-  const [embModel, setEmbModel] = useState(consumer.embedding_config?.model ?? "");
+  const [embProvider, setEmbProvider] = useState(emb?.provider ?? "");
+  const [embModel, setEmbModel] = useState(emb?.model ?? "");
   const [embKey, setEmbKey] = useState("");
   // Only user edits live in state; the displayed value falls back to the
-  // consumer's configured weight, then the registry's own default. This keeps
-  // the inputs correct regardless of when the registries query resolves.
+  // consumer's configured weight, then a default of 1.
   const [weights, setWeights] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
-    for (const w of consumer.weights ?? []) init[w.registry_id] = String(w.weight);
+    for (const w of consumer.registry_weights ?? []) init[w.registry_id] = String(w.weight);
     return init;
   });
   const fb = consumer.fallback;
@@ -300,19 +340,19 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
   const [chain, setChain] = useState<string[]>(fb?.chain ?? []);
   const [maxAttempts, setMaxAttempts] = useState(String(fb?.budget?.max_attempts ?? 3));
   const [maxLatency, setMaxLatency] = useState(String(fb?.budget?.max_total_latency_ms ?? 5000));
-  const [maxCost, setMaxCost] = useState(String(fb?.budget?.max_cost_usd ?? 0));
   const [saving, setSaving] = useState(false);
 
   const meta = STRATEGY_META[strategy];
-  // Existing semantic consumers keep the option available even though it is not
-  // offered by default in the catalog-driven design.
-  const showSemantic = consumer.algorithm === "semantic" || strategy === "semantic";
+  const showSemantic = consumer.lb_config?.algorithm === "semantic" || strategy === "semantic";
 
   function displayWeight(r: Registry): string {
-    return weights[r.id] ?? String(r.weight ?? 1);
+    return weights[r.id] ?? String(weightFromConsumer(r.id) ?? 1);
+  }
+  function weightFromConsumer(registryId: string): number | undefined {
+    return (consumer.registry_weights ?? []).find((w) => w.registry_id === registryId)?.weight;
   }
   function weightOf(r: Registry): number {
-    return Math.min(100, Math.max(0, Math.round(Number(displayWeight(r)) || 0)));
+    return Math.min(100, Math.max(1, Math.round(Number(displayWeight(r)) || 1)));
   }
   const totalWeight = attached.reduce((sum, r) => sum + weightOf(r), 0);
 
@@ -343,42 +383,66 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
   const chainable = attached.filter((r) => !chain.includes(r.id));
 
   async function save() {
-    const body = consumerBaseBody(consumer);
-    body.algorithm = algorithmFor(strategy);
+    const base = `${gatewayScope(gatewayId)}/consumers/${consumer.id}`;
 
-    if (strategy === "semantic") {
-      if (!embProvider.trim() || !embModel.trim() || !embKey.trim()) {
-        toast({
-          variant: "error",
-          title: "Embedding model required",
-          description: "Semantic routing needs an embedding provider, model and API key.",
-        });
-        return;
+    if (mode === "role_based") {
+      setSaving(true);
+      try {
+        await api.put(base, { routing_mode: "role_based" });
+        toast({ variant: "success", title: "Switched to role-based routing" });
+        invalidate();
+        onClose();
+      } catch (err) {
+        toast({ variant: "error", title: "Save failed", description: errorMessage(err) });
+      } finally {
+        setSaving(false);
       }
-      body.embedding_config = {
-        provider: embProvider.trim(),
-        model: embModel.trim(),
-        auth: { api_key: embKey.trim() },
-      };
+      return;
     }
 
-    if (strategy === "weighted") {
+    const body: Record<string, unknown> = { routing_mode: "inline" };
+
+    if (isLoadBalanced(strategy)) {
       if (attached.length === 0) {
-        toast({ variant: "error", title: "Attach at least one provider first (Bindings tab)." });
+        toast({ variant: "error", title: "Attach at least one registry first (Bindings tab)." });
         return;
       }
-      if (totalWeight === 0) {
-        toast({ variant: "error", title: "Set a weight above zero for at least one provider." });
-        return;
-      }
-      body.weights = attached.map((r) => ({ registry_id: r.id, weight: weightOf(r) }));
-    }
+      const lb: Record<string, unknown> = {
+        enabled: true,
+        algorithm: algorithmFor(strategy),
+        members: attached.map((r) => ({ registry_id: r.id })),
+      };
 
-    if (strategy === "fallback") {
-      if (chainResolved.length === 0) {
-        toast({ variant: "error", title: "Add at least one provider to the fallback order." });
+      if (strategy === "semantic") {
+        if (!embProvider.trim() || !embModel.trim()) {
+          toast({
+            variant: "error",
+            title: "Embedding model required",
+            description: "Semantic routing needs an embedding provider and model.",
+          });
+          return;
+        }
+        lb.embedding_config = {
+          provider: embProvider.trim(),
+          model: embModel.trim(),
+          ...(embKey.trim() ? { auth: { api_key: embKey.trim() } } : {}),
+        };
+      }
+
+      if (strategy === "weighted" && totalWeight === 0) {
+        toast({ variant: "error", title: "Set a weight above zero for at least one registry." });
         return;
       }
+
+      body.lb_config = lb;
+      body.fallback = { enabled: false };
+      body.model_policies = poolModelPolicies(consumer, attached);
+    } else if (strategy === "fallback") {
+      if (chainResolved.length === 0) {
+        toast({ variant: "error", title: "Add at least one registry to the fallback order." });
+        return;
+      }
+      body.lb_config = { enabled: false };
       body.fallback = {
         enabled: true,
         triggers,
@@ -386,16 +450,23 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
         budget: {
           max_attempts: Number(maxAttempts) || 1,
           max_total_latency_ms: Number(maxLatency) || 0,
-          max_cost_usd: Number(maxCost) || 0,
         },
       };
     } else {
+      body.lb_config = { enabled: false };
       body.fallback = { enabled: false };
     }
 
     setSaving(true);
     try {
-      await api.put(`${gatewayScope(gatewayId)}/consumers/${consumer.id}`, body);
+      // Weights are stored per registry association, not on the consumer body,
+      // so they are updated through the (idempotent) attach endpoint.
+      if (strategy === "weighted") {
+        for (const r of attached) {
+          await api.post(`${base}/registries/${r.id}`, { weight: weightOf(r) });
+        }
+      }
+      await api.put(base, body);
       toast({ variant: "success", title: "Routing saved" });
       invalidate();
       onClose();
@@ -408,6 +479,23 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
 
   return (
     <div className="flex flex-col gap-4">
+      <Field label="Access mode">
+        <Select value={mode} onChange={(e) => setMode(e.target.value as RoutingMode)}>
+          <option value="inline">Inline (registries)</option>
+          <option value="role_based">Role-based (identity)</option>
+        </Select>
+      </Field>
+
+      {mode === "role_based" && (
+        <div className="rounded-(--radius) border border-border bg-surface-2/30 p-3.5 text-[12px] text-muted">
+          Routing is governed by the roles bound in the <span className="text-fg">Bindings</span> tab.
+          A role-based consumer needs a single OIDC or OAuth2 auth and at least one role; each role
+          carries its own registries and model policies.
+        </div>
+      )}
+
+      {mode === "inline" && (
+        <>
       <Field label="Strategy">
         <Select value={strategy} onChange={(e) => setStrategy(e.target.value as Strategy)}>
           <optgroup label="Without distribution">
@@ -427,9 +515,9 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
 
       {strategy === "weighted" && (
         <div className="flex flex-col gap-2">
-          <p className="text-[13px] font-medium text-fg">Providers</p>
+          <p className="text-[13px] font-medium text-fg">Registries</p>
           {attached.length === 0 ? (
-            <p className="text-[12px] text-faint">Attach providers first (Bindings tab).</p>
+            <p className="text-[12px] text-faint">Attach registries first (Bindings tab).</p>
           ) : (
             <div className="flex flex-col gap-1.5">
               {attached.map((r) => {
@@ -444,7 +532,7 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
                     </span>
                     <Input
                       type="number"
-                      min={0}
+                      min={1}
                       max={100}
                       value={displayWeight(r)}
                       onChange={(e) => setWeights((prev) => ({ ...prev, [r.id]: e.target.value }))}
@@ -465,7 +553,7 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
           <div className="flex flex-col gap-2">
             <p className="text-[13px] font-medium text-fg">Provider order</p>
             {attached.length === 0 ? (
-              <p className="text-[12px] text-faint">Attach providers first (Bindings tab).</p>
+              <p className="text-[12px] text-faint">Attach registries first (Bindings tab).</p>
             ) : (
               <>
                 <div className="flex flex-col gap-1.5">
@@ -515,7 +603,7 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
                       e.target.value = "";
                     }}
                   >
-                    <option value="">Add a provider…</option>
+                    <option value="">Add a registry…</option>
                     {chainable.map((r) => (
                       <option key={r.id} value={r.id}>
                         {r.name} ({r.provider})
@@ -558,9 +646,6 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
                 <Input type="number" min={0} value={maxLatency} onChange={(e) => setMaxLatency(e.target.value)} />
               </Field>
             </Grid2>
-            <Field label="Max cost (USD)">
-              <Input type="number" min={0} step="0.01" value={maxCost} onChange={(e) => setMaxCost(e.target.value)} />
-            </Field>
           </div>
         </>
       )}
@@ -576,10 +661,12 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
               <Input value={embModel} onChange={(e) => setEmbModel(e.target.value)} placeholder="text-embedding-3-small" />
             </Field>
           </Grid2>
-          <Field label="API key" hint="re-enter to update">
+          <Field label="API key" hint="leave blank to keep the current key">
             <Input type="password" value={embKey} onChange={(e) => setEmbKey(e.target.value)} placeholder="sk-..." />
           </Field>
         </div>
+      )}
+        </>
       )}
 
       <div className="flex justify-end pt-2">
@@ -591,69 +678,31 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
   );
 }
 
-function consumerBaseBody(consumer: Consumer): Record<string, unknown> {
-  return {
-    name: consumer.name,
-    path: consumer.path,
-    type: consumer.type,
-    algorithm: consumer.algorithm,
-    active: consumer.active,
-    ...(consumer.headers ? { headers: consumer.headers } : {}),
-  };
-}
-
 function ModelPoliciesTab({ consumer, onClose }: { consumer: Consumer; onClose: () => void }) {
   const gatewayId = useActiveGatewayId();
   const invalidate = useConsumerInvalidate(consumer.id);
   const { toast } = useToast();
   const { data: registries } = useList<Registry>("registries");
 
-  const attached = (registries ?? []).filter((r) => consumer.registries.some((b) => b.id === r.id));
+  const attached = (registries ?? []).filter((r) => consumer.registry_ids.includes(r.id));
 
-  const initial: Record<string, { allowed: string; default: string }> = {};
-  for (const binding of consumer.registries) {
-    if (!binding.model_policies) continue;
-    initial[binding.id] = {
-      allowed: (binding.model_policies.allowed ?? []).join(", "),
-      default: binding.model_policies.default ?? "",
-    };
-  }
-  const [state, setState] = useState(initial);
+  const [state, setState] = useState(() => modelPolicyStateFrom(consumer.model_policies));
   const [saving, setSaving] = useState(false);
 
-  function update(registryId: string, key: "allowed" | "default", value: string) {
-    setState((prev) => ({
-      ...prev,
-      [registryId]: { allowed: "", default: "", ...prev[registryId], [key]: value },
-    }));
-  }
-
   async function save() {
-    const registryBindings = attached.map((r) => {
-      const entry = state[r.id];
-      const allowed = entry ? entry.allowed.split(",").map((s) => s.trim()).filter(Boolean) : [];
-      if (allowed.length === 0 && !entry?.default) return { id: r.id };
-      return { id: r.id, model_policies: { allowed, default: entry?.default || undefined } };
-    });
-
-    const body = consumerBaseBody(consumer);
-    if (consumer.fallback) {
-      body.fallback = {
-        enabled: consumer.fallback.enabled,
-        triggers: consumer.fallback.triggers,
-        chain: consumer.fallback.chain,
-        budget: {
-          max_attempts: consumer.fallback.budget.max_attempts,
-          max_total_latency_ms: consumer.fallback.budget.max_total_latency_ms,
-          max_cost_usd: consumer.fallback.budget.max_cost_usd,
-        },
-      };
+    const policies = buildModelPolicies(attached, state);
+    // An enabled lb_config requires a model policy for every pool member; keep
+    // those covered with a bare entry so saving allowlists never breaks routing.
+    if (consumer.lb_config?.enabled) {
+      const covered = new Set(policies.map((p) => p.registry_id));
+      for (const member of consumer.lb_config.members ?? []) {
+        if (!covered.has(member.registry_id)) policies.push({ registry_id: member.registry_id });
+      }
     }
-    body.registries = registryBindings;
 
     setSaving(true);
     try {
-      await api.put(`${gatewayScope(gatewayId)}/consumers/${consumer.id}`, body);
+      await api.put(`${gatewayScope(gatewayId)}/consumers/${consumer.id}`, { model_policies: policies });
       toast({ variant: "success", title: "Model policies saved" });
       invalidate();
       onClose();
@@ -674,25 +723,7 @@ function ModelPoliciesTab({ consumer, onClose }: { consumer: Consumer; onClose: 
 
   return (
     <div className="flex flex-col gap-4">
-      {attached.map((r) => (
-        <div key={r.id} className="rounded-(--radius) border border-border bg-surface-2/30 p-3.5 flex flex-col gap-3">
-          <p className="text-[13px] font-medium text-fg">{r.name}</p>
-          <Field label="Allowed models" hint="comma-separated, empty = all">
-            <Input
-              value={state[r.id]?.allowed ?? ""}
-              onChange={(e) => update(r.id, "allowed", e.target.value)}
-              placeholder="gpt-4o, gpt-4o-mini"
-            />
-          </Field>
-          <Field label="Default model" hint="optional">
-            <Input
-              value={state[r.id]?.default ?? ""}
-              onChange={(e) => update(r.id, "default", e.target.value)}
-              placeholder="gpt-4o"
-            />
-          </Field>
-        </div>
-      ))}
+      <ModelPolicyEditor registries={attached} state={state} onChange={setState} />
       <div className="flex justify-end pt-2">
         <Button variant="primary" onClick={save} loading={saving}>
           Save model policies

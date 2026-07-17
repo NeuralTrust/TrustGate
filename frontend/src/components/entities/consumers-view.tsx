@@ -32,14 +32,13 @@ const PROTOCOLS: { value: ConsumerType; label: string }[] = [
   { value: "A2A", label: "A2A" },
 ];
 
-// The consumer name doubles as its route slug: the proxy path is derived from
-// the slugified name so each consumer exposes a unique endpoint.
-function slugify(value: string): string {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+// The proxy route slug is generated server-side on creation; the UI surfaces it
+// but does not derive it from the name.
+function routingLabel(c: Consumer): string {
+  if (c.routing_mode === "role_based") return "role-based";
+  if (c.fallback?.enabled) return "fallback";
+  if (c.lb_config?.enabled) return c.lb_config.algorithm ?? "round-robin";
+  return "single";
 }
 
 export function ConsumersView() {
@@ -52,7 +51,7 @@ export function ConsumersView() {
   return (
     <div>
       <PageHeader
-        description="Consumers are routed endpoints. Each binds a path to registries, auth credentials and policies."
+        description="Consumers are routed endpoints. Each exposes a slug-based route backed by registries, auth credentials and policies."
         action={
           <Button variant="primary" onClick={create.onOpen}>
             <Plus className="h-4 w-4" />
@@ -79,9 +78,9 @@ export function ConsumersView() {
         <Table>
           <THead>
             <TH>Name</TH>
-            <TH>Path</TH>
+            <TH>Slug</TH>
             <TH>Type</TH>
-            <TH>Algorithm</TH>
+            <TH>Routing</TH>
             <TH>Bindings</TH>
             <TH>Status</TH>
             <TH className="text-right pr-4">Actions</TH>
@@ -93,17 +92,17 @@ export function ConsumersView() {
                   <span className="font-medium text-fg">{c.name}</span>
                 </TD>
                 <TD>
-                  <Mono>{c.path}</Mono>
+                  <Mono>{c.slug}</Mono>
                 </TD>
                 <TD>
                   <Badge>{c.type}</Badge>
                 </TD>
                 <TD>
-                  <span className="text-muted text-[12px]">{c.algorithm}</span>
+                  <span className="text-muted text-[12px]">{routingLabel(c)}</span>
                 </TD>
                 <TD>
                   <span className="text-[12px] text-muted">
-                    {c.registries.length}r · {c.auth_ids.length}a
+                    {c.registry_ids.length}r · {c.auth_ids.length}a
                   </span>
                 </TD>
                 <TD>
@@ -204,18 +203,14 @@ function CreateConsumerDialog({
   const [authName, setAuthName] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  const slug = slugify(name);
-
   async function submit() {
-    if (!slug) {
+    if (!name.trim()) {
       toast({ variant: "error", title: "Name is required" });
       return;
     }
     const body: Record<string, unknown> = {
       name: name.trim(),
-      path: `/${slug}`,
       type,
-      algorithm: "round-robin",
     };
 
     setSubmitting(true);
@@ -262,7 +257,7 @@ function CreateConsumerDialog({
             <Label>Name</Label>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="chat-prod" />
             <p className="text-[12px] text-muted">
-              Route <Mono>{slug ? `/${slug}` : "/…"}</Mono> — derived from the name.
+              A unique route slug is generated automatically on creation.
             </p>
           </div>
 

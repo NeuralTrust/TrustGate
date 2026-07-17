@@ -67,7 +67,7 @@ export function PlaygroundView() {
     setResponse("");
     setErrorText(null);
     try {
-      const res = await fetch(`/api/playground${selected.path}`, {
+      const res = await fetch(`/api/playground/${selected.slug}/v1/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -121,7 +121,7 @@ export function PlaygroundView() {
             </Field>
             {selected && (
               <p className="text-[12px] text-muted -mt-1">
-                Route <Mono>POST {selected.path}</Mono>
+                Route <Mono>POST /{selected.slug}/v1/chat/completions</Mono>
               </p>
             )}
 
