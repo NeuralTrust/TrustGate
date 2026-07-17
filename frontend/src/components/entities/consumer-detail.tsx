@@ -153,7 +153,7 @@ function BindingsTab({ consumer }: { consumer: Consumer }) {
         kind="registries"
         title="Registries"
         icon={<Server className="h-4 w-4" />}
-        boundIds={consumer.registries.map((r) => r.id)}
+        boundIds={consumer.registry_ids ?? consumer.registries?.map((r) => r.id) ?? []}
         useItems={() => useList<Registry>("registries")}
       />
       <BindingSection
@@ -281,7 +281,7 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
   const { toast } = useToast();
   const { data: registries } = useList<Registry>("registries");
 
-  const attached = (registries ?? []).filter((r) => consumer.registries.some((b) => b.id === r.id));
+  const attached = (registries ?? []).filter((r) => (consumer.registry_ids ?? consumer.registries?.map((b) => b.id) ?? []).includes(r.id));
 
   const [strategy, setStrategy] = useState<Strategy>(strategyOf(consumer));
   const [embProvider, setEmbProvider] = useState(consumer.embedding_config?.provider ?? "");
@@ -608,10 +608,10 @@ function ModelPoliciesTab({ consumer, onClose }: { consumer: Consumer; onClose: 
   const { toast } = useToast();
   const { data: registries } = useList<Registry>("registries");
 
-  const attached = (registries ?? []).filter((r) => consumer.registries.some((b) => b.id === r.id));
+  const attached = (registries ?? []).filter((r) => (consumer.registry_ids ?? consumer.registries?.map((b) => b.id) ?? []).includes(r.id));
 
   const initial: Record<string, { allowed: string; default: string }> = {};
-  for (const binding of consumer.registries) {
+  for (const binding of consumer.registries ?? []) {
     if (!binding.model_policies) continue;
     initial[binding.id] = {
       allowed: (binding.model_policies.allowed ?? []).join(", "),

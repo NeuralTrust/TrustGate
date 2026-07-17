@@ -182,7 +182,8 @@ export interface Consumer {
   embedding_config?: EmbeddingConfig | null;
   headers?: Record<string, string>;
   active: boolean;
-  registries: RegistryBinding[];
+  registries?: RegistryBinding[];
+  registry_ids?: string[];
   auth_ids: string[];
   fallback?: Fallback | null;
   weights?: ConsumerWeight[];
