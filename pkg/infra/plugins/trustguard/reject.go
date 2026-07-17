@@ -23,9 +23,11 @@ import (
 
 const typeBlocked = "trustguard_blocked"
 const typeRateLimited = "trustguard_rate_limited"
+const typeUnavailable = "trustguard_unavailable"
 
 const blockMessage = "request blocked due to a policy infraction"
 const rateLimitMessage = "rate limit exceeded"
+const unavailableMessage = "rate limit entitlements unavailable"
 
 func blockError(resp *GuardResponse) *appplugins.PluginError {
 	return &appplugins.PluginError{
@@ -46,6 +48,19 @@ func rateLimitError(err *rateLimitedError) *appplugins.PluginError {
 		Type:       typeRateLimited,
 		Message:    rateLimitMessage,
 		Headers:    err.headers,
+		Body:       body,
+	}
+}
+
+func unavailableError(err *entitlementsUnavailableError) *appplugins.PluginError {
+	body := []byte(`{"error":"rate limit entitlements unavailable"}`)
+	if err != nil && len(err.body) > 0 {
+		body = err.body
+	}
+	return &appplugins.PluginError{
+		StatusCode: http.StatusServiceUnavailable,
+		Type:       typeUnavailable,
+		Message:    unavailableMessage,
 		Body:       body,
 	}
 }

@@ -190,7 +190,7 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 	switch {
 	case errors.As(err, &rpcErr):
 		applyRPCErrorHeaders(c, rpcErr)
-		return writeJSON(c, rpcResponse{
+		return writeJSONStatus(c, httpStatusForRPCCode(rpcErr.Code), rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
 			Error:   &rpcError{Code: int(rpcErr.Code), Message: rpcErr.Message, Data: rpcErr.Data},
@@ -226,7 +226,11 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 	case errors.Is(err, appmcp.ErrNoMCPRegistries):
 		return writeRPCError(c, id, codeInvalidRequest, err.Error())
 	case errors.Is(err, ratelimitapp.ErrUnavailable):
-		return writeRPCError(c, id, int(appmcp.CodeUnavailable), err.Error())
+		return writeJSONStatus(c, fiber.StatusServiceUnavailable, rpcResponse{
+			JSONRPC: "2.0",
+			ID:      normalizeID(id),
+			Error:   &rpcError{Code: int(appmcp.CodeUnavailable), Message: err.Error()},
+		})
 	default:
 		return writeRPCError(c, id, codeInternalError, err.Error())
 	}
@@ -257,7 +261,22 @@ func writeRPCError(c *fiber.Ctx, id json.RawMessage, code int, message string) e
 }
 
 func writeJSON(c *fiber.Ctx, body any) error {
-	return c.Status(fiber.StatusOK).JSON(body)
+	return writeJSONStatus(c, fiber.StatusOK, body)
+}
+
+func writeJSONStatus(c *fiber.Ctx, status int, body any) error {
+	return c.Status(status).JSON(body)
+}
+
+func httpStatusForRPCCode(code int64) int {
+	switch code {
+	case appmcp.CodeRateLimited:
+		return fiber.StatusTooManyRequests
+	case appmcp.CodeUnavailable:
+		return fiber.StatusServiceUnavailable
+	default:
+		return fiber.StatusOK
+	}
 }
 
 func applyRPCErrorHeaders(c *fiber.Ctx, err *appmcp.RPCError) {
