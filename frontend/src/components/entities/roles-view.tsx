@@ -10,7 +10,7 @@ import { useToast } from "@/components/ui/toast";
 import { PageHeader, ConfirmDialog, useDisclosure } from "@/components/ui/page";
 import { Button } from "@/components/ui/button";
 import { Table, THead, TBody, TH, TR, TD } from "@/components/ui/table";
-import { Badge, EmptyState, PageLoader } from "@/components/ui/misc";
+import { EmptyState, PageLoader } from "@/components/ui/misc";
 import {
   Dialog,
   DialogContent,
