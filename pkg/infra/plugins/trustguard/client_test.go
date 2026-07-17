@@ -194,6 +194,25 @@ func TestGuardUnauthorizedReturnsSentinel(t *testing.T) {
 	}
 }
 
+func TestGuardUnavailableReturnsTypedError(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"error":"rate limit entitlements unavailable"}`)
+	}))
+	defer srv.Close()
+
+	c := newClient(time.Second)
+	_, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest())
+	var unavailable *entitlementsUnavailableError
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("err = %v, want *entitlementsUnavailableError", err)
+	}
+	if !bytes.Contains(unavailable.body, []byte(`entitlements unavailable`)) {
+		t.Fatalf("body = %s", unavailable.body)
+	}
+}
+
 func TestGuardRateLimitedReturnsTypedError(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -228,6 +228,11 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 			setExtras(in.Event, guardData{Direction: direction, Decision: decisionBlocked})
 			return nil, rateLimitError(limited)
 		}
+		var unavailable *entitlementsUnavailableError
+		if errors.As(err, &unavailable) {
+			setExtras(in.Event, guardData{Direction: direction, Decision: decisionBlocked})
+			return nil, unavailableError(unavailable)
+		}
 		p.warn(ctx, "trustguard call failed, failing open",
 			slog.String("plugin", PluginName),
 			slog.String("stage", string(in.Stage)),

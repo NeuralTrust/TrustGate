@@ -332,6 +332,27 @@ func TestExecuteRateLimitDoesNotFailOpen(t *testing.T) {
 	}
 }
 
+func TestExecuteUnavailableDoesNotFailOpen(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{status: http.StatusServiceUnavailable}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	in := execInput(policy.StagePreRequest, policy.ModeObserve, settings(""), requestContext(), nil)
+	_, err := p.Execute(context.Background(), in)
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("entitlements unavailable must not fail-open, got %v", err)
+	}
+	if pe.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", pe.StatusCode)
+	}
+	if pe.Type != typeUnavailable {
+		t.Fatalf("type = %q, want %q", pe.Type, typeUnavailable)
+	}
+}
+
 func TestExecuteServerErrorStillFailsOpen(t *testing.T) {
 	t.Parallel()
 

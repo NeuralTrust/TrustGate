@@ -103,6 +103,17 @@ func TestPluginRunner_PreRequest(t *testing.T) {
 			wantRPCData: `{"error":"rate limit exceeded","reason":"burst"}`,
 		},
 		{
+			name: "trustguard entitlements unavailable via plugin error",
+			execErr: &appplugins.PluginError{
+				StatusCode: 503,
+				Type:       "trustguard_unavailable",
+				Message:    "rate limit entitlements unavailable",
+				Body:       []byte(`{"error":"rate limit entitlements unavailable"}`),
+			},
+			wantRPCCode: CodeUnavailable,
+			wantRPCData: `{"error":"rate limit entitlements unavailable"}`,
+		},
+		{
 			name: "policy rate limit 429 stays policy-blocked",
 			execErr: &appplugins.PluginError{
 				StatusCode: 429,
