@@ -22,7 +22,6 @@ import (
 	telemetrydomain 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/playground"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	metricsschema "github.com/NeuralTrust/TrustGate/pkg/metrics"
 )
@@ -81,15 +80,12 @@ func (p *Pipeline) publish(
 	}
 	ctx := context.Background()
 	evt := p.builder.Build(ctx, requestTrace, req, resp, startTime, endTime)
-	// Playground traffic keeps Redis panel traces but must not write Activity (exporters/CH).
-	if !playground.IsPlaygroundRequest(req.Headers) {
-		for _, exporter := range targets {
-			if err := exporter.Publish(ctx, viewForClass(evt, exporter.DataClass())); err != nil {
-				p.logger.Error("failed to publish metrics event",
-					slog.String("gateway_id", req.GatewayID),
-					slog.String("exporter", exporter.Name()),
-					slog.String("error", err.Error()))
-			}
+	for _, exporter := range targets {
+		if err := exporter.Publish(ctx, viewForClass(evt, exporter.DataClass())); err != nil {
+			p.logger.Error("failed to publish metrics event",
+				slog.String("gateway_id", req.GatewayID),
+				slog.String("exporter", exporter.Name()),
+				slog.String("error", err.Error()))
 		}
 	}
 	if p.playgroundStore != nil {

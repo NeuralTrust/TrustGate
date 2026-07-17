@@ -347,7 +347,7 @@ func TestPipeline_PublishCallsPlaygroundStore(t *testing.T) {
 	require.Len(t, saved, 1, "playground store must receive the event after the exporters run")
 }
 
-func TestPipeline_PlaygroundSkipsExportersKeepsStore(t *testing.T) {
+func TestPipeline_PlaygroundPublishesExportersAndStore(t *testing.T) {
 	builder := NewBuilder(adapter.NewRegistry(), stubPricing{})
 	factory := &fakeFactory{}
 	cache := NewExporterCache(factory, internalTestLogger())
@@ -369,7 +369,7 @@ func TestPipeline_PlaygroundSkipsExportersKeepsStore(t *testing.T) {
 
 	p.publish(nil, req, resp, time.Now(), time.Now(), nil)
 
-	assert.Equal(t, 0, exporter.publishedCount(), "playground must not publish to Activity exporters")
+	assert.Equal(t, 1, exporter.publishedCount(), "playground must publish to Activity exporters")
 	saved := store.saved()
 	require.Len(t, saved, 1, "playground store must still receive the event for the panel")
 }
