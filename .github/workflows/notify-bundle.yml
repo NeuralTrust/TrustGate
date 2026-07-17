@@ -1,0 +1,22 @@
+# On every published release, poke dataplane-bundle so the combined DataPlane
+# image is rebuilt with this new TrustGate tag.
+# Uses the existing GH_TOKEN PAT (must have write access to the same org's
+# NeuralTrust/dataplane-bundle repo, which repository_dispatch requires).
+
+name: Notify dataplane-bundle
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger bundle rebuild
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer ${{ secrets.GH_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/NeuralTrust/dataplane-bundle/dispatches \
+            -d '{"event_type":"trustgate-released","client_payload":{"tag":"${{ github.event.release.tag_name }}"}}'
