@@ -126,7 +126,7 @@ export function RolesView() {
 
       {form.open && <RoleFormDialog open={form.open} onOpenChange={form.setOpen} role={editing} />}
       {detail && (
-        <RoleDetail roleId={detail.id} open={detail !== null} onOpenChange={(v) => !v && setDetail(null)} />
+        <RoleDetail roleId={detail.id} open={true} onOpenChange={(v) => !v && setDetail(null)} />
       )}
       <DeleteRoleDialog role={toDelete} onClose={() => setToDelete(null)} />
     </div>
