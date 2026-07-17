@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Plus, Pencil, Trash2, ShieldCheck, Globe } from "lucide-react";
 import { api, gatewayScope } from "@/lib/admin-client";
 import { useActiveGatewayId } from "@/components/layout/gateway-context";
@@ -18,9 +18,13 @@ import {
   DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
-import { Field, Input, Select, Label } from "@/components/ui/field";
+import { Field, Input, Select } from "@/components/ui/field";
 import { Section, SwitchRow, Grid2, Divider } from "@/components/ui/form-bits";
-import { JsonEditor } from "@/components/ui/json-editor";
+import {
+  PolicySettingsForm,
+  buildSettingsDefaults,
+  coerceSettings,
+} from "@/components/entities/policy-settings-form";
 import { cn } from "@/lib/cn";
 import type { Policy, PolicyStage, PolicyCatalogEntry } from "@/lib/types";
 
@@ -30,8 +34,6 @@ const FALLBACK_SLUGS = [
   "request_size_limiter",
   "semantic_cache",
 ];
-
-const STAGES: PolicyStage[] = ["pre_request", "post_request", "pre_response", "post_response"];
 
 export function PoliciesView() {
   const { data: policies, isLoading } = useList<Policy>("policies");
@@ -230,56 +232,53 @@ function PolicyFormDialog({
   const [slug, setSlug] = useState(policy?.slug ?? slugOptions[0]!);
   const [mode, setMode] = useState(policy?.mode ?? "");
   const [enabled, setEnabled] = useState(policy?.enabled ?? true);
-  const [parallel, setParallel] = useState(policy?.parallel ?? false);
-  const [priority, setPriority] = useState(String(policy?.priority ?? 0));
   const [stages, setStages] = useState<PolicyStage[]>(policy?.stages ?? ["pre_request"]);
-  const [settings, setSettings] = useState(
-    policy?.settings ? JSON.stringify(policy.settings, null, 2) : "{\n  \n}",
-  );
-  const [settingsValid, setSettingsValid] = useState(true);
+  const [settings, setSettings] = useState<Record<string, unknown>>(policy?.settings ?? {});
   const [submitting, setSubmitting] = useState(false);
 
   const entry = entries.find((e) => e.slug === slug);
   const supportedModes = entry?.supported_modes ?? [];
   const settingsFields = entry?.settings_schema?.fields ?? [];
 
-  function selectSlug(next: string) {
-    setSlug(next);
-    const catalogEntry = entries.find((e) => e.slug === next);
+  // When creating, derive stages, mode and default settings from the selected
+  // plugin's catalog schema. Editing keeps the persisted policy values.
+  useEffect(() => {
+    if (isEdit) return;
+    const catalogEntry = entries.find((e) => e.slug === slug);
     if (!catalogEntry) return;
-    if (catalogEntry.mandatory_stages.length > 0) {
-      setStages(catalogEntry.mandatory_stages);
-    } else if (catalogEntry.supported_stages.length > 0) {
-      setStages([catalogEntry.supported_stages[0]!]);
-    }
-    setMode(catalogEntry.default_mode || "");
-  }
-
-  function toggleStage(stage: PolicyStage) {
-    setStages((prev) =>
-      prev.includes(stage) ? prev.filter((s) => s !== stage) : [...prev, stage],
+    setStages(
+      catalogEntry.mandatory_stages.length > 0
+        ? catalogEntry.mandatory_stages
+        : catalogEntry.supported_stages.slice(0, 1),
     );
-  }
+    setMode(catalogEntry.default_mode || "");
+    setSettings(buildSettingsDefaults(catalogEntry.settings_schema?.fields ?? []));
+    // entries is derived from catalogGroups; depend on the stable query data.
+  }, [slug, isEdit, catalogGroups]);
 
   async function submit() {
     if (!name.trim() || !slug.trim()) {
       toast({ variant: "error", title: "Name and plugin are required" });
       return;
     }
-    if (!settingsValid) {
-      toast({ variant: "error", title: "Settings JSON is invalid" });
-      return;
+
+    let parsedSettings: Record<string, unknown>;
+    if (settingsFields.length > 0) {
+      try {
+        parsedSettings = coerceSettings(settingsFields, settings);
+      } catch {
+        toast({
+          variant: "error",
+          title: "Invalid settings",
+          description: "Check the free-form JSON fields.",
+        });
+        return;
+      }
+    } else {
+      // Schema not loaded (or plugin has none): preserve settings as-is.
+      parsedSettings = settings;
     }
 
-    let parsedSettings: Record<string, unknown> | undefined;
-    try {
-      parsedSettings = settings.trim() ? JSON.parse(settings) : undefined;
-    } catch {
-      toast({ variant: "error", title: "Settings JSON is invalid" });
-      return;
-    }
-
-    // Mandatory stages must always be present regardless of the toggles.
     const finalStages = entry
       ? Array.from(new Set([...entry.mandatory_stages, ...stages]))
       : stages;
@@ -288,12 +287,12 @@ function PolicyFormDialog({
       name: name.trim(),
       slug: slug.trim(),
       enabled,
-      parallel,
-      priority: Number(priority) || 0,
+      parallel: policy?.parallel ?? false,
+      priority: policy?.priority ?? 0,
       stages: finalStages,
     };
     if (mode.trim()) body.mode = mode.trim();
-    if (parsedSettings) body.settings = parsedSettings;
+    if (Object.keys(parsedSettings).length > 0) body.settings = parsedSettings;
 
     setSubmitting(true);
     try {
@@ -328,7 +327,7 @@ function PolicyFormDialog({
             </Field>
             <Field label="Plugin">
               {catalogGroups && catalogGroups.length > 0 ? (
-                <Select value={slug} onChange={(e) => selectSlug(e.target.value)} disabled={isEdit}>
+                <Select value={slug} onChange={(e) => setSlug(e.target.value)} disabled={isEdit}>
                   {catalogGroups.map((group) => (
                     <optgroup key={group.type} label={group.type}>
                       {group.items.map((it) => (
@@ -340,7 +339,7 @@ function PolicyFormDialog({
                   ))}
                 </Select>
               ) : (
-                <Select value={slug} onChange={(e) => selectSlug(e.target.value)} disabled={isEdit}>
+                <Select value={slug} onChange={(e) => setSlug(e.target.value)} disabled={isEdit}>
                   {slugOptions.map((s) => (
                     <option key={s} value={s}>
                       {s}
@@ -354,10 +353,7 @@ function PolicyFormDialog({
           {entry?.description && <p className="text-[12px] text-muted -mt-2">{entry.description}</p>}
 
           <Grid2>
-            <Field label="Priority" hint="lower runs first">
-              <Input type="number" value={priority} onChange={(e) => setPriority(e.target.value)} />
-            </Field>
-            {supportedModes.length > 0 ? (
+            {supportedModes.length > 0 && (
               <Field label="Mode">
                 <Select value={mode} onChange={(e) => setMode(e.target.value)}>
                   {supportedModes.map((m) => (
@@ -367,66 +363,16 @@ function PolicyFormDialog({
                   ))}
                 </Select>
               </Field>
-            ) : (
-              <div className="flex flex-col gap-2 justify-end">
-                <SwitchRow label="Enabled" checked={enabled} onCheckedChange={setEnabled} />
-              </div>
             )}
-          </Grid2>
-
-          {supportedModes.length > 0 && (
-            <SwitchRow label="Enabled" checked={enabled} onCheckedChange={setEnabled} />
-          )}
-
-          <SwitchRow
-            label="Parallel"
-            description="Run this policy concurrently with others in the same stage."
-            checked={parallel}
-            onCheckedChange={setParallel}
-          />
-
-          <div className="flex flex-col gap-2">
-            <Label>Stages</Label>
-            <div className="grid grid-cols-2 gap-2">
-              {STAGES.map((stage) => {
-                const active = stages.includes(stage);
-                return (
-                  <button
-                    key={stage}
-                    type="button"
-                    onClick={() => toggleStage(stage)}
-                    className={cn(
-                      "rounded-(--radius) border px-3 h-9 text-[13px] text-left transition-colors",
-                      active
-                        ? "border-accent/50 bg-accent/10 text-fg"
-                        : "border-border bg-surface-2/40 text-muted hover:text-fg",
-                    )}
-                  >
-                    {stage}
-                  </button>
-                );
-              })}
+            <div className="flex flex-col gap-2 justify-end">
+              <SwitchRow label="Enabled" checked={enabled} onCheckedChange={setEnabled} />
             </div>
-          </div>
+          </Grid2>
 
           <Divider />
 
-          <Section title="Settings" description="Plugin-specific configuration as JSON.">
-            {settingsFields.length > 0 && (
-              <div className="rounded-(--radius) border border-border bg-surface-2/30 px-3 py-2.5 flex flex-col gap-1">
-                <p className="text-[11px] font-medium uppercase tracking-wider text-faint">Available fields</p>
-                <ul className="flex flex-col gap-0.5">
-                  {settingsFields.map((f) => (
-                    <li key={f.key} className="text-[12px] text-muted">
-                      <code className="text-accent">{f.key}</code>
-                      <span className="text-faint"> · {f.type}{f.required ? " · required" : ""}</span>
-                      {f.description ? <span className="text-faint"> — {f.description}</span> : null}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            <JsonEditor value={settings} onChange={setSettings} onValidityChange={setSettingsValid} rows={9} />
+          <Section title="Settings" description="Plugin-specific configuration.">
+            <PolicySettingsForm fields={settingsFields} value={settings} onChange={setSettings} />
           </Section>
         </DialogBody>
         <DialogFooter>
