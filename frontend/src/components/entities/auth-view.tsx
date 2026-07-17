@@ -207,15 +207,31 @@ function AuthFormDialog({
   const { toast } = useToast();
   const isEdit = auth !== null;
 
+  const o2 = auth?.config.oauth2;
+  const oidc = auth?.config.oidc;
+
   const [name, setName] = useState(auth?.name ?? "");
   const [type, setType] = useState<AuthType>(auth?.type ?? "api_key");
   const [enabled, setEnabled] = useState(auth?.enabled ?? true);
 
-  const [issuer, setIssuer] = useState(auth?.config.oauth2?.issuer ?? "");
-  const [jwksUrl, setJwksUrl] = useState(auth?.config.oauth2?.jwks_url ?? "");
-  const [introspectionUrl, setIntrospectionUrl] = useState(auth?.config.oauth2?.introspection_url ?? "");
-  const [audiences, setAudiences] = useState((auth?.config.oauth2?.audiences ?? []).join(", "));
-  const [scopes, setScopes] = useState((auth?.config.oauth2?.required_scopes ?? []).join(", "));
+  const [issuer, setIssuer] = useState(o2?.issuer ?? oidc?.issuer ?? "");
+  const [audiences, setAudiences] = useState((o2?.audiences ?? oidc?.audiences ?? []).join(", "));
+  const [scopes, setScopes] = useState((o2?.required_scopes ?? oidc?.required_scopes ?? []).join(", "));
+  const [algorithms, setAlgorithms] = useState(
+    (o2?.allowed_algorithms ?? oidc?.allowed_algorithms ?? []).join(", "),
+  );
+  const [subjectClaim, setSubjectClaim] = useState(o2?.subject_claim ?? oidc?.subject_claim ?? "");
+  const [jwksUrl, setJwksUrl] = useState(o2?.jwks_url ?? oidc?.jwks_url ?? "");
+
+  const [introspectionUrl, setIntrospectionUrl] = useState(o2?.introspection_url ?? "");
+  const [sessionMode, setSessionMode] = useState(o2?.session_mode ?? false);
+  const [userinfoUrl, setUserinfoUrl] = useState(o2?.userinfo_url ?? "");
+  const [authorizeUrl, setAuthorizeUrl] = useState(o2?.authorize_url ?? "");
+  const [tokenUrl, setTokenUrl] = useState(o2?.token_url ?? "");
+  const [clientId, setClientId] = useState(o2?.client_id ?? "");
+  const [clientSecret, setClientSecret] = useState("");
+
+  const [publicKeys, setPublicKeys] = useState((oidc?.public_keys ?? []).join("\n\n"));
 
   const [caCert, setCaCert] = useState(auth?.config.mtls?.ca_cert ?? "");
   const [commonNames, setCommonNames] = useState((auth?.config.mtls?.allowed_common_names ?? []).join(", "));
@@ -223,6 +239,8 @@ function AuthFormDialog({
   const [submitting, setSubmitting] = useState(false);
 
   const splitList = (v: string) => v.split(",").map((s) => s.trim()).filter(Boolean);
+  const splitPems = (v: string) =>
+    v.split(/(?=-----BEGIN)/).map((s) => s.trim()).filter(Boolean);
 
   async function submit() {
     if (!name.trim()) {
@@ -234,13 +252,32 @@ function AuthFormDialog({
     if (type === "api_key") {
       body.config = {};
     } else if (type === "oauth2") {
+      const oauth2: Record<string, unknown> = {
+        issuer,
+        audiences: splitList(audiences),
+        jwks_url: jwksUrl || undefined,
+        introspection_url: introspectionUrl || undefined,
+        userinfo_url: userinfoUrl || undefined,
+        authorize_url: authorizeUrl || undefined,
+        token_url: tokenUrl || undefined,
+        client_id: clientId || undefined,
+        subject_claim: subjectClaim || undefined,
+        required_scopes: splitList(scopes),
+        allowed_algorithms: splitList(algorithms),
+        session_mode: sessionMode,
+      };
+      if (clientSecret) oauth2.client_secret = clientSecret;
+      body.config = { oauth2 };
+    } else if (type === "oidc") {
       body.config = {
-        oauth2: {
+        oidc: {
           issuer,
-          jwks_url: jwksUrl || undefined,
-          introspection_url: introspectionUrl || undefined,
           audiences: splitList(audiences),
+          jwks_url: jwksUrl || undefined,
+          public_keys: splitPems(publicKeys),
           required_scopes: splitList(scopes),
+          allowed_algorithms: splitList(algorithms),
+          subject_claim: subjectClaim || undefined,
         },
       };
     } else {
@@ -291,6 +328,7 @@ function AuthFormDialog({
               >
                 <option value="api_key">API key</option>
                 <option value="oauth2">OAuth2</option>
+                <option value="oidc">OIDC</option>
                 <option value="mtls">mTLS</option>
               </Select>
             </Field>
@@ -325,6 +363,87 @@ function AuthFormDialog({
                   </Field>
                   <Field label="Required scopes" hint="comma-separated">
                     <Input value={scopes} onChange={(e) => setScopes(e.target.value)} />
+                  </Field>
+                </Grid2>
+                <Grid2>
+                  <Field label="Allowed algorithms" hint="comma-separated">
+                    <Input value={algorithms} onChange={(e) => setAlgorithms(e.target.value)} placeholder="RS256" />
+                  </Field>
+                  <Field label="Subject claim" hint="optional">
+                    <Input value={subjectClaim} onChange={(e) => setSubjectClaim(e.target.value)} placeholder="sub" />
+                  </Field>
+                </Grid2>
+                <SwitchRow
+                  label="Session mode"
+                  description="Use the authorization-code flow with server-managed sessions."
+                  checked={sessionMode}
+                  onCheckedChange={setSessionMode}
+                />
+                {sessionMode && (
+                  <>
+                    <Grid2>
+                      <Field label="Authorize URL">
+                        <Input value={authorizeUrl} onChange={(e) => setAuthorizeUrl(e.target.value)} />
+                      </Field>
+                      <Field label="Token URL">
+                        <Input value={tokenUrl} onChange={(e) => setTokenUrl(e.target.value)} />
+                      </Field>
+                    </Grid2>
+                    <Field label="UserInfo URL" hint="optional">
+                      <Input value={userinfoUrl} onChange={(e) => setUserinfoUrl(e.target.value)} />
+                    </Field>
+                    <Grid2>
+                      <Field label="Client ID">
+                        <Input value={clientId} onChange={(e) => setClientId(e.target.value)} />
+                      </Field>
+                      <Field label="Client secret" hint={isEdit ? "blank keeps current" : undefined}>
+                        <Input
+                          type="password"
+                          value={clientSecret}
+                          onChange={(e) => setClientSecret(e.target.value)}
+                        />
+                      </Field>
+                    </Grid2>
+                  </>
+                )}
+              </Section>
+            </>
+          )}
+
+          {type === "oidc" && (
+            <>
+              <Divider />
+              <Section title="OIDC">
+                <Field label="Issuer">
+                  <Input value={issuer} onChange={(e) => setIssuer(e.target.value)} placeholder="https://issuer.example.com" />
+                </Field>
+                <Grid2>
+                  <Field label="Audiences" hint="comma-separated">
+                    <Input value={audiences} onChange={(e) => setAudiences(e.target.value)} />
+                  </Field>
+                  <Field label="Required scopes" hint="comma-separated">
+                    <Input value={scopes} onChange={(e) => setScopes(e.target.value)} />
+                  </Field>
+                </Grid2>
+                <Field label="JWKS URL" hint="or provide public keys below">
+                  <Input value={jwksUrl} onChange={(e) => setJwksUrl(e.target.value)} />
+                </Field>
+                <Field label="Public keys (PEM)" hint="one or more, or use JWKS">
+                  <textarea
+                    value={publicKeys}
+                    onChange={(e) => setPublicKeys(e.target.value)}
+                    rows={5}
+                    spellCheck={false}
+                    className="w-full bg-surface-2 border border-border rounded-(--radius) px-3 py-2 text-[12px] font-mono text-fg placeholder:text-faint outline-none focus:border-accent/70 focus:ring-2 focus:ring-accent/20"
+                    placeholder="-----BEGIN PUBLIC KEY-----"
+                  />
+                </Field>
+                <Grid2>
+                  <Field label="Allowed algorithms" hint="comma-separated, no HMAC">
+                    <Input value={algorithms} onChange={(e) => setAlgorithms(e.target.value)} placeholder="RS256, ES256" />
+                  </Field>
+                  <Field label="Subject claim" hint="optional">
+                    <Input value={subjectClaim} onChange={(e) => setSubjectClaim(e.target.value)} placeholder="sub" />
                   </Field>
                 </Grid2>
               </Section>
