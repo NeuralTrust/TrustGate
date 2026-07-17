@@ -72,6 +72,13 @@ services:
       OTEL_EXPORTER_OTLP_TIMEOUT: ${OTEL_EXPORTER_OTLP_TIMEOUT:-10000}
       OTEL_EXPORTER_OTLP_INSECURE: ${OTEL_EXPORTER_OTLP_INSECURE:-false}
       OTEL_EXPORTER_OTLP_COMPRESSION: ${OTEL_EXPORTER_OTLP_COMPRESSION:-}
+      # Exporters are opt-in. The bundle image ships an exporters file with
+      # metadata→otlp (uses the OTEL_EXPORTER_OTLP_* above) and raw→postgres
+      # (uses SENSIBLE_PG_DSN below). To turn telemetry on, set this to the
+      # baked path AND an OTLP endpoint above. Empty = no exporters.
+      TELEMETRY_EXPORTERS_FILE: ${TELEMETRY_EXPORTERS_FILE:-}
+      # Raw exporter target; defaults to the bundled Postgres service below.
+      SENSIBLE_PG_DSN: ${SENSIBLE_PG_DSN:-postgres://residency:residency@postgres:5432/residency?sslmode=disable}
 
       # ----------------------------------------------------------------------
       # DataAgent — outbound to DataBridge (SaaS) + local customer store
