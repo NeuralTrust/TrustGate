@@ -1,0 +1,99 @@
+name: trustgate-dataplane
+
+services:
+  dataplane:
+    image: neuraltrust/dataplane:stable
+    # TrustGate links glibc/librdkafka and is built linux/amd64; on Apple Silicon
+    # this runs under emulation.
+    platform: linux/amd64
+    restart: unless-stopped
+    ports:
+      - "8081:8081"   # TrustGate proxy (DataPlane traffic)
+      - "8090:8090"   # DataAgent local health probe
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      # ----------------------------------------------------------------------
+      # TrustGate proxy — general
+      # ----------------------------------------------------------------------
+      APP_ENV: prod
+      SERVER_PROXY_PORT: "8081"
+      LOG_LEVEL: INFO
+      LOG_FORMAT: json
+      GATEWAY_DISCOVERY_MODE: header
+      # REQUIRED to boot: >=32 bytes. openssl rand -base64 32
+      SERVER_SECRET_KEY: ${SERVER_SECRET_KEY:?set SERVER_SECRET_KEY (openssl rand -base64 32)}
+
+      # ----------------------------------------------------------------------
+      # TrustGate proxy — config sync (DB-less: dial the control plane)
+      # ----------------------------------------------------------------------
+      CONFIG_SYNC_DATA_PLANE_ENABLED: "true"
+      # Control-plane gRPC endpoint (host:port) this data plane dials.
+      CONFIG_SYNC_GRPC_ENDPOINT: ${CONFIG_SYNC_GRPC_ENDPOINT:?set CONFIG_SYNC_GRPC_ENDPOINT (host:port)}
+      # Bearer token that authenticates this data plane to the control plane.
+      CONFIG_SYNC_TOKEN: ${CONFIG_SYNC_TOKEN:?set CONFIG_SYNC_TOKEN}
+      # Instance id bound to the registered gateway instance. If omitted it is
+      # auto-resolved to the container host id; set it to pin a known instance.
+      CONFIG_SYNC_INSTANCE_ID: ${CONFIG_SYNC_INSTANCE_ID:-}
+      # AES-256 key to encrypt the local last-known-good snapshot. Must decode to
+      # exactly 32 bytes. openssl rand -base64 32
+      CONFIG_SYNC_LKG_KEY: ${CONFIG_SYNC_LKG_KEY:?set CONFIG_SYNC_LKG_KEY (openssl rand -base64 32)}
+      # LKG lives in /tmp (writable by the nonroot user in the distroless base).
+      CONFIG_SYNC_LKG_PATH: /tmp/trustgate-snapshot.lkg
+      CONFIG_SYNC_POLL_INTERVAL: 5m
+      # TLS to the control plane: set the SNI if it differs from the endpoint
+      # host, and a CA bundle path only for private PKI (empty = system roots).
+      CONFIG_SYNC_TLS_SERVER_NAME: ${CONFIG_SYNC_TLS_SERVER_NAME:-}
+      CONFIG_SYNC_TLS_CA: ${CONFIG_SYNC_TLS_CA:-}
+
+      # ----------------------------------------------------------------------
+      # TrustGate proxy — Redis
+      # ----------------------------------------------------------------------
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_DB: "3"
+
+      # ----------------------------------------------------------------------
+      # DataAgent — outbound to DataBridge (SaaS) + local customer store
+      # ----------------------------------------------------------------------
+      TENANT_ID: ${TENANT_ID:?set TENANT_ID}
+      DATABRIDGE_ADDR: ${DATABRIDGE_ADDR:?set DATABRIDGE_ADDR (host:port)}
+      DATABRIDGE_SERVER_NAME: ${DATABRIDGE_SERVER_NAME:?set DATABRIDGE_SERVER_NAME}
+      TLS_MODE: tls
+      # DataCore enrolment JWT (bearer only; the agent never signs it).
+      ENROLMENT_TOKEN: ${ENROLMENT_TOKEN:?set ENROLMENT_TOKEN}
+      # Reads residency data from the local Postgres below by default. Override
+      # with a READ-ONLY DSN pointing at the customer's real database.
+      STORE_BACKEND: postgres
+      DATABASE_URL: ${DATABASE_URL:-postgres://residency:residency@postgres:5432/residency?sslmode=disable}
+      HEALTH_ADDR: ":8090"
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: residency
+      POSTGRES_PASSWORD: residency
+      POSTGRES_DB: residency
+    volumes:
+      - residency_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U residency"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  residency_pgdata:

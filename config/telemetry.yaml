@@ -1,0 +1,26 @@
+# Default telemetry exporters for the metrics pipeline (ENG-1016).
+#
+# This file declares the exporters applied to every gateway unless a gateway
+# declares its own. It is selected by TELEMETRY_EXPORTERS_FILE (default
+# config/telemetry.yaml) and loaded at boot: valid entries are validated and
+# built fail-fast, a missing or empty file logs a warning and starts with no
+# defaults, and invalid config aborts boot.
+#
+# Copy this file to config/telemetry.yaml to get started.
+#
+exporters:
+  metadata:
+    - name: otlp
+      type: otlp
+
+  raw:
+    - name: sensible-pg
+      type: postgres
+      settings:
+        dsn_env: SENSIBLE_PG_DSN
+    # - name: raw-otlp
+    #   type: otlp
+    #   settings:
+    #     endpoint: "otel-collector:4317"
+    #     protocol: "grpc"
+    #     signal: "logs"
