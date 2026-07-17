@@ -26,6 +26,7 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
@@ -221,7 +222,8 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 
 	traceID := gatewayTraceID(ctx)
-	resp, err := p.guard(ctx, baseURL, cfg.CollectorID, traceID, body)
+	playground := requestHasPlaygroundToken(in.Request)
+	resp, err := p.guard(ctx, baseURL, cfg.CollectorID, traceID, body, playground)
 	if err != nil {
 		var limited *rateLimitedError
 		if errors.As(err, &limited) {
@@ -300,7 +302,24 @@ func gatewayTraceID(ctx context.Context) string {
 	return rt.TraceID()
 }
 
-func (p *Plugin) guard(ctx context.Context, baseURL, collectorID, traceID string, body GuardRequest) (*GuardResponse, error) {
+func requestHasPlaygroundToken(req *infracontext.RequestContext) bool {
+	if req == nil {
+		return false
+	}
+	for key, values := range req.Headers {
+		if !strings.EqualFold(key, "x-ag-playground-token") {
+			continue
+		}
+		for _, v := range values {
+			if v != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (p *Plugin) guard(ctx context.Context, baseURL, collectorID, traceID string, body GuardRequest, playground bool) (*GuardResponse, error) {
 	params := tokenParams{
 		baseURL:     baseURL,
 		collectorID: collectorID,
@@ -310,7 +329,7 @@ func (p *Plugin) guard(ctx context.Context, baseURL, collectorID, traceID string
 	if err != nil {
 		return nil, err
 	}
-	resp, err := p.client.Guard(ctx, baseURL, token, traceID, body)
+	resp, err := p.client.Guard(ctx, baseURL, token, traceID, body, playground)
 	if err == nil {
 		return resp, nil
 	}
@@ -322,7 +341,7 @@ func (p *Plugin) guard(ctx context.Context, baseURL, collectorID, traceID string
 	if err != nil {
 		return nil, err
 	}
-	return p.client.Guard(ctx, baseURL, token, traceID, body)
+	return p.client.Guard(ctx, baseURL, token, traceID, body, playground)
 }
 
 func (p *Plugin) warn(ctx context.Context, msg string, attrs ...any) {
