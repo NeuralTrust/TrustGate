@@ -58,34 +58,32 @@ services:
 
       # ----------------------------------------------------------------------
       # TrustGate proxy — telemetry / OTel collector (optional)
-      # Standard OTEL_EXPORTER_OTLP_* process-level defaults. Point ENDPOINT at
-      # your collector; the collector auth token is NOT a dedicated variable —
-      # it travels in OTEL_EXPORTER_OTLP_HEADERS as a comma-separated key=value
-      # list, e.g. "authorization=Bearer <token>,x-tenant=acme".
-      # Leave ENDPOINT empty to disable OTLP export (TrustGate still boots).
-      # ----------------------------------------------------------------------
-      TELEMETRY_ENABLED: "true"
+      # Point ENDPOINT at your collector; the collector auth token travels in
+      # OTEL_EXPORTER_OTLP_HEADERS as a comma-separated key=value list, e.g.
+      # "authorization=Bearer <token>". Leave ENDPOINT empty to disable OTLP.
+      # Telemetry is opt-in: set TELEMETRY_EXPORTERS_FILE to the baked path
+      # (/etc/trustgate/telemetry.yaml, exporters metadata→otlp + raw→postgres)
+      # AND an OTLP endpoint. Empty TELEMETRY_EXPORTERS_FILE = no exporters.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
       OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
-      # OTel spec: timeout is in milliseconds.
       OTEL_EXPORTER_OTLP_TIMEOUT: ${OTEL_EXPORTER_OTLP_TIMEOUT:-10000}
       OTEL_EXPORTER_OTLP_INSECURE: ${OTEL_EXPORTER_OTLP_INSECURE:-false}
       OTEL_EXPORTER_OTLP_COMPRESSION: ${OTEL_EXPORTER_OTLP_COMPRESSION:-}
-      # Exporters are opt-in. The bundle image ships an exporters file with
-      # metadata→otlp (uses the OTEL_EXPORTER_OTLP_* above) and raw→postgres
-      # (uses SENSIBLE_PG_DSN below). To turn telemetry on, set this to the
-      # baked path AND an OTLP endpoint above. Empty = no exporters.
       TELEMETRY_EXPORTERS_FILE: ${TELEMETRY_EXPORTERS_FILE:-}
-      # Raw exporter target; defaults to the bundled Postgres service below.
+      # Raw exporter target; defaults to the bundled Postgres below.
       SENSIBLE_PG_DSN: ${SENSIBLE_PG_DSN:-postgres://residency:residency@postgres:5432/residency?sslmode=disable}
 
       # ----------------------------------------------------------------------
       # DataAgent — outbound to DataBridge (SaaS) + local customer store
       # ----------------------------------------------------------------------
-      TENANT_ID: ${TENANT_ID:?set TENANT_ID}
       DATABRIDGE_ADDR: ${DATABRIDGE_ADDR:?set DATABRIDGE_ADDR (host:port)}
-      DATABRIDGE_SERVER_NAME: ${DATABRIDGE_SERVER_NAME:?set DATABRIDGE_SERVER_NAME}
+      # TENANT_ID is derived from the ENROLMENT_TOKEN tenant_id claim; set it only
+      # to override, and it must match the token or the agent refuses to start.
+      TENANT_ID: ${TENANT_ID:-}
+      # SNI defaults to the DATABRIDGE_ADDR host; set only to dial an IP or a
+      # differently-named proxy certificate.
+      DATABRIDGE_SERVER_NAME: ${DATABRIDGE_SERVER_NAME:-}
       TLS_MODE: tls
       # DataCore enrolment JWT (bearer only; the agent never signs it).
       ENROLMENT_TOKEN: ${ENROLMENT_TOKEN:?set ENROLMENT_TOKEN}
