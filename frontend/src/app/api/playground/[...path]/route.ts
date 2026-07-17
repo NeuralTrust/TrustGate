@@ -8,6 +8,11 @@ export const dynamic = "force-dynamic";
 // pkg/api/resolver/playground_resolver.go HeaderPlaygroundToken).
 const PLAYGROUND_TOKEN_HEADER = "X-AG-Playground-Token";
 
+// Header carrying the gateway slug for header-based discovery (see backend
+// pkg/api/resolver/gateway_resolver.go HeaderGatewaySlug). Locally the proxy
+// runs in header mode, so this replaces subdomain host resolution.
+const GATEWAY_SLUG_HEADER = "X-AG-Gateway-Slug";
+
 interface RouteContext {
   params: Promise<{ path: string[] }>;
 }
@@ -26,6 +31,14 @@ async function handler(req: NextRequest, ctx: RouteContext): Promise<NextRespons
   }
   const target = `${proxyBaseUrl()}/${path.join("/")}${req.nextUrl.search}`;
 
+  const gatewaySlug = req.headers.get(GATEWAY_SLUG_HEADER)?.trim();
+  if (!gatewaySlug) {
+    return NextResponse.json(
+      { error: "bff_error", message: `missing ${GATEWAY_SLUG_HEADER} header` },
+      { status: 400 },
+    );
+  }
+
   const body = await req.text();
 
   try {
@@ -35,6 +48,7 @@ async function handler(req: NextRequest, ctx: RouteContext): Promise<NextRespons
       headers: {
         "Content-Type": "application/json",
         [PLAYGROUND_TOKEN_HEADER]: token,
+        [GATEWAY_SLUG_HEADER]: gatewaySlug,
       },
       body: body.length > 0 ? body : undefined,
       cache: "no-store",
