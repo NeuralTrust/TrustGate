@@ -150,6 +150,9 @@ func (g *RPCGateway) checkRateLimit(ctx context.Context, rc *appconsumer.Routabl
 func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsumer, method string, params json.RawMessage) (any, error) {
 	switch method {
 	case "tools/list":
+		if err := g.checkRateLimit(ctx, rc); err != nil {
+			return nil, err
+		}
 		tools, err := g.composer.ListTools(ctx, rc)
 		if err != nil {
 			return nil, err
@@ -181,6 +184,9 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		}
 		return result, nil
 	case "resources/list":
+		if err := g.checkRateLimit(ctx, rc); err != nil {
+			return nil, err
+		}
 		resources, err := g.composer.ListResources(ctx, rc)
 		if err != nil {
 			return nil, err
@@ -190,6 +196,9 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		}
 		return map[string]any{"resources": resources}, nil
 	case "resources/templates/list":
+		if err := g.checkRateLimit(ctx, rc); err != nil {
+			return nil, err
+		}
 		templates, err := g.composer.ListResourceTemplates(ctx, rc)
 		if err != nil {
 			return nil, err
@@ -210,6 +219,9 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		}
 		return g.composer.ReadResource(ctx, rc, p.URI)
 	case "prompts/list":
+		if err := g.checkRateLimit(ctx, rc); err != nil {
+			return nil, err
+		}
 		prompts, err := g.composer.ListPrompts(ctx, rc)
 		if err != nil {
 			return nil, err

@@ -245,7 +245,7 @@ func TestHandler_ToolsCall_RateLimitPropagatesHeaders(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+	require.Equal(t, fiber.StatusTooManyRequests, resp.StatusCode)
 	require.Equal(t, "30", resp.Header.Get("Retry-After"))
 	require.Equal(t, "quota", resp.Header.Get("X-RateLimit-Reason"))
 	require.Equal(t, "10000", resp.Header.Get("X-RateLimit-Limit"))
@@ -255,6 +255,30 @@ func TestHandler_ToolsCall_RateLimitPropagatesHeaders(t *testing.T) {
 	rpcErr := body["error"].(map[string]any)
 	require.Equal(t, float64(-32004), rpcErr["code"])
 	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestRPCGateway_ToolsList_GatewayPlanExceeded_ReturnsRPCError(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	limiter := ratelimitmocks.NewChecker(t)
+	limiter.EXPECT().Check(mock.Anything, mock.Anything).Return(&ratelimitapp.Exceeded{
+		Reason:     ratelimitapp.ReasonBurst,
+		Limit:      60,
+		Remaining:  0,
+		RetryAfter: 5 * time.Second,
+	}).Once()
+
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), limiter)
+	rc := &appconsumer.RoutableConsumer{
+		Consumer: &consumerdomain.Consumer{Type: consumerdomain.TypeMCP, GatewayID: ids.New[ids.GatewayKind]()},
+	}
+	res, err := g.Dispatch(context.Background(), rc, "tools/list", nil)
+
+	assert.Nil(t, res)
+	var rpcErr *appmcp.RPCError
+	require.True(t, errors.As(err, &rpcErr), "want *appmcp.RPCError, got %v", err)
+	assert.Equal(t, appmcp.CodeRateLimited, rpcErr.Code)
+	composer.AssertNotCalled(t, "ListTools", mock.Anything, mock.Anything)
 }
 
 func TestRPCGateway_ToolsCall_GatewayPlanExceeded_ReturnsRPCErrorWithHeaders(t *testing.T) {

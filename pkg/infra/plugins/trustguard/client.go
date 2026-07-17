@@ -51,6 +51,16 @@ func (e *rateLimitedError) Error() string {
 	return "trustguard: rate limit exceeded"
 }
 
+// entitlementsUnavailableError is returned when TrustGuard evaluate cannot
+// resolve plan entitlements (HTTP 503). Must not fail-open.
+type entitlementsUnavailableError struct {
+	body []byte
+}
+
+func (e *entitlementsUnavailableError) Error() string {
+	return "trustguard: rate limit entitlements unavailable"
+}
+
 type client struct {
 	http *http.Client
 }
@@ -94,6 +104,9 @@ func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body
 			headers: copyRateLimitHeaders(res.Header),
 			body:    append([]byte(nil), raw...),
 		}
+	}
+	if res.StatusCode == http.StatusServiceUnavailable {
+		return nil, &entitlementsUnavailableError{body: append([]byte(nil), raw...)}
 	}
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
 		return nil, fmt.Errorf("trustguard: unexpected status %d", res.StatusCode)
