@@ -57,6 +57,23 @@ services:
       REDIS_DB: "3"
 
       # ----------------------------------------------------------------------
+      # TrustGate proxy — telemetry / OTel collector (optional)
+      # Standard OTEL_EXPORTER_OTLP_* process-level defaults. Point ENDPOINT at
+      # your collector; the collector auth token is NOT a dedicated variable —
+      # it travels in OTEL_EXPORTER_OTLP_HEADERS as a comma-separated key=value
+      # list, e.g. "authorization=Bearer <token>,x-tenant=acme".
+      # Leave ENDPOINT empty to disable OTLP export (TrustGate still boots).
+      # ----------------------------------------------------------------------
+      TELEMETRY_ENABLED: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+      # OTel spec: timeout is in milliseconds.
+      OTEL_EXPORTER_OTLP_TIMEOUT: ${OTEL_EXPORTER_OTLP_TIMEOUT:-10000}
+      OTEL_EXPORTER_OTLP_INSECURE: ${OTEL_EXPORTER_OTLP_INSECURE:-false}
+      OTEL_EXPORTER_OTLP_COMPRESSION: ${OTEL_EXPORTER_OTLP_COMPRESSION:-}
+
+      # ----------------------------------------------------------------------
       # DataAgent — outbound to DataBridge (SaaS) + local customer store
       # ----------------------------------------------------------------------
       TENANT_ID: ${TENANT_ID:?set TENANT_ID}
