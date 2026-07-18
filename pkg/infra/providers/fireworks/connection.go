@@ -12,26 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package providers
+package fireworks
 
-func ValidateProviderOptions(provider string, options map[string]any) error {
-	switch provider {
-	case ProviderOpenAICompatible:
-		_, err := DecodeOpenAICompatibleOptions(options)
-		return err
-	case ProviderOpenAI:
-		_, err := DecodeOpenAIOptions(options)
-		return err
-	case ProviderVertex:
-		_, err := DecodeVertexOptions(options)
-		return err
-	case ProviderDatabricks:
-		_, err := DecodeDatabricksOptions(options)
-		return err
-	case ProviderOracle:
-		_, err := DecodeOracleOptions(options)
-		return err
-	default:
-		return nil
-	}
+import (
+	"context"
+
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
+)
+
+const modelsURL = "https://api.fireworks.ai/inference/v1/models"
+
+func (c *client) TestConnection(ctx context.Context, config *providers.Config) providers.ProbeResult {
+	return providers.RunBearerGETProbe(ctx, providers.ProviderFireworks, modelsURL, config.Credentials.ApiKey)
 }
