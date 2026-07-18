@@ -31,9 +31,13 @@ import (
 )
 
 const (
-	HealthPath            = "/healthz"
-	ReadyPath             = "/readyz"
-	VersionPath           = "/__/version"
+	// HealthPath is the canonical liveness probe (/healthz).
+	HealthPath = "/healthz"
+	// HealthPathAlias is registered for load balancers that probe /health
+	// (e.g. platform ALB defaults). Same handler as HealthPath.
+	HealthPathAlias = "/health"
+	ReadyPath       = "/readyz"
+	VersionPath     = "/__/version"
 	DocsPath              = "/docs/*"
 	GatewaysPath          = "/v1/gateways"
 	ProvidersCatalog      = "/v1/providers-catalog"
@@ -118,6 +122,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	installMiddlewares(app, r.deps.MiddlewareTransport)
 
 	app.Get(HealthPath, r.deps.HealthHandler.Liveness)
+	app.Get(HealthPathAlias, r.deps.HealthHandler.Liveness)
 	app.Get(ReadyPath, r.deps.HealthHandler.Readiness)
 	app.Get(VersionPath, r.deps.VersionHandler.Handle)
 

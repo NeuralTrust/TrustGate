@@ -41,6 +41,7 @@ func NewProxyRouter(
 
 func (r *proxyRouter) BuildRoutes(app *fiber.App) error {
 	app.Get(HealthPath, r.healthHandler.Liveness)
+	app.Get(HealthPathAlias, r.healthHandler.Liveness)
 	app.Get(ReadyPath, r.healthHandler.Readiness)
 
 	installMiddlewares(app, r.middlewareTransport)
