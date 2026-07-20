@@ -5549,6 +5549,102 @@
       ]
     },
     {
+      "name": "com.slack/mcp",
+      "vendor": "Slack",
+      "category": "Communication",
+      "description": "Slack remote MCP: search messages, files, channels and users; read channels and threads; send messages; and read/create/update canvases. Confidential OAuth with a pre-registered Slack app (directory or internal); Streamable HTTP only.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.slack.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": false,
+        "authorize_url": "https://slack.com/oauth/v2_user/authorize",
+        "token_url": "https://slack.com/api/oauth.v2.user.access",
+        "scopes": [
+          "search:read",
+          "channels:history",
+          "groups:history",
+          "im:history",
+          "mpim:history",
+          "channels:read",
+          "users:read",
+          "chat:write",
+          "reactions:write",
+          "files:read",
+          "canvases:read",
+          "canvases:write"
+        ],
+        "resource": "https://mcp.slack.com/mcp"
+      },
+      "relevance": 95
+    },
+    {
+      "name": "com.google.workspace/gmail",
+      "vendor": "Gmail",
+      "category": "Productivity & Docs",
+      "description": "Gmail remote MCP: search threads, retrieve messages, list labels, and create drafts (Google Workspace, OAuth).",
+      "transport": "streamable-http",
+      "server_url": "https://gmailmcp.googleapis.com/mcp/v1",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "scopes": [
+          "https://www.googleapis.com/auth/gmail.readonly",
+          "https://www.googleapis.com/auth/gmail.compose"
+        ],
+        "resource": "https://gmailmcp.googleapis.com/mcp/v1"
+      },
+      "relevance": 92,
+      "tools": [
+        {
+          "name": "search_threads",
+          "description": "Search Gmail threads matching a query."
+        },
+        {
+          "name": "get_thread",
+          "description": "Retrieve the messages of a Gmail thread."
+        },
+        {
+          "name": "list_labels",
+          "description": "List the labels in the mailbox."
+        },
+        {
+          "name": "label_message",
+          "description": "Apply a label to a message."
+        },
+        {
+          "name": "unlabel_message",
+          "description": "Remove a label from a message."
+        },
+        {
+          "name": "label_thread",
+          "description": "Apply a label to a thread."
+        },
+        {
+          "name": "unlabel_thread",
+          "description": "Remove a label from a thread."
+        },
+        {
+          "name": "create_draft",
+          "description": "Create a draft email for review before sending."
+        },
+        {
+          "name": "list_drafts",
+          "description": "List draft emails in the mailbox."
+        }
+      ]
+    },
+    {
       "name": "com.google.cloud/androidmanagement",
       "vendor": "Google Cloud Android Management",
       "category": "Cloud Platform",
