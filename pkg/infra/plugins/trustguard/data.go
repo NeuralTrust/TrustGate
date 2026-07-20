@@ -89,14 +89,16 @@ type GuardFinding struct {
 }
 
 type guardData struct {
-	Direction     string         `json:"direction,omitempty"`
-	Status        string         `json:"status,omitempty"`
-	Decision      string         `json:"decision,omitempty"`
-	TraceID       string         `json:"trace_id,omitempty"`
-	RequestID     string         `json:"request_id,omitempty"`
-	FindingsCount int            `json:"findings_count,omitempty"`
-	Findings      []GuardFinding `json:"findings,omitempty"`
-	FailedOpen    bool           `json:"failed_open,omitempty"`
+	Direction      string         `json:"direction,omitempty"`
+	Status         string         `json:"status,omitempty"`
+	Decision       string         `json:"decision,omitempty"`
+	TraceID        string         `json:"trace_id,omitempty"`
+	RequestID      string         `json:"request_id,omitempty"`
+	FindingsCount  int            `json:"findings_count,omitempty"`
+	Findings       []GuardFinding `json:"findings,omitempty"`
+	FailedOpen     bool           `json:"failed_open,omitempty"`
+	Degraded       bool           `json:"degraded,omitempty"`
+	DegradedReason string         `json:"degraded_reason,omitempty"`
 }
 
 func setExtras(event *metrics.EventContext, data guardData) {

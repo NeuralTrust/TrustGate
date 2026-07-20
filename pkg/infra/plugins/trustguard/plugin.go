@@ -46,13 +46,23 @@ const (
 )
 
 const (
-	decisionBlocked    = "blocked"
-	decisionReported   = "reported"
-	decisionAllowed    = "allowed"
-	decisionFailedOpen = "failed_open"
-	statusBlock        = "block"
-	statusReport       = "report"
+	decisionBlocked     = "blocked"
+	decisionReported    = "reported"
+	decisionAllowed     = "allowed"
+	decisionFailedOpen  = "failed_open"
+	decisionTransformed = "transformed"
+	statusBlock         = "block"
+	statusReport        = "report"
+	statusTransform     = "transform"
 )
+
+const (
+	reasonTransformNoPayload    = "transform_no_payload"
+	reasonTransformUnsupported  = "transform_unsupported_path"
+	reasonTransformEncodeFailed = "transform_encode_failed"
+)
+
+const transformedInputKey = "input"
 
 var _ appplugins.Plugin = (*Plugin)(nil)
 
@@ -95,9 +105,16 @@ func (p *Plugin) SupportedModes() []policy.Mode {
 	return []policy.Mode{policy.ModeEnforce, policy.ModeObserve}
 }
 
-func (p *Plugin) MutatesRequestBody() bool { return false }
+// MutatesRequestBody reports that TrustGuard may rewrite the request body when
+// TrustGuard returns a transform (data-masking) outcome. Declaring this keeps
+// the plugin out of parallel batches with other body writers so the masked body
+// is applied deterministically and downstream plugins observe it.
+func (p *Plugin) MutatesRequestBody() bool { return true }
 
-func (p *Plugin) MutatesResponseBody() bool { return false }
+// MutatesResponseBody reports that TrustGuard may rewrite the response body when
+// TrustGuard returns a transform (data-masking) outcome. See MutatesRequestBody
+// for why this forces sequential execution.
+func (p *Plugin) MutatesResponseBody() bool { return true }
 
 func (p *Plugin) MutatesMetadata() bool { return false }
 
@@ -160,6 +177,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 
 	var text string
+	tgt := transformTarget{isResponse: direction == directionOutput}
 	if mcpMode {
 		if direction == directionInput {
 			if len(in.Request.Body) == 0 {
@@ -186,6 +204,10 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 				return passThrough(), nil
 			}
 			text = joinRequestText(creq)
+			reg := p.registry
+			tgt.apply = func(masked string) ([]byte, bool) {
+				return rewriteRequest(reg, format, creq, masked)
+			}
 		} else {
 			if in.Response == nil || in.Response.Streaming || len(in.Response.Body) == 0 {
 				return passThrough(), nil
@@ -195,6 +217,10 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 				return passThrough(), nil
 			}
 			text = cresp.Content
+			reg := p.registry
+			tgt.apply = func(masked string) ([]byte, bool) {
+				return rewriteResponse(reg, format, cresp, masked)
+			}
 		}
 	}
 	if strings.TrimSpace(text) == "" {
@@ -254,6 +280,10 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		Findings:      resp.Findings,
 	}
 
+	if resp.Status == statusTransform {
+		return p.applyTransform(in, data, resp, tgt)
+	}
+
 	data.Decision = guardOutcomeDecision(resp.Status, in.Mode)
 	if data.Decision == decisionBlocked {
 		recordGuardOutcome(in.Event, data)
@@ -261,6 +291,47 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 	recordGuardOutcome(in.Event, data)
 	return passThrough(), nil
+}
+
+// applyTransform enforces a TrustGuard transform (data-masking) outcome. In
+// observe mode the masked body is not applied and the outcome is reported. In
+// enforce mode the masked payload is written back into the provider body; when
+// it cannot be applied safely (missing payload, path without body propagation,
+// or re-encode failure) the request is blocked rather than forwarding the
+// unmasked data upstream.
+func (p *Plugin) applyTransform(in appplugins.ExecInput, data guardData, resp *GuardResponse, tgt transformTarget) (*appplugins.Result, error) {
+	if !appplugins.Blocks(in.Mode) {
+		data.Decision = decisionReported
+		recordGuardOutcome(in.Event, data)
+		return passThrough(), nil
+	}
+
+	masked, ok := transformedInput(resp.TransformedPayload)
+	if !ok {
+		return p.transformDegraded(in, data, resp, reasonTransformNoPayload)
+	}
+	if tgt.apply == nil {
+		return p.transformDegraded(in, data, resp, reasonTransformUnsupported)
+	}
+	body, ok := tgt.apply(masked)
+	if !ok {
+		return p.transformDegraded(in, data, resp, reasonTransformEncodeFailed)
+	}
+
+	data.Decision = decisionTransformed
+	recordGuardOutcome(in.Event, data)
+	if tgt.isResponse {
+		return &appplugins.Result{StatusCode: http.StatusOK, Body: body, StopUpstream: true}, nil
+	}
+	return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: body}, nil
+}
+
+func (p *Plugin) transformDegraded(in appplugins.ExecInput, data guardData, resp *GuardResponse, reason string) (*appplugins.Result, error) {
+	data.Decision = decisionBlocked
+	data.Degraded = true
+	data.DegradedReason = reason
+	recordGuardOutcome(in.Event, data)
+	return nil, blockError(resp)
 }
 
 func guardOutcomeDecision(status string, mode policy.Mode) string {
@@ -360,19 +431,6 @@ func protocolFor(consumerType string) string {
 	default:
 		return protocolLLM
 	}
-}
-
-func joinRequestText(creq *adapter.CanonicalRequest) string {
-	parts := make([]string, 0, len(creq.Messages)+1)
-	if strings.TrimSpace(creq.System) != "" {
-		parts = append(parts, creq.System)
-	}
-	for _, msg := range creq.Messages {
-		if strings.TrimSpace(msg.Content) != "" {
-			parts = append(parts, msg.Content)
-		}
-	}
-	return strings.Join(parts, "\n")
 }
 
 func passThrough() *appplugins.Result {
