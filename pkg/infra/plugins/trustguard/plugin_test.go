@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -422,7 +423,7 @@ func TestExecuteObserveModeOnBlockPassesThrough(t *testing.T) {
 func TestExecuteAllowStatusesPassThrough(t *testing.T) {
 	t.Parallel()
 
-	for _, status := range []string{"report", "transform", ""} {
+	for _, status := range []string{"report", ""} {
 		status := status
 		t.Run("status_"+status, func(t *testing.T) {
 			t.Parallel()
@@ -851,6 +852,203 @@ func TestExecuteRetriesOnceOn401(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&tokenHits); got != 2 {
 		t.Fatalf("token hits = %d, want 2 (initial + refresh after 401)", got)
+	}
+}
+
+func TestMutatesBodyReportsTrue(t *testing.T) {
+	t.Parallel()
+
+	p := New(adapter.NewRegistry(), "", testTimeout, "id", "secret", nil)
+	if !p.MutatesRequestBody() {
+		t.Fatal("MutatesRequestBody must be true so the planner runs TrustGuard sequentially")
+	}
+	if !p.MutatesResponseBody() {
+		t.Fatal("MutatesResponseBody must be true so the planner runs TrustGuard sequentially")
+	}
+}
+
+func transformResponse(masked string) GuardResponse {
+	return GuardResponse{
+		Status:             statusTransform,
+		TransformedPayload: map[string]any{"input": masked},
+		Findings: []GuardFinding{{
+			Source:  &GuardFindingSource{Kind: "detector", Plugin: "data_loss_prevention"},
+			Signal:  &GuardFindingSignal{Type: "pii"},
+			Outcome: &GuardFindingOutcome{Action: "transform"},
+		}},
+		TraceID: "trace-transform",
+	}
+}
+
+func TestExecutePreRequestTransformRewritesBody(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: transformResponse("be safe\nhello [MASKED_PII]")}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil, event)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK || res.StopUpstream {
+		t.Fatalf("expected pass-through result carrying request body, got %+v", res)
+	}
+	if len(res.RequestBody) == 0 {
+		t.Fatal("expected rewritten RequestBody, got none")
+	}
+	if res.Body != nil {
+		t.Fatalf("pre_request must not set response Body, got %q", res.Body)
+	}
+	got := string(res.RequestBody)
+	if !strings.Contains(got, "hello [MASKED_PII]") {
+		t.Fatalf("rewritten body missing masked text: %s", got)
+	}
+	if strings.Contains(got, "hello world") {
+		t.Fatalf("rewritten body still contains unmasked text: %s", got)
+	}
+	if attrs := span.PluginAttrsCopy(); attrs.Decision != decisionTransformed {
+		t.Fatalf("span decision = %q, want %q", attrs.Decision, decisionTransformed)
+	}
+}
+
+func TestExecutePreResponseTransformRewritesBody(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: transformResponse("the [MASKED_PII]")}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: openAIResponseBody()}
+	in := execInput(policy.StagePreResponse, policy.ModeEnforce, settings(""), requestContext(), resp)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK || !res.StopUpstream {
+		t.Fatalf("expected response rewrite with StopUpstream, got %+v", res)
+	}
+	if len(res.Body) == 0 {
+		t.Fatal("expected rewritten response Body, got none")
+	}
+	got := string(res.Body)
+	if !strings.Contains(got, "the [MASKED_PII]") {
+		t.Fatalf("rewritten response missing masked text: %s", got)
+	}
+	if strings.Contains(got, "the answer") {
+		t.Fatalf("rewritten response still contains unmasked text: %s", got)
+	}
+}
+
+func TestExecuteTransformObserveDoesNotRewrite(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: transformResponse("be safe\nhello [MASKED_PII]")}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeObserve, settings(""), requestContext(), nil, event)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("observe mode must not error, got %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK || res.StopUpstream {
+		t.Fatalf("expected pass-through in observe mode, got %+v", res)
+	}
+	if res.RequestBody != nil {
+		t.Fatalf("observe mode must not rewrite the body, got %q", res.RequestBody)
+	}
+	if attrs := span.PluginAttrsCopy(); attrs.Decision != decisionReported {
+		t.Fatalf("span decision = %q, want %q", attrs.Decision, decisionReported)
+	}
+}
+
+func TestExecuteTransformMissingPayloadBlocks(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusTransform, TraceID: "trace-empty"}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil, event)
+	res, err := p.Execute(context.Background(), in)
+	if res != nil {
+		t.Fatalf("expected block on unapplicable transform, got %+v", res)
+	}
+	if _, ok := appplugins.AsPluginError(err); !ok {
+		t.Fatalf("expected *PluginError, got %v", err)
+	}
+	attrs := span.PluginAttrsCopy()
+	extras, ok := attrs.Extras.(guardData)
+	if !ok {
+		t.Fatalf("extras type = %T, want guardData", attrs.Extras)
+	}
+	if !extras.Degraded || extras.DegradedReason != reasonTransformNoPayload {
+		t.Fatalf("extras = %+v, want degraded no-payload", extras)
+	}
+}
+
+func TestExecuteTransformLineCountMismatchBlocks(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: transformResponse("be safe\nhello\n[MASKED_PII]")}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil)
+	res, err := p.Execute(context.Background(), in)
+	if res != nil {
+		t.Fatalf("expected block on ambiguous transform, got %+v", res)
+	}
+	if _, ok := appplugins.AsPluginError(err); !ok {
+		t.Fatalf("expected *PluginError, got %v", err)
+	}
+}
+
+func TestExecuteMCPTransformEnforceBlocks(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: transformResponse("search\nfind [MASKED_PII]")}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), mcpRequestContext(), nil, event)
+	res, err := p.Execute(context.Background(), in)
+	if res != nil {
+		t.Fatalf("expected block on MCP transform (no body propagation), got %+v", res)
+	}
+	if _, ok := appplugins.AsPluginError(err); !ok {
+		t.Fatalf("expected *PluginError, got %v", err)
+	}
+	attrs := span.PluginAttrsCopy()
+	extras, ok := attrs.Extras.(guardData)
+	if !ok {
+		t.Fatalf("extras type = %T, want guardData", attrs.Extras)
+	}
+	if !extras.Degraded || extras.DegradedReason != reasonTransformUnsupported {
+		t.Fatalf("extras = %+v, want degraded unsupported-path", extras)
+	}
+}
+
+func TestExecuteMCPTransformObservePassesThrough(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: transformResponse("search\nfind [MASKED_PII]")}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	in := execInput(policy.StagePreRequest, policy.ModeObserve, settings(""), mcpRequestContext(), nil)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("observe mode must not error, got %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK || res.StopUpstream {
+		t.Fatalf("expected pass-through in observe mode, got %+v", res)
 	}
 }
 

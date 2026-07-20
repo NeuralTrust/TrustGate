@@ -19,6 +19,8 @@ const (
 	trustGuardFunctionalAccessToken  = "functional-trustguard-access-token"
 	trustGuardBlockWord              = "sql-injection-flag"
 	trustGuardErrorWord              = "guard-boom-flag"
+	trustGuardMaskWord               = "mask-me-flag"
+	trustGuardMaskToken              = "[MASKED_PII]"
 )
 
 var TrustGuardFunctionalStub *trustGuardStub
@@ -153,6 +155,12 @@ func (s *trustGuardStub) handleGuard(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if strings.Contains(strings.ToLower(req.Payload.Input), trustGuardBlockWord) {
 		_, _ = io.WriteString(w, `{"status":"block","findings":[{"source":{"kind":"detector","plugin":"prompt_guard"},"signal":{"type":"prompt_injection"},"outcome":{"action":"block"}}],"trace_id":"tg-trace-1","request_id":"tg-req-1"}`)
+		return
+	}
+	if strings.Contains(req.Payload.Input, trustGuardMaskWord) {
+		masked := strings.ReplaceAll(req.Payload.Input, trustGuardMaskWord, trustGuardMaskToken)
+		payload, _ := json.Marshal(map[string]string{"input": masked})
+		_, _ = io.WriteString(w, `{"status":"transform","transformed_payload":`+string(payload)+`,"findings":[{"source":{"kind":"detector","plugin":"data_loss_prevention"},"signal":{"type":"pii"},"outcome":{"action":"transform"}}],"trace_id":"tg-trace-3","request_id":"tg-req-3"}`)
 		return
 	}
 	_, _ = io.WriteString(w, `{"status":"allowed","findings":[],"trace_id":"tg-trace-2","request_id":"tg-req-2"}`)
