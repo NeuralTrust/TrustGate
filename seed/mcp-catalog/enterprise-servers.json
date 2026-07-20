@@ -5549,6 +5549,40 @@
       ]
     },
     {
+      "name": "com.slack/mcp",
+      "vendor": "Slack",
+      "category": "Communication",
+      "description": "Slack remote MCP: search messages, files, channels and users; read channels and threads; send messages; and read/create/update canvases. Confidential OAuth with a pre-registered Slack app (directory or internal); Streamable HTTP only.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.slack.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": false,
+        "authorize_url": "https://slack.com/oauth/v2_user/authorize",
+        "token_url": "https://slack.com/api/oauth.v2.user.access",
+        "scopes": [
+          "search:read",
+          "channels:history",
+          "groups:history",
+          "im:history",
+          "mpim:history",
+          "channels:read",
+          "users:read",
+          "chat:write",
+          "reactions:write",
+          "files:read",
+          "canvases:read",
+          "canvases:write"
+        ],
+        "resource": "https://mcp.slack.com/mcp"
+      },
+      "relevance": 95
+    },
+    {
       "name": "com.google.workspace/gmail",
       "vendor": "Gmail",
       "category": "Productivity & Docs",
