@@ -117,7 +117,7 @@ const (
 	defaultConfigSyncRecompileDebounce = 2 * time.Second
 	defaultConfigSyncRecompileBackstop = 5 * time.Minute
 
-	defaultRateLimitEnabled = false
+	defaultRateLimitEnabled = true
 
 	defaultConfigSyncGRPCListenAddr             = ":8083"
 	defaultConfigSyncGRPCKeepaliveTime          = 30 * time.Second

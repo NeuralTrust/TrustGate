@@ -76,6 +76,31 @@ func TestPluginE2E_TrustGuard_Enforce(t *testing.T) {
 	})
 }
 
+func TestPluginE2E_TrustGuard_TransformMasksRequestBody(t *testing.T) {
+	defer Track(t, "PluginTrustGuard")()
+
+	require.NotNil(t, TrustGuardFunctionalStub, "TrustGuard stub must be started in TestMain")
+	tg := TrustGuardFunctionalStub
+	tg.Reset()
+
+	up := newJSONUpstream(t, "tg-mask")
+	apiKey, path := setupPolicyRoute(t, up, policyPlugin("trustguard", trustGuardPolicySettings()))
+
+	hitsBefore := up.Hits()
+	status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil,
+		mustJSON(t, trustGuardChatRequest("please contact "+trustGuardMaskWord+" now")),
+	)
+	require.Equal(t, http.StatusOK, status, "body: %s", raw)
+	require.Equal(t, hitsBefore+1, up.Hits())
+	assert.GreaterOrEqual(t, tg.GuardHits(), 1)
+
+	forwarded := string(up.LastBody())
+	assert.Contains(t, forwarded, trustGuardMaskToken,
+		"the masked body from TrustGuard must reach the upstream")
+	assert.NotContains(t, forwarded, trustGuardMaskWord,
+		"the unmasked sensitive token must not reach the upstream")
+}
+
 func TestPluginE2E_TrustGuard_ObserveNeverBlocks(t *testing.T) {
 	defer Track(t, "PluginTrustGuard")()
 
