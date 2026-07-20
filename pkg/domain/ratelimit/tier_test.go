@@ -26,11 +26,11 @@ func TestLimitsFor(t *testing.T) {
 		wantMaxInstances int
 		wantHasCap       bool
 	}{
-		{tier: "free", wantOK: true, wantBurst: 60, wantQuota: 10_000, wantHasQuota: true, wantMaxInstances: 1, wantHasCap: true},
-		{tier: " Free ", wantOK: true, wantBurst: 60, wantQuota: 10_000, wantHasQuota: true, wantMaxInstances: 1, wantHasCap: true},
-		{tier: "standard", wantOK: true, wantBurst: 300, wantQuota: 100_000, wantHasQuota: true, wantMaxInstances: 2, wantHasCap: true},
-		{tier: "STANDARD", wantOK: true, wantBurst: 300, wantQuota: 100_000, wantHasQuota: true, wantMaxInstances: 2, wantHasCap: true},
-		{tier: "enterprise", wantOK: true, wantBurst: 1_000, wantQuota: 0, wantHasQuota: false, wantMaxInstances: 0, wantHasCap: false},
+		{tier: "free", wantOK: true, wantBurst: 60, wantQuota: 10_000, wantHasQuota: true, wantMaxInstances: 5, wantHasCap: true},
+		{tier: " Free ", wantOK: true, wantBurst: 60, wantQuota: 10_000, wantHasQuota: true, wantMaxInstances: 5, wantHasCap: true},
+		{tier: "standard", wantOK: true, wantBurst: 300, wantQuota: 100_000, wantHasQuota: true, wantMaxInstances: 5, wantHasCap: true},
+		{tier: "STANDARD", wantOK: true, wantBurst: 300, wantQuota: 100_000, wantHasQuota: true, wantMaxInstances: 5, wantHasCap: true},
+		{tier: "enterprise", wantOK: true, wantBurst: 1_000, wantQuota: 0, wantHasQuota: false, wantMaxInstances: 5, wantHasCap: true},
 		{tier: "gold", wantOK: false},
 		{tier: "", wantOK: false},
 	}
