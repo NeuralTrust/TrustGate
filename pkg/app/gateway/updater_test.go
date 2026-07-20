@@ -367,7 +367,7 @@ func TestUpdater_Update_RejectsTierChangeOverInstanceCap(t *testing.T) {
 	repo.EXPECT().
 		UpdateWithTenantCap(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
 			return g.Entitlements.Tier == "free"
-		}), "acme", 1).
+		}), "acme", 5).
 		Return(ratelimit.ErrInstanceLimit).
 		Once()
 
@@ -398,7 +398,7 @@ func TestUpdater_Update_AllowsTierChangeWithinInstanceCap(t *testing.T) {
 	repo.EXPECT().
 		UpdateWithTenantCap(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
 			return g.Entitlements.Tier == "free"
-		}), "acme", 1).
+		}), "acme", 5).
 		Return(nil).
 		Once()
 
