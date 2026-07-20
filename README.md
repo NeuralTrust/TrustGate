@@ -75,7 +75,7 @@ make down
 Then hit the health probes:
 
 ```bash
-curl localhost:8080/healthz       # admin
+curl localhost:8080/healthz       # admin (canonical; /health is an alias)
 curl localhost:8081/healthz       # proxy
 curl localhost:8082/healthz       # mcp
 curl localhost:8080/__/version    # build info (version, commit, build date)
