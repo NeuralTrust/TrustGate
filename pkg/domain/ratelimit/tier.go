@@ -31,9 +31,9 @@ type Limits struct {
 }
 
 var tiers = map[string]Limits{
-	TierFree:       {BurstPerMin: 60, QuotaPerMonth: 10_000, MaxInstances: 1},
-	TierStandard:   {BurstPerMin: 300, QuotaPerMonth: 100_000, MaxInstances: 2},
-	TierEnterprise: {BurstPerMin: 1_000, QuotaPerMonth: 0, MaxInstances: 0},
+	TierFree:       {BurstPerMin: 60, QuotaPerMonth: 10_000, MaxInstances: 5},
+	TierStandard:   {BurstPerMin: 300, QuotaPerMonth: 100_000, MaxInstances: 5},
+	TierEnterprise: {BurstPerMin: 1_000, QuotaPerMonth: 0, MaxInstances: 5},
 }
 
 func LimitsFor(tier string) (Limits, bool) {

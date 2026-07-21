@@ -243,7 +243,7 @@ func TestCreator_Create_StampsTenantIDFromContext(t *testing.T) {
 	repo.EXPECT().
 		SaveWithTenantCap(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
 			return g.TenantID() == "acme" && g.Metadata["env"] == "prod"
-		}), "acme", 1).
+		}), "acme", 5).
 		Return(nil).
 		Once()
 
@@ -288,7 +288,7 @@ func TestCreator_Create_RejectsSecondGatewayOnFreeTier(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	expectNoSiblingGateways(repo, "acme")
-	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "acme", 1).Return(ratelimit.ErrInstanceLimit).Once()
+	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "acme", 5).Return(ratelimit.ErrInstanceLimit).Once()
 
 	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil, true)
 
@@ -307,7 +307,7 @@ func TestCreator_Create_RejectsSecondGatewayOnFreeTier(t *testing.T) {
 func TestCreator_Create_AllowsSecondGatewayOnStandardTier(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "acme", 2).Return(nil).Once()
+	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "acme", 5).Return(nil).Once()
 
 	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil, true)
 
@@ -326,10 +326,10 @@ func TestCreator_Create_AllowsSecondGatewayOnStandardTier(t *testing.T) {
 	}
 }
 
-func TestCreator_Create_AllowsUnlimitedInstancesOnEnterpriseTier(t *testing.T) {
+func TestCreator_Create_AllowsInstancesOnEnterpriseTier(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "acme", 0).Return(nil).Once()
+	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "acme", 5).Return(nil).Once()
 
 	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil, true)
 
@@ -362,7 +362,7 @@ func TestCreator_Create_AllowsFirstGatewayOnFreeTier(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	expectNoSiblingGateways(repo, "acme")
-	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "acme", 1).Return(nil).Once()
+	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "acme", 5).Return(nil).Once()
 
 	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil, true)
 
@@ -379,7 +379,7 @@ func TestCreator_Create_PropagatesSaveWithTenantCapError(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	expectNoSiblingGateways(repo, "acme")
-	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "acme", 1).Return(errors.New("db down")).Once()
+	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "acme", 5).Return(errors.New("db down")).Once()
 
 	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil, true)
 
@@ -461,7 +461,7 @@ func TestCreator_Create_InheritsSiblingStandardTier(t *testing.T) {
 	repo.EXPECT().
 		SaveWithTenantCap(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
 			return g.Entitlements.Tier == "standard"
-		}), "acme", 2).
+		}), "acme", 5).
 		Return(nil).
 		Once()
 
@@ -492,7 +492,7 @@ func TestCreator_Create_RejectsThirdGatewayOnInheritedStandardCap(t *testing.T) 
 		})).
 		Return(siblings, 2, nil).
 		Once()
-	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "acme", 2).Return(ratelimit.ErrInstanceLimit).Once()
+	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "acme", 5).Return(ratelimit.ErrInstanceLimit).Once()
 
 	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil, true)
 
@@ -512,7 +512,7 @@ func TestCreator_Create_PlatformAdminStampsTenantAndEntitlements(t *testing.T) {
 	repo.EXPECT().
 		SaveWithTenantCap(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
 			return g.TenantID() == "acme" && g.Entitlements.Tier == "standard"
-		}), "acme", 2).
+		}), "acme", 5).
 		Return(nil).
 		Once()
 
@@ -553,7 +553,7 @@ func TestCreator_Create_InheritsHighestSiblingTier(t *testing.T) {
 	repo.EXPECT().
 		SaveWithTenantCap(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
 			return g.Entitlements.Tier == "enterprise"
-		}), "acme", 0).
+		}), "acme", 5).
 		Return(nil).
 		Once()
 
