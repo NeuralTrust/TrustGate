@@ -23,13 +23,13 @@ import (
 
 func intPtr(v int) *int { return &v }
 
-func TestResolveLimits_UnstampedUnavailable(t *testing.T) {
+func TestResolveLimits_UnstampedNoCaps(t *testing.T) {
 	t.Parallel()
 	for _, tier := range []string{"standard", "free", ""} {
 		t.Run(tier, func(t *testing.T) {
 			_, ok := Entitlements{Tier: tier}.ResolveLimits()
 			if ok {
-				t.Fatal("expected unstamped entitlements to be unavailable")
+				t.Fatal("expected unstamped entitlements to have no caps")
 			}
 		})
 	}

@@ -52,7 +52,7 @@ func (l *gatewayTierLoader) Limits(ctx context.Context, gatewayID ids.GatewayID)
 func limitsOrDefault(gw *gatewaydomain.Gateway) (domain.Limits, error) {
 	limits, ok := gw.Entitlements.ResolveLimits()
 	if !ok {
-		return domain.Limits{}, ErrUnavailable
+		return domain.Limits{}, ErrUnmetered
 	}
 	return limits, nil
 }

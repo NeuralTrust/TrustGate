@@ -83,12 +83,13 @@ func TestCreator_Create_Success(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	tel := &telemetry.Telemetry{ExtraParams: map[string]string{"env": "prod"}}
+	expectNoSiblingGateways(repo, "acme")
 	repo.EXPECT().
 		SaveWithTenantCap(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
 			return g.Slug == "prod" &&
 				g.Status == "active" &&
 				g.Telemetry == tel
-		}), "", 0).
+		}), "acme", 0).
 		Return(nil).
 		Once()
 
@@ -97,6 +98,7 @@ func TestCreator_Create_Success(t *testing.T) {
 
 	g, err := creator.Create(context.Background(), appgateway.CreateInput{
 		Slug:      "prod",
+		TenantID:  "acme",
 		Telemetry: tel,
 	})
 	if err != nil {
@@ -122,13 +124,15 @@ func TestCreator_Create_PreservesExplicitSessionConfig(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	disabled := false
-	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "", 0).Return(nil).Once()
+	expectNoSiblingGateways(repo, "acme")
+	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "acme", 0).Return(nil).Once()
 
 	mgr := newCacheManager()
 	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger(), nil, true)
 
 	g, err := creator.Create(context.Background(), appgateway.CreateInput{
 		Slug:          "prod",
+		TenantID:      "acme",
 		SessionConfig: &domain.SessionConfig{Enabled: &disabled},
 	})
 	if err != nil {
@@ -142,10 +146,11 @@ func TestCreator_Create_PreservesExplicitSessionConfig(t *testing.T) {
 func TestCreator_Create_GeneratesSlugWhenEmpty(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
+	expectNoSiblingGateways(repo, "acme")
 	repo.EXPECT().
 		SaveWithTenantCap(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
 			return domain.IsValidSlug(g.Slug)
-		}), "", 0).
+		}), "acme", 0).
 		Return(nil).
 		Once()
 
@@ -153,7 +158,8 @@ func TestCreator_Create_GeneratesSlugWhenEmpty(t *testing.T) {
 	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger(), nil, true)
 
 	g, err := creator.Create(context.Background(), appgateway.CreateInput{
-		Slug: "",
+		Slug:     "",
+		TenantID: "acme",
 	})
 	if err != nil {
 		t.Fatalf("Create error: %v", err)
@@ -166,13 +172,14 @@ func TestCreator_Create_GeneratesSlugWhenEmpty(t *testing.T) {
 func TestCreator_Create_RetriesOnGeneratedSlugCollision(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "", 0).Return(domain.ErrAlreadyExists).Once()
-	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "", 0).Return(nil).Once()
+	expectNoSiblingGateways(repo, "acme")
+	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "acme", 0).Return(domain.ErrAlreadyExists).Once()
+	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "acme", 0).Return(nil).Once()
 
 	mgr := newCacheManager()
 	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger(), nil, true)
 
-	g, err := creator.Create(context.Background(), appgateway.CreateInput{Slug: ""})
+	g, err := creator.Create(context.Background(), appgateway.CreateInput{Slug: "", TenantID: "acme"})
 	if err != nil {
 		t.Fatalf("Create error: %v", err)
 	}
@@ -184,12 +191,13 @@ func TestCreator_Create_RetriesOnGeneratedSlugCollision(t *testing.T) {
 func TestCreator_Create_DoesNotRetryOnProvidedSlugCollision(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "", 0).Return(domain.ErrAlreadyExists).Once()
+	expectNoSiblingGateways(repo, "acme")
+	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "acme", 0).Return(domain.ErrAlreadyExists).Once()
 
 	mgr := newCacheManager()
 	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger(), nil, true)
 
-	_, err := creator.Create(context.Background(), appgateway.CreateInput{Slug: "prod"})
+	_, err := creator.Create(context.Background(), appgateway.CreateInput{Slug: "prod", TenantID: "acme"})
 	if !errors.Is(err, domain.ErrAlreadyExists) {
 		t.Fatalf("expected ErrAlreadyExists for client-provided slug, got %v", err)
 	}
@@ -207,7 +215,8 @@ func TestCreator_Create_RejectsUnknownExporter(t *testing.T) {
 	creator := appgateway.NewCreator(repo, newCacheManager(), factory, newTestLogger(), nil, true)
 
 	_, err := creator.Create(context.Background(), appgateway.CreateInput{
-		Slug: "prod",
+		Slug:     "prod",
+		TenantID: "acme",
 		Telemetry: &telemetry.Telemetry{
 			Exporters: []telemetry.ExporterConfig{
 				{Name: "datadog", Settings: map[string]interface{}{}},
@@ -228,7 +237,8 @@ func TestCreator_Create_RejectsDuplicateExporter(t *testing.T) {
 	creator := appgateway.NewCreator(repo, newCacheManager(), factory, newTestLogger(), nil, true)
 
 	_, err := creator.Create(context.Background(), appgateway.CreateInput{
-		Slug: "prod",
+		Slug:     "prod",
+		TenantID: "acme",
 		Telemetry: &telemetry.Telemetry{
 			Exporters: []telemetry.ExporterConfig{
 				{Name: "kafka", Settings: map[string]interface{}{"topic": "a"}},
@@ -244,10 +254,11 @@ func TestCreator_Create_RejectsDuplicateExporter(t *testing.T) {
 func TestCreator_Create_StripsClientProvidedTenantID(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
+	expectNoSiblingGateways(repo, "acme")
 	repo.EXPECT().
 		SaveWithTenantCap(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
-			return g.TenantID() == "" && g.Metadata["env"] == "prod"
-		}), "", 0).
+			return g.TenantID() == "acme" && g.Metadata["env"] == "prod"
+		}), "acme", 0).
 		Return(nil).
 		Once()
 
@@ -255,13 +266,14 @@ func TestCreator_Create_StripsClientProvidedTenantID(t *testing.T) {
 
 	g, err := creator.Create(context.Background(), appgateway.CreateInput{
 		Slug:     "prod",
+		TenantID: "acme",
 		Metadata: map[string]string{domain.MetadataTenantIDKey: "attacker-team", "env": "prod"},
 	})
 	if err != nil {
 		t.Fatalf("Create error: %v", err)
 	}
-	if g.TenantID() != "" {
-		t.Fatalf("client-provided tenant_id was not stripped: %q", g.TenantID())
+	if g.TenantID() != "acme" {
+		t.Fatalf("tenant_id from input was not stamped: got %q, want acme", g.TenantID())
 	}
 }
 
@@ -294,8 +306,9 @@ func TestCreator_Create_StampsTenantIDFromContext(t *testing.T) {
 func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
+	expectNoSiblingGateways(repo, "acme")
 	repo.EXPECT().
-		SaveWithTenantCap(mock.Anything, mock.Anything, "", 0).
+		SaveWithTenantCap(mock.Anything, mock.Anything, "acme", 0).
 		Return(domain.ErrAlreadyExists).
 		Once()
 
@@ -303,7 +316,8 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger(), nil, true)
 
 	_, err := creator.Create(context.Background(), appgateway.CreateInput{
-		Slug: "prod",
+		Slug:     "prod",
+		TenantID: "acme",
 	})
 	if !errors.Is(err, domain.ErrAlreadyExists) {
 		t.Fatalf("expected ErrAlreadyExists, got %v", err)
@@ -377,16 +391,14 @@ func TestCreator_Create_AllowsEnterpriseTierAtInstanceCap(t *testing.T) {
 	}
 }
 
-func TestCreator_Create_SkipsInstanceLimitWhenTenantEmpty(t *testing.T) {
+func TestCreator_Create_RejectsEmptyTenant(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "", 0).Return(nil).Once()
-
 	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil, true)
 
 	_, err := creator.Create(context.Background(), appgateway.CreateInput{Slug: "prod"})
-	if err != nil {
-		t.Fatalf("Create error: %v", err)
+	if !errors.Is(err, commonerrors.ErrValidation) {
+		t.Fatalf("expected ErrValidation for empty tenant_id, got %v", err)
 	}
 }
 
@@ -462,13 +474,14 @@ func TestCreator_Create_RejectsClientEntitlementsWhenTenantSet(t *testing.T) {
 func TestCreator_Create_AcceptsClientEntitlementsWhenPlatformAdmin(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "", 0).Return(nil).Once()
+	repo.EXPECT().SaveWithTenantCap(mock.Anything, mock.Anything, "acme", 5).Return(nil).Once()
 
 	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil, true)
 
 	entitlements := stampedEntitlements("standard")
 	g, err := creator.Create(context.Background(), appgateway.CreateInput{
 		Slug:          "prod",
+		TenantID:      "acme",
 		PlatformAdmin: true,
 		Entitlements:  &entitlements,
 	})

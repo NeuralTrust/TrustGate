@@ -84,6 +84,9 @@ func NewCreator(
 }
 
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, error) {
+	if strings.TrimSpace(in.TenantID) == "" {
+		return nil, fmt.Errorf("tenant_id is required: %w", commonerrors.ErrValidation)
+	}
 	if err := validateExporters(c.exporterFactory, in.Telemetry); err != nil {
 		return nil, err
 	}
@@ -100,14 +103,14 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, 
 		g.SessionConfig = domain.DefaultSessionConfig()
 	}
 	// Platform admins (empty JWT tenant / PlatformAdmin) may set entitlements; tenant callers cannot.
-	if in.Entitlements != nil && !in.PlatformAdmin && in.TenantID != "" {
+	if in.Entitlements != nil && !in.PlatformAdmin {
 		return nil, fmt.Errorf("entitlements may only be set by platform admins: %w", commonerrors.ErrValidation)
 	}
-	if in.Entitlements != nil && (in.PlatformAdmin || in.TenantID == "") {
+	if in.Entitlements != nil && in.PlatformAdmin {
 		g.Entitlements = *in.Entitlements
 	}
 	// Under immutable entitlements, a new gateway still inherits the tenant's highest sibling tier so MaxInstances matches the plan.
-	if in.TenantID != "" && isDefaultFreeTier(g.Entitlements) {
+	if isDefaultFreeTier(g.Entitlements) {
 		inherited, err := c.highestSiblingTier(ctx, in.TenantID)
 		if err != nil {
 			return nil, err
@@ -134,9 +137,9 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, 
 	return g, nil
 }
 
-// instanceCap resolves stamped max-instances; 0 means unlimited, unstamped, or no tenant.
+// instanceCap resolves stamped max-instances; 0 means unlimited or unstamped.
 func instanceCap(tenantID string, entitlements domain.Entitlements) int {
-	if tenantID == "" {
+	if strings.TrimSpace(tenantID) == "" {
 		return 0
 	}
 	limits, ok := entitlements.ResolveLimits()

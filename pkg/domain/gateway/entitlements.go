@@ -42,7 +42,7 @@ func (e Entitlements) HasStampedLimits() bool {
 	return e.BurstPerMin != nil && e.QuotaPerMonth != nil && e.MaxInstances != nil
 }
 
-// ResolveLimits returns stamped caps only. Unstamped instances are unavailable for metering.
+// ResolveLimits returns stamped caps only. Unstamped instances have no commercial plan metering.
 func (e Entitlements) ResolveLimits() (ratelimit.Limits, bool) {
 	if !e.HasStampedLimits() {
 		return ratelimit.Limits{}, false

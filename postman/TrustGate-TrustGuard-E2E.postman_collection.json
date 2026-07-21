@@ -144,7 +144,7 @@
 								],
 								"body": {
 									"mode": "raw",
-									"raw": "{\n  \"slug\": \"e2e-tguard-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+									"raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"slug\": \"e2e-tguard-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
 								},
 								"url": {
 									"raw": "{{tg_base_url}}/v1/gateways",
@@ -1113,7 +1113,7 @@
 								],
 								"body": {
 									"mode": "raw",
-									"raw": "{\n  \"slug\": \"e2e-tguard-pg-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+									"raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"slug\": \"e2e-tguard-pg-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
 								},
 								"url": {
 									"raw": "{{tg_base_url}}/v1/gateways",

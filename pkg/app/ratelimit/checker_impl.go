@@ -21,7 +21,6 @@ import (
 	"math"
 	"time"
 
-	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -63,13 +62,14 @@ func (c *checker) recordFailOpen(ctx context.Context, reason string) {
 func (c *checker) Check(ctx context.Context, gatewayID ids.GatewayID) error {
 	limits, err := c.tiers.Limits(ctx, gatewayID)
 	if err != nil {
-		if errors.Is(err, commonerrors.ErrNotFound) || errors.Is(err, ErrUnavailable) {
-			return ErrUnavailable
+		// OSS / fail-open: unstamped, missing gateway, or load errors skip plan metering
+		// so CRUD can return 404 and self-hosted traffic is not blocked.
+		if !errors.Is(err, ErrUnmetered) {
+			c.logger.Warn("rate limit: failed to load entitlements; fail-open",
+				slog.String("gateway_id", gatewayID.String()),
+				slog.Any("error", err))
+			c.recordFailOpen(ctx, "tier_load")
 		}
-		c.logger.Warn("rate limit: failed to load entitlements; fail-open",
-			slog.String("gateway_id", gatewayID.String()),
-			slog.Any("error", err))
-		c.recordFailOpen(ctx, "tier_load")
 		return nil
 	}
 

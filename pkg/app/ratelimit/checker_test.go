@@ -153,17 +153,24 @@ func TestCheckerEnterpriseBurstExceeded(t *testing.T) {
 	}
 }
 
-func TestCheckerUnknownTierUnavailable(t *testing.T) {
-	c := NewChecker(stubTiers{tier: "gold"}, &stubCounter{burst: 1}, nil)
-	if err := c.Check(context.Background(), ids.New[ids.GatewayKind]()); !errors.Is(err, ErrUnavailable) {
-		t.Fatalf("err = %v, want ErrUnavailable", err)
+func TestCheckerUnmeteredSkipsPlanLimits(t *testing.T) {
+	c := NewChecker(stubTiers{err: ErrUnmetered}, &stubCounter{burst: 999}, nil)
+	if err := c.Check(context.Background(), ids.New[ids.GatewayKind]()); err != nil {
+		t.Fatalf("want skip plan limits nil, got %v", err)
 	}
 }
 
-func TestCheckerMissingGatewayUnavailable(t *testing.T) {
+func TestCheckerUnavailableFailOpen(t *testing.T) {
+	c := NewChecker(stubTiers{err: ErrUnavailable}, &stubCounter{burst: 1}, nil)
+	if err := c.Check(context.Background(), ids.New[ids.GatewayKind]()); err != nil {
+		t.Fatalf("want fail-open nil, got %v", err)
+	}
+}
+
+func TestCheckerMissingGatewayFailOpen(t *testing.T) {
 	c := NewChecker(stubTiers{err: commonerrors.ErrNotFound}, &stubCounter{}, nil)
-	if err := c.Check(context.Background(), ids.New[ids.GatewayKind]()); !errors.Is(err, ErrUnavailable) {
-		t.Fatalf("err = %v, want ErrUnavailable", err)
+	if err := c.Check(context.Background(), ids.New[ids.GatewayKind]()); err != nil {
+		t.Fatalf("want fail-open nil, got %v", err)
 	}
 }
 

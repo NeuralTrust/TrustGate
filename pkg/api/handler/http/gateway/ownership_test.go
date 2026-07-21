@@ -201,6 +201,23 @@ func TestCreateGatewayHandler_PlatformAdmin_UsesBodyTenantID(t *testing.T) {
 	require.Equal(t, fiber.StatusCreated, resp.StatusCode)
 }
 
+func TestCreateGatewayHandler_PlatformAdmin_MissingBodyTenant_Rejected(t *testing.T) {
+	t.Parallel()
+	creator := appgatewaymocks.NewCreator(t)
+
+	app := fiber.New()
+	app.Use(tenantMiddleware(""))
+	app.Post("/", gatewayhttp.NewCreateGatewayHandler(creator, "gw.local", "mcp.local").Handle)
+
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"slug":"prod"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, -1)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, fiber.StatusUnprocessableEntity, resp.StatusCode)
+	creator.AssertNotCalled(t, "Create", mock.Anything, mock.Anything)
+}
+
 func TestCreateGatewayHandler_TenantJWT_BodyTenantMismatch_Rejected(t *testing.T) {
 	t.Parallel()
 	creator := appgatewaymocks.NewCreator(t)

@@ -77,7 +77,7 @@ func TestGatewayTierLoader_FallsBackToFinder(t *testing.T) {
 	}
 }
 
-func TestGatewayTierLoader_UnstampedFromContextUnavailable(t *testing.T) {
+func TestGatewayTierLoader_UnstampedFromContextUnmetered(t *testing.T) {
 	finder := gatewaymocks.NewFinder(t)
 	loader := NewGatewayTierLoader(finder)
 
@@ -86,8 +86,8 @@ func TestGatewayTierLoader_UnstampedFromContextUnavailable(t *testing.T) {
 	ctx := appgateway.WithGateway(context.Background(), gw)
 
 	_, err := loader.Limits(ctx, gatewayID)
-	if !errors.Is(err, ErrUnavailable) {
-		t.Fatalf("err = %v, want ErrUnavailable", err)
+	if !errors.Is(err, ErrUnmetered) {
+		t.Fatalf("err = %v, want ErrUnmetered", err)
 	}
 	finder.AssertNotCalled(t, "FindByID")
 }
@@ -118,7 +118,7 @@ func TestGatewayTierLoader_UsesStampedLimits(t *testing.T) {
 	}
 }
 
-func TestGatewayTierLoader_UnstampedFromFinderUnavailable(t *testing.T) {
+func TestGatewayTierLoader_UnstampedFromFinderUnmetered(t *testing.T) {
 	finder := gatewaymocks.NewFinder(t)
 	gatewayID := ids.New[ids.GatewayKind]()
 	gw := &gatewaydomain.Gateway{ID: gatewayID, Entitlements: gatewaydomain.Entitlements{Tier: "free"}}
@@ -126,8 +126,8 @@ func TestGatewayTierLoader_UnstampedFromFinderUnavailable(t *testing.T) {
 
 	loader := NewGatewayTierLoader(finder)
 	_, err := loader.Limits(context.Background(), gatewayID)
-	if !errors.Is(err, ErrUnavailable) {
-		t.Fatalf("err = %v, want ErrUnavailable", err)
+	if !errors.Is(err, ErrUnmetered) {
+		t.Fatalf("err = %v, want ErrUnmetered", err)
 	}
 }
 
