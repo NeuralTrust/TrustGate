@@ -46,3 +46,4 @@ scripts/secret/
 .DS_Store
 .cursor/sdd
 docs/internal/*
+downloads/start.sh
