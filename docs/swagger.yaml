@@ -693,8 +693,9 @@ definitions:
         allOf:
         - $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Entitlements'
         description: |-
-          Entitlements.Tier is optional; only platform admins may set it. Tenant callers sending
-          entitlements receive 422. When omitted the gateway defaults to free (or inherits sibling tier).
+          Entitlements is required for platform (empty JWT tenant) create and must include full stamped caps.
+          Tenant callers must omit it (422 if sent). When a tenant omits it, the gateway defaults to free
+          or inherits the highest sibling tier.
       metadata:
         additionalProperties:
           type: string
@@ -709,8 +710,8 @@ definitions:
       telemetry:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry'
       tenant_id:
-        description: TenantID is optional ownership for platform (empty JWT) create-for-tenant;
-          tenant JWTs must match or omit it.
+        description: TenantID is required ownership for platform (empty JWT) create-for-tenant;
+          tenant JWTs may match or omit it (JWT wins).
         type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_request.UpdateGatewayRequest:
@@ -723,9 +724,9 @@ definitions:
         allOf:
         - $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Entitlements'
         description: |-
-          Entitlements.Tier is optional; only platform admins may set it (tenant callers get 422).
-          When omitted the gateway's tier is left unchanged. Downgrading when the tenant already
-          has more gateways than the new tier's MaxInstances returns 409 — delete excess first.
+          Entitlements is optional; only platform admins may set it (tenant callers get 422).
+          When omitted the gateway's entitlements are left unchanged. Downgrading when the tenant already
+          has more gateways than the new MaxInstances returns 409 — delete excess first.
       metadata:
         additionalProperties:
           type: string
@@ -1833,6 +1834,12 @@ definitions:
     type: object
   github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Entitlements:
     properties:
+      burst_per_min:
+        type: integer
+      max_instances:
+        type: integer
+      quota_per_month:
+        type: integer
       tier:
         type: string
     type: object
@@ -2268,9 +2275,26 @@ paths:
       summary: Proxy chat completion
       tags:
       - proxy
+  /health:
+    get:
+      description: Reports whether the process is alive. Canonical path is /healthz;
+        /health is an alias for load-balancer defaults.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Liveness probe
+      tags:
+      - system
   /healthz:
     get:
-      description: Reports whether the process is alive.
+      description: Reports whether the process is alive. Canonical path is /healthz;
+        /health is an alias for load-balancer defaults.
       produces:
       - application/json
       responses:
@@ -2372,11 +2396,13 @@ paths:
     post:
       consumes:
       - application/json
-      description: 'Creates a new gateway. The slug is optional: when omitted the
-        server generates a unique random slug. If provided it must be a lowercase
-        DNS label and unique. Tenant JWTs may not send entitlements (422); only platform
-        admins may stamp tier. With RATE_LIMIT_ENABLED, create returns 409 when the
-        tenant is already at MaxInstances for the effective tier.'
+      description: 'Creates a new gateway. Ownership tenant_id is required (JWT claim,
+        or body for platform admins). The slug is optional: when omitted the server
+        generates a unique random slug. If provided it must be a lowercase DNS label
+        and unique. Platform JWT create requires stamped entitlements (tier + caps);
+        tenant JWTs must omit entitlements (422 if sent). With RATE_LIMIT_ENABLED,
+        create returns 409 when the tenant is already at MaxInstances for the effective
+        tier.'
       parameters:
       - description: Gateway to create
         in: body

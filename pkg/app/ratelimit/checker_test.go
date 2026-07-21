@@ -17,20 +17,39 @@ package ratelimit
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 )
+
+var stubTierLimits = map[string]domain.Limits{
+	domain.TierFree:       {BurstPerMin: 60, QuotaPerMonth: 10_000, MaxInstances: 5},
+	domain.TierStandard:   {BurstPerMin: 300, QuotaPerMonth: 100_000, MaxInstances: 5},
+	domain.TierEnterprise: {BurstPerMin: 1_000, QuotaPerMonth: 0, MaxInstances: 5},
+}
 
 type stubTiers struct {
 	tier string
 	err  error
 }
 
-func (s stubTiers) Tier(context.Context, ids.GatewayID) (string, error) {
-	return s.tier, s.err
+func (s stubTiers) Limits(context.Context, ids.GatewayID) (domain.Limits, error) {
+	if s.err != nil {
+		return domain.Limits{}, s.err
+	}
+	tier := strings.ToLower(strings.TrimSpace(s.tier))
+	if tier == "" {
+		tier = domain.TierFree
+	}
+	limits, ok := stubTierLimits[tier]
+	if !ok {
+		return domain.Limits{}, ErrUnavailable
+	}
+	return limits, nil
 }
 
 type stubCounter struct {
@@ -134,17 +153,24 @@ func TestCheckerEnterpriseBurstExceeded(t *testing.T) {
 	}
 }
 
-func TestCheckerUnknownTierUnavailable(t *testing.T) {
-	c := NewChecker(stubTiers{tier: "gold"}, &stubCounter{burst: 1}, nil)
-	if err := c.Check(context.Background(), ids.New[ids.GatewayKind]()); !errors.Is(err, ErrUnavailable) {
-		t.Fatalf("err = %v, want ErrUnavailable", err)
+func TestCheckerUnmeteredSkipsPlanLimits(t *testing.T) {
+	c := NewChecker(stubTiers{err: ErrUnmetered}, &stubCounter{burst: 999}, nil)
+	if err := c.Check(context.Background(), ids.New[ids.GatewayKind]()); err != nil {
+		t.Fatalf("want skip plan limits nil, got %v", err)
 	}
 }
 
-func TestCheckerMissingGatewayUnavailable(t *testing.T) {
+func TestCheckerUnavailableFailOpen(t *testing.T) {
+	c := NewChecker(stubTiers{err: ErrUnavailable}, &stubCounter{burst: 1}, nil)
+	if err := c.Check(context.Background(), ids.New[ids.GatewayKind]()); err != nil {
+		t.Fatalf("want fail-open nil, got %v", err)
+	}
+}
+
+func TestCheckerMissingGatewayFailOpen(t *testing.T) {
 	c := NewChecker(stubTiers{err: commonerrors.ErrNotFound}, &stubCounter{}, nil)
-	if err := c.Check(context.Background(), ids.New[ids.GatewayKind]()); !errors.Is(err, ErrUnavailable) {
-		t.Fatalf("err = %v, want ErrUnavailable", err)
+	if err := c.Check(context.Background(), ids.New[ids.GatewayKind]()); err != nil {
+		t.Fatalf("want fail-open nil, got %v", err)
 	}
 }
 

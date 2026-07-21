@@ -43,9 +43,9 @@ type CreateInput struct {
 	Telemetry       *telemetry.Telemetry
 	ClientTLSConfig domain.ClientTLSConfig
 	SessionConfig   *domain.SessionConfig
-	// Entitlements overrides the default free tier when the admin API sets it explicitly.
+	// Entitlements is required when PlatformAdmin is true (full stamped caps).
 	Entitlements *domain.Entitlements
-	// PlatformAdmin is true when the JWT has no tenant claim (may set entitlements even when TenantID is stamped from the body).
+	// PlatformAdmin is true when the JWT has no tenant claim (must stamp entitlements; TenantID comes from the body).
 	PlatformAdmin bool
 }
 
@@ -84,6 +84,9 @@ func NewCreator(
 }
 
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, error) {
+	if strings.TrimSpace(in.TenantID) == "" {
+		return nil, fmt.Errorf("tenant_id is required: %w", commonerrors.ErrValidation)
+	}
 	if err := validateExporters(c.exporterFactory, in.Telemetry); err != nil {
 		return nil, err
 	}
@@ -99,15 +102,17 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, 
 	if g.SessionConfig == nil {
 		g.SessionConfig = domain.DefaultSessionConfig()
 	}
-	// Platform admins (empty JWT tenant / PlatformAdmin) may set entitlements; tenant callers cannot.
-	if in.Entitlements != nil && !in.PlatformAdmin && in.TenantID != "" {
+	// Platform create must stamp full entitlements; tenant callers cannot set them.
+	if in.PlatformAdmin {
+		if in.Entitlements == nil || !in.Entitlements.HasStampedLimits() {
+			return nil, fmt.Errorf("entitlements are required for platform create: %w", commonerrors.ErrValidation)
+		}
+		g.Entitlements = *in.Entitlements
+	} else if in.Entitlements != nil {
 		return nil, fmt.Errorf("entitlements may only be set by platform admins: %w", commonerrors.ErrValidation)
 	}
-	if in.Entitlements != nil && (in.PlatformAdmin || in.TenantID == "") {
-		g.Entitlements = *in.Entitlements
-	}
 	// Under immutable entitlements, a new gateway still inherits the tenant's highest sibling tier so MaxInstances matches the plan.
-	if in.TenantID != "" && isDefaultFreeTier(g.Entitlements) {
+	if isDefaultFreeTier(g.Entitlements) {
 		inherited, err := c.highestSiblingTier(ctx, in.TenantID)
 		if err != nil {
 			return nil, err
@@ -134,12 +139,12 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, 
 	return g, nil
 }
 
-// instanceCap resolves the tier's max-instances cap; 0 means unlimited or no tenant to scope by.
+// instanceCap resolves stamped max-instances; 0 means unlimited or unstamped.
 func instanceCap(tenantID string, entitlements domain.Entitlements) int {
-	if tenantID == "" {
+	if strings.TrimSpace(tenantID) == "" {
 		return 0
 	}
-	limits, ok := ratelimit.LimitsFor(entitlements.Tier)
+	limits, ok := entitlements.ResolveLimits()
 	if !ok || !limits.HasInstanceCap() {
 		return 0
 	}
@@ -178,7 +183,7 @@ func (c *creator) highestSiblingTier(ctx context.Context, tenantID string) (doma
 				continue
 			}
 			if tierRank(sibling.Entitlements.Tier) > tierRank(highest.Tier) {
-				highest = domain.Entitlements{Tier: strings.ToLower(strings.TrimSpace(sibling.Entitlements.Tier))}
+				highest = sibling.Entitlements
 			}
 		}
 		if len(items) == 0 || page*siblingListPageSize >= total {
