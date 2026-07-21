@@ -25,7 +25,6 @@ services:
       SERVER_MCP_PORT: "8082"
       LOG_LEVEL: INFO
       LOG_FORMAT: json
-      GATEWAY_DISCOVERY_MODE: header
       # REQUIRED to boot: >=32 bytes. openssl rand -base64 32
       SERVER_SECRET_KEY: ${SERVER_SECRET_KEY:?set SERVER_SECRET_KEY (openssl rand -base64 32)}
 

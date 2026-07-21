@@ -2284,7 +2284,7 @@
                 "gateways"
               ]
             },
-            "description": "Optional `slug` (lowercase DNS label): when omitted the server generates a unique random slug. The slug identifies the gateway on the proxy plane: `X-AG-Gateway-Slug` header (GATEWAY_DISCOVERY_MODE=header, default) or `{slug}.<GATEWAY_BASE_DOMAIN>` host (subdomain mode)."
+            "description": "Optional `slug` (lowercase DNS label): when omitted the server generates a unique random slug. The slug identifies the gateway on the proxy plane: `X-AG-Gateway-Slug` header takes precedence, and when it is absent the `{slug}.<GATEWAY_BASE_DOMAIN>` host is used as fallback."
           }
         },
         {
