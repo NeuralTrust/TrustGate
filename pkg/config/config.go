@@ -40,9 +40,6 @@ const (
 	defaultGatewayBaseDomain  = "llm.neuraltrust.ai"
 	defaultMCPBaseDomain      = "mcp.neuraltrust.ai"
 
-	GatewayDiscoveryModeHeader    = "header"
-	GatewayDiscoveryModeSubdomain = "subdomain"
-
 	defaultDBHost                    = "localhost"
 	defaultDBPort                    = 5432
 	defaultDBUser                    = "trustgate"
@@ -219,7 +216,6 @@ type ServerConfig struct {
 	SecretKey            string
 	GatewayBaseDomain    string
 	MCPBaseDomain        string
-	GatewayDiscoveryMode string
 	STSIssuer            string
 	STSSigningKey        string
 	TrustXFCCFrom        []string
@@ -407,10 +403,6 @@ func getServerConfig() ServerConfig {
 			"MCP_BASE_DOMAIN",
 			defaultMCPBaseDomain,
 		),
-		GatewayDiscoveryMode: strings.ToLower(strings.TrimSpace(getEnv(
-			"GATEWAY_DISCOVERY_MODE",
-			GatewayDiscoveryModeHeader,
-		))),
 		STSIssuer:     getEnv("STS_ISSUER", "trustgate"),
 		STSSigningKey: getEnv("STS_SIGNING_KEY", ""),
 		TrustXFCCFrom: splitCSV(getEnv("TRUST_XFCC_FROM", "")),
@@ -749,13 +741,6 @@ func (c *Config) Validate() error {
 	case postgresLoginDefault, postgresLoginAWS:
 	default:
 		return fmt.Errorf("%w: POSTGRES_LOGIN must be %q or %q", errors.ErrInvalidConfig, postgresLoginDefault, postgresLoginAWS)
-	}
-	if c.Server.GatewayDiscoveryMode != GatewayDiscoveryModeHeader &&
-		c.Server.GatewayDiscoveryMode != GatewayDiscoveryModeSubdomain {
-		return fmt.Errorf(
-			"%w: GATEWAY_DISCOVERY_MODE must be %q or %q",
-			errors.ErrInvalidConfig, GatewayDiscoveryModeHeader, GatewayDiscoveryModeSubdomain,
-		)
 	}
 	if strings.Trim(strings.ToLower(strings.TrimSpace(c.Server.GatewayBaseDomain)), ".") == "" {
 		return fmt.Errorf("%w: GATEWAY_BASE_DOMAIN is required", errors.ErrInvalidConfig)
