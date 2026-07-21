@@ -15,7 +15,7 @@
 package modules
 
 import (
-	"fmt"
+	"context"
 	"log/slog"
 	"strings"
 
@@ -46,12 +46,19 @@ func MCP(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(cfg *config.Config, logger *slog.Logger) (sts.TokenSigner, error) {
-		env := strings.ToLower(strings.TrimSpace(cfg.AppEnv))
-		if cfg.Server.STSSigningKey == "" && (env == "prod" || env == "production") {
-			return nil, fmt.Errorf("sts: STS_SIGNING_KEY is required when APP_ENV=%s (ephemeral keys are not shared across replicas)", cfg.AppEnv)
+	if err := c.Provide(func(cfg *config.Config, cc cache.Client, logger *slog.Logger) (sts.TokenSigner, error) {
+		keyPEM := cfg.Server.STSSigningKey
+		if keyPEM == "" {
+			env := strings.ToLower(strings.TrimSpace(cfg.AppEnv))
+			if env == "prod" || env == "production" {
+				resolved, err := infrasts.ResolveSharedSigningKey(context.Background(), cc.RedisClient(), logger)
+				if err != nil {
+					return nil, err
+				}
+				keyPEM = resolved
+			}
 		}
-		return infrasts.NewSigner(cfg.Server.STSIssuer, cfg.Server.STSSigningKey, logger)
+		return infrasts.NewSigner(cfg.Server.STSIssuer, keyPEM, logger)
 	}); err != nil {
 		return err
 	}
