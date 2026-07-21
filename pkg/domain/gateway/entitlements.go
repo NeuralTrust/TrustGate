@@ -24,22 +24,88 @@ import (
 
 const TierFree = ratelimit.TierFree
 
+// Entitlements is the plan label plus optional caps stamped by the control plane.
+// Stamped caps win; if absent, ResolveLimits falls back to LimitsFor(tier) for legacy rows.
 type Entitlements struct {
-	Tier string `json:"tier"`
+	Tier          string `json:"tier"`
+	BurstPerMin   *int   `json:"burst_per_min,omitempty"`
+	QuotaPerMonth *int   `json:"quota_per_month,omitempty"`
+	MaxInstances  *int   `json:"max_instances,omitempty"`
 }
 
 func DefaultEntitlements() Entitlements {
 	return Entitlements{Tier: TierFree}
 }
 
-// ValidateTier normalizes tier and rejects anything outside the known rate-limit tiers; empty means free.
+// HasStampedLimits reports whether all three numeric caps were stamped together.
+func (e Entitlements) HasStampedLimits() bool {
+	return e.BurstPerMin != nil && e.QuotaPerMonth != nil && e.MaxInstances != nil
+}
+
+// ResolveLimits prefers stamped caps; otherwise LimitsFor(tier) (empty → free) for unstamped instances.
+func (e Entitlements) ResolveLimits() (ratelimit.Limits, bool) {
+	if e.HasStampedLimits() {
+		return ratelimit.Limits{
+			BurstPerMin:   *e.BurstPerMin,
+			QuotaPerMonth: *e.QuotaPerMonth,
+			MaxInstances:  *e.MaxInstances,
+		}, true
+	}
+	tier := strings.ToLower(strings.TrimSpace(e.Tier))
+	if tier == "" {
+		tier = TierFree
+	}
+	return ratelimit.LimitsFor(tier)
+}
+
+// ValidateTier normalizes tier and rejects unknown plan labels; empty means free.
 func ValidateTier(tier string) (string, error) {
 	normalized := strings.ToLower(strings.TrimSpace(tier))
 	if normalized == "" {
 		return TierFree, nil
 	}
-	if _, ok := ratelimit.LimitsFor(normalized); !ok {
+	if !ratelimit.IsKnownTier(normalized) {
 		return "", fmt.Errorf("gateway: entitlements.tier must be one of free, standard, enterprise: %w", commonerrors.ErrValidation)
+	}
+	return normalized, nil
+}
+
+// NormalizeEntitlements validates tier and requires stamped caps when any limit field is present;
+// API payloads that include entitlements should send all three caps (control-plane stamp).
+func NormalizeEntitlements(e Entitlements) (Entitlements, error) {
+	tier, err := ValidateTier(e.Tier)
+	if err != nil {
+		return Entitlements{}, err
+	}
+	e.Tier = tier
+
+	anyLimit := e.BurstPerMin != nil || e.QuotaPerMonth != nil || e.MaxInstances != nil
+	if !anyLimit {
+		return e, nil
+	}
+	if !e.HasStampedLimits() {
+		return Entitlements{}, fmt.Errorf("gateway: entitlements stamped limits must set burst_per_min, quota_per_month, and max_instances together: %w", commonerrors.ErrValidation)
+	}
+	if *e.BurstPerMin <= 0 {
+		return Entitlements{}, fmt.Errorf("gateway: entitlements.burst_per_min must be > 0: %w", commonerrors.ErrValidation)
+	}
+	if *e.QuotaPerMonth < 0 {
+		return Entitlements{}, fmt.Errorf("gateway: entitlements.quota_per_month must be >= 0: %w", commonerrors.ErrValidation)
+	}
+	if *e.MaxInstances < 0 {
+		return Entitlements{}, fmt.Errorf("gateway: entitlements.max_instances must be >= 0: %w", commonerrors.ErrValidation)
+	}
+	return e, nil
+}
+
+// RequireStampedEntitlements is used when the control plane sends an entitlements object (upgrade/downgrade scripts).
+func RequireStampedEntitlements(e Entitlements) (Entitlements, error) {
+	normalized, err := NormalizeEntitlements(e)
+	if err != nil {
+		return Entitlements{}, err
+	}
+	if !normalized.HasStampedLimits() {
+		return Entitlements{}, fmt.Errorf("gateway: entitlements must include burst_per_min, quota_per_month, and max_instances: %w", commonerrors.ErrValidation)
 	}
 	return normalized, nil
 }

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 )
 
 const (
@@ -65,7 +66,7 @@ type Counter interface {
 
 //go:generate mockery --name=GatewayTierLoader --dir=. --output=./mocks --filename=gateway_tier_loader_mock.go --case=underscore --with-expecter
 type GatewayTierLoader interface {
-	Tier(ctx context.Context, gatewayID ids.GatewayID) (string, error)
+	Limits(ctx context.Context, gatewayID ids.GatewayID) (domain.Limits, error)
 }
 
 //go:generate mockery --name=Checker --dir=. --output=./mocks --filename=checker_mock.go --case=underscore --with-expecter

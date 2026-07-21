@@ -17,20 +17,39 @@ package ratelimit
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 )
+
+var stubTierLimits = map[string]domain.Limits{
+	domain.TierFree:       {BurstPerMin: 60, QuotaPerMonth: 10_000, MaxInstances: 1},
+	domain.TierStandard:   {BurstPerMin: 300, QuotaPerMonth: 100_000, MaxInstances: 2},
+	domain.TierEnterprise: {BurstPerMin: 1_000, QuotaPerMonth: 0, MaxInstances: 0},
+}
 
 type stubTiers struct {
 	tier string
 	err  error
 }
 
-func (s stubTiers) Tier(context.Context, ids.GatewayID) (string, error) {
-	return s.tier, s.err
+func (s stubTiers) Limits(context.Context, ids.GatewayID) (domain.Limits, error) {
+	if s.err != nil {
+		return domain.Limits{}, s.err
+	}
+	tier := strings.ToLower(strings.TrimSpace(s.tier))
+	if tier == "" {
+		tier = domain.TierFree
+	}
+	limits, ok := stubTierLimits[tier]
+	if !ok {
+		return domain.Limits{}, ErrUnavailable
+	}
+	return limits, nil
 }
 
 type stubCounter struct {

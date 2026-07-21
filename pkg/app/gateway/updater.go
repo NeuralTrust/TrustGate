@@ -25,7 +25,6 @@ import (
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
@@ -129,8 +128,8 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 		return nil, err
 	}
 	maxInstances := 0
-	if u.rateLimitEnabled && tenantID != "" && old.Entitlements.Tier != g.Entitlements.Tier {
-		limits, ok := ratelimit.LimitsFor(g.Entitlements.Tier)
+	if u.rateLimitEnabled && tenantID != "" && in.Entitlements != nil {
+		limits, ok := g.Entitlements.ResolveLimits()
 		if ok && limits.HasInstanceCap() {
 			maxInstances = limits.MaxInstances
 		}

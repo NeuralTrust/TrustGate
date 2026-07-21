@@ -31,13 +31,13 @@ type UpdateGatewayRequest struct {
 	Telemetry       *telemetry.Telemetry    `json:"telemetry,omitempty"`
 	ClientTLSConfig *domain.ClientTLSConfig `json:"client_tls,omitempty"`
 	SessionConfig   *domain.SessionConfig   `json:"session_config,omitempty"`
-	// Entitlements.Tier is optional; only platform admins may set it (tenant callers get 422).
-	// When omitted the gateway's tier is left unchanged. Downgrading when the tenant already
-	// has more gateways than the new tier's MaxInstances returns 409 — delete excess first.
+	// Entitlements is optional; only platform admins may set it (tenant callers get 422).
+	// When omitted the gateway's entitlements are left unchanged. Downgrading when the tenant already
+	// has more gateways than the new MaxInstances returns 409 — delete excess first.
 	Entitlements *domain.Entitlements `json:"entitlements,omitempty"`
 }
 
-func (r UpdateGatewayRequest) Validate() error {
+func (r *UpdateGatewayRequest) Validate() error {
 	if r.Slug != nil {
 		if strings.TrimSpace(*r.Slug) == "" {
 			return fmt.Errorf("slug is required: %w", commonerrors.ErrValidation)
@@ -47,11 +47,11 @@ func (r UpdateGatewayRequest) Validate() error {
 		}
 	}
 	if r.Entitlements != nil {
-		tier, err := domain.ValidateTier(r.Entitlements.Tier)
+		normalized, err := domain.RequireStampedEntitlements(*r.Entitlements)
 		if err != nil {
 			return err
 		}
-		r.Entitlements.Tier = tier
+		r.Entitlements = &normalized
 	}
 	return nil
 }

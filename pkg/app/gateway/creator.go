@@ -134,12 +134,12 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, 
 	return g, nil
 }
 
-// instanceCap resolves the tier's max-instances cap; 0 means unlimited or no tenant to scope by.
+// instanceCap resolves stamped max-instances; 0 means unlimited, unstamped, or no tenant.
 func instanceCap(tenantID string, entitlements domain.Entitlements) int {
 	if tenantID == "" {
 		return 0
 	}
-	limits, ok := ratelimit.LimitsFor(entitlements.Tier)
+	limits, ok := entitlements.ResolveLimits()
 	if !ok || !limits.HasInstanceCap() {
 		return 0
 	}
@@ -178,7 +178,7 @@ func (c *creator) highestSiblingTier(ctx context.Context, tenantID string) (doma
 				continue
 			}
 			if tierRank(sibling.Entitlements.Tier) > tierRank(highest.Tier) {
-				highest = domain.Entitlements{Tier: strings.ToLower(strings.TrimSpace(sibling.Entitlements.Tier))}
+				highest = sibling.Entitlements
 			}
 		}
 		if len(items) == 0 || page*siblingListPageSize >= total {

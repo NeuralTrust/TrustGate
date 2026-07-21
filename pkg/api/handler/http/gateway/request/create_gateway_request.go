@@ -33,21 +33,22 @@ type CreateGatewayRequest struct {
 	Telemetry       *telemetry.Telemetry   `json:"telemetry,omitempty"`
 	ClientTLSConfig domain.ClientTLSConfig `json:"client_tls,omitempty"`
 	SessionConfig   *domain.SessionConfig  `json:"session_config,omitempty"`
-	// Entitlements.Tier is optional; only platform admins may set it. Tenant callers sending
+	// Entitlements is optional; only platform admins may set it. Tenant callers sending
 	// entitlements receive 422. When omitted the gateway defaults to free (or inherits sibling tier).
+	// Optional stamped caps (burst_per_min, quota_per_month, max_instances) must be set together.
 	Entitlements *domain.Entitlements `json:"entitlements,omitempty"`
 }
 
 // Validate checks the create request. The slug is optional: when omitted the
 // server generates a unique random slug at creation time. A provided slug must
 // still be a valid lowercase DNS label.
-func (r CreateGatewayRequest) Validate() error {
+func (r *CreateGatewayRequest) Validate() error {
 	if r.Entitlements != nil {
-		tier, err := domain.ValidateTier(r.Entitlements.Tier)
+		normalized, err := domain.RequireStampedEntitlements(*r.Entitlements)
 		if err != nil {
 			return err
 		}
-		r.Entitlements.Tier = tier
+		r.Entitlements = &normalized
 	}
 	if strings.TrimSpace(r.Slug) == "" {
 		return nil
