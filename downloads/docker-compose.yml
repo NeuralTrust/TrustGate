@@ -9,6 +9,7 @@ services:
     restart: unless-stopped
     ports:
       - "8081:8081"   # TrustGate proxy (DataPlane traffic)
+      - "8082:8082"   # TrustGate MCP server
       - "8090:8090"   # DataAgent local health probe
     depends_on:
       redis:
@@ -21,6 +22,7 @@ services:
       # ----------------------------------------------------------------------
       APP_ENV: prod
       SERVER_PROXY_PORT: "8081"
+      SERVER_MCP_PORT: "8082"
       LOG_LEVEL: INFO
       LOG_FORMAT: json
       GATEWAY_DISCOVERY_MODE: header
