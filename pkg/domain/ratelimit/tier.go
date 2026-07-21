@@ -22,23 +22,24 @@ const (
 	TierEnterprise = "enterprise"
 )
 
-// Limits are plan caps; QuotaPerMonth == 0 means unlimited, MaxInstances == 0 means unlimited.
-// Create inherits the highest sibling tier so MaxInstances stays consistent under immutable entitlements.
+// Limits are plan caps stamped by the control plane onto each instance.
+// QuotaPerMonth == 0 means unlimited, MaxInstances == 0 means unlimited.
 type Limits struct {
 	BurstPerMin   int
 	QuotaPerMonth int
 	MaxInstances  int
 }
 
-var tiers = map[string]Limits{
-	TierFree:       {BurstPerMin: 60, QuotaPerMonth: 10_000, MaxInstances: 5},
-	TierStandard:   {BurstPerMin: 300, QuotaPerMonth: 100_000, MaxInstances: 5},
-	TierEnterprise: {BurstPerMin: 1_000, QuotaPerMonth: 0, MaxInstances: 5},
+var knownTiers = map[string]struct{}{
+	TierFree:       {},
+	TierStandard:   {},
+	TierEnterprise: {},
 }
 
-func LimitsFor(tier string) (Limits, bool) {
-	limits, ok := tiers[strings.ToLower(strings.TrimSpace(tier))]
-	return limits, ok
+// IsKnownTier reports whether name is a recognized plan label (no numeric caps here).
+func IsKnownTier(tier string) bool {
+	_, ok := knownTiers[strings.ToLower(strings.TrimSpace(tier))]
+	return ok
 }
 
 func (l Limits) HasMonthlyQuota() bool {

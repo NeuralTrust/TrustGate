@@ -2,7 +2,7 @@
 	"info": {
 		"_postman_id": "e2e00000-tg-tguard-0000-collection-0001",
 		"name": "TrustGate + TrustGuard E2E",
-		"description": "End-to-end flows wiring TrustGate to TrustGuard through the `trustguard` plugin.\n\nTwo self-contained scenarios (run one folder with Collection Runner):\n- **Flow - injection_protection (SQLi)**: `injection_protection` detector, SQL-injection KO, optional direct `/v1/evaluate` via `collector_key`.\n- **Flow - prompt_guard (jailbreak)**: `prompt_guard` detector via NeuralTrust Firewall; requires `firewall_base_url` + `firewall_token`.\n\nShared setup per flow: TrustGate gateway/registry/consumer, TrustGuard platform tenant + collector (`metadata.gateway_id`), TrustGate `trustguard` plugin policy with `collector_id`.\n\nAuth:\n- TrustGate admin: `Authorization: Bearer {{tg_admin_token}}`.\n- TrustGuard admin: `Authorization: Bearer {{admin_jwt}}` (auto-minted from `admin_jwt_secret` + `tenant_id`).\n- Runtime TrustGate\u2194TrustGuard: server-side platform OAuth2 (`TRUSTGUARD_CLIENT_ID`/`SECRET` on TrustGate = `TRUSTGUARD_PLATFORM_CLIENT_ID`/`SECRET` on TrustGuard).\n\nVariables: tg_base_url, tg_proxy_url, tg_admin_token, guard_base_url, admin_jwt_secret, tenant_id, openai_api_key; prompt_guard also needs firewall_base_url, firewall_token.",
+		"description": "End-to-end flows wiring TrustGate to TrustGuard through the `trustguard` plugin.\n\nTwo self-contained scenarios (run one folder with Collection Runner):\n- **Flow - injection_protection (SQLi)**: `injection_protection` detector, SQL-injection KO, optional direct `/v1/evaluate` via `collector_key`.\n- **Flow - prompt_guard (jailbreak)**: `prompt_guard` detector via NeuralTrust Firewall; requires `firewall_base_url` + `firewall_token`.\n\nShared setup per flow: TrustGate gateway/registry/consumer, TrustGuard platform tenant + collector (`metadata.gateway_id`), TrustGate `trustguard` plugin policy with `collector_id`.\n\nAuth:\n- TrustGate admin: `Authorization: Bearer {{tg_admin_token}}`.\n- TrustGuard admin: `Authorization: Bearer {{admin_jwt}}` (auto-minted from `admin_jwt_secret` + `tenant_id`).\n- Runtime TrustGate↔TrustGuard: server-side platform OAuth2 (`TRUSTGUARD_CLIENT_ID`/`SECRET` on TrustGate = `TRUSTGUARD_PLATFORM_CLIENT_ID`/`SECRET` on TrustGuard).\n\nVariables: tg_base_url, tg_proxy_url, tg_admin_token, guard_base_url, admin_jwt_secret, tenant_id, openai_api_key; prompt_guard also needs firewall_base_url, firewall_token.",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"event": [
@@ -34,7 +34,7 @@
 	"item": [
 		{
 			"name": "Flow - injection_protection (SQLi)",
-			"description": "TrustGate proxy + TrustGuard `injection_protection` detector. KO = SQL injection \u2192 403. Includes optional folder for direct `/v1/evaluate` via `collector_key`.",
+			"description": "TrustGate proxy + TrustGuard `injection_protection` detector. KO = SQL injection → 403. Includes optional folder for direct `/v1/evaluate` via `collector_key`.",
 			"item": [
 				{
 					"name": "0 - Health",
@@ -144,7 +144,7 @@
 								],
 								"body": {
 									"mode": "raw",
-									"raw": "{\n  \"slug\": \"e2e-tguard-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+									"raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"slug\": \"e2e-tguard-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
 								},
 								"url": {
 									"raw": "{{tg_base_url}}/v1/gateways",
@@ -1003,7 +1003,7 @@
 		},
 		{
 			"name": "Flow - prompt_guard (jailbreak)",
-			"description": "TrustGate proxy + TrustGuard `prompt_guard` detector (NeuralTrust Firewall). Requires `firewall_base_url` and `firewall_token`. KO = jailbreak prompt \u2192 403.",
+			"description": "TrustGate proxy + TrustGuard `prompt_guard` detector (NeuralTrust Firewall). Requires `firewall_base_url` and `firewall_token`. KO = jailbreak prompt → 403.",
 			"item": [
 				{
 					"name": "0 - Health",
@@ -1113,7 +1113,7 @@
 								],
 								"body": {
 									"mode": "raw",
-									"raw": "{\n  \"slug\": \"e2e-tguard-pg-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+									"raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"slug\": \"e2e-tguard-pg-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
 								},
 								"url": {
 									"raw": "{{tg_base_url}}/v1/gateways",

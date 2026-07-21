@@ -21,9 +21,7 @@ import (
 	"math"
 	"time"
 
-	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	domain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -62,21 +60,17 @@ func (c *checker) recordFailOpen(ctx context.Context, reason string) {
 }
 
 func (c *checker) Check(ctx context.Context, gatewayID ids.GatewayID) error {
-	tier, err := c.tiers.Tier(ctx, gatewayID)
+	limits, err := c.tiers.Limits(ctx, gatewayID)
 	if err != nil {
-		if errors.Is(err, commonerrors.ErrNotFound) {
-			return ErrUnavailable
+		// OSS / fail-open: unstamped, missing gateway, or load errors skip plan metering
+		// so CRUD can return 404 and self-hosted traffic is not blocked.
+		if !errors.Is(err, ErrUnmetered) {
+			c.logger.Warn("rate limit: failed to load entitlements; fail-open",
+				slog.String("gateway_id", gatewayID.String()),
+				slog.Any("error", err))
+			c.recordFailOpen(ctx, "tier_load")
 		}
-		c.logger.Warn("rate limit: failed to load entitlements; fail-open",
-			slog.String("gateway_id", gatewayID.String()),
-			slog.Any("error", err))
-		c.recordFailOpen(ctx, "tier_load")
 		return nil
-	}
-
-	limits, ok := domain.LimitsFor(tier)
-	if !ok {
-		return ErrUnavailable
 	}
 
 	burstCount, burstTTL, err := c.counter.IncrBurst(ctx, gatewayID)

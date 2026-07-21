@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 )
 
 const (
@@ -29,8 +30,13 @@ const (
 	ReasonQuota = "quota"
 )
 
-// ErrUnavailable means the gateway has no usable tier (HTTP 503 / JSON-RPC -32005).
+// ErrUnavailable is retained for transport mapping (HTTP 503 / JSON-RPC -32005).
+// TrustGate Check fails open on entitlement load errors (including missing gateways);
+// callers that still return this error map it to 503.
 var ErrUnavailable = errors.New("rate limit entitlements unavailable")
+
+// ErrUnmetered means the gateway has no stamped plan caps. Hot-path Check skips commercial rate limiting (OSS / self-hosted).
+var ErrUnmetered = errors.New("rate limit entitlements unmetered")
 
 // Exceeded is returned when a plan limit is hit (HTTP 429 / JSON-RPC -32004).
 type Exceeded struct {
@@ -65,7 +71,7 @@ type Counter interface {
 
 //go:generate mockery --name=GatewayTierLoader --dir=. --output=./mocks --filename=gateway_tier_loader_mock.go --case=underscore --with-expecter
 type GatewayTierLoader interface {
-	Tier(ctx context.Context, gatewayID ids.GatewayID) (string, error)
+	Limits(ctx context.Context, gatewayID ids.GatewayID) (domain.Limits, error)
 }
 
 //go:generate mockery --name=Checker --dir=. --output=./mocks --filename=checker_mock.go --case=underscore --with-expecter

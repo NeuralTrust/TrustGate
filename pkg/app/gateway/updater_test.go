@@ -261,9 +261,10 @@ func TestUpdater_Update_PersistsEntitlementsWhenProvided(t *testing.T) {
 		Once()
 
 	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
+	ent := stampedEntitlements("standard")
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:           id,
-		Entitlements: &domain.Entitlements{Tier: "standard"},
+		Entitlements: &ent,
 	})
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
@@ -279,7 +280,7 @@ func TestUpdater_Update_PreservesEntitlementsWhenOmitted(t *testing.T) {
 	id := ids.New[ids.GatewayKind]()
 	now := time.Now().UTC()
 	existing := domain.Rehydrate(id, "old", "active", "", nil, nil, nil, now, now)
-	existing.Entitlements = domain.Entitlements{Tier: "enterprise"}
+	existing.Entitlements = stampedEntitlements("enterprise")
 
 	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
 	repo.EXPECT().
@@ -313,10 +314,11 @@ func TestUpdater_Update_RejectsEntitlementsForTenantCaller(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
 
 	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
+	ent := stampedEntitlements("enterprise")
 	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:           id,
 		TenantID:     "acme",
-		Entitlements: &domain.Entitlements{Tier: "enterprise"},
+		Entitlements: &ent,
 	})
 	if !errors.Is(err, commonerrors.ErrValidation) {
 		t.Fatalf("expected ErrValidation rejecting tenant entitlements, got %v", err)
@@ -340,11 +342,12 @@ func TestUpdater_Update_AllowsEntitlementsForPlatformAdmin(t *testing.T) {
 		Once()
 
 	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
+	ent := stampedEntitlements("standard")
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:            id,
 		TenantID:      "",
 		PlatformAdmin: true,
-		Entitlements:  &domain.Entitlements{Tier: "standard"},
+		Entitlements:  &ent,
 	})
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
@@ -361,7 +364,7 @@ func TestUpdater_Update_RejectsTierChangeOverInstanceCap(t *testing.T) {
 	now := time.Now().UTC()
 	existing := domain.Rehydrate(id, "old", "active", "", nil, nil, nil, now, now)
 	existing.Metadata = map[string]string{domain.MetadataTenantIDKey: "acme"}
-	existing.Entitlements = domain.Entitlements{Tier: "enterprise"}
+	existing.Entitlements = stampedEntitlements("enterprise")
 
 	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
 	repo.EXPECT().
@@ -372,10 +375,11 @@ func TestUpdater_Update_RejectsTierChangeOverInstanceCap(t *testing.T) {
 		Once()
 
 	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, true)
+	free := stampedEntitlements("free")
 	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:            id,
 		PlatformAdmin: true,
-		Entitlements:  &domain.Entitlements{Tier: "free"},
+		Entitlements:  &free,
 	})
 	if !errors.Is(err, ratelimit.ErrInstanceLimit) {
 		t.Fatalf("expected ErrInstanceLimit downgrading over the cap, got %v", err)
@@ -392,7 +396,7 @@ func TestUpdater_Update_AllowsTierChangeWithinInstanceCap(t *testing.T) {
 	now := time.Now().UTC()
 	existing := domain.Rehydrate(id, "old", "active", "", nil, nil, nil, now, now)
 	existing.Metadata = map[string]string{domain.MetadataTenantIDKey: "acme"}
-	existing.Entitlements = domain.Entitlements{Tier: "enterprise"}
+	existing.Entitlements = stampedEntitlements("enterprise")
 
 	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
 	repo.EXPECT().
@@ -403,10 +407,11 @@ func TestUpdater_Update_AllowsTierChangeWithinInstanceCap(t *testing.T) {
 		Once()
 
 	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, true)
+	free := stampedEntitlements("free")
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:            id,
 		PlatformAdmin: true,
-		Entitlements:  &domain.Entitlements{Tier: "free"},
+		Entitlements:  &free,
 	})
 	if err != nil {
 		t.Fatalf("Update error: %v", err)

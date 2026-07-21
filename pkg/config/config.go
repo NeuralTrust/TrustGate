@@ -211,8 +211,10 @@ type ServerConfig struct {
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
 	IdleTimeout  time.Duration
-	// SecretKey signs and verifies admin-plane JWTs. Empty disables admin auth
-	// token acceptance (every token is rejected).
+	// SecretKey signs and verifies admin-plane JWTs and encrypts vault material.
+	// Empty disables admin auth token acceptance until resolved. In prod, when
+	// empty at boot, the DI layer auto-provisions a shared value in Redis
+	// (see crypto.ResolveSharedSecretKey) so replicas converge.
 	SecretKey            string
 	GatewayBaseDomain    string
 	MCPBaseDomain        string

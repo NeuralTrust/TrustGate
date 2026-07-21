@@ -16,11 +16,11 @@ package ratelimit
 
 import (
 	"context"
-	"strings"
 
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 )
 
 type gatewayTierLoader struct {
@@ -32,28 +32,27 @@ func NewGatewayTierLoader(finder appgateway.Finder) GatewayTierLoader {
 	return &gatewayTierLoader{finder: finder}
 }
 
-func (l *gatewayTierLoader) Tier(ctx context.Context, gatewayID ids.GatewayID) (string, error) {
+func (l *gatewayTierLoader) Limits(ctx context.Context, gatewayID ids.GatewayID) (domain.Limits, error) {
 	if gw, ok := appgateway.FromContext(ctx); ok {
 		if gw == nil {
-			return "", gatewaydomain.ErrNotFound
+			return domain.Limits{}, gatewaydomain.ErrNotFound
 		}
-		return tierOrDefault(gw), nil
+		return limitsOrDefault(gw)
 	}
 	gw, err := l.finder.FindByID(ctx, gatewayID)
 	if err != nil {
-		return "", err
+		return domain.Limits{}, err
 	}
 	if gw == nil {
-		return "", gatewaydomain.ErrNotFound
+		return domain.Limits{}, gatewaydomain.ErrNotFound
 	}
-	return tierOrDefault(gw), nil
+	return limitsOrDefault(gw)
 }
 
-// tierOrDefault falls back to the free tier when the gateway carries no entitlements (e.g. stale snapshot data).
-func tierOrDefault(gw *gatewaydomain.Gateway) string {
-	tier := strings.TrimSpace(gw.Entitlements.Tier)
-	if tier == "" {
-		return gatewaydomain.DefaultEntitlements().Tier
+func limitsOrDefault(gw *gatewaydomain.Gateway) (domain.Limits, error) {
+	limits, ok := gw.Entitlements.ResolveLimits()
+	if !ok {
+		return domain.Limits{}, ErrUnmetered
 	}
-	return tier
+	return limits, nil
 }

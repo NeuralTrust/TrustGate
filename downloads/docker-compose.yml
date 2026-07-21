@@ -25,13 +25,17 @@ services:
       SERVER_MCP_PORT: "8082"
       LOG_LEVEL: INFO
       LOG_FORMAT: json
-      # REQUIRED to boot: >=32 bytes. openssl rand -base64 32
-      SERVER_SECRET_KEY: ${SERVER_SECRET_KEY:?set SERVER_SECRET_KEY (openssl rand -base64 32)}
-      # RSA private key (base64-encoded PEM) used by the MCP server to sign STS
-      # session tokens. REQUIRED because APP_ENV=prod (ephemeral keys are not
-      # shared across replicas). Must be stable across restarts/replicas.
+      # Optional: when empty, TrustGate auto-provisions a shared SERVER_SECRET_KEY
+      # in Redis (vault encryption + admin JWTs, stable across restarts). Set it
+      # only to pin a specific key from your secret manager.
+      # openssl rand -base64 32
+      SERVER_SECRET_KEY: ${SERVER_SECRET_KEY:-}
+      # RSA private key (PEM, optionally base64-encoded) used by the MCP server
+      # to sign STS session tokens. Optional: when empty, TrustGate auto-provisions
+      # a key in Redis (shared across replicas, stable across restarts). Set it
+      # only to pin a specific key from your secret manager.
       # openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 | base64
-      STS_SIGNING_KEY: ${STS_SIGNING_KEY:?set STS_SIGNING_KEY (base64 of an RSA private key PEM)}
+      STS_SIGNING_KEY: ${STS_SIGNING_KEY:-}
 
       # ----------------------------------------------------------------------
       # TrustGate proxy — config sync (DB-less: dial the control plane)
@@ -64,28 +68,30 @@ services:
       REDIS_DB: "3"
 
       # ----------------------------------------------------------------------
-      # TrustGate proxy — telemetry / OTel collector
-      # ENDPOINT defaults to the NeuralTrust SaaS collector; override only to
-      # point at a different collector. The collector auth token, if any, travels
-      # in OTEL_EXPORTER_OTLP_HEADERS as a comma-separated key=value list, e.g.
-      # "authorization=Bearer <token>".
-      # Telemetry still requires TELEMETRY_EXPORTERS_FILE set to the baked path
-      # (/etc/trustgate/telemetry.yaml, exporters metadata→otlp + raw→postgres);
-      # empty TELEMETRY_EXPORTERS_FILE = no exporters.
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-https://telemetry.neuraltrust.ai}
+      # TrustGate proxy — telemetry / OTel egress
+      # TrustGate exports over plain OTLP to the loopback egress collector baked
+      # into the image (127.0.0.1:4318). That collector authenticates to the SaaS
+      # ingest via the DataAgent enrolment exchange (OAuth broker on 127.0.0.1:9465)
+      # and forwards to the SaaS endpoint, so no OTLP auth header is set here.
+      # Telemetry is enabled by default via the baked exporters file
+      # (/etc/trustgate/telemetry.yaml, exporters metadata→otlp + raw→postgres).
+      # Set TELEMETRY_EXPORTERS_FILE empty to disable all exporters.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://127.0.0.1:4318}
       OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
       OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
       OTEL_EXPORTER_OTLP_TIMEOUT: ${OTEL_EXPORTER_OTLP_TIMEOUT:-10000}
-      OTEL_EXPORTER_OTLP_INSECURE: ${OTEL_EXPORTER_OTLP_INSECURE:-false}
+      OTEL_EXPORTER_OTLP_INSECURE: ${OTEL_EXPORTER_OTLP_INSECURE:-true}
       OTEL_EXPORTER_OTLP_COMPRESSION: ${OTEL_EXPORTER_OTLP_COMPRESSION:-}
-      TELEMETRY_EXPORTERS_FILE: ${TELEMETRY_EXPORTERS_FILE:-}
+      TELEMETRY_EXPORTERS_FILE: ${TELEMETRY_EXPORTERS_FILE:-/etc/trustgate/telemetry.yaml}
       # Raw exporter target; defaults to the bundled Postgres below.
       SENSIBLE_PG_DSN: ${SENSIBLE_PG_DSN:-postgres://residency:residency@postgres:5432/residency?sslmode=disable}
 
       # ----------------------------------------------------------------------
       # DataAgent — outbound to DataBridge (SaaS) + local customer store
       # ----------------------------------------------------------------------
-      DATABRIDGE_ADDR: ${DATABRIDGE_ADDR:?set DATABRIDGE_ADDR (host:port)}
+      # DataBridge address (host:port) the agent dials. Defaults to the NeuralTrust
+      # SaaS DataBridge; override only for self-hosted setups.
+      DATABRIDGE_ADDR: ${DATABRIDGE_ADDR:-databridge.neuraltrust.ai:443}
       # TENANT_ID is derived from the ENROLMENT_TOKEN tenant_id claim; set it only
       # to override, and it must match the token or the agent refuses to start.
       TENANT_ID: ${TENANT_ID:-}

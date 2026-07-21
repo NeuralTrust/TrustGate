@@ -6,6 +6,7 @@ import (
 	context "context"
 
 	ids "github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -22,23 +23,23 @@ func (_m *GatewayTierLoader) EXPECT() *GatewayTierLoader_Expecter {
 	return &GatewayTierLoader_Expecter{mock: &_m.Mock}
 }
 
-// Tier provides a mock function with given fields: ctx, gatewayID
-func (_m *GatewayTierLoader) Tier(ctx context.Context, gatewayID ids.ID[ids.GatewayKind]) (string, error) {
+// Limits provides a mock function with given fields: ctx, gatewayID
+func (_m *GatewayTierLoader) Limits(ctx context.Context, gatewayID ids.ID[ids.GatewayKind]) (domain.Limits, error) {
 	ret := _m.Called(ctx, gatewayID)
 
 	if len(ret) == 0 {
-		panic("no return value specified for Tier")
+		panic("no return value specified for Limits")
 	}
 
-	var r0 string
+	var r0 domain.Limits
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind]) (string, error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind]) (domain.Limits, error)); ok {
 		return rf(ctx, gatewayID)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind]) string); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind]) domain.Limits); ok {
 		r0 = rf(ctx, gatewayID)
 	} else {
-		r0 = ret.Get(0).(string)
+		r0 = ret.Get(0).(domain.Limits)
 	}
 
 	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind]) error); ok {
@@ -50,31 +51,31 @@ func (_m *GatewayTierLoader) Tier(ctx context.Context, gatewayID ids.ID[ids.Gate
 	return r0, r1
 }
 
-// GatewayTierLoader_Tier_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Tier'
-type GatewayTierLoader_Tier_Call struct {
+// GatewayTierLoader_Limits_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Limits'
+type GatewayTierLoader_Limits_Call struct {
 	*mock.Call
 }
 
-// Tier is a helper method to define mock.On call
+// Limits is a helper method to define mock.On call
 //   - ctx context.Context
 //   - gatewayID ids.ID[ids.GatewayKind]
-func (_e *GatewayTierLoader_Expecter) Tier(ctx interface{}, gatewayID interface{}) *GatewayTierLoader_Tier_Call {
-	return &GatewayTierLoader_Tier_Call{Call: _e.mock.On("Tier", ctx, gatewayID)}
+func (_e *GatewayTierLoader_Expecter) Limits(ctx interface{}, gatewayID interface{}) *GatewayTierLoader_Limits_Call {
+	return &GatewayTierLoader_Limits_Call{Call: _e.mock.On("Limits", ctx, gatewayID)}
 }
 
-func (_c *GatewayTierLoader_Tier_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind])) *GatewayTierLoader_Tier_Call {
+func (_c *GatewayTierLoader_Limits_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind])) *GatewayTierLoader_Limits_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]))
 	})
 	return _c
 }
 
-func (_c *GatewayTierLoader_Tier_Call) Return(_a0 string, _a1 error) *GatewayTierLoader_Tier_Call {
+func (_c *GatewayTierLoader_Limits_Call) Return(_a0 domain.Limits, _a1 error) *GatewayTierLoader_Limits_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *GatewayTierLoader_Tier_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind]) (string, error)) *GatewayTierLoader_Tier_Call {
+func (_c *GatewayTierLoader_Limits_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind]) (domain.Limits, error)) *GatewayTierLoader_Limits_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -87,8 +88,6 @@ func NewGatewayTierLoader(t interface {
 }) *GatewayTierLoader {
 	mock := &GatewayTierLoader{}
 	mock.Mock.Test(t)
-
 	t.Cleanup(func() { mock.AssertExpectations(t) })
-
 	return mock
 }
