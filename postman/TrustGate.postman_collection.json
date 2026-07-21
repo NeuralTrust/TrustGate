@@ -474,7 +474,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"slug\": \"team-a-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+              "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"slug\": \"team-a-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways",
@@ -486,7 +486,7 @@
                 "gateways"
               ]
             },
-            "description": "Optional slug (lowercase DNS label); omitted → server generates. Tenant JWT must not send entitlements (422). Platform may stamp entitlements.tier and body tenant_id (create-for-tenant). With RATE_LIMIT_ENABLED, 409 at MaxInstances; free create inherits highest sibling tier. Ownership tenant_id is required (JWT claim or body for platform admins)."
+            "description": "Optional slug (lowercase DNS label); omitted → server generates. Tenant JWT must not send entitlements (422). Platform create requires full stamped entitlements and body tenant_id (create-for-tenant). With RATE_LIMIT_ENABLED, 409 at MaxInstances; free create inherits highest sibling tier. Ownership tenant_id is required (JWT claim or body for platform admins)."
           }
         },
         {
@@ -512,7 +512,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"slug\": \"team-a-ent-{{$randomInt}}\",\n  \"entitlements\": {\"tier\": \"standard\"}\n}"
+              "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"slug\": \"team-a-ent-{{$randomInt}}\",\n  \"entitlements\": {\n    \"tier\": \"standard\",\n    \"burst_per_min\": 300,\n    \"quota_per_month\": 100000,\n    \"max_instances\": 5\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways",
@@ -524,7 +524,7 @@
                 "gateways"
               ]
             },
-            "description": "Tenant JWT must not send entitlements; only platform admins may stamp tier. Expect 422 when using a tenant-scoped admin token. Ownership tenant_id is required (JWT claim or body for platform admins)."
+            "description": "Tenant JWT must not send entitlements; platform create requires full stamped entitlements (tier + burst_per_min + quota_per_month + max_instances); tenant JWTs must omit entitlements. Expect 422 when using a tenant-scoped admin token. Ownership tenant_id is required (JWT claim or body for platform admins)."
           }
         },
         {
@@ -2277,7 +2277,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"slug\": \"team-a-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+              "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"slug\": \"team-a-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways",
@@ -3042,7 +3042,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"slug\": \"team-a-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+              "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"slug\": \"team-a-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways",
@@ -3379,7 +3379,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"slug\": \"team-a-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+              "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"slug\": \"team-a-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways",
@@ -3860,7 +3860,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"slug\": \"entra-team-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+              "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"slug\": \"entra-team-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways",
@@ -4340,7 +4340,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"slug\": \"okta-team-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+              "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"slug\": \"okta-team-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways",
@@ -4753,7 +4753,7 @@
                 "url": "{{admin_url}}/v1/gateways",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"name\": \"flow-a-simple\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"flow-a-simple\"\n}"
                 },
                 "description": "Optionally add \"domain\": \"tenant-a.gw.example.com\" (bare hostname) for host-based tenant isolation: requests carrying that Host header resolve against this gateway only. Domains are unique across gateways. Ownership tenant_id is required (JWT claim or body for platform admins)."
               }
@@ -5160,7 +5160,7 @@
                 "url": "{{admin_url}}/v1/gateways",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"name\": \"flow-b-hub\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"flow-b-hub\"\n}"
                 }
               }
             },
@@ -5500,7 +5500,7 @@
                 "url": "{{admin_url}}/v1/gateways",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"name\": \"flow-c-entra\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"flow-c-entra\"\n}"
                 }
               }
             },
@@ -5859,7 +5859,7 @@
                 "url": "{{admin_url}}/v1/gateways",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"name\": \"flow-d-discovery\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"flow-d-discovery\"\n}"
                 }
               }
             },
@@ -6178,7 +6178,7 @@
                 "url": "{{admin_url}}/v1/gateways",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"name\": \"flow-e-downstream\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"flow-e-downstream\"\n}"
                 }
               }
             },
@@ -6327,7 +6327,7 @@
                 "url": "{{admin_url}}/v1/gateways",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"name\": \"flow-f-linear\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"flow-f-linear\"\n}"
                 }
               }
             },
@@ -6677,7 +6677,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"name\": \"flow-g-surface\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"flow-g-surface\"\n}"
                 }
               },
               "event": [
@@ -7211,7 +7211,7 @@
                 "url": "{{admin_url}}/v1/gateways",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"name\": \"flow-h-okta\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"flow-h-okta\"\n}"
                 }
               }
             },
@@ -7686,7 +7686,7 @@
                 "url": "{{admin_url}}/v1/gateways",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"name\": \"flow-i-github\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"flow-i-github\"\n}"
                 }
               }
             },
@@ -7926,7 +7926,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"name\": \"e2e-model-allowlist-{{$guid}}\",\n  \"slug\": \"model-allowlist-{{$randomInt}}\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"e2e-model-allowlist-{{$guid}}\",\n  \"slug\": \"model-allowlist-{{$randomInt}}\"\n}"
                 },
                 "url": {
                   "raw": "{{base_url}}/v1/gateways",
@@ -8424,7 +8424,7 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"name\": \"e2e-prompt-template-{{$guid}}\",\n  \"slug\": \"prompt-template-{{$randomInt}}\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"e2e-prompt-template-{{$guid}}\",\n  \"slug\": \"prompt-template-{{$randomInt}}\"\n}"
                 }
               }
             },
@@ -9121,7 +9121,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"name\": \"e2e-tool-allowlist-{{$guid}}\",\n  \"slug\": \"tool-allowlist-{{$randomInt}}\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"e2e-tool-allowlist-{{$guid}}\",\n  \"slug\": \"tool-allowlist-{{$randomInt}}\"\n}"
                 },
                 "url": {
                   "raw": "{{base_url}}/v1/gateways",
@@ -9619,7 +9619,7 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"name\": \"e2e-budget-{{$guid}}\",\n  \"slug\": \"budget-{{$randomInt}}\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"e2e-budget-{{$guid}}\",\n  \"slug\": \"budget-{{$randomInt}}\"\n}"
                 }
               }
             },
@@ -10257,7 +10257,7 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"name\": \"e2e-rate-limiter-{{$guid}}\",\n  \"slug\": \"rate-limiter-{{$randomInt}}\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"e2e-rate-limiter-{{$guid}}\",\n  \"slug\": \"rate-limiter-{{$randomInt}}\"\n}"
                 }
               }
             },
@@ -10690,7 +10690,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"name\": \"e2e-per-tool-rate-limiter-{{$guid}}\",\n  \"slug\": \"per-tool-rl-{{$randomInt}}\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"e2e-per-tool-rate-limiter-{{$guid}}\",\n  \"slug\": \"per-tool-rl-{{$randomInt}}\"\n}"
                 },
                 "url": {
                   "raw": "{{base_url}}/v1/gateways",
@@ -11238,7 +11238,7 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"name\": \"e2e-request-size-{{$guid}}\",\n  \"slug\": \"request-size-{{$randomInt}}\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"e2e-request-size-{{$guid}}\",\n  \"slug\": \"request-size-{{$randomInt}}\"\n}"
                 }
               }
             },
@@ -11628,7 +11628,7 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"name\": \"e2e-semantic-cache-{{$guid}}\",\n  \"slug\": \"semantic-cache-{{$randomInt}}\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"e2e-semantic-cache-{{$guid}}\",\n  \"slug\": \"semantic-cache-{{$randomInt}}\"\n}"
                 }
               }
             },
