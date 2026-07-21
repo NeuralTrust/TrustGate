@@ -43,9 +43,9 @@ type CreateInput struct {
 	Telemetry       *telemetry.Telemetry
 	ClientTLSConfig domain.ClientTLSConfig
 	SessionConfig   *domain.SessionConfig
-	// Entitlements overrides the default free tier when the admin API sets it explicitly.
+	// Entitlements is required when PlatformAdmin is true (full stamped caps).
 	Entitlements *domain.Entitlements
-	// PlatformAdmin is true when the JWT has no tenant claim (may set entitlements even when TenantID is stamped from the body).
+	// PlatformAdmin is true when the JWT has no tenant claim (must stamp entitlements; TenantID comes from the body).
 	PlatformAdmin bool
 }
 
@@ -102,12 +102,14 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, 
 	if g.SessionConfig == nil {
 		g.SessionConfig = domain.DefaultSessionConfig()
 	}
-	// Platform admins (empty JWT tenant / PlatformAdmin) may set entitlements; tenant callers cannot.
-	if in.Entitlements != nil && !in.PlatformAdmin {
-		return nil, fmt.Errorf("entitlements may only be set by platform admins: %w", commonerrors.ErrValidation)
-	}
-	if in.Entitlements != nil && in.PlatformAdmin {
+	// Platform create must stamp full entitlements; tenant callers cannot set them.
+	if in.PlatformAdmin {
+		if in.Entitlements == nil || !in.Entitlements.HasStampedLimits() {
+			return nil, fmt.Errorf("entitlements are required for platform create: %w", commonerrors.ErrValidation)
+		}
 		g.Entitlements = *in.Entitlements
+	} else if in.Entitlements != nil {
+		return nil, fmt.Errorf("entitlements may only be set by platform admins: %w", commonerrors.ErrValidation)
 	}
 	// Under immutable entitlements, a new gateway still inherits the tenant's highest sibling tier so MaxInstances matches the plan.
 	if isDefaultFreeTier(g.Entitlements) {

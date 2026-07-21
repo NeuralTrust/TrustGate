@@ -40,7 +40,7 @@ func NewCreateGatewayHandler(creator appgateway.Creator, baseDomain, mcpBaseDoma
 
 // Handle godoc
 // @Summary      Create a gateway
-// @Description  Creates a new gateway. Ownership tenant_id is required (JWT claim, or body for platform admins). The slug is optional: when omitted the server generates a unique random slug. If provided it must be a lowercase DNS label and unique. Tenant JWTs may not send entitlements (422); only platform admins may stamp tier. With RATE_LIMIT_ENABLED, create returns 409 when the tenant is already at MaxInstances for the effective tier.
+// @Description  Creates a new gateway. Ownership tenant_id is required (JWT claim, or body for platform admins). The slug is optional: when omitted the server generates a unique random slug. If provided it must be a lowercase DNS label and unique. Platform JWT create requires stamped entitlements (tier + caps); tenant JWTs must omit entitlements (422 if sent). With RATE_LIMIT_ENABLED, create returns 409 when the tenant is already at MaxInstances for the effective tier.
 // @Tags         gateways
 // @Accept       json
 // @Produce      json

@@ -493,6 +493,38 @@ func TestCreator_Create_AcceptsClientEntitlementsWhenPlatformAdmin(t *testing.T)
 	}
 }
 
+func TestCreator_Create_RejectsPlatformAdminWithoutEntitlements(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil, true)
+
+	_, err := creator.Create(context.Background(), appgateway.CreateInput{
+		Slug:          "prod",
+		TenantID:      "acme",
+		PlatformAdmin: true,
+	})
+	if !errors.Is(err, commonerrors.ErrValidation) {
+		t.Fatalf("expected ErrValidation for missing entitlements, got %v", err)
+	}
+}
+
+func TestCreator_Create_RejectsPlatformAdminTierOnlyEntitlements(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	creator := appgateway.NewCreator(repo, newCacheManager(), nil, newTestLogger(), nil, true)
+
+	entitlements := domain.Entitlements{Tier: "standard"}
+	_, err := creator.Create(context.Background(), appgateway.CreateInput{
+		Slug:          "prod",
+		TenantID:      "acme",
+		PlatformAdmin: true,
+		Entitlements:  &entitlements,
+	})
+	if !errors.Is(err, commonerrors.ErrValidation) {
+		t.Fatalf("expected ErrValidation for unstamped entitlements, got %v", err)
+	}
+}
+
 func TestCreator_Create_InheritsSiblingStandardTier(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)

@@ -33,9 +33,9 @@ type CreateGatewayRequest struct {
 	Telemetry       *telemetry.Telemetry   `json:"telemetry,omitempty"`
 	ClientTLSConfig domain.ClientTLSConfig `json:"client_tls,omitempty"`
 	SessionConfig   *domain.SessionConfig  `json:"session_config,omitempty"`
-	// Entitlements is optional; only platform admins may set it. Tenant callers sending
-	// entitlements receive 422. When omitted the gateway defaults to free (or inherits sibling tier).
-	// Optional stamped caps (burst_per_min, quota_per_month, max_instances) must be set together.
+	// Entitlements is required for platform (empty JWT tenant) create and must include full stamped caps.
+	// Tenant callers must omit it (422 if sent). When a tenant omits it, the gateway defaults to free
+	// or inherits the highest sibling tier.
 	Entitlements *domain.Entitlements `json:"entitlements,omitempty"`
 }
 

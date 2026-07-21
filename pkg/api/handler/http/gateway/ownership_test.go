@@ -15,6 +15,7 @@
 package gateway_test
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	gatewayhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	appgatewaymocks "github.com/NeuralTrust/TrustGate/pkg/app/gateway/mocks"
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -216,6 +218,28 @@ func TestCreateGatewayHandler_PlatformAdmin_MissingBodyTenant_Rejected(t *testin
 	defer resp.Body.Close()
 	require.Equal(t, fiber.StatusUnprocessableEntity, resp.StatusCode)
 	creator.AssertNotCalled(t, "Create", mock.Anything, mock.Anything)
+}
+
+func TestCreateGatewayHandler_PlatformAdmin_MissingEntitlements_Rejected(t *testing.T) {
+	t.Parallel()
+	creator := appgatewaymocks.NewCreator(t)
+	creator.EXPECT().
+		Create(mock.Anything, mock.MatchedBy(func(in appgateway.CreateInput) bool {
+			return in.PlatformAdmin && in.TenantID == "acme" && in.Entitlements == nil
+		})).
+		Return(nil, fmt.Errorf("entitlements are required for platform create: %w", commonerrors.ErrValidation)).
+		Once()
+
+	app := fiber.New()
+	app.Use(tenantMiddleware(""))
+	app.Post("/", gatewayhttp.NewCreateGatewayHandler(creator, "gw.local", "mcp.local").Handle)
+
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"slug":"prod","tenant_id":"acme"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, -1)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, fiber.StatusUnprocessableEntity, resp.StatusCode)
 }
 
 func TestCreateGatewayHandler_TenantJWT_BodyTenantMismatch_Rejected(t *testing.T) {
