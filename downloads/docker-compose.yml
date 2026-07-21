@@ -69,14 +69,15 @@ services:
 
       # ----------------------------------------------------------------------
       # TrustGate proxy — telemetry / OTel egress
-      # TrustGate exports over plain OTLP to the loopback egress collector baked
-      # into the image (127.0.0.1:4318). That collector authenticates to the SaaS
-      # ingest via the DataAgent enrolment exchange (OAuth broker on 127.0.0.1:9465)
-      # and forwards to the SaaS endpoint, so no OTLP auth header is set here.
+      # TrustGate exports OTLP/HTTP logs to the loopback egress collector baked
+      # into the image. The path /v1/logs is required: with an http:// URL the
+      # OTel SDK uses WithEndpointURL and does not append the signal path.
+      # That collector authenticates to SaaS ingest via the DataAgent enrolment
+      # exchange (OAuth broker on 127.0.0.1:9465), so no OTLP auth header here.
       # Telemetry is enabled by default via the baked exporters file
       # (/etc/trustgate/telemetry.yaml, exporters metadata→otlp + raw→postgres).
       # Set TELEMETRY_EXPORTERS_FILE empty to disable all exporters.
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://127.0.0.1:4318}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://127.0.0.1:4318/v1/logs}
       OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
       OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
       OTEL_EXPORTER_OTLP_TIMEOUT: ${OTEL_EXPORTER_OTLP_TIMEOUT:-10000}
