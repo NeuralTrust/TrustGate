@@ -32,8 +32,9 @@ services:
       # TrustGate proxy — config sync (DB-less: dial the control plane)
       # ----------------------------------------------------------------------
       CONFIG_SYNC_DATA_PLANE_ENABLED: "true"
-      # Control-plane gRPC endpoint (host:port) this data plane dials.
-      CONFIG_SYNC_GRPC_ENDPOINT: ${CONFIG_SYNC_GRPC_ENDPOINT:?set CONFIG_SYNC_GRPC_ENDPOINT (host:port)}
+      # Control-plane gRPC endpoint (host:port) this data plane dials. Defaults to
+      # the NeuralTrust SaaS control plane; override only for self-hosted setups.
+      CONFIG_SYNC_GRPC_ENDPOINT: ${CONFIG_SYNC_GRPC_ENDPOINT:-agentgateway-configsync.neuraltrust.ai:443}
       # Bearer token that authenticates this data plane to the control plane.
       CONFIG_SYNC_TOKEN: ${CONFIG_SYNC_TOKEN:?set CONFIG_SYNC_TOKEN}
       # Instance id bound to the registered gateway instance. If omitted it is
@@ -58,14 +59,15 @@ services:
       REDIS_DB: "3"
 
       # ----------------------------------------------------------------------
-      # TrustGate proxy — telemetry / OTel collector (optional)
-      # Point ENDPOINT at your collector; the collector auth token travels in
-      # OTEL_EXPORTER_OTLP_HEADERS as a comma-separated key=value list, e.g.
-      # "authorization=Bearer <token>". Leave ENDPOINT empty to disable OTLP.
-      # Telemetry is opt-in: set TELEMETRY_EXPORTERS_FILE to the baked path
-      # (/etc/trustgate/telemetry.yaml, exporters metadata→otlp + raw→postgres)
-      # AND an OTLP endpoint. Empty TELEMETRY_EXPORTERS_FILE = no exporters.
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      # TrustGate proxy — telemetry / OTel collector
+      # ENDPOINT defaults to the NeuralTrust SaaS collector; override only to
+      # point at a different collector. The collector auth token, if any, travels
+      # in OTEL_EXPORTER_OTLP_HEADERS as a comma-separated key=value list, e.g.
+      # "authorization=Bearer <token>".
+      # Telemetry still requires TELEMETRY_EXPORTERS_FILE set to the baked path
+      # (/etc/trustgate/telemetry.yaml, exporters metadata→otlp + raw→postgres);
+      # empty TELEMETRY_EXPORTERS_FILE = no exporters.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-https://telemetry.neuraltrust.ai}
       OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
       OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
       OTEL_EXPORTER_OTLP_TIMEOUT: ${OTEL_EXPORTER_OTLP_TIMEOUT:-10000}
