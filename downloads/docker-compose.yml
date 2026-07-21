@@ -86,7 +86,9 @@ services:
       # ----------------------------------------------------------------------
       # DataAgent — outbound to DataBridge (SaaS) + local customer store
       # ----------------------------------------------------------------------
-      DATABRIDGE_ADDR: ${DATABRIDGE_ADDR:?set DATABRIDGE_ADDR (host:port)}
+      # DataBridge address (host:port) the agent dials. Defaults to the NeuralTrust
+      # SaaS DataBridge; override only for self-hosted setups.
+      DATABRIDGE_ADDR: ${DATABRIDGE_ADDR:-databridge.neuraltrust.ai:443}
       # TENANT_ID is derived from the ENROLMENT_TOKEN tenant_id claim; set it only
       # to override, and it must match the token or the agent refuses to start.
       TENANT_ID: ${TENANT_ID:-}
