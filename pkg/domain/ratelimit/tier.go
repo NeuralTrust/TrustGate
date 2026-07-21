@@ -22,31 +22,23 @@ const (
 	TierEnterprise = "enterprise"
 )
 
-// Limits are plan caps; QuotaPerMonth == 0 means unlimited, MaxInstances == 0 means unlimited.
-// Prefer control-plane stamped caps on the instance; LimitsFor is only for legacy unstamped rows.
+// Limits are plan caps stamped by the control plane onto each instance.
+// QuotaPerMonth == 0 means unlimited, MaxInstances == 0 means unlimited.
 type Limits struct {
 	BurstPerMin   int
 	QuotaPerMonth int
 	MaxInstances  int
 }
 
-// legacyDefaults match the v1 seed in the SaaS plan_product_limits table.
-// Kept so develop/prod instances that only have entitlements.tier keep working until stamped.
-var legacyDefaults = map[string]Limits{
-	TierFree:       {BurstPerMin: 60, QuotaPerMonth: 10_000, MaxInstances: 1},
-	TierStandard:   {BurstPerMin: 300, QuotaPerMonth: 100_000, MaxInstances: 2},
-	TierEnterprise: {BurstPerMin: 1_000, QuotaPerMonth: 0, MaxInstances: 0},
+var knownTiers = map[string]struct{}{
+	TierFree:       {},
+	TierStandard:   {},
+	TierEnterprise: {},
 }
 
-// LimitsFor returns built-in caps for a known tier name (legacy unstamped instances).
-func LimitsFor(tier string) (Limits, bool) {
-	limits, ok := legacyDefaults[strings.ToLower(strings.TrimSpace(tier))]
-	return limits, ok
-}
-
-// IsKnownTier reports whether name is a recognized plan label.
+// IsKnownTier reports whether name is a recognized plan label (no numeric caps here).
 func IsKnownTier(tier string) bool {
-	_, ok := LimitsFor(tier)
+	_, ok := knownTiers[strings.ToLower(strings.TrimSpace(tier))]
 	return ok
 }
 

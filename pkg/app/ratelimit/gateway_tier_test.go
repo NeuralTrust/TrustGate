@@ -42,7 +42,7 @@ func TestGatewayTierLoader_PrefersContextGateway(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	gw := &gatewaydomain.Gateway{
 		ID:           gatewayID,
-		Entitlements: stampedGatewayEntitlements("standard", 300, 100_000, 2),
+		Entitlements: stampedGatewayEntitlements("standard", 300, 100_000, 5),
 	}
 	ctx := appgateway.WithGateway(context.Background(), gw)
 
@@ -62,7 +62,7 @@ func TestGatewayTierLoader_FallsBackToFinder(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	gw := &gatewaydomain.Gateway{
 		ID:           gatewayID,
-		Entitlements: stampedGatewayEntitlements("enterprise", 1_000, 0, 0),
+		Entitlements: stampedGatewayEntitlements("enterprise", 1_000, 0, 5),
 	}
 	finder.EXPECT().FindByID(context.Background(), gatewayID).Return(gw, nil).Once()
 
@@ -77,7 +77,7 @@ func TestGatewayTierLoader_FallsBackToFinder(t *testing.T) {
 	}
 }
 
-func TestGatewayTierLoader_UnstampedFromContextUsesLegacyDefaults(t *testing.T) {
+func TestGatewayTierLoader_UnstampedFromContextUnavailable(t *testing.T) {
 	finder := gatewaymocks.NewFinder(t)
 	loader := NewGatewayTierLoader(finder)
 
@@ -85,13 +85,9 @@ func TestGatewayTierLoader_UnstampedFromContextUsesLegacyDefaults(t *testing.T) 
 	gw := &gatewaydomain.Gateway{ID: gatewayID, Entitlements: gatewaydomain.Entitlements{Tier: "standard"}}
 	ctx := appgateway.WithGateway(context.Background(), gw)
 
-	limits, err := loader.Limits(ctx, gatewayID)
-	if err != nil {
-		t.Fatalf("Limits: %v", err)
-	}
-	want, _ := domain.LimitsFor("standard")
-	if limits != want {
-		t.Fatalf("limits = %+v, want legacy %+v", limits, want)
+	_, err := loader.Limits(ctx, gatewayID)
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("err = %v, want ErrUnavailable", err)
 	}
 	finder.AssertNotCalled(t, "FindByID")
 }
@@ -122,20 +118,16 @@ func TestGatewayTierLoader_UsesStampedLimits(t *testing.T) {
 	}
 }
 
-func TestGatewayTierLoader_UnstampedFromFinderUsesLegacyDefaults(t *testing.T) {
+func TestGatewayTierLoader_UnstampedFromFinderUnavailable(t *testing.T) {
 	finder := gatewaymocks.NewFinder(t)
 	gatewayID := ids.New[ids.GatewayKind]()
 	gw := &gatewaydomain.Gateway{ID: gatewayID, Entitlements: gatewaydomain.Entitlements{Tier: "free"}}
 	finder.EXPECT().FindByID(context.Background(), gatewayID).Return(gw, nil).Once()
 
 	loader := NewGatewayTierLoader(finder)
-	limits, err := loader.Limits(context.Background(), gatewayID)
-	if err != nil {
-		t.Fatalf("Limits: %v", err)
-	}
-	want, _ := domain.LimitsFor("free")
-	if limits != want {
-		t.Fatalf("limits = %+v, want legacy %+v", limits, want)
+	_, err := loader.Limits(context.Background(), gatewayID)
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("err = %v, want ErrUnavailable", err)
 	}
 }
 

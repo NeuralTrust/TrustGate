@@ -16,44 +16,11 @@ package ratelimit
 
 import "testing"
 
-func TestLimitsFor(t *testing.T) {
-	tests := []struct {
-		tier             string
-		wantOK           bool
-		wantBurst        int
-		wantQuota        int
-		wantHasQuota     bool
-		wantMaxInstances int
-		wantHasCap       bool
-	}{
-		{tier: "free", wantOK: true, wantBurst: 60, wantQuota: 10_000, wantHasQuota: true, wantMaxInstances: 1, wantHasCap: true},
-		{tier: " Free ", wantOK: true, wantBurst: 60, wantQuota: 10_000, wantHasQuota: true, wantMaxInstances: 1, wantHasCap: true},
-		{tier: "standard", wantOK: true, wantBurst: 300, wantQuota: 100_000, wantHasQuota: true, wantMaxInstances: 2, wantHasCap: true},
-		{tier: "enterprise", wantOK: true, wantBurst: 1_000, wantQuota: 0, wantHasQuota: false, wantMaxInstances: 0, wantHasCap: false},
-		{tier: "gold", wantOK: false},
-		{tier: "", wantOK: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.tier, func(t *testing.T) {
-			limits, ok := LimitsFor(tt.tier)
-			if ok != tt.wantOK {
-				t.Fatalf("LimitsFor(%q) ok = %v, want %v", tt.tier, ok, tt.wantOK)
-			}
-			if !ok {
-				return
-			}
-			if limits.BurstPerMin != tt.wantBurst || limits.QuotaPerMonth != tt.wantQuota || limits.MaxInstances != tt.wantMaxInstances {
-				t.Fatalf("limits = %+v", limits)
-			}
-			if limits.HasMonthlyQuota() != tt.wantHasQuota || limits.HasInstanceCap() != tt.wantHasCap {
-				t.Fatalf("HasMonthlyQuota/HasInstanceCap mismatch")
-			}
-		})
-	}
-}
-
 func TestIsKnownTier(t *testing.T) {
-	if !IsKnownTier("free") || IsKnownTier("gold") || IsKnownTier("") {
-		t.Fatal("IsKnownTier mismatch")
+	if !IsKnownTier("free") || !IsKnownTier(" Standard ") || !IsKnownTier("enterprise") {
+		t.Fatal("expected known tiers")
+	}
+	if IsKnownTier("gold") || IsKnownTier("") {
+		t.Fatal("expected unknown tiers")
 	}
 }

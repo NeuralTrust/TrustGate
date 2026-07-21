@@ -29,21 +29,21 @@ func stampedEntitlements(tier string) domain.Entitlements {
 			Tier:          "standard",
 			BurstPerMin:   intPtr(300),
 			QuotaPerMonth: intPtr(100_000),
-			MaxInstances:  intPtr(2),
+			MaxInstances:  intPtr(5),
 		}
 	case "enterprise":
 		return domain.Entitlements{
 			Tier:          "enterprise",
 			BurstPerMin:   intPtr(1_000),
 			QuotaPerMonth: intPtr(0),
-			MaxInstances:  intPtr(0),
+			MaxInstances:  intPtr(5),
 		}
 	default:
 		return domain.Entitlements{
 			Tier:          "free",
 			BurstPerMin:   intPtr(60),
 			QuotaPerMonth: intPtr(10_000),
-			MaxInstances:  intPtr(1),
+			MaxInstances:  intPtr(5),
 		}
 	}
 }

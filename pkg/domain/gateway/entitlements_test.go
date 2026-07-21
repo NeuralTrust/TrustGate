@@ -19,40 +19,20 @@ import (
 	"testing"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 )
 
 func intPtr(v int) *int { return &v }
 
-func TestResolveLimits_UnstampedFallsBackToLegacyDefaults(t *testing.T) {
+func TestResolveLimits_UnstampedUnavailable(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		tier string
-		want ratelimit.Limits
-	}{
-		{tier: "standard", want: mustLimits("standard")},
-		{tier: "free", want: mustLimits("free")},
-		{tier: "", want: mustLimits("free")},
-	}
-	for _, tt := range tests {
-		t.Run(tt.tier, func(t *testing.T) {
-			limits, ok := Entitlements{Tier: tt.tier}.ResolveLimits()
-			if !ok {
-				t.Fatal("expected ok for legacy unstamped tier")
-			}
-			if limits != tt.want {
-				t.Fatalf("got %+v, want %+v", limits, tt.want)
+	for _, tier := range []string{"standard", "free", ""} {
+		t.Run(tier, func(t *testing.T) {
+			_, ok := Entitlements{Tier: tier}.ResolveLimits()
+			if ok {
+				t.Fatal("expected unstamped entitlements to be unavailable")
 			}
 		})
 	}
-}
-
-func mustLimits(tier string) ratelimit.Limits {
-	limits, ok := ratelimit.LimitsFor(tier)
-	if !ok {
-		panic(tier)
-	}
-	return limits
 }
 
 func TestResolveLimits_StampedCaps(t *testing.T) {

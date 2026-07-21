@@ -27,9 +27,9 @@ import (
 )
 
 var stubTierLimits = map[string]domain.Limits{
-	domain.TierFree:       {BurstPerMin: 60, QuotaPerMonth: 10_000, MaxInstances: 1},
-	domain.TierStandard:   {BurstPerMin: 300, QuotaPerMonth: 100_000, MaxInstances: 2},
-	domain.TierEnterprise: {BurstPerMin: 1_000, QuotaPerMonth: 0, MaxInstances: 0},
+	domain.TierFree:       {BurstPerMin: 60, QuotaPerMonth: 10_000, MaxInstances: 5},
+	domain.TierStandard:   {BurstPerMin: 300, QuotaPerMonth: 100_000, MaxInstances: 5},
+	domain.TierEnterprise: {BurstPerMin: 1_000, QuotaPerMonth: 0, MaxInstances: 5},
 }
 
 type stubTiers struct {

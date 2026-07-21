@@ -24,8 +24,8 @@ import (
 
 const TierFree = ratelimit.TierFree
 
-// Entitlements is the plan label plus optional caps stamped by the control plane.
-// Stamped caps win; if absent, ResolveLimits falls back to LimitsFor(tier) for legacy rows.
+// Entitlements is the plan label plus caps stamped by the control plane.
+// Numeric caps are required for rate-limit enforcement (no built-in catalog).
 type Entitlements struct {
 	Tier          string `json:"tier"`
 	BurstPerMin   *int   `json:"burst_per_min,omitempty"`
@@ -42,20 +42,16 @@ func (e Entitlements) HasStampedLimits() bool {
 	return e.BurstPerMin != nil && e.QuotaPerMonth != nil && e.MaxInstances != nil
 }
 
-// ResolveLimits prefers stamped caps; otherwise LimitsFor(tier) (empty → free) for unstamped instances.
+// ResolveLimits returns stamped caps only. Unstamped instances are unavailable for metering.
 func (e Entitlements) ResolveLimits() (ratelimit.Limits, bool) {
-	if e.HasStampedLimits() {
-		return ratelimit.Limits{
-			BurstPerMin:   *e.BurstPerMin,
-			QuotaPerMonth: *e.QuotaPerMonth,
-			MaxInstances:  *e.MaxInstances,
-		}, true
+	if !e.HasStampedLimits() {
+		return ratelimit.Limits{}, false
 	}
-	tier := strings.ToLower(strings.TrimSpace(e.Tier))
-	if tier == "" {
-		tier = TierFree
-	}
-	return ratelimit.LimitsFor(tier)
+	return ratelimit.Limits{
+		BurstPerMin:   *e.BurstPerMin,
+		QuotaPerMonth: *e.QuotaPerMonth,
+		MaxInstances:  *e.MaxInstances,
+	}, true
 }
 
 // ValidateTier normalizes tier and rejects unknown plan labels; empty means free.

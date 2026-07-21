@@ -192,7 +192,7 @@ func TestCreateGatewayHandler_PlatformAdmin_UsesBodyTenantID(t *testing.T) {
 	app.Post("/", gatewayhttp.NewCreateGatewayHandler(creator, "gw.local", "mcp.local").Handle)
 
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(
-		`{"slug":"prod","tenant_id":"acme","entitlements":{"tier":"standard","burst_per_min":300,"quota_per_month":100000,"max_instances":2}}`,
+		`{"slug":"prod","tenant_id":"acme","entitlements":{"tier":"standard","burst_per_min":300,"quota_per_month":100000,"max_instances":5}}`,
 	))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := app.Test(req, -1)
