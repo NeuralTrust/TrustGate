@@ -539,8 +539,7 @@ func valid() *Config {
 
 func validServer() ServerConfig {
 	return ServerConfig{
-		GatewayDiscoveryMode: GatewayDiscoveryModeHeader,
-		GatewayBaseDomain:    "gw.example",
+		GatewayBaseDomain: "gw.example",
 	}
 }
 
