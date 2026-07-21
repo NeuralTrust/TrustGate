@@ -65,19 +65,19 @@ services:
       REDIS_DB: "3"
 
       # ----------------------------------------------------------------------
-      # TrustGate proxy — telemetry / OTel collector
-      # ENDPOINT defaults to the NeuralTrust SaaS collector; override only to
-      # point at a different collector. The collector auth token, if any, travels
-      # in OTEL_EXPORTER_OTLP_HEADERS as a comma-separated key=value list, e.g.
-      # "authorization=Bearer <token>".
+      # TrustGate proxy — telemetry / OTel egress
+      # TrustGate exports over plain OTLP to the loopback egress collector baked
+      # into the image (127.0.0.1:4318). That collector authenticates to the SaaS
+      # ingest via the DataAgent enrolment exchange (OAuth broker on 127.0.0.1:9465)
+      # and forwards to the SaaS endpoint, so no OTLP auth header is set here.
       # Telemetry is enabled by default via the baked exporters file
       # (/etc/trustgate/telemetry.yaml, exporters metadata→otlp + raw→postgres).
       # Set TELEMETRY_EXPORTERS_FILE empty to disable all exporters.
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-https://telemetry.neuraltrust.ai}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://127.0.0.1:4318}
       OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
       OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
       OTEL_EXPORTER_OTLP_TIMEOUT: ${OTEL_EXPORTER_OTLP_TIMEOUT:-10000}
-      OTEL_EXPORTER_OTLP_INSECURE: ${OTEL_EXPORTER_OTLP_INSECURE:-false}
+      OTEL_EXPORTER_OTLP_INSECURE: ${OTEL_EXPORTER_OTLP_INSECURE:-true}
       OTEL_EXPORTER_OTLP_COMPRESSION: ${OTEL_EXPORTER_OTLP_COMPRESSION:-}
       TELEMETRY_EXPORTERS_FILE: ${TELEMETRY_EXPORTERS_FILE:-/etc/trustgate/telemetry.yaml}
       # Raw exporter target; defaults to the bundled Postgres below.
