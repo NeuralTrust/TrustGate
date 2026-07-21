@@ -38,7 +38,8 @@ func uniqueName(prefix string) string {
 
 // CreateGateway issues a POST /v1/gateways and returns the new id.
 // Aborts the calling test on any failure. Platform admin tokens have no
-// tenant claim, so a default tenant_id is injected when the payload omits it.
+// tenant claim, so a default tenant_id and stamped entitlements are injected
+// when the payload omits them.
 func CreateGateway(t *testing.T, payload map[string]any) string {
 	t.Helper()
 	if payload == nil {
@@ -46,6 +47,14 @@ func CreateGateway(t *testing.T, payload map[string]any) string {
 	}
 	if _, ok := payload["tenant_id"]; !ok {
 		payload["tenant_id"] = "functional-tenant"
+	}
+	if _, ok := payload["entitlements"]; !ok {
+		payload["entitlements"] = map[string]any{
+			"tier":            "free",
+			"burst_per_min":   60,
+			"quota_per_month": 10000,
+			"max_instances":   5,
+		}
 	}
 	status, body := sendRequest(t, http.MethodPost, AdminURL+"/v1/gateways", nil, payload)
 	require.Equal(t, http.StatusCreated, status, "create gateway failed: %v", body)
