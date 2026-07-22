@@ -53,6 +53,7 @@ func TestStoreSessionRoundTrip(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected a session record")
+		return
 	}
 	if got.Subject != "user-42" || got.GatewayID != "gw-1" || got.AuthID != "auth-1" {
 		t.Fatalf("session record mismatch: %+v", got)
