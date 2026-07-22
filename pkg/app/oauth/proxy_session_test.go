@@ -275,6 +275,7 @@ func TestExchangeCodeSessionModeMintsSessionToken(t *testing.T) {
 	rec := store.peekSession(refresh)
 	if rec == nil {
 		t.Fatal("SaveSession must persist a record")
+		return
 	}
 	if rec.Subject != "user-42" || strings.Join(rec.Scopes, " ") != "mcp.access openid" {
 		t.Fatalf("session record mismatch: %+v", rec)
@@ -321,6 +322,7 @@ func TestRefreshSessionReMintsAndRotates(t *testing.T) {
 	rotated := store.peekSession(newRefresh)
 	if rotated == nil {
 		t.Fatal("rotated session must be persisted")
+		return
 	}
 	if rotated.Subject != "user-42" || strings.Join(rotated.Scopes, " ") != "mcp.access openid" {
 		t.Fatalf("rotated record must preserve subject/scopes, got %+v", rotated)

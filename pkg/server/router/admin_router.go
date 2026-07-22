@@ -136,7 +136,8 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	gw.Get("", r.tenantRL(), r.deps.ListGateway.Handle)
 	gw.Get("/:id", r.gatewayRL(), r.deps.GetGateway.Handle)
 	gw.Put("/:id", r.gatewayRL(), r.deps.UpdateGateway.Handle)
-	gw.Delete("/:id", r.gatewayRL(), r.deps.DeleteGateway.Handle)
+	// Delete skips plan RL so quota-exhausted gateways can still be removed.
+	gw.Delete("/:id", r.deps.DeleteGateway.Handle)
 
 	registries := gw.Group("/:gateway_id/registries", r.gatewayRL())
 	registries.Post("", r.deps.CreateRegistry.Handle)

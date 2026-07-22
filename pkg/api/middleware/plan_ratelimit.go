@@ -46,6 +46,10 @@ func (m *PlanRateLimitMiddleware) ForGateway() fiber.Handler {
 		if m == nil || m.limiter == nil {
 			return c.Next()
 		}
+		// Platform JWT (empty tenant) stamps entitlements; do not meter those writes.
+		if tenantID, _ := c.Locals(string(infracontext.TenantIDContextKey)).(string); tenantID == "" {
+			return c.Next()
+		}
 		gatewayID, ok := pathGatewayID(c)
 		if !ok {
 			return c.Next()

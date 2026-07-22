@@ -58,6 +58,7 @@ func TestNew(t *testing.T) {
 		}
 		if g == nil {
 			t.Fatal("expected gateway, got nil")
+			return
 		}
 		if !IsValidSlug(g.Slug) {
 			t.Fatalf("generated slug %q is not a valid DNS label", g.Slug)

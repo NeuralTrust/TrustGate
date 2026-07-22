@@ -174,6 +174,7 @@ func TestWeightedRoundRobin_ZeroWeightsServeAsWeightOne(t *testing.T) {
 		b := wrr.Next(context.Background(), nil, nil)
 		if b == nil {
 			t.Fatal("WRR with zero weights must keep serving traffic (weight 0 acts as 1)")
+			return
 		}
 		counts[b.Name]++
 	}
