@@ -177,6 +177,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 
 	var text string
+	var messages []GuardMessage
 	tgt := transformTarget{isResponse: direction == directionOutput}
 	if mcpMode {
 		if direction == directionInput {
@@ -203,10 +204,25 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 			if decErr != nil || creq == nil {
 				return passThrough(), nil
 			}
+			messages = requestMessages(creq)
 			text = joinRequestText(creq)
 			reg := p.registry
 			tgt.apply = func(masked string) ([]byte, bool) {
 				return rewriteRequest(reg, format, creq, masked)
+			}
+			tgt.applyPayload = func(payload map[string]any) ([]byte, bool) {
+				if !applyTransformedRequest(creq, payload) {
+					return nil, false
+				}
+				adp, err := reg.GetAdapter(format)
+				if err != nil {
+					return nil, false
+				}
+				body, err := adp.EncodeRequest(creq)
+				if err != nil {
+					return nil, false
+				}
+				return body, true
 			}
 		} else {
 			if in.Response == nil || in.Response.Streaming || len(in.Response.Body) == 0 {
@@ -223,7 +239,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 			}
 		}
 	}
-	if strings.TrimSpace(text) == "" {
+	if len(messages) == 0 && strings.TrimSpace(text) == "" {
 		return passThrough(), nil
 	}
 
@@ -231,8 +247,14 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	if mcpMode {
 		protocol = protocolMCP
 	}
+	payload := GuardPayload{}
+	if len(messages) > 0 {
+		payload.Messages = messages
+	} else {
+		payload.Input = text
+	}
 	body := GuardRequest{
-		Payload:    GuardPayload{Input: text},
+		Payload:    payload,
 		Direction:  direction,
 		Protocol:   protocol,
 		GatewayID:  in.Request.GatewayID,
@@ -306,16 +328,28 @@ func (p *Plugin) applyTransform(in appplugins.ExecInput, data guardData, resp *G
 		return passThrough(), nil
 	}
 
-	masked, ok := transformedInput(resp.TransformedPayload)
-	if !ok {
-		return p.transformDegraded(in, data, resp, reasonTransformNoPayload)
-	}
-	if tgt.apply == nil {
+	var body []byte
+	var ok bool
+	switch {
+	case tgt.applyPayload != nil:
+		if len(resp.TransformedPayload) == 0 {
+			return p.transformDegraded(in, data, resp, reasonTransformNoPayload)
+		}
+		body, ok = tgt.applyPayload(resp.TransformedPayload)
+		if !ok {
+			return p.transformDegraded(in, data, resp, reasonTransformEncodeFailed)
+		}
+	case tgt.apply != nil:
+		masked, found := transformedInput(resp.TransformedPayload)
+		if !found {
+			return p.transformDegraded(in, data, resp, reasonTransformNoPayload)
+		}
+		body, ok = tgt.apply(masked)
+		if !ok {
+			return p.transformDegraded(in, data, resp, reasonTransformEncodeFailed)
+		}
+	default:
 		return p.transformDegraded(in, data, resp, reasonTransformUnsupported)
-	}
-	body, ok := tgt.apply(masked)
-	if !ok {
-		return p.transformDegraded(in, data, resp, reasonTransformEncodeFailed)
 	}
 
 	data.Decision = decisionTransformed

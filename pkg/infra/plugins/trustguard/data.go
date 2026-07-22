@@ -30,8 +30,15 @@ type GuardRequest struct {
 }
 
 type GuardPayload struct {
-	Input       string            `json:"input"`
+	Input       string            `json:"input,omitempty"`
+	Messages    []GuardMessage    `json:"messages,omitempty"`
 	Attachments []GuardAttachment `json:"attachments,omitempty"`
+}
+
+// GuardMessage is one chat turn TrustGate sends to TrustGuard for per-turn scoring.
+type GuardMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
 type GuardAttachment struct {

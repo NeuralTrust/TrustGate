@@ -64,12 +64,29 @@ type trustGuardTokenCapture struct {
 
 type trustGuardGuardCapture struct {
 	Payload struct {
-		Input string `json:"input"`
+		Input    string `json:"input"`
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
 	} `json:"payload"`
 	Direction  string `json:"direction"`
 	Protocol   string `json:"protocol"`
 	GatewayID  string `json:"gateway_id"`
 	ConsumerID string `json:"consumer_id"`
+}
+
+func (c trustGuardGuardCapture) inspectText() string {
+	parts := make([]string, 0, len(c.Payload.Messages)+1)
+	if c.Payload.Input != "" {
+		parts = append(parts, c.Payload.Input)
+	}
+	for _, m := range c.Payload.Messages {
+		if m.Content != "" {
+			parts = append(parts, m.Content)
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 func (s *trustGuardStub) URL() string { return s.server.URL }
@@ -148,16 +165,29 @@ func (s *trustGuardStub) handleGuard(w http.ResponseWriter, r *http.Request) {
 	s.lastGuardAuth = r.Header.Get("Authorization")
 	s.mu.Unlock()
 
-	if strings.Contains(strings.ToLower(req.Payload.Input), trustGuardErrorWord) {
+	text := req.inspectText()
+	if strings.Contains(strings.ToLower(text), trustGuardErrorWord) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	if strings.Contains(strings.ToLower(req.Payload.Input), trustGuardBlockWord) {
+	if strings.Contains(strings.ToLower(text), trustGuardBlockWord) {
 		_, _ = io.WriteString(w, `{"status":"block","findings":[{"source":{"kind":"detector","plugin":"prompt_guard"},"signal":{"type":"prompt_injection"},"outcome":{"action":"block"}}],"trace_id":"tg-trace-1","request_id":"tg-req-1"}`)
 		return
 	}
-	if strings.Contains(req.Payload.Input, trustGuardMaskWord) {
+	if strings.Contains(text, trustGuardMaskWord) {
+		if len(req.Payload.Messages) > 0 {
+			msgs := make([]map[string]string, 0, len(req.Payload.Messages))
+			for _, m := range req.Payload.Messages {
+				msgs = append(msgs, map[string]string{
+					"role":    m.Role,
+					"content": strings.ReplaceAll(m.Content, trustGuardMaskWord, trustGuardMaskToken),
+				})
+			}
+			payload, _ := json.Marshal(map[string]any{"messages": msgs})
+			_, _ = io.WriteString(w, `{"status":"transform","transformed_payload":`+string(payload)+`,"findings":[{"source":{"kind":"detector","plugin":"data_loss_prevention"},"signal":{"type":"pii"},"outcome":{"action":"transform"}}],"trace_id":"tg-trace-3","request_id":"tg-req-3"}`)
+			return
+		}
 		masked := strings.ReplaceAll(req.Payload.Input, trustGuardMaskWord, trustGuardMaskToken)
 		payload, _ := json.Marshal(map[string]string{"input": masked})
 		_, _ = io.WriteString(w, `{"status":"transform","transformed_payload":`+string(payload)+`,"findings":[{"source":{"kind":"detector","plugin":"data_loss_prevention"},"signal":{"type":"pii"},"outcome":{"action":"transform"}}],"trace_id":"tg-trace-3","request_id":"tg-req-3"}`)
