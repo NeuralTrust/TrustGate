@@ -199,6 +199,7 @@ func TestApplyInjections(t *testing.T) {
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("applyInjections() error = nil, want error")
+					return
 				}
 				pe, ok := appplugins.AsPluginError(err)
 				if !ok {
@@ -393,6 +394,7 @@ func TestPluginPreRequestNoOpSmoke(t *testing.T) {
 			}
 			if res == nil {
 				t.Fatalf("Execute() result = nil, want okResult")
+				return
 			}
 			if res.StatusCode != http.StatusOK {
 				t.Fatalf("StatusCode = %d, want %d", res.StatusCode, http.StatusOK)
@@ -713,6 +715,7 @@ func TestPluginExecuteNoOpMatrix(t *testing.T) {
 			}
 			if res == nil {
 				t.Fatalf("Execute() result = nil, want okResult")
+				return
 			}
 			if res.StatusCode != http.StatusOK {
 				t.Fatalf("StatusCode = %d, want %d", res.StatusCode, http.StatusOK)

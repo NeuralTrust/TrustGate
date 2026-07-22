@@ -48,6 +48,7 @@ func TestBlockError(t *testing.T) {
 	err := blockError(f)
 	if err == nil {
 		t.Fatal("blockError returned nil")
+		return
 	}
 	if err.StatusCode != http.StatusForbidden {
 		t.Fatalf("StatusCode = %d, want %d", err.StatusCode, http.StatusForbidden)
