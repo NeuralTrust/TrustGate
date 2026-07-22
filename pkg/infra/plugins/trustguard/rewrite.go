@@ -21,16 +21,16 @@ import (
 )
 
 // transformTarget carries the closure that applies TrustGuard's masked text back
-// into the provider body for the current direction. apply/applyPayload are nil
-// when the path (e.g. native MCP) cannot propagate a rewritten body.
+// into the provider body for the current direction. apply is nil when the path
+// (e.g. native MCP) cannot propagate a rewritten body.
 type transformTarget struct {
-	isResponse   bool
-	apply        func(masked string) ([]byte, bool)
-	applyPayload func(payload map[string]any) ([]byte, bool)
+	isResponse bool
+	apply      func(masked string) ([]byte, bool)
 }
 
 // transformedInput extracts the masked string TrustGuard returns under the
-// payload's "input" key (legacy joined-text path).
+// payload's "input" key. TrustGate always sends a minimal {input: text} payload,
+// so the transform mirrors that shape.
 func transformedInput(payload map[string]any) (string, bool) {
 	if payload == nil {
 		return "", false
@@ -43,55 +43,10 @@ func transformedInput(payload map[string]any) (string, bool) {
 	return masked, ok
 }
 
-// transformedMessageContents extracts per-turn contents from a messages[]
-// transformed payload, in the same order requestMessages produced.
-func transformedMessageContents(payload map[string]any) ([]string, bool) {
-	if payload == nil {
-		return nil, false
-	}
-	raw, ok := payload["messages"].([]any)
-	if !ok || len(raw) == 0 {
-		return nil, false
-	}
-	out := make([]string, 0, len(raw))
-	for _, item := range raw {
-		m, ok := item.(map[string]any)
-		if !ok {
-			return nil, false
-		}
-		content, ok := m["content"].(string)
-		if !ok {
-			return nil, false
-		}
-		out = append(out, content)
-	}
-	return out, true
-}
-
-// applyTransformedRequest writes TrustGuard's masked payload back onto creq.
-// Prefers structured messages[]; falls back to legacy joined input.
-func applyTransformedRequest(creq *adapter.CanonicalRequest, payload map[string]any) bool {
-	if texts, ok := transformedMessageContents(payload); ok {
-		setters := requestSegmentSetters(creq)
-		if len(texts) != len(setters) {
-			return applyMaskedRequest(creq, strings.Join(texts, "\n"))
-		}
-		for i, s := range setters {
-			s.set(texts[i])
-		}
-		return true
-	}
-	masked, ok := transformedInput(payload)
-	if !ok {
-		return false
-	}
-	return applyMaskedRequest(creq, masked)
-}
-
-// requestParts returns the ordered text segments TrustGate historically joined
-// into a single payload.input string. requestMessages, joinRequestText, and
-// applyMaskedRequest must build this list identically so masked results map
-// back to the exact segments that were inspected.
+// requestParts returns the ordered text segments TrustGate sends to TrustGuard:
+// the system prompt (when non-empty) followed by each non-empty message content.
+// joinRequestText and applyMaskedRequest must build this list identically so the
+// masked result maps back to the exact segments that were inspected.
 func requestParts(creq *adapter.CanonicalRequest) []string {
 	parts := make([]string, 0, len(creq.Messages)+1)
 	if strings.TrimSpace(creq.System) != "" {
@@ -103,29 +58,6 @@ func requestParts(creq *adapter.CanonicalRequest) []string {
 		}
 	}
 	return parts
-}
-
-// requestMessages returns chat turns with roles so TrustGuard can score each
-// turn and take max(score), instead of diluting jailbreak signal in one blob.
-func requestMessages(creq *adapter.CanonicalRequest) []GuardMessage {
-	if creq == nil {
-		return nil
-	}
-	out := make([]GuardMessage, 0, len(creq.Messages)+1)
-	if sys := strings.TrimSpace(creq.System); sys != "" {
-		out = append(out, GuardMessage{Role: "system", Content: creq.System})
-	}
-	for _, msg := range creq.Messages {
-		if strings.TrimSpace(msg.Content) == "" {
-			continue
-		}
-		role := strings.TrimSpace(msg.Role)
-		if role == "" {
-			role = "user"
-		}
-		out = append(out, GuardMessage{Role: role, Content: msg.Content})
-	}
-	return out
 }
 
 func joinRequestText(creq *adapter.CanonicalRequest) string {
