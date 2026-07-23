@@ -24,5 +24,8 @@ import (
 var (
 	ErrInvalidModelRef  = fmt.Errorf("routing: invalid model reference: %w", commonerrors.ErrValidation)
 	ErrUnknownPoolAlias = fmt.Errorf("routing: unknown pool alias: %w", commonerrors.ErrValidation)
+	// ErrAmbiguousModel is retained for source compatibility.
+	// Deprecated: short model references now pin the first eligible registry.
+	ErrAmbiguousModel = fmt.Errorf("routing: ambiguous model: %w", commonerrors.ErrValidation)
 	ErrModelDenied      = errors.New("routing: model denied")
 )
