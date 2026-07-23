@@ -54,7 +54,6 @@ const (
 type AdminRouterDeps struct {
 	MiddlewareTransport *middleware.Transport
 	AdminAuth           *middleware.AdminAuthMiddleware
-	PlanRateLimit       *middleware.PlanRateLimitMiddleware
 	HealthHandler       *apihandler.HealthHandler
 	VersionHandler      *apihandler.VersionHandler
 
@@ -132,14 +131,13 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	app.Get(DocsPath, fiberSwagger.HandlerDefault)
 
 	gw := app.Group(GatewaysPath, r.deps.AdminAuth.Middleware())
-	gw.Post("", r.tenantRL(), r.deps.CreateGateway.Handle)
-	gw.Get("", r.tenantRL(), r.deps.ListGateway.Handle)
-	gw.Get("/:id", r.gatewayRL(), r.deps.GetGateway.Handle)
-	gw.Put("/:id", r.gatewayRL(), r.deps.UpdateGateway.Handle)
-	// Delete skips plan RL so quota-exhausted gateways can still be removed.
+	gw.Post("", r.deps.CreateGateway.Handle)
+	gw.Get("", r.deps.ListGateway.Handle)
+	gw.Get("/:id", r.deps.GetGateway.Handle)
+	gw.Put("/:id", r.deps.UpdateGateway.Handle)
 	gw.Delete("/:id", r.deps.DeleteGateway.Handle)
 
-	registries := gw.Group("/:gateway_id/registries", r.gatewayRL())
+	registries := gw.Group("/:gateway_id/registries")
 	registries.Post("", r.deps.CreateRegistry.Handle)
 	registries.Post("/test-connection", r.deps.TestRegistryConnection.Handle)
 	registries.Get("", r.deps.ListRegistry.Handle)
@@ -148,7 +146,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	registries.Put("/:id", r.deps.UpdateRegistry.Handle)
 	registries.Delete("/:id", r.deps.DeleteRegistry.Handle)
 
-	policies := gw.Group("/:gateway_id/policies", r.gatewayRL())
+	policies := gw.Group("/:gateway_id/policies")
 	policies.Post("", r.deps.CreatePolicy.Handle)
 	policies.Get("", r.deps.ListPolicy.Handle)
 	policies.Get("/:id", r.deps.GetPolicy.Handle)
@@ -158,7 +156,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	policies.Delete("/:id/global", r.deps.GlobalPolicy.UnsetGlobal)
 	policies.Post("/:id/duplicate", r.deps.DuplicatePolicy.Handle)
 
-	consumers := gw.Group("/:gateway_id/consumers", r.gatewayRL())
+	consumers := gw.Group("/:gateway_id/consumers")
 	consumers.Post("", r.deps.CreateConsumer.Handle)
 	consumers.Get("", r.deps.ListConsumer.Handle)
 	consumers.Get("/:id", r.deps.GetConsumer.Handle)
@@ -173,7 +171,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	consumers.Post("/:id/policies/:policy_id", r.deps.ConsumerAssociation.AttachPolicy)
 	consumers.Delete("/:id/policies/:policy_id", r.deps.ConsumerAssociation.DetachPolicy)
 
-	roles := gw.Group("/:gateway_id/roles", r.gatewayRL())
+	roles := gw.Group("/:gateway_id/roles")
 	roles.Post("", r.deps.CreateRole.Handle)
 	roles.Get("", r.deps.ListRole.Handle)
 	roles.Get("/:id", r.deps.GetRole.Handle)
@@ -182,40 +180,24 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	roles.Post("/:role_id/registries/:registry_id", r.deps.RoleAssociation.AttachRegistry)
 	roles.Delete("/:role_id/registries/:registry_id", r.deps.RoleAssociation.DetachRegistry)
 
-	auths := gw.Group("/:gateway_id/auths", r.gatewayRL())
+	auths := gw.Group("/:gateway_id/auths")
 	auths.Post("", r.deps.CreateAuth.Handle)
 	auths.Get("", r.deps.ListAuth.Handle)
 	auths.Get("/:id", r.deps.GetAuth.Handle)
 	auths.Put("/:id", r.deps.UpdateAuth.Handle)
 	auths.Delete("/:id", r.deps.DeleteAuth.Handle)
 
-	app.Get(ProvidersCatalog, r.deps.AdminAuth.Middleware(), r.tenantRL(), r.deps.ListProvidersCatalog.Handle)
-	app.Get(ModelsCatalogPath, r.deps.AdminAuth.Middleware(), r.tenantRL(), r.deps.ListModelsCatalog.Handle)
-	app.Get(PoliciesCatalogPath, r.deps.AdminAuth.Middleware(), r.tenantRL(), r.deps.ListPoliciesCatalog.Handle)
-	app.Get(MCPServersCatalogPath, r.deps.AdminAuth.Middleware(), r.tenantRL(), r.deps.ListMCPServersCatalog.Handle)
+	app.Get(ProvidersCatalog, r.deps.AdminAuth.Middleware(), r.deps.ListProvidersCatalog.Handle)
+	app.Get(ModelsCatalogPath, r.deps.AdminAuth.Middleware(), r.deps.ListModelsCatalog.Handle)
+	app.Get(PoliciesCatalogPath, r.deps.AdminAuth.Middleware(), r.deps.ListPoliciesCatalog.Handle)
+	app.Get(MCPServersCatalogPath, r.deps.AdminAuth.Middleware(), r.deps.ListMCPServersCatalog.Handle)
 
-	app.Get(PlaygroundTracePath, r.deps.AdminAuth.Middleware(), r.tenantRL(), r.deps.GetTrace.Handle)
+	app.Get(PlaygroundTracePath, r.deps.AdminAuth.Middleware(), r.deps.GetTrace.Handle)
 
-	app.Get(ConfigSyncConnPath, r.deps.AdminAuth.Middleware(), r.tenantRL(), r.deps.ListConfigSyncConnections.Handle)
+	app.Get(ConfigSyncConnPath, r.deps.AdminAuth.Middleware(), r.deps.ListConfigSyncConnections.Handle)
 
 	return nil
 }
-
-func (r *adminRouter) tenantRL() fiber.Handler {
-	if r.deps.PlanRateLimit == nil {
-		return passthrough
-	}
-	return r.deps.PlanRateLimit.ForTenant()
-}
-
-func (r *adminRouter) gatewayRL() fiber.Handler {
-	if r.deps.PlanRateLimit == nil {
-		return passthrough
-	}
-	return r.deps.PlanRateLimit.ForGateway()
-}
-
-func passthrough(c *fiber.Ctx) error { return c.Next() }
 
 func installMiddlewares(app *fiber.App, transport *middleware.Transport) {
 	for _, h := range transport.GetMiddlewares() {

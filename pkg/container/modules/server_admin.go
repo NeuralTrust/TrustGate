@@ -60,7 +60,6 @@ type adminRouterParams struct {
 	dig.In
 	Transport      *middleware.Transport `name:"admin"`
 	AdminAuth      *middleware.AdminAuthMiddleware
-	PlanRateLimit  *middleware.PlanRateLimitMiddleware
 	HealthHandler  *apihandler.HealthHandler
 	VersionHandler *apihandler.VersionHandler
 
@@ -127,9 +126,6 @@ func ServerAdmin(c *container.Container) error {
 	if err := c.Provide(adminTransport, dig.Name("admin")); err != nil {
 		return err
 	}
-	if err := c.Provide(middleware.NewPlanRateLimitMiddleware); err != nil {
-		return err
-	}
 	if err := c.Provide(func(repo *configsyncconnrepo.Repository) *configsynchttp.ListConnectionsHandler {
 		return configsynchttp.NewListConnectionsHandler(repo)
 	}); err != nil {
@@ -140,7 +136,6 @@ func ServerAdmin(c *container.Container) error {
 			return router.NewAdminRouter(router.AdminRouterDeps{
 				MiddlewareTransport:    p.Transport,
 				AdminAuth:              p.AdminAuth,
-				PlanRateLimit:          p.PlanRateLimit,
 				HealthHandler:          p.HealthHandler,
 				VersionHandler:         p.VersionHandler,
 				CreateGateway:          p.CreateGateway,
