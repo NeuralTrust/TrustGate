@@ -38,3 +38,21 @@ func setExtras(event *metrics.EventContext, data *Data) {
 	}
 	event.SetExtras(data)
 }
+
+// recordScore surfaces the matched guardrail detection on the metrics span so it
+// feeds the analytics Security Engine breakdown. Bedrock guardrails return no
+// confidence score, so only the label (the matched entity, falling back to the
+// policy) is meaningful and the numeric score stays 0.
+func recordScore(event *metrics.EventContext, data *Data) {
+	if event == nil || data == nil {
+		return
+	}
+	label := data.Name
+	if label == "" {
+		label = data.Policy
+	}
+	if label == "" {
+		return
+	}
+	event.SetScore(0, label)
+}
