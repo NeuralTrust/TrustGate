@@ -195,6 +195,34 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	}
 }
 
+func TestRepository_SavePreservesRegistryOrder(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "ordered-registries")
+	first := seedRegistry(t, f.be, gwID, "be-first")
+	second := seedRegistry(t, f.be, gwID, "be-second")
+	third := seedRegistry(t, f.be, gwID, "be-third")
+
+	want := []ids.RegistryID{third, first, second}
+	c := validConsumer(t, gwID, "ordered-consumer", want...)
+	if err := f.repo.Save(ctx, c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if len(got.RegistryIDs) != len(want) {
+		t.Fatalf("RegistryIDs = %v, want %v", got.RegistryIDs, want)
+	}
+	for i := range want {
+		if got.RegistryIDs[i] != want[i] {
+			t.Fatalf("RegistryIDs = %v, want %v", got.RegistryIDs, want)
+		}
+	}
+}
+
 func TestRepository_SaveAndFindByID_RoundTripsFallback(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
