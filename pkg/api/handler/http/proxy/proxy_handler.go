@@ -376,8 +376,7 @@ func mapProxyError(err error) (int, httpio.ErrorBody) {
 	case errors.Is(err, appproxy.ErrInvalidRequestPayload):
 		return fiber.StatusBadRequest, httpio.ErrorBody{Error: errCodeInvalidRequest, Message: err.Error()}
 	case errors.Is(err, routingdomain.ErrInvalidModelRef),
-		errors.Is(err, routingdomain.ErrUnknownPoolAlias),
-		errors.Is(err, routingdomain.ErrAmbiguousModel):
+		errors.Is(err, routingdomain.ErrUnknownPoolAlias):
 		return fiber.StatusBadRequest, httpio.ErrorBody{Error: errCodeInvalidModel, Message: err.Error()}
 	case errors.Is(err, routingdomain.ErrModelDenied),
 		errors.Is(err, appproxy.ErrModelNotAllowed):

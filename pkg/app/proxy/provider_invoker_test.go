@@ -224,3 +224,35 @@ func TestProviderInvoke_SourceFormatFromPath(t *testing.T) {
 		assert.Equal(t, "message", anthropicResp.Type, "response adapted back to anthropic")
 	})
 }
+
+func TestProviderInvoke_GeminiUsesDefaultModelAfterAutoRouting(t *testing.T) {
+	const defaultModel = "gemini-2.5-flash"
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, config *providers.Config, body []byte) ([]byte, error) {
+			model, err := adapter.ExtractModel(body)
+			require.NoError(t, err)
+			assert.Equal(t, defaultModel, model)
+			assert.Equal(t, defaultModel, config.Model)
+			assert.NotContains(t, string(body), `"auto"`)
+			return []byte(`{"candidates":[]}`), nil
+		}).
+		Once()
+
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("google").Return(client, nil).Once()
+
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+	req := &infracontext.RequestContext{
+		Body:          []byte(`{"contents":[]}`),
+		SourceFormat:  string(adapter.FormatGemini),
+		AllowedModels: []string{defaultModel},
+		DefaultModel:  defaultModel,
+	}
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("google"), req)
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}

@@ -22,12 +22,14 @@ import (
 const (
 	poolPrefix      = "pool:"
 	qualifiedPrefix = "@"
+	autoKeyword     = "auto"
 )
 
 type Intent struct {
 	Provider  string
 	Model     string
 	PoolAlias string
+	Auto      bool
 }
 
 func (i Intent) IsZero() bool {
@@ -43,13 +45,20 @@ func (i Intent) IsQualified() bool {
 }
 
 func (i Intent) IsShortModel() bool {
-	return i.Provider == "" && i.Model != "" && i.PoolAlias == ""
+	return i.Provider == "" && i.Model != "" && i.PoolAlias == "" && !i.Auto
+}
+
+func (i Intent) IsAuto() bool {
+	return i.Auto
 }
 
 func ParseModelRef(ref string) (Intent, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return Intent{}, nil
+	}
+	if strings.EqualFold(ref, autoKeyword) {
+		return Intent{Auto: true}, nil
 	}
 	if strings.HasPrefix(strings.ToLower(ref), poolPrefix) {
 		alias := strings.TrimSpace(ref[len(poolPrefix):])

@@ -117,7 +117,14 @@ func modelRefFromRequest(req *infracontext.RequestContext) (string, error) {
 }
 
 func applyIntentToBody(req *infracontext.RequestContext, intent routingdomain.Intent) {
-	if req == nil || intent.IsZero() {
+	if req == nil {
+		return
+	}
+	if intent.IsAuto() {
+		req.Body = adapter.StripModel(req.Body)
+		return
+	}
+	if intent.IsZero() {
 		return
 	}
 	if intent.IsPool() {
@@ -175,7 +182,7 @@ func (f *forwarder) routeBackend(
 			excluded: make(map[ids.RegistryID]struct{}),
 		}, nil
 	}
-	if intent.IsQualified() {
+	if intent.IsQualified() || intent.IsShortModel() {
 		return routedBackend{
 			backend:  candidates.Candidates()[0].Registry,
 			excluded: make(map[ids.RegistryID]struct{}),
