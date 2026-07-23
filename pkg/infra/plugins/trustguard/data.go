@@ -110,5 +110,52 @@ func setExtras(event *metrics.EventContext, data guardData) {
 
 func recordGuardOutcome(event *metrics.EventContext, data guardData) {
 	setExtras(event, data)
+	if scoreLabelWorthy(data.Decision) {
+		if label, score, ok := primaryFinding(data.Findings); ok {
+			event.SetScore(score, label)
+		}
+	}
 	appplugins.SetDecisionFromOutcome(event, data.Decision)
+}
+
+// scoreLabelWorthy reports whether a guard decision represents an actual
+// detection worth surfacing in the Security Engine breakdown. Pass-through
+// outcomes (allowed, failed_open) must not emit a score label.
+func scoreLabelWorthy(decision string) bool {
+	switch decision {
+	case decisionBlocked, decisionReported, decisionTransformed:
+		return true
+	default:
+		return false
+	}
+}
+
+// primaryFinding selects the finding that best represents the guard decision for
+// the Security Engine metric: the enforced detection with the highest
+// confidence, falling back to the highest-confidence signal when nothing was
+// enforced. It returns ok=false when no finding carries a usable signal type.
+func primaryFinding(findings []GuardFinding) (label string, score float64, ok bool) {
+	var enforced, any *GuardFinding
+	for i := range findings {
+		f := &findings[i]
+		if f.Signal == nil || f.Signal.Type == "" {
+			continue
+		}
+		if any == nil || f.Signal.Confidence > any.Signal.Confidence {
+			any = f
+		}
+		if f.Outcome != nil && f.Outcome.Action != "" {
+			if enforced == nil || f.Signal.Confidence > enforced.Signal.Confidence {
+				enforced = f
+			}
+		}
+	}
+	chosen := enforced
+	if chosen == nil {
+		chosen = any
+	}
+	if chosen == nil {
+		return "", 0, false
+	}
+	return chosen.Signal.Type, chosen.Signal.Confidence, true
 }
