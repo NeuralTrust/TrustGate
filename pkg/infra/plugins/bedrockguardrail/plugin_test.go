@@ -302,6 +302,7 @@ func TestExecuteClientErrorEnforceFailsClosed(t *testing.T) {
 	}
 	if err == nil {
 		t.Fatal("expected error on client failure in enforce mode")
+		return
 	}
 	if _, ok := appplugins.AsPluginError(err); ok {
 		t.Fatalf("expected non-PluginError on transport failure, got %v", err)

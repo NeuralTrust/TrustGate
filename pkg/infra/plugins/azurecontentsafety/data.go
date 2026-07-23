@@ -33,3 +33,26 @@ func setExtras(event *metrics.EventContext, data *Data) {
 	}
 	event.SetExtras(data)
 }
+
+// azureSeverityScale is Azure Content Safety's maximum severity level. Scores
+// are normalized to 0..1 so they are comparable with the confidence-style scores
+// other security engines report.
+const azureSeverityScale = 7
+
+// recordScore surfaces the most severe breached category on the metrics span so
+// it feeds the analytics Security Engine breakdown.
+func recordScore(event *metrics.EventContext, breaches []breachedCategory) {
+	if event == nil || len(breaches) == 0 {
+		return
+	}
+	top := breaches[0]
+	for _, b := range breaches[1:] {
+		if b.Severity > top.Severity {
+			top = b
+		}
+	}
+	if top.Category == "" {
+		return
+	}
+	event.SetScore(float64(top.Severity)/azureSeverityScale, top.Category)
+}

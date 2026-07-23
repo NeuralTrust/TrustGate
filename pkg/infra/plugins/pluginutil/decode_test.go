@@ -34,6 +34,7 @@ func TestDecodeHumanizesObjectInsteadOfNumber(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected decode error")
+		return
 	}
 	msg := err.Error()
 	want := `field "category_severity.Hate" must be a whole number but received an object`
@@ -55,6 +56,7 @@ func TestDecodeHumanizesMultipleFields(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected decode error")
+		return
 	}
 	msg := err.Error()
 	for _, key := range []string{"category_severity.Hate", "category_severity.Violence"} {

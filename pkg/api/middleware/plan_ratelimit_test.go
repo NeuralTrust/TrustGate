@@ -54,7 +54,10 @@ func TestPlanRateLimitForGatewayPrefersGatewayIDParam(t *testing.T) {
 	m := NewPlanRateLimitMiddleware(limiter, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	app := fiber.New()
-	app.Get("/v1/gateways/:gateway_id/policies/:id", m.ForGateway(), func(c *fiber.Ctx) error {
+	app.Get("/v1/gateways/:gateway_id/policies/:id", func(c *fiber.Ctx) error {
+		c.Locals(string(infracontext.TenantIDContextKey), "tenant-1")
+		return m.ForGateway()(c)
+	}, func(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusOK)
 	})
 
@@ -64,6 +67,25 @@ func TestPlanRateLimitForGatewayPrefersGatewayIDParam(t *testing.T) {
 	require.Equal(t, fiber.StatusTooManyRequests, resp.StatusCode)
 	require.Equal(t, gatewayID, limiter.last)
 	require.Equal(t, "burst", resp.Header.Get("X-RateLimit-Reason"))
+}
+
+func TestPlanRateLimitForGatewaySkipsPlatformJWT(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	limiter := &stubGateChecker{err: ratelimitapp.ErrUnavailable}
+	m := NewPlanRateLimitMiddleware(limiter, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	app := fiber.New()
+	app.Delete("/v1/gateways/:id", func(c *fiber.Ctx) error {
+		c.Locals(string(infracontext.TenantIDContextKey), "")
+		return m.ForGateway()(c)
+	}, func(c *fiber.Ctx) error {
+		return c.SendStatus(fiber.StatusOK)
+	})
+
+	resp, err := app.Test(httptest.NewRequest(fiber.MethodDelete, "/v1/gateways/"+gatewayID.String(), nil))
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+	require.True(t, limiter.last.IsNil())
 }
 
 func TestPlanRateLimitForTenantUsesFinder(t *testing.T) {

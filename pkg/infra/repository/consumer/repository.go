@@ -53,7 +53,7 @@ const (
 const consumerSelectColumns = `
 		SELECT c.id, c.gateway_id, c.name, c.type, c.slug, c.routing_mode, c.lb_config, c.fallback, c.model_policies, c.toolkit, c.fail_mode, c.headers, c.active,
 		       c.created_at, c.updated_at,
-		       COALESCE((SELECT array_agg(cb.registry_id ORDER BY cb.registry_id)
+		       COALESCE((SELECT array_agg(cb.registry_id ORDER BY cb.position NULLS FIRST, cb.registry_id)
 		                   FROM consumer_registry cb WHERE cb.consumer_id = c.id), '{}')::uuid[] AS registry_ids,
 		       COALESCE((SELECT json_object_agg(cw.registry_id, cw.weight)
 		                   FROM consumer_registry cw WHERE cw.consumer_id = c.id), '{}')::jsonb AS registry_weights,

@@ -240,6 +240,45 @@ func TestRoutingIntent_PinVersusLB(t *testing.T) {
 		assert.Equal(t, 0, other.Hits(), "the load balancer must never route a pinned request")
 	})
 
+	t.Run("auto uses the load balancer and each backend default model", func(t *testing.T) {
+		openai := newJSONUpstream(t, "openai-served")
+		compat := newJSONUpstream(t, "compat-served")
+		gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("autolb-gw")})
+		openaiID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-oai"), openai.URL()))
+		compatID := CreateRegistry(t, gatewayID, openaiCompatibleBackendPayload(uniqueName("be-compat"), compat.URL()))
+		coID := CreateConsumer(t, gatewayID, map[string]any{
+			"name": uniqueName("cons"),
+			"registries": []map[string]any{
+				{"id": openaiID, "model_policies": map[string]any{"allowed": []string{"gpt-4o-mini"}, "default": "gpt-4o-mini"}},
+				{"id": compatID, "model_policies": map[string]any{"allowed": []string{"compat-model"}, "default": "compat-model"}},
+			},
+			"lb_config": map[string]any{
+				"enabled":   true,
+				"algorithm": "round-robin",
+				"members": []map[string]any{
+					{"registry_id": openaiID},
+					{"registry_id": compatID},
+				},
+			},
+		})
+		apiKey := createAndAttachAPIKey(t, gatewayID, coID)
+		path := chatCompletionsPath(t, coID)
+
+		const total = 4
+		for i := 0; i < total; i++ {
+			status, _, body := proxyPost(t, apiKey, path, chatRequestModel("auto"))
+			assert.Equal(t, http.StatusOK, status, "request %d body: %s", i, body)
+		}
+
+		assert.Greater(t, openai.Hits(), 0, "the OpenAI backend must receive traffic")
+		assert.Greater(t, compat.Hits(), 0, "the compatible backend must receive traffic")
+		assert.Equal(t, total, openai.Hits()+compat.Hits())
+		assert.Contains(t, string(openai.LastBody()), `"model":"gpt-4o-mini"`)
+		assert.Contains(t, string(compat.LastBody()), `"model":"compat-model"`)
+		assert.NotContains(t, string(openai.LastBody()), `"model":"auto"`)
+		assert.NotContains(t, string(compat.LastBody()), `"model":"auto"`)
+	})
+
 	t.Run("qualified pin never fails over, even to a same-provider chain", func(t *testing.T) {
 		primary := newFailingUpstream(t, http.StatusInternalServerError)
 		chain := newFailingUpstream(t, http.StatusServiceUnavailable)
@@ -305,7 +344,7 @@ func TestRoutingIntent_ShortModel(t *testing.T) {
 		assert.Equal(t, 0, compatUp.Hits())
 	})
 
-	t.Run("ambiguous short model returns 400 with qualified alternatives", func(t *testing.T) {
+	t.Run("short model shared by providers pins the first registry", func(t *testing.T) {
 		openaiUp := newJSONUpstream(t, "openai-served")
 		compatUp := newJSONUpstream(t, "compat-served")
 		apiKey, path := setupTwoProviderRoute(t, openaiUp, compatUp,
@@ -313,11 +352,10 @@ func TestRoutingIntent_ShortModel(t *testing.T) {
 
 		status, _, body := proxyPost(t, apiKey, path, chatRequestModel("shared-model"))
 
-		assert.Equal(t, http.StatusBadRequest, status, "body: %s", body)
-		assert.Contains(t, string(body), "invalid_model")
-		assert.Contains(t, string(body), "@openai/shared-model")
-		assert.Contains(t, string(body), "@openai_compatible/shared-model")
-		assert.Equal(t, 0, openaiUp.Hits()+compatUp.Hits())
+		assert.Equal(t, http.StatusOK, status, "body: %s", body)
+		assert.Contains(t, string(body), "openai-served")
+		assert.Equal(t, 1, openaiUp.Hits())
+		assert.Equal(t, 0, compatUp.Hits())
 	})
 
 	t.Run("short model outside every allow-list returns 403", func(t *testing.T) {
