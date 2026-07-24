@@ -15,11 +15,16 @@
 package modules
 
 import (
+	"log/slog"
+
+	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/complexity"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	embeddingopenai "github.com/NeuralTrust/TrustGate/pkg/infra/embedding/openai"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer/strategies"
 	"go.uber.org/dig"
 )
 
@@ -27,6 +32,8 @@ type loadBalancerParams struct {
 	dig.In
 	EmbeddingRepo  embedding.Repository            `optional:"true"`
 	ServiceLocator factory.EmbeddingServiceLocator `optional:"true"`
+	Complexity     strategies.ComplexityScorer
+	Logger         *slog.Logger
 }
 
 func LoadBalancer(c *container.Container) error {
@@ -37,7 +44,16 @@ func LoadBalancer(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	if err := c.Provide(func(cfg *config.Config) strategies.ComplexityScorer {
+		return complexity.NewClient(
+			cfg.FirewallComplexity.BaseURL,
+			cfg.FirewallComplexity.Token,
+			cfg.FirewallComplexity.Timeout,
+		)
+	}); err != nil {
+		return err
+	}
 	return c.Provide(func(p loadBalancerParams) loadbalancer.Factory {
-		return loadbalancer.NewBaseFactory(p.EmbeddingRepo, p.ServiceLocator)
+		return loadbalancer.NewBaseFactory(p.EmbeddingRepo, p.ServiceLocator, p.Complexity, p.Logger)
 	})
 }

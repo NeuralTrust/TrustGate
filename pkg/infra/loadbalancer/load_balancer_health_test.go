@@ -60,7 +60,7 @@ func TestLoadBalancer_NextBackend_SkipsUnhealthyViaMGet(t *testing.T) {
 		t.Fatalf("seed unhealthy status: %v", err)
 	}
 
-	lb, err := loadbalancer.NewLoadBalancer(loadbalancer.NewBaseFactory(nil, nil), loadbalancer.Pool{
+	lb, err := loadbalancer.NewLoadBalancer(loadbalancer.NewBaseFactory(nil, nil, nil, nil), loadbalancer.Pool{
 		ID:         uuid.New().String(),
 		Registries: []*registry.Registry{unhealthy, healthy},
 		Algorithm:  loadbalancer.AlgorithmRoundRobin,

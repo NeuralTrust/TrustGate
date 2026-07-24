@@ -20,6 +20,7 @@ const (
 	WeightedRoundRobin = "weighted-round-robin"
 	LeastConnections   = "least-connections"
 	Semantic           = "semantic"
+	SmartRouting       = "smart-routing"
 )
 
 func Names() []string {
@@ -29,12 +30,13 @@ func Names() []string {
 		WeightedRoundRobin,
 		LeastConnections,
 		Semantic,
+		SmartRouting,
 	}
 }
 
 func IsValid(name string) bool {
 	switch name {
-	case RoundRobin, Random, WeightedRoundRobin, LeastConnections, Semantic:
+	case RoundRobin, Random, WeightedRoundRobin, LeastConnections, Semantic, SmartRouting:
 		return true
 	}
 	return false

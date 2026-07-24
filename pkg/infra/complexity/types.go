@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package loadbalancer
+package complexity
 
-import "github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer/strategies"
+type scoreRequest struct {
+	Input          string `json:"input"`
+	ConversationID string `json:"conversation_id,omitempty"`
+	TenantID       string `json:"tenant_id,omitempty"`
+}
 
-var (
-	_ Strategy = (*strategies.RoundRobin)(nil)
-	_ Strategy = (*strategies.Random)(nil)
-	_ Strategy = (*strategies.WeightedRoundRobin)(nil)
-	_ Strategy = (*strategies.LeastConnections)(nil)
-	_ Strategy = (*strategies.Semantic)(nil)
-	_ Strategy = (*strategies.SmartRouting)(nil)
-)
+type scoreResponse struct {
+	Score    float64 `json:"score"`
+	RawScore float64 `json:"raw_score"`
+}

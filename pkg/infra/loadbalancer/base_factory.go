@@ -16,6 +16,7 @@ package loadbalancer
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
@@ -28,15 +29,21 @@ var _ Factory = (*BaseFactory)(nil)
 type BaseFactory struct {
 	embeddingRepo  embedding.Repository
 	serviceLocator factory.EmbeddingServiceLocator
+	complexity     strategies.ComplexityScorer
+	logger         *slog.Logger
 }
 
 func NewBaseFactory(
 	embeddingRepo embedding.Repository,
 	serviceLocator factory.EmbeddingServiceLocator,
+	complexity strategies.ComplexityScorer,
+	logger *slog.Logger,
 ) Factory {
 	return &BaseFactory{
 		embeddingRepo:  embeddingRepo,
 		serviceLocator: serviceLocator,
+		complexity:     complexity,
+		logger:         logger,
 	}
 }
 
@@ -52,6 +59,8 @@ func (f *BaseFactory) CreateStrategy(input StrategyInput) (Strategy, error) {
 		return strategies.NewLeastConnections(input.Registries), nil
 	case algorithm.Semantic:
 		return strategies.NewSemantic(input.EmbeddingConfig, input.Registries, f.embeddingRepo, f.serviceLocator), nil
+	case algorithm.SmartRouting:
+		return strategies.NewSmartRouting(input.Registries, input.SmartRoutingConfig, f.complexity, f.logger), nil
 	default:
 		return nil, fmt.Errorf("unsupported load balancing algorithm: %s", input.Algorithm)
 	}

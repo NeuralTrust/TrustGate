@@ -100,11 +100,21 @@ type FallbackBudgetRequest struct {
 }
 
 type LBConfigRequest struct {
-	Enabled         bool                    `json:"enabled"`
-	Algorithm       string                  `json:"algorithm,omitempty"`
-	PoolAlias       string                  `json:"pool_alias,omitempty"`
-	Members         []LBPoolMemberRequest   `json:"members,omitempty"`
-	EmbeddingConfig *EmbeddingConfigRequest `json:"embedding_config,omitempty"`
+	Enabled         bool                       `json:"enabled"`
+	Algorithm       string                     `json:"algorithm,omitempty"`
+	PoolAlias       string                     `json:"pool_alias,omitempty"`
+	Members         []LBPoolMemberRequest      `json:"members,omitempty"`
+	EmbeddingConfig *EmbeddingConfigRequest    `json:"embedding_config,omitempty"`
+	SmartRouting    *SmartRoutingConfigRequest `json:"smart_routing,omitempty"`
+}
+
+type SmartRoutingConfigRequest struct {
+	Tiers []SmartRoutingTierRequest `json:"tiers"`
+}
+
+type SmartRoutingTierRequest struct {
+	MinScore   float64 `json:"min_score"`
+	RegistryID string  `json:"registry_id"`
 }
 
 type LBPoolMemberRequest struct {
@@ -150,6 +160,24 @@ type APIKeyAuthRequest struct {
 	ParamName     string `json:"param_name,omitempty"`
 	ParamValue    string `json:"param_value,omitempty"`
 	ParamLocation string `json:"param_location,omitempty"`
+}
+
+func (s *SmartRoutingConfigRequest) ToDomain() (*registrydomain.SmartRoutingConfig, error) {
+	if s == nil {
+		return nil, nil
+	}
+	tiers := make([]registrydomain.SmartRoutingTier, 0, len(s.Tiers))
+	for i, tier := range s.Tiers {
+		registryID, err := ids.Parse[ids.RegistryKind](tier.RegistryID)
+		if err != nil {
+			return nil, fmt.Errorf("lb_config.smart_routing.tiers[%d]: invalid registry_id %q: %w", i, tier.RegistryID, commonerrors.ErrValidation)
+		}
+		tiers = append(tiers, registrydomain.SmartRoutingTier{
+			MinScore:   tier.MinScore,
+			RegistryID: registryID,
+		})
+	}
+	return &registrydomain.SmartRoutingConfig{Tiers: tiers}, nil
 }
 
 func (e *EmbeddingConfigRequest) ToDomain() *registrydomain.EmbeddingConfig {
@@ -294,12 +322,17 @@ func (r *LBConfigRequest) ToDomain() (*domain.LBConfig, error) {
 			Models:     member.Models,
 		})
 	}
+	smartRouting, err := r.SmartRouting.ToDomain()
+	if err != nil {
+		return nil, err
+	}
 	return &domain.LBConfig{
 		Enabled:         r.Enabled,
 		Algorithm:       r.Algorithm,
 		PoolAlias:       r.PoolAlias,
 		Members:         members,
 		EmbeddingConfig: r.EmbeddingConfig.ToDomain(),
+		SmartRouting:    smartRouting,
 	}, nil
 }
 

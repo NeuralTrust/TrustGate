@@ -34,7 +34,8 @@ type Strategy =
   | "weighted"
   | "least-connections"
   | "random"
-  | "semantic";
+  | "semantic"
+  | "smart";
 
 const STRATEGY_META: Record<Strategy, { label: string; hint: string }> = {
   single: { label: "Single target", hint: "Route every request to the attached registry." },
@@ -53,6 +54,10 @@ const STRATEGY_META: Record<Strategy, { label: string; hint: string }> = {
   },
   random: { label: "Random", hint: "Pick an attached registry at random." },
   semantic: { label: "Semantic", hint: "Route by embedding similarity (requires an embedding model)." },
+  smart: {
+    label: "Smart routing",
+    hint: "Route by message complexity: each tier maps a minimum score to a registry.",
+  },
 };
 
 // A strategy that enables lb_config (anything other than single/fallback).
@@ -70,6 +75,8 @@ function algorithmFor(s: Strategy): Algorithm {
       return "random";
     case "semantic":
       return "semantic";
+    case "smart":
+      return "smart-routing";
     case "single":
     case "fallback":
     case "round-robin":
@@ -89,6 +96,8 @@ function strategyOf(c: Consumer): Strategy {
       return "random";
     case "semantic":
       return "semantic";
+    case "smart-routing":
+      return "smart";
     default:
       return "round-robin";
   }
@@ -328,6 +337,12 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
   const [embProvider, setEmbProvider] = useState(emb?.provider ?? "");
   const [embModel, setEmbModel] = useState(emb?.model ?? "");
   const [embKey, setEmbKey] = useState("");
+  const [tiers, setTiers] = useState<{ min_score: string; registry_id: string }[]>(() =>
+    (consumer.lb_config?.smart_routing?.tiers ?? []).map((t) => ({
+      min_score: String(t.min_score),
+      registry_id: t.registry_id,
+    })),
+  );
   // Only user edits live in state; the displayed value falls back to the
   // consumer's configured weight, then a default of 1.
   const [weights, setWeights] = useState<Record<string, string>>(() => {
@@ -344,6 +359,17 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
 
   const meta = STRATEGY_META[strategy];
   const showSemantic = consumer.lb_config?.algorithm === "semantic" || strategy === "semantic";
+  const showSmart = consumer.lb_config?.algorithm === "smart-routing" || strategy === "smart";
+
+  function addTier() {
+    setTiers((prev) => [...prev, { min_score: "", registry_id: "" }]);
+  }
+  function removeTier(index: number) {
+    setTiers((prev) => prev.filter((_, i) => i !== index));
+  }
+  function updateTier(index: number, patch: Partial<{ min_score: string; registry_id: string }>) {
+    setTiers((prev) => prev.map((tier, i) => (i === index ? { ...tier, ...patch } : tier)));
+  }
 
   function displayWeight(r: Registry): string {
     return weights[r.id] ?? String(weightFromConsumer(r.id) ?? 1);
@@ -434,6 +460,21 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
         return;
       }
 
+      if (strategy === "smart") {
+        const parsed = tiers
+          .map((t) => ({ min_score: Number(t.min_score), registry_id: t.registry_id }))
+          .filter((t) => t.registry_id);
+        if (parsed.length === 0) {
+          toast({ variant: "error", title: "Add at least one smart-routing tier with a registry." });
+          return;
+        }
+        if (parsed.some((t) => Number.isNaN(t.min_score) || t.min_score < 0 || t.min_score > 1)) {
+          toast({ variant: "error", title: "Each tier min score must be between 0 and 1." });
+          return;
+        }
+        lb.smart_routing = { tiers: parsed };
+      }
+
       body.lb_config = lb;
       body.fallback = { enabled: false };
       body.model_policies = poolModelPolicies(consumer, attached);
@@ -508,6 +549,7 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
             <option value="least-connections">{STRATEGY_META["least-connections"].label}</option>
             <option value="random">{STRATEGY_META.random.label}</option>
             {showSemantic && <option value="semantic">{STRATEGY_META.semantic.label}</option>}
+            {showSmart && <option value="smart">{STRATEGY_META.smart.label}</option>}
           </optgroup>
         </Select>
       </Field>
@@ -664,6 +706,67 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
           <Field label="API key" hint="leave blank to keep the current key">
             <Input type="password" value={embKey} onChange={(e) => setEmbKey(e.target.value)} placeholder="sk-..." />
           </Field>
+        </div>
+      )}
+
+      {strategy === "smart" && (
+        <div className="rounded-(--radius) border border-border bg-surface-2/30 p-3.5 flex flex-col gap-3">
+          <p className="text-[13px] font-medium text-fg">Complexity tiers</p>
+          <p className="text-[12px] text-muted -mt-1">
+            The tier with the highest min score not above the message score wins. Requests fall back to
+            round robin when the Firewall Complexity API is unavailable.
+          </p>
+          {attached.length === 0 ? (
+            <p className="text-[12px] text-faint">Attach registries first (Bindings tab).</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {tiers.map((tier, i) => (
+                <div key={i} className="flex items-end gap-2">
+                  <div className="w-28">
+                    <Field label="Min score">
+                      <Input
+                        type="number"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={tier.min_score}
+                        onChange={(e) => updateTier(i, { min_score: e.target.value })}
+                        placeholder="0.0"
+                      />
+                    </Field>
+                  </div>
+                  <div className="flex-1">
+                    <Field label="Registry">
+                      <Select
+                        value={tier.registry_id}
+                        onChange={(e) => updateTier(i, { registry_id: e.target.value })}
+                      >
+                        <option value="">Select registry…</option>
+                        {attached.map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.name}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeTier(i)}
+                    aria-label="Remove tier"
+                    className="mb-1 grid size-9 place-items-center rounded-(--radius) border border-border text-muted hover:text-fg"
+                  >
+                    <X className="size-4" />
+                  </button>
+                </div>
+              ))}
+              <div>
+                <Button variant="secondary" onClick={addTier}>
+                  Add tier
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
         </>
