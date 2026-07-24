@@ -1,0 +1,17 @@
+# cert-manager server certificate for the US config-sync gRPC endpoint.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: agentgateway-config-sync-tls
+spec:
+  secretName: agentgateway-config-sync-tls
+  duration: 2160h # 90d
+  renewBefore: 360h # 15d
+  privateKey:
+    algorithm: ECDSA
+    size: 384
+  dnsNames:
+    - agentgateway-configsync.us.neuraltrust.ai
+  issuerRef:
+    name: letsencrypt
+    kind: ClusterIssuer

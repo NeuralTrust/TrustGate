@@ -1,0 +1,38 @@
+# Cloud Armor: allow only Cloudflare-proxied traffic to these Services' load
+# balancer backends. References neuraltrust-prod-us-cloudflare-only (preview
+# until public Gateway is attached and logs are clean).
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: cloudflare-only-agentgateway-admin
+spec:
+  default:
+    securityPolicy: neuraltrust-prod-us-cloudflare-only
+  targetRef:
+    group: ""
+    kind: Service
+    name: agentgateway-admin
+---
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: cloudflare-only-agentgateway-proxy
+spec:
+  default:
+    securityPolicy: neuraltrust-prod-us-cloudflare-only
+  targetRef:
+    group: ""
+    kind: Service
+    name: agentgateway-proxy
+---
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: cloudflare-only-agentgateway-mcp
+spec:
+  default:
+    securityPolicy: neuraltrust-prod-us-cloudflare-only
+  targetRef:
+    group: ""
+    kind: Service
+    name: agentgateway-mcp

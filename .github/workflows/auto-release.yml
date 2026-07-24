@@ -1,8 +1,3 @@
-# Auto-release pipeline for the main branch.
-# Uses AI to determine the semver bump (major/minor/patch) and creates a GitHub
-# Release. The published release then triggers release.yml to build/promote to prod.
-# See: https://semver.org/
-
 name: Auto Release
 
 on:
