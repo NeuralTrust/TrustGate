@@ -106,6 +106,8 @@ const (
 
 	defaultTrustGuardTimeout = 15 * time.Second
 
+	defaultFirewallComplexityTimeout = 15 * time.Second
+
 	defaultOpenAIModerationTimeout = 15 * time.Second
 
 	defaultConfigSyncDataPlaneEnabled  = false
@@ -128,26 +130,27 @@ const (
 )
 
 type Config struct {
-	AppEnv           string
-	Server           ServerConfig
-	Database         DatabaseConfig
-	Redis            RedisConfig
-	Cache            CacheConfig
-	SemanticCache    SemanticCacheConfig
-	SessionStore     SessionStoreConfig
-	Kafka            KafkaConfig
-	Telemetry        TelemetryConfig
-	Metrics          MetricsConfig
-	Playground       PlaygroundConfig
-	Upstream         UpstreamConfig
-	Provider         ProviderConfig
-	Catalog          CatalogConfig
-	CORS             CORSConfig
-	Logger           LoggerConfig
-	TrustGuard       TrustGuardConfig
-	OpenAIModeration OpenAIModerationConfig
-	ConfigSync       ConfigSyncConfig
-	RateLimit        RateLimitConfig
+	AppEnv             string
+	Server             ServerConfig
+	Database           DatabaseConfig
+	Redis              RedisConfig
+	Cache              CacheConfig
+	SemanticCache      SemanticCacheConfig
+	SessionStore       SessionStoreConfig
+	Kafka              KafkaConfig
+	Telemetry          TelemetryConfig
+	Metrics            MetricsConfig
+	Playground         PlaygroundConfig
+	Upstream           UpstreamConfig
+	Provider           ProviderConfig
+	Catalog            CatalogConfig
+	CORS               CORSConfig
+	Logger             LoggerConfig
+	TrustGuard         TrustGuardConfig
+	FirewallComplexity FirewallComplexityConfig
+	OpenAIModeration   OpenAIModerationConfig
+	ConfigSync         ConfigSyncConfig
+	RateLimit          RateLimitConfig
 }
 
 const (
@@ -215,12 +218,12 @@ type ServerConfig struct {
 	// Empty disables admin auth token acceptance until resolved. In prod, when
 	// empty at boot, the DI layer auto-provisions a shared value in Redis
 	// (see crypto.ResolveSharedSecretKey) so replicas converge.
-	SecretKey            string
-	GatewayBaseDomain    string
-	MCPBaseDomain        string
-	STSIssuer            string
-	STSSigningKey        string
-	TrustXFCCFrom        []string
+	SecretKey         string
+	GatewayBaseDomain string
+	MCPBaseDomain     string
+	STSIssuer         string
+	STSSigningKey     string
+	TrustXFCCFrom     []string
 }
 
 type DatabaseConfig struct {
@@ -349,6 +352,15 @@ type TrustGuardConfig struct {
 	ClientSecret string
 }
 
+// FirewallComplexityConfig configures the Firewall Complexity API used by the
+// smart-routing load balancer. Token is a static bearer sent in the "token"
+// header; an empty BaseURL or Token disables smart routing at runtime.
+type FirewallComplexityConfig struct {
+	BaseURL string
+	Token   string // #nosec G117 -- config struct field, not a hardcoded credential
+	Timeout time.Duration
+}
+
 type OpenAIModerationConfig struct {
 	BaseURL string
 	Timeout time.Duration
@@ -361,26 +373,27 @@ type RateLimitConfig struct {
 
 func LoadConfig() (*Config, error) {
 	cfg := &Config{
-		AppEnv:           getEnv("APP_ENV", defaultAppEnv),
-		Server:           getServerConfig(),
-		Database:         getDatabaseConfig(),
-		Redis:            getRedisConfig(),
-		Cache:            getCacheConfig(),
-		SemanticCache:    getSemanticCacheConfig(),
-		SessionStore:     getSessionStoreConfig(),
-		Kafka:            getKafkaConfig(),
-		Telemetry:        getTelemetryConfig(),
-		Metrics:          getMetricsConfig(),
-		Playground:       getPlaygroundConfig(),
-		Upstream:         getUpstreamConfig(),
-		Provider:         getProviderConfig(),
-		Catalog:          getCatalogConfig(),
-		CORS:             getCORSConfig(),
-		Logger:           getLoggerConfig(),
-		TrustGuard:       getTrustGuardConfig(),
-		OpenAIModeration: getOpenAIModerationConfig(),
-		ConfigSync:       getConfigSyncConfig(),
-		RateLimit:        getRateLimitConfig(),
+		AppEnv:             getEnv("APP_ENV", defaultAppEnv),
+		Server:             getServerConfig(),
+		Database:           getDatabaseConfig(),
+		Redis:              getRedisConfig(),
+		Cache:              getCacheConfig(),
+		SemanticCache:      getSemanticCacheConfig(),
+		SessionStore:       getSessionStoreConfig(),
+		Kafka:              getKafkaConfig(),
+		Telemetry:          getTelemetryConfig(),
+		Metrics:            getMetricsConfig(),
+		Playground:         getPlaygroundConfig(),
+		Upstream:           getUpstreamConfig(),
+		Provider:           getProviderConfig(),
+		Catalog:            getCatalogConfig(),
+		CORS:               getCORSConfig(),
+		Logger:             getLoggerConfig(),
+		TrustGuard:         getTrustGuardConfig(),
+		FirewallComplexity: getFirewallComplexityConfig(),
+		OpenAIModeration:   getOpenAIModerationConfig(),
+		ConfigSync:         getConfigSyncConfig(),
+		RateLimit:          getRateLimitConfig(),
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -642,6 +655,14 @@ func getTrustGuardConfig() TrustGuardConfig {
 		Timeout:      getEnvDuration("TRUSTGUARD_TIMEOUT", defaultTrustGuardTimeout),
 		ClientID:     getEnv("TRUSTGUARD_CLIENT_ID", ""),
 		ClientSecret: getEnv("TRUSTGUARD_CLIENT_SECRET", ""),
+	}
+}
+
+func getFirewallComplexityConfig() FirewallComplexityConfig {
+	return FirewallComplexityConfig{
+		BaseURL: getEnv("FIREWALL_COMPLEXITY_BASE_URL", ""),
+		Token:   getEnv("FIREWALL_COMPLEXITY_TOKEN", ""),
+		Timeout: getEnvDuration("FIREWALL_COMPLEXITY_TIMEOUT", defaultFirewallComplexityTimeout),
 	}
 }
 

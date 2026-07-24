@@ -91,7 +91,7 @@ func newTestForwarder(t *testing.T, invoker appproxy.ProviderInvoker) appproxy.F
 func newTestForwarderWithLimiter(t *testing.T, invoker appproxy.ProviderInvoker, limiter ratelimitapp.Checker) appproxy.Forwarder {
 	mgr := cache.NewTTLMapManager(time.Minute)
 	return appproxy.NewForwarder(
-		loadbalancer.NewBaseFactory(nil, nil),
+		loadbalancer.NewBaseFactory(nil, nil, nil, nil),
 		newPermissiveCache(t), mgr, invoker, nil, nil, approuting.NewResolver(), limiter, nil, newTestLogger(),
 	)
 }
@@ -112,7 +112,7 @@ func (f *fakeSessionStore) LastTurnID(_ context.Context, _, _ string) string {
 func newTestForwarderWithStore(t *testing.T, invoker appproxy.ProviderInvoker, store appsession.Store) appproxy.Forwarder {
 	mgr := cache.NewTTLMapManager(time.Minute)
 	return appproxy.NewForwarder(
-		loadbalancer.NewBaseFactory(nil, nil),
+		loadbalancer.NewBaseFactory(nil, nil, nil, nil),
 		newPermissiveCache(t), mgr, invoker, nil, store, approuting.NewResolver(), nil, nil, newTestLogger(),
 	)
 }
