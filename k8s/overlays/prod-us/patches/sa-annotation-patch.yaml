@@ -3,4 +3,4 @@ kind: ServiceAccount
 metadata:
   name: agentgateway
   annotations:
-    iam.gke.io/gcp-service-account: "agentgateway-neuraltrust-prod-us@neuraltrust-prod-us.iam.gserviceaccount.com"
+    iam.gke.io/gcp-service-account: "alerteng-neuraltrust-prod-us@neuraltrust-prod-us.iam.gserviceaccount.com"
