@@ -23,6 +23,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	"github.com/NeuralTrust/TrustGate/pkg/server"
 	"github.com/NeuralTrust/TrustGate/pkg/server/router"
 	"go.uber.org/dig"
@@ -54,6 +55,7 @@ type proxyRouterParams struct {
 	Transport     *middleware.Transport `name:"proxy"`
 	HealthHandler *apihandler.HealthHandler
 	ProxyHandler  *proxyhttp.ForwardedHandler
+	OpsMetrics    *o11y.Provider
 }
 
 type proxyServerParams struct {
@@ -69,7 +71,8 @@ func ServerProxy(c *container.Container) error {
 	}
 	if err := c.Provide(
 		func(p proxyRouterParams) router.ServerRouter {
-			return router.NewProxyRouter(p.Transport, p.HealthHandler, p.ProxyHandler)
+			ops := middleware.NewOpsMetricsMiddleware(p.OpsMetrics, o11y.PlaneProxy)
+			return router.NewProxyRouter(p.Transport, p.HealthHandler, p.ProxyHandler, ops)
 		},
 		dig.Name("proxy"),
 	); err != nil {

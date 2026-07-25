@@ -58,6 +58,9 @@ type PluginRunner struct {
 	logger   *slog.Logger
 }
 
+// IsPolicyBlockedCode reports whether a JSON-RPC error is a policy denial.
+func IsPolicyBlockedCode(code int64) bool { return code == codePolicyBlocked }
+
 // NewPluginRunner accepts the shared executor port; a nil executor makes every
 // method a no-op (plugin-free parity with today's MCP path).
 func NewPluginRunner(executor appplugins.Executor, logger *slog.Logger) *PluginRunner {

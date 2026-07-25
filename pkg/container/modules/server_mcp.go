@@ -24,6 +24,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	"github.com/NeuralTrust/TrustGate/pkg/server"
 	"github.com/NeuralTrust/TrustGate/pkg/server/router"
 	"go.uber.org/dig"
@@ -61,6 +62,7 @@ type mcpRouterParams struct {
 	dig.In
 	BaseTransport              *middleware.Transport `name:"mcpBase"`
 	AuthTransport              *middleware.Transport `name:"mcpAuth"`
+	OpsMetrics                 *o11y.Provider
 	HealthHandler              *apihandler.HealthHandler
 	MCPHandler                 *mcphttp.Handler
 	ProtectedResourceHandler   *oauthhttp.ProtectedResourceHandler
@@ -89,6 +91,7 @@ func ServerMCP(c *container.Container) error {
 	}
 	if err := c.Provide(
 		func(p mcpRouterParams) router.ServerRouter {
+			ops := middleware.NewOpsMetricsMiddleware(p.OpsMetrics, o11y.PlaneMCP)
 			return router.NewMCPRouter(
 				p.BaseTransport,
 				p.AuthTransport,
@@ -102,6 +105,7 @@ func ServerMCP(c *container.Container) error {
 				p.TokenHandler,
 				p.ConnectHandler,
 				p.JWKSHandler,
+				ops,
 			)
 		},
 		dig.Name("mcp"),

@@ -76,6 +76,8 @@ const (
 	defaultTelemetryEnableRequestTraces = true
 	defaultTelemetryEnablePluginTraces  = true
 	defaultTelemetryExportersFile       = "config/telemetry.yaml"
+	// OPS metrics are off by default; product telemetry stays independent.
+	defaultOpsMetricsEnabled = false
 
 	defaultMetricsEnabled       = true
 	defaultMetricsQueueSize     = 1000
@@ -284,7 +286,11 @@ type TelemetryConfig struct {
 	ExportersFile       string
 	EnableRequestTraces bool
 	EnablePluginTraces  bool
-	OTLP                OTLPConfig
+	// OpsMetricsEnabled turns on AgentGateway operational OTel metrics
+	// (http.server.request.duration / agentgateway.request.outcome_total).
+	// Independent of Enabled (product-event pipeline). Default false.
+	OpsMetricsEnabled bool
+	OTLP              OTLPConfig
 }
 
 // OTLPConfig holds process-level OTLP exporter defaults read from the standard
@@ -516,6 +522,7 @@ func getTelemetryConfig() TelemetryConfig {
 		ExportersFile:       getEnv("TELEMETRY_EXPORTERS_FILE", defaultTelemetryExportersFile),
 		EnableRequestTraces: getEnvBool("TELEMETRY_ENABLE_REQUEST_TRACES", defaultTelemetryEnableRequestTraces),
 		EnablePluginTraces:  getEnvBool("TELEMETRY_ENABLE_PLUGIN_TRACES", defaultTelemetryEnablePluginTraces),
+		OpsMetricsEnabled:   getEnvBool("OPS_METRICS_ENABLED", defaultOpsMetricsEnabled),
 		OTLP:                getOTLPConfig(),
 	}
 }
