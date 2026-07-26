@@ -23,32 +23,17 @@ spec:
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: agentgateway-proxy
+  name: agentgateway-mcp
 spec:
   minReplicas: 2
-  maxReplicas: 15
-  metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: 80
-  - type: Resource
-    resource:
-      name: memory
-      target:
-        type: Utilization
-        averageUtilization: 90
-
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: agentgateway-mcp
+  name: agentgateway-proxy
 spec:
   minReplicas: 2
-  maxReplicas: 15
+  maxReplicas: 20
   metrics:
   - type: Resource
     resource:

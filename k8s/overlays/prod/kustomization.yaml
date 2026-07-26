@@ -9,14 +9,33 @@ resources:
 - cloudflare-backendpolicy.yaml
 - service-configsync-external.yaml
 - config-sync-cert.yaml
-# - patches/hpa-patch.yaml
 patchesStrategicMerge:
-- patches/replicas-patch.yaml
+- patches/hpa-patch.yaml
+# - patches/replicas-patch.yaml  # HPA owns replicas
 - patches/resources-patch.yaml
 - patches/pdb-patch.yaml
 - patches/httproute-patch.yaml
 - patches/sa-annotation-patch.yaml
 - patches/config-sync-tls-patch.yaml
+patches:
+- target:
+    kind: Deployment
+    name: agentgateway-admin
+  patch: |-
+    - op: remove
+      path: /spec/replicas
+- target:
+    kind: Deployment
+    name: agentgateway-proxy
+  patch: |-
+    - op: remove
+      path: /spec/replicas
+- target:
+    kind: Deployment
+    name: agentgateway-mcp
+  patch: |-
+    - op: remove
+      path: /spec/replicas
 commonLabels:
   app.kubernetes.io/managed-by: kustomize
   environment: prod
