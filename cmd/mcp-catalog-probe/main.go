@@ -133,7 +133,9 @@ func main() {
 	for _, r := range results {
 		counts[r.Status]++
 		line, _ := json.Marshal(r)
-		fmt.Fprintln(out, string(line))
+		if _, err := fmt.Fprintln(out, string(line)); err != nil {
+			fatalf("write report: %v", err)
+		}
 	}
 	fmt.Fprintf(os.Stderr, "probed %d servers:", len(results))
 	for _, k := range []string{
@@ -209,10 +211,6 @@ func probeOne(client *http.Client, timeout time.Duration, s map[string]any) prob
 		HiddenReason: reason,
 	}
 	defer func() { res.DurationMS = time.Since(start).Milliseconds() }()
-
-	if hidden {
-		// Still classify so --apply / reports stay useful when -include-hidden.
-	}
 
 	if transport == "sse" {
 		res.Status = statusBrokenUnsupp
