@@ -3466,7 +3466,9 @@
           "name": "RUBE_REMOTE_WORKBENCH",
           "description": "Cloud Python sandbox for processing between tool calls"
         }
-      ]
+      ],
+      "hidden": true,
+      "hidden_reason": "probe: broken_unreachable DNS failure"
     },
     {
       "name": "com.contentful/mcp",
@@ -4077,7 +4079,9 @@
           "name": "get_datadog_database_recommendations",
           "description": "Get DB recommendations"
         }
-      ]
+      ],
+      "hidden": true,
+      "hidden_reason": "probe: broken_unreachable HTTP 404"
     },
     {
       "name": "com.getdbt/mcp",
@@ -4797,7 +4801,9 @@
         ],
         "resource": "https://mcp-d.docusign.com/mcp"
       },
-      "relevance": 75
+      "relevance": 75,
+      "hidden": true,
+      "hidden_reason": "probe: broken_forbidden HTTP 403"
     },
     {
       "name": "com.dropbox/mcp",
@@ -7408,7 +7414,9 @@
       "description": "AI video generation and editing via InVideo.",
       "transport": "sse",
       "server_url": "https://mcp.invideo.io/sse",
-      "requires_auth": false
+      "requires_auth": false,
+      "hidden": true,
+      "hidden_reason": "connect fails: TrustGate MCP plane does not support SSE transport"
     },
     {
       "name": "dev.jam/mcp",
@@ -10761,7 +10769,9 @@
           "name": "list_transactions",
           "description": "List transactions"
         }
-      ]
+      ],
+      "hidden": true,
+      "hidden_reason": "probe: broken_unreachable HTTP 404"
     },
     {
       "name": "io.pendo/mcp",
@@ -11836,6 +11846,8 @@
       "transport": "sse",
       "server_url": "https://mcp.replicate.com/sse",
       "requires_auth": true,
+      "hidden": true,
+      "hidden_reason": "connect fails: TrustGate MCP plane does not support SSE transport",
       "oauth": {
         "required": true,
         "resource_metadata": true,
@@ -13053,7 +13065,9 @@
           "name": "change_security_hotspot_status",
           "description": "Review/change a hotspot status"
         }
-      ]
+      ],
+      "hidden": true,
+      "hidden_reason": "probe: broken_forbidden HTTP 400"
     },
     {
       "name": "com.sonatype/mcp",
@@ -15293,7 +15307,9 @@
           "name": "send_feedback",
           "description": "Send feedback to Zapier"
         }
-      ]
+      ],
+      "hidden": true,
+      "hidden_reason": "probe: broken_forbidden HTTP 403"
     },
     {
       "name": "us.zoom/docs",
