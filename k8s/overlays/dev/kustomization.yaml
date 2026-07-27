@@ -8,9 +8,9 @@ resources:
 - secretproviderclass/agentgateway-secrets.yaml
 - service-configsync-external.yaml
 - config-sync-cert.yaml
+# - patches/replicas-patch.yaml  # HPA owns replicas
 patchesStrategicMerge:
 - patches/hpa-patch.yaml
-# - patches/replicas-patch.yaml  # HPA owns replicas
 - patches/resources-patch.yaml
 - patches/pdb-patch.yaml
 - patches/httproute-patch.yaml
@@ -18,24 +18,24 @@ patchesStrategicMerge:
 - patches/config-sync-tls-patch.yaml
 - patches/config-sync-internal-lb-patch.yaml
 patches:
-- target:
+- patch: |-
+    - op: remove
+      path: /spec/replicas
+  target:
     kind: Deployment
     name: agentgateway-admin
-  patch: |-
+- patch: |-
     - op: remove
       path: /spec/replicas
-- target:
+  target:
     kind: Deployment
     name: agentgateway-proxy
-  patch: |-
+- patch: |-
     - op: remove
       path: /spec/replicas
-- target:
+  target:
     kind: Deployment
     name: agentgateway-mcp
-  patch: |-
-    - op: remove
-      path: /spec/replicas
 commonLabels:
   app.kubernetes.io/managed-by: kustomize
   environment: dev
@@ -43,7 +43,7 @@ namespace: agentgateway
 images:
 - name: agentgateway
   newName: europe-west1-docker.pkg.dev/neuraltrust-app-dev/nt-docker/agentgateway
-  newTag: 8b059f5c90b6166d81d9884953bcca664b179d82
+  newTag: 804aeec8cb8d79feba72c224cc6487ed8c8aeef7
 configMapGenerator:
 - behavior: create
   envs:
