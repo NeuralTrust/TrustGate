@@ -46,6 +46,11 @@ type PendingAuthorization struct {
 	CodeVerifier        string `json:"code_verifier"`
 	Resource            string `json:"resource,omitempty"`
 	AuthID              string `json:"auth_id,omitempty"`
+	// GatewayID is the gateway the addressed MCP consumer belongs to. It is
+	// captured at authorize time so the built-in default identity provider —
+	// which has no owning gateway of its own — can still bind the minted
+	// session to the right gateway at callback time.
+	GatewayID string `json:"gateway_id,omitempty"`
 }
 
 type CodeGrant struct {

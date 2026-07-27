@@ -215,12 +215,37 @@ type ServerConfig struct {
 	// Empty disables admin auth token acceptance until resolved. In prod, when
 	// empty at boot, the DI layer auto-provisions a shared value in Redis
 	// (see crypto.ResolveSharedSecretKey) so replicas converge.
-	SecretKey            string
-	GatewayBaseDomain    string
-	MCPBaseDomain        string
-	STSIssuer            string
-	STSSigningKey        string
-	TrustXFCCFrom        []string
+	SecretKey         string
+	GatewayBaseDomain string
+	MCPBaseDomain     string
+	STSIssuer         string
+	STSSigningKey     string
+	TrustXFCCFrom     []string
+	// MCPDefaultIdP is the built-in NeuralTrust identity provider used as the
+	// fallback OAuth2 login for MCP consumers that have no identity provider of
+	// their own. Empty Issuer disables it (behaviour unchanged).
+	MCPDefaultIdP MCPDefaultIdPConfig
+}
+
+// MCPDefaultIdPConfig configures the built-in NeuralTrust identity provider
+// that MCP consumers fall back to when they have no oauth2 auth of their own.
+// The gateway brokers the interactive login to this provider (the NeuralTrust
+// platform acting as an OAuth2 authorization server) and mints its own MCP
+// session token bound to the platform user, so operators do not have to stand
+// up and register an identity provider just to run a PoC.
+type MCPDefaultIdPConfig struct {
+	// Issuer is the authorization server's issuer URL (e.g.
+	// https://app.neuraltrust.ai/api/mcp/oauth). Empty disables the default.
+	Issuer string
+	// AuthorizeURL/TokenURL/JWKSURL default to {Issuer}/authorize, /token and
+	// /jwks respectively when left empty.
+	AuthorizeURL string
+	TokenURL     string
+	JWKSURL      string
+	ClientID     string
+	ClientSecret string // #nosec G117 -- config struct field, not a hardcoded credential
+	Audiences    []string
+	Scopes       []string
 }
 
 type DatabaseConfig struct {
@@ -408,6 +433,16 @@ func getServerConfig() ServerConfig {
 		STSIssuer:     getEnv("STS_ISSUER", "trustgate"),
 		STSSigningKey: getEnv("STS_SIGNING_KEY", ""),
 		TrustXFCCFrom: splitCSV(getEnv("TRUST_XFCC_FROM", "")),
+		MCPDefaultIdP: MCPDefaultIdPConfig{
+			Issuer:       getEnv("MCP_DEFAULT_IDP_ISSUER", ""),
+			AuthorizeURL: getEnv("MCP_DEFAULT_IDP_AUTHORIZE_URL", ""),
+			TokenURL:     getEnv("MCP_DEFAULT_IDP_TOKEN_URL", ""),
+			JWKSURL:      getEnv("MCP_DEFAULT_IDP_JWKS_URL", ""),
+			ClientID:     getEnv("MCP_DEFAULT_IDP_CLIENT_ID", ""),
+			ClientSecret: getEnv("MCP_DEFAULT_IDP_CLIENT_SECRET", ""),
+			Audiences:    splitCSV(getEnv("MCP_DEFAULT_IDP_AUDIENCE", "")),
+			Scopes:       splitCSV(getEnv("MCP_DEFAULT_IDP_SCOPES", "")),
+		},
 	}
 }
 

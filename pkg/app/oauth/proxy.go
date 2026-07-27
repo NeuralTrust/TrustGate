@@ -111,6 +111,7 @@ func (p *authProxy) Authorize(ctx context.Context, baseURL string, req Authorize
 		CodeVerifier:        verifier,
 		Resource:            req.Resource,
 		AuthID:              auth.ID.String(),
+		GatewayID:           auth.GatewayID.String(),
 	}
 	if err := p.store.SavePending(ctx, state, pending); err != nil {
 		return "", fmt.Errorf("oauth: park authorization: %w", err)
@@ -190,7 +191,13 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 		capturedSubject = sub
 		grant.Subject = sub
 		grant.AuthID = auth.ID.String()
+		// Prefer the gateway captured at authorize time: the built-in default
+		// identity provider is platform-wide and carries no gateway of its own,
+		// so pending.GatewayID is the only place the addressed gateway is known.
 		grant.GatewayID = auth.GatewayID.String()
+		if pending.GatewayID != "" {
+			grant.GatewayID = pending.GatewayID
+		}
 		grant.Audiences = cfg.Audiences
 		grant.Scopes = grantedScopes(token, pending.Scope)
 		grant.SessionMode = true
@@ -377,6 +384,12 @@ func (p *authProxy) mintSession(grant CodeGrant) (map[string]any, error) {
 		"scope":     strings.Join(grant.Scopes, " "),
 		"authid":    grant.AuthID,
 		"token_use": "mcp_session",
+	}
+	// gwid binds the session to the gateway the login was brokered for. It is
+	// authoritative for the built-in default identity provider, whose synthetic
+	// auth record carries no gateway of its own.
+	if grant.GatewayID != "" {
+		claims["gwid"] = grant.GatewayID
 	}
 	if len(grant.Audiences) > 0 {
 		claims["aud"] = grant.Audiences

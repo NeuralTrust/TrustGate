@@ -23,6 +23,54 @@ func (_m *CredentialFinder) EXPECT() *CredentialFinder_Expecter {
 	return &CredentialFinder_Expecter{mock: &_m.Mock}
 }
 
+// DefaultOAuth2ForGateway provides a mock function with given fields: gatewayID
+func (_m *CredentialFinder) DefaultOAuth2ForGateway(gatewayID ids.GatewayID) *auth.Auth {
+	ret := _m.Called(gatewayID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DefaultOAuth2ForGateway")
+	}
+
+	var r0 *auth.Auth
+	if rf, ok := ret.Get(0).(func(ids.GatewayID) *auth.Auth); ok {
+		r0 = rf(gatewayID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*auth.Auth)
+		}
+	}
+
+	return r0
+}
+
+// CredentialFinder_DefaultOAuth2ForGateway_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DefaultOAuth2ForGateway'
+type CredentialFinder_DefaultOAuth2ForGateway_Call struct {
+	*mock.Call
+}
+
+// DefaultOAuth2ForGateway is a helper method to define mock.On call
+//   - gatewayID ids.GatewayID
+func (_e *CredentialFinder_Expecter) DefaultOAuth2ForGateway(gatewayID interface{}) *CredentialFinder_DefaultOAuth2ForGateway_Call {
+	return &CredentialFinder_DefaultOAuth2ForGateway_Call{Call: _e.mock.On("DefaultOAuth2ForGateway", gatewayID)}
+}
+
+func (_c *CredentialFinder_DefaultOAuth2ForGateway_Call) Run(run func(gatewayID ids.GatewayID)) *CredentialFinder_DefaultOAuth2ForGateway_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(ids.GatewayID))
+	})
+	return _c
+}
+
+func (_c *CredentialFinder_DefaultOAuth2ForGateway_Call) Return(_a0 *auth.Auth) *CredentialFinder_DefaultOAuth2ForGateway_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *CredentialFinder_DefaultOAuth2ForGateway_Call) RunAndReturn(run func(ids.GatewayID) *auth.Auth) *CredentialFinder_DefaultOAuth2ForGateway_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // MTLSAuths provides a mock function with given fields: ctx
 func (_m *CredentialFinder) MTLSAuths(ctx context.Context) ([]*auth.Auth, error) {
 	ret := _m.Called(ctx)
