@@ -28,19 +28,19 @@ type transformTarget struct {
 	apply      func(masked string) ([]byte, bool)
 }
 
-// transformedInput extracts the masked string TrustGuard returns under the
-// payload's "input" key. TrustGate always sends a minimal {input: text} payload,
-// so the transform mirrors that shape.
+// transformedInput extracts the masked string TrustGuard returns for rewrite.
+// Prefer the legacy "input" key (response path and older clients). For LLM
+// request evaluates that send messages[], fall back to joining non-empty
+// message contents in the same order as requestParts.
 func transformedInput(payload map[string]any) (string, bool) {
 	if payload == nil {
 		return "", false
 	}
-	value, ok := payload[transformedInputKey]
-	if !ok {
-		return "", false
+	if value, ok := payload[transformedInputKey]; ok {
+		masked, ok := value.(string)
+		return masked, ok
 	}
-	masked, ok := value.(string)
-	return masked, ok
+	return joinedTransformedMessages(payload)
 }
 
 // requestParts returns the ordered text segments TrustGate sends to TrustGuard:
