@@ -149,7 +149,8 @@ export type Algorithm =
   | "random"
   | "weighted-round-robin"
   | "least-connections"
-  | "semantic";
+  | "semantic"
+  | "smart-routing";
 
 export interface EmbeddingAuth {
   api_key?: string;
@@ -171,12 +172,22 @@ export interface LBPoolMember {
   models?: string[];
 }
 
+export interface SmartRoutingTier {
+  min_score: number;
+  registry_id: string;
+}
+
+export interface SmartRoutingConfig {
+  tiers: SmartRoutingTier[];
+}
+
 export interface LBConfig {
   enabled: boolean;
   algorithm?: Algorithm;
   pool_alias?: string;
   members?: LBPoolMember[];
   embedding_config?: EmbeddingConfig | null;
+  smart_routing?: SmartRoutingConfig | null;
 }
 
 export interface RegistryWeight {

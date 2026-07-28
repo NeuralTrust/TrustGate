@@ -101,6 +101,24 @@ func TestParseCuratedMCPServers_AcceptsUniqueCodes(t *testing.T) {
 	require.Len(t, servers, 2)
 }
 
+func TestParseCuratedMCPServers_OmitsHidden(t *testing.T) {
+	t.Parallel()
+
+	data := []byte(`{"servers":[
+		{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://a.example.com/mcp"},
+		{"name":"com.hidden/mcp","transport":"streamable-http","server_url":"https://h.example.com/mcp","hidden":true,"hidden_reason":"broken"},
+		{"name":"com.beta/mcp","transport":"streamable-http","server_url":"https://b.example.com/mcp","hidden":false}
+	]}`)
+
+	servers, err := parseCuratedMCPServers(data)
+	require.NoError(t, err)
+	require.Len(t, servers, 2)
+	codes := []string{servers[0].Code, servers[1].Code}
+	require.Contains(t, codes, "com.acme/mcp")
+	require.Contains(t, codes, "com.beta/mcp")
+	require.NotContains(t, codes, "com.hidden/mcp")
+}
+
 func TestRequiresConfig_Classification(t *testing.T) {
 	t.Parallel()
 

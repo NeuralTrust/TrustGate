@@ -82,6 +82,10 @@ type rawServer struct {
 	OAuth        *domain.MCPOAuth        `json:"oauth"`
 	Tools        []domain.MCPTool        `json:"tools"`
 	Relevance    int                     `json:"relevance"`
+	// Hidden keeps the entry in the seed for audit/re-probe but omits it from
+	// ListMCPServers (Admin UI / product catalog).
+	Hidden       bool   `json:"hidden,omitempty"`
+	HiddenReason string `json:"hidden_reason,omitempty"`
 }
 
 func loadCuratedMCPServers() ([]domain.MCPServer, error) {
@@ -106,6 +110,9 @@ func parseCuratedMCPServers(data []byte) ([]domain.MCPServer, error) {
 			return nil, fmt.Errorf("mcp catalog: duplicate server code %q", s.Name)
 		}
 		seen[s.Name] = struct{}{}
+		if s.Hidden {
+			continue
+		}
 		servers = append(servers, domain.MCPServer{
 			Code:           s.Name,
 			DisplayName:    s.Vendor,

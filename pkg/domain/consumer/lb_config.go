@@ -30,11 +30,12 @@ type LBPoolMember struct {
 }
 
 type LBConfig struct {
-	Enabled         bool                      `json:"enabled"`
-	Algorithm       string                    `json:"algorithm,omitempty"`
-	PoolAlias       string                    `json:"pool_alias,omitempty"`
-	Members         []LBPoolMember            `json:"members,omitempty"`
-	EmbeddingConfig *registry.EmbeddingConfig `json:"embedding_config,omitempty"`
+	Enabled         bool                         `json:"enabled"`
+	Algorithm       string                       `json:"algorithm,omitempty"`
+	PoolAlias       string                       `json:"pool_alias,omitempty"`
+	Members         []LBPoolMember               `json:"members,omitempty"`
+	EmbeddingConfig *registry.EmbeddingConfig    `json:"embedding_config,omitempty"`
+	SmartRouting    *registry.SmartRoutingConfig `json:"smart_routing,omitempty"`
 }
 
 func (l LBConfig) Value() (driver.Value, error) {
@@ -70,7 +71,11 @@ func (l *LBConfig) Validate(inline ModelPolicies) error {
 			return err
 		}
 	}
-	if l.Algorithm == algorithm.Semantic {
+	switch l.Algorithm {
+	case algorithm.Semantic:
+		if l.SmartRouting != nil {
+			return fmt.Errorf("%w: smart_routing is only valid for the smart-routing algorithm", ErrInvalidLBConfig)
+		}
 		if l.EmbeddingConfig == nil {
 			return fmt.Errorf("%w: embedding_config required for semantic algorithm", ErrInvalidLBConfig)
 		}
@@ -78,9 +83,37 @@ func (l *LBConfig) Validate(inline ModelPolicies) error {
 			return fmt.Errorf("%w: %s", ErrInvalidLBConfig, err.Error())
 		}
 		return nil
+	case algorithm.SmartRouting:
+		if l.EmbeddingConfig != nil {
+			return fmt.Errorf("%w: embedding_config is only valid for the semantic algorithm", ErrInvalidLBConfig)
+		}
+		if l.SmartRouting == nil {
+			return fmt.Errorf("%w: smart_routing required for smart-routing algorithm", ErrInvalidLBConfig)
+		}
+		if err := l.SmartRouting.Validate(); err != nil {
+			return fmt.Errorf("%w: %s", ErrInvalidLBConfig, err.Error())
+		}
+		return l.validateSmartRoutingMembers()
+	default:
+		if l.EmbeddingConfig != nil {
+			return fmt.Errorf("%w: embedding_config is only valid for the semantic algorithm", ErrInvalidLBConfig)
+		}
+		if l.SmartRouting != nil {
+			return fmt.Errorf("%w: smart_routing is only valid for the smart-routing algorithm", ErrInvalidLBConfig)
+		}
+		return nil
 	}
-	if l.EmbeddingConfig != nil {
-		return fmt.Errorf("%w: embedding_config is only valid for the semantic algorithm", ErrInvalidLBConfig)
+}
+
+func (l *LBConfig) validateSmartRoutingMembers() error {
+	members := make(map[ids.RegistryID]struct{}, len(l.Members))
+	for _, member := range l.Members {
+		members[member.RegistryID] = struct{}{}
+	}
+	for i, tier := range l.SmartRouting.Tiers {
+		if _, ok := members[tier.RegistryID]; !ok {
+			return fmt.Errorf("%w: smart_routing.tiers[%d].registry_id %s is not a pool member", ErrInvalidLBConfig, i, tier.RegistryID)
+		}
 	}
 	return nil
 }

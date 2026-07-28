@@ -52,7 +52,7 @@ func TestPluginE2E_TrustGuard_Enforce(t *testing.T) {
 		assert.Equal(t, "llm", guard.Protocol)
 		assert.NotEmpty(t, guard.GatewayID)
 		assert.NotEmpty(t, guard.ConsumerID)
-		assert.Contains(t, guard.Payload.Input, "hello, how are you?")
+		assert.Contains(t, trustGuardInspectText(guard.Payload), "hello, how are you?")
 
 		tokensAfterFirst := tg.TokenHits()
 		status, _, raw = proxyRequest(t, http.MethodPost, apiKey, path, nil,

@@ -35,6 +35,7 @@ import (
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
 )
@@ -350,6 +351,10 @@ func sessionIDFromContext(c *fiber.Ctx) string {
 
 func writeProxyError(c *fiber.Ctx, err error) error {
 	status, body := mapProxyError(err)
+	if status == fiber.StatusForbidden &&
+		(body.Error == errCodePluginRejected || body.Error == errCodeModelNotAllowed) {
+		middleware.SetOpsOutcome(c, o11y.OutcomeDeniedPolicy)
+	}
 	if rt := trace.FromContext(c.UserContext()); rt != nil {
 		rt.SetStatusReason(body.Error)
 	}

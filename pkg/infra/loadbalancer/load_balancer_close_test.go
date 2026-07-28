@@ -53,7 +53,7 @@ func TestLoadBalancer_Close_IdempotentAndSafe(t *testing.T) {
 		t.Fatalf("NewLLMRegistry error: %v", err)
 	}
 
-	lb, err := loadbalancer.NewLoadBalancer(loadbalancer.NewBaseFactory(nil, nil), loadbalancer.Pool{
+	lb, err := loadbalancer.NewLoadBalancer(loadbalancer.NewBaseFactory(nil, nil, nil, nil), loadbalancer.Pool{
 		ID:         uuid.New().String(),
 		Registries: []*registry.Registry{bk},
 		Algorithm:  loadbalancer.AlgorithmRoundRobin,

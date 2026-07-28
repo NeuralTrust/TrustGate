@@ -22,4 +22,5 @@ var (
 	_ Strategy = (*strategies.WeightedRoundRobin)(nil)
 	_ Strategy = (*strategies.LeastConnections)(nil)
 	_ Strategy = (*strategies.Semantic)(nil)
+	_ Strategy = (*strategies.SmartRouting)(nil)
 )

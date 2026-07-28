@@ -34,6 +34,7 @@ import (
 	authsession "github.com/NeuralTrust/TrustGate/pkg/infra/auth/session"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	playgroundstore "github.com/NeuralTrust/TrustGate/pkg/infra/metrics/playground"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
@@ -46,6 +47,9 @@ type healthParams struct {
 }
 
 func API(c *container.Container) error {
+	if err := c.Provide(o11y.NewProvider); err != nil {
+		return err
+	}
 	if err := c.Provide(func(p healthParams) *apihandler.HealthHandler {
 		var checks []apihandler.ReadinessCheck
 		if p.Store != nil {

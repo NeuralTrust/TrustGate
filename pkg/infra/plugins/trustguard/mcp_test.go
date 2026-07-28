@@ -167,3 +167,40 @@ func TestFlattenArgumentStrings(t *testing.T) {
 		})
 	}
 }
+
+func TestMCPToolsCallPayload(t *testing.T) {
+	t.Parallel()
+	raw, err := mcpToolsCallPayload([]byte(`{"name":"search","arguments":{"query":"find me"}}`))
+	if err != nil {
+		t.Fatalf("mcpToolsCallPayload: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if m["jsonrpc"] != "2.0" || m["method"] != "tools/call" {
+		t.Fatalf("envelope = %#v", m)
+	}
+	params, _ := m["params"].(map[string]any)
+	if params["name"] != "search" {
+		t.Fatalf("name = %#v", params["name"])
+	}
+}
+
+func TestMCPToolsResultPayload(t *testing.T) {
+	t.Parallel()
+	raw, err := mcpToolsResultPayload([]byte(`{"content":[{"type":"text","text":"ok"}],"isError":false}`))
+	if err != nil {
+		t.Fatalf("mcpToolsResultPayload: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if m["jsonrpc"] != "2.0" {
+		t.Fatalf("jsonrpc = %#v", m["jsonrpc"])
+	}
+	if _, ok := m["result"]; !ok {
+		t.Fatalf("missing result: %#v", m)
+	}
+}

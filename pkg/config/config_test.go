@@ -128,7 +128,7 @@ func TestNormalizeRedisLogin(t *testing.T) {
 func TestLoadConfig_RedisLoginModes(t *testing.T) {
 	tests := []struct {
 		name, login, password, wantLogin, wantPassword string
-		awsExtras                                       bool
+		awsExtras                                      bool
 	}{
 		{name: "blank defaults to default and preserves password", password: "configured-password", wantLogin: redisLoginDefault, wantPassword: "configured-password"},
 		{name: "whitespace defaults to default", login: " \t ", password: "configured-password", wantLogin: redisLoginDefault, wantPassword: "configured-password"},
@@ -320,6 +320,9 @@ func TestLoadConfig_B1RuntimeDefaultsAndOverrides(t *testing.T) {
 	}
 	if cfg.Telemetry.KafkaTopic != defaultTelemetryKafkaTopic {
 		t.Errorf("Telemetry.KafkaTopic = %q, want %q", cfg.Telemetry.KafkaTopic, defaultTelemetryKafkaTopic)
+	}
+	if cfg.Telemetry.OpsMetricsEnabled {
+		t.Errorf("Telemetry.OpsMetricsEnabled default = true, want false")
 	}
 	if cfg.Metrics.QueueSize != defaultMetricsQueueSize {
 		t.Errorf("Metrics.QueueSize = %d, want %d", cfg.Metrics.QueueSize, defaultMetricsQueueSize)

@@ -38,11 +38,12 @@ type RedisProvider interface {
 }
 
 type Pool struct {
-	ID              string
-	Registries      []*registry.Registry
-	Weights         map[ids.RegistryID]int
-	Algorithm       string
-	EmbeddingConfig *registry.EmbeddingConfig
+	ID                 string
+	Registries         []*registry.Registry
+	Weights            map[ids.RegistryID]int
+	Algorithm          string
+	EmbeddingConfig    *registry.EmbeddingConfig
+	SmartRoutingConfig *registry.SmartRoutingConfig
 }
 
 type LoadBalancer struct {
@@ -74,10 +75,11 @@ func NewLoadBalancer(
 	}
 
 	strategy, err := factory.CreateStrategy(StrategyInput{
-		Algorithm:       pool.Algorithm,
-		Registries:      pool.Registries,
-		Weights:         pool.Weights,
-		EmbeddingConfig: embeddingCfg,
+		Algorithm:          pool.Algorithm,
+		Registries:         pool.Registries,
+		Weights:            pool.Weights,
+		EmbeddingConfig:    embeddingCfg,
+		SmartRoutingConfig: pool.SmartRoutingConfig,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create load balancing strategy: %w", err)

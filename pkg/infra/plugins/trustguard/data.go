@@ -15,12 +15,14 @@
 package trustguard
 
 import (
+	"encoding/json"
+
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 )
 
 type GuardRequest struct {
-	Payload    GuardPayload    `json:"payload"`
+	Payload    json.RawMessage `json:"payload"`
 	Direction  string          `json:"direction"`
 	Protocol   string          `json:"protocol"`
 	GatewayID  string          `json:"gateway_id"`
@@ -29,6 +31,7 @@ type GuardRequest struct {
 	Attributes GuardAttributes `json:"attributes"`
 }
 
+// GuardPayload is the LLM evaluate body: flattened text plus optional attachments.
 type GuardPayload struct {
 	Input       string            `json:"input"`
 	Attachments []GuardAttachment `json:"attachments,omitempty"`

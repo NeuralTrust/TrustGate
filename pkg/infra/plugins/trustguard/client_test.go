@@ -27,8 +27,12 @@ import (
 )
 
 func sampleRequest() GuardRequest {
+	payload, err := llmPayload("hello world")
+	if err != nil {
+		panic(err)
+	}
 	return GuardRequest{
-		Payload:    GuardPayload{Input: "hello world"},
+		Payload:    payload,
 		Direction:  "input",
 		Protocol:   "llm",
 		SessionID:  "session-1",
@@ -106,8 +110,8 @@ func TestGuardDecodesResponses(t *testing.T) {
 				if got.ConsumerID != "consumer-1" {
 					t.Errorf("consumer_id = %q, want %q", got.ConsumerID, "consumer-1")
 				}
-				if got.Payload.Input != "hello world" {
-					t.Errorf("payload.input = %q, want %q", got.Payload.Input, "hello world")
+				if llmPayloadInput(t, got.Payload) != "hello world" {
+					t.Errorf("payload.input = %q, want %q", llmPayloadInput(t, got.Payload), "hello world")
 				}
 				w.WriteHeader(tt.statusCode)
 				_, _ = io.WriteString(w, tt.respBody)
