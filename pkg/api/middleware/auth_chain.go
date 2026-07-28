@@ -43,6 +43,10 @@ type chainIdentityResolver struct {
 	certs       appauth.ClientCertificateExtractor
 	session     appauth.SessionTokenVerifier
 	xfccPeers   []*net.IPNet
+	// defaultIdPEnabled reports whether the built-in NeuralTrust identity
+	// provider is configured. When true, an MCP path that has no oauth2 auth of
+	// its own falls back to the default provider in the request scope.
+	defaultIdPEnabled bool
 }
 
 func NewChainIdentityResolver(
@@ -55,17 +59,19 @@ func NewChainIdentityResolver(
 	certExtractor appauth.ClientCertificateExtractor,
 	sessionVerifier appauth.SessionTokenVerifier,
 	trustXFCCFrom []string,
+	defaultIdPEnabled bool,
 ) IdentityResolver {
 	return &chainIdentityResolver{
-		apiKeys:     apiKeys,
-		credentials: credentials,
-		paths:       paths,
-		jwt:         jwtValidator,
-		intro:       introValidator,
-		mtls:        mtlsValidator,
-		certs:       certExtractor,
-		session:     sessionVerifier,
-		xfccPeers:   parseTrustedPeers(trustXFCCFrom),
+		apiKeys:           apiKeys,
+		credentials:       credentials,
+		paths:             paths,
+		jwt:               jwtValidator,
+		intro:             introValidator,
+		mtls:              mtlsValidator,
+		certs:             certExtractor,
+		session:           sessionVerifier,
+		xfccPeers:         parseTrustedPeers(trustXFCCFrom),
+		defaultIdPEnabled: defaultIdPEnabled,
 	}
 }
 
@@ -137,10 +143,21 @@ func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) (authScope, error) {
 		return nil, nil
 	}
 	scope := authScope{}
+	hasOAuth2 := false
 	for _, m := range matches {
 		for _, a := range m.Auths {
 			scope[a.ID] = struct{}{}
+			if a.Type == authdomain.TypeOAuth2 {
+				hasOAuth2 = true
+			}
 		}
+	}
+	// When the addressed MCP consumer has no oauth2 identity provider of its
+	// own, allow the built-in NeuralTrust default provider on this path so a
+	// session it minted (bound to that synthetic auth) is accepted. Consumers
+	// that configure their own oauth2 IdP keep it exclusively.
+	if r.defaultIdPEnabled && !hasOAuth2 {
+		scope[appauth.DefaultIdPAuthID()] = struct{}{}
 	}
 	return scope, nil
 }
@@ -209,9 +226,28 @@ func (r *chainIdentityResolver) resolveSession(ctx context.Context, token string
 		if !principal.HasScopes(cfg.RequiredScopes) {
 			return Identity{}, resolver.ErrUnauthenticated
 		}
-		return Identity{GatewayID: a.GatewayID, AuthID: a.ID, Principal: principal}, nil
+		gatewayID := a.GatewayID
+		// The built-in default identity provider carries no gateway of its own;
+		// the authoritative gateway is the one captured when the session was
+		// minted, carried in the (gateway-signed) gwid claim.
+		if appauth.IsDefaultIdP(a) {
+			gw, err := gatewayFromClaim(principal.Claims["gwid"])
+			if err != nil {
+				return Identity{}, resolver.ErrUnauthenticated
+			}
+			gatewayID = gw
+		}
+		return Identity{GatewayID: gatewayID, AuthID: a.ID, Principal: principal}, nil
 	}
 	return Identity{}, resolver.ErrUnauthenticated
+}
+
+func gatewayFromClaim(v any) (ids.GatewayID, error) {
+	raw, _ := v.(string)
+	if raw == "" {
+		return ids.GatewayID{}, resolver.ErrUnauthenticated
+	}
+	return ids.Parse[ids.GatewayKind](raw)
 }
 
 func (r *chainIdentityResolver) resolveJWT(ctx context.Context, token string, candidates []*authdomain.Auth, scope authScope) (Identity, error) {

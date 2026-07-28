@@ -19,6 +19,7 @@ import (
 
 	authhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/auth"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -63,7 +64,23 @@ func provideAuthServices(c *container.Container) error {
 	if err := c.Provide(appauth.NewAPIKeyFinder); err != nil {
 		return err
 	}
-	if err := c.Provide(appauth.NewCredentialFinder); err != nil {
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger, cfg *config.Config) appauth.CredentialFinder {
+		defaultIdP := appauth.BuildDefaultIdP(appauth.DefaultIdPConfig{
+			Issuer:       cfg.Server.MCPDefaultIdP.Issuer,
+			AuthorizeURL: cfg.Server.MCPDefaultIdP.AuthorizeURL,
+			TokenURL:     cfg.Server.MCPDefaultIdP.TokenURL,
+			JWKSURL:      cfg.Server.MCPDefaultIdP.JWKSURL,
+			ClientID:     cfg.Server.MCPDefaultIdP.ClientID,
+			ClientSecret: cfg.Server.MCPDefaultIdP.ClientSecret,
+			Audiences:    cfg.Server.MCPDefaultIdP.Audiences,
+			Scopes:       cfg.Server.MCPDefaultIdP.Scopes,
+		})
+		if defaultIdP != nil {
+			logger.Info("mcp: built-in NeuralTrust default identity provider enabled",
+				slog.String("issuer", defaultIdP.Config.OAuth2.Issuer))
+		}
+		return appauth.NewCredentialFinder(repo, manager, logger, defaultIdP)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(appauth.NewOIDCFinder); err != nil {

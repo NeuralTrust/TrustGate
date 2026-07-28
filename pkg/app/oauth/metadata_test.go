@@ -26,8 +26,18 @@ import (
 )
 
 type fakeCredentialFinder struct {
-	oauth2 []*authdomain.Auth
-	err    error
+	oauth2     []*authdomain.Auth
+	defaultIdP *authdomain.Auth
+	err        error
+}
+
+func (f *fakeCredentialFinder) DefaultOAuth2ForGateway(gatewayID ids.GatewayID) *authdomain.Auth {
+	if f.defaultIdP == nil {
+		return nil
+	}
+	clone := *f.defaultIdP
+	clone.GatewayID = gatewayID
+	return &clone
 }
 
 func (f *fakeCredentialFinder) OAuth2Auths(context.Context) ([]*authdomain.Auth, error) {

@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcp/mocks"
@@ -99,6 +100,39 @@ func rpcCall(t *testing.T, app *fiber.App, body string) (int, map[string]any) {
 		_ = json.Unmarshal(raw, &decoded)
 	}
 	return res.StatusCode, decoded
+}
+
+func TestHandler_DefaultIdP_AllowedWithoutAttachedAuth(t *testing.T) {
+	t.Parallel()
+	// An MCP consumer with no identity provider of its own (empty AuthIDs)
+	// authenticated via the built-in NeuralTrust default IdP: the resolved
+	// AuthID is the well-known default sentinel, which the handler must accept
+	// even though it is not attached to the consumer.
+	gwID := ids.New[ids.GatewayKind]()
+	cons := &consumerdomain.Consumer{
+		ID:        ids.New[ids.ConsumerKind](),
+		GatewayID: gwID,
+		Name:      "virtual",
+		Type:      consumerdomain.TypeMCP,
+		Slug:      "virtual",
+		Active:    true,
+	}
+	data := appconsumer.NewData(gwID, []appconsumer.RoutableConsumer{{Consumer: cons}})
+
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		ctx := appconsumer.WithAuthID(c.UserContext(), appauth.DefaultIdPAuthID())
+		ctx = appconsumer.WithData(ctx, data)
+		c.SetUserContext(ctx)
+		return c.Next()
+	})
+	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil), appmcp.NewRoleScoper(approle.NewOIDCResolver()))
+	app.Post(mcpPath, handler.Handle)
+
+	status, _ := rpcCall(t, app, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}`)
+	if status != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200 (default IdP must be accepted for a consumer with no attached auth)", status)
+	}
 }
 
 func TestHandler_Initialize_EchoesSupportedVersion(t *testing.T) {

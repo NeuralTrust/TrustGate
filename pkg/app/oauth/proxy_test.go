@@ -755,15 +755,17 @@ func TestRefreshAcceptsFormEncodedIdP(t *testing.T) {
 }
 
 type fakeChainer struct {
-	url      string
-	calls    int
-	resource string
-	sub      string
-	resume   string
+	url       string
+	calls     int
+	gatewayID ids.GatewayID
+	resource  string
+	sub       string
+	resume    string
 }
 
-func (f *fakeChainer) ChainURL(_ context.Context, _ string, _ ids.GatewayID, resource, principalSub, resumeURL string) (string, error) {
+func (f *fakeChainer) ChainURL(_ context.Context, _ string, gatewayID ids.GatewayID, resource, principalSub, resumeURL string) (string, error) {
 	f.calls++
+	f.gatewayID = gatewayID
 	f.resource, f.sub, f.resume = resource, principalSub, resumeURL
 	return f.url, nil
 }
