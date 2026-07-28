@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"net/url"
 
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -49,6 +50,13 @@ func (p *authProxy) authForResource(ctx context.Context, resource string) (*auth
 		return nil, oauthErr("invalid_target",
 			"multiple identity providers configured; send an RFC 8707 resource parameter identifying the MCP server")
 	}
+	// The platform-wide default has no owning gateway to bind to when the
+	// request carries neither a resource indicator nor a routed gateway, so it
+	// cannot serve this path; require the caller to identify the MCP server.
+	if err == nil && appauth.IsDefaultIdP(a) {
+		return nil, oauthErr("invalid_target",
+			"send an RFC 8707 resource parameter identifying the MCP server")
+	}
 	return a, err
 }
 
@@ -59,6 +67,14 @@ func (p *authProxy) gatewayScopedAuth(ctx context.Context, gatewayID ids.Gateway
 		return nil, oauthErr("invalid_target",
 			"multiple identity providers configured for this gateway; attach a single oauth2 identity provider to the MCP consumer")
 	case errors.Is(err, ErrNoAuthorizationServer):
+		// The MCP consumer has no identity provider of its own: fall back to the
+		// built-in NeuralTrust identity provider when it is configured, bound to
+		// this gateway. This is the zero-configuration default that lets an MCP
+		// consumer broker interactive logins without the operator standing up
+		// their own IdP.
+		if def := p.credentials.DefaultOAuth2ForGateway(gatewayID); def != nil {
+			return def, nil
+		}
 		return nil, oauthErr("invalid_request",
 			"this MCP server has no oauth2 identity provider; interactive login requires an oauth2 auth with a pre-registered client at your identity provider")
 	}
@@ -177,15 +193,31 @@ func (p *authProxy) singleOAuth2AuthForGateway(ctx context.Context, gatewayID id
 	return pickSingleOAuth2(auths)
 }
 
+// pickSingleOAuth2 selects the single oauth2 identity provider from the given
+// set. The built-in NeuralTrust default is treated as a fallback: it never
+// causes ambiguity and is only returned when no operator-configured provider
+// exists.
 func pickSingleOAuth2(auths []*authdomain.Auth) (*authdomain.Auth, error) {
-	issuers := issuersOf(auths)
+	real := make([]*authdomain.Auth, 0, len(auths))
+	var def *authdomain.Auth
+	for _, a := range auths {
+		if appauth.IsDefaultIdP(a) {
+			def = a
+			continue
+		}
+		real = append(real, a)
+	}
+	issuers := issuersOf(real)
 	if len(issuers) == 0 {
+		if def != nil {
+			return def, nil
+		}
 		return nil, ErrNoAuthorizationServer
 	}
 	if len(issuers) > 1 {
 		return nil, ErrAmbiguousAuthorizationServer
 	}
-	for _, a := range auths {
+	for _, a := range real {
 		if a.Config.OAuth2 != nil && a.Config.OAuth2.Issuer == issuers[0] {
 			return a, nil
 		}

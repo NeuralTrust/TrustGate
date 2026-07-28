@@ -111,6 +111,7 @@ func (p *authProxy) Authorize(ctx context.Context, baseURL string, req Authorize
 		CodeVerifier:        verifier,
 		Resource:            req.Resource,
 		AuthID:              auth.ID.String(),
+		GatewayID:           auth.GatewayID.String(),
 	}
 	if err := p.store.SavePending(ctx, state, pending); err != nil {
 		return "", fmt.Errorf("oauth: park authorization: %w", err)
@@ -149,6 +150,16 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 		return "", err
 	}
 	cfg := auth.Config.OAuth2
+	// The built-in default identity provider is platform-wide and carries no
+	// gateway of its own (its auth record is a shared singleton, so it must not
+	// be mutated); the addressed gateway was captured at authorize time. Resolve
+	// it once here for both the minted session and the consent detour.
+	effectiveGatewayID := auth.GatewayID
+	if pending.GatewayID != "" {
+		if gw, perr := ids.Parse[ids.GatewayKind](pending.GatewayID); perr == nil {
+			effectiveGatewayID = gw
+		}
+	}
 	endpoints, err := p.idp.endpoints(ctx, cfg)
 	if err != nil {
 		return "", err
@@ -190,7 +201,7 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 		capturedSubject = sub
 		grant.Subject = sub
 		grant.AuthID = auth.ID.String()
-		grant.GatewayID = auth.GatewayID.String()
+		grant.GatewayID = effectiveGatewayID.String()
 		grant.Audiences = cfg.Audiences
 		grant.Scopes = grantedScopes(token, pending.Scope)
 		grant.SessionMode = true
@@ -199,7 +210,7 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 		return "", fmt.Errorf("oauth: store code grant: %w", err)
 	}
 	resume := clientRedirect(pending.RedirectURI, url.Values{"code": {gwCode}}, pending.State)
-	if detour := p.consentDetour(ctx, baseURL, auth.GatewayID, pending.Resource, capturedSubject, token, resume); detour != "" {
+	if detour := p.consentDetour(ctx, baseURL, effectiveGatewayID, pending.Resource, capturedSubject, token, resume); detour != "" {
 		return detour, nil
 	}
 	return resume, nil
@@ -377,6 +388,12 @@ func (p *authProxy) mintSession(grant CodeGrant) (map[string]any, error) {
 		"scope":     strings.Join(grant.Scopes, " "),
 		"authid":    grant.AuthID,
 		"token_use": "mcp_session",
+	}
+	// gwid binds the session to the gateway the login was brokered for. It is
+	// authoritative for the built-in default identity provider, whose synthetic
+	// auth record carries no gateway of its own.
+	if grant.GatewayID != "" {
+		claims["gwid"] = grant.GatewayID
 	}
 	if len(grant.Audiences) > 0 {
 		claims["aud"] = grant.Audiences

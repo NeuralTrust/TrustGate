@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
@@ -348,7 +349,11 @@ func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 	if rc.Consumer.Type != consumerdomain.TypeMCP {
 		return nil, fiber.NewError(fiber.StatusNotFound, "consumer is not an MCP consumer")
 	}
-	if !hasAuth(rc, authID) {
+	// The built-in NeuralTrust default identity provider is not attached to the
+	// consumer's AuthIDs (the consumer has no identity provider of its own). The
+	// auth chain only resolves a default-IdP session on a path that has no
+	// oauth2 provider, so accepting it here is consistent with that scoping.
+	if !hasAuth(rc, authID) && authID != appauth.DefaultIdPAuthID() {
 		return nil, fiber.NewError(fiber.StatusForbidden, "credential not allowed for this consumer")
 	}
 	return rc, nil

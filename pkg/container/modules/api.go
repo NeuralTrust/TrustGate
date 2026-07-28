@@ -122,6 +122,7 @@ func API(c *container.Container) error {
 			mtls.NewXFCCExtractor(),
 			sessionVerifier,
 			cfg.Server.TrustXFCCFrom,
+			cfg.Server.MCPDefaultIdP.Issuer != "",
 		)
 	}); err != nil {
 		return err
