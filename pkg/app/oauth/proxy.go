@@ -150,6 +150,16 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 		return "", err
 	}
 	cfg := auth.Config.OAuth2
+	// The built-in default identity provider is platform-wide and carries no
+	// gateway of its own (its auth record is a shared singleton, so it must not
+	// be mutated); the addressed gateway was captured at authorize time. Resolve
+	// it once here for both the minted session and the consent detour.
+	effectiveGatewayID := auth.GatewayID
+	if pending.GatewayID != "" {
+		if gw, perr := ids.Parse[ids.GatewayKind](pending.GatewayID); perr == nil {
+			effectiveGatewayID = gw
+		}
+	}
 	endpoints, err := p.idp.endpoints(ctx, cfg)
 	if err != nil {
 		return "", err
@@ -191,13 +201,7 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 		capturedSubject = sub
 		grant.Subject = sub
 		grant.AuthID = auth.ID.String()
-		// Prefer the gateway captured at authorize time: the built-in default
-		// identity provider is platform-wide and carries no gateway of its own,
-		// so pending.GatewayID is the only place the addressed gateway is known.
-		grant.GatewayID = auth.GatewayID.String()
-		if pending.GatewayID != "" {
-			grant.GatewayID = pending.GatewayID
-		}
+		grant.GatewayID = effectiveGatewayID.String()
 		grant.Audiences = cfg.Audiences
 		grant.Scopes = grantedScopes(token, pending.Scope)
 		grant.SessionMode = true
@@ -206,7 +210,7 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 		return "", fmt.Errorf("oauth: store code grant: %w", err)
 	}
 	resume := clientRedirect(pending.RedirectURI, url.Values{"code": {gwCode}}, pending.State)
-	if detour := p.consentDetour(ctx, baseURL, auth.GatewayID, pending.Resource, capturedSubject, token, resume); detour != "" {
+	if detour := p.consentDetour(ctx, baseURL, effectiveGatewayID, pending.Resource, capturedSubject, token, resume); detour != "" {
 		return detour, nil
 	}
 	return resume, nil

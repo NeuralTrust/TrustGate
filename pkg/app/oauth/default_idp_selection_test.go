@@ -15,7 +15,9 @@
 package oauth
 
 import (
+	"context"
 	"errors"
+	"net/http"
 	"testing"
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
@@ -73,4 +75,39 @@ func TestGatewayScopedAuth_NoDefaultKeepsError(t *testing.T) {
 	var oauthError *OAuthError
 	require.True(t, errors.As(err, &oauthError))
 	require.Equal(t, "invalid_request", oauthError.Code)
+}
+
+// The consent detour must target the gateway captured at authorize time, not
+// the default IdP's (nil) gateway — otherwise the upstream-connect screen never
+// opens for MCP consumers that rely on the built-in default.
+func TestCallbackDefaultIdPConsentUsesEffectiveGateway(t *testing.T) {
+	accessToken := unsignedJWT(t, map[string]any{"sub": "platform-user-1"})
+	idp := fakeIdPWithToken(t, accessToken)
+	def := appauth.BuildDefaultIdP(appauth.DefaultIdPConfig{Issuer: idp.URL, ClientID: "trustgate"})
+	require.True(t, def.GatewayID.IsNil(), "the default IdP has no gateway of its own")
+
+	store := newMemFlowStore()
+	chainer := &fakeChainer{url: "http://localhost:8082/oMTXK0qG/mcp/connect?ticket=tk"}
+	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{def}, defaultIdP: def}
+	proxy := NewAuthProxy(finder, nil, http.DefaultClient, store, chainer, nil, nil)
+
+	gw := ids.New[ids.GatewayKind]()
+	state := "state-1"
+	require.NoError(t, store.SavePending(context.Background(), state, PendingAuthorization{
+		ClientID:      "trustgate",
+		RedirectURI:   "http://localhost:8082/oauth/callback",
+		State:         "client-state",
+		CodeChallenge: "chal",
+		CodeVerifier:  "verifier",
+		Resource:      "http://localhost:8082/oMTXK0qG/mcp",
+		AuthID:        appauth.DefaultIdPAuthID().String(),
+		GatewayID:     gw.String(),
+	}))
+
+	loc, err := proxy.Callback(context.Background(), "http://localhost:8082", state, "the-code", "", "")
+	require.NoError(t, err)
+	require.Equal(t, chainer.url, loc, "callback must detour to the upstream-connect page")
+	require.Equal(t, 1, chainer.calls)
+	require.Equal(t, gw, chainer.gatewayID, "consent detour must use the addressed gateway, not the default's nil gateway")
+	require.Equal(t, "platform-user-1", chainer.sub)
 }
