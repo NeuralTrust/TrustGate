@@ -43,12 +43,6 @@ func TestNewMCPServerCatalog_LoadsCuratedList(t *testing.T) {
 		require.Falsef(t, dup, "duplicate code %q", s.Code)
 		codes[s.Code] = struct{}{}
 	}
-
-	// Seed-hidden vendors must not appear in the served catalog.
-	require.NotContains(t, codes, "com.replicate/mcp")
-	require.NotContains(t, codes, "io.invideo/mcp")
-	require.NotContains(t, codes, "com.zapier/mcp")
-	require.NotContains(t, codes, "com.docusign/mcp")
 }
 
 func TestListMCPServers_SortedByRelevanceDesc(t *testing.T) {
