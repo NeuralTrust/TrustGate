@@ -20,7 +20,8 @@ const (
 	decisionCompressed = "compressed"
 	decisionObserved   = "observed"
 	decisionNoChange   = "no_change"
-	decisionSkipped    = "skipped_too_large"
+	decisionSkipped      = "skipped_too_large"
+	decisionSkippedLossy = "skipped_lossy_roundtrip"
 )
 
 // Data is the per-invocation telemetry payload recorded on the plugin span.

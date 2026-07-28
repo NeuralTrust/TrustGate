@@ -43,10 +43,14 @@ func compressContent(content string, cfg Settings) (string, bool) {
 	}
 	if cfg.CompressJSON {
 		// Route on the first byte only; compactJSON validates via json.Compact's
-		// own error return, so standalone JSON is scanned exactly once.
+		// own error return, so standalone JSON is scanned exactly once. Content
+		// that merely starts with a brace but is not valid JSON (templated text,
+		// prose) falls back to the fenced-block path.
+		prev := out
 		if trimmed := strings.TrimSpace(out); len(trimmed) >= 2 && (trimmed[0] == '{' || trimmed[0] == '[') {
 			out = compactJSON(out)
-		} else {
+		}
+		if out == prev {
 			out = compactFencedJSON(out)
 		}
 	}
@@ -72,23 +76,42 @@ func compactJSON(content string) string {
 }
 
 // compactFencedJSON minifies every valid ```json fenced block inside prose,
-// leaving the fences and all surrounding text byte-identical.
+// leaving the fences and all surrounding text byte-identical. A single regex
+// pass collects the block boundaries; the output is rebuilt manually so each
+// block is matched exactly once.
 func compactFencedJSON(content string) string {
 	if !strings.Contains(content, "```json") {
 		return content
 	}
-	return fencedJSONBlock.ReplaceAllStringFunc(content, func(block string) string {
-		m := fencedJSONBlock.FindStringSubmatch(block)
-		if m == nil {
-			return block
-		}
-		inner := m[1]
+	matches := fencedJSONBlock.FindAllStringSubmatchIndex(content, -1)
+	if matches == nil {
+		return content
+	}
+	var b strings.Builder
+	b.Grow(len(content))
+	last := 0
+	changed := false
+	for _, m := range matches {
+		blockStart, blockEnd, innerStart, innerEnd := m[0], m[1], m[2], m[3]
+		inner := content[innerStart:innerEnd]
 		compacted := compactJSON(inner)
 		if compacted == inner {
-			return block
+			b.WriteString(content[last:blockEnd])
+			last = blockEnd
+			continue
 		}
-		return "```json\n" + compacted + "\n```"
-	})
+		b.WriteString(content[last:blockStart])
+		b.WriteString("```json\n")
+		b.WriteString(compacted)
+		b.WriteString("\n```")
+		last = blockEnd
+		changed = true
+	}
+	if !changed {
+		return content
+	}
+	b.WriteString(content[last:])
+	return b.String()
 }
 
 // normalizeWhitespace trims trailing spaces and tabs from every line and caps
@@ -151,7 +174,13 @@ func mayNeedNormalization(content string, maxBlank int) bool {
 	if strings.HasSuffix(content, " ") || strings.HasSuffix(content, "\t") {
 		return true
 	}
-	// A run of more than maxBlank blank lines is maxBlank+2 consecutive
-	// newlines. Blank lines containing spaces or tabs are caught above.
-	return strings.Contains(content, strings.Repeat("\n", maxBlank+2))
+	// A run of more than maxBlank blank lines needs maxBlank+2 consecutive
+	// newlines mid-content, but only maxBlank+1 at the start or end of the
+	// content (the run is not bracketed by non-blank lines there). Blank
+	// lines containing spaces or tabs are caught above.
+	edgeRun := strings.Repeat("\n", maxBlank+1)
+	if strings.HasPrefix(content, edgeRun) || strings.HasSuffix(content, edgeRun) {
+		return true
+	}
+	return strings.Contains(content, edgeRun+"\n")
 }

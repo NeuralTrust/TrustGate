@@ -33,7 +33,7 @@ var (
 	ErrNoTransforms  = errors.New("prompt_compression: at least one transform must be enabled")
 	ErrNegativeMin   = errors.New("prompt_compression: min_length must not be negative")
 	ErrEmptyRole     = errors.New("prompt_compression: target_roles contains an empty role")
-	ErrBadBlankLines = errors.New("prompt_compression: max_consecutive_blank_lines must be >= 1")
+	ErrBadBlankLines = errors.New("prompt_compression: max_consecutive_blank_lines must be between 1 and 1000")
 	ErrBadMaxBody    = errors.New("prompt_compression: max_body_bytes must not be negative")
 )
 
@@ -68,7 +68,7 @@ type Settings struct {
 	// terminal and CI logs. Defaults to true.
 	StripANSI bool
 	// MaxConsecutiveBlankLines caps runs of blank lines when NormalizeWhitespace
-	// is on. Defaults to 1; explicit values below 1 are rejected.
+	// is on. Defaults to 1; values outside [1, 1000] are rejected.
 	MaxConsecutiveBlankLines int
 	// MinLength skips messages whose content is shorter than this many bytes, so
 	// tiny stable messages are never rewritten (avoids cache churn for no gain).
@@ -134,7 +134,7 @@ func (s *Settings) validate() error {
 	if s.MinLength < 0 {
 		return ErrNegativeMin
 	}
-	if s.MaxConsecutiveBlankLines < 1 {
+	if s.MaxConsecutiveBlankLines < 1 || s.MaxConsecutiveBlankLines > 1000 {
 		return ErrBadBlankLines
 	}
 	if s.MaxBodyBytes < 0 {

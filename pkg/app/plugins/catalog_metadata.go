@@ -791,7 +791,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "max_consecutive_blank_lines",
 					Label:       "Max Consecutive Blank Lines",
 					Type:        FieldTypeInteger,
-					Description: "Longest run of blank lines kept when whitespace normalization is enabled.",
+					Description: "Longest run of blank lines kept when whitespace normalization is enabled (1-1000).",
 					Default:     1,
 				},
 				{

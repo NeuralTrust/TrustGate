@@ -103,6 +103,13 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		p.debug(ctx, "resolve request format failed", slog.Any("error", err))
 		return passThrough(), nil
 	}
+	// The canonical round-trip is lossy for shapes it does not model
+	// (multimodal parts, cache_control annotations, unmodeled fields). A
+	// request that might lose data on re-encode is never touched.
+	if !supportedFormat(format) || !roundTripSafe(in.Request.Body) {
+		p.skipLossy(in, cfg)
+		return passThrough(), nil
+	}
 	creq, err := p.registry.DecodeRequestFor(in.Request.Body, format)
 	if err != nil || creq == nil {
 		p.debug(ctx, "decode request failed", slog.Any("error", err))
@@ -113,7 +120,24 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		p.debug(ctx, "rewrite request failed", slog.Any("error", err))
 		return passThrough(), nil
 	}
+	if changed && !keepsTopLevelFields(in.Request.Body, body) {
+		p.skipLossy(in, cfg)
+		return passThrough(), nil
+	}
 	return p.decide(in, cfg, changed, body), nil
+}
+
+// skipLossy records that the request was left untouched because compressing
+// it would risk dropping content the canonical model does not represent.
+func (p *Plugin) skipLossy(in appplugins.ExecInput, cfg Settings) {
+	setExtras(in.Event, &Data{
+		Stage:      string(in.Stage),
+		Mode:       string(in.Mode),
+		Transforms: cfg.describe(),
+		Decision:   decisionSkippedLossy,
+		BytesIn:    len(in.Request.Body),
+		BytesOut:   len(in.Request.Body),
+	})
 }
 
 func (p *Plugin) decide(in appplugins.ExecInput, cfg Settings, changed bool, body []byte) *appplugins.Result {
@@ -124,7 +148,12 @@ func (p *Plugin) decide(in appplugins.ExecInput, cfg Settings, changed bool, bod
 		Transforms: cfg.describe(),
 		BytesIn:    bytesIn,
 	}
-	if !changed {
+	// Fail open when the re-encoded body did not shrink: forwarding the
+	// original is always safe, and a "compression" that inflates the request
+	// would both waste tokens and churn provider caches. Checked before the
+	// mode branch so observe and enforce report identical decisions and byte
+	// accounting for the same input.
+	if !changed || len(body) >= bytesIn {
 		data.Decision = decisionNoChange
 		data.BytesOut = bytesIn
 		setExtras(in.Event, data)
@@ -134,22 +163,9 @@ func (p *Plugin) decide(in appplugins.ExecInput, cfg Settings, changed bool, bod
 	// Derived from the encoded bodies so BytesIn - BytesOut == BytesSaved holds
 	// even when re-encoding changes framing (escaping, field ordering).
 	data.BytesSaved = bytesIn - len(body)
-	if bytesIn > 0 {
-		data.Ratio = float64(len(body)) / float64(bytesIn)
-	}
+	data.Ratio = float64(len(body)) / float64(bytesIn)
 	if !appplugins.Blocks(in.Mode) {
 		data.Decision = decisionObserved
-		setExtras(in.Event, data)
-		return passThrough()
-	}
-	// Fail open when the re-encoded body somehow grew: forwarding the original
-	// is always safe, and a "compression" that inflates the request would both
-	// waste tokens and churn provider caches.
-	if len(body) >= bytesIn {
-		data.Decision = decisionNoChange
-		data.BytesOut = bytesIn
-		data.BytesSaved = 0
-		data.Ratio = 0
 		setExtras(in.Event, data)
 		return passThrough()
 	}
