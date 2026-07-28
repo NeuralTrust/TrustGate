@@ -777,7 +777,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "normalize_whitespace",
 					Label:       "Normalize Whitespace",
 					Type:        FieldTypeBoolean,
-					Description: "Trim trailing spaces per line and collapse runs of blank lines. Indentation is preserved.",
+					Description: "Trim trailing spaces per line and collapse runs of blank lines. Indentation and Markdown two-space hard line breaks are preserved.",
 					Default:     true,
 				},
 				{
@@ -800,6 +800,13 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Type:        FieldTypeInteger,
 					Description: "Skip messages shorter than this many bytes; tiny messages are never rewritten.",
 					Default:     0,
+				},
+				{
+					Key:         "max_body_bytes",
+					Label:       "Max Body Bytes",
+					Type:        FieldTypeInteger,
+					Description: "Skip compression entirely for request bodies larger than this many bytes, bounding per-request CPU cost. 0 disables the cap.",
+					Default:     1048576,
 				},
 				{
 					Key:         "target_roles",

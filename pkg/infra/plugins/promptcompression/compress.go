@@ -21,15 +21,6 @@ import (
 	"strings"
 )
 
-// contentKind is the coarse content classification the router assigns to a
-// message before choosing transforms.
-type contentKind int
-
-const (
-	kindProse contentKind = iota
-	kindJSON
-)
-
 // ansiEscape matches ANSI CSI/OSC escape sequences (colors, cursor movement)
 // that captured terminal output and CI logs carry but models never need.
 var ansiEscape = regexp.MustCompile(`\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))`)
@@ -39,20 +30,6 @@ var ansiEscape = regexp.MustCompile(`\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1b]*
 // without touching the surrounding text.
 var fencedJSONBlock = regexp.MustCompile("(?s)```json[ \t]*\\n(.*?)\\n[ \t]*```")
 
-// classify routes content to a kind. Only unambiguous standalone JSON objects
-// or arrays are classified as JSON; everything else is prose.
-func classify(content string) contentKind {
-	trimmed := strings.TrimSpace(content)
-	if len(trimmed) < 2 {
-		return kindProse
-	}
-	first := trimmed[0]
-	if (first == '{' || first == '[') && json.Valid([]byte(trimmed)) {
-		return kindJSON
-	}
-	return kindProse
-}
-
 // compressContent applies the configured transforms to a single message body
 // and reports whether anything changed. Transforms are ordered so structural
 // work (JSON) happens before textual cleanup, and every step is deterministic.
@@ -61,14 +38,15 @@ func compressContent(content string, cfg Settings) (string, bool) {
 		return content, false
 	}
 	out := content
-	if cfg.StripANSI {
+	if cfg.StripANSI && strings.Contains(out, "\x1b") {
 		out = ansiEscape.ReplaceAllString(out, "")
 	}
 	if cfg.CompressJSON {
-		switch classify(out) {
-		case kindJSON:
+		// Route on the first byte only; compactJSON validates via json.Compact's
+		// own error return, so standalone JSON is scanned exactly once.
+		if trimmed := strings.TrimSpace(out); len(trimmed) >= 2 && (trimmed[0] == '{' || trimmed[0] == '[') {
 			out = compactJSON(out)
-		case kindProse:
+		} else {
 			out = compactFencedJSON(out)
 		}
 	}
@@ -80,7 +58,7 @@ func compressContent(content string, cfg Settings) (string, bool) {
 
 // compactJSON minifies a standalone JSON document. It is byte-lossless with
 // respect to the decoded value: only inter-token whitespace is removed. On any
-// failure the original text is returned untouched.
+// failure (including invalid JSON) the original text is returned untouched.
 func compactJSON(content string) string {
 	trimmed := strings.TrimSpace(content)
 	var buf bytes.Buffer
@@ -105,9 +83,6 @@ func compactFencedJSON(content string) string {
 			return block
 		}
 		inner := m[1]
-		if !json.Valid([]byte(strings.TrimSpace(inner))) {
-			return block
-		}
 		compacted := compactJSON(inner)
 		if compacted == inner {
 			return block
@@ -117,23 +92,66 @@ func compactFencedJSON(content string) string {
 }
 
 // normalizeWhitespace trims trailing spaces and tabs from every line and caps
-// runs of blank lines at maxBlank. Leading whitespace (indentation) is
-// preserved because it can be semantically meaningful (code, YAML, Markdown).
+// runs of blank lines at maxBlank. Two exceptions keep the transform safe for
+// formatted text: leading whitespace (indentation) is preserved because it can
+// be semantically meaningful (code, YAML, Markdown), and lines ending in two
+// or more spaces keep exactly two so Markdown hard line breaks survive.
 func normalizeWhitespace(content string, maxBlank int) string {
+	if !mayNeedNormalization(content, maxBlank) {
+		return content
+	}
 	lines := strings.Split(content, "\n")
 	out := make([]string, 0, len(lines))
 	blanks := 0
+	changed := false
 	for _, line := range lines {
-		line = strings.TrimRight(line, " \t")
-		if line == "" {
+		norm := normalizeLine(line)
+		if norm != line {
+			changed = true
+		}
+		if norm == "" {
 			blanks++
 			if blanks > maxBlank {
+				changed = true
 				continue
 			}
 		} else {
 			blanks = 0
 		}
-		out = append(out, line)
+		out = append(out, norm)
+	}
+	if !changed {
+		return content
 	}
 	return strings.Join(out, "\n")
+}
+
+// normalizeLine trims trailing whitespace from a single line, keeping exactly
+// two trailing spaces when the original line ended in a Markdown hard break
+// (two or more spaces after non-whitespace content).
+func normalizeLine(line string) string {
+	trimmed := strings.TrimRight(line, " \t")
+	if trimmed == "" || trimmed == line {
+		return trimmed
+	}
+	if strings.HasSuffix(line, "  ") {
+		return trimmed + "  "
+	}
+	return trimmed
+}
+
+// mayNeedNormalization is a cheap pre-scan that lets normalizeWhitespace skip
+// the split/join allocation entirely for content that is already clean — the
+// common case once a conversation's history has been compressed on a previous
+// turn. False positives only cost the full pass; false negatives never occur.
+func mayNeedNormalization(content string, maxBlank int) bool {
+	if strings.Contains(content, " \n") || strings.Contains(content, "\t\n") {
+		return true
+	}
+	if strings.HasSuffix(content, " ") || strings.HasSuffix(content, "\t") {
+		return true
+	}
+	// A run of more than maxBlank blank lines is maxBlank+2 consecutive
+	// newlines. Blank lines containing spaces or tabs are caught above.
+	return strings.Contains(content, strings.Repeat("\n", maxBlank+2))
 }

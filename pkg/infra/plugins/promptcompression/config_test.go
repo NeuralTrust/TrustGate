@@ -47,6 +47,14 @@ func TestParseConfigValid(t *testing.T) {
 			name:     "whitespace only",
 			settings: map[string]any{"normalize_whitespace": true},
 		},
+		{
+			name:     "empty settings take catalog defaults",
+			settings: map[string]any{},
+		},
+		{
+			name:     "explicit zero max_body_bytes disables the cap",
+			settings: map[string]any{"max_body_bytes": 0},
+		},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -59,6 +67,21 @@ func TestParseConfigValid(t *testing.T) {
 	}
 }
 
+func TestParseConfigDefaults(t *testing.T) {
+	t.Parallel()
+	cfg, err := parseConfig(map[string]any{})
+	require.NoError(t, err)
+	assert.True(t, cfg.CompressJSON, "compress_json must default to true, matching the catalog schema")
+	assert.True(t, cfg.NormalizeWhitespace, "normalize_whitespace must default to true, matching the catalog schema")
+	assert.True(t, cfg.StripANSI, "strip_ansi must default to true, matching the catalog schema")
+	assert.Equal(t, 1, cfg.MaxConsecutiveBlankLines)
+	assert.Equal(t, defaultMaxBodyBytes, cfg.MaxBodyBytes)
+
+	uncapped, err := parseConfig(map[string]any{"max_body_bytes": 0})
+	require.NoError(t, err)
+	assert.True(t, uncapped.withinBodyCap(1<<30), "explicit zero must disable the body cap")
+}
+
 func TestParseConfigErrors(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -66,11 +89,6 @@ func TestParseConfigErrors(t *testing.T) {
 		settings map[string]any
 		wantErr  error
 	}{
-		{
-			name:     "no transforms enabled",
-			settings: map[string]any{},
-			wantErr:  ErrNoTransforms,
-		},
 		{
 			name:     "all transforms disabled",
 			settings: map[string]any{"compress_json": false, "normalize_whitespace": false, "strip_ansi": false},
@@ -87,9 +105,19 @@ func TestParseConfigErrors(t *testing.T) {
 			wantErr:  ErrBadBlankLines,
 		},
 		{
+			name:     "explicit zero blank line cap rejected",
+			settings: map[string]any{"compress_json": true, "max_consecutive_blank_lines": 0},
+			wantErr:  ErrBadBlankLines,
+		},
+		{
+			name:     "negative max body bytes",
+			settings: map[string]any{"compress_json": true, "max_body_bytes": -1},
+			wantErr:  ErrBadMaxBody,
+		},
+		{
 			name:     "empty role",
 			settings: map[string]any{"compress_json": true, "target_roles": []any{"  "}},
-			wantErr:  ErrUnknownRole,
+			wantErr:  ErrEmptyRole,
 		},
 	}
 	for _, tt := range tests {

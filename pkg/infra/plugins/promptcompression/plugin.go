@@ -85,6 +85,19 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	if in.Request == nil || len(in.Request.Body) == 0 || in.Request.Provider == "" || p.registry == nil {
 		return passThrough(), nil
 	}
+	// Bound per-request CPU cost on the proxy hot path: bodies above the cap
+	// skip the whole pipeline rather than paying decode + transform + encode.
+	if !cfg.withinBodyCap(len(in.Request.Body)) {
+		setExtras(in.Event, &Data{
+			Stage:      string(in.Stage),
+			Mode:       string(in.Mode),
+			Transforms: cfg.describe(),
+			Decision:   decisionSkipped,
+			BytesIn:    len(in.Request.Body),
+			BytesOut:   len(in.Request.Body),
+		})
+		return passThrough(), nil
+	}
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
 	if err != nil {
 		p.debug(ctx, "resolve request format failed", slog.Any("error", err))
@@ -95,15 +108,15 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		p.debug(ctx, "decode request failed", slog.Any("error", err))
 		return passThrough(), nil
 	}
-	body, changed, saved, err := rewriteRequest(p.registry, format, creq, cfg)
+	body, changed, err := rewriteRequest(p.registry, format, creq, cfg)
 	if err != nil {
 		p.debug(ctx, "rewrite request failed", slog.Any("error", err))
 		return passThrough(), nil
 	}
-	return p.decide(in, cfg, changed, saved, body), nil
+	return p.decide(in, cfg, changed, body), nil
 }
 
-func (p *Plugin) decide(in appplugins.ExecInput, cfg Settings, changed bool, saved int, body []byte) *appplugins.Result {
+func (p *Plugin) decide(in appplugins.ExecInput, cfg Settings, changed bool, body []byte) *appplugins.Result {
 	bytesIn := len(in.Request.Body)
 	data := &Data{
 		Stage:      string(in.Stage),
@@ -118,7 +131,9 @@ func (p *Plugin) decide(in appplugins.ExecInput, cfg Settings, changed bool, sav
 		return passThrough()
 	}
 	data.BytesOut = len(body)
-	data.BytesSaved = saved
+	// Derived from the encoded bodies so BytesIn - BytesOut == BytesSaved holds
+	// even when re-encoding changes framing (escaping, field ordering).
+	data.BytesSaved = bytesIn - len(body)
 	if bytesIn > 0 {
 		data.Ratio = float64(len(body)) / float64(bytesIn)
 	}

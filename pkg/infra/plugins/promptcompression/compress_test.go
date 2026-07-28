@@ -76,10 +76,28 @@ func TestFencedJSONInvalidBlockUntouched(t *testing.T) {
 
 func TestNormalizeWhitespace(t *testing.T) {
 	t.Parallel()
-	content := "line one   \n\n\n\nline two\t\n  indented stays"
+	content := "line one \n\n\n\nline two\t\n  indented stays"
 	out, changed := compressContent(content, Settings{NormalizeWhitespace: true, MaxConsecutiveBlankLines: 1})
 	require.True(t, changed)
 	assert.Equal(t, "line one\n\nline two\n  indented stays", out)
+}
+
+func TestNormalizeWhitespacePreservesMarkdownHardBreaks(t *testing.T) {
+	t.Parallel()
+	content := "first line  \nsecond line    \nthird line \nlast"
+	out, changed := compressContent(content, Settings{NormalizeWhitespace: true, MaxConsecutiveBlankLines: 1})
+	require.True(t, changed)
+	// Two-or-more trailing spaces are a Markdown hard break: keep exactly two.
+	// A single trailing space is noise: drop it.
+	assert.Equal(t, "first line  \nsecond line  \nthird line\nlast", out)
+}
+
+func TestNormalizeWhitespaceFastPathSkipsCleanContent(t *testing.T) {
+	t.Parallel()
+	clean := "already clean\n\nno trailing whitespace\n  indented"
+	out, changed := compressContent(clean, Settings{NormalizeWhitespace: true, MaxConsecutiveBlankLines: 1})
+	assert.False(t, changed)
+	assert.Equal(t, clean, out)
 }
 
 func TestStripANSI(t *testing.T) {

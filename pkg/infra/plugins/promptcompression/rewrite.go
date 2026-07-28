@@ -20,16 +20,14 @@ import "github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 // Because every transform is deterministic and applied uniformly to the whole
 // conversation, a message compresses to the same bytes on every turn, so
 // provider prompt-cache prefixes stay stable across requests.
-func rewriteRequest(reg *adapter.Registry, format adapter.Format, creq *adapter.CanonicalRequest, cfg Settings) ([]byte, bool, int, error) {
+func rewriteRequest(reg *adapter.Registry, format adapter.Format, creq *adapter.CanonicalRequest, cfg Settings) ([]byte, bool, error) {
 	adp, err := reg.GetAdapter(format)
 	if err != nil {
-		return nil, false, 0, err
+		return nil, false, err
 	}
 	changed := false
-	saved := 0
 	if creq.System != "" && cfg.appliesToRole("system") {
 		if out, did := compressContent(creq.System, cfg); did {
-			saved += len(creq.System) - len(out)
 			creq.System = out
 			changed = true
 		}
@@ -41,7 +39,6 @@ func rewriteRequest(reg *adapter.Registry, format adapter.Format, creq *adapter.
 		}
 		if msg.Content != "" {
 			if out, did := compressContent(msg.Content, cfg); did {
-				saved += len(msg.Content) - len(out)
 				msg.Content = out
 				changed = true
 			}
@@ -53,7 +50,6 @@ func rewriteRequest(reg *adapter.Registry, format adapter.Format, creq *adapter.
 					continue
 				}
 				if out := compactJSON(args); out != args {
-					saved += len(args) - len(out)
 					msg.ToolCalls[j].Arguments = out
 					changed = true
 				}
@@ -61,11 +57,11 @@ func rewriteRequest(reg *adapter.Registry, format adapter.Format, creq *adapter.
 		}
 	}
 	if !changed {
-		return nil, false, 0, nil
+		return nil, false, nil
 	}
 	body, err := adp.EncodeRequest(creq)
 	if err != nil {
-		return nil, false, 0, err
+		return nil, false, err
 	}
-	return body, true, saved, nil
+	return body, true, nil
 }

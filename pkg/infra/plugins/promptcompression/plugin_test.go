@@ -101,7 +101,12 @@ func TestValidateConfig(t *testing.T) {
 	t.Parallel()
 	p := New(adapter.NewRegistry(), nil)
 	require.NoError(t, p.ValidateConfig(defaultSettings()))
-	require.Error(t, p.ValidateConfig(map[string]any{}))
+	require.NoError(t, p.ValidateConfig(map[string]any{}), "empty settings must resolve to the catalog defaults")
+	require.Error(t, p.ValidateConfig(map[string]any{
+		"compress_json":        false,
+		"normalize_whitespace": false,
+		"strip_ansi":           false,
+	}))
 }
 
 func TestExecuteCompressesJSONToolOutput(t *testing.T) {
@@ -188,10 +193,121 @@ func TestExecuteMissingRequestFailsOpen(t *testing.T) {
 func TestExecuteInvalidSettingsErrors(t *testing.T) {
 	t.Parallel()
 	p := New(adapter.NewRegistry(), nil)
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, map[string]any{}, reqCtx(openAIProvider, "", []byte("{}")), newEvent())
+	allOff := map[string]any{"compress_json": false, "normalize_whitespace": false, "strip_ansi": false}
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, allOff, reqCtx(openAIProvider, "", []byte("{}")), newEvent())
 
 	_, err := p.Execute(context.Background(), in)
 	require.Error(t, err)
+}
+
+func TestExecuteBodyCapSkipsPipeline(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), nil)
+	verboseJSON := "{\n  \"a\":   1,\n  \"b\":   2\n}"
+	body := openAIRequest(t, "sys", verboseJSON)
+	set := defaultSettings()
+	set["max_body_bytes"] = len(body) - 1
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, set, reqCtx(openAIProvider, "", body), newEvent())
+
+	res, err := p.Execute(context.Background(), in)
+	assertPassThrough(t, res, err)
+}
+
+func TestExecuteCompressesOpenAIToolCallArguments(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), nil)
+	prettyArgs := "{\n  \"query\":   \"trustgate\",\n  \"limit\":   10\n}"
+	prettyResult := "{\n  \"hits\": [\n    {\"id\": 1},\n    {\"id\": 2}\n  ]\n}"
+	payload := map[string]any{
+		"model": "gpt-4o",
+		"messages": []map[string]any{
+			{"role": "user", "content": "search please"},
+			{"role": "assistant", "content": nil, "tool_calls": []map[string]any{
+				{"id": "call_1", "type": "function", "function": map[string]any{"name": "search", "arguments": prettyArgs}},
+			}},
+			{"role": "tool", "tool_call_id": "call_1", "content": prettyResult},
+		},
+	}
+	body, err := json.Marshal(payload)
+	require.NoError(t, err)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, defaultSettings(), reqCtx(openAIProvider, "", body), newEvent())
+
+	res, err := p.Execute(context.Background(), in)
+	require.NoError(t, err)
+	require.NotNil(t, res.RequestBody, "expected a rewritten request body")
+	assert.Less(t, len(res.RequestBody), len(body))
+
+	creq, err := adapter.NewRegistry().DecodeRequestFor(res.RequestBody, adapter.FormatOpenAI)
+	require.NoError(t, err)
+	require.Len(t, creq.Messages, 3)
+	require.Len(t, creq.Messages[1].ToolCalls, 1)
+	gotArgs := creq.Messages[1].ToolCalls[0].Arguments
+	assert.JSONEq(t, prettyArgs, gotArgs, "compaction must preserve the arguments value")
+	assert.Less(t, len(gotArgs), len(prettyArgs))
+	assert.JSONEq(t, prettyResult, creq.Messages[2].Content, "compaction must preserve the tool result value")
+	assert.Less(t, len(creq.Messages[2].Content), len(prettyResult))
+}
+
+func TestExecuteCompressesAnthropicToolUseInput(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), nil)
+	// The tool input is pretty-printed inside the wire body; building the body
+	// by hand keeps json.Marshal from compacting it before the plugin runs.
+	prettyArgs := `{"path":  "/tmp/x",  "recursive":  true}`
+	body := []byte(`{"model":"claude-3","messages":[{"role":"user","content":"list files"},{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"ls","input":` + prettyArgs + `}]}],"max_tokens":100}`)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, defaultSettings(), reqCtx("anthropic", "", body), newEvent())
+
+	res, err := p.Execute(context.Background(), in)
+	require.NoError(t, err)
+	require.NotNil(t, res.RequestBody, "expected a rewritten request body")
+
+	creq, err := adapter.NewRegistry().DecodeRequestFor(res.RequestBody, adapter.FormatAnthropic)
+	require.NoError(t, err)
+	var toolCall *adapter.CanonicalToolCall
+	for i := range creq.Messages {
+		if len(creq.Messages[i].ToolCalls) > 0 {
+			toolCall = &creq.Messages[i].ToolCalls[0]
+			break
+		}
+	}
+	require.NotNil(t, toolCall, "tool call must survive the round-trip")
+	assert.JSONEq(t, prettyArgs, toolCall.Arguments, "compaction must preserve the tool input value")
+	assert.Less(t, len(toolCall.Arguments), len(prettyArgs))
+}
+
+func TestExecuteToolCallArgumentsRespectGates(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), nil)
+	prettyArgs := "{\n  \"q\":   \"x\"\n}"
+	payload := map[string]any{
+		"model": "gpt-4o",
+		"messages": []map[string]any{
+			{"role": "user", "content": "go"},
+			{"role": "assistant", "content": nil, "tool_calls": []map[string]any{
+				{"id": "call_1", "type": "function", "function": map[string]any{"name": "search", "arguments": prettyArgs}},
+			}},
+		},
+	}
+	body, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	t.Run("min_length skips short arguments", func(t *testing.T) {
+		t.Parallel()
+		set := defaultSettings()
+		set["min_length"] = len(prettyArgs) + 1
+		in := execInput(policy.StagePreRequest, policy.ModeEnforce, set, reqCtx(openAIProvider, "", body), newEvent())
+		res, err := p.Execute(context.Background(), in)
+		assertPassThrough(t, res, err)
+	})
+
+	t.Run("target_roles excludes assistant tool calls", func(t *testing.T) {
+		t.Parallel()
+		set := defaultSettings()
+		set["target_roles"] = []any{"user"}
+		in := execInput(policy.StagePreRequest, policy.ModeEnforce, set, reqCtx(openAIProvider, "", body), newEvent())
+		res, err := p.Execute(context.Background(), in)
+		assertPassThrough(t, res, err)
+	})
 }
 
 func TestExecuteAnthropicSystemCompressed(t *testing.T) {
