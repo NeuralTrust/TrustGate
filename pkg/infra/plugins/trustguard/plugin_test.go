@@ -42,6 +42,35 @@ func llmPayloadInput(t *testing.T, raw json.RawMessage) string {
 	return p.Input
 }
 
+func llmPayloadMessages(t *testing.T, raw json.RawMessage) []map[string]any {
+	t.Helper()
+	var p struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		t.Fatalf("unmarshal llm messages payload: %v", err)
+	}
+	return p.Messages
+}
+
+func assertLLMRequestMessages(t *testing.T, raw json.RawMessage, wantRoles []string, wantContents []string) {
+	t.Helper()
+	msgs := llmPayloadMessages(t, raw)
+	if len(msgs) != len(wantRoles) {
+		t.Fatalf("messages len = %d, want %d (%#v)", len(msgs), len(wantRoles), msgs)
+	}
+	for i := range wantRoles {
+		if got, _ := msgs[i]["role"].(string); got != wantRoles[i] {
+			t.Fatalf("messages[%d].role = %q, want %q", i, got, wantRoles[i])
+		}
+		if i < len(wantContents) && wantContents[i] != "" {
+			if got, _ := msgs[i]["content"].(string); got != wantContents[i] {
+				t.Fatalf("messages[%d].content = %q, want %q", i, got, wantContents[i])
+			}
+		}
+	}
+}
+
 func mcpPayloadMap(t *testing.T, raw json.RawMessage) map[string]any {
 	t.Helper()
 	var m map[string]any
@@ -248,9 +277,7 @@ func TestExecutePreRequestBlockReturns403(t *testing.T) {
 	if got.Attributes.Model.Name != "gpt-4o-mini" || got.Attributes.Model.Provider != "openai" {
 		t.Fatalf("model = %+v, want gpt-4o-mini/openai", got.Attributes.Model)
 	}
-	if llmPayloadInput(t, got.Payload) != "be safe\nhello world" {
-		t.Fatalf("input = %q, want %q", llmPayloadInput(t, got.Payload), "be safe\nhello world")
-	}
+	assertLLMRequestMessages(t, got.Payload, []string{"system", "user"}, []string{"be safe", "hello world"})
 }
 
 func TestExecutePreRequestRateLimitReturns429(t *testing.T) {
@@ -760,9 +787,7 @@ func TestExecuteForwardsFullGuardRequest(t *testing.T) {
 	if got.ConsumerID != "consumer-real-42" {
 		t.Fatalf("consumer_id = %q, want consumer-real-42", got.ConsumerID)
 	}
-	if llmPayloadInput(t, got.Payload) != "be safe\nhello world" {
-		t.Fatalf("input = %q, want %q", llmPayloadInput(t, got.Payload), "be safe\nhello world")
-	}
+	assertLLMRequestMessages(t, got.Payload, []string{"system", "user"}, []string{"be safe", "hello world"})
 	if got.Attributes.ContentType != contentTypeJSON {
 		t.Fatalf("attributes.content_type = %q, want %q", got.Attributes.ContentType, contentTypeJSON)
 	}
@@ -1067,6 +1092,49 @@ func TestExecuteMCPTransformObservePassesThrough(t *testing.T) {
 	}
 	if res == nil || res.StatusCode != http.StatusOK || res.StopUpstream {
 		t.Fatalf("expected pass-through in observe mode, got %+v", res)
+	}
+}
+
+func TestExecutePreRequestSendsOpenAIToolMessages(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	req := requestContext()
+	req.Body = []byte(`{
+		"model":"gpt-4o",
+		"messages":[
+			{"role":"system","content":"be safe"},
+			{"role":"user","content":"get weather"},
+			{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}]},
+			{"role":"tool","tool_call_id":"call_1","content":"{\"temp\":18}"}
+		],
+		"tools":[{"type":"function","function":{"name":"get_weather","parameters":{"type":"object"}}}]
+	}`)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), req, nil)
+	if _, err := p.Execute(context.Background(), in); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := f.captured()
+	if got.Protocol != protocolLLM {
+		t.Fatalf("protocol = %q, want %q", got.Protocol, protocolLLM)
+	}
+	msgs := llmPayloadMessages(t, got.Payload)
+	if len(msgs) != 4 {
+		t.Fatalf("messages = %#v, want 4 turns", msgs)
+	}
+	if msgs[3]["role"] != "tool" {
+		t.Fatalf("last role = %#v, want tool", msgs[3]["role"])
+	}
+	if msgs[3]["content"] != `{"temp":18}` {
+		t.Fatalf("tool content = %#v", msgs[3]["content"])
+	}
+	calls, _ := msgs[2]["tool_calls"].([]any)
+	if len(calls) != 1 {
+		t.Fatalf("assistant tool_calls = %#v", msgs[2]["tool_calls"])
 	}
 }
 

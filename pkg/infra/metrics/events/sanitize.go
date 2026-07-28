@@ -20,6 +20,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -288,7 +289,162 @@ func capBody(body []byte, maxBytes int) string {
 	if maxBytes <= 0 || len(body) <= maxBytes {
 		return string(body)
 	}
+	if capped, ok := capJSONBody(body, maxBytes); ok {
+		return capped
+	}
 	return string(body[:maxBytes]) + truncatedSuffix
+}
+
+// capJSONBody shrinks a JSON payload to fit maxBytes while keeping valid JSON.
+// Chat-style bodies keep messages[] parseable so Activity can still render them.
+func capJSONBody(body []byte, maxBytes int) (string, bool) {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 {
+		return "", false
+	}
+	switch trimmed[0] {
+	case '{', '[':
+	default:
+		return "", false
+	}
+
+	var generic any
+	if err := json.Unmarshal(trimmed, &generic); err != nil {
+		return "", false
+	}
+
+	switch root := generic.(type) {
+	case map[string]any:
+		root["_nt_truncated"] = true
+		if !shrinkJSONMap(root, maxBytes) {
+			return "", false
+		}
+		out, err := json.Marshal(root)
+		if err != nil || len(out) > maxBytes {
+			return "", false
+		}
+		return string(out), true
+	case []any:
+		shrunk := shrinkJSONArray(root, maxBytes)
+		out, err := json.Marshal(shrunk)
+		if err != nil || len(out) > maxBytes {
+			return "", false
+		}
+		return string(out), true
+	default:
+		return "", false
+	}
+}
+
+func shrinkJSONMap(m map[string]any, maxBytes int) bool {
+	if fitsJSON(m, maxBytes) {
+		return true
+	}
+	if msgs, ok := m["messages"].([]any); ok && len(msgs) > 0 {
+		m["messages"] = shrinkMessages(msgs, maxBytes, m)
+		if fitsJSON(m, maxBytes) {
+			return true
+		}
+	}
+	// Drop bulky non-essential keys after messages are already minimized.
+	for _, key := range []string{"tools", "functions", "tool_choice", "function_call"} {
+		if _, ok := m[key]; ok {
+			delete(m, key)
+			m["_nt_truncated"] = true
+			if fitsJSON(m, maxBytes) {
+				return true
+			}
+		}
+	}
+	truncateStringLeaves(m, maxBytes)
+	return fitsJSON(m, maxBytes)
+}
+
+func shrinkJSONArray(arr []any, maxBytes int) []any {
+	out := arr
+	for len(out) > 1 && !fitsJSON(out, maxBytes) {
+		out = out[:len(out)-1]
+	}
+	if !fitsJSON(out, maxBytes) {
+		truncateStringLeaves(out, maxBytes)
+	}
+	return out
+}
+
+// shrinkMessages keeps the first message (often system) and the newest tail,
+// dropping middle history until the whole object fits maxBytes.
+func shrinkMessages(msgs []any, maxBytes int, parent map[string]any) []any {
+	if len(msgs) == 0 {
+		return msgs
+	}
+	out := append([]any(nil), msgs...)
+	for len(out) > 2 && !fitsJSONWithMessages(parent, out, maxBytes) {
+		// Drop the oldest non-head message (index 1) so system + recent turns remain.
+		out = append(out[:1], out[2:]...)
+	}
+	for len(out) > 1 && !fitsJSONWithMessages(parent, out, maxBytes) {
+		out = out[1:]
+	}
+	if !fitsJSONWithMessages(parent, out, maxBytes) {
+		truncateStringLeaves(out, maxBytes)
+	}
+	return out
+}
+
+func fitsJSONWithMessages(parent map[string]any, msgs []any, maxBytes int) bool {
+	parent["messages"] = msgs
+	return fitsJSON(parent, maxBytes)
+}
+
+func fitsJSON(v any, maxBytes int) bool {
+	out, err := json.Marshal(v)
+	return err == nil && len(out) <= maxBytes
+}
+
+func truncateStringLeaves(v any, maxBytes int) {
+	switch t := v.(type) {
+	case map[string]any:
+		for key, val := range t {
+			switch child := val.(type) {
+			case string:
+				t[key] = truncateUTF8(child, maxStringLeafBytes(maxBytes))
+			default:
+				truncateStringLeaves(child, maxBytes)
+			}
+		}
+	case []any:
+		for i := range t {
+			switch child := t[i].(type) {
+			case string:
+				t[i] = truncateUTF8(child, maxStringLeafBytes(maxBytes))
+			default:
+				truncateStringLeaves(child, maxBytes)
+			}
+		}
+	}
+}
+
+func maxStringLeafBytes(maxBytes int) int {
+	const minLeaf = 256
+	leaf := maxBytes / 4
+	if leaf < minLeaf {
+		return minLeaf
+	}
+	return leaf
+}
+
+func truncateUTF8(s string, maxBytes int) string {
+	if maxBytes <= 0 || len(s) <= maxBytes {
+		return s
+	}
+	if maxBytes <= len(truncatedSuffix) {
+		return s[:maxBytes]
+	}
+	cut := maxBytes - len(truncatedSuffix)
+	for cut > 0 && !utf8.ValidString(s[:cut]) {
+		cut--
+	}
+	return s[:cut] + truncatedSuffix
 }
 
 func extractMultipartFileNames(body []byte, boundary string) string {
