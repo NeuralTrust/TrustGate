@@ -41,15 +41,30 @@ func supportedFormat(f adapter.Format) bool {
 // allowed key sets for the message shapes the canonical model round-trips
 // faithfully. Anything outside these sets is assumed to be dropped by the
 // decode/encode cycle and vetoes compression for the whole request.
+// Anthropic tool_result parts are deliberately absent: the adapter cannot
+// round-trip their array-form content, is_error flag, or adjacency to text
+// parts, so any request carrying them is left untouched.
 var (
 	allowedMessageKeys = keySet("role", "content", "tool_calls", "tool_call_id")
 	allowedPartKeys    = map[string]map[string]struct{}{
-		"text":        keySet("type", "text"),
-		"tool_use":    keySet("type", "id", "name", "input"),
-		"tool_result": keySet("type", "tool_use_id", "content", "is_error"),
+		"text":     keySet("type", "text"),
+		"tool_use": keySet("type", "id", "name", "input"),
 	}
 	allowedToolCallKeys = keySet("id", "type", "function", "index")
 	allowedFunctionKeys = keySet("name", "arguments")
+
+	// tool definitions: OpenAI {type, function{...}} and Anthropic
+	// {name, description, input_schema}. Extra keys such as an Anthropic
+	// cache_control breakpoint or OpenAI function.strict are not modeled by
+	// the canonical form and veto compression.
+	allowedOpenAIToolKeys    = keySet("type", "function")
+	allowedToolFunctionKeys  = keySet("name", "description", "parameters")
+	allowedAnthropicToolKeys = keySet("name", "description", "input_schema")
+
+	// tool_choice objects: OpenAI {type, function{name}} and Anthropic
+	// {type, name}. Fields like disable_parallel_tool_use veto compression.
+	allowedToolChoiceKeys   = keySet("type", "name", "function")
+	allowedToolChoiceFnKeys = keySet("name")
 )
 
 func keySet(keys ...string) map[string]struct{} {
@@ -60,41 +75,65 @@ func keySet(keys ...string) map[string]struct{} {
 	return s
 }
 
-// roundTripSafe reports whether every message in the raw request body uses
-// only shapes the canonical model represents without loss. It is conservative:
-// any parse surprise or unknown key vetoes compression.
+// roundTripSafe reports whether every message, tool definition, and
+// tool_choice in the raw request body uses only shapes the canonical model
+// represents without loss. It is conservative: any parse surprise or unknown
+// key vetoes compression.
 func roundTripSafe(body []byte) bool {
 	var probe struct {
-		Messages []json.RawMessage `json:"messages"`
+		Messages   []json.RawMessage `json:"messages"`
+		Tools      []json.RawMessage `json:"tools"`
+		ToolChoice json.RawMessage   `json:"tool_choice"`
 	}
 	if err := json.Unmarshal(body, &probe); err != nil {
 		return false
 	}
-	for _, raw := range probe.Messages {
-		if !messageRoundTripSafe(raw) {
+	systemSeen := false
+	for i, raw := range probe.Messages {
+		role, ok := messageRoundTripSafe(raw)
+		if !ok {
+			return false
+		}
+		// The canonical form hoists system content into a single field, so a
+		// system message anywhere but the head — or more than one — would be
+		// merged and reordered on re-encode.
+		if role == "system" {
+			if i != 0 || systemSeen {
+				return false
+			}
+			systemSeen = true
+		}
+	}
+	for _, raw := range probe.Tools {
+		if !toolRoundTripSafe(raw) {
 			return false
 		}
 	}
-	return true
+	return toolChoiceRoundTripSafe(probe.ToolChoice)
 }
 
-func messageRoundTripSafe(raw json.RawMessage) bool {
+func messageRoundTripSafe(raw json.RawMessage) (role string, safe bool) {
 	var msg map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &msg); err != nil {
-		return false
+		return "", false
 	}
 	for key := range msg {
 		if _, ok := allowedMessageKeys[key]; !ok {
-			return false
+			return "", false
+		}
+	}
+	if rawRole, ok := msg["role"]; ok {
+		if err := json.Unmarshal(rawRole, &role); err != nil {
+			return "", false
 		}
 	}
 	if content, ok := msg["content"]; ok && !contentRoundTripSafe(content) {
-		return false
+		return "", false
 	}
 	if calls, ok := msg["tool_calls"]; ok && !toolCallsRoundTripSafe(calls) {
-		return false
+		return "", false
 	}
-	return true
+	return role, true
 }
 
 // contentRoundTripSafe accepts plain string (or null) content, and content
@@ -160,6 +199,74 @@ func toolCallsRoundTripSafe(raw json.RawMessage) bool {
 	return true
 }
 
+// toolRoundTripSafe accepts the two tool-definition shapes the canonical
+// model represents: OpenAI {type, function{name, description, parameters}}
+// and Anthropic {name, description, input_schema}. The shape is picked by the
+// presence of "function" so a hybrid object cannot borrow keys from both sets.
+func toolRoundTripSafe(raw json.RawMessage) bool {
+	var tool map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &tool); err != nil {
+		return false
+	}
+	if fn, ok := tool["function"]; ok {
+		for key := range tool {
+			if _, ok := allowedOpenAIToolKeys[key]; !ok {
+				return false
+			}
+		}
+		var function map[string]json.RawMessage
+		if err := json.Unmarshal(fn, &function); err != nil {
+			return false
+		}
+		for key := range function {
+			if _, ok := allowedToolFunctionKeys[key]; !ok {
+				return false
+			}
+		}
+		return true
+	}
+	for key := range tool {
+		if _, ok := allowedAnthropicToolKeys[key]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// toolChoiceRoundTripSafe accepts an absent tool_choice, the OpenAI string
+// form ("auto", "none", "required"), and the object forms the canonical model
+// carries: OpenAI {type, function{name}} and Anthropic {type, name}.
+func toolChoiceRoundTripSafe(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return true
+	}
+	if trimmed[0] == '"' {
+		return json.Valid(trimmed)
+	}
+	var choice map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &choice); err != nil {
+		return false
+	}
+	for key := range choice {
+		if _, ok := allowedToolChoiceKeys[key]; !ok {
+			return false
+		}
+	}
+	if fn, ok := choice["function"]; ok {
+		var function map[string]json.RawMessage
+		if err := json.Unmarshal(fn, &function); err != nil {
+			return false
+		}
+		for key := range function {
+			if _, ok := allowedToolChoiceFnKeys[key]; !ok {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // keepsTopLevelFields reports whether every non-null top-level field of the
 // original request survived into the re-encoded body. The transforms only
 // rewrite string values inside messages, so a top-level key missing from the
@@ -175,7 +282,13 @@ func keepsTopLevelFields(original, encoded []byte) bool {
 		return false
 	}
 	for key, value := range in {
-		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+		trimmed := bytes.TrimSpace(value)
+		if bytes.Equal(trimmed, []byte("null")) {
+			continue
+		}
+		// An explicit "stream": false is the provider default; the adapter
+		// omitting it on encode is faithful, not lossy.
+		if key == "stream" && bytes.Equal(trimmed, []byte("false")) {
 			continue
 		}
 		if _, ok := out[key]; !ok {

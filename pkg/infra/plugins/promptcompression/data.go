@@ -17,9 +17,9 @@ package promptcompression
 import "github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 
 const (
-	decisionCompressed = "compressed"
-	decisionObserved   = "observed"
-	decisionNoChange   = "no_change"
+	decisionCompressed   = "compressed"
+	decisionObserved     = "observed"
+	decisionNoChange     = "no_change"
 	decisionSkipped      = "skipped_too_large"
 	decisionSkippedLossy = "skipped_lossy_roundtrip"
 )
