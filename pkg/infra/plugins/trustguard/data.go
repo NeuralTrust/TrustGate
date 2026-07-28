@@ -31,7 +31,8 @@ type GuardRequest struct {
 	Attributes GuardAttributes `json:"attributes"`
 }
 
-// GuardPayload is the LLM evaluate body: flattened text plus optional attachments.
+// GuardPayload is the minimal LLM evaluate body used for response-direction
+// inspect (assistant text). Request-direction LLM evaluates use messages[].
 type GuardPayload struct {
 	Input       string            `json:"input"`
 	Attachments []GuardAttachment `json:"attachments,omitempty"`
