@@ -117,3 +117,45 @@ func blockIsText(block mcpContentBlock) bool {
 	}
 	return block.Type == "text"
 }
+
+// mcpToolsCallPayload wraps Gate's {name,arguments} tools/call params in the
+// JSON-RPC envelope TrustGuard expects for protocol=mcp.
+func mcpToolsCallPayload(body []byte) (json.RawMessage, error) {
+	var call mcpToolCall
+	if err := json.Unmarshal(body, &call); err != nil {
+		return nil, err
+	}
+	params := map[string]any{"name": call.Name}
+	if len(call.Arguments) > 0 {
+		var args any
+		if err := json.Unmarshal(call.Arguments, &args); err != nil {
+			params["arguments"] = string(call.Arguments)
+		} else {
+			params["arguments"] = args
+		}
+	}
+	return json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/call",
+		"params":  params,
+	})
+}
+
+// mcpToolsResultPayload wraps a CallToolResult body as a JSON-RPC result
+// envelope for protocol=mcp output evaluation.
+func mcpToolsResultPayload(body []byte) (json.RawMessage, error) {
+	var result any
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	return json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"result":  result,
+	})
+}
+
+func llmPayload(input string) (json.RawMessage, error) {
+	return json.Marshal(GuardPayload{Input: input})
+}
