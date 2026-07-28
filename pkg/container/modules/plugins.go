@@ -31,6 +31,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/modelallowlist"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/openaimoderation"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pertoolratelimit"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/promptcompression"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/prompttemplate"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/regexreplace"
@@ -96,6 +97,7 @@ func newPluginRegistry(p pluginParams) (appplugins.Registry, error) {
 		semanticcache.New(store, p.Locator, p.Adapters),
 		modelallowlist.New(),
 		prompttemplate.New(),
+		promptcompression.New(p.Adapters, p.Logger),
 		toolallowlist.New(p.Adapters),
 		toolinjection.New(p.Adapters),
 		trustguard.New(p.Adapters, p.Cfg.TrustGuard.BaseURL, p.Cfg.TrustGuard.Timeout, p.Cfg.TrustGuard.ClientID, p.Cfg.TrustGuard.ClientSecret, p.Logger),
