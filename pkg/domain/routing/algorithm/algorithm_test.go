@@ -28,6 +28,7 @@ func TestIsValid(t *testing.T) {
 		{name: "weighted-round-robin", in: WeightedRoundRobin, want: true},
 		{name: "least-connections", in: LeastConnections, want: true},
 		{name: "semantic", in: Semantic, want: true},
+		{name: "smart-routing", in: SmartRouting, want: true},
 		{name: "empty", in: "", want: false},
 		{name: "unknown", in: "foo", want: false},
 		{name: "least-conn no s", in: "least-conn", want: false},
@@ -46,8 +47,8 @@ func TestIsValid(t *testing.T) {
 func TestNames(t *testing.T) {
 	t.Parallel()
 	names := Names()
-	if len(names) != 5 {
-		t.Fatalf("len(Names()) = %d, want 5", len(names))
+	if len(names) != 6 {
+		t.Fatalf("len(Names()) = %d, want 6", len(names))
 	}
 	for _, n := range names {
 		if !IsValid(n) {

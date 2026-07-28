@@ -16,6 +16,7 @@ package trustguard
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -177,6 +178,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 
 	var text string
+	var payload json.RawMessage
 	tgt := transformTarget{isResponse: direction == directionOutput}
 	if mcpMode {
 		if direction == directionInput {
@@ -184,11 +186,37 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 				return passThrough(), nil
 			}
 			text = mcpInputText(in.Request.Body)
+			if strings.TrimSpace(text) == "" {
+				return passThrough(), nil
+			}
+			raw, err := mcpToolsCallPayload(in.Request.Body)
+			if err != nil {
+				p.warn(ctx, "trustguard mcp tools/call payload build failed, failing open",
+					slog.String("plugin", PluginName),
+					slog.Any("error", err),
+				)
+				setExtras(in.Event, guardData{Direction: direction, Decision: decisionFailedOpen, FailedOpen: true})
+				return passThrough(), nil
+			}
+			payload = raw
 		} else {
 			if in.Response == nil || in.Response.Streaming || len(in.Response.Body) == 0 {
 				return passThrough(), nil
 			}
 			text = mcpOutputText(in.Response.Body)
+			if strings.TrimSpace(text) == "" {
+				return passThrough(), nil
+			}
+			raw, err := mcpToolsResultPayload(in.Response.Body)
+			if err != nil {
+				p.warn(ctx, "trustguard mcp tools/result payload build failed, failing open",
+					slog.String("plugin", PluginName),
+					slog.Any("error", err),
+				)
+				setExtras(in.Event, guardData{Direction: direction, Decision: decisionFailedOpen, FailedOpen: true})
+				return passThrough(), nil
+			}
+			payload = raw
 		}
 	} else {
 		format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
@@ -222,9 +250,19 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 				return rewriteResponse(reg, format, cresp, masked)
 			}
 		}
-	}
-	if strings.TrimSpace(text) == "" {
-		return passThrough(), nil
+		if strings.TrimSpace(text) == "" {
+			return passThrough(), nil
+		}
+		raw, err := llmPayload(text)
+		if err != nil {
+			p.warn(ctx, "trustguard llm payload build failed, failing open",
+				slog.String("plugin", PluginName),
+				slog.Any("error", err),
+			)
+			setExtras(in.Event, guardData{Direction: direction, Decision: decisionFailedOpen, FailedOpen: true})
+			return passThrough(), nil
+		}
+		payload = raw
 	}
 
 	protocol := protocolFor(in.Request.ConsumerType)
@@ -232,7 +270,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		protocol = protocolMCP
 	}
 	body := GuardRequest{
-		Payload:    GuardPayload{Input: text},
+		Payload:    payload,
 		Direction:  direction,
 		Protocol:   protocol,
 		GatewayID:  in.Request.GatewayID,

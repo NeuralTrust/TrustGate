@@ -25,7 +25,7 @@ import (
 
 func TestBaseFactory_CreateStrategy_KnownAlgorithms(t *testing.T) {
 	t.Parallel()
-	factory := loadbalancer.NewBaseFactory(nil, nil)
+	factory := loadbalancer.NewBaseFactory(nil, nil, nil, nil)
 	registries := []*registry.Registry{{ID: ids.New[ids.RegistryKind](), Name: "a", LLMTarget: &registry.LLMTarget{Provider: "openai"}}}
 
 	cases := []struct {
@@ -38,6 +38,7 @@ func TestBaseFactory_CreateStrategy_KnownAlgorithms(t *testing.T) {
 		{name: "weighted", alg: loadbalancer.AlgorithmWeightedRoundRobin, wantName: "weighted-round-robin"},
 		{name: "least-conn", alg: loadbalancer.AlgorithmLeastConnections, wantName: "least-connections"},
 		{name: "semantic", alg: loadbalancer.AlgorithmSemantic, wantName: "semantic"},
+		{name: "smart-routing", alg: loadbalancer.AlgorithmSmartRouting, wantName: "smart-routing"},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -59,7 +60,7 @@ func TestBaseFactory_CreateStrategy_KnownAlgorithms(t *testing.T) {
 
 func TestBaseFactory_CreateStrategy_UnknownAlgorithm(t *testing.T) {
 	t.Parallel()
-	factory := loadbalancer.NewBaseFactory(nil, nil)
+	factory := loadbalancer.NewBaseFactory(nil, nil, nil, nil)
 	_, err := factory.CreateStrategy(loadbalancer.StrategyInput{Algorithm: "bogus"})
 	if err == nil {
 		t.Fatal("expected error for unknown algorithm")
@@ -72,8 +73,8 @@ func TestBaseFactory_CreateStrategy_UnknownAlgorithm(t *testing.T) {
 func TestExportedConstantsMatchAlgorithmPackage(t *testing.T) {
 	t.Parallel()
 	algs := loadbalancer.Algorithms()
-	if len(algs) != 5 {
-		t.Fatalf("len(Algorithms) = %d, want 5", len(algs))
+	if len(algs) != 6 {
+		t.Fatalf("len(Algorithms) = %d, want 6", len(algs))
 	}
 	for _, a := range algs {
 		if !loadbalancer.IsValidAlgorithm(a) {

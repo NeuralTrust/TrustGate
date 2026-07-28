@@ -30,6 +30,7 @@ const (
 	AlgorithmWeightedRoundRobin = algorithm.WeightedRoundRobin
 	AlgorithmLeastConnections   = algorithm.LeastConnections
 	AlgorithmSemantic           = algorithm.Semantic
+	AlgorithmSmartRouting       = algorithm.SmartRouting
 )
 
 type Strategy interface {
@@ -38,10 +39,11 @@ type Strategy interface {
 }
 
 type StrategyInput struct {
-	Algorithm       string
-	Registries      []*registry.Registry
-	Weights         map[ids.RegistryID]int
-	EmbeddingConfig *embedding.Config
+	Algorithm          string
+	Registries         []*registry.Registry
+	Weights            map[ids.RegistryID]int
+	EmbeddingConfig    *embedding.Config
+	SmartRoutingConfig *registry.SmartRoutingConfig
 }
 
 type Factory interface {

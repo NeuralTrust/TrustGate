@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
@@ -26,6 +27,7 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
 )
@@ -189,6 +191,14 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 	)
 	switch {
 	case errors.As(err, &rpcErr):
+		switch {
+		case appmcp.IsPolicyBlockedCode(rpcErr.Code):
+			middleware.SetOpsOutcome(c, o11y.OutcomeDeniedPolicy)
+		case rpcErr.Code == appmcp.CodeRateLimited:
+			middleware.SetOpsOutcome(c, o11y.OutcomeDeniedThrottled)
+		default:
+			middleware.SetOpsOutcome(c, o11y.OutcomeServerError)
+		}
 		applyRPCErrorHeaders(c, rpcErr)
 		return writeJSONStatus(c, httpStatusForRPCCode(rpcErr.Code), rpcResponse{
 			JSONRPC: "2.0",
@@ -196,6 +206,7 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 			Error:   &rpcError{Code: int(rpcErr.Code), Message: rpcErr.Message, Data: rpcErr.Data},
 		})
 	case errors.As(err, &consentErr):
+		middleware.SetOpsOutcome(c, o11y.OutcomeClientError)
 		connectURL := fmt.Sprintf("%s%s/connect?ticket=%s", c.BaseURL(), consentErr.Path, consentErr.Ticket)
 		data, _ := json.Marshal(fiber.Map{
 			"provider":    consentErr.Provider,
@@ -226,6 +237,7 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 	case errors.Is(err, appmcp.ErrNoMCPRegistries):
 		return writeRPCError(c, id, codeInvalidRequest, err.Error())
 	case errors.Is(err, ratelimitapp.ErrUnavailable):
+		middleware.SetOpsOutcome(c, o11y.OutcomeServerError)
 		return writeJSONStatus(c, fiber.StatusServiceUnavailable, rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
@@ -253,6 +265,11 @@ func writeRawRPCResult(c *fiber.Ctx, id json.RawMessage, result json.RawMessage)
 }
 
 func writeRPCError(c *fiber.Ctx, id json.RawMessage, code int, message string) error {
+	outcome := o11y.OutcomeClientError
+	if code == codeInternalError {
+		outcome = o11y.OutcomeServerError
+	}
+	middleware.SetOpsOutcome(c, outcome)
 	return writeJSON(c, rpcResponse{
 		JSONRPC: "2.0",
 		ID:      normalizeID(id),

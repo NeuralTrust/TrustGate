@@ -33,6 +33,24 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
+func llmPayloadInput(t *testing.T, raw json.RawMessage) string {
+	t.Helper()
+	var p GuardPayload
+	if err := json.Unmarshal(raw, &p); err != nil {
+		t.Fatalf("unmarshal llm payload: %v", err)
+	}
+	return p.Input
+}
+
+func mcpPayloadMap(t *testing.T, raw json.RawMessage) map[string]any {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal mcp payload: %v", err)
+	}
+	return m
+}
+
 const testTimeout = 2 * time.Second
 
 func openAIRequestBody() []byte {
@@ -230,8 +248,8 @@ func TestExecutePreRequestBlockReturns403(t *testing.T) {
 	if got.Attributes.Model.Name != "gpt-4o-mini" || got.Attributes.Model.Provider != "openai" {
 		t.Fatalf("model = %+v, want gpt-4o-mini/openai", got.Attributes.Model)
 	}
-	if got.Payload.Input != "be safe\nhello world" {
-		t.Fatalf("input = %q, want %q", got.Payload.Input, "be safe\nhello world")
+	if llmPayloadInput(t, got.Payload) != "be safe\nhello world" {
+		t.Fatalf("input = %q, want %q", llmPayloadInput(t, got.Payload), "be safe\nhello world")
 	}
 }
 
@@ -395,8 +413,8 @@ func TestExecutePreResponseBlockReturns403(t *testing.T) {
 	if got.Direction != directionOutput {
 		t.Fatalf("direction = %q, want %q", got.Direction, directionOutput)
 	}
-	if got.Payload.Input != "the answer" {
-		t.Fatalf("input = %q, want %q", got.Payload.Input, "the answer")
+	if llmPayloadInput(t, got.Payload) != "the answer" {
+		t.Fatalf("input = %q, want %q", llmPayloadInput(t, got.Payload), "the answer")
 	}
 }
 
@@ -742,8 +760,8 @@ func TestExecuteForwardsFullGuardRequest(t *testing.T) {
 	if got.ConsumerID != "consumer-real-42" {
 		t.Fatalf("consumer_id = %q, want consumer-real-42", got.ConsumerID)
 	}
-	if got.Payload.Input != "be safe\nhello world" {
-		t.Fatalf("input = %q, want %q", got.Payload.Input, "be safe\nhello world")
+	if llmPayloadInput(t, got.Payload) != "be safe\nhello world" {
+		t.Fatalf("input = %q, want %q", llmPayloadInput(t, got.Payload), "be safe\nhello world")
 	}
 	if got.Attributes.ContentType != contentTypeJSON {
 		t.Fatalf("attributes.content_type = %q, want %q", got.Attributes.ContentType, contentTypeJSON)
@@ -1096,8 +1114,17 @@ func TestExecuteMCPInputBlock(t *testing.T) {
 	if got.Attributes.Model.Provider != "" {
 		t.Fatalf("provider = %q, want empty", got.Attributes.Model.Provider)
 	}
-	if got.Payload.Input != "search\nfind me" {
-		t.Fatalf("input = %q, want %q", got.Payload.Input, "search\nfind me")
+	payload := mcpPayloadMap(t, got.Payload)
+	if payload["jsonrpc"] != "2.0" || payload["method"] != "tools/call" {
+		t.Fatalf("mcp payload = %#v, want jsonrpc tools/call", payload)
+	}
+	params, _ := payload["params"].(map[string]any)
+	if params["name"] != "search" {
+		t.Fatalf("params.name = %#v, want search", params["name"])
+	}
+	args, _ := params["arguments"].(map[string]any)
+	if args["query"] != "find me" {
+		t.Fatalf("params.arguments = %#v, want query=find me", args)
 	}
 }
 
@@ -1145,8 +1172,18 @@ func TestExecuteMCPOutputBlock(t *testing.T) {
 	if got.Protocol != protocolMCP {
 		t.Fatalf("protocol = %q, want %q", got.Protocol, protocolMCP)
 	}
-	if got.Payload.Input != "the answer" {
-		t.Fatalf("input = %q, want %q", got.Payload.Input, "the answer")
+	payload := mcpPayloadMap(t, got.Payload)
+	if payload["jsonrpc"] != "2.0" {
+		t.Fatalf("mcp payload jsonrpc = %#v, want 2.0", payload["jsonrpc"])
+	}
+	result, _ := payload["result"].(map[string]any)
+	content, _ := result["content"].([]any)
+	if len(content) == 0 {
+		t.Fatalf("mcp result missing content: %#v", payload)
+	}
+	block, _ := content[0].(map[string]any)
+	if block["text"] != "the answer" {
+		t.Fatalf("result content text = %#v, want the answer", block["text"])
 	}
 }
 
@@ -1205,8 +1242,8 @@ func TestExecuteMCPInputBlockWithNilRegistry(t *testing.T) {
 	if _, ok := appplugins.AsPluginError(err); !ok {
 		t.Fatalf("expected *PluginError, got %v", err)
 	}
-	if got := f.captured(); got.Payload.Input != "search\nfind me" {
-		t.Fatalf("input = %q, want %q", got.Payload.Input, "search\nfind me")
+	if got := f.captured(); mcpPayloadMap(t, got.Payload)["method"] != "tools/call" {
+		t.Fatalf("mcp payload = %#v, want tools/call", mcpPayloadMap(t, got.Payload))
 	}
 }
 

@@ -35,9 +35,9 @@ const (
 	HealthPath = "/healthz"
 	// HealthPathAlias is registered for load balancers that probe /health
 	// (e.g. platform ALB defaults). Same handler as HealthPath.
-	HealthPathAlias = "/health"
-	ReadyPath       = "/readyz"
-	VersionPath     = "/__/version"
+	HealthPathAlias       = "/health"
+	ReadyPath             = "/readyz"
+	VersionPath           = "/__/version"
 	DocsPath              = "/docs/*"
 	GatewaysPath          = "/v1/gateways"
 	ProvidersCatalog      = "/v1/providers-catalog"
@@ -53,6 +53,7 @@ const (
 // argument to NewAdminRouter.
 type AdminRouterDeps struct {
 	MiddlewareTransport *middleware.Transport
+	OpsMetrics          *middleware.OpsMetricsMiddleware
 	AdminAuth           *middleware.AdminAuthMiddleware
 	HealthHandler       *apihandler.HealthHandler
 	VersionHandler      *apihandler.VersionHandler
@@ -118,6 +119,9 @@ func NewAdminRouter(deps AdminRouterDeps) ServerRouter {
 }
 
 func (r *adminRouter) BuildRoutes(app *fiber.App) error {
+	if r.deps.OpsMetrics != nil {
+		app.Use(r.deps.OpsMetrics.Middleware())
+	}
 	installMiddlewares(app, r.deps.MiddlewareTransport)
 
 	app.Get(HealthPath, r.deps.HealthHandler.Liveness)

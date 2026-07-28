@@ -31,6 +31,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	configsyncconnrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/configsyncconn"
 	"github.com/NeuralTrust/TrustGate/pkg/server"
 	"github.com/NeuralTrust/TrustGate/pkg/server/router"
@@ -59,6 +60,7 @@ func adminTransport(m adminMiddlewares) *middleware.Transport {
 type adminRouterParams struct {
 	dig.In
 	Transport      *middleware.Transport `name:"admin"`
+	OpsMetrics     *o11y.Provider
 	AdminAuth      *middleware.AdminAuthMiddleware
 	HealthHandler  *apihandler.HealthHandler
 	VersionHandler *apihandler.VersionHandler
@@ -135,6 +137,7 @@ func ServerAdmin(c *container.Container) error {
 		func(p adminRouterParams) router.ServerRouter {
 			return router.NewAdminRouter(router.AdminRouterDeps{
 				MiddlewareTransport:    p.Transport,
+				OpsMetrics:             middleware.NewOpsMetricsMiddleware(p.OpsMetrics, o11y.PlaneAdmin),
 				AdminAuth:              p.AdminAuth,
 				HealthHandler:          p.HealthHandler,
 				VersionHandler:         p.VersionHandler,

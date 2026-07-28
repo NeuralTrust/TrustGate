@@ -57,13 +57,14 @@ func newLoadBalancerCache(
 func (c *loadBalancerCache) For(rc *appconsumer.RoutableConsumer) (*loadbalancer.LoadBalancer, error) {
 	key := loadBalancerCacheKey(rc.Consumer.GatewayID, rc.Consumer.ID)
 	return c.getOrBuild(key, func() loadbalancer.Pool {
-		lbAlgorithm, embeddingConfig := lbSettings(rc)
+		lbAlgorithm, embeddingConfig, smartRouting := lbSettings(rc)
 		return loadbalancer.Pool{
-			ID:              key,
-			Registries:      rc.Registries,
-			Weights:         rc.Consumer.RegistryWeights,
-			Algorithm:       lbAlgorithm,
-			EmbeddingConfig: embeddingConfig,
+			ID:                 key,
+			Registries:         rc.Registries,
+			Weights:            rc.Consumer.RegistryWeights,
+			Algorithm:          lbAlgorithm,
+			EmbeddingConfig:    embeddingConfig,
+			SmartRoutingConfig: smartRouting,
 		}
 	})
 }
@@ -75,13 +76,14 @@ func (c *loadBalancerCache) PoolFor(
 ) (*loadbalancer.LoadBalancer, error) {
 	key := poolLoadBalancerCacheKey(rc.Consumer.GatewayID, rc.Consumer.ID, alias)
 	return c.getOrBuild(key, func() loadbalancer.Pool {
-		lbAlgorithm, embeddingConfig := lbSettings(rc)
+		lbAlgorithm, embeddingConfig, smartRouting := lbSettings(rc)
 		return loadbalancer.Pool{
-			ID:              key,
-			Registries:      candidates.Registries(),
-			Weights:         rc.Consumer.RegistryWeights,
-			Algorithm:       lbAlgorithm,
-			EmbeddingConfig: embeddingConfig,
+			ID:                 key,
+			Registries:         candidates.Registries(),
+			Weights:            rc.Consumer.RegistryWeights,
+			Algorithm:          lbAlgorithm,
+			EmbeddingConfig:    embeddingConfig,
+			SmartRoutingConfig: smartRouting,
 		}
 	})
 }
@@ -129,16 +131,18 @@ func (c *loadBalancerCache) cached(key string) (*loadbalancer.LoadBalancer, bool
 	return lb, true
 }
 
-func lbSettings(rc *appconsumer.RoutableConsumer) (string, *domain.EmbeddingConfig) {
+func lbSettings(rc *appconsumer.RoutableConsumer) (string, *domain.EmbeddingConfig, *domain.SmartRoutingConfig) {
 	lbAlgorithm := algorithm.RoundRobin
 	var embeddingConfig *domain.EmbeddingConfig
+	var smartRouting *domain.SmartRoutingConfig
 	if lbCfg := rc.Consumer.LBConfig; lbCfg != nil && lbCfg.Enabled {
 		if lbCfg.Algorithm != "" {
 			lbAlgorithm = lbCfg.Algorithm
 		}
 		embeddingConfig = lbCfg.EmbeddingConfig
+		smartRouting = lbCfg.SmartRouting
 	}
-	return lbAlgorithm, embeddingConfig
+	return lbAlgorithm, embeddingConfig, smartRouting
 }
 
 func loadBalancerCacheKey(gatewayID ids.GatewayID, consumerID ids.ConsumerID) string {
