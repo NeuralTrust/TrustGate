@@ -17,6 +17,8 @@ patchesStrategicMerge:
 - patches/httproute-patch.yaml
 - patches/sa-annotation-patch.yaml
 - patches/config-sync-tls-patch.yaml
+# minAvailable and maxUnavailable are mutually exclusive, so the base
+# minAvailable has to be removed before maxUnavailable can be set.
 patches:
 - patch: |-
     - op: remove
@@ -36,8 +38,6 @@ patches:
   target:
     kind: Deployment
     name: agentgateway-mcp
-# minAvailable and maxUnavailable are mutually exclusive, so the base
-# minAvailable has to be removed before maxUnavailable can be set.
 - patch: |-
     - op: remove
       path: /spec/minAvailable
@@ -63,7 +63,7 @@ namespace: agentgateway
 images:
 - name: agentgateway
   newName: europe-west1-docker.pkg.dev/neuraltrust-app-prod/nt-docker/agentgateway
-  newTag: v0.22.1
+  newTag: v0.23.0
 configMapGenerator:
 - behavior: create
   envs:
