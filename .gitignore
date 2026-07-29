@@ -40,6 +40,9 @@ k8s/overlays/*/secret.env
 # Local-only secret decrypt/encrypt helper (never commit)
 scripts/secret/
 
+# Accidental local OAuth signing keys (never commit)
+mcp-oauth.key
+
 # Editor/IDE
 .idea/
 # .vscode/
