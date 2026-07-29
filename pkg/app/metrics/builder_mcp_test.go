@@ -103,7 +103,7 @@ func TestBuilder_MCPFoldsPolicyChain(t *testing.T) {
 		Method:         "tools/call",
 		Operation:      "tool",
 		Tool:           "list_projects",
-		UpstreamStatus: "error",
+		UpstreamStatus: http.StatusForbidden,
 		RPCErrorCode:   -32001,
 	}, 3*time.Millisecond))
 
@@ -116,6 +116,7 @@ func TestBuilder_MCPFoldsPolicyChain(t *testing.T) {
 
 	assert.Equal(t, events.KindMCP, evt.Kind)
 	require.NotNil(t, evt.MCP)
+	assert.Equal(t, http.StatusForbidden, evt.MCP.UpstreamStatus)
 	assert.Equal(t, -32001, evt.MCP.RPCErrorCode)
 
 	require.Len(t, evt.PolicyChain, 1)
