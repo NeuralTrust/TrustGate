@@ -30,6 +30,13 @@ const apiKeyPrefix = "ag_"
 
 const apiKeyEntropyBytes = 32
 
+// Non-secret preview of a generated api_key. Kept short so list/get can show
+// enough for operators to recognize a key without storing the plaintext.
+const (
+	apiKeyPreviewPrefixLen = 8 // includes the "ag_" marker, e.g. "ag_3dlXk"
+	apiKeyPreviewSuffixLen = 4
+)
+
 type Type string
 
 const (
@@ -67,9 +74,13 @@ type Auth struct {
 	Enabled   bool          `json:"enabled"`
 	Config    Config        `json:"config"`
 	KeyHash   string        `json:"-"`
-	RawKey    string        `json:"-"`
-	CreatedAt time.Time     `json:"created_at"`
-	UpdatedAt time.Time     `json:"updated_at"`
+	// KeyPrefix / KeySuffix are a non-secret recognition hint for api_key auths
+	// (e.g. "ag_3dlXk" + "Rv8Q"). Never used for authentication.
+	KeyPrefix string    `json:"-"`
+	KeySuffix string    `json:"-"`
+	RawKey    string    `json:"-"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func NewAuth(gatewayID ids.GatewayID, name string, authType Type, enabled bool, config Config) (*Auth, error) {
@@ -105,6 +116,7 @@ func NewAPIKeyAuth(gatewayID ids.GatewayID, name string, enabled bool) (*Auth, e
 	}
 	a.RawKey = rawKey
 	a.KeyHash = HashAPIKey(rawKey)
+	a.KeyPrefix, a.KeySuffix = APIKeyPreview(rawKey)
 	return a, nil
 }
 
@@ -119,6 +131,15 @@ func GenerateAPIKey() (string, error) {
 func HashAPIKey(raw string) string {
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
+}
+
+// APIKeyPreview returns the non-secret head and tail of a generated api key.
+// Empty strings are returned when the key is too short to split safely.
+func APIKeyPreview(raw string) (prefix, suffix string) {
+	if len(raw) < apiKeyPreviewPrefixLen+apiKeyPreviewSuffixLen {
+		return "", ""
+	}
+	return raw[:apiKeyPreviewPrefixLen], raw[len(raw)-apiKeyPreviewSuffixLen:]
 }
 
 func (a *Auth) Validate() error {

@@ -31,6 +31,8 @@ func TestCreateAuth_Success_GeneratesKey(t *testing.T) {
 	key, ok := body["api_key"].(string)
 	require.True(t, ok, "create must surface the generated api_key: %v", body)
 	assert.True(t, strings.HasPrefix(key, "ag_"), "generated key must carry the ag_ prefix: %q", key)
+	assert.Equal(t, key[:8], body["key_prefix"], "key_prefix must match the head of the issued key")
+	assert.Equal(t, key[len(key)-4:], body["key_suffix"], "key_suffix must match the tail of the issued key")
 
 	// The secret never lives inside config: api_key auth carries no config block.
 	cfg, ok := body["config"].(map[string]any)
@@ -88,18 +90,24 @@ func TestCreateAuth_OAuth2RequiresAudiences(t *testing.T) {
 	assert.Equal(t, "validation_failed", body["error"])
 }
 
-func TestCreateAuth_Conflict(t *testing.T) {
+func TestCreateAuth_DuplicateNameAllowed(t *testing.T) {
 	defer Track(t, "CreateAuth")()
 	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("auth-dup")})
 	name := uniqueName("api-key")
-	_ = CreateAuth(t, gwID, validAuthPayload(name))
+	firstID := CreateAuth(t, gwID, validAuthPayload(name))
 
+	// Auth names are labels only — credentials resolve by id / key_hash, so two
+	// api_key auths on the same gateway may share a display name.
 	status, body := sendRequest(t, http.MethodPost,
 		fmt.Sprintf("%s/v1/gateways/%s/auths", AdminURL, gwID), nil,
 		validAuthPayload(name),
 	)
-	require.Equal(t, http.StatusConflict, status, "body=%v", body)
-	assert.Equal(t, "already_exists", body["error"])
+	require.Equal(t, http.StatusCreated, status, "body=%v", body)
+	secondID, ok := body["id"].(string)
+	require.True(t, ok, "create auth response missing id: %v", body)
+	assert.NotEqual(t, firstID, secondID)
+	assert.Equal(t, name, body["name"])
+	assert.NotEmpty(t, body["api_key"])
 }
 
 func TestCreateAuth_InvalidType(t *testing.T) {
