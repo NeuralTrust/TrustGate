@@ -105,9 +105,16 @@ func (f *fakeDialer) Connect(_ context.Context, target Target) (Upstream, error)
 
 type fakeCreds struct {
 	err error
+	// errByURL optionally returns a per-upstream error keyed by MCPTarget.URL.
+	errByURL map[string]error
 }
 
-func (f *fakeCreds) Apply(context.Context, *appconsumer.RoutableConsumer, *registrydomain.Registry, *Target) error {
+func (f *fakeCreds) Apply(_ context.Context, _ *appconsumer.RoutableConsumer, reg *registrydomain.Registry, _ *Target) error {
+	if f.errByURL != nil && reg != nil && reg.MCPTarget != nil {
+		if err, ok := f.errByURL[reg.MCPTarget.URL]; ok {
+			return err
+		}
+	}
 	return f.err
 }
 
@@ -287,7 +294,7 @@ func TestComposer_FailMode(t *testing.T) {
 	})
 }
 
-func TestComposer_ConsentRequiredBypassesFailOpen(t *testing.T) {
+func TestComposer_ConsentRequiredWhenAllNeedConsent(t *testing.T) {
 	t.Parallel()
 	regA := mcpRegistry(t, "coda", "https://a.example.com/mcp")
 	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
@@ -300,7 +307,34 @@ func TestComposer_ConsentRequiredBypassesFailOpen(t *testing.T) {
 	_, err := c.ListTools(context.Background(), routable(consumer, regA))
 	var consentErr *ConsentRequiredError
 	if !errors.As(err, &consentErr) {
-		t.Fatalf("error = %v, want ConsentRequiredError to propagate even in fail-open", err)
+		t.Fatalf("error = %v, want ConsentRequiredError when every upstream needs consent", err)
+	}
+}
+
+func TestComposer_PartialConsentServesLinkedUpstream(t *testing.T) {
+	t.Parallel()
+	regLinked := mcpRegistry(t, "linear", "https://linear.example.com/mcp")
+	regPending := mcpRegistry(t, "notion", "https://notion.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://linear.example.com/mcp": {tools: tools("search")},
+		"https://notion.example.com/mcp": {tools: tools("query")},
+	}}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://notion.example.com/mcp": &ConsentRequiredError{
+			Provider: "com.notion/mcp",
+			Ticket:   "tk",
+			Path:     "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+
+	consumer := &consumerdomain.Consumer{Type: consumerdomain.TypeMCP, MCP: &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeClosed}}
+	got, err := c.ListTools(context.Background(), routable(consumer, regLinked, regPending))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if names := toolNames(got); len(names) != 1 || names[0] != "search" {
+		t.Fatalf("tools = %v, want [search] from the linked upstream only", names)
 	}
 }
 
