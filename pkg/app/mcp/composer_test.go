@@ -370,6 +370,73 @@ func TestComposer_CallTool_RoutesToOwningUpstream(t *testing.T) {
 	}
 }
 
+// A tool served by a healthy upstream must still be callable while a different
+// upstream awaits user consent: an unconnected Notion must not break a call
+// routed to another MCP server.
+func TestComposer_CallTool_UnrelatedConsentDoesNotBlockOtherUpstream(t *testing.T) {
+	t.Parallel()
+	notion := mcpRegistry(t, "notion", "https://notion.example.com/mcp")
+	graphite := mcpRegistry(t, "graphite", "https://graphite.example.com/mcp")
+	upGraphite := &fakeUpstream{tools: tools("list_diffs"), result: json.RawMessage(`{"content":[]}`)}
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://notion.example.com/mcp":   {tools: tools("search")},
+		"https://graphite.example.com/mcp": upGraphite,
+	}}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://notion.example.com/mcp": &ConsentRequiredError{
+			Provider: "com.notion/mcp", Ticket: "tk", Path: "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP:  &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen},
+	}, notion, graphite)
+
+	res, err := c.CallTool(context.Background(), rc, "list_diffs", nil)
+	if err != nil {
+		t.Fatalf("call routed to a healthy upstream must succeed, got %v", err)
+	}
+	if string(res) != `{"content":[]}` {
+		t.Fatalf("result = %s", res)
+	}
+	if upGraphite.lastCall != "list_diffs" {
+		t.Fatalf("upstream call = %q, want list_diffs", upGraphite.lastCall)
+	}
+}
+
+// A tool that no reachable upstream exposes, while another upstream awaits
+// consent, still reports the consent requirement: the tool may well live behind
+// the unconnected provider.
+func TestComposer_CallTool_UnknownToolSurfacesPendingConsent(t *testing.T) {
+	t.Parallel()
+	notion := mcpRegistry(t, "notion", "https://notion.example.com/mcp")
+	graphite := mcpRegistry(t, "graphite", "https://graphite.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://notion.example.com/mcp":   {tools: tools("search")},
+		"https://graphite.example.com/mcp": {tools: tools("list_diffs")},
+	}}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://notion.example.com/mcp": &ConsentRequiredError{
+			Provider: "com.notion/mcp", Ticket: "tk", Path: "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP:  &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen},
+	}, notion, graphite)
+
+	_, err := c.CallTool(context.Background(), rc, "search", nil)
+	var consentErr *ConsentRequiredError
+	if !errors.As(err, &consentErr) {
+		t.Fatalf("error = %v, want ConsentRequiredError for the unconnected provider", err)
+	}
+	if consentErr.Provider != "com.notion/mcp" {
+		t.Fatalf("provider = %q, want com.notion/mcp", consentErr.Provider)
+	}
+}
+
 func TestComposer_NoMCPRegistries(t *testing.T) {
 	t.Parallel()
 	c := newTestComposer(&fakeDialer{})
