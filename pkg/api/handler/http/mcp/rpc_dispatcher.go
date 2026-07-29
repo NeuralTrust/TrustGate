@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
@@ -72,19 +73,19 @@ func (g *RPCGateway) finishSpan(span *trace.Span, err error) {
 	}
 	defer span.End()
 	if err == nil {
-		span.SetMCPStatus("ok", 0)
+		span.SetMCPStatus(http.StatusOK, 0)
 		return
 	}
 	span.SetError(err.Error())
 	var rpcErr *appmcp.RPCError
 	switch {
 	case errors.As(err, &rpcErr):
-		span.SetMCPStatus("error", int(rpcErr.Code))
+		span.SetMCPStatus(rpcErr.ResolvedHTTPStatus(), int(rpcErr.Code))
 	case errors.Is(err, appmcp.ErrToolNotFound), errors.Is(err, appmcp.ErrPromptNotFound),
 		errors.Is(err, appmcp.ErrResourceNotFound):
-		span.SetMCPStatus("not_found", 0)
+		span.SetMCPStatus(http.StatusNotFound, 0)
 	default:
-		span.SetMCPStatus("error", 0)
+		span.SetMCPStatus(http.StatusBadGateway, 0)
 	}
 }
 

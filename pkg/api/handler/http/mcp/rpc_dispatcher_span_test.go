@@ -17,10 +17,12 @@ package mcp_test
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"testing"
 
 	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcp/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
@@ -52,7 +54,7 @@ func TestRPCGateway_Dispatch_RecordsToolSpan(t *testing.T) {
 	assert.Equal(t, "tools/call", attrs.Method)
 	assert.Equal(t, "tool", attrs.Operation)
 	assert.Equal(t, "echo", attrs.Tool)
-	assert.Equal(t, "ok", attrs.UpstreamStatus)
+	assert.Equal(t, http.StatusOK, attrs.UpstreamStatus)
 }
 
 func TestRPCGateway_Dispatch_RecordsErrorStatus(t *testing.T) {
@@ -74,9 +76,34 @@ func TestRPCGateway_Dispatch_RecordsErrorStatus(t *testing.T) {
 	attrs, ok := spans[0].MCPAttrsCopy()
 	require.True(t, ok)
 	assert.Equal(t, "discovery", attrs.Operation)
-	assert.Equal(t, "error", attrs.UpstreamStatus)
+	assert.Equal(t, http.StatusBadGateway, attrs.UpstreamStatus)
+}
+
+func TestRPCGateway_Dispatch_RecordsPolicyBlockedHTTPStatus(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().
+		CallTool(mock.Anything, mock.Anything, "echo", mock.Anything).
+		Return(nil, &appmcp.RPCError{
+			Code:       -32001,
+			Message:    "blocked",
+			HTTPStatus: http.StatusForbidden,
+		}).Once()
+
+	rt := trace.New("t-3", trace.Metadata{Kind: events.KindMCP})
+	ctx := trace.NewContext(context.Background(), rt)
+
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), nil)
+	_, err := g.Dispatch(ctx, &appconsumer.RoutableConsumer{}, "tools/call", json.RawMessage(`{"name":"echo"}`))
+	require.Error(t, err)
+
+	attrs, ok := rt.Spans()[0].MCPAttrsCopy()
+	require.True(t, ok)
+	assert.Equal(t, http.StatusForbidden, attrs.UpstreamStatus)
+	assert.Equal(t, -32001, attrs.RPCErrorCode)
 }
 
 type assertErr struct{}
 
 func (assertErr) Error() string { return "boom" }
+

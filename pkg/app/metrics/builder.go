@@ -222,17 +222,32 @@ func (b *Builder) buildMCP(
 	}
 	evt.MCP = mcp
 
+	chain, pluginsMs, flagged, security := b.foldPluginSpans(requestTrace)
+	evt.PolicyChain = chain
+	evt.IsFlagged = flagged
+	evt.Security = security
+
 	totalMs := endTime.Sub(startTime).Milliseconds()
-	gatewayMs := maxInt64(0, totalMs-upstreamMs)
+	routingMs := maxInt64(0, totalMs-upstreamMs-pluginsMs)
 	evt.Latency = events.Latency{
 		TotalMs:    totalMs,
 		ProviderMs: upstreamMs,
-		GatewayMs:  gatewayMs,
+		PoliciesMs: pluginsMs,
+		RoutingMs:  routingMs,
+		GatewayMs:  pluginsMs + routingMs,
 	}
 
 	b.fillRequest(evt, req, nil)
 	b.fillResponse(evt, resp, nil, totalMs)
 	b.fillStatus(evt, resp, nil, requestTrace)
+	// Prefer the logical MCP outcome over the wire status when they diverge
+	// (e.g. historical JSON-RPC denials that rode on HTTP 200).
+	if mcp != nil && mcp.UpstreamStatus != 0 {
+		evt.Response.StatusCode = mcp.UpstreamStatus
+		evt.Status.Code = mcp.UpstreamStatus
+		evt.Status.IsTimeout = mcp.UpstreamStatus == http.StatusRequestTimeout ||
+			mcp.UpstreamStatus == http.StatusGatewayTimeout
+	}
 	return evt
 }
 

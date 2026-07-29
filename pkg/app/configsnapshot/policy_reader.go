@@ -23,4 +23,7 @@ import (
 
 type PolicyReader interface {
 	ListByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*policydomain.Policy, error)
+	// List with a zero GatewayID pages across every gateway; the compiler's
+	// bulk collect path uses it to load all policies in one scan.
+	List(ctx context.Context, filter policydomain.ListFilter) ([]*policydomain.Policy, int, error)
 }

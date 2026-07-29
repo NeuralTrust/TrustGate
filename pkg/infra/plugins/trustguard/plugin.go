@@ -231,11 +231,23 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 			if decErr != nil || creq == nil {
 				return passThrough(), nil
 			}
-			text = joinRequestText(creq)
+			if strings.TrimSpace(joinRequestText(creq)) == "" {
+				return passThrough(), nil
+			}
 			reg := p.registry
 			tgt.apply = func(masked string) ([]byte, bool) {
 				return rewriteRequest(reg, format, creq, masked)
 			}
+			raw, err := llmRequestPayload(creq)
+			if err != nil {
+				p.warn(ctx, "trustguard llm payload build failed, failing open",
+					slog.String("plugin", PluginName),
+					slog.Any("error", err),
+				)
+				setExtras(in.Event, guardData{Direction: direction, Decision: decisionFailedOpen, FailedOpen: true})
+				return passThrough(), nil
+			}
+			payload = raw
 		} else {
 			if in.Response == nil || in.Response.Streaming || len(in.Response.Body) == 0 {
 				return passThrough(), nil
@@ -245,24 +257,24 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 				return passThrough(), nil
 			}
 			text = cresp.Content
+			if strings.TrimSpace(text) == "" {
+				return passThrough(), nil
+			}
 			reg := p.registry
 			tgt.apply = func(masked string) ([]byte, bool) {
 				return rewriteResponse(reg, format, cresp, masked)
 			}
+			raw, err := llmPayload(text)
+			if err != nil {
+				p.warn(ctx, "trustguard llm payload build failed, failing open",
+					slog.String("plugin", PluginName),
+					slog.Any("error", err),
+				)
+				setExtras(in.Event, guardData{Direction: direction, Decision: decisionFailedOpen, FailedOpen: true})
+				return passThrough(), nil
+			}
+			payload = raw
 		}
-		if strings.TrimSpace(text) == "" {
-			return passThrough(), nil
-		}
-		raw, err := llmPayload(text)
-		if err != nil {
-			p.warn(ctx, "trustguard llm payload build failed, failing open",
-				slog.String("plugin", PluginName),
-				slog.Any("error", err),
-			)
-			setExtras(in.Event, guardData{Direction: direction, Decision: decisionFailedOpen, FailedOpen: true})
-			return passThrough(), nil
-		}
-		payload = raw
 	}
 
 	protocol := protocolFor(in.Request.ConsumerType)

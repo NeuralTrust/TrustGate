@@ -115,7 +115,11 @@ const (
 	defaultConfigSyncDataPlaneEnabled  = false
 	defaultConfigSyncLKGPath           = "/var/lib/trustgate/snapshot.lkg"
 	defaultConfigSyncPollInterval      = 5 * time.Minute
-	defaultConfigSyncRecompileDebounce = 2 * time.Second
+	// The dispatcher fires immediately on the first write signal (leading edge);
+	// the debounce is only the horizon for folding a burst of follow-up writes
+	// into one trailing recompile, so it stays short to keep propagation of
+	// multi-call admin flows (create consumer + key + policies) near-immediate.
+	defaultConfigSyncRecompileDebounce = 250 * time.Millisecond
 	defaultConfigSyncRecompileBackstop = 5 * time.Minute
 
 	defaultRateLimitEnabled = true

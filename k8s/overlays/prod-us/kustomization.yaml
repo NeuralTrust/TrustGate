@@ -11,31 +11,49 @@ resources:
 - config-sync-cert.yaml
 patchesStrategicMerge:
 - patches/hpa-patch.yaml
-# - patches/replicas-patch.yaml  # HPA owns replicas
 - patches/resources-patch.yaml
 - patches/pdb-patch.yaml
 - patches/httproute-patch.yaml
 - patches/sa-annotation-patch.yaml
 - patches/config-sync-tls-patch.yaml
 patches:
-- target:
+- patch: |-
+    - op: remove
+      path: /spec/replicas
+  target:
     kind: Deployment
     name: agentgateway-admin
-  patch: |-
+- patch: |-
     - op: remove
       path: /spec/replicas
-- target:
+  target:
     kind: Deployment
     name: agentgateway-proxy
-  patch: |-
+- patch: |-
     - op: remove
       path: /spec/replicas
-- target:
+  target:
     kind: Deployment
     name: agentgateway-mcp
-  patch: |-
+# PDB: maxUnavailable is HPA-safe at the prod-us floor of 2 (wave-2 rule 2).
+- patch: |-
     - op: remove
-      path: /spec/replicas
+      path: /spec/minAvailable
+    - op: add
+      path: /spec/maxUnavailable
+      value: 1
+  target:
+    kind: PodDisruptionBudget
+    name: agentgateway-proxy
+- patch: |-
+    - op: remove
+      path: /spec/minAvailable
+    - op: add
+      path: /spec/maxUnavailable
+      value: 1
+  target:
+    kind: PodDisruptionBudget
+    name: agentgateway-mcp
 commonLabels:
   app.kubernetes.io/managed-by: kustomize
   environment: prod-us
@@ -43,7 +61,7 @@ namespace: agentgateway
 images:
 - name: agentgateway
   newName: europe-west1-docker.pkg.dev/neuraltrust-app-prod/nt-docker/agentgateway
-  newTag: v0.19.2
+  newTag: v0.21.3
 configMapGenerator:
 - behavior: create
   envs:

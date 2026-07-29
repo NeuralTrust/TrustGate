@@ -1,11 +1,15 @@
 # HPA patch for dev environment - agentgateway
+# Admin is pinned to 2 replicas: every admin replica recompiles the config
+# snapshot on every write, so extra replicas multiply the compile load on
+# Postgres (and the compile CPU itself pushes the HPA into scaling up,
+# feeding the loop) without adding any config-sync capacity.
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: agentgateway-admin
 spec:
   minReplicas: 2
-  maxReplicas: 5
+  maxReplicas: 2
   metrics:
   - type: Resource
     resource:

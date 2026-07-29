@@ -66,15 +66,12 @@ type binding struct {
 
 func (c *composer) ListTools(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Tool, error) {
 	annotateTargets(ctx, len(mcpRegistries(rc)))
-	bindings, consentErr, err := c.compose(ctx, rc)
+	// Partial federation: upstreams still awaiting consent are skipped and the
+	// linked ones are listed. Only when every upstream needs consent does
+	// compose report it, so the client is told to visit the connect page.
+	bindings, _, err := c.compose(ctx, rc)
 	if err != nil {
 		return nil, err
-	}
-	// Discovery is where the client is told to connect a provider, so a pending
-	// consent requirement is surfaced here rather than silently publishing a
-	// tool list that is missing that upstream's tools.
-	if consentErr != nil {
-		return nil, consentErr
 	}
 	out := make([]Tool, 0, len(bindings))
 	for _, b := range bindings {
@@ -131,7 +128,7 @@ func annotateUpstream(ctx context.Context, reg *registrydomain.Registry, upstrea
 		catalog = reg.MCPTarget.Code
 		transport = string(reg.MCPTarget.Transport)
 	}
-	span.SetMCPUpstream(reg.Name, reg.ID.String(), host, catalog, transport, upstreamTool, "")
+	span.SetMCPUpstream(reg.Name, reg.ID.String(), host, catalog, transport, upstreamTool)
 	start := time.Now()
 	return func() { span.SetLatency(time.Since(start)) }
 }
@@ -154,11 +151,12 @@ func hostFromURL(raw string) string {
 }
 
 // compose discovers every upstream bound to the consumer and returns the tool
-// bindings of the reachable ones. In fail-open mode an upstream awaiting user
-// consent no longer aborts the whole composition: its consent requirement is
-// reported separately so each caller can decide whether it is relevant to the
-// operation at hand. Fail-closed keeps the strict contract — any unusable
-// upstream fails the request.
+// bindings of the reachable ones. An upstream awaiting user consent never
+// aborts the composition — it is skipped so the linked upstreams still federate
+// — and its consent requirement is reported separately so each caller can
+// decide whether it is relevant: listing ignores it, calling a tool no reachable
+// upstream serves reports it. Only when nothing at all could be composed does it
+// become the returned error.
 func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]binding, *ConsentRequiredError, error) {
 	registries := mcpRegistries(rc)
 	if len(registries) == 0 {
@@ -178,13 +176,12 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 			}
 			var consentErr *ConsentRequiredError
 			if errors.As(err, &consentErr) {
-				if !failOpen {
-					return nil, nil, err
-				}
+				// Partial consent is allowed on the connect page — skip unlinked
+				// upstreams during federation and serve tools from linked ones.
 				if pendingConsent == nil {
 					pendingConsent = consentErr
 				}
-				c.logger.Warn("mcp composer: upstream awaiting user consent",
+				c.logger.Info("mcp composer: skipping upstream pending consent",
 					"registry", reg.Name, "provider", consentErr.Provider)
 				continue
 			}

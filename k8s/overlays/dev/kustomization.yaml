@@ -8,7 +8,6 @@ resources:
 - secretproviderclass/agentgateway-secrets.yaml
 - service-configsync-external.yaml
 - config-sync-cert.yaml
-# - patches/replicas-patch.yaml  # HPA owns replicas
 patchesStrategicMerge:
 - patches/hpa-patch.yaml
 - patches/resources-patch.yaml
@@ -43,7 +42,7 @@ namespace: agentgateway
 images:
 - name: agentgateway
   newName: europe-west1-docker.pkg.dev/neuraltrust-app-dev/nt-docker/agentgateway
-  newTag: 78a4195d541b9c0225286faa9d7169e84c53249c
+  newTag: 44c748fbb0cbbce99864869950f396dcb311216f
 configMapGenerator:
 - behavior: create
   envs:

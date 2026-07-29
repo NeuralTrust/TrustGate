@@ -48,6 +48,7 @@ func federate[T any](
 
 	var out []T
 	reachable := 0
+	var firstConsent *ConsentRequiredError
 	for _, reg := range registries {
 		items, err := discoverCached(c, ctx, rc, reg, kind, list)
 		if err != nil {
@@ -56,7 +57,12 @@ func federate[T any](
 			}
 			var consentErr *ConsentRequiredError
 			if errors.As(err, &consentErr) {
-				return nil, err
+				if firstConsent == nil {
+					firstConsent = consentErr
+				}
+				c.logger.Info("mcp composer: skipping upstream pending consent",
+					"registry", reg.Name, "provider", consentErr.Provider)
+				continue
 			}
 			if !failOpen {
 				return nil, fmt.Errorf("%w: registry %q: %w", ErrUpstreamUnavailable, reg.Name, err)
@@ -69,6 +75,9 @@ func federate[T any](
 		out = append(out, filter(reg, items)...)
 	}
 	if reachable == 0 {
+		if firstConsent != nil {
+			return nil, firstConsent
+		}
 		return nil, fmt.Errorf("%w: no upstream MCP server reachable", ErrUpstreamUnavailable)
 	}
 	return out, nil

@@ -29,7 +29,7 @@ import (
 const component = "configsnapshot"
 
 const (
-	defaultDebounce  = 2 * time.Second
+	defaultDebounce  = 250 * time.Millisecond
 	defaultBackstop  = 5 * time.Minute
 	defaultRetention = 24 * time.Hour
 	defaultMaxRows   = 10000
@@ -40,8 +40,15 @@ type SnapshotCompiler interface {
 	Compile(ctx context.Context) (*readmodel.Snapshot, error)
 }
 
+// PartitionedCompiler compiles the global snapshot, tenant-only scoped
+// snapshots, and the shared catalog separately, so the dispatcher can encode
+// the catalog once and append the encoded bytes to every published snapshot.
+// Protobuf wire format merges concatenated messages (repeated fields append),
+// so tenant bytes + catalog bytes decode as one full snapshot on the data
+// plane; both halves use deterministic marshaling, keeping version hashes
+// stable across replicas.
 type PartitionedCompiler interface {
-	CompileAll(ctx context.Context) (*readmodel.Snapshot, map[string]*readmodel.Snapshot, error)
+	CompileAll(ctx context.Context) (global *readmodel.Snapshot, scoped map[string]*readmodel.Snapshot, catalog *readmodel.Snapshot, err error)
 }
 
 // DispatcherConfig tunes the debounce/backstop cadence and the outbox safety bound.
@@ -120,7 +127,8 @@ func NewDispatcher(
 	}
 }
 
-// Signal requests a debounced dispatch after an admin write.
+// Signal requests a dispatch after an admin write: immediate when the loop is
+// quiet, folded into the trailing debounced dispatch during a write burst.
 func (d *Dispatcher) Signal() {
 	select {
 	case d.trigger <- struct{}{}:
@@ -128,9 +136,12 @@ func (d *Dispatcher) Signal() {
 	}
 }
 
-// Run drives the dispatch loop until ctx is cancelled: a debounced dispatch after
-// a Signal burst, a jittered backstop dispatch, and an initial catch-up when the
-// outbox holds markers left by a write that committed before a prior restart.
+// Run drives the dispatch loop until ctx is cancelled: an immediate dispatch on
+// the first Signal after a quiet period so a single admin write (a new consumer,
+// key, …) reaches data planes without sitting out the debounce, a trailing
+// debounced dispatch that folds the rest of a Signal burst, a jittered backstop
+// dispatch, and an initial catch-up when the outbox holds markers left by a
+// write that committed before a prior restart.
 func (d *Dispatcher) Run(ctx context.Context) error {
 	if pending, err := d.outbox.PendingCount(ctx); err != nil {
 		if ctx.Err() == nil {
@@ -151,26 +162,36 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 	defer ticker.Stop()
 
 	var armed bool
+	var lastDispatch time.Time
+	dispatch := func(failMsg string) {
+		lastDispatch = time.Now()
+		if err := d.dispatch(ctx); err != nil && ctx.Err() == nil {
+			d.logger.Error(failMsg,
+				slog.String("component", component), slog.String("error", err.Error()))
+		}
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-d.trigger:
-			if !armed {
-				timer.Reset(d.debounce)
-				armed = true
+			if armed {
+				continue
 			}
+			// A dispatch within the last debounce window means this Signal is part
+			// of a burst: fold it into one trailing dispatch when the window closes.
+			// Otherwise dispatch on the leading edge so the write propagates now.
+			if wait := d.debounce - time.Since(lastDispatch); wait > 0 {
+				timer.Reset(wait)
+				armed = true
+				continue
+			}
+			dispatch("dispatch failed")
 		case <-timer.C:
 			armed = false
-			if err := d.dispatch(ctx); err != nil && ctx.Err() == nil {
-				d.logger.Error("dispatch failed",
-					slog.String("component", component), slog.String("error", err.Error()))
-			}
+			dispatch("dispatch failed")
 		case <-ticker.C:
-			if err := d.dispatch(ctx); err != nil && ctx.Err() == nil {
-				d.logger.Error("backstop dispatch failed",
-					slog.String("component", component), slog.String("error", err.Error()))
-			}
+			dispatch("backstop dispatch failed")
 		}
 	}
 }
@@ -206,10 +227,12 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 		pending = nil
 	}
 
+	compileStart := time.Now()
 	raw, version, scoped, err := d.compile(ctx)
 	if err != nil {
 		return err
 	}
+	compileDuration := time.Since(compileStart)
 
 	// The global snapshot is derived from every gateway plus the shared catalog, so
 	// any change bumps the global version; that makes it a safe outer gate for the
@@ -235,6 +258,11 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 				delete(d.publishedScoped, scope)
 			}
 		}
+		d.logger.Info("published config snapshot",
+			slog.String("component", component),
+			slog.String("version", version),
+			slog.Duration("compile", compileDuration),
+			slog.Int("bytes", len(raw)))
 	}
 	d.mu.Unlock()
 
@@ -249,19 +277,25 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 
 func (d *Dispatcher) compile(ctx context.Context) (raw []byte, version string, scoped map[string]ScopedSnapshot, err error) {
 	if partitioned, ok := d.compiler.(PartitionedCompiler); ok {
-		global, scopedSnaps, cerr := partitioned.CompileAll(ctx)
+		global, scopedSnaps, catalog, cerr := partitioned.CompileAll(ctx)
 		if cerr != nil {
 			return nil, "", nil, fmt.Errorf("configsnapshot: compile: %w", cerr)
 		}
-		raw, version, err = d.encode(global)
+		// The catalog is usually the bulk of the encoded bytes and identical in
+		// every snapshot, so encode it once and append the bytes per snapshot.
+		catalogRaw, eerr := d.codec.Encode(catalog)
+		if eerr != nil {
+			return nil, "", nil, fmt.Errorf("configsnapshot: encode catalog: %w", eerr)
+		}
+		raw, version, err = d.encodeWithCatalog(global, catalogRaw)
 		if err != nil {
 			return nil, "", nil, err
 		}
 		scoped = make(map[string]ScopedSnapshot, len(scopedSnaps))
 		for scope, snap := range scopedSnaps {
-			scopedRaw, scopedVersion, eerr := d.encode(snap)
-			if eerr != nil {
-				return nil, "", nil, eerr
+			scopedRaw, scopedVersion, serr := d.encodeWithCatalog(snap, catalogRaw)
+			if serr != nil {
+				return nil, "", nil, serr
 			}
 			scoped[scope] = ScopedSnapshot{Raw: scopedRaw, Version: scopedVersion}
 		}
@@ -277,6 +311,20 @@ func (d *Dispatcher) compile(ctx context.Context) (raw []byte, version string, s
 		return nil, "", nil, err
 	}
 	return raw, version, nil, nil
+}
+
+// encodeWithCatalog encodes a tenant-only snapshot and appends the
+// pre-encoded catalog bytes. Protobuf unmarshal merges the concatenation into
+// one full snapshot; the version hashes the exact bytes served.
+func (d *Dispatcher) encodeWithCatalog(snapshot *readmodel.Snapshot, catalogRaw []byte) ([]byte, string, error) {
+	tenantRaw, err := d.codec.Encode(snapshot)
+	if err != nil {
+		return nil, "", fmt.Errorf("configsnapshot: encode: %w", err)
+	}
+	raw := make([]byte, 0, len(tenantRaw)+len(catalogRaw))
+	raw = append(raw, tenantRaw...)
+	raw = append(raw, catalogRaw...)
+	return raw, d.codec.Version(raw), nil
 }
 
 func (d *Dispatcher) encode(snapshot *readmodel.Snapshot) ([]byte, string, error) {

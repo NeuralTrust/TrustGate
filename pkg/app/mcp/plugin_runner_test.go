@@ -20,6 +20,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
 	"testing"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -155,6 +156,7 @@ func TestPluginRunner_PreRequest(t *testing.T) {
 				require.NoError(t, err)
 			case tt.wantRPCCode != 0:
 				rpcErr := assertRPCError(t, err, tt.wantRPCCode, tt.wantRPCData)
+				assert.Equal(t, expectedHTTPStatus(tt.execErr, tt.outcome), rpcErr.HTTPStatus)
 				if tt.wantRPCCode == CodeRateLimited {
 					require.Equal(t, []string{"42"}, rpcErr.HTTPHeaders["Retry-After"])
 					require.Equal(t, []string{"burst"}, rpcErr.HTTPHeaders["X-RateLimit-Reason"])
@@ -162,6 +164,17 @@ func TestPluginRunner_PreRequest(t *testing.T) {
 			}
 		})
 	}
+}
+
+func expectedHTTPStatus(execErr error, outcome *appplugins.StageOutcome) int {
+	var pe *appplugins.PluginError
+	if errors.As(execErr, &pe) && pe.StatusCode != 0 {
+		return pe.StatusCode
+	}
+	if outcome != nil && outcome.StatusCode != 0 {
+		return outcome.StatusCode
+	}
+	return http.StatusForbidden
 }
 
 func TestPluginRunner_PreResponse(t *testing.T) {
@@ -249,7 +262,8 @@ func TestPluginRunner_PreResponse(t *testing.T) {
 			case tt.wantNil:
 				require.NoError(t, err)
 			case tt.wantRPCCode != 0:
-				_ = assertRPCError(t, err, tt.wantRPCCode, tt.wantRPCData)
+				rpcErr := assertRPCError(t, err, tt.wantRPCCode, tt.wantRPCData)
+				assert.Equal(t, expectedHTTPStatus(tt.execErr, tt.outcome), rpcErr.HTTPStatus)
 			}
 		})
 	}

@@ -6364,7 +6364,8 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "upstream_status": {
-                    "type": "string"
+                    "description": "Logical HTTP status of the MCP outcome (e.g. 200, 403). Gateway denials also set the wire HTTP status and http.response.status_code.",
+                    "type": "integer"
                 },
                 "upstream_tool": {
                     "type": "string"

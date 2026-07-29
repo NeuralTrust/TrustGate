@@ -15,11 +15,13 @@
 package events_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRedactHeaders_RedactsSensitiveHeaders(t *testing.T) {
@@ -85,4 +87,92 @@ func TestSanitizeBody_PreservesPlainTextWithoutCredentials(t *testing.T) {
 	got := events.SanitizeBody([]byte("plain user text"), map[string][]string{"Content-Type": {"text/plain"}})
 	assert.Equal(t, "plain user text", got)
 	assert.False(t, strings.Contains(got, "[REDACTED]"))
+}
+
+func TestSanitizeBody_JSONSafeCapKeepsParseableMessages(t *testing.T) {
+	msgs := make([]map[string]any, 0, 40)
+	msgs = append(msgs, map[string]any{"role": "system", "content": "Be concise."})
+	for i := 0; i < 38; i++ {
+		msgs = append(msgs, map[string]any{
+			"role":    "user",
+			"content": strings.Repeat("x", 2500) + "-" + string(rune('a'+i%26)),
+		})
+	}
+	msgs = append(msgs, map[string]any{"role": "user", "content": "Fetch https://neuraltrust.ai and summarize."})
+
+	raw, err := json.Marshal(map[string]any{
+		"model":    "gpt-5-mini-2025-08-07",
+		"messages": msgs,
+	})
+	require.NoError(t, err)
+	require.Greater(t, len(raw), 64*1024)
+
+	got := events.SanitizeBody(raw, map[string][]string{"Content-Type": {"application/json"}})
+	require.LessOrEqual(t, len(got), 64*1024)
+	require.True(t, json.Valid([]byte(got)), "sanitized body must stay valid JSON")
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal([]byte(got), &parsed))
+	require.Equal(t, true, parsed["_nt_truncated"])
+
+	outMsgs, ok := parsed["messages"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, outMsgs)
+
+	last, ok := outMsgs[len(outMsgs)-1].(map[string]any)
+	require.True(t, ok)
+	assert.Contains(t, last["content"], "neuraltrust.ai")
+}
+
+func TestSanitizeBody_JSONSafeCapKeepsParseableGeminiContents(t *testing.T) {
+	contents := make([]map[string]any, 0, 40)
+	contents = append(contents, map[string]any{
+		"role":  "user",
+		"parts": []any{map[string]any{"text": "system-like first turn"}},
+	})
+	for i := 0; i < 38; i++ {
+		contents = append(contents, map[string]any{
+			"role":  "user",
+			"parts": []any{map[string]any{"text": strings.Repeat("y", 2500) + "-" + string(rune('a'+i%26))}},
+		})
+	}
+	contents = append(contents, map[string]any{
+		"role":  "user",
+		"parts": []any{map[string]any{"text": "Summarize https://neuraltrust.ai"}},
+	})
+
+	raw, err := json.Marshal(map[string]any{
+		"model":    "gemini-2.0-flash",
+		"contents": contents,
+	})
+	require.NoError(t, err)
+	require.Greater(t, len(raw), 64*1024)
+
+	got := events.SanitizeBody(raw, map[string][]string{"Content-Type": {"application/json"}})
+	require.LessOrEqual(t, len(got), 64*1024)
+	require.True(t, json.Valid([]byte(got)), "sanitized body must stay valid JSON")
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal([]byte(got), &parsed))
+	require.Equal(t, true, parsed["_nt_truncated"])
+
+	outContents, ok := parsed["contents"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, outContents)
+
+	last, ok := outContents[len(outContents)-1].(map[string]any)
+	require.True(t, ok)
+	parts, ok := last["parts"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, parts)
+	part, ok := parts[0].(map[string]any)
+	require.True(t, ok)
+	assert.Contains(t, part["text"], "neuraltrust.ai")
+}
+
+func TestSanitizeBody_JSONSafeCapNonJSONFallsBackToByteTruncate(t *testing.T) {
+	body := []byte(strings.Repeat("plain-", 20_000))
+	got := events.SanitizeBody(body, map[string][]string{"Content-Type": {"text/plain"}})
+	assert.True(t, strings.HasSuffix(got, "...[truncated]"))
+	assert.LessOrEqual(t, len(got), 64*1024+len("...[truncated]"))
 }

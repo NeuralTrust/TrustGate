@@ -70,7 +70,7 @@ type MCPAttrs struct {
 	Prompt         string
 	ResourceURI    string
 	Targets        int
-	UpstreamStatus string
+	UpstreamStatus int
 	RPCErrorCode   int
 }
 
@@ -298,7 +298,7 @@ func (s *Span) SetMCPRequest(method, operation, tool, prompt, resourceURI string
 	s.MCP.ResourceURI = resourceURI
 }
 
-func (s *Span) SetMCPUpstream(serverName, registryID, host, catalogCode, transport, upstreamTool, status string) {
+func (s *Span) SetMCPUpstream(serverName, registryID, host, catalogCode, transport, upstreamTool string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ensureMCP()
@@ -308,7 +308,6 @@ func (s *Span) SetMCPUpstream(serverName, registryID, host, catalogCode, transpo
 	s.MCP.CatalogCode = catalogCode
 	s.MCP.Transport = transport
 	s.MCP.UpstreamTool = upstreamTool
-	s.MCP.UpstreamStatus = status
 }
 
 func (s *Span) SetMCPTargets(targets int) {
@@ -318,11 +317,12 @@ func (s *Span) SetMCPTargets(targets int) {
 	s.MCP.Targets = targets
 }
 
-func (s *Span) SetMCPStatus(status string, rpcErrorCode int) {
+// SetMCPStatus records the logical HTTP status for MCP metrics and http.response.status_code.
+func (s *Span) SetMCPStatus(httpStatus, rpcErrorCode int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ensureMCP()
-	s.MCP.UpstreamStatus = status
+	s.MCP.UpstreamStatus = httpStatus
 	s.MCP.RPCErrorCode = rpcErrorCode
 }
 

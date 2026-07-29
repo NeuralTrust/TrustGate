@@ -66,9 +66,9 @@ type MCP struct {
 	Prompt            string `json:"prompt,omitempty"`
 	ResourceURI       string `json:"resource_uri,omitempty"`
 	Targets           int    `json:"targets,omitempty"`
-	UpstreamStatus    string `json:"upstream_status,omitempty"`
-	UpstreamLatencyMs int64  `json:"upstream_latency_ms,omitempty"`
-	RPCErrorCode      int    `json:"rpc_error_code,omitempty"`
+	UpstreamStatus    int   `json:"upstream_status,omitempty"`
+	UpstreamLatencyMs int64 `json:"upstream_latency_ms,omitempty"`
+	RPCErrorCode      int   `json:"rpc_error_code,omitempty"`
 }
 
 type Consumer struct {

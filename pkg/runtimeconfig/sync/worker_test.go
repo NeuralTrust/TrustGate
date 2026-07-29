@@ -374,6 +374,45 @@ func TestWorker_RunBacksOffOnWatchError(t *testing.T) {
 	assert.GreaterOrEqual(t, fetcher.callCount(), 2)
 }
 
+func TestWorker_RunWatchBreakConvergesWithoutNotice(t *testing.T) {
+	t.Parallel()
+
+	// A version published while the stream was down is never replayed on
+	// reconnect. The catch-up converge after a watch error must pick it up
+	// even though no notice ever arrives.
+	fetcher := &fakeFetcher{results: []fetchResult{
+		{raw: []byte("initial"), version: stringCodec{}.Version([]byte("initial"))},
+		{raw: []byte("missed"), version: stringCodec{}.Version([]byte("missed"))},
+		{notModified: true},
+	}}
+	transport := &fakeTransport{ch: make(chan watchMsg, 1)}
+	transport.ch <- watchMsg{err: errors.New("stream broke")}
+
+	store := NewMemoryStore[string]()
+	worker := NewWorker[string](fetcher, store, transport, nil, stringCodec{}, nil, WorkerConfig{
+		PollInterval: time.Hour,
+		MinBackoff:   time.Millisecond,
+		MaxBackoff:   5 * time.Millisecond,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- worker.Run(ctx) }()
+
+	require.Eventually(t, func() bool {
+		snap, ok := snapshotOf(t, store)
+		return ok && snap == "missed"
+	}, 2*time.Second, 5*time.Millisecond)
+
+	cancel()
+	select {
+	case err := <-done:
+		assert.ErrorIs(t, err, context.Canceled)
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker did not exit after cancel")
+	}
+}
+
 func TestWorker_RunBackstopConverges(t *testing.T) {
 	t.Parallel()
 

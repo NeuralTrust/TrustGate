@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"testing"
 
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
@@ -77,6 +78,21 @@ func (f fakeConsumers) ListByGateway(_ context.Context, gatewayID ids.GatewayID)
 	return f.byGateway[gatewayID.String()], nil
 }
 
+func (f fakeConsumers) List(_ context.Context, filter consumerdomain.ListFilter) ([]*consumerdomain.Consumer, int, error) {
+	if f.err != nil {
+		return nil, 0, f.err
+	}
+	if filter.Page > 1 {
+		return nil, 0, nil
+	}
+	if filter.GatewayID != (ids.GatewayID{}) {
+		items := f.byGateway[filter.GatewayID.String()]
+		return items, len(items), nil
+	}
+	items := flattenByGateway(f.byGateway)
+	return items, len(items), nil
+}
+
 type fakeRegistries struct {
 	byGateway    map[string][]*registrydomain.Registry
 	errByGateway map[string]error
@@ -86,6 +102,20 @@ type fakeRegistries struct {
 func (f fakeRegistries) List(_ context.Context, filter registrydomain.ListFilter) ([]*registrydomain.Registry, int, error) {
 	if f.err != nil {
 		return nil, 0, f.err
+	}
+	if filter.GatewayID == (ids.GatewayID{}) {
+		// Bulk scan across all gateways: a corrupt row anywhere fails the
+		// whole scan, mirroring the SQL repository.
+		for _, err := range f.errByGateway {
+			if err != nil {
+				return nil, 0, err
+			}
+		}
+		if filter.Page > 1 {
+			return nil, 0, nil
+		}
+		items := flattenByGateway(f.byGateway)
+		return items, len(items), nil
 	}
 	if err := f.errByGateway[filter.GatewayID.String()]; err != nil {
 		return nil, 0, err
@@ -109,6 +139,21 @@ func (f fakePolicies) ListByGateway(_ context.Context, gatewayID ids.GatewayID) 
 	return f.byGateway[gatewayID.String()], nil
 }
 
+func (f fakePolicies) List(_ context.Context, filter policydomain.ListFilter) ([]*policydomain.Policy, int, error) {
+	if f.err != nil {
+		return nil, 0, f.err
+	}
+	if filter.Page > 1 {
+		return nil, 0, nil
+	}
+	if filter.GatewayID != (ids.GatewayID{}) {
+		items := f.byGateway[filter.GatewayID.String()]
+		return items, len(items), nil
+	}
+	items := flattenByGateway(f.byGateway)
+	return items, len(items), nil
+}
+
 type fakeAuths struct {
 	byGateway map[string][]*authdomain.Auth
 	err       error
@@ -121,7 +166,11 @@ func (f fakeAuths) List(_ context.Context, filter authdomain.ListFilter) ([]*aut
 	if filter.Page > 1 {
 		return nil, 0, nil
 	}
-	items := f.byGateway[filter.GatewayID.String()]
+	if filter.GatewayID != (ids.GatewayID{}) {
+		items := f.byGateway[filter.GatewayID.String()]
+		return items, len(items), nil
+	}
+	items := flattenByGateway(f.byGateway)
 	return items, len(items), nil
 }
 
@@ -135,6 +184,36 @@ func (f fakeRoles) ListByGateway(_ context.Context, gatewayID ids.GatewayID) ([]
 		return nil, f.err
 	}
 	return f.byGateway[gatewayID.String()], nil
+}
+
+func (f fakeRoles) List(_ context.Context, filter roledomain.ListFilter) ([]*roledomain.Role, int, error) {
+	if f.err != nil {
+		return nil, 0, f.err
+	}
+	if filter.Page > 1 {
+		return nil, 0, nil
+	}
+	if filter.GatewayID != (ids.GatewayID{}) {
+		items := f.byGateway[filter.GatewayID.String()]
+		return items, len(items), nil
+	}
+	items := flattenByGateway(f.byGateway)
+	return items, len(items), nil
+}
+
+// flattenByGateway mirrors the SQL repos' zero-GatewayID List semantics for
+// the fakes: all gateways' rows in one deterministic (key-sorted) list.
+func flattenByGateway[T any](byGateway map[string][]T) []T {
+	keys := make([]string, 0, len(byGateway))
+	for k := range byGateway {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]T, 0)
+	for _, k := range keys {
+		out = append(out, byGateway[k]...)
+	}
+	return out
 }
 
 type fakeCatalog struct {

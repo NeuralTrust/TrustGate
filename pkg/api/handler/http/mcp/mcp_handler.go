@@ -155,7 +155,7 @@ func (h *Handler) recordInitialize(c *fiber.Ctx) {
 	}
 	span := rt.StartSpan(trace.SpanMCP, "initialize")
 	span.SetMCPRequest("initialize", "initialize", "", "", "")
-	span.SetMCPStatus("ok", 0)
+	span.SetMCPStatus(fiber.StatusOK, 0)
 	span.End()
 }
 
@@ -201,7 +201,7 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 			middleware.SetOpsOutcome(c, o11y.OutcomeServerError)
 		}
 		applyRPCErrorHeaders(c, rpcErr)
-		return writeJSONStatus(c, httpStatusForRPCCode(rpcErr.Code), rpcResponse{
+		return writeJSONStatus(c, httpStatusForRPCError(rpcErr), rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
 			Error:   &rpcError{Code: int(rpcErr.Code), Message: rpcErr.Message, Data: rpcErr.Data},
@@ -286,12 +286,17 @@ func writeJSONStatus(c *fiber.Ctx, status int, body any) error {
 	return c.Status(status).JSON(body)
 }
 
-func httpStatusForRPCCode(code int64) int {
-	switch code {
-	case appmcp.CodeRateLimited:
-		return fiber.StatusTooManyRequests
-	case appmcp.CodeUnavailable:
-		return fiber.StatusServiceUnavailable
+// httpStatusForRPCError maps gateway denials onto the wire HTTP status so
+// agents and telemetry see the real outcome. Upstream JSON-RPC errors stay on 200.
+func httpStatusForRPCError(err *appmcp.RPCError) int {
+	if err == nil {
+		return fiber.StatusOK
+	}
+	switch {
+	case appmcp.IsPolicyBlockedCode(err.Code),
+		err.Code == appmcp.CodeRateLimited,
+		err.Code == appmcp.CodeUnavailable:
+		return err.ResolvedHTTPStatus()
 	default:
 		return fiber.StatusOK
 	}
