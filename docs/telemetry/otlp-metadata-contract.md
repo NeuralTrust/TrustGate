@@ -24,7 +24,7 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | Attribute | Event field |
 |-----------|-------------|
 | `http.request.method` | `request.method` |
-| `http.response.status_code` | `response.status_code` |
+| `http.response.status_code` | `response.status_code` (for MCP, aligned with `trustgate.mcp.upstream_status` / gateway denial outcome) |
 | `url.path` | `request.path` |
 
 ## GenAI semconv

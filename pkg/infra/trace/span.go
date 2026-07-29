@@ -317,7 +317,7 @@ func (s *Span) SetMCPTargets(targets int) {
 	s.MCP.Targets = targets
 }
 
-// SetMCPStatus records the logical upstream HTTP status for metrics (wire may still be 200).
+// SetMCPStatus records the logical HTTP status for MCP metrics and http.response.status_code.
 func (s *Span) SetMCPStatus(httpStatus, rpcErrorCode int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

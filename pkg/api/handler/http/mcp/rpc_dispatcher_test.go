@@ -201,7 +201,7 @@ func TestRPCGateway_ToolsCall_Allow_ReturnsResultUnchanged(t *testing.T) {
 	assert.Equal(t, string(raw), string(got))
 }
 
-func TestHandler_ToolsCall_PreRequestBlock_RendersJSONRPCErrorAt200(t *testing.T) {
+func TestHandler_ToolsCall_PreRequestBlock_RendersJSONRPCErrorAt403(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
 	exec := pluginmocks.NewExecutor(t)
@@ -210,8 +210,8 @@ func TestHandler_ToolsCall_PreRequestBlock_RendersJSONRPCErrorAt200(t *testing.T
 	app := newAppWithRunner(t, composer, appmcp.NewPluginRunner(exec, discardLogger()), consumerdomain.TypeMCP, true)
 	status, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"echo"}}`)
 
-	if status != fiber.StatusOK {
-		t.Fatalf("JSON-RPC errors must ride on HTTP 200, got %d", status)
+	if status != fiber.StatusForbidden {
+		t.Fatalf("policy-blocked tools/call must return HTTP 403, got %d", status)
 	}
 	rpcErr := body["error"].(map[string]any)
 	if rpcErr["code"].(float64) != -32001 {

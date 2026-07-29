@@ -9,7 +9,6 @@ resources:
 - cloudflare-backendpolicy.yaml
 - service-configsync-external.yaml
 - config-sync-cert.yaml
-# - patches/replicas-patch.yaml  # HPA owns replicas
 patchesStrategicMerge:
 - patches/hpa-patch.yaml
 - patches/resources-patch.yaml
@@ -35,6 +34,25 @@ patches:
       path: /spec/replicas
   target:
     kind: Deployment
+    name: agentgateway-mcp
+# PDB: maxUnavailable is HPA-safe at the prod-us floor of 2 (wave-2 rule 2).
+- patch: |-
+    - op: remove
+      path: /spec/minAvailable
+    - op: add
+      path: /spec/maxUnavailable
+      value: 1
+  target:
+    kind: PodDisruptionBudget
+    name: agentgateway-proxy
+- patch: |-
+    - op: remove
+      path: /spec/minAvailable
+    - op: add
+      path: /spec/maxUnavailable
+      value: 1
+  target:
+    kind: PodDisruptionBudget
     name: agentgateway-mcp
 commonLabels:
   app.kubernetes.io/managed-by: kustomize
