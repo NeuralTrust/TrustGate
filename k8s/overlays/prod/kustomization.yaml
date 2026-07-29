@@ -36,6 +36,26 @@ patches:
   target:
     kind: Deployment
     name: agentgateway-mcp
+# minAvailable and maxUnavailable are mutually exclusive, so the base
+# minAvailable has to be removed before maxUnavailable can be set.
+- patch: |-
+    - op: remove
+      path: /spec/minAvailable
+    - op: add
+      path: /spec/maxUnavailable
+      value: 1
+  target:
+    kind: PodDisruptionBudget
+    name: agentgateway-proxy
+- patch: |-
+    - op: remove
+      path: /spec/minAvailable
+    - op: add
+      path: /spec/maxUnavailable
+      value: 1
+  target:
+    kind: PodDisruptionBudget
+    name: agentgateway-mcp
 commonLabels:
   app.kubernetes.io/managed-by: kustomize
   environment: prod

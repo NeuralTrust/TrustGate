@@ -10,8 +10,12 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: agentgateway-admin
+  # Admin does not scale horizontally: every replica recompiles the whole
+  # config snapshot on every write, so extra replicas add Postgres and CPU
+  # load without adding config-sync capacity — and that CPU then drives the
+  # HPA to scale up again. Size the pod vertically; cap the count at 2 for HA.
   minReplicas: 1
-  maxReplicas: 10
+  maxReplicas: 2
   metrics:
   - type: Resource
     resource:

@@ -1,21 +1,10 @@
 # PDB patch for prod environment - agentgateway
+# proxy and mcp use maxUnavailable (set in kustomization.yaml, which also has
+# to drop the base minAvailable): at a floor of 3 replicas, minAvailable: 1
+# would let a node-pool upgrade evict two of three pods at once.
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: agentgateway-admin
-spec:
-  minAvailable: 1
----
-apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata:
-  name: agentgateway-proxy
-spec:
-  minAvailable: 1
----
-apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata:
-  name: agentgateway-mcp
 spec:
   minAvailable: 1
