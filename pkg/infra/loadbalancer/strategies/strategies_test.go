@@ -236,3 +236,60 @@ func TestSemantic_SingleRegistry(t *testing.T) {
 		t.Fatalf("expected 'only', got %+v", got)
 	}
 }
+
+func TestExtractPromptFromRequest(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		body    string
+		want    string
+		wantErr bool
+	}{
+		{
+			name: "prompt field",
+			body: `{"prompt":"hello"}`,
+			want: "hello",
+		},
+		{
+			name: "last user before tool messages",
+			body: `{
+				"messages":[
+					{"role":"system","content":"you are a weather assistant"},
+					{"role":"user","content":"What is the weather like in Beijing?"},
+					{"role":"assistant","content":null,"tool_calls":[{"type":"function","function":{"name":"get_weather"}}]},
+					{"role":"tool","content":"{\"temp\":22,\"condition\":\"sunny\"}"}
+				]
+			}`,
+			want: "What is the weather like in Beijing?",
+		},
+		{
+			name: "fallback last message when no user role",
+			body: `{"messages":[{"role":"system","content":"sys"},{"role":"assistant","content":"reply"}]}`,
+			want: "reply",
+		},
+		{
+			name:    "empty body",
+			body:    "",
+			wantErr: true,
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := extractPromptFromRequest([]byte(tc.body))
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
