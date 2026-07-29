@@ -8,7 +8,6 @@ resources:
 - secretproviderclass/agentgateway-secrets.yaml
 - service-configsync-external.yaml
 - config-sync-cert.yaml
-# - patches/replicas-patch.yaml  # HPA owns replicas
 patchesStrategicMerge:
 - patches/hpa-patch.yaml
 - patches/resources-patch.yaml
