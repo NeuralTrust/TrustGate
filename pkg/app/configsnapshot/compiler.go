@@ -27,9 +27,16 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
+	"golang.org/x/sync/errgroup"
 )
 
 const compilerPageSize = 100
+
+// compilerConcurrency bounds how many gateways are collected from the database
+// at once. Each gateway costs several sequential queries; collecting gateways
+// serially makes compile time grow linearly with the tenant count, which
+// directly delays config propagation to the data planes.
+const compilerConcurrency = 8
 
 type Compiler struct {
 	gateways   GatewayReader
@@ -76,30 +83,32 @@ func (c *Compiler) CompileFor(ctx context.Context, scope string) (*readmodel.Sna
 	if err != nil {
 		return nil, err
 	}
-
-	data := readmodel.Data{}
-	var skipped, considered int
-	for i := range gateways {
-		if scope != "" && gateways[i].ID.String() != scope {
-			continue
-		}
-		considered++
-		var gwData readmodel.Data
-		if err := c.collectGateway(ctx, gateways[i].ID, &gwData); err != nil {
-			if errors.Is(err, commonerrors.ErrCorruptData) {
-				c.logger.Warn("skipping gateway with corrupt persisted config from snapshot",
-					slog.String("component", component),
-					slog.String("gateway_id", gateways[i].ID.String()),
-					slog.String("error", err.Error()))
-				skipped++
-				continue
+	if scope != "" {
+		scoped := make([]gatewaydomain.Gateway, 0, 1)
+		for i := range gateways {
+			if gateways[i].ID.String() == scope {
+				scoped = append(scoped, gateways[i])
 			}
-			return nil, err
 		}
-		appendGatewayData(&data, gateways[i], gwData)
+		gateways = scoped
 	}
 
-	if skipped > 0 && skipped == considered {
+	collected, err := c.collectGateways(ctx, gateways)
+	if err != nil {
+		return nil, err
+	}
+
+	data := readmodel.Data{}
+	var skipped int
+	for i := range gateways {
+		if collected[i] == nil {
+			skipped++
+			continue
+		}
+		appendGatewayData(&data, gateways[i], *collected[i])
+	}
+
+	if skipped > 0 && skipped == len(gateways) {
 		return nil, fmt.Errorf("configsnapshot: every gateway (%d) skipped due to corrupt persisted config; refusing to publish empty snapshot: %w", skipped, commonerrors.ErrCorruptData)
 	}
 
@@ -119,30 +128,27 @@ func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[str
 		return nil, nil, err
 	}
 
+	collected, err := c.collectGateways(ctx, gateways)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	global := readmodel.Data{}
 	buckets := map[string]*readmodel.Data{}
 	var skipped int
 	for i := range gateways {
-		var gwData readmodel.Data
-		if err := c.collectGateway(ctx, gateways[i].ID, &gwData); err != nil {
-			if errors.Is(err, commonerrors.ErrCorruptData) {
-				c.logger.Warn("skipping gateway with corrupt persisted config from snapshot",
-					slog.String("component", component),
-					slog.String("gateway_id", gateways[i].ID.String()),
-					slog.String("error", err.Error()))
-				skipped++
-				continue
-			}
-			return nil, nil, err
+		if collected[i] == nil {
+			skipped++
+			continue
 		}
-		appendGatewayData(&global, gateways[i], gwData)
+		appendGatewayData(&global, gateways[i], *collected[i])
 		if scope := gateways[i].ID.String(); scope != "" {
 			bucket, ok := buckets[scope]
 			if !ok {
 				bucket = &readmodel.Data{}
 				buckets[scope] = bucket
 			}
-			appendGatewayData(bucket, gateways[i], gwData)
+			appendGatewayData(bucket, gateways[i], *collected[i])
 		}
 	}
 
@@ -209,6 +215,39 @@ func (c *Compiler) listGateways(ctx context.Context) ([]gatewaydomain.Gateway, e
 			return out, nil
 		}
 	}
+}
+
+// collectGateways loads each gateway's config concurrently, bounded by
+// compilerConcurrency, and returns per-gateway data aligned by index with
+// gateways. A nil entry marks a gateway skipped for corrupt persisted config;
+// any other collect error fails the whole compile. Callers append the results
+// in slice order, so the compiled snapshot stays byte-identical to a serial
+// collect and version hashes remain stable.
+func (c *Compiler) collectGateways(ctx context.Context, gateways []gatewaydomain.Gateway) ([]*readmodel.Data, error) {
+	results := make([]*readmodel.Data, len(gateways))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(compilerConcurrency)
+	for i := range gateways {
+		g.Go(func() error {
+			var gwData readmodel.Data
+			if err := c.collectGateway(gctx, gateways[i].ID, &gwData); err != nil {
+				if errors.Is(err, commonerrors.ErrCorruptData) {
+					c.logger.Warn("skipping gateway with corrupt persisted config from snapshot",
+						slog.String("component", component),
+						slog.String("gateway_id", gateways[i].ID.String()),
+						slog.String("error", err.Error()))
+					return nil
+				}
+				return err
+			}
+			results[i] = &gwData
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 func (c *Compiler) collectGateway(ctx context.Context, gatewayID ids.GatewayID, data *readmodel.Data) error {
