@@ -7,12 +7,15 @@ spec:
     spec:
       containers:
       - name: admin
+        # The admin compiles and proto-encodes the full config snapshot on
+        # every write; at 100m that CPU work was throttled ~10x and showed up
+        # as ~20s of config propagation latency to the data planes.
         resources:
           limits:
-            cpu: 100m
+            cpu: "1"
             memory: 1Gi
           requests:
-            cpu: 50m
+            cpu: 250m
             memory: 512Mi
 ---
 apiVersion: apps/v1

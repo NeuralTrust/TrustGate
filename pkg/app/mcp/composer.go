@@ -149,6 +149,7 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 
 	var candidates []binding
 	reachable := 0
+	var firstConsent *ConsentRequiredError
 	for _, reg := range registries {
 		tools, err := c.discover(ctx, rc, reg)
 		if err != nil {
@@ -157,7 +158,14 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 			}
 			var consentErr *ConsentRequiredError
 			if errors.As(err, &consentErr) {
-				return nil, err
+				// Partial consent is allowed on the connect page — skip unlinked
+				// upstreams during federation and serve tools from linked ones.
+				if firstConsent == nil {
+					firstConsent = consentErr
+				}
+				c.logger.Info("mcp composer: skipping upstream pending consent",
+					"registry", reg.Name, "provider", consentErr.Provider)
+				continue
 			}
 			if !failOpen {
 				return nil, fmt.Errorf("%w: registry %q: %w", ErrUpstreamUnavailable, reg.Name, err)
@@ -170,6 +178,9 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 		candidates = append(candidates, selectTools(toolkit, reg, tools)...)
 	}
 	if reachable == 0 {
+		if firstConsent != nil {
+			return nil, firstConsent
+		}
 		return nil, fmt.Errorf("%w: no upstream MCP server reachable", ErrUpstreamUnavailable)
 	}
 	return resolveNames(candidates), nil
