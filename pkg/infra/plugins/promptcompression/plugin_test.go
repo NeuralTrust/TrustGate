@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"testing"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -332,4 +333,55 @@ func TestExecuteAnthropicSystemCompressed(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, verboseJSON, creq.System)
 	assert.Less(t, len(creq.System), len(verboseJSON))
+}
+
+func TestExecuteSetsCompressionHeaders(t *testing.T) {
+	t.Parallel()
+	p := New(adapter.NewRegistry(), nil)
+	verbose := "{\\n  \\\"a\\\":   1,\\n  \\\"b\\\":   2\\n}"
+
+	t.Run("compressed reports decision, saved bytes, and ratio", func(t *testing.T) {
+		t.Parallel()
+		body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"` + verbose + `"}]}`)
+		in := execInput(policy.StagePreRequest, policy.ModeEnforce, defaultSettings(), reqCtx(openAIProvider, "", body), newEvent())
+		res, err := p.Execute(context.Background(), in)
+		require.NoError(t, err)
+		require.NotNil(t, res.RequestBody)
+		require.Equal(t, []string{"compressed"}, res.Headers[headerDecision])
+		saved, convErr := strconv.Atoi(res.Headers[headerSaved][0])
+		require.NoError(t, convErr)
+		assert.Equal(t, len(body)-len(res.RequestBody), saved)
+		assert.NotEmpty(t, res.Headers[headerRatio])
+	})
+
+	t.Run("observe mode reports what would have been saved", func(t *testing.T) {
+		t.Parallel()
+		body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"` + verbose + `"}]}`)
+		in := execInput(policy.StagePreRequest, policy.ModeObserve, defaultSettings(), reqCtx(openAIProvider, "", body), newEvent())
+		res, err := p.Execute(context.Background(), in)
+		require.NoError(t, err)
+		require.Nil(t, res.RequestBody, "observe must not rewrite")
+		require.Equal(t, []string{"observed"}, res.Headers[headerDecision])
+		assert.NotEmpty(t, res.Headers[headerSaved])
+	})
+
+	t.Run("clean content reports no_change without byte headers", func(t *testing.T) {
+		t.Parallel()
+		body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"already clean"}]}`)
+		in := execInput(policy.StagePreRequest, policy.ModeEnforce, defaultSettings(), reqCtx(openAIProvider, "", body), newEvent())
+		res, err := p.Execute(context.Background(), in)
+		require.NoError(t, err)
+		require.Equal(t, []string{"no_change"}, res.Headers[headerDecision])
+		assert.NotContains(t, res.Headers, headerSaved)
+	})
+
+	t.Run("lossy shapes report the skip reason", func(t *testing.T) {
+		t.Parallel()
+		body := []byte(`{"model":"gpt-4o","seed":42,"messages":[{"role":"user","content":"` + verbose + `"}]}`)
+		in := execInput(policy.StagePreRequest, policy.ModeEnforce, defaultSettings(), reqCtx(openAIProvider, "", body), newEvent())
+		res, err := p.Execute(context.Background(), in)
+		require.NoError(t, err)
+		require.Nil(t, res.RequestBody)
+		require.Equal(t, []string{"skipped_lossy_roundtrip"}, res.Headers[headerDecision])
+	})
 }
