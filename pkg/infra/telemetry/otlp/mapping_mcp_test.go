@@ -15,6 +15,7 @@
 package otlp
 
 import (
+	"net/http"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
@@ -45,7 +46,7 @@ func TestEventToRecord_MCPAttributes(t *testing.T) {
 			Tool:              "search",
 			UpstreamTool:      "search",
 			Targets:           3,
-			UpstreamStatus:    "ok",
+			UpstreamStatus:    http.StatusOK,
 			UpstreamLatencyMs: 120,
 		},
 	}
@@ -61,7 +62,7 @@ func TestEventToRecord_MCPAttributes(t *testing.T) {
 	assert.Equal(t, "com.asana/mcp", attrs[attrMCPCatalogCode].AsString())
 	assert.Equal(t, "streamable-http", attrs[attrMCPTransport].AsString())
 	assert.Equal(t, "search", attrs[attrMCPTool].AsString())
-	assert.Equal(t, "ok", attrs[attrMCPUpstreamStatus].AsString())
+	assert.Equal(t, int64(http.StatusOK), attrs[attrMCPUpstreamStatus].AsInt64())
 	assert.Equal(t, int64(3), attrs[attrMCPTargets].AsInt64())
 	assert.Equal(t, int64(120), attrs[attrMCPUpstreamLatencyMs].AsInt64())
 }

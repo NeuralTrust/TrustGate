@@ -16,6 +16,7 @@ package metrics
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
@@ -51,7 +52,7 @@ func TestBuilder_MCPFoldsUpstreamAndLatency(t *testing.T) {
 		Host:           "mcp.asana.com",
 		CatalogCode:    "com.asana/mcp",
 		Transport:      "streamable-http",
-		UpstreamStatus: "ok",
+		UpstreamStatus: http.StatusOK,
 	}, 120*time.Millisecond))
 
 	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/mcp", Body: []byte(`{"jsonrpc":"2.0"}`)}
@@ -71,7 +72,7 @@ func TestBuilder_MCPFoldsUpstreamAndLatency(t *testing.T) {
 	assert.Equal(t, "mcp.asana.com", evt.MCP.Host)
 	assert.Equal(t, "asana", evt.MCP.ServerName)
 	assert.Equal(t, "com.asana/mcp", evt.MCP.CatalogCode)
-	assert.Equal(t, "ok", evt.MCP.UpstreamStatus)
+	assert.Equal(t, http.StatusOK, evt.MCP.UpstreamStatus)
 	assert.Equal(t, int64(120), evt.MCP.UpstreamLatencyMs)
 
 	assert.Equal(t, int64(200), evt.Latency.TotalMs)

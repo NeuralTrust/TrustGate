@@ -155,7 +155,9 @@ func eventToRecord(evt *events.Event) otellog.Record {
 		appendStr(attrMCPUpstreamTool, evt.MCP.UpstreamTool)
 		appendStr(attrMCPPrompt, evt.MCP.Prompt)
 		appendStr(attrMCPResourceURI, evt.MCP.ResourceURI)
-		appendStr(attrMCPUpstreamStatus, evt.MCP.UpstreamStatus)
+		if evt.MCP.UpstreamStatus != 0 {
+			attrs = append(attrs, otellog.Int(attrMCPUpstreamStatus, evt.MCP.UpstreamStatus))
+		}
 		if evt.MCP.Targets > 0 {
 			attrs = append(attrs, otellog.Int(attrMCPTargets, evt.MCP.Targets))
 		}

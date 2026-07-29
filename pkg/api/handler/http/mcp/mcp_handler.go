@@ -155,7 +155,7 @@ func (h *Handler) recordInitialize(c *fiber.Ctx) {
 	}
 	span := rt.StartSpan(trace.SpanMCP, "initialize")
 	span.SetMCPRequest("initialize", "initialize", "", "", "")
-	span.SetMCPStatus("ok", 0)
+	span.SetMCPStatus(fiber.StatusOK, 0)
 	span.End()
 }
 

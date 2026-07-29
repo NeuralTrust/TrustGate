@@ -6364,7 +6364,8 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "upstream_status": {
-                    "type": "string"
+                    "description": "Logical HTTP status of the MCP outcome (e.g. 200, 403). Wire HTTP may still be 200.",
+                    "type": "integer"
                 },
                 "upstream_tool": {
                     "type": "string"

@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 )
 
 type Tool struct {
@@ -150,11 +151,32 @@ type RPCError struct {
 	Code        int64
 	Message     string
 	Data        json.RawMessage
+	HTTPStatus  int // logical HTTP status for metrics; wire may still be 200
 	HTTPHeaders map[string][]string
 }
 
 func (e *RPCError) Error() string {
 	return fmt.Sprintf("jsonrpc error %d: %s", e.Code, e.Message)
+}
+
+// ResolvedHTTPStatus returns the logical HTTP status for telemetry (not the wire status).
+func (e *RPCError) ResolvedHTTPStatus() int {
+	if e == nil {
+		return http.StatusBadGateway
+	}
+	if e.HTTPStatus != 0 {
+		return e.HTTPStatus
+	}
+	switch e.Code {
+	case codePolicyBlocked:
+		return http.StatusForbidden
+	case CodeRateLimited:
+		return http.StatusTooManyRequests
+	case CodeUnavailable:
+		return http.StatusServiceUnavailable
+	default:
+		return http.StatusBadGateway
+	}
 }
 
 func IsRPCError(err error) bool {

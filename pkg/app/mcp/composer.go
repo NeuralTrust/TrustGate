@@ -117,7 +117,7 @@ func annotateUpstream(ctx context.Context, reg *registrydomain.Registry, upstrea
 		catalog = reg.MCPTarget.Code
 		transport = string(reg.MCPTarget.Transport)
 	}
-	span.SetMCPUpstream(reg.Name, reg.ID.String(), host, catalog, transport, upstreamTool, "")
+	span.SetMCPUpstream(reg.Name, reg.ID.String(), host, catalog, transport, upstreamTool)
 	start := time.Now()
 	return func() { span.SetLatency(time.Since(start)) }
 }
