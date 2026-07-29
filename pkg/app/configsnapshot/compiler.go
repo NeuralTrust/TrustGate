@@ -131,15 +131,21 @@ func (c *Compiler) CompileFor(ctx context.Context, scope string) (*readmodel.Sna
 	return readmodel.Build(data), nil
 }
 
-func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[string]*readmodel.Snapshot, error) {
+// CompileAll compiles the global snapshot, one tenant-only snapshot per
+// gateway scope, and the shared catalog as its own snapshot. The catalog
+// (providers + models, usually the bulk of the encoded bytes) is deliberately
+// NOT merged into the global or scoped snapshots: the dispatcher encodes it
+// once and appends the encoded bytes to every snapshot it publishes, instead
+// of re-encoding the same catalog per gateway on every compile.
+func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[string]*readmodel.Snapshot, *readmodel.Snapshot, error) {
 	gateways, err := c.listGateways(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	collected, err := c.collectGateways(ctx, gateways)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	global := readmodel.Data{}
@@ -162,24 +168,25 @@ func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[str
 	}
 
 	if skipped > 0 && len(global.Gateways) == 0 {
-		return nil, nil, fmt.Errorf("configsnapshot: every gateway (%d) skipped due to corrupt persisted config; refusing to publish empty snapshot: %w", skipped, commonerrors.ErrCorruptData)
+		return nil, nil, nil, fmt.Errorf("configsnapshot: every gateway (%d) skipped due to corrupt persisted config; refusing to publish empty snapshot: %w", skipped, commonerrors.ErrCorruptData)
 	}
 
 	cat, err := c.collectCatalogData(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
+	catData := readmodel.Data{}
+	mergeCatalog(&catData, cat)
+	sortData(&catData)
 
-	mergeCatalog(&global, cat)
 	sortData(&global)
 
 	scoped := make(map[string]*readmodel.Snapshot, len(buckets))
 	for scope, bucket := range buckets {
-		mergeCatalog(bucket, cat)
 		sortData(bucket)
 		scoped[scope] = readmodel.Build(*bucket)
 	}
-	return readmodel.Build(global), scoped, nil
+	return readmodel.Build(global), scoped, readmodel.Build(catData), nil
 }
 
 func appendGatewayData(dst *readmodel.Data, gateway gatewaydomain.Gateway, gwData readmodel.Data) {

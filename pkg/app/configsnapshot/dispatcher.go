@@ -40,8 +40,15 @@ type SnapshotCompiler interface {
 	Compile(ctx context.Context) (*readmodel.Snapshot, error)
 }
 
+// PartitionedCompiler compiles the global snapshot, tenant-only scoped
+// snapshots, and the shared catalog separately, so the dispatcher can encode
+// the catalog once and append the encoded bytes to every published snapshot.
+// Protobuf wire format merges concatenated messages (repeated fields append),
+// so tenant bytes + catalog bytes decode as one full snapshot on the data
+// plane; both halves use deterministic marshaling, keeping version hashes
+// stable across replicas.
 type PartitionedCompiler interface {
-	CompileAll(ctx context.Context) (*readmodel.Snapshot, map[string]*readmodel.Snapshot, error)
+	CompileAll(ctx context.Context) (global *readmodel.Snapshot, scoped map[string]*readmodel.Snapshot, catalog *readmodel.Snapshot, err error)
 }
 
 // DispatcherConfig tunes the debounce/backstop cadence and the outbox safety bound.
@@ -270,19 +277,25 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 
 func (d *Dispatcher) compile(ctx context.Context) (raw []byte, version string, scoped map[string]ScopedSnapshot, err error) {
 	if partitioned, ok := d.compiler.(PartitionedCompiler); ok {
-		global, scopedSnaps, cerr := partitioned.CompileAll(ctx)
+		global, scopedSnaps, catalog, cerr := partitioned.CompileAll(ctx)
 		if cerr != nil {
 			return nil, "", nil, fmt.Errorf("configsnapshot: compile: %w", cerr)
 		}
-		raw, version, err = d.encode(global)
+		// The catalog is usually the bulk of the encoded bytes and identical in
+		// every snapshot, so encode it once and append the bytes per snapshot.
+		catalogRaw, eerr := d.codec.Encode(catalog)
+		if eerr != nil {
+			return nil, "", nil, fmt.Errorf("configsnapshot: encode catalog: %w", eerr)
+		}
+		raw, version, err = d.encodeWithCatalog(global, catalogRaw)
 		if err != nil {
 			return nil, "", nil, err
 		}
 		scoped = make(map[string]ScopedSnapshot, len(scopedSnaps))
 		for scope, snap := range scopedSnaps {
-			scopedRaw, scopedVersion, eerr := d.encode(snap)
-			if eerr != nil {
-				return nil, "", nil, eerr
+			scopedRaw, scopedVersion, serr := d.encodeWithCatalog(snap, catalogRaw)
+			if serr != nil {
+				return nil, "", nil, serr
 			}
 			scoped[scope] = ScopedSnapshot{Raw: scopedRaw, Version: scopedVersion}
 		}
@@ -298,6 +311,20 @@ func (d *Dispatcher) compile(ctx context.Context) (raw []byte, version string, s
 		return nil, "", nil, err
 	}
 	return raw, version, nil, nil
+}
+
+// encodeWithCatalog encodes a tenant-only snapshot and appends the
+// pre-encoded catalog bytes. Protobuf unmarshal merges the concatenation into
+// one full snapshot; the version hashes the exact bytes served.
+func (d *Dispatcher) encodeWithCatalog(snapshot *readmodel.Snapshot, catalogRaw []byte) ([]byte, string, error) {
+	tenantRaw, err := d.codec.Encode(snapshot)
+	if err != nil {
+		return nil, "", fmt.Errorf("configsnapshot: encode: %w", err)
+	}
+	raw := make([]byte, 0, len(tenantRaw)+len(catalogRaw))
+	raw = append(raw, tenantRaw...)
+	raw = append(raw, catalogRaw...)
+	return raw, d.codec.Version(raw), nil
 }
 
 func (d *Dispatcher) encode(snapshot *readmodel.Snapshot) ([]byte, string, error) {
