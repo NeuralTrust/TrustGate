@@ -197,12 +197,18 @@ func TestRepository_Save_DuplicateNameForSameGateway(t *testing.T) {
 	ctx := context.Background()
 	gwID := seedGateway(t, gw, "agw-dup")
 
-	if err := r.Save(ctx, validAuth(t, gwID, "dupe")); err != nil {
+	// Auth names are display labels only — credentials resolve by id / key_hash,
+	// so two api_key auths on the same gateway may share a name.
+	first := validAuth(t, gwID, "dupe")
+	if err := r.Save(ctx, first); err != nil {
 		t.Fatalf("first Save: %v", err)
 	}
-	err := r.Save(ctx, validAuth(t, gwID, "dupe"))
-	if !errors.Is(err, domain.ErrAlreadyExists) {
-		t.Fatalf("err = %v, want ErrAlreadyExists", err)
+	second := validAuth(t, gwID, "dupe")
+	if err := r.Save(ctx, second); err != nil {
+		t.Fatalf("second Save with duplicate name: %v", err)
+	}
+	if first.ID == second.ID {
+		t.Fatalf("expected distinct auth ids for duplicate names, both %s", first.ID)
 	}
 }
 
