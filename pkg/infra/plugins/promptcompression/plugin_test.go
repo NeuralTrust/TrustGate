@@ -34,10 +34,13 @@ import (
 const openAIProvider = "openai"
 
 func defaultSettings() map[string]any {
+	// min_length is pinned to 0 because tests exercise the transforms on
+	// deliberately small payloads; the production default is 256.
 	return map[string]any{
 		"compress_json":        true,
 		"normalize_whitespace": true,
 		"strip_ansi":           true,
+		"min_length":           0,
 	}
 }
 

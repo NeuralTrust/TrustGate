@@ -75,7 +75,12 @@ func TestParseConfigDefaults(t *testing.T) {
 	assert.True(t, cfg.NormalizeWhitespace, "normalize_whitespace must default to true, matching the catalog schema")
 	assert.True(t, cfg.StripANSI, "strip_ansi must default to true, matching the catalog schema")
 	assert.Equal(t, 1, cfg.MaxConsecutiveBlankLines)
+	assert.Equal(t, defaultMinLength, cfg.MinLength, "unset min_length must default to 256")
 	assert.Equal(t, defaultMaxBodyBytes, cfg.MaxBodyBytes)
+
+	zero, err := parseConfig(map[string]any{"min_length": 0})
+	require.NoError(t, err)
+	assert.Equal(t, 0, zero.MinLength, "explicit zero must compress everything")
 
 	uncapped, err := parseConfig(map[string]any{"max_body_bytes": 0})
 	require.NoError(t, err)
