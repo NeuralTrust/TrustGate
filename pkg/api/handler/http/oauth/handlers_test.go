@@ -49,6 +49,10 @@ func (f *fakeCredentialFinder) MTLSAuths(context.Context) ([]*authdomain.Auth, e
 	return nil, nil
 }
 
+func (f *fakeCredentialFinder) DefaultOAuth2ForGateway(ids.GatewayID) *authdomain.Auth {
+	return nil
+}
+
 type memFlowStore struct {
 	clients map[string]appoauth.RegisteredGatewayClient
 }

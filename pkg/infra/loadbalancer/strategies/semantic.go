@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
@@ -99,14 +100,36 @@ func extractPromptFromRequest(body []byte) (string, error) {
 		return "", err
 	}
 	if prompt, ok := data["prompt"].(string); ok {
-		return prompt, nil
+		if s := strings.TrimSpace(prompt); s != "" {
+			return s, nil
+		}
 	}
-	if messages, ok := data["messages"].([]interface{}); ok && len(messages) > 0 {
-		lastMsg := messages[len(messages)-1]
-		if msgMap, ok := lastMsg.(map[string]interface{}); ok {
-			if content, ok := msgMap["content"].(string); ok {
-				return content, nil
+	messages, ok := data["messages"].([]interface{})
+	if !ok || len(messages) == 0 {
+		return "", fmt.Errorf("could not extract prompt from request")
+	}
+	for i := len(messages) - 1; i >= 0; i-- {
+		msgMap, ok := messages[i].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		role, _ := msgMap["role"].(string)
+		if role != "user" {
+			continue
+		}
+		if content, ok := msgMap["content"].(string); ok {
+			if s := strings.TrimSpace(content); s != "" {
+				return s, nil
 			}
+		}
+	}
+	lastMsg, ok := messages[len(messages)-1].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("could not extract prompt from request")
+	}
+	if content, ok := lastMsg["content"].(string); ok {
+		if s := strings.TrimSpace(content); s != "" {
+			return s, nil
 		}
 	}
 	return "", fmt.Errorf("could not extract prompt from request")

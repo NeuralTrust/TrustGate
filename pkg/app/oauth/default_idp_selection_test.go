@@ -47,7 +47,7 @@ func TestPickSingleOAuth2_DefaultIsFallbackOnly(t *testing.T) {
 	require.Equal(t, real.ID, got.ID)
 
 	// The default never causes ambiguity.
-	got, err = pickSingleOAuth2([]*authdomain.Auth{real, realOAuth2(t, "https://idp2.example.com"), def})
+	_, err = pickSingleOAuth2([]*authdomain.Auth{real, realOAuth2(t, "https://idp2.example.com"), def})
 	require.ErrorIs(t, err, ErrAmbiguousAuthorizationServer)
 
 	// No providers at all.
