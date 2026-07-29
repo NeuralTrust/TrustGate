@@ -49,7 +49,9 @@ const (
 	defaultSignal       = SignalLogs
 	defaultCompression  = compressionGzip
 	defaultTimeout      = 10 * time.Second
-	defaultMaxBodyBytes = 4096
+	// Keep Activity raw request/response bodies intact past the 64KiB sanitize
+	// cap; the previous 4KiB OTel attribute limit mid-cut JSON and blanked UI.
+	defaultMaxBodyBytes = 256 * 1024
 )
 
 // TLSSettings configures mutual or server-only TLS for the OTLP transport.

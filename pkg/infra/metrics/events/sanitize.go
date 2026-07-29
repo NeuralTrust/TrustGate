@@ -346,8 +346,14 @@ func shrinkJSONMap(m map[string]any, maxBytes int) bool {
 			return true
 		}
 	}
+	if contents, ok := m["contents"].([]any); ok && len(contents) > 0 {
+		m["contents"] = shrinkGeminiContents(contents, maxBytes, m)
+		if fitsJSON(m, maxBytes) {
+			return true
+		}
+	}
 	// Drop bulky non-essential keys after messages are already minimized.
-	for _, key := range []string{"tools", "functions", "tool_choice", "function_call"} {
+	for _, key := range []string{"tools", "functions", "tool_choice", "function_call", "toolsConfig", "generationConfig", "safetySettings"} {
 		if _, ok := m[key]; ok {
 			delete(m, key)
 			m["_nt_truncated"] = true
@@ -393,6 +399,30 @@ func shrinkMessages(msgs []any, maxBytes int, parent map[string]any) []any {
 
 func fitsJSONWithMessages(parent map[string]any, msgs []any, maxBytes int) bool {
 	parent["messages"] = msgs
+	return fitsJSON(parent, maxBytes)
+}
+
+// shrinkGeminiContents keeps the first content turn and the newest tail, like
+// shrinkMessages, so Activity can still parse Gemini generateContent bodies.
+func shrinkGeminiContents(contents []any, maxBytes int, parent map[string]any) []any {
+	if len(contents) == 0 {
+		return contents
+	}
+	out := append([]any(nil), contents...)
+	for len(out) > 2 && !fitsJSONWithContents(parent, out, maxBytes) {
+		out = append(out[:1], out[2:]...)
+	}
+	for len(out) > 1 && !fitsJSONWithContents(parent, out, maxBytes) {
+		out = out[1:]
+	}
+	if !fitsJSONWithContents(parent, out, maxBytes) {
+		truncateStringLeaves(out, maxBytes)
+	}
+	return out
+}
+
+func fitsJSONWithContents(parent map[string]any, contents []any, maxBytes int) bool {
+	parent["contents"] = contents
 	return fitsJSON(parent, maxBytes)
 }
 
