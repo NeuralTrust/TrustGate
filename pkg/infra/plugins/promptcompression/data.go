@@ -14,7 +14,12 @@
 
 package promptcompression
 
-import "github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+)
 
 const (
 	decisionCompressed   = "compressed"
@@ -22,6 +27,15 @@ const (
 	decisionNoChange     = "no_change"
 	decisionSkipped      = "skipped_too_large"
 	decisionSkippedLossy = "skipped_lossy_roundtrip"
+)
+
+// Response headers surfacing the compression outcome to the caller, following
+// the semantic_cache X-Cache-* convention, so the plugin's effect is
+// observable per request without consulting the telemetry stream.
+const (
+	headerDecision = "X-Prompt-Compression"
+	headerSaved    = "X-Prompt-Compression-Saved"
+	headerRatio    = "X-Prompt-Compression-Ratio"
 )
 
 // Data is the per-invocation telemetry payload recorded on the plugin span.
@@ -41,4 +55,16 @@ func setExtras(event *metrics.EventContext, data *Data) {
 		return
 	}
 	event.SetExtras(data)
+}
+
+// decisionHeaders renders the outcome as response headers. Saved bytes and
+// ratio are only meaningful when a rewrite happened (or would have happened,
+// in observe mode).
+func decisionHeaders(data *Data) map[string][]string {
+	headers := map[string][]string{headerDecision: {data.Decision}}
+	if data.Decision == decisionCompressed || data.Decision == decisionObserved {
+		headers[headerSaved] = []string{strconv.Itoa(data.BytesSaved)}
+		headers[headerRatio] = []string{fmt.Sprintf("%.4f", data.Ratio)}
+	}
+	return headers
 }

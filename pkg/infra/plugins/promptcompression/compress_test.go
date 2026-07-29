@@ -24,10 +24,12 @@ import (
 )
 
 func allTransforms() Settings {
+	// min_length pinned to 0: these tests exercise transforms on small samples.
 	cfg, err := parseConfig(map[string]any{
 		"compress_json":        true,
 		"normalize_whitespace": true,
 		"strip_ansi":           true,
+		"min_length":           0,
 	})
 	if err != nil {
 		panic(err)

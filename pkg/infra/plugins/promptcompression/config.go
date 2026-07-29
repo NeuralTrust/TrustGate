@@ -29,6 +29,11 @@ const PluginName = "prompt_compression"
 // CPU cost stays bounded on the proxy hot path.
 const defaultMaxBodyBytes = 1 << 20 // 1 MiB
 
+// defaultMinLength skips rewriting short message contents: compacting a few
+// dozen bytes saves nothing measurable, while leaving small stable messages
+// byte-identical protects provider prompt-cache prefixes.
+const defaultMinLength = 256
+
 var (
 	ErrNoTransforms  = errors.New("prompt_compression: at least one transform must be enabled")
 	ErrNegativeMin   = errors.New("prompt_compression: min_length must not be negative")
@@ -46,7 +51,7 @@ type wireSettings struct {
 	NormalizeWhitespace      *bool    `mapstructure:"normalize_whitespace"`
 	StripANSI                *bool    `mapstructure:"strip_ansi"`
 	MaxConsecutiveBlankLines *int     `mapstructure:"max_consecutive_blank_lines"`
-	MinLength                int      `mapstructure:"min_length"`
+	MinLength                *int     `mapstructure:"min_length"`
 	MaxBodyBytes             *int     `mapstructure:"max_body_bytes"`
 	TargetRoles              []string `mapstructure:"target_roles"`
 }
@@ -71,7 +76,8 @@ type Settings struct {
 	// is on. Defaults to 1; values outside [1, 1000] are rejected.
 	MaxConsecutiveBlankLines int
 	// MinLength skips messages whose content is shorter than this many bytes, so
-	// tiny stable messages are never rewritten (avoids cache churn for no gain).
+	// tiny stable messages are never rewritten (avoids cache churn for no
+	// gain). Defaults to 256; an explicit 0 compresses everything.
 	MinLength int
 	// MaxBodyBytes skips the whole pipeline for request bodies larger than this
 	// many bytes, bounding per-request CPU cost. Defaults to 1 MiB; an explicit
@@ -105,7 +111,7 @@ func (w wireSettings) resolve() Settings {
 		NormalizeWhitespace:      true,
 		StripANSI:                true,
 		MaxConsecutiveBlankLines: 1,
-		MinLength:                w.MinLength,
+		MinLength:                defaultMinLength,
 		MaxBodyBytes:             defaultMaxBodyBytes,
 		TargetRoles:              w.TargetRoles,
 	}
@@ -120,6 +126,9 @@ func (w wireSettings) resolve() Settings {
 	}
 	if w.MaxConsecutiveBlankLines != nil {
 		cfg.MaxConsecutiveBlankLines = *w.MaxConsecutiveBlankLines
+	}
+	if w.MinLength != nil {
+		cfg.MinLength = *w.MinLength
 	}
 	if w.MaxBodyBytes != nil {
 		cfg.MaxBodyBytes = *w.MaxBodyBytes

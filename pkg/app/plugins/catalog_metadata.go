@@ -798,8 +798,8 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "min_length",
 					Label:       "Min Content Length",
 					Type:        FieldTypeInteger,
-					Description: "Skip messages shorter than this many bytes; tiny messages are never rewritten.",
-					Default:     0,
+					Description: "Skip messages shorter than this many bytes; tiny stable messages are never rewritten, which protects provider prompt caches. 0 compresses everything.",
+					Default:     256,
 				},
 				{
 					Key:         "max_body_bytes",

@@ -88,15 +88,16 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	// Bound per-request CPU cost on the proxy hot path: bodies above the cap
 	// skip the whole pipeline rather than paying decode + transform + encode.
 	if !cfg.withinBodyCap(len(in.Request.Body)) {
-		setExtras(in.Event, &Data{
+		data := &Data{
 			Stage:      string(in.Stage),
 			Mode:       string(in.Mode),
 			Transforms: cfg.describe(),
 			Decision:   decisionSkipped,
 			BytesIn:    len(in.Request.Body),
 			BytesOut:   len(in.Request.Body),
-		})
-		return passThrough(), nil
+		}
+		setExtras(in.Event, data)
+		return passThroughWith(data), nil
 	}
 	format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
 	if err != nil {
@@ -107,8 +108,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	// (multimodal parts, cache_control annotations, unmodeled fields). A
 	// request that might lose data on re-encode is never touched.
 	if !supportedFormat(format) || !roundTripSafe(in.Request.Body) {
-		p.skipLossy(in, cfg)
-		return passThrough(), nil
+		return p.skipLossy(in, cfg), nil
 	}
 	creq, err := p.registry.DecodeRequestFor(in.Request.Body, format)
 	if err != nil || creq == nil {
@@ -121,23 +121,24 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return passThrough(), nil
 	}
 	if changed && !keepsTopLevelFields(in.Request.Body, body) {
-		p.skipLossy(in, cfg)
-		return passThrough(), nil
+		return p.skipLossy(in, cfg), nil
 	}
 	return p.decide(in, cfg, changed, body), nil
 }
 
 // skipLossy records that the request was left untouched because compressing
 // it would risk dropping content the canonical model does not represent.
-func (p *Plugin) skipLossy(in appplugins.ExecInput, cfg Settings) {
-	setExtras(in.Event, &Data{
+func (p *Plugin) skipLossy(in appplugins.ExecInput, cfg Settings) *appplugins.Result {
+	data := &Data{
 		Stage:      string(in.Stage),
 		Mode:       string(in.Mode),
 		Transforms: cfg.describe(),
 		Decision:   decisionSkippedLossy,
 		BytesIn:    len(in.Request.Body),
 		BytesOut:   len(in.Request.Body),
-	})
+	}
+	setExtras(in.Event, data)
+	return passThroughWith(data)
 }
 
 func (p *Plugin) decide(in appplugins.ExecInput, cfg Settings, changed bool, body []byte) *appplugins.Result {
@@ -157,7 +158,7 @@ func (p *Plugin) decide(in appplugins.ExecInput, cfg Settings, changed bool, bod
 		data.Decision = decisionNoChange
 		data.BytesOut = bytesIn
 		setExtras(in.Event, data)
-		return passThrough()
+		return passThroughWith(data)
 	}
 	data.BytesOut = len(body)
 	// Derived from the encoded bodies so BytesIn - BytesOut == BytesSaved holds
@@ -167,12 +168,12 @@ func (p *Plugin) decide(in appplugins.ExecInput, cfg Settings, changed bool, bod
 	if !appplugins.Blocks(in.Mode) {
 		data.Decision = decisionObserved
 		setExtras(in.Event, data)
-		return passThrough()
+		return passThroughWith(data)
 	}
 	data.Decision = decisionCompressed
 	setExtras(in.Event, data)
 	appplugins.SetDecisionFromOutcome(in.Event, decisionCompressed)
-	return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: body}
+	return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: body, Headers: decisionHeaders(data)}
 }
 
 func (p *Plugin) debug(ctx context.Context, msg string, attrs ...any) {
@@ -184,4 +185,10 @@ func (p *Plugin) debug(ctx context.Context, msg string, attrs ...any) {
 
 func passThrough() *appplugins.Result {
 	return &appplugins.Result{StatusCode: http.StatusOK}
+}
+
+// passThroughWith forwards the request unchanged while still reporting the
+// outcome to the caller via response headers.
+func passThroughWith(data *Data) *appplugins.Result {
+	return &appplugins.Result{StatusCode: http.StatusOK, Headers: decisionHeaders(data)}
 }
