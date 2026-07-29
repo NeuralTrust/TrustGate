@@ -77,6 +77,47 @@ func TestGatewayScopedAuth_NoDefaultKeepsError(t *testing.T) {
 	require.Equal(t, "invalid_request", oauthError.Code)
 }
 
+// A gateway that hosts several operator-configured IdPs is normally ambiguous,
+// but when the built-in default is configured a consumer that pinned none of
+// them resolves to the default instead of failing with invalid_target — this is
+// how a consumer opts into the default while other IdPs coexist on the gateway.
+func TestGatewayScopedAuth_AmbiguousFallsBackToDefault(t *testing.T) {
+	def := appauth.BuildDefaultIdP(appauth.DefaultIdPConfig{
+		Issuer: "https://app.neuraltrust.ai/api/mcp/oauth", ClientID: "tg",
+	})
+	gw := ids.New[ids.GatewayKind]()
+	authA := realOAuth2(t, "https://idp-a.example.com")
+	authA.GatewayID = gw
+	authB := realOAuth2(t, "https://idp-b.example.com")
+	authB.GatewayID = gw
+	p := &authProxy{credentials: &fakeCredentialFinder{
+		oauth2:     []*authdomain.Auth{authA, authB},
+		defaultIdP: def,
+	}}
+
+	auth, err := p.gatewayScopedAuth(t.Context(), gw)
+	require.NoError(t, err)
+	require.True(t, appauth.IsDefaultIdP(auth))
+	require.Equal(t, gw, auth.GatewayID)
+}
+
+// Without a default configured, the same multi-IdP gateway stays a hard
+// invalid_target error: the gateway never silently picks one of several
+// operator-configured IdPs.
+func TestGatewayScopedAuth_AmbiguousNoDefaultStaysError(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	authA := realOAuth2(t, "https://idp-a.example.com")
+	authA.GatewayID = gw
+	authB := realOAuth2(t, "https://idp-b.example.com")
+	authB.GatewayID = gw
+	p := &authProxy{credentials: &fakeCredentialFinder{oauth2: []*authdomain.Auth{authA, authB}}}
+
+	_, err := p.gatewayScopedAuth(t.Context(), gw)
+	var oauthError *OAuthError
+	require.True(t, errors.As(err, &oauthError))
+	require.Equal(t, "invalid_target", oauthError.Code)
+}
+
 // The consent detour must target the gateway captured at authorize time, not
 // the default IdP's (nil) gateway — otherwise the upstream-connect screen never
 // opens for MCP consumers that rely on the built-in default.

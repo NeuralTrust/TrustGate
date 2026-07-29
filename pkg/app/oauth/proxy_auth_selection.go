@@ -64,6 +64,16 @@ func (p *authProxy) gatewayScopedAuth(ctx context.Context, gatewayID ids.Gateway
 	a, err := p.singleOAuth2AuthForGateway(ctx, gatewayID)
 	switch {
 	case errors.Is(err, ErrAmbiguousAuthorizationServer):
+		// The gateway hosts several operator-configured IdPs and this MCP consumer
+		// pinned none of them. When the built-in NeuralTrust default IdP is
+		// configured, fall back to it: this lets a consumer opt into the default
+		// simply by not attaching an oauth2 auth of its own, even on a gateway that
+		// also serves other identity providers (a consumer that needs a specific
+		// one still pins it by attaching that oauth2 auth). Without a default there
+		// is no safe way to pick one, so the ambiguity stays a hard error.
+		if def := p.credentials.DefaultOAuth2ForGateway(gatewayID); def != nil {
+			return def, nil
+		}
 		return nil, oauthErr("invalid_target",
 			"multiple identity providers configured for this gateway; attach a single oauth2 identity provider to the MCP consumer")
 	case errors.Is(err, ErrNoAuthorizationServer):
