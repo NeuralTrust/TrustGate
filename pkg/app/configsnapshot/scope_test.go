@@ -27,6 +27,7 @@ import (
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	infrasnapshot "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
 )
 
 func gatewayWithTeam(id ids.GatewayID, team string) *gatewaydomain.Gateway {
@@ -94,7 +95,7 @@ func TestCompilerCompileAllPartitionsAndIsolates(t *testing.T) {
 
 	compiler := twoTenantCompiler(t, acme, globex, acmeConsumer, globexConsumer)
 
-	global, scoped, err := compiler.CompileAll(context.Background())
+	global, scoped, catalog, err := compiler.CompileAll(context.Background())
 	if err != nil {
 		t.Fatalf("compile all: %v", err)
 	}
@@ -116,12 +117,55 @@ func TestCompilerCompileAllPartitionsAndIsolates(t *testing.T) {
 			t.Fatal("globex consumer leaked into acme scope")
 		}
 	}
-	if len(acmeSnap.Data().Providers) != 1 {
-		t.Fatalf("expected shared catalog in acme scope, got %d", len(acmeSnap.Data().Providers))
+	if len(acmeSnap.Data().Providers) != 0 {
+		t.Fatalf("scoped snapshots must be tenant-only; the dispatcher appends the catalog bytes, got %d providers", len(acmeSnap.Data().Providers))
+	}
+	if len(catalog.Data().Providers) != 1 {
+		t.Fatalf("expected the shared catalog as its own snapshot, got %d providers", len(catalog.Data().Providers))
 	}
 	globexSnap := scoped[globex.String()]
 	if gws := globexSnap.Data().Gateways; len(gws) != 1 || gws[0].ID != globex {
 		t.Fatalf("globex scope leaked other gateways: %+v", gws)
+	}
+}
+
+// TestScopedBytesConcatenatedWithCatalogDecodeAsOneSnapshot locks in the wire
+// property the dispatcher relies on: a tenant-only snapshot encoding followed
+// by the catalog encoding unmarshals as one merged snapshot on the data plane.
+func TestScopedBytesConcatenatedWithCatalogDecodeAsOneSnapshot(t *testing.T) {
+	acme := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
+	globex := mustGatewayID(t, "22222222-2222-2222-2222-222222222222")
+	acmeConsumer := mustConsumerID(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	globexConsumer := mustConsumerID(t, "cccccccc-cccc-cccc-cccc-cccccccccccc")
+
+	compiler := twoTenantCompiler(t, acme, globex, acmeConsumer, globexConsumer)
+	_, scoped, catalog, err := compiler.CompileAll(context.Background())
+	if err != nil {
+		t.Fatalf("compile all: %v", err)
+	}
+
+	codec := infrasnapshot.NewCodec()
+	tenantRaw, err := codec.Encode(scoped[acme.String()])
+	if err != nil {
+		t.Fatalf("encode tenant: %v", err)
+	}
+	catalogRaw, err := codec.Encode(catalog)
+	if err != nil {
+		t.Fatalf("encode catalog: %v", err)
+	}
+	merged, err := codec.Decode(append(append([]byte{}, tenantRaw...), catalogRaw...))
+	if err != nil {
+		t.Fatalf("decode concatenated snapshot: %v", err)
+	}
+	data := merged.Data()
+	if len(data.Gateways) != 1 || data.Gateways[0].ID != acme {
+		t.Fatalf("merged snapshot must keep the tenant data, got %+v", data.Gateways)
+	}
+	if len(data.Consumers) != 1 || data.Consumers[0].ID != acmeConsumer {
+		t.Fatalf("merged snapshot must keep the tenant consumers, got %+v", data.Consumers)
+	}
+	if len(data.Providers) != 1 {
+		t.Fatalf("merged snapshot must contain the catalog, got %d providers", len(data.Providers))
 	}
 }
 
