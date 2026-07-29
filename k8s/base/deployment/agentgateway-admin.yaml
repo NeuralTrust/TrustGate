@@ -44,13 +44,16 @@ spec:
         # plane serves compiled snapshots to the DB-less proxy/mcp data planes.
         - containerPort: 8083
           name: grpc
+        # Snapshot compilation is a CPU burst on every config write, so the
+        # limit has to leave room for it: at 200m the compile was throttled
+        # and config propagation to the data planes took ~20s.
         resources:
           limits:
-            cpu: 200m
-            memory: 2Gi
-          requests:
-            cpu: 100m
+            cpu: "1"
             memory: 1Gi
+          requests:
+            cpu: 250m
+            memory: 512Mi
         startupProbe:
           httpGet:
             path: /healthz

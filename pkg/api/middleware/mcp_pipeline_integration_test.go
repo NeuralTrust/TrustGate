@@ -113,6 +113,6 @@ func TestMCPPipeline_ToolsCallBuildsMCPEvent(t *testing.T) {
 	assert.Equal(t, "tools/call", evt.MCP.Method)
 	assert.Equal(t, "tool", evt.MCP.Operation)
 	assert.Equal(t, "echo", evt.MCP.Tool)
-	assert.Equal(t, "ok", evt.MCP.UpstreamStatus)
+	assert.Equal(t, 200, evt.MCP.UpstreamStatus)
 	assert.Equal(t, "consumer-1", evt.Consumer.ID)
 }

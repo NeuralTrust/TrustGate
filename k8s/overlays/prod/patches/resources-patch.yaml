@@ -8,12 +8,14 @@ spec:
     spec:
       containers:
       - name: admin
+        # Control plane, not a data path: sized vertically because snapshot
+        # compilation is per-replica work that extra pods only duplicate.
         resources:
           limits:
-            cpu: 200m
+            cpu: "2"
             memory: 2Gi
           requests:
-            cpu: 100m
+            cpu: "1"
             memory: 1Gi
 ---
 apiVersion: apps/v1
@@ -25,13 +27,15 @@ spec:
     spec:
       containers:
       - name: proxy
+        # Request is the HPA denominator, so it tracks steady-state usage and
+        # lets the autoscaler react; the limit carries the per-pod burst.
         resources:
           limits:
             cpu: "4"
             memory: 4Gi
           requests:
-            cpu: "2"
-            memory: 2Gi
+            cpu: "1"
+            memory: 1Gi
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -47,5 +51,5 @@ spec:
             cpu: "2"
             memory: 2Gi
           requests:
-            cpu: "1"
-            memory: 1Gi
+            cpu: 500m
+            memory: 512Mi

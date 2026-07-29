@@ -223,10 +223,15 @@ func blockToRPCError(pe *appplugins.PluginError) *RPCError {
 		}
 		body = pe.Body
 	}
+	httpStatus := http.StatusForbidden
+	if pe != nil && pe.StatusCode != 0 {
+		httpStatus = pe.StatusCode
+	}
 	return &RPCError{
 		Code:        code,
 		Message:     msg,
 		Data:        body,
+		HTTPStatus:  httpStatus,
 		HTTPHeaders: headers,
 	}
 }
