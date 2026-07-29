@@ -50,6 +50,8 @@ func (s *stubCredentials) OAuth2AuthsForGateway(_ context.Context, gatewayID ids
 
 func (s *stubCredentials) MTLSAuths(context.Context) ([]*authdomain.Auth, error) { return nil, nil }
 
+func (s *stubCredentials) DefaultOAuth2ForGateway(ids.GatewayID) *authdomain.Auth { return nil }
+
 type fakeSigner struct {
 	mints int
 }
