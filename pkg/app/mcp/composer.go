@@ -66,7 +66,10 @@ type binding struct {
 
 func (c *composer) ListTools(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Tool, error) {
 	annotateTargets(ctx, len(mcpRegistries(rc)))
-	bindings, err := c.compose(ctx, rc)
+	// Partial federation: upstreams still awaiting consent are skipped and the
+	// linked ones are listed. Only when every upstream needs consent does
+	// compose report it, so the client is told to visit the connect page.
+	bindings, _, err := c.compose(ctx, rc)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +83,7 @@ func (c *composer) ListTools(ctx context.Context, rc *appconsumer.RoutableConsum
 }
 
 func (c *composer) CallTool(ctx context.Context, rc *appconsumer.RoutableConsumer, name string, arguments json.RawMessage) (json.RawMessage, error) {
-	bindings, err := c.compose(ctx, rc)
+	bindings, consentErr, err := c.compose(ctx, rc)
 	if err != nil {
 		return nil, err
 	}
@@ -100,6 +103,14 @@ func (c *composer) CallTool(ctx context.Context, rc *appconsumer.RoutableConsume
 		}
 		defer up.Close(ctx)
 		return up.CallTool(ctx, b.tool.Name, arguments)
+	}
+	// No reachable upstream exposes this tool. If another upstream is still
+	// awaiting consent it may be the one that owns the tool, so the consent
+	// requirement is the useful answer; otherwise the tool genuinely does not
+	// exist. A tool served by a reachable upstream never reaches this point, so
+	// an unconnected provider can no longer break calls routed elsewhere.
+	if consentErr != nil {
+		return nil, consentErr
 	}
 	return nil, fmt.Errorf("%w: %s", ErrToolNotFound, name)
 }
@@ -139,36 +150,43 @@ func hostFromURL(raw string) string {
 	return u.Host
 }
 
-func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]binding, error) {
+// compose discovers every upstream bound to the consumer and returns the tool
+// bindings of the reachable ones. An upstream awaiting user consent never
+// aborts the composition — it is skipped so the linked upstreams still federate
+// — and its consent requirement is reported separately so each caller can
+// decide whether it is relevant: listing ignores it, calling a tool no reachable
+// upstream serves reports it. Only when nothing at all could be composed does it
+// become the returned error.
+func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]binding, *ConsentRequiredError, error) {
 	registries := mcpRegistries(rc)
 	if len(registries) == 0 {
-		return nil, ErrNoMCPRegistries
+		return nil, nil, ErrNoMCPRegistries
 	}
 	failOpen := rc.Consumer.FailMode() != consumerdomain.FailModeClosed
 	toolkit := rc.Consumer.Toolkit()
 
 	var candidates []binding
+	var pendingConsent *ConsentRequiredError
 	reachable := 0
-	var firstConsent *ConsentRequiredError
 	for _, reg := range registries {
 		tools, err := c.discover(ctx, rc, reg)
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil, ctx.Err()
+				return nil, nil, ctx.Err()
 			}
 			var consentErr *ConsentRequiredError
 			if errors.As(err, &consentErr) {
 				// Partial consent is allowed on the connect page — skip unlinked
 				// upstreams during federation and serve tools from linked ones.
-				if firstConsent == nil {
-					firstConsent = consentErr
+				if pendingConsent == nil {
+					pendingConsent = consentErr
 				}
 				c.logger.Info("mcp composer: skipping upstream pending consent",
 					"registry", reg.Name, "provider", consentErr.Provider)
 				continue
 			}
 			if !failOpen {
-				return nil, fmt.Errorf("%w: registry %q: %w", ErrUpstreamUnavailable, reg.Name, err)
+				return nil, nil, fmt.Errorf("%w: registry %q: %w", ErrUpstreamUnavailable, reg.Name, err)
 			}
 			c.logger.Warn("mcp composer: skipping unreachable upstream",
 				"registry", reg.Name, "error", err)
@@ -178,12 +196,14 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 		candidates = append(candidates, selectTools(toolkit, reg, tools)...)
 	}
 	if reachable == 0 {
-		if firstConsent != nil {
-			return nil, firstConsent
+		// Nothing could be composed. A pending consent requirement is the more
+		// actionable explanation, so it wins over a bare "unreachable".
+		if pendingConsent != nil {
+			return nil, nil, pendingConsent
 		}
-		return nil, fmt.Errorf("%w: no upstream MCP server reachable", ErrUpstreamUnavailable)
+		return nil, nil, fmt.Errorf("%w: no upstream MCP server reachable", ErrUpstreamUnavailable)
 	}
-	return resolveNames(candidates), nil
+	return resolveNames(candidates), pendingConsent, nil
 }
 
 func selectTools(toolkit consumerdomain.Toolkit, reg *registrydomain.Registry, tools []Tool) []binding {
