@@ -29,7 +29,7 @@ import (
 const component = "configsnapshot"
 
 const (
-	defaultDebounce  = 2 * time.Second
+	defaultDebounce  = 250 * time.Millisecond
 	defaultBackstop  = 5 * time.Minute
 	defaultRetention = 24 * time.Hour
 	defaultMaxRows   = 10000
@@ -220,10 +220,12 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 		pending = nil
 	}
 
+	compileStart := time.Now()
 	raw, version, scoped, err := d.compile(ctx)
 	if err != nil {
 		return err
 	}
+	compileDuration := time.Since(compileStart)
 
 	// The global snapshot is derived from every gateway plus the shared catalog, so
 	// any change bumps the global version; that makes it a safe outer gate for the
@@ -249,6 +251,11 @@ func (d *Dispatcher) dispatch(ctx context.Context) error {
 				delete(d.publishedScoped, scope)
 			}
 		}
+		d.logger.Info("published config snapshot",
+			slog.String("component", component),
+			slog.String("version", version),
+			slog.Duration("compile", compileDuration),
+			slog.Int("bytes", len(raw)))
 	}
 	d.mu.Unlock()
 
