@@ -109,8 +109,9 @@ func MCP(c *container.Container) error {
 		vault vaultdomain.Repository,
 		connect appoauth.ConnectService,
 		provider appoauth.ProviderClient,
+		logger *slog.Logger,
 	) appmcp.CredentialResolver {
-		return appmcp.NewCredentialResolver(exchanger, vault, connect, provider)
+		return appmcp.NewCredentialResolver(exchanger, vault, connect, provider, logger)
 	}); err != nil {
 		return err
 	}

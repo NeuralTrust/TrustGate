@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -56,6 +57,7 @@ type credentialResolver struct {
 	vault     vaultdomain.Repository
 	connect   appoauth.ConnectService
 	provider  appoauth.ProviderClient
+	logger    *slog.Logger
 	refresh   singleflight.Group
 }
 
@@ -64,8 +66,18 @@ func NewCredentialResolver(
 	vault vaultdomain.Repository,
 	connect appoauth.ConnectService,
 	provider appoauth.ProviderClient,
+	logger *slog.Logger,
 ) CredentialResolver {
-	return &credentialResolver{exchanger: exchanger, vault: vault, connect: connect, provider: provider}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &credentialResolver{
+		exchanger: exchanger,
+		vault:     vault,
+		connect:   connect,
+		provider:  provider,
+		logger:    logger,
+	}
 }
 
 const vaultRefreshSkew = 60 * time.Second
@@ -124,7 +136,8 @@ func (r *credentialResolver) forwarded(ctx context.Context, rc *appconsumer.Rout
 	gatewayID := rc.Consumer.GatewayID
 	cred, err := r.vault.Find(ctx, gatewayID, principal.Subject, cfg.Provider)
 	if errors.Is(err, vaultdomain.ErrNotFound) {
-		return r.consentRequired(ctx, rc, cfg.Provider, principal.Subject)
+		return r.consentRequired(ctx, rc, cfg.Provider, principal.Subject,
+			"no stored credential for this user and provider")
 	}
 	if err != nil {
 		return err
@@ -164,6 +177,21 @@ func (r *credentialResolver) refreshCredential(
 		}
 		fresh, err := r.provider.Refresh(ctx, refreshCfg, cred.RefreshToken)
 		if err != nil {
+			// Providers that rotate refresh tokens (Notion, and OAuth 2.1 in
+			// general) invalidate the previous one on every refresh, and
+			// singleflight only dedupes within this process. A sibling replica
+			// may therefore have rotated the token between our read and this
+			// call, which the provider reports as invalid_grant. Re-read before
+			// giving up: if the stored credential is usable again the peer's
+			// refresh succeeded and there is nothing for the user to consent to.
+			if errors.Is(err, appoauth.ErrInvalidGrant) {
+				latest, findErr := r.vault.Find(ctx, gatewayID, subject, provider)
+				if findErr == nil && !latest.Expired(vaultRefreshSkew) {
+					r.logger.Info("mcp credentials: refresh raced a concurrent rotation; reusing the credential stored by the peer",
+						"provider", provider, "subject", subject, "gateway_id", gatewayID.String())
+					return latest, nil
+				}
+			}
 			return nil, err
 		}
 		cred.AccessToken = fresh.AccessToken
@@ -177,8 +205,16 @@ func (r *credentialResolver) refreshCredential(
 		return cred, nil
 	})
 	if err != nil {
-		if errors.Is(err, errGrantExhausted) || errors.Is(err, appoauth.ErrInvalidGrant) || errors.Is(err, vaultdomain.ErrNotFound) {
-			return nil, r.consentRequired(ctx, rc, provider, subject)
+		switch {
+		case errors.Is(err, errGrantExhausted):
+			return nil, r.consentRequired(ctx, rc, provider, subject,
+				"stored grant carries no refresh token and the access token expired")
+		case errors.Is(err, appoauth.ErrInvalidGrant):
+			return nil, r.consentRequired(ctx, rc, provider, subject,
+				"provider rejected the stored refresh token (invalid_grant)")
+		case errors.Is(err, vaultdomain.ErrNotFound):
+			return nil, r.consentRequired(ctx, rc, provider, subject,
+				"stored credential vanished while refreshing")
 		}
 		return nil, err
 	}
@@ -191,7 +227,16 @@ func (r *credentialResolver) refreshCredential(
 
 var errGrantExhausted = errors.New("mcp credentials: stored grant cannot be refreshed")
 
-func (r *credentialResolver) consentRequired(ctx context.Context, rc *appconsumer.RoutableConsumer, provider, principalSub string) error {
+// consentRequired is the single funnel through which a downstream call asks the
+// user to (re)connect a provider. The reason is logged so an unexpected consent
+// prompt can be traced to the condition that produced it instead of being
+// guessed at from the client-side error alone.
+func (r *credentialResolver) consentRequired(ctx context.Context, rc *appconsumer.RoutableConsumer, provider, principalSub, reason string) error {
+	r.logger.Info("mcp credentials: user consent required",
+		"provider", provider,
+		"subject", principalSub,
+		"gateway_id", rc.Consumer.GatewayID.String(),
+		"reason", reason)
 	consumerPath := appconsumer.MCPPath(rc.Consumer.Slug)
 	ticket, err := r.connect.CreateTicket(ctx, rc.Consumer.GatewayID, principalSub, consumerPath)
 	if err != nil {
