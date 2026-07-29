@@ -259,6 +259,10 @@ var providerAuthCatalog = map[string][]AuthTypeOption{
 	providers.ProviderCerebras:         {apiKeyAuthOption},
 	providers.ProviderOpenRouter:       {apiKeyAuthOption},
 	providers.ProviderCohere:           {apiKeyAuthOption},
+	providers.ProviderPerplexity:       {apiKeyAuthOption},
+	providers.ProviderFireworks:      {apiKeyAuthOption},
+	providers.ProviderDatabricks:       {apiKeyAuthOption},
+	providers.ProviderOracle:           {apiKeyAuthOption},
 }
 
 func ProviderAuthOptions(code string) []AuthTypeOption {

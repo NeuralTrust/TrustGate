@@ -34,6 +34,18 @@ type OpenAICompatibleOptions struct {
 	Headers map[string]string `mapstructure:"headers"`
 }
 
+type DatabricksOptions struct {
+	BaseURL string            `mapstructure:"base_url"`
+	Headers map[string]string `mapstructure:"headers"`
+}
+
+type OracleOptions struct {
+	Region  string            `mapstructure:"region"`
+	Project string            `mapstructure:"project"`
+	BaseURL string            `mapstructure:"base_url"`
+	Headers map[string]string `mapstructure:"headers"`
+}
+
 func DecodeOpenAICompatibleOptions(options map[string]any) (OpenAICompatibleOptions, error) {
 	var opts OpenAICompatibleOptions
 	if len(options) > 0 {
@@ -48,6 +60,53 @@ func DecodeOpenAICompatibleOptions(options map[string]any) (OpenAICompatibleOpti
 	}
 	if err := validateHTTPBaseURL(opts.BaseURL); err != nil {
 		return OpenAICompatibleOptions{}, fmt.Errorf("openai_compatible: %w", err)
+	}
+
+	return opts, nil
+}
+
+func DecodeDatabricksOptions(options map[string]any) (DatabricksOptions, error) {
+	var opts DatabricksOptions
+	if len(options) > 0 {
+		if err := mapstructure.Decode(options, &opts); err != nil {
+			return DatabricksOptions{}, fmt.Errorf("databricks: invalid provider_options: %w", err)
+		}
+	}
+
+	opts.BaseURL = strings.TrimSpace(opts.BaseURL)
+	if opts.BaseURL == "" {
+		return DatabricksOptions{}, fmt.Errorf("databricks: base_url is required")
+	}
+	if err := validateHTTPBaseURL(opts.BaseURL); err != nil {
+		return DatabricksOptions{}, fmt.Errorf("databricks: %w", err)
+	}
+
+	return opts, nil
+}
+
+func DecodeOracleOptions(options map[string]any) (OracleOptions, error) {
+	var opts OracleOptions
+	if len(options) > 0 {
+		if err := mapstructure.Decode(options, &opts); err != nil {
+			return OracleOptions{}, fmt.Errorf("oracle: invalid provider_options: %w", err)
+		}
+	}
+
+	opts.Region = strings.TrimSpace(opts.Region)
+	opts.Project = strings.TrimSpace(opts.Project)
+	opts.BaseURL = strings.TrimSpace(opts.BaseURL)
+
+	if opts.BaseURL == "" {
+		if opts.Region == "" {
+			return OracleOptions{}, fmt.Errorf("oracle: region or base_url is required")
+		}
+		opts.BaseURL = fmt.Sprintf(
+			"https://inference.generativeai.%s.oci.oraclecloud.com/openai/v1",
+			opts.Region,
+		)
+	}
+	if err := validateHTTPBaseURL(opts.BaseURL); err != nil {
+		return OracleOptions{}, fmt.Errorf("oracle: %w", err)
 	}
 
 	return opts, nil

@@ -23,13 +23,17 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/bedrock"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/cerebras"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/cohere"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/databricks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/deepseek"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/fireworks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/google"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/groq"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/mistral"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openrouter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openaicompat"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/oracle"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/perplexity"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/vertex"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/xai"
 )
@@ -51,6 +55,10 @@ const (
 	ProviderCerebras         = providers.ProviderCerebras
 	ProviderOpenRouter       = providers.ProviderOpenRouter
 	ProviderCohere           = providers.ProviderCohere
+	ProviderPerplexity       = providers.ProviderPerplexity
+	ProviderFireworks        = providers.ProviderFireworks
+	ProviderDatabricks       = providers.ProviderDatabricks
+	ProviderOracle           = providers.ProviderOracle
 )
 
 //go:generate mockery --name=ProviderLocator --dir=. --output=./mocks --filename=provider_locator_mock.go --case=underscore --with-expecter
@@ -86,6 +94,10 @@ func NewProviderLocator() ProviderLocator {
 			ProviderOpenRouter:       openrouter.NewOpenRouterClient(),
 			ProviderVertex:           vertex.NewVertexClient(),
 			ProviderCohere:           cohere.NewCohereClient(),
+			ProviderPerplexity:       perplexity.NewPerplexityClient(),
+			ProviderFireworks:        fireworks.NewFireworksClient(),
+			ProviderDatabricks:       databricks.NewDatabricksClient(),
+			ProviderOracle:           oracle.NewOracleClient(),
 		},
 	}
 }
