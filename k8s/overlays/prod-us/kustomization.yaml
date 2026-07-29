@@ -16,6 +16,7 @@ patchesStrategicMerge:
 - patches/httproute-patch.yaml
 - patches/sa-annotation-patch.yaml
 - patches/config-sync-tls-patch.yaml
+# PDB: maxUnavailable is HPA-safe at the prod-us floor of 2 (wave-2 rule 2).
 patches:
 - patch: |-
     - op: remove
@@ -35,7 +36,6 @@ patches:
   target:
     kind: Deployment
     name: agentgateway-mcp
-# PDB: maxUnavailable is HPA-safe at the prod-us floor of 2 (wave-2 rule 2).
 - patch: |-
     - op: remove
       path: /spec/minAvailable
@@ -61,7 +61,7 @@ namespace: agentgateway
 images:
 - name: agentgateway
   newName: europe-west1-docker.pkg.dev/neuraltrust-app-prod/nt-docker/agentgateway
-  newTag: v0.23.0
+  newTag: v0.23.1
 configMapGenerator:
 - behavior: create
   envs:
