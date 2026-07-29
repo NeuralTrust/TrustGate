@@ -118,6 +118,8 @@ func TestBuilder_MCPFoldsPolicyChain(t *testing.T) {
 	require.NotNil(t, evt.MCP)
 	assert.Equal(t, http.StatusForbidden, evt.MCP.UpstreamStatus)
 	assert.Equal(t, -32001, evt.MCP.RPCErrorCode)
+	assert.Equal(t, http.StatusForbidden, evt.Response.StatusCode)
+	assert.Equal(t, http.StatusForbidden, evt.Status.Code)
 
 	require.Len(t, evt.PolicyChain, 1)
 	assert.Equal(t, "trustguard", evt.PolicyChain[0].Name)

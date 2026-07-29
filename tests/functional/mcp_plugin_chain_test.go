@@ -5,6 +5,7 @@ package functional_test
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"sync/atomic"
 	"testing"
 
@@ -84,6 +85,7 @@ func TestMCPPluginChain_PreRequestEnforceBlockSkipsUpstream(t *testing.T) {
 		map[string]any{"name": "echo", "arguments": map[string]any{"message": "please run " + trustGuardBlockWord}})
 
 	require.Equal(t, rpcCodePolicyBlocked, rpcErrorCode(t, status, body))
+	require.Equal(t, http.StatusForbidden, status, "policy-blocked tools/call must return HTTP 403: %v", body)
 	require.Zero(t, atomic.LoadInt64(&calls), "upstream tool must not be invoked when PreRequest blocks")
 }
 
@@ -100,6 +102,7 @@ func TestMCPPluginChain_PreResponseEnforceBlockDiscardsResult(t *testing.T) {
 		map[string]any{"name": "leak", "arguments": map[string]any{"message": "benign"}})
 
 	require.Equal(t, rpcCodePolicyBlocked, rpcErrorCode(t, status, body))
+	require.Equal(t, http.StatusForbidden, status, "policy-blocked tools/call must return HTTP 403: %v", body)
 	require.Equal(t, int64(1), atomic.LoadInt64(&calls), "upstream tool must run once before PreResponse blocks its result")
 }
 
