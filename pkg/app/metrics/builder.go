@@ -222,12 +222,19 @@ func (b *Builder) buildMCP(
 	}
 	evt.MCP = mcp
 
+	chain, pluginsMs, flagged, security := b.foldPluginSpans(requestTrace)
+	evt.PolicyChain = chain
+	evt.IsFlagged = flagged
+	evt.Security = security
+
 	totalMs := endTime.Sub(startTime).Milliseconds()
-	gatewayMs := maxInt64(0, totalMs-upstreamMs)
+	routingMs := maxInt64(0, totalMs-upstreamMs-pluginsMs)
 	evt.Latency = events.Latency{
 		TotalMs:    totalMs,
 		ProviderMs: upstreamMs,
-		GatewayMs:  gatewayMs,
+		PoliciesMs: pluginsMs,
+		RoutingMs:  routingMs,
+		GatewayMs:  pluginsMs + routingMs,
 	}
 
 	b.fillRequest(evt, req, nil)
