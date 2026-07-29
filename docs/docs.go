@@ -3532,6 +3532,13 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "key_prefix": {
+                    "description": "Non-secret recognition hint for api_key auths (e.g. \"ag_3dlXk\" + \"Rv8Q\").",
+                    "type": "string"
+                },
+                "key_suffix": {
+                    "type": "string"
+                },
                 "name": {
                     "type": "string"
                 },

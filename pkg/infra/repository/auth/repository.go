@@ -68,11 +68,15 @@ func (r *Repository) Save(ctx context.Context, a *domain.Auth) error {
 		return fmt.Errorf("auth repository: marshal config: %w", err)
 	}
 	const query = `
-		INSERT INTO auths (id, gateway_id, name, type, enabled, config, key_hash, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+		INSERT INTO auths (
+			id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, created_at, updated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
-			a.ID, a.GatewayID, a.Name, string(a.Type), a.Enabled, configBytes, nullableString(a.KeyHash), a.CreatedAt, a.UpdatedAt,
+			a.ID, a.GatewayID, a.Name, string(a.Type), a.Enabled, configBytes,
+			nullableString(a.KeyHash), nullableString(a.KeyPrefix), nullableString(a.KeySuffix),
+			a.CreatedAt, a.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -125,7 +129,7 @@ func (r *Repository) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids
 
 func (r *Repository) FindByID(ctx context.Context, id ids.AuthID) (*domain.Auth, error) {
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, config, key_hash, created_at, updated_at
+		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, created_at, updated_at
 		  FROM auths
 		 WHERE id = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, id)
@@ -141,7 +145,7 @@ func (r *Repository) FindByID(ctx context.Context, id ids.AuthID) (*domain.Auth,
 
 func (r *Repository) FindByAPIKeyHash(ctx context.Context, keyHash string) (*domain.Auth, error) {
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, config, key_hash, created_at, updated_at
+		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, created_at, updated_at
 		  FROM auths
 		 WHERE key_hash = $1
 		   AND type = 'api_key'
@@ -162,7 +166,7 @@ func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, aut
 		return nil, nil
 	}
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, config, key_hash, created_at, updated_at
+		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, created_at, updated_at
 		  FROM auths
 		 WHERE gateway_id = $1
 		   AND id = ANY($2::uuid[])`
@@ -195,7 +199,7 @@ func (r *Repository) FindEnabledByTypes(ctx context.Context, types []domain.Type
 		typeNames = append(typeNames, string(t))
 	}
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, config, key_hash, created_at, updated_at
+		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, created_at, updated_at
 		  FROM auths
 		 WHERE enabled = TRUE
 		   AND type = ANY($1::text[])
@@ -226,7 +230,7 @@ func (r *Repository) ListEnabledByGatewayAndType(
 	authType domain.Type,
 ) ([]*domain.Auth, error) {
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, config, key_hash, created_at, updated_at
+		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, created_at, updated_at
 		  FROM auths
 		 WHERE gateway_id = $1
 		   AND type = $2
@@ -275,7 +279,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	}
 
 	const listQuery = `
-		SELECT id, gateway_id, name, type, enabled, config, key_hash, created_at, updated_at
+		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, created_at, updated_at
 		  FROM auths
 		 WHERE ($1::uuid IS NULL OR gateway_id = $1)
 		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')
@@ -311,10 +315,12 @@ func scanAuth(s rowScanner) (*domain.Auth, error) {
 		authType  string
 		configRaw []byte
 		keyHash   *string
+		keyPrefix *string
+		keySuffix *string
 	)
 	if err := s.Scan(
 		&a.ID, &a.GatewayID, &a.Name, &authType, &a.Enabled,
-		&configRaw, &keyHash,
+		&configRaw, &keyHash, &keyPrefix, &keySuffix,
 		&a.CreatedAt, &a.UpdatedAt,
 	); err != nil {
 		return nil, err
@@ -322,6 +328,12 @@ func scanAuth(s rowScanner) (*domain.Auth, error) {
 	a.Type = domain.Type(authType)
 	if keyHash != nil {
 		a.KeyHash = *keyHash
+	}
+	if keyPrefix != nil {
+		a.KeyPrefix = *keyPrefix
+	}
+	if keySuffix != nil {
+		a.KeySuffix = *keySuffix
 	}
 	if len(configRaw) > 0 {
 		if err := json.Unmarshal(configRaw, &a.Config); err != nil {

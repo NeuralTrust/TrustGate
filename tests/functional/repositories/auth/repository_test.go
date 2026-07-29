@@ -118,6 +118,10 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	if got.KeyHash == "" || got.KeyHash != a.KeyHash {
 		t.Fatalf("key_hash round-trip lost data: got %q want %q", got.KeyHash, a.KeyHash)
 	}
+	if got.KeyPrefix != a.KeyPrefix || got.KeySuffix != a.KeySuffix {
+		t.Fatalf("key preview round-trip lost data: got %q…%q want %q…%q",
+			got.KeyPrefix, got.KeySuffix, a.KeyPrefix, a.KeySuffix)
+	}
 }
 
 func TestRepository_FindByAPIKeyHash(t *testing.T) {

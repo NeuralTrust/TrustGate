@@ -26,9 +26,12 @@ func TestGetAuth_Success_NeverReturnsSecret(t *testing.T) {
 	assert.Equal(t, name, body["name"])
 
 	// The key is hash-only storage: GET never returns the plaintext, neither at
-	// the top level nor inside a config block.
+	// the top level nor inside a config block. A non-secret head/tail preview is
+	// returned so operators can recognize the key in the UI.
 	_, hasTopLevelKey := body["api_key"]
 	assert.False(t, hasTopLevelKey, "GET must not return the api_key (shown only once at creation): %v", body)
+	assert.NotEmpty(t, body["key_prefix"])
+	assert.NotEmpty(t, body["key_suffix"])
 	cfg, _ := body["config"].(map[string]any)
 	_, hasAPIKeyCfg := cfg["api_key"]
 	assert.False(t, hasAPIKeyCfg, "api_key auth must not carry a config.api_key block: %v", cfg)
