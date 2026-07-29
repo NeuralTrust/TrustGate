@@ -31,6 +31,8 @@ func TestCreateAuth_Success_GeneratesKey(t *testing.T) {
 	key, ok := body["api_key"].(string)
 	require.True(t, ok, "create must surface the generated api_key: %v", body)
 	assert.True(t, strings.HasPrefix(key, "ag_"), "generated key must carry the ag_ prefix: %q", key)
+	assert.Equal(t, key[:8], body["key_prefix"], "key_prefix must match the head of the issued key")
+	assert.Equal(t, key[len(key)-4:], body["key_suffix"], "key_suffix must match the tail of the issued key")
 
 	// The secret never lives inside config: api_key auth carries no config block.
 	cfg, ok := body["config"].(map[string]any)
