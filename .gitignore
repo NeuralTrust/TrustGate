@@ -34,8 +34,8 @@ var/
 .env.local
 
 # k8s per-overlay secret blobs (real sensitive data; only *.example is committed)
-secret.env
-k8s/overlays/*/secret.env
+secrets.env
+k8s/overlays/*/secrets.env
 
 # Local-only secret decrypt/encrypt helper (never commit)
 scripts/secret/
