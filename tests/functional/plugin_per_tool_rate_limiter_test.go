@@ -239,6 +239,7 @@ func TestPluginE2E_PerToolRateLimiter_MCPToolCallDeny(t *testing.T) {
 	status, body = mcpRPC(t, gatewayID, consumerID, headers, "tools/call",
 		map[string]any{"name": "send_email", "arguments": map[string]any{}})
 	require.Equal(t, rpcCodePolicyBlocked, rpcErrorCode(t, status, body), "over-budget tools/call must be denied with -32001")
+	require.Equal(t, http.StatusTooManyRequests, status, "over-budget tools/call must return HTTP 429: %v", body)
 	require.Equal(t, int64(1), atomic.LoadInt64(&calls), "over-budget tools/call must not reach the upstream CallTool")
 }
 

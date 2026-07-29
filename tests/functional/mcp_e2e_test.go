@@ -138,9 +138,8 @@ func rpcResult(t *testing.T, status int, body map[string]any) map[string]any {
 
 func rpcErrorCode(t *testing.T, status int, body map[string]any) float64 {
 	t.Helper()
-	require.Equal(t, http.StatusOK, status, "expected rpc-level error: %v", body)
 	rpcErr, ok := body["error"].(map[string]any)
-	require.True(t, ok, "expected rpc error, got: %v", body)
+	require.True(t, ok, "expected rpc error (http %d), got: %v", status, body)
 	code, ok := rpcErr["code"].(float64)
 	require.True(t, ok, "rpc error missing code: %v", rpcErr)
 	return code

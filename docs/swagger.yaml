@@ -2056,7 +2056,7 @@ definitions:
       upstream_latency_ms:
         type: integer
       upstream_status:
-        description: Logical HTTP status of the MCP outcome (e.g. 200, 403). Wire HTTP may still be 200.
+        description: Logical HTTP status of the MCP outcome (e.g. 200, 403). Gateway denials also set the wire HTTP status and http.response.status_code.
         type: integer
       upstream_tool:
         type: string
