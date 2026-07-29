@@ -23,6 +23,7 @@ import (
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -351,18 +352,33 @@ func (c *Compiler) collectCatalog(ctx context.Context, data *readmodel.Data) err
 		return fmt.Errorf("configsnapshot: list providers: %w", err)
 	}
 	data.Providers = append(data.Providers, providers...)
+
+	// One models query per provider; run them concurrently and append in
+	// provider order so the snapshot bytes stay deterministic.
+	modelsByProvider := make([][]catalogdomain.Model, len(providers))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(compilerConcurrency)
 	for i := range providers {
-		models, err := c.catalog.ListModelsByProviderCode(ctx, providers[i].Code)
-		if err != nil {
-			if errors.Is(err, commonerrors.ErrNotFound) {
-				continue
+		g.Go(func() error {
+			models, err := c.catalog.ListModelsByProviderCode(gctx, providers[i].Code)
+			if err != nil {
+				if errors.Is(err, commonerrors.ErrNotFound) {
+					return nil
+				}
+				return fmt.Errorf("configsnapshot: list models for provider %s: %w", providers[i].Code, err)
 			}
-			return fmt.Errorf("configsnapshot: list models for provider %s: %w", providers[i].Code, err)
-		}
-		for j := range models {
+			modelsByProvider[i] = models
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return err
+	}
+	for i := range providers {
+		for j := range modelsByProvider[i] {
 			data.CatalogModels = append(data.CatalogModels, readmodel.CatalogModel{
 				ProviderCode: providers[i].Code,
-				Model:        models[j],
+				Model:        modelsByProvider[i][j],
 			})
 		}
 	}
