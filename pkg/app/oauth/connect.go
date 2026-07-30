@@ -18,6 +18,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -64,6 +66,11 @@ func (s *connectService) mintTicket(ctx context.Context, t ConnectTicket) (strin
 	return id, nil
 }
 
+// credentialExpiryGrace mirrors the refresh skew the MCP credential resolver
+// applies, so the connect page and the downstream calls agree on when a stored
+// grant has run out.
+const credentialExpiryGrace = 60 * time.Second
+
 func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPage, error) {
 	ticket, gatewayID, data, rc, err := s.resolve(ctx, ticketID)
 	if err != nil {
@@ -82,6 +89,11 @@ func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPag
 			status.Linked = true
 			status.AccountRef = cred.AccountRef
 			status.ExpiresAt = cred.ExpiresAt
+			// A grant whose access token has expired and that carries no refresh
+			// token is dead: the resolver will demand consent on every call. Say so
+			// here instead of showing "Connected" while the agent is being told the
+			// opposite.
+			status.NeedsReconnect = cred.RefreshToken == "" && cred.Expired(credentialExpiryGrace)
 		case !errors.Is(err, vaultdomain.ErrNotFound):
 			return nil, fmt.Errorf("oauth connect: check linked credential: %w", err)
 		}
@@ -149,6 +161,17 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	if err != nil {
 		return st.TicketID, err
 	}
+	// Whether the provider handed us a refresh token decides everything that
+	// follows: without one the grant dies with its access token and every later
+	// call demands consent again. Record it at the moment of truth so that loop
+	// is diagnosable from the logs.
+	slog.Info("oauth connect: provider grant stored",
+		"provider", provider,
+		"subject", st.Ticket.PrincipalSub,
+		"gateway_id", gatewayID.String(),
+		"has_refresh_token", token.RefreshToken != "",
+		"expires_at", token.ExpiresAt,
+		"scopes", token.Scopes)
 	cred, err := vaultdomain.NewCredential(
 		gatewayID, st.Ticket.PrincipalSub, provider, "",
 		token.AccessToken, token.RefreshToken, token.Scopes, token.ExpiresAt,

@@ -55,6 +55,11 @@ type ProviderStatus struct {
 	Linked     bool
 	AccountRef string
 	ExpiresAt  time.Time
+	// NeedsReconnect marks a stored grant that can never be renewed: its access
+	// token has expired and it carries no refresh token. Every downstream call
+	// against it demands consent, so the page must not advertise it as a live
+	// connection.
+	NeedsReconnect bool
 }
 
 type ConnectPage struct {

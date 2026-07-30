@@ -436,6 +436,52 @@ func TestConnectService_UnknownTicketAndProvider(t *testing.T) {
 	}
 }
 
+// A stored grant whose access token expired and that carries no refresh token
+// can never be renewed: the MCP resolver demands consent on every call. The
+// page must report that instead of a green "Connected" that contradicts what
+// the agent is being told.
+func TestConnectService_PageReportsDeadGrantAsNeedingReconnect(t *testing.T) {
+	t.Parallel()
+	svc, vault, gw := connectFixture(t, "https://unused")
+	ctx := context.Background()
+	ticket, err := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+
+	// Expired and unrefreshable.
+	dead, err := vaultdomain.NewCredential(gw, "alice", "github", "", "tok", "", nil, time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("credential: %v", err)
+	}
+	if err := vault.Upsert(ctx, dead); err != nil {
+		t.Fatalf("vault: %v", err)
+	}
+	page, err := svc.Page(ctx, ticket)
+	if err != nil {
+		t.Fatalf("Page: %v", err)
+	}
+	if !page.Providers[0].NeedsReconnect {
+		t.Fatalf("status = %+v, want NeedsReconnect for an expired grant with no refresh token", page.Providers[0])
+	}
+
+	// Expired but refreshable: still a live connection, the resolver renews it.
+	renewable, err := vaultdomain.NewCredential(gw, "alice", "github", "", "tok", "ref", nil, time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("credential: %v", err)
+	}
+	if err := vault.Upsert(ctx, renewable); err != nil {
+		t.Fatalf("vault: %v", err)
+	}
+	page, err = svc.Page(ctx, ticket)
+	if err != nil {
+		t.Fatalf("Page: %v", err)
+	}
+	if !page.Providers[0].Linked || page.Providers[0].NeedsReconnect {
+		t.Fatalf("status = %+v, want a refreshable grant to stay linked", page.Providers[0])
+	}
+}
+
 func TestConnectService_ChainURL(t *testing.T) {
 	t.Parallel()
 	svc, vault, gw := connectFixture(t, "https://unused")
