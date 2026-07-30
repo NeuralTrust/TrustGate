@@ -4985,6 +4985,59 @@
       ]
     },
     {
+      "name": "ai.fathom/mcp",
+      "vendor": "Fathom",
+      "category": "Productivity & Docs",
+      "description": "Meeting recordings, transcripts, AI summaries, teams, and webhooks via browser OAuth (DCR).",
+      "transport": "streamable-http",
+      "server_url": "https://api.fathom.ai/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://fathom.video/mcp/oauth/authorize",
+        "token_url": "https://api.fathom.ai/mcp/oauth/token",
+        "scopes": [
+          "mcp"
+        ],
+        "resource": "https://api.fathom.ai/mcp"
+      },
+      "relevance": 70,
+      "tools": [
+        {
+          "name": "list_meetings",
+          "description": "List recorded meetings (filter by date, participants, team)"
+        },
+        {
+          "name": "get_summary",
+          "description": "Fetch AI summary for a meeting recording"
+        },
+        {
+          "name": "get_transcript",
+          "description": "Fetch full transcript with speakers and timestamps"
+        },
+        {
+          "name": "list_teams",
+          "description": "List accessible Fathom teams"
+        },
+        {
+          "name": "list_team_members",
+          "description": "List members of a Fathom team"
+        },
+        {
+          "name": "create_webhook",
+          "description": "Subscribe to new meeting content (summary, transcript, action items)"
+        },
+        {
+          "name": "delete_webhook",
+          "description": "Delete a webhook subscription"
+        }
+      ]
+    },
+    {
       "name": "io.fibery/mcp",
       "vendor": "Fibery",
       "category": "Project Management",
@@ -5534,6 +5587,69 @@
         {
           "name": "list_drafts",
           "description": "List draft emails in the mailbox."
+        }
+      ]
+    },
+    {
+      "name": "com.google.workspace/calendar",
+      "vendor": "Google Calendar",
+      "category": "Productivity & Docs",
+      "description": "Google Calendar remote MCP: list calendars, search and manage events, suggest free time, and RSVP (Google Workspace, OAuth).",
+      "transport": "streamable-http",
+      "server_url": "https://calendarmcp.googleapis.com/mcp/v1",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "scopes": [
+          "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+          "https://www.googleapis.com/auth/calendar.events",
+          "https://www.googleapis.com/auth/calendar.events.freebusy"
+        ],
+        "resource": "https://calendarmcp.googleapis.com/mcp/v1"
+      },
+      "relevance": 91,
+      "tools": [
+        {
+          "name": "list_calendars",
+          "description": "List calendars the user can access"
+        },
+        {
+          "name": "list_events",
+          "description": "List events matching time and filter constraints"
+        },
+        {
+          "name": "search_events",
+          "description": "Semantic search over primary-calendar events"
+        },
+        {
+          "name": "get_event",
+          "description": "Get a single event by ID"
+        },
+        {
+          "name": "suggest_time",
+          "description": "Suggest free time slots across calendars"
+        },
+        {
+          "name": "create_event",
+          "description": "Create a calendar event"
+        },
+        {
+          "name": "update_event",
+          "description": "Update an existing calendar event"
+        },
+        {
+          "name": "delete_event",
+          "description": "Delete a calendar event"
+        },
+        {
+          "name": "respond_to_event",
+          "description": "RSVP to an event invitation"
         }
       ]
     },
