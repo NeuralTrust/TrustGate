@@ -139,6 +139,16 @@ func scoreLabelWorthy(decision string) bool {
 // confidence, falling back to the highest-confidence signal when nothing was
 // enforced. It returns ok=false when no finding carries a usable signal type.
 func primaryFinding(findings []GuardFinding) (label string, score float64, ok bool) {
+	chosen := selectPrimaryFinding(findings)
+	if chosen == nil || chosen.Signal == nil {
+		return "", 0, false
+	}
+	return chosen.Signal.Type, chosen.Signal.Confidence, true
+}
+
+// selectPrimaryFinding returns the enforced finding with the highest
+// confidence, or the highest-confidence signal when nothing was enforced.
+func selectPrimaryFinding(findings []GuardFinding) *GuardFinding {
 	var enforced, any *GuardFinding
 	for i := range findings {
 		f := &findings[i]
@@ -154,12 +164,8 @@ func primaryFinding(findings []GuardFinding) (label string, score float64, ok bo
 			}
 		}
 	}
-	chosen := enforced
-	if chosen == nil {
-		chosen = any
+	if enforced != nil {
+		return enforced
 	}
-	if chosen == nil {
-		return "", 0, false
-	}
-	return chosen.Signal.Type, chosen.Signal.Confidence, true
+	return any
 }
