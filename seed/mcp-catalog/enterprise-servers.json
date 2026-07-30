@@ -3420,11 +3420,11 @@
       "tools": [
         {
           "name": "proxy_tool_call",
-          "description": "STEP 2: Execute a tool discovered via search_resources. This is the ONLY way to call tools returned by search_resources — they cannot be called directly. Requires: toolName (from search_resources output), parameters (matching tool's inputSchema), and payment metadata in _meta.x402/payment. Return..."
+          "description": "STEP 2: Execute a tool discovered via search_resources. This is the ONLY way to call tools returned by search_resources \u2014 they cannot be called directly. Requires: toolName (from search_resources output), parameters (matching tool's inputSchema), and payment metadata in _meta.x402/payment. Return..."
         },
         {
           "name": "search_resources",
-          "description": "STEP 1: Search for available x402-payable tools. Returns a list of tool DESCRIPTIONS (not callable tools). IMPORTANT: The returned tools are NOT directly callable — you MUST use proxy_tool_call to execute any discovered tool. Pass the returned tool.name as proxy_tool_call's toolName parameter. Re..."
+          "description": "STEP 1: Search for available x402-payable tools. Returns a list of tool DESCRIPTIONS (not callable tools). IMPORTANT: The returned tools are NOT directly callable \u2014 you MUST use proxy_tool_call to execute any discovered tool. Pass the returned tool.name as proxy_tool_call's toolName parameter. Re..."
         }
       ]
     },
@@ -3781,7 +3781,7 @@
       "name": "com.datadoghq/mcp",
       "vendor": "Datadog",
       "category": "Observability",
-      "description": "Metrics, logs, traces, monitors, and incidents via Datadog MCP (US1). Endpoint https://mcp.datadoghq.com/v1/mcp; other sites use https://mcp.<site>/v1/mcp. OAuth (recommended), or DD_API_KEY + DD_APPLICATION_KEY headers. Optional ?toolsets=… to filter tools.",
+      "description": "Metrics, logs, traces, monitors, and incidents via Datadog MCP (US1). Endpoint https://mcp.datadoghq.com/v1/mcp; other sites use https://mcp.<site>/v1/mcp. OAuth (recommended), or DD_API_KEY + DD_APPLICATION_KEY headers. Optional ?toolsets=\u2026 to filter tools.",
       "transport": "streamable-http",
       "server_url": "https://mcp.datadoghq.com/v1/mcp",
       "requires_auth": true,
@@ -4765,7 +4765,7 @@
       "tools": [
         {
           "name": "ListFolder",
-          "description": "Browse directory contents (≤100 items/call)"
+          "description": "Browse directory contents (\u2264100 items/call)"
         },
         {
           "name": "GetFileMetadata",
@@ -4920,7 +4920,7 @@
         },
         {
           "name": "query_docs_filesystem_endor_labs_documentation",
-          "description": "Run a read-only shell-like query against a virtualized, in-memory filesystem rooted at `/` that contains ONLY the Endor Labs Documentation documentation pages and OpenAPI specs. This is NOT a shell on any real machine — nothing runs on the user's computer, the server host, or any network. The fil..."
+          "description": "Run a read-only shell-like query against a virtualized, in-memory filesystem rooted at `/` that contains ONLY the Endor Labs Documentation documentation pages and OpenAPI specs. This is NOT a shell on any real machine \u2014 nothing runs on the user's computer, the server host, or any network. The fil..."
         }
       ]
     },
@@ -6698,6 +6698,55 @@
         "resource": "https://mcp.grafana.com/mcp"
       },
       "relevance": 80
+    },
+    {
+      "name": "ai.granola/mcp",
+      "vendor": "Granola",
+      "category": "Productivity & Docs",
+      "description": "Meeting notes, transcripts, folders, and action items via browser OAuth (DCR).",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.granola.ai/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp-auth.granola.ai/oauth2/authorize",
+        "token_url": "https://mcp-auth.granola.ai/oauth2/token",
+        "scopes": [
+          "mcp"
+        ],
+        "resource": "https://mcp.granola.ai/mcp"
+      },
+      "relevance": 70,
+      "tools": [
+        {
+          "name": "query_granola_meetings",
+          "description": "Chat with Granola meeting notes"
+        },
+        {
+          "name": "list_meeting_folders",
+          "description": "List accessible folders (paid plans)"
+        },
+        {
+          "name": "list_meetings",
+          "description": "List meeting notes (filter by folder on paid plans)"
+        },
+        {
+          "name": "get_meetings",
+          "description": "Read meeting notes, attendees, and summaries"
+        },
+        {
+          "name": "get_meeting_transcript",
+          "description": "Fetch raw meeting transcripts (paid plans)"
+        },
+        {
+          "name": "get_account_info",
+          "description": "Connected Granola account email and active workspace"
+        }
+      ]
     },
     {
       "name": "com.getguru/mcp",
@@ -13627,15 +13676,15 @@
         },
         {
           "name": "twprojects-create_custom_item",
-          "description": "Create a new custom item type (e.g. Contracts, Leads, Deals) on a project. Custom items are user-defined entity types — Contracts, Leads, Deals, or anything else a customer has set up on a project. Use these tools when the user refers to an entity that is NOT a built-in Teamwork concept (Task, Ta..."
+          "description": "Create a new custom item type (e.g. Contracts, Leads, Deals) on a project. Custom items are user-defined entity types \u2014 Contracts, Leads, Deals, or anything else a customer has set up on a project. Use these tools when the user refers to an entity that is NOT a built-in Teamwork concept (Task, Ta..."
         },
         {
           "name": "twprojects-create_custom_item_field",
-          "description": "Add a field (column) to a custom item type. Field types include text, number, dropdown, multiselect, checkbox, url, user, date, time and datetime. Custom items are user-defined entity types — Contracts, Leads, Deals, or anything else a customer has set up on a project. Use these tools when the us..."
+          "description": "Add a field (column) to a custom item type. Field types include text, number, dropdown, multiselect, checkbox, url, user, date, time and datetime. Custom items are user-defined entity types \u2014 Contracts, Leads, Deals, or anything else a customer has set up on a project. Use these tools when the us..."
         },
         {
           "name": "twprojects-create_custom_item_record",
-          "description": "Create a record (row) on a custom item type. For example, add a Contract on the Contracts type. Pass field values by name; the tool resolves names to the API's internal IDs. Custom items are user-defined entity types — Contracts, Leads, Deals, or anything else a customer has set up on a project. ..."
+          "description": "Create a record (row) on a custom item type. For example, add a Contract on the Contracts type. Pass field values by name; the tool resolves names to the API's internal IDs. Custom items are user-defined entity types \u2014 Contracts, Leads, Deals, or anything else a customer has set up on a project. ..."
         },
         {
           "name": "twprojects-create_jobrole",
@@ -13731,15 +13780,15 @@
         },
         {
           "name": "twprojects-get_custom_item",
-          "description": "Get a custom item type with its fields and sections inline, so you can see its schema before creating or updating records. Custom items are user-defined entity types — Contracts, Leads, Deals, or anything else a customer has set up on a project. Use these tools when the user refers to an entity t..."
+          "description": "Get a custom item type with its fields and sections inline, so you can see its schema before creating or updating records. Custom items are user-defined entity types \u2014 Contracts, Leads, Deals, or anything else a customer has set up on a project. Use these tools when the user refers to an entity t..."
         },
         {
           "name": "twprojects-get_custom_item_field",
-          "description": "Get a single field on a custom item type. Custom items are user-defined entity types — Contracts, Leads, Deals, or anything else a customer has set up on a project. Use these tools when the user refers to an entity that is NOT a built-in Teamwork concept (Task, Tasklist, Project, Milestone, Comme..."
+          "description": "Get a single field on a custom item type. Custom items are user-defined entity types \u2014 Contracts, Leads, Deals, or anything else a customer has set up on a project. Use these tools when the user refers to an entity that is NOT a built-in Teamwork concept (Task, Tasklist, Project, Milestone, Comme..."
         },
         {
           "name": "twprojects-get_custom_item_record",
-          "description": "Get a single record. Field values come back keyed by display name with dropdown values translated to their human-readable labels. Custom items are user-defined entity types — Contracts, Leads, Deals, or anything else a customer has set up on a project. Use these tools when the user refers to an e..."
+          "description": "Get a single record. Field values come back keyed by display name with dropdown values translated to their human-readable labels. Custom items are user-defined entity types \u2014 Contracts, Leads, Deals, or anything else a customer has set up on a project. Use these tools when the user refers to an e..."
         },
         {
           "name": "twprojects-get_jobrole",
@@ -13843,15 +13892,15 @@
         },
         {
           "name": "twprojects-list_custom_item_fields",
-          "description": "List fields on a custom item type. Each entry includes the twId you need when writing record values. Custom items are user-defined entity types — Contracts, Leads, Deals, or anything else a customer has set up on a project. Use these tools when the user refers to an entity that is NOT a built-in ..."
+          "description": "List fields on a custom item type. Each entry includes the twId you need when writing record values. Custom items are user-defined entity types \u2014 Contracts, Leads, Deals, or anything else a customer has set up on a project. Use these tools when the user refers to an entity that is NOT a built-in ..."
         },
         {
           "name": "twprojects-list_custom_item_records",
-          "description": "List records on a custom item type. Returns each record with field values keyed by display name. Use the section_ids filter to scope to a specific section. Custom items are user-defined entity types — Contracts, Leads, Deals, or anything else a customer has set up on a project. Use these tools wh..."
+          "description": "List records on a custom item type. Returns each record with field values keyed by display name. Use the section_ids filter to scope to a specific section. Custom items are user-defined entity types \u2014 Contracts, Leads, Deals, or anything else a customer has set up on a project. Use these tools wh..."
         },
         {
           "name": "twprojects-list_custom_items",
-          "description": "List the custom item types defined on a project. Returns each type's id, display name and labels — call get_custom_item to see a type's fields and sections. Custom items are user-defined entity types — Contracts, Leads, Deals, or anything else a customer has set up on a project. Use these tools w..."
+          "description": "List the custom item types defined on a project. Returns each type's id, display name and labels \u2014 call get_custom_item to see a type's fields and sections. Custom items are user-defined entity types \u2014 Contracts, Leads, Deals, or anything else a customer has set up on a project. Use these tools w..."
         },
         {
           "name": "twprojects-list_industries",
@@ -13975,15 +14024,15 @@
         },
         {
           "name": "twprojects-update_custom_item",
-          "description": "Update a custom item type's display name, description, or labels. Custom items are user-defined entity types — Contracts, Leads, Deals, or anything else a customer has set up on a project. Use these tools when the user refers to an entity that is NOT a built-in Teamwork concept (Task, Tasklist, P..."
+          "description": "Update a custom item type's display name, description, or labels. Custom items are user-defined entity types \u2014 Contracts, Leads, Deals, or anything else a customer has set up on a project. Use these tools when the user refers to an entity that is NOT a built-in Teamwork concept (Task, Tasklist, P..."
         },
         {
           "name": "twprojects-update_custom_item_field",
-          "description": "Update a field on a custom item type. Custom items are user-defined entity types — Contracts, Leads, Deals, or anything else a customer has set up on a project. Use these tools when the user refers to an entity that is NOT a built-in Teamwork concept (Task, Tasklist, Project, Milestone, Comment, ..."
+          "description": "Update a field on a custom item type. Custom items are user-defined entity types \u2014 Contracts, Leads, Deals, or anything else a customer has set up on a project. Use these tools when the user refers to an entity that is NOT a built-in Teamwork concept (Task, Tasklist, Project, Milestone, Comment, ..."
         },
         {
           "name": "twprojects-update_custom_item_record",
-          "description": "Update a record on a custom item type. Only the fields you supply are changed; others are left as-is. Set section_id to null to remove the record from any section. Custom items are user-defined entity types — Contracts, Leads, Deals, or anything else a customer has set up on a project. Use these ..."
+          "description": "Update a record on a custom item type. Only the fields you supply are changed; others are left as-is. Set section_id to null to remove the record from any section. Custom items are user-defined entity types \u2014 Contracts, Leads, Deals, or anything else a customer has set up on a project. Use these ..."
         },
         {
           "name": "twprojects-update_jobrole",
