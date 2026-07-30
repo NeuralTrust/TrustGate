@@ -61,6 +61,14 @@ func (m *memConnectStore) GetClient(_ context.Context, key string) (*oauth.Regis
 	return &c, nil
 }
 
+func (m *memConnectStore) SaveClientIfAbsent(_ context.Context, key string, c oauth.RegisteredClient) (*oauth.RegisteredClient, error) {
+	if existing, ok := m.clients[key]; ok {
+		return &existing, nil
+	}
+	m.clients[key] = c
+	return &c, nil
+}
+
 func (m *memConnectStore) SaveTicket(_ context.Context, id string, t oauth.ConnectTicket) error {
 	m.tickets[id] = t
 	return nil
