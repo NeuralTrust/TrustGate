@@ -857,7 +857,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"trustguard": {
 		name:        "TrustGuard",
 		group:       groupGuardrails,
-		description: "Inspect request or response content with TrustGuard, block flagged material, and apply data-masking. Fails open on guard errors; streaming is not inspected live.",
+		description: "Inspect request or response content with TrustGuard, block flagged material, and apply data-masking. Fails open on guard errors. Streaming responses are inspected after the stream completes (post_response), not live.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
