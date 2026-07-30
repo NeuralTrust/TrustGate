@@ -93,20 +93,22 @@ func TestParseConfig(t *testing.T) {
 
 func TestSelectsStage(t *testing.T) {
 	tests := []struct {
-		name            string
-		inspect         string
-		wantPreRequest  bool
-		wantPreResponse bool
+		name             string
+		inspect          string
+		wantPreRequest   bool
+		wantPreResponse  bool
+		wantPostResponse bool
 	}{
-		{name: "request", inspect: inspectRequest, wantPreRequest: true, wantPreResponse: false},
-		{name: "response", inspect: inspectResponse, wantPreRequest: false, wantPreResponse: true},
-		{name: "request_response", inspect: inspectRequestResponse, wantPreRequest: true, wantPreResponse: true},
+		{name: "request", inspect: inspectRequest, wantPreRequest: true, wantPreResponse: false, wantPostResponse: false},
+		{name: "response", inspect: inspectResponse, wantPreRequest: false, wantPreResponse: true, wantPostResponse: true},
+		{name: "request_response", inspect: inspectRequestResponse, wantPreRequest: true, wantPreResponse: true, wantPostResponse: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := Settings{Inspect: tt.inspect}
 			assert.Equal(t, tt.wantPreRequest, s.selectsStage(policy.StagePreRequest))
 			assert.Equal(t, tt.wantPreResponse, s.selectsStage(policy.StagePreResponse))
+			assert.Equal(t, tt.wantPostResponse, s.selectsStage(policy.StagePostResponse))
 		})
 	}
 }

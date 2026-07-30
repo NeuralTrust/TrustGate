@@ -440,9 +440,7 @@ func TestExecutePreResponseBlockReturns403(t *testing.T) {
 	if got.Direction != directionOutput {
 		t.Fatalf("direction = %q, want %q", got.Direction, directionOutput)
 	}
-	if llmPayloadInput(t, got.Payload) != "the answer" {
-		t.Fatalf("input = %q, want %q", llmPayloadInput(t, got.Payload), "the answer")
-	}
+	assertLLMRequestMessages(t, got.Payload, []string{"assistant"}, []string{"the answer"})
 }
 
 func TestExecuteObserveModeOnBlockPassesThrough(t *testing.T) {
@@ -570,7 +568,57 @@ func TestExecuteStreamingResponsePassThrough(t *testing.T) {
 		t.Fatalf("expected pass-through, got %+v", res)
 	}
 	if f.count() != 0 {
-		t.Fatalf("expected guard not called for streaming, got %d hits", f.count())
+		t.Fatalf("expected guard not called for streaming pre_response, got %d hits", f.count())
+	}
+}
+
+func TestExecutePostResponseStreamingInspects(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: "allowed", TraceID: "trace-stream"}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	sse := "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"the \"}}]}\n" +
+		"data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"answer\"}}]}\n" +
+		"data: [DONE]\n"
+	resp := &infracontext.ResponseContext{StatusCode: 200, Streaming: true, Body: []byte(sse)}
+	in := execInput(policy.StagePostResponse, policy.ModeObserve, settings(""), requestContext(), resp)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("expected pass-through, got %+v", res)
+	}
+	if f.count() != 1 {
+		t.Fatalf("expected guard called once for streamed post_response, got %d", f.count())
+	}
+	got := f.captured()
+	if got.Direction != directionOutput {
+		t.Fatalf("direction = %q, want %q", got.Direction, directionOutput)
+	}
+	assertLLMRequestMessages(t, got.Payload, []string{"assistant"}, []string{"the answer"})
+}
+
+func TestExecutePostResponseNonStreamingPassThrough(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusBlock}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	resp := &infracontext.ResponseContext{StatusCode: 200, Streaming: false, Body: openAIResponseBody()}
+	in := execInput(policy.StagePostResponse, policy.ModeEnforce, settings(""), requestContext(), resp)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("expected pass-through, got %+v", res)
+	}
+	if f.count() != 0 {
+		t.Fatalf("expected no guard call for non-stream post_response, got %d", f.count())
 	}
 }
 

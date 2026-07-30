@@ -67,13 +67,19 @@ func unavailableError(err *entitlementsUnavailableError) *appplugins.PluginError
 
 func blockBody(resp *GuardResponse) []byte {
 	body := struct {
-		Status    string `json:"status"`
-		Message   string `json:"message"`
-		TraceID   string `json:"trace_id,omitempty"`
-		RequestID string `json:"request_id,omitempty"`
+		Status       string `json:"status"`
+		Message      string `json:"message"`
+		Type         string `json:"type,omitempty"`
+		Reason       string `json:"reason,omitempty"`
+		Plugin       string `json:"plugin,omitempty"`
+		DetectorName string `json:"detector_name,omitempty"`
+		GateName     string `json:"gate_name,omitempty"`
+		TraceID      string `json:"trace_id,omitempty"`
+		RequestID    string `json:"request_id,omitempty"`
 	}{
 		Status:  statusBlock,
 		Message: blockMessage,
+		Type:    typeBlocked,
 	}
 	if resp != nil {
 		if resp.Status != "" {
@@ -81,10 +87,20 @@ func blockBody(resp *GuardResponse) []byte {
 		}
 		body.TraceID = resp.TraceID
 		body.RequestID = resp.RequestID
+		if finding := selectPrimaryFinding(resp.Findings); finding != nil {
+			if finding.Signal != nil {
+				body.Reason = finding.Signal.Type
+			}
+			if finding.Source != nil {
+				body.Plugin = finding.Source.Plugin
+				body.DetectorName = finding.Source.DetectorName
+				body.GateName = finding.Source.GateName
+			}
+		}
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
-		return []byte(`{"status":"block","message":"request blocked due to a policy infraction"}`)
+		return []byte(`{"status":"block","message":"request blocked due to a policy infraction","type":"trustguard_blocked"}`)
 	}
 	return raw
 }

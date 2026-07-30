@@ -18,13 +18,19 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
-	"github.com/aws/aws-sdk-go-v2/service/sts/types"
 )
+
+// Refresh STS / IRSA credentials before the Absolute expiry so long-lived
+// pooled Bedrock clients keep working across credential rotation.
+const credentialsExpiryWindow = 5 * time.Minute
 
 //go:generate mockery --name=Client --dir=. --output=./mocks --filename=bedrock_client_mock.go --case=underscore --with-expecter
 type Client interface {
@@ -88,28 +94,30 @@ func (c *client) BuildClient(
 		return cl, nil
 	}
 
-	var awsCfg aws.Config
-	var err error
-
 	if region == "" {
 		region = "us-east-1"
 	}
 
-	if useRole && roleARN != "" {
-		creds, err := assumeRole(ctx, accessKey, secretKey, roleARN, region, sessionName)
-		if err != nil {
-			return nil, fmt.Errorf("failed to assume role: %v", err)
-		}
+	awsCfg, err := loadAWSConfig(ctx, accessKey, secretKey, sessionToken, region)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load AWS config: %v", err)
+	}
 
-		awsCfg, err = loadAWSConfig(ctx, *creds.AccessKeyId, *creds.SecretAccessKey, *creds.SessionToken, region)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load AWS config with assumed role: %v", err)
+	if useRole && roleARN != "" {
+		if sessionName == "" {
+			sessionName = "BedrockClientSession"
 		}
-	} else {
-		awsCfg, err = loadAWSConfig(ctx, accessKey, secretKey, sessionToken, region)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load AWS config: %v", err)
-		}
+		// AssumeRoleProvider re-calls STS when the CredentialsCache marks
+		// creds expired. Base identity (IRSA or static keys) also refreshes
+		// via the chain held by the STS client — do not bake one-shot
+		// temporary keys into a static provider.
+		stsClient := sts.NewFromConfig(awsCfg)
+		provider := stscreds.NewAssumeRoleProvider(stsClient, roleARN, func(o *stscreds.AssumeRoleOptions) {
+			o.RoleSessionName = sessionName
+		})
+		awsCfg.Credentials = aws.NewCredentialsCache(provider, func(o *aws.CredentialsCacheOptions) {
+			o.ExpiryWindow = credentialsExpiryWindow
+		})
 	}
 
 	newClient := &client{
@@ -122,38 +130,17 @@ func (c *client) BuildClient(
 	return newClient, nil
 }
 
+// loadAWSConfig builds an AWS config. When access keys are set, they are used
+// as static credentials. When omitted, the default credential chain is used
+// (IRSA on EKS, env vars, instance profile, etc.).
 func loadAWSConfig(ctx context.Context, accessKey, secretKey, sessionToken, region string) (aws.Config, error) {
-	return awsconfig.LoadDefaultConfig(ctx,
-		awsconfig.WithCredentialsProvider(aws.CredentialsProviderFunc(
-			func(ctx context.Context) (aws.Credentials, error) {
-				return aws.Credentials{
-					AccessKeyID:     accessKey,
-					SecretAccessKey: secretKey,
-					SessionToken:    sessionToken,
-				}, nil
-			},
-		)),
+	opts := []func(*awsconfig.LoadOptions) error{
 		awsconfig.WithRegion(region),
-	)
-}
-
-func assumeRole(ctx context.Context, accessKey, secretKey, roleARN, region, sessionName string) (*types.Credentials, error) {
-	baseCfg, err := loadAWSConfig(ctx, accessKey, secretKey, "", region)
-	if err != nil {
-		return nil, fmt.Errorf("unable to load base AWS config: %w", err)
 	}
-	stsClient := sts.NewFromConfig(baseCfg)
-
-	if sessionName == "" {
-		sessionName = "BedrockClientSession"
+	if accessKey != "" && secretKey != "" {
+		opts = append(opts, awsconfig.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(accessKey, secretKey, sessionToken),
+		))
 	}
-
-	output, err := stsClient.AssumeRole(ctx, &sts.AssumeRoleInput{
-		RoleArn:         aws.String(roleARN),
-		RoleSessionName: aws.String(sessionName),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to assume role: %w", err)
-	}
-	return output.Credentials, nil
+	return awsconfig.LoadDefaultConfig(ctx, opts...)
 }

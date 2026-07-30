@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -29,6 +30,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
+
+const credentialsExpiryWindow = 5 * time.Minute
 
 type awsCredentials struct {
 	region          string
@@ -136,16 +139,20 @@ func buildRuntimeClient(ctx context.Context, creds awsCredentials) (guardrailCli
 		region = defaultRegion
 	}
 
-	staticProvider := credentials.NewStaticCredentialsProvider(
-		creds.accessKeyID,
-		creds.secretAccessKey,
-		creds.sessionToken,
-	)
-
-	cfg, err := awsconfig.LoadDefaultConfig(ctx,
+	opts := []func(*awsconfig.LoadOptions) error{
 		awsconfig.WithRegion(region),
-		awsconfig.WithCredentialsProvider(staticProvider),
-	)
+	}
+	if creds.accessKeyID != "" && creds.secretAccessKey != "" {
+		opts = append(opts, awsconfig.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(
+				creds.accessKeyID,
+				creds.secretAccessKey,
+				creds.sessionToken,
+			),
+		))
+	}
+
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("bedrock_guardrail: load aws config: %w", err)
 	}
@@ -159,7 +166,9 @@ func buildRuntimeClient(ctx context.Context, creds awsCredentials) (guardrailCli
 		provider := stscreds.NewAssumeRoleProvider(stsClient, creds.roleARN, func(o *stscreds.AssumeRoleOptions) {
 			o.RoleSessionName = sessionName
 		})
-		cfg.Credentials = aws.NewCredentialsCache(provider)
+		cfg.Credentials = aws.NewCredentialsCache(provider, func(o *aws.CredentialsCacheOptions) {
+			o.ExpiryWindow = credentialsExpiryWindow
+		})
 	}
 
 	return bedrockruntime.NewFromConfig(cfg), nil
