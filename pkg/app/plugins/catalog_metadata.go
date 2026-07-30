@@ -1064,7 +1064,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 							Key:         "use_role",
 							Label:       "Use IAM Role",
 							Type:        FieldTypeBoolean,
-							Description: "Assume an IAM role via STS instead of using static keys.",
+							Description: "Assume an IAM role via STS. On EKS, omit access keys and use the pod IRSA identity as the base.",
 							Default:     false,
 						},
 						{
@@ -1084,13 +1084,13 @@ var pluginCatalogMeta = map[string]catalogMeta{
 							Key:         "access_key_id",
 							Label:       "Access Key ID",
 							Type:        FieldTypeString,
-							Description: "Required for static-key auth (Use IAM Role disabled).",
+							Description: "Optional when Use IAM Role is enabled (IRSA / default chain). Required for static-key auth.",
 						},
 						{
 							Key:         "secret_access_key",
 							Label:       "Secret Access Key",
 							Type:        FieldTypeString,
-							Description: "Required for static-key auth (Use IAM Role disabled).",
+							Description: "Optional when Use IAM Role is enabled (IRSA / default chain). Required for static-key auth.",
 						},
 						{
 							Key:         "session_token",

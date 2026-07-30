@@ -280,6 +280,9 @@ func (a *TargetAuth) Validate() error {
 		if a.AWS == nil {
 			return fmt.Errorf("%w: aws payload required for type aws", ErrInvalidRegistry)
 		}
+		if err := a.AWS.Validate(); err != nil {
+			return err
+		}
 	case AuthTypeOAuth2:
 		if a.OAuth == nil {
 			return fmt.Errorf("%w: oauth configuration required for type oauth2", ErrInvalidRegistry)
@@ -303,6 +306,23 @@ func (a *TargetAuth) Validate() error {
 func (a *AzureAuth) Validate() error {
 	_, err := a.CredentialMode()
 	return err
+}
+
+// Validate checks AWS auth for static keys or assume-role (IRSA-friendly) mode.
+func (a *AWSAuth) Validate() error {
+	if strings.TrimSpace(a.Region) == "" {
+		return fmt.Errorf("%w: aws.region is required", ErrInvalidRegistry)
+	}
+	if a.UseRole {
+		if strings.TrimSpace(a.Role) == "" {
+			return fmt.Errorf("%w: aws.role is required when use_role is true", ErrInvalidRegistry)
+		}
+		return nil
+	}
+	if strings.TrimSpace(a.AccessKeyID) == "" || strings.TrimSpace(a.SecretAccessKey) == "" {
+		return fmt.Errorf("%w: aws.access_key_id and aws.secret_access_key are required when use_role is false", ErrInvalidRegistry)
+	}
+	return nil
 }
 
 func (a *AzureAuth) CredentialMode() (AzureCredentialMode, error) {

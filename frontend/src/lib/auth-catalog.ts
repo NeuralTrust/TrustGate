@@ -80,8 +80,6 @@ export function fallbackAuthOptions(providerCode: string): CatalogAuthTypeOption
           label: "Assume role",
           fields: [
             { key: "region", label: "Region", type: "string", required: true },
-            { key: "access_key_id", label: "Access Key ID", type: "string", required: true },
-            { key: "secret_access_key", label: "Secret Access Key", type: "string", required: true, secret: true },
             { key: "role", label: "Role ARN", type: "string", required: true },
             { key: "use_role", label: "Assume Role", type: "boolean", required: true, default: true },
           ],
