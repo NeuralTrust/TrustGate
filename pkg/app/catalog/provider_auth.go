@@ -207,20 +207,18 @@ var (
 			Label:   "Assume role",
 			Fields: []AuthField{
 				awsRegionField,
-				awsAccessKeyField,
-				awsSecretKeyField,
 				{
 					Key:         "role",
 					Label:       "Role ARN",
 					Type:        AuthFieldTypeString,
-					Description: "IAM role ARN to assume.",
+					Description: "IAM role ARN to assume via STS.",
 					Required:    true,
 				},
 				{
 					Key:         "use_role",
 					Label:       "Assume Role",
 					Type:        AuthFieldTypeBoolean,
-					Description: "Assume the configured IAM role using the base credentials above.",
+					Description: "Assume the configured IAM role. On EKS, base credentials come from the pod IRSA identity (no access keys).",
 					Required:    true,
 					Default:     true,
 				},

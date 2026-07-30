@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	bedrockClient "github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
@@ -30,12 +31,15 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	awscredentials "github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	bedrockTypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
-	stsTypes "github.com/aws/aws-sdk-go-v2/service/sts/types"
 	smithy "github.com/aws/smithy-go"
 )
+
+const credentialsExpiryWindow = 5 * time.Minute
 
 type client struct {
 	clientPool    *sync.Map
@@ -260,53 +264,36 @@ func buildAwsConfig(ctx context.Context, credentials providers.Credentials) (aws
 
 	accessKey := credentials.AwsBedrock.AccessKey
 	secretKey := credentials.AwsBedrock.SecretKey
+	sessionToken := credentials.AwsBedrock.SessionToken
 
-	if credentials.AwsBedrock.UseRole && credentials.AwsBedrock.RoleARN != "" {
-		creds, err := assumeRole(ctx, accessKey, secretKey, credentials.AwsBedrock.RoleARN, region)
-		if err != nil {
-			return aws.Config{}, err
-		}
-		return loadAWSConfig(ctx, *creds.AccessKeyId, *creds.SecretAccessKey, *creds.SessionToken, region)
+	awsCfg, err := loadAWSConfig(ctx, accessKey, secretKey, sessionToken, region)
+	if err != nil {
+		return aws.Config{}, err
 	}
 
-	return loadAWSConfig(ctx, accessKey, secretKey, "", region)
+	if credentials.AwsBedrock.UseRole && credentials.AwsBedrock.RoleARN != "" {
+		stsClient := sts.NewFromConfig(awsCfg)
+		provider := stscreds.NewAssumeRoleProvider(stsClient, credentials.AwsBedrock.RoleARN, func(o *stscreds.AssumeRoleOptions) {
+			o.RoleSessionName = "BedrockClientSession"
+		})
+		awsCfg.Credentials = aws.NewCredentialsCache(provider, func(o *aws.CredentialsCacheOptions) {
+			o.ExpiryWindow = credentialsExpiryWindow
+		})
+	}
+
+	return awsCfg, nil
 }
 
 func loadAWSConfig(ctx context.Context, accessKey, secretKey, sessionToken, region string) (aws.Config, error) {
-	return config.LoadDefaultConfig(ctx,
-		config.WithCredentialsProvider(aws.CredentialsProviderFunc(
-			func(ctx context.Context) (aws.Credentials, error) {
-				return aws.Credentials{
-					AccessKeyID:     accessKey,
-					SecretAccessKey: secretKey,
-					SessionToken:    sessionToken,
-				}, nil
-			},
-		)),
+	opts := []func(*config.LoadOptions) error{
 		config.WithRegion(region),
-	)
-}
-
-func assumeRole(ctx context.Context, accessKey, secretKey, roleARN, region string, sessionName ...string) (*stsTypes.Credentials, error) {
-	baseCfg, err := loadAWSConfig(ctx, accessKey, secretKey, "", region)
-	if err != nil {
-		return nil, fmt.Errorf("unable to load base AWS config: %w", err)
 	}
-	stsClient := sts.NewFromConfig(baseCfg)
-
-	roleName := "BedrockClientSession"
-	if len(sessionName) > 0 && sessionName[0] != "" {
-		roleName = sessionName[0]
+	if accessKey != "" && secretKey != "" {
+		opts = append(opts, config.WithCredentialsProvider(
+			awscredentials.NewStaticCredentialsProvider(accessKey, secretKey, sessionToken),
+		))
 	}
-
-	output, err := stsClient.AssumeRole(ctx, &sts.AssumeRoleInput{
-		RoleArn:         aws.String(roleARN),
-		RoleSessionName: aws.String(roleName),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to assume role: %w", err)
-	}
-	return output.Credentials, nil
+	return config.LoadDefaultConfig(ctx, opts...)
 }
 
 // stripBedrockFields removes keys from the JSON body that the Bedrock

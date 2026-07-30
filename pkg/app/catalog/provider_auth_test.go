@@ -91,9 +91,14 @@ func TestProviderAuthOptions_BedrockVariants(t *testing.T) {
 	}
 
 	assumeRole := variants["assume_role"]
-	for _, key := range []string{"region", "access_key_id", "secret_access_key", "role", "use_role"} {
+	for _, key := range []string{"region", "role", "use_role"} {
 		if !fieldRequired(assumeRole.Fields, key) {
 			t.Fatalf("assume_role missing required field %q: %+v", key, assumeRole.Fields)
+		}
+	}
+	for _, key := range []string{"access_key_id", "secret_access_key"} {
+		if fieldRequired(assumeRole.Fields, key) {
+			t.Fatalf("assume_role must not require %q (IRSA / default chain): %+v", key, assumeRole.Fields)
 		}
 	}
 	if defaultVal, ok := fieldDefault(assumeRole.Fields, "use_role"); !ok || defaultVal != true {
