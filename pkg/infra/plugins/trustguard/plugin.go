@@ -91,11 +91,13 @@ func New(registry *adapter.Registry, baseURL string, timeout time.Duration, clie
 func (p *Plugin) Name() string { return PluginName }
 
 func (p *Plugin) MandatoryStages() []policy.Stage {
-	return []policy.Stage{policy.StagePreRequest, policy.StagePreResponse}
+	// PostResponse is mandatory so streamed responses are buffered and inspected
+	// after the client drain (PreResponse sees Streaming=true and cannot inspect).
+	return []policy.Stage{policy.StagePreRequest, policy.StagePreResponse, policy.StagePostResponse}
 }
 
 func (p *Plugin) SupportedStages() []policy.Stage {
-	return []policy.Stage{policy.StagePreRequest, policy.StagePreResponse}
+	return []policy.Stage{policy.StagePreRequest, policy.StagePreResponse, policy.StagePostResponse}
 }
 
 func (p *Plugin) SupportedProtocols() []appplugins.Protocol {
@@ -163,7 +165,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 
 	direction := directionInput
-	if in.Stage == policy.StagePreResponse {
+	if in.Stage == policy.StagePreResponse || in.Stage == policy.StagePostResponse {
 		direction = directionOutput
 	}
 
@@ -200,7 +202,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 			}
 			payload = raw
 		} else {
-			if in.Response == nil || in.Response.Streaming || len(in.Response.Body) == 0 {
+			if skipOutputInspect(in.Stage, in.Response) {
 				return passThrough(), nil
 			}
 			text = mcpOutputText(in.Response.Body)
@@ -249,22 +251,30 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 			}
 			payload = raw
 		} else {
-			if in.Response == nil || in.Response.Streaming || len(in.Response.Body) == 0 {
+			if skipOutputInspect(in.Stage, in.Response) {
 				return passThrough(), nil
 			}
-			cresp, decErr := p.registry.DecodeResponseFor(in.Response.Body, format)
-			if decErr != nil || cresp == nil {
-				return passThrough(), nil
+			var cresp *adapter.CanonicalResponse
+			if in.Response.Streaming {
+				text = streamAssistantText(p.registry, in.Response.Body, format)
+			} else {
+				var decErr error
+				cresp, decErr = p.registry.DecodeResponseFor(in.Response.Body, format)
+				if decErr != nil || cresp == nil {
+					return passThrough(), nil
+				}
+				text = cresp.Content
 			}
-			text = cresp.Content
 			if strings.TrimSpace(text) == "" {
 				return passThrough(), nil
 			}
-			reg := p.registry
-			tgt.apply = func(masked string) ([]byte, bool) {
-				return rewriteResponse(reg, format, cresp, masked)
+			if cresp != nil {
+				reg := p.registry
+				tgt.apply = func(masked string) ([]byte, bool) {
+					return rewriteResponse(reg, format, cresp, masked)
+				}
 			}
-			raw, err := llmPayload(text)
+			raw, err := llmResponsePayload(text)
 			if err != nil {
 				p.warn(ctx, "trustguard llm payload build failed, failing open",
 					slog.String("plugin", PluginName),
@@ -480,6 +490,23 @@ func protocolFor(consumerType string) string {
 		return protocolA2A
 	default:
 		return protocolLLM
+	}
+}
+
+// skipOutputInspect reports whether this stage should skip response inspection.
+// PreResponse defers streaming bodies to PostResponse (body is empty until drain);
+// PostResponse skips non-streaming bodies already inspected at PreResponse.
+func skipOutputInspect(stage policy.Stage, resp *infracontext.ResponseContext) bool {
+	if resp == nil || len(resp.Body) == 0 {
+		return true
+	}
+	switch stage {
+	case policy.StagePreResponse:
+		return resp.Streaming
+	case policy.StagePostResponse:
+		return !resp.Streaming
+	default:
+		return true
 	}
 }
 

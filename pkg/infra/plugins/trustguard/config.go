@@ -84,9 +84,11 @@ func (s Settings) selectsStage(stage policy.Stage) bool {
 	case inspectRequest:
 		return stage == policy.StagePreRequest
 	case inspectResponse:
-		return stage == policy.StagePreResponse
+		return stage == policy.StagePreResponse || stage == policy.StagePostResponse
 	case inspectRequestResponse:
-		return stage == policy.StagePreRequest || stage == policy.StagePreResponse
+		return stage == policy.StagePreRequest ||
+			stage == policy.StagePreResponse ||
+			stage == policy.StagePostResponse
 	default:
 		return false
 	}

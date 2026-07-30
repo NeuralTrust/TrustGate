@@ -30,6 +30,20 @@ func llmRequestPayload(creq *adapter.CanonicalRequest) (json.RawMessage, error) 
 	})
 }
 
+// llmResponsePayload builds a protocol=llm evaluate payload for response-direction
+// inspect. Uses messages[] with role=assistant so Activity and detectors do not
+// treat the completion as a user turn (the legacy {input} shape mapped to RoleUser).
+func llmResponsePayload(text string) (json.RawMessage, error) {
+	return json.Marshal(map[string]any{
+		"messages": []map[string]any{
+			{
+				"role":    "assistant",
+				"content": text,
+			},
+		},
+	})
+}
+
 func guardChatMessages(creq *adapter.CanonicalRequest) []map[string]any {
 	if creq == nil {
 		return nil
