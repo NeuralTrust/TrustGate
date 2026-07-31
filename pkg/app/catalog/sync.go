@@ -121,6 +121,18 @@ var modelsDevProviderToCode = map[string]string{
 	"cohere":         providers.ProviderCohere,
 }
 
+// skipModel drops catalog entries the gateway could never invoke as published.
+//
+// On Bedrock, models.dev lists some models twice: once under their InvokeModel
+// ID and once behind an alternative OpenAI-compatible endpoint, which the
+// Bedrock client does not speak (e.g. "openai.gpt-oss-20b" alongside the real
+// "openai.gpt-oss-20b-1:0"). Other providers legitimately reach models through
+// an alternative endpoint — Claude on Vertex and Azure, for one — so the rule is
+// scoped to Bedrock rather than applied to the whole catalog.
+func skipModel(providerCode string, m modelsdev.Model) bool {
+	return providerCode == providers.ProviderBedrock && m.AltAPI != ""
+}
+
 //go:generate mockery --name=Syncer --dir=. --output=./mocks --filename=catalog_syncer_mock.go --case=underscore --with-expecter
 type Syncer interface {
 	Sync(ctx context.Context) error
@@ -166,6 +178,9 @@ func (s *syncer) Sync(ctx context.Context) error {
 		}
 		provider, ok := codeToProvider[code]
 		if !ok {
+			continue
+		}
+		if skipModel(code, m) {
 			continue
 		}
 		entity := &domain.Model{
