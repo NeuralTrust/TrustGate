@@ -290,7 +290,7 @@ func TestMCPServer_ToolkitFiltersAndAliasesTools(t *testing.T) {
 
 	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
 		map[string]any{"name": "secret"})
-	require.Equal(t, float64(-32602), rpcErrorCode(t, status, body))
+	require.Equal(t, float64(-32001), rpcErrorCode(t, status, body))
 }
 
 func TestMCPServer_PromptsAndResources(t *testing.T) {
@@ -499,7 +499,7 @@ func TestMCPServer_RoleBasedConsumerAppliesRoleMCPPolicies(t *testing.T) {
 
 	status, body = mcpRPC(t, gatewayID, consumerID, bearerHeaders(granted), "tools/call",
 		map[string]any{"name": "secret"})
-	require.Equal(t, float64(-32602), rpcErrorCode(t, status, body))
+	require.Equal(t, float64(-32001), rpcErrorCode(t, status, body))
 }
 
 func TestMCPServer_RoleBasedConsumerEmptyToolkitDeniesAll(t *testing.T) {
