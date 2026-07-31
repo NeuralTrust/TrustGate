@@ -163,6 +163,52 @@ func (r *PluginRunner) PreResponse(
 	return nil
 }
 
+// PreResponseResult runs StagePreResponse over an arbitrary MCP result body
+// (tools/list, tools/call result, etc.) without requiring tools/call params.
+func (r *PluginRunner) PreResponseResult(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	result json.RawMessage,
+) error {
+	if r.executor == nil || rc == nil || rc.Consumer == nil {
+		return nil
+	}
+	reqCtx := &infracontext.RequestContext{
+		GatewayID:    rc.Consumer.GatewayID.String(),
+		ConsumerID:   rc.Consumer.ID.String(),
+		ConsumerType: string(rc.Consumer.Type),
+		MCP:          true,
+		Body:         []byte(`{}`),
+	}
+	respCtx := &infracontext.ResponseContext{
+		GatewayID: rc.Consumer.GatewayID.String(),
+		Body:      result,
+		Streaming: false,
+	}
+	outcome, err := r.executor.RunStage(ctx, appplugins.StageInput{
+		Stage:    policy.StagePreResponse,
+		Policies: rc.Policies,
+		Plan:     rc.PolicyPlan,
+		Request:  reqCtx,
+		Response: respCtx,
+	})
+	if err != nil {
+		if pe, ok := appplugins.AsPluginError(err); ok {
+			return blockToRPCError(pe)
+		}
+		r.logFailOpen(rc, policy.StagePreResponse, directionOutput, err)
+		return nil
+	}
+	if outcome != nil && outcome.ShortCircuit {
+		return blockToRPCError(&appplugins.PluginError{
+			StatusCode: outcome.StatusCode,
+			Message:    "response blocked by policy",
+			Body:       outcome.Body,
+		})
+	}
+	return nil
+}
+
 // logFailOpen records a guard/plugin failure that the runner deliberately does
 // not surface. RUN-832 requires a tools/call to proceed on guard errors in both
 // directions; only ids and outcome are logged, never tool payloads.

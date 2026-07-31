@@ -69,6 +69,21 @@ func mcpOutputText(body []byte) string {
 	return strings.Join(parts, "\n")
 }
 
+// mcpOutputInspectable reports whether an MCP result body has text worth sending
+// to TrustGuard: CallToolResult text blocks or tools/list tool metadata.
+func mcpOutputInspectable(body []byte) bool {
+	if strings.TrimSpace(mcpOutputText(body)) != "" {
+		return true
+	}
+	var listed struct {
+		Tools []json.RawMessage `json:"tools"`
+	}
+	if err := json.Unmarshal(body, &listed); err != nil {
+		return false
+	}
+	return len(listed.Tools) > 0
+}
+
 // flattenArgumentStrings walks the decoded arguments value and collects string
 // leaves (recursing maps and arrays); numbers, bools and nulls are skipped. Map
 // keys are visited in sorted order for deterministic output. When arguments are

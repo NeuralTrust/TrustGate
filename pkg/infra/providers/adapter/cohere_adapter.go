@@ -385,6 +385,9 @@ func (a *CohereAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, 
 		if err := json.Unmarshal(event.Delta, &delta); err != nil || delta.Message == nil || delta.Message.Content == nil {
 			return nil, nil
 		}
+		if delta.Message.Content.Type != "" && delta.Message.Content.Type != "text" {
+			return nil, nil
+		}
 		if delta.Message.Content.Text == "" {
 			return nil, nil
 		}

@@ -150,6 +150,9 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 		var toolCalls []CanonicalToolCall
 		var toolResults []CanonicalMessage
 		for _, p := range c.Parts {
+			if p.Thought || p.ThoughtSignature != "" {
+				continue
+			}
 			if p.Text != "" {
 				textParts = append(textParts, p.Text)
 			}
@@ -472,6 +475,9 @@ func (a *GeminiAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, 
 
 		var text string
 		for i, p := range content.Parts {
+			if p.Thought || p.ThoughtSignature != "" {
+				continue
+			}
 			text += p.Text
 			if p.FunctionCall != nil {
 				argsBytes, _ := json.Marshal(p.FunctionCall.Args)

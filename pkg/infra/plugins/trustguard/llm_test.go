@@ -85,6 +85,63 @@ func TestLLMRequestPayloadPreservesToolRoles(t *testing.T) {
 	}
 }
 
+func TestLLMRequestPayloadIncludesTools(t *testing.T) {
+	t.Parallel()
+
+	creq := &adapter.CanonicalRequest{
+		Messages: []adapter.CanonicalMessage{{Role: "user", Content: "hi"}},
+		Tools: []adapter.CanonicalTool{{
+			Name:        "search",
+			Description: "find docs",
+			Schema:      map[string]any{"type": "object"},
+		}},
+	}
+	raw, err := llmRequestPayload(creq)
+	if err != nil {
+		t.Fatalf("llmRequestPayload: %v", err)
+	}
+	var payload struct {
+		Tools []map[string]any `json:"tools"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(payload.Tools) != 1 {
+		t.Fatalf("tools len = %d, want 1", len(payload.Tools))
+	}
+	fn, ok := payload.Tools[0]["function"].(map[string]any)
+	if !ok || fn["name"] != "search" || fn["description"] != "find docs" {
+		t.Fatalf("function = %#v", payload.Tools[0]["function"])
+	}
+}
+
+func TestLLMResponsePayloadToolCallsOnly(t *testing.T) {
+	t.Parallel()
+
+	raw, err := llmResponsePayload(&adapter.CanonicalResponse{
+		ToolCalls: []adapter.CanonicalToolCall{{ID: "1", Name: "search", Arguments: `{}`}},
+	}, []adapter.CanonicalTool{{Name: "search", Description: "find docs"}})
+	if err != nil {
+		t.Fatalf("llmResponsePayload: %v", err)
+	}
+	var payload struct {
+		Messages []map[string]any `json:"messages"`
+		Tools    []map[string]any `json:"tools"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(payload.Messages) != 1 || payload.Messages[0]["role"] != "assistant" {
+		t.Fatalf("messages = %#v", payload.Messages)
+	}
+	if _, ok := payload.Messages[0]["tool_calls"]; !ok {
+		t.Fatal("expected tool_calls on assistant message")
+	}
+	if len(payload.Tools) != 1 {
+		t.Fatalf("tools len = %d, want 1", len(payload.Tools))
+	}
+}
+
 func TestJoinedTransformedMessages(t *testing.T) {
 	t.Parallel()
 
@@ -118,5 +175,28 @@ func TestTransformedInputPrefersInputThenMessages(t *testing.T) {
 	})
 	if !ok || got != "a\nb" {
 		t.Fatalf("messages fallback: got %q ok=%v", got, ok)
+	}
+}
+
+func TestLLMResponsePayloadSkipsPureThinking(t *testing.T) {
+	t.Parallel()
+	raw, err := llmResponsePayload(&adapter.CanonicalResponse{
+		Content: "private thought",
+		Reasoning: &adapter.CanonicalReasoning{ThinkingText: "private thought"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("llmResponsePayload: %v", err)
+	}
+	var payload struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(payload.Messages) != 1 {
+		t.Fatalf("messages = %#v", payload.Messages)
+	}
+	if payload.Messages[0]["content"] != "" {
+		t.Fatalf("content = %#v, want empty (thinking-only)", payload.Messages[0]["content"])
 	}
 }
