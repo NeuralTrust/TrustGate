@@ -15,9 +15,14 @@
 package mcp
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
@@ -129,7 +134,7 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 	switch req.Method {
 	case "initialize":
 		h.recordInitialize(c)
-		return h.handleInitialize(c, req)
+		return h.handleInitialize(c, req, rc)
 	case "ping":
 		skipMetrics(c)
 		return writeRPCResult(c, req.ID, struct{}{})
@@ -166,7 +171,7 @@ type initializeParams struct {
 	ProtocolVersion string `json:"protocolVersion"`
 }
 
-func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest) error {
+func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer.RoutableConsumer) error {
 	var params initializeParams
 	_ = json.Unmarshal(req.Params, &params)
 	version := latestProtocolVersion
@@ -182,9 +187,40 @@ func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest) error {
 		},
 		"serverInfo": fiber.Map{
 			"name":    serverName,
-			"version": serverVersion,
+			"version": serverVersion + "+" + surfaceFingerprint(rc),
 		},
 	})
+}
+
+// surfaceFingerprint summarises everything that decides which tools a virtual
+// MCP exposes: the bound MCP registries, when each was last changed, and the
+// toolkit that filters them. It rides in serverInfo.version as semver build
+// metadata, so a client that caches a server's tool list keyed on its reported
+// version re-lists after the consumer is reconfigured. Without it every virtual
+// MCP reports a constant "1.0" forever and a newly attached registry stays
+// invisible until the client is reinstalled.
+func surfaceFingerprint(rc *appconsumer.RoutableConsumer) string {
+	if rc == nil || rc.Consumer == nil {
+		return "0"
+	}
+	parts := make([]string, 0, len(rc.Registries))
+	for _, reg := range rc.Registries {
+		if reg == nil || !reg.IsMCP() {
+			continue
+		}
+		parts = append(parts, reg.ID.String()+"@"+reg.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	}
+	entries := make([]string, 0, len(rc.Consumer.Toolkit()))
+	for _, e := range rc.Consumer.Toolkit() {
+		entries = append(entries, "tk:"+e.RegistryID.String()+"/"+e.Tool+"/"+e.Prompt+"/"+e.Resource+"/"+e.ExposeAs)
+	}
+	// Neither list has a guaranteed order across replicas or reloads — the
+	// role-derived toolkit is a union — so sort both: the same configuration
+	// must always fingerprint the same.
+	sort.Strings(parts)
+	sort.Strings(entries)
+	sum := sha256.Sum256([]byte(strings.Join(append(parts, entries...), "|")))
+	return hex.EncodeToString(sum[:6])
 }
 
 func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
