@@ -19,12 +19,12 @@
 // through different APIs:
 //
 //   - The model must be serverless — billed per request with no resource to
-//     deploy: a base model offering ON_DEMAND throughput, or a system-defined
-//     cross-region inference profile (us./eu./global./…) fronting one.
-//     Everything else InvokeModel accepts in its modelId (Bedrock Marketplace
-//     endpoints, Provisioned Throughput, custom and imported models) needs the
-//     ARN of a resource the customer created, so it cannot come from a shared
-//     catalog. ListFoundationModels and ListInferenceProfiles answer this.
+//     deploy: a base model offering ON_DEMAND throughput, or a global
+//     cross-region inference profile fronting one. Everything else InvokeModel
+//     accepts in its modelId (Bedrock Marketplace endpoints, Provisioned
+//     Throughput, custom and imported models) needs the ARN of a resource the
+//     customer created, so it cannot come from a shared catalog.
+//     ListFoundationModels and ListInferenceProfiles answer this.
 //   - The account must have been granted access to it. ListFoundationModels
 //     returns every model in the region regardless of access, so entitlement is
 //     a separate GetFoundationModelAvailability call per model — without it the
@@ -43,6 +43,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -80,15 +81,17 @@ const (
 	statusAvailable  = "AVAILABLE"
 
 	// inferenceTypeOnDemand marks a base model that can be invoked by its plain
-	// model ID; inferenceTypeProfile marks one reachable only through an
-	// inference profile, whose IDs are collected separately.
+	// model ID. A model without it is reachable only through an inference
+	// profile, whose IDs are collected separately.
 	inferenceTypeOnDemand = "ON_DEMAND"
-	inferenceTypeProfile  = "INFERENCE_PROFILE"
 
 	// profileTypeSystemDefined selects the cross-region profiles AWS predefines;
 	// APPLICATION profiles are customer-created and account-specific.
 	profileTypeSystemDefined = "SYSTEM_DEFINED"
 	profileStatusActive      = "ACTIVE"
+	// globalProfilePrefix names the geography-agnostic inference profile, the only
+	// kind the catalog offers. See collectInferenceProfiles.
+	globalProfilePrefix = "global."
 	profilePageSize          = "1000"
 	// maxProfilePages bounds pagination so a repeating nextToken cannot spin.
 	maxProfilePages = 10
@@ -216,9 +219,25 @@ func (c *client) ListInvocableModelIDs(
 }
 
 type availabilityResponse struct {
+	// AgreementAvailability reports whether the account holds the model's
+	// agreement (its AWS Marketplace subscription). It is the field that goes
+	// NOT_AVAILABLE while the other three still read positive, which is what an
+	// account that never completed the subscription looks like.
+	AgreementAvailability struct {
+		Status string `json:"status"`
+	} `json:"agreementAvailability"`
 	AuthorizationStatus     string `json:"authorizationStatus"`
 	EntitlementAvailability string `json:"entitlementAvailability"`
 	RegionAvailability      string `json:"regionAvailability"`
+}
+
+// invocable reports whether all four availability signals are positive. Any one
+// of them being negative makes InvokeModel fail with AccessDeniedException.
+func (r availabilityResponse) invocable() bool {
+	return r.AgreementAvailability.Status == statusAvailable &&
+		r.AuthorizationStatus == statusAuthorized &&
+		r.EntitlementAvailability == statusAvailable &&
+		r.RegionAvailability == statusAvailable
 }
 
 // entitlements resolves model access for the distinct base models behind ids.
@@ -259,9 +278,7 @@ func (c *client) entitlements(
 				return nil
 			}
 			answered = true
-			verdicts[base] = payload.AuthorizationStatus == statusAuthorized &&
-				payload.EntitlementAvailability == statusAvailable &&
-				payload.RegionAvailability == statusAvailable
+			verdicts[base] = payload.invocable()
 			return nil
 		})
 	}
@@ -301,10 +318,14 @@ type foundationModelsResponse struct {
 	} `json:"modelSummaries"`
 }
 
-// collectFoundationModels adds every base model that can be billed per request.
-// Models flagged INFERENCE_PROFILE only are counted too: their plain ID is not
-// invocable, but keeping them lets the catalog show the model, and the matching
-// profile ID arrives from collectInferenceProfiles.
+// collectFoundationModels adds the base models invocable by their plain ID, i.e.
+// those offering ON_DEMAND throughput.
+//
+// A model whose only inference type is INFERENCE_PROFILE is deliberately left
+// out: passing its bare ID to InvokeModel fails with "Invocation of model ID …
+// with on-demand throughput isn't supported. Retry your request with the ID or
+// ARN of an inference profile". Such a model reaches the catalog through its
+// profile IDs, which collectInferenceProfiles adds.
 func (c *client) collectFoundationModels(
 	ctx context.Context,
 	awsCreds aws.Credentials,
@@ -319,11 +340,8 @@ func (c *client) collectFoundationModels(
 		if summary.ModelID == "" {
 			continue
 		}
-		for _, inferenceType := range summary.InferenceTypesSupported {
-			if inferenceType == inferenceTypeOnDemand || inferenceType == inferenceTypeProfile {
-				out[summary.ModelID] = struct{}{}
-				break
-			}
+		if slices.Contains(summary.InferenceTypesSupported, inferenceTypeOnDemand) {
+			out[summary.ModelID] = struct{}{}
 		}
 	}
 	return nil
@@ -338,6 +356,15 @@ type inferenceProfilesResponse struct {
 	NextToken string `json:"nextToken"`
 }
 
+// collectInferenceProfiles adds the geography-agnostic ("global.") profiles.
+//
+// Profiles scoped to one geography (us., eu., jp., au.) are skipped even though
+// AWS lists them: they are only invocable from source regions inside their own
+// geography, so a catalog entry for one is valid for some registries and broken
+// for others. A global profile routes from any supported source region, which
+// means one entry works whatever region a registry is configured with. Base
+// models invocable by their plain ID are unaffected — they come from
+// collectFoundationModels.
 func (c *client) collectInferenceProfiles(
 	ctx context.Context,
 	awsCreds aws.Credentials,
@@ -361,6 +388,9 @@ func (c *client) collectInferenceProfiles(
 		}
 		for _, summary := range payload.Summaries {
 			if summary.ID == "" || summary.Status != profileStatusActive {
+				continue
+			}
+			if !strings.HasPrefix(summary.ID, globalProfilePrefix) {
 				continue
 			}
 			out[summary.ID] = struct{}{}

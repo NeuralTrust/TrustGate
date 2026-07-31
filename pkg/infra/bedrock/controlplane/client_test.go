@@ -39,19 +39,30 @@ const foundationModelsPayload = `{
 	]
 }`
 
+// Claude Sonnet 4.5 above is INFERENCE_PROFILE only, so its bare ID is not
+// invocable and only its global profile may be listed. The eu. profile is
+// active but geography-scoped, so it is skipped too.
+const (
+	claudeSonnet45Base          = "anthropic.claude-sonnet-4-5-20250929-v1:0"
+	claudeSonnet45GlobalProfile = "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+	claudeSonnet45EUProfile     = "eu.anthropic.claude-sonnet-4-5-20250929-v1:0"
+)
+
 const profilesPayload = `{"inferenceProfileSummaries": [
+	{"inferenceProfileId": "global.anthropic.claude-sonnet-4-5-20250929-v1:0", "status": "ACTIVE", "type": "SYSTEM_DEFINED"},
 	{"inferenceProfileId": "eu.anthropic.claude-sonnet-4-5-20250929-v1:0", "status": "ACTIVE", "type": "SYSTEM_DEFINED"},
 	{"inferenceProfileId": "us.anthropic.retired-v1:0", "status": "INACTIVE", "type": "SYSTEM_DEFINED"}
 ]}`
 
-func entitledPayload(authorized, entitled, region bool) string {
+func entitledPayload(agreement, authorized, entitled, region bool) string {
 	status := func(ok bool, yes, no string) string {
 		if ok {
 			return yes
 		}
 		return no
 	}
-	return `{"authorizationStatus": "` + status(authorized, "AUTHORIZED", "NOT_AUTHORIZED") +
+	return `{"agreementAvailability": {"status": "` + status(agreement, "AVAILABLE", "NOT_AVAILABLE") +
+		`"}, "authorizationStatus": "` + status(authorized, "AUTHORIZED", "NOT_AUTHORIZED") +
 		`", "entitlementAvailability": "` + status(entitled, "AVAILABLE", "NOT_AVAILABLE") +
 		`", "regionAvailability": "` + status(region, "AVAILABLE", "NOT_AVAILABLE") + `"}`
 }
@@ -96,7 +107,7 @@ func catalogHandler(entitlement func(modelID string) (int, string)) http.Handler
 }
 
 func allEntitled(string) (int, string) {
-	return http.StatusOK, entitledPayload(true, true, true)
+	return http.StatusOK, entitledPayload(true, true, true, true)
 }
 
 func TestListInvocableModelIDs_KeepsServerlessAndEntitledOnly(t *testing.T) {
@@ -104,7 +115,8 @@ func TestListInvocableModelIDs_KeepsServerlessAndEntitledOnly(t *testing.T) {
 	c := newTestClient(t, catalogHandler(allEntitled))
 
 	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "eu-west-1"}, []string{
-		"eu.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		claudeSonnet45GlobalProfile,
+		claudeSonnet45Base, // Invocable only through a profile, never by itself.
 		"amazon.nova-pro-v1:0",
 		"amazon.titan-tg1-large", // PROVISIONED only.
 		"google.gemma-3-4b-it",   // Marketplace: absent from the region listing.
@@ -114,9 +126,26 @@ func TestListInvocableModelIDs_KeepsServerlessAndEntitledOnly(t *testing.T) {
 
 	assert.True(t, got.EntitlementChecked)
 	assert.Equal(t, map[string]struct{}{
-		"eu.anthropic.claude-sonnet-4-5-20250929-v1:0": {},
-		"amazon.nova-pro-v1:0":                         {},
+		claudeSonnet45GlobalProfile: {},
+		"amazon.nova-pro-v1:0":      {},
 	}, got.ModelIDs)
+}
+
+// A geography-scoped profile is only invocable from source regions inside its
+// own geography, so it never reaches the catalog even when AWS reports it active
+// — the region is a per-registry setting, and the global profile covers all of
+// them with a single entry.
+func TestListInvocableModelIDs_DropsGeographyScopedProfiles(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t, catalogHandler(allEntitled))
+
+	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "eu-west-1"}, []string{
+		claudeSonnet45EUProfile,
+		claudeSonnet45GlobalProfile,
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, map[string]struct{}{claudeSonnet45GlobalProfile: {}}, got.ModelIDs)
 }
 
 // The account sees the model in the region but has not enabled access to it —
@@ -125,13 +154,43 @@ func TestListInvocableModelIDs_DropsModelsWithoutAccess(t *testing.T) {
 	t.Parallel()
 	c := newTestClient(t, catalogHandler(func(modelID string) (int, string) {
 		if strings.HasPrefix(modelID, "anthropic.") {
-			return http.StatusOK, entitledPayload(true, false, true)
+			return http.StatusOK, entitledPayload(true, true, false, true)
 		}
 		return allEntitled(modelID)
 	}))
 
 	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "eu-west-1"}, []string{
-		"eu.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		claudeSonnet45GlobalProfile,
+		"amazon.nova-pro-v1:0",
+	})
+	require.NoError(t, err)
+
+	assert.True(t, got.EntitlementChecked)
+	assert.Equal(t, map[string]struct{}{"amazon.nova-pro-v1:0": {}}, got.ModelIDs)
+}
+
+// A real response from an account that never completed the model's AWS
+// Marketplace subscription: authorization, entitlement and region all read
+// positive and only agreementAvailability is negative. Invoking it still fails
+// with AccessDeniedException, so agreementAvailability cannot be ignored.
+func TestListInvocableModelIDs_DropsModelWithoutAgreement(t *testing.T) {
+	t.Parallel()
+	const noAgreement = `{
+		"modelId": "anthropic.claude-sonnet-4-5-20250929-v1",
+		"agreementAvailability": {"status": "NOT_AVAILABLE"},
+		"authorizationStatus": "AUTHORIZED",
+		"entitlementAvailability": "AVAILABLE",
+		"regionAvailability": "AVAILABLE"
+	}`
+	c := newTestClient(t, catalogHandler(func(modelID string) (int, string) {
+		if strings.HasPrefix(modelID, "anthropic.") {
+			return http.StatusOK, noAgreement
+		}
+		return allEntitled(modelID)
+	}))
+
+	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "eu-west-1"}, []string{
+		claudeSonnet45GlobalProfile,
 		"amazon.nova-pro-v1:0",
 	})
 	require.NoError(t, err)
@@ -144,13 +203,13 @@ func TestListInvocableModelIDs_DropsUnauthorizedAndOutOfRegion(t *testing.T) {
 	t.Parallel()
 	c := newTestClient(t, catalogHandler(func(modelID string) (int, string) {
 		if strings.HasPrefix(modelID, "anthropic.") {
-			return http.StatusOK, entitledPayload(false, true, true)
+			return http.StatusOK, entitledPayload(true, false, true, true)
 		}
-		return http.StatusOK, entitledPayload(true, true, false)
+		return http.StatusOK, entitledPayload(true, true, true, false)
 	}))
 
 	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "eu-west-1"}, []string{
-		"eu.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		claudeSonnet45GlobalProfile,
 		"amazon.nova-pro-v1:0",
 	})
 	require.NoError(t, err)
@@ -173,13 +232,18 @@ func TestListInvocableModelIDs_ChecksEntitlementOncePerBaseModel(t *testing.T) {
 	}))
 
 	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "eu-west-1"}, []string{
-		"eu.anthropic.claude-sonnet-4-5-20250929-v1:0",
-		"anthropic.claude-sonnet-4-5-20250929-v1:0",
+		claudeSonnet45GlobalProfile,
+		claudeSonnet45Base,
 		"amazon.nova-pro-v1:0",
 	})
 	require.NoError(t, err)
 
-	assert.Len(t, got.ModelIDs, 3)
+	// The bare Claude ID drops out for being profile-only, but its entitlement
+	// was still resolved with a single call shared by the profile.
+	assert.Equal(t, map[string]struct{}{
+		claudeSonnet45GlobalProfile: {},
+		"amazon.nova-pro-v1:0":      {},
+	}, got.ModelIDs)
 	assert.Equal(t, map[string]int{
 		"anthropic.claude-sonnet-4-5-20250929-v1:0": 1,
 		"amazon.nova-pro-v1:0":                      1,
@@ -216,7 +280,7 @@ func TestListInvocableModelIDs_DropsModelWhoseCheckFails(t *testing.T) {
 	}))
 
 	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "eu-west-1"}, []string{
-		"eu.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		claudeSonnet45GlobalProfile,
 		"amazon.nova-pro-v1:0",
 	})
 	require.NoError(t, err)
@@ -248,22 +312,22 @@ func TestListInvocableModelIDs_FollowsProfilePagination(t *testing.T) {
 		case r.URL.Path == foundationModelsPath:
 			_, _ = w.Write([]byte(`{"modelSummaries": []}`))
 		case strings.HasPrefix(r.URL.Path, availabilityPath):
-			_, _ = w.Write([]byte(entitledPayload(true, true, true)))
+			_, _ = w.Write([]byte(entitledPayload(true, true, true, true)))
 		case r.URL.Query().Get("nextToken") == "":
 			_, _ = w.Write([]byte(`{"inferenceProfileSummaries": [
-				{"inferenceProfileId": "us.first-v1:0", "status": "ACTIVE"}
+				{"inferenceProfileId": "global.first-v1:0", "status": "ACTIVE"}
 			], "nextToken": "page-2"}`))
 		default:
 			_, _ = w.Write([]byte(`{"inferenceProfileSummaries": [
-				{"inferenceProfileId": "us.second-v1:0", "status": "ACTIVE"}
+				{"inferenceProfileId": "global.second-v1:0", "status": "ACTIVE"}
 			]}`))
 		}
 	}))
 
 	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "us-east-1"},
-		[]string{"us.first-v1:0", "us.second-v1:0"})
+		[]string{"global.first-v1:0", "global.second-v1:0"})
 	require.NoError(t, err)
-	assert.Equal(t, map[string]struct{}{"us.first-v1:0": {}, "us.second-v1:0": {}}, got.ModelIDs)
+	assert.Equal(t, map[string]struct{}{"global.first-v1:0": {}, "global.second-v1:0": {}}, got.ModelIDs)
 }
 
 // A repeating nextToken must not loop forever.
@@ -276,21 +340,21 @@ func TestListInvocableModelIDs_StopsOnRepeatedToken(t *testing.T) {
 		case r.URL.Path == foundationModelsPath:
 			_, _ = w.Write([]byte(`{"modelSummaries": []}`))
 		case strings.HasPrefix(r.URL.Path, availabilityPath):
-			_, _ = w.Write([]byte(entitledPayload(true, true, true)))
+			_, _ = w.Write([]byte(entitledPayload(true, true, true, true)))
 		default:
 			mu.Lock()
 			calls++
 			mu.Unlock()
 			_, _ = w.Write([]byte(`{"inferenceProfileSummaries": [
-				{"inferenceProfileId": "us.loop-v1:0", "status": "ACTIVE"}
+				{"inferenceProfileId": "global.loop-v1:0", "status": "ACTIVE"}
 			], "nextToken": "same"}`))
 		}
 	}))
 
 	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "us-east-1"},
-		[]string{"us.loop-v1:0"})
+		[]string{"global.loop-v1:0"})
 	require.NoError(t, err)
-	assert.Equal(t, map[string]struct{}{"us.loop-v1:0": {}}, got.ModelIDs)
+	assert.Equal(t, map[string]struct{}{"global.loop-v1:0": {}}, got.ModelIDs)
 	assert.Equal(t, 2, calls, "should stop as soon as the token repeats")
 }
 
