@@ -43,13 +43,26 @@ export function usePolicyCatalog() {
   });
 }
 
-export function useModelsCatalog(providerCode?: string) {
+/**
+ * Naming a registry scopes the catalog to what its credentials can actually
+ * invoke — on Bedrock that drops Marketplace and provisioned-only models, which
+ * would otherwise be offered and fail at request time.
+ */
+export function useModelsCatalog(
+  providerCode?: string,
+  scope?: { gatewayId?: string; registryId?: string },
+) {
+  const params = new URLSearchParams();
+  if (providerCode) params.set("provider", providerCode);
+  if (scope?.gatewayId && scope?.registryId) {
+    params.set("gateway_id", scope.gatewayId);
+    params.set("registry_id", scope.registryId);
+  }
+  const query = params.toString();
+
   return useQuery({
-    queryKey: ["models-catalog", providerCode ?? "all"],
-    queryFn: () =>
-      api.get<ListResponse<Model>>(
-        `/v1/models-catalog${providerCode ? `?provider=${encodeURIComponent(providerCode)}` : ""}`,
-      ),
+    queryKey: ["models-catalog", providerCode ?? "all", scope?.registryId ?? "any"],
+    queryFn: () => api.get<ListResponse<Model>>(`/v1/models-catalog${query ? `?${query}` : ""}`),
     select: (data): Model[] => data.items ?? [],
     enabled: providerCode !== "",
     staleTime: 5 * 60 * 1000,

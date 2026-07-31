@@ -205,8 +205,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 			if skipOutputInspect(in.Stage, in.Response) {
 				return passThrough(), nil
 			}
-			text = mcpOutputText(in.Response.Body)
-			if strings.TrimSpace(text) == "" {
+			if !mcpOutputInspectable(in.Response.Body) {
 				return passThrough(), nil
 			}
 			raw, err := mcpToolsResultPayload(in.Response.Body)
@@ -233,14 +232,14 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 			if decErr != nil || creq == nil {
 				return passThrough(), nil
 			}
-			if strings.TrimSpace(joinRequestText(creq)) == "" {
+			if strings.TrimSpace(joinRequestText(creq)) == "" && len(extractPayloadAttachments(in.Request.Body)) == 0 {
 				return passThrough(), nil
 			}
 			reg := p.registry
 			tgt.apply = func(masked string) ([]byte, bool) {
 				return rewriteRequest(reg, format, creq, masked)
 			}
-			raw, err := llmRequestPayload(creq)
+			raw, err := llmRequestPayloadWithAttachments(creq, extractPayloadAttachments(in.Request.Body))
 			if err != nil {
 				p.warn(ctx, "trustguard llm payload build failed, failing open",
 					slog.String("plugin", PluginName),
@@ -255,26 +254,30 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 				return passThrough(), nil
 			}
 			var cresp *adapter.CanonicalResponse
+			var reqTools []adapter.CanonicalTool
+			if creq, decErr := p.registry.DecodeRequestFor(in.Request.Body, format); decErr == nil && creq != nil {
+				reqTools = creq.Tools
+			}
 			if in.Response.Streaming {
 				text = streamAssistantText(p.registry, in.Response.Body, format)
+				cresp = &adapter.CanonicalResponse{Content: text}
 			} else {
 				var decErr error
 				cresp, decErr = p.registry.DecodeResponseFor(in.Response.Body, format)
 				if decErr != nil || cresp == nil {
 					return passThrough(), nil
 				}
-				text = cresp.Content
 			}
-			if strings.TrimSpace(text) == "" {
+			if !responseHasInspectableContent(cresp) && len(reqTools) == 0 {
 				return passThrough(), nil
 			}
-			if cresp != nil {
+			if cresp != nil && strings.TrimSpace(cresp.Content) != "" {
 				reg := p.registry
 				tgt.apply = func(masked string) ([]byte, bool) {
 					return rewriteResponse(reg, format, cresp, masked)
 				}
 			}
-			raw, err := llmResponsePayload(text)
+			raw, err := llmResponsePayload(cresp, reqTools)
 			if err != nil {
 				p.warn(ctx, "trustguard llm payload build failed, failing open",
 					slog.String("plugin", PluginName),

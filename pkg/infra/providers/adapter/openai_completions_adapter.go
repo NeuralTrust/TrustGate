@@ -14,7 +14,10 @@
 
 package adapter
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // ---------------------------------------------------------------------------
 // Chat Completions API typed structs
@@ -38,6 +41,7 @@ type openaiRequest struct {
 type openaiMessage struct {
 	Role       string           `json:"role"`
 	Content    json.RawMessage  `json:"content,omitempty"` // string or []contentPart
+	Refusal    *string          `json:"refusal,omitempty"`
 	ToolCalls  []openaiToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string           `json:"tool_call_id,omitempty"`
 }
@@ -201,7 +205,7 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 			})
 		}
 
-		if m.Role == "system" {
+		if m.Role == "system" || m.Role == "developer" {
 			if cr.System != "" {
 				cr.System += "\n"
 			}
@@ -314,6 +318,9 @@ func decodeCompletionsResponse(body []byte) (*CanonicalResponse, error) {
 		choice := resp.Choices[0]
 		if choice.Message != nil {
 			cr.Content = contentToString(choice.Message.Content)
+			if cr.Content == "" && choice.Message.Refusal != nil {
+				cr.Content = strings.TrimSpace(*choice.Message.Refusal)
+			}
 			for _, tc := range choice.Message.ToolCalls {
 				cr.ToolCalls = append(cr.ToolCalls, CanonicalToolCall{
 					ID:        tc.ID,

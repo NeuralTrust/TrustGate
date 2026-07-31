@@ -78,7 +78,10 @@ function ModelPolicyRow({
   value: ModelPolicyState;
   onChange: (value: ModelPolicyState) => void;
 }) {
-  const { data: models } = useModelsCatalog(registry.provider);
+  const { data: models } = useModelsCatalog(registry.provider, {
+    gatewayId: registry.gateway_id,
+    registryId: registry.id,
+  });
   const [custom, setCustom] = useState("");
 
   const catalogSlugs = (models ?? []).map((m) => m.slug);
