@@ -192,11 +192,11 @@ func TestHandler_ToolsCall_PassesUpstreamRPCErrorThrough(t *testing.T) {
 	}
 }
 
-// Calling a tool on an upstream the user has not connected is an authorization
-// gap, so it answers 401 and carries the connect URL. No WWW-Authenticate is
-// advertised: the caller's gateway credentials are fine, and a challenge here
-// would push MCP clients back through the gateway's own OAuth flow.
-func TestHandler_ToolsCall_ConsentRequiredIsUnauthorized(t *testing.T) {
+// Calling a tool on an upstream the user has not connected answers 403 and
+// carries the connect URL. Not 401: MCP clients read that as a stale gateway
+// token, refresh it, retry, and fail with "401 after successful
+// authentication" without ever surfacing the consent URL.
+func TestHandler_ToolsCall_ConsentRequiredIsForbidden(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
 	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "notion-search", mock.Anything).
@@ -207,8 +207,8 @@ func TestHandler_ToolsCall_ConsentRequiredIsUnauthorized(t *testing.T) {
 
 	status, body := rpcCall(t, app,
 		`{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"notion-search"}}`)
-	if status != fiber.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401 for an unconnected upstream", status)
+	if status != fiber.StatusForbidden {
+		t.Fatalf("status = %d, want 403 for an unconnected upstream", status)
 	}
 	rpcErr := body["error"].(map[string]any)
 	if rpcErr["code"].(float64) != -32003 {

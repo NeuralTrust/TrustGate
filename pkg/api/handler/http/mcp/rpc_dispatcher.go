@@ -87,8 +87,9 @@ func (g *RPCGateway) finishSpan(span *trace.Span, err error) {
 	case errors.As(err, &consentErr):
 		// An upstream the user has not connected yet is an authorization gap,
 		// not a broken gateway; recording it as 502 buried real upstream
-		// failures under routine consent prompts.
-		span.SetMCPStatus(http.StatusUnauthorized, codeConsentRequired)
+		// failures under routine consent prompts. Mirrors the 403 sent on the
+		// wire — 401 makes MCP clients retry the gateway's own OAuth forever.
+		span.SetMCPStatus(http.StatusForbidden, codeConsentRequired)
 	case errors.Is(err, appmcp.ErrToolNotFound), errors.Is(err, appmcp.ErrPromptNotFound),
 		errors.Is(err, appmcp.ErrResourceNotFound):
 		span.SetMCPStatus(http.StatusNotFound, 0)
