@@ -216,9 +216,25 @@ func (c *client) ListInvocableModelIDs(
 }
 
 type availabilityResponse struct {
+	// AgreementAvailability reports whether the account holds the model's
+	// agreement (its AWS Marketplace subscription). It is the field that goes
+	// NOT_AVAILABLE while the other three still read positive, which is what an
+	// account that never completed the subscription looks like.
+	AgreementAvailability struct {
+		Status string `json:"status"`
+	} `json:"agreementAvailability"`
 	AuthorizationStatus     string `json:"authorizationStatus"`
 	EntitlementAvailability string `json:"entitlementAvailability"`
 	RegionAvailability      string `json:"regionAvailability"`
+}
+
+// invocable reports whether all four availability signals are positive. Any one
+// of them being negative makes InvokeModel fail with AccessDeniedException.
+func (r availabilityResponse) invocable() bool {
+	return r.AgreementAvailability.Status == statusAvailable &&
+		r.AuthorizationStatus == statusAuthorized &&
+		r.EntitlementAvailability == statusAvailable &&
+		r.RegionAvailability == statusAvailable
 }
 
 // entitlements resolves model access for the distinct base models behind ids.
@@ -259,9 +275,7 @@ func (c *client) entitlements(
 				return nil
 			}
 			answered = true
-			verdicts[base] = payload.AuthorizationStatus == statusAuthorized &&
-				payload.EntitlementAvailability == statusAvailable &&
-				payload.RegionAvailability == statusAvailable
+			verdicts[base] = payload.invocable()
 			return nil
 		})
 	}

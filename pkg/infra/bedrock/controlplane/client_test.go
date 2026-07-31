@@ -44,14 +44,15 @@ const profilesPayload = `{"inferenceProfileSummaries": [
 	{"inferenceProfileId": "us.anthropic.retired-v1:0", "status": "INACTIVE", "type": "SYSTEM_DEFINED"}
 ]}`
 
-func entitledPayload(authorized, entitled, region bool) string {
+func entitledPayload(agreement, authorized, entitled, region bool) string {
 	status := func(ok bool, yes, no string) string {
 		if ok {
 			return yes
 		}
 		return no
 	}
-	return `{"authorizationStatus": "` + status(authorized, "AUTHORIZED", "NOT_AUTHORIZED") +
+	return `{"agreementAvailability": {"status": "` + status(agreement, "AVAILABLE", "NOT_AVAILABLE") +
+		`"}, "authorizationStatus": "` + status(authorized, "AUTHORIZED", "NOT_AUTHORIZED") +
 		`", "entitlementAvailability": "` + status(entitled, "AVAILABLE", "NOT_AVAILABLE") +
 		`", "regionAvailability": "` + status(region, "AVAILABLE", "NOT_AVAILABLE") + `"}`
 }
@@ -96,7 +97,7 @@ func catalogHandler(entitlement func(modelID string) (int, string)) http.Handler
 }
 
 func allEntitled(string) (int, string) {
-	return http.StatusOK, entitledPayload(true, true, true)
+	return http.StatusOK, entitledPayload(true, true, true, true)
 }
 
 func TestListInvocableModelIDs_KeepsServerlessAndEntitledOnly(t *testing.T) {
@@ -125,7 +126,37 @@ func TestListInvocableModelIDs_DropsModelsWithoutAccess(t *testing.T) {
 	t.Parallel()
 	c := newTestClient(t, catalogHandler(func(modelID string) (int, string) {
 		if strings.HasPrefix(modelID, "anthropic.") {
-			return http.StatusOK, entitledPayload(true, false, true)
+			return http.StatusOK, entitledPayload(true, true, false, true)
+		}
+		return allEntitled(modelID)
+	}))
+
+	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "eu-west-1"}, []string{
+		"eu.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		"amazon.nova-pro-v1:0",
+	})
+	require.NoError(t, err)
+
+	assert.True(t, got.EntitlementChecked)
+	assert.Equal(t, map[string]struct{}{"amazon.nova-pro-v1:0": {}}, got.ModelIDs)
+}
+
+// A real response from an account that never completed the model's AWS
+// Marketplace subscription: authorization, entitlement and region all read
+// positive and only agreementAvailability is negative. Invoking it still fails
+// with AccessDeniedException, so agreementAvailability cannot be ignored.
+func TestListInvocableModelIDs_DropsModelWithoutAgreement(t *testing.T) {
+	t.Parallel()
+	const noAgreement = `{
+		"modelId": "anthropic.claude-sonnet-4-5-20250929-v1",
+		"agreementAvailability": {"status": "NOT_AVAILABLE"},
+		"authorizationStatus": "AUTHORIZED",
+		"entitlementAvailability": "AVAILABLE",
+		"regionAvailability": "AVAILABLE"
+	}`
+	c := newTestClient(t, catalogHandler(func(modelID string) (int, string) {
+		if strings.HasPrefix(modelID, "anthropic.") {
+			return http.StatusOK, noAgreement
 		}
 		return allEntitled(modelID)
 	}))
@@ -144,9 +175,9 @@ func TestListInvocableModelIDs_DropsUnauthorizedAndOutOfRegion(t *testing.T) {
 	t.Parallel()
 	c := newTestClient(t, catalogHandler(func(modelID string) (int, string) {
 		if strings.HasPrefix(modelID, "anthropic.") {
-			return http.StatusOK, entitledPayload(false, true, true)
+			return http.StatusOK, entitledPayload(true, false, true, true)
 		}
-		return http.StatusOK, entitledPayload(true, true, false)
+		return http.StatusOK, entitledPayload(true, true, true, false)
 	}))
 
 	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "eu-west-1"}, []string{
@@ -248,7 +279,7 @@ func TestListInvocableModelIDs_FollowsProfilePagination(t *testing.T) {
 		case r.URL.Path == foundationModelsPath:
 			_, _ = w.Write([]byte(`{"modelSummaries": []}`))
 		case strings.HasPrefix(r.URL.Path, availabilityPath):
-			_, _ = w.Write([]byte(entitledPayload(true, true, true)))
+			_, _ = w.Write([]byte(entitledPayload(true, true, true, true)))
 		case r.URL.Query().Get("nextToken") == "":
 			_, _ = w.Write([]byte(`{"inferenceProfileSummaries": [
 				{"inferenceProfileId": "us.first-v1:0", "status": "ACTIVE"}
@@ -276,7 +307,7 @@ func TestListInvocableModelIDs_StopsOnRepeatedToken(t *testing.T) {
 		case r.URL.Path == foundationModelsPath:
 			_, _ = w.Write([]byte(`{"modelSummaries": []}`))
 		case strings.HasPrefix(r.URL.Path, availabilityPath):
-			_, _ = w.Write([]byte(entitledPayload(true, true, true)))
+			_, _ = w.Write([]byte(entitledPayload(true, true, true, true)))
 		default:
 			mu.Lock()
 			calls++
