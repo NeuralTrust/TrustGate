@@ -213,7 +213,13 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 			"provider":    consentErr.Provider,
 			"connect_url": connectURL,
 		})
-		return writeJSON(c, rpcResponse{
+		// 401 rather than a transport-level success: the call failed because the
+		// user has not authorized this upstream, which reads as an auth problem
+		// in clients and logs alike. No WWW-Authenticate is set on purpose —
+		// the caller's credentials for the gateway are valid, and advertising a
+		// challenge here would send MCP clients back through the gateway's own
+		// OAuth flow instead of to the connect page carried in the payload.
+		return writeJSONStatus(c, fiber.StatusUnauthorized, rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
 			Error: &rpcError{

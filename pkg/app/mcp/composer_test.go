@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
 	"sync"
 	"testing"
 
@@ -434,6 +435,99 @@ func TestComposer_CallTool_UnknownToolSurfacesPendingConsent(t *testing.T) {
 	}
 	if consentErr.Provider != "com.notion/mcp" {
 		t.Fatalf("provider = %q, want com.notion/mcp", consentErr.Provider)
+	}
+}
+
+// A tool the upstream offers but the toolkit excludes is a policy denial: it
+// must answer 403 rather than "not found", and never an authorization prompt —
+// connecting an account cannot grant a tool the consumer is not allowed to use.
+func TestComposer_CallTool_ToolkitDeniedIsForbidden(t *testing.T) {
+	t.Parallel()
+	notion := mcpRegistry(t, "notion", "https://notion.example.com/mcp")
+	up := &fakeUpstream{
+		tools:  tools("notion-create-pages", "notion-search"),
+		result: json.RawMessage(`{"content":[]}`),
+	}
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{"https://notion.example.com/mcp": up}}
+	c := newTestComposer(dialer)
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP: &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{
+			{RegistryID: notion.ID, Tool: "notion-create-pages"},
+		}},
+	}, notion)
+
+	_, err := c.CallTool(context.Background(), rc, "notion-search", nil)
+	var rpcErr *RPCError
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("error = %v, want an RPCError policy denial", err)
+	}
+	if rpcErr.ResolvedHTTPStatus() != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rpcErr.ResolvedHTTPStatus())
+	}
+	if !IsPolicyBlockedCode(rpcErr.Code) {
+		t.Fatalf("code = %d, want the policy-blocked code", rpcErr.Code)
+	}
+	if up.lastCall != "" {
+		t.Fatalf("upstream was invoked with %q for a denied tool", up.lastCall)
+	}
+}
+
+// The denial wins over a pending consent on another upstream: the tool is
+// forbidden regardless of whether the user connects anything.
+func TestComposer_CallTool_DeniedToolBeatsPendingConsent(t *testing.T) {
+	t.Parallel()
+	notion := mcpRegistry(t, "notion", "https://notion.example.com/mcp")
+	linear := mcpRegistry(t, "linear", "https://linear.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://notion.example.com/mcp": {tools: tools("notion-create-pages", "notion-search")},
+		"https://linear.example.com/mcp": {tools: tools("linear-search")},
+	}}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://linear.example.com/mcp": &ConsentRequiredError{
+			Provider: "app.linear/mcp", Ticket: "tk", Path: "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP: &consumerdomain.MCPPolicy{
+			FailMode: consumerdomain.FailModeOpen,
+			Toolkit: consumerdomain.Toolkit{
+				{RegistryID: notion.ID, Tool: "notion-create-pages"},
+				{RegistryID: linear.ID, Tool: consumerdomain.ToolWildcard},
+			},
+		},
+	}, notion, linear)
+
+	_, err := c.CallTool(context.Background(), rc, "notion-search", nil)
+	var consent *ConsentRequiredError
+	if errors.As(err, &consent) {
+		t.Fatal("a forbidden tool must not send the user through a consent flow")
+	}
+	var rpcErr *RPCError
+	if !errors.As(err, &rpcErr) || rpcErr.ResolvedHTTPStatus() != http.StatusForbidden {
+		t.Fatalf("error = %v, want 403 policy denial", err)
+	}
+}
+
+// A tool nobody offers is still a plain not-found, not a denial.
+func TestComposer_CallTool_UnknownToolStaysNotFound(t *testing.T) {
+	t.Parallel()
+	notion := mcpRegistry(t, "notion", "https://notion.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://notion.example.com/mcp": {tools: tools("notion-create-pages")},
+	}}
+	c := newTestComposer(dialer)
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP: &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{
+			{RegistryID: notion.ID, Tool: "notion-create-pages"},
+		}},
+	}, notion)
+
+	if _, err := c.CallTool(context.Background(), rc, "does-not-exist", nil); !errors.Is(err, ErrToolNotFound) {
+		t.Fatalf("error = %v, want ErrToolNotFound", err)
 	}
 }
 

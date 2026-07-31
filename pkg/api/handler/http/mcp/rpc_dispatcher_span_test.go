@@ -103,6 +103,32 @@ func TestRPCGateway_Dispatch_RecordsPolicyBlockedHTTPStatus(t *testing.T) {
 	assert.Equal(t, -32001, attrs.RPCErrorCode)
 }
 
+// An upstream the user has not connected yet is an authorization gap, not a
+// broken gateway: recording it as 502 hid real upstream failures among routine
+// consent prompts.
+func TestRPCGateway_Dispatch_RecordsConsentAsUnauthorized(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().
+		CallTool(mock.Anything, mock.Anything, "notion-search", mock.Anything).
+		Return(nil, &appmcp.ConsentRequiredError{
+			Provider: "com.notion/mcp", Ticket: "tk", Path: "/p/mcp",
+		}).Once()
+
+	rt := trace.New("t-4", trace.Metadata{Kind: events.KindMCP})
+	ctx := trace.NewContext(context.Background(), rt)
+
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), nil)
+	_, err := g.Dispatch(ctx, &appconsumer.RoutableConsumer{}, "tools/call",
+		json.RawMessage(`{"name":"notion-search"}`))
+	require.Error(t, err)
+
+	attrs, ok := rt.Spans()[0].MCPAttrsCopy()
+	require.True(t, ok)
+	assert.Equal(t, http.StatusUnauthorized, attrs.UpstreamStatus)
+	assert.Equal(t, -32003, attrs.RPCErrorCode)
+}
+
 type assertErr struct{}
 
 func (assertErr) Error() string { return "boom" }
