@@ -16,8 +16,12 @@ package catalog
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"slices"
+	"strings"
 	"time"
 
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
@@ -51,10 +55,14 @@ type ServerlessFilterInput struct {
 
 //go:generate mockery --name=ServerlessFilter --dir=. --output=./mocks --filename=catalog_serverless_filter_mock.go --case=underscore --with-expecter
 type ServerlessFilter interface {
-	// Filter narrows models to the ones a registry's credentials can invoke
-	// serverless. It never fails the caller: any provider other than Bedrock,
-	// any non-AWS auth, and any control plane error return the input unchanged,
-	// because an over-long model list is a far smaller problem than an empty one.
+	// Filter narrows models to the ones a registry's credentials can actually
+	// invoke: serverless, in the registry's region, and with model access granted
+	// to the account.
+	//
+	// It never returns an error. Any provider other than Bedrock, any non-AWS
+	// auth, and any control plane failure yield the input unchanged, since a
+	// too-long list degrades gracefully while a spuriously empty one does not.
+	// A verified empty result, on the other hand, is passed through as empty.
 	Filter(ctx context.Context, in ServerlessFilterInput) []domain.Model
 }
 
@@ -93,39 +101,52 @@ func (f *serverlessFilter) Filter(ctx context.Context, in ServerlessFilterInput)
 		return in.Models
 	}
 
-	available, err := f.serverlessIDs(ctx, creds)
+	slugs := make([]string, 0, len(in.Models))
+	for _, model := range in.Models {
+		slugs = append(slugs, model.Slug)
+	}
+
+	availability, err := f.availability(ctx, creds, slugs)
 	if err != nil {
-		f.logger.Warn("bedrock serverless lookup failed, listing unfiltered catalog",
+		f.logger.Warn("bedrock availability lookup failed, listing unfiltered catalog",
 			slog.String("registry_id", in.RegistryID.String()),
 			slog.String("region", creds.Region),
 			slog.String("error", err.Error()))
 		return in.Models
 	}
-	if len(available) == 0 {
-		f.logger.Warn("bedrock reported no serverless models, listing unfiltered catalog",
+	if !availability.EntitlementChecked {
+		f.logger.Warn("bedrock model access could not be verified; catalog may list models the account cannot invoke",
+			slog.String("registry_id", in.RegistryID.String()),
+			slog.String("region", creds.Region),
+			slog.String("hint", "grant bedrock:GetFoundationModelAvailability to these credentials"))
+	}
+
+	kept := make([]domain.Model, 0, len(availability.ModelIDs))
+	for _, model := range in.Models {
+		if _, ok := availability.ModelIDs[model.Slug]; ok {
+			kept = append(kept, model)
+		}
+	}
+
+	// An empty result is reported as-is once entitlement was verified: the
+	// account really can invoke none of these models, and offering them anyway
+	// would only move the failure to request time. Without a verdict the same
+	// emptiness may just mean the catalog slugs and AWS disagree, so fall back.
+	if len(kept) == 0 && !availability.EntitlementChecked {
+		f.logger.Warn("no catalog model matched bedrock model ids, listing unfiltered catalog",
 			slog.String("registry_id", in.RegistryID.String()),
 			slog.String("region", creds.Region))
 		return in.Models
 	}
-
-	kept := make([]domain.Model, 0, len(in.Models))
-	for _, model := range in.Models {
-		if _, ok := available[model.Slug]; ok {
-			kept = append(kept, model)
-		}
-	}
-	// No overlap means the catalog slugs and this account's model IDs disagree
-	// entirely — a catalog bug, not an empty account. Fall back rather than hand
-	// the UI a picker with nothing in it.
 	if len(kept) == 0 {
-		f.logger.Warn("no catalog model matched bedrock serverless ids, listing unfiltered catalog",
+		f.logger.Warn("no bedrock model is invocable with these credentials",
 			slog.String("registry_id", in.RegistryID.String()),
 			slog.String("region", creds.Region),
-			slog.Int("aws_models", len(available)))
-		return in.Models
+			slog.String("hint", "enable model access for this account in the Bedrock console"))
+		return kept
 	}
 
-	f.logger.Debug("bedrock catalog narrowed to serverless models",
+	f.logger.Debug("bedrock catalog narrowed to invocable models",
 		slog.String("registry_id", in.RegistryID.String()),
 		slog.String("region", creds.Region),
 		slog.Int("before", len(in.Models)),
@@ -162,24 +183,35 @@ func (f *serverlessFilter) credentials(
 	}, nil
 }
 
-func (f *serverlessFilter) serverlessIDs(
+func (f *serverlessFilter) availability(
 	ctx context.Context,
 	creds controlplane.Credentials,
-) (map[string]struct{}, error) {
-	key := creds.CacheKey()
+	candidates []string,
+) (controlplane.Availability, error) {
+	key := availabilityCacheKey(creds, candidates)
 	if cached, ok := f.cache.Get(key); ok {
-		if ids, ok := cached.(map[string]struct{}); ok {
-			return ids, nil
+		if availability, ok := cached.(controlplane.Availability); ok {
+			return availability, nil
 		}
 	}
 
 	lookupCtx, cancel := context.WithTimeout(ctx, serverlessLookupTimeout)
 	defer cancel()
 
-	ids, err := f.client.ListServerlessModelIDs(lookupCtx, creds)
+	availability, err := f.client.ListInvocableModelIDs(lookupCtx, creds, candidates)
 	if err != nil {
-		return nil, err
+		return controlplane.Availability{}, err
 	}
-	f.cache.Set(key, ids)
-	return ids, nil
+	f.cache.Set(key, availability)
+	return availability, nil
+}
+
+// availabilityCacheKey scopes a cached verdict to both the credentials and the
+// exact candidate set, so a catalog sync that adds or drops models is not served
+// a stale answer computed for the previous list.
+func availabilityCacheKey(creds controlplane.Credentials, candidates []string) string {
+	sorted := slices.Clone(candidates)
+	slices.Sort(sorted)
+	digest := sha256.Sum256([]byte(strings.Join(sorted, "\n")))
+	return creds.CacheKey() + "|" + hex.EncodeToString(digest[:8])
 }

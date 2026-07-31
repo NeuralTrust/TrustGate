@@ -13,17 +13,24 @@
 // limitations under the License.
 
 // Package controlplane queries the Amazon Bedrock control plane to discover
-// which model identifiers a set of credentials can invoke serverless.
+// which model identifiers a set of credentials can actually invoke.
 //
-// "Serverless" here means billed per request with no resource to deploy: base
-// models offering ON_DEMAND throughput, plus the system-defined cross-region
-// inference profiles (us./eu./global./…) that front them. Everything else
-// InvokeModel accepts in its modelId — Bedrock Marketplace endpoints,
-// Provisioned Throughput, custom and imported models — requires an ARN of a
-// resource the customer created, so it can never be served from a shared
-// catalog and is deliberately left out.
+// Two independent things have to hold, and the control plane reports them
+// through different APIs:
 //
-// Both calls are plain SigV4-signed GETs rather than the service/bedrock SDK
+//   - The model must be serverless — billed per request with no resource to
+//     deploy: a base model offering ON_DEMAND throughput, or a system-defined
+//     cross-region inference profile (us./eu./global./…) fronting one.
+//     Everything else InvokeModel accepts in its modelId (Bedrock Marketplace
+//     endpoints, Provisioned Throughput, custom and imported models) needs the
+//     ARN of a resource the customer created, so it cannot come from a shared
+//     catalog. ListFoundationModels and ListInferenceProfiles answer this.
+//   - The account must have been granted access to it. ListFoundationModels
+//     returns every model in the region regardless of access, so entitlement is
+//     a separate GetFoundationModelAvailability call per model — without it the
+//     catalog would keep offering models that fail with AccessDeniedException.
+//
+// All calls are plain SigV4-signed GETs rather than the service/bedrock SDK
 // module, matching how pkg/infra/cache signs its ElastiCache requests.
 package controlplane
 
@@ -37,6 +44,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -45,6 +53,7 @@ import (
 	awscredentials "github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -61,6 +70,14 @@ const (
 
 	foundationModelsPath  = "/foundation-models"
 	inferenceProfilesPath = "/inference-profiles"
+	availabilityPath      = "/foundation-model-availability/"
+
+	// entitlementConcurrency bounds the per-model availability calls, which run
+	// once per credential set per cache window.
+	entitlementConcurrency = 8
+
+	statusAuthorized = "AUTHORIZED"
+	statusAvailable  = "AVAILABLE"
 
 	// inferenceTypeOnDemand marks a base model that can be invoked by its plain
 	// model ID; inferenceTypeProfile marks one reachable only through an
@@ -102,12 +119,29 @@ func (c Credentials) CacheKey() string {
 	return fmt.Sprintf("%s|%s|%v|%s", c.Region, c.AccessKey, c.UseRole, c.RoleARN)
 }
 
+// Availability is the verdict on a set of candidate model IDs.
+type Availability struct {
+	// ModelIDs are the candidates these credentials can invoke.
+	ModelIDs map[string]struct{}
+	// EntitlementChecked reports whether model access was actually verified. It
+	// is false when the credentials cannot call GetFoundationModelAvailability
+	// (it needs bedrock:GetFoundationModelAvailability), in which case ModelIDs
+	// is only known to be serverless and may still contain models that fail with
+	// AccessDeniedException. Callers use it to tell a trustworthy empty result
+	// from an unverifiable one.
+	EntitlementChecked bool
+}
+
 //go:generate mockery --name=Client --dir=. --output=./mocks --filename=bedrock_controlplane_client_mock.go --case=underscore --with-expecter
 type Client interface {
-	// ListServerlessModelIDs returns the set of modelId values these credentials
-	// can pass to InvokeModel without deploying anything: on-demand base models
-	// and system-defined inference profiles.
-	ListServerlessModelIDs(ctx context.Context, creds Credentials) (map[string]struct{}, error)
+	// ListInvocableModelIDs narrows candidates to the model IDs these credentials
+	// can pass to InvokeModel and get a completion back: serverless, in this
+	// region, and with model access granted to the account.
+	//
+	// Candidates are filtered rather than the region's full model list enumerated
+	// so the per-model entitlement calls stay proportional to what the caller
+	// would actually offer.
+	ListInvocableModelIDs(ctx context.Context, creds Credentials, candidates []string) (Availability, error)
 }
 
 var _ Client = (*client)(nil)
@@ -129,27 +163,135 @@ func NewClient() Client {
 	}
 }
 
-func (c *client) ListServerlessModelIDs(ctx context.Context, creds Credentials) (map[string]struct{}, error) {
+func (c *client) ListInvocableModelIDs(
+	ctx context.Context,
+	creds Credentials,
+	candidates []string,
+) (Availability, error) {
 	if creds.Region == "" {
-		return nil, ErrRegionRequired
+		return Availability{}, ErrRegionRequired
 	}
+	if len(candidates) == 0 {
+		return Availability{ModelIDs: map[string]struct{}{}, EntitlementChecked: true}, nil
+	}
+
 	cfg, err := c.loadConfig(ctx, creds)
 	if err != nil {
-		return nil, fmt.Errorf("bedrock controlplane: load aws config: %w", err)
+		return Availability{}, fmt.Errorf("bedrock controlplane: load aws config: %w", err)
 	}
 	awsCreds, err := cfg.Credentials.Retrieve(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("bedrock controlplane: retrieve aws credentials: %w", err)
+		return Availability{}, fmt.Errorf("bedrock controlplane: retrieve aws credentials: %w", err)
 	}
 
-	ids := make(map[string]struct{})
-	if err := c.collectFoundationModels(ctx, awsCreds, creds.Region, ids); err != nil {
-		return nil, err
+	serverless := make(map[string]struct{})
+	if err := c.collectFoundationModels(ctx, awsCreds, creds.Region, serverless); err != nil {
+		return Availability{}, err
 	}
-	if err := c.collectInferenceProfiles(ctx, awsCreds, creds.Region, ids); err != nil {
-		return nil, err
+	if err := c.collectInferenceProfiles(ctx, awsCreds, creds.Region, serverless); err != nil {
+		return Availability{}, err
 	}
-	return ids, nil
+
+	shortlist := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if _, ok := serverless[candidate]; ok {
+			shortlist = append(shortlist, candidate)
+		}
+	}
+
+	entitled, checked := c.entitlements(ctx, awsCreds, creds.Region, shortlist)
+	out := make(map[string]struct{}, len(shortlist))
+	for _, id := range shortlist {
+		if !checked {
+			out[id] = struct{}{}
+			continue
+		}
+		// Entitlement is granted on the underlying base model, so every regional
+		// profile of a model shares one verdict.
+		if entitled[baseModelID(id)] {
+			out[id] = struct{}{}
+		}
+	}
+	return Availability{ModelIDs: out, EntitlementChecked: checked}, nil
+}
+
+type availabilityResponse struct {
+	AuthorizationStatus     string `json:"authorizationStatus"`
+	EntitlementAvailability string `json:"entitlementAvailability"`
+	RegionAvailability      string `json:"regionAvailability"`
+}
+
+// entitlements resolves model access for the distinct base models behind ids.
+// It returns checked=false when no verdict could be obtained at all — a missing
+// bedrock:GetFoundationModelAvailability permission must not silently empty the
+// caller's catalog — while a single model that errors is simply treated as not
+// entitled once at least one other verdict came back.
+func (c *client) entitlements(
+	ctx context.Context,
+	awsCreds aws.Credentials,
+	region string,
+	ids []string,
+) (map[string]bool, bool) {
+	bases := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		bases[baseModelID(id)] = struct{}{}
+	}
+	if len(bases) == 0 {
+		return nil, true
+	}
+
+	var (
+		mu       sync.Mutex
+		verdicts = make(map[string]bool, len(bases))
+		answered bool
+	)
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(entitlementConcurrency)
+	for base := range bases {
+		base := base
+		group.Go(func() error {
+			var payload availabilityResponse
+			err := c.get(groupCtx, awsCreds, region, availabilityPath+url.PathEscape(base), nil, &payload)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				verdicts[base] = false
+				return nil
+			}
+			answered = true
+			verdicts[base] = payload.AuthorizationStatus == statusAuthorized &&
+				payload.EntitlementAvailability == statusAvailable &&
+				payload.RegionAvailability == statusAvailable
+			return nil
+		})
+	}
+	_ = group.Wait()
+
+	if !answered {
+		return nil, false
+	}
+	return verdicts, true
+}
+
+// baseModelID strips the geography prefix of a cross-region inference profile
+// ("eu.anthropic.claude-…" -> "anthropic.claude-…"), which is the ID model
+// access is granted on. Plain model IDs are returned unchanged.
+func baseModelID(id string) string {
+	parts := strings.Split(id, ".")
+	if len(parts) < 3 {
+		return id
+	}
+	if _, ok := profileGeoPrefixes[parts[0]]; !ok {
+		return id
+	}
+	return strings.Join(parts[1:], ".")
+}
+
+// profileGeoPrefixes are the geography scopes AWS puts in front of a model ID to
+// name its cross-region inference profile.
+var profileGeoPrefixes = map[string]struct{}{
+	"us": {}, "us-gov": {}, "eu": {}, "apac": {}, "jp": {}, "au": {},
+	"ca": {}, "sa": {}, "global": {},
 }
 
 type foundationModelsResponse struct {

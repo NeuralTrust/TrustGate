@@ -84,12 +84,19 @@ func TestServerlessFilter_KeepsOnlyServerlessModels(t *testing.T) {
 	finder.EXPECT().FindByID(mock.Anything, gatewayID, registryID).
 		Return(bedrockRegistry(awsAuth()), nil).Once()
 	client.EXPECT().
-		ListServerlessModelIDs(mock.Anything, mock.MatchedBy(func(c controlplane.Credentials) bool {
+		ListInvocableModelIDs(mock.Anything, mock.MatchedBy(func(c controlplane.Credentials) bool {
 			return c.Region == "eu-west-1" && c.AccessKey == "AKIAEXAMPLE"
+		}), mock.MatchedBy(func(candidates []string) bool {
+			// Every catalog slug is offered as a candidate, so the client can keep
+			// its per-model entitlement calls proportional to what we would show.
+			return len(candidates) == 4 && candidates[2] == "google.gemma-3-4b-it"
 		})).
-		Return(map[string]struct{}{
-			"eu.anthropic.claude-sonnet-4-5-20250929-v1:0": {},
-			"amazon.nova-pro-v1:0":                         {},
+		Return(controlplane.Availability{
+			ModelIDs: map[string]struct{}{
+				"eu.anthropic.claude-sonnet-4-5-20250929-v1:0": {},
+				"amazon.nova-pro-v1:0":                         {},
+			},
+			EntitlementChecked: true,
 		}, nil).Once()
 
 	filter := appcatalog.NewServerlessFilter(finder, client, discardLogger())
@@ -120,8 +127,11 @@ func TestServerlessFilter_CachesPerCredentialSet(t *testing.T) {
 
 	finder.EXPECT().FindByID(mock.Anything, gatewayID, registryID).
 		Return(bedrockRegistry(awsAuth()), nil).Twice()
-	client.EXPECT().ListServerlessModelIDs(mock.Anything, mock.Anything).
-		Return(map[string]struct{}{"amazon.nova-pro-v1:0": {}}, nil).Once()
+	client.EXPECT().ListInvocableModelIDs(mock.Anything, mock.Anything, mock.Anything).
+		Return(controlplane.Availability{
+			ModelIDs:           map[string]struct{}{"amazon.nova-pro-v1:0": {}},
+			EntitlementChecked: true,
+		}, nil).Once()
 
 	filter := appcatalog.NewServerlessFilter(finder, client, discardLogger())
 	in := appcatalog.ServerlessFilterInput{
@@ -164,8 +174,8 @@ func TestServerlessFilter_FallsBackWhenLookupFails(t *testing.T) {
 
 	finder.EXPECT().FindByID(mock.Anything, gatewayID, registryID).
 		Return(bedrockRegistry(awsAuth()), nil).Once()
-	client.EXPECT().ListServerlessModelIDs(mock.Anything, mock.Anything).
-		Return(nil, errors.New("403 AccessDeniedException")).Once()
+	client.EXPECT().ListInvocableModelIDs(mock.Anything, mock.Anything, mock.Anything).
+		Return(controlplane.Availability{}, errors.New("403 AccessDeniedException")).Once()
 
 	filter := appcatalog.NewServerlessFilter(finder, client, discardLogger())
 	models := catalogModels("amazon.nova-pro-v1:0", "google.gemma-3-4b-it")
@@ -180,7 +190,10 @@ func TestServerlessFilter_FallsBackWhenLookupFails(t *testing.T) {
 	assert.Equal(t, models, got, "an unreachable control plane must not empty the picker")
 }
 
-func TestServerlessFilter_FallsBackWhenNothingOverlaps(t *testing.T) {
+// A verified empty answer is reported as empty: the account can invoke none of
+// these models, and listing them anyway would only move the failure to request
+// time — which is the whole point of the filter.
+func TestServerlessFilter_ReturnsEmptyWhenNothingIsInvocable(t *testing.T) {
 	t.Parallel()
 	finder := regmocks.NewFinder(t)
 	client := cpmocks.NewClient(t)
@@ -189,8 +202,39 @@ func TestServerlessFilter_FallsBackWhenNothingOverlaps(t *testing.T) {
 
 	finder.EXPECT().FindByID(mock.Anything, gatewayID, registryID).
 		Return(bedrockRegistry(awsAuth()), nil).Once()
-	client.EXPECT().ListServerlessModelIDs(mock.Anything, mock.Anything).
-		Return(map[string]struct{}{"something.else-v1:0": {}}, nil).Once()
+	client.EXPECT().ListInvocableModelIDs(mock.Anything, mock.Anything, mock.Anything).
+		Return(controlplane.Availability{
+			ModelIDs:           map[string]struct{}{},
+			EntitlementChecked: true,
+		}, nil).Once()
+
+	filter := appcatalog.NewServerlessFilter(finder, client, discardLogger())
+	got := filter.Filter(context.Background(), appcatalog.ServerlessFilterInput{
+		ProviderCode: providers.ProviderBedrock,
+		GatewayID:    gatewayID,
+		RegistryID:   registryID,
+		Models:       catalogModels("amazon.nova-pro-v1:0"),
+	})
+
+	assert.Empty(t, got)
+}
+
+// Without a verdict the same emptiness may just mean the catalog slugs and this
+// account's model IDs disagree, so the full list is the safer answer.
+func TestServerlessFilter_FallsBackWhenEmptyAndUnverified(t *testing.T) {
+	t.Parallel()
+	finder := regmocks.NewFinder(t)
+	client := cpmocks.NewClient(t)
+	gatewayID := ids.New[ids.GatewayKind]()
+	registryID := ids.New[ids.RegistryKind]()
+
+	finder.EXPECT().FindByID(mock.Anything, gatewayID, registryID).
+		Return(bedrockRegistry(awsAuth()), nil).Once()
+	client.EXPECT().ListInvocableModelIDs(mock.Anything, mock.Anything, mock.Anything).
+		Return(controlplane.Availability{
+			ModelIDs:           map[string]struct{}{},
+			EntitlementChecked: false,
+		}, nil).Once()
 
 	filter := appcatalog.NewServerlessFilter(finder, client, discardLogger())
 	models := catalogModels("amazon.nova-pro-v1:0")
