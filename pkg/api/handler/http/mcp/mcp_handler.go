@@ -56,6 +56,9 @@ const (
 const (
 	codeConsentRequired  = -32003
 	codeResourceNotFound = -32002
+	// codePolicyBlocked mirrors the app-layer policy-denial code, so a toolkit
+	// denial is classified alongside plugin blocks.
+	codePolicyBlocked = -32001
 )
 
 type Handler struct {
@@ -188,6 +191,7 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 	var (
 		rpcErr        *appmcp.RPCError
 		consentErr    *appmcp.ConsentRequiredError
+		notPermitted  *appmcp.ToolNotPermittedError
 		invalidParams *InvalidParamsError
 	)
 	switch {
@@ -213,6 +217,12 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 			"provider":    consentErr.Provider,
 			"connect_url": connectURL,
 		})
+		// HTTP 200 carrying a JSON-RPC error, not a 4xx. MCP streamable-HTTP
+		// clients treat any non-2xx on this endpoint as a transport failure: they
+		// drop the connection and restart authentication instead of reading the
+		// body, so the connect URL never reaches the user. The refusal is
+		// reported to the agent through the JSON-RPC error, and the semantic
+		// status (403) is recorded on the span for metrics and traces.
 		return writeJSON(c, rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
@@ -221,6 +231,17 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 				Message: fmt.Sprintf("user consent required: open %s to connect %s", connectURL, consentErr.Provider),
 				Data:    data,
 			},
+		})
+	case errors.As(err, &notPermitted):
+		// A denial the agent should read and act on, so it rides on HTTP 200 for
+		// the same transport reason as the consent case above; the span records
+		// it as forbidden. Written inline rather than through writeRPCError,
+		// which would reclassify the outcome as a generic client error.
+		middleware.SetOpsOutcome(c, o11y.OutcomeDeniedPolicy)
+		return writeJSON(c, rpcResponse{
+			JSONRPC: "2.0",
+			ID:      normalizeID(id),
+			Error:   &rpcError{Code: codePolicyBlocked, Message: notPermitted.Error()},
 		})
 	case errors.As(err, &invalidParams):
 		return writeRPCError(c, id, codeInvalidParams, invalidParams.Reason)

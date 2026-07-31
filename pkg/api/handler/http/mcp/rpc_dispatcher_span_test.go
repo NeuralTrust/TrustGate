@@ -103,6 +103,33 @@ func TestRPCGateway_Dispatch_RecordsPolicyBlockedHTTPStatus(t *testing.T) {
 	assert.Equal(t, -32001, attrs.RPCErrorCode)
 }
 
+// The wire answers 200 so MCP clients parse the error, but telemetry must still
+// say what the refusal means: an upstream the user has not connected is an
+// authorization gap, not a broken gateway. Recording it as 502 hid real
+// upstream failures among routine consent prompts.
+func TestRPCGateway_Dispatch_RecordsConsentAsForbidden(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().
+		CallTool(mock.Anything, mock.Anything, "notion-search", mock.Anything).
+		Return(nil, &appmcp.ConsentRequiredError{
+			Provider: "com.notion/mcp", Ticket: "tk", Path: "/p/mcp",
+		}).Once()
+
+	rt := trace.New("t-4", trace.Metadata{Kind: events.KindMCP})
+	ctx := trace.NewContext(context.Background(), rt)
+
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), nil)
+	_, err := g.Dispatch(ctx, &appconsumer.RoutableConsumer{}, "tools/call",
+		json.RawMessage(`{"name":"notion-search"}`))
+	require.Error(t, err)
+
+	attrs, ok := rt.Spans()[0].MCPAttrsCopy()
+	require.True(t, ok)
+	assert.Equal(t, http.StatusForbidden, attrs.UpstreamStatus)
+	assert.Equal(t, -32003, attrs.RPCErrorCode)
+}
+
 type assertErr struct{}
 
 func (assertErr) Error() string { return "boom" }
