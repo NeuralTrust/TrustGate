@@ -89,3 +89,17 @@ func TestCohereRerankAdapter_DecodeRequest_Model(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "rerank-english-v3.0", got.Model)
 }
+
+func TestCohere_DecodeStreamChunk_SkipsThinking(t *testing.T) {
+	a := &CohereAdapter{}
+	thinking := []byte(`{"type":"content-delta","delta":{"message":{"content":{"type":"thinking","thinking":"private"}}}}`)
+	chunk, err := a.DecodeStreamChunk(thinking)
+	require.NoError(t, err)
+	assert.Nil(t, chunk)
+
+	text := []byte(`{"type":"content-delta","delta":{"message":{"content":{"type":"text","text":"hello"}}}}`)
+	chunk, err = a.DecodeStreamChunk(text)
+	require.NoError(t, err)
+	require.NotNil(t, chunk)
+	assert.Equal(t, "hello", chunk.Delta)
+}

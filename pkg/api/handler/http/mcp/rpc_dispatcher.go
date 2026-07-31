@@ -174,7 +174,15 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		if tools == nil {
 			tools = []appmcp.Tool{}
 		}
-		return map[string]any{"tools": tools}, nil
+		result := map[string]any{"tools": tools}
+		raw, err := json.Marshal(result)
+		if err != nil {
+			return nil, err
+		}
+		if err := g.plugins.PreResponseResult(ctx, rc, raw); err != nil {
+			return nil, err
+		}
+		return result, nil
 	case "tools/call":
 		var p struct {
 			Name      string          `json:"name"`

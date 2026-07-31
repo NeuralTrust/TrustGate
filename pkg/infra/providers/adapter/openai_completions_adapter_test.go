@@ -143,3 +143,25 @@ func TestUsageSubCounts_OpenAIChat_ReasoningOutput(t *testing.T) {
 	assert.Equal(t, 12, cr.Usage.ReasoningOutputTokens)
 	assert.Equal(t, 20, cr.Usage.OutputTokens, "ReasoningOutputTokens is a sub-count; OutputTokens must not be reduced")
 }
+
+func TestCanonical_OpenAI_Completions_DeveloperAndRefusal(t *testing.T) {
+	a := &OpenAIAdapter{}
+	req := `{
+		"model":"gpt-5-mini",
+		"messages":[
+			{"role":"developer","content":"Prefer tools."},
+			{"role":"user","content":"hi"}
+		]
+	}`
+	cr, err := a.DecodeRequest([]byte(req))
+	require.NoError(t, err)
+	assert.Equal(t, "Prefer tools.", cr.System)
+	require.Len(t, cr.Messages, 1)
+
+	resp := `{
+		"choices":[{"message":{"role":"assistant","content":null,"refusal":"I cannot help with that."},"finish_reason":"stop"}]
+	}`
+	cresp, err := a.DecodeResponse([]byte(resp))
+	require.NoError(t, err)
+	assert.Equal(t, "I cannot help with that.", cresp.Content)
+}

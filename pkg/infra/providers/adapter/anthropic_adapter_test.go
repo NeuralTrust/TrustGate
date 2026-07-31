@@ -334,3 +334,31 @@ func TestAnthropicSSE_CacheFieldRoundTrip_MessageStart(t *testing.T) {
 	assert.Equal(t, 4, decoded.Usage.CacheCreationInputTokens)
 	assert.Equal(t, 9, decoded.Usage.CacheReadInputTokens)
 }
+
+func TestCanonical_Anthropic_SystemArrayAndToolResultBlocks(t *testing.T) {
+	input := `{
+		"model": "claude-sonnet-4-5",
+		"max_tokens": 1024,
+		"system": [{"type":"text","text":"Be concise."}],
+		"messages": [
+			{"role":"user","content":[{"type":"text","text":"Weather?"}]},
+			{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"get_lat_lng","input":{"location_description":"Beijing"}}]},
+			{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":[{"type":"text","text":"timeout"}]}]}
+		]
+	}`
+	a := &AnthropicAdapter{}
+	cr, err := a.DecodeRequest([]byte(input))
+	require.NoError(t, err)
+	assert.Equal(t, "Be concise.", cr.System)
+	require.GreaterOrEqual(t, len(cr.Messages), 2)
+	var tool *CanonicalMessage
+	for i := range cr.Messages {
+		if cr.Messages[i].Role == "tool" {
+			tool = &cr.Messages[i]
+			break
+		}
+	}
+	require.NotNil(t, tool)
+	assert.Equal(t, "error: timeout", tool.Content)
+	assert.Equal(t, "t1", tool.ToolCallID)
+}

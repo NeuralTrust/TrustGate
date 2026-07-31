@@ -27,7 +27,7 @@ type AnthropicAdapter struct{}
 // Provider-specific typed structs
 type anthropicRequest struct {
 	Model       string                 `json:"model,omitempty"`
-	System      string                 `json:"system,omitempty"`
+	System      json.RawMessage        `json:"system,omitempty"`
 	Messages    []anthropicMessage     `json:"messages"`
 	MaxTokens   int                    `json:"max_tokens"`
 	Temperature *float64               `json:"temperature,omitempty"`
@@ -86,7 +86,8 @@ type anthropicContentBlock struct {
 	Name         string          `json:"name,omitempty"`
 	Input        json.RawMessage `json:"input,omitempty"`
 	ToolUseID    string          `json:"tool_use_id,omitempty"` // user message: tool_result block
-	BlockContent string          `json:"content,omitempty"`     // user message: tool_result block content
+	Content      json.RawMessage `json:"content,omitempty"`     // tool_result content: string or blocks
+	IsError      bool            `json:"is_error,omitempty"`
 }
 
 type anthropicUsage struct {
@@ -249,10 +250,14 @@ func decodeAnthropicMessageContent(role string, content json.RawMessage) []Canon
 		for _, b := range blocks {
 			switch b.Type {
 			case "tool_result":
+				content := anthropicToolResultText(b.Content)
+				if b.IsError && content != "" {
+					content = "error: " + content
+				}
 				toolMessages = append(toolMessages, CanonicalMessage{
 					Role:       "tool",
 					ToolCallID: b.ToolUseID,
-					Content:    b.BlockContent,
+					Content:    content,
 				})
 			case "text":
 				textParts = append(textParts, b.Text)
@@ -302,7 +307,7 @@ func (a *AnthropicAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error)
 
 	cr := &CanonicalRequest{
 		Model:       req.Model,
-		System:      req.System,
+		System:      anthropicSystemText(req.System),
 		MaxTokens:   req.MaxTokens,
 		Temperature: req.Temperature,
 		TopP:        req.TopP,
@@ -349,7 +354,7 @@ func (a *AnthropicAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error)
 func (a *AnthropicAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 	out := anthropicRequest{
 		Model:       req.Model,
-		System:      req.System,
+		System:      anthropicSystemRaw(req.System),
 		Temperature: req.Temperature,
 		TopP:        req.TopP,
 		TopK:        req.TopK,
@@ -374,10 +379,11 @@ func (a *AnthropicAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) 
 		if m.Role == "tool" {
 			var toolResultBlocks []anthropicContentBlock
 			for i < len(req.Messages) && req.Messages[i].Role == "tool" {
+				content, _ := json.Marshal(req.Messages[i].Content)
 				toolResultBlocks = append(toolResultBlocks, anthropicContentBlock{
-					Type:         "tool_result",
-					ToolUseID:    req.Messages[i].ToolCallID,
-					BlockContent: req.Messages[i].Content,
+					Type:      "tool_result",
+					ToolUseID: req.Messages[i].ToolCallID,
+					Content:   content,
 				})
 				i++
 			}
@@ -799,4 +805,61 @@ func (a *AnthropicAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]b
 	}
 
 	return nil, nil
+}
+
+func anthropicSystemText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return strings.TrimSpace(s)
+	}
+	var blocks []anthropicContentBlock
+	if json.Unmarshal(raw, &blocks) != nil {
+		return strings.TrimSpace(contentToString(raw))
+	}
+	parts := make([]string, 0, len(blocks))
+	for _, b := range blocks {
+		if b.Type == "" || b.Type == "text" {
+			if t := strings.TrimSpace(b.Text); t != "" {
+				parts = append(parts, t)
+			}
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func anthropicSystemRaw(system string) json.RawMessage {
+	if strings.TrimSpace(system) == "" {
+		return nil
+	}
+	raw, err := json.Marshal(system)
+	if err != nil {
+		return nil
+	}
+	return raw
+}
+
+func anthropicToolResultText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var blocks []anthropicContentBlock
+	if json.Unmarshal(raw, &blocks) == nil {
+		parts := make([]string, 0, len(blocks))
+		for _, b := range blocks {
+			if b.Type == "text" || b.Type == "" {
+				if t := strings.TrimSpace(b.Text); t != "" {
+					parts = append(parts, t)
+				}
+			}
+		}
+		return strings.Join(parts, "\n")
+	}
+	return contentToString(raw)
 }
