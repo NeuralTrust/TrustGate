@@ -208,7 +208,6 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 			if !mcpOutputInspectable(in.Response.Body) {
 				return passThrough(), nil
 			}
-			text = mcpOutputText(in.Response.Body)
 			raw, err := mcpToolsResultPayload(in.Response.Body)
 			if err != nil {
 				p.warn(ctx, "trustguard mcp tools/result payload build failed, failing open",
@@ -268,7 +267,6 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 				if decErr != nil || cresp == nil {
 					return passThrough(), nil
 				}
-				text = cresp.Content
 			}
 			if !responseHasInspectableContent(cresp) && len(reqTools) == 0 {
 				return passThrough(), nil
