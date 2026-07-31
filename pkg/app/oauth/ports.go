@@ -59,6 +59,13 @@ type RegisteredClient struct {
 type ClientStore interface {
 	SaveClient(ctx context.Context, key string, c RegisteredClient) error
 	GetClient(ctx context.Context, key string) (*RegisteredClient, error)
+	// SaveClientIfAbsent stores c only when no client is registered under key
+	// yet, and returns whichever client ends up stored — c when this caller won
+	// the claim, the incumbent when another replica got there first. Dynamic
+	// client registration is not idempotent: two replicas registering
+	// concurrently mint two client_ids, and the one that loses a last-write-wins
+	// save takes every refresh token issued to it down with it.
+	SaveClientIfAbsent(ctx context.Context, key string, c RegisteredClient) (*RegisteredClient, error)
 }
 
 //go:generate mockery --name=UpstreamRegistrar --dir=. --output=./mocks --filename=oauth_upstream_registrar_mock.go --case=underscore --with-expecter

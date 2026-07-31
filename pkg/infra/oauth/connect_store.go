@@ -88,6 +88,34 @@ func (s *ConnectStore) SaveClient(ctx context.Context, key string, c appoauth.Re
 	return s.set(ctx, clientPrefix+key, c, 0)
 }
 
+// SaveClientIfAbsent claims the registration slot atomically (SETNX), so that
+// when several replicas register a dynamic client at the same moment exactly
+// one client_id survives and every replica converges on it.
+func (s *ConnectStore) SaveClientIfAbsent(ctx context.Context, key string, c appoauth.RegisteredClient) (*appoauth.RegisteredClient, error) {
+	raw, err := json.Marshal(c)
+	if err != nil {
+		return nil, fmt.Errorf("oauth connect store: encode client: %w", err)
+	}
+	won, err := s.rdb.SetNX(ctx, clientPrefix+key, raw, 0).Result()
+	if err != nil {
+		return nil, fmt.Errorf("oauth connect store: claim client: %w", err)
+	}
+	if won {
+		return &c, nil
+	}
+	incumbent, err := s.GetClient(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	if incumbent == nil {
+		// The winner's entry vanished between SETNX and the read (eviction or an
+		// explicit delete). Fall back to our own registration rather than
+		// reporting no client at all.
+		return &c, nil
+	}
+	return incumbent, nil
+}
+
 func (s *ConnectStore) GetClient(ctx context.Context, key string) (*appoauth.RegisteredClient, error) {
 	raw, err := s.rdb.Get(ctx, clientPrefix+key).Bytes()
 	if errors.Is(err, redis.Nil) {

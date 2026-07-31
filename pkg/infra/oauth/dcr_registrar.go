@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -142,8 +143,17 @@ func (r *upstreamRegistrar) discover(ctx context.Context, upstreamURL string) (*
 }
 
 func (r *upstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *appoauth.UpstreamAuthServer, redirectURI string) (*appoauth.RegisteredClient, error) {
-	if c, err := r.clients.GetClient(ctx, key); err == nil && c != nil && c.RedirectURI == redirectURI {
-		return c, nil
+	cached, cacheErr := r.clients.GetClient(ctx, key)
+	if cacheErr == nil && cached != nil && cached.RedirectURI == redirectURI {
+		return cached, nil
+	}
+	// A client is already registered but for a different redirect URI. Replacing
+	// it is deliberate, and it invalidates every refresh token the old client
+	// holds, so say so rather than losing those grants silently.
+	replacing := cacheErr == nil && cached != nil
+	if replacing {
+		slog.Warn("oauth dcr: re-registering upstream client because the redirect URI changed; grants held by the previous client can no longer be refreshed",
+			"key", key, "old_redirect_uri", cached.RedirectURI, "new_redirect_uri", redirectURI)
 	}
 	if meta.RegistrationEndpoint == "" {
 		return nil, fmt.Errorf("%w: authorization server has no registration_endpoint", appoauth.ErrUpstreamNotDiscoverable)
@@ -180,10 +190,26 @@ func (r *upstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *
 		return nil, fmt.Errorf("oauth dcr: registration response has no client_id")
 	}
 	client := &appoauth.RegisteredClient{ClientID: doc.ClientID, ClientSecret: doc.ClientSecret, RedirectURI: redirectURI}
-	if err := r.clients.SaveClient(ctx, key, *client); err != nil {
+	if replacing {
+		if err := r.clients.SaveClient(ctx, key, *client); err != nil {
+			return nil, err
+		}
+		return client, nil
+	}
+	// First registration for this upstream. Other replicas may be registering
+	// at the same moment; claim the slot atomically so all of them converge on a
+	// single client_id. Overwriting here would strand the refresh tokens issued
+	// to the client that lost the race, which surfaces later as invalid_grant
+	// and drags the user back through consent.
+	stored, err := r.clients.SaveClientIfAbsent(ctx, key, *client)
+	if err != nil {
 		return nil, err
 	}
-	return client, nil
+	if stored.ClientID != client.ClientID {
+		slog.Info("oauth dcr: discarding duplicate client registration; another replica claimed this upstream first",
+			"key", key, "kept_client_id", stored.ClientID)
+	}
+	return stored, nil
 }
 
 func (r *upstreamRegistrar) CachedClient(ctx context.Context, key string) (*appoauth.RegisteredClient, error) {
