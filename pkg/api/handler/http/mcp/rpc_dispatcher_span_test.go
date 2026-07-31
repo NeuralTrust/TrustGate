@@ -103,9 +103,10 @@ func TestRPCGateway_Dispatch_RecordsPolicyBlockedHTTPStatus(t *testing.T) {
 	assert.Equal(t, -32001, attrs.RPCErrorCode)
 }
 
-// An upstream the user has not connected yet is an authorization gap, not a
-// broken gateway: recording it as 502 hid real upstream failures among routine
-// consent prompts.
+// The wire answers 200 so MCP clients parse the error, but telemetry must still
+// say what the refusal means: an upstream the user has not connected is an
+// authorization gap, not a broken gateway. Recording it as 502 hid real
+// upstream failures among routine consent prompts.
 func TestRPCGateway_Dispatch_RecordsConsentAsForbidden(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)

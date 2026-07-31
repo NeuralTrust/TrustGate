@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"net/url"
 	"time"
 
@@ -111,11 +110,7 @@ func (c *composer) CallTool(ctx context.Context, rc *appconsumer.RoutableConsume
 	// forbidden tool sends the user off to an authorization flow that cannot
 	// grant it.
 	if _, forbidden := comp.denied[name]; forbidden {
-		return nil, &RPCError{
-			Code:       codePolicyBlocked,
-			Message:    fmt.Sprintf("tool %q is not permitted for this consumer", name),
-			HTTPStatus: http.StatusForbidden,
-		}
+		return nil, &ToolNotPermittedError{Tool: name}
 	}
 	// No reachable upstream exposes this tool. If another upstream is still
 	// awaiting consent it may be the one that owns the tool, so the consent

@@ -27,3 +27,15 @@ var (
 	ErrNoMCPRegistries     = fmt.Errorf("mcp: no MCP registries attached to consumer: %w", commonerrors.ErrValidation)
 	ErrUpstreamUnavailable = fmt.Errorf("mcp: upstream unavailable")
 )
+
+// ToolNotPermittedError reports a tool the upstream offers but the consumer's
+// toolkit excludes. It is a denial, not a missing tool and not an upstream
+// failure, so it carries its own type: the handler answers it as a policy block
+// the agent can read, while telemetry records it as forbidden.
+type ToolNotPermittedError struct {
+	Tool string
+}
+
+func (e *ToolNotPermittedError) Error() string {
+	return fmt.Sprintf("mcp: tool %q is not permitted for this consumer", e.Tool)
+}

@@ -78,18 +78,22 @@ func (g *RPCGateway) finishSpan(span *trace.Span, err error) {
 	}
 	span.SetError(err.Error())
 	var (
-		rpcErr     *appmcp.RPCError
-		consentErr *appmcp.ConsentRequiredError
+		rpcErr       *appmcp.RPCError
+		consentErr   *appmcp.ConsentRequiredError
+		notPermitted *appmcp.ToolNotPermittedError
 	)
 	switch {
 	case errors.As(err, &rpcErr):
 		span.SetMCPStatus(rpcErr.ResolvedHTTPStatus(), int(rpcErr.Code))
 	case errors.As(err, &consentErr):
-		// An upstream the user has not connected yet is an authorization gap,
-		// not a broken gateway; recording it as 502 buried real upstream
-		// failures under routine consent prompts. Mirrors the 403 sent on the
-		// wire — 401 makes MCP clients retry the gateway's own OAuth forever.
+		// Both of these answer HTTP 200 on the wire so MCP clients parse the
+		// JSON-RPC error instead of tearing down the transport. The status the
+		// refusal *means* belongs in telemetry, which is what this records:
+		// otherwise an unconnected upstream showed up as a 502 and buried real
+		// upstream failures among routine consent prompts.
 		span.SetMCPStatus(http.StatusForbidden, codeConsentRequired)
+	case errors.As(err, &notPermitted):
+		span.SetMCPStatus(http.StatusForbidden, codePolicyBlocked)
 	case errors.Is(err, appmcp.ErrToolNotFound), errors.Is(err, appmcp.ErrPromptNotFound),
 		errors.Is(err, appmcp.ErrResourceNotFound):
 		span.SetMCPStatus(http.StatusNotFound, 0)
