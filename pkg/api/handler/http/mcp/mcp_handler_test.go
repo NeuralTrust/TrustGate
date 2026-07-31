@@ -192,6 +192,38 @@ func TestHandler_ToolsCall_PassesUpstreamRPCErrorThrough(t *testing.T) {
 	}
 }
 
+// Calling a tool on an upstream the user has not connected is an authorization
+// gap, so it answers 401 and carries the connect URL. No WWW-Authenticate is
+// advertised: the caller's gateway credentials are fine, and a challenge here
+// would push MCP clients back through the gateway's own OAuth flow.
+func TestHandler_ToolsCall_ConsentRequiredIsUnauthorized(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "notion-search", mock.Anything).
+		Return(nil, &appmcp.ConsentRequiredError{
+			Provider: "com.notion/mcp", Ticket: "tk", Path: "/virtual/mcp",
+		}).Once()
+	app := newApp(t, composer, consumerdomain.TypeMCP, true)
+
+	status, body := rpcCall(t, app,
+		`{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"notion-search"}}`)
+	if status != fiber.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 for an unconnected upstream", status)
+	}
+	rpcErr := body["error"].(map[string]any)
+	if rpcErr["code"].(float64) != -32003 {
+		t.Fatalf("code = %v, want -32003", rpcErr["code"])
+	}
+	data := rpcErr["data"].(map[string]any)
+	if data["provider"] != "com.notion/mcp" {
+		t.Fatalf("provider = %v", data["provider"])
+	}
+	connectURL, _ := data["connect_url"].(string)
+	if !strings.Contains(connectURL, "/virtual/mcp/connect?ticket=tk") {
+		t.Fatalf("connect_url = %q, want the consumer's connect page", connectURL)
+	}
+}
+
 func TestHandler_UnknownMethod_MapsToMethodNotFound(t *testing.T) {
 	t.Parallel()
 	app := newApp(t, mocks.NewComposer(t), consumerdomain.TypeMCP, true)
