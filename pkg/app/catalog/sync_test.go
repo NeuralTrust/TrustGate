@@ -194,6 +194,52 @@ func TestSyncer_Sync_SkipsBedrockModelsOnAlternativeEndpoints(t *testing.T) {
 	}
 }
 
+// Only the global inference profile is offered, so the geography-scoped
+// duplicates of a model (us., eu., jp., au.) never reach the catalog — not even
+// for clients that list models without scoping the request to a registry.
+func TestSyncer_Sync_SkipsGeographyScopedBedrockProfiles(t *testing.T) {
+	t.Parallel()
+	const payload = `{
+		"amazon-bedrock": {
+			"id": "amazon-bedrock",
+			"name": "Amazon Bedrock",
+			"models": {
+				"anthropic.claude-opus-5": {"id":"anthropic.claude-opus-5","name":"Claude Opus 5"},
+				"global.anthropic.claude-opus-5": {"id":"global.anthropic.claude-opus-5","name":"Claude Opus 5 (Global)"},
+				"us.anthropic.claude-opus-5": {"id":"us.anthropic.claude-opus-5","name":"Claude Opus 5 (US)"},
+				"eu.anthropic.claude-opus-5": {"id":"eu.anthropic.claude-opus-5","name":"Claude Opus 5 (EU)"},
+				"jp.anthropic.claude-opus-5": {"id":"jp.anthropic.claude-opus-5","name":"Claude Opus 5 (JP)"},
+				"au.anthropic.claude-opus-5": {"id":"au.anthropic.claude-opus-5","name":"Claude Opus 5 (AU)"},
+				"amazon.nova-pro-v1:0": {"id":"amazon.nova-pro-v1:0","name":"Nova Pro"}
+			}
+		}
+	}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, payload)
+	}))
+	defer srv.Close()
+
+	repo := newFakeRepo()
+	s := NewSyncer(repo, modelsdev.NewClient(srv.URL), slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	if err := s.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync error: %v", err)
+	}
+
+	got := map[string]bool{}
+	for _, slug := range repo.disabledCalls[repo.providers["bedrock"].ID] {
+		got[slug] = true
+	}
+	want := []string{"anthropic.claude-opus-5", "global.anthropic.claude-opus-5", "amazon.nova-pro-v1:0"}
+	if len(got) != len(want) {
+		t.Fatalf("bedrock keep slugs = %v, want exactly %v", got, want)
+	}
+	for _, slug := range want {
+		if !got[slug] {
+			t.Fatalf("bedrock keep slugs = %v, missing %q", got, slug)
+		}
+	}
+}
+
 func TestSyncer_Sync_PropagatesClientError(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

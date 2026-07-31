@@ -21,6 +21,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock/controlplane"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bootlog"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/catalog/modelsdev"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
@@ -122,15 +123,25 @@ var modelsDevProviderToCode = map[string]string{
 }
 
 // skipModel drops catalog entries the gateway could never invoke as published.
+// Both rules are scoped to Bedrock; other providers are synced verbatim.
 //
-// On Bedrock, models.dev lists some models twice: once under their InvokeModel
+// The first covers models models.dev lists twice: once under their InvokeModel
 // ID and once behind an alternative OpenAI-compatible endpoint, which the
 // Bedrock client does not speak (e.g. "openai.gpt-oss-20b" alongside the real
 // "openai.gpt-oss-20b-1:0"). Other providers legitimately reach models through
-// an alternative endpoint — Claude on Vertex and Azure, for one — so the rule is
-// scoped to Bedrock rather than applied to the whole catalog.
+// an alternative endpoint — Claude on Vertex and Azure, for one — hence the
+// narrow scope.
+//
+// The second drops inference profiles bound to one geography. Only the global
+// profile is offered, so that a catalog entry is valid whatever region a
+// registry is configured with. Filtering here rather than only at listing time
+// keeps the stored catalog free of entries no registry should pick, including
+// for clients that do not scope their request to a registry.
 func skipModel(providerCode string, m modelsdev.Model) bool {
-	return providerCode == providers.ProviderBedrock && m.AltAPI != ""
+	if providerCode != providers.ProviderBedrock {
+		return false
+	}
+	return m.AltAPI != "" || controlplane.IsGeographyScopedProfile(m.Slug)
 }
 
 //go:generate mockery --name=Syncer --dir=. --output=./mocks --filename=catalog_syncer_mock.go --case=underscore --with-expecter
