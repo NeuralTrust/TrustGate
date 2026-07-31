@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"iter"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -315,19 +314,18 @@ func stripBedrockFields(body []byte) []byte {
 }
 
 // Cross-format adaptation strips the model from the body (Bedrock resolves it
-// from the InvokeModel path), so it falls back to cfg. The "eu." region prefix
-// is trimmed to the standard Bedrock model ID.
+// from the InvokeModel path), so it falls back to cfg.
 func (c *client) resolveModel(reqBody []byte, cfg *providers.Config) string {
 	if modelID, err := extractBedrockModelID(reqBody); err == nil && modelID != "" {
 		return modelID
 	}
 	if extracted, err := adapter.ExtractModel(reqBody); err == nil && extracted != "" {
-		return bedrockModelID(extracted)
+		return extracted
 	}
 	if cfg.Model != "" {
-		return bedrockModelID(cfg.Model)
+		return cfg.Model
 	}
-	return bedrockModelID(cfg.DefaultModel)
+	return cfg.DefaultModel
 }
 
 func extractBedrockModelID(body []byte) (string, error) {
@@ -340,13 +338,8 @@ func extractBedrockModelID(body []byte) (string, error) {
 	return probe.ModelID, nil
 }
 
-// bedrockModelID returns the model ID to pass to InvokeModel. Removes a leading
-// "eu." region prefix when present so the API receives the standard Bedrock
-// identifier. The "us." prefix is left as-is since it is part of some Bedrock
-// model IDs.
-func bedrockModelID(model string) string {
-	if strings.HasPrefix(model, "eu.") {
-		return strings.TrimPrefix(model, "eu.")
-	}
-	return model
-}
+// The model identifier is passed through to InvokeModel untouched. A geography
+// prefix such as "eu." or "us." names a cross-region inference profile, which is
+// the only way to invoke many newer models: rewriting it to the bare model ID
+// makes AWS answer "Invocation of model ID … with on-demand throughput isn't
+// supported. Retry your request with the ID or ARN of an inference profile".

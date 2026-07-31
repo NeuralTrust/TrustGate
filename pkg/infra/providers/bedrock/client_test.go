@@ -112,10 +112,24 @@ func TestStripBedrockFields(t *testing.T) {
 	assert.Contains(t, raw, "messages")
 }
 
-func TestBedrockModelID(t *testing.T) {
-	assert.Equal(t, "anthropic.claude-3", bedrockModelID("eu.anthropic.claude-3"))
-	assert.Equal(t, "us.deepseek.r1", bedrockModelID("us.deepseek.r1"), "us. prefix is preserved")
-	assert.Equal(t, "amazon.titan", bedrockModelID("amazon.titan"))
+// Inference profile IDs must survive model resolution: rewriting
+// "eu.anthropic.…" to the bare model ID makes AWS reject the call, since many
+// newer models cannot be invoked with on-demand throughput at all.
+func TestResolveModel_PreservesInferenceProfilePrefix(t *testing.T) {
+	c := &client{}
+	// Bedrock-format body: encodeClaude has already removed "model", so the
+	// identifier can only come from the config.
+	body := []byte(`{"anthropic_version":"bedrock-2023-05-31","messages":[]}`)
+
+	for _, model := range []string{
+		"eu.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		"us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		"global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		"anthropic.claude-sonnet-4-5-20250929-v1:0",
+	} {
+		assert.Equal(t, model, c.resolveModel(body, &providers.Config{Model: model}))
+		assert.Equal(t, model, c.resolveModel(body, &providers.Config{DefaultModel: model}))
+	}
 }
 
 func TestExtractBedrockModelID(t *testing.T) {

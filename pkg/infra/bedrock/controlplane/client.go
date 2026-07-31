@@ -43,6 +43,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -80,10 +81,9 @@ const (
 	statusAvailable  = "AVAILABLE"
 
 	// inferenceTypeOnDemand marks a base model that can be invoked by its plain
-	// model ID; inferenceTypeProfile marks one reachable only through an
-	// inference profile, whose IDs are collected separately.
+	// model ID. A model without it is reachable only through an inference
+	// profile, whose IDs are collected separately.
 	inferenceTypeOnDemand = "ON_DEMAND"
-	inferenceTypeProfile  = "INFERENCE_PROFILE"
 
 	// profileTypeSystemDefined selects the cross-region profiles AWS predefines;
 	// APPLICATION profiles are customer-created and account-specific.
@@ -315,10 +315,14 @@ type foundationModelsResponse struct {
 	} `json:"modelSummaries"`
 }
 
-// collectFoundationModels adds every base model that can be billed per request.
-// Models flagged INFERENCE_PROFILE only are counted too: their plain ID is not
-// invocable, but keeping them lets the catalog show the model, and the matching
-// profile ID arrives from collectInferenceProfiles.
+// collectFoundationModels adds the base models invocable by their plain ID, i.e.
+// those offering ON_DEMAND throughput.
+//
+// A model whose only inference type is INFERENCE_PROFILE is deliberately left
+// out: passing its bare ID to InvokeModel fails with "Invocation of model ID …
+// with on-demand throughput isn't supported. Retry your request with the ID or
+// ARN of an inference profile". Such a model reaches the catalog through its
+// profile IDs, which collectInferenceProfiles adds.
 func (c *client) collectFoundationModels(
 	ctx context.Context,
 	awsCreds aws.Credentials,
@@ -333,11 +337,8 @@ func (c *client) collectFoundationModels(
 		if summary.ModelID == "" {
 			continue
 		}
-		for _, inferenceType := range summary.InferenceTypesSupported {
-			if inferenceType == inferenceTypeOnDemand || inferenceType == inferenceTypeProfile {
-				out[summary.ModelID] = struct{}{}
-				break
-			}
+		if slices.Contains(summary.InferenceTypesSupported, inferenceTypeOnDemand) {
+			out[summary.ModelID] = struct{}{}
 		}
 	}
 	return nil
