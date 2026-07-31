@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"net/http"
 	"sync"
 	"testing"
 
@@ -458,15 +457,12 @@ func TestComposer_CallTool_ToolkitDeniedIsForbidden(t *testing.T) {
 	}, notion)
 
 	_, err := c.CallTool(context.Background(), rc, "notion-search", nil)
-	var rpcErr *RPCError
-	if !errors.As(err, &rpcErr) {
-		t.Fatalf("error = %v, want an RPCError policy denial", err)
+	var denied *ToolNotPermittedError
+	if !errors.As(err, &denied) {
+		t.Fatalf("error = %v, want ToolNotPermittedError", err)
 	}
-	if rpcErr.ResolvedHTTPStatus() != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403", rpcErr.ResolvedHTTPStatus())
-	}
-	if !IsPolicyBlockedCode(rpcErr.Code) {
-		t.Fatalf("code = %d, want the policy-blocked code", rpcErr.Code)
+	if denied.Tool != "notion-search" {
+		t.Fatalf("tool = %q, want notion-search", denied.Tool)
 	}
 	if up.lastCall != "" {
 		t.Fatalf("upstream was invoked with %q for a denied tool", up.lastCall)
@@ -505,9 +501,9 @@ func TestComposer_CallTool_DeniedToolBeatsPendingConsent(t *testing.T) {
 	if errors.As(err, &consent) {
 		t.Fatal("a forbidden tool must not send the user through a consent flow")
 	}
-	var rpcErr *RPCError
-	if !errors.As(err, &rpcErr) || rpcErr.ResolvedHTTPStatus() != http.StatusForbidden {
-		t.Fatalf("error = %v, want 403 policy denial", err)
+	var denied *ToolNotPermittedError
+	if !errors.As(err, &denied) {
+		t.Fatalf("error = %v, want a policy denial", err)
 	}
 }
 

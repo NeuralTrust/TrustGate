@@ -192,11 +192,11 @@ func TestHandler_ToolsCall_PassesUpstreamRPCErrorThrough(t *testing.T) {
 	}
 }
 
-// Calling a tool on an upstream the user has not connected answers 403 and
-// carries the connect URL. Not 401: MCP clients read that as a stale gateway
-// token, refresh it, retry, and fail with "401 after successful
-// authentication" without ever surfacing the consent URL.
-func TestHandler_ToolsCall_ConsentRequiredIsForbidden(t *testing.T) {
+// The consent refusal must reach the agent, so it rides on HTTP 200 carrying
+// the JSON-RPC error and the connect URL. Any 4xx here is read by MCP clients
+// as a transport failure: they drop the connection and restart authentication
+// without ever parsing the body.
+func TestHandler_ToolsCall_ConsentRequiredRidesOn200(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
 	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "notion-search", mock.Anything).
@@ -207,8 +207,8 @@ func TestHandler_ToolsCall_ConsentRequiredIsForbidden(t *testing.T) {
 
 	status, body := rpcCall(t, app,
 		`{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"notion-search"}}`)
-	if status != fiber.StatusForbidden {
-		t.Fatalf("status = %d, want 403 for an unconnected upstream", status)
+	if status != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200 so the client parses the JSON-RPC error", status)
 	}
 	rpcErr := body["error"].(map[string]any)
 	if rpcErr["code"].(float64) != -32003 {
@@ -221,6 +221,29 @@ func TestHandler_ToolsCall_ConsentRequiredIsForbidden(t *testing.T) {
 	connectURL, _ := data["connect_url"].(string)
 	if !strings.Contains(connectURL, "/virtual/mcp/connect?ticket=tk") {
 		t.Fatalf("connect_url = %q, want the consumer's connect page", connectURL)
+	}
+}
+
+// A tool the toolkit forbids is reported to the agent as a policy denial over
+// HTTP 200, so the client surfaces the reason instead of failing the transport.
+func TestHandler_ToolsCall_ToolNotPermittedRidesOn200(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "notion-search", mock.Anything).
+		Return(nil, &appmcp.ToolNotPermittedError{Tool: "notion-search"}).Once()
+	app := newApp(t, composer, consumerdomain.TypeMCP, true)
+
+	status, body := rpcCall(t, app,
+		`{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"notion-search"}}`)
+	if status != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200 so the client parses the JSON-RPC error", status)
+	}
+	rpcErr := body["error"].(map[string]any)
+	if rpcErr["code"].(float64) != -32001 {
+		t.Fatalf("code = %v, want the policy-blocked code", rpcErr["code"])
+	}
+	if msg, _ := rpcErr["message"].(string); !strings.Contains(msg, "not permitted") {
+		t.Fatalf("message = %q, want it to say the tool is not permitted", msg)
 	}
 }
 
