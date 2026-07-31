@@ -31,6 +31,7 @@ import (
 	approle "github.com/NeuralTrust/TrustGate/pkg/app/role"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/mock"
 )
@@ -78,6 +79,40 @@ func newAppWithRunnerAndLimiter(t *testing.T, composer appmcp.Composer, plugins 
 	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(composer, plugins, limiter), appmcp.NewRoleScoper(approle.NewOIDCResolver()))
 	app.Post(mcpPath, handler.Handle)
 	app.Get(mcpPath, handler.MethodNotAllowed)
+	return app
+}
+
+// newAppWithRegistries builds an MCP consumer bound to the given registries, so
+// a test can observe how the initialize response reflects the tool surface.
+func newAppWithRegistries(t *testing.T, registries ...*registrydomain.Registry) *fiber.App {
+	t.Helper()
+	authID := ids.New[ids.AuthKind]()
+	gwID := ids.New[ids.GatewayKind]()
+	cons := &consumerdomain.Consumer{
+		ID:        ids.New[ids.ConsumerKind](),
+		GatewayID: gwID,
+		Name:      "virtual",
+		Type:      consumerdomain.TypeMCP,
+		Slug:      "virtual",
+		Active:    true,
+		AuthIDs:   []ids.AuthID{authID},
+	}
+	data := appconsumer.NewData(gwID, []appconsumer.RoutableConsumer{
+		{Consumer: cons, Registries: registries},
+	})
+
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		ctx := appconsumer.WithAuthID(c.UserContext(), authID)
+		ctx = appconsumer.WithData(ctx, data)
+		c.SetUserContext(ctx)
+		return c.Next()
+	})
+	handler := mcphttp.NewHandler(
+		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
+		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
+	)
+	app.Post(mcpPath, handler.Handle)
 	return app
 }
 
@@ -244,6 +279,47 @@ func TestHandler_ToolsCall_ToolNotPermittedRidesOn200(t *testing.T) {
 	}
 	if msg, _ := rpcErr["message"].(string); !strings.Contains(msg, "not permitted") {
 		t.Fatalf("message = %q, want it to say the tool is not permitted", msg)
+	}
+}
+
+// serverInfo.version carries a fingerprint of the tool surface, so a client
+// that caches a server's tool list keyed on its reported version re-lists once
+// the consumer gains or loses a registry. A constant "1.0" left a newly
+// attached registry invisible no matter how often the client reconnected.
+func TestHandler_Initialize_VersionTracksTheToolSurface(t *testing.T) {
+	t.Parallel()
+	reg := func(name string) *registrydomain.Registry {
+		r, err := registrydomain.NewMCPRegistry(
+			ids.New[ids.GatewayKind](), name, "",
+			&registrydomain.MCPTarget{URL: "https://" + name + ".example.com/mcp"},
+		)
+		if err != nil {
+			t.Fatalf("registry: %v", err)
+		}
+		return r
+	}
+	notion, linear := reg("notion"), reg("linear")
+
+	versionFor := func(regs ...*registrydomain.Registry) string {
+		app := newAppWithRegistries(t, regs...)
+		_, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+		info := body["result"].(map[string]any)["serverInfo"].(map[string]any)
+		return info["version"].(string)
+	}
+
+	one := versionFor(notion)
+	if !strings.HasPrefix(one, "1.0+") {
+		t.Fatalf("version = %q, want the implementation version plus a fingerprint", one)
+	}
+	if again := versionFor(notion); again != one {
+		t.Fatalf("version is unstable for the same configuration: %q vs %q", one, again)
+	}
+	// Order must not matter, only the set.
+	if versionFor(notion, linear) != versionFor(linear, notion) {
+		t.Fatal("version must not depend on registry ordering")
+	}
+	if two := versionFor(notion, linear); two == one {
+		t.Fatalf("version %q did not change after attaching a registry", two)
 	}
 }
 
