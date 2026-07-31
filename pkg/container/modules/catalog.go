@@ -24,6 +24,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock/controlplane"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/catalog/modelsdev"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	catalogrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/catalog"
@@ -67,6 +68,14 @@ func provideCatalogServices(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(appcatalog.NewMCPServerCatalog); err != nil {
+		return err
+	}
+	if err := c.Provide(func() controlplane.Client {
+		return controlplane.NewClient()
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(appcatalog.NewServerlessFilter); err != nil {
 		return err
 	}
 	if err := c.Provide(cataloghttp.NewListMCPServersHandler); err != nil {
