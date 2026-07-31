@@ -30,7 +30,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testCredentials = `{
+const foundationModelsPayload = `{
 	"modelSummaries": [
 		{"modelId": "anthropic.claude-sonnet-4-5-20250929-v1:0", "inferenceTypesSupported": ["INFERENCE_PROFILE"]},
 		{"modelId": "amazon.nova-pro-v1:0", "inferenceTypesSupported": ["ON_DEMAND", "PROVISIONED"]},
@@ -39,7 +39,24 @@ const testCredentials = `{
 	]
 }`
 
-func newTestClient(t *testing.T, handler http.Handler) (Client, *httptest.Server) {
+const profilesPayload = `{"inferenceProfileSummaries": [
+	{"inferenceProfileId": "eu.anthropic.claude-sonnet-4-5-20250929-v1:0", "status": "ACTIVE", "type": "SYSTEM_DEFINED"},
+	{"inferenceProfileId": "us.anthropic.retired-v1:0", "status": "INACTIVE", "type": "SYSTEM_DEFINED"}
+]}`
+
+func entitledPayload(authorized, entitled, region bool) string {
+	status := func(ok bool, yes, no string) string {
+		if ok {
+			return yes
+		}
+		return no
+	}
+	return `{"authorizationStatus": "` + status(authorized, "AUTHORIZED", "NOT_AUTHORIZED") +
+		`", "entitlementAvailability": "` + status(entitled, "AVAILABLE", "NOT_AVAILABLE") +
+		`", "regionAvailability": "` + status(region, "AVAILABLE", "NOT_AVAILABLE") + `"}`
+}
+
+func newTestClient(t *testing.T, handler http.Handler) Client {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
@@ -55,131 +72,274 @@ func newTestClient(t *testing.T, handler http.Handler) (Client, *httptest.Server
 			}, nil
 		},
 		endpoint: server.URL,
-	}, server
+	}
 }
 
-func TestListServerlessModelIDs_KeepsOnDemandAndProfilesOnly(t *testing.T) {
-	t.Parallel()
-	var paths []string
-	var mu sync.Mutex
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		paths = append(paths, r.URL.Path)
-		mu.Unlock()
+// catalogHandler serves the two list endpoints, and delegates availability to
+// entitlement so each test decides which models the account may invoke.
+func catalogHandler(entitlement func(modelID string) (int, string)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case foundationModelsPath:
-			_, _ = w.Write([]byte(testCredentials))
-		case inferenceProfilesPath:
-			assert.Equal(t, profileTypeSystemDefined, r.URL.Query().Get("type"))
-			_, _ = w.Write([]byte(`{"inferenceProfileSummaries": [
-				{"inferenceProfileId": "eu.anthropic.claude-sonnet-4-5-20250929-v1:0", "status": "ACTIVE", "type": "SYSTEM_DEFINED"},
-				{"inferenceProfileId": "us.anthropic.retired-v1:0", "status": "INACTIVE", "type": "SYSTEM_DEFINED"}
-			]}`))
+		switch {
+		case r.URL.Path == foundationModelsPath:
+			_, _ = w.Write([]byte(foundationModelsPayload))
+		case r.URL.Path == inferenceProfilesPath:
+			_, _ = w.Write([]byte(profilesPayload))
+		case strings.HasPrefix(r.URL.Path, availabilityPath):
+			status, body := entitlement(strings.TrimPrefix(r.URL.Path, availabilityPath))
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(body))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	})
-	c, _ := newTestClient(t, handler)
-
-	got, err := c.ListServerlessModelIDs(context.Background(), Credentials{Region: "eu-west-1"})
-	require.NoError(t, err)
-
-	want := map[string]struct{}{
-		// Reachable through its inference profile, so the model stays listed.
-		"anthropic.claude-sonnet-4-5-20250929-v1:0": {},
-		"amazon.nova-pro-v1:0":                      {},
-		"eu.anthropic.claude-sonnet-4-5-20250929-v1:0": {},
 	}
-	assert.Equal(t, want, got)
-	assert.ElementsMatch(t, []string{foundationModelsPath, inferenceProfilesPath}, paths)
 }
 
-func TestListServerlessModelIDs_SignsRequests(t *testing.T) {
+func allEntitled(string) (int, string) {
+	return http.StatusOK, entitledPayload(true, true, true)
+}
+
+func TestListInvocableModelIDs_KeepsServerlessAndEntitledOnly(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t, catalogHandler(allEntitled))
+
+	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "eu-west-1"}, []string{
+		"eu.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		"amazon.nova-pro-v1:0",
+		"amazon.titan-tg1-large", // PROVISIONED only.
+		"google.gemma-3-4b-it",   // Marketplace: absent from the region listing.
+		"us.anthropic.retired-v1:0",
+	})
+	require.NoError(t, err)
+
+	assert.True(t, got.EntitlementChecked)
+	assert.Equal(t, map[string]struct{}{
+		"eu.anthropic.claude-sonnet-4-5-20250929-v1:0": {},
+		"amazon.nova-pro-v1:0":                         {},
+	}, got.ModelIDs)
+}
+
+// The account sees the model in the region but has not enabled access to it —
+// invoking it would fail with AccessDeniedException, so it must not be listed.
+func TestListInvocableModelIDs_DropsModelsWithoutAccess(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t, catalogHandler(func(modelID string) (int, string) {
+		if strings.HasPrefix(modelID, "anthropic.") {
+			return http.StatusOK, entitledPayload(true, false, true)
+		}
+		return allEntitled(modelID)
+	}))
+
+	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "eu-west-1"}, []string{
+		"eu.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		"amazon.nova-pro-v1:0",
+	})
+	require.NoError(t, err)
+
+	assert.True(t, got.EntitlementChecked)
+	assert.Equal(t, map[string]struct{}{"amazon.nova-pro-v1:0": {}}, got.ModelIDs)
+}
+
+func TestListInvocableModelIDs_DropsUnauthorizedAndOutOfRegion(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t, catalogHandler(func(modelID string) (int, string) {
+		if strings.HasPrefix(modelID, "anthropic.") {
+			return http.StatusOK, entitledPayload(false, true, true)
+		}
+		return http.StatusOK, entitledPayload(true, true, false)
+	}))
+
+	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "eu-west-1"}, []string{
+		"eu.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		"amazon.nova-pro-v1:0",
+	})
+	require.NoError(t, err)
+
+	assert.True(t, got.EntitlementChecked)
+	assert.Empty(t, got.ModelIDs)
+}
+
+// Entitlement lives on the base model, so one call covers every regional
+// profile of it.
+func TestListInvocableModelIDs_ChecksEntitlementOncePerBaseModel(t *testing.T) {
+	t.Parallel()
+	var mu sync.Mutex
+	asked := map[string]int{}
+	c := newTestClient(t, catalogHandler(func(modelID string) (int, string) {
+		mu.Lock()
+		asked[modelID]++
+		mu.Unlock()
+		return allEntitled(modelID)
+	}))
+
+	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "eu-west-1"}, []string{
+		"eu.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		"anthropic.claude-sonnet-4-5-20250929-v1:0",
+		"amazon.nova-pro-v1:0",
+	})
+	require.NoError(t, err)
+
+	assert.Len(t, got.ModelIDs, 3)
+	assert.Equal(t, map[string]int{
+		"anthropic.claude-sonnet-4-5-20250929-v1:0": 1,
+		"amazon.nova-pro-v1:0":                      1,
+	}, asked)
+}
+
+// Without bedrock:GetFoundationModelAvailability nothing can be verified, so the
+// serverless shortlist is returned and flagged as unverified rather than emptied.
+func TestListInvocableModelIDs_ReportsUnverifiedEntitlement(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t, catalogHandler(func(string) (int, string) {
+		return http.StatusForbidden, `{"message":"not authorized to perform bedrock:GetFoundationModelAvailability"}`
+	}))
+
+	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "eu-west-1"}, []string{
+		"amazon.nova-pro-v1:0",
+		"google.gemma-3-4b-it",
+	})
+	require.NoError(t, err)
+
+	assert.False(t, got.EntitlementChecked)
+	assert.Equal(t, map[string]struct{}{"amazon.nova-pro-v1:0": {}}, got.ModelIDs)
+}
+
+// One model erroring while others answer is treated as not entitled: the
+// verdict set is trustworthy, so a lone failure should not be waved through.
+func TestListInvocableModelIDs_DropsModelWhoseCheckFails(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t, catalogHandler(func(modelID string) (int, string) {
+		if strings.HasPrefix(modelID, "anthropic.") {
+			return http.StatusNotFound, `{"message":"ResourceNotFoundException"}`
+		}
+		return allEntitled(modelID)
+	}))
+
+	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "eu-west-1"}, []string{
+		"eu.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		"amazon.nova-pro-v1:0",
+	})
+	require.NoError(t, err)
+
+	assert.True(t, got.EntitlementChecked)
+	assert.Equal(t, map[string]struct{}{"amazon.nova-pro-v1:0": {}}, got.ModelIDs)
+}
+
+func TestListInvocableModelIDs_SignsRequests(t *testing.T) {
 	t.Parallel()
 	var authorization string
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == foundationModelsPath {
 			authorization = r.Header.Get("Authorization")
 		}
 		_, _ = w.Write([]byte(`{}`))
-	})
-	c, _ := newTestClient(t, handler)
+	}))
 
-	_, err := c.ListServerlessModelIDs(context.Background(), Credentials{Region: "us-east-1"})
+	_, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "us-east-1"}, []string{"x.y-v1:0"})
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(authorization, "AWS4-HMAC-SHA256 "), "got %q", authorization)
 	assert.Contains(t, authorization, "/us-east-1/bedrock/aws4_request")
 }
 
-func TestListServerlessModelIDs_FollowsProfilePagination(t *testing.T) {
+func TestListInvocableModelIDs_FollowsProfilePagination(t *testing.T) {
 	t.Parallel()
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == foundationModelsPath {
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == foundationModelsPath:
 			_, _ = w.Write([]byte(`{"modelSummaries": []}`))
-			return
-		}
-		if r.URL.Query().Get("nextToken") == "" {
+		case strings.HasPrefix(r.URL.Path, availabilityPath):
+			_, _ = w.Write([]byte(entitledPayload(true, true, true)))
+		case r.URL.Query().Get("nextToken") == "":
 			_, _ = w.Write([]byte(`{"inferenceProfileSummaries": [
 				{"inferenceProfileId": "us.first-v1:0", "status": "ACTIVE"}
 			], "nextToken": "page-2"}`))
-			return
+		default:
+			_, _ = w.Write([]byte(`{"inferenceProfileSummaries": [
+				{"inferenceProfileId": "us.second-v1:0", "status": "ACTIVE"}
+			]}`))
 		}
-		_, _ = w.Write([]byte(`{"inferenceProfileSummaries": [
-			{"inferenceProfileId": "us.second-v1:0", "status": "ACTIVE"}
-		]}`))
-	})
-	c, _ := newTestClient(t, handler)
+	}))
 
-	got, err := c.ListServerlessModelIDs(context.Background(), Credentials{Region: "us-east-1"})
+	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "us-east-1"},
+		[]string{"us.first-v1:0", "us.second-v1:0"})
 	require.NoError(t, err)
-	assert.Equal(t, map[string]struct{}{"us.first-v1:0": {}, "us.second-v1:0": {}}, got)
+	assert.Equal(t, map[string]struct{}{"us.first-v1:0": {}, "us.second-v1:0": {}}, got.ModelIDs)
 }
 
 // A repeating nextToken must not loop forever.
-func TestListServerlessModelIDs_StopsOnRepeatedToken(t *testing.T) {
+func TestListInvocableModelIDs_StopsOnRepeatedToken(t *testing.T) {
 	t.Parallel()
-	var calls int
 	var mu sync.Mutex
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == foundationModelsPath {
+	var calls int
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == foundationModelsPath:
 			_, _ = w.Write([]byte(`{"modelSummaries": []}`))
-			return
+		case strings.HasPrefix(r.URL.Path, availabilityPath):
+			_, _ = w.Write([]byte(entitledPayload(true, true, true)))
+		default:
+			mu.Lock()
+			calls++
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"inferenceProfileSummaries": [
+				{"inferenceProfileId": "us.loop-v1:0", "status": "ACTIVE"}
+			], "nextToken": "same"}`))
 		}
-		mu.Lock()
-		calls++
-		mu.Unlock()
-		_, _ = w.Write([]byte(`{"inferenceProfileSummaries": [
-			{"inferenceProfileId": "us.loop-v1:0", "status": "ACTIVE"}
-		], "nextToken": "same"}`))
-	})
-	c, _ := newTestClient(t, handler)
+	}))
 
-	got, err := c.ListServerlessModelIDs(context.Background(), Credentials{Region: "us-east-1"})
+	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "us-east-1"},
+		[]string{"us.loop-v1:0"})
 	require.NoError(t, err)
-	assert.Equal(t, map[string]struct{}{"us.loop-v1:0": {}}, got)
+	assert.Equal(t, map[string]struct{}{"us.loop-v1:0": {}}, got.ModelIDs)
 	assert.Equal(t, 2, calls, "should stop as soon as the token repeats")
 }
 
-func TestListServerlessModelIDs_PropagatesAWSError(t *testing.T) {
+func TestListInvocableModelIDs_PropagatesListingError(t *testing.T) {
 	t.Parallel()
-	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = w.Write([]byte(`{"message":"not authorized to perform bedrock:ListFoundationModels"}`))
-	})
-	c, _ := newTestClient(t, handler)
+	}))
 
-	_, err := c.ListServerlessModelIDs(context.Background(), Credentials{Region: "us-east-1"})
+	_, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "us-east-1"}, []string{"x.y-v1:0"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "403")
 	assert.Contains(t, err.Error(), "bedrock:ListFoundationModels")
 }
 
-func TestListServerlessModelIDs_RequiresRegion(t *testing.T) {
+func TestListInvocableModelIDs_RequiresRegion(t *testing.T) {
 	t.Parallel()
-	c := NewClient()
-	_, err := c.ListServerlessModelIDs(context.Background(), Credentials{})
+	_, err := NewClient().ListInvocableModelIDs(context.Background(), Credentials{}, []string{"x.y-v1:0"})
 	assert.True(t, errors.Is(err, ErrRegionRequired))
+}
+
+// No candidates means nothing to ask AWS about; the empty answer is authoritative.
+func TestListInvocableModelIDs_ShortCircuitsWithoutCandidates(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t, http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("no control plane call expected")
+	}))
+
+	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "us-east-1"}, nil)
+	require.NoError(t, err)
+	assert.True(t, got.EntitlementChecked)
+	assert.Empty(t, got.ModelIDs)
+}
+
+func TestBaseModelID(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		"eu.anthropic.claude-sonnet-4-5-20250929-v1:0":     "anthropic.claude-sonnet-4-5-20250929-v1:0",
+		"global.anthropic.claude-sonnet-4-5-20250929-v1:0": "anthropic.claude-sonnet-4-5-20250929-v1:0",
+		"us-gov.anthropic.claude-v1:0":                     "anthropic.claude-v1:0",
+		"anthropic.claude-sonnet-4-5-20250929-v1:0":        "anthropic.claude-sonnet-4-5-20250929-v1:0",
+		"amazon.nova-pro-v1:0":                             "amazon.nova-pro-v1:0",
+		// "meta" is not a geography, so a three-segment ID keeps its first part.
+		"meta.llama3.instruct-v1:0": "meta.llama3.instruct-v1:0",
+	}
+	for in, want := range cases {
+		assert.Equal(t, want, baseModelID(in), in)
+	}
 }
 
 func TestBaseURL(t *testing.T) {

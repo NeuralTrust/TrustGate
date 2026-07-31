@@ -22,29 +22,27 @@ func (_m *Client) EXPECT() *Client_Expecter {
 	return &Client_Expecter{mock: &_m.Mock}
 }
 
-// ListServerlessModelIDs provides a mock function with given fields: ctx, creds
-func (_m *Client) ListServerlessModelIDs(ctx context.Context, creds controlplane.Credentials) (map[string]struct{}, error) {
-	ret := _m.Called(ctx, creds)
+// ListInvocableModelIDs provides a mock function with given fields: ctx, creds, candidates
+func (_m *Client) ListInvocableModelIDs(ctx context.Context, creds controlplane.Credentials, candidates []string) (controlplane.Availability, error) {
+	ret := _m.Called(ctx, creds, candidates)
 
 	if len(ret) == 0 {
-		panic("no return value specified for ListServerlessModelIDs")
+		panic("no return value specified for ListInvocableModelIDs")
 	}
 
-	var r0 map[string]struct{}
+	var r0 controlplane.Availability
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, controlplane.Credentials) (map[string]struct{}, error)); ok {
-		return rf(ctx, creds)
+	if rf, ok := ret.Get(0).(func(context.Context, controlplane.Credentials, []string) (controlplane.Availability, error)); ok {
+		return rf(ctx, creds, candidates)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, controlplane.Credentials) map[string]struct{}); ok {
-		r0 = rf(ctx, creds)
+	if rf, ok := ret.Get(0).(func(context.Context, controlplane.Credentials, []string) controlplane.Availability); ok {
+		r0 = rf(ctx, creds, candidates)
 	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(map[string]struct{})
-		}
+		r0 = ret.Get(0).(controlplane.Availability)
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, controlplane.Credentials) error); ok {
-		r1 = rf(ctx, creds)
+	if rf, ok := ret.Get(1).(func(context.Context, controlplane.Credentials, []string) error); ok {
+		r1 = rf(ctx, creds, candidates)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -52,31 +50,32 @@ func (_m *Client) ListServerlessModelIDs(ctx context.Context, creds controlplane
 	return r0, r1
 }
 
-// Client_ListServerlessModelIDs_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ListServerlessModelIDs'
-type Client_ListServerlessModelIDs_Call struct {
+// Client_ListInvocableModelIDs_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ListInvocableModelIDs'
+type Client_ListInvocableModelIDs_Call struct {
 	*mock.Call
 }
 
-// ListServerlessModelIDs is a helper method to define mock.On call
+// ListInvocableModelIDs is a helper method to define mock.On call
 //   - ctx context.Context
 //   - creds controlplane.Credentials
-func (_e *Client_Expecter) ListServerlessModelIDs(ctx interface{}, creds interface{}) *Client_ListServerlessModelIDs_Call {
-	return &Client_ListServerlessModelIDs_Call{Call: _e.mock.On("ListServerlessModelIDs", ctx, creds)}
+//   - candidates []string
+func (_e *Client_Expecter) ListInvocableModelIDs(ctx interface{}, creds interface{}, candidates interface{}) *Client_ListInvocableModelIDs_Call {
+	return &Client_ListInvocableModelIDs_Call{Call: _e.mock.On("ListInvocableModelIDs", ctx, creds, candidates)}
 }
 
-func (_c *Client_ListServerlessModelIDs_Call) Run(run func(ctx context.Context, creds controlplane.Credentials)) *Client_ListServerlessModelIDs_Call {
+func (_c *Client_ListInvocableModelIDs_Call) Run(run func(ctx context.Context, creds controlplane.Credentials, candidates []string)) *Client_ListInvocableModelIDs_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(controlplane.Credentials))
+		run(args[0].(context.Context), args[1].(controlplane.Credentials), args[2].([]string))
 	})
 	return _c
 }
 
-func (_c *Client_ListServerlessModelIDs_Call) Return(_a0 map[string]struct{}, _a1 error) *Client_ListServerlessModelIDs_Call {
+func (_c *Client_ListInvocableModelIDs_Call) Return(_a0 controlplane.Availability, _a1 error) *Client_ListInvocableModelIDs_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *Client_ListServerlessModelIDs_Call) RunAndReturn(run func(context.Context, controlplane.Credentials) (map[string]struct{}, error)) *Client_ListServerlessModelIDs_Call {
+func (_c *Client_ListInvocableModelIDs_Call) RunAndReturn(run func(context.Context, controlplane.Credentials, []string) (controlplane.Availability, error)) *Client_ListInvocableModelIDs_Call {
 	_c.Call.Return(run)
 	return _c
 }
