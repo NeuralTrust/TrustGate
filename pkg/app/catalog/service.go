@@ -40,6 +40,20 @@ func (s *service) ListProviders(ctx context.Context) ([]domain.Provider, error) 
 	return s.repo.ListProviders(ctx)
 }
 
+// ListModels returns the models on offer for a provider. Disabled rows are left
+// out: the catalog keeps them so pricing and validation can still resolve a
+// model that was withdrawn upstream, but a listing exists to be picked from, and
+// a withdrawn model is not a valid pick.
 func (s *service) ListModels(ctx context.Context, providerCode string) ([]domain.Model, error) {
-	return s.repo.ListModelsByProviderCode(ctx, providerCode)
+	stored, err := s.repo.ListModelsByProviderCode(ctx, providerCode)
+	if err != nil {
+		return nil, err
+	}
+	enabled := make([]domain.Model, 0, len(stored))
+	for _, model := range stored {
+		if model.Enabled {
+			enabled = append(enabled, model)
+		}
+	}
+	return enabled, nil
 }

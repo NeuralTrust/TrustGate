@@ -89,10 +89,11 @@ const (
 	// APPLICATION profiles are customer-created and account-specific.
 	profileTypeSystemDefined = "SYSTEM_DEFINED"
 	profileStatusActive      = "ACTIVE"
-	// globalProfilePrefix names the geography-agnostic inference profile, the only
-	// kind the catalog offers. See collectInferenceProfiles.
-	globalProfilePrefix = "global."
-	profilePageSize          = "1000"
+	// globalProfileGeography names the geography-agnostic inference profile, the
+	// only kind the catalog offers. See collectInferenceProfiles.
+	globalProfileGeography = "global"
+	globalProfilePrefix    = globalProfileGeography + "."
+	profilePageSize        = "1000"
 	// maxProfilePages bounds pagination so a repeating nextToken cannot spin.
 	maxProfilePages = 10
 
@@ -288,6 +289,19 @@ func (c *client) entitlements(
 		return nil, false
 	}
 	return verdicts, true
+}
+
+// IsGeographyScopedProfile reports whether id names an inference profile bound to
+// a single geography ("us.", "eu.", "jp.", "au."…), which is invocable only from
+// source regions inside that geography. Plain model IDs and the geography-
+// agnostic "global." profile are not scoped and return false.
+func IsGeographyScopedProfile(id string) bool {
+	parts := strings.Split(id, ".")
+	if len(parts) < 3 || parts[0] == globalProfileGeography {
+		return false
+	}
+	_, ok := profileGeoPrefixes[parts[0]]
+	return ok
 }
 
 // baseModelID strips the geography prefix of a cross-region inference profile
