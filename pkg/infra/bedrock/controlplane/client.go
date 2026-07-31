@@ -19,12 +19,12 @@
 // through different APIs:
 //
 //   - The model must be serverless — billed per request with no resource to
-//     deploy: a base model offering ON_DEMAND throughput, or a system-defined
-//     cross-region inference profile (us./eu./global./…) fronting one.
-//     Everything else InvokeModel accepts in its modelId (Bedrock Marketplace
-//     endpoints, Provisioned Throughput, custom and imported models) needs the
-//     ARN of a resource the customer created, so it cannot come from a shared
-//     catalog. ListFoundationModels and ListInferenceProfiles answer this.
+//     deploy: a base model offering ON_DEMAND throughput, or a global
+//     cross-region inference profile fronting one. Everything else InvokeModel
+//     accepts in its modelId (Bedrock Marketplace endpoints, Provisioned
+//     Throughput, custom and imported models) needs the ARN of a resource the
+//     customer created, so it cannot come from a shared catalog.
+//     ListFoundationModels and ListInferenceProfiles answer this.
 //   - The account must have been granted access to it. ListFoundationModels
 //     returns every model in the region regardless of access, so entitlement is
 //     a separate GetFoundationModelAvailability call per model — without it the
@@ -89,6 +89,9 @@ const (
 	// APPLICATION profiles are customer-created and account-specific.
 	profileTypeSystemDefined = "SYSTEM_DEFINED"
 	profileStatusActive      = "ACTIVE"
+	// globalProfilePrefix names the geography-agnostic inference profile, the only
+	// kind the catalog offers. See collectInferenceProfiles.
+	globalProfilePrefix = "global."
 	profilePageSize          = "1000"
 	// maxProfilePages bounds pagination so a repeating nextToken cannot spin.
 	maxProfilePages = 10
@@ -353,6 +356,15 @@ type inferenceProfilesResponse struct {
 	NextToken string `json:"nextToken"`
 }
 
+// collectInferenceProfiles adds the geography-agnostic ("global.") profiles.
+//
+// Profiles scoped to one geography (us., eu., jp., au.) are skipped even though
+// AWS lists them: they are only invocable from source regions inside their own
+// geography, so a catalog entry for one is valid for some registries and broken
+// for others. A global profile routes from any supported source region, which
+// means one entry works whatever region a registry is configured with. Base
+// models invocable by their plain ID are unaffected — they come from
+// collectFoundationModels.
 func (c *client) collectInferenceProfiles(
 	ctx context.Context,
 	awsCreds aws.Credentials,
@@ -376,6 +388,9 @@ func (c *client) collectInferenceProfiles(
 		}
 		for _, summary := range payload.Summaries {
 			if summary.ID == "" || summary.Status != profileStatusActive {
+				continue
+			}
+			if !strings.HasPrefix(summary.ID, globalProfilePrefix) {
 				continue
 			}
 			out[summary.ID] = struct{}{}

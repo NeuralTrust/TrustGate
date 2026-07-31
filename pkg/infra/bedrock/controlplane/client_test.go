@@ -39,12 +39,17 @@ const foundationModelsPayload = `{
 	]
 }`
 
-// Claude Sonnet 4.5 above is INFERENCE_PROFILE only: its bare ID is not
-// invocable, so only the eu. profile of it may be listed.
-const claudeSonnet45Base = "anthropic.claude-sonnet-4-5-20250929-v1:0"
-const claudeSonnet45EUProfile = "eu.anthropic.claude-sonnet-4-5-20250929-v1:0"
+// Claude Sonnet 4.5 above is INFERENCE_PROFILE only, so its bare ID is not
+// invocable and only its global profile may be listed. The eu. profile is
+// active but geography-scoped, so it is skipped too.
+const (
+	claudeSonnet45Base          = "anthropic.claude-sonnet-4-5-20250929-v1:0"
+	claudeSonnet45GlobalProfile = "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+	claudeSonnet45EUProfile     = "eu.anthropic.claude-sonnet-4-5-20250929-v1:0"
+)
 
 const profilesPayload = `{"inferenceProfileSummaries": [
+	{"inferenceProfileId": "global.anthropic.claude-sonnet-4-5-20250929-v1:0", "status": "ACTIVE", "type": "SYSTEM_DEFINED"},
 	{"inferenceProfileId": "eu.anthropic.claude-sonnet-4-5-20250929-v1:0", "status": "ACTIVE", "type": "SYSTEM_DEFINED"},
 	{"inferenceProfileId": "us.anthropic.retired-v1:0", "status": "INACTIVE", "type": "SYSTEM_DEFINED"}
 ]}`
@@ -110,7 +115,7 @@ func TestListInvocableModelIDs_KeepsServerlessAndEntitledOnly(t *testing.T) {
 	c := newTestClient(t, catalogHandler(allEntitled))
 
 	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "eu-west-1"}, []string{
-		claudeSonnet45EUProfile,
+		claudeSonnet45GlobalProfile,
 		claudeSonnet45Base, // Invocable only through a profile, never by itself.
 		"amazon.nova-pro-v1:0",
 		"amazon.titan-tg1-large", // PROVISIONED only.
@@ -121,9 +126,26 @@ func TestListInvocableModelIDs_KeepsServerlessAndEntitledOnly(t *testing.T) {
 
 	assert.True(t, got.EntitlementChecked)
 	assert.Equal(t, map[string]struct{}{
-		claudeSonnet45EUProfile: {},
-		"amazon.nova-pro-v1:0":  {},
+		claudeSonnet45GlobalProfile: {},
+		"amazon.nova-pro-v1:0":      {},
 	}, got.ModelIDs)
+}
+
+// A geography-scoped profile is only invocable from source regions inside its
+// own geography, so it never reaches the catalog even when AWS reports it active
+// — the region is a per-registry setting, and the global profile covers all of
+// them with a single entry.
+func TestListInvocableModelIDs_DropsGeographyScopedProfiles(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t, catalogHandler(allEntitled))
+
+	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "eu-west-1"}, []string{
+		claudeSonnet45EUProfile,
+		claudeSonnet45GlobalProfile,
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, map[string]struct{}{claudeSonnet45GlobalProfile: {}}, got.ModelIDs)
 }
 
 // The account sees the model in the region but has not enabled access to it —
@@ -138,7 +160,7 @@ func TestListInvocableModelIDs_DropsModelsWithoutAccess(t *testing.T) {
 	}))
 
 	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "eu-west-1"}, []string{
-		"eu.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		claudeSonnet45GlobalProfile,
 		"amazon.nova-pro-v1:0",
 	})
 	require.NoError(t, err)
@@ -168,7 +190,7 @@ func TestListInvocableModelIDs_DropsModelWithoutAgreement(t *testing.T) {
 	}))
 
 	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "eu-west-1"}, []string{
-		"eu.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		claudeSonnet45GlobalProfile,
 		"amazon.nova-pro-v1:0",
 	})
 	require.NoError(t, err)
@@ -187,7 +209,7 @@ func TestListInvocableModelIDs_DropsUnauthorizedAndOutOfRegion(t *testing.T) {
 	}))
 
 	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "eu-west-1"}, []string{
-		"eu.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		claudeSonnet45GlobalProfile,
 		"amazon.nova-pro-v1:0",
 	})
 	require.NoError(t, err)
@@ -210,7 +232,7 @@ func TestListInvocableModelIDs_ChecksEntitlementOncePerBaseModel(t *testing.T) {
 	}))
 
 	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "eu-west-1"}, []string{
-		claudeSonnet45EUProfile,
+		claudeSonnet45GlobalProfile,
 		claudeSonnet45Base,
 		"amazon.nova-pro-v1:0",
 	})
@@ -219,8 +241,8 @@ func TestListInvocableModelIDs_ChecksEntitlementOncePerBaseModel(t *testing.T) {
 	// The bare Claude ID drops out for being profile-only, but its entitlement
 	// was still resolved with a single call shared by the profile.
 	assert.Equal(t, map[string]struct{}{
-		claudeSonnet45EUProfile: {},
-		"amazon.nova-pro-v1:0":  {},
+		claudeSonnet45GlobalProfile: {},
+		"amazon.nova-pro-v1:0":      {},
 	}, got.ModelIDs)
 	assert.Equal(t, map[string]int{
 		"anthropic.claude-sonnet-4-5-20250929-v1:0": 1,
@@ -258,7 +280,7 @@ func TestListInvocableModelIDs_DropsModelWhoseCheckFails(t *testing.T) {
 	}))
 
 	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "eu-west-1"}, []string{
-		"eu.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		claudeSonnet45GlobalProfile,
 		"amazon.nova-pro-v1:0",
 	})
 	require.NoError(t, err)
@@ -293,19 +315,19 @@ func TestListInvocableModelIDs_FollowsProfilePagination(t *testing.T) {
 			_, _ = w.Write([]byte(entitledPayload(true, true, true, true)))
 		case r.URL.Query().Get("nextToken") == "":
 			_, _ = w.Write([]byte(`{"inferenceProfileSummaries": [
-				{"inferenceProfileId": "us.first-v1:0", "status": "ACTIVE"}
+				{"inferenceProfileId": "global.first-v1:0", "status": "ACTIVE"}
 			], "nextToken": "page-2"}`))
 		default:
 			_, _ = w.Write([]byte(`{"inferenceProfileSummaries": [
-				{"inferenceProfileId": "us.second-v1:0", "status": "ACTIVE"}
+				{"inferenceProfileId": "global.second-v1:0", "status": "ACTIVE"}
 			]}`))
 		}
 	}))
 
 	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "us-east-1"},
-		[]string{"us.first-v1:0", "us.second-v1:0"})
+		[]string{"global.first-v1:0", "global.second-v1:0"})
 	require.NoError(t, err)
-	assert.Equal(t, map[string]struct{}{"us.first-v1:0": {}, "us.second-v1:0": {}}, got.ModelIDs)
+	assert.Equal(t, map[string]struct{}{"global.first-v1:0": {}, "global.second-v1:0": {}}, got.ModelIDs)
 }
 
 // A repeating nextToken must not loop forever.
@@ -324,15 +346,15 @@ func TestListInvocableModelIDs_StopsOnRepeatedToken(t *testing.T) {
 			calls++
 			mu.Unlock()
 			_, _ = w.Write([]byte(`{"inferenceProfileSummaries": [
-				{"inferenceProfileId": "us.loop-v1:0", "status": "ACTIVE"}
+				{"inferenceProfileId": "global.loop-v1:0", "status": "ACTIVE"}
 			], "nextToken": "same"}`))
 		}
 	}))
 
 	got, err := c.ListInvocableModelIDs(context.Background(), Credentials{Region: "us-east-1"},
-		[]string{"us.loop-v1:0"})
+		[]string{"global.loop-v1:0"})
 	require.NoError(t, err)
-	assert.Equal(t, map[string]struct{}{"us.loop-v1:0": {}}, got.ModelIDs)
+	assert.Equal(t, map[string]struct{}{"global.loop-v1:0": {}}, got.ModelIDs)
 	assert.Equal(t, 2, calls, "should stop as soon as the token repeats")
 }
 
