@@ -191,6 +191,26 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 	}
 	reg := regWithAuth(gw, cfg)
 
+	// A credential that exists but cannot be decrypted (the vault key rotated)
+	// must still elicit consent — reconnecting rewrites it under the current key
+	// — rather than surfacing as a raw error the composer would treat as an
+	// upstream failure. The distinct reason is what makes a key rotation
+	// diagnosable instead of looking like the user never connected.
+	t.Run("undecryptable credential elicits consent, not a raw error", func(t *testing.T) {
+		t.Parallel()
+		r := NewCredentialResolver(nil, undecryptableVault{}, &stubConnect{ticket: "tk-dec"}, infraoauth.NewProviderClient(nil), discardLogger())
+		ctx := principalCtx(&identity.Principal{Subject: "alice"})
+		target := Target{}
+		err := r.Apply(ctx, mcpConsumer(gw), reg, &target)
+		var consent *ConsentRequiredError
+		if !errors.As(err, &consent) {
+			t.Fatalf("error = %v, want ConsentRequiredError for an undecryptable credential", err)
+		}
+		if target.Headers["Authorization"] != "" {
+			t.Fatal("an undecryptable credential must not be injected")
+		}
+	})
+
 	t.Run("missing credential returns consent elicitation", func(t *testing.T) {
 		t.Parallel()
 		r := NewCredentialResolver(nil, &memVault{}, &stubConnect{ticket: "tckt"}, infraoauth.NewProviderClient(nil), discardLogger())
@@ -376,3 +396,16 @@ func TestCredentialResolver_NoneAndStaticAreNoops(t *testing.T) {
 		}
 	}
 }
+
+// undecryptableVault holds a credential the current key cannot read, the way
+// the real vault reports it after SERVER_SECRET_KEY changes.
+type undecryptableVault struct{}
+
+func (undecryptableVault) Upsert(context.Context, *vaultdomain.Credential) error { return nil }
+func (undecryptableVault) Find(context.Context, ids.GatewayID, string, string) (*vaultdomain.Credential, error) {
+	return nil, vaultdomain.ErrUndecryptable
+}
+func (undecryptableVault) ListByPrincipal(context.Context, ids.GatewayID, string) ([]*vaultdomain.Credential, error) {
+	return nil, nil
+}
+func (undecryptableVault) Delete(context.Context, ids.GatewayID, string, string) error { return nil }

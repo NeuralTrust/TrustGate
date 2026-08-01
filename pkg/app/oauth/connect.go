@@ -94,6 +94,12 @@ func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPag
 			// here instead of showing "Connected" while the agent is being told the
 			// opposite.
 			status.NeedsReconnect = cred.RefreshToken == "" && cred.Expired(credentialExpiryGrace)
+		case errors.Is(err, vaultdomain.ErrUndecryptable):
+			// Stored but unreadable under the current key: show it as linked so
+			// the operator sees which provider is affected, but flag it for
+			// reconnect since the resolver cannot use it.
+			status.Linked = true
+			status.NeedsReconnect = true
 		case !errors.Is(err, vaultdomain.ErrNotFound):
 			return nil, fmt.Errorf("oauth connect: check linked credential: %w", err)
 		}

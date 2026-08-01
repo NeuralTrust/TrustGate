@@ -139,6 +139,15 @@ func (r *credentialResolver) forwarded(ctx context.Context, rc *appconsumer.Rout
 		return r.consentRequired(ctx, rc, cfg.Provider, principal.Subject,
 			"no stored credential for this user and provider")
 	}
+	if errors.Is(err, vaultdomain.ErrUndecryptable) {
+		// The credential exists but the vault key can no longer read it — the
+		// user did connect, so "no stored credential" would be a lie and send
+		// them round a reconnect loop that only papers over one provider at a
+		// time. Name the real cause; reconnecting rewrites it under the current
+		// key, but the fix is to stop SERVER_SECRET_KEY from changing.
+		return r.consentRequired(ctx, rc, cfg.Provider, principal.Subject,
+			"stored credential is undecryptable (SERVER_SECRET_KEY changed since it was saved)")
+	}
 	if err != nil {
 		return err
 	}
