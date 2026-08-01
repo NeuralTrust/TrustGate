@@ -190,6 +190,10 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 				return passThrough(), nil
 			}
 			reqBody := in.Request.Body
+			toolName := mcpToolName(reqBody)
+			tgt.applyPayload = func(payload map[string]any) ([]byte, bool) {
+				return mcpTransformedRequest(payload, toolName)
+			}
 			tgt.apply = func(masked string) ([]byte, bool) {
 				return rewriteMCPRequest(reqBody, masked)
 			}
@@ -212,6 +216,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 				return passThrough(), nil
 			}
 			respBody := in.Response.Body
+			tgt.applyPayload = mcpTransformedResult
 			tgt.apply = func(masked string) ([]byte, bool) {
 				return rewriteMCPResponse(respBody, masked)
 			}
@@ -364,6 +369,15 @@ func (p *Plugin) applyTransform(in appplugins.ExecInput, data guardData, resp *G
 		return passThrough(), nil
 	}
 
+	// A structured payload is preferred where the protocol has one: TrustGuard
+	// returns the masked MCP envelope whole, so the values are lifted out of it
+	// instead of being re-split from a joined string.
+	if tgt.applyPayload != nil {
+		if body, ok := tgt.applyPayload(resp.TransformedPayload); ok {
+			return p.transformApplied(in, data, tgt, body)
+		}
+	}
+
 	masked, ok := transformedInput(resp.TransformedPayload)
 	if !ok {
 		return p.transformDegraded(in, data, resp, reasonTransformNoPayload)
@@ -375,7 +389,12 @@ func (p *Plugin) applyTransform(in appplugins.ExecInput, data guardData, resp *G
 	if !ok {
 		return p.transformDegraded(in, data, resp, reasonTransformEncodeFailed)
 	}
+	return p.transformApplied(in, data, tgt, body)
+}
 
+// transformApplied records a successful rewrite and hands the masked body back
+// in the direction it belongs to.
+func (p *Plugin) transformApplied(in appplugins.ExecInput, data guardData, tgt transformTarget, body []byte) (*appplugins.Result, error) {
 	data.Decision = decisionTransformed
 	recordGuardOutcome(in.Event, data)
 	if tgt.isResponse {
