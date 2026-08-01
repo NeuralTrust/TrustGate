@@ -179,7 +179,11 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		if err != nil {
 			return nil, err
 		}
-		if err := g.plugins.PreResponseResult(ctx, rc, raw); err != nil {
+		// A tool listing is static server metadata, so it is scanned only for
+		// threats in the tool descriptions (indirect prompt injection, code
+		// injection): a genuine block stops discovery, while a data-masking
+		// transform is ignored — the listing is never redacted or rewritten.
+		if err := g.plugins.PreResponseDiscovery(ctx, rc, raw); err != nil {
 			return nil, err
 		}
 		return result, nil
