@@ -783,3 +783,92 @@ func TestComposer_ReadResource_RoutesByURI(t *testing.T) {
 		t.Fatalf("read routed to wrong upstream: a=%q b=%q", upA.lastRead, upB.lastRead)
 	}
 }
+
+// A consumer with no MCP policy (fail mode unset) must degrade the same way
+// for prompts as it does for tools: an upstream still awaiting consent is
+// skipped, and prompts from the linked upstreams are served. This is exactly
+// the virtual-MCP-with-optional-providers setup, where a hard failure here
+// makes clients abort their whole surface refresh.
+func TestComposer_ListPrompts_PartialConsentServesLinkedUpstream(t *testing.T) {
+	t.Parallel()
+	regLinked := mcpRegistry(t, "linear", "https://linear.example.com/mcp")
+	regPending := mcpRegistry(t, "notion", "https://notion.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://linear.example.com/mcp": {prompts: prompts("triage")},
+		"https://notion.example.com/mcp": {prompts: prompts("summarize")},
+	}}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://notion.example.com/mcp": &ConsentRequiredError{
+			Provider: "com.notion/mcp",
+			Ticket:   "tk",
+			Path:     "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+
+	for _, consumer := range []*consumerdomain.Consumer{
+		{Type: consumerdomain.TypeMCP},
+		{Type: consumerdomain.TypeMCP, MCP: &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeClosed}},
+	} {
+		got, err := c.ListPrompts(context.Background(), routable(consumer, regLinked, regPending))
+		if err != nil {
+			t.Fatalf("unexpected error (fail mode %q): %v", consumer.FailMode(), err)
+		}
+		names := make([]string, 0, len(got))
+		for _, p := range got {
+			names = append(names, p.Name)
+		}
+		if len(names) != 1 || names[0] != "triage" {
+			t.Fatalf("prompts = %v, want [triage] from the linked upstream only", names)
+		}
+	}
+}
+
+func TestComposer_ListPrompts_ConsentRequiredWhenAllNeedConsent(t *testing.T) {
+	t.Parallel()
+	regA := mcpRegistry(t, "coda", "https://a.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://a.example.com/mcp": {prompts: prompts("x")},
+	}}
+	creds := &fakeCreds{err: &ConsentRequiredError{Provider: "coda", Ticket: "tk", Path: "/p/mcp"}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+
+	_, err := c.ListPrompts(context.Background(), routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, regA))
+	var consentErr *ConsentRequiredError
+	if !errors.As(err, &consentErr) {
+		t.Fatalf("error = %v, want ConsentRequiredError when every upstream needs consent", err)
+	}
+}
+
+// A prompt no reachable upstream serves may live behind the upstream that is
+// still awaiting consent, so the consent requirement is the useful answer —
+// mirroring CallTool.
+func TestComposer_GetPrompt_UnknownPromptSurfacesPendingConsent(t *testing.T) {
+	t.Parallel()
+	regLinked := mcpRegistry(t, "linear", "https://linear.example.com/mcp")
+	regPending := mcpRegistry(t, "notion", "https://notion.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://linear.example.com/mcp": {prompts: prompts("triage")},
+		"https://notion.example.com/mcp": {prompts: prompts("summarize")},
+	}}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://notion.example.com/mcp": &ConsentRequiredError{
+			Provider: "com.notion/mcp",
+			Ticket:   "tk",
+			Path:     "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, regLinked, regPending)
+
+	var consentErr *ConsentRequiredError
+	if _, err := c.GetPrompt(context.Background(), rc, "summarize", nil); !errors.As(err, &consentErr) {
+		t.Fatalf("error = %v, want ConsentRequiredError for the unconnected provider", err)
+	}
+	if consentErr.Provider != "com.notion/mcp" {
+		t.Fatalf("provider = %q, want com.notion/mcp", consentErr.Provider)
+	}
+	if _, err := c.GetPrompt(context.Background(), rc, "triage", nil); err != nil {
+		t.Fatalf("prompt on the linked upstream must still resolve: %v", err)
+	}
+}

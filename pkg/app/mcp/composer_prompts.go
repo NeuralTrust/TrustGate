@@ -17,6 +17,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -26,7 +27,10 @@ import (
 
 func (c *composer) ListPrompts(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Prompt, error) {
 	annotateTargets(ctx, len(mcpRegistries(rc)))
-	bindings, err := c.composePrompts(ctx, rc)
+	// Same partial-federation contract as ListTools: upstreams awaiting consent
+	// are skipped and the linked ones still answer, so a client refreshing its
+	// surface never fails just because an optional provider is unconnected.
+	bindings, _, err := c.composePrompts(ctx, rc)
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +44,7 @@ func (c *composer) ListPrompts(ctx context.Context, rc *appconsumer.RoutableCons
 }
 
 func (c *composer) GetPrompt(ctx context.Context, rc *appconsumer.RoutableConsumer, name string, arguments map[string]string) (json.RawMessage, error) {
-	bindings, err := c.composePrompts(ctx, rc)
+	bindings, pendingConsent, err := c.composePrompts(ctx, rc)
 	if err != nil {
 		return nil, err
 	}
@@ -61,6 +65,11 @@ func (c *composer) GetPrompt(ctx context.Context, rc *appconsumer.RoutableConsum
 		defer up.Close(ctx)
 		return up.GetPrompt(ctx, b.prompt.Name, arguments)
 	}
+	// Mirror CallTool: an upstream still awaiting consent may be the one that
+	// owns this prompt, so the consent requirement is the useful answer.
+	if pendingConsent != nil {
+		return nil, pendingConsent
+	}
 	return nil, fmt.Errorf("%w: %s", ErrPromptNotFound, name)
 }
 
@@ -70,15 +79,18 @@ type promptBinding struct {
 	exposed  string
 }
 
-func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]promptBinding, error) {
+func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]promptBinding, *ConsentRequiredError, error) {
 	registries := mcpRegistries(rc)
 	if len(registries) == 0 {
-		return nil, ErrNoMCPRegistries
+		return nil, nil, ErrNoMCPRegistries
 	}
-	failOpen := rc.Consumer.FailMode() == consumerdomain.FailModeOpen
+	// Same default as compose(): an absent or empty fail mode fails open, so
+	// tools and prompts always degrade the same way for the same consumer.
+	failOpen := rc.Consumer.FailMode() != consumerdomain.FailModeClosed
 	toolkit := rc.Consumer.Toolkit()
 
 	var candidates []promptBinding
+	var pendingConsent *ConsentRequiredError
 	reachable := 0
 	for _, reg := range registries {
 		prompts, err := discoverCached(c, ctx, rc, reg, "prompts", func(ctx context.Context, up Upstream) ([]Prompt, error) {
@@ -86,10 +98,22 @@ func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableC
 		})
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil, ctx.Err()
+				return nil, nil, ctx.Err()
+			}
+			var consentErr *ConsentRequiredError
+			if errors.As(err, &consentErr) {
+				// Partial consent is allowed on the connect page — skip unlinked
+				// upstreams during federation and serve prompts from linked ones,
+				// even when the consumer otherwise fails closed.
+				if pendingConsent == nil {
+					pendingConsent = consentErr
+				}
+				c.logger.Info("mcp composer: skipping upstream pending consent",
+					"registry", reg.Name, "provider", consentErr.Provider)
+				continue
 			}
 			if !failOpen {
-				return nil, fmt.Errorf("%w: registry %q: %w", ErrUpstreamUnavailable, reg.Name, err)
+				return nil, nil, fmt.Errorf("%w: registry %q: %w", ErrUpstreamUnavailable, reg.Name, err)
 			}
 			c.logger.Warn("mcp composer: skipping unreachable upstream",
 				"registry", reg.Name, "error", err)
@@ -99,7 +123,10 @@ func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableC
 		candidates = append(candidates, selectPrompts(toolkit, reg, prompts)...)
 	}
 	if reachable == 0 {
-		return nil, fmt.Errorf("%w: no upstream MCP server reachable", ErrUpstreamUnavailable)
+		if pendingConsent != nil {
+			return nil, nil, pendingConsent
+		}
+		return nil, nil, fmt.Errorf("%w: no upstream MCP server reachable", ErrUpstreamUnavailable)
 	}
 	items := make([]exposedName, len(candidates))
 	for i, b := range candidates {
@@ -108,7 +135,7 @@ func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableC
 	for i, name := range resolveExposedNames(items) {
 		candidates[i].exposed = name
 	}
-	return candidates, nil
+	return candidates, pendingConsent, nil
 }
 
 func selectPrompts(toolkit consumerdomain.Toolkit, reg *registrydomain.Registry, prompts []Prompt) []promptBinding {

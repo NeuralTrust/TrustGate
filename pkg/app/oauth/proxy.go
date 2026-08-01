@@ -410,19 +410,36 @@ func (p *authProxy) mintSession(grant CodeGrant) (map[string]any, error) {
 	}, nil
 }
 
+// sessionRotationGrace is how long a rotated gateway refresh token stays
+// usable after a successful refresh. Long enough to absorb a client's
+// concurrent workers and transport retries, short enough that a leaked old
+// token is worthless minutes later.
+const sessionRotationGrace = 60 * time.Second
+
 func (p *authProxy) refresh(ctx context.Context, req TokenRequest) (map[string]any, error) {
 	if req.RefreshToken == "" {
 		return nil, oauthErr("invalid_request", "refresh_token is required")
 	}
 	if strings.HasPrefix(req.RefreshToken, gatewayRefreshPrefix) {
-		rec, err := p.store.TakeSession(ctx, req.RefreshToken)
+		rec, err := p.store.GetSession(ctx, req.RefreshToken)
 		if err != nil {
 			return nil, fmt.Errorf("oauth: load session: %w", err)
 		}
 		if rec == nil {
-			return nil, oauthErr("invalid_grant", "unknown, expired or already used refresh token")
+			return nil, oauthErr("invalid_grant", "unknown or expired refresh token")
 		}
-		return p.refreshSession(ctx, *rec)
+		resp, err := p.refreshSession(ctx, *rec)
+		if err != nil {
+			return nil, err
+		}
+		// Rotate with a grace window rather than single-use: the old token keeps
+		// working for a short overlap so a concurrent worker of the same client,
+		// or a retry after a lost token response, still lands on a valid grant
+		// instead of invalid_grant (which clients treat as session death).
+		if err := p.store.RetireSession(ctx, req.RefreshToken, sessionRotationGrace); err != nil {
+			return nil, fmt.Errorf("oauth: retire rotated refresh token: %w", err)
+		}
+		return resp, nil
 	}
 	auth, err := p.authForResource(ctx, req.Resource)
 	if err != nil {
