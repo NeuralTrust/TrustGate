@@ -26,6 +26,11 @@ import (
 var (
 	ErrTicketNotFound   = errors.New("oauth connect: ticket expired or unknown")
 	ErrProviderNotFound = errors.New("oauth connect: provider not configured for this consumer")
+	// ErrNoRegisteredClient means the dynamically registered OAuth client for an
+	// upstream is gone from the store (Redis flush/eviction). A stored refresh
+	// token is useless without the client it was issued to, so the only way
+	// forward is the consent flow, which re-registers via EnsureClient.
+	ErrNoRegisteredClient = errors.New("oauth connect: no dynamically registered client for this upstream")
 )
 
 type ConnectTicket struct {

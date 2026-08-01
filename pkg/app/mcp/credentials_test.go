@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -306,6 +307,28 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		var consent *ConsentRequiredError
 		if errors.As(err, &consent) {
 			t.Fatal("transient failures must not force the user back through consent")
+		}
+	})
+
+	// A lost DCR client (Redis flush) makes the stored refresh token unusable:
+	// only the consent flow re-registers a client, so this must elicit consent
+	// rather than propagate as a transient error that skips the upstream.
+	t.Run("lost registered client elicits consent", func(t *testing.T) {
+		t.Parallel()
+		vault := &memVault{}
+		cred, _ := vaultdomain.NewCredential(gw, "alice", "github", "", "old", "refresh-me", nil, time.Now().Add(-time.Hour))
+		_ = vault.Upsert(context.Background(), cred)
+		connect := &stubConnect{
+			ticket:     "t7",
+			refreshErr: fmt.Errorf("%w: provider %q", appoauth.ErrNoRegisteredClient, "github"),
+		}
+		r := NewCredentialResolver(nil, vault, connect, infraoauth.NewProviderClient(nil), discardLogger())
+		ctx := principalCtx(&identity.Principal{Subject: "alice"})
+		target := Target{}
+		err := r.Apply(ctx, mcpConsumer(gw), reg, &target)
+		var consent *ConsentRequiredError
+		if !errors.As(err, &consent) || consent.Ticket != "t7" {
+			t.Fatalf("error = %v, want consent for a lost registered client", err)
 		}
 	})
 
