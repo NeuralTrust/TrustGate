@@ -27,6 +27,12 @@ import (
 var (
 	ErrInvalidCredential = fmt.Errorf("vault: invalid credential: %w", commonerrors.ErrValidation)
 	ErrNotFound          = fmt.Errorf("vault: credential not found: %w", commonerrors.ErrNotFound)
+	// ErrUndecryptable is a stored credential that cannot be decrypted with the
+	// current key — almost always because SERVER_SECRET_KEY changed since it was
+	// written. It is distinct from ErrNotFound so callers can tell "the user
+	// never connected this" apart from "the vault key rotated and every stored
+	// credential is now unreadable", which need very different responses.
+	ErrUndecryptable = fmt.Errorf("vault: credential could not be decrypted: %w", commonerrors.ErrValidation)
 )
 
 type Credential struct {

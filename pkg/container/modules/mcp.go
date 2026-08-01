@@ -150,7 +150,10 @@ func MCPVaultPostgres(c *container.Container) error {
 }
 
 func MCPVaultRedis(c *container.Container) error {
-	return c.Provide(func(cc cache.Client, cipher vaultdomain.Encrypter) vaultdomain.Repository {
+	return c.Provide(func(cc cache.Client, cipher vaultdomain.Encrypter, logger *slog.Logger) vaultdomain.Repository {
+		// The data plane keeps durable OAuth state (user grants, DCR clients) in
+		// this Redis. Surface at startup any configuration that could shed it.
+		vaultrepo.WarnIfVolatile(context.Background(), cc.RedisClient(), logger)
 		return vaultrepo.NewRedisRepository(cc.RedisClient(), cipher)
 	})
 }

@@ -1550,3 +1550,74 @@ func TestExecuteBlocksOnlyOnFlaggedLeg(t *testing.T) {
 		t.Fatalf("expected *PluginError on response block, got %v", err)
 	}
 }
+
+// The real TrustGuard contract for protocol=mcp: transformed_payload is the
+// whole masked JSON-RPC envelope, not an {"input": "..."} string. Reading it as
+// a string found nothing and degraded to a block, which is what a DLP policy in
+// transform mode produced on a live tools/call.
+func TestExecuteMCPTransformUsesEnvelopePayload(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{
+		Status: statusTransform,
+		TransformedPayload: map[string]any{
+			"id":      float64(1),
+			"jsonrpc": "2.0",
+			"method":  "tools/call",
+			"params": map[string]any{
+				"name": "notion-create-pages",
+				"arguments": map[string]any{
+					"pages": []any{map[string]any{
+						"content":    "## Datos de contacto\n\n- **Email:** [MASKED_EMAIL]\n- **Teléfono:** [MASKED_PHONE]",
+						"icon":       "👤",
+						"properties": map[string]any{"title": "Victor — Contacto"},
+					}},
+				},
+			},
+		},
+		TraceID: "trace-mcp-transform",
+	}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	reqCtx := mcpRequestContext()
+	reqCtx.Body = []byte(`{"name":"notion-create-pages","arguments":{"pages":[{"content":"## Datos de contacto\n\n- **Email:** victor@neuraltrust.ai\n- **Teléfono:** 600123456","icon":"👤","properties":{"title":"Victor — Contacto"}}]}}`)
+
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), reqCtx, nil, event)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("a transform outcome must not block, got %v", err)
+	}
+	if res == nil || res.RequestBody == nil {
+		t.Fatalf("expected the masked request body, got %+v", res)
+	}
+
+	var call mcpToolCall
+	if uerr := json.Unmarshal(res.RequestBody, &call); uerr != nil {
+		t.Fatalf("rewritten body is not a tools/call: %v", uerr)
+	}
+	if call.Name != "notion-create-pages" {
+		t.Fatalf("tool name = %q, want it preserved", call.Name)
+	}
+	args := string(call.Arguments)
+	if strings.Contains(args, "victor@neuraltrust.ai") || strings.Contains(args, "600123456") {
+		t.Fatalf("unmasked PII survived into the upstream arguments: %s", args)
+	}
+	if !strings.Contains(args, "[MASKED_EMAIL]") || !strings.Contains(args, "[MASKED_PHONE]") {
+		t.Fatalf("masked values missing from the arguments: %s", args)
+	}
+	// The structure the detector left must survive untouched.
+	if !strings.Contains(args, `"title":"Victor — Contacto"`) {
+		t.Fatalf("the rewrite lost non-masked structure: %s", args)
+	}
+
+	attrs := span.PluginAttrsCopy()
+	extras, ok := attrs.Extras.(guardData)
+	if !ok {
+		t.Fatalf("extras type = %T, want guardData", attrs.Extras)
+	}
+	if extras.Degraded || extras.Decision != decisionTransformed {
+		t.Fatalf("extras = %+v, want a clean transformed outcome", extras)
+	}
+}
