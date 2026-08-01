@@ -20,6 +20,48 @@ import (
 	"strings"
 )
 
+// mcpTransformedRequest lifts the masked tools/call arguments out of the
+// envelope TrustGuard echoes back for protocol=mcp — the same
+// {jsonrpc,id,method,params} shape mcpToolsCallPayload sent, with the detected
+// spans replaced. Nothing has to be re-split, so the structure survives exactly
+// as the detector left it.
+//
+// The tool name comes from the original call, never from the payload: routing
+// is the gateway's decision and must not be steered by a masking outcome.
+func mcpTransformedRequest(payload map[string]any, name string) ([]byte, bool) {
+	params, ok := payload["params"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	arguments, ok := params["arguments"]
+	if !ok {
+		return nil, false
+	}
+	raw, err := json.Marshal(arguments)
+	if err != nil {
+		return nil, false
+	}
+	out, err := json.Marshal(mcpToolCall{Name: name, Arguments: raw})
+	if err != nil {
+		return nil, false
+	}
+	return out, true
+}
+
+// mcpTransformedResult lifts the masked CallToolResult out of the JSON-RPC
+// result envelope mcpToolsResultPayload sent.
+func mcpTransformedResult(payload map[string]any) ([]byte, bool) {
+	result, ok := payload["result"]
+	if !ok {
+		return nil, false
+	}
+	out, err := json.Marshal(result)
+	if err != nil {
+		return nil, false
+	}
+	return out, true
+}
+
 // rewriteMCPRequest writes TrustGuard's masked text back into the tools/call
 // arguments, mirroring how the LLM path writes it back into the message
 // segments. The parts are rebuilt exactly as mcpInputText collected them so the
@@ -165,4 +207,13 @@ func rewriteMCPResponse(body []byte, masked string) ([]byte, bool) {
 		return nil, false
 	}
 	return out, true
+}
+
+// mcpToolName reads the tool name from the gateway's tools/call body.
+func mcpToolName(body []byte) string {
+	var call mcpToolCall
+	if err := json.Unmarshal(body, &call); err != nil {
+		return ""
+	}
+	return call.Name
 }

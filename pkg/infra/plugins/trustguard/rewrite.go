@@ -26,6 +26,12 @@ import (
 type transformTarget struct {
 	isResponse bool
 	apply      func(masked string) ([]byte, bool)
+	// applyPayload rebuilds the body from the structured payload TrustGuard
+	// echoes back. For protocol=mcp the transform outcome is the whole masked
+	// JSON-RPC envelope rather than a masked string, so there is nothing to
+	// re-split: the masked values are lifted straight out of it. Tried before
+	// apply, which stays as the fallback for a string-shaped payload.
+	applyPayload func(payload map[string]any) ([]byte, bool)
 }
 
 // transformedInput extracts the masked string TrustGuard returns for rewrite.
