@@ -194,15 +194,32 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		if err := g.checkRateLimit(ctx, rc); err != nil {
 			return nil, err
 		}
-		if err := g.plugins.PreRequest(ctx, rc, p.Name, p.Arguments); err != nil {
-			return nil, err
-		}
-		result, err := g.composer.CallTool(ctx, rc, p.Name, p.Arguments)
+		pre, err := g.plugins.PreRequest(ctx, rc, p.Name, p.Arguments)
 		if err != nil {
 			return nil, err
 		}
-		if err := g.plugins.PreResponse(ctx, rc, p.Name, p.Arguments, result); err != nil {
+		// The request stage may rewrite the tool input (data-masking) or answer
+		// the call outright. Carry both forward: reusing the original arguments
+		// would send upstream exactly what a plugin just redacted.
+		arguments := p.Arguments
+		if pre != nil {
+			if pre.Result != nil {
+				return pre.Result, nil
+			}
+			if pre.Arguments != nil {
+				arguments = pre.Arguments
+			}
+		}
+		result, err := g.composer.CallTool(ctx, rc, p.Name, arguments)
+		if err != nil {
 			return nil, err
+		}
+		post, err := g.plugins.PreResponse(ctx, rc, p.Name, arguments, result)
+		if err != nil {
+			return nil, err
+		}
+		if post != nil && post.Result != nil {
+			result = post.Result
 		}
 		return result, nil
 	case "resources/list":
