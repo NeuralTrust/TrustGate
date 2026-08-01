@@ -205,11 +205,11 @@ func (r *redisRepository) decrypt(stored *storedCredential) (*domain.Credential,
 	var err error
 	if c.AccessToken, err = r.cipher.Decrypt(stored.AccessToken); err != nil {
 		return nil, fmt.Errorf("%w: undecryptable access token for %s/%s: %v",
-			domain.ErrNotFound, stored.PrincipalSub, stored.Provider, err)
+			domain.ErrUndecryptable, stored.PrincipalSub, stored.Provider, err)
 	}
 	if c.RefreshToken, err = r.cipher.Decrypt(stored.RefreshToken); err != nil {
 		return nil, fmt.Errorf("%w: undecryptable refresh token for %s/%s: %v",
-			domain.ErrNotFound, stored.PrincipalSub, stored.Provider, err)
+			domain.ErrUndecryptable, stored.PrincipalSub, stored.Provider, err)
 	}
 	if stored.ExpiresAt != nil {
 		c.ExpiresAt = *stored.ExpiresAt

@@ -75,7 +75,10 @@ func (s *connectService) hasUnlinked(ctx context.Context, gatewayID ids.GatewayI
 		if cfg == nil {
 			continue
 		}
-		if _, err := s.vault.Find(ctx, gatewayID, principalSub, cfg.Provider); errors.Is(err, vaultdomain.ErrNotFound) {
+		// Not connected, or connected but unreadable under the current key: both
+		// need the user to (re)link, so both count as unlinked here.
+		if _, err := s.vault.Find(ctx, gatewayID, principalSub, cfg.Provider); errors.Is(err, vaultdomain.ErrNotFound) ||
+			errors.Is(err, vaultdomain.ErrUndecryptable) {
 			return true
 		}
 	}
