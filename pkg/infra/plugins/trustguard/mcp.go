@@ -26,8 +26,9 @@ type mcpToolCall struct {
 }
 
 type mcpToolResult struct {
-	Content []mcpContentBlock `json:"content"`
-	IsError bool              `json:"isError"`
+	Content           []mcpContentBlock `json:"content"`
+	StructuredContent json.RawMessage   `json:"structuredContent"`
+	IsError           bool              `json:"isError"`
 }
 
 type mcpContentBlock struct {
@@ -51,21 +52,30 @@ func mcpInputText(body []byte) string {
 	return strings.Join(parts, "\n")
 }
 
-// mcpOutputText concatenates the text of every text content block in a
-// CallToolResult, ignoring non-text blocks (image/audio/resource). The isError
-// flag does not change extraction. It returns "" when there is no text.
+// mcpOutputText concatenates the inspectable text of a CallToolResult: the text
+// of every text content block (ignoring image/audio/resource blocks) followed by
+// every string leaf of structuredContent, in the order rewriteMCPResponse writes
+// them back. The isError flag does not change extraction. It returns "" when
+// there is nothing to inspect.
+//
+// structuredContent is included because a tool may return its payload there
+// instead of, or in addition to, text blocks — it reaches the agent all the
+// same. This value gates whether the guard is called at all, so leaving
+// structuredContent out let a result whose PII lived only in structuredContent
+// skip inspection entirely and reach the caller unmasked.
 func mcpOutputText(body []byte) string {
 	var result mcpToolResult
 	if err := json.Unmarshal(body, &result); err != nil {
 		return ""
 	}
-	parts := make([]string, 0, len(result.Content))
+	parts := make([]string, 0, len(result.Content)+1)
 	for _, block := range result.Content {
 		if !blockIsText(block) || strings.TrimSpace(block.Text) == "" {
 			continue
 		}
 		parts = append(parts, block.Text)
 	}
+	parts = append(parts, flattenArgumentStrings(result.StructuredContent)...)
 	return strings.Join(parts, "\n")
 }
 
