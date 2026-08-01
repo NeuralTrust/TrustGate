@@ -28,6 +28,11 @@ func TestVolatilityProblems(t *testing.T) {
 	if got := volatilityProblems("noeviction", "aof_enabled:1", "", true); len(got) != 0 {
 		t.Fatalf("safe config flagged: %v", got)
 	}
+	// Memorystore's default: volatile-lru only evicts keys with a TTL, which
+	// the vault's keys never carry — not a problem.
+	if got := volatilityProblems("volatile-lru", "aof_enabled:1", "", true); len(got) != 0 {
+		t.Fatalf("volatile-lru flagged despite TTL-less vault keys: %v", got)
+	}
 	// Managed Redis (CONFIG blocked, INFO unreadable): nothing to report.
 	if got := volatilityProblems("", "", "", false); len(got) != 0 {
 		t.Fatalf("unreadable config must stay quiet, got %v", got)

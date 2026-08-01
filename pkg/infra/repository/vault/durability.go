@@ -61,8 +61,11 @@ func WarnIfVolatile(ctx context.Context, rc *redis.Client, logger *slog.Logger) 
 // the policy can be tested without a Redis that honours CONFIG.
 func volatilityProblems(policy, persistenceInfo, save string, sawPersistence bool) []string {
 	var problems []string
-	if policy != "" && policy != "noeviction" {
-		problems = append(problems, "maxmemory-policy="+policy+" can evict stored credentials under memory pressure (want noeviction)")
+	// Only allkeys-* policies can touch the vault's keys: credentials are
+	// stored without a TTL, and volatile-* policies evict solely keys that
+	// carry one (Memorystore's default volatile-lru is therefore safe here).
+	if strings.HasPrefix(policy, "allkeys-") {
+		problems = append(problems, "maxmemory-policy="+policy+" can evict stored credentials under memory pressure (want noeviction or volatile-*)")
 	}
 	persistent := strings.Contains(persistenceInfo, "aof_enabled:1") || strings.TrimSpace(save) != ""
 	if sawPersistence && !persistent {
