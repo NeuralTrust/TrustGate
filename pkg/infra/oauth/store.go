@@ -96,13 +96,28 @@ func (s *Store) SaveSession(ctx context.Context, refreshToken string, rec appoau
 	return s.save(ctx, sessionPrefix+refreshToken, rec, sessionTTL)
 }
 
-func (s *Store) TakeSession(ctx context.Context, refreshToken string) (*appoauth.SessionRecord, error) {
+func (s *Store) GetSession(ctx context.Context, refreshToken string) (*appoauth.SessionRecord, error) {
+	raw, err := s.rdb.Get(ctx, sessionPrefix+refreshToken).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("oauth flow store: get session: %w", err)
+	}
 	var rec appoauth.SessionRecord
-	ok, err := s.take(ctx, sessionPrefix+refreshToken, &rec)
-	if err != nil || !ok {
-		return nil, err
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		return nil, fmt.Errorf("oauth flow store: decode session: %w", err)
 	}
 	return &rec, nil
+}
+
+func (s *Store) RetireSession(ctx context.Context, refreshToken string, grace time.Duration) error {
+	// EXPIRE LT only ever shortens the remaining TTL: replaying an already
+	// retired token cannot push its expiry out again.
+	if err := s.rdb.ExpireLT(ctx, sessionPrefix+refreshToken, grace).Err(); err != nil {
+		return fmt.Errorf("oauth flow store: retire session: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) save(ctx context.Context, key string, v any, ttl time.Duration) error {

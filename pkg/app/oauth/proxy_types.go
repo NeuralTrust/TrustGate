@@ -16,6 +16,7 @@ package oauth
 
 import (
 	"context"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
@@ -88,7 +89,14 @@ type FlowStore interface {
 	SaveGatewayClient(ctx context.Context, c RegisteredGatewayClient) error
 	GetGatewayClient(ctx context.Context, clientID string) (*RegisteredGatewayClient, error)
 	SaveSession(ctx context.Context, refreshToken string, rec SessionRecord) error
-	TakeSession(ctx context.Context, refreshToken string) (*SessionRecord, error)
+	GetSession(ctx context.Context, refreshToken string) (*SessionRecord, error)
+	// RetireSession shortens the session's remaining lifetime to the grace
+	// window instead of deleting it. A rotated refresh token must survive
+	// briefly: MCP clients refresh from several workers at once and retry when
+	// a token response is lost in transit, and a hard single-use token turns
+	// either into invalid_grant — killing the whole session. It must only ever
+	// shorten the TTL, so replaying an old token cannot keep it alive.
+	RetireSession(ctx context.Context, refreshToken string, grace time.Duration) error
 }
 
 type AuthorizeRequest struct {
