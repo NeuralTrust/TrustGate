@@ -191,6 +191,10 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 			if strings.TrimSpace(text) == "" {
 				return passThrough(), nil
 			}
+			reqBody := in.Request.Body
+			tgt.apply = func(masked string) ([]byte, bool) {
+				return rewriteMCPRequest(reqBody, masked)
+			}
 			raw, err := mcpToolsCallPayload(in.Request.Body)
 			if err != nil {
 				p.warn(ctx, "trustguard mcp tools/call payload build failed, failing open",
@@ -207,6 +211,10 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 			}
 			if !mcpOutputInspectable(in.Response.Body) {
 				return passThrough(), nil
+			}
+			respBody := in.Response.Body
+			tgt.apply = func(masked string) ([]byte, bool) {
+				return rewriteMCPResponse(respBody, masked)
 			}
 			raw, err := mcpToolsResultPayload(in.Response.Body)
 			if err != nil {

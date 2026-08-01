@@ -345,18 +345,15 @@ func writeJSONStatus(c *fiber.Ctx, status int, body any) error {
 
 // httpStatusForRPCError maps gateway denials onto the wire HTTP status so
 // agents and telemetry see the real outcome. Upstream JSON-RPC errors stay on 200.
-func httpStatusForRPCError(err *appmcp.RPCError) int {
-	if err == nil {
-		return fiber.StatusOK
-	}
-	switch {
-	case appmcp.IsPolicyBlockedCode(err.Code),
-		err.Code == appmcp.CodeRateLimited,
-		err.Code == appmcp.CodeUnavailable:
-		return err.ResolvedHTTPStatus()
-	default:
-		return fiber.StatusOK
-	}
+// httpStatusForRPCError is always 200: on the MCP wire a JSON-RPC error is a
+// successful exchange carrying a failed call. Clients treat a 4xx/5xx here as a
+// transport failure — they drop the connection and restart authentication
+// without reading the body — so a policy denial answered with 403 killed the
+// session instead of telling the agent it was blocked. The status the refusal
+// means (403, 429, 503) is recorded on the span, and rate-limit headers still
+// ride along on the response.
+func httpStatusForRPCError(_ *appmcp.RPCError) int {
+	return fiber.StatusOK
 }
 
 func applyRPCErrorHeaders(c *fiber.Ctx, err *appmcp.RPCError) {

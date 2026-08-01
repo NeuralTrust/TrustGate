@@ -1,0 +1,168 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package trustguard
+
+import (
+	"encoding/json"
+	"sort"
+	"strings"
+)
+
+// rewriteMCPRequest writes TrustGuard's masked text back into the tools/call
+// arguments, mirroring how the LLM path writes it back into the message
+// segments. The parts are rebuilt exactly as mcpInputText collected them so the
+// masked text maps onto the values that were inspected; anything ambiguous
+// fails, and the caller then blocks rather than forwarding unmasked data.
+func rewriteMCPRequest(body []byte, masked string) ([]byte, bool) {
+	var call mcpToolCall
+	if err := json.Unmarshal(body, &call); err != nil {
+		return nil, false
+	}
+	// Arguments that are not valid JSON are inspected as one raw blob; there is
+	// no structure to write back into, so refuse instead of guessing.
+	var decoded any
+	if len(call.Arguments) == 0 || json.Unmarshal(call.Arguments, &decoded) != nil {
+		return nil, false
+	}
+
+	parts := make([]string, 0, 4)
+	name := strings.TrimSpace(call.Name)
+	if name != "" {
+		parts = append(parts, name)
+	}
+	leaves := collectStrings(decoded, nil)
+	if len(leaves) == 0 {
+		return nil, false
+	}
+	parts = append(parts, leaves...)
+
+	maskedParts, ok := redistribute(masked, parts)
+	if !ok {
+		return nil, false
+	}
+	if name != "" {
+		// The tool name was inspected but is never rewritten: routing is the
+		// gateway's decision, not a masking outcome.
+		maskedParts = maskedParts[1:]
+	}
+
+	idx := 0
+	patched, ok := replaceArgumentStrings(decoded, maskedParts, &idx)
+	if !ok || idx != len(maskedParts) {
+		return nil, false
+	}
+	arguments, err := json.Marshal(patched)
+	if err != nil {
+		return nil, false
+	}
+	out, err := json.Marshal(mcpToolCall{Name: call.Name, Arguments: arguments})
+	if err != nil {
+		return nil, false
+	}
+	return out, true
+}
+
+// replaceArgumentStrings walks the arguments tree in the same order
+// collectStrings did — maps by sorted key, arrays in order, blank strings
+// skipped — replacing each inspected leaf with its masked counterpart.
+func replaceArgumentStrings(value any, masked []string, idx *int) (any, bool) {
+	switch v := value.(type) {
+	case string:
+		if strings.TrimSpace(v) == "" {
+			return v, true
+		}
+		if *idx >= len(masked) {
+			return nil, false
+		}
+		out := masked[*idx]
+		*idx++
+		return out, true
+	case map[string]any:
+		keys := make([]string, 0, len(v))
+		for k := range v {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			patched, ok := replaceArgumentStrings(v[k], masked, idx)
+			if !ok {
+				return nil, false
+			}
+			v[k] = patched
+		}
+		return v, true
+	case []any:
+		for i := range v {
+			patched, ok := replaceArgumentStrings(v[i], masked, idx)
+			if !ok {
+				return nil, false
+			}
+			v[i] = patched
+		}
+		return v, true
+	default:
+		return value, true
+	}
+}
+
+// rewriteMCPResponse writes the masked text back into the text content blocks of
+// a CallToolResult. The result is patched in place on a generic decode rather
+// than re-encoded from a typed struct, so fields the gateway does not model
+// (structuredContent, _meta, annotations) survive the rewrite.
+func rewriteMCPResponse(body []byte, masked string) ([]byte, bool) {
+	var generic map[string]any
+	if err := json.Unmarshal(body, &generic); err != nil {
+		return nil, false
+	}
+	blocks, ok := generic["content"].([]any)
+	if !ok {
+		return nil, false
+	}
+
+	// Same selection as mcpOutputText: text blocks with non-blank text, in order.
+	targets := make([]map[string]any, 0, len(blocks))
+	parts := make([]string, 0, len(blocks))
+	for _, raw := range blocks {
+		block, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		text, ok := block["text"].(string)
+		if !ok || strings.TrimSpace(text) == "" {
+			continue
+		}
+		if kind, ok := block["type"].(string); ok && kind != "" && kind != "text" {
+			continue
+		}
+		targets = append(targets, block)
+		parts = append(parts, text)
+	}
+	if len(targets) == 0 {
+		return nil, false
+	}
+
+	maskedParts, ok := redistribute(masked, parts)
+	if !ok {
+		return nil, false
+	}
+	for i, block := range targets {
+		block["text"] = maskedParts[i]
+	}
+	out, err := json.Marshal(generic)
+	if err != nil {
+		return nil, false
+	}
+	return out, true
+}

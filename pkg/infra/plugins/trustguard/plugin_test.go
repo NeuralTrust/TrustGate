@@ -1100,7 +1100,10 @@ func TestExecuteTransformLineCountMismatchBlocks(t *testing.T) {
 	}
 }
 
-func TestExecuteMCPTransformEnforceBlocks(t *testing.T) {
+// Enforce + transform on MCP masks the tool arguments, the same way the LLM path
+// masks message content. It used to degrade to a block because the MCP branch
+// built no rewrite target.
+func TestExecuteMCPTransformEnforceMasksArguments(t *testing.T) {
 	t.Parallel()
 
 	f := &fakeGuard{response: transformResponse("search\nfind [MASKED_PII]")}
@@ -1110,19 +1113,64 @@ func TestExecuteMCPTransformEnforceBlocks(t *testing.T) {
 	event, span := newEvent()
 	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), mcpRequestContext(), nil, event)
 	res, err := p.Execute(context.Background(), in)
-	if res != nil {
-		t.Fatalf("expected block on MCP transform (no body propagation), got %+v", res)
+	if err != nil {
+		t.Fatalf("masking must not fail the call, got %v", err)
 	}
-	if _, ok := appplugins.AsPluginError(err); !ok {
-		t.Fatalf("expected *PluginError, got %v", err)
+	if res == nil || res.RequestBody == nil {
+		t.Fatalf("expected a rewritten request body, got %+v", res)
+	}
+	var call mcpToolCall
+	if uerr := json.Unmarshal(res.RequestBody, &call); uerr != nil {
+		t.Fatalf("rewritten body is not a tools/call: %v", uerr)
+	}
+	if call.Name != "search" {
+		t.Fatalf("tool name = %q, want it left alone", call.Name)
+	}
+	if got := string(call.Arguments); got != `{"query":"find [MASKED_PII]"}` {
+		t.Fatalf("arguments = %s, want the masked value", got)
 	}
 	attrs := span.PluginAttrsCopy()
 	extras, ok := attrs.Extras.(guardData)
 	if !ok {
 		t.Fatalf("extras type = %T, want guardData", attrs.Extras)
 	}
-	if !extras.Degraded || extras.DegradedReason != reasonTransformUnsupported {
-		t.Fatalf("extras = %+v, want degraded unsupported-path", extras)
+	if extras.Degraded || extras.Decision != decisionTransformed {
+		t.Fatalf("extras = %+v, want a clean transformed outcome", extras)
+	}
+}
+
+// The response direction masks the text blocks of the tool result and keeps
+// fields the gateway does not model.
+func TestExecuteMCPTransformEnforceMasksResult(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: transformResponse("the [MASKED_PII]")}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	resp := &infracontext.ResponseContext{
+		GatewayID: "gw-test",
+		Body:      []byte(`{"content":[{"type":"text","text":"the answer"}],"isError":false,"_meta":{"k":"v"}}`),
+	}
+	in := execInput(policy.StagePreResponse, policy.ModeEnforce, settings(""), mcpRequestContext(), resp)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("masking must not fail the call, got %v", err)
+	}
+	if res == nil || !res.StopUpstream || res.Body == nil {
+		t.Fatalf("expected a rewritten result body, got %+v", res)
+	}
+	var out map[string]any
+	if uerr := json.Unmarshal(res.Body, &out); uerr != nil {
+		t.Fatalf("rewritten body is not JSON: %v", uerr)
+	}
+	blocks := out["content"].([]any)
+	first := blocks[0].(map[string]any)
+	if first["text"] != "the [MASKED_PII]" {
+		t.Fatalf("text = %v, want the masked value", first["text"])
+	}
+	if _, ok := out["_meta"]; !ok {
+		t.Fatal("the rewrite dropped fields the gateway does not model")
 	}
 }
 
