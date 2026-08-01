@@ -201,7 +201,10 @@ func TestRPCGateway_ToolsCall_Allow_ReturnsResultUnchanged(t *testing.T) {
 	assert.Equal(t, string(raw), string(got))
 }
 
-func TestHandler_ToolsCall_PreRequestBlock_RendersJSONRPCErrorAt403(t *testing.T) {
+// A policy denial answers HTTP 200 carrying the JSON-RPC error: MCP clients
+// read a 4xx on this endpoint as a transport failure and tear the session down
+// without ever surfacing the block. The 403 it means is recorded on the span.
+func TestHandler_ToolsCall_PreRequestBlock_RidesOn200(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
 	exec := pluginmocks.NewExecutor(t)
@@ -210,8 +213,8 @@ func TestHandler_ToolsCall_PreRequestBlock_RendersJSONRPCErrorAt403(t *testing.T
 	app := newAppWithRunner(t, composer, appmcp.NewPluginRunner(exec, discardLogger()), consumerdomain.TypeMCP, true)
 	status, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"echo"}}`)
 
-	if status != fiber.StatusForbidden {
-		t.Fatalf("policy-blocked tools/call must return HTTP 403, got %d", status)
+	if status != fiber.StatusOK {
+		t.Fatalf("policy-blocked tools/call must ride on HTTP 200 so the client parses it, got %d", status)
 	}
 	rpcErr := body["error"].(map[string]any)
 	if rpcErr["code"].(float64) != -32001 {
@@ -245,7 +248,9 @@ func TestHandler_ToolsCall_RateLimitPropagatesHeaders(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	require.Equal(t, fiber.StatusTooManyRequests, resp.StatusCode)
+	// Throttling rides on 200 for the same transport reason; the rate-limit
+	// headers still travel so clients can back off.
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
 	require.Equal(t, "30", resp.Header.Get("Retry-After"))
 	require.Equal(t, "quota", resp.Header.Get("X-RateLimit-Reason"))
 	require.Equal(t, "10000", resp.Header.Get("X-RateLimit-Limit"))
@@ -374,4 +379,67 @@ func TestRPCGateway_ToolsCall_GatewayPlanUnavailable_ReturnsRPCError(t *testing.
 	require.True(t, errors.As(err, &rpcErr), "want *appmcp.RPCError, got %v", err)
 	assert.Equal(t, appmcp.CodeUnavailable, rpcErr.Code)
 	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+// End to end: TrustGuard masks the tool input, and the masked arguments — not
+// the originals — are what reaches the upstream. Forwarding the originals would
+// leak exactly the data the policy was configured to redact.
+func TestHandler_ToolsCall_MaskedArgumentsReachUpstream(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	var forwarded json.RawMessage
+	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "echo", mock.Anything).
+		Run(func(_ context.Context, _ *appconsumer.RoutableConsumer, _ string, args json.RawMessage) {
+			forwarded = args
+		}).
+		Return(json.RawMessage(`{"content":[]}`), nil).Once()
+
+	exec := pluginmocks.NewExecutor(t)
+	exec.EXPECT().RunStage(mock.Anything, mock.Anything).
+		Run(func(_ context.Context, in appplugins.StageInput) {
+			if in.Stage == policydomain.StagePreRequest {
+				in.Request.Body = []byte(`{"name":"echo","arguments":{"ssn":"[REDACTED]"}}`)
+			}
+		}).
+		Return(&appplugins.StageOutcome{}, nil)
+
+	app := newAppWithRunner(t, composer, appmcp.NewPluginRunner(exec, discardLogger()), consumerdomain.TypeMCP, true)
+	status, _ := rpcCall(t, app,
+		`{"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"echo","arguments":{"ssn":"123-45-6789"}}}`)
+
+	require.Equal(t, fiber.StatusOK, status)
+	assert.JSONEq(t, `{"ssn":"[REDACTED]"}`, string(forwarded),
+		"the upstream must receive the masked arguments")
+}
+
+// End to end: a masked tool result reaches the client as the tool's output
+// rather than failing the call.
+func TestHandler_ToolsCall_MaskedResultReachesClient(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "echo", mock.Anything).
+		Return(json.RawMessage(`{"content":[{"type":"text","text":"555-1234"}]}`), nil).Once()
+
+	masked := `{"content":[{"type":"text","text":"[REDACTED]"}]}`
+	exec := pluginmocks.NewExecutor(t)
+	exec.EXPECT().RunStage(mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, in appplugins.StageInput) (*appplugins.StageOutcome, error) {
+			if in.Stage == policydomain.StagePreResponse {
+				return &appplugins.StageOutcome{
+					ShortCircuit: true,
+					StatusCode:   fiber.StatusOK,
+					Body:         []byte(masked),
+				}, nil
+			}
+			return &appplugins.StageOutcome{}, nil
+		})
+
+	app := newAppWithRunner(t, composer, appmcp.NewPluginRunner(exec, discardLogger()), consumerdomain.TypeMCP, true)
+	status, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":22,"method":"tools/call","params":{"name":"echo"}}`)
+
+	require.Equal(t, fiber.StatusOK, status)
+	require.Nil(t, body["error"], "masking must not fail the call: %v", body["error"])
+	got, err := json.Marshal(body["result"])
+	require.NoError(t, err)
+	assert.JSONEq(t, masked, string(got))
 }
