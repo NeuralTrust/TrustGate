@@ -238,13 +238,6 @@
                 "description": "Target model used when behavior is downgrade_model. Must be on the same provider."
               },
               {
-                "key": "stream_usage_injection",
-                "label": "Stream Usage Injection",
-                "type": "boolean",
-                "description": "Request and inject usage on streaming responses so accrual works on streams.",
-                "default": false
-              },
-              {
                 "key": "count_cache_reads",
                 "label": "Count Cache Reads",
                 "type": "boolean",

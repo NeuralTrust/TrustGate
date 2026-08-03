@@ -246,10 +246,15 @@ func TestTokenRateLimiterSchema_BudgetTree(t *testing.T) {
 	assert.Equal(t, []string{"reject", "downgrade_model"}, enumValues(behavior.Enum))
 	assert.Equal(t, []string{"Reject", "Downgrade Model"}, enumLabels(behavior.Enum))
 
-	for _, k := range []string{"downgrade_to", "stream_usage_injection", "count_cache_reads", "custom_pricing", "group_by_header"} {
+	for _, k := range []string{"downgrade_to", "count_cache_reads", "custom_pricing", "group_by_header"} {
 		_, ok := fieldByKey(fields, k)
 		assert.Truef(t, ok, "missing top-level field %q", k)
 	}
+
+	// The proxy always asks OpenAI-format upstreams for streaming usage, so the
+	// budget has no switch of its own to offer.
+	_, ok = fieldByKey(fields, "stream_usage_injection")
+	assert.False(t, ok, "stream_usage_injection must not be advertised")
 
 	// Cost cap, the legacy window block, per_model and pricing_table moved out
 	// of the budget catalog schema even though their parsing is preserved.
