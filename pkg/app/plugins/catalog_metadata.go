@@ -225,13 +225,6 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Description: "Target model used when behavior is downgrade_model. Must be on the same provider.",
 				},
 				{
-					Key:         "stream_usage_injection",
-					Label:       "Stream Usage Injection",
-					Type:        FieldTypeBoolean,
-					Description: "Request and inject usage on streaming responses so accrual works on streams.",
-					Default:     false,
-				},
-				{
 					Key:         "count_cache_reads",
 					Label:       "Count Cache Reads",
 					Type:        FieldTypeBoolean,
