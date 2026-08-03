@@ -41,7 +41,9 @@ func TestValidate(t *testing.T) {
 	}{
 		{"dsn_env accepted", Settings{DSNEnv: "SENSIBLE_PG_DSN", Table: metrics.TableName}, ""},
 		{"literal dsn accepted", Settings{DSN: "postgres://localhost/db", Table: metrics.TableName}, ""},
-		{"neither dsn nor dsn_env", Settings{Table: metrics.TableName}, "dsn"},
+		// Neither dsn nor dsn_env is valid: the template falls back to the
+		// service DatabaseConfig (RUN-1086).
+		{"neither dsn nor dsn_env", Settings{Table: metrics.TableName}, ""},
 		{"foreign table rejected", Settings{DSNEnv: "SENSIBLE_PG_DSN", Table: "other_table"}, "owned"},
 	}
 	for _, tt := range tests {
@@ -57,6 +59,15 @@ func TestValidate(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.wantErr)
 		})
 	}
+}
+
+func TestHasDSNSource(t *testing.T) {
+	t.Parallel()
+
+	assert.True(t, Settings{DSN: "postgres://x"}.hasDSNSource())
+	assert.True(t, Settings{DSNEnv: "SENSIBLE_PG_DSN"}.hasDSNSource())
+	assert.False(t, Settings{}.hasDSNSource())
+	assert.False(t, Settings{DSN: "  ", DSNEnv: "  "}.hasDSNSource())
 }
 
 func TestResolveDSNPrefersLiteral(t *testing.T) {

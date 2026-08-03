@@ -74,7 +74,7 @@ func newExporterFactory(logger *slog.Logger, cfg *config.Config) appmetrics.Expo
 	return infratelemetry.NewExporterLocator(
 		infratelemetry.WithExporter(kafka.ExporterName, kafka.NewKafkaTemplate(logger, cfg.Kafka)),
 		infratelemetry.WithExporter(otlp.ExporterName, otlp.NewTemplate(logger, cfg.Telemetry.OTLP)),
-		infratelemetry.WithExporter(postgres.ExporterName, postgres.NewTemplate(logger)),
+		infratelemetry.WithExporter(postgres.ExporterName, postgres.NewTemplate(logger, &cfg.Database)),
 	)
 }
 
