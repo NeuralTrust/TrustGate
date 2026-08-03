@@ -41,6 +41,8 @@ func (s stubPricing) Resolve(_ context.Context, providerCode, slug string) appca
 	return s.price
 }
 
+func (stubPricing) InvalidateCache() {}
+
 func newBuilder(price appcatalog.Pricing) *Builder {
 	return NewBuilder(adapter.NewRegistry(), stubPricing{price: price})
 }

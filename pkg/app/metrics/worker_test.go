@@ -80,6 +80,8 @@ func (s stubPricingResolver) Resolve(_ context.Context, _ string, _ string) appc
 	return s.price
 }
 
+func (stubPricingResolver) InvalidateCache() {}
+
 // TestWorker_PublishesConsolidatedEvent exercises the full path: Process ->
 // pipeline -> builder -> exporter, asserting that a single consolidated event
 // with the expected shape reaches the exporter.

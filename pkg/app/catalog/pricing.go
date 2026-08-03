@@ -23,6 +23,7 @@ import (
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -36,6 +37,7 @@ type Pricing struct {
 //go:generate mockery --name=PricingResolver --dir=. --output=./mocks --filename=pricing_resolver_mock.go --case=underscore --with-expecter
 type PricingResolver interface {
 	Resolve(ctx context.Context, providerCode, slug string) Pricing
+	InvalidateCache()
 }
 
 var _ PricingResolver = (*pricingResolver)(nil)
@@ -67,9 +69,18 @@ func (r *pricingResolver) Resolve(ctx context.Context, providerCode, slug string
 		if cached, ok := r.cached(key); ok {
 			return cached, nil
 		}
-		return r.load(ctx, providerCode, slug, key), nil
+		p := r.load(ctx, providerCode, slug)
+		if !p.Found && providerCode == providers.ProviderOpenAICompatible {
+			p = r.load(ctx, providers.ProviderOpenAI, slug)
+		}
+		r.memoryCache.Set(key, p)
+		return p, nil
 	})
 	return v.(Pricing)
+}
+
+func (r *pricingResolver) InvalidateCache() {
+	r.memoryCache.Clear()
 }
 
 func (r *pricingResolver) cached(key string) (Pricing, bool) {
@@ -85,7 +96,7 @@ func (r *pricingResolver) cached(key string) (Pricing, bool) {
 	return p, true
 }
 
-func (r *pricingResolver) load(ctx context.Context, providerCode, slug, key string) Pricing {
+func (r *pricingResolver) load(ctx context.Context, providerCode, slug string) Pricing {
 	model, err := r.repo.FindModel(ctx, providerCode, slug)
 	if err != nil {
 		if !errors.Is(err, commonerrors.ErrNotFound) {
@@ -94,18 +105,17 @@ func (r *pricingResolver) load(ctx context.Context, providerCode, slug, key stri
 				slog.String("model", slug),
 				slog.String("error", err.Error()))
 		}
-		p := Pricing{}
-		r.memoryCache.Set(key, p)
-		return p
+		return Pricing{}
 	}
-	p := Pricing{
+	if model.InputPrice == "" && model.OutputPrice == "" {
+		return Pricing{}
+	}
+	return Pricing{
 		ModelLabel:  model.DisplayName,
 		InputPrice:  parsePrice(model.InputPrice),
 		OutputPrice: parsePrice(model.OutputPrice),
 		Found:       true,
 	}
-	r.memoryCache.Set(key, p)
-	return p
 }
 
 func parsePrice(raw string) float64 {

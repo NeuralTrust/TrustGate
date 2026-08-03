@@ -49,6 +49,8 @@ func (stubPricing) Resolve(context.Context, string, string) appcatalog.Pricing {
 	return appcatalog.Pricing{}
 }
 
+func (stubPricing) InvalidateCache() {}
+
 func TestMCPPipeline_ToolsCallBuildsMCPEvent(t *testing.T) {
 	worker := appmetricsmocks.NewWorker(t)
 
