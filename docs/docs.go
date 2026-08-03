@@ -3269,7 +3269,7 @@ const docTemplate = `{
         },
         "/{consumer_slug}/v1/chat/completions": {
             "post": {
-                "description": "Forwards an OpenAI Chat Completions request to the selected provider. Proxy plane route: /{consumer_slug}/v1/chat/completions. Other fixed routes include /v1/messages (Anthropic) and /v1/responses (OpenAI Responses).",
+                "description": "Forwards an OpenAI Chat Completions request to the selected provider. Proxy plane route: /{consumer_slug}/v1/chat/completions. Other fixed routes include /v1/messages (Anthropic) and /v1/responses (OpenAI Responses). Inline consumers may authenticate with an api key via X-AG-API-Key, x-api-key, or Authorization: Bearer ag_….",
                 "consumes": [
                     "application/json"
                 ],
@@ -3296,7 +3296,13 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Bearer token for OAuth2 or OIDC consumers",
+                        "description": "API key for inline consumers (Anthropic-compatible clients)",
+                        "name": "x-api-key",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Bearer ag_… for inline api-key auth, or Bearer JWT for OAuth2/OIDC consumers",
                         "name": "Authorization",
                         "in": "header"
                     },

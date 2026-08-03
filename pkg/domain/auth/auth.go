@@ -133,6 +133,13 @@ func HashAPIKey(raw string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// HasAPIKeyPrefix reports whether raw looks like a generated TrustGate api key
+// (the "ag_" marker). Used by the proxy to tell api keys apart from JWTs when
+// both travel in Authorization: Bearer.
+func HasAPIKeyPrefix(raw string) bool {
+	return strings.HasPrefix(raw, apiKeyPrefix)
+}
+
 // APIKeyPreview returns the non-secret head and tail of a generated api key.
 // Empty strings are returned when the key is too short to split safely.
 func APIKeyPreview(raw string) (prefix, suffix string) {

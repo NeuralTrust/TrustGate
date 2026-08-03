@@ -31,7 +31,7 @@ type Connection struct {
 }
 
 func NewConnection(ctx context.Context, cfg *config.DatabaseConfig) (*Connection, error) {
-	conf, err := buildPoolConfig(ctx, cfg)
+	conf, err := NewPoolConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("%w: build pool config: %w", errors.ErrBoot, err)
 	}
@@ -44,6 +44,14 @@ func NewConnection(ctx context.Context, cfg *config.DatabaseConfig) (*Connection
 		return nil, fmt.Errorf("%w: ping database: %v", errors.ErrBoot, err)
 	}
 	return &Connection{Pool: pool}, nil
+}
+
+// NewPoolConfig builds a pgxpool.Config from discrete DatabaseConfig fields,
+// including the IAM BeforeConnect hook when Login is "aws". Callers that need
+// a pool without the boot-time Ping of NewConnection (for example a telemetry
+// sink) should use this and open the pool themselves.
+func NewPoolConfig(ctx context.Context, cfg *config.DatabaseConfig) (*pgxpool.Config, error) {
+	return buildPoolConfig(ctx, cfg)
 }
 
 func (c *Connection) Close() {
