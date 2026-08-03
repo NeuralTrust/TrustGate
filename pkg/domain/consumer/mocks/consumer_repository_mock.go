@@ -866,17 +866,17 @@ func (_c *Repository_Save_Call) RunAndReturn(run func(context.Context, *consumer
 	return _c
 }
 
-// Update provides a mock function with given fields: ctx, c
-func (_m *Repository) Update(ctx context.Context, c *consumer.Consumer) error {
-	ret := _m.Called(ctx, c)
+// Update provides a mock function with given fields: ctx, c, registries
+func (_m *Repository) Update(ctx context.Context, c *consumer.Consumer, registries *consumer.RegistryBindings) error {
+	ret := _m.Called(ctx, c, registries)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Update")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, *consumer.Consumer) error); ok {
-		r0 = rf(ctx, c)
+	if rf, ok := ret.Get(0).(func(context.Context, *consumer.Consumer, *consumer.RegistryBindings) error); ok {
+		r0 = rf(ctx, c, registries)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -892,13 +892,14 @@ type Repository_Update_Call struct {
 // Update is a helper method to define mock.On call
 //   - ctx context.Context
 //   - c *consumer.Consumer
-func (_e *Repository_Expecter) Update(ctx interface{}, c interface{}) *Repository_Update_Call {
-	return &Repository_Update_Call{Call: _e.mock.On("Update", ctx, c)}
+//   - registries *consumer.RegistryBindings
+func (_e *Repository_Expecter) Update(ctx interface{}, c interface{}, registries interface{}) *Repository_Update_Call {
+	return &Repository_Update_Call{Call: _e.mock.On("Update", ctx, c, registries)}
 }
 
-func (_c *Repository_Update_Call) Run(run func(ctx context.Context, c *consumer.Consumer)) *Repository_Update_Call {
+func (_c *Repository_Update_Call) Run(run func(ctx context.Context, c *consumer.Consumer, registries *consumer.RegistryBindings)) *Repository_Update_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(*consumer.Consumer))
+		run(args[0].(context.Context), args[1].(*consumer.Consumer), args[2].(*consumer.RegistryBindings))
 	})
 	return _c
 }
@@ -908,7 +909,7 @@ func (_c *Repository_Update_Call) Return(_a0 error) *Repository_Update_Call {
 	return _c
 }
 
-func (_c *Repository_Update_Call) RunAndReturn(run func(context.Context, *consumer.Consumer) error) *Repository_Update_Call {
+func (_c *Repository_Update_Call) RunAndReturn(run func(context.Context, *consumer.Consumer, *consumer.RegistryBindings) error) *Repository_Update_Call {
 	_c.Call.Return(run)
 	return _c
 }

@@ -167,7 +167,7 @@ func TestConsumerAdapter(t *testing.T) {
 	assert.Len(t, byAuth, 1)
 
 	assert.ErrorIs(t, repo.Save(ctx, &consumerdomain.Consumer{}), configsync.ErrReadOnly)
-	assert.ErrorIs(t, repo.Update(ctx, &consumerdomain.Consumer{}), configsync.ErrReadOnly)
+	assert.ErrorIs(t, repo.Update(ctx, &consumerdomain.Consumer{}, nil), configsync.ErrReadOnly)
 	assert.ErrorIs(t, repo.Delete(ctx, f.gateway.ID, ids.New[ids.ConsumerKind]()), configsync.ErrReadOnly)
 	assert.ErrorIs(t, repo.AttachAuth(ctx, ids.New[ids.ConsumerKind](), f.auth.ID), configsync.ErrReadOnly)
 	assert.ErrorIs(t, repo.DetachAuth(ctx, ids.New[ids.ConsumerKind](), f.auth.ID), configsync.ErrReadOnly)

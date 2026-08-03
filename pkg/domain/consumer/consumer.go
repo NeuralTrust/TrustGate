@@ -74,6 +74,13 @@ const (
 	MaxRegistryWeight = 100
 )
 
+// RegistryBindings is a complete desired registry association set for a
+// consumer, with the weight to apply to each member.
+type RegistryBindings struct {
+	IDs     []ids.RegistryID
+	Weights map[ids.RegistryID]int
+}
+
 type Consumer struct {
 	ID              ids.ConsumerID         `json:"id"`
 	GatewayID       ids.GatewayID          `json:"gateway_id"`

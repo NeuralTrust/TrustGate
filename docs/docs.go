@@ -814,7 +814,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Updates an existing consumer.",
+                "description": "Updates an existing consumer. The optional ` + "`" + `registries` + "`" + ` field replaces the whole registry association set, so switching a role_based consumer to inline routing and attaching its registries happens in a single atomic request.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3095,7 +3095,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the catalog of supported models, optionally filtered by provider.",
+                "description": "Returns the catalog of supported models, optionally filtered by provider. When gateway_id and registry_id are supplied for an AWS Bedrock registry, the list is narrowed to the models those credentials can invoke serverless (on-demand base models and system-defined inference profiles), excluding Bedrock Marketplace, Provisioned Throughput and custom models. Malformed ids and unreachable AWS endpoints are ignored and yield the full catalog.",
                 "produces": [
                     "application/json"
                 ],
@@ -3108,6 +3108,20 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Filter by provider id",
                         "name": "provider",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway of the registry to scope availability to",
+                        "name": "gateway_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Registry whose credentials decide model availability",
+                        "name": "registry_id",
                         "in": "query"
                     }
                 ],
@@ -3990,6 +4004,9 @@ const docTemplate = `{
                 },
                 "pool_alias": {
                     "type": "string"
+                },
+                "smart_routing": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SmartRoutingConfigRequest"
                 }
             }
         },
@@ -4056,6 +4073,28 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SmartRoutingConfigRequest": {
+            "type": "object",
+            "properties": {
+                "tiers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SmartRoutingTierRequest"
+                    }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SmartRoutingTierRequest": {
+            "type": "object",
+            "properties": {
+                "min_score": {
+                    "type": "number"
+                },
+                "registry_id": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ToolkitEntryRequest": {
             "type": "object",
             "properties": {
@@ -4105,6 +4144,13 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "registries": {
+                    "description": "Registries replaces the whole registry association set: registries absent\nfrom the list are detached. Omit the field to leave the associations as\nthey are; send an empty list to detach every registry.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.RegistryBindingRequest"
+                    }
                 },
                 "routing_mode": {
                     "type": "string"
@@ -4295,6 +4341,9 @@ const docTemplate = `{
                 },
                 "pool_alias": {
                     "type": "string"
+                },
+                "smart_routing": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SmartRoutingConfigResponse"
                 }
             }
         },
@@ -4357,6 +4406,28 @@ const docTemplate = `{
                 },
                 "weight": {
                     "type": "integer"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SmartRoutingConfigResponse": {
+            "type": "object",
+            "properties": {
+                "tiers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SmartRoutingTierResponse"
+                    }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SmartRoutingTierResponse": {
+            "type": "object",
+            "properties": {
+                "min_score": {
+                    "type": "number"
+                },
+                "registry_id": {
+                    "type": "string"
                 }
             }
         },
@@ -6371,7 +6442,6 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "upstream_status": {
-                    "description": "Logical HTTP status of the MCP outcome (e.g. 200, 403). Gateway denials also set the wire HTTP status and http.response.status_code.",
                     "type": "integer"
                 },
                 "upstream_tool": {
