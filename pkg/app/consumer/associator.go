@@ -91,7 +91,10 @@ func (a *associator) AttachRegistry(ctx context.Context, gatewayID ids.GatewayID
 		return err
 	}
 	if cons.RoutingMode == domain.RoutingModeRoleBased {
-		return commonerrors.ErrConflict
+		return fmt.Errorf(
+			"%w: consumer %s routes by role, registries can only be attached in inline routing;"+
+				" send routing_mode and registries together in PUT /v1/gateways/{gateway_id}/consumers/{id}",
+			commonerrors.ErrConflict, consumerID)
 	}
 	reg, err := a.registryInGateway(ctx, gatewayID, registryID)
 	if err != nil {
@@ -123,7 +126,10 @@ func (a *associator) AttachRole(ctx context.Context, gatewayID ids.GatewayID, co
 		return err
 	}
 	if cons.RoutingMode == domain.RoutingModeInline {
-		return commonerrors.ErrConflict
+		return fmt.Errorf(
+			"%w: consumer %s routes inline, roles can only be attached in role_based routing;"+
+				" send routing_mode in PUT /v1/gateways/{gateway_id}/consumers/{id} first",
+			commonerrors.ErrConflict, consumerID)
 	}
 	if err := a.roleInGateway(ctx, gatewayID, roleID); err != nil {
 		return err

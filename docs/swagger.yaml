@@ -433,6 +433,8 @@ definitions:
         type: array
       pool_alias:
         type: string
+      smart_routing:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SmartRoutingConfigRequest'
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.LBPoolMemberRequest:
     properties:
@@ -477,6 +479,20 @@ definitions:
       default:
         type: string
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SmartRoutingConfigRequest:
+    properties:
+      tiers:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SmartRoutingTierRequest'
+        type: array
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SmartRoutingTierRequest:
+    properties:
+      min_score:
+        type: number
+      registry_id:
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ToolkitEntryRequest:
     properties:
       expose_as:
@@ -510,6 +526,14 @@ definitions:
         type: array
       name:
         type: string
+      registries:
+        description: |-
+          Registries replaces the whole registry association set: registries absent
+          from the list are detached. Omit the field to leave the associations as
+          they are; send an empty list to detach every registry.
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.RegistryBindingRequest'
+        type: array
       routing_mode:
         type: string
       toolkit:
@@ -635,6 +659,8 @@ definitions:
         type: array
       pool_alias:
         type: string
+      smart_routing:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SmartRoutingConfigResponse'
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.LBPoolMemberResponse:
     properties:
@@ -675,6 +701,20 @@ definitions:
         type: string
       weight:
         type: integer
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SmartRoutingConfigResponse:
+    properties:
+      tiers:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SmartRoutingTierResponse'
+        type: array
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SmartRoutingTierResponse:
+    properties:
+      min_score:
+        type: number
+      registry_id:
+        type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ToolkitEntryResponse:
     properties:
@@ -2062,7 +2102,6 @@ definitions:
       upstream_latency_ms:
         type: integer
       upstream_status:
-        description: Logical HTTP status of the MCP outcome (e.g. 200, 403). Gateway denials also set the wire HTTP status and http.response.status_code.
         type: integer
       upstream_tool:
         type: string
@@ -2835,7 +2874,9 @@ paths:
     put:
       consumes:
       - application/json
-      description: Updates an existing consumer.
+      description: Updates an existing consumer. The optional `registries` field replaces
+        the whole registry association set, so switching a role_based consumer to
+        inline routing and attaching its registries happens in a single atomic request.
       parameters:
       - description: Gateway id
         format: uuid
@@ -4312,11 +4353,25 @@ paths:
   /v1/models-catalog:
     get:
       description: Returns the catalog of supported models, optionally filtered by
-        provider.
+        provider. When gateway_id and registry_id are supplied for an AWS Bedrock
+        registry, the list is narrowed to the models those credentials can invoke
+        serverless (on-demand base models and system-defined inference profiles),
+        excluding Bedrock Marketplace, Provisioned Throughput and custom models. Malformed
+        ids and unreachable AWS endpoints are ignored and yield the full catalog.
       parameters:
       - description: Filter by provider id
         in: query
         name: provider
+        type: string
+      - description: Gateway of the registry to scope availability to
+        format: uuid
+        in: query
+        name: gateway_id
+        type: string
+      - description: Registry whose credentials decide model availability
+        format: uuid
+        in: query
+        name: registry_id
         type: string
       produces:
       - application/json

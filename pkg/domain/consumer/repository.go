@@ -39,7 +39,10 @@ type Reader interface {
 // Writer persists consumer aggregate lifecycle changes.
 type Writer interface {
 	Save(ctx context.Context, c *Consumer) error
-	Update(ctx context.Context, c *Consumer) error
+	// Update persists the consumer row and, when registries is non-nil, replaces
+	// its registry association set in the same transaction. A nil registries
+	// leaves the existing links untouched.
+	Update(ctx context.Context, c *Consumer, registries *RegistryBindings) error
 	Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.ConsumerID) error
 }
 
