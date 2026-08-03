@@ -136,6 +136,19 @@ func TestHashAPIKey_Deterministic(t *testing.T) {
 	}
 }
 
+func TestHasAPIKeyPrefix(t *testing.T) {
+	t.Parallel()
+	if !HasAPIKeyPrefix("ag_secret") {
+		t.Fatal("generated api keys must match the prefix")
+	}
+	if HasAPIKeyPrefix("eyJhbGciOiJIUzI1NiJ9.payload.sig") {
+		t.Fatal("JWTs must not match the api-key prefix")
+	}
+	if HasAPIKeyPrefix("") {
+		t.Fatal("empty string must not match the prefix")
+	}
+}
+
 func TestNewAuth_Validation(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()

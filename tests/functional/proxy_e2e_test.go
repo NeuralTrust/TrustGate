@@ -26,6 +26,7 @@ type fakeUpstream struct {
 	hits     int64
 	mu       sync.Mutex
 	lastBody []byte
+	lastAuth string
 }
 
 func (u *fakeUpstream) URL() string { return u.server.URL }
@@ -38,11 +39,18 @@ func (u *fakeUpstream) LastBody() []byte {
 	return u.lastBody
 }
 
+func (u *fakeUpstream) LastAuth() string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.lastAuth
+}
+
 func (u *fakeUpstream) record(r *http.Request) {
 	atomic.AddInt64(&u.hits, 1)
 	body, _ := io.ReadAll(r.Body)
 	u.mu.Lock()
 	u.lastBody = body
+	u.lastAuth = r.Header.Get("Authorization")
 	u.mu.Unlock()
 }
 
@@ -174,16 +182,23 @@ func expectedAttempts() int {
 // status, response headers and the full (buffered or streamed) body.
 func proxyPost(t *testing.T, apiKey, path string, body any) (int, http.Header, []byte) {
 	t.Helper()
+	return proxyPostWithAuth(t, apiKey, path, body, proxyAPIKeyHeader, apiKey)
+}
+
+// proxyPostWithAuth is like proxyPost but lets the caller choose which header
+// carries the gateway api key (X-AG-API-Key, Authorization, or x-api-key).
+func proxyPostWithAuth(t *testing.T, hostKey, path string, body any, authHeader, authValue string) (int, http.Header, []byte) {
+	t.Helper()
 	buf, err := json.Marshal(body)
 	require.NoError(t, err)
 
 	req, err := http.NewRequest(http.MethodPost, ProxyURL+path, bytes.NewReader(buf))
 	require.NoError(t, err)
-	host, ok := proxyHosts.Load(apiKey)
+	host, ok := proxyHosts.Load(hostKey)
 	require.True(t, ok, "proxy host missing for api key")
 	req.Host = host.(string)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(proxyAPIKeyHeader, apiKey)
+	req.Header.Set(authHeader, authValue)
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -241,6 +256,36 @@ func TestProxyE2E_NonStreaming_NoLB(t *testing.T) {
 		assert.Equal(t, http.StatusInternalServerError, status, "the final upstream error is relayed, body: %s", body)
 		assert.Equal(t, expectedAttempts(), up.Hits(), "every attempt (first + retries) must reach the upstream")
 	})
+}
+
+// TestProxyE2E_APIKeyAuthHeaders checks that the same gateway api key authenticates
+// when presented via X-AG-API-Key, Authorization: Bearer, or x-api-key, and that
+// the registry credential (not the gateway key) is what reaches the upstream.
+func TestProxyE2E_APIKeyAuthHeaders(t *testing.T) {
+	defer Track(t, "ProxyE2E")()
+
+	up := newJSONUpstream(t, "auth-header-ok")
+	apiKey, path := setupRoute(t, "", up)
+
+	cases := []struct {
+		name   string
+		header string
+		value  string
+	}{
+		{name: "X-AG-API-Key", header: proxyAPIKeyHeader, value: apiKey},
+		{name: "Authorization Bearer", header: "Authorization", value: "Bearer " + apiKey},
+		{name: "x-api-key", header: "x-api-key", value: apiKey},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			status, _, body := proxyPostWithAuth(t, apiKey, path, chatRequest(false), tc.header, tc.value)
+			assert.Equal(t, http.StatusOK, status, "body: %s", body)
+			assert.Contains(t, string(body), "auth-header-ok")
+			assert.Equal(t, "Bearer sk-test", up.LastAuth(),
+				"upstream must receive the registry credential, not the gateway api key")
+		})
+	}
+	assert.Equal(t, len(cases), up.Hits())
 }
 
 func TestProxyE2E_Streaming_NoLB(t *testing.T) {

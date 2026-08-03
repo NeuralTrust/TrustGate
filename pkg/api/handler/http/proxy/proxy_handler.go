@@ -84,13 +84,14 @@ func NewForwardedHandler(forwarder appproxy.Forwarder) *ForwardedHandler {
 
 // Handle godoc
 // @Summary      Proxy chat completion
-// @Description  Forwards an OpenAI Chat Completions request to the selected provider. Proxy plane route: /{consumer_slug}/v1/chat/completions. Other fixed routes include /v1/messages (Anthropic) and /v1/responses (OpenAI Responses).
+// @Description  Forwards an OpenAI Chat Completions request to the selected provider. Proxy plane route: /{consumer_slug}/v1/chat/completions. Other fixed routes include /v1/messages (Anthropic) and /v1/responses (OpenAI Responses). Inline consumers may authenticate with an api key via X-AG-API-Key, x-api-key, or Authorization: Bearer ag_….
 // @Tags         proxy
 // @Accept       json
 // @Produce      json
 // @Param        consumer_slug      path   string  true   "Consumer slug"
 // @Param        X-AG-API-Key       header string  false  "API key for inline consumers"
-// @Param        Authorization      header string  false  "Bearer token for OAuth2 or OIDC consumers"
+// @Param        x-api-key          header string  false  "API key for inline consumers (Anthropic-compatible clients)"
+// @Param        Authorization      header string  false  "Bearer ag_… for inline api-key auth, or Bearer JWT for OAuth2/OIDC consumers"
 // @Param        X-AG-Gateway-Slug  header string  false  "Gateway slug when using header-based gateway discovery"
 // @Param        body               body   object  true   "OpenAI Chat Completions request body"
 // @Success      200                {object}  map[string]interface{}

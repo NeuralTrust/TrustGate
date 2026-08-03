@@ -83,7 +83,7 @@ func (m *AuthMiddleware) Middleware() fiber.Handler {
 				slog.String("gateway_slug", gw.Slug),
 				slog.String("consumer_slug", route.ConsumerSlug),
 				slog.String("error", err.Error()))
-			if errors.Is(err, resolver.ErrUnauthenticated) && apiKeyAttachedElsewhere(c.Get(resolver.HeaderAPIKey), data, rc) {
+			if errors.Is(err, resolver.ErrUnauthenticated) && apiKeyAttachedElsewhere(resolver.APIKeyFromRequest(c), data, rc) {
 				return forbidden(c, resolver.ErrForbidden)
 			}
 			return writeAuthError(c, err)

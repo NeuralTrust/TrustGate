@@ -54,7 +54,7 @@ func (r ChainedIdentityResolver) Resolve(
 	if c.Get(HeaderPlaygroundToken) != "" {
 		return r.playground.Resolve(c, gw, rc)
 	}
-	if c.Get(HeaderAPIKey) != "" {
+	if APIKeyFromRequest(c) != "" {
 		return r.apiKey.Resolve(c, gw, rc)
 	}
 	if strings.TrimSpace(c.Get(fiber.HeaderAuthorization)) == "" {
