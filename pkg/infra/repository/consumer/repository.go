@@ -143,7 +143,7 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 	})
 }
 
-func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
+func (r *Repository) Update(ctx context.Context, c *domain.Consumer, registries *domain.RegistryBindings) error {
 	if c == nil {
 		return errors.New("consumer repository: nil consumer")
 	}
@@ -181,11 +181,11 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
 		       active           = $11,
 		       updated_at       = $12
 		 WHERE id = $1 AND gateway_id = $13`
+	// The consumers row is written before the registry links because the
+	// routing-mode DB guard rejects registry rows on a role_based consumer: a
+	// role_based → inline switch has to land the new mode first.
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if err := lockConsumerRow(ctx, tx, c.ID); err != nil {
-			return err
-		}
-		if err := ensureRegistryRefsAssociated(ctx, tx, c); err != nil {
 			return err
 		}
 		if err := cleanupIncompatibleRelations(ctx, tx, c); err != nil {
@@ -201,8 +201,38 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
 		if cmd.RowsAffected() == 0 {
 			return domain.ErrNotFound
 		}
-		return nil
+		if err := replaceRegistryLinks(ctx, tx, c, registries); err != nil {
+			return err
+		}
+		return ensureRegistryRefsAssociated(ctx, tx, c)
 	})
+}
+
+// replaceRegistryLinks makes consumer_registry match the requested set,
+// detaching the links that are gone and upserting the rest with their weight and
+// their position in the set. A role_based consumer holds no links at all;
+// cleanupIncompatibleRelations already removed them.
+func replaceRegistryLinks(ctx context.Context, tx pgx.Tx, c *domain.Consumer, registries *domain.RegistryBindings) error {
+	if registries == nil || c.RoutingMode == domain.RoutingModeRoleBased {
+		return nil
+	}
+	const detachRemoved = `
+		DELETE FROM consumer_registry
+		 WHERE consumer_id = $1
+		   AND registry_id <> ALL($2::uuid[])`
+	if _, err := tx.Exec(ctx, detachRemoved, c.ID, ids.ToUUIDs(registries.IDs)); err != nil {
+		return mapPgError(err)
+	}
+	const upsertLink = `
+		INSERT INTO consumer_registry (consumer_id, registry_id, weight, position) VALUES ($1, $2, $3, $4)
+		ON CONFLICT (consumer_id, registry_id) DO UPDATE SET weight = EXCLUDED.weight, position = EXCLUDED.position`
+	for position, registryID := range registries.IDs {
+		weight := clampRegistryWeight(registries.Weights[registryID])
+		if _, err := tx.Exec(ctx, upsertLink, c.ID, registryID, weight, position); err != nil {
+			return mapPgError(err)
+		}
+	}
+	return nil
 }
 
 func cleanupIncompatibleRelations(ctx context.Context, tx pgx.Tx, c *domain.Consumer) error {

@@ -47,7 +47,7 @@ func TestSyncer_Sync_SignalsOnSuccess(t *testing.T) {
 	defer srv.Close()
 
 	signaler := &configsynctest.FakeSignaler{}
-	s := NewSyncer(newFakeRepo(), modelsdev.NewClient(srv.URL), newSignalTestLogger(), signaler)
+	s := NewSyncer(newFakeRepo(), modelsdev.NewClient(srv.URL), newSignalTestLogger(), signaler, nil)
 
 	if err := s.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync error: %v", err)
@@ -65,7 +65,7 @@ func TestSyncer_Sync_DoesNotSignalOnFailure(t *testing.T) {
 	defer srv.Close()
 
 	signaler := &configsynctest.FakeSignaler{}
-	s := NewSyncer(newFakeRepo(), modelsdev.NewClient(srv.URL), newSignalTestLogger(), signaler)
+	s := NewSyncer(newFakeRepo(), modelsdev.NewClient(srv.URL), newSignalTestLogger(), signaler, nil)
 
 	if err := s.Sync(context.Background()); err == nil {
 		t.Fatal("expected error from failing client")

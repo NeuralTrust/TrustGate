@@ -105,7 +105,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 	if err := validateRegistryRefsAssociated(cons); err != nil {
 		return nil, err
 	}
-	if err := c.ensureRegistriesInGateway(ctx, in.GatewayID, in.RegistryIDs); err != nil {
+	if err := ensureRegistriesInGateway(ctx, c.registryRepo, in.GatewayID, in.RegistryIDs); err != nil {
 		return nil, err
 	}
 	if err := c.ensureRolesInGateway(ctx, in.GatewayID, in.RoleIDs); err != nil {
@@ -136,11 +136,16 @@ func (c *creator) saveWithSlugRetry(ctx context.Context, cons *domain.Consumer) 
 	}
 }
 
-func (c *creator) ensureRegistriesInGateway(ctx context.Context, gatewayID ids.GatewayID, registryIDs []ids.RegistryID) error {
+func ensureRegistriesInGateway(
+	ctx context.Context,
+	registryRepo registrydomain.Repository,
+	gatewayID ids.GatewayID,
+	registryIDs []ids.RegistryID,
+) error {
 	if len(registryIDs) == 0 {
 		return nil
 	}
-	found, err := c.registryRepo.FindByIDs(ctx, gatewayID, registryIDs)
+	found, err := registryRepo.FindByIDs(ctx, gatewayID, registryIDs)
 	if err != nil {
 		return err
 	}

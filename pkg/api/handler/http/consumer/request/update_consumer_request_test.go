@@ -15,9 +15,12 @@
 package request
 
 import (
+	"errors"
 	"testing"
 
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 func strPtr(v string) *string { return &v }
@@ -44,6 +47,84 @@ func TestUpdateConsumerRequest_ToType(t *testing.T) {
 				t.Fatalf("ToType() = %q, want %q", *got, *tc.want)
 			}
 		})
+	}
+}
+
+func TestUpdateConsumerRequest_ToRegistryBindings(t *testing.T) {
+	t.Parallel()
+	first := ids.New[ids.RegistryKind]()
+	second := ids.New[ids.RegistryKind]()
+	weight := 40
+
+	t.Run("omitted keeps current associations", func(t *testing.T) {
+		t.Parallel()
+		got, err := UpdateConsumerRequest{}.ToRegistryBindings()
+		if err != nil {
+			t.Fatalf("ToRegistryBindings() error: %v", err)
+		}
+		if got != nil {
+			t.Fatalf("ToRegistryBindings() = %+v, want nil", got)
+		}
+	})
+
+	t.Run("empty list detaches every registry", func(t *testing.T) {
+		t.Parallel()
+		got, err := UpdateConsumerRequest{Registries: &[]RegistryBindingRequest{}}.ToRegistryBindings()
+		if err != nil {
+			t.Fatalf("ToRegistryBindings() error: %v", err)
+		}
+		if got == nil || len(got.IDs) != 0 {
+			t.Fatalf("ToRegistryBindings() = %+v, want empty binding set", got)
+		}
+	})
+
+	t.Run("preserves order and weights", func(t *testing.T) {
+		t.Parallel()
+		got, err := UpdateConsumerRequest{Registries: &[]RegistryBindingRequest{
+			{ID: first.String(), Weight: &weight},
+			{ID: second.String()},
+		}}.ToRegistryBindings()
+		if err != nil {
+			t.Fatalf("ToRegistryBindings() error: %v", err)
+		}
+		if len(got.IDs) != 2 || got.IDs[0] != first || got.IDs[1] != second {
+			t.Fatalf("IDs = %v, want [%s %s]", got.IDs, first, second)
+		}
+		if got.Weights[first] != weight || got.Weights[second] != domain.DefaultRegistryWeight {
+			t.Fatalf("Weights = %v", got.Weights)
+		}
+	})
+
+	t.Run("rejects duplicates", func(t *testing.T) {
+		t.Parallel()
+		_, err := UpdateConsumerRequest{Registries: &[]RegistryBindingRequest{
+			{ID: first.String()},
+			{ID: first.String()},
+		}}.ToRegistryBindings()
+		if !errors.Is(err, commonerrors.ErrValidation) {
+			t.Fatalf("err = %v, want ErrValidation", err)
+		}
+	})
+
+	t.Run("rejects out of range weight", func(t *testing.T) {
+		t.Parallel()
+		tooBig := domain.MaxRegistryWeight + 1
+		_, err := UpdateConsumerRequest{Registries: &[]RegistryBindingRequest{
+			{ID: first.String(), Weight: &tooBig},
+		}}.ToRegistryBindings()
+		if !errors.Is(err, commonerrors.ErrValidation) {
+			t.Fatalf("err = %v, want ErrValidation", err)
+		}
+	})
+}
+
+func TestUpdateConsumerRequest_Validate_RejectsPerBindingModelPolicies(t *testing.T) {
+	t.Parallel()
+	req := UpdateConsumerRequest{Registries: &[]RegistryBindingRequest{
+		{ID: ids.New[ids.RegistryKind]().String(), ModelPolicies: &RegistryModelPolicyRequest{Default: "gpt-4o"}},
+	}}
+	if err := req.Validate(); !errors.Is(err, commonerrors.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation", err)
 	}
 }
 
