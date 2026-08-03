@@ -27,7 +27,8 @@ import (
 	registrymocks "github.com/NeuralTrust/TrustGate/pkg/domain/registry/mocks"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/cachetest"
+	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
+	"github.com/stretchr/testify/mock"
 )
 
 type associatorRoleRepositoryStub struct {
@@ -76,11 +77,15 @@ func TestAssociator_DetachRegistry_RejectsModelPolicyReference(t *testing.T) {
 		GatewayID:     gwID,
 		ModelPolicies: domain.ModelPolicies{registryID: {Allowed: []string{"gpt-4o"}}},
 	}
+	// No expectations: a detach the repository refused leaves the role's
+	// registries unchanged, so no replica may be told to drop its cache.
+	publisher := cachemocks.NewEventPublisher(t)
+
 	associator := approle.NewAssociator(
 		associatorRoleRepositoryStub{role: role, detachErr: commonerrors.ErrConflict},
 		registrymocks.NewRepository(t),
 		cache.NewTTLMapManager(cache.RoleCacheTTL),
-		cachetest.NoopPublisher(),
+		publisher,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		nil,
 	)
@@ -89,4 +94,5 @@ func TestAssociator_DetachRegistry_RejectsModelPolicyReference(t *testing.T) {
 	if !errors.Is(err, commonerrors.ErrConflict) {
 		t.Fatalf("err = %v, want ErrConflict", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
