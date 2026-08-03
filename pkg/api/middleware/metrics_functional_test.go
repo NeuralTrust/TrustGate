@@ -125,6 +125,8 @@ func (zeroPricing) Resolve(_ context.Context, _ string, _ string) appcatalog.Pri
 	return appcatalog.Pricing{}
 }
 
+func (zeroPricing) InvalidateCache() {}
+
 func newMetricsApp(t *testing.T, gw *gatewaydomain.Gateway, rec *eventRecorder) *fiber.App {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))

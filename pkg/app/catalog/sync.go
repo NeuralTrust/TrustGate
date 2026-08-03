@@ -156,10 +156,11 @@ type syncer struct {
 	client   *modelsdev.Client
 	logger   *slog.Logger
 	signaler configsyncport.SnapshotSignaler
+	pricing  PricingResolver
 }
 
-func NewSyncer(repo domain.Repository, client *modelsdev.Client, logger *slog.Logger, signaler configsyncport.SnapshotSignaler) Syncer {
-	return &syncer{repo: repo, client: client, logger: logger, signaler: signaler}
+func NewSyncer(repo domain.Repository, client *modelsdev.Client, logger *slog.Logger, signaler configsyncport.SnapshotSignaler, pricing PricingResolver) Syncer {
+	return &syncer{repo: repo, client: client, logger: logger, signaler: signaler, pricing: pricing}
 }
 
 func (s *syncer) Sync(ctx context.Context) error {
@@ -224,6 +225,9 @@ func (s *syncer) Sync(ctx context.Context) error {
 	s.logger.Info(bootlog.CatalogSyncCompleted,
 		slog.Int("providers", len(seedProviders)),
 		slog.Int("models", len(models)))
+	if s.pricing != nil {
+		s.pricing.InvalidateCache()
+	}
 	if s.signaler != nil {
 		s.signaler.Signal(ctx)
 	}

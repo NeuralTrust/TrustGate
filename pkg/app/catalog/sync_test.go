@@ -114,7 +114,7 @@ func TestSyncer_Sync(t *testing.T) {
 	repo := newFakeRepo()
 	client := modelsdev.NewClient(srv.URL)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s := NewSyncer(repo, client, logger, nil)
+	s := NewSyncer(repo, client, logger, nil, nil)
 
 	if err := s.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync error: %v", err)
@@ -179,7 +179,7 @@ func TestSyncer_Sync_SkipsBedrockModelsOnAlternativeEndpoints(t *testing.T) {
 	defer srv.Close()
 
 	repo := newFakeRepo()
-	s := NewSyncer(repo, modelsdev.NewClient(srv.URL), slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	s := NewSyncer(repo, modelsdev.NewClient(srv.URL), slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
 	if err := s.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync error: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestSyncer_Sync_SkipsGeographyScopedBedrockProfiles(t *testing.T) {
 	defer srv.Close()
 
 	repo := newFakeRepo()
-	s := NewSyncer(repo, modelsdev.NewClient(srv.URL), slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	s := NewSyncer(repo, modelsdev.NewClient(srv.URL), slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
 	if err := s.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync error: %v", err)
 	}
@@ -250,9 +250,35 @@ func TestSyncer_Sync_PropagatesClientError(t *testing.T) {
 	repo := newFakeRepo()
 	client := modelsdev.NewClient(srv.URL)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s := NewSyncer(repo, client, logger, nil)
+	s := NewSyncer(repo, client, logger, nil, nil)
 
 	if err := s.Sync(context.Background()); err == nil {
 		t.Fatal("expected error from failing client")
+	}
+}
+
+type pricingCacheSpy struct {
+	invalidations int
+}
+
+func (p *pricingCacheSpy) Resolve(context.Context, string, string) Pricing { return Pricing{} }
+
+func (p *pricingCacheSpy) InvalidateCache() { p.invalidations++ }
+
+func TestSyncer_Sync_InvalidatesPricingCache(t *testing.T) {
+	t.Parallel()
+	const payload = `{"openai":{"id":"openai","name":"OpenAI","models":{"gpt-4o":{"id":"gpt-4o","name":"GPT-4o"}}}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, payload)
+	}))
+	defer srv.Close()
+
+	pricing := &pricingCacheSpy{}
+	s := NewSyncer(newFakeRepo(), modelsdev.NewClient(srv.URL), slog.New(slog.NewTextHandler(io.Discard, nil)), nil, pricing)
+	if err := s.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync error: %v", err)
+	}
+	if pricing.invalidations != 1 {
+		t.Fatalf("InvalidateCache calls = %d, want 1", pricing.invalidations)
 	}
 }
