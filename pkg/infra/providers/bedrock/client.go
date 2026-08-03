@@ -15,12 +15,14 @@
 package bedrock
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -29,6 +31,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
 	"github.com/aws/aws-sdk-go-v2/config"
 	awscredentials "github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
@@ -36,9 +39,18 @@ import (
 	bedrockTypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	smithy "github.com/aws/smithy-go"
+	"github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 const credentialsExpiryWindow = 5 * time.Minute
+
+// Bedrock reports the token counts of a buffered answer in these headers, for
+// every family, whether or not the body repeats them.
+const (
+	inputCountHeader  = "X-Amzn-Bedrock-Input-Token-Count"
+	outputCountHeader = "X-Amzn-Bedrock-Output-Token-Count"
+)
 
 type client struct {
 	clientPool    *sync.Map
@@ -76,7 +88,7 @@ func (c *client) Completions(
 		ModelId:     aws.String(model),
 		ContentType: aws.String("application/json"),
 		Body:        reqBody,
-	})
+	}, withRawResponse)
 	if err != nil {
 		if backendErr := newBedrockBackendError(err); backendErr != nil {
 			return nil, backendErr
@@ -84,7 +96,76 @@ func (c *client) Completions(
 		return nil, fmt.Errorf("failed to invoke model: %w", err)
 	}
 
-	return resp.Body, nil
+	return withHeaderTokenCounts(resp.Body, rawResponseHeaders(resp.ResultMetadata)), nil
+}
+
+// withRawResponse keeps the HTTP response reachable from the output metadata,
+// which is the only way to read the token-count headers: they are not modelled
+// in InvokeModelOutput. The SDK copies the options per call, so appending here
+// does not touch the pooled client.
+func withRawResponse(o *bedrockruntime.Options) {
+	o.APIOptions = append(o.APIOptions, awsmiddleware.AddRawResponseToMetadata)
+}
+
+func rawResponseHeaders(md middleware.Metadata) http.Header {
+	raw, ok := awsmiddleware.GetRawResponse(md).(*smithyhttp.Response)
+	if !ok || raw == nil || raw.Response == nil {
+		return nil
+	}
+	return raw.Header
+}
+
+// withHeaderTokenCounts splices the token counts Bedrock reports in headers into
+// the response body, under the same key the streaming path already carries them
+// in. Some families report usage nowhere else — a legacy Mistral answer is a
+// bare {"outputs":[…]} — so without this a buffered call looks free to every
+// plugin that charges for tokens.
+//
+// The counts go in first on purpose: a body that already carries real metrics
+// repeats the key, and the last occurrence is the one Go decodes, so the
+// upstream's own figures still win.
+func withHeaderTokenCounts(body []byte, headers http.Header) []byte {
+	if headers == nil {
+		return body
+	}
+	in := headerCount(headers, inputCountHeader)
+	out := headerCount(headers, outputCountHeader)
+	if in == 0 && out == 0 {
+		return body
+	}
+
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return body
+	}
+	rest := bytes.TrimLeft(trimmed[1:], " \t\r\n")
+	if len(rest) == 0 {
+		return body
+	}
+
+	metrics := fmt.Sprintf(
+		`"amazon-bedrock-invocationMetrics":{"inputTokenCount":%d,"outputTokenCount":%d}`,
+		in, out,
+	)
+	merged := make([]byte, 0, len(metrics)+len(trimmed)+1)
+	merged = append(merged, '{')
+	merged = append(merged, metrics...)
+	if rest[0] != '}' {
+		merged = append(merged, ',')
+	}
+	return append(merged, rest...)
+}
+
+func headerCount(headers http.Header, name string) int {
+	value := headers.Get(name)
+	if value == "" {
+		return 0
+	}
+	count, err := strconv.Atoi(value)
+	if err != nil || count < 0 {
+		return 0
+	}
+	return count
 }
 
 func (c *client) CompletionsStream(
