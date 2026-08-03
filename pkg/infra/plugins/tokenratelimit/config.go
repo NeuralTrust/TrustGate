@@ -56,19 +56,18 @@ type aggregateConfig struct {
 }
 
 type config struct {
-	Unit                 string                         `mapstructure:"unit"`
-	PerModel             bool                           `mapstructure:"per_model"`
-	Counting             string                         `mapstructure:"counting"`
-	Rules                []budgetRule                   `mapstructure:"rules"`
-	Aggregate            *aggregateConfig               `mapstructure:"aggregate"`
-	BehaviorOnExceeded   string                         `mapstructure:"behavior_on_exceeded"`
-	DowngradeTo          string                         `mapstructure:"downgrade_to"`
-	StreamUsageInjection bool                           `mapstructure:"stream_usage_injection"`
-	CountCacheReads      bool                           `mapstructure:"count_cache_reads"`
-	CostCap              *llmcost.CapConfig             `mapstructure:"cost_cap"`
-	CustomPricing        map[string]llmcost.CustomPrice `mapstructure:"custom_pricing"`
-	Window               windowConfig                   `mapstructure:"window"`
-	GroupByHeader        string                         `mapstructure:"group_by_header"`
+	Unit               string                         `mapstructure:"unit"`
+	PerModel           bool                           `mapstructure:"per_model"`
+	Counting           string                         `mapstructure:"counting"`
+	Rules              []budgetRule                   `mapstructure:"rules"`
+	Aggregate          *aggregateConfig               `mapstructure:"aggregate"`
+	BehaviorOnExceeded string                         `mapstructure:"behavior_on_exceeded"`
+	DowngradeTo        string                         `mapstructure:"downgrade_to"`
+	CountCacheReads    bool                           `mapstructure:"count_cache_reads"`
+	CostCap            *llmcost.CapConfig             `mapstructure:"cost_cap"`
+	CustomPricing      map[string]llmcost.CustomPrice `mapstructure:"custom_pricing"`
+	Window             windowConfig                   `mapstructure:"window"`
+	GroupByHeader      string                         `mapstructure:"group_by_header"`
 }
 
 var validUnits = map[string]int{

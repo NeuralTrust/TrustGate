@@ -21,7 +21,6 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
-	"strconv"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
@@ -293,6 +292,9 @@ func tokensRemaining(max float64, consumed int64) int {
 	return r
 }
 
+// accrue charges the windows once the answer is known. It reports through the
+// event only: the post-response stage runs after the response has been sent, so
+// any header it returned would be written to a snapshot nobody reads.
 func (p *Plugin) accrue(
 	ctx context.Context,
 	cfg *config,
@@ -335,8 +337,6 @@ func (p *Plugin) accrue(
 	if remaining < 0 {
 		remaining = 0
 	}
-	headers := rateLimitHeaders(limit, remaining, p.resetSeconds(ctx, primary.key, primary.windowSec))
-	headers["X-Tokens-Consumed"] = []string{strconv.Itoa(tokens)}
 
 	provider := ""
 	if req != nil {
@@ -353,7 +353,7 @@ func (p *Plugin) accrue(
 		TokensRemaining: remaining,
 		Model:           model,
 	})
-	return &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}, nil
+	return &appplugins.Result{StatusCode: http.StatusOK}, nil
 }
 
 func (p *Plugin) accrueDollars(

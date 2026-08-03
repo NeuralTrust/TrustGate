@@ -110,10 +110,8 @@ func TestPlugin_PostResponse_RecordsTokensAndPreRequestRejects(t *testing.T) {
 	body := []byte(`{"id":"x","model":"gpt","choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`)
 	resp := &infracontext.ResponseContext{StatusCode: 200, Body: body}
 
-	res, err := p.Execute(context.Background(), input(policy.StagePostResponse, settings, req, resp))
+	_, err := p.Execute(context.Background(), input(policy.StagePostResponse, settings, req, resp))
 	require.NoError(t, err)
-	assert.Equal(t, []string{"15"}, res.Headers["X-Tokens-Consumed"])
-	assert.Equal(t, []string{"0"}, res.Headers["X-Ratelimit-Remaining-Tokens"])
 
 	// Now the next PreRequest must reject (15 consumed >= 10 limit).
 	_, err = p.Execute(context.Background(), input(policy.StagePreRequest, settings, req, &infracontext.ResponseContext{}))
@@ -152,9 +150,12 @@ func TestPlugin_PostResponse_StreamingUsesObservedUsage(t *testing.T) {
 	}
 	resp := &infracontext.ResponseContext{StatusCode: 200, Streaming: true}
 
-	res, err := p.Execute(context.Background(), input(policy.StagePostResponse, settings, req, resp))
+	_, err := p.Execute(context.Background(), input(policy.StagePostResponse, settings, req, resp))
 	require.NoError(t, err)
-	assert.Equal(t, []string{"42"}, res.Headers["X-Tokens-Consumed"])
+
+	res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, req, &infracontext.ResponseContext{}))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"58"}, res.Headers["X-Ratelimit-Remaining-Tokens"], "the streamed usage must be charged")
 }
 
 func TestPlugin_PostResponse_NoTokensNoRecord(t *testing.T) {
@@ -163,9 +164,12 @@ func TestPlugin_PostResponse_NoTokensNoRecord(t *testing.T) {
 	req := &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai"}
 	resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{}`)}
 
-	res, err := p.Execute(context.Background(), input(policy.StagePostResponse, settings, req, resp))
+	_, err := p.Execute(context.Background(), input(policy.StagePostResponse, settings, req, resp))
 	require.NoError(t, err)
-	assert.Empty(t, res.Headers["X-Tokens-Consumed"])
+
+	res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, req, &infracontext.ResponseContext{}))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"100"}, res.Headers["X-Ratelimit-Remaining-Tokens"], "a response without usage must charge nothing")
 }
 
 func scopedInput(stage policy.Stage, settings map[string]any, req *infracontext.RequestContext, resp *infracontext.ResponseContext, scope appplugins.RuntimeScope) appplugins.ExecInput {
