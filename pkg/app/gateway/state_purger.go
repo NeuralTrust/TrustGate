@@ -16,24 +16,15 @@ package gateway
 
 import (
 	"context"
-	"log/slog"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 )
 
-func publishGatewayDataInvalidation(
-	ctx context.Context,
-	publisher cache.EventPublisher,
-	logger *slog.Logger,
-	gatewayID ids.GatewayID,
-) {
-	evt := event.InvalidateGatewayDataEvent{GatewayID: gatewayID.String()}
-	if err := publisher.Publish(ctx, evt); err != nil {
-		logger.Warn("failed to publish gateway data invalidation",
-			slog.String("gateway_id", gatewayID.String()),
-			slog.String("error", err.Error()),
-		)
-	}
+// StatePurger reclaims the shared-cache state a gateway owns. Implementations
+// are only ever invoked for a gateway that has already been deleted, never on
+// an update or cache-invalidation path.
+//
+//go:generate mockery --name=StatePurger --dir=. --output=./mocks --filename=gateway_state_purger_mock.go --case=underscore --with-expecter
+type StatePurger interface {
+	PurgeGatewayState(ctx context.Context, gatewayID ids.GatewayID) error
 }

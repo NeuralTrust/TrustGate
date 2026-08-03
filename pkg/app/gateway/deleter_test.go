@@ -21,12 +21,14 @@ import (
 	"time"
 
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	appgatewaymocks "github.com/NeuralTrust/TrustGate/pkg/app/gateway/mocks"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/gateway/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/cachetest"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -41,7 +43,16 @@ func TestDeleter_Delete_Success(t *testing.T) {
 	now := time.Now().UTC()
 	mgr.GetTTLMap(cache.GatewayTTLName).Set("id:"+id.String(), domain.Rehydrate(id, "x", "active", "", nil, nil, nil, now, now))
 
-	deleter := appgateway.NewDeleter(repo, mgr, cachetest.NoopPublisher(), newTestLogger(), nil)
+	purger := appgatewaymocks.NewStatePurger(t)
+	purger.EXPECT().PurgeGatewayState(mock.Anything, id).Return(nil).Once()
+
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: id.String()}).
+		Return(nil).
+		Once()
+
+	deleter := appgateway.NewDeleter(repo, mgr, publisher, newTestLogger(), nil, purger)
 	if err := deleter.Delete(context.Background(), id); err != nil {
 		t.Fatalf("Delete error: %v", err)
 	}
@@ -59,11 +70,18 @@ func TestDeleter_Delete_NotFound(t *testing.T) {
 	mgr := newCacheManager()
 	mgr.GetTTLMap(cache.GatewayTTLName).Set("id:"+id.String(), &domain.Gateway{ID: id})
 
-	deleter := appgateway.NewDeleter(repo, mgr, cachetest.NoopPublisher(), newTestLogger(), nil)
+	// No expectations on the purger or the publisher: a delete the repository
+	// refused must neither reap the gateway's credentials nor announce a change.
+	purger := appgatewaymocks.NewStatePurger(t)
+	publisher := cachemocks.NewEventPublisher(t)
+
+	deleter := appgateway.NewDeleter(repo, mgr, publisher, newTestLogger(), nil, purger)
 	err := deleter.Delete(context.Background(), id)
 	if !errors.Is(err, commonerrors.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
+	purger.AssertNotCalled(t, "PurgeGatewayState", mock.Anything, mock.Anything)
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 	// On failure the cache entry is intentionally left untouched —
 	// the repo did not change state.
 	if _, ok := mgr.GetTTLMap(cache.GatewayTTLName).Get("id:" + id.String()); !ok {
@@ -77,9 +95,67 @@ func TestDeleter_Delete_HasDependents(t *testing.T) {
 	id := ids.New[ids.GatewayKind]()
 	repo.EXPECT().Delete(mock.Anything, id).Return(domain.ErrHasDependents).Once()
 
-	deleter := appgateway.NewDeleter(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	purger := appgatewaymocks.NewStatePurger(t)
+	publisher := cachemocks.NewEventPublisher(t)
+
+	deleter := appgateway.NewDeleter(repo, newCacheManager(), publisher, newTestLogger(), nil, purger)
 	err := deleter.Delete(context.Background(), id)
 	if !errors.Is(err, commonerrors.ErrHasDependents) {
 		t.Fatalf("expected ErrHasDependents, got %v", err)
+	}
+	purger.AssertNotCalled(t, "PurgeGatewayState", mock.Anything, mock.Anything)
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
+}
+
+// A purge failure must not turn a completed delete into an API error: the
+// gateway row is already gone and the caller cannot retry it.
+func TestDeleter_Delete_SurvivesPurgeFailure(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	repo.EXPECT().Delete(mock.Anything, id).Return(nil).Once()
+
+	purger := appgatewaymocks.NewStatePurger(t)
+	purger.EXPECT().PurgeGatewayState(mock.Anything, id).Return(errors.New("redis down")).Once()
+
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: id.String()}).
+		Return(nil).
+		Once()
+
+	deleter := appgateway.NewDeleter(repo, newCacheManager(), publisher, newTestLogger(), nil, purger)
+	if err := deleter.Delete(context.Background(), id); err != nil {
+		t.Fatalf("Delete error = %v, want nil despite the purge failure", err)
+	}
+}
+
+// Same contract for the event bus: the row is gone, so a broker failure only
+// costs the other replicas a stale read model until their TTL expires.
+func TestDeleter_Delete_SurvivesPublishFailure(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	repo.EXPECT().Delete(mock.Anything, id).Return(nil).Once()
+
+	purger := appgatewaymocks.NewStatePurger(t)
+	purger.EXPECT().PurgeGatewayState(mock.Anything, id).Return(nil).Once()
+
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: id.String()}).
+		Return(errors.New("redis unreachable")).
+		Once()
+
+	mgr := newCacheManager()
+	now := time.Now().UTC()
+	mgr.GetTTLMap(cache.GatewayTTLName).Set("id:"+id.String(), domain.Rehydrate(id, "x", "active", "", nil, nil, nil, now, now))
+
+	deleter := appgateway.NewDeleter(repo, mgr, publisher, newTestLogger(), nil, purger)
+	if err := deleter.Delete(context.Background(), id); err != nil {
+		t.Fatalf("Delete error = %v, want nil despite the publish failure", err)
+	}
+	if _, ok := mgr.GetTTLMap(cache.GatewayTTLName).Get("id:" + id.String()); ok {
+		t.Fatal("local cache must be wiped even when the invalidation cannot be broadcast")
 	}
 }
