@@ -26,7 +26,8 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	consumermocks "github.com/NeuralTrust/TrustGate/pkg/domain/consumer/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/cachetest"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -67,7 +68,13 @@ func TestUpdater_Update_Success(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
@@ -99,7 +106,13 @@ func TestUpdater_Update_Partial_PreservesTypeAndConfig(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
@@ -130,7 +143,13 @@ func TestUpdater_Update_PreservesSecretWhenMasked(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
@@ -150,7 +169,9 @@ func TestUpdater_Update_GatewayMismatch(t *testing.T) {
 	existing := existingAuth(ids.New[ids.GatewayKind]())
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 
-	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 	_, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: ids.New[ids.GatewayKind](),
@@ -161,6 +182,7 @@ func TestUpdater_Update_GatewayMismatch(t *testing.T) {
 	if !errors.Is(err, domain.ErrInvalidGatewayID) {
 		t.Fatalf("err = %v, want ErrInvalidGatewayID", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestUpdater_Update_NotFound(t *testing.T) {
@@ -169,7 +191,9 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 	id := ids.New[ids.AuthKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
 
-	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 	_, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:     id,
 		Name:   ptr("x"),
@@ -179,6 +203,7 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func oidcConfig() domain.Config {
@@ -204,7 +229,9 @@ func TestUpdater_Update_RejectsTypeChangeBreakingMCPConsumer(t *testing.T) {
 		RoutingMode: consumerdomain.RoutingModeRoleBased,
 	}}, nil).Once()
 
-	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+
+	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil)
 	_, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
@@ -214,6 +241,7 @@ func TestUpdater_Update_RejectsTypeChangeBreakingMCPConsumer(t *testing.T) {
 	if !errors.Is(err, commonerrors.ErrConflict) {
 		t.Fatalf("err = %v, want ErrConflict (oidc breaks the MCP consumer referencing this auth)", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestUpdater_Update_AllowsTypeChangeWithoutReferences(t *testing.T) {
@@ -229,7 +257,13 @@ func TestUpdater_Update_AllowsTypeChangeWithoutReferences(t *testing.T) {
 	consumerRepo := consumermocks.NewRepository(t)
 	consumerRepo.EXPECT().ListByAuthID(mock.Anything, existing.ID).Return(nil, nil).Once()
 
-	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil)
 	if _, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
@@ -255,7 +289,9 @@ func TestUpdater_Update_RejectsDisablingAuthOfRoleBasedConsumer(t *testing.T) {
 		RoutingMode: consumerdomain.RoutingModeRoleBased,
 	}}, nil).Once()
 
-	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+
+	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil)
 	_, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:      existing.ID,
 		Enabled: ptr(false),
@@ -263,6 +299,7 @@ func TestUpdater_Update_RejectsDisablingAuthOfRoleBasedConsumer(t *testing.T) {
 	if !errors.Is(err, commonerrors.ErrConflict) {
 		t.Fatalf("err = %v, want ErrConflict (disabling the only auth of a role_based consumer)", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestUpdater_Update_RejectsDisablingOnlyMCPAuth(t *testing.T) {
@@ -282,7 +319,9 @@ func TestUpdater_Update_RejectsDisablingOnlyMCPAuth(t *testing.T) {
 		AuthIDs:     []ids.AuthID{existing.ID},
 	}}, nil).Once()
 
-	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+
+	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil)
 	_, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:      existing.ID,
 		Enabled: ptr(false),
@@ -290,6 +329,7 @@ func TestUpdater_Update_RejectsDisablingOnlyMCPAuth(t *testing.T) {
 	if !errors.Is(err, commonerrors.ErrConflict) {
 		t.Fatalf("err = %v, want ErrConflict (disabling the only usable auth of an MCP consumer)", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestUpdater_Update_AllowsDisablingMCPAuthWithUsableSibling(t *testing.T) {
@@ -315,7 +355,13 @@ func TestUpdater_Update_AllowsDisablingMCPAuthWithUsableSibling(t *testing.T) {
 		AuthIDs:     []ids.AuthID{existing.ID, sibling.ID},
 	}}, nil).Once()
 
-	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil)
 	if _, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:      existing.ID,
 		Enabled: ptr(false),

@@ -29,7 +29,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	registrymocks "github.com/NeuralTrust/TrustGate/pkg/domain/registry/mocks"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/cachetest"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -67,7 +68,13 @@ func TestUpdater_Update_Success(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
@@ -99,7 +106,13 @@ func TestUpdater_Update_Partial_PreservesFieldsAndAssociations(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
@@ -121,7 +134,8 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, mock.Anything).Return(nil, domain.ErrNotFound).Once()
 
-	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 
 	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID: ids.New[ids.ConsumerKind](),
@@ -129,6 +143,7 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestUpdater_Update_RejectsModelPolicyForUnassociatedRegistry(t *testing.T) {
@@ -140,7 +155,8 @@ func TestUpdater_Update_RejectsModelPolicyForUnassociatedRegistry(t *testing.T) 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 
-	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 
 	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:        existing.ID,
@@ -154,6 +170,7 @@ func TestUpdater_Update_RejectsModelPolicyForUnassociatedRegistry(t *testing.T) 
 	if !errors.Is(err, registrydomain.ErrInvalidRegistryID) {
 		t.Fatalf("err = %v, want ErrInvalidRegistryID", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestUpdater_Update_AllowsModelPolicyForAssociatedRegistry(t *testing.T) {
@@ -166,7 +183,13 @@ func TestUpdater_Update_AllowsModelPolicyForAssociatedRegistry(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 
-	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 
 	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:        existing.ID,
@@ -192,7 +215,8 @@ func TestUpdater_Update_RejectsLBConfigForUnassociatedRegistry(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 
-	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 
 	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:        existing.ID,
@@ -208,6 +232,7 @@ func TestUpdater_Update_RejectsLBConfigForUnassociatedRegistry(t *testing.T) {
 	if !errors.Is(err, registrydomain.ErrInvalidRegistryID) {
 		t.Fatalf("err = %v, want ErrInvalidRegistryID", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestUpdater_Update_DisabledObjectsClearFallbackAndLBConfig(t *testing.T) {
@@ -237,7 +262,13 @@ func TestUpdater_Update_DisabledObjectsClearFallbackAndLBConfig(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
@@ -272,7 +303,13 @@ func TestUpdater_Update_SwitchToRoleBasedCleansInlineConfig(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 	if _, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:          existing.ID,
 		GatewayID:   gwID,
@@ -309,7 +346,13 @@ func TestUpdater_Update_SwitchToInlineClearsRoles(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 	if _, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:          existing.ID,
 		GatewayID:   gwID,
@@ -334,7 +377,8 @@ func TestUpdater_Update_RejectsIdPAuthOnSwitchToMCP(t *testing.T) {
 	authRepo.EXPECT().FindByIDs(mock.Anything, gwID, existing.AuthIDs).
 		Return([]*authdomain.Auth{{ID: authID, GatewayID: gwID, Type: authdomain.TypeOIDC}}, nil).Once()
 
-	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authRepo, newCacheManager(), publisher, newTestLogger(), nil)
 	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
@@ -343,6 +387,7 @@ func TestUpdater_Update_RejectsIdPAuthOnSwitchToMCP(t *testing.T) {
 	if !errors.Is(err, commonerrors.ErrConflict) {
 		t.Fatalf("err = %v, want ErrConflict (oidc cannot broker for an MCP consumer)", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestUpdater_Update_RejectsNonIdPAuthOnSwitchToRoleBased(t *testing.T) {
@@ -361,7 +406,8 @@ func TestUpdater_Update_RejectsNonIdPAuthOnSwitchToRoleBased(t *testing.T) {
 	authRepo.EXPECT().FindByIDs(mock.Anything, gwID, existing.AuthIDs).
 		Return([]*authdomain.Auth{{ID: authID, GatewayID: gwID, Type: authdomain.TypeAPIKey}}, nil).Once()
 
-	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authRepo, newCacheManager(), publisher, newTestLogger(), nil)
 	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:          existing.ID,
 		GatewayID:   gwID,
@@ -370,6 +416,7 @@ func TestUpdater_Update_RejectsNonIdPAuthOnSwitchToRoleBased(t *testing.T) {
 	if !errors.Is(err, commonerrors.ErrConflict) {
 		t.Fatalf("err = %v, want ErrConflict (role_based requires an identity-provider auth)", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestUpdater_Update_AllowsOAuth2AuthOnSwitchToMCP(t *testing.T) {
@@ -388,7 +435,13 @@ func TestUpdater_Update_AllowsOAuth2AuthOnSwitchToMCP(t *testing.T) {
 	authRepo.EXPECT().FindByIDs(mock.Anything, gwID, existing.AuthIDs).
 		Return([]*authdomain.Auth{{ID: authID, GatewayID: gwID, Type: authdomain.TypeOAuth2}}, nil).Once()
 
-	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authRepo, newCacheManager(), publisher, newTestLogger(), nil)
 	if _, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
@@ -409,7 +462,8 @@ func TestUpdater_Update_RejectsMultipleAuthsOnSwitchToRoleBased(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 
-	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:          existing.ID,
 		GatewayID:   gwID,
@@ -418,6 +472,7 @@ func TestUpdater_Update_RejectsMultipleAuthsOnSwitchToRoleBased(t *testing.T) {
 	if !errors.Is(err, domain.ErrInvalidRoutingMode) {
 		t.Fatalf("err = %v, want ErrInvalidRoutingMode (role_based allows at most one auth)", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func roleBasedConsumer(gwID ids.GatewayID) *domain.Consumer {
@@ -463,7 +518,13 @@ func TestUpdater_Update_SwitchToInlineAttachesRegistries(t *testing.T) {
 		Return([]*registrydomain.Registry{{ID: beID, GatewayID: gwID}}, nil).
 		Once()
 
-	updater := appconsumer.NewUpdater(repo, registryRepo, authmocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appconsumer.NewUpdater(repo, registryRepo, authmocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:          existing.ID,
 		GatewayID:   gwID,
@@ -499,7 +560,13 @@ func TestUpdater_Update_EmptyRegistriesDetachesAll(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 	if _, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:         existing.ID,
 		GatewayID:  gwID,
@@ -518,7 +585,8 @@ func TestUpdater_Update_RejectsRegistriesInRoleBasedMode(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 
-	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:         existing.ID,
 		GatewayID:  gwID,
@@ -527,6 +595,7 @@ func TestUpdater_Update_RejectsRegistriesInRoleBasedMode(t *testing.T) {
 	if !errors.Is(err, domain.ErrInvalidRoutingMode) {
 		t.Fatalf("err = %v, want ErrInvalidRoutingMode (registries need inline routing)", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestUpdater_Update_RejectsRegistriesOutsideGateway(t *testing.T) {
@@ -545,7 +614,8 @@ func TestUpdater_Update_RejectsRegistriesOutsideGateway(t *testing.T) {
 		Return(nil, nil).
 		Once()
 
-	updater := appconsumer.NewUpdater(repo, registryRepo, authmocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	updater := appconsumer.NewUpdater(repo, registryRepo, authmocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:         existing.ID,
 		GatewayID:  gwID,
@@ -554,6 +624,7 @@ func TestUpdater_Update_RejectsRegistriesOutsideGateway(t *testing.T) {
 	if !errors.Is(err, registrydomain.ErrInvalidRegistryID) {
 		t.Fatalf("err = %v, want ErrInvalidRegistryID", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestUpdater_Update_RejectsCrossGateway(t *testing.T) {
@@ -565,7 +636,8 @@ func TestUpdater_Update_RejectsCrossGateway(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 
-	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authmocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 
 	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:        existing.ID,
@@ -575,4 +647,5 @@ func TestUpdater_Update_RejectsCrossGateway(t *testing.T) {
 	if !errors.Is(err, domain.ErrInvalidGatewayID) {
 		t.Fatalf("err = %v, want ErrInvalidGatewayID", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }

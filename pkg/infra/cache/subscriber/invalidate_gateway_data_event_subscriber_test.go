@@ -78,7 +78,6 @@ func TestInvalidateGatewayDataEventSubscriber_OnEvent_EvictsGatewayScopedEntries
 	client.EXPECT().GetTTLMap(cache.RoleTTLName).Return(roleMap).Once()
 	client.EXPECT().GetTTLMap(cache.RegistryTTLName).Return(registryMap).Once()
 	client.EXPECT().GetTTLMap(cache.PolicyTTLName).Return(policyMap).Once()
-	client.EXPECT().DeleteAllByGatewayID(mock.Anything, gatewayID).Return(nil).Once()
 
 	sub := subscriber.NewInvalidateGatewayDataEventSubscriber(discardLogger(), client)
 	if err := sub.OnEvent(context.Background(), event.InvalidateGatewayDataEvent{GatewayID: gatewayID}); err != nil {
@@ -124,4 +123,24 @@ func TestInvalidateGatewayDataEventSubscriber_OnEvent_EvictsGatewayScopedEntries
 	if _, ok := consumerPathMap.Get("|/v1/mcp/linear"); ok {
 		t.Fatal("consumer-path entry was not evicted")
 	}
+}
+
+// Gateway data invalidation must stay confined to the in-process TTL maps. It
+// once issued a Redis pattern delete on *<gatewayID>*, which also wiped the
+// durable state that shares the database: stored MCP credentials, dynamic
+// client registrations, sessions and rate-limit quotas.
+func TestInvalidateGatewayDataEventSubscriber_OnEvent_NeverReachesRedis(t *testing.T) {
+	t.Parallel()
+	gatewayID := ids.New[ids.GatewayKind]().String()
+
+	client := cachemocks.NewClient(t)
+	client.EXPECT().GetTTLMap(mock.Anything).Return(cache.NewTTLMap(time.Minute))
+
+	sub := subscriber.NewInvalidateGatewayDataEventSubscriber(discardLogger(), client)
+	if err := sub.OnEvent(context.Background(), event.InvalidateGatewayDataEvent{GatewayID: gatewayID}); err != nil {
+		t.Fatalf("OnEvent error: %v", err)
+	}
+
+	client.AssertNotCalled(t, "RedisClient")
+	client.AssertNotCalled(t, "Delete", mock.Anything, mock.Anything)
 }

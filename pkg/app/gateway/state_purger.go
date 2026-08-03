@@ -12,21 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package cachetest provides cache test doubles shared across app-layer tests.
-package cachetest
+package gateway
 
 import (
 	"context"
 
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
-type noopPublisher struct{}
-
-func (noopPublisher) Publish(context.Context, event.Event) error { return nil }
-
-// NoopPublisher returns an EventPublisher that discards every event. Use it in
-// unit tests that exercise services which publish cache-invalidation events but
-// do not assert on the events themselves.
-func NoopPublisher() cache.EventPublisher { return noopPublisher{} }
+// StatePurger reclaims the shared-cache state a gateway owns. Implementations
+// are only ever invoked for a gateway that has already been deleted, never on
+// an update or cache-invalidation path.
+//
+//go:generate mockery --name=StatePurger --dir=. --output=./mocks --filename=gateway_state_purger_mock.go --case=underscore --with-expecter
+type StatePurger interface {
+	PurgeGatewayState(ctx context.Context, gatewayID ids.GatewayID) error
+}
