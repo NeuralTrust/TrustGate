@@ -2265,7 +2265,9 @@ paths:
       - application/json
       description: 'Forwards an OpenAI Chat Completions request to the selected provider.
         Proxy plane route: /{consumer_slug}/v1/chat/completions. Other fixed routes
-        include /v1/messages (Anthropic) and /v1/responses (OpenAI Responses).'
+        include /v1/messages (Anthropic) and /v1/responses (OpenAI Responses). Inline
+        consumers may authenticate with an api key via X-AG-API-Key, x-api-key, or
+        Authorization: Bearer ag_….'
       parameters:
       - description: Consumer slug
         in: path
@@ -2276,7 +2278,12 @@ paths:
         in: header
         name: X-AG-API-Key
         type: string
-      - description: Bearer token for OAuth2 or OIDC consumers
+      - description: API key for inline consumers (Anthropic-compatible clients)
+        in: header
+        name: x-api-key
+        type: string
+      - description: Bearer ag_… for inline api-key auth, or Bearer JWT for OAuth2/OIDC
+          consumers
         in: header
         name: Authorization
         type: string
