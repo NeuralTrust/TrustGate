@@ -25,9 +25,12 @@ import (
 
 var _ cache.EventSubscriber[event.InvalidateGatewayDataEvent] = (*InvalidateGatewayDataEventSubscriber)(nil)
 
+// InvalidateGatewayDataEventSubscriber drops the in-process caches that hold
+// gateway-scoped configuration. It must never delete from Redis: that keyspace
+// holds durable OAuth state (user credentials, client registrations, sessions)
+// rather than cached config, which now reaches data planes over config-sync.
 type InvalidateGatewayDataEventSubscriber struct {
 	logger            *slog.Logger
-	cache             cache.Client
 	gatewayCache      *cache.TTLMap
 	consumerCache     *cache.TTLMap
 	consumerDataCache *cache.TTLMap
@@ -45,7 +48,6 @@ func NewInvalidateGatewayDataEventSubscriber(
 ) cache.EventSubscriber[event.InvalidateGatewayDataEvent] {
 	return &InvalidateGatewayDataEventSubscriber{
 		logger:            logger,
-		cache:             c,
 		gatewayCache:      c.GetTTLMap(cache.GatewayTTLName),
 		consumerCache:     c.GetTTLMap(cache.ConsumerTTLName),
 		consumerDataCache: c.GetTTLMap(cache.ConsumerDataTTLName),
@@ -58,7 +60,7 @@ func NewInvalidateGatewayDataEventSubscriber(
 	}
 }
 
-func (s *InvalidateGatewayDataEventSubscriber) OnEvent(ctx context.Context, evt event.InvalidateGatewayDataEvent) error {
+func (s *InvalidateGatewayDataEventSubscriber) OnEvent(_ context.Context, evt event.InvalidateGatewayDataEvent) error {
 	s.logger.Info("invalidating gateway data cache", slog.String("gateway_id", evt.GatewayID))
 
 	if s.gatewayCache != nil {
@@ -87,13 +89,6 @@ func (s *InvalidateGatewayDataEventSubscriber) OnEvent(ctx context.Context, evt 
 	}
 	if s.policyCache != nil {
 		s.policyCache.Clear()
-	}
-
-	if err := s.cache.DeleteAllByGatewayID(ctx, evt.GatewayID); err != nil {
-		s.logger.Warn("failed to delete gateway keys from redis cache",
-			slog.String("gateway_id", evt.GatewayID),
-			slog.String("error", err.Error()),
-		)
 	}
 
 	return nil
