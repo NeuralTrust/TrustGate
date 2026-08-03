@@ -20,6 +20,7 @@ import (
 	"log/slog"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
+	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -310,7 +311,7 @@ func (a *associator) policyInGateway(ctx context.Context, gatewayID ids.GatewayI
 
 func (a *associator) invalidate(ctx context.Context, cons *domain.Consumer) {
 	a.memoryCache.Delete(cons.ID.String())
-	publishGatewayDataInvalidation(ctx, a.publisher, a.logger, cons.GatewayID)
+	invalidation.GatewayData(ctx, a.publisher, a.logger, cons.GatewayID)
 	if a.signaler != nil {
 		a.signaler.Signal(ctx)
 	}

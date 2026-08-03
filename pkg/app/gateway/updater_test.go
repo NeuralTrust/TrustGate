@@ -27,7 +27,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/cachetest"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -49,7 +50,13 @@ func TestUpdater_Update_Success(t *testing.T) {
 		Once()
 
 	mgr := newCacheManager()
-	updater := appgateway.NewUpdater(repo, mgr, cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: id.String()}).
+		Return(nil).
+		Once()
+
+	updater := appgateway.NewUpdater(repo, mgr, publisher, nil, newTestLogger(), nil, false)
 
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:     id,
@@ -89,7 +96,13 @@ func TestUpdater_UpdateSlug_InvalidatesOldSlugCache(t *testing.T) {
 
 	mgr := newCacheManager()
 	mgr.GetTTLMap(cache.GatewayTTLName).Set("slug:old", existing)
-	updater := appgateway.NewUpdater(repo, mgr, cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: id.String()}).
+		Return(nil).
+		Once()
+
+	updater := appgateway.NewUpdater(repo, mgr, publisher, nil, newTestLogger(), nil, false)
 
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
@@ -115,7 +128,9 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 	id := ids.New[ids.GatewayKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
+	publisher := cachemocks.NewEventPublisher(t)
+
+	updater := appgateway.NewUpdater(repo, newCacheManager(), publisher, nil, newTestLogger(), nil, false)
 	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
 		Slug: ptr("x"),
@@ -123,6 +138,7 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 	if !errors.Is(err, commonerrors.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestUpdater_Update_Partial_PreservesStatus(t *testing.T) {
@@ -140,7 +156,13 @@ func TestUpdater_Update_Partial_PreservesStatus(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: id.String()}).
+		Return(nil).
+		Once()
+
+	updater := appgateway.NewUpdater(repo, newCacheManager(), publisher, nil, newTestLogger(), nil, false)
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
 		Slug: ptr("renamed"),
@@ -169,7 +191,13 @@ func TestUpdater_Update_TenantIDIsServerOnlyAndImmutable(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: id.String()}).
+		Return(nil).
+		Once()
+
+	updater := appgateway.NewUpdater(repo, newCacheManager(), publisher, nil, newTestLogger(), nil, false)
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:       id,
 		Metadata: map[string]string{domain.MetadataTenantIDKey: "globex", "env": "staging"},
@@ -201,7 +229,13 @@ func TestUpdater_Update_HealsEmptyTenantFromContext(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: id.String()}).
+		Return(nil).
+		Once()
+
+	updater := appgateway.NewUpdater(repo, newCacheManager(), publisher, nil, newTestLogger(), nil, false)
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:       id,
 		TenantID: "acme",
@@ -231,7 +265,13 @@ func TestUpdater_Update_ContextTenantDoesNotOverrideExisting(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: id.String()}).
+		Return(nil).
+		Once()
+
+	updater := appgateway.NewUpdater(repo, newCacheManager(), publisher, nil, newTestLogger(), nil, false)
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:       id,
 		TenantID: "globex",
@@ -260,7 +300,13 @@ func TestUpdater_Update_PersistsEntitlementsWhenProvided(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: id.String()}).
+		Return(nil).
+		Once()
+
+	updater := appgateway.NewUpdater(repo, newCacheManager(), publisher, nil, newTestLogger(), nil, false)
 	ent := stampedEntitlements("standard")
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:           id,
@@ -290,7 +336,13 @@ func TestUpdater_Update_PreservesEntitlementsWhenOmitted(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: id.String()}).
+		Return(nil).
+		Once()
+
+	updater := appgateway.NewUpdater(repo, newCacheManager(), publisher, nil, newTestLogger(), nil, false)
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
 		Slug: ptr("renamed"),
@@ -313,7 +365,9 @@ func TestUpdater_Update_RejectsEntitlementsForTenantCaller(t *testing.T) {
 
 	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
+	publisher := cachemocks.NewEventPublisher(t)
+
+	updater := appgateway.NewUpdater(repo, newCacheManager(), publisher, nil, newTestLogger(), nil, false)
 	ent := stampedEntitlements("enterprise")
 	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:           id,
@@ -323,6 +377,7 @@ func TestUpdater_Update_RejectsEntitlementsForTenantCaller(t *testing.T) {
 	if !errors.Is(err, commonerrors.ErrValidation) {
 		t.Fatalf("expected ErrValidation rejecting tenant entitlements, got %v", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestUpdater_Update_AllowsEntitlementsForPlatformAdmin(t *testing.T) {
@@ -341,7 +396,13 @@ func TestUpdater_Update_AllowsEntitlementsForPlatformAdmin(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: id.String()}).
+		Return(nil).
+		Once()
+
+	updater := appgateway.NewUpdater(repo, newCacheManager(), publisher, nil, newTestLogger(), nil, false)
 	ent := stampedEntitlements("standard")
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:            id,
@@ -374,7 +435,9 @@ func TestUpdater_Update_RejectsTierChangeOverInstanceCap(t *testing.T) {
 		Return(ratelimit.ErrInstanceLimit).
 		Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, true)
+	publisher := cachemocks.NewEventPublisher(t)
+
+	updater := appgateway.NewUpdater(repo, newCacheManager(), publisher, nil, newTestLogger(), nil, true)
 	free := stampedEntitlements("free")
 	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:            id,
@@ -387,6 +450,7 @@ func TestUpdater_Update_RejectsTierChangeOverInstanceCap(t *testing.T) {
 	if !errors.Is(err, commonerrors.ErrConflict) {
 		t.Fatalf("expected wrapped commonerrors.ErrConflict, got %v", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestUpdater_Update_AllowsTierChangeWithinInstanceCap(t *testing.T) {
@@ -406,7 +470,13 @@ func TestUpdater_Update_AllowsTierChangeWithinInstanceCap(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, true)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: id.String()}).
+		Return(nil).
+		Once()
+
+	updater := appgateway.NewUpdater(repo, newCacheManager(), publisher, nil, newTestLogger(), nil, true)
 	free := stampedEntitlements("free")
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:            id,
@@ -430,7 +500,9 @@ func TestUpdater_Update_RejectsEmptySlug(t *testing.T) {
 
 	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger(), nil, false)
+	publisher := cachemocks.NewEventPublisher(t)
+
+	updater := appgateway.NewUpdater(repo, newCacheManager(), publisher, nil, newTestLogger(), nil, false)
 	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
 		Slug: ptr(""),
@@ -438,4 +510,5 @@ func TestUpdater_Update_RejectsEmptySlug(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected validation error, got nil")
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }

@@ -23,7 +23,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/registry/mocks"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/cachetest"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -38,7 +39,13 @@ func TestUpdater_Update_Success(t *testing.T) {
 		return b.ID == existing.ID && b.Name == "new"
 	})).Return(nil).Once()
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateRegistryCacheEvent{GatewayID: existing.GatewayID.String(), RegistryID: existing.ID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID:       existing.ID,
 		Name:     ptr("new"),
@@ -65,7 +72,13 @@ func TestUpdater_Update_TogglesEnabled(t *testing.T) {
 		return b.ID == existing.ID && !b.Enabled
 	})).Return(nil).Once()
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateRegistryCacheEvent{GatewayID: existing.GatewayID.String(), RegistryID: existing.ID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID:      existing.ID,
 		Enabled: ptr(false),
@@ -87,7 +100,13 @@ func TestUpdater_Update_EnabledUnchangedWhenNil(t *testing.T) {
 		return b.Enabled
 	})).Return(nil).Once()
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateRegistryCacheEvent{GatewayID: existing.GatewayID.String(), RegistryID: existing.ID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID:   existing.ID,
 		Name: ptr("renamed"),
@@ -114,7 +133,13 @@ func TestUpdater_Update_Partial_PreservesProviderOptionsAndHealthChecks(t *testi
 			b.Auth() != nil && b.Auth().APIKey != nil && b.Auth().APIKey.APIKey == "sk-real"
 	})).Return(nil).Once()
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateRegistryCacheEvent{GatewayID: existing.GatewayID.String(), RegistryID: existing.ID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID:   existing.ID,
 		Name: ptr("renamed"),
@@ -151,7 +176,13 @@ func TestUpdater_Update_PartialMCPTargetPreservesAuthAndHeaders(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Once()
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateRegistryCacheEvent{GatewayID: existing.GatewayID.String(), RegistryID: existing.ID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID:        existing.ID,
 		MCPTarget: &domain.MCPTarget{URL: "https://new.example.com/mcp"},
@@ -183,7 +214,13 @@ func TestUpdater_Update_MCPTargetAuthClearedExplicitly(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Once()
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateRegistryCacheEvent{GatewayID: existing.GatewayID.String(), RegistryID: existing.ID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID:        existing.ID,
 		MCPTarget: &domain.MCPTarget{Auth: &domain.MCPAuth{Mode: domain.MCPAuthModeNone}},
@@ -208,7 +245,13 @@ func TestUpdater_Update_PreservesRedactedSecret(t *testing.T) {
 		return b.Auth() != nil && b.Auth().APIKey != nil && b.Auth().APIKey.APIKey == "sk-real"
 	})).Return(nil).Once()
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateRegistryCacheEvent{GatewayID: existing.GatewayID.String(), RegistryID: existing.ID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID:       existing.ID,
 		Name:     ptr("old"),
@@ -232,7 +275,13 @@ func TestUpdater_Update_PreservesSecretWhenAuthOmitted(t *testing.T) {
 		return b.Name == "renamed" && b.Auth() != nil && b.Auth().APIKey.APIKey == "sk-real"
 	})).Return(nil).Once()
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateRegistryCacheEvent{GatewayID: existing.GatewayID.String(), RegistryID: existing.ID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID:       existing.ID,
 		Name:     ptr("renamed"),
@@ -267,7 +316,13 @@ func TestUpdater_Update_AzurePreservesAPIKeyForSameMode(t *testing.T) {
 			b.Auth().Azure.ClientSecret == ""
 	})).Return(nil).Once()
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateRegistryCacheEvent{GatewayID: existing.GatewayID.String(), RegistryID: existing.ID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID: existing.ID,
 		Auth: &domain.TargetAuth{
@@ -311,7 +366,13 @@ func TestUpdater_Update_AzurePreservesClientSecretForSameServicePrincipal(t *tes
 			b.Auth().Azure.TenantID == "tenant-1"
 	})).Return(nil).Once()
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateRegistryCacheEvent{GatewayID: existing.GatewayID.String(), RegistryID: existing.ID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID: existing.ID,
 		Auth: &domain.TargetAuth{
@@ -357,7 +418,13 @@ func TestUpdater_Update_AzureClearsIncompatibleSecretsOnModeChange(t *testing.T)
 			b.Auth().Azure.TenantID == ""
 	})).Return(nil).Once()
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateRegistryCacheEvent{GatewayID: existing.GatewayID.String(), RegistryID: existing.ID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID: existing.ID,
 		Auth: &domain.TargetAuth{
@@ -393,7 +460,9 @@ func TestUpdater_Update_AzureRejectsServicePrincipalSecretForDifferentPrincipal(
 	existing, _ := domain.NewLLMRegistry(ids.New[ids.GatewayKind](), "old", "", &domain.LLMTarget{Provider: "azure", Auth: auth})
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
 	_, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID: existing.ID,
 		Auth: &domain.TargetAuth{
@@ -409,6 +478,7 @@ func TestUpdater_Update_AzureRejectsServicePrincipalSecretForDifferentPrincipal(
 	if !errors.Is(err, domain.ErrInvalidRegistry) {
 		t.Fatalf("err = %v, want ErrInvalidRegistry", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestUpdater_Update_RejectsGatewayIDChange(t *testing.T) {
@@ -417,7 +487,9 @@ func TestUpdater_Update_RejectsGatewayIDChange(t *testing.T) {
 	existing, _ := domain.NewLLMRegistry(ids.New[ids.GatewayKind](), "x", "", &domain.LLMTarget{Provider: "openai", Auth: domain.NewAPIKeyAuth("sk-1")})
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
 	_, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: ids.New[ids.GatewayKind](),
@@ -428,6 +500,7 @@ func TestUpdater_Update_RejectsGatewayIDChange(t *testing.T) {
 	if !errors.Is(err, domain.ErrInvalidGatewayID) {
 		t.Fatalf("err = %v, want ErrInvalidGatewayID", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestUpdater_Update_NotFound(t *testing.T) {
@@ -436,7 +509,9 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 	id := ids.New[ids.RegistryKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
 	_, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID:       id,
 		Name:     ptr("x"),
@@ -446,4 +521,5 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }

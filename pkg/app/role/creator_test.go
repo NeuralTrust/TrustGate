@@ -24,7 +24,9 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/cachetest"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
+	"github.com/stretchr/testify/mock"
 )
 
 type repositoryStub struct{}
@@ -52,15 +54,23 @@ func (repositoryStub) DetachRegistryIfUnreferenced(context.Context, ids.GatewayI
 
 func TestCreator_Create_SavesRoleWithoutInitialModelPolicies(t *testing.T) {
 	t.Parallel()
+	gatewayID := ids.New[ids.GatewayKind]()
+
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gatewayID.String()}).
+		Return(nil).
+		Once()
+
 	creator := approle.NewCreator(
 		repositoryStub{},
 		cache.NewTTLMapManager(cache.RoleCacheTTL),
-		cachetest.NoopPublisher(),
+		publisher,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		nil,
 	)
 	role, err := creator.Create(context.Background(), approle.CreateInput{
-		GatewayID: ids.New[ids.GatewayKind](),
+		GatewayID: gatewayID,
 		Name:      "analyst",
 	})
 	if err != nil {

@@ -28,7 +28,8 @@ import (
 	consumermocks "github.com/NeuralTrust/TrustGate/pkg/domain/consumer/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/cachetest"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -46,7 +47,13 @@ func TestDeleter_Delete_Success(t *testing.T) {
 	consumerRepo := consumermocks.NewRepository(t)
 	consumerRepo.EXPECT().ListByAuthID(mock.Anything, id).Return(nil, nil).Once()
 
-	deleter := appauth.NewDeleter(repo, consumerRepo, mgr, cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	deleter := appauth.NewDeleter(repo, consumerRepo, mgr, publisher, newTestLogger(), nil)
 	if err := deleter.Delete(context.Background(), gwID, id); err != nil {
 		t.Fatalf("Delete error: %v", err)
 	}
@@ -69,7 +76,9 @@ func TestDeleter_Delete_BlockedWhenSoleIdPOfRoleBased(t *testing.T) {
 		RoutingMode: consumerdomain.RoutingModeRoleBased,
 	}}, nil).Once()
 
-	deleter := appauth.NewDeleter(repo, consumerRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+
+	deleter := appauth.NewDeleter(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil)
 	err := deleter.Delete(context.Background(), gwID, id)
 	if !errors.Is(err, commonerrors.ErrConflict) {
 		t.Fatalf("err = %v, want ErrConflict when deleting the sole identity provider of a role_based consumer", err)
@@ -77,6 +86,7 @@ func TestDeleter_Delete_BlockedWhenSoleIdPOfRoleBased(t *testing.T) {
 	if !strings.Contains(err.Error(), "before deleting") {
 		t.Fatalf("err = %v, want the message to reference deleting", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestDeleter_Delete_BlockedWhenSoleUsableIdPOfMCP(t *testing.T) {
@@ -94,11 +104,14 @@ func TestDeleter_Delete_BlockedWhenSoleUsableIdPOfMCP(t *testing.T) {
 		AuthIDs: []ids.AuthID{id},
 	}}, nil).Once()
 
-	deleter := appauth.NewDeleter(repo, consumerRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+
+	deleter := appauth.NewDeleter(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil)
 	err := deleter.Delete(context.Background(), gwID, id)
 	if !errors.Is(err, commonerrors.ErrConflict) {
 		t.Fatalf("err = %v, want ErrConflict when deleting the sole usable identity provider of an MCP consumer", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestDeleter_Delete_PropagatesError(t *testing.T) {
@@ -107,10 +120,13 @@ func TestDeleter_Delete_PropagatesError(t *testing.T) {
 	id := ids.New[ids.AuthKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
 
-	deleter := appauth.NewDeleter(repo, consumermocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+
+	deleter := appauth.NewDeleter(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 	if err := deleter.Delete(context.Background(), ids.New[ids.GatewayKind](), id); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestDeleter_Delete_WrongGateway(t *testing.T) {
@@ -119,10 +135,13 @@ func TestDeleter_Delete_WrongGateway(t *testing.T) {
 	id := ids.New[ids.AuthKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Auth{ID: id, GatewayID: ids.New[ids.GatewayKind]()}, nil).Once()
 
-	deleter := appauth.NewDeleter(repo, consumermocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+
+	deleter := appauth.NewDeleter(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 	if err := deleter.Delete(context.Background(), ids.New[ids.GatewayKind](), id); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound for cross-gateway delete", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestDeleter_Delete_DetachesReferencingConsumers(t *testing.T) {
@@ -143,7 +162,14 @@ func TestDeleter_Delete_DetachesReferencingConsumers(t *testing.T) {
 	consumerRepo.EXPECT().DetachAuth(mock.Anything, firstConsumer, id).Return(nil).Once()
 	consumerRepo.EXPECT().DetachAuth(mock.Anything, secondConsumer, id).Return(nil).Once()
 
-	deleter := appauth.NewDeleter(repo, consumerRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	// Two detached consumers still amount to a single gateway-wide invalidation.
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	deleter := appauth.NewDeleter(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil)
 	if err := deleter.Delete(context.Background(), gwID, id); err != nil {
 		t.Fatalf("Delete error: %v", err)
 	}

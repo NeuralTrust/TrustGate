@@ -23,7 +23,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/policy/mocks"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/cachetest"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -57,7 +58,13 @@ func TestUpdater_Update_Success(t *testing.T) {
 		return p.ID == existing.ID && p.Name == "new" && p.Description == "new description"
 	})).Return(nil).Once()
 
-	updater := apppolicy.NewUpdater(repo, newRegistryMock(t, nil), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: existing.GatewayID.String()}).
+		Return(nil).
+		Once()
+
+	updater := apppolicy.NewUpdater(repo, newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), validUpdateInput(existing.ID))
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
@@ -79,7 +86,13 @@ func TestUpdater_Update_Partial(t *testing.T) {
 		return p.Name == "renamed" && p.Slug == "rate_limiter" && p.Description == "old description"
 	})).Return(nil).Once()
 
-	updater := apppolicy.NewUpdater(repo, newRegistryMock(t, nil), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: existing.GatewayID.String()}).
+		Return(nil).
+		Once()
+
+	updater := apppolicy.NewUpdater(repo, newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), apppolicy.UpdateInput{
 		ID:   existing.ID,
 		Name: ptr("renamed"),
@@ -108,7 +121,13 @@ func TestUpdater_Update_PreservesModeWhenOmitted(t *testing.T) {
 		return p.Mode == domain.ModeObserve
 	})).Return(nil).Once()
 
-	updater := apppolicy.NewUpdater(repo, newRegistryMock(t, nil), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: existing.GatewayID.String()}).
+		Return(nil).
+		Once()
+
+	updater := apppolicy.NewUpdater(repo, newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), apppolicy.UpdateInput{ID: existing.ID, Name: ptr("renamed")})
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
@@ -127,7 +146,13 @@ func TestUpdater_Update_SetsModeWhenProvided(t *testing.T) {
 		return p.Mode == domain.ModeThrottle
 	})).Return(nil).Once()
 
-	updater := apppolicy.NewUpdater(repo, newRegistryMock(t, nil), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: existing.GatewayID.String()}).
+		Return(nil).
+		Once()
+
+	updater := apppolicy.NewUpdater(repo, newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := updater.Update(context.Background(), apppolicy.UpdateInput{ID: existing.ID, Mode: ptr(domain.ModeThrottle)})
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
@@ -143,13 +168,16 @@ func TestUpdater_Update_RejectsGatewayIDChange(t *testing.T) {
 	existing := existingPolicy(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 
-	updater := apppolicy.NewUpdater(repo, newRegistryMock(t, nil), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+
+	updater := apppolicy.NewUpdater(repo, newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
 	in := validUpdateInput(existing.ID)
 	in.GatewayID = ids.New[ids.GatewayKind]()
 	_, err := updater.Update(context.Background(), in)
 	if !errors.Is(err, domain.ErrInvalidGatewayID) {
 		t.Fatalf("err = %v, want ErrInvalidGatewayID", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestUpdater_Update_NotFound(t *testing.T) {
@@ -158,9 +186,12 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 	id := ids.New[ids.PolicyKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
 
-	updater := apppolicy.NewUpdater(repo, newRegistryMock(t, nil), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+
+	updater := apppolicy.NewUpdater(repo, newRegistryMock(t, nil), newCacheManager(), publisher, newTestLogger(), nil)
 	_, err := updater.Update(context.Background(), validUpdateInput(id))
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }

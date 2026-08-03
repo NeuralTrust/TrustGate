@@ -24,7 +24,8 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/cachetest"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -44,8 +45,14 @@ func TestCreator_Create_SignalsOnSuccess(t *testing.T) {
 	gwID := ids.New[ids.GatewayKind]()
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
 
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
 	signaler := &configsynctest.FakeSignaler{}
-	creator := appauth.NewCreator(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), signaler)
+	creator := appauth.NewCreator(repo, newCacheManager(), publisher, newTestLogger(), signaler)
 
 	if _, err := creator.Create(context.Background(), signalCreateInput(gwID)); err != nil {
 		t.Fatalf("Create error: %v", err)
@@ -61,8 +68,10 @@ func TestCreator_Create_DoesNotSignalOnFailure(t *testing.T) {
 	gwID := ids.New[ids.GatewayKind]()
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(errors.New("boom")).Once()
 
+	publisher := cachemocks.NewEventPublisher(t)
+
 	signaler := &configsynctest.FakeSignaler{}
-	creator := appauth.NewCreator(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), signaler)
+	creator := appauth.NewCreator(repo, newCacheManager(), publisher, newTestLogger(), signaler)
 
 	if _, err := creator.Create(context.Background(), signalCreateInput(gwID)); err == nil {
 		t.Fatal("expected error, got nil")
@@ -70,6 +79,7 @@ func TestCreator_Create_DoesNotSignalOnFailure(t *testing.T) {
 	if got := signaler.Count(); got != 0 {
 		t.Fatalf("Signal count = %d, want 0", got)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestCreator_Create_NilSignalerIsSafe(t *testing.T) {
@@ -78,7 +88,13 @@ func TestCreator_Create_NilSignalerIsSafe(t *testing.T) {
 	gwID := ids.New[ids.GatewayKind]()
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
 
-	creator := appauth.NewCreator(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	creator := appauth.NewCreator(repo, newCacheManager(), publisher, newTestLogger(), nil)
 
 	if _, err := creator.Create(context.Background(), signalCreateInput(gwID)); err != nil {
 		t.Fatalf("Create error: %v", err)
