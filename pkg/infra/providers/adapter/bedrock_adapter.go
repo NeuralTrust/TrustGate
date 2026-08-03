@@ -31,6 +31,7 @@ type BedrockAdapter struct {
 	titan   bedrockTitanAdapter
 	llama   bedrockLlamaAdapter
 	mistral bedrockMistralAdapter
+	nova    bedrockNovaAdapter
 }
 
 // ---------------------------------------------------------------------------
@@ -39,58 +40,123 @@ type BedrockAdapter struct {
 
 const (
 	bfClaude  = "claude"
-	bfOpenAI  = "openai" // DeepSeek, AI21 Jamba, etc.
+	bfOpenAI  = "openai" // DeepSeek, AI21 Jamba, newer Mistral, etc.
 	bfTitan   = "titan"
 	bfLlama   = "llama"
 	bfMistral = "mistral"
+	bfNova    = "nova"
 )
 
-// detectFamilyByModel returns the model family from a Bedrock model ID.
+// legacyMistralModels are the Mistral models whose Bedrock schema is the text
+// completion one (a single "prompt" string). Every other Mistral model — the
+// 2025 generation onwards: devstral, magistral, ministral 3, mistral large 3,
+// voxtral, pixtral — speaks the chat completions schema and answers "missing
+// field `messages`" if given a prompt. mistral-7b and mixtral are the mirror
+// image: they answer "Messages not supported for this model".
+var legacyMistralModels = []string{
+	"mistral-7b-instruct",
+	"mixtral-8x7b-instruct",
+	"mistral-large-2402",
+	"mistral-small-2402",
+}
+
+// openAICompatibleVendors are the Bedrock vendors whose InvokeModel schema is
+// the OpenAI chat completions one — {"messages":[…]} in, {"choices":[…]} out.
+// Each was invoked to confirm it, because the responses of all of them already
+// decode as OpenAI: leaving the request on the Claude fallback would encode and
+// decode the same model as two different families, and it is only accepted at
+// all because these endpoints tolerate the anthropic_version stowaway.
+var openAICompatibleVendors = []string{
+	"openai.", // gpt-oss
+	"qwen.",
+	"google.gemma",
+	"nvidia.",
+	"minimax.",
+	"zai.",
+	"deepseek",
+	"ai21.jamba",
+}
+
+// detectFamilyByModel returns the model family from a Bedrock model ID. The ID
+// may carry a geography prefix ("eu.", "us.") naming a cross-region inference
+// profile, so every match is a substring rather than an equality.
 func detectFamilyByModel(model string) string {
 	m := strings.ToLower(model)
 	switch {
 	case strings.Contains(m, "anthropic.claude"), strings.Contains(m, "claude"):
 		return bfClaude
-	case strings.Contains(m, "deepseek"), strings.Contains(m, "ai21.jamba"):
+	case strings.Contains(m, "amazon.nova"):
+		return bfNova
+	case containsAny(m, openAICompatibleVendors):
 		return bfOpenAI
 	case strings.Contains(m, "amazon.titan"):
 		return bfTitan
 	case strings.Contains(m, "meta.llama"), strings.Contains(m, "llama"):
 		return bfLlama
-	case strings.Contains(m, "mistral"):
-		return bfMistral
+	case strings.Contains(m, "mistral"), strings.Contains(m, "mixtral"):
+		if containsAny(m, legacyMistralModels) {
+			return bfMistral
+		}
+		return bfOpenAI
 	default:
-		return bfClaude // safe default
+		// Claude, because an unrecognised ID is as likely to be a provisioned
+		// or custom model ARN — which carries no family at all — as a vendor
+		// nobody has mapped yet.
+		return bfClaude
 	}
+}
+
+func containsAny(model string, needles []string) bool {
+	for _, needle := range needles {
+		if strings.Contains(model, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// present records that a key was in the JSON without keeping its value, which
+// is all family detection needs. json.RawMessage would copy the whole subtree
+// instead, and detection runs once per streamed chunk — that is a copy per
+// token, on every provider.
+type present bool
+
+func (p *present) UnmarshalJSON([]byte) error {
+	*p = true
+	return nil
 }
 
 // detectFamilyFromRequestBody inspects the JSON body to determine the model
 // family heuristically.
 func detectFamilyFromRequestBody(body []byte) string {
 	var probe struct {
-		InputText        json.RawMessage `json:"inputText"`
-		Prompt           json.RawMessage `json:"prompt"`
-		Messages         json.RawMessage `json:"messages"`
-		MaxGenLen        json.RawMessage `json:"max_gen_len"`
-		System           json.RawMessage `json:"system"`
-		AnthropicVersion json.RawMessage `json:"anthropic_version"`
+		InputText        present         `json:"inputText"`
+		Prompt           present         `json:"prompt"`
+		Messages         present         `json:"messages"`
+		MaxGenLen        present         `json:"max_gen_len"`
+		System           json.RawMessage `json:"system"` // the value decides Claude vs OpenAI
+		AnthropicVersion present         `json:"anthropic_version"`
+		InferenceConfig  present         `json:"inferenceConfig"`
 	}
 	if json.Unmarshal(body, &probe) != nil {
 		return bfClaude
 	}
-	if probe.InputText != nil {
+	if probe.InferenceConfig {
+		return bfNova
+	}
+	if probe.InputText {
 		return bfTitan
 	}
-	if probe.Prompt != nil && probe.Messages == nil {
-		if probe.MaxGenLen != nil {
+	if probe.Prompt && !probe.Messages {
+		if probe.MaxGenLen {
 			return bfLlama
 		}
 		return bfMistral
 	}
 	// Has "messages" — distinguish Claude (Anthropic) from OpenAI-compat.
 	// Anthropic format has top-level "system" string or "anthropic_version".
-	if probe.Messages != nil {
-		if probe.AnthropicVersion != nil {
+	if probe.Messages {
+		if probe.AnthropicVersion {
 			return bfClaude
 		}
 		if probe.System != nil {
@@ -108,25 +174,29 @@ func detectFamilyFromRequestBody(body []byte) string {
 // detectFamilyFromResponseBody inspects the response JSON.
 func detectFamilyFromResponseBody(body []byte) string {
 	var probe struct {
-		Results    json.RawMessage `json:"results"`    // Titan
-		Generation json.RawMessage `json:"generation"` // Llama
-		Outputs    json.RawMessage `json:"outputs"`    // Mistral
-		Choices    json.RawMessage `json:"choices"`    // OpenAI-compat (DeepSeek, etc.)
-		Content    json.RawMessage `json:"content"`    // Claude (Anthropic)
+		Results    present `json:"results"`    // Titan
+		Generation present `json:"generation"` // Llama
+		Outputs    present `json:"outputs"`    // Mistral
+		Choices    present `json:"choices"`    // OpenAI-compat (DeepSeek, etc.)
+		Content    present `json:"content"`    // Claude (Anthropic)
+		Output     present `json:"output"`     // Nova
 	}
 	if json.Unmarshal(body, &probe) != nil {
 		return bfClaude
 	}
-	if probe.Results != nil {
+	if probe.Output {
+		return bfNova
+	}
+	if probe.Results {
 		return bfTitan
 	}
-	if probe.Generation != nil {
+	if probe.Generation {
 		return bfLlama
 	}
-	if probe.Outputs != nil {
+	if probe.Outputs {
 		return bfMistral
 	}
-	if probe.Choices != nil {
+	if probe.Choices {
 		return bfOpenAI
 	}
 	return bfClaude
@@ -135,26 +205,40 @@ func detectFamilyFromResponseBody(body []byte) string {
 // detectFamilyFromStreamChunk inspects a single streaming chunk.
 func detectFamilyFromStreamChunk(chunk []byte) string {
 	var probe struct {
-		OutputText json.RawMessage `json:"outputText"` // Titan
-		Generation json.RawMessage `json:"generation"` // Llama
-		Outputs    json.RawMessage `json:"outputs"`    // Mistral
-		Choices    json.RawMessage `json:"choices"`    // OpenAI-compat (DeepSeek)
-		Type       json.RawMessage `json:"type"`       // Claude/Anthropic
+		OutputText        present `json:"outputText"` // Titan
+		Generation        present `json:"generation"` // Llama
+		Outputs           present `json:"outputs"`    // Mistral
+		Choices           present `json:"choices"`    // OpenAI-compat (DeepSeek)
+		Type              present `json:"type"`       // Claude/Anthropic
+		MessageStart      present `json:"messageStart"`
+		ContentBlockDelta present `json:"contentBlockDelta"`
+		ContentBlockStop  present `json:"contentBlockStop"`
+		MessageStop       present `json:"messageStop"`
+		Metadata          present `json:"metadata"` // Nova, but too generic to lead with
 	}
 	if json.Unmarshal(chunk, &probe) != nil {
 		return bfClaude
 	}
-	if probe.OutputText != nil {
+	if probe.MessageStart || probe.ContentBlockDelta ||
+		probe.ContentBlockStop || probe.MessageStop {
+		return bfNova
+	}
+	if probe.OutputText {
 		return bfTitan
 	}
-	if probe.Generation != nil {
+	if probe.Generation {
 		return bfLlama
 	}
-	if probe.Outputs != nil {
+	if probe.Outputs {
 		return bfMistral
 	}
-	if probe.Choices != nil {
+	if probe.Choices {
 		return bfOpenAI
+	}
+	// The chunk that closes a Nova stream carries only usage, under a key
+	// generic enough that it is worth ruling out every other family first.
+	if probe.Metadata {
+		return bfNova
 	}
 	return bfClaude
 }
@@ -168,6 +252,8 @@ func (a *BedrockAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 	switch family {
 	case bfOpenAI:
 		return a.openai.DecodeRequest(body)
+	case bfNova:
+		return a.nova.DecodeRequest(body)
 	case bfTitan:
 		return a.titan.DecodeRequest(body)
 	case bfLlama:
@@ -188,6 +274,8 @@ func (a *BedrockAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 	switch family {
 	case bfOpenAI:
 		return a.openai.EncodeRequest(req)
+	case bfNova:
+		return a.nova.EncodeRequest(req)
 	case bfTitan:
 		return a.titan.EncodeRequest(req)
 	case bfLlama:
@@ -227,6 +315,8 @@ func (a *BedrockAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error)
 	switch family {
 	case bfOpenAI:
 		return a.openai.DecodeResponse(body)
+	case bfNova:
+		return a.nova.DecodeResponse(body)
 	case bfTitan:
 		return a.titan.DecodeResponse(body)
 	case bfLlama:
@@ -255,6 +345,8 @@ func (a *BedrockAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk,
 	switch family {
 	case bfOpenAI:
 		return a.openai.DecodeStreamChunk(chunk)
+	case bfNova:
+		return a.nova.DecodeStreamChunk(chunk)
 	case bfTitan:
 		return a.titan.DecodeStreamChunk(chunk)
 	case bfLlama:
@@ -305,11 +397,12 @@ type titanResult struct {
 }
 
 type titanStreamChunk struct {
-	OutputText                string  `json:"outputText"`
-	TokenCount                int     `json:"tokenCount,omitempty"`
-	CompletionReason          *string `json:"completionReason,omitempty"`
-	InputTextTokenCount       int     `json:"inputTextTokenCount,omitempty"`
-	TotalOutputTextTokenCount int     `json:"totalOutputTextTokenCount,omitempty"`
+	OutputText                string                    `json:"outputText"`
+	TokenCount                int                       `json:"tokenCount,omitempty"`
+	CompletionReason          *string                   `json:"completionReason,omitempty"`
+	InputTextTokenCount       int                       `json:"inputTextTokenCount,omitempty"`
+	TotalOutputTextTokenCount int                       `json:"totalOutputTextTokenCount,omitempty"`
+	Metrics                   *bedrockInvocationMetrics `json:"amazon-bedrock-invocationMetrics"`
 }
 
 // Request ---------------------------------------------------------------------
@@ -361,6 +454,19 @@ func (t *bedrockTitanAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, erro
 
 // Response --------------------------------------------------------------------
 
+// titanFinishReason maps a Titan completion reason onto the canonical
+// vocabulary, for both the buffered and the streamed path.
+func titanFinishReason(reason string) string {
+	switch reason {
+	case "FINISH", "":
+		return "stop"
+	case "LENGTH":
+		return "length"
+	default:
+		return reason
+	}
+}
+
 func (t *bedrockTitanAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) {
 	var resp titanResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
@@ -370,14 +476,7 @@ func (t *bedrockTitanAdapter) DecodeResponse(body []byte) (*CanonicalResponse, e
 	if len(resp.Results) > 0 {
 		r := resp.Results[0]
 		cr.Content = r.OutputText
-		switch r.CompletionReason {
-		case "FINISH", "":
-			cr.FinishReason = "stop"
-		case "LENGTH":
-			cr.FinishReason = "length"
-		default:
-			cr.FinishReason = r.CompletionReason
-		}
+		cr.FinishReason = titanFinishReason(r.CompletionReason)
 		if r.Reasoning != "" {
 			cr.Reasoning = &CanonicalReasoning{ThinkingText: r.Reasoning}
 		}
@@ -393,22 +492,19 @@ func (t *bedrockTitanAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamC
 	if err := json.Unmarshal(chunk, &c); err != nil {
 		return nil, nil
 	}
-	sc := &CanonicalStreamChunk{Delta: c.OutputText}
+	var finishReason string
 	if c.CompletionReason != nil && *c.CompletionReason != "" {
-		switch *c.CompletionReason {
-		case "FINISH":
-			sc.FinishReason = "stop"
-		case "LENGTH":
-			sc.FinishReason = "length"
-		default:
-			sc.FinishReason = *c.CompletionReason
-		}
+		finishReason = titanFinishReason(*c.CompletionReason)
 	}
-	sc.Usage = mergeBedrockUsage(chunk, c.InputTextTokenCount, c.TotalOutputTextTokenCount)
-	if sc.Delta == "" && sc.FinishReason == "" && sc.Usage == nil {
+	usage := mergeParsedUsage(c.InputTextTokenCount, c.TotalOutputTextTokenCount, 0, c.Metrics)
+	if c.OutputText == "" && finishReason == "" && usage == nil {
 		return nil, nil
 	}
-	return sc, nil
+	return &CanonicalStreamChunk{
+		Delta:        c.OutputText,
+		FinishReason: finishReason,
+		Usage:        usage,
+	}, nil
 }
 
 // =========================================================================
@@ -437,10 +533,11 @@ type llamaResponse struct {
 }
 
 type llamaStreamChunk struct {
-	Generation           string  `json:"generation"`
-	PromptTokenCount     *int    `json:"prompt_token_count,omitempty"`
-	GenerationTokenCount *int    `json:"generation_token_count,omitempty"`
-	StopReason           *string `json:"stop_reason,omitempty"`
+	Generation           string                    `json:"generation"`
+	PromptTokenCount     *int                      `json:"prompt_token_count,omitempty"`
+	GenerationTokenCount *int                      `json:"generation_token_count,omitempty"`
+	StopReason           *string                   `json:"stop_reason,omitempty"`
+	Metrics              *bedrockInvocationMetrics `json:"amazon-bedrock-invocationMetrics"`
 }
 
 // Request ---------------------------------------------------------------------
@@ -473,24 +570,30 @@ func (l *bedrockLlamaAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, erro
 
 // Response --------------------------------------------------------------------
 
+// llamaFinishReason maps a Llama stop reason onto the canonical vocabulary.
+// Both the buffered and the streamed path go through it: Bedrock reports
+// "length" on the last chunk exactly as it does on a whole answer, and a client
+// that only sees "stop" cannot tell a complete answer from a truncated one.
+func llamaFinishReason(stop string) string {
+	switch stop {
+	case "stop", "end_of_text", "":
+		return "stop"
+	case "length":
+		return "length"
+	default:
+		return stop
+	}
+}
+
 func (l *bedrockLlamaAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) {
 	var resp llamaResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, err
 	}
-	var fr string
-	switch resp.StopReason {
-	case "stop", "end_of_text", "":
-		fr = "stop"
-	case "length":
-		fr = "length"
-	default:
-		fr = resp.StopReason
-	}
 	cr := &CanonicalResponse{
 		Role:         "assistant",
 		Content:      resp.Generation,
-		FinishReason: fr,
+		FinishReason: llamaFinishReason(resp.StopReason),
 	}
 	if resp.Reasoning != "" {
 		cr.Reasoning = &CanonicalReasoning{ThinkingText: resp.Reasoning}
@@ -506,9 +609,9 @@ func (l *bedrockLlamaAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamC
 	if err := json.Unmarshal(chunk, &c); err != nil {
 		return nil, nil
 	}
-	sc := &CanonicalStreamChunk{Delta: c.Generation}
+	var finishReason string
 	if c.StopReason != nil && *c.StopReason != "" {
-		sc.FinishReason = "stop"
+		finishReason = llamaFinishReason(*c.StopReason)
 	}
 	var in, out int
 	if c.PromptTokenCount != nil {
@@ -517,11 +620,15 @@ func (l *bedrockLlamaAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamC
 	if c.GenerationTokenCount != nil {
 		out = *c.GenerationTokenCount
 	}
-	sc.Usage = mergeBedrockUsage(chunk, in, out)
-	if sc.Delta == "" && sc.FinishReason == "" && sc.Usage == nil {
+	usage := mergeParsedUsage(in, out, 0, c.Metrics)
+	if c.Generation == "" && finishReason == "" && usage == nil {
 		return nil, nil
 	}
-	return sc, nil
+	return &CanonicalStreamChunk{
+		Delta:        c.Generation,
+		FinishReason: finishReason,
+		Usage:        usage,
+	}, nil
 }
 
 // =========================================================================
@@ -554,7 +661,8 @@ type mistralOutput struct {
 }
 
 type mistralStreamChunk struct {
-	Outputs []mistralOutput `json:"outputs,omitempty"`
+	Outputs []mistralOutput           `json:"outputs,omitempty"`
+	Metrics *bedrockInvocationMetrics `json:"amazon-bedrock-invocationMetrics"`
 }
 
 // Request ---------------------------------------------------------------------
@@ -591,6 +699,20 @@ func (m *bedrockMistralAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, er
 
 // Response --------------------------------------------------------------------
 
+// mistralFinishReason maps a Mistral stop reason onto the canonical vocabulary.
+// Shared with the streamed path: the chunk that closes a truncated answer says
+// "length" just like the buffered body does.
+func mistralFinishReason(stop string) string {
+	switch stop {
+	case "stop", "end_turn", "":
+		return "stop"
+	case "length":
+		return "length"
+	default:
+		return stop
+	}
+}
+
 func (m *bedrockMistralAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) {
 	var resp mistralResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
@@ -600,14 +722,7 @@ func (m *bedrockMistralAdapter) DecodeResponse(body []byte) (*CanonicalResponse,
 	if len(resp.Outputs) > 0 {
 		o := resp.Outputs[0]
 		cr.Content = o.Text
-		switch o.StopReason {
-		case "stop", "end_turn", "":
-			cr.FinishReason = "stop"
-		case "length":
-			cr.FinishReason = "length"
-		default:
-			cr.FinishReason = o.StopReason
-		}
+		cr.FinishReason = mistralFinishReason(o.StopReason)
 		if o.Reasoning != "" {
 			cr.Reasoning = &CanonicalReasoning{ThinkingText: o.Reasoning}
 		}
@@ -625,18 +740,240 @@ func (m *bedrockMistralAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStrea
 	if err := json.Unmarshal(chunk, &c); err != nil {
 		return nil, nil
 	}
-	sc := &CanonicalStreamChunk{}
+	var delta, finishReason string
 	if len(c.Outputs) > 0 {
-		sc.Delta = c.Outputs[0].Text
+		delta = c.Outputs[0].Text
 		if c.Outputs[0].StopReason != "" {
-			sc.FinishReason = "stop"
+			finishReason = mistralFinishReason(c.Outputs[0].StopReason)
 		}
 	}
-	sc.Usage = parseBedrockInvocationMetrics(chunk)
-	if sc.Delta == "" && sc.FinishReason == "" && sc.Usage == nil {
+	usage := mergeParsedUsage(0, 0, 0, c.Metrics)
+	if delta == "" && finishReason == "" && usage == nil {
 		return nil, nil
 	}
-	return sc, nil
+	return &CanonicalStreamChunk{
+		Delta:        delta,
+		FinishReason: finishReason,
+		Usage:        usage,
+	}, nil
+}
+
+// =========================================================================
+//
+//	NOVA  (Amazon Nova)
+//
+// =========================================================================
+
+// bedrockNovaAdapter speaks the Nova schema: content is a list of typed blocks
+// rather than a string, and the sampling knobs live under "inferenceConfig".
+// Nova rejects unknown top-level keys, so the Claude encoder's max_tokens and
+// anthropic_version make it answer "extraneous key [max_tokens] is not
+// permitted".
+type bedrockNovaAdapter struct{}
+
+// Typed structs ---------------------------------------------------------------
+
+type novaTextBlock struct {
+	Text string `json:"text"`
+}
+
+type novaMessage struct {
+	Role    string          `json:"role"`
+	Content []novaTextBlock `json:"content"`
+}
+
+type novaInferenceConfig struct {
+	MaxTokens     int      `json:"maxTokens,omitempty"`
+	Temperature   *float64 `json:"temperature,omitempty"`
+	TopP          *float64 `json:"topP,omitempty"`
+	TopK          *int     `json:"topK,omitempty"`
+	StopSequences []string `json:"stopSequences,omitempty"`
+}
+
+type novaRequest struct {
+	System          []novaTextBlock      `json:"system,omitempty"`
+	Messages        []novaMessage        `json:"messages"`
+	InferenceConfig *novaInferenceConfig `json:"inferenceConfig,omitempty"`
+}
+
+type novaUsage struct {
+	InputTokens  int `json:"inputTokens"`
+	OutputTokens int `json:"outputTokens"`
+	TotalTokens  int `json:"totalTokens"`
+}
+
+// The invocation metrics ride in the same JSON as the answer, so both response
+// and chunk parse them in the same pass: on a stream this runs per chunk, and a
+// second Unmarshal of every chunk just to look for a fallback is latency spent
+// on every token.
+type novaResponse struct {
+	Output struct {
+		Message novaMessage `json:"message"`
+	} `json:"output"`
+	StopReason string                    `json:"stopReason"`
+	Usage      *novaUsage                `json:"usage"`
+	Metrics    *bedrockInvocationMetrics `json:"amazon-bedrock-invocationMetrics"`
+}
+
+type novaStreamChunk struct {
+	ContentBlockDelta *struct {
+		Delta struct {
+			Text string `json:"text"`
+		} `json:"delta"`
+	} `json:"contentBlockDelta"`
+	MessageStop *struct {
+		StopReason string `json:"stopReason"`
+	} `json:"messageStop"`
+	Metadata *struct {
+		Usage *novaUsage `json:"usage"`
+	} `json:"metadata"`
+	Metrics *bedrockInvocationMetrics `json:"amazon-bedrock-invocationMetrics"`
+}
+
+// novaFinishReason maps a Nova stop reason onto the canonical vocabulary.
+func novaFinishReason(stop string) string {
+	switch stop {
+	case "end_turn", "stop_sequence", "":
+		return "stop"
+	case "max_tokens":
+		return "length"
+	default:
+		return stop
+	}
+}
+
+func novaText(blocks []novaTextBlock) string {
+	// A single block is the norm; joining it would copy the string for nothing.
+	switch len(blocks) {
+	case 0:
+		return ""
+	case 1:
+		return blocks[0].Text
+	}
+	var sb strings.Builder
+	for _, b := range blocks {
+		sb.WriteString(b.Text)
+	}
+	return sb.String()
+}
+
+// Request ---------------------------------------------------------------------
+
+func (n *bedrockNovaAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
+	var req novaRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		return nil, err
+	}
+	cr := &CanonicalRequest{
+		System:   novaText(req.System),
+		Messages: make([]CanonicalMessage, 0, len(req.Messages)),
+	}
+	for _, m := range req.Messages {
+		cr.Messages = append(cr.Messages, CanonicalMessage{
+			Role:    m.Role,
+			Content: novaText(m.Content),
+		})
+	}
+	if ic := req.InferenceConfig; ic != nil {
+		cr.MaxTokens = ic.MaxTokens
+		cr.Temperature = ic.Temperature
+		cr.TopP = ic.TopP
+		cr.TopK = ic.TopK
+		cr.Stop = ic.StopSequences
+	}
+	return cr, nil
+}
+
+func (n *bedrockNovaAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
+	out := novaRequest{Messages: make([]novaMessage, 0, len(req.Messages))}
+	if req.System != "" {
+		out.System = []novaTextBlock{{Text: req.System}}
+	}
+	for _, m := range req.Messages {
+		// Nova only accepts user and assistant turns; a system message reaching
+		// here belongs in the dedicated field, not in the conversation.
+		if m.Role == "system" {
+			out.System = append(out.System, novaTextBlock{Text: m.Content})
+			continue
+		}
+		out.Messages = append(out.Messages, novaMessage{
+			Role:    m.Role,
+			Content: []novaTextBlock{{Text: m.Content}},
+		})
+	}
+
+	if req.MaxTokens > 0 || req.Temperature != nil || req.TopP != nil ||
+		req.TopK != nil || len(req.Stop) > 0 {
+		out.InferenceConfig = &novaInferenceConfig{
+			MaxTokens:     req.MaxTokens,
+			Temperature:   req.Temperature,
+			TopP:          req.TopP,
+			TopK:          req.TopK,
+			StopSequences: req.Stop,
+		}
+	}
+	return json.Marshal(out)
+}
+
+// Response --------------------------------------------------------------------
+
+func (n *bedrockNovaAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) {
+	var resp novaResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, err
+	}
+	cr := &CanonicalResponse{
+		Role:         "assistant",
+		Content:      novaText(resp.Output.Message.Content),
+		FinishReason: novaFinishReason(resp.StopReason),
+	}
+	if resp.Output.Message.Role != "" {
+		cr.Role = resp.Output.Message.Role
+	}
+	cr.Usage = novaCanonicalUsage(resp.Usage, resp.Metrics)
+	return cr, nil
+}
+
+// Stream ----------------------------------------------------------------------
+
+func (n *bedrockNovaAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
+	var c novaStreamChunk
+	if err := json.Unmarshal(chunk, &c); err != nil {
+		return nil, nil
+	}
+
+	var delta, finishReason string
+	if c.ContentBlockDelta != nil {
+		delta = c.ContentBlockDelta.Delta.Text
+	}
+	if c.MessageStop != nil {
+		finishReason = novaFinishReason(c.MessageStop.StopReason)
+	}
+	// Usage closes the stream in its own metadata chunk, which carries no text.
+	var usage *novaUsage
+	if c.Metadata != nil {
+		usage = c.Metadata.Usage
+	}
+	canonicalUsage := novaCanonicalUsage(usage, c.Metrics)
+
+	// Nova emits a contentBlockStop after every delta, so about half the chunks
+	// of a stream say nothing: they must not cost an allocation.
+	if delta == "" && finishReason == "" && canonicalUsage == nil {
+		return nil, nil
+	}
+	return &CanonicalStreamChunk{
+		Delta:        delta,
+		FinishReason: finishReason,
+		Usage:        canonicalUsage,
+	}, nil
+}
+
+func novaCanonicalUsage(usage *novaUsage, metrics *bedrockInvocationMetrics) *CanonicalUsage {
+	var in, out, total int
+	if usage != nil {
+		in, out, total = usage.InputTokens, usage.OutputTokens, usage.TotalTokens
+	}
+	return mergeParsedUsage(in, out, total, metrics)
 }
 
 // =========================================================================
@@ -700,16 +1037,19 @@ func formatMistralPrompt(system string, msgs []CanonicalMessage) string {
 		sysPrefix = system + "\n\n"
 	}
 
-	firstUser := true
 	for _, m := range msgs {
 		switch m.Role {
+		case "system":
+			// The template has no system turn, so it rides on the next user
+			// one. Dropping it would silently discard the instructions a
+			// caller put in the conversation instead of the system field.
+			sysPrefix += m.Content + "\n\n"
 		case "user":
 			content := m.Content
-			if firstUser && sysPrefix != "" {
+			if sysPrefix != "" {
 				content = sysPrefix + content
 				sysPrefix = ""
 			}
-			firstUser = false
 			fmt.Fprintf(&sb, "[INST] %s [/INST]", content)
 		case "assistant":
 			sb.WriteString(m.Content)
@@ -720,6 +1060,13 @@ func formatMistralPrompt(system string, msgs []CanonicalMessage) string {
 	return sb.String()
 }
 
+// bedrockInvocationMetrics is the cross-family usage block Bedrock appends
+// alongside the model's own answer.
+type bedrockInvocationMetrics struct {
+	InputTokenCount  int `json:"inputTokenCount"`
+	OutputTokenCount int `json:"outputTokenCount"`
+}
+
 // parseBedrockInvocationMetrics reads the cross-family
 // `amazon-bedrock-invocationMetrics` block as a fallback usage source. It
 // returns nil when the block is absent, both counts are zero, or the body
@@ -727,10 +1074,7 @@ func formatMistralPrompt(system string, msgs []CanonicalMessage) string {
 // callers must honor the nil-when-absent contract.
 func parseBedrockInvocationMetrics(body []byte) *CanonicalUsage {
 	var probe struct {
-		Metrics *struct {
-			InputTokenCount  int `json:"inputTokenCount"`
-			OutputTokenCount int `json:"outputTokenCount"`
-		} `json:"amazon-bedrock-invocationMetrics"`
+		Metrics *bedrockInvocationMetrics `json:"amazon-bedrock-invocationMetrics"`
 	}
 	if err := json.Unmarshal(body, &probe); err != nil {
 		return nil
@@ -739,6 +1083,22 @@ func parseBedrockInvocationMetrics(body []byte) *CanonicalUsage {
 		return nil
 	}
 	return newCanonicalUsage(probe.Metrics.InputTokenCount, probe.Metrics.OutputTokenCount, 0)
+}
+
+// mergeParsedUsage is mergeBedrockUsage over values a caller has already
+// decoded. The streaming decoders use it so a chunk is parsed once instead of
+// once for its own fields and again for the metrics — a saving paid per token.
+func mergeParsedUsage(familyIn, familyOut, familyTotal int, metrics *bedrockInvocationMetrics) *CanonicalUsage {
+	in, out := familyIn, familyOut
+	if metrics != nil {
+		if in == 0 {
+			in = metrics.InputTokenCount
+		}
+		if out == 0 {
+			out = metrics.OutputTokenCount
+		}
+	}
+	return newCanonicalUsage(in, out, familyTotal)
 }
 
 // mergeBedrockUsage applies the family-wins fallback: native family token counts

@@ -155,9 +155,9 @@ func TestBedrock_Llama_StreamChunkDecode(t *testing.T) {
 // Bedrock Mistral: OpenAI → Bedrock (Mistral model)
 // ---------------------------------------------------------------------------
 
-func TestAdaptRequest_OpenAIToBedrockMistral(t *testing.T) {
+func TestAdaptRequest_OpenAIToBedrockLegacyMistral(t *testing.T) {
 	input := `{
-		"model": "mistral.mistral-large-2407-v1:0",
+		"model": "mistral.mistral-7b-instruct-v0:2",
 		"messages": [
 			{"role": "user", "content": "Explain AI"}
 		],
@@ -180,6 +180,36 @@ func TestAdaptRequest_OpenAIToBedrockMistral(t *testing.T) {
 	assert.Contains(t, result.Prompt, "Explain AI")
 	assert.Contains(t, result.Prompt, "[/INST]")
 	assert.Equal(t, 300, result.MaxTokens)
+}
+
+// Bedrock's Mistral models split across two schemas: the text completion API
+// (7B, Mixtral, Large and Small 24.02) takes a "prompt" string, everything from
+// Large 24.07 onwards takes "messages". Sending a prompt to the newer ones gets
+// "missing field `messages`" back, so unknown Mistral IDs default to messages:
+// the text completion list is closed, no new model joins it.
+func TestAdaptRequest_ModernMistralUsesMessages(t *testing.T) {
+	for _, model := range []string{
+		"mistral.mistral-large-2407-v1:0",
+		"mistral.devstral-2-123b",
+		"eu.mistral.pixtral-large-2502-v1:0",
+	} {
+		t.Run(model, func(t *testing.T) {
+			input := `{"model": "` + model + `", "messages": [{"role": "user", "content": "Explain AI"}], "max_tokens": 300}`
+
+			oa := &OpenAIAdapter{}
+			canonical, err := oa.DecodeRequest([]byte(input))
+			require.NoError(t, err)
+
+			adapter := &BedrockAdapter{}
+			out, err := adapter.EncodeRequest(canonical)
+			require.NoError(t, err)
+
+			var body map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(out, &body))
+			assert.Contains(t, body, "messages")
+			assert.NotContains(t, body, "prompt")
+		})
+	}
 }
 
 func TestBedrock_Mistral_ResponseDecode(t *testing.T) {
@@ -455,4 +485,232 @@ func TestBedrock_InvocationMetricsFallback_MetricsAbsent(t *testing.T) {
 	cr, err := (&bedrockMistralAdapter{}).DecodeResponse(body)
 	require.NoError(t, err)
 	assert.Nil(t, cr.Usage, "Mistral with no metrics and no native counters must return nil")
+}
+
+// ---------------------------------------------------------------------------
+// Bedrock Nova (Amazon Nova)
+// ---------------------------------------------------------------------------
+
+func TestAdaptRequest_OpenAIToBedrockNova(t *testing.T) {
+	input := `{
+		"model": "eu.amazon.nova-lite-v1:0",
+		"messages": [
+			{"role": "system", "content": "You are helpful."},
+			{"role": "user", "content": "Hello, Nova!"}
+		],
+		"max_tokens": 256,
+		"temperature": 0.7
+	}`
+
+	oa := &OpenAIAdapter{}
+	canonical, err := oa.DecodeRequest([]byte(input))
+	require.NoError(t, err)
+
+	adapter := &BedrockAdapter{}
+	out, err := adapter.EncodeRequest(canonical)
+	require.NoError(t, err)
+
+	// Nova rejects unknown top-level keys outright, so the Claude encoder's
+	// max_tokens and anthropic_version are what "extraneous key [max_tokens]
+	// is not permitted" was complaining about.
+	var body map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(out, &body))
+	assert.NotContains(t, body, "max_tokens")
+	assert.NotContains(t, body, "anthropic_version")
+
+	var result novaRequest
+	require.NoError(t, json.Unmarshal(out, &result))
+	require.Len(t, result.System, 1)
+	assert.Equal(t, "You are helpful.", result.System[0].Text)
+	require.Len(t, result.Messages, 1)
+	assert.Equal(t, "user", result.Messages[0].Role)
+	require.Len(t, result.Messages[0].Content, 1)
+	assert.Equal(t, "Hello, Nova!", result.Messages[0].Content[0].Text)
+	require.NotNil(t, result.InferenceConfig)
+	assert.Equal(t, 256, result.InferenceConfig.MaxTokens)
+	assert.InDelta(t, 0.7, *result.InferenceConfig.Temperature, 0.001)
+}
+
+func TestBedrock_Nova_ResponseDecode(t *testing.T) {
+	body := `{"output":{"message":{"content":[{"text":"Ok."}],"role":"assistant"}},"stopReason":"max_tokens","usage":{"inputTokens":2,"outputTokens":16,"totalTokens":18}}`
+
+	adapter := &BedrockAdapter{}
+	cr, err := adapter.DecodeResponse([]byte(body))
+	require.NoError(t, err)
+	assert.Equal(t, "Ok.", cr.Content)
+	assert.Equal(t, "assistant", cr.Role)
+	assert.Equal(t, "length", cr.FinishReason)
+	require.NotNil(t, cr.Usage)
+	assert.Equal(t, 2, cr.Usage.InputTokens)
+	assert.Equal(t, 16, cr.Usage.OutputTokens)
+	assert.Equal(t, 18, cr.Usage.TotalTokens)
+}
+
+func TestBedrock_Nova_StreamChunkDecode(t *testing.T) {
+	adapter := &BedrockAdapter{}
+
+	sc, err := adapter.DecodeStreamChunk([]byte(`{"contentBlockDelta":{"delta":{"text":"Ok"},"contentBlockIndex":0}}`))
+	require.NoError(t, err)
+	require.NotNil(t, sc)
+	assert.Equal(t, "Ok", sc.Delta)
+
+	sc, err = adapter.DecodeStreamChunk([]byte(`{"messageStop":{"stopReason":"end_turn"}}`))
+	require.NoError(t, err)
+	require.NotNil(t, sc)
+	assert.Equal(t, "stop", sc.FinishReason)
+
+	// Usage closes the stream in its own chunk; miss it and the budget plugin
+	// never charges a streamed Nova answer.
+	sc, err = adapter.DecodeStreamChunk([]byte(`{"metadata":{"usage":{"inputTokens":2,"outputTokens":13}}}`))
+	require.NoError(t, err)
+	require.NotNil(t, sc)
+	require.NotNil(t, sc.Usage)
+	assert.Equal(t, 2, sc.Usage.InputTokens)
+	assert.Equal(t, 13, sc.Usage.OutputTokens)
+	assert.Equal(t, 15, sc.Usage.TotalTokens)
+
+	for _, empty := range []string{
+		`{"messageStart":{"role":"assistant"}}`,
+		`{"contentBlockStop":{"contentBlockIndex":0}}`,
+	} {
+		sc, err = adapter.DecodeStreamChunk([]byte(empty))
+		require.NoError(t, err)
+		assert.Nil(t, sc, "a chunk with no text, no stop reason and no usage carries nothing")
+	}
+}
+
+func TestBedrock_Nova_UsageFallsBackToInvocationMetrics(t *testing.T) {
+	adapter := &BedrockAdapter{}
+
+	sc, err := adapter.DecodeStreamChunk([]byte(`{"metadata":{"metrics":{}},"amazon-bedrock-invocationMetrics":{"inputTokenCount":7,"outputTokenCount":3}}`))
+	require.NoError(t, err)
+	require.NotNil(t, sc)
+	require.NotNil(t, sc.Usage)
+	assert.Equal(t, 7, sc.Usage.InputTokens)
+	assert.Equal(t, 3, sc.Usage.OutputTokens)
+
+	sc, err = adapter.DecodeStreamChunk([]byte(`{"metadata":{"usage":{"inputTokens":2,"outputTokens":13}},"amazon-bedrock-invocationMetrics":{"inputTokenCount":99,"outputTokenCount":99}}`))
+	require.NoError(t, err)
+	require.NotNil(t, sc)
+	require.NotNil(t, sc.Usage)
+	assert.Equal(t, 2, sc.Usage.InputTokens, "Nova's own counters must win over the invocation metrics")
+	assert.Equal(t, 13, sc.Usage.OutputTokens)
+}
+
+func TestBedrock_DecodeNovaRequest(t *testing.T) {
+	body := `{"system":[{"text":"Be brief."}],"messages":[{"role":"user","content":[{"text":"Hello Nova"}]}],"inferenceConfig":{"maxTokens":128,"temperature":0.5}}`
+	adapter := &BedrockAdapter{}
+	cr, err := adapter.DecodeRequest([]byte(body))
+	require.NoError(t, err)
+	assert.Equal(t, "Be brief.", cr.System)
+	require.Len(t, cr.Messages, 1)
+	assert.Equal(t, "Hello Nova", cr.Messages[0].Content)
+	assert.Equal(t, 128, cr.MaxTokens)
+	assert.InDelta(t, 0.5, *cr.Temperature, 0.001)
+}
+
+// Bedrock reports "length" on the last chunk of a truncated answer exactly as
+// it does on a whole one. Collapsing it to "stop" tells the client the model
+// finished when it was cut off. Both chunks below are verbatim from Bedrock.
+func TestBedrock_StreamKeepsTruncationReason(t *testing.T) {
+	cases := []struct {
+		name  string
+		chunk string
+	}{
+		{
+			name:  "llama",
+			chunk: `{"generation":",","prompt_token_count":null,"generation_token_count":8,"stop_reason":"length","amazon-bedrock-invocationMetrics":{"inputTokenCount":13,"outputTokenCount":8}}`,
+		},
+		{
+			name:  "mistral",
+			chunk: `{"outputs":[{"text":".","stop_reason":"length"}],"amazon-bedrock-invocationMetrics":{"inputTokenCount":12,"outputTokenCount":12}}`,
+		},
+		{
+			name:  "titan",
+			chunk: `{"outputText":".","completionReason":"LENGTH","inputTextTokenCount":12,"totalOutputTextTokenCount":12}`,
+		},
+		{
+			name:  "nova",
+			chunk: `{"messageStop":{"stopReason":"max_tokens"}}`,
+		},
+	}
+	adapter := &BedrockAdapter{}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sc, err := adapter.DecodeStreamChunk([]byte(tc.chunk))
+			require.NoError(t, err)
+			require.NotNil(t, sc)
+			assert.Equal(t, "length", sc.FinishReason)
+		})
+	}
+}
+
+func TestBedrock_StreamUsageStillReadsInvocationMetrics(t *testing.T) {
+	adapter := &BedrockAdapter{}
+	for _, tc := range []struct {
+		name  string
+		chunk string
+	}{
+		{"llama", `{"generation":"","stop_reason":"stop","amazon-bedrock-invocationMetrics":{"inputTokenCount":13,"outputTokenCount":8}}`},
+		{"mistral", `{"outputs":[{"text":"","stop_reason":"stop"}],"amazon-bedrock-invocationMetrics":{"inputTokenCount":13,"outputTokenCount":8}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sc, err := adapter.DecodeStreamChunk([]byte(tc.chunk))
+			require.NoError(t, err)
+			require.NotNil(t, sc)
+			require.NotNil(t, sc.Usage)
+			assert.Equal(t, 13, sc.Usage.InputTokens)
+			assert.Equal(t, 8, sc.Usage.OutputTokens)
+			assert.Equal(t, 21, sc.Usage.TotalTokens)
+		})
+	}
+}
+
+// The Mistral template has no system turn, so a system message arriving in the
+// conversation (rather than in the dedicated field) used to vanish.
+func TestBedrock_MistralPromptKeepsSystemMessages(t *testing.T) {
+	prompt := formatMistralPrompt("", []CanonicalMessage{
+		{Role: "system", Content: "Answer in Catalan."},
+		{Role: "user", Content: "Explain AI"},
+	})
+	assert.Contains(t, prompt, "Answer in Catalan.")
+	assert.Contains(t, prompt, "Explain AI")
+}
+
+func TestBedrock_DetectFamilyByModel(t *testing.T) {
+	cases := []struct {
+		model string
+		want  string
+	}{
+		{"anthropic.claude-3-5-sonnet-20240620-v1:0", bfClaude},
+		{"eu.anthropic.claude-haiku-4-5-20251001-v1:0", bfClaude},
+		{"amazon.nova-lite-v1:0", bfNova},
+		{"eu.amazon.nova-lite-v1:0", bfNova},
+		{"amazon.titan-text-express-v1", bfTitan},
+		{"meta.llama3-70b-instruct-v1:0", bfLlama},
+		{"us.deepseek.deepseek-r1-v1:0", bfOpenAI},
+		{"mistral.mistral-7b-instruct-v0:2", bfMistral},
+		{"mistral.mixtral-8x7b-instruct-v0:1", bfMistral},
+		{"mistral.mistral-large-2402-v1:0", bfMistral},
+		{"mistral.mistral-large-2407-v1:0", bfOpenAI},
+		{"mistral.devstral-2-123b", bfOpenAI},
+		{"mistral.mistral-large-3-675b-instruct", bfOpenAI},
+		{"eu.mistral.pixtral-large-2502-v1:0", bfOpenAI},
+		// Vendors Bedrock added after the six original families, each invoked
+		// to confirm it answers the OpenAI chat completions schema.
+		{"openai.gpt-oss-20b-1:0", bfOpenAI},
+		{"qwen.qwen3-32b-v1:0", bfOpenAI},
+		{"google.gemma-3-4b-it", bfOpenAI},
+		{"nvidia.nemotron-nano-9b-v2", bfOpenAI},
+		{"minimax.minimax-m2", bfOpenAI},
+		{"zai.glm-4.7-flash", bfOpenAI},
+		// No vendor in the ID: a provisioned or custom model ARN keeps the
+		// incumbent fallback rather than erroring.
+		{"arn:aws:bedrock:eu-west-1:1234:provisioned-model/abcd", bfClaude},
+	}
+	for _, tc := range cases {
+		t.Run(tc.model, func(t *testing.T) {
+			assert.Equal(t, tc.want, detectFamilyByModel(tc.model))
+		})
+	}
 }
