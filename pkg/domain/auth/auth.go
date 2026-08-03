@@ -128,8 +128,14 @@ func GenerateAPIKey() (string, error) {
 	return apiKeyPrefix + base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
+// HashAPIKey returns a deterministic SHA-256 hex digest of an opaque api key for
+// exact-match storage and lookup. This is not password hashing: callers present
+// the full key and we look up by digest, so a slow KDF (bcrypt/scrypt/argon2)
+// would break authentication without improving the threat model.
+//
+// codeql[go/weak-sensitive-data-hashing]
 func HashAPIKey(raw string) string {
-	sum := sha256.Sum256([]byte(raw))
+	sum := sha256.Sum256([]byte(raw)) // codeql[go/weak-sensitive-data-hashing]
 	return hex.EncodeToString(sum[:])
 }
 
