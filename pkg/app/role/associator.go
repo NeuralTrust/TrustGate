@@ -19,6 +19,7 @@ import (
 	"log/slog"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
+	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
@@ -108,7 +109,7 @@ func (a *associator) registryInGateway(ctx context.Context, gatewayID ids.Gatewa
 
 func (a *associator) invalidate(ctx context.Context, role *domain.Role) {
 	a.memoryCache.Delete(role.ID.String())
-	publishGatewayDataInvalidation(ctx, a.publisher, a.logger, role.GatewayID)
+	invalidation.GatewayData(ctx, a.publisher, a.logger, role.GatewayID)
 	if a.signaler != nil {
 		a.signaler.Signal(ctx)
 	}

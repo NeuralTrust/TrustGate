@@ -19,6 +19,7 @@ import (
 	"log/slog"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
+	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -45,6 +46,7 @@ type deleter struct {
 	publisher         cache.EventPublisher
 	logger            *slog.Logger
 	signaler          configsyncport.SnapshotSignaler
+	statePurger       StatePurger
 }
 
 func NewDeleter(
@@ -53,6 +55,7 @@ func NewDeleter(
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
+	statePurger StatePurger,
 ) Deleter {
 	return &deleter{
 		repo:              repo,
@@ -68,6 +71,7 @@ func NewDeleter(
 		publisher:         publisher,
 		logger:            logger,
 		signaler:          signaler,
+		statePurger:       statePurger,
 	}
 }
 
@@ -79,11 +83,28 @@ func (d *deleter) Delete(ctx context.Context, id ids.GatewayID) error {
 	deleteGatewayCache(d.memoryCache, g)
 	d.memoryCache.Delete(gatewayIDCacheKey(id))
 	d.evictGatewayScopedCaches(id)
-	publishGatewayDataInvalidation(ctx, d.publisher, d.logger, id)
+	d.purgeGatewayState(ctx, id)
+	invalidation.GatewayData(ctx, d.publisher, d.logger, id)
 	if d.signaler != nil {
 		d.signaler.Signal(ctx)
 	}
 	return nil
+}
+
+// purgeGatewayState reclaims the Redis state the deleted gateway owned. It is
+// best-effort: the gateway row is already gone, so a purge failure must not
+// turn a completed delete into an API error. It leaves keys behind instead,
+// which the next delete of the same id would pick up.
+func (d *deleter) purgeGatewayState(ctx context.Context, id ids.GatewayID) {
+	if d.statePurger == nil {
+		return
+	}
+	if err := d.statePurger.PurgeGatewayState(ctx, id); err != nil {
+		d.logger.Warn("failed to purge gateway state from redis",
+			slog.String("gateway_id", id.String()),
+			slog.String("error", err.Error()),
+		)
+	}
 }
 
 // evictGatewayScopedCaches drops the in-memory read caches for resources owned

@@ -27,7 +27,9 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/cachetest"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
+	"github.com/stretchr/testify/mock"
 )
 
 type failingRepositoryStub struct {
@@ -38,11 +40,15 @@ func (failingRepositoryStub) Save(context.Context, *domain.Role) error {
 	return errors.New("boom")
 }
 
-func newSignalCreator(repo domain.Repository, signaler configsyncport.SnapshotSignaler) approle.Creator {
+func newSignalCreator(
+	repo domain.Repository,
+	publisher cache.EventPublisher,
+	signaler configsyncport.SnapshotSignaler,
+) approle.Creator {
 	return approle.NewCreator(
 		repo,
 		cache.NewTTLMapManager(cache.RoleCacheTTL),
-		cachetest.NoopPublisher(),
+		publisher,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		signaler,
 	)
@@ -50,10 +56,18 @@ func newSignalCreator(repo domain.Repository, signaler configsyncport.SnapshotSi
 
 func TestCreator_Create_SignalsOnSuccess(t *testing.T) {
 	t.Parallel()
+	gatewayID := ids.New[ids.GatewayKind]()
 	signaler := &configsynctest.FakeSignaler{}
-	creator := newSignalCreator(repositoryStub{}, signaler)
 
-	if _, err := creator.Create(context.Background(), approle.CreateInput{GatewayID: ids.New[ids.GatewayKind](), Name: "analyst"}); err != nil {
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gatewayID.String()}).
+		Return(nil).
+		Once()
+
+	creator := newSignalCreator(repositoryStub{}, publisher, signaler)
+
+	if _, err := creator.Create(context.Background(), approle.CreateInput{GatewayID: gatewayID, Name: "analyst"}); err != nil {
 		t.Fatalf("Create error: %v", err)
 	}
 	if got := signaler.Count(); got != 1 {
@@ -63,22 +77,35 @@ func TestCreator_Create_SignalsOnSuccess(t *testing.T) {
 
 func TestCreator_Create_DoesNotSignalOnFailure(t *testing.T) {
 	t.Parallel()
+	gatewayID := ids.New[ids.GatewayKind]()
 	signaler := &configsynctest.FakeSignaler{}
-	creator := newSignalCreator(failingRepositoryStub{}, signaler)
 
-	if _, err := creator.Create(context.Background(), approle.CreateInput{GatewayID: ids.New[ids.GatewayKind](), Name: "analyst"}); err == nil {
+	publisher := cachemocks.NewEventPublisher(t)
+
+	creator := newSignalCreator(failingRepositoryStub{}, publisher, signaler)
+
+	if _, err := creator.Create(context.Background(), approle.CreateInput{GatewayID: gatewayID, Name: "analyst"}); err == nil {
 		t.Fatal("expected error, got nil")
 	}
 	if got := signaler.Count(); got != 0 {
 		t.Fatalf("Signal count = %d, want 0", got)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestCreator_Create_NilSignalerIsSafe(t *testing.T) {
 	t.Parallel()
-	creator := newSignalCreator(repositoryStub{}, nil)
+	gatewayID := ids.New[ids.GatewayKind]()
 
-	if _, err := creator.Create(context.Background(), approle.CreateInput{GatewayID: ids.New[ids.GatewayKind](), Name: "analyst"}); err != nil {
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gatewayID.String()}).
+		Return(nil).
+		Once()
+
+	creator := newSignalCreator(repositoryStub{}, publisher, nil)
+
+	if _, err := creator.Create(context.Background(), approle.CreateInput{GatewayID: gatewayID, Name: "analyst"}); err != nil {
 		t.Fatalf("Create error: %v", err)
 	}
 }

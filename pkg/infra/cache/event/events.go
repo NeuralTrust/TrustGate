@@ -21,14 +21,12 @@ type Event interface {
 }
 
 var (
-	DeleteGatewayCacheEventType      = "DeleteGatewayCacheEvent"
 	InvalidateGatewayDataEventType   = "InvalidateGatewayDataEvent"
 	InvalidateRegistryCacheEventType = "InvalidateRegistryCacheEvent"
 	SnapshotDirtyEventType           = "SnapshotDirtyEvent"
 )
 
 var Registry = map[string]reflect.Type{
-	DeleteGatewayCacheEventType:      reflect.TypeOf(DeleteGatewayCacheEvent{}),
 	InvalidateGatewayDataEventType:   reflect.TypeOf(InvalidateGatewayDataEvent{}),
 	InvalidateRegistryCacheEventType: reflect.TypeOf(InvalidateRegistryCacheEvent{}),
 	SnapshotDirtyEventType:           reflect.TypeOf(SnapshotDirtyEvent{}),

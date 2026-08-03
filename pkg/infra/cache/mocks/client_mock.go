@@ -6,7 +6,6 @@ import (
 	context "context"
 	time "time"
 
-	gateway "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	cache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	redis "github.com/redis/go-redis/v9"
 	mock "github.com/stretchr/testify/mock"
@@ -153,53 +152,6 @@ func (_c *Client_Delete_Call) RunAndReturn(run func(context.Context, string) err
 	return _c
 }
 
-// DeleteAllByGatewayID provides a mock function with given fields: ctx, gatewayID
-func (_m *Client) DeleteAllByGatewayID(ctx context.Context, gatewayID string) error {
-	ret := _m.Called(ctx, gatewayID)
-
-	if len(ret) == 0 {
-		panic("no return value specified for DeleteAllByGatewayID")
-	}
-
-	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, string) error); ok {
-		r0 = rf(ctx, gatewayID)
-	} else {
-		r0 = ret.Error(0)
-	}
-
-	return r0
-}
-
-// Client_DeleteAllByGatewayID_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DeleteAllByGatewayID'
-type Client_DeleteAllByGatewayID_Call struct {
-	*mock.Call
-}
-
-// DeleteAllByGatewayID is a helper method to define mock.On call
-//   - ctx context.Context
-//   - gatewayID string
-func (_e *Client_Expecter) DeleteAllByGatewayID(ctx interface{}, gatewayID interface{}) *Client_DeleteAllByGatewayID_Call {
-	return &Client_DeleteAllByGatewayID_Call{Call: _e.mock.On("DeleteAllByGatewayID", ctx, gatewayID)}
-}
-
-func (_c *Client_DeleteAllByGatewayID_Call) Run(run func(ctx context.Context, gatewayID string)) *Client_DeleteAllByGatewayID_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string))
-	})
-	return _c
-}
-
-func (_c *Client_DeleteAllByGatewayID_Call) Return(_a0 error) *Client_DeleteAllByGatewayID_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *Client_DeleteAllByGatewayID_Call) RunAndReturn(run func(context.Context, string) error) *Client_DeleteAllByGatewayID_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // Get provides a mock function with given fields: ctx, key
 func (_m *Client) Get(ctx context.Context, key string) (string, error) {
 	ret := _m.Called(ctx, key)
@@ -257,65 +209,6 @@ func (_c *Client_Get_Call) RunAndReturn(run func(context.Context, string) (strin
 	return _c
 }
 
-// GetGateway provides a mock function with given fields: ctx, id
-func (_m *Client) GetGateway(ctx context.Context, id string) (*gateway.Gateway, error) {
-	ret := _m.Called(ctx, id)
-
-	if len(ret) == 0 {
-		panic("no return value specified for GetGateway")
-	}
-
-	var r0 *gateway.Gateway
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string) (*gateway.Gateway, error)); ok {
-		return rf(ctx, id)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, string) *gateway.Gateway); ok {
-		r0 = rf(ctx, id)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*gateway.Gateway)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
-		r1 = rf(ctx, id)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// Client_GetGateway_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetGateway'
-type Client_GetGateway_Call struct {
-	*mock.Call
-}
-
-// GetGateway is a helper method to define mock.On call
-//   - ctx context.Context
-//   - id string
-func (_e *Client_Expecter) GetGateway(ctx interface{}, id interface{}) *Client_GetGateway_Call {
-	return &Client_GetGateway_Call{Call: _e.mock.On("GetGateway", ctx, id)}
-}
-
-func (_c *Client_GetGateway_Call) Run(run func(ctx context.Context, id string)) *Client_GetGateway_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string))
-	})
-	return _c
-}
-
-func (_c *Client_GetGateway_Call) Return(_a0 *gateway.Gateway, _a1 error) *Client_GetGateway_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *Client_GetGateway_Call) RunAndReturn(run func(context.Context, string) (*gateway.Gateway, error)) *Client_GetGateway_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // GetTTLMap provides a mock function with given fields: name
 func (_m *Client) GetTTLMap(name string) *cache.TTLMap {
 	ret := _m.Called(name)
@@ -364,52 +257,6 @@ func (_c *Client_GetTTLMap_Call) RunAndReturn(run func(string) *cache.TTLMap) *C
 	return _c
 }
 
-// InvalidateAll provides a mock function with given fields: ctx
-func (_m *Client) InvalidateAll(ctx context.Context) error {
-	ret := _m.Called(ctx)
-
-	if len(ret) == 0 {
-		panic("no return value specified for InvalidateAll")
-	}
-
-	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context) error); ok {
-		r0 = rf(ctx)
-	} else {
-		r0 = ret.Error(0)
-	}
-
-	return r0
-}
-
-// Client_InvalidateAll_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'InvalidateAll'
-type Client_InvalidateAll_Call struct {
-	*mock.Call
-}
-
-// InvalidateAll is a helper method to define mock.On call
-//   - ctx context.Context
-func (_e *Client_Expecter) InvalidateAll(ctx interface{}) *Client_InvalidateAll_Call {
-	return &Client_InvalidateAll_Call{Call: _e.mock.On("InvalidateAll", ctx)}
-}
-
-func (_c *Client_InvalidateAll_Call) Run(run func(ctx context.Context)) *Client_InvalidateAll_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context))
-	})
-	return _c
-}
-
-func (_c *Client_InvalidateAll_Call) Return(_a0 error) *Client_InvalidateAll_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *Client_InvalidateAll_Call) RunAndReturn(run func(context.Context) error) *Client_InvalidateAll_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // RedisClient provides a mock function with no fields
 func (_m *Client) RedisClient() *redis.Client {
 	ret := _m.Called()
@@ -453,53 +300,6 @@ func (_c *Client_RedisClient_Call) Return(_a0 *redis.Client) *Client_RedisClient
 }
 
 func (_c *Client_RedisClient_Call) RunAndReturn(run func() *redis.Client) *Client_RedisClient_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// SaveGateway provides a mock function with given fields: ctx, _a1
-func (_m *Client) SaveGateway(ctx context.Context, _a1 *gateway.Gateway) error {
-	ret := _m.Called(ctx, _a1)
-
-	if len(ret) == 0 {
-		panic("no return value specified for SaveGateway")
-	}
-
-	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, *gateway.Gateway) error); ok {
-		r0 = rf(ctx, _a1)
-	} else {
-		r0 = ret.Error(0)
-	}
-
-	return r0
-}
-
-// Client_SaveGateway_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SaveGateway'
-type Client_SaveGateway_Call struct {
-	*mock.Call
-}
-
-// SaveGateway is a helper method to define mock.On call
-//   - ctx context.Context
-//   - _a1 *gateway.Gateway
-func (_e *Client_Expecter) SaveGateway(ctx interface{}, _a1 interface{}) *Client_SaveGateway_Call {
-	return &Client_SaveGateway_Call{Call: _e.mock.On("SaveGateway", ctx, _a1)}
-}
-
-func (_c *Client_SaveGateway_Call) Run(run func(ctx context.Context, _a1 *gateway.Gateway)) *Client_SaveGateway_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(*gateway.Gateway))
-	})
-	return _c
-}
-
-func (_c *Client_SaveGateway_Call) Return(_a0 error) *Client_SaveGateway_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *Client_SaveGateway_Call) RunAndReturn(run func(context.Context, *gateway.Gateway) error) *Client_SaveGateway_Call {
 	_c.Call.Return(run)
 	return _c
 }

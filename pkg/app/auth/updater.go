@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
+	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -117,7 +118,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Auth, err
 	if existing.KeyHash != "" {
 		u.keyCache.Set(existing.KeyHash, existing)
 	}
-	publishGatewayDataInvalidation(ctx, u.publisher, u.logger, existing.GatewayID)
+	invalidation.GatewayData(ctx, u.publisher, u.logger, existing.GatewayID)
 	if u.signaler != nil {
 		u.signaler.Signal(ctx)
 	}

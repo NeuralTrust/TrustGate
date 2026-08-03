@@ -17,20 +17,14 @@ package cache
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
-	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bootlog"
 	"github.com/redis/go-redis/v9"
-)
-
-const (
-	GatewayKeyPattern = "gateway:%s"
 )
 
 //go:generate mockery --name=Client --dir=. --output=./mocks --filename=client_mock.go --case=underscore --with-expecter
@@ -41,12 +35,6 @@ type Client interface {
 	RedisClient() *redis.Client
 	CreateTTLMap(name string, ttl time.Duration) *TTLMap
 	GetTTLMap(name string) *TTLMap
-
-	GetGateway(ctx context.Context, id string) (*domain.Gateway, error)
-	SaveGateway(ctx context.Context, gateway *domain.Gateway) error
-
-	DeleteAllByGatewayID(ctx context.Context, gatewayID string) error
-	InvalidateAll(ctx context.Context) error
 	ClearAllTTLMaps()
 }
 
@@ -160,53 +148,6 @@ func (c *client) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-func (c *client) DeleteAllByGatewayID(ctx context.Context, gatewayID string) error {
-	pattern := fmt.Sprintf("*%s*", gatewayID)
-	var cursor uint64
-	for {
-		keys, nextCursor, err := c.redisClient.Scan(ctx, cursor, pattern, 100).Result()
-		if err != nil {
-			return fmt.Errorf("error scanning keys: %w", err)
-		}
-		if len(keys) > 0 {
-			if err := c.redisClient.Del(ctx, keys...).Err(); err != nil {
-				return fmt.Errorf("error deleting keys: %w", err)
-			}
-			for _, key := range keys {
-				c.localCache.Delete(key)
-			}
-		}
-		cursor = nextCursor
-		if cursor == 0 {
-			break
-		}
-	}
-	return nil
-}
-
-func (c *client) InvalidateAll(ctx context.Context) error {
-	var cursor uint64
-	for {
-		keys, nextCursor, err := c.redisClient.Scan(ctx, cursor, "*", 100).Result()
-		if err != nil {
-			return fmt.Errorf("error scanning keys: %w", err)
-		}
-		if len(keys) > 0 {
-			if err := c.redisClient.Del(ctx, keys...).Err(); err != nil {
-				return fmt.Errorf("error deleting keys: %w", err)
-			}
-			for _, key := range keys {
-				c.localCache.Delete(key)
-			}
-		}
-		cursor = nextCursor
-		if cursor == 0 {
-			break
-		}
-	}
-	return nil
-}
-
 func (c *client) RedisClient() *redis.Client {
 	return c.redisClient
 }
@@ -221,28 +162,6 @@ func (c *client) GetTTLMap(name string) *TTLMap {
 
 func (c *client) ClearAllTTLMaps() {
 	c.ttlManager.ClearAllTTLMaps()
-}
-
-func (c *client) SaveGateway(ctx context.Context, gateway *domain.Gateway) error {
-	key := fmt.Sprintf(GatewayKeyPattern, gateway.ID.String())
-	payload, err := json.Marshal(gateway)
-	if err != nil {
-		return err
-	}
-	return c.Set(ctx, key, string(payload), 0)
-}
-
-func (c *client) GetGateway(ctx context.Context, id string) (*domain.Gateway, error) {
-	key := fmt.Sprintf(GatewayKeyPattern, id)
-	res, err := c.Get(ctx, key)
-	if err != nil {
-		return nil, err
-	}
-	g := new(domain.Gateway)
-	if err := json.Unmarshal([]byte(res), g); err != nil {
-		return nil, err
-	}
-	return g, nil
 }
 
 func safeStringCast(value any) (string, error) {

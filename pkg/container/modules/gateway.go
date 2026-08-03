@@ -26,6 +26,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	gatewayrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/repository/gatewaystate"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 )
 
@@ -53,8 +54,13 @@ func provideGatewayServices(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appgateway.Deleter {
-		return appgateway.NewDeleter(repo, manager, publisher, logger, sig.Signaler)
+	if err := c.Provide(func(cc cache.Client) appgateway.StatePurger {
+		return gatewaystate.NewPurger(cc.RedisClient())
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, purger appgateway.StatePurger) appgateway.Deleter {
+		return appgateway.NewDeleter(repo, manager, publisher, logger, sig.Signaler, purger)
 	}); err != nil {
 		return err
 	}

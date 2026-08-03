@@ -19,6 +19,7 @@ import (
 	"log/slog"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
+	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -67,7 +68,7 @@ func (d *deleter) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.Re
 		return err
 	}
 	d.memoryCache.Delete(id.String())
-	publishBackendCacheInvalidation(ctx, d.publisher, d.logger, existing.GatewayID, existing.ID)
+	invalidation.Registry(ctx, d.publisher, d.logger, existing.GatewayID, existing.ID)
 	if d.signaler != nil {
 		d.signaler.Signal(ctx)
 	}
