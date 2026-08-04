@@ -198,8 +198,9 @@ func TestExecuteEnforceUnresolvedRejects(t *testing.T) {
 	require.Error(t, err)
 	pe, ok := appplugins.AsPluginError(err)
 	require.True(t, ok)
-	assert.Equal(t, http.StatusInternalServerError, pe.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, pe.StatusCode)
 	assert.Equal(t, typeVariableUnresolved, pe.Type)
+	assert.Contains(t, pe.Message, "tenant", "the caller is told which variable it failed to supply")
 }
 
 func TestExecuteObserveDoesNotMutateOrReject(t *testing.T) {

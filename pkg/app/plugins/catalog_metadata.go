@@ -552,7 +552,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "Template Engine",
 					Type:        FieldTypeEnum,
 					Description: "Placeholder rendering engine. Only mustache is supported in v1.",
-					Enum:        enumOptions("mustache", "jinja2_subset"),
+					Enum:        enumOptions("mustache"),
 					Default:     "mustache",
 				},
 				{
