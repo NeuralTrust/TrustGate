@@ -75,6 +75,23 @@ func TestConfigValidate(t *testing.T) {
 			settings: map[string]any{},
 			wantErr:  true,
 		},
+		{
+			name: "omitted type defaults to function",
+			settings: map[string]any{
+				"inject_tools": []any{
+					map[string]any{"function": map[string]any{"name": "safety_check"}},
+				},
+			},
+		},
+		{
+			name: "type outside the catalog enum",
+			settings: map[string]any{
+				"inject_tools": []any{
+					map[string]any{"type": "retrieval", "function": map[string]any{"name": "safety_check"}},
+				},
+			},
+			wantErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
