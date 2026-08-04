@@ -1,0 +1,54 @@
+# Private Service Connect routes — same hostnames as the public edge, parented
+# to psc-gateway (gateway-psc). Backends are the PSC-only Services so Cloud
+# Armor on the public Services does not attach to the regional RILB.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentgateway-proxy-psc-route
+  labels:
+    app.kubernetes.io/name: agentgateway
+    app.kubernetes.io/instance: agentgateway
+    component: proxy
+    neuraltrust.ai/exposure: psc
+spec:
+  parentRefs:
+  - name: psc-gateway
+    namespace: gateway-psc
+  hostnames:
+  - "agentgateway.us.neuraltrust.ai"
+  - "gateway-llm.us.neuraltrust.ai"
+  - "*.llm.us.neuraltrust.ai"
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: agentgateway-proxy-psc
+      port: 8081
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentgateway-mcp-psc-route
+  labels:
+    app.kubernetes.io/name: agentgateway
+    app.kubernetes.io/instance: agentgateway
+    component: mcp
+    neuraltrust.ai/exposure: psc
+spec:
+  parentRefs:
+  - name: psc-gateway
+    namespace: gateway-psc
+  hostnames:
+  - "agentgateway-mcp.us.neuraltrust.ai"
+  - "gateway-mcp.us.neuraltrust.ai"
+  - "*.mcp.us.neuraltrust.ai"
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: agentgateway-mcp-psc
+      port: 8082
