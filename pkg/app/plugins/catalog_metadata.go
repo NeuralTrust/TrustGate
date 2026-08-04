@@ -760,6 +760,48 @@ var pluginCatalogMeta = map[string]catalogMeta{
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
+					Key:         "compress_json",
+					Label:       "Compress JSON",
+					Type:        FieldTypeBoolean,
+					Description: "Minify standalone JSON message content, ```json fenced blocks and tool-call arguments. At least one transform must stay enabled.",
+					Default:     true,
+				},
+				{
+					Key:         "normalize_whitespace",
+					Label:       "Normalize Whitespace",
+					Type:        FieldTypeBoolean,
+					Description: "Trim trailing spaces per line, keeping Markdown hard line breaks, and collapse runs of blank lines.",
+					Default:     true,
+				},
+				{
+					Key:         "strip_ansi",
+					Label:       "Strip ANSI Escapes",
+					Type:        FieldTypeBoolean,
+					Description: "Remove ANSI colour and cursor sequences, common in captured terminal and CI logs.",
+					Default:     true,
+				},
+				{
+					Key:         "max_consecutive_blank_lines",
+					Label:       "Max Consecutive Blank Lines",
+					Type:        FieldTypeInteger,
+					Description: "Longest run of blank lines kept when whitespace is normalized. Between 1 and 1000.",
+					Default:     1,
+				},
+				{
+					Key:         "min_length",
+					Label:       "Minimum Content Length",
+					Type:        FieldTypeInteger,
+					Description: "Skip message content shorter than this many bytes; 0 compresses everything. Leaving small messages byte-identical protects provider prompt-cache prefixes.",
+					Default:     256,
+				},
+				{
+					Key:         "max_body_bytes",
+					Label:       "Max Body Bytes",
+					Type:        FieldTypeInteger,
+					Description: "Skip the whole pipeline for request bodies larger than this, bounding per-request CPU cost; 0 disables the cap.",
+					Default:     1048576,
+				},
+				{
 					Key:         "target_roles",
 					Label:       "Target Roles",
 					Type:        FieldTypeArray,
