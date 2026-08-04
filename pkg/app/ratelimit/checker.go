@@ -16,6 +16,7 @@ package ratelimit
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -60,7 +61,30 @@ func (e *Exceeded) Headers() map[string][]string {
 }
 
 func (e *Exceeded) Body() []byte {
-	return []byte(fmt.Sprintf(`{"error":"rate limit exceeded","reason":%q}`, e.Reason))
+	retryAfter := RetryAfterSeconds(e.RetryAfter)
+	payload := map[string]any{
+		"error":               "rate limit exceeded",
+		"message":             rateLimitClientMessage(e.Reason, retryAfter),
+		"reason":              e.Reason,
+		"limit":               e.Limit,
+		"retry_after_seconds": retryAfter,
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return []byte(fmt.Sprintf(`{"error":"rate limit exceeded","reason":%q}`, e.Reason))
+	}
+	return raw
+}
+
+func rateLimitClientMessage(reason string, retryAfterSeconds int) string {
+	switch reason {
+	case ReasonBurst:
+		return fmt.Sprintf("Request blocked: gateway burst rate limit exceeded. Retry after %ds.", retryAfterSeconds)
+	case ReasonQuota:
+		return fmt.Sprintf("Request blocked: monthly request quota exceeded. Retry after %ds.", retryAfterSeconds)
+	default:
+		return fmt.Sprintf("Request blocked: rate limit exceeded (%s). Retry after %ds.", reason, retryAfterSeconds)
+	}
 }
 
 //go:generate mockery --name=Counter --dir=. --output=./mocks --filename=counter_mock.go --case=underscore --with-expecter

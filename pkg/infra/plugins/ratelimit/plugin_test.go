@@ -16,6 +16,7 @@ package ratelimit
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -165,6 +166,14 @@ func TestPlugin_Execute_RejectsOverLimit(t *testing.T) {
 	assert.Equal(t, 429, pe.StatusCode)
 	assert.Equal(t, []string{"30"}, pe.Headers["Retry-After"])
 	assert.Equal(t, []string{"0"}, pe.Headers["X-RateLimit-consumer-Remaining"])
+	require.NotEmpty(t, pe.Body)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(pe.Body, &payload))
+	assert.Equal(t, "rate limit exceeded", payload["error"])
+	assert.Equal(t, "consumer", payload["reason"])
+	assert.Equal(t, float64(2), payload["limit"])
+	assert.Equal(t, float64(30), payload["retry_after_seconds"])
+	assert.Contains(t, payload["message"], "consumer rate limit exceeded")
 }
 
 // A non-global policy must give each consumer an independent budget even when
