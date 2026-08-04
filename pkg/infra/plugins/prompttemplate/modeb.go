@@ -26,6 +26,7 @@ type modeBResult struct {
 	hasReference     bool
 	changed          bool
 	resolvedTemplate string
+	discarded        int
 }
 
 func applyModeB(cfg *config, rb *requestBody, clientVars map[string]any, ctxVars map[string]string) (modeBResult, error) {
@@ -38,6 +39,16 @@ func applyModeB(cfg *config, rb *requestBody, clientVars map[string]any, ctxVars
 	}
 
 	ref := refs[0]
+	if other, ok := conflictingRef(refs); ok {
+		// A rendered template replaces the whole conversation, so two different
+		// ones cannot both be honoured. Rendering the first silently served a
+		// template the caller did not ask for.
+		return modeBResult{hasReference: true}, reject(
+			http.StatusBadRequest,
+			typeAmbiguous,
+			fmt.Sprintf("request references both %s and %s; only one template can be rendered", ref, other),
+		)
+	}
 	nt, ok := findNamedTemplate(cfg, ref.name)
 	if !ok {
 		return modeBResult{hasReference: true}, reject(http.StatusBadRequest, typeNotFound, fmt.Sprintf("template %q not found", ref.name))
@@ -58,12 +69,31 @@ func applyModeB(cfg *config, rb *requestBody, clientVars map[string]any, ctxVars
 	if err != nil {
 		return result, err
 	}
+	before := len(rb.messages)
 	if err := rb.replaceMessages(rendered); err != nil {
 		return result, reject(http.StatusInternalServerError, typeRenderFailed, "rendered template is not a valid messages array")
 	}
 
 	result.changed = true
+	// Rendering replaces the conversation rather than the referencing message,
+	// so a multi-turn caller loses the history it sent. Reported because the
+	// caller cannot see it: the answer just gets worse.
+	if dropped := before - len(rb.messages); dropped > 0 {
+		result.discarded = dropped
+	}
 	return result, nil
+}
+
+// conflictingRef reports the first reference that asks for something other than
+// refs[0]. Repeating the same reference is not a conflict: a multi-turn client
+// resends its earlier turns, so the same one arrives again on every request.
+func conflictingRef(refs []templateRef) (templateRef, bool) {
+	for _, ref := range refs[1:] {
+		if ref != refs[0] {
+			return ref, true
+		}
+	}
+	return templateRef{}, false
 }
 
 func findNamedTemplate(cfg *config, name string) (*namedTemplate, bool) {

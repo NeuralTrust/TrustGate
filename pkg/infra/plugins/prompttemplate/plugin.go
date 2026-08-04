@@ -32,6 +32,7 @@ const (
 	typeVariableInvalid    = "template_variable_invalid"
 	typeNotFound           = "template_not_found"
 	typeRequired           = "template_required"
+	typeAmbiguous          = "template_ambiguous"
 	typeRenderFailed       = "template_render_failed"
 )
 
@@ -133,7 +134,14 @@ func runModes(cfg *config, rb *requestBody, properties map[string]any, ctxVars m
 	if modeA {
 		aOutcome = applyModeA(cfg, rb, ctxVars)
 		if cfg.OnMissingContextVariable == onMissingContextError && len(aOutcome.unresolved) > 0 {
-			return aOutcome, bOutcome, reject(http.StatusInternalServerError, typeVariableUnresolved, "unresolved context variable")
+			// The variable is missing because the caller omitted the header or the
+			// claim it comes from, so this is their error to fix, as it already is
+			// for a missing client variable in mode B.
+			return aOutcome, bOutcome, reject(
+				http.StatusBadRequest,
+				typeVariableUnresolved,
+				fmt.Sprintf("context variable %q could not be resolved", aOutcome.unresolved[0]),
+			)
 		}
 	}
 	return aOutcome, bOutcome, nil
@@ -141,11 +149,12 @@ func runModes(cfg *config, rb *requestBody, properties map[string]any, ctxVars m
 
 func buildData(decision string, a modeAOutcome, b modeBResult) PromptTemplateData {
 	return PromptTemplateData{
-		Decision:         decision,
-		InjectedIDs:      a.injected,
-		SkippedIDs:       a.skipped,
-		UnresolvedIDs:    a.unresolved,
-		ResolvedTemplate: b.resolvedTemplate,
+		Decision:          decision,
+		InjectedIDs:       a.injected,
+		SkippedIDs:        a.skipped,
+		UnresolvedIDs:     a.unresolved,
+		ResolvedTemplate:  b.resolvedTemplate,
+		DiscardedMessages: b.discarded,
 	}
 }
 

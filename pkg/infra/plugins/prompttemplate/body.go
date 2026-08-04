@@ -39,6 +39,13 @@ type templateRef struct {
 	label string
 }
 
+func (r templateRef) String() string {
+	if r.label == "" {
+		return r.name
+	}
+	return r.name + "@" + r.label
+}
+
 type requestBody struct {
 	fields         map[string]json.RawMessage
 	system         string
