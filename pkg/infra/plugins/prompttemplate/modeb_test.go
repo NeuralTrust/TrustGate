@@ -220,16 +220,31 @@ func TestApplyModeBBareStringWrap(t *testing.T) {
 	assert.JSONEq(t, `{"messages":[{"role":"user","content":"You are a friendly bot."}]}`, string(out))
 }
 
-func TestApplyModeBUsesFirstReference(t *testing.T) {
+func TestApplyModeBRejectsConflictingReferences(t *testing.T) {
 	enabled := true
 	first := namedTemplate{Name: "first", Versions: []templateVersion{{Labels: []string{"stable"}, Content: `[{"role":"system","content":"FIRST"}]`}}}
 	second := namedTemplate{Name: "second", Versions: []templateVersion{{Labels: []string{"stable"}, Content: `[{"role":"system","content":"SECOND"}]`}}}
 	cfg := &config{TemplateEngine: engineMustache, NamedTemplates: []namedTemplate{first, second}, DefaultLabel: "stable", OnMissingClientVariable: onMissingClientError, EscapeJSONControlChars: &enabled}
 	rb, err := decodeBody([]byte(`{"messages":[{"role":"user","content":"{template://first}"},{"role":"user","content":"{template://second}"}]}`))
 	require.NoError(t, err)
+	_, err = applyModeB(cfg, rb, nil, nil)
+	pe := requirePluginError(t, err)
+	assert.Equal(t, http.StatusBadRequest, pe.StatusCode)
+	assert.Equal(t, typeAmbiguous, pe.Type)
+}
+
+// A multi-turn caller resends its earlier turns, so the reference it used before
+// arrives again alongside the current one. Identical repeats are unambiguous.
+func TestApplyModeBAcceptsRepeatedReference(t *testing.T) {
+	enabled := true
+	first := namedTemplate{Name: "first", Versions: []templateVersion{{Labels: []string{"stable"}, Content: `[{"role":"system","content":"FIRST"}]`}}}
+	cfg := &config{TemplateEngine: engineMustache, NamedTemplates: []namedTemplate{first}, DefaultLabel: "stable", OnMissingClientVariable: onMissingClientError, EscapeJSONControlChars: &enabled}
+	rb, err := decodeBody([]byte(`{"messages":[{"role":"user","content":"{template://first}"},{"role":"assistant","content":"ok"},{"role":"user","content":"{template://first}"}]}`))
+	require.NoError(t, err)
 	outcome, err := applyModeB(cfg, rb, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "first", outcome.resolvedTemplate)
+	assert.Equal(t, 2, outcome.discarded, "the two turns the template replaced are reported")
 	out, err := rb.marshal()
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"messages":[{"role":"system","content":"FIRST"}]}`, string(out))

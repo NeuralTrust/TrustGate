@@ -16,6 +16,7 @@ package ratelimit
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -235,6 +236,30 @@ func TestExceededHeaders(t *testing.T) {
 	}
 	if got := headers["X-RateLimit-Reason"]; len(got) != 1 || got[0] != ReasonBurst {
 		t.Fatalf("X-RateLimit-Reason = %v, want [%s]", got, ReasonBurst)
+	}
+}
+
+func TestExceededBodyExplainsReason(t *testing.T) {
+	err := &Exceeded{Reason: ReasonBurst, Limit: 60, Remaining: 0, RetryAfter: 42 * time.Second}
+	var payload map[string]any
+	if uerr := json.Unmarshal(err.Body(), &payload); uerr != nil {
+		t.Fatalf("unmarshal body: %v", uerr)
+	}
+	if payload["error"] != "rate limit exceeded" {
+		t.Fatalf("error = %v", payload["error"])
+	}
+	if payload["reason"] != ReasonBurst {
+		t.Fatalf("reason = %v", payload["reason"])
+	}
+	if payload["limit"] != float64(60) {
+		t.Fatalf("limit = %v", payload["limit"])
+	}
+	if payload["retry_after_seconds"] != float64(42) {
+		t.Fatalf("retry_after_seconds = %v", payload["retry_after_seconds"])
+	}
+	msg, _ := payload["message"].(string)
+	if msg == "" || !strings.Contains(msg, "burst") {
+		t.Fatalf("message = %q, want burst explanation", msg)
 	}
 }
 

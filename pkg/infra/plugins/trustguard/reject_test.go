@@ -22,7 +22,7 @@ import (
 func TestBlockBodyOmitsFindingsFromClientResponse(t *testing.T) {
 	t.Parallel()
 
-	raw := blockBody(&GuardResponse{
+	resp := &GuardResponse{
 		Status: statusBlock,
 		Findings: []GuardFinding{{
 			Source: &GuardFindingSource{
@@ -39,7 +39,9 @@ func TestBlockBodyOmitsFindingsFromClientResponse(t *testing.T) {
 		}},
 		TraceID:   "trace-1",
 		RequestID: "req-1",
-	})
+	}
+	wantMessage := "Request blocked by security policy: jailbreak (Jailbreak detector)."
+	raw := blockBody(resp, clientBlockMessage(resp))
 
 	var body map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &body); err != nil {
@@ -80,8 +82,8 @@ func TestBlockBodyOmitsFindingsFromClientResponse(t *testing.T) {
 	if status != statusBlock {
 		t.Fatalf("status = %q, want %q", status, statusBlock)
 	}
-	if message != blockMessage {
-		t.Fatalf("message = %q, want %q", message, blockMessage)
+	if message != wantMessage {
+		t.Fatalf("message = %q, want %q", message, wantMessage)
 	}
 	if blockType != typeBlocked {
 		t.Fatalf("type = %q, want %q", blockType, typeBlocked)
@@ -103,25 +105,42 @@ func TestBlockBodyOmitsFindingsFromClientResponse(t *testing.T) {
 func TestBlockBodyIncludesGateName(t *testing.T) {
 	t.Parallel()
 
-	raw := blockBody(&GuardResponse{
+	resp := &GuardResponse{
 		Status: statusBlock,
 		Findings: []GuardFinding{{
 			Source:  &GuardFindingSource{Kind: "gate", GateName: "max_tokens"},
 			Signal:  &GuardFindingSignal{Type: "gate_block", Confidence: 1},
 			Outcome: &GuardFindingOutcome{Action: "block"},
 		}},
-	})
+	}
+	raw := blockBody(resp, clientBlockMessage(resp))
 
 	var body struct {
 		Type     string `json:"type"`
 		Reason   string `json:"reason"`
 		GateName string `json:"gate_name"`
+		Message  string `json:"message"`
 	}
 	if err := json.Unmarshal(raw, &body); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if body.Type != typeBlocked || body.Reason != "gate_block" || body.GateName != "max_tokens" {
 		t.Fatalf("body = %+v", body)
+	}
+	wantMessage := "Request blocked by security policy: gate_block (max_tokens)."
+	if body.Message != wantMessage {
+		t.Fatalf("message = %q, want %q", body.Message, wantMessage)
+	}
+}
+
+func TestClientBlockMessageFallsBackWithoutFindings(t *testing.T) {
+	t.Parallel()
+
+	if got := clientBlockMessage(nil); got != blockMessage {
+		t.Fatalf("nil resp message = %q, want %q", got, blockMessage)
+	}
+	if got := clientBlockMessage(&GuardResponse{Status: statusBlock}); got != blockMessage {
+		t.Fatalf("empty findings message = %q, want %q", got, blockMessage)
 	}
 }
 
@@ -156,7 +175,8 @@ func TestRateLimitErrorEmptyBodyFallback(t *testing.T) {
 	if pe.StatusCode != 429 {
 		t.Fatalf("status = %d, want 429", pe.StatusCode)
 	}
-	if string(pe.Body) != `{"error":"rate limit exceeded"}` {
-		t.Fatalf("body = %s", pe.Body)
+	want := `{"error":"rate limit exceeded","message":"Request blocked: rate limit exceeded."}`
+	if string(pe.Body) != want {
+		t.Fatalf("body = %s, want %s", pe.Body, want)
 	}
 }

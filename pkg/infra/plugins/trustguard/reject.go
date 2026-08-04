@@ -16,7 +16,9 @@ package trustguard
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 )
@@ -30,18 +32,19 @@ const rateLimitMessage = "rate limit exceeded"
 const unavailableMessage = "rate limit entitlements unavailable"
 
 func blockError(resp *GuardResponse) *appplugins.PluginError {
+	message := clientBlockMessage(resp)
 	return &appplugins.PluginError{
 		StatusCode: http.StatusForbidden,
 		Type:       typeBlocked,
-		Message:    blockMessage,
-		Body:       blockBody(resp),
+		Message:    message,
+		Body:       blockBody(resp, message),
 	}
 }
 
 func rateLimitError(err *rateLimitedError) *appplugins.PluginError {
 	body := err.body
 	if len(body) == 0 {
-		body = []byte(`{"error":"rate limit exceeded"}`)
+		body = []byte(`{"error":"rate limit exceeded","message":"Request blocked: rate limit exceeded."}`)
 	}
 	return &appplugins.PluginError{
 		StatusCode: http.StatusTooManyRequests,
@@ -65,7 +68,10 @@ func unavailableError(err *entitlementsUnavailableError) *appplugins.PluginError
 	}
 }
 
-func blockBody(resp *GuardResponse) []byte {
+func blockBody(resp *GuardResponse, message string) []byte {
+	if message == "" {
+		message = blockMessage
+	}
 	body := struct {
 		Status       string `json:"status"`
 		Message      string `json:"message"`
@@ -78,7 +84,7 @@ func blockBody(resp *GuardResponse) []byte {
 		RequestID    string `json:"request_id,omitempty"`
 	}{
 		Status:  statusBlock,
-		Message: blockMessage,
+		Message: message,
 		Type:    typeBlocked,
 	}
 	if resp != nil {
@@ -103,4 +109,35 @@ func blockBody(resp *GuardResponse) []byte {
 		return []byte(`{"status":"block","message":"request blocked due to a policy infraction","type":"trustguard_blocked"}`)
 	}
 	return raw
+}
+
+func clientBlockMessage(resp *GuardResponse) string {
+	if resp == nil {
+		return blockMessage
+	}
+	finding := selectPrimaryFinding(resp.Findings)
+	if finding == nil {
+		return blockMessage
+	}
+	reason := ""
+	if finding.Signal != nil {
+		reason = strings.TrimSpace(finding.Signal.Type)
+	}
+	name := ""
+	if finding.Source != nil {
+		name = strings.TrimSpace(finding.Source.DetectorName)
+		if name == "" {
+			name = strings.TrimSpace(finding.Source.GateName)
+		}
+	}
+	switch {
+	case reason != "" && name != "":
+		return fmt.Sprintf("Request blocked by security policy: %s (%s).", reason, name)
+	case reason != "":
+		return fmt.Sprintf("Request blocked by security policy: %s.", reason)
+	case name != "":
+		return fmt.Sprintf("Request blocked by security policy (%s).", name)
+	default:
+		return blockMessage
+	}
 }

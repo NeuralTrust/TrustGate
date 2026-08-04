@@ -198,7 +198,7 @@ func TestPluginE2E_PromptTemplate_ErrorCodes(t *testing.T) {
 		},
 	}
 
-	t.Run("unresolved context variable returns 500 template_variable_unresolved", func(t *testing.T) {
+	t.Run("unresolved context variable returns 400 template_variable_unresolved", func(t *testing.T) {
 		up := newJSONUpstream(t, "prompt-unresolved")
 		apiKey, path := setupPolicyRoute(t, up, promptTemplatePolicy(map[string]any{
 			"context_variables": map[string]any{
@@ -213,8 +213,9 @@ func TestPluginE2E_PromptTemplate_ErrorCodes(t *testing.T) {
 		body := mustJSON(t, chatBody([]map[string]any{{"role": "user", "content": "Hello"}}, nil))
 		status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
 
-		assert.Equal(t, http.StatusInternalServerError, status, "body: %s", raw)
+		assert.Equal(t, http.StatusBadRequest, status, "body: %s", raw)
 		assert.Contains(t, string(raw), "template_variable_unresolved")
+		assert.Contains(t, string(raw), "tenant", "the caller is told which variable it failed to supply")
 		assert.Equal(t, 0, up.Hits(), "a rejected request must not reach the upstream")
 	})
 
@@ -270,6 +271,43 @@ func TestPluginE2E_PromptTemplate_ErrorCodes(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, status, "body: %s", raw)
 		assert.Contains(t, string(raw), "template_not_found")
 		assert.Equal(t, 0, up.Hits())
+	})
+
+	t.Run("two different references return 400 template_ambiguous", func(t *testing.T) {
+		up := newJSONUpstream(t, "prompt-ambiguous")
+		apiKey, path := setupPolicyRoute(t, up, promptTemplatePolicy(map[string]any{
+			"named_templates":            namedTemplate,
+			"default_label":              "stable",
+			"allow_untemplated_requests": false,
+		}))
+
+		body := mustJSON(t, chatBody([]map[string]any{
+			{"role": "user", "content": "{template://support-bot@stable} and {template://other@stable}"},
+		}, map[string]any{"properties": map[string]any{"persona": "friendly"}}))
+		status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
+
+		assert.Equal(t, http.StatusBadRequest, status, "body: %s", raw)
+		assert.Contains(t, string(raw), "template_ambiguous")
+		assert.Equal(t, 0, up.Hits())
+	})
+
+	t.Run("the same reference repeated across turns still renders", func(t *testing.T) {
+		up := newJSONUpstream(t, "prompt-repeated")
+		apiKey, path := setupPolicyRoute(t, up, promptTemplatePolicy(map[string]any{
+			"named_templates":            namedTemplate,
+			"default_label":              "stable",
+			"allow_untemplated_requests": false,
+		}))
+
+		body := mustJSON(t, chatBody([]map[string]any{
+			{"role": "user", "content": "{template://support-bot@stable}"},
+			{"role": "assistant", "content": "sure"},
+			{"role": "user", "content": "{template://support-bot@stable}"},
+		}, map[string]any{"properties": map[string]any{"persona": "friendly"}}))
+		status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
+
+		assert.Equal(t, http.StatusOK, status, "body: %s", raw)
+		assert.Equal(t, 1, up.Hits(), "a repeated reference is not a conflict and must be served")
 	})
 
 	t.Run("no reference with allow_untemplated_requests false returns 400 template_required", func(t *testing.T) {

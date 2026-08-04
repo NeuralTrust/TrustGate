@@ -664,7 +664,8 @@ func TestPromptTemplateSchema_Tree(t *testing.T) {
 	engineField, ok := fieldByKey(fields, "template_engine")
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeEnum, engineField.Type)
-	assert.Equal(t, []string{"mustache", "jinja2_subset"}, enumValues(engineField.Enum))
+	assert.Equal(t, []string{"mustache"}, enumValues(engineField.Enum),
+		"jinja2_subset is refused by the plugin, so the catalog must not offer it")
 	assert.Equal(t, "mustache", engineField.Default)
 
 	contextVars, ok := fieldByKey(fields, "context_variables")

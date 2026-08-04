@@ -28,4 +28,7 @@ type PromptTemplateData struct {
 	SkippedIDs       []string `json:"skipped_ids,omitempty"`
 	UnresolvedIDs    []string `json:"unresolved_variables,omitempty"`
 	ResolvedTemplate string   `json:"resolved_template,omitempty"`
+	// DiscardedMessages counts the conversation turns a rendered template
+	// replaced, which is otherwise invisible to the caller and to the operator.
+	DiscardedMessages int `json:"discarded_messages,omitempty"`
 }
