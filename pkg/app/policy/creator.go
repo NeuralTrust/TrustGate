@@ -74,7 +74,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Policy, e
 	if err != nil {
 		return nil, err
 	}
-	if err := validatePlugin(c.registry, in.Slug, in.Stages, in.Settings); err != nil {
+	if err := validatePlugin(c.registry, in.Slug, in.Stages, p.Mode, in.Settings); err != nil {
 		return nil, err
 	}
 	if err := c.repo.Save(ctx, p); err != nil {

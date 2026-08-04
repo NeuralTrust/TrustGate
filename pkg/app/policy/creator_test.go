@@ -46,6 +46,7 @@ func newRegistryMock(t *testing.T, stagesErr error) *pluginmocks.Registry {
 	t.Helper()
 	reg := pluginmocks.NewRegistry(t)
 	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(stagesErr).Maybe()
+	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(nil).Maybe()
 	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Maybe()
 	return reg
 }
@@ -109,6 +110,21 @@ func TestCreator_Create_RejectsUnsupportedStage(t *testing.T) {
 	_, err := creator.Create(context.Background(), validCreateInput(ids.New[ids.GatewayKind]()))
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("err = %v, want registry stage error", err)
+	}
+}
+
+func TestCreator_Create_RejectsUnsupportedMode(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	sentinel := errors.New("mode not supported")
+	reg := pluginmocks.NewRegistry(t)
+	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(nil).Maybe()
+	reg.EXPECT().ValidateMode(mock.Anything, mock.Anything).Return(sentinel).Once()
+	creator := apppolicy.NewCreator(repo, reg, newCacheManager(), newTestLogger(), nil)
+
+	_, err := creator.Create(context.Background(), validCreateInput(ids.New[ids.GatewayKind]()))
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("err = %v, want registry mode error", err)
 	}
 }
 
