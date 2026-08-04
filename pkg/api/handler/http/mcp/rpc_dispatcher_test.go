@@ -201,6 +201,91 @@ func TestRPCGateway_ToolsCall_Allow_ReturnsResultUnchanged(t *testing.T) {
 	assert.Equal(t, string(raw), string(got))
 }
 
+// prompts/list and resources/list do not carry tool descriptions, so they never
+// run the policy chain: the executor is wired with no RunStage expectation, and
+// mockery fails the test if the chain runs.
+func TestRPCGateway_ListingsWithoutTools_NeverRunPolicyChain(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		method string
+		expect func(*mocks.Composer)
+	}{
+		{
+			method: "prompts/list",
+			expect: func(c *mocks.Composer) {
+				c.EXPECT().ListPrompts(mock.Anything, mock.Anything).Return(nil, nil).Once()
+			},
+		},
+		{
+			method: "resources/list",
+			expect: func(c *mocks.Composer) {
+				c.EXPECT().ListResources(mock.Anything, mock.Anything).Return(nil, nil).Once()
+			},
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.method, func(t *testing.T) {
+			t.Parallel()
+			composer := mocks.NewComposer(t)
+			tc.expect(composer)
+			exec := pluginmocks.NewExecutor(t)
+
+			g := mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(exec, discardLogger()), nil)
+			_, err := g.Dispatch(context.Background(), mcpRoutableConsumer(), tc.method, nil)
+			require.NoError(t, err)
+			exec.AssertNotCalled(t, "RunStage", mock.Anything, mock.Anything)
+		})
+	}
+}
+
+// tools/list is scanned for threats in the tool descriptions, but a data-masking
+// transform (DLP) is ignored: masking static tool metadata is pointless, and
+// blocking on it would leave the client with no tools. The listing is returned
+// unchanged even though the guard short-circuited with a masked body.
+func TestRPCGateway_ToolsList_IgnoresMaskingTransform(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().ListTools(mock.Anything, mock.Anything).
+		Return([]appmcp.Tool{{Name: "search"}}, nil).Once()
+
+	exec := pluginmocks.NewExecutor(t)
+	exec.EXPECT().RunStage(mock.Anything, mock.MatchedBy(func(in appplugins.StageInput) bool {
+		return in.Stage == policydomain.StagePreResponse
+	})).Return(&appplugins.StageOutcome{
+		ShortCircuit: true,
+		StatusCode:   http.StatusOK,
+		Body:         []byte(`{"tools":[{"name":"search","description":"[MASKED_EMAIL]"}]}`),
+	}, nil).Once()
+
+	g := mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(exec, discardLogger()), nil)
+	res, err := g.Dispatch(context.Background(), mcpRoutableConsumer(), "tools/list", nil)
+	require.NoError(t, err)
+	body, _ := json.Marshal(res)
+	assert.Contains(t, string(body), `"search"`)
+	assert.NotContains(t, string(body), "MASKED", "the listing must be returned unmasked")
+}
+
+// A genuine threat block on a tool description (indirect prompt injection, code
+// injection) stops discovery with -32001.
+func TestRPCGateway_ToolsList_ThreatBlockStopsDiscovery(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().ListTools(mock.Anything, mock.Anything).
+		Return([]appmcp.Tool{{Name: "search"}}, nil).Once()
+
+	exec := pluginmocks.NewExecutor(t)
+	exec.EXPECT().RunStage(mock.Anything, mock.Anything).
+		Return(nil, blockErr("injection")).Once()
+
+	g := mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(exec, discardLogger()), nil)
+	res, err := g.Dispatch(context.Background(), mcpRoutableConsumer(), "tools/list", nil)
+	assert.Nil(t, res)
+	var rpcErr *appmcp.RPCError
+	require.True(t, errors.As(err, &rpcErr), "want *appmcp.RPCError, got %v", err)
+	assert.Equal(t, int64(-32001), rpcErr.Code)
+}
+
 // A policy denial answers HTTP 200 carrying the JSON-RPC error: MCP clients
 // read a 4xx on this endpoint as a transport failure and tear the session down
 // without ever surfacing the block. The 403 it means is recorded on the span.

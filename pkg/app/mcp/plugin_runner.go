@@ -233,9 +233,18 @@ func (r *PluginRunner) PreResponse(
 	return nil, nil
 }
 
-// PreResponseResult runs StagePreResponse over an arbitrary MCP result body
-// (tools/list, tools/call result, etc.) without requiring tools/call params.
-func (r *PluginRunner) PreResponseResult(
+// PreResponseDiscovery runs StagePreResponse over a discovery result (a tool
+// listing) but applies only the outcomes that make sense for static server
+// metadata. A tool listing is not user data: a threat detector — indirect prompt
+// injection or code injection reading a malicious tool description — should be
+// able to block it, but a data-masking transform (DLP) must not touch it.
+// Redacting example emails baked into a description is pointless and would mangle
+// or, when the mask cannot be applied, destroy discovery.
+//
+// So a genuine denial (a PluginError or a non-2xx short-circuit) stops the
+// listing, while a 2xx transform (the masking path) is dropped and the original
+// listing is kept. Fails open on any non-block error, like the other stages.
+func (r *PluginRunner) PreResponseDiscovery(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
 	result json.RawMessage,
@@ -270,6 +279,12 @@ func (r *PluginRunner) PreResponseResult(
 		return nil
 	}
 	if outcome != nil && outcome.ShortCircuit {
+		// A 2xx short-circuit is a data-masking rewrite; discovery is never
+		// rewritten, so drop it and keep the original listing. Anything else is a
+		// real denial (a threat detector) and stops discovery.
+		if replacesPayload(outcome) {
+			return nil
+		}
 		return blockToRPCError(&appplugins.PluginError{
 			StatusCode: outcome.StatusCode,
 			Message:    "response blocked by policy",

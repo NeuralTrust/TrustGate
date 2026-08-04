@@ -159,39 +159,53 @@ func replaceArgumentStrings(value any, masked []string, idx *int) (any, bool) {
 	}
 }
 
-// rewriteMCPResponse writes the masked text back into the text content blocks of
-// a CallToolResult. The result is patched in place on a generic decode rather
-// than re-encoded from a typed struct, so fields the gateway does not model
-// (structuredContent, _meta, annotations) survive the rewrite.
+// rewriteMCPResponse writes the masked text back into a CallToolResult: first the
+// text content blocks, then the string leaves of structuredContent, in the exact
+// order mcpOutputText collected them. The result is patched in place on a generic
+// decode rather than re-encoded from a typed struct, so fields the gateway does
+// not model (_meta, annotations) survive the rewrite.
+//
+// This is the string-payload fallback; the structured applyPayload path
+// (mcpTransformedResult) is tried first and lifts the whole masked envelope. It
+// still has to cover structuredContent so a result whose only inspectable data
+// lives there is masked here rather than degrading to a block.
 func rewriteMCPResponse(body []byte, masked string) ([]byte, bool) {
 	var generic map[string]any
 	if err := json.Unmarshal(body, &generic); err != nil {
 		return nil, false
 	}
-	blocks, ok := generic["content"].([]any)
-	if !ok {
-		return nil, false
-	}
 
 	// Same selection as mcpOutputText: text blocks with non-blank text, in order.
-	targets := make([]map[string]any, 0, len(blocks))
-	parts := make([]string, 0, len(blocks))
-	for _, raw := range blocks {
-		block, ok := raw.(map[string]any)
-		if !ok {
-			continue
+	textBlocks := make([]map[string]any, 0)
+	parts := make([]string, 0)
+	if blocks, ok := generic["content"].([]any); ok {
+		for _, raw := range blocks {
+			block, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			text, ok := block["text"].(string)
+			if !ok || strings.TrimSpace(text) == "" {
+				continue
+			}
+			if kind, ok := block["type"].(string); ok && kind != "" && kind != "text" {
+				continue
+			}
+			textBlocks = append(textBlocks, block)
+			parts = append(parts, text)
 		}
-		text, ok := block["text"].(string)
-		if !ok || strings.TrimSpace(text) == "" {
-			continue
-		}
-		if kind, ok := block["type"].(string); ok && kind != "" && kind != "text" {
-			continue
-		}
-		targets = append(targets, block)
-		parts = append(parts, text)
 	}
-	if len(targets) == 0 {
+
+	// Then structuredContent string leaves, sorted-key order, matching
+	// flattenArgumentStrings/collectStrings so the masked halves line up.
+	structured, hasStructured := generic["structuredContent"]
+	var structuredLeaves int
+	if hasStructured {
+		leaves := collectStrings(structured, nil)
+		structuredLeaves = len(leaves)
+		parts = append(parts, leaves...)
+	}
+	if len(parts) == 0 {
 		return nil, false
 	}
 
@@ -199,8 +213,16 @@ func rewriteMCPResponse(body []byte, masked string) ([]byte, bool) {
 	if !ok {
 		return nil, false
 	}
-	for i, block := range targets {
+	for i, block := range textBlocks {
 		block["text"] = maskedParts[i]
+	}
+	if structuredLeaves > 0 {
+		idx := 0
+		patched, ok := replaceArgumentStrings(structured, maskedParts[len(textBlocks):], &idx)
+		if !ok || idx != structuredLeaves {
+			return nil, false
+		}
+		generic["structuredContent"] = patched
 	}
 	out, err := json.Marshal(generic)
 	if err != nil {
