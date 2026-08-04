@@ -387,4 +387,23 @@ func TestExecuteSetsCompressionHeaders(t *testing.T) {
 		require.Nil(t, res.RequestBody)
 		require.Equal(t, []string{"skipped_lossy_roundtrip"}, res.Headers[headerDecision])
 	})
+
+	// A payload the plugin would happily compress on /chat/completions, sent on
+	// a route it does not model. Reporting the round-trip veto here would send
+	// the operator to inspect a prompt that was never the problem.
+	t.Run("an unsupported wire format is reported apart from a lossy payload", func(t *testing.T) {
+		t.Parallel()
+		body := []byte(`{"model":"gpt-4o","input":[{"role":"user","content":"` + verbose + `"}]}`)
+		in := execInput(
+			policy.StagePreRequest,
+			policy.ModeEnforce,
+			defaultSettings(),
+			reqCtx(openAIProvider, string(adapter.FormatOpenAIResponses), body),
+			newEvent(),
+		)
+		res, err := p.Execute(context.Background(), in)
+		require.NoError(t, err)
+		require.Nil(t, res.RequestBody)
+		require.Equal(t, []string{"skipped_unsupported_format"}, res.Headers[headerDecision])
+	})
 }
