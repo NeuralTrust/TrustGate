@@ -19,6 +19,7 @@ spec:
     namespace: gateway
   hostnames:
   - "agentgateway.us.neuraltrust.ai"
+  - "gateway-llm.us.neuraltrust.ai"
   - "*.llm.us.neuraltrust.ai"
 ---
 apiVersion: gateway.networking.k8s.io/v1
@@ -31,4 +32,5 @@ spec:
     namespace: gateway
   hostnames:
   - "agentgateway-mcp.us.neuraltrust.ai"
+  - "gateway-mcp.us.neuraltrust.ai"
   - "*.mcp.us.neuraltrust.ai"
