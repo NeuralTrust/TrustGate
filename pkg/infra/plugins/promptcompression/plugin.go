@@ -104,11 +104,18 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		p.debug(ctx, "resolve request format failed", slog.Any("error", err))
 		return passThrough(), nil
 	}
+	// Only the OpenAI-compatible and Anthropic request shapes are modeled here,
+	// so a client on any other route (the Responses API, Gemini's own) is left
+	// alone. Reported apart from the round-trip veto below: nothing the caller
+	// does to the payload will change this one.
+	if !supportedFormat(format) {
+		return p.skip(in, cfg, decisionSkippedFormat), nil
+	}
 	// The canonical round-trip is lossy for shapes it does not model
 	// (multimodal parts, cache_control annotations, unmodeled fields). A
 	// request that might lose data on re-encode is never touched.
-	if !supportedFormat(format) || !roundTripSafe(in.Request.Body) {
-		return p.skipLossy(in, cfg), nil
+	if !roundTripSafe(in.Request.Body) {
+		return p.skip(in, cfg, decisionSkippedLossy), nil
 	}
 	creq, err := p.registry.DecodeRequestFor(in.Request.Body, format)
 	if err != nil || creq == nil {
@@ -121,19 +128,19 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return passThrough(), nil
 	}
 	if changed && !keepsTopLevelFields(in.Request.Body, body) {
-		return p.skipLossy(in, cfg), nil
+		return p.skip(in, cfg, decisionSkippedLossy), nil
 	}
 	return p.decide(in, cfg, changed, body), nil
 }
 
-// skipLossy records that the request was left untouched because compressing
-// it would risk dropping content the canonical model does not represent.
-func (p *Plugin) skipLossy(in appplugins.ExecInput, cfg Settings) *appplugins.Result {
+// skip records that the request was forwarded untouched, naming which of the
+// guards declined it so the operator is not sent looking in the wrong place.
+func (p *Plugin) skip(in appplugins.ExecInput, cfg Settings, decision string) *appplugins.Result {
 	data := &Data{
 		Stage:      string(in.Stage),
 		Mode:       string(in.Mode),
 		Transforms: cfg.describe(),
-		Decision:   decisionSkippedLossy,
+		Decision:   decision,
 		BytesIn:    len(in.Request.Body),
 		BytesOut:   len(in.Request.Body),
 	}

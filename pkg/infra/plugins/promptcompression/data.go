@@ -27,6 +27,11 @@ const (
 	decisionNoChange     = "no_change"
 	decisionSkipped      = "skipped_too_large"
 	decisionSkippedLossy = "skipped_lossy_roundtrip"
+	// decisionSkippedFormat separates "this plugin does not speak the wire
+	// format the client used" from "this payload cannot be rewritten safely".
+	// Both leave the request untouched, but only the second is something the
+	// caller can act on by changing what they send.
+	decisionSkippedFormat = "skipped_unsupported_format"
 )
 
 // Response headers surfacing the compression outcome to the caller, following
