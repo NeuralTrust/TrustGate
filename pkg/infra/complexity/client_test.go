@@ -21,6 +21,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -73,6 +74,44 @@ func TestClient_Score_Success(t *testing.T) {
 	score, err := c.Score(context.Background(), "hello", "chat_1", "tenant_1")
 	require.NoError(t, err)
 	assert.InDelta(t, 0.41, score, 1e-9)
+}
+
+func TestClient_Score_UsesCanonicalPathWithoutRedirect(t *testing.T) {
+	t.Parallel()
+	var mu sync.Mutex
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		if r.URL.Path != "/v1/complexity/" {
+			http.Redirect(w, r, "/v1/complexity/", http.StatusTemporaryRedirect)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(scoreResponse{Score: 0.5, RawScore: 0.5})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, tokenProviderStub{configured: true, token: "tok"}, time.Second)
+	_, err := c.Score(context.Background(), "hello", "", "")
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, []string{"/v1/complexity/"}, paths)
+}
+
+func TestCheckRedirect(t *testing.T) {
+	t.Parallel()
+	secure, err := http.NewRequest(http.MethodPost, "https://firewall.example.com/v1/complexity/", nil)
+	require.NoError(t, err)
+	plain, err := http.NewRequest(http.MethodPost, "http://firewall.example.com/v1/complexity/", nil)
+	require.NoError(t, err)
+
+	assert.Error(t, checkRedirect(plain, []*http.Request{secure}))
+	assert.NoError(t, checkRedirect(secure, []*http.Request{plain}))
+	assert.NoError(t, checkRedirect(plain, []*http.Request{plain}))
+	assert.Error(t, checkRedirect(plain, make([]*http.Request, maxRedirects)))
 }
 
 func TestClient_Score_NotConfigured(t *testing.T) {

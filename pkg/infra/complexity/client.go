@@ -30,11 +30,14 @@ import (
 )
 
 const (
-	complexityPath   = "/v1/complexity"
+	// The API canonicalises this route with a trailing slash and answers the
+	// slashless form with a 307, so omitting it costs a redirect per score.
+	complexityPath   = "/v1/complexity/"
 	headerToken      = "token"
 	contentTypeJSON  = "application/json"
 	maxResponseBytes = 1 << 20
 	defaultTimeout   = 15 * time.Second
+	maxRedirects     = 10
 )
 
 // ErrUnauthorized is returned when the Firewall Complexity API rejects the token.
@@ -63,10 +66,23 @@ func NewClient(baseURL string, tokenProvider TokenProvider, timeout time.Duratio
 		timeout = defaultTimeout
 	}
 	return &Client{
-		http:          &http.Client{Timeout: timeout},
+		http:          &http.Client{Timeout: timeout, CheckRedirect: checkRedirect},
 		baseURL:       strings.TrimRight(baseURL, "/"),
 		tokenProvider: tokenProvider,
 	}
+}
+
+// checkRedirect keeps the Firewall token off the wire in clear text: the API
+// redirects to an http:// Location even when reached over https, and following
+// that would replay the request, token header included, unencrypted.
+func checkRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= maxRedirects {
+		return fmt.Errorf("complexity: stopped after %d redirects", maxRedirects)
+	}
+	if len(via) > 0 && via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
+		return fmt.Errorf("complexity: refusing redirect from https to %s", req.URL.Scheme)
+	}
+	return nil
 }
 
 // Configured reports whether the endpoint and token provider are configured.

@@ -13,7 +13,8 @@ import (
 
 const (
 	firewallComplexityFunctionalSecret = "functional-firewall-secret"
-	firewallComplexityPath             = "/v1/complexity"
+	// Trailing slash mirrors the real API, which redirects the slashless form.
+	firewallComplexityPath = "/v1/complexity/"
 
 	// Message-content markers the stub maps to deterministic complexity
 	// scores, so each test drives routing purely through the prompt it sends
