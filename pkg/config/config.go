@@ -108,13 +108,13 @@ const (
 
 	defaultTrustGuardTimeout = 15 * time.Second
 
-	defaultFirewallComplexityTimeout = 15 * time.Second
+	defaultFirewallComplexityTimeout = 30 * time.Second
 
 	defaultOpenAIModerationTimeout = 15 * time.Second
 
-	defaultConfigSyncDataPlaneEnabled  = false
-	defaultConfigSyncLKGPath           = "/var/lib/trustgate/snapshot.lkg"
-	defaultConfigSyncPollInterval      = 5 * time.Minute
+	defaultConfigSyncDataPlaneEnabled = false
+	defaultConfigSyncLKGPath          = "/var/lib/trustgate/snapshot.lkg"
+	defaultConfigSyncPollInterval     = 5 * time.Minute
 	// The dispatcher fires immediately on the first write signal (leading edge);
 	// the debounce is only the horizon for folding a burst of follow-up writes
 	// into one trailing recompile, so it stays short to keep propagation of
@@ -388,12 +388,12 @@ type TrustGuardConfig struct {
 }
 
 // FirewallComplexityConfig configures the Firewall Complexity API used by the
-// smart-routing load balancer. Token is a static bearer sent in the "token"
-// header; an empty BaseURL or Token disables smart routing at runtime.
+// smart-routing load balancer. An empty BaseURL or SecretKey disables smart
+// routing at runtime.
 type FirewallComplexityConfig struct {
-	BaseURL string
-	Token   string // #nosec G117 -- config struct field, not a hardcoded credential
-	Timeout time.Duration
+	BaseURL   string
+	SecretKey string // #nosec G117 -- config struct field, not a hardcoded credential
+	Timeout   time.Duration
 }
 
 type OpenAIModerationConfig struct {
@@ -706,9 +706,9 @@ func getTrustGuardConfig() TrustGuardConfig {
 
 func getFirewallComplexityConfig() FirewallComplexityConfig {
 	return FirewallComplexityConfig{
-		BaseURL: getEnv("FIREWALL_COMPLEXITY_BASE_URL", ""),
-		Token:   getEnv("FIREWALL_COMPLEXITY_TOKEN", ""),
-		Timeout: getEnvDuration("FIREWALL_COMPLEXITY_TIMEOUT", defaultFirewallComplexityTimeout),
+		BaseURL:   getEnv("FIREWALL_BASE_URL", ""),
+		SecretKey: getEnv("FIREWALL_SECRET_KEY", ""),
+		Timeout:   defaultFirewallComplexityTimeout,
 	}
 }
 

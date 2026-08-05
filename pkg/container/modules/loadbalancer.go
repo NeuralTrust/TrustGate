@@ -23,6 +23,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/complexity"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	embeddingopenai "github.com/NeuralTrust/TrustGate/pkg/infra/embedding/openai"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/firewall"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer/strategies"
 	"go.uber.org/dig"
@@ -47,7 +48,7 @@ func LoadBalancer(c *container.Container) error {
 	if err := c.Provide(func(cfg *config.Config) strategies.ComplexityScorer {
 		return complexity.NewClient(
 			cfg.FirewallComplexity.BaseURL,
-			cfg.FirewallComplexity.Token,
+			firewall.NewTokenProvider(cfg.FirewallComplexity.SecretKey),
 			cfg.FirewallComplexity.Timeout,
 		)
 	}); err != nil {
