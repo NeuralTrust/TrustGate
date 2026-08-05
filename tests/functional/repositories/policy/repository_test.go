@@ -329,6 +329,51 @@ func TestRepository_List_FilterByGatewayAndName(t *testing.T) {
 	}
 }
 
+func TestRepository_List_RestrictToSlugs(t *testing.T) {
+	r, gw, _ := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-slug")
+
+	mustSave := func(p *domain.Policy) {
+		if err := r.Save(ctx, p); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+	}
+	mustSave(validPolicy(t, gwID, "rate-one"))
+	p2, err := domain.NewPolicy(gwID, "size-one", "request_size_limiter", true, 0, false,
+		map[string]any{"allowed_payload_size": 10, "size_unit": "megabytes"}, []domain.Stage{domain.StagePreRequest}, "", domain.ModeEnforce)
+	if err != nil {
+		t.Fatalf("NewPolicy: %v", err)
+	}
+	mustSave(p2)
+
+	items, total, err := r.List(ctx, domain.ListFilter{
+		GatewayID:       gwID,
+		RestrictToSlugs: true,
+		Slugs:           []string{"rate_limiter"},
+		Page:            listing.Page{Number: 1, Size: 10},
+	})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if total != 1 || len(items) != 1 || items[0].Slug != "rate_limiter" {
+		t.Fatalf("List(slug) total=%d items=%+v", total, items)
+	}
+
+	items, total, err = r.List(ctx, domain.ListFilter{
+		GatewayID:       gwID,
+		RestrictToSlugs: true,
+		Slugs:           []string{},
+		Page:            listing.Page{Number: 1, Size: 10},
+	})
+	if err != nil {
+		t.Fatalf("List empty slugs: %v", err)
+	}
+	if total != 0 || len(items) != 0 {
+		t.Fatalf("List(empty restrict) total=%d len=%d", total, len(items))
+	}
+}
+
 func TestRepository_GlobalFlag_RoundTripAndListByGateway(t *testing.T) {
 	r, gw, _ := setupRepo(t)
 	ctx := context.Background()

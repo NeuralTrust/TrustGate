@@ -21,17 +21,21 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 )
 
-// SortableFields are the whitelist of query fields accepted by list sort.
 var SortableFields = []string{"name", "created_at", "updated_at", "priority"}
 
 type ListFilter struct {
-	GatewayID ids.GatewayID
-	Search    string
-	Enabled   *bool
-	Global    *bool
-	Mode      Mode
-	Page      listing.Page
-	Sort      listing.Sort
+	GatewayID  ids.GatewayID
+	Search     string
+	Enabled    *bool
+	Global     *bool
+	Mode       Mode
+	Categories []string
+	Types      []string
+	// RestrictToSlugs with empty Slugs means match nothing (ENG-1242).
+	RestrictToSlugs bool
+	Slugs           []string
+	Page            listing.Page
+	Sort            listing.Sort
 }
 
 //go:generate mockery --name=Repository --dir=. --output=./mocks --filename=policy_repository_mock.go --case=underscore --with-expecter

@@ -154,3 +154,61 @@ func TestListPolicies_SortByPriority(t *testing.T) {
 	}
 	assert.Equal(t, []float64{10, 20, 30}, prios)
 }
+
+func TestListPolicies_FilterByTypeSlug(t *testing.T) {
+	defer Track(t, "ListPolicy")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("pol-type-gw")})
+	prefix := uniqueName("pol-type")
+	rateID := CreatePolicy(t, gwID, validPolicyPayload(prefix+"-rate"))
+	sizePayload := validPolicyPayload(prefix + "-size")
+	sizePayload["slug"] = "request_size_limiter"
+	sizePayload["settings"] = map[string]any{
+		"allowed_payload_size": 10,
+		"size_unit":            "megabytes",
+	}
+	_ = CreatePolicy(t, gwID, sizePayload)
+
+	status, body := sendRequest(t, http.MethodGet,
+		fmt.Sprintf("%s/v1/gateways/%s/policies?search=%s&type=rate_limiter",
+			AdminURL, gwID, url.QueryEscape(prefix)),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	assert.Equal(t, float64(1), body["total"])
+	items, _ := body["items"].([]any)
+	require.Len(t, items, 1)
+	obj, _ := items[0].(map[string]any)
+	assert.Equal(t, rateID, obj["id"])
+	assert.Equal(t, "rate_limiter", obj["slug"])
+}
+
+func TestListPolicies_FilterByCategory(t *testing.T) {
+	defer Track(t, "ListPolicy")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("pol-cat-gw")})
+	prefix := uniqueName("pol-cat")
+	_ = CreatePolicy(t, gwID, validPolicyPayload(prefix))
+
+	status, body := sendRequest(t, http.MethodGet,
+		fmt.Sprintf("%s/v1/gateways/%s/policies?search=%s&category=%s",
+			AdminURL, gwID, url.QueryEscape(prefix), url.QueryEscape("Traffic Control")),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	assert.Equal(t, float64(1), body["total"])
+
+	status, body = sendRequest(t, http.MethodGet,
+		fmt.Sprintf("%s/v1/gateways/%s/policies?search=%s&category=%s",
+			AdminURL, gwID, url.QueryEscape(prefix), url.QueryEscape("Guardrails")),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	assert.Equal(t, float64(0), body["total"])
+
+	status, body = sendRequest(t, http.MethodGet,
+		fmt.Sprintf("%s/v1/gateways/%s/policies?search=%s&category=%s",
+			AdminURL, gwID, url.QueryEscape(prefix), url.QueryEscape("Missing Category")),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	assert.Equal(t, float64(0), body["total"])
+}

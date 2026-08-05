@@ -3377,6 +3377,14 @@ paths:
         in: query
         name: mode
         type: string
+      - description: Catalog category (group type); comma-separated multi
+        in: query
+        name: category
+        type: string
+      - description: Plugin slug (FE type filter); comma-separated multi
+        in: query
+        name: type
+        type: string
       - description: Sort field (name, created_at, updated_at, priority)
         in: query
         name: sort

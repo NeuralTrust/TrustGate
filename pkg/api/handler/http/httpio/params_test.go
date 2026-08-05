@@ -17,6 +17,7 @@ package httpio
 import (
 	"errors"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -282,6 +283,47 @@ func TestParseOptionalBool(t *testing.T) {
 			}
 			if got == nil || *got != tc.want {
 				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseCSVQuery(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		target string
+		want   []string
+	}{
+		{name: "missing", target: "/test", want: nil},
+		{name: "single", target: "/test?category=Guardrails", want: []string{"Guardrails"}},
+		{name: "comma separated", target: "/test?category=Guardrails,Quota", want: []string{"Guardrails", "Quota"}},
+		{name: "trims spaces", target: "/test?category=Guardrails,%20Quota", want: []string{"Guardrails", "Quota"}},
+		{name: "repeated keys", target: "/test?type=a&type=b", want: []string{"a", "b"}},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := runInCtx(t, tc.target, "/test", func(c *fiber.Ctx) ([]string, error) {
+				name := "category"
+				if strings.Contains(tc.target, "type=") {
+					name = "type"
+				}
+				return ParseCSVQuery(c, name), nil
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Fatalf("got %v, want %v", got, tc.want)
+				}
 			}
 		})
 	}
