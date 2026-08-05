@@ -43,3 +43,42 @@ func TestProtocolResolver_SupportedProtocols(t *testing.T) {
 		assert.Nil(t, got)
 	})
 }
+
+type protocolPickyPlugin struct {
+	stagePlugin
+	err error
+}
+
+func (p *protocolPickyPlugin) ValidateConfigForProtocol(Protocol, map[string]any) error {
+	return p.err
+}
+
+func TestProtocolResolver_ValidateSettingsForProtocol(t *testing.T) {
+	reg := NewRegistry()
+	require.NoError(t, reg.Register(&stagePlugin{
+		name:      "indifferent",
+		supported: []policy.Stage{policy.StagePreRequest},
+		protocols: []Protocol{ProtocolLLM, ProtocolMCP},
+	}))
+	require.NoError(t, reg.Register(&protocolPickyPlugin{
+		stagePlugin: stagePlugin{
+			name:      "picky",
+			supported: []policy.Stage{policy.StagePreRequest},
+			protocols: []Protocol{ProtocolLLM, ProtocolMCP},
+		},
+		err: assert.AnError,
+	}))
+	resolver := NewProtocolResolver(reg)
+
+	t.Run("a plugin that does not care is not asked", func(t *testing.T) {
+		assert.NoError(t, resolver.ValidateSettingsForProtocol("indifferent", "MCP", nil))
+	})
+
+	t.Run("an unknown plugin is nobody's business", func(t *testing.T) {
+		assert.NoError(t, resolver.ValidateSettingsForProtocol("missing", "MCP", nil))
+	})
+
+	t.Run("a plugin that cares has its verdict carried out", func(t *testing.T) {
+		assert.ErrorIs(t, resolver.ValidateSettingsForProtocol("picky", "MCP", nil), assert.AnError)
+	})
+}

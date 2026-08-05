@@ -119,6 +119,33 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	return err
 }
 
+// ValidateConfigForProtocol refuses, on MCP, the behaviors that only the LLM
+// path can carry out. There the plugin watches a model's conversation and can
+// edit it — withdraw the tool before the model sees it, or answer its call with
+// an explanation. On MCP the client asked for one tool by name and the gateway
+// is the caller, so there is nothing to edit and every behavior collapses into
+// the same refusal. Accepting the setting and quietly enforcing something else
+// is the failure worth avoiding: the policy would read as one thing on the
+// consumer it is attached to and behave as another.
+func (p *Plugin) ValidateConfigForProtocol(protocol appplugins.Protocol, settings map[string]any) error {
+	if protocol != appplugins.ProtocolMCP {
+		return nil
+	}
+	cfg, err := parseConfig(settings)
+	if err != nil {
+		return err
+	}
+	offenders := cfg.rewritingBehaviors()
+	if len(offenders) == 0 {
+		return nil
+	}
+	return fmt.Errorf(
+		"per_tool_rate_limiter: %s cannot be honoured on MCP, where a refused call is never sent"+
+			" and there is no request to rewrite; use %s or attach this policy to an LLM consumer",
+		strings.Join(offenders, ", "), behaviorReject,
+	)
+}
+
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	if p.redis == nil {
 		return okResult(), nil

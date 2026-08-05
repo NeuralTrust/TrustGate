@@ -212,6 +212,99 @@ func TestPlugin_ValidateConfig(t *testing.T) {
 	}
 }
 
+func TestPlugin_ValidateConfigForProtocol(t *testing.T) {
+	rule := func(behavior string) map[string]any {
+		r := map[string]any{
+			"tool": "send_email", "windows": []any{map[string]any{"duration": "1m", "max": 5}},
+		}
+		if behavior != "" {
+			r["behavior"] = behavior
+		}
+		return r
+	}
+
+	tests := []struct {
+		name     string
+		protocol appplugins.Protocol
+		settings map[string]any
+		wantErr  string
+	}{
+		{
+			name:     "rewriting behaviour is fine on the path that can rewrite",
+			protocol: appplugins.ProtocolLLM,
+			settings: map[string]any{"rules": []any{rule(behaviorStrip)}},
+		},
+		{
+			name:     "refusing is the same on both paths",
+			protocol: appplugins.ProtocolMCP,
+			settings: map[string]any{"rules": []any{rule(behaviorReject)}},
+		},
+		{
+			name:     "an unset behaviour refuses, so it carries over",
+			protocol: appplugins.ProtocolMCP,
+			settings: map[string]any{"rules": []any{rule("")}},
+		},
+		{
+			name:     "stripping cannot be honoured on mcp",
+			protocol: appplugins.ProtocolMCP,
+			settings: map[string]any{"rules": []any{rule(behaviorStrip)}},
+			wantErr:  behaviorStrip,
+		},
+		{
+			name:     "injecting cannot be honoured on mcp",
+			protocol: appplugins.ProtocolMCP,
+			settings: map[string]any{"rules": []any{rule(behaviorInject)}},
+			wantErr:  behaviorInject,
+		},
+		{
+			name:     "a rewriting default is caught too",
+			protocol: appplugins.ProtocolMCP,
+			settings: map[string]any{
+				"behavior_default": behaviorInject,
+				"rules":            []any{rule("")},
+			},
+			wantErr: "behavior_default",
+		},
+		{
+			name:     "an invalid rule set is still invalid",
+			protocol: appplugins.ProtocolMCP,
+			settings: map[string]any{"rules": []any{}},
+			wantErr:  "rules must not be empty",
+		},
+	}
+
+	p := New(nil, nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := p.ValidateConfigForProtocol(tt.protocol, tt.settings)
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+// The offending tool is named so an operator with a long rule set is told which
+// line to change rather than that something, somewhere, is wrong.
+func TestPlugin_ValidateConfigForProtocol_NamesTheOffendingRule(t *testing.T) {
+	err := New(nil, nil).ValidateConfigForProtocol(appplugins.ProtocolMCP, map[string]any{
+		"rules": []any{
+			map[string]any{
+				"tool": "safe_tool", "windows": []any{map[string]any{"duration": "1m", "max": 5}},
+			},
+			map[string]any{
+				"tool": "send_email", "windows": []any{map[string]any{"duration": "1m", "max": 5}},
+				"behavior": behaviorStrip,
+			},
+		},
+	})
+
+	require.ErrorContains(t, err, "send_email")
+	assert.NotContains(t, err.Error(), "safe_tool")
+}
+
 func TestPlugin_AppearsInCatalog(t *testing.T) {
 	reg := appplugins.NewRegistry()
 	require.NoError(t, reg.Register(New(nil, nil)))
