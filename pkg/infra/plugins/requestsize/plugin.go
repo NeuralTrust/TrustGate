@@ -99,7 +99,7 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 			RequestSizeBytes:   byteSize,
 			RequestSizeChars:   charCount,
 			MaxSizeBytes:       maxBytes,
-			MaxCharsPerRequest: int(cfg.MaxCharsPerRequest),
+			MaxCharsPerRequest: int(cfg.maxChars()),
 			LimitExceeded:      true,
 			ExceededType:       "bytes",
 		})
@@ -113,12 +113,12 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 		return allowResult(byteSize, charCount, maxBytes, cfg), nil
 	}
 
-	if int64(charCount) > cfg.MaxCharsPerRequest {
+	if int64(charCount) > cfg.maxChars() {
 		setSizeExtras(in.Event, RequestSizeLimiterData{
 			RequestSizeBytes:   byteSize,
 			RequestSizeChars:   charCount,
 			MaxSizeBytes:       maxBytes,
-			MaxCharsPerRequest: int(cfg.MaxCharsPerRequest),
+			MaxCharsPerRequest: int(cfg.maxChars()),
 			LimitExceeded:      true,
 			ExceededType:       "chars",
 		})
@@ -136,7 +136,7 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 		RequestSizeBytes:   byteSize,
 		RequestSizeChars:   charCount,
 		MaxSizeBytes:       maxBytes,
-		MaxCharsPerRequest: int(cfg.MaxCharsPerRequest),
+		MaxCharsPerRequest: int(cfg.maxChars()),
 		LimitExceeded:      false,
 	})
 	return allowResult(byteSize, charCount, maxBytes, cfg), nil
@@ -149,7 +149,7 @@ func allowResult(byteSize, charCount, maxBytes int, cfg *config) *appplugins.Res
 			"X-Request-Size-Bytes": {strconv.Itoa(byteSize)},
 			"X-Request-Size-Chars": {strconv.Itoa(charCount)},
 			"X-Size-Limit-Bytes":   {strconv.Itoa(maxBytes)},
-			"X-Size-Limit-Chars":   {strconv.FormatInt(cfg.MaxCharsPerRequest, 10)},
+			"X-Size-Limit-Chars":   {strconv.FormatInt(cfg.maxChars(), 10)},
 		},
 	}
 }

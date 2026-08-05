@@ -33,10 +33,13 @@ const (
 	defaultMaxCharsPerRequest = 100_000
 )
 
+// config is the request_size_limiter settings. MaxCharsPerRequest is a pointer
+// so an operator writing 0 can be told it means nothing, instead of silently
+// getting the default ceiling an omitted field asks for.
 type config struct {
 	AllowedPayloadSize   int      `mapstructure:"allowed_payload_size"`
 	SizeUnit             sizeUnit `mapstructure:"size_unit"`
-	MaxCharsPerRequest   int64    `mapstructure:"max_chars_per_request"`
+	MaxCharsPerRequest   *int64   `mapstructure:"max_chars_per_request"`
 	RequireContentLength bool     `mapstructure:"require_content_length"`
 }
 
@@ -61,8 +64,8 @@ func (c *config) validate() error {
 	default:
 		return fmt.Errorf("request_size_limiter: size_unit must be one of bytes, kilobytes, megabytes")
 	}
-	if c.MaxCharsPerRequest < 0 {
-		return fmt.Errorf("request_size_limiter: max_chars_per_request cannot be negative")
+	if c.MaxCharsPerRequest != nil && *c.MaxCharsPerRequest <= 0 {
+		return fmt.Errorf("request_size_limiter: max_chars_per_request must be > 0 when set")
 	}
 	return nil
 }
@@ -74,9 +77,17 @@ func (c *config) applyDefaults() {
 	if c.AllowedPayloadSize <= 0 {
 		c.AllowedPayloadSize = defaultAllowedPayloadSize
 	}
-	if c.MaxCharsPerRequest <= 0 {
-		c.MaxCharsPerRequest = defaultMaxCharsPerRequest
+	if c.MaxCharsPerRequest == nil {
+		maxChars := int64(defaultMaxCharsPerRequest)
+		c.MaxCharsPerRequest = &maxChars
 	}
+}
+
+func (c *config) maxChars() int64 {
+	if c.MaxCharsPerRequest == nil {
+		return defaultMaxCharsPerRequest
+	}
+	return *c.MaxCharsPerRequest
 }
 
 func (c *config) maxSizeBytes() int {
