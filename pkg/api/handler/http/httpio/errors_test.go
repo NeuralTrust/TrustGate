@@ -36,6 +36,8 @@ func TestMapDomainError(t *testing.T) {
 		{name: "invalid uuid → 400", err: ErrInvalidUUIDParam, wantStatus: fiber.StatusBadRequest, wantCode: "invalid_uuid"},
 		{name: "invalid page → 422", err: ErrInvalidPage, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "invalid_pagination"},
 		{name: "invalid size → 422", err: ErrInvalidSize, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "invalid_pagination"},
+		{name: "invalid sort → 422", err: ErrInvalidSort, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "invalid_sort"},
+		{name: "invalid filter → 422", err: ErrInvalidFilter, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "invalid_filter"},
 		{name: "not found → 404", err: commonerrors.ErrNotFound, wantStatus: fiber.StatusNotFound, wantCode: "not_found"},
 		{name: "wrapped not found → 404", err: fmt.Errorf("repo: %w", commonerrors.ErrNotFound), wantStatus: fiber.StatusNotFound, wantCode: "not_found"},
 		{name: "already exists → 409", err: commonerrors.ErrAlreadyExists, wantStatus: fiber.StatusConflict, wantCode: "already_exists"},
