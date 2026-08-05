@@ -138,7 +138,11 @@ func TestPluginE2E_PerToolRateLimiter_RejectResponse(t *testing.T) {
 	status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, proposal)
 	require.Equal(t, http.StatusOK, status, "proposal turn is under the limit, body: %s", raw)
 
-	execution := mustJSON(t, chatRequestWithToolResult("call_1", "get_weather"))
+	// An agent framework re-declares its tools on every turn, so the request that
+	// reports a result is also the one enforcement reads. Declaring them here is
+	// what keeps the budget honest: the call this turn is reporting is the one
+	// the budget granted, and refusing it would leave max: 1 completing none.
+	execution := mustJSON(t, chatRequestWithToolResult("call_1", "get_weather", "get_weather"))
 	status, _, raw = proxyRequest(t, http.MethodPost, apiKey, path, nil, execution)
 	require.Equal(t, http.StatusOK, status, "executed-result turn charges the counter and passes through, body: %s", raw)
 

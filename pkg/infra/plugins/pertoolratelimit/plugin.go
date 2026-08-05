@@ -198,6 +198,10 @@ func (p *Plugin) preRequest(
 	if err != nil || canonical == nil {
 		return okResult(), nil
 	}
+	spent, err := p.spentBefore(ctx, cfg, in, dimension, subject, canonical.Tools)
+	if err != nil {
+		return nil, fmt.Errorf("per_tool_rate_limiter: %w", err)
+	}
 	if len(canonical.Messages) > 0 {
 		if err := p.countExecuted(ctx, cfg, in, dimension, subject, canonical.Messages); err != nil {
 			return nil, fmt.Errorf("per_tool_rate_limiter: %w", err)
@@ -221,10 +225,7 @@ func (p *Plugin) preRequest(
 		if !p.enforcedAtRequest(behavior, canonical.Stream) {
 			continue
 		}
-		ws, err := p.overLimit(ctx, in.Config.ID, dimension, subject, tool, rule)
-		if err != nil {
-			return nil, fmt.Errorf("per_tool_rate_limiter: %w", err)
-		}
+		ws := spent[tool]
 		if ws == nil {
 			continue
 		}
@@ -238,6 +239,35 @@ func (p *Plugin) preRequest(
 		return okResult(), nil
 	}
 	return p.stripTools(in.Request.Body, format, canonical, strip)
+}
+
+func (p *Plugin) spentBefore(
+	ctx context.Context,
+	cfg *config,
+	in appplugins.ExecInput,
+	dimension, subject string,
+	tools []adapter.CanonicalTool,
+) (map[string]*windowState, error) {
+	spent := make(map[string]*windowState, len(tools))
+	for i := range tools {
+		tool := tools[i].Name
+		if tool == "" {
+			continue
+		}
+		if _, done := spent[tool]; done {
+			continue
+		}
+		rule, ok := matchRule(cfg.Rules, tool)
+		if !ok {
+			continue
+		}
+		ws, err := p.overLimit(ctx, in.Config.ID, dimension, subject, tool, rule)
+		if err != nil {
+			return nil, err
+		}
+		spent[tool] = ws
+	}
+	return spent, nil
 }
 
 func (p *Plugin) enforcedAtRequest(behavior string, streaming bool) bool {
