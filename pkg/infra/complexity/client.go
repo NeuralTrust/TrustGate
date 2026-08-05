@@ -40,32 +40,38 @@ const (
 // ErrUnauthorized is returned when the Firewall Complexity API rejects the token.
 var ErrUnauthorized = errors.New("complexity: unauthorized")
 
-// ErrNotConfigured is returned when Score is called without a base URL and token.
+// ErrNotConfigured is returned when Score is called without a base URL and token provider.
 var ErrNotConfigured = errors.New("complexity: client not configured")
 
-// Client calls the Firewall Complexity API with a static bearer token.
-type Client struct {
-	http    *http.Client
-	baseURL string
-	token   string
+// TokenProvider supplies authentication tokens for Firewall requests.
+type TokenProvider interface {
+	Configured() bool
+	Invalidate()
+	Token() (string, error)
 }
 
-// NewClient builds a Client. An empty baseURL or token leaves it unconfigured
-// (see Configured), so callers can fall back to another strategy.
-func NewClient(baseURL, token string, timeout time.Duration) *Client {
+// Client calls the Firewall Complexity API.
+type Client struct {
+	http          *http.Client
+	baseURL       string
+	tokenProvider TokenProvider
+}
+
+// NewClient builds a Client. Missing endpoint credentials leave it unconfigured.
+func NewClient(baseURL string, tokenProvider TokenProvider, timeout time.Duration) *Client {
 	if timeout <= 0 {
 		timeout = defaultTimeout
 	}
 	return &Client{
-		http:    &http.Client{Timeout: timeout},
-		baseURL: strings.TrimRight(baseURL, "/"),
-		token:   token,
+		http:          &http.Client{Timeout: timeout},
+		baseURL:       strings.TrimRight(baseURL, "/"),
+		tokenProvider: tokenProvider,
 	}
 }
 
-// Configured reports whether both a base URL and token are set.
+// Configured reports whether the endpoint and token provider are configured.
 func (c *Client) Configured() bool {
-	return c.baseURL != "" && c.token != ""
+	return c.baseURL != "" && c.tokenProvider != nil && c.tokenProvider.Configured()
 }
 
 // Score returns the session-smoothed complexity score in [0,1] for input.
@@ -73,6 +79,10 @@ func (c *Client) Configured() bool {
 func (c *Client) Score(ctx context.Context, input, conversationID, tenantID string) (float64, error) {
 	if !c.Configured() {
 		return 0, ErrNotConfigured
+	}
+	token, err := c.tokenProvider.Token()
+	if err != nil {
+		return 0, fmt.Errorf("complexity: get token: %w", err)
 	}
 	payload, err := json.Marshal(scoreRequest{
 		Input:          input,
@@ -87,7 +97,7 @@ func (c *Client) Score(ctx context.Context, input, conversationID, tenantID stri
 	if err != nil {
 		return 0, fmt.Errorf("complexity: build request: %w", err)
 	}
-	req.Header.Set(headerToken, c.token)
+	req.Header.Set(headerToken, token)
 	req.Header.Set("Content-Type", contentTypeJSON)
 
 	res, err := c.http.Do(req)
@@ -103,6 +113,7 @@ func (c *Client) Score(ctx context.Context, input, conversationID, tenantID stri
 		return 0, fmt.Errorf("complexity: read response: %w", err)
 	}
 	if res.StatusCode == http.StatusUnauthorized {
+		c.tokenProvider.Invalidate()
 		return 0, ErrUnauthorized
 	}
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {

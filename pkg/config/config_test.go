@@ -60,6 +60,21 @@ func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	}
 }
 
+func TestGetFirewallComplexityConfig(t *testing.T) {
+	t.Setenv("FIREWALL_BASE_URL", "https://firewall.example")
+	t.Setenv("FIREWALL_SECRET_KEY", "signing-secret")
+	cfg := getFirewallComplexityConfig()
+	if cfg.BaseURL != "https://firewall.example" {
+		t.Errorf("BaseURL = %q, want %q", cfg.BaseURL, "https://firewall.example")
+	}
+	if cfg.SecretKey != "signing-secret" {
+		t.Errorf("SecretKey = %q, want configured value", cfg.SecretKey)
+	}
+	if cfg.Timeout != defaultFirewallComplexityTimeout {
+		t.Errorf("Timeout = %s, want %s", cfg.Timeout, defaultFirewallComplexityTimeout)
+	}
+}
+
 func TestLoadConfig_PostgresLoginModes(t *testing.T) {
 	tests := []struct {
 		name, login, password, sslMode, wantLogin, wantPassword string
