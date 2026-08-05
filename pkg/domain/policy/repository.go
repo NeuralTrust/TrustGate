@@ -21,22 +21,17 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 )
 
-// SortableFields are the whitelist of query fields accepted by list sort.
 var SortableFields = []string{"name", "created_at", "updated_at", "priority"}
 
 type ListFilter struct {
-	GatewayID ids.GatewayID
-	Search    string
-	Enabled   *bool
-	Global    *bool
-	Mode      Mode
-	// Categories are catalog group type strings (e.g. "Guardrails"). Expanded to
-	// slugs in the app layer before the repository query.
+	GatewayID  ids.GatewayID
+	Search     string
+	Enabled    *bool
+	Global     *bool
+	Mode       Mode
 	Categories []string
-	// Types are plugin slugs (FE filter id "type"). Combined with Categories via
-	// intersection when both are set.
-	Types []string
-	// RestrictToSlugs, when true, limits results to Slugs (empty Slugs → no rows).
+	Types      []string
+	// RestrictToSlugs with empty Slugs means match nothing (ENG-1242).
 	RestrictToSlugs bool
 	Slugs           []string
 	Page            listing.Page

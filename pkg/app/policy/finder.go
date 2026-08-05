@@ -70,9 +70,6 @@ func (f *finder) FindByID(ctx context.Context, gatewayID ids.GatewayID, id ids.P
 	return scopeToGateway(p, gatewayID)
 }
 
-// scopeToGateway enforces that a policy belongs to the requesting gateway,
-// returning ErrNotFound for cross-gateway ids so the API never confirms the
-// existence of another gateway's resource.
 func scopeToGateway(p *domain.Policy, gatewayID ids.GatewayID) (*domain.Policy, error) {
 	if p.GatewayID != gatewayID {
 		return nil, domain.ErrNotFound

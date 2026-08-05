@@ -20,10 +20,6 @@ import (
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 )
 
-// ResolveListSlugs expands catalog category filters and optional type (plugin slug)
-// filters into the slug set used by repository list. restricted is true when any
-// category or type filter was requested. An empty slug slice with restricted true
-// means the filter matches nothing (unknown category, empty intersection, etc.).
 func ResolveListSlugs(catalog appplugins.Catalog, categories, types []string) (slugs []string, restricted bool) {
 	if len(categories) == 0 && len(types) == 0 {
 		return nil, false
