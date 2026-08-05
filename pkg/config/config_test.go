@@ -70,8 +70,8 @@ func TestGetFirewallComplexityConfig(t *testing.T) {
 	if cfg.SecretKey != "signing-secret" {
 		t.Errorf("SecretKey = %q, want configured value", cfg.SecretKey)
 	}
-	if cfg.Timeout != defaultFirewallComplexityTimeout {
-		t.Errorf("Timeout = %s, want %s", cfg.Timeout, defaultFirewallComplexityTimeout)
+	if cfg.Timeout != 30*time.Second {
+		t.Errorf("Timeout = %s, want 30s", cfg.Timeout)
 	}
 }
 

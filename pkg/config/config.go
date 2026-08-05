@@ -108,7 +108,7 @@ const (
 
 	defaultTrustGuardTimeout = 15 * time.Second
 
-	defaultFirewallComplexityTimeout = 15 * time.Second
+	defaultFirewallComplexityTimeout = 30 * time.Second
 
 	defaultOpenAIModerationTimeout = 15 * time.Second
 
