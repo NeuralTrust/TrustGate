@@ -14,8 +14,15 @@
 
 package request
 
+import (
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
+)
+
 type ListAuthRequest struct {
-	Name string
-	Page int
-	Size int
+	Search  string
+	Type    domain.Type
+	Enabled *bool
+	Page    listing.Page
+	Sort    listing.Sort
 }

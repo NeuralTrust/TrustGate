@@ -18,13 +18,17 @@ import (
 	"context"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 )
 
+// SortableFields are the whitelist of query fields accepted by list sort.
+var SortableFields = []string{"name", "created_at", "updated_at"}
+
 type ListFilter struct {
-	GatewayID    ids.GatewayID
-	NameContains string
-	Page         int
-	Size         int
+	GatewayID ids.GatewayID
+	Search    string
+	Page      listing.Page
+	Sort      listing.Sort
 }
 
 //go:generate mockery --name=Repository --dir=. --output=./mocks --filename=role_repository_mock.go --case=underscore --with-expecter

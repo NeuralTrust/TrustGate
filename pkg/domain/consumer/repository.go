@@ -18,13 +18,20 @@ import (
 	"context"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 )
 
+// SortableFields are the whitelist of query fields accepted by list sort.
+var SortableFields = []string{"name", "created_at", "updated_at", "type"}
+
 type ListFilter struct {
-	GatewayID    ids.GatewayID
-	NameContains string
-	Page         int
-	Size         int
+	GatewayID ids.GatewayID
+	Search    string
+	Type      Type
+	Active    *bool
+	AuthID    ids.AuthID
+	Page      listing.Page
+	Sort      listing.Sort
 }
 
 // Reader exposes the read-only queries over the consumer store.

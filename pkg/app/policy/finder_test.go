@@ -103,13 +103,13 @@ func TestFinder_List(t *testing.T) {
 	want := []*domain.Policy{{ID: ids.New[ids.PolicyKind](), Name: "a"}}
 	repo.EXPECT().
 		List(mock.Anything, mock.MatchedBy(func(f domain.ListFilter) bool {
-			return f.NameContains == "a"
+			return f.Search == "a"
 		})).
 		Return(want, 1, nil).
 		Once()
 
 	finder := apppolicy.NewFinder(repo, newCacheManager(), newTestLogger())
-	got, total, err := finder.List(context.Background(), domain.ListFilter{NameContains: "a"})
+	got, total, err := finder.List(context.Background(), domain.ListFilter{Search: "a"})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
