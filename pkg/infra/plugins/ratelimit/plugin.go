@@ -115,8 +115,8 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return nil, err
 	}
 
+	reset := now.Add(window)
 	headers := make(map[string][]string)
-	setLimitHeaders(headers, dimension, cfg.Limit, count, now.Add(window))
 
 	data := RateLimiterData{
 		ExceededType: dimension,
@@ -130,6 +130,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		data.RetryAfter = cfg.RetryAfter
 
 		if appplugins.Blocks(in.Mode) && !appplugins.Throttles(in.Mode) {
+			setLimitHeaders(headers, dimension, cfg.Limit, count, reset)
 			headers["Retry-After"] = []string{cfg.RetryAfter}
 			appplugins.SetDecision(in.Event, in.Mode)
 			if in.Event != nil {
@@ -154,6 +155,9 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	if err := p.record(ctx, redisKey, now, window); err != nil {
 		return nil, err
 	}
+	// The client is told what is left once this request is counted: a client
+	// reading "1 remaining" must be able to spend it without being rejected.
+	setLimitHeaders(headers, dimension, cfg.Limit, count+1, reset)
 
 	if in.Event != nil {
 		in.Event.SetStatusCode(http.StatusOK)

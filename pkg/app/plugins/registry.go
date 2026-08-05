@@ -32,6 +32,7 @@ type Registry interface {
 	Get(name string) (Plugin, bool)
 	Validate(name string, settings map[string]any) error
 	ValidateStages(name string, selected []policy.Stage) error
+	ValidateMode(name string, selected policy.Mode) error
 	Names() []string
 }
 
@@ -102,6 +103,14 @@ func (r *registry) ValidateStages(name string, selected []policy.Stage) error {
 		return fmt.Errorf("%w: %s", ErrUnknownPlugin, name)
 	}
 	return ValidateStages(p, selected)
+}
+
+func (r *registry) ValidateMode(name string, selected policy.Mode) error {
+	p, ok := r.plugins[name]
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrUnknownPlugin, name)
+	}
+	return ValidateMode(p, selected)
 }
 
 func (r *registry) Names() []string {

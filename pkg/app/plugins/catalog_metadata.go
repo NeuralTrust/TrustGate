@@ -76,15 +76,14 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "window",
 					Label:       "Window",
 					Type:        FieldTypeDuration,
-					Description: "Sliding window duration (e.g. 1s, 1m, 1h).",
+					Description: "Sliding window duration, one second or longer (e.g. 1s, 1m, 1h).",
 					Required:    true,
 				},
 				{
 					Key:         "retry_after",
 					Label:       "Retry After",
 					Type:        FieldTypeString,
-					Description: "Value sent in the Retry-After header, in seconds, when the limit is exceeded.",
-					Default:     "60",
+					Description: "Value sent in the Retry-After header, in seconds, when the limit is exceeded. Defaults to the window, which is when the budget actually returns.",
 				},
 				{
 					Key:         "group_by_header",
@@ -121,7 +120,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "max_chars_per_request",
 					Label:       "Max Characters Per Request",
 					Type:        FieldTypeInteger,
-					Description: "Maximum number of UTF-8 characters allowed in the request body.",
+					Description: "Maximum number of UTF-8 characters allowed in the request body. Leave it out to use the default; zero is not a valid ceiling.",
 					Default:     100000,
 				},
 				{

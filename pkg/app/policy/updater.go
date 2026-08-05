@@ -114,7 +114,13 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 	if err := existing.Validate(); err != nil {
 		return nil, err
 	}
-	if err := validatePlugin(u.registry, existing.Slug, existing.Stages, existing.Settings); err != nil {
+	if err := validatePlugin(
+		u.registry,
+		existing.Slug,
+		existing.Stages,
+		existing.Mode,
+		existing.Settings,
+	); err != nil {
 		return nil, err
 	}
 	if err := u.repo.Update(ctx, existing); err != nil {
