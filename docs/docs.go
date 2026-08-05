@@ -1620,6 +1620,18 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
+                        "description": "Catalog category (group type); comma-separated multi",
+                        "name": "category",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Plugin slug (FE type filter); comma-separated multi",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "description": "Sort field (name, created_at, updated_at, priority)",
                         "name": "sort",
                         "in": "query"

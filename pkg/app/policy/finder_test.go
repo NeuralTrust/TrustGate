@@ -20,12 +20,25 @@ import (
 	"testing"
 
 	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/policy/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/stretchr/testify/mock"
 )
+
+type stubCatalog struct {
+	catalog appplugins.Catalog
+}
+
+func (s stubCatalog) Catalog() appplugins.Catalog {
+	return s.catalog
+}
+
+func emptyCatalog() appplugins.CatalogService {
+	return stubCatalog{}
+}
 
 func TestFinder_FindByID_CacheHit(t *testing.T) {
 	t.Parallel()
@@ -37,7 +50,7 @@ func TestFinder_FindByID_CacheHit(t *testing.T) {
 	mgr := newCacheManager()
 	mgr.GetTTLMap(cache.PolicyTTLName).Set(id.String(), cached)
 
-	finder := apppolicy.NewFinder(repo, mgr, newTestLogger())
+	finder := apppolicy.NewFinder(repo, emptyCatalog(), mgr, newTestLogger())
 	got, err := finder.FindByID(context.Background(), gwID, id)
 	if err != nil {
 		t.Fatalf("FindByID: %v", err)
@@ -56,7 +69,7 @@ func TestFinder_FindByID_CacheMiss_PopulatesCache(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, id).Return(want, nil).Once()
 
 	mgr := newCacheManager()
-	finder := apppolicy.NewFinder(repo, mgr, newTestLogger())
+	finder := apppolicy.NewFinder(repo, emptyCatalog(), mgr, newTestLogger())
 
 	got, err := finder.FindByID(context.Background(), gwID, id)
 	if err != nil {
@@ -76,7 +89,7 @@ func TestFinder_FindByID_NotFound(t *testing.T) {
 	id := ids.New[ids.PolicyKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
 
-	finder := apppolicy.NewFinder(repo, newCacheManager(), newTestLogger())
+	finder := apppolicy.NewFinder(repo, emptyCatalog(), newCacheManager(), newTestLogger())
 	_, err := finder.FindByID(context.Background(), ids.New[ids.GatewayKind](), id)
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
@@ -90,7 +103,7 @@ func TestFinder_FindByID_WrongGateway(t *testing.T) {
 	want := &domain.Policy{ID: id, GatewayID: ids.New[ids.GatewayKind](), Name: "other"}
 	repo.EXPECT().FindByID(mock.Anything, id).Return(want, nil).Once()
 
-	finder := apppolicy.NewFinder(repo, newCacheManager(), newTestLogger())
+	finder := apppolicy.NewFinder(repo, emptyCatalog(), newCacheManager(), newTestLogger())
 	_, err := finder.FindByID(context.Background(), ids.New[ids.GatewayKind](), id)
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound for cross-gateway id", err)
@@ -103,17 +116,57 @@ func TestFinder_List(t *testing.T) {
 	want := []*domain.Policy{{ID: ids.New[ids.PolicyKind](), Name: "a"}}
 	repo.EXPECT().
 		List(mock.Anything, mock.MatchedBy(func(f domain.ListFilter) bool {
-			return f.Search == "a"
+			return f.Search == "a" && !f.RestrictToSlugs
 		})).
 		Return(want, 1, nil).
 		Once()
 
-	finder := apppolicy.NewFinder(repo, newCacheManager(), newTestLogger())
+	finder := apppolicy.NewFinder(repo, emptyCatalog(), newCacheManager(), newTestLogger())
 	got, total, err := finder.List(context.Background(), domain.ListFilter{Search: "a"})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
 	if total != 1 || len(got) != 1 {
 		t.Fatalf("List returned total=%d len=%d", total, len(got))
+	}
+}
+
+func TestFinder_List_CategoryExpandsToSlugs(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	catalog := stubCatalog{catalog: appplugins.Catalog{
+		Groups: []appplugins.CatalogGroup{{
+			Type:  "Traffic Control",
+			Items: []appplugins.CatalogEntry{{Slug: "rate_limiter"}},
+		}},
+	}}
+	repo.EXPECT().
+		List(mock.Anything, mock.MatchedBy(func(f domain.ListFilter) bool {
+			return f.RestrictToSlugs && len(f.Slugs) == 1 && f.Slugs[0] == "rate_limiter"
+		})).
+		Return([]*domain.Policy{}, 0, nil).
+		Once()
+
+	finder := apppolicy.NewFinder(repo, catalog, newCacheManager(), newTestLogger())
+	_, _, err := finder.List(context.Background(), domain.ListFilter{
+		Categories: []string{"Traffic Control"},
+	})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+}
+
+func TestFinder_List_UnknownCategoryShortCircuits(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	finder := apppolicy.NewFinder(repo, emptyCatalog(), newCacheManager(), newTestLogger())
+	items, total, err := finder.List(context.Background(), domain.ListFilter{
+		Categories: []string{"Missing"},
+	})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if total != 0 || len(items) != 0 {
+		t.Fatalf("got total=%d len=%d", total, len(items))
 	}
 }

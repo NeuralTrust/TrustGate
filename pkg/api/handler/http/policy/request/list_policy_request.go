@@ -20,10 +20,12 @@ import (
 )
 
 type ListPolicyRequest struct {
-	Search  string
-	Enabled *bool
-	Global  *bool
-	Mode    domain.Mode
-	Page    listing.Page
-	Sort    listing.Sort
+	Search     string
+	Enabled    *bool
+	Global     *bool
+	Mode       domain.Mode
+	Categories []string
+	Types      []string
+	Page       listing.Page
+	Sort       listing.Sort
 }

@@ -240,13 +240,28 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%' OR lower(slug) LIKE '%' || lower($2) || '%')
 		   AND ($3::boolean IS NULL OR enabled = $3)
 		   AND ($4::boolean IS NULL OR global = $4)
-		   AND ($5 = '' OR mode = $5)`
+		   AND ($5 = '' OR mode = $5)
+		   AND (NOT $6::boolean OR slug = ANY($7::text[]))`
 
 	gatewayParam := nullableUUID(filter.GatewayID.UUID())
 	modeParam := string(filter.Mode)
+	slugs := filter.Slugs
+	if slugs == nil {
+		slugs = []string{}
+	}
 
 	var total int
-	if err := r.conn.Pool.QueryRow(ctx, countQuery, gatewayParam, filter.Search, filter.Enabled, filter.Global, modeParam).Scan(&total); err != nil {
+	if err := r.conn.Pool.QueryRow(
+		ctx,
+		countQuery,
+		gatewayParam,
+		filter.Search,
+		filter.Enabled,
+		filter.Global,
+		modeParam,
+		filter.RestrictToSlugs,
+		slugs,
+	).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("policy repository: count: %w", err)
 	}
 
@@ -257,9 +272,22 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		   AND ($3::boolean IS NULL OR p.enabled = $3)
 		   AND ($4::boolean IS NULL OR p.global = $4)
 		   AND ($5 = '' OR p.mode = $5)
+		   AND (NOT $6::boolean OR p.slug = ANY($7::text[]))
 		 ORDER BY ` + policyOrderBy(filter.Sort) + `
-		 LIMIT $6 OFFSET $7`
-	rows, err := r.conn.Pool.Query(ctx, listQuery, gatewayParam, filter.Search, filter.Enabled, filter.Global, modeParam, page.Size, offset)
+		 LIMIT $8 OFFSET $9`
+	rows, err := r.conn.Pool.Query(
+		ctx,
+		listQuery,
+		gatewayParam,
+		filter.Search,
+		filter.Enabled,
+		filter.Global,
+		modeParam,
+		filter.RestrictToSlugs,
+		slugs,
+		page.Size,
+		offset,
+	)
 	if err != nil {
 		return nil, 0, fmt.Errorf("policy repository: list: %w", err)
 	}

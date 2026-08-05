@@ -43,6 +43,8 @@ func NewListPolicyHandler(finder apppolicy.Finder) *ListPolicyHandler {
 // @Param        enabled     query     bool    false  "Filter by enabled flag"
 // @Param        global      query     bool    false  "Filter by global flag"
 // @Param        mode        query     string  false  "Filter by mode (enforce, throttle, observe)"
+// @Param        category    query     string  false  "Catalog category (group type); comma-separated multi"
+// @Param        type        query     string  false  "Plugin slug (FE type filter); comma-separated multi"
 // @Param        sort        query     string  false  "Sort field (name, created_at, updated_at, priority)"
 // @Param        order       query     string  false  "Sort order (asc, desc)"
 // @Param        page        query     int     false  "Page number (1-based)"
@@ -81,22 +83,26 @@ func (h *ListPolicyHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 	req := request.ListPolicyRequest{
-		Search:  httpio.ParseSearch(c),
-		Enabled: enabled,
-		Global:  global,
-		Mode:    mode,
-		Page:    page,
-		Sort:    sort,
+		Search:     httpio.ParseSearch(c),
+		Enabled:    enabled,
+		Global:     global,
+		Mode:       mode,
+		Categories: httpio.ParseCSVQuery(c, "category"),
+		Types:      httpio.ParseCSVQuery(c, "type"),
+		Page:       page,
+		Sort:       sort,
 	}
 
 	items, total, err := h.finder.List(c.UserContext(), domain.ListFilter{
-		GatewayID: gatewayID,
-		Search:    req.Search,
-		Enabled:   req.Enabled,
-		Global:    req.Global,
-		Mode:      req.Mode,
-		Page:      req.Page,
-		Sort:      req.Sort,
+		GatewayID:  gatewayID,
+		Search:     req.Search,
+		Enabled:    req.Enabled,
+		Global:     req.Global,
+		Mode:       req.Mode,
+		Categories: req.Categories,
+		Types:      req.Types,
+		Page:       req.Page,
+		Sort:       req.Sort,
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)

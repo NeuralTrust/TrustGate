@@ -169,6 +169,29 @@ func ParseOptionalBool(c *fiber.Ctx, name string) (*bool, error) {
 	return &v, nil
 }
 
+// ParseCSVQuery splits a query param on commas (and repeated keys) into trimmed
+// non-empty values. Missing returns nil.
+func ParseCSVQuery(c *fiber.Ctx, name string) []string {
+	args := c.Context().QueryArgs()
+	rawValues := args.PeekMulti(name)
+	if len(rawValues) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(rawValues))
+	for _, raw := range rawValues {
+		for _, part := range strings.Split(string(raw), ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				out = append(out, part)
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func containsString(items []string, want string) bool {
 	for _, item := range items {
 		if item == want {
