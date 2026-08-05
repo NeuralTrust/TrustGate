@@ -191,11 +191,10 @@ func TestPlugin_ValidateConfig(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "bad scope",
+			name: "scope is no longer a setting and is ignored like any other unknown key",
 			settings: map[string]any{"scope": "tenant", "rules": []any{map[string]any{
 				"tool": "send_email", "windows": []any{map[string]any{"duration": "1m", "max": 5}},
 			}}},
-			wantErr: true,
 		},
 	}
 
@@ -210,6 +209,99 @@ func TestPlugin_ValidateConfig(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+func TestPlugin_ValidateConfigForProtocol(t *testing.T) {
+	rule := func(behavior string) map[string]any {
+		r := map[string]any{
+			"tool": "send_email", "windows": []any{map[string]any{"duration": "1m", "max": 5}},
+		}
+		if behavior != "" {
+			r["behavior"] = behavior
+		}
+		return r
+	}
+
+	tests := []struct {
+		name     string
+		protocol appplugins.Protocol
+		settings map[string]any
+		wantErr  string
+	}{
+		{
+			name:     "rewriting behaviour is fine on the path that can rewrite",
+			protocol: appplugins.ProtocolLLM,
+			settings: map[string]any{"rules": []any{rule(behaviorStrip)}},
+		},
+		{
+			name:     "refusing is the same on both paths",
+			protocol: appplugins.ProtocolMCP,
+			settings: map[string]any{"rules": []any{rule(behaviorReject)}},
+		},
+		{
+			name:     "an unset behaviour refuses, so it carries over",
+			protocol: appplugins.ProtocolMCP,
+			settings: map[string]any{"rules": []any{rule("")}},
+		},
+		{
+			name:     "stripping cannot be honoured on mcp",
+			protocol: appplugins.ProtocolMCP,
+			settings: map[string]any{"rules": []any{rule(behaviorStrip)}},
+			wantErr:  behaviorStrip,
+		},
+		{
+			name:     "injecting cannot be honoured on mcp",
+			protocol: appplugins.ProtocolMCP,
+			settings: map[string]any{"rules": []any{rule(behaviorInject)}},
+			wantErr:  behaviorInject,
+		},
+		{
+			name:     "a rewriting default is caught too",
+			protocol: appplugins.ProtocolMCP,
+			settings: map[string]any{
+				"behavior_default": behaviorInject,
+				"rules":            []any{rule("")},
+			},
+			wantErr: "behavior_default",
+		},
+		{
+			name:     "an invalid rule set is still invalid",
+			protocol: appplugins.ProtocolMCP,
+			settings: map[string]any{"rules": []any{}},
+			wantErr:  "rules must not be empty",
+		},
+	}
+
+	p := New(nil, nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := p.ValidateConfigForProtocol(tt.protocol, tt.settings)
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+// The offending tool is named so an operator with a long rule set is told which
+// line to change rather than that something, somewhere, is wrong.
+func TestPlugin_ValidateConfigForProtocol_NamesTheOffendingRule(t *testing.T) {
+	err := New(nil, nil).ValidateConfigForProtocol(appplugins.ProtocolMCP, map[string]any{
+		"rules": []any{
+			map[string]any{
+				"tool": "safe_tool", "windows": []any{map[string]any{"duration": "1m", "max": 5}},
+			},
+			map[string]any{
+				"tool": "send_email", "windows": []any{map[string]any{"duration": "1m", "max": 5}},
+				"behavior": behaviorStrip,
+			},
+		},
+	})
+
+	require.ErrorContains(t, err, "send_email")
+	assert.NotContains(t, err.Error(), "safe_tool")
 }
 
 func TestPlugin_AppearsInCatalog(t *testing.T) {
@@ -773,6 +865,38 @@ func TestPlugin_PreRequest_NoRejectUnderBudget(t *testing.T) {
 	assert.Nil(t, res.RequestBody)
 }
 
+// Most cases here seed the counter and check the limit, or count with no limit
+// in play. These two do both in the one request, which is where the budget used
+// to lose a call: the request handing back the Nth result moved the counter to
+// max and was then refused by it, so max: 1 completed none.
+
+func TestPlugin_PreRequest_ReportingAResultDoesNotRefuseTheCallThatEarnedIt(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 1)
+	body := openAIToolResultsRaw(t, []string{"send_email"}, []tcSpec{{"call_1", "send_email"}}, []string{"call_1"})
+
+	res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, openAIReq(body), nil))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+
+	val, err := rdb.Get(context.Background(), consumerKey("send_email", 0)).Result()
+	require.NoError(t, err)
+	assert.Equal(t, "1", val, "the result is still counted, it just does not refuse itself")
+}
+
+func TestPlugin_PreRequest_RejectsOnceTheBudgetWasAlreadySpent(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 1)
+	seed(t, rdb, consumerKey("send_email", 0), 1)
+	body := openAIToolResultsRaw(t, []string{"send_email"}, []tcSpec{{"call_2", "send_email"}}, []string{"call_2"})
+
+	_, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, openAIReq(body), nil))
+
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok)
+	assert.Equal(t, http.StatusTooManyRequests, pe.StatusCode)
+}
+
 func TestPlugin_PreRequest_NoRejectWhenToolNotDeclared(t *testing.T) {
 	p, rdb := newPluginRedis(t)
 	settings := ruleSettings("send_email", "reject_response", "1m", 5)
@@ -1024,11 +1148,13 @@ func TestPlugin_FullCycle_CountThenReject(t *testing.T) {
 		return openAIReq(openAIToolResultsRaw(t, []string{"send_email"}, []tcSpec{{id, "send_email"}}, []string{id}))
 	}
 
-	res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, turn("call_1"), nil))
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusOK, res.StatusCode)
+	for _, id := range []string{"call_1", "call_2"} {
+		res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, turn(id), nil))
+		require.NoError(t, err, "a budget of two covers %s", id)
+		assert.Equal(t, http.StatusOK, res.StatusCode)
+	}
 
-	_, err = p.Execute(context.Background(), input(policy.StagePreRequest, settings, turn("call_2"), nil))
+	_, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, turn("call_3"), nil))
 	pe, ok := appplugins.AsPluginError(err)
 	require.True(t, ok)
 	assert.Equal(t, http.StatusTooManyRequests, pe.StatusCode)

@@ -14,6 +14,7 @@ import (
 )
 
 const rpcCodePolicyBlocked = float64(-32001)
+const rpcCodeRateLimited = float64(-32004)
 
 func addCountingEchoTool(server *sdk.Server, name string, calls *int64) {
 	server.AddTool(

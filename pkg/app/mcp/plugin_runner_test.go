@@ -115,14 +115,16 @@ func TestPluginRunner_PreRequest(t *testing.T) {
 			wantRPCData: `{"error":"rate limit entitlements unavailable"}`,
 		},
 		{
-			name: "policy rate limit 429 stays policy-blocked",
+			// A tool budget is a matter of timing, so it gets the code a client
+			// can act on rather than the one that means "never".
+			name: "policy rate limit 429 is throttling, not a veto",
 			execErr: &appplugins.PluginError{
 				StatusCode: 429,
 				Message:    "tool rate limit exceeded",
 				Body:       []byte(`{"error":"rate limit exceeded"}`),
 				Headers:    map[string][]string{"X-RateLimit-Tool": {"send_email"}},
 			},
-			wantRPCCode: codePolicyBlocked,
+			wantRPCCode: CodeRateLimited,
 			wantRPCData: `{"error":"rate limit exceeded"}`,
 		},
 		{
@@ -157,9 +159,11 @@ func TestPluginRunner_PreRequest(t *testing.T) {
 			case tt.wantRPCCode != 0:
 				rpcErr := assertRPCError(t, err, tt.wantRPCCode, tt.wantRPCData)
 				assert.Equal(t, expectedHTTPStatus(tt.execErr, tt.outcome), rpcErr.HTTPStatus)
-				if tt.wantRPCCode == CodeRateLimited {
-					require.Equal(t, []string{"42"}, rpcErr.HTTPHeaders["Retry-After"])
-					require.Equal(t, []string{"burst"}, rpcErr.HTTPHeaders["X-RateLimit-Reason"])
+				// The headers are how a throttled client learns when to come
+				// back, so whatever the plugin set has to survive the trip.
+				var pe *appplugins.PluginError
+				if errors.As(tt.execErr, &pe) && len(pe.Headers) > 0 {
+					assert.Equal(t, pe.Headers, rpcErr.HTTPHeaders)
 				}
 			}
 		})

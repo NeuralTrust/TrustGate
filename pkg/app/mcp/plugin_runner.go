@@ -33,16 +33,18 @@ import (
 // -32002 and -32003 are already used elsewhere in the MCP handler.
 const codePolicyBlocked int64 = -32001
 
-// CodeRateLimited is returned for gateway plan throttle (rpc_dispatcher) and for
-// TrustGuard evaluate 429 (plugin Type trustguard_rate_limited). Policy plugins
-// that return HTTP 429 (e.g. per_tool_rate_limiter) keep codePolicyBlocked (-32001).
+// CodeRateLimited is returned whenever a denial is a matter of timing rather
+// than of permission: the gateway plan throttle (rpc_dispatcher), TrustGuard's
+// evaluate 429, and any policy plugin answering 429. Clients act on the two
+// codes very differently — -32001 is never worth retrying and this one is worth
+// retrying after Retry-After — so the distinction has to follow the status the
+// plugin chose, not the plugin's identity.
 const CodeRateLimited int64 = -32004
 
 // CodeUnavailable is returned when gateway plan entitlements cannot be resolved
 // (unknown tier) or TrustGuard evaluate returns 503. Aligns with HTTP 503 on the proxy path.
 const CodeUnavailable int64 = -32005
 
-const trustGuardRateLimitedType = "trustguard_rate_limited"
 const trustGuardUnavailableType = "trustguard_unavailable"
 
 const (
@@ -335,8 +337,7 @@ func (r *PluginRunner) buildRequestContext(
 
 func blockToRPCError(pe *appplugins.PluginError) *RPCError {
 	code := codePolicyBlocked
-	// Only TrustGuard plan-limit 429 maps to -32004; policy rate limiters stay -32001.
-	if pe != nil && pe.StatusCode == http.StatusTooManyRequests && pe.Type == trustGuardRateLimitedType {
+	if pe != nil && pe.StatusCode == http.StatusTooManyRequests {
 		code = CodeRateLimited
 	}
 	if pe != nil && pe.StatusCode == http.StatusServiceUnavailable && pe.Type == trustGuardUnavailableType {

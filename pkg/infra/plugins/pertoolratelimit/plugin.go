@@ -119,6 +119,33 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	return err
 }
 
+// ValidateConfigForProtocol refuses, on MCP, the behaviors that only the LLM
+// path can carry out. There the plugin watches a model's conversation and can
+// edit it — withdraw the tool before the model sees it, or answer its call with
+// an explanation. On MCP the client asked for one tool by name and the gateway
+// is the caller, so there is nothing to edit and every behavior collapses into
+// the same refusal. Accepting the setting and quietly enforcing something else
+// is the failure worth avoiding: the policy would read as one thing on the
+// consumer it is attached to and behave as another.
+func (p *Plugin) ValidateConfigForProtocol(protocol appplugins.Protocol, settings map[string]any) error {
+	if protocol != appplugins.ProtocolMCP {
+		return nil
+	}
+	cfg, err := parseConfig(settings)
+	if err != nil {
+		return err
+	}
+	offenders := cfg.rewritingBehaviors()
+	if len(offenders) == 0 {
+		return nil
+	}
+	return fmt.Errorf(
+		"per_tool_rate_limiter: %s cannot be honoured on MCP, where a refused call is never sent"+
+			" and there is no request to rewrite; use %s or attach this policy to an LLM consumer",
+		strings.Join(offenders, ", "), behaviorReject,
+	)
+}
+
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	if p.redis == nil {
 		return okResult(), nil
@@ -171,6 +198,10 @@ func (p *Plugin) preRequest(
 	if err != nil || canonical == nil {
 		return okResult(), nil
 	}
+	spent, err := p.spentBefore(ctx, cfg, in, dimension, subject, canonical.Tools)
+	if err != nil {
+		return nil, fmt.Errorf("per_tool_rate_limiter: %w", err)
+	}
 	if len(canonical.Messages) > 0 {
 		if err := p.countExecuted(ctx, cfg, in, dimension, subject, canonical.Messages); err != nil {
 			return nil, fmt.Errorf("per_tool_rate_limiter: %w", err)
@@ -194,10 +225,7 @@ func (p *Plugin) preRequest(
 		if !p.enforcedAtRequest(behavior, canonical.Stream) {
 			continue
 		}
-		ws, err := p.overLimit(ctx, in.Config.ID, dimension, subject, tool, rule)
-		if err != nil {
-			return nil, fmt.Errorf("per_tool_rate_limiter: %w", err)
-		}
+		ws := spent[tool]
 		if ws == nil {
 			continue
 		}
@@ -211,6 +239,35 @@ func (p *Plugin) preRequest(
 		return okResult(), nil
 	}
 	return p.stripTools(in.Request.Body, format, canonical, strip)
+}
+
+func (p *Plugin) spentBefore(
+	ctx context.Context,
+	cfg *config,
+	in appplugins.ExecInput,
+	dimension, subject string,
+	tools []adapter.CanonicalTool,
+) (map[string]*windowState, error) {
+	spent := make(map[string]*windowState, len(tools))
+	for i := range tools {
+		tool := tools[i].Name
+		if tool == "" {
+			continue
+		}
+		if _, done := spent[tool]; done {
+			continue
+		}
+		rule, ok := matchRule(cfg.Rules, tool)
+		if !ok {
+			continue
+		}
+		ws, err := p.overLimit(ctx, in.Config.ID, dimension, subject, tool, rule)
+		if err != nil {
+			return nil, err
+		}
+		spent[tool] = ws
+	}
+	return spent, nil
 }
 
 func (p *Plugin) enforcedAtRequest(behavior string, streaming bool) bool {

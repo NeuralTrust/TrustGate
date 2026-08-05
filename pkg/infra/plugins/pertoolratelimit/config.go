@@ -28,11 +28,6 @@ const (
 	behaviorStrip  = "strip_tool_from_request"
 )
 
-var validScopes = map[string]struct{}{
-	"consumer": {},
-	"global":   {},
-}
-
 var enforceableBehaviors = map[string]struct{}{
 	behaviorReject: {},
 	behaviorInject: {},
@@ -51,8 +46,11 @@ type ruleConfig struct {
 	Behavior string         `mapstructure:"behavior"`
 }
 
+// config has no scope of its own: the counters are keyed by the scope of the
+// policy that carries the plugin. It used to accept one, validated it, and never
+// read it, so a policy asking for a budget shared across consumers silently got
+// one per consumer.
 type config struct {
-	Scope           string       `mapstructure:"scope"`
 	Rules           []ruleConfig `mapstructure:"rules"`
 	BehaviorDefault string       `mapstructure:"behavior_default"`
 }
@@ -74,11 +72,6 @@ func parseConfig(settings map[string]any) (*config, error) {
 }
 
 func (c *config) validate() error {
-	if c.Scope != "" {
-		if _, ok := validScopes[c.Scope]; !ok {
-			return fmt.Errorf("per_tool_rate_limiter: scope must be one of consumer, global")
-		}
-	}
 	if err := validateBehavior(c.BehaviorDefault); err != nil {
 		return fmt.Errorf("per_tool_rate_limiter: behavior_default: %w", err)
 	}
@@ -134,6 +127,22 @@ func validateBehavior(behavior string) error {
 	default:
 		return fmt.Errorf("behavior must be one of reject_response, inject_error_result, strip_tool_from_request")
 	}
+}
+
+// rewritingBehaviors names the rules whose behavior edits the exchange instead
+// of refusing it, which is something only the LLM path can do. The tools they
+// name are returned so the operator is told which lines to change.
+func (c *config) rewritingBehaviors() []string {
+	var offenders []string
+	if c.BehaviorDefault != "" && c.BehaviorDefault != behaviorReject {
+		offenders = append(offenders, fmt.Sprintf("behavior_default %q", c.BehaviorDefault))
+	}
+	for _, rule := range c.Rules {
+		if rule.Behavior != "" && rule.Behavior != behaviorReject {
+			offenders = append(offenders, fmt.Sprintf("rule %q behavior %q", rule.Tool, rule.Behavior))
+		}
+	}
+	return offenders
 }
 
 func (c *config) behaviorDefault() string {

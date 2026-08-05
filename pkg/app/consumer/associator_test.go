@@ -17,6 +17,7 @@ package consumer_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -55,12 +56,17 @@ func newAssociator(
 }
 
 type fakeProtocolResolver struct {
-	protocols map[string][]string
+	protocols     map[string][]string
+	settingsError error
 }
 
 func (f *fakeProtocolResolver) SupportedProtocols(slug string) ([]string, bool) {
 	p, ok := f.protocols[slug]
 	return p, ok
+}
+
+func (f *fakeProtocolResolver) ValidateSettingsForProtocol(string, string, map[string]any) error {
+	return f.settingsError
 }
 
 type roleRepositoryStub struct {
@@ -375,6 +381,40 @@ func TestAssociator_AttachPolicy_ProtocolValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A plugin may support a protocol and still carry a setting that protocol
+// cannot honour, so supporting it is not the end of the check.
+func TestAssociator_AttachPolicy_SettingsUnsupportedOnConsumerProtocol(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	consumerID := ids.New[ids.ConsumerKind]()
+	policyID := ids.New[ids.PolicyKind]()
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, consumerID).
+		Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, Type: domain.TypeMCP}, nil).Once()
+
+	policyRepo := policymocks.NewRepository(t)
+	policyRepo.EXPECT().FindByID(mock.Anything, policyID).
+		Return(&policydomain.Policy{ID: policyID, GatewayID: gwID, Slug: "cost_cap"}, nil).Once()
+
+	publisher := cachemocks.NewEventPublisher(t)
+	resolver := &fakeProtocolResolver{
+		protocols:     map[string][]string{"cost_cap": {"LLM", "MCP"}},
+		settingsError: errors.New("behavior cannot be honoured on MCP"),
+	}
+	a := newAssociator(repo, backendmocks.NewRepository(t), authmocks.NewRepository(t), policyRepo, publisher, resolver)
+
+	err := a.AttachPolicy(context.Background(), gwID, consumerID, policyID)
+
+	if !errors.Is(err, domain.ErrPolicyProtocolMismatch) {
+		t.Fatalf("err = %v, want ErrPolicyProtocolMismatch", err)
+	}
+	if !strings.Contains(err.Error(), "behavior cannot be honoured on MCP") {
+		t.Fatalf("err = %v, want the plugin's own complaint to reach the operator", err)
+	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestAssociator_AttachAuth_Success(t *testing.T) {
