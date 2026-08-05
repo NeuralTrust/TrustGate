@@ -103,3 +103,54 @@ func TestListPolicies_InvalidPagination(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
 	assert.Equal(t, "invalid_pagination", body["error"])
 }
+
+func TestListPolicies_FilterByEnabledAndMode(t *testing.T) {
+	defer Track(t, "ListPolicy")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("pol-filter-gw")})
+	prefix := uniqueName("pol-filter")
+	payload := validPolicyPayload(prefix)
+	payload["mode"] = "observe"
+	_ = CreatePolicy(t, gwID, payload)
+
+	status, body := sendRequest(t, http.MethodGet,
+		fmt.Sprintf("%s/v1/gateways/%s/policies?search=%s&enabled=true&mode=observe",
+			AdminURL, gwID, url.QueryEscape(prefix)),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	assert.Equal(t, float64(1), body["total"])
+
+	status, body = sendRequest(t, http.MethodGet,
+		fmt.Sprintf("%s/v1/gateways/%s/policies?search=%s&mode=enforce",
+			AdminURL, gwID, url.QueryEscape(prefix)),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	assert.Equal(t, float64(0), body["total"])
+}
+
+func TestListPolicies_SortByPriority(t *testing.T) {
+	defer Track(t, "ListPolicy")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("pol-sort-gw")})
+	prefix := uniqueName("pol-prio")
+	for _, prio := range []int{30, 10, 20} {
+		payload := validPolicyPayload(fmt.Sprintf("%s-%d", prefix, prio))
+		payload["priority"] = prio
+		_ = CreatePolicy(t, gwID, payload)
+	}
+
+	status, body := sendRequest(t, http.MethodGet,
+		fmt.Sprintf("%s/v1/gateways/%s/policies?search=%s&sort=priority&order=asc",
+			AdminURL, gwID, url.QueryEscape(prefix)),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	items, _ := body["items"].([]any)
+	require.Len(t, items, 3)
+	prios := make([]float64, 0, 3)
+	for _, raw := range items {
+		obj, _ := raw.(map[string]any)
+		prios = append(prios, obj["priority"].(float64))
+	}
+	assert.Equal(t, []float64{10, 20, 30}, prios)
+}

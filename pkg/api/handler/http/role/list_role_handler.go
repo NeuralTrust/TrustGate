@@ -38,44 +38,48 @@ func NewListRoleHandler(finder approle.Finder) *ListRoleHandler {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        gateway_id  path      string  true   "Gateway id"  format(uuid)
-// @Param        name        query     string  false  "Filter by name (substring match)"
+// @Param        search      query     string  false  "Substring match on name (alias: name)"
+// @Param        name        query     string  false  "Alias of search"
+// @Param        sort        query     string  false  "Sort field (name, created_at, updated_at)"
+// @Param        order       query     string  false  "Sort order (asc, desc)"
 // @Param        page        query     int     false  "Page number (1-based)"
 // @Param        size        query     int     false  "Page size"
 // @Success      200         {object}  response.ListRoleResponse
 // @Failure      400         {object}  httpio.ErrorBody
 // @Failure      401         {object}  httpio.ErrorBody
+// @Failure      422         {object}  httpio.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/roles [get]
 func (h *ListRoleHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, err := httpio.ParseGatewayID(c)
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	page, err := httpio.ParsePage(c)
+	page, err := httpio.ParseListingPage(c)
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
-	size, err := httpio.ParseSize(c)
+	sort, err := httpio.ParseSort(c, domain.SortableFields)
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
 	req := request.ListRoleRequest{
-		Name: c.Query("name"),
-		Page: page,
-		Size: size,
+		Search: httpio.ParseSearch(c),
+		Page:   page,
+		Sort:   sort,
 	}
 	items, total, err := h.finder.List(c.UserContext(), domain.ListFilter{
-		GatewayID:    gatewayID,
-		NameContains: req.Name,
-		Page:         req.Page,
-		Size:         req.Size,
+		GatewayID: gatewayID,
+		Search:    req.Search,
+		Page:      req.Page,
+		Sort:      req.Sort,
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)
 	}
 	out := response.ListRoleResponse{
 		Items: make([]response.RoleResponse, 0, len(items)),
-		Page:  req.Page,
-		Size:  req.Size,
+		Page:  req.Page.Number,
+		Size:  req.Page.Size,
 		Total: total,
 	}
 	for _, role := range items {

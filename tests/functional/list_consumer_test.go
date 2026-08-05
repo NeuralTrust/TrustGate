@@ -108,6 +108,55 @@ func TestListConsumers_InvalidPagination(t *testing.T) {
 	assert.Equal(t, "invalid_pagination", body["error"])
 }
 
+func TestListConsumers_FilterByTypeAndActive(t *testing.T) {
+	defer Track(t, "ListConsumer")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-type-gw")})
+	prefix := uniqueName("co-type")
+	payload := validConsumerPayload(prefix)
+	payload["type"] = "LLM"
+	_ = CreateConsumer(t, gwID, payload)
+
+	status, body := sendRequest(t, http.MethodGet,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers?search=%s&type=LLM&active=true",
+			AdminURL, gwID, url.QueryEscape(prefix)),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	assert.Equal(t, float64(1), body["total"])
+
+	status, body = sendRequest(t, http.MethodGet,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers?search=%s&type=MCP",
+			AdminURL, gwID, url.QueryEscape(prefix)),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	assert.Equal(t, float64(0), body["total"])
+}
+
+func TestListConsumers_SortByName(t *testing.T) {
+	defer Track(t, "ListConsumer")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-sort-gw")})
+	prefix := uniqueName("co-sort")
+	_ = CreateConsumer(t, gwID, validConsumerPayload(prefix+"-c"))
+	_ = CreateConsumer(t, gwID, validConsumerPayload(prefix+"-a"))
+	_ = CreateConsumer(t, gwID, validConsumerPayload(prefix+"-b"))
+
+	status, body := sendRequest(t, http.MethodGet,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers?search=%s&sort=name&order=asc",
+			AdminURL, gwID, url.QueryEscape(prefix)),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	items, _ := body["items"].([]any)
+	require.Len(t, items, 3)
+	names := make([]string, 0, 3)
+	for _, raw := range items {
+		obj, _ := raw.(map[string]any)
+		names = append(names, obj["name"].(string))
+	}
+	assert.Equal(t, []string{prefix + "-a", prefix + "-b", prefix + "-c"}, names)
+}
+
 func TestListConsumers_InvalidGatewayUUID(t *testing.T) {
 	defer Track(t, "ListConsumer")()
 	status, body := sendRequest(t, http.MethodGet,

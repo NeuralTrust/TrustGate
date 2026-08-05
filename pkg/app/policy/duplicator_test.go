@@ -71,7 +71,7 @@ func TestDuplicator_CopiesConfigWithFirstFreeSuffix(t *testing.T) {
 	finder.EXPECT().FindByID(mock.Anything, gwID, src.ID).Return(src, nil).Once()
 	finder.EXPECT().
 		List(mock.Anything, mock.MatchedBy(func(f domain.ListFilter) bool {
-			return f.GatewayID == gwID && f.NameContains == "Foo"
+			return f.GatewayID == gwID && f.Search == "Foo"
 		})).
 		Return([]*domain.Policy{src}, 1, nil).
 		Once()
@@ -164,7 +164,7 @@ func TestDuplicator_StripsTrailingNumberFromSourceName(t *testing.T) {
 	finder.EXPECT().FindByID(mock.Anything, gwID, src.ID).Return(src, nil).Once()
 	finder.EXPECT().
 		List(mock.Anything, mock.MatchedBy(func(f domain.ListFilter) bool {
-			return f.NameContains == "Foo"
+			return f.Search == "Foo"
 		})).
 		Return(existing, len(existing), nil).
 		Once()
@@ -229,7 +229,7 @@ func TestDuplicator_StartsAboveSourceNumber(t *testing.T) {
 	finder.EXPECT().FindByID(mock.Anything, gwID, src.ID).Return(src, nil).Once()
 	finder.EXPECT().
 		List(mock.Anything, mock.MatchedBy(func(f domain.ListFilter) bool {
-			return f.NameContains == "Policy"
+			return f.Search == "Policy"
 		})).
 		Return([]*domain.Policy{src}, 1, nil).
 		Once()

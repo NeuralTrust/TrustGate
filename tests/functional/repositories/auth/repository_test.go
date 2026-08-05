@@ -13,6 +13,7 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
 	repo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/auth"
@@ -316,7 +317,7 @@ func TestRepository_List_FilterByGatewayAndName(t *testing.T) {
 	mustSave(validAuth(t, gw1, "staging-key"))
 	mustSave(validAuth(t, gw2, "other-key"))
 
-	items, total, err := r.List(ctx, domain.ListFilter{GatewayID: gw1, Page: 1, Size: 10})
+	items, total, err := r.List(ctx, domain.ListFilter{GatewayID: gw1, Page: listing.Page{Number: 1, Size: 10}})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -324,7 +325,7 @@ func TestRepository_List_FilterByGatewayAndName(t *testing.T) {
 		t.Fatalf("List(gw1) total=%d len=%d, want 2/2", total, len(items))
 	}
 
-	items, total, err = r.List(ctx, domain.ListFilter{NameContains: "other", Page: 1, Size: 10})
+	items, total, err = r.List(ctx, domain.ListFilter{Search: "other", Page: listing.Page{Number: 1, Size: 10}})
 	if err != nil {
 		t.Fatalf("List name: %v", err)
 	}

@@ -13,6 +13,7 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
@@ -303,7 +304,7 @@ func TestRepository_List_FilterByGatewayAndName(t *testing.T) {
 	mustSave(validPolicy(t, gw1, "openai-staging"))
 	mustSave(validPolicy(t, gw2, "anthropic-prod"))
 
-	items, total, err := r.List(ctx, domain.ListFilter{GatewayID: gw1, Page: 1, Size: 10})
+	items, total, err := r.List(ctx, domain.ListFilter{GatewayID: gw1, Page: listing.Page{Number: 1, Size: 10}})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -311,7 +312,7 @@ func TestRepository_List_FilterByGatewayAndName(t *testing.T) {
 		t.Fatalf("List(gw1) total=%d len=%d, want 2/2", total, len(items))
 	}
 
-	items, total, err = r.List(ctx, domain.ListFilter{NameContains: "anthropic", Page: 1, Size: 10})
+	items, total, err = r.List(ctx, domain.ListFilter{Search: "anthropic", Page: listing.Page{Number: 1, Size: 10}})
 	if err != nil {
 		t.Fatalf("List name: %v", err)
 	}
@@ -319,7 +320,7 @@ func TestRepository_List_FilterByGatewayAndName(t *testing.T) {
 		t.Fatalf("List(name) returned %+v", items)
 	}
 
-	items, total, err = r.List(ctx, domain.ListFilter{Page: 1, Size: 10})
+	items, total, err = r.List(ctx, domain.ListFilter{Page: listing.Page{Number: 1, Size: 10}})
 	if err != nil {
 		t.Fatalf("List all: %v", err)
 	}

@@ -2501,9 +2501,29 @@ paths:
         name: gateway_id
         required: true
         type: string
-      - description: Filter by name (substring match)
+      - description: 'Substring match on name (alias: name)'
+        in: query
+        name: search
+        type: string
+      - description: Alias of search
         in: query
         name: name
+        type: string
+      - description: Filter by auth type (api_key, oauth2, oidc, mtls)
+        in: query
+        name: type
+        type: string
+      - description: Filter by enabled flag
+        in: query
+        name: enabled
+        type: boolean
+      - description: Sort field (name, created_at, updated_at, type)
+        in: query
+        name: sort
+        type: string
+      - description: Sort order (asc, desc)
+        in: query
+        name: order
         type: string
       - description: Page number (1-based)
         in: query
@@ -2526,6 +2546,10 @@ paths:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
@@ -2720,9 +2744,34 @@ paths:
         name: gateway_id
         required: true
         type: string
-      - description: Filter by name (substring match)
+      - description: 'Substring match on name or slug (alias: name)'
+        in: query
+        name: search
+        type: string
+      - description: Alias of search
         in: query
         name: name
+        type: string
+      - description: Filter by consumer type (LLM, MCP, A2A)
+        in: query
+        name: type
+        type: string
+      - description: Filter by active flag
+        in: query
+        name: active
+        type: boolean
+      - description: Filter consumers linked to this auth id
+        format: uuid
+        in: query
+        name: auth_id
+        type: string
+      - description: Sort field (name, created_at, updated_at, type)
+        in: query
+        name: sort
+        type: string
+      - description: Sort order (asc, desc)
+        in: query
+        name: order
         type: string
       - description: Page number (1-based)
         in: query
@@ -2745,6 +2794,10 @@ paths:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
@@ -3304,9 +3357,33 @@ paths:
         name: gateway_id
         required: true
         type: string
-      - description: Filter by name (substring match)
+      - description: 'Substring match on name or slug (alias: name)'
+        in: query
+        name: search
+        type: string
+      - description: Alias of search
         in: query
         name: name
+        type: string
+      - description: Filter by enabled flag
+        in: query
+        name: enabled
+        type: boolean
+      - description: Filter by global flag
+        in: query
+        name: global
+        type: boolean
+      - description: Filter by mode (enforce, throttle, observe)
+        in: query
+        name: mode
+        type: string
+      - description: Sort field (name, created_at, updated_at, priority)
+        in: query
+        name: sort
+        type: string
+      - description: Sort order (asc, desc)
+        in: query
+        name: order
         type: string
       - description: Page number (1-based)
         in: query
@@ -3329,6 +3406,10 @@ paths:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
@@ -3918,9 +3999,21 @@ paths:
         name: gateway_id
         required: true
         type: string
-      - description: Filter by name (substring match)
+      - description: 'Substring match on name (alias: name)'
+        in: query
+        name: search
+        type: string
+      - description: Alias of search
         in: query
         name: name
+        type: string
+      - description: Sort field (name, created_at, updated_at)
+        in: query
+        name: sort
+        type: string
+      - description: Sort order (asc, desc)
+        in: query
+        name: order
         type: string
       - description: Page number (1-based)
         in: query
@@ -3943,6 +4036,10 @@ paths:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:

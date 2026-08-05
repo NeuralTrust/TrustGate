@@ -22,6 +22,7 @@ import (
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 )
 
@@ -53,9 +54,9 @@ type ToolkitEntryRequest struct {
 }
 
 type ListRoleRequest struct {
-	Name string
-	Page int
-	Size int
+	Search string
+	Page   listing.Page
+	Sort   listing.Sort
 }
 
 type ModelPolicyRequest struct {

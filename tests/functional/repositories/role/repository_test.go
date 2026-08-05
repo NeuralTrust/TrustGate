@@ -12,6 +12,7 @@ import (
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
@@ -193,5 +194,58 @@ func TestRepository_Update_RejectsModelPolicyReferenceAfterDetach(t *testing.T) 
 	err := f.repo.Update(ctx, role)
 	if !errors.Is(err, domain.ErrInvalidModelPolicy) {
 		t.Fatalf("err = %v, want ErrInvalidModelPolicy", err)
+	}
+}
+
+func TestRepository_List_FilterByGatewaySearchAndSort(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gw1 := seedGateway(t, f.gateway, "role-list-1")
+	gw2 := seedGateway(t, f.gateway, "role-list-2")
+
+	mustSave := func(role *domain.Role) {
+		if err := f.repo.Save(ctx, role); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+	}
+	mustSave(validRole(t, gw1, "alpha-role"))
+	mustSave(validRole(t, gw1, "beta-role"))
+	mustSave(validRole(t, gw2, "gamma-role"))
+
+	items, total, err := f.repo.List(ctx, domain.ListFilter{
+		GatewayID: gw1,
+		Page:      listing.Page{Number: 1, Size: 10},
+	})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if total != 2 || len(items) != 2 {
+		t.Fatalf("List(gw1) total=%d len=%d, want 2/2", total, len(items))
+	}
+
+	items, total, err = f.repo.List(ctx, domain.ListFilter{
+		Search: "gamma",
+		Page:   listing.Page{Number: 1, Size: 10},
+	})
+	if err != nil {
+		t.Fatalf("List search: %v", err)
+	}
+	if total != 1 || len(items) != 1 || items[0].Name != "gamma-role" {
+		t.Fatalf("List(search) returned %+v total=%d", items, total)
+	}
+
+	items, total, err = f.repo.List(ctx, domain.ListFilter{
+		GatewayID: gw1,
+		Page:      listing.Page{Number: 1, Size: 10},
+		Sort:      listing.Sort{Field: "name", Direction: listing.Asc},
+	})
+	if err != nil {
+		t.Fatalf("List sort: %v", err)
+	}
+	if total != 2 || len(items) != 2 {
+		t.Fatalf("List(sort) total=%d len=%d", total, len(items))
+	}
+	if items[0].Name != "alpha-role" || items[1].Name != "beta-role" {
+		t.Fatalf("List(sort) names = %q, %q", items[0].Name, items[1].Name)
 	}
 }
