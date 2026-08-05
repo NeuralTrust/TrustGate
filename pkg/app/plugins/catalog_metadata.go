@@ -334,13 +334,6 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Enum:        enumOptions("reject_response", "inject_error_result", "strip_tool_from_request"),
 					Default:     "reject_response",
 				},
-				{
-					Key:         "scope",
-					Label:       "Scope",
-					Type:        FieldTypeEnum,
-					Description: "Informational; effective scope derives from the policy global flag.",
-					Enum:        enumOptions("consumer", "global"),
-				},
 			},
 		},
 	},

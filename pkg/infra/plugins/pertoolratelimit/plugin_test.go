@@ -191,11 +191,10 @@ func TestPlugin_ValidateConfig(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "bad scope",
+			name: "scope is no longer a setting and is ignored like any other unknown key",
 			settings: map[string]any{"scope": "tenant", "rules": []any{map[string]any{
 				"tool": "send_email", "windows": []any{map[string]any{"duration": "1m", "max": 5}},
 			}}},
-			wantErr: true,
 		},
 	}
 
@@ -773,6 +772,38 @@ func TestPlugin_PreRequest_NoRejectUnderBudget(t *testing.T) {
 	assert.Nil(t, res.RequestBody)
 }
 
+// Most cases here seed the counter and check the limit, or count with no limit
+// in play. These two do both in the one request, which is where the budget used
+// to lose a call: the request handing back the Nth result moved the counter to
+// max and was then refused by it, so max: 1 completed none.
+
+func TestPlugin_PreRequest_ReportingAResultDoesNotRefuseTheCallThatEarnedIt(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 1)
+	body := openAIToolResultsRaw(t, []string{"send_email"}, []tcSpec{{"call_1", "send_email"}}, []string{"call_1"})
+
+	res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, openAIReq(body), nil))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+
+	val, err := rdb.Get(context.Background(), consumerKey("send_email", 0)).Result()
+	require.NoError(t, err)
+	assert.Equal(t, "1", val, "the result is still counted, it just does not refuse itself")
+}
+
+func TestPlugin_PreRequest_RejectsOnceTheBudgetWasAlreadySpent(t *testing.T) {
+	p, rdb := newPluginRedis(t)
+	settings := ruleSettings("send_email", "reject_response", "1m", 1)
+	seed(t, rdb, consumerKey("send_email", 0), 1)
+	body := openAIToolResultsRaw(t, []string{"send_email"}, []tcSpec{{"call_2", "send_email"}}, []string{"call_2"})
+
+	_, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, openAIReq(body), nil))
+
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok)
+	assert.Equal(t, http.StatusTooManyRequests, pe.StatusCode)
+}
+
 func TestPlugin_PreRequest_NoRejectWhenToolNotDeclared(t *testing.T) {
 	p, rdb := newPluginRedis(t)
 	settings := ruleSettings("send_email", "reject_response", "1m", 5)
@@ -1024,11 +1055,13 @@ func TestPlugin_FullCycle_CountThenReject(t *testing.T) {
 		return openAIReq(openAIToolResultsRaw(t, []string{"send_email"}, []tcSpec{{id, "send_email"}}, []string{id}))
 	}
 
-	res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, turn("call_1"), nil))
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusOK, res.StatusCode)
+	for _, id := range []string{"call_1", "call_2"} {
+		res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, turn(id), nil))
+		require.NoError(t, err, "a budget of two covers %s", id)
+		assert.Equal(t, http.StatusOK, res.StatusCode)
+	}
 
-	_, err = p.Execute(context.Background(), input(policy.StagePreRequest, settings, turn("call_2"), nil))
+	_, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, turn("call_3"), nil))
 	pe, ok := appplugins.AsPluginError(err)
 	require.True(t, ok)
 	assert.Equal(t, http.StatusTooManyRequests, pe.StatusCode)
