@@ -32,9 +32,33 @@
                 }
             }
         },
+        "/health": {
+            "get": {
+                "description": "Reports whether the process is alive. Canonical path is /healthz; /health is an alias for load-balancer defaults.",
+                "tags": [
+                    "system"
+                ],
+                "summary": "Liveness probe",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": {
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/healthz": {
             "get": {
-                "description": "Reports whether the process is alive.",
+                "description": "Reports whether the process is alive. Canonical path is /healthz; /health is an alias for load-balancer defaults.",
                 "tags": [
                     "system"
                 ],
@@ -320,8 +344,48 @@
                         }
                     },
                     {
-                        "description": "Filter by name (substring match)",
+                        "description": "Substring match on name (alias: name)",
+                        "name": "search",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Alias of search",
                         "name": "name",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Filter by auth type (api_key, oauth2, oidc, mtls)",
+                        "name": "type",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Filter by enabled flag",
+                        "name": "enabled",
+                        "in": "query",
+                        "schema": {
+                            "type": "boolean"
+                        }
+                    },
+                    {
+                        "description": "Sort field (name, created_at, updated_at, type)",
+                        "name": "sort",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Sort order (asc, desc)",
+                        "name": "order",
                         "in": "query",
                         "schema": {
                             "type": "string"
@@ -367,6 +431,16 @@
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -743,8 +817,57 @@
                         }
                     },
                     {
-                        "description": "Filter by name (substring match)",
+                        "description": "Substring match on name or slug (alias: name)",
+                        "name": "search",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Alias of search",
                         "name": "name",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Filter by consumer type (LLM, MCP, A2A)",
+                        "name": "type",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Filter by active flag",
+                        "name": "active",
+                        "in": "query",
+                        "schema": {
+                            "type": "boolean"
+                        }
+                    },
+                    {
+                        "description": "Filter consumers linked to this auth id",
+                        "name": "auth_id",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    },
+                    {
+                        "description": "Sort field (name, created_at, updated_at, type)",
+                        "name": "sort",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Sort order (asc, desc)",
+                        "name": "order",
                         "in": "query",
                         "schema": {
                             "type": "string"
@@ -790,6 +913,16 @@
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -971,7 +1104,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Updates an existing consumer.",
+                "description": "Updates an existing consumer. The optional `registries` field replaces the whole registry association set, so switching a role_based consumer to inline routing and attaching its registries happens in a single atomic request.",
                 "tags": [
                     "consumers"
                 ],
@@ -1826,8 +1959,72 @@
                         }
                     },
                     {
-                        "description": "Filter by name (substring match)",
+                        "description": "Substring match on name or slug (alias: name)",
+                        "name": "search",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Alias of search",
                         "name": "name",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Filter by enabled flag",
+                        "name": "enabled",
+                        "in": "query",
+                        "schema": {
+                            "type": "boolean"
+                        }
+                    },
+                    {
+                        "description": "Filter by global flag",
+                        "name": "global",
+                        "in": "query",
+                        "schema": {
+                            "type": "boolean"
+                        }
+                    },
+                    {
+                        "description": "Filter by mode (enforce, throttle, observe)",
+                        "name": "mode",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Catalog category (group type); comma-separated multi",
+                        "name": "category",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Plugin slug (FE type filter); comma-separated multi",
+                        "name": "type",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Sort field (name, created_at, updated_at, priority)",
+                        "name": "sort",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Sort order (asc, desc)",
+                        "name": "order",
                         "in": "query",
                         "schema": {
                             "type": "string"
@@ -1873,6 +2070,16 @@
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -3003,8 +3210,32 @@
                         }
                     },
                     {
-                        "description": "Filter by name (substring match)",
+                        "description": "Substring match on name (alias: name)",
+                        "name": "search",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Alias of search",
                         "name": "name",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Sort field (name, created_at, updated_at)",
+                        "name": "sort",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Sort order (asc, desc)",
+                        "name": "order",
                         "in": "query",
                         "schema": {
                             "type": "string"
@@ -3050,6 +3281,16 @@
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -3839,7 +4080,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the catalog of supported models, optionally filtered by provider.",
+                "description": "Returns the catalog of supported models, optionally filtered by provider. When gateway_id and registry_id are supplied for an AWS Bedrock registry, the list is narrowed to the models those credentials can invoke serverless (on-demand base models and system-defined inference profiles), excluding Bedrock Marketplace, Provisioned Throughput and custom models. Malformed ids and unreachable AWS endpoints are ignored and yield the full catalog.",
                 "tags": [
                     "catalog"
                 ],
@@ -3851,6 +4092,24 @@
                         "in": "query",
                         "schema": {
                             "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Gateway of the registry to scope availability to",
+                        "name": "gateway_id",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    },
+                    {
+                        "description": "Registry whose credentials decide model availability",
+                        "name": "registry_id",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
                         }
                     }
                 ],
@@ -4031,7 +4290,7 @@
         },
         "/{consumer_slug}/v1/chat/completions": {
             "post": {
-                "description": "Forwards an OpenAI Chat Completions request to the selected provider. Proxy plane route: /{consumer_slug}/v1/chat/completions. Other fixed routes include /v1/messages (Anthropic) and /v1/responses (OpenAI Responses).",
+                "description": "Forwards an OpenAI Chat Completions request to the selected provider. Proxy plane route: /{consumer_slug}/v1/chat/completions. Other fixed routes include /v1/messages (Anthropic) and /v1/responses (OpenAI Responses). Inline consumers may authenticate with an api key via X-AG-API-Key, x-api-key, or Authorization: Bearer ag_….",
                 "tags": [
                     "proxy"
                 ],
@@ -4055,7 +4314,15 @@
                         }
                     },
                     {
-                        "description": "Bearer token for OAuth2 or OIDC consumers",
+                        "description": "API key for inline consumers (Anthropic-compatible clients)",
+                        "name": "x-api-key",
+                        "in": "header",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Bearer ag_… for inline api-key auth, or Bearer JWT for OAuth2/OIDC consumers",
                         "name": "Authorization",
                         "in": "header",
                         "schema": {
@@ -4807,6 +5074,9 @@
                     },
                     "pool_alias": {
                         "type": "string"
+                    },
+                    "smart_routing": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SmartRoutingConfigRequest"
                     }
                 }
             },
@@ -4873,6 +5143,28 @@
                     }
                 }
             },
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SmartRoutingConfigRequest": {
+                "type": "object",
+                "properties": {
+                    "tiers": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SmartRoutingTierRequest"
+                        }
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SmartRoutingTierRequest": {
+                "type": "object",
+                "properties": {
+                    "min_score": {
+                        "type": "number"
+                    },
+                    "registry_id": {
+                        "type": "string"
+                    }
+                }
+            },
             "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ToolkitEntryRequest": {
                 "type": "object",
                 "properties": {
@@ -4922,6 +5214,13 @@
                     },
                     "name": {
                         "type": "string"
+                    },
+                    "registries": {
+                        "description": "Registries replaces the whole registry association set: registries absent\nfrom the list are detached. Omit the field to leave the associations as\nthey are; send an empty list to detach every registry.",
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.RegistryBindingRequest"
+                        }
                     },
                     "routing_mode": {
                         "type": "string"
@@ -5112,6 +5411,9 @@
                     },
                     "pool_alias": {
                         "type": "string"
+                    },
+                    "smart_routing": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SmartRoutingConfigResponse"
                     }
                 }
             },
@@ -5177,6 +5479,28 @@
                     }
                 }
             },
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SmartRoutingConfigResponse": {
+                "type": "object",
+                "properties": {
+                    "tiers": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SmartRoutingTierResponse"
+                        }
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SmartRoutingTierResponse": {
+                "type": "object",
+                "properties": {
+                    "min_score": {
+                        "type": "number"
+                    },
+                    "registry_id": {
+                        "type": "string"
+                    }
+                }
+            },
             "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ToolkitEntryResponse": {
                 "type": "object",
                 "properties": {
@@ -5232,7 +5556,7 @@
                         "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry"
                     },
                     "tenant_id": {
-                        "description": "TenantID is optional ownership for platform (empty JWT) create-for-tenant; tenant JWTs must match or omit it.",
+                        "description": "TenantID is required ownership for platform (empty JWT) create-for-tenant; tenant JWTs may match or omit it (JWT wins).",
                         "type": "string"
                     }
                 }
@@ -6858,6 +7182,15 @@
             "github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Entitlements": {
                 "type": "object",
                 "properties": {
+                    "burst_per_min": {
+                        "type": "integer"
+                    },
+                    "max_instances": {
+                        "type": "integer"
+                    },
+                    "quota_per_month": {
+                        "type": "integer"
+                    },
                     "tier": {
                         "type": "string"
                     }
@@ -7179,7 +7512,6 @@
                         "type": "integer"
                     },
                     "upstream_status": {
-                        "description": "Logical HTTP status of the MCP outcome (e.g. 200, 403). Gateway denials also set the wire HTTP status and http.response.status_code.",
                         "type": "integer"
                     },
                     "upstream_tool": {

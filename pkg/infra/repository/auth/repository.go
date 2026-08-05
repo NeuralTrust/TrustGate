@@ -22,6 +22,7 @@ import (
 
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	"github.com/google/uuid"
@@ -257,41 +258,41 @@ func (r *Repository) ListEnabledByGatewayAndType(
 }
 
 func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*domain.Auth, int, error) {
-	if filter.Page < 1 {
-		filter.Page = 1
-	}
-	if filter.Size < 1 {
-		filter.Size = 20
-	}
-	offset := (filter.Page - 1) * filter.Size
+	page := filter.Page.Normalize()
+	offset := page.Offset()
 
 	const countQuery = `
 		SELECT COUNT(*)
 		  FROM auths
 		 WHERE ($1::uuid IS NULL OR gateway_id = $1)
-		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')`
+		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')
+		   AND ($3 = '' OR type = $3)
+		   AND ($4::boolean IS NULL OR enabled = $4)`
 
 	gatewayParam := nullableUUID(filter.GatewayID.UUID())
+	typeParam := string(filter.Type)
 
 	var total int
-	if err := r.conn.Pool.QueryRow(ctx, countQuery, gatewayParam, filter.NameContains).Scan(&total); err != nil {
+	if err := r.conn.Pool.QueryRow(ctx, countQuery, gatewayParam, filter.Search, typeParam, filter.Enabled).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("auth repository: count: %w", err)
 	}
 
-	const listQuery = `
+	listQuery := `
 		SELECT id, gateway_id, name, type, enabled, config, key_hash, key_prefix, key_suffix, created_at, updated_at
 		  FROM auths
 		 WHERE ($1::uuid IS NULL OR gateway_id = $1)
 		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')
-		 ORDER BY created_at DESC, id
-		 LIMIT $3 OFFSET $4`
-	rows, err := r.conn.Pool.Query(ctx, listQuery, gatewayParam, filter.NameContains, filter.Size, offset)
+		   AND ($3 = '' OR type = $3)
+		   AND ($4::boolean IS NULL OR enabled = $4)
+		 ORDER BY ` + authOrderBy(filter.Sort) + `
+		 LIMIT $5 OFFSET $6`
+	rows, err := r.conn.Pool.Query(ctx, listQuery, gatewayParam, filter.Search, typeParam, filter.Enabled, page.Size, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("auth repository: list: %w", err)
 	}
 	defer rows.Close()
 
-	items := make([]*domain.Auth, 0, filter.Size)
+	items := make([]*domain.Auth, 0, page.Size)
 	for rows.Next() {
 		a, err := scanAuth(rows)
 		if err != nil {
@@ -348,6 +349,28 @@ func nullableUUID(id uuid.UUID) any {
 		return nil
 	}
 	return id
+}
+
+func authOrderBy(sort listing.Sort) string {
+	col := "created_at"
+	dir := listing.Desc
+	if !sort.IsZero() {
+		switch sort.Field {
+		case "name":
+			col = "name"
+		case "created_at":
+			col = "created_at"
+		case "updated_at":
+			col = "updated_at"
+		case "type":
+			col = "type"
+		}
+		dir = sort.Direction
+		if dir == "" {
+			dir = listing.Asc
+		}
+	}
+	return col + " " + dir.SQL() + ", id"
 }
 
 func nullableString(s string) any {

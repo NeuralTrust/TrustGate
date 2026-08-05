@@ -27,6 +27,7 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
@@ -275,7 +276,7 @@ func (c *Compiler) collectAllBulk(ctx context.Context) (map[ids.GatewayID]*readm
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() (err error) {
 		consumers, err = listAll(gctx, "consumers", func(ctx context.Context, page int) ([]*consumerdomain.Consumer, int, error) {
-			return c.consumers.List(ctx, consumerdomain.ListFilter{Page: page, Size: compilerBulkPageSize})
+			return c.consumers.List(ctx, consumerdomain.ListFilter{Page: listing.Page{Number: page, Size: compilerBulkPageSize}})
 		})
 		return err
 	})
@@ -287,19 +288,19 @@ func (c *Compiler) collectAllBulk(ctx context.Context) (map[ids.GatewayID]*readm
 	})
 	g.Go(func() (err error) {
 		policies, err = listAll(gctx, "policies", func(ctx context.Context, page int) ([]*policydomain.Policy, int, error) {
-			return c.policies.List(ctx, policydomain.ListFilter{Page: page, Size: compilerBulkPageSize})
+			return c.policies.List(ctx, policydomain.ListFilter{Page: listing.Page{Number: page, Size: compilerBulkPageSize}})
 		})
 		return err
 	})
 	g.Go(func() (err error) {
 		auths, err = listAll(gctx, "auths", func(ctx context.Context, page int) ([]*authdomain.Auth, int, error) {
-			return c.auths.List(ctx, authdomain.ListFilter{Page: page, Size: compilerBulkPageSize})
+			return c.auths.List(ctx, authdomain.ListFilter{Page: listing.Page{Number: page, Size: compilerBulkPageSize}})
 		})
 		return err
 	})
 	g.Go(func() (err error) {
 		roles, err = listAll(gctx, "roles", func(ctx context.Context, page int) ([]*roledomain.Role, int, error) {
-			return c.roles.List(ctx, roledomain.ListFilter{Page: page, Size: compilerBulkPageSize})
+			return c.roles.List(ctx, roledomain.ListFilter{Page: listing.Page{Number: page, Size: compilerBulkPageSize}})
 		})
 		return err
 	})
@@ -472,7 +473,7 @@ func (c *Compiler) listRegistries(ctx context.Context, gatewayID ids.GatewayID) 
 func (c *Compiler) listAuths(ctx context.Context, gatewayID ids.GatewayID) ([]authdomain.Auth, error) {
 	out := make([]authdomain.Auth, 0)
 	for page := 1; ; page++ {
-		items, _, err := c.auths.List(ctx, authdomain.ListFilter{GatewayID: gatewayID, Page: page, Size: compilerPageSize})
+		items, _, err := c.auths.List(ctx, authdomain.ListFilter{GatewayID: gatewayID, Page: listing.Page{Number: page, Size: compilerPageSize}})
 		if err != nil {
 			if errors.Is(err, commonerrors.ErrNotFound) {
 				return out, nil

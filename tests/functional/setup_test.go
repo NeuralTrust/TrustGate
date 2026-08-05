@@ -24,9 +24,9 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
-	"github.com/redis/go-redis/v9"
 	"github.com/jackc/pgx/v5"
 	"github.com/joho/godotenv"
+	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -97,8 +97,8 @@ func buildCmdEnv(trustGuardBaseURL, firewallComplexityBaseURL string) []string {
 		env = append(env, "TRUSTGUARD_BASE_URL="+trustGuardBaseURL)
 	}
 	if firewallComplexityBaseURL != "" {
-		env = append(env, "FIREWALL_COMPLEXITY_BASE_URL="+firewallComplexityBaseURL)
-		env = append(env, "FIREWALL_COMPLEXITY_TOKEN="+firewallComplexityFunctionalToken)
+		env = append(env, "FIREWALL_BASE_URL="+firewallComplexityBaseURL)
+		env = append(env, "FIREWALL_SECRET_KEY="+firewallComplexityFunctionalSecret)
 	}
 	return env
 }

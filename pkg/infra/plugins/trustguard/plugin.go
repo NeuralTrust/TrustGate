@@ -451,8 +451,17 @@ func (p *Plugin) config(settings map[string]any) (Settings, error) {
 	return cfg, nil
 }
 
+// configCacheKey must name every setting parseConfig reads, direction included:
+// it is an alias for inspect, so omitting it gives a policy that sets only
+// direction the same key as one that sets neither, and the first of the two to
+// be parsed decides which legs both of them inspect.
 func configCacheKey(settings map[string]any) string {
-	return fmt.Sprintf("%v\x00%v", settings["inspect"], settings["collector_id"])
+	return fmt.Sprintf(
+		"%v\x00%v\x00%v",
+		settings["inspect"],
+		settings["direction"],
+		settings["collector_id"],
+	)
 }
 
 func gatewayTraceID(ctx context.Context) string {

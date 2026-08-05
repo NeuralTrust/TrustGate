@@ -82,7 +82,7 @@ func (f fakeConsumers) List(_ context.Context, filter consumerdomain.ListFilter)
 	if f.err != nil {
 		return nil, 0, f.err
 	}
-	if filter.Page > 1 {
+	if filter.Page.Number > 1 {
 		return nil, 0, nil
 	}
 	if filter.GatewayID != (ids.GatewayID{}) {
@@ -143,7 +143,7 @@ func (f fakePolicies) List(_ context.Context, filter policydomain.ListFilter) ([
 	if f.err != nil {
 		return nil, 0, f.err
 	}
-	if filter.Page > 1 {
+	if filter.Page.Number > 1 {
 		return nil, 0, nil
 	}
 	if filter.GatewayID != (ids.GatewayID{}) {
@@ -163,7 +163,7 @@ func (f fakeAuths) List(_ context.Context, filter authdomain.ListFilter) ([]*aut
 	if f.err != nil {
 		return nil, 0, f.err
 	}
-	if filter.Page > 1 {
+	if filter.Page.Number > 1 {
 		return nil, 0, nil
 	}
 	if filter.GatewayID != (ids.GatewayID{}) {
@@ -190,7 +190,7 @@ func (f fakeRoles) List(_ context.Context, filter roledomain.ListFilter) ([]*rol
 	if f.err != nil {
 		return nil, 0, f.err
 	}
-	if filter.Page > 1 {
+	if filter.Page.Number > 1 {
 		return nil, 0, nil
 	}
 	if filter.GatewayID != (ids.GatewayID{}) {

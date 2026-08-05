@@ -18,6 +18,7 @@ import (
 	"context"
 	"log/slog"
 
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -33,13 +34,20 @@ var _ Finder = (*finder)(nil)
 
 type finder struct {
 	repo        domain.Repository
+	catalog     appplugins.CatalogService
 	memoryCache *cache.TTLMap
 	logger      *slog.Logger
 }
 
-func NewFinder(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger) Finder {
+func NewFinder(
+	repo domain.Repository,
+	catalog appplugins.CatalogService,
+	manager *cache.TTLMapManager,
+	logger *slog.Logger,
+) Finder {
 	return &finder{
 		repo:        repo,
+		catalog:     catalog,
 		memoryCache: manager.GetTTLMap(cache.PolicyTTLName),
 		logger:      logger,
 	}
@@ -62,9 +70,6 @@ func (f *finder) FindByID(ctx context.Context, gatewayID ids.GatewayID, id ids.P
 	return scopeToGateway(p, gatewayID)
 }
 
-// scopeToGateway enforces that a policy belongs to the requesting gateway,
-// returning ErrNotFound for cross-gateway ids so the API never confirms the
-// existence of another gateway's resource.
 func scopeToGateway(p *domain.Policy, gatewayID ids.GatewayID) (*domain.Policy, error) {
 	if p.GatewayID != gatewayID {
 		return nil, domain.ErrNotFound
@@ -73,5 +78,13 @@ func scopeToGateway(p *domain.Policy, gatewayID ids.GatewayID) (*domain.Policy, 
 }
 
 func (f *finder) List(ctx context.Context, filter domain.ListFilter) ([]*domain.Policy, int, error) {
+	slugs, restricted := ResolveListSlugs(f.catalog.Catalog(), filter.Categories, filter.Types)
+	filter.Categories = nil
+	filter.Types = nil
+	filter.RestrictToSlugs = restricted
+	filter.Slugs = slugs
+	if restricted && len(slugs) == 0 {
+		return []*domain.Policy{}, 0, nil
+	}
 	return f.repo.List(ctx, filter)
 }

@@ -16,11 +16,13 @@ package trustguard
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
 const testCollectorID = "11111111-1111-4111-8111-111111111111"
@@ -89,6 +91,24 @@ func TestParseConfig(t *testing.T) {
 			assert.Equal(t, tt.wantInspect, cfg.Inspect)
 		})
 	}
+}
+
+func TestConfigCacheKeepsDirectionAndInspectApart(t *testing.T) {
+	p := New(adapter.NewRegistry(), "http://guard.local", time.Second, "id", "secret", nil)
+
+	legacy, err := p.config(map[string]any{"direction": inspectRequest, "collector_id": testCollectorID})
+	require.NoError(t, err)
+	assert.Equal(t, inspectRequest, legacy.Inspect)
+
+	unset, err := p.config(map[string]any{"collector_id": testCollectorID})
+	require.NoError(t, err)
+	assert.Equal(t, inspectRequestResponse, unset.Inspect,
+		"a policy that sets neither key must not inherit the cached config of one that sets direction")
+
+	again, err := p.config(map[string]any{"direction": inspectRequest, "collector_id": testCollectorID})
+	require.NoError(t, err)
+	assert.Equal(t, inspectRequest, again.Inspect,
+		"the cached entry for direction must survive a policy that leaves it unset")
 }
 
 func TestSelectsStage(t *testing.T) {

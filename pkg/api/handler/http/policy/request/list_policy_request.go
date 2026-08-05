@@ -14,8 +14,18 @@
 
 package request
 
+import (
+	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+)
+
 type ListPolicyRequest struct {
-	Name string
-	Page int
-	Size int
+	Search     string
+	Enabled    *bool
+	Global     *bool
+	Mode       domain.Mode
+	Categories []string
+	Types      []string
+	Page       listing.Page
+	Sort       listing.Sort
 }

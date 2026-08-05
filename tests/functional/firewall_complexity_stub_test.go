@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 const (
-	firewallComplexityFunctionalToken = "functional-firewall-token"
-	firewallComplexityPath            = "/v1/complexity"
+	firewallComplexityFunctionalSecret = "functional-firewall-secret"
+	firewallComplexityPath             = "/v1/complexity"
 
 	// Message-content markers the stub maps to deterministic complexity
 	// scores, so each test drives routing purely through the prompt it sends
@@ -70,7 +72,7 @@ func newFirewallComplexityStubServer() *firewallComplexityStub {
 	stub := &firewallComplexityStub{}
 	mux := http.NewServeMux()
 	mux.HandleFunc(firewallComplexityPath, func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("token") != firewallComplexityFunctionalToken {
+		if !isValidFirewallToken(r.Header.Get("token")) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -90,6 +92,17 @@ func newFirewallComplexityStubServer() *firewallComplexityStub {
 	})
 	stub.server = httptest.NewServer(mux)
 	return stub
+}
+
+func isValidFirewallToken(signed string) bool {
+	token, err := jwt.Parse(signed, func(token *jwt.Token) (any, error) {
+		return []byte(firewallComplexityFunctionalSecret), nil
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
+	if err != nil || !token.Valid {
+		return false
+	}
+	claims, ok := token.Claims.(jwt.MapClaims)
+	return ok && claims["purpose"] == "firewall"
 }
 
 func writeFirewallScore(w http.ResponseWriter, score float64) {

@@ -28,12 +28,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type tokenProviderStub struct {
+	configured bool
+	token      string
+	err        error
+	invalidate func()
+}
+
+func (s tokenProviderStub) Configured() bool       { return s.configured }
+func (s tokenProviderStub) Token() (string, error) { return s.token, s.err }
+func (s tokenProviderStub) Invalidate() {
+	if s.invalidate != nil {
+		s.invalidate()
+	}
+}
+
 func TestClient_Configured(t *testing.T) {
 	t.Parallel()
-	assert.False(t, NewClient("", "", 0).Configured())
-	assert.False(t, NewClient("http://x", "", 0).Configured())
-	assert.False(t, NewClient("", "tok", 0).Configured())
-	assert.True(t, NewClient("http://x", "tok", 0).Configured())
+	configured := tokenProviderStub{configured: true, token: "tok"}
+	assert.False(t, NewClient("", configured, 0).Configured())
+	assert.False(t, NewClient("http://x", nil, 0).Configured())
+	assert.False(t, NewClient("http://x", tokenProviderStub{}, 0).Configured())
+	assert.True(t, NewClient("http://x", configured, 0).Configured())
 }
 
 func TestClient_Score_Success(t *testing.T) {
@@ -53,7 +69,7 @@ func TestClient_Score_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(srv.URL, "secret-token", time.Second)
+	c := NewClient(srv.URL, tokenProviderStub{configured: true, token: "secret-token"}, time.Second)
 	score, err := c.Score(context.Background(), "hello", "chat_1", "tenant_1")
 	require.NoError(t, err)
 	assert.InDelta(t, 0.41, score, 1e-9)
@@ -61,21 +77,35 @@ func TestClient_Score_Success(t *testing.T) {
 
 func TestClient_Score_NotConfigured(t *testing.T) {
 	t.Parallel()
-	c := NewClient("", "", time.Second)
+	c := NewClient("", nil, time.Second)
 	_, err := c.Score(context.Background(), "hello", "", "")
 	assert.ErrorIs(t, err, ErrNotConfigured)
 }
 
+func TestClient_Score_TokenError(t *testing.T) {
+	t.Parallel()
+	tokenErr := errors.New("mint token")
+	c := NewClient("http://x", tokenProviderStub{configured: true, err: tokenErr}, time.Second)
+	_, err := c.Score(context.Background(), "hello", "", "")
+	assert.ErrorIs(t, err, tokenErr)
+}
+
 func TestClient_Score_Unauthorized(t *testing.T) {
 	t.Parallel()
+	invalidated := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer srv.Close()
 
-	c := NewClient(srv.URL, "bad", time.Second)
+	c := NewClient(srv.URL, tokenProviderStub{
+		configured: true,
+		token:      "bad",
+		invalidate: func() { invalidated = true },
+	}, time.Second)
 	_, err := c.Score(context.Background(), "hello", "", "")
 	assert.ErrorIs(t, err, ErrUnauthorized)
+	assert.True(t, invalidated)
 }
 
 func TestClient_Score_ServerError(t *testing.T) {
@@ -85,7 +115,7 @@ func TestClient_Score_ServerError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(srv.URL, "tok", time.Second)
+	c := NewClient(srv.URL, tokenProviderStub{configured: true, token: "tok"}, time.Second)
 	_, err := c.Score(context.Background(), "hello", "", "")
 	require.Error(t, err)
 	assert.False(t, errors.Is(err, ErrUnauthorized))
