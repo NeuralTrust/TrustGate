@@ -136,6 +136,22 @@ func validateBehavior(behavior string) error {
 	}
 }
 
+// rewritingBehaviors names the rules whose behavior edits the exchange instead
+// of refusing it, which is something only the LLM path can do. The tools they
+// name are returned so the operator is told which lines to change.
+func (c *config) rewritingBehaviors() []string {
+	var offenders []string
+	if c.BehaviorDefault != "" && c.BehaviorDefault != behaviorReject {
+		offenders = append(offenders, fmt.Sprintf("behavior_default %q", c.BehaviorDefault))
+	}
+	for _, rule := range c.Rules {
+		if rule.Behavior != "" && rule.Behavior != behaviorReject {
+			offenders = append(offenders, fmt.Sprintf("rule %q behavior %q", rule.Tool, rule.Behavior))
+		}
+	}
+	return offenders
+}
+
 func (c *config) behaviorDefault() string {
 	if c.BehaviorDefault != "" {
 		return c.BehaviorDefault

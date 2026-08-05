@@ -14,6 +14,15 @@
 
 package plugins
 
+// ProtocolConfigValidator is implemented by plugins that serve more than one
+// protocol and whose settings do not all mean something on each of them. A
+// plugin supporting a protocol only says the chain will run; a setting that the
+// chosen protocol cannot honour is accepted at policy creation, where no
+// consumer is in sight, so the check has to happen when the two meet.
+type ProtocolConfigValidator interface {
+	ValidateConfigForProtocol(protocol Protocol, settings map[string]any) error
+}
+
 type ProtocolResolver struct {
 	registry Registry
 }
@@ -33,4 +42,23 @@ func (r *ProtocolResolver) SupportedProtocols(slug string) ([]string, bool) {
 		out = append(out, string(protocol))
 	}
 	return out, true
+}
+
+// ValidateSettingsForProtocol reports whether a policy's settings mean on this
+// protocol what they say. Plugins that do not care return nil by not
+// implementing ProtocolConfigValidator.
+func (r *ProtocolResolver) ValidateSettingsForProtocol(
+	slug string,
+	protocol string,
+	settings map[string]any,
+) error {
+	p, ok := r.registry.Get(slug)
+	if !ok {
+		return nil
+	}
+	validator, ok := p.(ProtocolConfigValidator)
+	if !ok {
+		return nil
+	}
+	return validator.ValidateConfigForProtocol(Protocol(protocol), settings)
 }

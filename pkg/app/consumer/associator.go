@@ -235,10 +235,17 @@ func (a *associator) validatePolicyProtocol(cons *domain.Consumer, pol *policydo
 	}
 	for _, protocol := range protocols {
 		if protocol == string(cons.Type) {
-			return nil
+			return a.validatePolicySettings(cons, pol)
 		}
 	}
 	return fmt.Errorf("%w: plugin %s does not support consumer protocol %s", domain.ErrPolicyProtocolMismatch, pol.Slug, cons.Type)
+}
+
+func (a *associator) validatePolicySettings(cons *domain.Consumer, pol *policydomain.Policy) error {
+	if err := a.resolver.ValidateSettingsForProtocol(pol.Slug, string(cons.Type), pol.Settings); err != nil {
+		return fmt.Errorf("%w: %s", domain.ErrPolicyProtocolMismatch, err)
+	}
+	return nil
 }
 
 func (a *associator) DetachPolicy(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, policyID ids.PolicyID) error {
