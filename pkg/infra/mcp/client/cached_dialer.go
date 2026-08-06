@@ -89,14 +89,23 @@ func (d *cachedDialer) connectAndStore(ctx context.Context, key string, target a
 		return nil, err
 	}
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	if e, ok := d.entries[key]; ok {
-		sess.Close(ctx)
 		e.lastUsed = time.Now()
-		return e.session, nil
+		winner := e.session
+		d.mu.Unlock()
+		closeInBackground(sess)
+		return winner, nil
 	}
 	d.entries[key] = &sessionEntry{session: sess, lastUsed: time.Now()}
+	d.mu.Unlock()
 	return sess, nil
+}
+
+// closeInBackground tears a session down off the request path: the teardown is
+// a round trip to the upstream that nobody is waiting on, and it outlives the
+// context of the caller that lost the race to store its session.
+func closeInBackground(sess *Session) {
+	go sess.Close(context.Background())
 }
 
 func (d *cachedDialer) drop(ctx context.Context, key string, sess *Session) {
@@ -121,14 +130,9 @@ func (d *cachedDialer) evictIdleLocked() {
 			stale = append(stale, e.session)
 		}
 	}
-	if len(stale) == 0 {
-		return
+	for _, s := range stale {
+		closeInBackground(s)
 	}
-	go func() {
-		for _, s := range stale {
-			s.Close(context.Background())
-		}
-	}()
 }
 
 func credentialFingerprint(headers map[string]string) string {
