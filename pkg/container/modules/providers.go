@@ -31,5 +31,6 @@ func Providers(c *container.Container) error {
 	}
 	return c.Invoke(func(cfg *config.Config) {
 		providers.SetDefaultHTTPTimeout(cfg.Provider.RequestTimeout)
+		providers.SetDefaultResponseHeaderTimeout(cfg.Provider.ResponseHeaderTimeout)
 	})
 }

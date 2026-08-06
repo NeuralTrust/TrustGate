@@ -28,9 +28,25 @@ import (
 // Override with SetDefaultHTTPTimeout during initialization.
 var DefaultHTTPTimeout = 120 * time.Second
 
+// DefaultResponseHeaderTimeout bounds the wait for an upstream provider's
+// response headers. Override with SetDefaultResponseHeaderTimeout during
+// initialization.
+//
+// Non-streaming providers withhold response headers until the whole completion
+// has been generated, so this value caps total generation time for
+// non-streaming requests. Keeping it below DefaultHTTPTimeout silently
+// truncates long completions regardless of the configured request timeout.
+var DefaultResponseHeaderTimeout = 120 * time.Second
+
 func SetDefaultHTTPTimeout(d time.Duration) {
 	if d > 0 {
 		DefaultHTTPTimeout = d
+	}
+}
+
+func SetDefaultResponseHeaderTimeout(d time.Duration) {
+	if d > 0 {
+		DefaultResponseHeaderTimeout = d
 	}
 }
 
@@ -120,7 +136,7 @@ func newTransport() *http.Transport {
 
 		IdleConnTimeout: 60 * time.Second,
 
-		ResponseHeaderTimeout: 30 * time.Second,
+		ResponseHeaderTimeout: DefaultResponseHeaderTimeout,
 
 		ExpectContinueTimeout: 1 * time.Second,
 
