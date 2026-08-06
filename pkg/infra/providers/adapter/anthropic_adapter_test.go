@@ -363,10 +363,6 @@ func TestCanonical_Anthropic_SystemArrayAndToolResultBlocks(t *testing.T) {
 	assert.Equal(t, "t1", tool.ToolCallID)
 }
 
-// ---------------------------------------------------------------------------
-// Extended thinking: thinking_delta must survive the stream
-// ---------------------------------------------------------------------------
-
 func TestAnthropicDecodeStreamChunk_ThinkingDelta(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -412,9 +408,6 @@ func TestAnthropicDecodeStreamChunk_ThinkingDelta(t *testing.T) {
 	}
 }
 
-// A thinking delta arriving from Anthropic must reach an OpenAI-wire client as
-// reasoning_content. Dropping it left the SSE stream silent for the whole
-// reasoning phase, which intermediaries treat as an idle connection.
 func TestAnthropicThinkingDeltaReachesOpenAIStream(t *testing.T) {
 	input := `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"step one"}}`
 

@@ -153,9 +153,9 @@ type StreamToolCallDelta struct {
 type CanonicalStreamChunk struct {
 	ID                 string                     `json:"id,omitempty"`
 	Model              string                     `json:"model,omitempty"`
-	Role               string                     `json:"role,omitempty"`            // only on first chunk
-	Delta              string                     `json:"delta,omitempty"`           // text content delta
-	ReasoningDelta     string                     `json:"reasoning_delta,omitempty"` // thinking/reasoning content delta
+	Role               string                     `json:"role,omitempty"`  // only on first chunk
+	Delta              string                     `json:"delta,omitempty"` // text content delta
+	ReasoningDelta     string                     `json:"reasoning_delta,omitempty"`
 	FinishReason       string                     `json:"finish_reason,omitempty"`
 	ToolCallDeltas     []StreamToolCallDelta      `json:"tool_call_deltas,omitempty"`
 	Usage              *CanonicalUsage            `json:"usage,omitempty"` // present in the final chunk of some providers

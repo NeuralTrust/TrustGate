@@ -20,15 +20,7 @@ import (
 	"strings"
 )
 
-// defaultAnthropicMaxTokens is the fallback when the caller sends no max_tokens.
-// Anthropic requires the field, so some value must be sent, and the previous
-// 4096 truncated answers on extended-thinking models, where reasoning and the
-// visible answer share the budget.
-//
-// It is deliberately far below the 64000 ceiling of current Claude models: a
-// larger value is rejected outright by models with a lower ceiling, and on a
-// non-streamed request it generates for longer than upstream proxies keep the
-// connection open, turning a truncated answer into no answer at all.
+// Not the 64000 model ceiling: lower-ceiling models reject larger values, and a longer generation outlives the proxy read timeout.
 const defaultAnthropicMaxTokens = 8192
 
 // AnthropicAdapter converts between Anthropic Messages API format and the
@@ -165,7 +157,7 @@ type anthropicMessageStart struct {
 type anthropicDelta struct {
 	Type        string `json:"type,omitempty"`
 	Text        string `json:"text,omitempty"`
-	Thinking    string `json:"thinking,omitempty"`     // for thinking_delta (extended thinking streaming)
+	Thinking    string `json:"thinking,omitempty"`
 	PartialJSON string `json:"partial_json,omitempty"` // for input_json_delta (tool_use streaming)
 	StopReason  string `json:"stop_reason,omitempty"`
 }
@@ -600,8 +592,7 @@ func (a *AnthropicAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChun
 		if delta.Type == "text_delta" && delta.Text != "" {
 			return &CanonicalStreamChunk{Delta: delta.Text}, nil
 		}
-		// Extended thinking: without forwarding these the stream stays silent for
-		// the whole reasoning phase and intermediaries close the idle connection.
+		// Forwarded so the stream is not silent during the reasoning phase, which proxies close as idle.
 		if delta.Type == "thinking_delta" && delta.Thinking != "" {
 			return &CanonicalStreamChunk{ReasoningDelta: delta.Thinking}, nil
 		}
