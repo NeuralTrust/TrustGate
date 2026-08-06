@@ -362,3 +362,113 @@ func TestCanonical_Anthropic_SystemArrayAndToolResultBlocks(t *testing.T) {
 	assert.Equal(t, "error: timeout", tool.Content)
 	assert.Equal(t, "t1", tool.ToolCallID)
 }
+
+// ---------------------------------------------------------------------------
+// Extended thinking: thinking_delta must survive the stream
+// ---------------------------------------------------------------------------
+
+func TestAnthropicDecodeStreamChunk_ThinkingDelta(t *testing.T) {
+	tests := []struct {
+		name          string
+		body          string
+		wantReasoning string
+		wantText      string
+		wantNil       bool
+	}{
+		{
+			name:          "thinking_delta becomes a reasoning delta",
+			body:          `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me think"}}`,
+			wantReasoning: "Let me think",
+		},
+		{
+			name:     "text_delta stays plain content",
+			body:     `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}`,
+			wantText: "Hi",
+		},
+		{
+			name:    "empty thinking_delta yields nothing",
+			body:    `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}}`,
+			wantNil: true,
+		},
+		{
+			name:    "signature_delta is still ignored",
+			body:    `{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"abc"}}`,
+			wantNil: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := (&AnthropicAdapter{}).DecodeStreamChunk([]byte(tt.body))
+			require.NoError(t, err)
+			if tt.wantNil {
+				assert.Nil(t, got)
+				return
+			}
+			require.NotNil(t, got)
+			assert.Equal(t, tt.wantReasoning, got.ReasoningDelta)
+			assert.Equal(t, tt.wantText, got.Delta)
+		})
+	}
+}
+
+// A thinking delta arriving from Anthropic must reach an OpenAI-wire client as
+// reasoning_content. Dropping it left the SSE stream silent for the whole
+// reasoning phase, which intermediaries treat as an idle connection.
+func TestAnthropicThinkingDeltaReachesOpenAIStream(t *testing.T) {
+	input := `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"step one"}}`
+
+	lines, err := NewRegistry().AdaptStreamChunk([]byte(input), FormatOpenAI, FormatAnthropic)
+	require.NoError(t, err)
+	require.NotEmpty(t, lines, "thinking delta must produce SSE output")
+
+	var payload []byte
+	for _, l := range lines {
+		if p, ok := bytes.CutPrefix(l, []byte("data: ")); ok {
+			payload = p
+			break
+		}
+	}
+	require.NotNil(t, payload)
+
+	var chunk struct {
+		Choices []struct {
+			Delta struct {
+				Content          string `json:"content"`
+				ReasoningContent string `json:"reasoning_content"`
+			} `json:"delta"`
+		} `json:"choices"`
+	}
+	require.NoError(t, json.Unmarshal(payload, &chunk))
+	require.Len(t, chunk.Choices, 1)
+	assert.Equal(t, "step one", chunk.Choices[0].Delta.ReasoningContent)
+	assert.Empty(t, chunk.Choices[0].Delta.Content, "reasoning must not leak into content")
+}
+
+func TestAnthropicEncodeRequest_MaxTokensDefault(t *testing.T) {
+	tests := []struct {
+		name      string
+		maxTokens int
+		want      int
+	}{
+		{name: "caller value is respected", maxTokens: 512, want: 512},
+		{name: "absent value falls back to the default", maxTokens: 0, want: defaultAnthropicMaxTokens},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, err := (&AnthropicAdapter{}).EncodeRequest(&CanonicalRequest{
+				Model:     "claude-opus-4-5",
+				MaxTokens: tt.maxTokens,
+				Messages:  []CanonicalMessage{{Role: "user", Content: "hi"}},
+			})
+			require.NoError(t, err)
+
+			var out struct {
+				MaxTokens int `json:"max_tokens"`
+			}
+			require.NoError(t, json.Unmarshal(body, &out))
+			assert.Equal(t, tt.want, out.MaxTokens)
+		})
+	}
+}
