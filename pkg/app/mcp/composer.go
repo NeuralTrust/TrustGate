@@ -27,6 +27,7 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
+	"golang.org/x/sync/singleflight"
 )
 
 //go:generate mockery --name=Composer --dir=. --output=./mocks --filename=mcp_composer_mock.go --case=underscore --with-expecter
@@ -46,6 +47,7 @@ type composer struct {
 	dialer    Dialer
 	creds     CredentialResolver
 	discovery DiscoveryCache
+	flight    singleflight.Group
 	logger    *slog.Logger
 }
 
@@ -177,9 +179,9 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 	var pendingConsent *ConsentRequiredError
 	denied := make(map[string]struct{})
 	reachable := 0
-	for _, reg := range registries {
-		tools, err := c.discover(ctx, rc, reg)
-		if err != nil {
+	for _, found := range c.discoverTools(ctx, rc, registries) {
+		reg, tools := found.registry, found.items
+		if err := found.err; err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}

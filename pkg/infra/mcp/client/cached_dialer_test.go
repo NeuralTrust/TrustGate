@@ -22,6 +22,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	mcpclient "github.com/NeuralTrust/TrustGate/pkg/infra/mcp/client"
@@ -173,6 +174,68 @@ func TestCachedDialer_NoPinKeyConnectsFresh(t *testing.T) {
 	}
 	if got := upstream.inits.Load(); got != 2 {
 		t.Fatalf("expected a fresh session per connect without a pin key, got %d inits", got)
+	}
+}
+
+func TestCachedDialer_ClosingARedundantSessionDoesNotStallTheCache(t *testing.T) {
+	t.Parallel()
+
+	var dialling atomic.Int64
+	bothDialling := make(chan struct{})
+	tearingDown := make(chan struct{}, 4)
+	finishTeardown := make(chan struct{})
+
+	server := sdk.NewServer(&sdk.Implementation{Name: "stub", Version: "1"}, nil)
+	server.AddReceivingMiddleware(func(next sdk.MethodHandler) sdk.MethodHandler {
+		return func(ctx context.Context, method string, req sdk.Request) (sdk.Result, error) {
+			if method == "initialize" {
+				if n := dialling.Add(1); n <= 2 {
+					if n == 2 {
+						close(bothDialling)
+					}
+					<-bothDialling
+				}
+			}
+			return next(ctx, method, req)
+		}
+	})
+	inner := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, nil)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			tearingDown <- struct{}{}
+			<-finishTeardown
+		}
+		inner.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	defer close(finishTeardown)
+
+	dialer := newCachedDialer()
+	for i := 0; i < 2; i++ {
+		go func() {
+			_, _ = dialer.Connect(context.Background(),
+				appmcp.Target{URL: srv.URL, PinKey: "gw:consumer:reg"})
+		}()
+	}
+	select {
+	case <-tearingDown:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the session that lost the race was never torn down")
+	}
+
+	dialled := make(chan error, 1)
+	go func() {
+		_, err := dialer.Connect(context.Background(),
+			appmcp.Target{URL: srv.URL, PinKey: "gw:consumer:other"})
+		dialled <- err
+	}()
+	select {
+	case err := <-dialled:
+		if err != nil {
+			t.Fatalf("connect to a second registry: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a session lookup waited on the teardown round trip of an unrelated session")
 	}
 }
 
