@@ -139,9 +139,10 @@ type openaiStreamChoice struct {
 }
 
 type openaiStreamDelta struct {
-	Role      string                 `json:"role,omitempty"`
-	Content   string                 `json:"content,omitempty"`
-	ToolCalls []openaiStreamToolCall `json:"tool_calls,omitempty"`
+	Role             string                 `json:"role,omitempty"`
+	Content          string                 `json:"content,omitempty"`
+	ReasoningContent string                 `json:"reasoning_content,omitempty"`
+	ToolCalls        []openaiStreamToolCall `json:"tool_calls,omitempty"`
 }
 
 type openaiStreamToolCall struct {
@@ -475,8 +476,9 @@ func decodeCompletionsStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 
 func encodeCompletionsStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
 	delta := openaiStreamDelta{
-		Role:    chunk.Role,
-		Content: chunk.Delta,
+		Role:             chunk.Role,
+		Content:          chunk.Delta,
+		ReasoningContent: chunk.ReasoningDelta,
 	}
 	for _, tc := range chunk.ToolCallDeltas {
 		delta.ToolCalls = append(delta.ToolCalls, openaiStreamToolCall{

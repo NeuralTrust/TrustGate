@@ -20,6 +20,9 @@ import (
 	"strings"
 )
 
+// Not the 64000 model ceiling: lower-ceiling models reject larger values, and a longer generation outlives the proxy read timeout.
+const defaultAnthropicMaxTokens = 8192
+
 // AnthropicAdapter converts between Anthropic Messages API format and the
 // canonical internal model.
 type AnthropicAdapter struct{}
@@ -154,6 +157,7 @@ type anthropicMessageStart struct {
 type anthropicDelta struct {
 	Type        string `json:"type,omitempty"`
 	Text        string `json:"text,omitempty"`
+	Thinking    string `json:"thinking,omitempty"`
 	PartialJSON string `json:"partial_json,omitempty"` // for input_json_delta (tool_use streaming)
 	StopReason  string `json:"stop_reason,omitempty"`
 }
@@ -370,7 +374,7 @@ func (a *AnthropicAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) 
 	if req.MaxTokens > 0 {
 		out.MaxTokens = req.MaxTokens
 	} else {
-		out.MaxTokens = 4096
+		out.MaxTokens = defaultAnthropicMaxTokens
 	}
 
 	// Messages: collapse canonical Role="tool" messages into one Anthropic "user" message with tool_result blocks
@@ -587,6 +591,10 @@ func (a *AnthropicAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChun
 		}
 		if delta.Type == "text_delta" && delta.Text != "" {
 			return &CanonicalStreamChunk{Delta: delta.Text}, nil
+		}
+		// Forwarded so the stream is not silent during the reasoning phase, which proxies close as idle.
+		if delta.Type == "thinking_delta" && delta.Thinking != "" {
+			return &CanonicalStreamChunk{ReasoningDelta: delta.Thinking}, nil
 		}
 		if delta.Type == "input_json_delta" {
 			return &CanonicalStreamChunk{
