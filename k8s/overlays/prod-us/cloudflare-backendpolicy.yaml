@@ -1,6 +1,11 @@
 # Cloud Armor: allow only Cloudflare-proxied traffic to these Services' load
 # balancer backends. References neuraltrust-prod-us-cloudflare-only (preview
 # until public Gateway is attached and logs are clean).
+#
+# timeoutSec also lives here because it is a GCPBackendPolicy field. Omitting it
+# yields the GCP default of 30s, which cuts LLM completions mid-generation; the
+# proxy and MCP backends serve long-running upstream calls and need the higher
+# bound. The admin backend keeps the default: its requests are short.
 apiVersion: networking.gke.io/v1
 kind: GCPBackendPolicy
 metadata:
@@ -20,6 +25,7 @@ metadata:
 spec:
   default:
     securityPolicy: neuraltrust-prod-us-cloudflare-only
+    timeoutSec: 300
   targetRef:
     group: ""
     kind: Service
@@ -32,6 +38,7 @@ metadata:
 spec:
   default:
     securityPolicy: neuraltrust-prod-us-cloudflare-only
+    timeoutSec: 300
   targetRef:
     group: ""
     kind: Service

@@ -17,6 +17,7 @@ package providers
 import (
 	"bytes"
 	"io"
+	"net/http"
 	"testing"
 	"time"
 
@@ -69,6 +70,33 @@ func TestSetDefaultHTTPTimeout(t *testing.T) {
 
 	SetDefaultHTTPTimeout(0)
 	assert.Equal(t, 42*time.Second, DefaultHTTPTimeout, "non-positive duration must be ignored")
+}
+
+func TestSetDefaultResponseHeaderTimeout(t *testing.T) {
+	original := DefaultResponseHeaderTimeout
+	t.Cleanup(func() { DefaultResponseHeaderTimeout = original })
+
+	SetDefaultResponseHeaderTimeout(90 * time.Second)
+	assert.Equal(t, 90*time.Second, DefaultResponseHeaderTimeout)
+
+	SetDefaultResponseHeaderTimeout(0)
+	assert.Equal(t, 90*time.Second, DefaultResponseHeaderTimeout, "non-positive duration must be ignored")
+}
+
+func TestHTTPClientPool_TransportUsesConfiguredResponseHeaderTimeout(t *testing.T) {
+	original := DefaultResponseHeaderTimeout
+	t.Cleanup(func() { DefaultResponseHeaderTimeout = original })
+	SetDefaultResponseHeaderTimeout(300 * time.Second)
+
+	pool := NewHTTPClientPool()
+
+	transport, ok := pool.Get("anthropic", DefaultHTTPTimeout).Transport.(*http.Transport)
+	require.True(t, ok, "non-streaming client must use *http.Transport")
+	assert.Equal(t, 300*time.Second, transport.ResponseHeaderTimeout)
+
+	streamTransport, ok := pool.GetStream("anthropic").Transport.(*http.Transport)
+	require.True(t, ok, "streaming client must use *http.Transport")
+	assert.Equal(t, 300*time.Second, streamTransport.ResponseHeaderTimeout)
 }
 
 func TestDrainBody(t *testing.T) {

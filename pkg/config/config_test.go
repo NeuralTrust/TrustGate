@@ -75,6 +75,51 @@ func TestGetFirewallComplexityConfig(t *testing.T) {
 	}
 }
 
+func TestGetProviderConfig_ResponseHeaderTimeout(t *testing.T) {
+	tests := []struct {
+		name           string
+		requestTimeout string
+		headerTimeout  string
+		wantRequest    time.Duration
+		wantHeader     time.Duration
+	}{
+		{
+			name:        "both unset fall back to defaults",
+			wantRequest: defaultProviderRequestTimeout,
+			wantHeader:  defaultProviderRequestTimeout,
+		},
+		{
+			name:           "header timeout tracks request timeout when unset",
+			requestTimeout: "300s",
+			wantRequest:    300 * time.Second,
+			wantHeader:     300 * time.Second,
+		},
+		{
+			name:           "explicit header timeout wins",
+			requestTimeout: "300s",
+			headerTimeout:  "45s",
+			wantRequest:    300 * time.Second,
+			wantHeader:     45 * time.Second,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("PROVIDER_REQUEST_TIMEOUT", tc.requestTimeout)
+			t.Setenv("PROVIDER_RESPONSE_HEADER_TIMEOUT", tc.headerTimeout)
+
+			cfg := getProviderConfig()
+
+			if cfg.RequestTimeout != tc.wantRequest {
+				t.Errorf("RequestTimeout = %s, want %s", cfg.RequestTimeout, tc.wantRequest)
+			}
+			if cfg.ResponseHeaderTimeout != tc.wantHeader {
+				t.Errorf("ResponseHeaderTimeout = %s, want %s", cfg.ResponseHeaderTimeout, tc.wantHeader)
+			}
+		})
+	}
+}
+
 func TestLoadConfig_PostgresLoginModes(t *testing.T) {
 	tests := []struct {
 		name, login, password, sslMode, wantLogin, wantPassword string

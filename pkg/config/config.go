@@ -355,8 +355,9 @@ type UpstreamConfig struct {
 }
 
 type ProviderConfig struct {
-	RequestTimeout time.Duration
-	MaxRetries     int
+	RequestTimeout        time.Duration
+	ResponseHeaderTimeout time.Duration
+	MaxRetries            int
 }
 
 type CatalogConfig struct {
@@ -652,9 +653,15 @@ func getUpstreamConfig() UpstreamConfig {
 }
 
 func getProviderConfig() ProviderConfig {
+	requestTimeout := getEnvDuration("PROVIDER_REQUEST_TIMEOUT", defaultProviderRequestTimeout)
+	// Non-streaming providers withhold response headers until the whole
+	// completion is generated, so a header timeout below the request timeout
+	// would cap generation time without the request timeout ever applying.
+	// Defaulting to the request timeout keeps the two from drifting apart.
 	return ProviderConfig{
-		RequestTimeout: getEnvDuration("PROVIDER_REQUEST_TIMEOUT", defaultProviderRequestTimeout),
-		MaxRetries:     getEnvInt("PROVIDER_MAX_RETRIES", defaultProviderMaxRetries),
+		RequestTimeout:        requestTimeout,
+		ResponseHeaderTimeout: getEnvDuration("PROVIDER_RESPONSE_HEADER_TIMEOUT", requestTimeout),
+		MaxRetries:            getEnvInt("PROVIDER_MAX_RETRIES", defaultProviderMaxRetries),
 	}
 }
 
