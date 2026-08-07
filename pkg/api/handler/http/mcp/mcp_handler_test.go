@@ -367,10 +367,11 @@ func TestHandler_UnknownMethod_MapsToMethodNotFound(t *testing.T) {
 func TestHandler_Notification_Returns202(t *testing.T) {
 	t.Parallel()
 	app := newApp(t, mocks.NewComposer(t), consumerdomain.TypeMCP, true)
-	status, _ := rpcCall(t, app, `{"jsonrpc":"2.0","method":"notifications/initialized"}`)
+	status, raw := rpcRawCallWithHeaders(t, app, `{"jsonrpc":"2.0","method":"notifications/initialized"}`, nil)
 	if status != fiber.StatusAccepted {
 		t.Fatalf("status = %d, want 202", status)
 	}
+	require.Empty(t, raw)
 }
 
 func TestHandler_ParseError(t *testing.T) {
@@ -569,6 +570,19 @@ func TestHandler_ModernNotificationStillValidatesHeaders(t *testing.T) {
 	})
 	require.Equal(t, fiber.StatusBadRequest, status)
 	require.Equal(t, float64(-32020), response["error"].(map[string]any)["code"])
+}
+
+func TestHandler_LegacyNullIDIsNotification(t *testing.T) {
+	t.Parallel()
+	app := newApp(t, mocks.NewComposer(t), consumerdomain.TypeMCP, true)
+	status, raw := rpcRawCallWithHeaders(
+		t,
+		app,
+		`{"jsonrpc":"2.0","id":null,"method":"notifications/initialized"}`,
+		nil,
+	)
+	require.Equal(t, fiber.StatusAccepted, status)
+	require.Empty(t, raw)
 }
 
 func TestHandler_ModernNullIDIsRequest(t *testing.T) {

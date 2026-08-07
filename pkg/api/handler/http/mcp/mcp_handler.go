@@ -128,7 +128,7 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 				skipMetrics(c)
 				return writeProtocolError(c, req.ID, protocolErr)
 			}
-			if isNotification(req) {
+			if isNotification(req, era) {
 				skipMetrics(c)
 				return c.Status(fiber.StatusAccepted).Send(nil)
 			}
@@ -163,9 +163,9 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 		return writeBoundaryRPCError(c, req.ID, era, codeInvalidRequest, "invalid request")
 	}
 
-	if isNotification(req) {
+	if isNotification(req, era) {
 		skipMetrics(c)
-		return c.SendStatus(fiber.StatusAccepted)
+		return c.Status(fiber.StatusAccepted).Send(nil)
 	}
 
 	switch req.Method {
@@ -343,8 +343,11 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 	}
 }
 
-func isNotification(req rpcRequest) bool {
-	return len(req.ID) == 0
+func isNotification(req rpcRequest, era protocolEra) bool {
+	if len(req.ID) == 0 {
+		return true
+	}
+	return era == protocolEraLegacy && bytes.Equal(bytes.TrimSpace(req.ID), []byte("null"))
 }
 
 func isSupportedModernMethod(method string) bool {
