@@ -58,6 +58,7 @@ type openaiResponsesTool struct {
 	Name        string                 `json:"name"`
 	Description string                 `json:"description,omitempty"`
 	Parameters  map[string]interface{} `json:"parameters,omitempty"`
+	Format      json.RawMessage        `json:"format,omitempty"`
 	Strict      *bool                  `json:"strict,omitempty"`
 }
 
@@ -220,14 +221,21 @@ func decodeResponsesRequest(body []byte) (*CanonicalRequest, error) {
 		if json.Unmarshal(raw, &tool) != nil || tool.Name == "" {
 			continue
 		}
-		if tool.Type != "" && tool.Type != "function" {
-			continue
+		switch tool.Type {
+		case "custom":
+			cr.Tools = append(cr.Tools, CanonicalTool{
+				Kind:        ToolKindCustom,
+				Name:        tool.Name,
+				Description: tool.Description,
+				Format:      tool.Format,
+			})
+		case "", "function":
+			cr.Tools = append(cr.Tools, CanonicalTool{
+				Name:        tool.Name,
+				Description: tool.Description,
+				Schema:      tool.Parameters,
+			})
 		}
-		cr.Tools = append(cr.Tools, CanonicalTool{
-			Name:        tool.Name,
-			Description: tool.Description,
-			Schema:      tool.Parameters,
-		})
 	}
 
 	return cr, nil
@@ -495,6 +503,11 @@ func encodeResponsesRequest(req *CanonicalRequest) ([]byte, error) {
 			Name:        t.Name,
 			Description: t.Description,
 			Parameters:  t.Schema,
+		}
+		if t.Kind == ToolKindCustom {
+			tool.Type = "custom"
+			tool.Parameters = nil
+			tool.Format = t.Format
 		}
 		raw, _ := json.Marshal(tool)
 		out.Tools = append(out.Tools, raw)
