@@ -179,7 +179,14 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 
 	result, err := h.gateway.Dispatch(c.UserContext(), rc, req.Method, req.Params)
 	if err != nil {
-		return writeAppError(c, req.ID, err)
+		return writeAppError(c, req.ID, err, era, req.Method)
+	}
+	if era == protocolEraModern {
+		normalized, err := normalizeModernResult(req.Method, result, rc)
+		if err != nil {
+			return writeRPCErrorStatus(c, req.ID, fiber.StatusInternalServerError, codeInternalError, "internal error", nil)
+		}
+		return writeRPCResult(c, req.ID, normalized)
 	}
 	if raw, ok := result.(json.RawMessage); ok {
 		return writeRawRPCResult(c, req.ID, raw)
@@ -270,13 +277,22 @@ func surfaceFingerprint(rc *appconsumer.RoutableConsumer) string {
 	return hex.EncodeToString(sum[:6])
 }
 
-func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
+func writeAppError(c *fiber.Ctx, id json.RawMessage, err error, era protocolEra, method string) error {
 	var (
 		rpcErr        *appmcp.RPCError
 		consentErr    *appmcp.ConsentRequiredError
 		notPermitted  *appmcp.ToolNotPermittedError
 		invalidParams *InvalidParamsError
 	)
+	if era == protocolEraModern && method == "resources/read" {
+		if errors.As(err, &rpcErr) && int(rpcErr.Code) == codeResourceNotFound {
+			applyRPCErrorHeaders(c, rpcErr)
+			return writeRPCErrorStatus(c, id, fiber.StatusBadRequest, codeInvalidParams, rpcErr.Message, rpcErr.Data)
+		}
+		if errors.Is(err, appmcp.ErrResourceNotFound) {
+			return writeRPCErrorStatus(c, id, fiber.StatusBadRequest, codeInvalidParams, err.Error(), nil)
+		}
+	}
 	switch {
 	case errors.As(err, &rpcErr):
 		switch {

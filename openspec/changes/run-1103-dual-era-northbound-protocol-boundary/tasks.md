@@ -37,12 +37,12 @@ Each child PR must show only its slice; merge to `main` in order and retarget th
 
 ## Phase 2: Modern response adapter (PR 2)
 
-- [ ] 2.1 Create `modern_response.go` and tests for copied object normalization, universal server info, private TTLs, and non-object HTTP 500/`-32603`. Depends: Phase 1.
-- [ ] 2.2 Add recursive `x-mcp-header` sanitization and concurrent immutability tests in `modern_response_test.go`. Done: modern copy changes only; legacy/cached payload remains intact under `-race`.
-- [ ] 2.3 Wire modern success/error adaptation in `mcp_handler.go`; test list/read/tool-call fields and legacy byte-shape compatibility in `mcp_handler_test.go`. Depends: 2.1–2.2.
-- [ ] 2.4 Run `clean-comments` on phase files; retain tooling directives only.
-- [ ] 2.5 Run `/reviewer` against PR 2 scope; resolve cache, mutation, and status findings.
-- [ ] 2.6 Run `/verifier` with the Phase 1 command set. Done: all green.
+- [x] 2.1 Create `modern_response.go` and tests for copied object normalization, universal server info, private TTLs, and non-object HTTP 500/`-32603`. Depends: Phase 1.
+- [x] 2.2 Add recursive `x-mcp-header` sanitization and concurrent immutability tests in `modern_response_test.go`. Done: modern copy changes only; legacy/cached payload remains intact under `-race`.
+- [x] 2.3 Wire modern success/error adaptation in `mcp_handler.go`; test list/read/tool-call fields and legacy byte-shape compatibility in `mcp_handler_test.go`. Depends: 2.1–2.2.
+- [x] 2.4 Run `clean-comments` on phase files; retain tooling directives only.
+- [x] 2.5 Run `/reviewer` against PR 2 scope; resolve cache, mutation, and status findings.
+- [x] 2.6 Run `/verifier` with the Phase 1 command set. Done: all green.
 
 ## Phase 3: Scoped discovery and transport closure (PR 3)
 
