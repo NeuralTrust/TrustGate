@@ -286,7 +286,7 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error, era protocolEra,
 	)
 	if era == protocolEraModern && method == "resources/read" {
 		if errors.As(err, &rpcErr) && int(rpcErr.Code) == codeResourceNotFound {
-			applyRPCErrorHeaders(c, rpcErr)
+			applyRPCErrorHeaders(c, rpcErr, era)
 			return writeRPCErrorStatus(c, id, fiber.StatusBadRequest, codeInvalidParams, rpcErr.Message, rpcErr.Data)
 		}
 		if errors.Is(err, appmcp.ErrResourceNotFound) {
@@ -303,7 +303,7 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error, era protocolEra,
 		default:
 			middleware.SetOpsOutcome(c, o11y.OutcomeServerError)
 		}
-		applyRPCErrorHeaders(c, rpcErr)
+		applyRPCErrorHeaders(c, rpcErr, era)
 		return writeJSONStatus(c, httpStatusForRPCError(rpcErr), rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
@@ -452,11 +452,14 @@ func httpStatusForRPCError(_ *appmcp.RPCError) int {
 	return fiber.StatusOK
 }
 
-func applyRPCErrorHeaders(c *fiber.Ctx, err *appmcp.RPCError) {
+func applyRPCErrorHeaders(c *fiber.Ctx, err *appmcp.RPCError, era protocolEra) {
 	if err == nil {
 		return
 	}
 	for name, values := range err.HTTPHeaders {
+		if era == protocolEraModern && strings.EqualFold(name, "Mcp-Session-Id") {
+			continue
+		}
 		for _, value := range values {
 			c.Response().Header.Add(name, value)
 		}

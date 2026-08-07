@@ -301,6 +301,71 @@ func TestHandler_ToolsCall_PassesUpstreamRPCErrorThrough(t *testing.T) {
 	}
 }
 
+func TestHandler_RPCErrorSessionHeaderIsolationByEra(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name           string
+		body           string
+		requestHeaders http.Header
+		sessionHeader  string
+		wantSession    bool
+	}{
+		{
+			name:          "legacy preserves session header",
+			body:          `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"boom"}}`,
+			sessionHeader: "mCp-SeSsIoN-iD",
+			wantSession:   true,
+		},
+		{
+			name:           "modern filters canonical casing",
+			body:           `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"boom","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`,
+			requestHeaders: modernHeadersWithName("tools/call", "boom"),
+			sessionHeader:  "Mcp-Session-Id",
+		},
+		{
+			name:           "modern filters lowercase",
+			body:           `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"boom","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`,
+			requestHeaders: modernHeadersWithName("tools/call", "boom"),
+			sessionHeader:  "mcp-session-id",
+		},
+		{
+			name:           "modern filters mixed casing",
+			body:           `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"boom","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`,
+			requestHeaders: modernHeadersWithName("tools/call", "boom"),
+			sessionHeader:  "mCp-SeSsIoN-iD",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			composer := mocks.NewComposer(t)
+			composer.EXPECT().CallTool(mock.Anything, mock.Anything, "boom", mock.Anything).
+				Return(nil, &appmcp.RPCError{
+					Code:    -32099,
+					Message: "upstream exploded",
+					HTTPHeaders: http.Header{
+						tc.sessionHeader: {"session-value"},
+						"X-Upstream":     {"preserved"},
+					},
+				}).Once()
+			app := newApp(t, composer, consumerdomain.TypeMCP, true)
+			req := httptest.NewRequest(fiber.MethodPost, mcpPath, strings.NewReader(tc.body))
+			req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+			for name, values := range tc.requestHeaders {
+				for _, value := range values {
+					req.Header.Add(name, value)
+				}
+			}
+			res, err := app.Test(req, -1)
+			require.NoError(t, err)
+			defer func() { _ = res.Body.Close() }()
+			require.Equal(t, "preserved", res.Header.Get("X-Upstream"))
+			require.Equal(t, tc.wantSession, res.Header.Get("Mcp-Session-Id") == "session-value")
+		})
+	}
+}
+
 func TestHandler_ToolsCall_ConsentRequiredRidesOn200(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
