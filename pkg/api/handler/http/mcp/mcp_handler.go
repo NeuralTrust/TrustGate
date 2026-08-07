@@ -15,6 +15,7 @@
 package mcp
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -98,16 +99,21 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 	}
 
 	protocolHeader := c.Get("MCP-Protocol-Version")
+	body := c.Body()
+	invalidTopLevel := json.Valid(body) && !isJSONObject(body)
 	var req rpcRequest
-	parseErr := json.Unmarshal(c.Body(), &req)
+	parseErr := json.Unmarshal(body, &req)
 	era := protocolEraLegacy
-	if parseErr != nil {
+	if parseErr != nil || invalidTopLevel {
 		if protocolHeader != "" && !isSupportedProtocolVersion(protocolHeader) {
 			skipMetrics(c)
 			return writeProtocolError(c, nil, unsupportedProtocolVersion(protocolHeader))
 		}
 		if parseErrorEra(protocolHeader) == protocolEraModern {
 			skipMetrics(c)
+			if invalidTopLevel {
+				return writeBoundaryRPCError(c, nil, protocolEraModern, codeInvalidRequest, "invalid request")
+			}
 			return writeBoundaryRPCError(c, nil, protocolEraModern, codeParseError, "parse error")
 		}
 	} else {
@@ -122,13 +128,13 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 				skipMetrics(c)
 				return writeProtocolError(c, req.ID, protocolErr)
 			}
-			if !isSupportedModernMethod(req.Method) {
-				skipMetrics(c)
-				return writeRPCErrorStatus(c, req.ID, fiber.StatusNotFound, codeMethodNotFound, "method not found", nil)
-			}
 			if isNotification(req) {
 				skipMetrics(c)
 				return c.Status(fiber.StatusAccepted).Send(nil)
+			}
+			if !isSupportedModernMethod(req.Method) {
+				skipMetrics(c)
+				return writeRPCErrorStatus(c, req.ID, fiber.StatusNotFound, codeMethodNotFound, "method not found", nil)
 			}
 		}
 	}
@@ -200,6 +206,11 @@ func parseErrorEra(protocolHeader string) protocolEra {
 		return protocolEraModern
 	}
 	return protocolEraLegacy
+}
+
+func isJSONObject(raw []byte) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) > 0 && trimmed[0] == '{'
 }
 
 func (h *Handler) recordInitialize(c *fiber.Ctx) {

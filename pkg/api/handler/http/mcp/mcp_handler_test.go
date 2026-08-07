@@ -392,6 +392,33 @@ func TestHandler_ModernParseErrorUsesHTTP400(t *testing.T) {
 	require.Equal(t, float64(-32700), body["error"].(map[string]any)["code"])
 }
 
+func TestHandler_ModernNonObjectRequestsUseInvalidRequest(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "array", body: `[]`},
+		{name: "string", body: `"request"`},
+		{name: "number", body: `1`},
+		{name: "boolean", body: `true`},
+		{name: "null", body: `null`},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			status, response := rpcCallWithHeaders(t, newAppWithoutConsumers(t), tc.body, http.Header{
+				"MCP-Protocol-Version": {"2026-07-28"},
+			})
+			require.Equal(t, fiber.StatusBadRequest, status)
+			require.Contains(t, response, "id")
+			require.Nil(t, response["id"])
+			require.Equal(t, float64(-32600), response["error"].(map[string]any)["code"])
+		})
+	}
+}
+
 func TestHandler_UnknownProtocolPrecedesMalformedJSON(t *testing.T) {
 	t.Parallel()
 	app := newAppWithoutConsumers(t)
@@ -425,6 +452,20 @@ func TestHandler_LegacyBoundaryErrorsPreserveLookupPrecedence(t *testing.T) {
 			name:       "invalid request preserves not found",
 			app:        newAppWithoutConsumers,
 			body:       `{}`,
+			wantStatus: fiber.StatusNotFound,
+		},
+		{
+			name: "array preserves forbidden",
+			app: func(t *testing.T) *fiber.App {
+				return newApp(t, mocks.NewComposer(t), consumerdomain.TypeMCP, false)
+			},
+			body:       `[]`,
+			wantStatus: fiber.StatusForbidden,
+		},
+		{
+			name:       "null preserves not found",
+			app:        newAppWithoutConsumers,
+			body:       `null`,
 			wantStatus: fiber.StatusNotFound,
 		},
 	}
@@ -479,6 +520,55 @@ func TestHandler_ModernNotificationReturns202WithoutBody(t *testing.T) {
 	status, raw := rpcRawCallWithHeaders(t, app, body, modernHeadersFor("tools/list"))
 	require.Equal(t, fiber.StatusAccepted, status)
 	require.Empty(t, raw)
+}
+
+func TestHandler_UnknownModernNotificationSkipsDownstreamEffects(t *testing.T) {
+	t.Parallel()
+	authID := ids.New[ids.AuthKind]()
+	data := appconsumer.NewData(ids.New[ids.GatewayKind](), nil)
+	requestTrace := trace.New("notification", trace.Metadata{Kind: events.KindMCP})
+	var metricsSkipped bool
+
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		ctx := appconsumer.WithAuthID(c.UserContext(), authID)
+		ctx = appconsumer.WithData(ctx, data)
+		ctx = trace.NewContext(ctx, requestTrace)
+		c.SetUserContext(ctx)
+		err := c.Next()
+		metricsSkipped, _ = c.Locals(string(infracontext.MCPSkipMetricsKey)).(bool)
+		return err
+	})
+	composer := mocks.NewComposer(t)
+	roleScoper := mocks.NewRoleScoper(t)
+	executor := pluginmocks.NewExecutor(t)
+	limiter := ratelimitmocks.NewChecker(t)
+	handler := mcphttp.NewHandler(
+		mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(executor, discardLogger()), limiter),
+		roleScoper,
+	)
+	app.Post(mcpPath, handler.Handle)
+
+	body := `{"jsonrpc":"2.0","method":"unknown/method","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`
+	status, raw := rpcRawCallWithHeaders(t, app, body, modernHeadersFor("unknown/method"))
+	require.Equal(t, fiber.StatusAccepted, status)
+	require.Empty(t, raw)
+	require.True(t, metricsSkipped)
+	require.Empty(t, requestTrace.Spans())
+	require.Empty(t, roleScoper.Calls)
+	require.Empty(t, limiter.Calls)
+	require.Empty(t, executor.Calls)
+	require.Empty(t, composer.Calls)
+}
+
+func TestHandler_ModernNotificationStillValidatesHeaders(t *testing.T) {
+	t.Parallel()
+	body := `{"jsonrpc":"2.0","method":"unknown/method","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`
+	status, response := rpcCallWithHeaders(t, newAppWithoutConsumers(t), body, http.Header{
+		"MCP-Protocol-Version": {"2026-07-28"},
+	})
+	require.Equal(t, fiber.StatusBadRequest, status)
+	require.Equal(t, float64(-32020), response["error"].(map[string]any)["code"])
 }
 
 func TestHandler_ModernNullIDIsRequest(t *testing.T) {
