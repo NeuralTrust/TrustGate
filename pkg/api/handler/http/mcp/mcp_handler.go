@@ -168,6 +168,15 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusAccepted).Send(nil)
 	}
 
+	if era == protocolEraModern && req.Method == "server/discover" {
+		normalized, err := normalizeModernResult(req.Method, serverDiscoveryResult(rc), rc)
+		if err != nil {
+			return writeRPCErrorStatus(c, req.ID, fiber.StatusInternalServerError, codeInternalError, "internal error", nil)
+		}
+		recordServerDiscovery(c)
+		return writeRPCResult(c, req.ID, normalized)
+	}
+
 	switch req.Method {
 	case "initialize":
 		h.recordInitialize(c)
@@ -267,8 +276,14 @@ func surfaceFingerprint(rc *appconsumer.RoutableConsumer) string {
 		}
 		parts = append(parts, reg.ID.String()+"@"+reg.UpdatedAt.UTC().Format(time.RFC3339Nano))
 	}
-	entries := make([]string, 0, len(rc.Consumer.Toolkit()))
-	for _, e := range rc.Consumer.Toolkit() {
+	toolkit := rc.Consumer.Toolkit()
+	entries := make([]string, 0, len(toolkit)+1)
+	if toolkit == nil {
+		entries = append(entries, "tk-state:nil")
+	} else {
+		entries = append(entries, "tk-state:configured")
+	}
+	for _, e := range toolkit {
 		entries = append(entries, "tk:"+e.RegistryID.String()+"/"+e.Tool+"/"+e.Prompt+"/"+e.Resource+"/"+e.ExposeAs)
 	}
 	sort.Strings(parts)
@@ -368,7 +383,8 @@ func isNotification(req rpcRequest, era protocolEra) bool {
 
 func isSupportedModernMethod(method string) bool {
 	switch method {
-	case "tools/list",
+	case "server/discover",
+		"tools/list",
 		"tools/call",
 		"resources/list",
 		"resources/templates/list",
