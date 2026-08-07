@@ -142,7 +142,20 @@ func (c *toolCallCoalescer) merge(rawCalls []any) {
 		if id, ok := m["id"].(string); ok {
 			d.ID = id
 		}
-		if fn, ok := m["function"].(map[string]any); ok {
+		if kind, ok := m["type"].(string); ok && kind == "custom" {
+			d.Kind = adapter.ToolKindCustom
+		}
+		// A custom tool call streams its freeform payload under custom.input;
+		// later fragments may omit the type, so the payload key decides.
+		if custom, ok := m["custom"].(map[string]any); ok {
+			d.Kind = adapter.ToolKindCustom
+			if name, ok := custom["name"].(string); ok {
+				d.Name = name
+			}
+			if input, ok := custom["input"].(string); ok {
+				d.ArgumentsDelta = input
+			}
+		} else if fn, ok := m["function"].(map[string]any); ok {
 			if name, ok := fn["name"].(string); ok {
 				d.Name = name
 			}
@@ -176,15 +189,21 @@ func (c *toolCallCoalescer) flushLines() [][]byte {
 	deltas := c.acc.Flush()
 	toolCalls := make([]any, 0, len(deltas))
 	for _, d := range deltas {
-		toolCalls = append(toolCalls, map[string]any{
-			"index": d.Index,
-			"id":    d.ID,
-			"type":  "function",
-			"function": map[string]any{
+		call := map[string]any{"index": d.Index, "id": d.ID}
+		if d.Kind == adapter.ToolKindCustom {
+			call["type"] = "custom"
+			call["custom"] = map[string]any{
+				"name":  d.Name,
+				"input": d.ArgumentsDelta,
+			}
+		} else {
+			call["type"] = "function"
+			call["function"] = map[string]any{
 				"name":      d.Name,
 				"arguments": d.ArgumentsDelta,
-			},
-		})
+			}
+		}
+		toolCalls = append(toolCalls, call)
 	}
 	chunk := make(map[string]any, len(c.envelope)+1)
 	for k, v := range c.envelope {

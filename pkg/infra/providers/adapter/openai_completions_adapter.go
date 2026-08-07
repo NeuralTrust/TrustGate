@@ -47,8 +47,18 @@ type openaiMessage struct {
 }
 
 type openaiTool struct {
-	Type     string         `json:"type"`
-	Function openaiFunction `json:"function"`
+	Type     string            `json:"type"`
+	Function *openaiFunction   `json:"function,omitempty"`
+	Custom   *openaiCustomTool `json:"custom,omitempty"`
+}
+
+// openaiCustomTool is the freeform tool shape GPT-5 models accept. Format is
+// kept as raw JSON because its grammar payload is not part of the canonical
+// model and must survive a round-trip untouched.
+type openaiCustomTool struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Format      json.RawMessage `json:"format,omitempty"`
 }
 
 type openaiFunction struct {
@@ -58,14 +68,54 @@ type openaiFunction struct {
 }
 
 type openaiToolCall struct {
-	ID       string         `json:"id"`
-	Type     string         `json:"type"`
-	Function openaiCallFunc `json:"function"`
+	ID       string            `json:"id"`
+	Type     string            `json:"type"`
+	Function *openaiCallFunc   `json:"function,omitempty"`
+	Custom   *openaiCustomCall `json:"custom,omitempty"`
 }
 
 type openaiCallFunc struct {
 	Name      string `json:"name"`
 	Arguments string `json:"arguments"`
+}
+
+// openaiCustomCall is how GPT-5 models invoke a freeform "custom" tool: the
+// payload is raw text rather than JSON arguments.
+type openaiCustomCall struct {
+	Name  string `json:"name"`
+	Input string `json:"input"`
+}
+
+func decodeOpenAIToolCall(tc openaiToolCall) CanonicalToolCall {
+	if tc.Type == "custom" && tc.Custom != nil {
+		return CanonicalToolCall{
+			ID:        tc.ID,
+			Kind:      ToolKindCustom,
+			Name:      tc.Custom.Name,
+			Arguments: tc.Custom.Input,
+		}
+	}
+	call := CanonicalToolCall{ID: tc.ID}
+	if tc.Function != nil {
+		call.Name = tc.Function.Name
+		call.Arguments = tc.Function.Arguments
+	}
+	return call
+}
+
+func encodeOpenAIToolCall(tc CanonicalToolCall) openaiToolCall {
+	if tc.Kind == ToolKindCustom {
+		return openaiToolCall{
+			ID:     tc.ID,
+			Type:   "custom",
+			Custom: &openaiCustomCall{Name: tc.Name, Input: tc.Arguments},
+		}
+	}
+	return openaiToolCall{
+		ID:       tc.ID,
+		Type:     "function",
+		Function: &openaiCallFunc{Name: tc.Name, Arguments: tc.Arguments},
+	}
 }
 
 type openaiRespFormat struct {
@@ -146,15 +196,37 @@ type openaiStreamDelta struct {
 }
 
 type openaiStreamToolCall struct {
-	Index    int                    `json:"index"`
-	ID       string                 `json:"id,omitempty"`
-	Type     string                 `json:"type,omitempty"`
-	Function openaiStreamToolCallFn `json:"function,omitempty"`
+	Index    int                     `json:"index"`
+	ID       string                  `json:"id,omitempty"`
+	Type     string                  `json:"type,omitempty"`
+	Function *openaiStreamToolCallFn `json:"function,omitempty"`
+	Custom   *openaiStreamToolCallFn `json:"custom,omitempty"`
 }
 
+// openaiStreamToolCallFn carries the incremental name/payload of a streamed
+// tool call. Custom tool calls stream their freeform text under "input"
+// instead of "arguments", so both keys are decoded into Arguments.
 type openaiStreamToolCallFn struct {
 	Name      string `json:"name,omitempty"`
 	Arguments string `json:"arguments,omitempty"`
+	Input     string `json:"input,omitempty"`
+}
+
+func (f *openaiStreamToolCallFn) payload() string {
+	if f == nil {
+		return ""
+	}
+	if f.Input != "" {
+		return f.Input
+	}
+	return f.Arguments
+}
+
+func (f *openaiStreamToolCallFn) name() string {
+	if f == nil {
+		return ""
+	}
+	return f.Name
 }
 
 // ---------------------------------------------------------------------------
@@ -199,11 +271,7 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 			ToolCallID: m.ToolCallID,
 		}
 		for _, tc := range m.ToolCalls {
-			cm.ToolCalls = append(cm.ToolCalls, CanonicalToolCall{
-				ID:        tc.ID,
-				Name:      tc.Function.Name,
-				Arguments: tc.Function.Arguments,
-			})
+			cm.ToolCalls = append(cm.ToolCalls, decodeOpenAIToolCall(tc))
 		}
 
 		if m.Role == "system" || m.Role == "developer" {
@@ -217,11 +285,21 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 	}
 
 	for _, t := range req.Tools {
-		cr.Tools = append(cr.Tools, CanonicalTool{
-			Name:        t.Function.Name,
-			Description: t.Function.Description,
-			Schema:      t.Function.Parameters,
-		})
+		switch {
+		case t.Type == "custom" && t.Custom != nil:
+			cr.Tools = append(cr.Tools, CanonicalTool{
+				Kind:        ToolKindCustom,
+				Name:        t.Custom.Name,
+				Description: t.Custom.Description,
+				Format:      t.Custom.Format,
+			})
+		case t.Function != nil:
+			cr.Tools = append(cr.Tools, CanonicalTool{
+				Name:        t.Function.Name,
+				Description: t.Function.Description,
+				Schema:      t.Function.Parameters,
+			})
+		}
 	}
 
 	cr.ToolChoice = decodeOpenAIToolChoice(req.ToolChoice)
@@ -269,22 +347,26 @@ func encodeCompletionsRequest(req *CanonicalRequest) ([]byte, error) {
 			ToolCallID: m.ToolCallID,
 		}
 		for _, tc := range m.ToolCalls {
-			msg.ToolCalls = append(msg.ToolCalls, openaiToolCall{
-				ID:   tc.ID,
-				Type: "function",
-				Function: openaiCallFunc{
-					Name:      tc.Name,
-					Arguments: tc.Arguments,
-				},
-			})
+			msg.ToolCalls = append(msg.ToolCalls, encodeOpenAIToolCall(tc))
 		}
 		out.Messages = append(out.Messages, msg)
 	}
 
 	for _, t := range req.Tools {
+		if t.Kind == ToolKindCustom {
+			out.Tools = append(out.Tools, openaiTool{
+				Type: "custom",
+				Custom: &openaiCustomTool{
+					Name:        t.Name,
+					Description: t.Description,
+					Format:      t.Format,
+				},
+			})
+			continue
+		}
 		out.Tools = append(out.Tools, openaiTool{
 			Type: "function",
-			Function: openaiFunction{
+			Function: &openaiFunction{
 				Name:        t.Name,
 				Description: t.Description,
 				Parameters:  t.Schema,
@@ -323,11 +405,7 @@ func decodeCompletionsResponse(body []byte) (*CanonicalResponse, error) {
 				cr.Content = strings.TrimSpace(*choice.Message.Refusal)
 			}
 			for _, tc := range choice.Message.ToolCalls {
-				cr.ToolCalls = append(cr.ToolCalls, CanonicalToolCall{
-					ID:        tc.ID,
-					Name:      tc.Function.Name,
-					Arguments: tc.Function.Arguments,
-				})
+				cr.ToolCalls = append(cr.ToolCalls, decodeOpenAIToolCall(tc))
 			}
 		}
 		cr.FinishReason = choice.FinishReason
@@ -367,14 +445,7 @@ func encodeCompletionsResponse(resp *CanonicalResponse) ([]byte, error) {
 		Content: stringToContent(resp.Content),
 	}
 	for _, tc := range resp.ToolCalls {
-		msg.ToolCalls = append(msg.ToolCalls, openaiToolCall{
-			ID:   tc.ID,
-			Type: "function",
-			Function: openaiCallFunc{
-				Name:      tc.Name,
-				Arguments: tc.Arguments,
-			},
-		})
+		msg.ToolCalls = append(msg.ToolCalls, encodeOpenAIToolCall(tc))
 	}
 
 	out := openaiResponse{
@@ -439,12 +510,16 @@ func decodeCompletionsStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 			sc.FinishReason = *choice.FinishReason
 		}
 		for _, tc := range delta.ToolCalls {
-			sc.ToolCallDeltas = append(sc.ToolCallDeltas, StreamToolCallDelta{
-				Index:          tc.Index,
-				ID:             tc.ID,
-				Name:           tc.Function.Name,
-				ArgumentsDelta: tc.Function.Arguments,
-			})
+			scd := StreamToolCallDelta{Index: tc.Index, ID: tc.ID}
+			if tc.Type == "custom" || tc.Custom != nil {
+				scd.Kind = ToolKindCustom
+				scd.Name = tc.Custom.name()
+				scd.ArgumentsDelta = tc.Custom.payload()
+			} else {
+				scd.Name = tc.Function.name()
+				scd.ArgumentsDelta = tc.Function.payload()
+			}
+			sc.ToolCallDeltas = append(sc.ToolCallDeltas, scd)
 		}
 	}
 
@@ -481,11 +556,20 @@ func encodeCompletionsStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error)
 		ReasoningContent: chunk.ReasoningDelta,
 	}
 	for _, tc := range chunk.ToolCallDeltas {
+		if tc.Kind == ToolKindCustom {
+			delta.ToolCalls = append(delta.ToolCalls, openaiStreamToolCall{
+				Index:  tc.Index,
+				ID:     tc.ID,
+				Type:   "custom",
+				Custom: &openaiStreamToolCallFn{Name: tc.Name, Input: tc.ArgumentsDelta},
+			})
+			continue
+		}
 		delta.ToolCalls = append(delta.ToolCalls, openaiStreamToolCall{
 			Index: tc.Index,
 			ID:    tc.ID,
 			Type:  "function",
-			Function: openaiStreamToolCallFn{
+			Function: &openaiStreamToolCallFn{
 				Name:      tc.Name,
 				Arguments: tc.ArgumentsDelta,
 			},
