@@ -184,6 +184,33 @@ func modernHeadersFor(method string) http.Header {
 	}
 }
 
+func modernHeadersWithName(method, name string) http.Header {
+	headers := modernHeadersFor(method)
+	headers.Set("Mcp-Name", name)
+	return headers
+}
+
+func containsHeaderAnnotation(value any) bool {
+	switch current := value.(type) {
+	case map[string]any:
+		if _, ok := current["x-mcp-header"]; ok {
+			return true
+		}
+		for _, nested := range current {
+			if containsHeaderAnnotation(nested) {
+				return true
+			}
+		}
+	case []any:
+		for _, nested := range current {
+			if containsHeaderAnnotation(nested) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func TestHandler_DefaultIdP_AllowedWithoutAttachedAuth(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
@@ -238,19 +265,23 @@ func TestHandler_Initialize_UnknownVersionFallsBackToLatest(t *testing.T) {
 
 func TestHandler_ToolsList_ComposedSurface(t *testing.T) {
 	t.Parallel()
+	var tool appmcp.Tool
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"name":"gh_search",
+		"inputSchema":{"type":"object","properties":{"query":{"type":"string","x-mcp-header":"X-Query"}}}
+	}`), &tool))
 	composer := mocks.NewComposer(t)
 	composer.EXPECT().ListTools(mock.Anything, mock.Anything).
-		Return([]appmcp.Tool{{Name: "gh_search"}}, nil).Once()
+		Return([]appmcp.Tool{tool}, nil).Once()
 	app := newApp(t, composer, consumerdomain.TypeMCP, true)
 
-	status, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":7,"method":"tools/list"}`)
-	if status != fiber.StatusOK {
-		t.Fatalf("status = %d", status)
-	}
-	tools := body["result"].(map[string]any)["tools"].([]any)
-	if len(tools) != 1 || tools[0].(map[string]any)["name"] != "gh_search" {
-		t.Fatalf("tools = %v", tools)
-	}
+	status, raw := rpcRawCallWithHeaders(t, app, `{"jsonrpc":"2.0","id":7,"method":"tools/list"}`, nil)
+	require.Equal(t, fiber.StatusOK, status)
+	require.Equal(
+		t,
+		`{"jsonrpc":"2.0","id":7,"result":{"tools":[{"inputSchema":{"type":"object","properties":{"query":{"type":"string","x-mcp-header":"X-Query"}}},"name":"gh_search"}]}}`,
+		string(raw),
+	)
 }
 
 func TestHandler_ToolsCall_PassesUpstreamRPCErrorThrough(t *testing.T) {
@@ -267,6 +298,71 @@ func TestHandler_ToolsCall_PassesUpstreamRPCErrorThrough(t *testing.T) {
 	rpcErr := body["error"].(map[string]any)
 	if rpcErr["code"].(float64) != -32099 || rpcErr["message"] != "upstream exploded" {
 		t.Fatalf("error = %v, want upstream error verbatim", rpcErr)
+	}
+}
+
+func TestHandler_RPCErrorSessionHeaderIsolationByEra(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name           string
+		body           string
+		requestHeaders http.Header
+		sessionHeader  string
+		wantSession    bool
+	}{
+		{
+			name:          "legacy preserves session header",
+			body:          `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"boom"}}`,
+			sessionHeader: "mCp-SeSsIoN-iD",
+			wantSession:   true,
+		},
+		{
+			name:           "modern filters canonical casing",
+			body:           `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"boom","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`,
+			requestHeaders: modernHeadersWithName("tools/call", "boom"),
+			sessionHeader:  "Mcp-Session-Id",
+		},
+		{
+			name:           "modern filters lowercase",
+			body:           `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"boom","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`,
+			requestHeaders: modernHeadersWithName("tools/call", "boom"),
+			sessionHeader:  "mcp-session-id",
+		},
+		{
+			name:           "modern filters mixed casing",
+			body:           `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"boom","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`,
+			requestHeaders: modernHeadersWithName("tools/call", "boom"),
+			sessionHeader:  "mCp-SeSsIoN-iD",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			composer := mocks.NewComposer(t)
+			composer.EXPECT().CallTool(mock.Anything, mock.Anything, "boom", mock.Anything).
+				Return(nil, &appmcp.RPCError{
+					Code:    -32099,
+					Message: "upstream exploded",
+					HTTPHeaders: http.Header{
+						tc.sessionHeader: {"session-value"},
+						"X-Upstream":     {"preserved"},
+					},
+				}).Once()
+			app := newApp(t, composer, consumerdomain.TypeMCP, true)
+			req := httptest.NewRequest(fiber.MethodPost, mcpPath, strings.NewReader(tc.body))
+			req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+			for name, values := range tc.requestHeaders {
+				for _, value := range values {
+					req.Header.Add(name, value)
+				}
+			}
+			res, err := app.Test(req, -1)
+			require.NoError(t, err)
+			defer func() { _ = res.Body.Close() }()
+			require.Equal(t, "preserved", res.Header.Get("X-Upstream"))
+			require.Equal(t, tc.wantSession, res.Header.Get("Mcp-Session-Id") == "session-value")
+		})
 	}
 }
 
@@ -663,9 +759,14 @@ func TestHandler_ModernMethodFilteringPrecedesConsumerLookup(t *testing.T) {
 
 func TestHandler_ModernHappyPathUsesExistingDispatcher(t *testing.T) {
 	t.Parallel()
+	var tool appmcp.Tool
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"name":"search",
+		"inputSchema":{"type":"object","properties":{"query":{"type":"string","x-mcp-header":"X-Query"}}}
+	}`), &tool))
 	composer := mocks.NewComposer(t)
 	composer.EXPECT().ListTools(mock.Anything, mock.Anything).
-		Return([]appmcp.Tool{{Name: "search"}}, nil).Once()
+		Return([]appmcp.Tool{tool}, nil).Once()
 	app := newApp(t, composer, consumerdomain.TypeMCP, true)
 	body := `{"jsonrpc":"2.0","id":"modern-1","method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`
 	status, response := rpcCallWithHeaders(t, app, body, modernHeadersFor("tools/list"))
@@ -673,7 +774,176 @@ func TestHandler_ModernHappyPathUsesExistingDispatcher(t *testing.T) {
 	require.Equal(t, "modern-1", response["id"])
 	result := response["result"].(map[string]any)
 	require.Len(t, result["tools"], 1)
-	require.NotContains(t, result, "resultType")
+	require.Equal(t, "complete", result["resultType"])
+	require.Equal(t, float64(300000), result["ttlMs"])
+	require.Equal(t, "private", result["cacheScope"])
+	serverInfo := result["_meta"].(map[string]any)["io.modelcontextprotocol/serverInfo"].(map[string]any)
+	require.True(t, strings.HasPrefix(serverInfo["version"].(string), "1.0+"))
+	require.False(t, containsHeaderAnnotation(result))
+}
+
+func TestHandler_ModernMethodsDispatchAndAdaptFields(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		body      string
+		headers   http.Header
+		setup     func(*mocks.Composer)
+		resultKey string
+		wantTTL   any
+	}{
+		{
+			name:    "resource read",
+			body:    `{"jsonrpc":"2.0","id":11,"method":"resources/read","params":{"uri":"file:///doc","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`,
+			headers: modernHeadersWithName("resources/read", "file:///doc"),
+			setup: func(composer *mocks.Composer) {
+				composer.EXPECT().ReadResource(mock.Anything, mock.Anything, "file:///doc").
+					Return(json.RawMessage(`{"contents":[{"uri":"file:///doc","text":"kept"}],"extra":"preserved"}`), nil).Once()
+			},
+			resultKey: "contents",
+			wantTTL:   float64(0),
+		},
+		{
+			name:    "tool call",
+			body:    `{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"search","arguments":{"q":"value"},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`,
+			headers: modernHeadersWithName("tools/call", "search"),
+			setup: func(composer *mocks.Composer) {
+				composer.EXPECT().CallTool(mock.Anything, mock.Anything, "search", mock.Anything).
+					Return(json.RawMessage(`{"content":[{"type":"text","text":"kept"}],"extra":"preserved"}`), nil).Once()
+			},
+			resultKey: "content",
+		},
+		{
+			name:    "prompts list",
+			body:    `{"jsonrpc":"2.0","id":17,"method":"prompts/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`,
+			headers: modernHeadersFor("prompts/list"),
+			setup: func(composer *mocks.Composer) {
+				composer.EXPECT().ListPrompts(mock.Anything, mock.Anything).
+					Return([]appmcp.Prompt{{Name: "writer"}}, nil).Once()
+			},
+			resultKey: "prompts",
+			wantTTL:   float64(300000),
+		},
+		{
+			name:    "prompt get",
+			body:    `{"jsonrpc":"2.0","id":18,"method":"prompts/get","params":{"name":"writer","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`,
+			headers: modernHeadersWithName("prompts/get", "writer"),
+			setup: func(composer *mocks.Composer) {
+				composer.EXPECT().GetPrompt(mock.Anything, mock.Anything, "writer", mock.Anything).
+					Return(json.RawMessage(`{"messages":[]}`), nil).Once()
+			},
+			resultKey: "messages",
+		},
+		{
+			name:    "resources list",
+			body:    `{"jsonrpc":"2.0","id":19,"method":"resources/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`,
+			headers: modernHeadersFor("resources/list"),
+			setup: func(composer *mocks.Composer) {
+				composer.EXPECT().ListResources(mock.Anything, mock.Anything).
+					Return([]appmcp.Resource{{Name: "document", URI: "file:///doc"}}, nil).Once()
+			},
+			resultKey: "resources",
+			wantTTL:   float64(300000),
+		},
+		{
+			name:    "resource templates list",
+			body:    `{"jsonrpc":"2.0","id":20,"method":"resources/templates/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`,
+			headers: modernHeadersFor("resources/templates/list"),
+			setup: func(composer *mocks.Composer) {
+				composer.EXPECT().ListResourceTemplates(mock.Anything, mock.Anything).
+					Return([]appmcp.ResourceTemplate{{Name: "document", URITemplate: "file:///{id}"}}, nil).Once()
+			},
+			resultKey: "resourceTemplates",
+			wantTTL:   float64(300000),
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			composer := mocks.NewComposer(t)
+			tc.setup(composer)
+			app := newApp(t, composer, consumerdomain.TypeMCP, true)
+			status, response := rpcCallWithHeaders(t, app, tc.body, tc.headers)
+			require.Equal(t, fiber.StatusOK, status)
+			result := response["result"].(map[string]any)
+			require.Contains(t, result, tc.resultKey)
+			require.Equal(t, "complete", result["resultType"])
+			require.Contains(t, result["_meta"].(map[string]any), "io.modelcontextprotocol/serverInfo")
+			if tc.wantTTL != nil {
+				require.Equal(t, tc.wantTTL, result["ttlMs"])
+				require.Equal(t, "private", result["cacheScope"])
+			} else {
+				require.NotContains(t, result, "ttlMs")
+				require.NotContains(t, result, "cacheScope")
+			}
+		})
+	}
+}
+
+func TestHandler_ModernInvalidSuccessPayloadReturnsInternalError(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		result json.RawMessage
+	}{
+		{name: "nil", result: nil},
+		{name: "empty raw", result: json.RawMessage{}},
+		{name: "null", result: json.RawMessage(`null`)},
+		{name: "array", result: json.RawMessage(`[]`)},
+		{name: "non-object metadata", result: json.RawMessage(`{"_meta":[]}`)},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			composer := mocks.NewComposer(t)
+			composer.EXPECT().CallTool(mock.Anything, mock.Anything, "search", mock.Anything).
+				Return(tc.result, nil).Once()
+			app := newApp(t, composer, consumerdomain.TypeMCP, true)
+			body := `{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"search","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`
+			status, response := rpcCallWithHeaders(t, app, body, modernHeadersWithName("tools/call", "search"))
+			require.Equal(t, fiber.StatusInternalServerError, status)
+			require.Equal(t, float64(-32603), response["error"].(map[string]any)["code"])
+			require.Equal(t, float64(13), response["id"])
+		})
+	}
+}
+
+func TestHandler_ModernResourceMissUsesInvalidParams(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{name: "domain error", err: appmcp.ErrResourceNotFound},
+		{name: "legacy upstream code", err: &appmcp.RPCError{Code: -32002, Message: "resource missing"}},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			composer := mocks.NewComposer(t)
+			composer.EXPECT().ReadResource(mock.Anything, mock.Anything, "file:///missing").
+				Return(nil, tc.err).Once()
+			app := newApp(t, composer, consumerdomain.TypeMCP, true)
+			body := `{"jsonrpc":"2.0","id":14,"method":"resources/read","params":{"uri":"file:///missing","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`
+			status, response := rpcCallWithHeaders(t, app, body, modernHeadersWithName("resources/read", "file:///missing"))
+			require.Equal(t, fiber.StatusBadRequest, status)
+			require.Equal(t, float64(-32602), response["error"].(map[string]any)["code"])
+		})
+	}
+}
+
+func TestHandler_LegacyResourceMissKeepsLegacyError(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().ReadResource(mock.Anything, mock.Anything, "file:///missing").
+		Return(nil, appmcp.ErrResourceNotFound).Once()
+	app := newApp(t, composer, consumerdomain.TypeMCP, true)
+	status, response := rpcCall(t, app, `{"jsonrpc":"2.0","id":16,"method":"resources/read","params":{"uri":"file:///missing"}}`)
+	require.Equal(t, fiber.StatusOK, status)
+	require.Equal(t, float64(-32002), response["error"].(map[string]any)["code"])
 }
 
 func TestHandler_ModernValidationPrecedesDownstream(t *testing.T) {
