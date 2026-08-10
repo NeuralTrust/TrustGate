@@ -95,7 +95,7 @@ func TestSanitizeBody_JSONSafeCapKeepsParseableMessages(t *testing.T) {
 	for i := 0; i < 38; i++ {
 		msgs = append(msgs, map[string]any{
 			"role":    "user",
-			"content": strings.Repeat("x", 2500) + "-" + string(rune('a'+i%26)),
+			"content": strings.Repeat("x", 30_000) + "-" + string(rune('a'+i%26)),
 		})
 	}
 	msgs = append(msgs, map[string]any{"role": "user", "content": "Fetch https://neuraltrust.ai and summarize."})
@@ -105,10 +105,10 @@ func TestSanitizeBody_JSONSafeCapKeepsParseableMessages(t *testing.T) {
 		"messages": msgs,
 	})
 	require.NoError(t, err)
-	require.Greater(t, len(raw), 64*1024)
+	require.Greater(t, len(raw), events.MaxSanitizedBodyBytes)
 
 	got := events.SanitizeBody(raw, map[string][]string{"Content-Type": {"application/json"}})
-	require.LessOrEqual(t, len(got), 64*1024)
+	require.LessOrEqual(t, len(got), events.MaxSanitizedBodyBytes)
 	require.True(t, json.Valid([]byte(got)), "sanitized body must stay valid JSON")
 
 	var parsed map[string]any
@@ -133,7 +133,7 @@ func TestSanitizeBody_JSONSafeCapKeepsParseableGeminiContents(t *testing.T) {
 	for i := 0; i < 38; i++ {
 		contents = append(contents, map[string]any{
 			"role":  "user",
-			"parts": []any{map[string]any{"text": strings.Repeat("y", 2500) + "-" + string(rune('a'+i%26))}},
+			"parts": []any{map[string]any{"text": strings.Repeat("y", 30_000) + "-" + string(rune('a'+i%26))}},
 		})
 	}
 	contents = append(contents, map[string]any{
@@ -146,10 +146,10 @@ func TestSanitizeBody_JSONSafeCapKeepsParseableGeminiContents(t *testing.T) {
 		"contents": contents,
 	})
 	require.NoError(t, err)
-	require.Greater(t, len(raw), 64*1024)
+	require.Greater(t, len(raw), events.MaxSanitizedBodyBytes)
 
 	got := events.SanitizeBody(raw, map[string][]string{"Content-Type": {"application/json"}})
-	require.LessOrEqual(t, len(got), 64*1024)
+	require.LessOrEqual(t, len(got), events.MaxSanitizedBodyBytes)
 	require.True(t, json.Valid([]byte(got)), "sanitized body must stay valid JSON")
 
 	var parsed map[string]any
@@ -171,8 +171,8 @@ func TestSanitizeBody_JSONSafeCapKeepsParseableGeminiContents(t *testing.T) {
 }
 
 func TestSanitizeBody_JSONSafeCapNonJSONFallsBackToByteTruncate(t *testing.T) {
-	body := []byte(strings.Repeat("plain-", 20_000))
+	body := []byte(strings.Repeat("plain-", 200_000))
 	got := events.SanitizeBody(body, map[string][]string{"Content-Type": {"text/plain"}})
 	assert.True(t, strings.HasSuffix(got, "...[truncated]"))
-	assert.LessOrEqual(t, len(got), 64*1024+len("...[truncated]"))
+	assert.LessOrEqual(t, len(got), events.MaxSanitizedBodyBytes+len("...[truncated]"))
 }
