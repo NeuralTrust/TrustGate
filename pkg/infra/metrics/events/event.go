@@ -124,11 +124,17 @@ type Cost struct {
 	Currency      string       `json:"currency"`
 }
 
+// Latency splits the request wall clock into the three stages that can be acted
+// on: the provider, the policy chain and the gateway itself. PoliciesMs covers
+// every stage the chain ran, including post_response, which executes after the
+// response was already sent. GatewayMs discounts that asynchronous share, so the
+// stages reconcile as TotalMs = ProviderMs + blocking policies + GatewayMs. The
+// per-stage split is not duplicated here: it is derivable from PolicyChain,
+// where every entry carries its Stage and LatencyMs.
 type Latency struct {
 	TotalMs    int64 `json:"total_ms"`
 	ProviderMs int64 `json:"provider_ms"`
 	PoliciesMs int64 `json:"policies_ms"`
-	RoutingMs  int64 `json:"routing_ms"`
 	GatewayMs  int64 `json:"gateway_ms"`
 }
 

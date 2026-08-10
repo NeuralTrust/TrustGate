@@ -67,7 +67,7 @@ func fullEvent() *events.Event {
 			ReasoningOutputTokens: 1,
 		},
 		Cost:    &events.Cost{PromptUsd: events.DecimalFloat(0.002), CompletionUsd: events.DecimalFloat(0.008), TotalUsd: events.DecimalFloat(0.01), Currency: "USD"},
-		Latency: events.Latency{TotalMs: 120, ProviderMs: 100, PoliciesMs: 10, RoutingMs: 5, GatewayMs: 5},
+		Latency: events.Latency{TotalMs: 120, ProviderMs: 100, PoliciesMs: 14, GatewayMs: 6},
 		Attempts: []events.Attempt{
 			{Provider: "openai", Attempt: 1, StatusCode: 200},
 		},
@@ -108,6 +108,9 @@ func TestEventToRecord_StandardAndProprietaryCoexist(t *testing.T) {
 	assert.Equal(t, "USD", attrs["trustgate.cost.currency"].AsString())
 	assert.Equal(t, int64(15), attrs["trustgate.usage.total_tokens"].AsInt64())
 	assert.Equal(t, int64(120), attrs["trustgate.latency.total_ms"].AsInt64())
+	assert.Equal(t, int64(100), attrs["trustgate.latency.provider_ms"].AsInt64())
+	assert.Equal(t, int64(14), attrs["trustgate.latency.policies_ms"].AsInt64())
+	assert.Equal(t, int64(6), attrs["trustgate.latency.gateway_ms"].AsInt64())
 
 	assert.Contains(t, attrs["trustgate.policy_chain"].AsString(), "rate-limit")
 	assert.Equal(t, int64(1), attrs["trustgate.attempts.count"].AsInt64())

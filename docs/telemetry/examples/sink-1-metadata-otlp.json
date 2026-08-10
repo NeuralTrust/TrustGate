@@ -41,7 +41,6 @@
       "trustgate.latency.total_ms": 812,
       "trustgate.latency.provider_ms": 760,
       "trustgate.latency.policies_ms": 34,
-      "trustgate.latency.routing_ms": 3,
       "trustgate.latency.gateway_ms": 15,
       "trustgate.is_flagged": true,
       "trustgate.security": ["pii"],
