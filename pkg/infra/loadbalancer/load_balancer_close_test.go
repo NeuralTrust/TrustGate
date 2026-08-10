@@ -21,6 +21,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
 	"github.com/google/uuid"
@@ -54,9 +55,9 @@ func TestLoadBalancer_Close_IdempotentAndSafe(t *testing.T) {
 	}
 
 	lb, err := loadbalancer.NewLoadBalancer(loadbalancer.NewBaseFactory(nil, nil, nil, nil), loadbalancer.Pool{
-		ID:         uuid.New().String(),
-		Registries: []*registry.Registry{bk},
-		Algorithm:  loadbalancer.AlgorithmRoundRobin,
+		ID:        uuid.New().String(),
+		Routes:    []routingdomain.Route{routingdomain.RouteForRegistry(bk)},
+		Algorithm: loadbalancer.AlgorithmRoundRobin,
 	}, newTestLogger(), cacheClient)
 	if err != nil {
 		t.Fatalf("NewLoadBalancer error: %v", err)

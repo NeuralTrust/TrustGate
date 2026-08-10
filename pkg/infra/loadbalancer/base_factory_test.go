@@ -20,13 +20,20 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
 )
 
 func TestBaseFactory_CreateStrategy_KnownAlgorithms(t *testing.T) {
 	t.Parallel()
 	factory := loadbalancer.NewBaseFactory(nil, nil, nil, nil)
-	registries := []*registry.Registry{{ID: ids.New[ids.RegistryKind](), Name: "a", LLMTarget: &registry.LLMTarget{Provider: "openai"}}}
+	routes := []routingdomain.Route{
+		routingdomain.RouteForRegistry(&registry.Registry{
+			ID:        ids.New[ids.RegistryKind](),
+			Name:      "a",
+			LLMTarget: &registry.LLMTarget{Provider: "openai"},
+		}),
+	}
 
 	cases := []struct {
 		name     string
@@ -45,8 +52,8 @@ func TestBaseFactory_CreateStrategy_KnownAlgorithms(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s, err := factory.CreateStrategy(loadbalancer.StrategyInput{
-				Algorithm:  tc.alg,
-				Registries: registries,
+				Algorithm: tc.alg,
+				Routes:    routes,
 			})
 			if err != nil {
 				t.Fatalf("CreateStrategy(%s) returned error: %v", tc.alg, err)

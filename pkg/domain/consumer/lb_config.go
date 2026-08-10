@@ -18,6 +18,8 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -27,6 +29,19 @@ import (
 type LBPoolMember struct {
 	RegistryID ids.RegistryID `json:"registry_id"`
 	Models     []string       `json:"models,omitempty"`
+	Model      string         `json:"model,omitempty"`
+	Weight     *int           `json:"weight,omitempty"`
+}
+
+func (m LBPoolMember) RouteModel() string {
+	return strings.TrimSpace(m.Model)
+}
+
+func (m LBPoolMember) RouteWeight(fallback int) int {
+	if m.Weight == nil || *m.Weight <= 0 {
+		return fallback
+	}
+	return *m.Weight
 }
 
 type LBConfig struct {
@@ -71,6 +86,9 @@ func (l *LBConfig) Validate(inline ModelPolicies) error {
 			return err
 		}
 	}
+	if err := l.validateRouteIdentity(); err != nil {
+		return err
+	}
 	switch l.Algorithm {
 	case algorithm.Semantic:
 		if l.SmartRouting != nil {
@@ -93,7 +111,7 @@ func (l *LBConfig) Validate(inline ModelPolicies) error {
 		if err := l.SmartRouting.Validate(); err != nil {
 			return fmt.Errorf("%w: %s", ErrInvalidLBConfig, err.Error())
 		}
-		return l.validateSmartRoutingMembers()
+		return l.validateSmartRoutingTiers()
 	default:
 		if l.EmbeddingConfig != nil {
 			return fmt.Errorf("%w: embedding_config is only valid for the semantic algorithm", ErrInvalidLBConfig)
@@ -105,14 +123,58 @@ func (l *LBConfig) Validate(inline ModelPolicies) error {
 	}
 }
 
-func (l *LBConfig) validateSmartRoutingMembers() error {
-	members := make(map[ids.RegistryID]struct{}, len(l.Members))
+func (l *LBConfig) validateRouteIdentity() error {
+	type routeKey struct {
+		registryID ids.RegistryID
+		model      string
+	}
+	perRegistry := make(map[ids.RegistryID]int, len(l.Members))
 	for _, member := range l.Members {
-		members[member.RegistryID] = struct{}{}
+		perRegistry[member.RegistryID]++
+	}
+	seen := make(map[routeKey]struct{}, len(l.Members))
+	for i, member := range l.Members {
+		model := member.RouteModel()
+		if model == "" && perRegistry[member.RegistryID] > 1 {
+			return fmt.Errorf(
+				"%w: members[%d] repeats registry %s without a model; every member sharing a registry must declare one",
+				ErrInvalidLBConfig, i, member.RegistryID)
+		}
+		key := routeKey{registryID: member.RegistryID, model: model}
+		if _, dup := seen[key]; dup {
+			return fmt.Errorf(
+				"%w: members[%d] duplicates route %s/%s", ErrInvalidLBConfig, i, member.RegistryID, model)
+		}
+		seen[key] = struct{}{}
+	}
+	return nil
+}
+
+func (l *LBConfig) validateSmartRoutingTiers() error {
+	routes := make(map[ids.RegistryID][]string, len(l.Members))
+	for _, member := range l.Members {
+		routes[member.RegistryID] = append(routes[member.RegistryID], member.RouteModel())
 	}
 	for i, tier := range l.SmartRouting.Tiers {
-		if _, ok := members[tier.RegistryID]; !ok {
-			return fmt.Errorf("%w: smart_routing.tiers[%d].registry_id %s is not a pool member", ErrInvalidLBConfig, i, tier.RegistryID)
+		models, ok := routes[tier.RegistryID]
+		if !ok {
+			return fmt.Errorf(
+				"%w: smart_routing.tiers[%d].registry_id %s is not a pool member",
+				ErrInvalidLBConfig, i, tier.RegistryID)
+		}
+		model := tier.RouteModel()
+		if model == "" {
+			if len(models) > 1 {
+				return fmt.Errorf(
+					"%w: smart_routing.tiers[%d] targets registry %s, which has %d routes; declare a model",
+					ErrInvalidLBConfig, i, tier.RegistryID, len(models))
+			}
+			continue
+		}
+		if !slices.Contains(models, model) {
+			return fmt.Errorf(
+				"%w: smart_routing.tiers[%d].model %q is not a route of registry %s",
+				ErrInvalidLBConfig, i, model, tier.RegistryID)
 		}
 	}
 	return nil
@@ -125,6 +187,10 @@ func validateLBPoolMember(index int, member LBPoolMember, inline ModelPolicies) 
 	policy, ok := inline.For(member.RegistryID)
 	if !ok {
 		return fmt.Errorf("%w: members[%d].registry_id %s is not in model_policies", ErrInvalidLBConfig, index, member.RegistryID)
+	}
+	if member.Weight != nil && (*member.Weight < DefaultRegistryWeight || *member.Weight > MaxRegistryWeight) {
+		return fmt.Errorf("%w: members[%d].weight %d is out of range [%d,%d]",
+			ErrInvalidLBConfig, index, *member.Weight, DefaultRegistryWeight, MaxRegistryWeight)
 	}
 	allowed := make(map[string]struct{}, len(policy.Allowed))
 	for _, model := range policy.Allowed {
@@ -141,6 +207,35 @@ func validateLBPoolMember(index int, member LBPoolMember, inline ModelPolicies) 
 		seen[model] = struct{}{}
 		if _, ok := allowed[model]; !ok {
 			return fmt.Errorf("%w: members[%d].model %q is not allowed by model_policies", ErrInvalidLBConfig, index, model)
+		}
+	}
+	return validateLBPoolMemberModel(index, member, seen, allowed)
+}
+
+// An open allow-list permits every model, so a pinned model is only checked against a non-empty one.
+func validateLBPoolMemberModel(
+	index int,
+	member LBPoolMember,
+	memberModels map[string]struct{},
+	allowed map[string]struct{},
+) error {
+	model := member.RouteModel()
+	if model == "" {
+		if member.Model != "" {
+			return fmt.Errorf("%w: members[%d].model is blank", ErrInvalidLBConfig, index)
+		}
+		return nil
+	}
+	if len(memberModels) > 0 {
+		if _, ok := memberModels[model]; !ok {
+			return fmt.Errorf("%w: members[%d].model %q is not listed in members[%d].models",
+				ErrInvalidLBConfig, index, model, index)
+		}
+	}
+	if len(allowed) > 0 {
+		if _, ok := allowed[model]; !ok {
+			return fmt.Errorf("%w: members[%d].model %q is not allowed by model_policies",
+				ErrInvalidLBConfig, index, model)
 		}
 	}
 	return nil

@@ -20,33 +20,36 @@ import (
 	"math/big"
 	"sync"
 
-	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 )
 
 type Random struct {
-	mu         sync.Mutex
-	registries []*registry.Registry
+	mu     sync.Mutex
+	routes []routingdomain.Route
 }
 
-func NewRandom(registries []*registry.Registry) *Random {
-	return &Random{registries: registries}
+func NewRandom(routes []routingdomain.Route) *Random {
+	return &Random{routes: routes}
 }
 
-func (r *Random) Next(_ context.Context, _ *infracontext.RequestContext, exclude map[ids.RegistryID]struct{}) *registry.Registry {
+func (r *Random) Next(
+	_ context.Context,
+	_ *infracontext.RequestContext,
+	exclude map[routingdomain.RouteKey]struct{},
+) *routingdomain.Route {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	candidates := filterExcluded(r.registries, exclude)
+	candidates := filterExcluded(r.routes, exclude)
 	if len(candidates) == 0 {
 		return nil
 	}
 	n, err := rand.Int(rand.Reader, big.NewInt(int64(len(candidates))))
 	if err != nil {
-		return candidates[0]
+		return pick(candidates[0])
 	}
-	return candidates[n.Int64()]
+	return pick(candidates[n.Int64()])
 }
 
 func (r *Random) Name() string {

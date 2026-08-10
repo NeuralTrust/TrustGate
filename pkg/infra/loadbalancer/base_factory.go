@@ -50,17 +50,17 @@ func NewBaseFactory(
 func (f *BaseFactory) CreateStrategy(input StrategyInput) (Strategy, error) {
 	switch input.Algorithm {
 	case algorithm.RoundRobin:
-		return strategies.NewRoundRobin(input.Registries), nil
+		return strategies.NewRoundRobin(input.Routes), nil
 	case algorithm.Random:
-		return strategies.NewRandom(input.Registries), nil
+		return strategies.NewRandom(input.Routes), nil
 	case algorithm.WeightedRoundRobin:
-		return strategies.NewWeightedRoundRobin(input.Registries, input.Weights), nil
+		return strategies.NewWeightedRoundRobin(input.Routes), nil
 	case algorithm.LeastConnections:
-		return strategies.NewLeastConnections(input.Registries), nil
+		return strategies.NewLeastConnections(input.Routes), nil
 	case algorithm.Semantic:
-		return strategies.NewSemantic(input.EmbeddingConfig, input.Registries, f.embeddingRepo, f.serviceLocator), nil
+		return strategies.NewSemantic(input.EmbeddingConfig, input.Routes, f.embeddingRepo, f.serviceLocator), nil
 	case algorithm.SmartRouting:
-		return strategies.NewSmartRouting(input.Registries, input.SmartRoutingConfig, f.complexity, f.logger), nil
+		return strategies.NewSmartRouting(input.Routes, input.SmartRoutingConfig, f.complexity, f.logger), nil
 	default:
 		return nil, fmt.Errorf("unsupported load balancing algorithm: %s", input.Algorithm)
 	}

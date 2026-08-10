@@ -23,8 +23,8 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/redis/go-redis/v9"
 )
@@ -39,8 +39,7 @@ type RedisProvider interface {
 
 type Pool struct {
 	ID                 string
-	Registries         []*registry.Registry
-	Weights            map[ids.RegistryID]int
+	Routes             []routingdomain.Route
 	Algorithm          string
 	EmbeddingConfig    *registry.EmbeddingConfig
 	SmartRoutingConfig *registry.SmartRoutingConfig
@@ -52,6 +51,7 @@ type LoadBalancer struct {
 	cache      RedisProvider
 	poolID     string
 	poolSize   int
+	routes     []routingdomain.Route
 	backendIDs []string
 	successCh  chan *registry.Registry
 	factory    Factory
@@ -67,7 +67,9 @@ func NewLoadBalancer(
 ) (*LoadBalancer, error) {
 	ctx := context.Background()
 
-	seedInitialHealth(ctx, cacheClient, pool.Registries, logger)
+	// Health is tracked per registry, not per route.
+	poolRegistries := routingdomain.DistinctRegistries(pool.Routes)
+	seedInitialHealth(ctx, cacheClient, poolRegistries, logger)
 
 	var embeddingCfg *embedding.Config
 	if pool.EmbeddingConfig != nil {
@@ -76,8 +78,7 @@ func NewLoadBalancer(
 
 	strategy, err := factory.CreateStrategy(StrategyInput{
 		Algorithm:          pool.Algorithm,
-		Registries:         pool.Registries,
-		Weights:            pool.Weights,
+		Routes:             pool.Routes,
 		EmbeddingConfig:    embeddingCfg,
 		SmartRoutingConfig: pool.SmartRoutingConfig,
 	})
@@ -85,8 +86,8 @@ func NewLoadBalancer(
 		return nil, fmt.Errorf("failed to create load balancing strategy: %w", err)
 	}
 
-	backendIDs := make([]string, 0, len(pool.Registries))
-	for _, b := range pool.Registries {
+	backendIDs := make([]string, 0, len(poolRegistries))
+	for _, b := range poolRegistries {
 		backendIDs = append(backendIDs, b.ID.String())
 	}
 
@@ -95,7 +96,8 @@ func NewLoadBalancer(
 		logger:     logger,
 		cache:      cacheClient,
 		poolID:     pool.ID,
-		poolSize:   len(pool.Registries),
+		poolSize:   len(pool.Routes),
+		routes:     pool.Routes,
 		backendIDs: backendIDs,
 		successCh:  make(chan *registry.Registry, 1000),
 		factory:    factory,
@@ -103,6 +105,10 @@ func NewLoadBalancer(
 	}
 	go lb.processSuccessReports()
 	return lb, nil
+}
+
+func (lb *LoadBalancer) Routes() []routingdomain.Route {
+	return lb.routes
 }
 
 func healthKey(backendID string) string {
@@ -187,35 +193,36 @@ func (lb *LoadBalancer) performSuccessUpdate(b *registry.Registry) {
 	}
 }
 
-func (lb *LoadBalancer) NextBackend(
+func (lb *LoadBalancer) NextRoute(
 	ctx context.Context,
 	req *infracontext.RequestContext,
-	exclude map[ids.RegistryID]struct{},
-) (*registry.Registry, error) {
+	exclude map[routingdomain.RouteKey]struct{},
+) (*routingdomain.Route, error) {
 	attempts := lb.poolSize
 	if attempts < 1 {
 		attempts = 1
 	}
 	health := lb.healthMap(ctx)
-	var last *registry.Registry
+	var last *routingdomain.Route
 	for i := 0; i < attempts; i++ {
-		b := lb.strategy.Next(ctx, req, exclude)
-		if b == nil {
+		route := lb.strategy.Next(ctx, req, exclude)
+		if route == nil || route.Registry == nil {
 			break
 		}
-		last = b
-		if isHealthy(health, b.ID.String()) {
-			return b, nil
+		last = route
+		if isHealthy(health, route.Registry.ID.String()) {
+			return route, nil
 		}
 	}
 	if last != nil {
-		lb.logger.Info("all registries unhealthy; using last candidate as fallback",
-			slog.String("registry_id", last.ID.String()),
-			slog.String("provider", last.Provider()),
+		lb.logger.Info("all routes unhealthy; using last candidate as fallback",
+			slog.String("registry_id", last.Registry.ID.String()),
+			slog.String("provider", last.Registry.Provider()),
+			slog.String("model", last.Model),
 		)
 		return last, nil
 	}
-	return nil, fmt.Errorf("no available registries")
+	return nil, fmt.Errorf("no available routes")
 }
 
 // healthMap fetches the health status of every backend in the pool with a

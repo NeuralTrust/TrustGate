@@ -18,51 +18,43 @@ import (
 	"context"
 	"sync"
 
-	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 )
 
 type WeightedRoundRobin struct {
 	mu            sync.Mutex
-	registries    []*registry.Registry
-	weights       map[ids.RegistryID]int
+	routes        []routingdomain.Route
 	currentIndex  int
 	currentWeight int
 	maxWeight     int
 }
 
-func NewWeightedRoundRobin(registries []*registry.Registry, weights map[ids.RegistryID]int) *WeightedRoundRobin {
-	wrr := &WeightedRoundRobin{
-		registries: registries,
-		weights:    weights,
-	}
-	for _, b := range registries {
-		if wrr.effectiveWeight(b) > wrr.maxWeight {
-			wrr.maxWeight = wrr.effectiveWeight(b)
+func NewWeightedRoundRobin(routes []routingdomain.Route) *WeightedRoundRobin {
+	wrr := &WeightedRoundRobin{routes: routes}
+	for _, route := range routes {
+		if w := route.EffectiveWeight(); w > wrr.maxWeight {
+			wrr.maxWeight = w
 		}
 	}
 	return wrr
 }
 
-func (wrr *WeightedRoundRobin) effectiveWeight(b *registry.Registry) int {
-	if w, ok := wrr.weights[b.ID]; ok && w > 0 {
-		return w
-	}
-	return 1
-}
-
-func (wrr *WeightedRoundRobin) Next(_ context.Context, _ *infracontext.RequestContext, exclude map[ids.RegistryID]struct{}) *registry.Registry {
+func (wrr *WeightedRoundRobin) Next(
+	_ context.Context,
+	_ *infracontext.RequestContext,
+	exclude map[routingdomain.RouteKey]struct{},
+) *routingdomain.Route {
 	wrr.mu.Lock()
 	defer wrr.mu.Unlock()
-	if len(wrr.registries) == 0 {
+	if len(wrr.routes) == 0 {
 		return nil
 	}
 
-	maxIterations := len(wrr.registries)*(wrr.maxWeight+1) + 1
+	maxIterations := len(wrr.routes)*(wrr.maxWeight+1) + 1
 	for i := 0; i < maxIterations; i++ {
-		wrr.currentIndex = (wrr.currentIndex + 1) % len(wrr.registries)
+		wrr.currentIndex = (wrr.currentIndex + 1) % len(wrr.routes)
 		if wrr.currentIndex == 0 {
 			wrr.currentWeight = wrr.currentWeight - 1
 			if wrr.currentWeight <= 0 {
@@ -72,9 +64,9 @@ func (wrr *WeightedRoundRobin) Next(_ context.Context, _ *infracontext.RequestCo
 				}
 			}
 		}
-		b := wrr.registries[wrr.currentIndex]
-		if wrr.effectiveWeight(b) >= wrr.currentWeight && !isExcluded(b.ID, exclude) {
-			return b
+		route := wrr.routes[wrr.currentIndex]
+		if route.EffectiveWeight() >= wrr.currentWeight && !isExcluded(route.Key(), exclude) {
+			return pick(route)
 		}
 	}
 	return nil

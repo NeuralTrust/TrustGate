@@ -19,8 +19,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 )
 
@@ -38,10 +38,14 @@ func (f *fakeScorer) Score(_ context.Context, _, _, _ string) (float64, error) {
 
 func (f *fakeScorer) Configured() bool { return f.configured }
 
-func tiersFor(backends []*registry.Registry, minScores ...float64) *registry.SmartRoutingConfig {
+func tiersFor(routes []routingdomain.Route, minScores ...float64) *registry.SmartRoutingConfig {
 	cfg := &registry.SmartRoutingConfig{}
 	for i, min := range minScores {
-		cfg.Tiers = append(cfg.Tiers, registry.SmartRoutingTier{MinScore: min, RegistryID: backends[i].ID})
+		cfg.Tiers = append(cfg.Tiers, registry.SmartRoutingTier{
+			MinScore:   min,
+			RegistryID: routes[i].RegistryID(),
+			Model:      routes[i].Model,
+		})
 	}
 	return cfg
 }
@@ -73,12 +77,12 @@ func TestSmartRouting_MapsScoreToTier(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			backends := makeBackends("a", "b", "c")
-			cfg := tiersFor(backends, 0.0, 0.4, 0.8)
+			routes := makeRoutes("a", "b", "c")
+			cfg := tiersFor(routes, 0.0, 0.4, 0.8)
 			scorer := &fakeScorer{score: tc.score, configured: true}
-			s := NewSmartRouting(backends, cfg, scorer, nil)
+			s := NewSmartRouting(routes, cfg, scorer, nil)
 			got := s.Next(context.Background(), promptReq(), nil)
-			if got == nil || got.Name != tc.want {
+			if got == nil || routeName(t, got) != tc.want {
 				t.Fatalf("score %g: got %+v, want %q", tc.score, got, tc.want)
 			}
 			if scorer.calls != 1 {
@@ -88,15 +92,64 @@ func TestSmartRouting_MapsScoreToTier(t *testing.T) {
 	}
 }
 
+func TestSmartRouting_MapsScoreToModelOnOneRegistry(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		score float64
+		want  string
+	}{
+		{"simple", 0.1, "gpt-4o-mini"},
+		{"medium", 0.5, "gpt-4.1-mini"},
+		{"complex", 0.9, "gpt-5"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			routes := modelRoutes("gpt-4o-mini", "gpt-4.1-mini", "gpt-5")
+			cfg := tiersFor(routes, 0.0, 0.4, 0.8)
+			scorer := &fakeScorer{score: tc.score, configured: true}
+			s := NewSmartRouting(routes, cfg, scorer, nil)
+
+			got := s.Next(context.Background(), promptReq(), nil)
+
+			if got == nil {
+				t.Fatalf("score %g: expected a route", tc.score)
+			}
+			if got.Model != tc.want {
+				t.Fatalf("score %g: model = %q, want %q", tc.score, got.Model, tc.want)
+			}
+			if scorer.calls != 1 {
+				t.Fatalf("expected exactly one score call, got %d", scorer.calls)
+			}
+		})
+	}
+}
+
+func TestSmartRouting_ExcludedModelRouteFallsBackToItsSibling(t *testing.T) {
+	t.Parallel()
+	routes := modelRoutes("gpt-4o-mini", "gpt-5")
+	cfg := tiersFor(routes, 0.0, 0.8)
+	scorer := &fakeScorer{score: 0.9, configured: true}
+	s := NewSmartRouting(routes, cfg, scorer, nil)
+
+	got := s.Next(context.Background(), promptReq(), excludeRoutes(routes[1]))
+
+	if got == nil || got.Model != "gpt-4o-mini" {
+		t.Fatalf("excluding the mapped model must leave its sibling on the same registry, got %+v", got)
+	}
+}
+
 func TestSmartRouting_NotConfiguredFallsBackToRoundRobin(t *testing.T) {
 	t.Parallel()
-	backends := makeBackends("a", "b", "c")
-	cfg := tiersFor(backends, 0.0, 0.4, 0.8)
+	routes := makeRoutes("a", "b", "c")
+	cfg := tiersFor(routes, 0.0, 0.4, 0.8)
 	scorer := &fakeScorer{score: 0.9, configured: false}
-	s := NewSmartRouting(backends, cfg, scorer, nil)
+	s := NewSmartRouting(routes, cfg, scorer, nil)
 	got := s.Next(context.Background(), promptReq(), nil)
-	if got == nil || got.Name != "a" {
-		t.Fatalf("unconfigured scorer should round-robin from first backend, got %+v", got)
+	if got == nil || routeName(t, got) != "a" {
+		t.Fatalf("unconfigured scorer should round-robin from first route, got %+v", got)
 	}
 	if scorer.calls != 0 {
 		t.Fatalf("scorer must not be called when unconfigured, calls=%d", scorer.calls)
@@ -105,25 +158,25 @@ func TestSmartRouting_NotConfiguredFallsBackToRoundRobin(t *testing.T) {
 
 func TestSmartRouting_ScoreErrorFallsBackToRoundRobin(t *testing.T) {
 	t.Parallel()
-	backends := makeBackends("a", "b", "c")
-	cfg := tiersFor(backends, 0.0, 0.4, 0.8)
+	routes := makeRoutes("a", "b", "c")
+	cfg := tiersFor(routes, 0.0, 0.4, 0.8)
 	scorer := &fakeScorer{err: errors.New("boom"), configured: true}
-	s := NewSmartRouting(backends, cfg, scorer, nil)
+	s := NewSmartRouting(routes, cfg, scorer, nil)
 	got := s.Next(context.Background(), promptReq(), nil)
-	if got == nil || got.Name != "a" {
-		t.Fatalf("score error should round-robin from first backend, got %+v", got)
+	if got == nil || routeName(t, got) != "a" {
+		t.Fatalf("score error should round-robin from first route, got %+v", got)
 	}
 }
 
 func TestSmartRouting_EmptyBodyFallsBackToRoundRobin(t *testing.T) {
 	t.Parallel()
-	backends := makeBackends("a", "b", "c")
-	cfg := tiersFor(backends, 0.0, 0.4, 0.8)
+	routes := makeRoutes("a", "b", "c")
+	cfg := tiersFor(routes, 0.0, 0.4, 0.8)
 	scorer := &fakeScorer{score: 0.9, configured: true}
-	s := NewSmartRouting(backends, cfg, scorer, nil)
+	s := NewSmartRouting(routes, cfg, scorer, nil)
 	got := s.Next(context.Background(), &infracontext.RequestContext{}, nil)
-	if got == nil || got.Name != "a" {
-		t.Fatalf("empty body should round-robin from first backend, got %+v", got)
+	if got == nil || routeName(t, got) != "a" {
+		t.Fatalf("empty body should round-robin from first route, got %+v", got)
 	}
 	if scorer.calls != 0 {
 		t.Fatalf("scorer must not be called when input cannot be extracted, calls=%d", scorer.calls)
@@ -132,25 +185,24 @@ func TestSmartRouting_EmptyBodyFallsBackToRoundRobin(t *testing.T) {
 
 func TestSmartRouting_MappedRegistryExcludedFallsBack(t *testing.T) {
 	t.Parallel()
-	backends := makeBackends("a", "b", "c")
-	cfg := tiersFor(backends, 0.0, 0.4, 0.8)
+	routes := makeRoutes("a", "b", "c")
+	cfg := tiersFor(routes, 0.0, 0.4, 0.8)
 	scorer := &fakeScorer{score: 0.9, configured: true}
-	s := NewSmartRouting(backends, cfg, scorer, nil)
-	exclude := map[ids.RegistryID]struct{}{backends[2].ID: {}}
-	got := s.Next(context.Background(), promptReq(), exclude)
-	if got == nil || got.Name == "c" {
+	s := NewSmartRouting(routes, cfg, scorer, nil)
+	got := s.Next(context.Background(), promptReq(), excludeRoutes(routes[2]))
+	if got == nil || routeName(t, got) == "c" {
 		t.Fatalf("excluded mapped registry must fall back to a candidate, got %+v", got)
 	}
 }
 
 func TestSmartRouting_SingleCandidateSkipsScorer(t *testing.T) {
 	t.Parallel()
-	backends := makeBackends("only")
-	cfg := tiersFor(backends, 0.0)
+	routes := makeRoutes("only")
+	cfg := tiersFor(routes, 0.0)
 	scorer := &fakeScorer{score: 0.9, configured: true}
-	s := NewSmartRouting(backends, cfg, scorer, nil)
+	s := NewSmartRouting(routes, cfg, scorer, nil)
 	got := s.Next(context.Background(), promptReq(), nil)
-	if got == nil || got.Name != "only" {
+	if got == nil || routeName(t, got) != "only" {
 		t.Fatalf("single candidate should be returned without scoring, got %+v", got)
 	}
 	if scorer.calls != 0 {

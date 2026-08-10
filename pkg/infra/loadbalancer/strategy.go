@@ -18,8 +18,8 @@ import (
 	"context"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 )
@@ -33,15 +33,19 @@ const (
 	AlgorithmSmartRouting       = algorithm.SmartRouting
 )
 
+// Excluding a route by key removes only that (registry, model) pair, never the registry.
 type Strategy interface {
-	Next(ctx context.Context, req *infracontext.RequestContext, exclude map[ids.RegistryID]struct{}) *registry.Registry
+	Next(
+		ctx context.Context,
+		req *infracontext.RequestContext,
+		exclude map[routingdomain.RouteKey]struct{},
+	) *routingdomain.Route
 	Name() string
 }
 
 type StrategyInput struct {
 	Algorithm          string
-	Registries         []*registry.Registry
-	Weights            map[ids.RegistryID]int
+	Routes             []routingdomain.Route
 	EmbeddingConfig    *embedding.Config
 	SmartRoutingConfig *registry.SmartRoutingConfig
 }
