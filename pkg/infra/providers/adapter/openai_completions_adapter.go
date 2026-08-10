@@ -50,6 +50,13 @@ type openaiTool struct {
 	Type     string            `json:"type"`
 	Function *openaiFunction   `json:"function,omitempty"`
 	Custom   *openaiCustomTool `json:"custom,omitempty"`
+	// Clients built against the Responses API (Cursor with GPT-5 models) send
+	// custom tools flat, with the payload alongside "type" instead of nested
+	// under "custom". Decoding both shapes keeps such a tool from being
+	// dropped; encoding always emits the nested Chat Completions shape.
+	Name        string          `json:"name,omitempty"`
+	Description string          `json:"description,omitempty"`
+	Format      json.RawMessage `json:"format,omitempty"`
 }
 
 // openaiCustomTool is the freeform tool shape GPT-5 models accept. Format is
@@ -65,6 +72,76 @@ type openaiFunction struct {
 	Name        string                 `json:"name"`
 	Description string                 `json:"description,omitempty"`
 	Parameters  map[string]interface{} `json:"parameters,omitempty"`
+}
+
+// A grammar format is spelled differently on each wire: Chat Completions nests
+// the grammar fields under a "grammar" object, the Responses API keeps them
+// alongside "type". The canonical model stores the flat form, so these two
+// helpers translate on the way in and out. Non-grammar formats (e.g. plain
+// text) are identical on both wires and pass through untouched.
+
+func flattenCustomToolFormat(raw json.RawMessage) json.RawMessage {
+	var format map[string]json.RawMessage
+	if len(raw) == 0 || json.Unmarshal(raw, &format) != nil {
+		return raw
+	}
+	inner, ok := format["grammar"]
+	if !ok {
+		return raw
+	}
+	kind, ok := format["type"]
+	if !ok {
+		return raw
+	}
+	var grammar map[string]json.RawMessage
+	if json.Unmarshal(inner, &grammar) != nil {
+		return raw
+	}
+	flat := map[string]json.RawMessage{"type": kind}
+	for k, v := range grammar {
+		flat[k] = v
+	}
+	out, err := json.Marshal(flat)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+func wrapCustomToolFormat(raw json.RawMessage) json.RawMessage {
+	var format map[string]json.RawMessage
+	if len(raw) == 0 || json.Unmarshal(raw, &format) != nil {
+		return raw
+	}
+	if _, already := format["grammar"]; already {
+		return raw
+	}
+	var kind string
+	if err := json.Unmarshal(format["type"], &kind); err != nil || kind != "grammar" {
+		return raw
+	}
+	grammar := make(map[string]json.RawMessage, len(format))
+	for k, v := range format {
+		if k == "type" {
+			continue
+		}
+		grammar[k] = v
+	}
+	if len(grammar) == 0 {
+		return raw
+	}
+	inner, err := json.Marshal(grammar)
+	if err != nil {
+		return raw
+	}
+	out, err := json.Marshal(map[string]json.RawMessage{
+		"type":    format["type"],
+		"grammar": inner,
+	})
+	if err != nil {
+		return raw
+	}
+	return out
 }
 
 type openaiToolCall struct {
@@ -286,12 +363,16 @@ func decodeCompletionsRequest(body []byte) (*CanonicalRequest, error) {
 
 	for _, t := range req.Tools {
 		switch {
-		case t.Type == "custom" && t.Custom != nil:
+		case t.Type == "custom":
+			custom := t.Custom
+			if custom == nil {
+				custom = &openaiCustomTool{Name: t.Name, Description: t.Description, Format: t.Format}
+			}
 			cr.Tools = append(cr.Tools, CanonicalTool{
 				Kind:        ToolKindCustom,
-				Name:        t.Custom.Name,
-				Description: t.Custom.Description,
-				Format:      t.Custom.Format,
+				Name:        custom.Name,
+				Description: custom.Description,
+				Format:      flattenCustomToolFormat(custom.Format),
 			})
 		case t.Function != nil:
 			cr.Tools = append(cr.Tools, CanonicalTool{
@@ -359,7 +440,7 @@ func encodeCompletionsRequest(req *CanonicalRequest) ([]byte, error) {
 				Custom: &openaiCustomTool{
 					Name:        t.Name,
 					Description: t.Description,
-					Format:      t.Format,
+					Format:      wrapCustomToolFormat(t.Format),
 				},
 			})
 			continue

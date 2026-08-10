@@ -166,6 +166,18 @@ func TestCanonical_OpenAI_Completions_DeveloperAndRefusal(t *testing.T) {
 	assert.Equal(t, "I cannot help with that.", cresp.Content)
 }
 
+// customToolGrammar returns the grammar payload of an encoded custom tool,
+// asserting the nesting chat/completions requires: format.grammar.{syntax,definition}.
+func customToolGrammar(t *testing.T, custom map[string]any) map[string]any {
+	t.Helper()
+	format, ok := custom["format"].(map[string]any)
+	require.True(t, ok, "format must survive: %v", custom)
+	assert.Equal(t, "grammar", format["type"])
+	grammar, ok := format["grammar"].(map[string]any)
+	require.True(t, ok, "chat/completions requires format.grammar: %v", format)
+	return grammar
+}
+
 // GPT-5 models accept freeform "custom" tools alongside classic "function"
 // tools. A canonical round-trip must not turn one into the other (ENG-1281).
 func TestCanonical_OpenAI_Completions_CustomToolRoundtrip(t *testing.T) {
@@ -176,7 +188,7 @@ func TestCanonical_OpenAI_Completions_CustomToolRoundtrip(t *testing.T) {
 	}{
 		{
 			name: "custom tool keeps its type, name and format",
-			tool: `{"type":"custom","custom":{"name":"bash","description":"Run a shell command","format":{"type":"grammar","syntax":"lark","definition":"start: /.+/"}}}`,
+			tool: `{"type":"custom","custom":{"name":"bash","description":"Run a shell command","format":{"type":"grammar","grammar":{"syntax":"lark","definition":"start: /.+/"}}}}`,
 			check: func(t *testing.T, canonical CanonicalTool, encoded map[string]any) {
 				assert.Equal(t, ToolKindCustom, canonical.Kind)
 				assert.Equal(t, "bash", canonical.Name)
@@ -188,10 +200,34 @@ func TestCanonical_OpenAI_Completions_CustomToolRoundtrip(t *testing.T) {
 				custom, ok := encoded["custom"].(map[string]any)
 				require.True(t, ok, "custom payload must survive: %v", encoded)
 				assert.Equal(t, "bash", custom["name"])
-				format, ok := custom["format"].(map[string]any)
-				require.True(t, ok, "format must survive verbatim: %v", custom)
-				assert.Equal(t, "lark", format["syntax"])
-				assert.Equal(t, "start: /.+/", format["definition"])
+				grammar := customToolGrammar(t, custom)
+				assert.Equal(t, "lark", grammar["syntax"])
+				assert.Equal(t, "start: /.+/", grammar["definition"])
+			},
+		},
+		{
+			// Cursor declares custom tools the way the Responses API spells
+			// them, even on a Chat Completions request. Dropping the tool loses
+			// the model's editing capability, and forwarding it verbatim makes
+			// OpenAI reject the call with "Missing required parameter:
+			// tools[N].custom" (ENG-1281).
+			name: "custom tool declared flat is normalised to the nested shape",
+			tool: `{"type":"custom","name":"ApplyPatch","description":"Patch files","format":{"type":"grammar","syntax":"lark","definition":"start: /.+/"}}`,
+			check: func(t *testing.T, canonical CanonicalTool, encoded map[string]any) {
+				assert.Equal(t, ToolKindCustom, canonical.Kind)
+				assert.Equal(t, "ApplyPatch", canonical.Name)
+				assert.Equal(t, "Patch files", canonical.Description)
+
+				assert.Equal(t, "custom", encoded["type"])
+				assert.Nil(t, encoded["name"], "the flat spelling must not survive encoding")
+				assert.Nil(t, encoded["format"], "the flat spelling must not survive encoding")
+
+				custom, ok := encoded["custom"].(map[string]any)
+				require.True(t, ok, "custom payload must be nested: %v", encoded)
+				assert.Equal(t, "ApplyPatch", custom["name"])
+				grammar := customToolGrammar(t, custom)
+				assert.Equal(t, "lark", grammar["syntax"])
+				assert.Equal(t, "start: /.+/", grammar["definition"])
 			},
 		},
 		{

@@ -333,6 +333,86 @@ func TestNormalizeOpenAIRequest_PreservesExistingToolFunctionParameters(t *testi
 	assert.Contains(t, props, "q")
 }
 
+// Cursor sends a chat/completions body whose custom tool is spelled the
+// Responses way. Forwarded verbatim, OpenAI answers "Missing required
+// parameter: tools[N].custom" and the whole turn fails (ENG-1281).
+func TestNormalizeOpenAIRequest_NestsFlatCustomTool(t *testing.T) {
+	input := `{
+		"model": "gpt-5.1",
+		"messages": [{"role": "user", "content": "hello"}],
+		"tools": [
+			{"type": "function", "function": {"name": "read_file", "parameters": {"type": "object", "properties": {"p": {"type": "string"}}}}},
+			{
+				"type": "custom",
+				"name": "ApplyPatch",
+				"description": "Patch files",
+				"format": {"type": "grammar", "syntax": "lark", "definition": "start: /.+/"}
+			}
+		]
+	}`
+
+	out := NormalizeOpenAIRequest([]byte(input))
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(out, &result))
+	tools := result["tools"].([]any)
+	require.Len(t, tools, 2)
+
+	assert.Equal(t, "function", tools[0].(map[string]any)["type"], "function tools must be left alone")
+
+	tool := tools[1].(map[string]any)
+	assert.Equal(t, "custom", tool["type"])
+	assert.NotContains(t, tool, "name", "the flat spelling must be removed")
+	assert.NotContains(t, tool, "format", "the flat spelling must be removed")
+
+	custom := tool["custom"].(map[string]any)
+	assert.Equal(t, "ApplyPatch", custom["name"])
+	assert.Equal(t, "Patch files", custom["description"])
+	format := custom["format"].(map[string]any)
+	assert.Equal(t, "grammar", format["type"])
+	grammar := format["grammar"].(map[string]any)
+	assert.Equal(t, "lark", grammar["syntax"])
+	assert.Equal(t, "start: /.+/", grammar["definition"])
+
+	assert.JSONEq(t, string(out), string(NormalizeOpenAIRequest(out)), "normalization must be idempotent")
+}
+
+func TestNormalizeOpenAIRequest_LeavesWellFormedCustomToolUntouched(t *testing.T) {
+	input := `{
+		"model": "gpt-5.1",
+		"messages": [{"role": "user", "content": "hello"}],
+		"tools": [
+			{
+				"type": "custom",
+				"custom": {
+					"name": "bash",
+					"format": {"type": "grammar", "grammar": {"syntax": "lark", "definition": "start: /.+/"}}
+				}
+			}
+		]
+	}`
+
+	assert.JSONEq(t, input, string(NormalizeOpenAIRequest([]byte(input))))
+}
+
+// A custom tool with no grammar (freeform text) still needs the "custom" nesting.
+func TestNormalizeOpenAIRequest_NestsFlatCustomToolWithoutGrammar(t *testing.T) {
+	input := `{
+		"model": "gpt-5.1",
+		"messages": [{"role": "user", "content": "hello"}],
+		"tools": [{"type": "custom", "name": "freeform", "description": "Anything"}]
+	}`
+
+	out := NormalizeOpenAIRequest([]byte(input))
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(out, &result))
+	custom := result["tools"].([]any)[0].(map[string]any)["custom"].(map[string]any)
+	assert.Equal(t, "freeform", custom["name"])
+	assert.Equal(t, "Anything", custom["description"])
+	assert.NotContains(t, custom, "format")
+}
+
 func TestNormalizeRequestForProvider_Cerebras_InjectsToolParameters(t *testing.T) {
 	input := `{
 		"model": "gpt-oss-120b",

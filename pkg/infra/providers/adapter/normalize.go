@@ -15,6 +15,7 @@
 package adapter
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 
@@ -32,6 +33,9 @@ import (
 //   - Ensures every tools[].function.parameters is a non-empty JSON Schema object.
 //     Gemini cross-format requests often omit parameters; strict OpenAI-wire
 //     upstreams (e.g. Cerebras gpt-oss) reject tools without it.
+//   - Ensures every custom tool is nested under "custom" with its grammar under
+//     format.grammar. Clients targeting GPT-5 models declare custom tools the
+//     Responses way, which chat/completions rejects.
 //
 // The function is a no-op (returns the original body) when no changes are
 // needed, so it is safe to call unconditionally on every OpenAI-bound request.
@@ -88,6 +92,11 @@ func NormalizeOpenAIRequest(body []byte) []byte {
 
 	if toolsRaw, ok := raw["tools"]; ok {
 		if b, toolsChanged := normalizeToolsFunctionParameters(toolsRaw); toolsChanged {
+			toolsRaw = b
+			raw["tools"] = b
+			changed = true
+		}
+		if b, toolsChanged := normalizeCustomTools(toolsRaw); toolsChanged {
 			raw["tools"] = b
 			changed = true
 		}
@@ -136,6 +145,73 @@ func normalizeToolsFunctionParameters(toolsRaw json.RawMessage) (json.RawMessage
 			continue
 		}
 		tools[i]["function"] = fnBytes
+		changed = true
+	}
+	if !changed {
+		return toolsRaw, false
+	}
+	b, err := json.Marshal(tools)
+	if err != nil {
+		return toolsRaw, false
+	}
+	return b, true
+}
+
+// normalizeCustomTools rewrites custom tools spelled the Responses way into the
+// shape chat/completions requires. Clients that target GPT-5 models (Cursor)
+// declare them flat, with name/description/format alongside "type" and the
+// grammar fields alongside format.type; chat/completions demands the payload
+// nested under "custom" and the grammar under format.grammar, and rejects the
+// whole request otherwise (ENG-1281). Tools already in the nested shape are
+// left untouched, so this is idempotent.
+func normalizeCustomTools(toolsRaw json.RawMessage) (json.RawMessage, bool) {
+	if len(toolsRaw) == 0 || string(toolsRaw) == "null" {
+		return toolsRaw, false
+	}
+	var tools []map[string]json.RawMessage
+	if err := json.Unmarshal(toolsRaw, &tools); err != nil {
+		return toolsRaw, false
+	}
+	changed := false
+	for i := range tools {
+		var kind string
+		if json.Unmarshal(tools[i]["type"], &kind) != nil || kind != "custom" {
+			continue
+		}
+
+		custom := map[string]json.RawMessage{}
+		rewritten := false
+		if nested, ok := tools[i]["custom"]; ok && !isEmptyOrNull(nested) {
+			if json.Unmarshal(nested, &custom) != nil {
+				continue
+			}
+		} else {
+			for _, field := range []string{"name", "description", "format"} {
+				if v, ok := tools[i][field]; ok {
+					custom[field] = v
+					delete(tools[i], field)
+				}
+			}
+			if len(custom) == 0 {
+				continue
+			}
+			rewritten = true
+		}
+
+		if format, ok := custom["format"]; ok {
+			if wrapped := wrapCustomToolFormat(format); !bytes.Equal(wrapped, format) {
+				custom["format"] = wrapped
+				rewritten = true
+			}
+		}
+		if !rewritten {
+			continue
+		}
+		b, err := json.Marshal(custom)
+		if err != nil {
+			return toolsRaw, false
+		}
+		tools[i]["custom"] = b
 		changed = true
 	}
 	if !changed {
