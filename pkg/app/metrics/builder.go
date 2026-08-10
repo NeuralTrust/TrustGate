@@ -130,6 +130,7 @@ func (b *Builder) foldLLMSpans(requestTrace *trace.RequestTrace) (*trace.LLMAttr
 			Fallback:   attrs.Fallback,
 			Pinned:     attrs.Pinned,
 			Route:      attrs.Route,
+			RouteModel: attrs.RouteModel,
 			Outcome:    attrs.Outcome,
 			StatusCode: span.StatusCode(),
 			LatencyMs:  span.Latency().Milliseconds(),
@@ -337,7 +338,7 @@ func (b *Builder) fillResponse(evt *events.Event, resp *infracontext.ResponseCon
 		evt.Response.FinishReason = served.FinishReason
 	}
 	if len(resp.Body) > 0 {
-		body := events.SanitizeBodyFull(resp.Body, resp.Headers)
+		body := events.SanitizeBody(resp.Body, resp.Headers)
 		evt.Response.Body = &body
 	}
 }
