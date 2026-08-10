@@ -10,12 +10,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// stampedFreeEntitlements is the minimal entitlements block the admin API
+// accepts. max_instances is deliberately far above what the suite creates: it
+// caps gateways per tenant and every test shares one tenant, so a small value
+// would fail whichever test happens to run last.
 func stampedFreeEntitlements() map[string]any {
 	return map[string]any{
 		"tier":            "free",
 		"burst_per_min":   60,
 		"quota_per_month": 10000,
-		"max_instances":   5,
+		"max_instances":   1000,
 	}
 }
 

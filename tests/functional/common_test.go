@@ -49,11 +49,16 @@ func CreateGateway(t *testing.T, payload map[string]any) string {
 		payload["tenant_id"] = "functional-tenant"
 	}
 	if _, ok := payload["entitlements"]; !ok {
+		// The API rejects stamped limits unless all three are set, and
+		// max_instances caps gateways per tenant. Every test here shares one
+		// tenant, so a small value would give the whole suite a budget that
+		// the next test to be added would exhaust. Tests that exercise the cap
+		// itself stamp their own entitlements.
 		payload["entitlements"] = map[string]any{
 			"tier":            "free",
 			"burst_per_min":   60,
 			"quota_per_month": 10000,
-			"max_instances":   5,
+			"max_instances":   1000,
 		}
 	}
 	status, body := sendRequest(t, http.MethodPost, AdminURL+"/v1/gateways", nil, payload)
