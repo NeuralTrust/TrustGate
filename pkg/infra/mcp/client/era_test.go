@@ -141,6 +141,8 @@ func TestEraCoordinatorRetriesInconclusiveSharedProbeForDifferentCredentials(t *
 
 	badStarted := make(chan struct{})
 	releaseBad := make(chan struct{})
+	goodStarted := make(chan struct{})
+	releaseGood := make(chan struct{})
 	var calls atomic.Int64
 	coordinator := newEraCoordinator(probeFunc(func(_ context.Context, target appmcp.Target) (probeOutcome, error) {
 		calls.Add(1)
@@ -150,6 +152,8 @@ func TestEraCoordinatorRetriesInconclusiveSharedProbeForDifferentCredentials(t *
 			<-releaseBad
 			return probeOutcome{}, appmcp.ErrUnreachable
 		case "Bearer good":
+			close(goodStarted)
+			<-releaseGood
 			return probeOutcome{kind: probeModern, version: modernProtocolVersion}, nil
 		default:
 			return probeOutcome{}, errors.New("unexpected credential")
@@ -183,10 +187,12 @@ func TestEraCoordinatorRetriesInconclusiveSharedProbeForDifferentCredentials(t *
 		}{resolution: resolution, err: err}
 	}()
 	close(releaseBad)
+	<-goodStarted
 
 	if err := <-badDone; !errors.Is(err, appmcp.ErrUnreachable) {
 		t.Fatalf("bad credential error = %v", err)
 	}
+	close(releaseGood)
 	goodResult := <-goodDone
 	if goodResult.err != nil {
 		t.Fatalf("good credential resolve: %v", goodResult.err)
