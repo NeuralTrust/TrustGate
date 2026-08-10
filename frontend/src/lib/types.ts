@@ -170,11 +170,14 @@ export interface EmbeddingConfig {
 export interface LBPoolMember {
   registry_id: string;
   models?: string[];
+  model?: string;
+  weight?: number;
 }
 
 export interface SmartRoutingTier {
   min_score: number;
   registry_id: string;
+  model?: string;
 }
 
 export interface SmartRoutingConfig {
