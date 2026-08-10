@@ -20,7 +20,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net/url"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -32,10 +34,15 @@ import (
 const sessionIdleTTL = 30 * time.Minute
 
 func NewCachedDialer(client *Client, logger *slog.Logger) appmcp.Dialer {
+	return newCachedDialer(client, logger)
+}
+
+func newCachedDialer(client *Client, logger *slog.Logger) *cachedDialer {
 	return &cachedDialer{
 		client:  client,
 		logger:  logger,
 		entries: map[string]*sessionEntry{},
+		now:     time.Now,
 	}
 }
 
@@ -45,6 +52,7 @@ type cachedDialer struct {
 
 	mu      sync.Mutex
 	entries map[string]*sessionEntry
+	now     func() time.Time
 }
 
 type sessionEntry struct {
@@ -53,14 +61,28 @@ type sessionEntry struct {
 }
 
 func (d *cachedDialer) Connect(ctx context.Context, target appmcp.Target) (appmcp.Upstream, error) {
+	return d.ConnectLegacy(ctx, target)
+}
+
+func (d *cachedDialer) ConnectLegacy(ctx context.Context, target appmcp.Target) (appmcp.Upstream, error) {
 	if target.PinKey == "" {
-		sess, err := d.client.Connect(ctx, target)
+		sess, err := d.client.ConnectLegacy(ctx, target)
 		if err != nil {
 			return nil, err
 		}
 		return sess, nil
 	}
-	key := target.PinKey + ":" + credentialFingerprint(target.Headers)
+	origin, err := canonicalOrigin(target.URL)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid upstream endpoint: %w", appmcp.ErrUnreachable, err)
+	}
+	urlFingerprint, err := canonicalURLFingerprint(origin, target.URL)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid upstream endpoint: %w", appmcp.ErrUnreachable, err)
+	}
+	key := origin + "\x00" + urlFingerprint + "\x00" +
+		string(target.ProtocolMode) + "\x00" + target.PinKey + "\x00" +
+		credentialFingerprint(target.Headers)
 	if sess := d.lookup(key); sess != nil {
 		return newCachedUpstream(d, key, target, sess), nil
 	}
@@ -79,31 +101,28 @@ func (d *cachedDialer) lookup(key string) *Session {
 	if !ok {
 		return nil
 	}
-	e.lastUsed = time.Now()
+	e.lastUsed = d.now()
 	return e.session
 }
 
 func (d *cachedDialer) connectAndStore(ctx context.Context, key string, target appmcp.Target) (*Session, error) {
-	sess, err := d.client.Connect(ctx, target)
+	sess, err := d.client.ConnectLegacy(ctx, target)
 	if err != nil {
 		return nil, err
 	}
 	d.mu.Lock()
 	if e, ok := d.entries[key]; ok {
-		e.lastUsed = time.Now()
+		e.lastUsed = d.now()
 		winner := e.session
 		d.mu.Unlock()
 		closeInBackground(sess)
 		return winner, nil
 	}
-	d.entries[key] = &sessionEntry{session: sess, lastUsed: time.Now()}
+	d.entries[key] = &sessionEntry{session: sess, lastUsed: d.now()}
 	d.mu.Unlock()
 	return sess, nil
 }
 
-// closeInBackground tears a session down off the request path: the teardown is
-// a round trip to the upstream that nobody is waiting on, and it outlives the
-// context of the caller that lost the race to store its session.
 func closeInBackground(sess *Session) {
 	go sess.Close(context.Background())
 }
@@ -122,7 +141,7 @@ func (d *cachedDialer) drop(ctx context.Context, key string, sess *Session) {
 }
 
 func (d *cachedDialer) evictIdleLocked() {
-	cutoff := time.Now().Add(-sessionIdleTTL)
+	cutoff := d.now().Add(-sessionIdleTTL)
 	var stale []*Session
 	for key, e := range d.entries {
 		if e.lastUsed.Before(cutoff) {
@@ -151,7 +170,24 @@ func credentialFingerprint(headers map[string]string) string {
 		h.Write([]byte(headers[k]))
 		h.Write([]byte{0})
 	}
-	return hex.EncodeToString(h.Sum(nil)[:12])
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func canonicalURLFingerprint(origin, rawURL string) (string, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "", errors.New("upstream URL syntax is invalid")
+	}
+	path := parsed.EscapedPath()
+	if path == "" {
+		path = "/"
+	}
+	identity := origin + path
+	if parsed.RawQuery != "" {
+		identity += "?" + parsed.RawQuery
+	}
+	sum := sha256.Sum256([]byte(identity))
+	return hex.EncodeToString(sum[:12]), nil
 }
 
 type cachedUpstream struct {
@@ -240,11 +276,21 @@ func (u *cachedUpstream) refresh(ctx context.Context, err error) bool {
 	sess, connErr := u.dialer.connectAndStore(ctx, u.key, u.target)
 	if connErr != nil {
 		u.dialer.logger.Warn("mcp cached dialer: session refresh failed",
-			"target", u.target.URL, "error", connErr)
+			"origin", u.sess().origin, "category", refreshErrorCategory(connErr))
 		return false
 	}
 	u.session.Store(sess)
 	return true
+}
+
+func refreshErrorCategory(err error) string {
+	if errors.Is(err, appmcp.ErrUnreachable) {
+		return "unreachable"
+	}
+	if appmcp.IsRPCError(err) {
+		return "rpc"
+	}
+	return "unknown"
 }
 
 func shouldDrop(ctx context.Context, err error) bool {

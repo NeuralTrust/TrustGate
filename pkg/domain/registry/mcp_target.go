@@ -15,6 +15,7 @@
 package registry
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -32,6 +33,23 @@ const (
 type MCPTransport string
 
 const MCPTransportStreamableHTTP MCPTransport = "streamable-http"
+
+type MCPProtocolMode string
+
+const (
+	MCPProtocolModeAuto   MCPProtocolMode = "auto"
+	MCPProtocolModeModern MCPProtocolMode = "modern"
+	MCPProtocolModeLegacy MCPProtocolMode = "legacy"
+)
+
+func (m MCPProtocolMode) Validate() error {
+	switch m {
+	case "", MCPProtocolModeAuto, MCPProtocolModeModern, MCPProtocolModeLegacy:
+		return nil
+	default:
+		return fmt.Errorf("%w: unsupported protocol_mode %q", ErrInvalidMCPTarget, m)
+	}
+}
 
 type MCPAuthMode string
 
@@ -86,11 +104,12 @@ type MCPTarget struct {
 	// join key the UI uses to tell whether a catalog server is already
 	// connected, mirroring how an LLM registry stores its provider code. Empty
 	// for custom servers added by raw URL.
-	Code      string            `json:"code,omitempty"`
-	URL       string            `json:"url"`
-	Transport MCPTransport      `json:"transport,omitempty"`
-	Headers   map[string]string `json:"headers,omitempty"`
-	Auth      *MCPAuth          `json:"auth,omitempty"`
+	Code         string            `json:"code,omitempty"`
+	URL          string            `json:"url"`
+	Transport    MCPTransport      `json:"transport,omitempty"`
+	ProtocolMode MCPProtocolMode   `json:"protocol_mode,omitempty"`
+	Headers      map[string]string `json:"headers,omitempty"`
+	Auth         *MCPAuth          `json:"auth,omitempty"`
 }
 
 func (t *MCPTarget) Normalize() {
@@ -100,15 +119,34 @@ func (t *MCPTarget) Normalize() {
 	if t.Transport == "" {
 		t.Transport = MCPTransportStreamableHTTP
 	}
+	if t.ProtocolMode == "" {
+		t.ProtocolMode = MCPProtocolModeAuto
+	}
 	if t.Auth == nil {
 		t.Auth = &MCPAuth{Mode: MCPAuthModeNone}
 	}
+}
+
+func (t *MCPTarget) UnmarshalJSON(data []byte) error {
+	type targetAlias MCPTarget
+	var decoded targetAlias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	target := MCPTarget(decoded)
+	target.Normalize()
+	if err := target.Validate(); err != nil {
+		return err
+	}
+	*t = target
+	return nil
 }
 
 func (t *MCPTarget) Validate() error {
 	if t == nil {
 		return fmt.Errorf("%w: mcp_target is required", ErrInvalidMCPTarget)
 	}
+	t.Normalize()
 	if strings.TrimSpace(t.URL) == "" {
 		return fmt.Errorf("%w: url is required", ErrInvalidMCPTarget)
 	}
@@ -118,6 +156,9 @@ func (t *MCPTarget) Validate() error {
 	}
 	if t.Transport != "" && t.Transport != MCPTransportStreamableHTTP {
 		return fmt.Errorf("%w: unsupported transport %q", ErrInvalidMCPTarget, t.Transport)
+	}
+	if err := t.ProtocolMode.Validate(); err != nil {
+		return err
 	}
 	if t.Auth != nil {
 		if err := t.Auth.Validate(); err != nil {
