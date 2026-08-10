@@ -81,6 +81,7 @@ type SmartRoutingConfigResponse struct {
 type SmartRoutingTierResponse struct {
 	MinScore   float64        `json:"min_score"`
 	RegistryID ids.RegistryID `json:"registry_id"`
+	Model      string         `json:"model,omitempty"`
 }
 
 type LBPoolMemberResponse struct {
@@ -206,6 +207,7 @@ func fromSmartRouting(config *registrydomain.SmartRoutingConfig) *SmartRoutingCo
 		tiers = append(tiers, SmartRoutingTierResponse{
 			MinScore:   tier.MinScore,
 			RegistryID: tier.RegistryID,
+			Model:      tier.Model,
 		})
 	}
 	return &SmartRoutingConfigResponse{Tiers: tiers}

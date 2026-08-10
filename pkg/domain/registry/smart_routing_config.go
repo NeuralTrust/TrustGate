@@ -16,15 +16,19 @@ package registry
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 // SmartRoutingTier binds a complexity-score threshold to a target registry. A
-// tier is selected when the score is at least MinScore.
+// tier is selected when the score is at least MinScore. Model is an optional
+// override applied when the tier wins; when empty, the registry's model policy
+// default is used. Multiple tiers may share a RegistryID with different models.
 type SmartRoutingTier struct {
 	MinScore   float64        `json:"min_score"`
 	RegistryID ids.RegistryID `json:"registry_id"`
+	Model      string         `json:"model,omitempty"`
 }
 
 // SmartRoutingConfig maps complexity scores in [0,1] to registries. The tier
@@ -53,12 +57,12 @@ func (c *SmartRoutingConfig) Validate() error {
 	return nil
 }
 
-// RegistryForScore returns the registry mapped to the given complexity score:
-// the tier with the greatest MinScore that is not above the score. It reports
-// false when no tier applies (e.g. the score is below every threshold).
-func (c *SmartRoutingConfig) RegistryForScore(score float64) (ids.RegistryID, bool) {
+// TierForScore returns the tier mapped to the given complexity score: the one
+// with the greatest MinScore that is not above the score. It reports false when
+// no tier applies (e.g. the score is below every threshold).
+func (c *SmartRoutingConfig) TierForScore(score float64) (SmartRoutingTier, bool) {
 	var (
-		best     ids.RegistryID
+		best     SmartRoutingTier
 		bestMin  float64
 		selected bool
 	)
@@ -67,10 +71,34 @@ func (c *SmartRoutingConfig) RegistryForScore(score float64) (ids.RegistryID, bo
 			continue
 		}
 		if !selected || tier.MinScore > bestMin {
-			best = tier.RegistryID
+			best = tier
 			bestMin = tier.MinScore
 			selected = true
 		}
 	}
 	return best, selected
+}
+
+// RegistryForScore returns the registry mapped to the given complexity score:
+// the tier with the greatest MinScore that is not above the score. It reports
+// false when no tier applies (e.g. the score is below every threshold).
+func (c *SmartRoutingConfig) RegistryForScore(score float64) (ids.RegistryID, bool) {
+	tier, ok := c.TierForScore(score)
+	if !ok {
+		return ids.RegistryID{}, false
+	}
+	return tier.RegistryID, true
+}
+
+// ModelForScore returns the optional model override for the winning tier.
+func (c *SmartRoutingConfig) ModelForScore(score float64) (string, bool) {
+	tier, ok := c.TierForScore(score)
+	if !ok {
+		return "", false
+	}
+	model := strings.TrimSpace(tier.Model)
+	if model == "" {
+		return "", false
+	}
+	return model, true
 }

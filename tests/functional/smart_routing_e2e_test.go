@@ -95,6 +95,75 @@ func TestSmartRoutingE2E_RoutesByScoreAndInjectsRegistryDefaultModel(t *testing.
 	})
 }
 
+// setupSmartRouteSameRegistry wires one upstream/registry with three complexity
+// tiers that share that registry but declare distinct per-tier models.
+func setupSmartRouteSameRegistry(t *testing.T, upstream *fakeUpstream, simpleModel, mediumModel, hardModel string) (string, string) {
+	t.Helper()
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("smart-same-reg-gw")})
+	registryID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-shared"), upstream.URL()))
+
+	coID := CreateConsumer(t, gatewayID, map[string]any{
+		"name": uniqueName("smart-same-reg-cons"),
+		"registries": []map[string]any{
+			{
+				"id": registryID,
+				"model_policies": map[string]any{
+					"allowed": []string{simpleModel, mediumModel, hardModel},
+					"default": simpleModel,
+				},
+			},
+		},
+		"lb_config": map[string]any{
+			"enabled":   true,
+			"algorithm": "smart-routing",
+			"members":   []map[string]any{{"registry_id": registryID}},
+			"smart_routing": map[string]any{
+				"tiers": []map[string]any{
+					{"min_score": 0.0, "registry_id": registryID, "model": simpleModel},
+					{"min_score": 0.3, "registry_id": registryID, "model": mediumModel},
+					{"min_score": 0.8, "registry_id": registryID, "model": hardModel},
+				},
+			},
+		},
+	})
+	apiKey := createAndAttachAPIKey(t, gatewayID, coID)
+	return apiKey, chatCompletionsPath(t, coID)
+}
+
+func TestSmartRoutingE2E_SameRegistryInjectsPerTierModel(t *testing.T) {
+	defer Track(t, "SmartRoutingE2E")()
+
+	const (
+		simpleModel = "model-simple-tier"
+		mediumModel = "model-medium-tier"
+		hardModel   = "model-hard-tier"
+	)
+
+	t.Run("low score injects the simple tier model on the shared registry", func(t *testing.T) {
+		up := newJSONUpstream(t, "served-by-shared")
+		apiKey, path := setupSmartRouteSameRegistry(t, up, simpleModel, mediumModel, hardModel)
+
+		status, _, body := proxyPost(t, apiKey, path, smartChatRequest(smartRouteLowContent))
+
+		require.Equal(t, http.StatusOK, status, "body: %s", body)
+		assert.Equal(t, 1, up.Hits())
+		assert.Contains(t, string(up.LastBody()), simpleModel,
+			"low score must inject the simple tier model even when registry is shared")
+	})
+
+	t.Run("high score injects the hard tier model on the shared registry", func(t *testing.T) {
+		up := newJSONUpstream(t, "served-by-shared")
+		apiKey, path := setupSmartRouteSameRegistry(t, up, simpleModel, mediumModel, hardModel)
+
+		status, _, body := proxyPost(t, apiKey, path, smartChatRequest(smartRouteHighContent))
+
+		require.Equal(t, http.StatusOK, status, "body: %s", body)
+		assert.Equal(t, 1, up.Hits())
+		assert.Contains(t, string(up.LastBody()), hardModel,
+			"high score must inject the hard tier model even when registry is shared")
+	})
+}
+
 func TestSmartRoutingE2E_FallsBackToRoundRobinOnScoreError(t *testing.T) {
 	defer Track(t, "SmartRoutingE2E")()
 

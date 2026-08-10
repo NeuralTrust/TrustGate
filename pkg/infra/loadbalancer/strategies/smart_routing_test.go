@@ -77,14 +77,49 @@ func TestSmartRouting_MapsScoreToTier(t *testing.T) {
 			cfg := tiersFor(backends, 0.0, 0.4, 0.8)
 			scorer := &fakeScorer{score: tc.score, configured: true}
 			s := NewSmartRouting(backends, cfg, scorer, nil)
-			got := s.Next(context.Background(), promptReq(), nil)
+			req := promptReq()
+			got := s.Next(context.Background(), req, nil)
 			if got == nil || got.Name != tc.want {
 				t.Fatalf("score %g: got %+v, want %q", tc.score, got, tc.want)
 			}
 			if scorer.calls != 1 {
 				t.Fatalf("expected exactly one score call, got %d", scorer.calls)
 			}
+			if req.ComplexityScore == nil || *req.ComplexityScore != tc.score {
+				t.Fatalf("score %g: ComplexityScore = %v, want %g", tc.score, req.ComplexityScore, tc.score)
+			}
 		})
+	}
+}
+
+func TestSmartRouting_SameRegistryDifferentTierModels(t *testing.T) {
+	t.Parallel()
+	// One pool member is enough when tiers carry per-tier models: scoring still
+	// runs so the forwarder can pick the winning tier's model.
+	backends := makeBackends("shared")
+	reg := backends[0].ID
+	cfg := &registry.SmartRoutingConfig{
+		Tiers: []registry.SmartRoutingTier{
+			{MinScore: 0.0, RegistryID: reg, Model: "model-simple"},
+			{MinScore: 0.5, RegistryID: reg, Model: "model-hard"},
+		},
+	}
+	scorer := &fakeScorer{score: 0.9, configured: true}
+	s := NewSmartRouting(backends, cfg, scorer, nil)
+	req := promptReq()
+	got := s.Next(context.Background(), req, nil)
+	if got == nil || got.ID != reg {
+		t.Fatalf("expected shared registry, got %+v", got)
+	}
+	if scorer.calls != 1 {
+		t.Fatalf("expected scoring for per-tier models, calls=%d", scorer.calls)
+	}
+	if req.ComplexityScore == nil {
+		t.Fatal("expected ComplexityScore to be set")
+	}
+	model, ok := cfg.ModelForScore(*req.ComplexityScore)
+	if !ok || model != "model-hard" {
+		t.Fatalf("tier model = %q ok=%v, want model-hard", model, ok)
 	}
 }
 

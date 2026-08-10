@@ -18,6 +18,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -93,7 +94,10 @@ func (l *LBConfig) Validate(inline ModelPolicies) error {
 		if err := l.SmartRouting.Validate(); err != nil {
 			return fmt.Errorf("%w: %s", ErrInvalidLBConfig, err.Error())
 		}
-		return l.validateSmartRoutingMembers()
+		if err := l.validateSmartRoutingMembers(); err != nil {
+			return err
+		}
+		return l.validateSmartRoutingTierModels(inline)
 	default:
 		if l.EmbeddingConfig != nil {
 			return fmt.Errorf("%w: embedding_config is only valid for the semantic algorithm", ErrInvalidLBConfig)
@@ -113,6 +117,38 @@ func (l *LBConfig) validateSmartRoutingMembers() error {
 	for i, tier := range l.SmartRouting.Tiers {
 		if _, ok := members[tier.RegistryID]; !ok {
 			return fmt.Errorf("%w: smart_routing.tiers[%d].registry_id %s is not a pool member", ErrInvalidLBConfig, i, tier.RegistryID)
+		}
+	}
+	return nil
+}
+
+// validateSmartRoutingTierModels ensures each tier model is allowed by the
+// registry's model policy when that policy restricts models.
+func (l *LBConfig) validateSmartRoutingTierModels(inline ModelPolicies) error {
+	if l == nil || l.SmartRouting == nil {
+		return nil
+	}
+	for i, tier := range l.SmartRouting.Tiers {
+		model := strings.TrimSpace(tier.Model)
+		if model == "" {
+			continue
+		}
+		policy, ok := inline.For(tier.RegistryID)
+		if !ok {
+			return fmt.Errorf("%w: smart_routing.tiers[%d].registry_id %s is not in model_policies", ErrInvalidLBConfig, i, tier.RegistryID)
+		}
+		if len(policy.Allowed) == 0 {
+			continue
+		}
+		allowed := false
+		for _, candidate := range policy.Allowed {
+			if candidate == model {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return fmt.Errorf("%w: smart_routing.tiers[%d].model %q is not allowed by model_policies", ErrInvalidLBConfig, i, model)
 		}
 	}
 	return nil

@@ -50,6 +50,10 @@ type RequestContext struct {
 	AllowedModels      []string
 	DefaultModel       string
 	RequestedModel     string
+	// ComplexityScore is set by the smart-routing strategy when a score is
+	// obtained. The forwarder uses it to apply a per-tier model override from
+	// lb_config.smart_routing.tiers[].model.
+	ComplexityScore *float64
 	// MCP marks a native MCP tools/call payload so protocol-aware plugins
 	// inspect it via the MCP text path instead of the LLM canonical decoders.
 	MCP bool

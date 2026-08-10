@@ -115,6 +115,10 @@ type SmartRoutingConfigRequest struct {
 type SmartRoutingTierRequest struct {
 	MinScore   float64 `json:"min_score"`
 	RegistryID string  `json:"registry_id"`
+	// Model is an optional per-tier default override. When set, smart routing
+	// injects this model after selecting the tier's registry by score. Multiple
+	// tiers may share a registry_id with different models.
+	Model string `json:"model,omitempty"`
 }
 
 type LBPoolMemberRequest struct {
@@ -175,6 +179,7 @@ func (s *SmartRoutingConfigRequest) ToDomain() (*registrydomain.SmartRoutingConf
 		tiers = append(tiers, registrydomain.SmartRoutingTier{
 			MinScore:   tier.MinScore,
 			RegistryID: registryID,
+			Model:      strings.TrimSpace(tier.Model),
 		})
 	}
 	return &registrydomain.SmartRoutingConfig{Tiers: tiers}, nil

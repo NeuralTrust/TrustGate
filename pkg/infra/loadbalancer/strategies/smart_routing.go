@@ -17,6 +17,7 @@ package strategies
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -70,7 +71,9 @@ func (s *SmartRouting) Next(
 	if len(candidates) == 0 {
 		return nil
 	}
-	if len(candidates) == 1 {
+	// Skip scoring when a single candidate is enough for routing AND no tier
+	// carries a per-tier model override (same registry, different models).
+	if len(candidates) == 1 && !s.hasTierModelOverrides() {
 		return candidates[0]
 	}
 	if s.config == nil || s.scorer == nil || !s.scorer.Configured() || req == nil {
@@ -84,8 +87,15 @@ func (s *SmartRouting) Next(
 	if err != nil {
 		return s.fallbackNext(ctx, req, exclude, "complexity score unavailable")
 	}
+	// Persist the score so the forwarder can apply a per-tier model override
+	// (tiers may share a registry with different models).
+	scoreCopy := score
+	req.ComplexityScore = &scoreCopy
 	target := s.registryForScore(score, candidates)
 	if target == nil {
+		if len(candidates) == 1 {
+			return candidates[0]
+		}
 		return s.fallbackNext(ctx, req, exclude, "no candidate matched complexity score")
 	}
 	if s.logger != nil {
@@ -95,6 +105,18 @@ func (s *SmartRouting) Next(
 		)
 	}
 	return target
+}
+
+func (s *SmartRouting) hasTierModelOverrides() bool {
+	if s.config == nil {
+		return false
+	}
+	for _, tier := range s.config.Tiers {
+		if strings.TrimSpace(tier.Model) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *SmartRouting) registryForScore(score float64, candidates []*registry.Registry) *registry.Registry {

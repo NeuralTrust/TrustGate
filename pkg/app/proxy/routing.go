@@ -256,19 +256,49 @@ func firstAvailableFallback(
 
 func (f *forwarder) stampRoutingPolicy(dto *forwardRequestDTO, rc *appconsumer.RoutableConsumer, bk *domain.Registry) {
 	dto.routeSource = routeSourceFor(dto.candidates, bk)
+	var (
+		allowed      []string
+		defaultModel string
+	)
 	if candidate, ok := dto.candidates.ForRegistry(bk.ID); ok {
-		dto.request.AllowedModels = candidate.Allowed
-		dto.request.DefaultModel = candidate.Default
-		return
-	}
-	policy, ok := rc.Consumer.ModelPolicies.For(bk.ID)
-	if !ok {
+		allowed = candidate.Allowed
+		defaultModel = candidate.Default
+	} else if policy, ok := rc.Consumer.ModelPolicies.For(bk.ID); ok {
+		allowed = policy.Allowed
+		defaultModel = policy.Default
+	} else {
 		dto.request.AllowedModels = nil
 		dto.request.DefaultModel = ""
 		return
 	}
-	dto.request.AllowedModels = policy.Allowed
-	dto.request.DefaultModel = policy.Default
+	// Prefer a per-tier smart-routing model when the scored tier targets this
+	// registry. Falls back to the registry policy default otherwise.
+	if model := smartRoutingTierModel(rc, bk.ID, dto.request.ComplexityScore); model != "" {
+		defaultModel = model
+	}
+	dto.request.AllowedModels = allowed
+	dto.request.DefaultModel = defaultModel
+}
+
+// smartRoutingTierModel returns the optional model override from the winning
+// smart-routing tier when it targets registryID.
+func smartRoutingTierModel(
+	rc *appconsumer.RoutableConsumer,
+	registryID ids.RegistryID,
+	score *float64,
+) string {
+	if score == nil || rc == nil || rc.Consumer == nil {
+		return ""
+	}
+	cfg := rc.Consumer.LBConfig
+	if cfg == nil || !cfg.Enabled || cfg.SmartRouting == nil {
+		return ""
+	}
+	tier, ok := cfg.SmartRouting.TierForScore(*score)
+	if !ok || tier.RegistryID != registryID {
+		return ""
+	}
+	return strings.TrimSpace(tier.Model)
 }
 
 func routeSourceFor(candidates *routingdomain.CandidateSet, bk *domain.Registry) string {
