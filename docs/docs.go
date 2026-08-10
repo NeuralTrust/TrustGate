@@ -6578,9 +6578,6 @@ const docTemplate = `{
                 "provider_ms": {
                     "type": "integer"
                 },
-                "routing_ms": {
-                    "type": "integer"
-                },
                 "total_ms": {
                     "type": "integer"
                 }

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
@@ -82,21 +83,19 @@ func (b *Builder) Build(
 	if served != nil {
 		evt.TurnID = served.TurnID
 	}
-	chain, pluginsMs, flagged, security := b.foldPluginSpans(requestTrace)
+	policies := b.foldPluginSpans(requestTrace)
 	evt.Attempts = attempts
-	evt.PolicyChain = chain
-	evt.IsFlagged = flagged
-	evt.Security = security
+	evt.PolicyChain = policies.chain
+	evt.IsFlagged = policies.flagged
+	evt.Security = policies.security
 
 	totalMs := endTime.Sub(startTime).Milliseconds()
 	providerMs := sumAttemptLatency(attempts)
-	routingMs := maxInt64(0, totalMs-providerMs-pluginsMs)
 	evt.Latency = events.Latency{
 		TotalMs:    totalMs,
 		ProviderMs: providerMs,
-		PoliciesMs: pluginsMs,
-		RoutingMs:  routingMs,
-		GatewayMs:  pluginsMs + routingMs,
+		PoliciesMs: policies.totalMs,
+		GatewayMs:  gatewayLatency(totalMs, providerMs, policies),
 	}
 
 	b.fillRequest(evt, req, served)
@@ -139,12 +138,32 @@ func (b *Builder) foldLLMSpans(requestTrace *trace.RequestTrace) (*trace.LLMAttr
 	return served, attempts
 }
 
-func (b *Builder) foldPluginSpans(requestTrace *trace.RequestTrace) ([]events.PolicyEntry, int64, bool, []string) {
+// pluginFold aggregates the policy spans of one request. totalMs covers every
+// stage; asyncMs is the share the client never waited for.
+type pluginFold struct {
+	chain    []events.PolicyEntry
+	totalMs  int64
+	asyncMs  int64
+	flagged  bool
+	security []string
+}
+
+// gatewayLatency is what the gateway itself spent: the wall clock left once the
+// provider and the policies that blocked the response are removed. post_response
+// policies are excluded because they run after the client got its answer, so
+// counting them would make the remainder negative and clamp to zero.
+func gatewayLatency(totalMs, providerMs int64, policies pluginFold) int64 {
+	blockingPoliciesMs := policies.totalMs - policies.asyncMs
+	return maxInt64(0, totalMs-providerMs-blockingPoliciesMs)
+}
+
+func (b *Builder) foldPluginSpans(requestTrace *trace.RequestTrace) pluginFold {
 	if requestTrace == nil {
-		return nil, 0, false, nil
+		return pluginFold{}
 	}
 	var chain []events.PolicyEntry
 	var pluginsMs int64
+	var asyncMs int64
 	anyFlagged := false
 	seenLabels := make(map[string]struct{})
 	var security []string
@@ -161,6 +180,9 @@ func (b *Builder) foldPluginSpans(requestTrace *trace.RequestTrace) ([]events.Po
 		flagged := hasError || pluginDecisionFlagged(attrs.Decision) || (statusCode >= http.StatusBadRequest)
 		latencyMs := span.Latency().Milliseconds()
 		pluginsMs += latencyMs
+		if attrs.Stage == string(policy.StagePostResponse) {
+			asyncMs += latencyMs
+		}
 		if flagged {
 			anyFlagged = true
 			if attrs.ScoreLabel != "" {
@@ -183,7 +205,13 @@ func (b *Builder) foldPluginSpans(requestTrace *trace.RequestTrace) ([]events.Po
 			Extras:     events.SanitizeExtras(attrs.Extras),
 		})
 	}
-	return chain, pluginsMs, anyFlagged, security
+	return pluginFold{
+		chain:    chain,
+		totalMs:  pluginsMs,
+		asyncMs:  asyncMs,
+		flagged:  anyFlagged,
+		security: security,
+	}
 }
 
 func pluginDecisionFlagged(decision string) bool {
@@ -223,19 +251,17 @@ func (b *Builder) buildMCP(
 	}
 	evt.MCP = mcp
 
-	chain, pluginsMs, flagged, security := b.foldPluginSpans(requestTrace)
-	evt.PolicyChain = chain
-	evt.IsFlagged = flagged
-	evt.Security = security
+	policies := b.foldPluginSpans(requestTrace)
+	evt.PolicyChain = policies.chain
+	evt.IsFlagged = policies.flagged
+	evt.Security = policies.security
 
 	totalMs := endTime.Sub(startTime).Milliseconds()
-	routingMs := maxInt64(0, totalMs-upstreamMs-pluginsMs)
 	evt.Latency = events.Latency{
 		TotalMs:    totalMs,
 		ProviderMs: upstreamMs,
-		PoliciesMs: pluginsMs,
-		RoutingMs:  routingMs,
-		GatewayMs:  pluginsMs + routingMs,
+		PoliciesMs: policies.totalMs,
+		GatewayMs:  gatewayLatency(totalMs, upstreamMs, policies),
 	}
 
 	b.fillRequest(evt, req, nil)
