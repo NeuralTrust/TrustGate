@@ -81,11 +81,14 @@ type SmartRoutingConfigResponse struct {
 type SmartRoutingTierResponse struct {
 	MinScore   float64        `json:"min_score"`
 	RegistryID ids.RegistryID `json:"registry_id"`
+	Model      string         `json:"model,omitempty"`
 }
 
 type LBPoolMemberResponse struct {
 	RegistryID ids.RegistryID `json:"registry_id"`
 	Models     []string       `json:"models,omitempty"`
+	Model      string         `json:"model,omitempty"`
+	Weight     *int           `json:"weight,omitempty"`
 }
 
 type EmbeddingConfigResponse struct {
@@ -177,6 +180,8 @@ func fromLBConfig(config *domain.LBConfig) *LBConfigResponse {
 		members = append(members, LBPoolMemberResponse{
 			RegistryID: member.RegistryID,
 			Models:     member.Models,
+			Model:      member.Model,
+			Weight:     member.Weight,
 		})
 	}
 	var embedding *EmbeddingConfigResponse
@@ -206,6 +211,7 @@ func fromSmartRouting(config *registrydomain.SmartRoutingConfig) *SmartRoutingCo
 		tiers = append(tiers, SmartRoutingTierResponse{
 			MinScore:   tier.MinScore,
 			RegistryID: tier.RegistryID,
+			Model:      tier.Model,
 		})
 	}
 	return &SmartRoutingConfigResponse{Tiers: tiers}
