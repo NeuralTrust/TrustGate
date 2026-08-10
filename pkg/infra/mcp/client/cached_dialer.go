@@ -29,6 +29,7 @@ import (
 	"time"
 
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
+	"golang.org/x/sync/singleflight"
 )
 
 const sessionIdleTTL = 30 * time.Minute
@@ -43,6 +44,8 @@ func newCachedDialer(client *Client, logger *slog.Logger) *cachedDialer {
 		logger:  logger,
 		entries: map[string]*sessionEntry{},
 		now:     time.Now,
+		timeout: responseHeaderTimeout,
+		connect: client.ConnectLegacy,
 	}
 }
 
@@ -53,6 +56,11 @@ type cachedDialer struct {
 	mu      sync.Mutex
 	entries map[string]*sessionEntry
 	now     func() time.Time
+	flight  singleflight.Group
+	timeout time.Duration
+	connect func(context.Context, appmcp.Target) (*Session, error)
+
+	connectJoined func()
 }
 
 type sessionEntry struct {
@@ -106,21 +114,58 @@ func (d *cachedDialer) lookup(key string) *Session {
 }
 
 func (d *cachedDialer) connectAndStore(ctx context.Context, key string, target appmcp.Target) (*Session, error) {
-	sess, err := d.client.ConnectLegacy(ctx, target)
-	if err != nil {
-		return nil, err
-	}
-	d.mu.Lock()
-	if e, ok := d.entries[key]; ok {
-		e.lastUsed = d.now()
-		winner := e.session
+	target = cloneTarget(target)
+	resultChannel := d.flight.DoChan(key, func() (any, error) {
+		if sess := d.lookup(key); sess != nil {
+			return sess, nil
+		}
+		workCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), d.timeout)
+		defer cancel()
+		sess, err := d.connect(workCtx, target)
+		if err != nil {
+			return nil, err
+		}
+		if winner := d.lookup(key); winner != nil {
+			d.closeSession(ctx, sess)
+			return winner, nil
+		}
+		d.mu.Lock()
+		if entry, ok := d.entries[key]; ok {
+			entry.lastUsed = d.now()
+			winner := entry.session
+			d.mu.Unlock()
+			d.closeSession(ctx, sess)
+			return winner, nil
+		}
+		d.entries[key] = &sessionEntry{session: sess, lastUsed: d.now()}
 		d.mu.Unlock()
-		closeInBackground(sess)
-		return winner, nil
+		return sess, nil
+	})
+	if d.connectJoined != nil {
+		d.connectJoined()
 	}
-	d.entries[key] = &sessionEntry{session: sess, lastUsed: d.now()}
-	d.mu.Unlock()
-	return sess, nil
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case result := <-resultChannel:
+		if result.Err != nil {
+			return nil, result.Err
+		}
+		sess, ok := result.Val.(*Session)
+		if !ok || sess == nil {
+			return nil, errors.New("mcp cached dialer received an invalid session result")
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return sess, nil
+	}
+}
+
+func (d *cachedDialer) closeSession(ctx context.Context, sess *Session) {
+	closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), d.timeout)
+	defer cancel()
+	sess.Close(closeCtx)
 }
 
 func closeInBackground(sess *Session) {

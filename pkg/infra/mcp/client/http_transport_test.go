@@ -143,6 +143,24 @@ func TestTargetHTTPClientRejectsReservedHeaders(t *testing.T) {
 	}
 }
 
+func TestTargetHTTPClientRejectsDuplicateHeaderCasingBeforeIO(t *testing.T) {
+	t.Parallel()
+
+	transport := &recordingRoundTripper{}
+	for range 20 {
+		_, err := newTargetHTTPClientWithTransport(map[string]string{
+			"Authorization": "Bearer first",
+			"authorization": "Bearer second",
+		}, transport)
+		if err == nil || err.Error() != `duplicate upstream header "authorization"` {
+			t.Fatalf("error = %v, want deterministic duplicate header error", err)
+		}
+	}
+	if got := len(transport.snapshot()); got != 0 {
+		t.Fatalf("transport requests = %d, want 0", got)
+	}
+}
+
 type recordingRoundTripper struct {
 	mu       sync.Mutex
 	requests []*http.Request

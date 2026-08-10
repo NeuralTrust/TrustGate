@@ -89,6 +89,7 @@ func (d *negotiatingDialer) Connect(ctx context.Context, target appmcp.Target) (
 	if mode == "" {
 		mode = registrydomain.MCPProtocolModeAuto
 	}
+	target.ProtocolMode = mode
 	switch mode {
 	case registrydomain.MCPProtocolModeLegacy:
 		upstream, connectErr := d.legacy.ConnectLegacy(ctx, target)

@@ -76,6 +76,16 @@ func TestMCPTarget_ProtocolModeValidation(t *testing.T) {
 	}
 }
 
+func TestMCPTarget_AcceptsUppercaseHTTPS(t *testing.T) {
+	t.Parallel()
+
+	target := validMCPTarget()
+	target.URL = "HTTPS://MCP.EXAMPLE.COM/mcp"
+	if err := target.Validate(); err != nil {
+		t.Fatalf("Validate() = %v, want nil", err)
+	}
+}
+
 func TestMCPTarget_JSONRoundTripDefaultsAndValidatesProtocolMode(t *testing.T) {
 	t.Parallel()
 	var old MCPTarget

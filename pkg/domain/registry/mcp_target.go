@@ -151,7 +151,11 @@ func (t *MCPTarget) Validate() error {
 		return fmt.Errorf("%w: url is required", ErrInvalidMCPTarget)
 	}
 	u, err := url.Parse(t.URL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+	if err != nil {
+		return fmt.Errorf("%w: url must be a valid http(s) URL", ErrInvalidMCPTarget)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if (scheme != "http" && scheme != "https") || u.Host == "" {
 		return fmt.Errorf("%w: url must be a valid http(s) URL", ErrInvalidMCPTarget)
 	}
 	if t.Transport != "" && t.Transport != MCPTransportStreamableHTTP {

@@ -57,6 +57,7 @@ Trazabilidad de la reordenación: las antiguas tareas Legacy `4.1–4.3` son aho
 - [x] 5.4 Ampliar `tests/functional/mcp_e2e_test.go`: matriz dual-era, aliases/toolkits, credenciales aisladas, fail modes y logs sin secretos.
 - [x] 5.H Hardening: coalescing por credencial y contradicción sin poisoning cross-credential —incluido `legacy_candidate` inicial—, cancelación sin consumir reconcile, descarte de errores stale, cleanup automático de singleflight, lifecycle ref-safe, SHA-256 completo, telemetría estable y fixtures autenticados.
 - [x] 5.5 Verificar `gofmt`, `goimports`, focused tests, `go test -race ./...`, `go vet ./...`, `golangci-lint run`, `make license-check`; reviewer/fix final. La suite funcional completa queda bloqueada por Kafka/harness no disponibles; la compilación con tag funcional pasa.
+- [x] 5.P PR preflight: deduplicar cold connects legacy cacheables, aislar sesiones sin `PinKey`, normalizar modo efectivo y esquema HTTP(S), y rechazar headers canónicos duplicados antes de I/O.
 
 ## Approval gate
 

@@ -16,6 +16,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -84,4 +85,92 @@ func TestCachedDialer_SessionIdleTTLBehavior(t *testing.T) {
 	first.Close(context.Background())
 	atBoundary.Close(context.Background())
 	dialer.drop(context.Background(), afterExpiry.(*cachedUpstream).key, afterExpiry.(*cachedUpstream).sess())
+}
+
+func TestCachedDialer_CanceledInitiatorDoesNotCancelSharedConnect(t *testing.T) {
+	t.Parallel()
+
+	var initializes atomic.Int64
+	initializeStarted := make(chan struct{})
+	releaseInitialize := make(chan struct{})
+	server := sdk.NewServer(&sdk.Implementation{Name: "stub", Version: "1"}, nil)
+	server.AddReceivingMiddleware(func(next sdk.MethodHandler) sdk.MethodHandler {
+		return func(ctx context.Context, method string, req sdk.Request) (sdk.Result, error) {
+			if method == "initialize" {
+				if initializes.Add(1) == 1 {
+					close(initializeStarted)
+				}
+				<-releaseInitialize
+			}
+			return next(ctx, method, req)
+		}
+	})
+	upstream := httptest.NewServer(sdk.NewStreamableHTTPHandler(
+		func(*http.Request) *sdk.Server { return server },
+		nil,
+	))
+	t.Cleanup(upstream.Close)
+
+	dialer := newCachedDialer(New(), slog.New(slog.DiscardHandler))
+	joined := make(chan struct{}, 2)
+	dialer.connectJoined = func() {
+		joined <- struct{}{}
+	}
+	target := appmcp.Target{URL: upstream.URL, PinKey: "gateway:registry"}
+	initiatorCtx, cancelInitiator := context.WithCancel(context.Background())
+	initiatorResult := make(chan error, 1)
+	go func() {
+		_, err := dialer.Connect(initiatorCtx, target)
+		initiatorResult <- err
+	}()
+	<-joined
+	<-initializeStarted
+
+	followerResult := make(chan error, 1)
+	go func() {
+		_, err := dialer.Connect(context.Background(), target)
+		followerResult <- err
+	}()
+	<-joined
+	cancelInitiator()
+	if err := <-initiatorResult; !errors.Is(err, context.Canceled) {
+		t.Fatalf("initiator error = %v, want context canceled", err)
+	}
+	close(releaseInitialize)
+	if err := <-followerResult; err != nil {
+		t.Fatalf("follower connect: %v", err)
+	}
+	if got := initializes.Load(); got != 1 {
+		t.Fatalf("initializes = %d, want 1", got)
+	}
+}
+
+func TestCachedDialer_SharedConnectIsBounded(t *testing.T) {
+	t.Parallel()
+
+	initializeStarted := make(chan struct{})
+	dialer := newCachedDialer(New(), slog.New(slog.DiscardHandler))
+	dialer.timeout = 25 * time.Millisecond
+	dialer.connect = func(ctx context.Context, _ appmcp.Target) (*Session, error) {
+		close(initializeStarted)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, err := dialer.Connect(context.Background(), appmcp.Target{
+			URL:    "https://mcp.example.com",
+			PinKey: "gateway:registry",
+		})
+		result <- err
+	}()
+	<-initializeStarted
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("bounded connect returned nil error")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("bounded connect did not complete")
+	}
 }

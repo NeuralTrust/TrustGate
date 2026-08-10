@@ -23,7 +23,6 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -171,89 +170,78 @@ func TestCachedDialer_ListRetriesAfterLostSession(t *testing.T) {
 	}
 }
 
-func TestCachedDialer_NoPinKeyConnectsFresh(t *testing.T) {
+func TestCachedDialer_NoPinKeyOwnsIndependentSessions(t *testing.T) {
 	t.Parallel()
 	upstream := newUpstreamStub(t)
 	dialer := newCachedDialer()
 	target := appmcp.Target{URL: upstream.srv.URL}
 
-	for i := 0; i < 2; i++ {
-		up, err := dialer.Connect(context.Background(), target)
-		if err != nil {
-			t.Fatalf("connect %d: %v", i, err)
-		}
-		if _, err := up.ListTools(context.Background()); err != nil {
-			t.Fatalf("list %d: %v", i, err)
-		}
-		up.Close(context.Background())
+	const callers = 8
+	results := make(chan error, callers)
+	for range callers {
+		go func() {
+			up, err := dialer.Connect(context.Background(), target)
+			if err == nil {
+				_, err = up.ListTools(context.Background())
+				up.Close(context.Background())
+			}
+			results <- err
+		}()
 	}
-	if got := upstream.inits.Load(); got != 2 {
-		t.Fatalf("expected a fresh session per connect without a pin key, got %d inits", got)
+	for range callers {
+		if err := <-results; err != nil {
+			t.Fatalf("connect/list: %v", err)
+		}
+	}
+	if got := upstream.inits.Load(); got != callers {
+		t.Fatalf("initializes = %d, want %d independent sessions", got, callers)
 	}
 	if got := upstream.discovers.Load(); got != 0 {
 		t.Fatalf("server/discover reached legacy upstream %d times", got)
 	}
 }
 
-func TestCachedDialer_ClosingARedundantSessionDoesNotStallTheCache(t *testing.T) {
+func TestCachedDialer_ConcurrentColdConnectUsesOneSession(t *testing.T) {
 	t.Parallel()
 
-	var dialling atomic.Int64
-	bothDialling := make(chan struct{})
-	tearingDown := make(chan struct{}, 4)
-	finishTeardown := make(chan struct{})
+	var initializes atomic.Int64
+	started := make(chan struct{})
+	release := make(chan struct{})
 
 	server := sdk.NewServer(&sdk.Implementation{Name: "stub", Version: "1"}, nil)
 	server.AddReceivingMiddleware(func(next sdk.MethodHandler) sdk.MethodHandler {
 		return func(ctx context.Context, method string, req sdk.Request) (sdk.Result, error) {
 			if method == "initialize" {
-				if n := dialling.Add(1); n <= 2 {
-					if n == 2 {
-						close(bothDialling)
-					}
-					<-bothDialling
+				if initializes.Add(1) == 1 {
+					close(started)
 				}
+				<-release
 			}
 			return next(ctx, method, req)
 		}
 	})
 	inner := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, nil)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete {
-			tearingDown <- struct{}{}
-			<-finishTeardown
-		}
-		inner.ServeHTTP(w, r)
-	}))
+	srv := httptest.NewServer(inner)
 	defer srv.Close()
-	defer close(finishTeardown)
 
 	dialer := newCachedDialer()
-	for i := 0; i < 2; i++ {
+	results := make(chan error, 2)
+	for range 2 {
 		go func() {
-			_, _ = dialer.Connect(context.Background(),
+			_, err := dialer.Connect(context.Background(),
 				appmcp.Target{URL: srv.URL, PinKey: "gw:consumer:reg"})
+			results <- err
 		}()
 	}
-	select {
-	case <-tearingDown:
-	case <-time.After(10 * time.Second):
-		t.Fatal("the session that lost the race was never torn down")
-	}
-
-	dialled := make(chan error, 1)
-	go func() {
-		_, err := dialer.Connect(context.Background(),
-			appmcp.Target{URL: srv.URL, PinKey: "gw:consumer:other"})
-		dialled <- err
-	}()
-	select {
-	case err := <-dialled:
-		if err != nil {
-			t.Fatalf("connect to a second registry: %v", err)
+	<-started
+	close(release)
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatalf("connect: %v", err)
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("a session lookup waited on the teardown round trip of an unrelated session")
+	}
+	if got := initializes.Load(); got != 1 {
+		t.Fatalf("initializes = %d, want 1", got)
 	}
 }
 

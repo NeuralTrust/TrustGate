@@ -20,6 +20,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -118,11 +119,22 @@ func newTargetHTTPClientWithTransport(headers map[string]string, transport http.
 		return nil, errors.New("upstream HTTP transport is nil")
 	}
 	targetHeaders := make(http.Header, len(headers))
-	for key, value := range headers {
+	keys := make([]string, 0, len(headers))
+	for key := range headers {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	seen := make(map[string]struct{}, len(headers))
+	for _, key := range keys {
+		value := headers[key]
 		normalized := strings.ToLower(strings.TrimSpace(key))
 		if !httpguts.ValidHeaderFieldName(key) || !httpguts.ValidHeaderFieldValue(value) {
 			return nil, fmt.Errorf("invalid upstream header %q", key)
 		}
+		if _, duplicate := seen[normalized]; duplicate {
+			return nil, fmt.Errorf("duplicate upstream header %q", normalized)
+		}
+		seen[normalized] = struct{}{}
 		if _, reserved := reservedTargetHeaders[normalized]; reserved || strings.HasPrefix(normalized, "mcp-param-") {
 			return nil, fmt.Errorf("reserved upstream header %q", key)
 		}

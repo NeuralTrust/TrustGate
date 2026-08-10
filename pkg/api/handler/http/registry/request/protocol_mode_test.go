@@ -63,3 +63,21 @@ func TestRegistryRequests_RejectInvalidProtocolMode(t *testing.T) {
 		t.Fatalf("Update Validate() = %v, want validation error", err)
 	}
 }
+
+func TestMCPRegistryRequest_AcceptsUppercaseHTTPS(t *testing.T) {
+	t.Parallel()
+
+	request := CreateRegistryRequest{
+		Name: "mcp",
+		Type: "MCP",
+		MCPTarget: &MCPTargetRequest{
+			URL: "HTTPS://MCP.EXAMPLE.COM/mcp",
+		},
+	}
+	if err := request.Validate(); err != nil {
+		t.Fatalf("request Validate() = %v, want nil", err)
+	}
+	if err := request.ToMCPTarget().Validate(); err != nil {
+		t.Fatalf("target Validate() = %v, want nil", err)
+	}
+}

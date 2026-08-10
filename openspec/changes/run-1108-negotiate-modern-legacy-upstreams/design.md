@@ -125,7 +125,7 @@ const (
 )
 ```
 
-`MCPTarget.ProtocolMode` usa `json:"protocol_mode,omitempty"`. `Normalize` convierte vacío en `auto`; `Validate` rechaza cualquier otro valor. El vacío sigue aceptándose al leer JSONB y snapshots antiguos.
+`MCPTarget.ProtocolMode` usa `json:"protocol_mode,omitempty"`. `Normalize` convierte vacío en `auto`; `Validate` rechaza cualquier otro valor. El vacío sigue aceptándose al leer JSONB y snapshots antiguos. El negotiating dialer materializa siempre el modo efectivo antes de dispatch para que vacío y `auto` explícito tengan la misma identidad de sesión.
 
 La request API usa `protocol_mode` dentro de `mcp_target`. Create permite vacío y el dominio aplica `auto`. Update conserva el modo anterior si el campo está vacío; un `"auto"` explícito sí lo sustituye. La respuesta siempre materializa el valor efectivo para evitar ambigüedad.
 
@@ -165,7 +165,7 @@ Mcp-Protocol-Version, Mcp-Session-Id, Last-Event-ID,
 Mcp-Method, Mcp-Name y cualquier Mcp-Param-*
 ```
 
-`Authorization` y headers de tenant no reservados siguen permitidos. La validación se repite sobre `Target.Headers` en infra para cubrir todas las fuentes de credenciales.
+`Authorization` y headers de tenant no reservados siguen permitidos. La validación se repite sobre `Target.Headers` en infra para cubrir todas las fuentes de credenciales. Dos claves que colapsan al mismo nombre canónico, como `Authorization` y `authorization`, se rechazan de forma determinista antes de I/O.
 
 El boundary autoritativo para endpoint y headers reservados es la construcción de conexión/probe en `pkg/infra/mcp/client`, antes de cualquier I/O. No se duplica esta política de transporte en dominio/API: hacerlo crearía dos listas de headers con riesgo de deriva. Tanto `Client.Connect` legacy como el probe validan endpoint y headers antes de contactar la red; los tests fijan ese comportamiento observable.
 
@@ -316,7 +316,7 @@ No existe wrapper de `mcp.Connection`, pump ni goroutine adicional. Esto es nece
 
 Trade-off: se depende del comportamiento observable de fallback de `Client.Connect` v1.7.0. Tests de wire fijan que el servidor recibe `initialize` primero, nunca `server/discover`, que las llamadas posteriores llevan la versión legacy y que `Close` emite exactamente el teardown esperado.
 
-La identidad de la caché de sesiones legacy es `origen canónico + fingerprint de URL canónica + ProtocolMode + PinKey + fingerprint de credencial`. El fingerprint de credencial usa el SHA-256 completo; el fingerprint de URL cubre path y query sin almacenar sus valores en claro. Cambiar endpoint, modo, pin o credencial crea una sesión distinta; el TTL idle sigue siendo 30 minutos.
+La identidad de la caché de sesiones legacy es `origen canónico + fingerprint de URL canónica + ProtocolMode + PinKey + fingerprint de credencial`. El fingerprint de credencial usa el SHA-256 completo; el fingerprint de URL cubre path y query sin almacenar sus valores en claro. Cambiar endpoint, modo, pin o credencial crea una sesión distinta; el TTL idle sigue siendo 30 minutos. El cold connect de una identidad cacheable se agrupa con `singleflight` por esa clave completa: el trabajo usa timeout propio, los waiters cancelan de forma independiente y se relee la caché antes y después del dial. Sin `PinKey` no existe identidad compartible: cada `ConnectLegacy` mantiene ownership de una sesión independiente, aunque la decisión de era siga coordinándose por origen.
 
 Alternativas rechazadas:
 

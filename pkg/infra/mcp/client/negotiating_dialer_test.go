@@ -22,6 +22,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,6 +32,7 @@ import (
 
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type legacyConnectorFunc func(context.Context, appmcp.Target) (appmcp.Upstream, error)
@@ -91,6 +93,67 @@ func (u *upstreamStub) Close(ctx context.Context) {
 	if u.close != nil {
 		u.close(ctx)
 	}
+}
+
+type legacyOnlyNegotiationServer struct {
+	server          *httptest.Server
+	discovers       atomic.Int64
+	initializes     atomic.Int64
+	discoverOnce    sync.Once
+	discoverStarted chan struct{}
+	releaseDiscover chan struct{}
+}
+
+func startLegacyOnlyNegotiationServer(t *testing.T) *legacyOnlyNegotiationServer {
+	t.Helper()
+	fixture := &legacyOnlyNegotiationServer{}
+	server := sdk.NewServer(&sdk.Implementation{Name: "legacy-only", Version: "1"}, nil)
+	server.AddReceivingMiddleware(func(next sdk.MethodHandler) sdk.MethodHandler {
+		return func(ctx context.Context, method string, req sdk.Request) (sdk.Result, error) {
+			if method == "initialize" {
+				fixture.initializes.Add(1)
+			}
+			return next(ctx, method, req)
+		}
+	})
+	handler := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, nil)
+	fixture.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if err := r.Body.Close(); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		var envelope struct {
+			Method string `json:"method"`
+		}
+		if err := json.Unmarshal(body, &envelope); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if envelope.Method == "server/discover" {
+			fixture.discovers.Add(1)
+			if fixture.discoverStarted != nil {
+				fixture.discoverOnce.Do(func() {
+					close(fixture.discoverStarted)
+				})
+				<-fixture.releaseDiscover
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			if _, err := w.Write([]byte(`{`)); err != nil {
+				return
+			}
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(fixture.server.Close)
+	return fixture
 }
 
 func TestNegotiatingDialerStrictOverridesSkipProbeAndFallback(t *testing.T) {
@@ -217,6 +280,79 @@ func TestNegotiatingDialerConcurrentFirstRequestsUseOneProbe(t *testing.T) {
 	}
 	if got := probes.Load(); got != 1 {
 		t.Fatalf("probe calls = %d, want 1", got)
+	}
+}
+
+func TestNegotiatingDialerConcurrentPinnedLegacyFallbackSharesColdSession(t *testing.T) {
+	t.Parallel()
+
+	fixture := startLegacyOnlyNegotiationServer(t)
+	fixture.discoverStarted = make(chan struct{})
+	fixture.releaseDiscover = make(chan struct{})
+	dialer := NewNegotiatingDialer(New(), slog.New(slog.DiscardHandler))
+	target := appmcp.Target{
+		URL:          fixture.server.URL,
+		PinKey:       "gateway:consumer:registry",
+		ProtocolMode: registrydomain.MCPProtocolModeAuto,
+	}
+	const callers = 32
+	var ready sync.WaitGroup
+	ready.Add(callers)
+	begin := make(chan struct{})
+	results := make(chan error, callers)
+	for range callers {
+		go func() {
+			ready.Done()
+			<-begin
+			upstream, err := dialer.Connect(context.Background(), target)
+			if err == nil {
+				upstream.Close(context.Background())
+			}
+			results <- err
+		}()
+	}
+	ready.Wait()
+	close(begin)
+	<-fixture.discoverStarted
+	close(fixture.releaseDiscover)
+	for range callers {
+		if err := <-results; err != nil {
+			t.Fatalf("connect: %v", err)
+		}
+	}
+	if got := fixture.discovers.Load(); got != 1 {
+		t.Fatalf("strict probes = %d, want 1", got)
+	}
+	if got := fixture.initializes.Load(); got != 1 {
+		t.Fatalf("legacy initializes = %d, want 1", got)
+	}
+}
+
+func TestNegotiatingDialerEmptyAndExplicitAutoSharePinnedSession(t *testing.T) {
+	t.Parallel()
+
+	fixture := startLegacyOnlyNegotiationServer(t)
+	dialer := NewNegotiatingDialer(New(), slog.New(slog.DiscardHandler))
+	target := appmcp.Target{
+		URL:    fixture.server.URL,
+		PinKey: "gateway:consumer:registry",
+	}
+	first, err := dialer.Connect(context.Background(), target)
+	if err != nil {
+		t.Fatalf("empty-mode connect: %v", err)
+	}
+	first.Close(context.Background())
+	target.ProtocolMode = registrydomain.MCPProtocolModeAuto
+	second, err := dialer.Connect(context.Background(), target)
+	if err != nil {
+		t.Fatalf("explicit-auto connect: %v", err)
+	}
+	second.Close(context.Background())
+	if got := fixture.discovers.Load(); got != 1 {
+		t.Fatalf("strict probes = %d, want 1", got)
+	}
+	if got := fixture.initializes.Load(); got != 1 {
+		t.Fatalf("legacy initializes = %d, want 1", got)
 	}
 }
 
