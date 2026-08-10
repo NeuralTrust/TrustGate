@@ -16,35 +16,40 @@ package strategies
 
 import (
 	"context"
+	"slices"
 	"sync"
 
-	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 )
 
 type LeastConnections struct {
-	mu         sync.Mutex
-	registries []*registry.Registry
+	mu     sync.Mutex
+	routes []routingdomain.Route
 }
 
-func NewLeastConnections(registries []*registry.Registry) *LeastConnections {
-	return &LeastConnections{registries: registries}
+func NewLeastConnections(routes []routingdomain.Route) *LeastConnections {
+	// Rotation happens in place, so the strategy owns its own copy.
+	return &LeastConnections{routes: slices.Clone(routes)}
 }
 
-func (lc *LeastConnections) Next(_ context.Context, _ *infracontext.RequestContext, exclude map[ids.RegistryID]struct{}) *registry.Registry {
+func (lc *LeastConnections) Next(
+	_ context.Context,
+	_ *infracontext.RequestContext,
+	exclude map[routingdomain.RouteKey]struct{},
+) *routingdomain.Route {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	n := len(lc.registries)
+	n := len(lc.routes)
 	if n == 0 {
 		return nil
 	}
 	for i := 0; i < n; i++ {
-		selected := lc.registries[0]
-		lc.registries = append(lc.registries[1:], lc.registries[0])
-		if !isExcluded(selected.ID, exclude) {
-			return selected
+		selected := lc.routes[0]
+		lc.routes = append(lc.routes[1:], lc.routes[0])
+		if !isExcluded(selected.Key(), exclude) {
+			return pick(selected)
 		}
 	}
 	return nil

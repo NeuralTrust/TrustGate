@@ -308,16 +308,65 @@ function BindingSection<T extends NamedEntity>({
   );
 }
 
-// Model policies (registry_id → allowed/default) are required for every member
-// of an enabled lb_config pool. This merges the consumer's existing policies
-// with a bare entry for any attached registry that lacks one, so enabling load
-// balancing never fails validation.
-function poolModelPolicies(consumer: Consumer, attached: Registry[]): ModelPolicy[] {
+type PoolRoute = { registry_id: string; model: string; weight: string };
+
+type TierDraft = { min_score: string; registry_id: string; model: string };
+
+function poolRoutesFrom(consumer: Consumer): PoolRoute[] {
+  const registryWeight = new Map((consumer.registry_weights ?? []).map((w) => [w.registry_id, w.weight]));
+  return (consumer.lb_config?.members ?? []).map((m) => ({
+    registry_id: m.registry_id,
+    model: m.model ?? "",
+    weight: String(m.weight ?? registryWeight.get(m.registry_id) ?? 1),
+  }));
+}
+
+function mergePoolRoutes(routes: PoolRoute[], attached: Registry[]): PoolRoute[] {
+  const attachedIds = new Set(attached.map((r) => r.id));
+  const merged = routes.filter((r) => attachedIds.has(r.registry_id));
+  const covered = new Set(merged.map((r) => r.registry_id));
+  for (const r of attached) {
+    if (!covered.has(r.id)) merged.push({ registry_id: r.id, model: "", weight: "1" });
+  }
+  return merged;
+}
+
+function routeWeightOf(route: PoolRoute): number {
+  return Math.min(100, Math.max(1, Math.round(Number(route.weight) || 1)));
+}
+
+function routesOf(routes: PoolRoute[], registryId: string): PoolRoute[] {
+  return routes.filter((r) => r.registry_id === registryId);
+}
+
+// Mirrors the backend route-identity rules so the user sees the problem before saving.
+function poolRouteError(routes: PoolRoute[]): string | null {
+  const seen = new Set<string>();
+  for (const route of routes) {
+    const model = route.model.trim();
+    if (!model && routesOf(routes, route.registry_id).length > 1) {
+      return "Every route of a registry that appears more than once needs a model.";
+    }
+    const key = `${route.registry_id}|${model}`;
+    if (seen.has(key)) return "Two routes share the same registry and model.";
+    seen.add(key);
+  }
+  return null;
+}
+
+// An enabled pool requires a policy per member and a pinned model inside any non-empty allowlist.
+function poolModelPolicies(consumer: Consumer, attached: Registry[], routes: PoolRoute[]): ModelPolicy[] {
   const existing = new Map((consumer.model_policies ?? []).map((p) => [p.registry_id, p]));
   return attached.map((r) => {
     const current = existing.get(r.id);
+    const allowed = current?.allowed ?? [];
     const policy: ModelPolicy = { registry_id: r.id };
-    if (current?.allowed && current.allowed.length > 0) policy.allowed = current.allowed;
+    if (allowed.length > 0) {
+      const pinned = routesOf(routes, r.id)
+        .map((route) => route.model.trim())
+        .filter((model) => model !== "" && !allowed.includes(model));
+      policy.allowed = [...allowed, ...new Set(pinned)];
+    }
     if (current?.default) policy.default = current.default;
     return policy;
   });
@@ -337,19 +386,14 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
   const [embProvider, setEmbProvider] = useState(emb?.provider ?? "");
   const [embModel, setEmbModel] = useState(emb?.model ?? "");
   const [embKey, setEmbKey] = useState("");
-  const [tiers, setTiers] = useState<{ min_score: string; registry_id: string }[]>(() =>
+  const [tiers, setTiers] = useState<TierDraft[]>(() =>
     (consumer.lb_config?.smart_routing?.tiers ?? []).map((t) => ({
       min_score: String(t.min_score),
       registry_id: t.registry_id,
+      model: t.model ?? "",
     })),
   );
-  // Only user edits live in state; the displayed value falls back to the
-  // consumer's configured weight, then a default of 1.
-  const [weights, setWeights] = useState<Record<string, string>>(() => {
-    const init: Record<string, string> = {};
-    for (const w of consumer.registry_weights ?? []) init[w.registry_id] = String(w.weight);
-    return init;
-  });
+  const [routes, setRoutes] = useState<PoolRoute[]>(() => poolRoutesFrom(consumer));
   const fb = consumer.fallback;
   const [triggers, setTriggers] = useState<string[]>(fb?.triggers?.length ? fb.triggers : ["http_5xx"]);
   const [chain, setChain] = useState<string[]>(fb?.chain ?? []);
@@ -362,25 +406,28 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
   const showSmart = consumer.lb_config?.algorithm === "smart-routing" || strategy === "smart";
 
   function addTier() {
-    setTiers((prev) => [...prev, { min_score: "", registry_id: "" }]);
+    setTiers((prev) => [...prev, { min_score: "", registry_id: "", model: "" }]);
   }
   function removeTier(index: number) {
     setTiers((prev) => prev.filter((_, i) => i !== index));
   }
-  function updateTier(index: number, patch: Partial<{ min_score: string; registry_id: string }>) {
+  function updateTier(index: number, patch: Partial<TierDraft>) {
     setTiers((prev) => prev.map((tier, i) => (i === index ? { ...tier, ...patch } : tier)));
   }
 
-  function displayWeight(r: Registry): string {
-    return weights[r.id] ?? String(weightFromConsumer(r.id) ?? 1);
+  // Mutations rewrite the normalized list so edits survive the merge with attached registries.
+  const poolRoutes = mergePoolRoutes(routes, attached);
+  function addRoute(registryId: string) {
+    if (!registryId) return;
+    setRoutes([...poolRoutes, { registry_id: registryId, model: "", weight: "1" }]);
   }
-  function weightFromConsumer(registryId: string): number | undefined {
-    return (consumer.registry_weights ?? []).find((w) => w.registry_id === registryId)?.weight;
+  function removeRoute(index: number) {
+    setRoutes(poolRoutes.filter((_, i) => i !== index));
   }
-  function weightOf(r: Registry): number {
-    return Math.min(100, Math.max(1, Math.round(Number(displayWeight(r)) || 1)));
+  function updateRoute(index: number, patch: Partial<PoolRoute>) {
+    setRoutes(poolRoutes.map((route, i) => (i === index ? { ...route, ...patch } : route)));
   }
-  const totalWeight = attached.reduce((sum, r) => sum + weightOf(r), 0);
+  const totalWeight = poolRoutes.reduce((sum, route) => sum + routeWeightOf(route), 0);
 
   function toggleTrigger(t: string) {
     setTriggers((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]));
@@ -433,10 +480,19 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
         toast({ variant: "error", title: "Attach at least one registry first (Bindings tab)." });
         return;
       }
+      const routeError = poolRouteError(poolRoutes);
+      if (routeError) {
+        toast({ variant: "error", title: routeError });
+        return;
+      }
       const lb: Record<string, unknown> = {
         enabled: true,
         algorithm: algorithmFor(strategy),
-        members: attached.map((r) => ({ registry_id: r.id })),
+        members: poolRoutes.map((route) => ({
+          registry_id: route.registry_id,
+          ...(route.model.trim() ? { model: route.model.trim() } : {}),
+          ...(strategy === "weighted" ? { weight: routeWeightOf(route) } : {}),
+        })),
       };
 
       if (strategy === "semantic") {
@@ -462,8 +518,12 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
 
       if (strategy === "smart") {
         const parsed = tiers
-          .map((t) => ({ min_score: Number(t.min_score), registry_id: t.registry_id }))
-          .filter((t) => t.registry_id);
+          .filter((t) => t.registry_id)
+          .map((t) => ({
+            min_score: Number(t.min_score),
+            registry_id: t.registry_id,
+            ...(t.model.trim() ? { model: t.model.trim() } : {}),
+          }));
         if (parsed.length === 0) {
           toast({ variant: "error", title: "Add at least one smart-routing tier with a registry." });
           return;
@@ -472,12 +532,22 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
           toast({ variant: "error", title: "Each tier min score must be between 0 and 1." });
           return;
         }
+        const ambiguous = parsed.find(
+          (t) => !t.model && routesOf(poolRoutes, t.registry_id).length > 1,
+        );
+        if (ambiguous) {
+          toast({
+            variant: "error",
+            title: "Pick a model for every tier whose registry has more than one route.",
+          });
+          return;
+        }
         lb.smart_routing = { tiers: parsed };
       }
 
       body.lb_config = lb;
       body.fallback = { enabled: false };
-      body.model_policies = poolModelPolicies(consumer, attached);
+      body.model_policies = poolModelPolicies(consumer, attached, poolRoutes);
     } else if (strategy === "fallback") {
       if (chainResolved.length === 0) {
         toast({ variant: "error", title: "Add at least one registry to the fallback order." });
@@ -500,11 +570,11 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
 
     setSaving(true);
     try {
-      // Weights are stored per registry association, not on the consumer body,
-      // so they are updated through the (idempotent) attach endpoint.
+      // The per-registry weight lives on the association, so it goes through the (idempotent) attach endpoint.
       if (strategy === "weighted") {
         for (const r of attached) {
-          await api.post(`${base}/registries/${r.id}`, { weight: weightOf(r) });
+          const route = routesOf(poolRoutes, r.id)[0];
+          if (route) await api.post(`${base}/registries/${r.id}`, { weight: routeWeightOf(route) });
         }
       }
       await api.put(base, body);
@@ -555,37 +625,80 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
       </Field>
       <p className="text-[12px] text-muted -mt-2">{meta.hint}</p>
 
-      {strategy === "weighted" && (
+      {isLoadBalanced(strategy) && (
         <div className="flex flex-col gap-2">
-          <p className="text-[13px] font-medium text-fg">Registries</p>
+          <p className="text-[13px] font-medium text-fg">Pool routes</p>
+          <p className="text-[12px] text-muted -mt-1">
+            Each route is a registry with an optional model. Add the same registry twice with different
+            models to balance across them independently; leave the model blank to use the registry
+            default from Model policies.
+          </p>
           {attached.length === 0 ? (
             <p className="text-[12px] text-faint">Attach registries first (Bindings tab).</p>
           ) : (
-            <div className="flex flex-col gap-1.5">
-              {attached.map((r) => {
-                const pct = totalWeight > 0 ? Math.round((weightOf(r) / totalWeight) * 100) : 0;
-                return (
-                  <div
-                    key={r.id}
-                    className="flex items-center gap-3 rounded-(--radius) border border-border bg-surface-2/30 px-3.5 h-12"
-                  >
-                    <span className="flex-1 min-w-0 text-[13px] text-fg truncate">
-                      {r.name} <span className="text-faint">({r.provider})</span>
-                    </span>
-                    <Input
-                      type="number"
-                      min={1}
-                      max={100}
-                      value={displayWeight(r)}
-                      onChange={(e) => setWeights((prev) => ({ ...prev, [r.id]: e.target.value }))}
-                      className="w-20"
-                      aria-label={`Weight for ${r.name}`}
-                    />
-                    <span className="w-10 text-right text-[12px] text-muted tabular-nums">{pct}%</span>
-                  </div>
-                );
-              })}
-            </div>
+            <>
+              <div className="flex flex-col gap-1.5">
+                {poolRoutes.map((route, i) => {
+                  const r = registryById.get(route.registry_id);
+                  const only = routesOf(poolRoutes, route.registry_id).length === 1;
+                  const pct = totalWeight > 0 ? Math.round((routeWeightOf(route) / totalWeight) * 100) : 0;
+                  return (
+                    <div
+                      key={`${route.registry_id}-${i}`}
+                      className="flex items-center gap-3 rounded-(--radius) border border-border bg-surface-2/30 px-3.5 h-12"
+                    >
+                      <span className="w-40 shrink-0 text-[13px] text-fg truncate">
+                        {r?.name} <span className="text-faint">({r?.provider})</span>
+                      </span>
+                      <Input
+                        value={route.model}
+                        onChange={(e) => updateRoute(i, { model: e.target.value })}
+                        placeholder="registry default"
+                        className="flex-1 min-w-0"
+                        aria-label={`Model for ${r?.name}`}
+                      />
+                      {strategy === "weighted" && (
+                        <>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={100}
+                            value={route.weight}
+                            onChange={(e) => updateRoute(i, { weight: e.target.value })}
+                            className="w-20"
+                            aria-label={`Weight for ${r?.name}`}
+                          />
+                          <span className="w-10 text-right text-[12px] text-muted tabular-nums">{pct}%</span>
+                        </>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        disabled={only}
+                        onClick={() => removeRoute(i)}
+                        aria-label="Remove route"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+              <Select
+                value=""
+                onChange={(e) => {
+                  addRoute(e.target.value);
+                  e.target.value = "";
+                }}
+              >
+                <option value="">Add a route…</option>
+                {attached.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name} ({r.provider})
+                  </option>
+                ))}
+              </Select>
+            </>
           )}
         </div>
       )}
@@ -739,7 +852,7 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
                     <Field label="Registry">
                       <Select
                         value={tier.registry_id}
-                        onChange={(e) => updateTier(i, { registry_id: e.target.value })}
+                        onChange={(e) => updateTier(i, { registry_id: e.target.value, model: "" })}
                       >
                         <option value="">Select registry…</option>
                         {attached.map((r) => (
@@ -747,6 +860,20 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
                             {r.name}
                           </option>
                         ))}
+                      </Select>
+                    </Field>
+                  </div>
+                  <div className="flex-1">
+                    <Field label="Route">
+                      <Select value={tier.model} onChange={(e) => updateTier(i, { model: e.target.value })}>
+                        <option value="">Any route</option>
+                        {routesOf(poolRoutes, tier.registry_id)
+                          .filter((route) => route.model.trim() !== "")
+                          .map((route, routeIndex) => (
+                            <option key={`${route.model}-${routeIndex}`} value={route.model.trim()}>
+                              {route.model.trim()}
+                            </option>
+                          ))}
                       </Select>
                     </Field>
                   </div>

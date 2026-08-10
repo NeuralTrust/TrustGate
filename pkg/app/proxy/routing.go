@@ -34,8 +34,8 @@ import (
 
 type routedBackend struct {
 	lb           *loadbalancer.LoadBalancer
-	backend      *domain.Registry
-	excluded     map[ids.RegistryID]struct{}
+	route        routingdomain.Route
+	excluded     map[routingdomain.RouteKey]struct{}
 	fromFallback bool
 	pinned       bool
 }
@@ -178,97 +178,128 @@ func (f *forwarder) routeBackend(
 ) (routedBackend, error) {
 	if isRoleBased(rc) {
 		return routedBackend{
-			backend:  candidates.Candidates()[0].Registry,
-			excluded: make(map[ids.RegistryID]struct{}),
+			route:    routingdomain.RouteForRegistry(candidates.Candidates()[0].Registry),
+			excluded: make(map[routingdomain.RouteKey]struct{}),
 		}, nil
 	}
 	if intent.IsQualified() || intent.IsShortModel() {
 		return routedBackend{
-			backend:  candidates.Candidates()[0].Registry,
-			excluded: make(map[ids.RegistryID]struct{}),
+			route:    routingdomain.RouteForRegistry(candidates.Candidates()[0].Registry),
+			excluded: make(map[routingdomain.RouteKey]struct{}),
 			pinned:   true,
 		}, nil
 	}
 	if len(rc.Registries) == 0 {
 		return routedBackend{}, ErrNoBackendsInPool
 	}
-	lb, err := f.routeLoadBalancer(rc, intent, candidates)
+	lb, err := f.routeLoadBalancer(rc, intent)
 	if err != nil {
 		return routedBackend{}, err
 	}
-	excluded := nonCandidateRegistries(rc, candidates)
-	bk, err := lb.NextBackend(ctx, req, excluded)
+	excluded := nonCandidateRoutes(lb, rc, candidates)
+	route, err := lb.NextRoute(ctx, req, excluded)
 	if err != nil {
 		if fallback := firstAvailableFallback(rc, excluded); fallback != nil {
-			return routedBackend{lb: lb, backend: fallback, excluded: excluded, fromFallback: true}, nil
+			return routedBackend{
+				lb:           lb,
+				route:        routingdomain.RouteForRegistry(fallback),
+				excluded:     excluded,
+				fromFallback: true,
+			}, nil
 		}
 		return routedBackend{}, fmt.Errorf("%w: %s", ErrNoBackendAvailable, err.Error())
 	}
-	return routedBackend{lb: lb, backend: bk, excluded: excluded}, nil
+	return routedBackend{lb: lb, route: *route, excluded: excluded}, nil
 }
 
 func (f *forwarder) routeLoadBalancer(
 	rc *appconsumer.RoutableConsumer,
 	intent routingdomain.Intent,
-	candidates *routingdomain.CandidateSet,
 ) (*loadbalancer.LoadBalancer, error) {
 	if intent.IsPool() {
-		return f.balancers.PoolFor(rc, intent.PoolAlias, candidates)
+		return f.balancers.PoolFor(rc, intent.PoolAlias)
 	}
 	return f.balancers.For(rc)
 }
 
-func nonCandidateRegistries(
+func nonCandidateRoutes(
+	lb *loadbalancer.LoadBalancer,
 	rc *appconsumer.RoutableConsumer,
 	candidates *routingdomain.CandidateSet,
-) map[ids.RegistryID]struct{} {
-	excluded := make(map[ids.RegistryID]struct{})
+) map[routingdomain.RouteKey]struct{} {
+	excluded := make(map[routingdomain.RouteKey]struct{})
 	if candidates == nil {
 		return excluded
 	}
-	for _, reg := range rc.Registries {
-		if !candidates.HasRegistry(reg.ID) {
-			excluded[reg.ID] = struct{}{}
+	for _, route := range lb.Routes() {
+		if !candidates.HasRegistry(route.RegistryID()) {
+			excluded[route.Key()] = struct{}{}
 		}
 	}
 	for _, reg := range rc.FallbackBackends {
 		if !candidates.HasRegistry(reg.ID) {
-			excluded[reg.ID] = struct{}{}
+			excluded[routingdomain.RouteForRegistry(reg).Key()] = struct{}{}
 		}
 	}
 	return excluded
 }
 
+// The fallback chain picks registries, so a registry with any excluded route counts as tried.
+func excludedRegistries(excluded map[routingdomain.RouteKey]struct{}) map[ids.RegistryID]struct{} {
+	out := make(map[ids.RegistryID]struct{}, len(excluded))
+	for key := range excluded {
+		out[key.RegistryID] = struct{}{}
+	}
+	return out
+}
+
 func firstAvailableFallback(
 	rc *appconsumer.RoutableConsumer,
-	excluded map[ids.RegistryID]struct{},
+	excluded map[routingdomain.RouteKey]struct{},
 ) *domain.Registry {
 	if fb := rc.Consumer.Fallback; fb == nil || !fb.Enabled {
 		return nil
 	}
+	skip := excludedRegistries(excluded)
 	for _, bk := range rc.FallbackBackends {
-		if _, skip := excluded[bk.ID]; !skip {
+		if _, blocked := skip[bk.ID]; !blocked {
 			return bk
 		}
 	}
 	return nil
 }
 
-func (f *forwarder) stampRoutingPolicy(dto *forwardRequestDTO, rc *appconsumer.RoutableConsumer, bk *domain.Registry) {
+func (f *forwarder) stampRoutingPolicy(
+	dto *forwardRequestDTO,
+	rc *appconsumer.RoutableConsumer,
+	route routingdomain.Route,
+) {
+	bk := route.Registry
 	dto.routeSource = routeSourceFor(dto.candidates, bk)
-	if candidate, ok := dto.candidates.ForRegistry(bk.ID); ok {
-		dto.request.AllowedModels = candidate.Allowed
-		dto.request.DefaultModel = candidate.Default
-		return
+	allowed, defaultModel := candidatePolicy(dto.candidates, rc, bk)
+	if route.Allowed != nil {
+		allowed = route.Allowed
+	}
+	if route.Default != "" {
+		defaultModel = route.Default
+	}
+	dto.request.AllowedModels = allowed
+	dto.request.DefaultModel = defaultModel
+}
+
+func candidatePolicy(
+	candidates *routingdomain.CandidateSet,
+	rc *appconsumer.RoutableConsumer,
+	bk *domain.Registry,
+) ([]string, string) {
+	if candidate, ok := candidates.ForRegistry(bk.ID); ok {
+		return candidate.Allowed, candidate.Default
 	}
 	policy, ok := rc.Consumer.ModelPolicies.For(bk.ID)
 	if !ok {
-		dto.request.AllowedModels = nil
-		dto.request.DefaultModel = ""
-		return
+		return nil, ""
 	}
-	dto.request.AllowedModels = policy.Allowed
-	dto.request.DefaultModel = policy.Default
+	return policy.Allowed, policy.Default
 }
 
 func routeSourceFor(candidates *routingdomain.CandidateSet, bk *domain.Registry) string {

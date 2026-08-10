@@ -33,10 +33,15 @@ const (
 )
 
 type LLMAttrs struct {
-	RegistryID     string
-	Provider       string
-	Model          string
-	SentModel      string
+	RegistryID string
+	Provider   string
+	Model      string
+	SentModel  string
+	// RouteModel is the model the load balancer's route pinned, empty when the
+	// route deferred to the registry's model policy. It separates the balancer's
+	// decision from RequestedModel (what the client asked for) and SentModel
+	// (what actually went upstream), which otherwise coincide.
+	RouteModel     string
 	RequestedModel string
 	FinishReason   string
 	TurnID         string

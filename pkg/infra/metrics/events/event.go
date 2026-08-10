@@ -139,6 +139,10 @@ type Attempt struct {
 	Fallback   bool   `json:"fallback"`
 	Pinned     bool   `json:"pinned"`
 	Route      string `json:"route,omitempty"`
+	// RouteModel is the model pinned by the load balancer route this attempt
+	// used. It is empty when the route deferred to the registry default, and it
+	// is what tells two attempts on the same registry apart.
+	RouteModel string `json:"route_model,omitempty"`
 	Outcome    string `json:"outcome,omitempty"`
 	StatusCode int    `json:"status_code"`
 	LatencyMs  int64  `json:"latency_ms"`
