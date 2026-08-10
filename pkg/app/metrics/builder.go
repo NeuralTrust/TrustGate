@@ -337,7 +337,7 @@ func (b *Builder) fillResponse(evt *events.Event, resp *infracontext.ResponseCon
 		evt.Response.FinishReason = served.FinishReason
 	}
 	if len(resp.Body) > 0 {
-		body := events.SanitizeBodyFull(resp.Body, resp.Headers)
+		body := events.SanitizeBody(resp.Body, resp.Headers)
 		evt.Response.Body = &body
 	}
 }
