@@ -91,6 +91,31 @@ func TestInvokeStream_PassthroughStream(t *testing.T) {
 	}, got)
 }
 
+func TestInvokeStream_AdvertisesServedRouteBeforeFirstChunk(t *testing.T) {
+	const defaultModel = "gpt-4o-mini"
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		CompletionsStream(mock.Anything, mock.Anything, mock.Anything).
+		Return(seqOf([]byte("data: [DONE]")), nil).
+		Once()
+
+	inv := newStreamInvoker(t, "openai", client)
+	target := apiKeyTarget("openai")
+	req := &infracontext.RequestContext{
+		Body:          []byte(`{"stream":true,"messages":[{"role":"user","content":"hi"}]}`),
+		AllowedModels: []string{defaultModel},
+		DefaultModel:  defaultModel,
+	}
+
+	resp, err := inv.InvokeStream(context.Background(), target, req)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"openai"}, resp.Headers["X-Selected-Provider"])
+	assert.Equal(t, []string{target.ID.String()}, resp.Headers["X-Selected-Registry"])
+	assert.Equal(t, []string{defaultModel}, resp.Headers["X-Selected-Model"])
+
+	collectStream(t, resp.Stream)
+}
+
 func TestInvokeStream_CrossFormatAdapt(t *testing.T) {
 	// Registry (anthropic) emits an anthropic content delta; the client speaks
 	// openai, so adaptStream converts anthropic -> openai.
@@ -153,11 +178,16 @@ func TestInvokeStream_PreStreamBackendErrorPassthrough(t *testing.T) {
 	inv := newStreamInvoker(t, "openai", client)
 	req := &infracontext.RequestContext{Body: []byte(openaiRequestBody)}
 
-	resp, err := inv.InvokeStream(context.Background(), apiKeyTarget("openai"), req)
+	target := apiKeyTarget("openai")
+	resp, err := inv.InvokeStream(context.Background(), target, req)
 	require.NoError(t, err)
 	assert.Nil(t, resp.Stream, "pre-stream error must not open a stream")
 	assert.Equal(t, 429, resp.StatusCode)
 	assert.Equal(t, errBody, resp.Body)
+	assert.Equal(t, []string{"openai"}, resp.Headers["X-Selected-Provider"])
+	assert.Equal(t, []string{target.ID.String()}, resp.Headers["X-Selected-Registry"])
+	assert.Equal(t, []string{"gpt-4"}, resp.Headers["X-Selected-Model"],
+		"a route that fails before streaming must still be identifiable")
 }
 
 func TestInvokeStream_UsageObserverRecordsFinalUsage(t *testing.T) {

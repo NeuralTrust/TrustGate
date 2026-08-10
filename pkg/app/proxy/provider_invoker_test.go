@@ -77,6 +77,34 @@ func TestProviderInvoke_SameFormatPassthrough(t *testing.T) {
 	assert.Equal(t, "openai", req.TargetFormat)
 }
 
+func TestProviderInvoke_AdvertisesServedRoute(t *testing.T) {
+	const defaultModel = "gpt-4o-mini"
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		Return([]byte(openaiResponseBody), nil).
+		Once()
+
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	target := apiKeyTarget("openai")
+	req := &infracontext.RequestContext{
+		Body:          []byte(`{"messages":[{"role":"user","content":"hi"}]}`),
+		AllowedModels: []string{defaultModel},
+		DefaultModel:  defaultModel,
+	}
+	resp, err := inv.Invoke(context.Background(), target, req)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"openai"}, resp.Headers["X-Selected-Provider"])
+	assert.Equal(t, []string{target.ID.String()}, resp.Headers["X-Selected-Registry"])
+	assert.Equal(t, []string{defaultModel}, resp.Headers["X-Selected-Model"],
+		"the header must carry the model the route resolved to, which the client never sent")
+}
+
 func TestProviderInvoke_DecodesUsageOnFinish(t *testing.T) {
 	client := providermocks.NewClient(t)
 	client.EXPECT().
@@ -177,6 +205,9 @@ func TestProviderInvoke_BackendErrorPassthrough(t *testing.T) {
 	assert.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
 	assert.Equal(t, errBody, resp.Body)
 	assert.Equal(t, []string{"application/json"}, resp.Headers["Content-Type"])
+	assert.Equal(t, []string{"openai"}, resp.Headers["X-Selected-Provider"])
+	assert.Equal(t, []string{"gpt-4"}, resp.Headers["X-Selected-Model"],
+		"a failed attempt must still say which route was tried")
 }
 
 func TestProviderInvoke_SourceFormatFromPath(t *testing.T) {
