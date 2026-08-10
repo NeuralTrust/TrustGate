@@ -685,6 +685,53 @@ func TestStrictProbeNegotiatesUnsupportedVersionOnce(t *testing.T) {
 	}
 }
 
+func TestStrictProbeDowngradesToLegacyWhenOnlyLegacyVersionsAdvertised(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		reply probeReply
+	}{
+		{
+			name: "discover result advertises legacy versions only",
+			reply: probeReply{
+				status:      http.StatusOK,
+				contentType: "application/json",
+				body:        discoverResult(testProbeID, "2025-11-25", "2025-06-18"),
+			},
+		},
+		{
+			name: "version rejection advertises legacy versions only",
+			reply: probeReply{
+				status:      http.StatusBadRequest,
+				contentType: "application/json",
+				body: discoverError(testProbeID, codeUnsupportedProtocolVersion, map[string]any{
+					"supported": []string{"2025-06-18"},
+					"requested": modernProtocolVersion,
+				}),
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			target, calls := newProbeTarget(t, func(_ int, _ map[string]any) probeReply {
+				return tt.reply
+			})
+			outcome, err := newTestProbe(t, target, modernProtocolVersion).Probe(context.Background(), target)
+			if err != nil {
+				t.Fatalf("Probe: %v", err)
+			}
+			if outcome.kind != probeLegacyCandidate {
+				t.Fatalf("outcome = %+v, want probeLegacyCandidate", outcome)
+			}
+			if calls.Load() != 1 {
+				t.Fatalf("calls = %d, want 1", calls.Load())
+			}
+		})
+	}
+}
+
 func TestStrictProbeNeverFallsBackAfterModernIncompatibility(t *testing.T) {
 	t.Parallel()
 
@@ -694,7 +741,7 @@ func TestStrictProbeNeverFallsBackAfterModernIncompatibility(t *testing.T) {
 	}{
 		{
 			name: "no mutually supported version",
-			data: map[string]any{"supported": []string{"2025-11-25"}},
+			data: map[string]any{"supported": []string{"2027-05-01"}},
 		},
 		{
 			name: "missing supported versions",

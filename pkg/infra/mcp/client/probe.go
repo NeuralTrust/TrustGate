@@ -40,6 +40,10 @@ const (
 	metaClientCapabilities = "io.modelcontextprotocol/clientCapabilities"
 )
 
+// legacyProtocolVersions are the pre-SEP-2575 versions the legacy adapter can
+// negotiate through the initialize handshake, newest first.
+var legacyProtocolVersions = []string{"2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"}
+
 var errProbeBodyTooLarge = errors.New("mcp probe response body exceeds 64 KiB")
 
 type probeErrorCode string
@@ -95,6 +99,7 @@ type probeOutcome struct {
 type strictProbe struct {
 	transport             http.RoundTripper
 	supportedVersions     []string
+	legacyVersions        []string
 	implementationVersion string
 }
 
@@ -106,6 +111,7 @@ func newStrictProbe(transport http.RoundTripper, supportedVersions []string, imp
 	return &strictProbe{
 		transport:             transport,
 		supportedVersions:     append([]string(nil), supportedVersions...),
+		legacyVersions:        append([]string(nil), legacyProtocolVersions...),
 		implementationVersion: implementationVersion,
 	}
 }
@@ -276,12 +282,11 @@ func (p *strictProbe) classify(
 	case codeHeaderMismatch, codeRequiredCapability:
 		return probeOutcome{kind: probeModern, version: requestedVersion}, "", nil
 	case codeUnsupportedProtocolVersion:
-		retryVersion := p.versionFromUnsupportedError(rpcErr)
-		if retryVersion == "" {
-			outcome, err := incompatibleProbeOutcome()
-			return outcome, "", err
+		advertised := supportedVersionsFromError(rpcErr)
+		if retryVersion := latestMutuallySupported(p.supportedVersions, advertised); retryVersion != "" {
+			return probeOutcome{}, retryVersion, nil
 		}
-		return probeOutcome{}, retryVersion, nil
+		return p.downgrade(advertised)
 	}
 	return probeOutcome{kind: probeLegacyCandidate}, "", nil
 }
@@ -306,27 +311,39 @@ func (p *strictProbe) classifySuccess(
 	}
 	if requireRequestedVersion {
 		if latestMutuallySupported([]string{requestedVersion}, attempt.result.SupportedVersions) == "" {
-			outcome, err := incompatibleProbeOutcome()
-			return outcome, "", err
+			return p.downgrade(attempt.result.SupportedVersions)
 		}
 		return probeOutcome{kind: probeModern, version: requestedVersion}, "", nil
 	}
 	version := latestMutuallySupported(p.supportedVersions, attempt.result.SupportedVersions)
 	if version == "" {
-		outcome, err := incompatibleProbeOutcome()
-		return outcome, "", err
+		return p.downgrade(attempt.result.SupportedVersions)
 	}
 	return probeOutcome{kind: probeModern, version: version}, "", nil
 }
 
-func (p *strictProbe) versionFromUnsupportedError(rpcErr *jsonrpc.Error) string {
+// downgrade classifies an upstream that answered server/discover but shares no
+// modern protocol version with TrustGate. Such a server is not necessarily
+// unusable: go-sdk servers answer server/discover even in stateful mode, where
+// they deliberately withhold the modern versions while still serving the legacy
+// initialize handshake. Only an upstream with no version in common at all is
+// reported as incompatible.
+func (p *strictProbe) downgrade(remote []string) (probeOutcome, string, error) {
+	if latestMutuallySupported(p.legacyVersions, remote) != "" {
+		return probeOutcome{kind: probeLegacyCandidate}, "", nil
+	}
+	outcome, err := incompatibleProbeOutcome()
+	return outcome, "", err
+}
+
+func supportedVersionsFromError(rpcErr *jsonrpc.Error) []string {
 	var data struct {
 		Supported []string `json:"supported"`
 	}
 	if len(rpcErr.Data) == 0 || json.Unmarshal(rpcErr.Data, &data) != nil {
-		return ""
+		return nil
 	}
-	return latestMutuallySupported(p.supportedVersions, data.Supported)
+	return data.Supported
 }
 
 func incompatibleProbeOutcome() (probeOutcome, error) {

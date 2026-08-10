@@ -27,14 +27,30 @@ import (
 
 // startMCPUpstream runs a real MCP server (streamable HTTP) inside the test
 // process; the gateway process reaches it through the loopback interface.
+// The handler is stateful, so it serves the legacy era only: the SDK withholds
+// the 2026-07-28 protocol version unless the transport is stateless.
 func startMCPUpstream(t *testing.T, configure func(*sdk.Server)) *httptest.Server {
+	return startMCPUpstreamWithOptions(t, configure, nil)
+}
+
+// startModernMCPUpstream runs a stateless MCP server, the only mode in which the
+// SDK advertises and serves the 2026-07-28 protocol.
+func startModernMCPUpstream(t *testing.T, configure func(*sdk.Server)) *httptest.Server {
+	return startMCPUpstreamWithOptions(t, configure, &sdk.StreamableHTTPOptions{Stateless: true})
+}
+
+func startMCPUpstreamWithOptions(
+	t *testing.T,
+	configure func(*sdk.Server),
+	options *sdk.StreamableHTTPOptions,
+) *httptest.Server {
 	t.Helper()
 	server := sdk.NewServer(&sdk.Implementation{Name: "fake-upstream", Version: "1.0"}, nil)
 	if configure != nil {
 		configure(server)
 	}
 	srv := httptest.NewServer(sdk.NewStreamableHTTPHandler(
-		func(*http.Request) *sdk.Server { return server }, nil))
+		func(*http.Request) *sdk.Server { return server }, options))
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -58,7 +74,11 @@ func startAuthenticatedEraMCPUpstream(
 	t.Helper()
 	server := sdk.NewServer(&sdk.Implementation{Name: "era-upstream", Version: "1.0"}, nil)
 	addTool(server, toolName)
-	sdkHandler := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, nil)
+	var options *sdk.StreamableHTTPOptions
+	if !legacyOnly {
+		options = &sdk.StreamableHTTPOptions{Stateless: true}
+	}
+	sdkHandler := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, options)
 	fixture := &eraMCPFixture{}
 	fixture.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		for key, expected := range expectedHeaders {
@@ -350,7 +370,11 @@ func TestMCPServer_ToolsListAndCallWithFullAccess(t *testing.T) {
 func TestMCPServer_ProtocolModeMatrixPreservesTools(t *testing.T) {
 	for _, mode := range []string{"auto", "modern", "legacy"} {
 		t.Run(mode, func(t *testing.T) {
-			upstream := startMCPUpstream(t, func(s *sdk.Server) { addTool(s, "echo-"+mode) })
+			start := startMCPUpstream
+			if mode == "modern" {
+				start = startModernMCPUpstream
+			}
+			upstream := start(t, func(s *sdk.Server) { addTool(s, "echo-"+mode) })
 			gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
 			registryID := CreateRegistry(
 				t,
