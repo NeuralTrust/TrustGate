@@ -61,6 +61,7 @@ func TestStreamCanonicalResponseContentReasoningToolCalls(t *testing.T) {
 	got := streamCanonicalResponse(reg, []byte(sse), adapter.FormatOpenAI)
 	if got == nil {
 		t.Fatal("expected canonical response")
+		return
 	}
 	if got.Content != "hi there" {
 		t.Fatalf("content = %q, want %q", got.Content, "hi there")
