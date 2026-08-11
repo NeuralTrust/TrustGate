@@ -17,6 +17,7 @@ package proxy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"iter"
 	"log/slog"
 	"maps"
@@ -25,6 +26,8 @@ import (
 	"time"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
@@ -65,6 +68,27 @@ func (f *forwarder) runPreRequest(
 		}, nil
 	}
 	return nil, nil
+}
+
+// checkRateLimit enforces the gateway plan burst/quota before the request
+// reaches the upstream. An exceeded limit renders a 429 ForwardResult with the
+// standard rate-limit headers; an unavailable plan (unknown/missing tier)
+// propagates as an error so mapProxyError maps it to HTTP 503, matching how an
+// unusable guard is treated.
+func (f *forwarder) checkRateLimit(ctx context.Context, gatewayID ids.GatewayID) (*ForwardResult, error) {
+	err := f.limiter.Check(ctx, gatewayID)
+	if err == nil {
+		return nil, nil
+	}
+	var exceeded *ratelimitapp.Exceeded
+	if errors.As(err, &exceeded) {
+		return &ForwardResult{
+			StatusCode: http.StatusTooManyRequests,
+			Headers:    exceeded.Headers(),
+			Body:       exceeded.Body(),
+		}, nil
+	}
+	return nil, err
 }
 
 func (f *forwarder) runPreResponseGated(

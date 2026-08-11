@@ -138,7 +138,11 @@ func TestPluginE2E_PerToolRateLimiter_RejectResponse(t *testing.T) {
 	status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, proposal)
 	require.Equal(t, http.StatusOK, status, "proposal turn is under the limit, body: %s", raw)
 
-	execution := mustJSON(t, chatRequestWithToolResult("call_1", "get_weather"))
+	// An agent framework re-declares its tools on every turn, so the request that
+	// reports a result is also the one enforcement reads. Declaring them here is
+	// what keeps the budget honest: the call this turn is reporting is the one
+	// the budget granted, and refusing it would leave max: 1 completing none.
+	execution := mustJSON(t, chatRequestWithToolResult("call_1", "get_weather", "get_weather"))
 	status, _, raw = proxyRequest(t, http.MethodPost, apiKey, path, nil, execution)
 	require.Equal(t, http.StatusOK, status, "executed-result turn charges the counter and passes through, body: %s", raw)
 
@@ -238,7 +242,9 @@ func TestPluginE2E_PerToolRateLimiter_MCPToolCallDeny(t *testing.T) {
 
 	status, body = mcpRPC(t, gatewayID, consumerID, headers, "tools/call",
 		map[string]any{"name": "send_email", "arguments": map[string]any{}})
-	require.Equal(t, rpcCodePolicyBlocked, rpcErrorCode(t, status, body), "over-budget tools/call must be denied with -32001")
+	require.Equal(t, rpcCodeRateLimited, rpcErrorCode(t, status, body),
+		"an exhausted budget is throttling, not a permanent denial: it must be -32004 so the client knows to retry")
+	require.Equal(t, http.StatusOK, status, "over-budget tools/call must stay on HTTP 200 with JSON-RPC error (non-2xx drops MCP sessions): %v", body)
 	require.Equal(t, int64(1), atomic.LoadInt64(&calls), "over-budget tools/call must not reach the upstream CallTool")
 }
 

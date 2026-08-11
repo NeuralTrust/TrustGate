@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/logredact"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/google/uuid"
 )
@@ -32,10 +33,15 @@ const (
 )
 
 type LLMAttrs struct {
-	RegistryID     string
-	Provider       string
-	Model          string
-	SentModel      string
+	RegistryID string
+	Provider   string
+	Model      string
+	SentModel  string
+	// RouteModel is the model the load balancer's route pinned, empty when the
+	// route deferred to the registry's model policy. It separates the balancer's
+	// decision from RequestedModel (what the client asked for) and SentModel
+	// (what actually went upstream), which otherwise coincide.
+	RouteModel     string
 	RequestedModel string
 	FinishReason   string
 	TurnID         string
@@ -69,7 +75,7 @@ type MCPAttrs struct {
 	Prompt         string
 	ResourceURI    string
 	Targets        int
-	UpstreamStatus string
+	UpstreamStatus int
 	RPCErrorCode   int
 }
 
@@ -158,7 +164,7 @@ func (s *Span) StatusCode() int {
 func (s *Span) SetError(msg string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.errMsg = msg
+	s.errMsg = logredact.RedactLogString(msg)
 }
 
 func (s *Span) Error() string {
@@ -297,7 +303,7 @@ func (s *Span) SetMCPRequest(method, operation, tool, prompt, resourceURI string
 	s.MCP.ResourceURI = resourceURI
 }
 
-func (s *Span) SetMCPUpstream(serverName, registryID, host, catalogCode, transport, upstreamTool, status string) {
+func (s *Span) SetMCPUpstream(serverName, registryID, host, catalogCode, transport, upstreamTool string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ensureMCP()
@@ -307,7 +313,6 @@ func (s *Span) SetMCPUpstream(serverName, registryID, host, catalogCode, transpo
 	s.MCP.CatalogCode = catalogCode
 	s.MCP.Transport = transport
 	s.MCP.UpstreamTool = upstreamTool
-	s.MCP.UpstreamStatus = status
 }
 
 func (s *Span) SetMCPTargets(targets int) {
@@ -317,11 +322,12 @@ func (s *Span) SetMCPTargets(targets int) {
 	s.MCP.Targets = targets
 }
 
-func (s *Span) SetMCPStatus(status string, rpcErrorCode int) {
+// SetMCPStatus records the logical HTTP status for MCP metrics and http.response.status_code.
+func (s *Span) SetMCPStatus(httpStatus, rpcErrorCode int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ensureMCP()
-	s.MCP.UpstreamStatus = status
+	s.MCP.UpstreamStatus = httpStatus
 	s.MCP.RPCErrorCode = rpcErrorCode
 }
 

@@ -24,7 +24,8 @@ import (
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
 	consumermocks "github.com/NeuralTrust/TrustGate/pkg/domain/consumer/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/cachetest"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -43,9 +44,15 @@ func enabledOAuth2(t *testing.T, gatewayID ids.GatewayID, issuer string, audienc
 	return a
 }
 
-func createOAuth2(t *testing.T, repo *repomocks.Repository, gatewayID ids.GatewayID, audiences ...string) error {
+func createOAuth2(
+	t *testing.T,
+	repo *repomocks.Repository,
+	publisher *cachemocks.EventPublisher,
+	gatewayID ids.GatewayID,
+	audiences ...string,
+) error {
 	t.Helper()
-	creator := appauth.NewCreator(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	creator := appauth.NewCreator(repo, newCacheManager(), publisher, newTestLogger(), nil)
 	_, err := creator.Create(context.Background(), appauth.CreateInput{
 		GatewayID: gatewayID,
 		Name:      "new-idp",
@@ -67,10 +74,12 @@ func TestCreator_RejectsDuplicateIssuerAudience(t *testing.T) {
 	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).
 		Return([]*domain.Auth{enabledOAuth2(t, gatewayID, "https://idp.example.com", "api://abc")}, nil).Once()
 
-	err := createOAuth2(t, repo, gatewayID, "api://abc")
+	publisher := cachemocks.NewEventPublisher(t)
+	err := createOAuth2(t, repo, publisher, gatewayID, "api://abc")
 	if !errors.Is(err, domain.ErrDuplicateOAuth2) {
 		t.Fatalf("err = %v, want ErrDuplicateOAuth2", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestCreator_RejectsAudienceEquivalence(t *testing.T) {
@@ -80,10 +89,12 @@ func TestCreator_RejectsAudienceEquivalence(t *testing.T) {
 	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).
 		Return([]*domain.Auth{enabledOAuth2(t, gatewayID, "https://idp.example.com", "api://abc")}, nil).Once()
 
-	err := createOAuth2(t, repo, gatewayID, "abc")
+	publisher := cachemocks.NewEventPublisher(t)
+	err := createOAuth2(t, repo, publisher, gatewayID, "abc")
 	if !errors.Is(err, domain.ErrDuplicateOAuth2) {
 		t.Fatalf("err = %v, want ErrDuplicateOAuth2", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestCreator_AllowsSameIssuerAudienceOnAnotherGateway(t *testing.T) {
@@ -94,7 +105,14 @@ func TestCreator_AllowsSameIssuerAudienceOnAnotherGateway(t *testing.T) {
 		Return([]*domain.Auth{other}, nil).Once()
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
 
-	if err := createOAuth2(t, repo, ids.New[ids.GatewayKind](), "api://abc"); err != nil {
+	gatewayID := ids.New[ids.GatewayKind]()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gatewayID.String()}).
+		Return(nil).
+		Once()
+
+	if err := createOAuth2(t, repo, publisher, gatewayID, "api://abc"); err != nil {
 		t.Fatalf("expected same issuer+audience on a different gateway to be allowed, got %v", err)
 	}
 }
@@ -117,10 +135,12 @@ func TestCreator_RejectsWildcardAudienceOverlap(t *testing.T) {
 	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).
 		Return([]*domain.Auth{legacyNoAudiences}, nil).Once()
 
-	err := createOAuth2(t, repo, gatewayID, "api://abc")
+	publisher := cachemocks.NewEventPublisher(t)
+	err := createOAuth2(t, repo, publisher, gatewayID, "api://abc")
 	if !errors.Is(err, domain.ErrDuplicateOAuth2) {
 		t.Fatalf("err = %v, want ErrDuplicateOAuth2", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestCreator_AllowsSameIssuerDistinctAudience(t *testing.T) {
@@ -131,7 +151,13 @@ func TestCreator_AllowsSameIssuerDistinctAudience(t *testing.T) {
 		Return([]*domain.Auth{enabledOAuth2(t, gatewayID, "https://idp.example.com", "api://tenant-a")}, nil).Once()
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
 
-	if err := createOAuth2(t, repo, gatewayID, "api://tenant-b"); err != nil {
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gatewayID.String()}).
+		Return(nil).
+		Once()
+
+	if err := createOAuth2(t, repo, publisher, gatewayID, "api://tenant-b"); err != nil {
 		t.Fatalf("expected same issuer with distinct audience to be allowed, got %v", err)
 	}
 }
@@ -148,7 +174,9 @@ func TestUpdater_RejectsEnablingConflictingAuth(t *testing.T) {
 	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).
 		Return([]*domain.Auth{other}, nil).Once()
 
-	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 	_, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:      existing.ID,
 		Enabled: ptr(true),
@@ -156,6 +184,7 @@ func TestUpdater_RejectsEnablingConflictingAuth(t *testing.T) {
 	if !errors.Is(err, domain.ErrDuplicateOAuth2) {
 		t.Fatalf("err = %v, want ErrDuplicateOAuth2", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestUpdater_AllowsUpdatingSameEntry(t *testing.T) {
@@ -168,7 +197,13 @@ func TestUpdater_AllowsUpdatingSameEntry(t *testing.T) {
 		Return([]*domain.Auth{existing}, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Once()
 
-	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: existing.GatewayID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), publisher, newTestLogger(), nil)
 	if _, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:   existing.ID,
 		Name: ptr("renamed"),

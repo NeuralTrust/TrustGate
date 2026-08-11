@@ -16,33 +16,76 @@ package trustguard
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 )
 
 const typeBlocked = "trustguard_blocked"
+const typeRateLimited = "trustguard_rate_limited"
+const typeUnavailable = "trustguard_unavailable"
 
 const blockMessage = "request blocked due to a policy infraction"
+const rateLimitMessage = "rate limit exceeded"
+const unavailableMessage = "rate limit entitlements unavailable"
 
 func blockError(resp *GuardResponse) *appplugins.PluginError {
+	message := clientBlockMessage(resp)
 	return &appplugins.PluginError{
 		StatusCode: http.StatusForbidden,
 		Type:       typeBlocked,
-		Message:    blockMessage,
-		Body:       blockBody(resp),
+		Message:    message,
+		Body:       blockBody(resp, message),
 	}
 }
 
-func blockBody(resp *GuardResponse) []byte {
+func rateLimitError(err *rateLimitedError) *appplugins.PluginError {
+	body := err.body
+	if len(body) == 0 {
+		body = []byte(`{"error":"rate limit exceeded","message":"Request blocked: rate limit exceeded."}`)
+	}
+	return &appplugins.PluginError{
+		StatusCode: http.StatusTooManyRequests,
+		Type:       typeRateLimited,
+		Message:    rateLimitMessage,
+		Headers:    err.headers,
+		Body:       body,
+	}
+}
+
+func unavailableError(err *entitlementsUnavailableError) *appplugins.PluginError {
+	body := []byte(`{"error":"rate limit entitlements unavailable"}`)
+	if err != nil && len(err.body) > 0 {
+		body = err.body
+	}
+	return &appplugins.PluginError{
+		StatusCode: http.StatusServiceUnavailable,
+		Type:       typeUnavailable,
+		Message:    unavailableMessage,
+		Body:       body,
+	}
+}
+
+func blockBody(resp *GuardResponse, message string) []byte {
+	if message == "" {
+		message = blockMessage
+	}
 	body := struct {
-		Status    string `json:"status"`
-		Message   string `json:"message"`
-		TraceID   string `json:"trace_id,omitempty"`
-		RequestID string `json:"request_id,omitempty"`
+		Status       string `json:"status"`
+		Message      string `json:"message"`
+		Type         string `json:"type,omitempty"`
+		Reason       string `json:"reason,omitempty"`
+		Plugin       string `json:"plugin,omitempty"`
+		DetectorName string `json:"detector_name,omitempty"`
+		GateName     string `json:"gate_name,omitempty"`
+		TraceID      string `json:"trace_id,omitempty"`
+		RequestID    string `json:"request_id,omitempty"`
 	}{
 		Status:  statusBlock,
-		Message: blockMessage,
+		Message: message,
+		Type:    typeBlocked,
 	}
 	if resp != nil {
 		if resp.Status != "" {
@@ -50,10 +93,51 @@ func blockBody(resp *GuardResponse) []byte {
 		}
 		body.TraceID = resp.TraceID
 		body.RequestID = resp.RequestID
+		if finding := selectPrimaryFinding(resp.Findings); finding != nil {
+			if finding.Signal != nil {
+				body.Reason = finding.Signal.Type
+			}
+			if finding.Source != nil {
+				body.Plugin = finding.Source.Plugin
+				body.DetectorName = finding.Source.DetectorName
+				body.GateName = finding.Source.GateName
+			}
+		}
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
-		return []byte(`{"status":"block","message":"request blocked due to a policy infraction"}`)
+		return []byte(`{"status":"block","message":"request blocked due to a policy infraction","type":"trustguard_blocked"}`)
 	}
 	return raw
+}
+
+func clientBlockMessage(resp *GuardResponse) string {
+	if resp == nil {
+		return blockMessage
+	}
+	finding := selectPrimaryFinding(resp.Findings)
+	if finding == nil {
+		return blockMessage
+	}
+	reason := ""
+	if finding.Signal != nil {
+		reason = strings.TrimSpace(finding.Signal.Type)
+	}
+	name := ""
+	if finding.Source != nil {
+		name = strings.TrimSpace(finding.Source.DetectorName)
+		if name == "" {
+			name = strings.TrimSpace(finding.Source.GateName)
+		}
+	}
+	switch {
+	case reason != "" && name != "":
+		return fmt.Sprintf("Request blocked by security policy: %s (%s).", reason, name)
+	case reason != "":
+		return fmt.Sprintf("Request blocked by security policy: %s.", reason)
+	case name != "":
+		return fmt.Sprintf("Request blocked by security policy (%s).", name)
+	default:
+		return blockMessage
+	}
 }

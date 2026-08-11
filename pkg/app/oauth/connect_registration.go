@@ -58,7 +58,7 @@ func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayI
 		return nil, err
 	}
 	if client == nil {
-		return nil, fmt.Errorf("oauth connect: no registered client for provider %q; consent flow required", cfg.Provider)
+		return nil, fmt.Errorf("%w: provider %q", ErrNoRegisteredClient, cfg.Provider)
 	}
 	return autoAuth(cfg, meta, client), nil
 }

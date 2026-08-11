@@ -1,0 +1,319 @@
+# Google Workspace MCP OAuth (Gmail, Calendar, …)
+
+How TrustGate connects to Google’s remote MCP servers (Gmail, Calendar, and
+future Workspace MCP products), why the UI asks for a **client ID and secret**,
+how that differs from Claude, and how to register a **shared TrustGate OAuth
+app** so end users get a Claude-like one-click connect.
+
+## 1. Mental model
+
+Connecting Gmail or Calendar MCP is always **OAuth 2.0**. Someone’s application
+must be registered with Google as “the thing asking for access.” That
+registration produces a **client ID** and **client secret**.
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant TrustGate
+  participant GoogleAuth as Google OAuth
+  participant GoogleMCP as Gmail/Calendar MCP
+
+  User->>TrustGate: Connect Gmail/Calendar
+  TrustGate->>GoogleAuth: Authorize (client_id, redirect_uri, scopes, PKCE)
+  User->>GoogleAuth: Sign in + consent
+  GoogleAuth->>TrustGate: Redirect with code (/oauth/callback)
+  TrustGate->>GoogleAuth: Exchange code (client_id + client_secret)
+  TrustGate->>TrustGate: Store tokens in credential vault
+  TrustGate->>GoogleMCP: tools/call with Bearer access_token
+```
+
+| Role | Who |
+|------|-----|
+| OAuth **client** (the registered app) | Whoever owns the GCP OAuth client — customer (BYO) or NeuralTrust (shared) |
+| OAuth **authorization server** | Google (`accounts.google.com` / `oauth2.googleapis.com`) |
+| Resource / MCP server | e.g. `https://gmailmcp.googleapis.com/mcp/v1`, `https://calendarmcp.googleapis.com/mcp/v1` |
+| Token broker + vault | TrustGate (`forwarded` MCP auth) |
+
+Catalog entries for these servers use:
+
+- `registration: "manual"`
+- `dcr: false`
+- `pkce: true`
+
+Google does **not** support Dynamic Client Registration (DCR) for these MCP
+endpoints. The host cannot invent a client at connect time (unlike Granola,
+Notion-style DCR servers with `registration: "auto"`).
+
+## 2. Why Claude does not ask for client ID / secret
+
+Claude (and Antigravity) still use a Google OAuth client. Users simply never
+type it:
+
+| Path | Who owns the OAuth client? | User sees |
+|------|----------------------------|-----------|
+| Claude built-in / first-party Calendar connect | **Anthropic** (pre-registered) | Sign in + consent only |
+| Claude **custom** connector ([Google docs](https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server)) | **You** | Paste client ID + secret |
+| TrustGate today | **You** (BYO) | Paste client ID + secret |
+| TrustGate Claude-like (not shipped yet) | **NeuralTrust** shared app | Sign in + consent only |
+
+TrustGate cannot reuse Claude’s client: OAuth clients are bound to a specific
+application name, redirect URI allowlist, and Google Cloud project.
+
+## 3. Catalog entries (source of truth)
+
+Seeded in `seed/mcp-catalog/enterprise-servers.json`:
+
+| Catalog name | Vendor | Server URL |
+|--------------|--------|------------|
+| `com.google.workspace/gmail` | Gmail | `https://gmailmcp.googleapis.com/mcp/v1` |
+| `com.google.workspace/calendar` | Google Calendar | `https://calendarmcp.googleapis.com/mcp/v1` |
+
+Shared OAuth endpoints:
+
+- Authorize: `https://accounts.google.com/o/oauth2/v2/auth`
+- Token: `https://oauth2.googleapis.com/token`
+
+### Gmail scopes (catalog)
+
+- `https://www.googleapis.com/auth/gmail.readonly`
+- `https://www.googleapis.com/auth/gmail.compose`
+
+### Calendar scopes (catalog)
+
+Configure-screen docs list mostly readonly scopes; write tools require events
+write access. Catalog uses:
+
+- `https://www.googleapis.com/auth/calendar.calendarlist.readonly`
+- `https://www.googleapis.com/auth/calendar.events` (read + write)
+- `https://www.googleapis.com/auth/calendar.events.freebusy`
+
+### Calendar tools (preview in catalog)
+
+`list_calendars`, `list_events`, `search_events`, `get_event`, `suggest_time`,
+`create_event`, `update_event`, `delete_event`, `respond_to_event`.
+
+Authoritative tool set is discovered at runtime after connect. Official setup:
+[Configure the Calendar MCP server](https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server).
+
+---
+
+## 4. Current path: BYO Google OAuth client (per customer / env)
+
+Use this today when connecting Gmail or Calendar from the Registry UI.
+
+### 4.1 Prerequisites
+
+- A Google Cloud project you control
+- Ability to configure the OAuth consent screen and create OAuth clients
+- TrustGate gateway reachable at a stable HTTPS (or localhost) base URL whose
+  callback you can allowlist
+
+### 4.2 Enable Google APIs
+
+Replace `PROJECT_ID` with your GCP project id.
+
+**Calendar**
+
+```bash
+gcloud services enable calendar-json.googleapis.com --project=PROJECT_ID
+gcloud services enable calendarmcp.googleapis.com --project=PROJECT_ID
+```
+
+**Gmail** (enable the Gmail API and Gmail MCP API for your project — same
+pattern as Calendar; see Google Workspace MCP product docs for the exact MCP
+service name for Gmail).
+
+### 4.3 Configure the OAuth consent screen
+
+In Google Cloud Console → **Google Auth Platform** (or APIs & Services →
+OAuth consent screen):
+
+1. App name (e.g. `TrustGate` or your company name).
+2. User support email and developer contact.
+3. Audience:
+   - **Internal** — Google Workspace org only.
+   - **External** — any Google account (requires test users until verified).
+4. Under **Data Access**, add the scopes listed in §3 for the products you
+   enable.
+5. If External and unverified: **Audience → Test users** → add every account
+   that will connect.
+
+### 4.4 Create the OAuth client
+
+1. **Google Auth Platform → Clients → Create client**.
+2. Application type: **Web application**.
+3. Name: e.g. `TrustGate MCP`.
+4. **Authorized redirect URIs** — add TrustGate’s OAuth callback:
+
+   ```text
+   https://<TRUSTGATE_PUBLIC_HOST>/oauth/callback
+   ```
+
+   Local / dev examples (adjust host/port to your gateway public base):
+
+   ```text
+   http://localhost:8080/oauth/callback
+   https://gateway.dev.example.com/oauth/callback
+   ```
+
+   The path is `CallbackPath` in TrustGate (`/oauth/callback`). Google requires
+   an **exact** match (scheme, host, port, path). Add one URI per environment
+   and custom domain.
+
+5. Create → copy **Client ID** and **Client secret**.
+
+### 4.5 Connect in TrustGate / App Registry
+
+1. Open the MCP catalog → Gmail or Google Calendar.
+2. When prompted for manual OAuth, paste:
+   - **Client ID**
+   - **Client secret** (if the panel asks for it)
+3. Complete the browser consent for the Google account that owns the mailbox /
+   calendar.
+4. Tokens are stored in TrustGate’s credential vault; later tool calls use
+   `forwarded` auth with that user’s access token.
+
+### 4.6 Common failures
+
+| Symptom | Likely cause |
+|---------|----------------|
+| `redirect_uri_mismatch` | Callback URL not exactly allowlisted on the OAuth client |
+| Access blocked / app not verified | External app + user not in Test users |
+| Tools fail with insufficient scope | Consent screen missing write scopes (e.g. Calendar `calendar.events`) |
+| API not enabled | Forgot `calendarmcp.googleapis.com` / Calendar API (or Gmail equivalents) |
+
+---
+
+## 5. Claude-like path: shared NeuralTrust / TrustGate OAuth app
+
+Goal: end users never paste client ID/secret. TrustGate injects a platform-owned
+Google OAuth client the same way Claude injects Anthropic’s.
+
+### 5.1 What you register (one-time, platform)
+
+1. Create a dedicated GCP project, e.g. `neuraltrust-trustgate-mcp`.
+2. Enable Gmail + Calendar APIs and their MCP services (§4.2).
+3. Consent screen branded as **TrustGate** / **NeuralTrust**:
+   - Homepage, privacy policy, support email (required for verification).
+   - Audience **External** for multi-tenant cloud.
+   - All scopes for every Google Workspace MCP product you will productize.
+4. Create **one** Web OAuth client.
+5. Allowlist **every** production (and staging) redirect URI:
+
+   ```text
+   https://<cloud-gateway-host>/oauth/callback
+   https://<staging-gateway-host>/oauth/callback
+   ```
+
+   For self-hosted customers you either:
+
+   - do **not** use the shared client (keep BYO), or
+   - maintain a growing allowlist of customer gateway hosts (usually
+     impractical).
+
+6. Store client ID + secret in platform secrets (never in git or the MCP catalog
+   JSON).
+
+### 5.2 Product / engineering work (not done by catalog alone)
+
+Catalog `registration: "manual"` only describes Google’s constraint. Claude-like
+UX needs TrustGate (and/or the App) to:
+
+1. Hold platform secrets, e.g. conceptually:
+
+   ```text
+   GOOGLE_WORKSPACE_MCP_CLIENT_ID=...
+   GOOGLE_WORKSPACE_MCP_CLIENT_SECRET=...
+   ```
+
+2. When creating a registry for known catalog names
+   (`com.google.workspace/gmail`, `com.google.workspace/calendar`, …),
+   **inject** those credentials server-side into `forwarded` auth
+   (`client_id` / `client_secret`).
+3. **Hide** Client ID / Client Secret fields in `McpServerConfigPanel` for those
+   entries (or when a shared client is configured).
+4. Keep BYO path for:
+   - self-hosted / air-gapped,
+   - customers who must own the Google OAuth app for compliance,
+   - environments where the shared redirect URI is not registered.
+
+Suggested product split:
+
+| Deployment | Default |
+|------------|---------|
+| NeuralTrust cloud | Shared TrustGate Google OAuth app |
+| Self-hosted / enterprise BYO IdP requirements | Customer-provided client |
+
+### 5.3 Google verification (required for real customers)
+
+Until the OAuth app is **verified**:
+
+- Only **test users** listed on the consent screen can complete OAuth.
+- Fine for dogfooding; not fine for open signup.
+
+For External apps with Calendar / Gmail scopes expect:
+
+- OAuth verification in Google Cloud
+- Privacy policy + homepage
+- Possible security assessment for sensitive / restricted scopes
+- Clear branding (“TrustGate wants access to your Google Calendar”)
+
+Plan timeline and legal/privacy review before promising one-click connect in
+production.
+
+### 5.4 Tradeoffs
+
+| | BYO (today) | Shared NeuralTrust client |
+|--|-------------|---------------------------|
+| UX | Paste client + secret | One-click connect |
+| Who owns the GCP project | Customer | NeuralTrust |
+| Consent screen name | Customer’s app | TrustGate / NeuralTrust |
+| Self-hosted | Natural | Shared client usually unfit |
+| Redirect URI ops | Per customer project | Must allowlist every TrustGate host |
+| Compliance | Customer is OAuth app owner | NeuralTrust is the OAuth app / data processor for the grant |
+
+---
+
+## 6. Operator checklist (shared app launch)
+
+- [ ] GCP project created; Gmail/Calendar (+ MCP) APIs enabled
+- [ ] Consent screen branded; scopes match catalog (and write tools)
+- [ ] Web client created; all `/oauth/callback` URIs allowlisted
+- [ ] Client ID/secret in platform secret store
+- [ ] Connect path injects credentials; UI fields hidden when configured
+- [ ] Dogfood with test users
+- [ ] Start Google OAuth verification before GA
+- [ ] Document BYO fallback for self-hosted
+- [ ] Privacy / DPA wording updated for “TrustGate connects to Google on your behalf”
+
+---
+
+## 7. Related code & docs
+
+| Area | Location |
+|------|----------|
+| MCP catalog seed | `seed/mcp-catalog/enterprise-servers.json` |
+| Gateway OAuth callback path | `pkg/app/oauth/proxy_types.go` → `CallbackPath` (`/oauth/callback`) |
+| Forwarded MCP credentials | `pkg/app/mcp/credentials.go` |
+| Registry UI (manual client fields) | App `McpServerConfigPanel` / `mcpCatalog.ts` |
+| Local MCP plane testing | `docs/mcp/testing-guide.md` |
+| Google Calendar MCP setup | https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server |
+
+---
+
+## 8. Short FAQ
+
+**Why can’t TrustGate DCR against Google like Granola?**  
+Google Workspace remote MCP requires a pre-created Cloud Console OAuth client.
+Catalog marks `dcr: false` / `registration: "manual"`.
+
+**Why does Claude feel easier?**  
+Anthropic already registered Claude with Google. Users authorize Anthropic’s
+app; they never see the client credentials.
+
+**How do we do the same?**  
+Register TrustGate once (§5), inject credentials in the connect path, hide the
+form fields, and complete Google verification for production users.
+
+**Can we put the client secret in `enterprise-servers.json`?**  
+No. Secrets belong in platform config / secret manager, not the public catalog.

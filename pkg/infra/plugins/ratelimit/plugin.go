@@ -16,6 +16,7 @@ package ratelimit
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -23,8 +24,8 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
-	"github.com/redis/go-redis/v9"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 )
 
 const PluginName = "rate_limiter"
@@ -114,8 +115,8 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return nil, err
 	}
 
+	reset := now.Add(window)
 	headers := make(map[string][]string)
-	setLimitHeaders(headers, dimension, cfg.Limit, count, now.Add(window))
 
 	data := RateLimiterData{
 		ExceededType: dimension,
@@ -129,15 +130,18 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		data.RetryAfter = cfg.RetryAfter
 
 		if appplugins.Blocks(in.Mode) && !appplugins.Throttles(in.Mode) {
+			setLimitHeaders(headers, dimension, cfg.Limit, count, reset)
 			headers["Retry-After"] = []string{cfg.RetryAfter}
 			appplugins.SetDecision(in.Event, in.Mode)
 			if in.Event != nil {
 				in.Event.SetExtras(data)
 			}
+			message := fmt.Sprintf("Request blocked: %s rate limit exceeded. Retry after %ss.", dimension, cfg.RetryAfter)
 			return nil, &appplugins.PluginError{
 				StatusCode: http.StatusTooManyRequests,
-				Message:    fmt.Sprintf("%s rate limit exceeded", dimension),
+				Message:    message,
 				Headers:    headers,
+				Body:       rateLimitRejectBody(dimension, message, cfg),
 			}
 		}
 
@@ -151,6 +155,9 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	if err := p.record(ctx, redisKey, now, window); err != nil {
 		return nil, err
 	}
+	// The client is told what is left once this request is counted: a client
+	// reading "1 remaining" must be able to spend it without being rejected.
+	setLimitHeaders(headers, dimension, cfg.Limit, count+1, reset)
 
 	if in.Event != nil {
 		in.Event.SetStatusCode(http.StatusOK)
@@ -206,4 +213,23 @@ func setLimitHeaders(headers map[string][]string, dimension string, limit int, c
 	headers[prefix+"-Limit"] = []string{strconv.Itoa(limit)}
 	headers[prefix+"-Remaining"] = []string{strconv.FormatInt(remaining, 10)}
 	headers[prefix+"-Reset"] = []string{strconv.FormatInt(reset.Unix(), 10)}
+}
+
+func rateLimitRejectBody(dimension, message string, cfg *config) []byte {
+	payload := map[string]any{
+		"error":   "rate limit exceeded",
+		"message": message,
+		"reason":  dimension,
+		"scope":   dimension,
+		"limit":   cfg.Limit,
+		"window":  cfg.Window,
+	}
+	if secs, err := strconv.Atoi(cfg.RetryAfter); err == nil && secs > 0 {
+		payload["retry_after_seconds"] = secs
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return []byte(fmt.Sprintf(`{"error":"rate limit exceeded","message":%q,"reason":%q}`, message, dimension))
+	}
+	return raw
 }

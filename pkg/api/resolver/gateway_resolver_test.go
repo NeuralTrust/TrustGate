@@ -193,7 +193,7 @@ func TestHeaderGatewayResolver(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			finder := fakeGatewayFinder{bySlug: map[string]*gatewaydomain.Gateway{"acme": gw}}
-			resolver := NewGatewayResolver(&finder, "header", testBaseDomain)
+			resolver := NewGatewayResolver(&finder, testBaseDomain)
 
 			var (
 				got        *gatewaydomain.Gateway
@@ -235,16 +235,19 @@ func TestHeaderGatewayResolver(t *testing.T) {
 	}
 }
 
-func TestNewGatewayResolver_SubdomainModeIgnoresHeader(t *testing.T) {
+func TestNewGatewayResolver_HeaderTakesPrecedenceOverSubdomainHost(t *testing.T) {
 	t.Parallel()
 	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
 	finder := fakeGatewayFinder{bySlug: map[string]*gatewaydomain.Gateway{"acme": gw}}
-	resolver := NewGatewayResolver(&finder, "subdomain", testBaseDomain)
+	resolver := NewGatewayResolver(&finder, testBaseDomain)
 
-	var resolveErr error
+	var (
+		got        *gatewaydomain.Gateway
+		resolveErr error
+	)
 	app := fiber.New()
 	app.Get("/", func(c *fiber.Ctx) error {
-		_, resolveErr = resolver.Resolve(c)
+		got, resolveErr = resolver.Resolve(c)
 		return c.SendStatus(fiber.StatusOK)
 	})
 	req := httptest.NewRequest(fiber.MethodGet, "/", nil)
@@ -254,11 +257,11 @@ func TestNewGatewayResolver_SubdomainModeIgnoresHeader(t *testing.T) {
 		t.Fatalf("app.Test: %v", err)
 	}
 
-	if resolveErr == nil {
-		t.Fatal("subdomain mode must ignore the slug header and fail on a non-subdomain host")
+	if resolveErr != nil {
+		t.Fatalf("Resolve error: %v", resolveErr)
 	}
-	if !errors.Is(resolveErr, appauth.ErrInvalidAuthRequest) {
-		t.Fatalf("err = %v, want ErrInvalidAuthRequest", resolveErr)
+	if got != gw {
+		t.Fatal("resolver must honor the slug header even without a subdomain host")
 	}
 }
 

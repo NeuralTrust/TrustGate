@@ -34,7 +34,7 @@ func (r *APIKeyIdentityResolver) Resolve(
 	gw *gatewaydomain.Gateway,
 	rc *appconsumer.RoutableConsumer,
 ) (*appauth.AuthContext, error) {
-	rawKey := c.Get(HeaderAPIKey)
+	rawKey := APIKeyFromRequest(c)
 	if rawKey == "" {
 		return nil, ErrUnauthenticated
 	}

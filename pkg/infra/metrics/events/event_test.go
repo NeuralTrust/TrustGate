@@ -34,7 +34,7 @@ func TestEvent_MarshalMCPBlock(t *testing.T) {
 			ServerName:        "asana",
 			Host:              "mcp.asana.com",
 			Tool:              "search",
-			UpstreamStatus:    "ok",
+			UpstreamStatus:    200,
 			UpstreamLatencyMs: 120,
 		},
 	}
@@ -51,6 +51,7 @@ func TestEvent_MarshalMCPBlock(t *testing.T) {
 	assert.Equal(t, "tools/call", mcp["method"])
 	assert.Equal(t, "asana", mcp["server_name"])
 	assert.Equal(t, "mcp.asana.com", mcp["host"])
+	assert.Equal(t, float64(200), mcp["upstream_status"])
 	assert.Equal(t, float64(120), mcp["upstream_latency_ms"])
 }
 

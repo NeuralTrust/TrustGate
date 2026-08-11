@@ -24,6 +24,7 @@ import (
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
@@ -53,7 +54,7 @@ const (
 const consumerSelectColumns = `
 		SELECT c.id, c.gateway_id, c.name, c.type, c.slug, c.routing_mode, c.lb_config, c.fallback, c.model_policies, c.toolkit, c.fail_mode, c.headers, c.active,
 		       c.created_at, c.updated_at,
-		       COALESCE((SELECT array_agg(cb.registry_id ORDER BY cb.registry_id)
+		       COALESCE((SELECT array_agg(cb.registry_id ORDER BY cb.position NULLS FIRST, cb.registry_id)
 		                   FROM consumer_registry cb WHERE cb.consumer_id = c.id), '{}')::uuid[] AS registry_ids,
 		       COALESCE((SELECT json_object_agg(cw.registry_id, cw.weight)
 		                   FROM consumer_registry cw WHERE cw.consumer_id = c.id), '{}')::jsonb AS registry_weights,
@@ -143,7 +144,7 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 	})
 }
 
-func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
+func (r *Repository) Update(ctx context.Context, c *domain.Consumer, registries *domain.RegistryBindings) error {
 	if c == nil {
 		return errors.New("consumer repository: nil consumer")
 	}
@@ -181,11 +182,11 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
 		       active           = $11,
 		       updated_at       = $12
 		 WHERE id = $1 AND gateway_id = $13`
+	// The consumers row is written before the registry links because the
+	// routing-mode DB guard rejects registry rows on a role_based consumer: a
+	// role_based → inline switch has to land the new mode first.
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if err := lockConsumerRow(ctx, tx, c.ID); err != nil {
-			return err
-		}
-		if err := ensureRegistryRefsAssociated(ctx, tx, c); err != nil {
 			return err
 		}
 		if err := cleanupIncompatibleRelations(ctx, tx, c); err != nil {
@@ -201,8 +202,38 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
 		if cmd.RowsAffected() == 0 {
 			return domain.ErrNotFound
 		}
-		return nil
+		if err := replaceRegistryLinks(ctx, tx, c, registries); err != nil {
+			return err
+		}
+		return ensureRegistryRefsAssociated(ctx, tx, c)
 	})
+}
+
+// replaceRegistryLinks makes consumer_registry match the requested set,
+// detaching the links that are gone and upserting the rest with their weight and
+// their position in the set. A role_based consumer holds no links at all;
+// cleanupIncompatibleRelations already removed them.
+func replaceRegistryLinks(ctx context.Context, tx pgx.Tx, c *domain.Consumer, registries *domain.RegistryBindings) error {
+	if registries == nil || c.RoutingMode == domain.RoutingModeRoleBased {
+		return nil
+	}
+	const detachRemoved = `
+		DELETE FROM consumer_registry
+		 WHERE consumer_id = $1
+		   AND registry_id <> ALL($2::uuid[])`
+	if _, err := tx.Exec(ctx, detachRemoved, c.ID, ids.ToUUIDs(registries.IDs)); err != nil {
+		return mapPgError(err)
+	}
+	const upsertLink = `
+		INSERT INTO consumer_registry (consumer_id, registry_id, weight, position) VALUES ($1, $2, $3, $4)
+		ON CONFLICT (consumer_id, registry_id) DO UPDATE SET weight = EXCLUDED.weight, position = EXCLUDED.position`
+	for position, registryID := range registries.IDs {
+		weight := clampRegistryWeight(registries.Weights[registryID])
+		if _, err := tx.Exec(ctx, upsertLink, c.ID, registryID, weight, position); err != nil {
+			return mapPgError(err)
+		}
+	}
+	return nil
 }
 
 func cleanupIncompatibleRelations(ctx context.Context, tx pgx.Tx, c *domain.Consumer) error {
@@ -470,39 +501,44 @@ func (r *Repository) FindActiveBySlug(ctx context.Context, slug string) (*domain
 }
 
 func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*domain.Consumer, int, error) {
-	if filter.Page < 1 {
-		filter.Page = 1
-	}
-	if filter.Size < 1 {
-		filter.Size = 20
-	}
-	offset := (filter.Page - 1) * filter.Size
+	page := filter.Page.Normalize()
+	offset := page.Offset()
 
 	gatewayParam := nullableUUID(filter.GatewayID.UUID())
+	authParam := nullableUUID(filter.AuthID.UUID())
+	typeParam := string(filter.Type)
 
 	const countQuery = `
 		SELECT COUNT(*)
-		  FROM consumers
-		 WHERE ($1::uuid IS NULL OR gateway_id = $1)
-		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')`
+		  FROM consumers c
+		 WHERE ($1::uuid IS NULL OR c.gateway_id = $1)
+		   AND ($2 = '' OR lower(c.name) LIKE '%' || lower($2) || '%' OR lower(c.slug) LIKE '%' || lower($2) || '%')
+		   AND ($3 = '' OR c.type = $3)
+		   AND ($4::boolean IS NULL OR c.active = $4)
+		   AND ($5::uuid IS NULL OR EXISTS (
+		         SELECT 1 FROM consumer_auth ca WHERE ca.consumer_id = c.id AND ca.auth_id = $5))`
 	var total int
-	if err := r.conn.Pool.QueryRow(ctx, countQuery, gatewayParam, filter.NameContains).Scan(&total); err != nil {
+	if err := r.conn.Pool.QueryRow(ctx, countQuery, gatewayParam, filter.Search, typeParam, filter.Active, authParam).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("consumer repository: count: %w", err)
 	}
 
 	listQuery := consumerSelectColumns + `
 		  FROM consumers c
 		 WHERE ($1::uuid IS NULL OR c.gateway_id = $1)
-		   AND ($2 = '' OR lower(c.name) LIKE '%' || lower($2) || '%')
-		 ORDER BY c.created_at DESC, c.id
-		 LIMIT $3 OFFSET $4`
-	rows, err := r.conn.Pool.Query(ctx, listQuery, gatewayParam, filter.NameContains, filter.Size, offset)
+		   AND ($2 = '' OR lower(c.name) LIKE '%' || lower($2) || '%' OR lower(c.slug) LIKE '%' || lower($2) || '%')
+		   AND ($3 = '' OR c.type = $3)
+		   AND ($4::boolean IS NULL OR c.active = $4)
+		   AND ($5::uuid IS NULL OR EXISTS (
+		         SELECT 1 FROM consumer_auth ca WHERE ca.consumer_id = c.id AND ca.auth_id = $5))
+		 ORDER BY ` + consumerOrderBy(filter.Sort) + `
+		 LIMIT $6 OFFSET $7`
+	rows, err := r.conn.Pool.Query(ctx, listQuery, gatewayParam, filter.Search, typeParam, filter.Active, authParam, page.Size, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("consumer repository: list: %w", err)
 	}
 	defer rows.Close()
 
-	items := make([]*domain.Consumer, 0, filter.Size)
+	items := make([]*domain.Consumer, 0, page.Size)
 	for rows.Next() {
 		c, err := scanConsumer(rows)
 		if err != nil {
@@ -819,6 +855,28 @@ func nullableUUID(id uuid.UUID) any {
 		return nil
 	}
 	return id
+}
+
+func consumerOrderBy(sort listing.Sort) string {
+	col := "c.created_at"
+	dir := listing.Desc
+	if !sort.IsZero() {
+		switch sort.Field {
+		case "name":
+			col = "c.name"
+		case "created_at":
+			col = "c.created_at"
+		case "updated_at":
+			col = "c.updated_at"
+		case "type":
+			col = "c.type"
+		}
+		dir = sort.Direction
+		if dir == "" {
+			dir = listing.Asc
+		}
+	}
+	return col + " " + dir.SQL() + ", c.id"
 }
 
 func mapPgError(err error) error {

@@ -31,7 +31,7 @@ type Connection struct {
 }
 
 func NewConnection(ctx context.Context, cfg *config.DatabaseConfig) (*Connection, error) {
-	conf, err := buildPoolConfig(ctx, cfg)
+	conf, err := NewPoolConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("%w: build pool config: %w", errors.ErrBoot, err)
 	}
@@ -44,6 +44,14 @@ func NewConnection(ctx context.Context, cfg *config.DatabaseConfig) (*Connection
 		return nil, fmt.Errorf("%w: ping database: %v", errors.ErrBoot, err)
 	}
 	return &Connection{Pool: pool}, nil
+}
+
+// NewPoolConfig builds a pgxpool.Config from discrete DatabaseConfig fields,
+// including the IAM BeforeConnect hook when Login is "aws". Callers that need
+// a pool without the boot-time Ping of NewConnection (for example a telemetry
+// sink) should use this and open the pool themselves.
+func NewPoolConfig(ctx context.Context, cfg *config.DatabaseConfig) (*pgxpool.Config, error) {
+	return buildPoolConfig(ctx, cfg)
 }
 
 func (c *Connection) Close() {
@@ -63,10 +71,19 @@ func buildPoolConfig(ctx context.Context, cfg *config.DatabaseConfig) (*pgxpool.
 	if cfg.Login == "aws" {
 		password = ""
 	}
+	// Omit empty password= from the DSN. pgx keyword parsing treats
+	// `password= dbname=foo` as Password="dbname=foo" and Database="", so IAM
+	// (empty password) would drop the database name and fall back to the username.
 	dsn := fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		cfg.Host, cfg.Port, cfg.User, password, cfg.Name, cfg.SSLMode,
+		"host=%s port=%d user=%s dbname=%s sslmode=%s",
+		cfg.Host, cfg.Port, cfg.User, cfg.Name, cfg.SSLMode,
 	)
+	if password != "" {
+		dsn = fmt.Sprintf(
+			"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+			cfg.Host, cfg.Port, cfg.User, password, cfg.Name, cfg.SSLMode,
+		)
+	}
 	if cfg.SSLRootCert != "" {
 		dsn += " sslrootcert=" + cfg.SSLRootCert
 	}

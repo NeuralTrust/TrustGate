@@ -66,9 +66,9 @@ type MCP struct {
 	Prompt            string `json:"prompt,omitempty"`
 	ResourceURI       string `json:"resource_uri,omitempty"`
 	Targets           int    `json:"targets,omitempty"`
-	UpstreamStatus    string `json:"upstream_status,omitempty"`
-	UpstreamLatencyMs int64  `json:"upstream_latency_ms,omitempty"`
-	RPCErrorCode      int    `json:"rpc_error_code,omitempty"`
+	UpstreamStatus    int   `json:"upstream_status,omitempty"`
+	UpstreamLatencyMs int64 `json:"upstream_latency_ms,omitempty"`
+	RPCErrorCode      int   `json:"rpc_error_code,omitempty"`
 }
 
 type Consumer struct {
@@ -124,11 +124,17 @@ type Cost struct {
 	Currency      string       `json:"currency"`
 }
 
+// Latency splits the request wall clock into the three stages that can be acted
+// on: the provider, the policy chain and the gateway itself. PoliciesMs covers
+// every stage the chain ran, including post_response, which executes after the
+// response was already sent. GatewayMs discounts that asynchronous share, so the
+// stages reconcile as TotalMs = ProviderMs + blocking policies + GatewayMs. The
+// per-stage split is not duplicated here: it is derivable from PolicyChain,
+// where every entry carries its Stage and LatencyMs.
 type Latency struct {
 	TotalMs    int64 `json:"total_ms"`
 	ProviderMs int64 `json:"provider_ms"`
 	PoliciesMs int64 `json:"policies_ms"`
-	RoutingMs  int64 `json:"routing_ms"`
 	GatewayMs  int64 `json:"gateway_ms"`
 }
 
@@ -139,6 +145,10 @@ type Attempt struct {
 	Fallback   bool   `json:"fallback"`
 	Pinned     bool   `json:"pinned"`
 	Route      string `json:"route,omitempty"`
+	// RouteModel is the model pinned by the load balancer route this attempt
+	// used. It is empty when the route deferred to the registry default, and it
+	// is what tells two attempts on the same registry apart.
+	RouteModel string `json:"route_model,omitempty"`
 	Outcome    string `json:"outcome,omitempty"`
 	StatusCode int    `json:"status_code"`
 	LatencyMs  int64  `json:"latency_ms"`

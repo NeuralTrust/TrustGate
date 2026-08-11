@@ -61,7 +61,9 @@ func testLogger() *slog.Logger {
 func newLocator() *infratelemetry.ExporterLocator {
 	return infratelemetry.NewExporterLocator(
 		infratelemetry.WithExporter(kafka.ExporterName, kafka.NewKafkaTemplate(testLogger(), config.KafkaConfig{Brokers: []string{"localhost:9092"}})),
-		infratelemetry.WithExporter(postgres.ExporterName, postgres.NewTemplate(testLogger())),
+		infratelemetry.WithExporter(postgres.ExporterName, postgres.NewTemplate(testLogger(), &config.DatabaseConfig{
+			Host: "localhost", Port: 5432, User: "test", Name: "test", SSLMode: "disable",
+		})),
 	)
 }
 
@@ -97,9 +99,11 @@ func TestExporterLocator_Validate(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	t.Run("postgres without a dsn is rejected", func(t *testing.T) {
+	t.Run("postgres without a dsn falls back to service DatabaseConfig", func(t *testing.T) {
+		// Structural validation must pass; the pool is opened lazily and uses
+		// the service DatabaseConfig when neither dsn nor dsn_env is set (RUN-1086).
 		err := locator.Validate(telemetrydomain.ExporterConfig{Name: postgres.ExporterName, Settings: map[string]interface{}{}})
-		require.Error(t, err)
+		require.NoError(t, err)
 	})
 }
 

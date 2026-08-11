@@ -49,6 +49,8 @@ func (stubPricing) Resolve(context.Context, string, string) appcatalog.Pricing {
 	return appcatalog.Pricing{}
 }
 
+func (stubPricing) InvalidateCache() {}
+
 func TestMCPPipeline_ToolsCallBuildsMCPEvent(t *testing.T) {
 	worker := appmetricsmocks.NewWorker(t)
 
@@ -79,7 +81,7 @@ func TestMCPPipeline_ToolsCallBuildsMCPEvent(t *testing.T) {
 		CallTool(mock.Anything, mock.Anything, "echo", mock.Anything).
 		Return(json.RawMessage(`{"content":[]}`), nil).
 		Once()
-	gateway := mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(nil, nil))
+	gateway := mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(nil, nil), nil)
 
 	gatewayID := ids.New[ids.GatewayKind]()
 	app := fiber.New()
@@ -113,6 +115,6 @@ func TestMCPPipeline_ToolsCallBuildsMCPEvent(t *testing.T) {
 	assert.Equal(t, "tools/call", evt.MCP.Method)
 	assert.Equal(t, "tool", evt.MCP.Operation)
 	assert.Equal(t, "echo", evt.MCP.Tool)
-	assert.Equal(t, "ok", evt.MCP.UpstreamStatus)
+	assert.Equal(t, 200, evt.MCP.UpstreamStatus)
 	assert.Equal(t, "consumer-1", evt.Consumer.ID)
 }

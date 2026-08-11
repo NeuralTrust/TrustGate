@@ -153,6 +153,108 @@ func TestUpdateConsumer_Partial_EmptyTypePreservesExisting(t *testing.T) {
 	assert.Equal(t, "MCP", body["type"], "empty type must be treated as no-change, not reset to LLM")
 }
 
+// TestUpdateConsumer_SwitchRoleBasedToInlineWithRegistries covers the routing
+// switch a UI performs in one step: the registry links cannot be created before
+// the consumer leaves role_based mode, so they travel in the update body.
+func TestUpdateConsumer_SwitchRoleBasedToInlineWithRegistries(t *testing.T) {
+	defer Track(t, "UpdateConsumer")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-upd-rb2inline-gw")})
+	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-rb2inline-be")))
+	roleID := CreateRole(t, gwID, map[string]any{"name": uniqueName("co-upd-rb2inline-role")})
+	name := uniqueName("co-upd-rb2inline")
+	coID := CreateConsumer(t, gwID, map[string]any{
+		"name":         name,
+		"routing_mode": "role_based",
+		"roles":        []string{roleID},
+	})
+
+	// Attaching through the association endpoint is what fails while the
+	// consumer is still role_based.
+	status, body := sendRequest(t, http.MethodPost,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s/registries/%s", AdminURL, gwID, coID, beID),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusConflict, status, "body=%v", body)
+
+	status, body = sendRequest(t, http.MethodPut,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gwID, coID),
+		nil, map[string]any{
+			"name":           name,
+			"routing_mode":   "inline",
+			"registries":     []map[string]any{{"id": beID, "weight": 40}},
+			"model_policies": []map[string]any{{"registry_id": beID, "default": "gpt-4o-mini"}},
+		},
+	)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+
+	got := getConsumer(t, gwID, coID)
+	assert.Equal(t, "inline", got["routing_mode"])
+	assert.Empty(t, idSet(t, got, "role_ids"), "roles must be dropped on the switch to inline")
+	registries := idSet(t, got, "registry_ids")
+	require.Len(t, registries, 1)
+	assert.Contains(t, registries, beID)
+}
+
+// TestUpdateConsumer_RegistriesReplaceAssociationSet asserts the field is a full
+// replacement: registries missing from the list are detached.
+func TestUpdateConsumer_RegistriesReplaceAssociationSet(t *testing.T) {
+	defer Track(t, "UpdateConsumer")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-upd-replace-gw")})
+	be1 := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-replace-be1")))
+	be2 := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-replace-be2")))
+	name := uniqueName("co-upd-replace")
+	coID := CreateConsumerWithRegistries(t, gwID, name, be1, be2)
+
+	status, body := sendRequest(t, http.MethodPut,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gwID, coID),
+		nil, map[string]any{"name": name, "registries": []map[string]any{{"id": be2}}},
+	)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+
+	got := idSet(t, getConsumer(t, gwID, coID), "registry_ids")
+	require.Len(t, got, 1)
+	assert.Contains(t, got, be2)
+}
+
+// TestUpdateConsumer_RejectsRegistriesInRoleBasedMode keeps the invariant that a
+// role_based consumer never holds registry links.
+func TestUpdateConsumer_RejectsRegistriesInRoleBasedMode(t *testing.T) {
+	defer Track(t, "UpdateConsumer")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-upd-rb-reg-gw")})
+	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-rb-reg-be")))
+	name := uniqueName("co-upd-rb-reg")
+	coID := CreateConsumer(t, gwID, validConsumerPayload(name))
+
+	status, body := sendRequest(t, http.MethodPut,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gwID, coID),
+		nil, map[string]any{
+			"name":         name,
+			"routing_mode": "role_based",
+			"registries":   []map[string]any{{"id": beID}},
+		},
+	)
+	require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
+	assert.Equal(t, "validation_failed", body["error"])
+}
+
+// TestUpdateConsumer_RejectsRegistryFromAnotherGateway keeps the association set
+// inside the gateway boundary.
+func TestUpdateConsumer_RejectsRegistryFromAnotherGateway(t *testing.T) {
+	defer Track(t, "UpdateConsumer")()
+	gwA := CreateGateway(t, map[string]any{"slug": uniqueName("co-upd-xgw-a")})
+	gwB := CreateGateway(t, map[string]any{"slug": uniqueName("co-upd-xgw-b")})
+	foreign := CreateRegistry(t, gwB, validRegistryPayload(uniqueName("co-upd-xgw-be")))
+	name := uniqueName("co-upd-xgw")
+	coID := CreateConsumer(t, gwA, validConsumerPayload(name))
+
+	status, body := sendRequest(t, http.MethodPut,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gwA, coID),
+		nil, map[string]any{"name": name, "registries": []map[string]any{{"id": foreign}}},
+	)
+	require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
+	assert.Equal(t, "validation_failed", body["error"])
+}
+
 func TestUpdateConsumer_NotFound(t *testing.T) {
 	defer Track(t, "UpdateConsumer")()
 	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("co-upd-missing-gw")})

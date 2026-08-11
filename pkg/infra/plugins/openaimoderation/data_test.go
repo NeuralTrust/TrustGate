@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
 func TestSetExtrasNilSafe(t *testing.T) {
@@ -32,6 +33,33 @@ func TestSetExtrasNilSafe(t *testing.T) {
 	assert.NotPanics(t, func() {
 		setExtras(metrics.NewEventContext(nil), ModerationData{Decision: "allowed"})
 	})
+}
+
+func TestRecordScoreSetsMaxCategory(t *testing.T) {
+	t.Parallel()
+	assert.NotPanics(t, func() {
+		recordScore(nil, ModerationData{MaxScoreCategory: "hate", MaxScore: 0.9})
+	})
+
+	rt := trace.New("t", trace.Metadata{})
+	span := rt.StartSpan(trace.SpanPlugin, PluginName)
+	recordScore(metrics.NewEventContext(span), ModerationData{MaxScoreCategory: "hate", MaxScore: 0.87})
+
+	attrs := span.PluginAttrsCopy()
+	require.Equal(t, "hate", attrs.ScoreLabel)
+	require.NotNil(t, attrs.Score)
+	assert.InDelta(t, 0.87, *attrs.Score, 1e-9)
+}
+
+func TestRecordScoreNoCategoryIsNoOp(t *testing.T) {
+	t.Parallel()
+	rt := trace.New("t", trace.Metadata{})
+	span := rt.StartSpan(trace.SpanPlugin, PluginName)
+	recordScore(metrics.NewEventContext(span), ModerationData{MaxScore: 0.5})
+
+	attrs := span.PluginAttrsCopy()
+	assert.Empty(t, attrs.ScoreLabel)
+	assert.Nil(t, attrs.Score)
 }
 
 func TestModerationDataOmitempty(t *testing.T) {

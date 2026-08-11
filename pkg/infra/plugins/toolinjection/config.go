@@ -24,6 +24,8 @@ const (
 	conflictGatewayWins = "gateway_wins"
 	conflictClientWins  = "client_wins"
 	conflictReject      = "reject"
+
+	toolTypeFunction = "function"
 )
 
 var validScopes = map[string]struct{}{
@@ -79,6 +81,11 @@ func (c *config) validate() error {
 	for i := range c.InjectTools {
 		if c.InjectTools[i].Function.Name == "" {
 			return fmt.Errorf("tool_injection: inject_tools[%d]: function.name must not be empty", i)
+		}
+		// Every entry becomes a function tool whatever the type says, so a type
+		// the plugin cannot honour is refused rather than silently reinterpreted.
+		if t := c.InjectTools[i].Type; t != "" && t != toolTypeFunction {
+			return fmt.Errorf("tool_injection: inject_tools[%d]: type must be %q", i, toolTypeFunction)
 		}
 	}
 	if len(c.InjectTools) == 0 {

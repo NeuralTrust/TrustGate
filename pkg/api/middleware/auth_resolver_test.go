@@ -129,6 +129,91 @@ func TestAuthMiddleware_APIKeyInlineSuccess(t *testing.T) {
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
 }
 
+func TestAuthMiddleware_APIKeyBearerInlineSuccess(t *testing.T) {
+	t.Parallel()
+	gw, rc, rawKey := inlineConsumerWithAPIKey(t)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{}, nil)
+
+	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
+	req.Host = "acme.gw.neuraltrust.ai"
+	req.Header.Set(fiber.HeaderAuthorization, "Bearer "+rawKey)
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+}
+
+func TestAuthMiddleware_APIKeyCompatHeaderInlineSuccess(t *testing.T) {
+	t.Parallel()
+	gw, rc, rawKey := inlineConsumerWithAPIKey(t)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{}, nil)
+
+	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
+	req.Host = "acme.gw.neuraltrust.ai"
+	req.Header.Set(resolver.HeaderAPIKeyCompat, rawKey)
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+}
+
+func TestAuthMiddleware_APIKeyBearerUnknownUnauthorized(t *testing.T) {
+	t.Parallel()
+	gw, rc, _ := inlineConsumerWithAPIKey(t)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{}, nil)
+
+	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
+	req.Host = "acme.gw.neuraltrust.ai"
+	req.Header.Set(fiber.HeaderAuthorization, "Bearer ag_unknown")
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+}
+
+func TestAuthMiddleware_APIKeyBearerValidElsewhereForbidden(t *testing.T) {
+	t.Parallel()
+	gw, rc, _ := inlineConsumerWithAPIKey(t)
+	otherRawKey := "ag_other"
+	otherAuthID := ids.New[ids.AuthKind]()
+	otherRC := appconsumer.RoutableConsumer{
+		Consumer: &consumerdomain.Consumer{
+			ID:          ids.New[ids.ConsumerKind](),
+			GatewayID:   gw.ID,
+			Slug:        "other123",
+			RoutingMode: consumerdomain.RoutingModeInline,
+			Active:      true,
+			AuthIDs:     []ids.AuthID{otherAuthID},
+		},
+		Auths: []*authdomain.Auth{{
+			ID:        otherAuthID,
+			GatewayID: gw.ID,
+			Type:      authdomain.TypeAPIKey,
+			Enabled:   true,
+			KeyHash:   authdomain.HashAPIKey(otherRawKey),
+		}},
+	}
+	data := appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc, otherRC})
+	app := newAuthTestApp(t, gw, data, fakeOAuth2Verifier{}, fakeOIDCVerifier{}, nil)
+
+	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
+	req.Host = "acme.gw.neuraltrust.ai"
+	req.Header.Set(fiber.HeaderAuthorization, "Bearer "+otherRawKey)
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+}
+
+func TestAuthMiddleware_APIKeyBearerRoleBasedForbidden(t *testing.T) {
+	t.Parallel()
+	gw, rc, rawKey := roleBasedConsumerWithAPIKey(t)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeOIDCVerifier{}, nil)
+
+	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
+	req.Host = "acme.gw.neuraltrust.ai"
+	req.Header.Set(fiber.HeaderAuthorization, "Bearer "+rawKey)
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+}
+
 func TestAuthMiddleware_APIKeyValidElsewhereForbidden(t *testing.T) {
 	t.Parallel()
 	gw, rc, _ := inlineConsumerWithAPIKey(t)
@@ -430,6 +515,31 @@ func inlineConsumerWithAPIKey(t *testing.T) (*gatewaydomain.Gateway, appconsumer
 			GatewayID:   gw.ID,
 			Slug:        "cons1234",
 			RoutingMode: consumerdomain.RoutingModeInline,
+			Active:      true,
+			AuthIDs:     []ids.AuthID{authID},
+		},
+		Auths: []*authdomain.Auth{{
+			ID:        authID,
+			GatewayID: gw.ID,
+			Type:      authdomain.TypeAPIKey,
+			Enabled:   true,
+			KeyHash:   authdomain.HashAPIKey(rawKey),
+		}},
+	}
+	return gw, rc, rawKey
+}
+
+func roleBasedConsumerWithAPIKey(t *testing.T) (*gatewaydomain.Gateway, appconsumer.RoutableConsumer, string) {
+	t.Helper()
+	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
+	authID := ids.New[ids.AuthKind]()
+	rawKey := "ag_secret"
+	rc := appconsumer.RoutableConsumer{
+		Consumer: &consumerdomain.Consumer{
+			ID:          ids.New[ids.ConsumerKind](),
+			GatewayID:   gw.ID,
+			Slug:        "cons1234",
+			RoutingMode: consumerdomain.RoutingModeRoleBased,
 			Active:      true,
 			AuthIDs:     []ids.AuthID{authID},
 		},

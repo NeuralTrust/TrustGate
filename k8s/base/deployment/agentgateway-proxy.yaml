@@ -8,6 +8,11 @@ metadata:
     component: proxy
 spec:
   replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app.kubernetes.io/instance: agentgateway
@@ -20,6 +25,7 @@ spec:
         app.kubernetes.io/component: proxy
         component: proxy
     spec:
+      terminationGracePeriodSeconds: 60
       serviceAccountName: agentgateway
       containers:
       - name: proxy
@@ -28,7 +34,7 @@ spec:
         workingDir: /app
         args:
         - proxy
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
             name: agentgateway-config
@@ -50,6 +56,12 @@ spec:
           requests:
             cpu: 1000m
             memory: 2Gi
+        startupProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          periodSeconds: 5
+          failureThreshold: 30
         readinessProbe:
           httpGet:
             path: /readyz
@@ -93,8 +105,8 @@ spec:
           requiredDuringSchedulingIgnoredDuringExecution:
           - labelSelector:
               matchExpressions:
-              - key: app
+              - key: component
                 operator: In
                 values:
-                - agentgateway-proxy
+                - proxy
             topologyKey: kubernetes.io/hostname

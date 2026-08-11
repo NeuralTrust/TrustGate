@@ -21,13 +21,10 @@ x-server-common: &server-common
   environment:
     DB_HOST: postgres
     REDIS_HOST: redis
-    KAFKA_BROKERS: kafka:9092
   depends_on:
     postgres:
       condition: service_healthy
     redis:
-      condition: service_healthy
-    kafka:
       condition: service_healthy
   restart: unless-stopped
 

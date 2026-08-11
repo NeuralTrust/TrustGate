@@ -23,6 +23,19 @@ import (
 )
 
 var ErrInvalidModes = errors.New("plugin: invalid declared modes")
+var ErrModeNotSupported = errors.New("plugin: mode not supported")
+
+// ValidateMode reports whether a policy may run the plugin in the given mode.
+// An empty mode is the default one, which every plugin supports.
+func ValidateMode(p PluginDescriptor, selected policy.Mode) error {
+	mode := selected.Normalize()
+	for _, m := range p.SupportedModes() {
+		if m == mode {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: %q", ErrModeNotSupported, mode)
+}
 
 func validateDeclaredModes(name string, modes []policy.Mode) error {
 	if len(modes) == 0 {

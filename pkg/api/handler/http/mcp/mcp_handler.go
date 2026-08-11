@@ -15,16 +15,25 @@
 package mcp
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
+	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
+	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
 )
@@ -52,6 +61,9 @@ const (
 const (
 	codeConsentRequired  = -32003
 	codeResourceNotFound = -32002
+	// codePolicyBlocked mirrors the app-layer policy-denial code, so a toolkit
+	// denial is classified alongside plugin blocks.
+	codePolicyBlocked = -32001
 )
 
 type Handler struct {
@@ -122,7 +134,7 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 	switch req.Method {
 	case "initialize":
 		h.recordInitialize(c)
-		return h.handleInitialize(c, req)
+		return h.handleInitialize(c, req, rc)
 	case "ping":
 		skipMetrics(c)
 		return writeRPCResult(c, req.ID, struct{}{})
@@ -151,7 +163,7 @@ func (h *Handler) recordInitialize(c *fiber.Ctx) {
 	}
 	span := rt.StartSpan(trace.SpanMCP, "initialize")
 	span.SetMCPRequest("initialize", "initialize", "", "", "")
-	span.SetMCPStatus("ok", 0)
+	span.SetMCPStatus(fiber.StatusOK, 0)
 	span.End()
 }
 
@@ -159,7 +171,7 @@ type initializeParams struct {
 	ProtocolVersion string `json:"protocolVersion"`
 }
 
-func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest) error {
+func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer.RoutableConsumer) error {
 	var params initializeParams
 	_ = json.Unmarshal(req.Params, &params)
 	version := latestProtocolVersion
@@ -175,30 +187,78 @@ func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest) error {
 		},
 		"serverInfo": fiber.Map{
 			"name":    serverName,
-			"version": serverVersion,
+			"version": serverVersion + "+" + surfaceFingerprint(rc),
 		},
 	})
+}
+
+// surfaceFingerprint summarises everything that decides which tools a virtual
+// MCP exposes: the bound MCP registries, when each was last changed, and the
+// toolkit that filters them. It rides in serverInfo.version as semver build
+// metadata, so a client that caches a server's tool list keyed on its reported
+// version re-lists after the consumer is reconfigured. Without it every virtual
+// MCP reports a constant "1.0" forever and a newly attached registry stays
+// invisible until the client is reinstalled.
+func surfaceFingerprint(rc *appconsumer.RoutableConsumer) string {
+	if rc == nil || rc.Consumer == nil {
+		return "0"
+	}
+	parts := make([]string, 0, len(rc.Registries))
+	for _, reg := range rc.Registries {
+		if reg == nil || !reg.IsMCP() {
+			continue
+		}
+		parts = append(parts, reg.ID.String()+"@"+reg.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	}
+	entries := make([]string, 0, len(rc.Consumer.Toolkit()))
+	for _, e := range rc.Consumer.Toolkit() {
+		entries = append(entries, "tk:"+e.RegistryID.String()+"/"+e.Tool+"/"+e.Prompt+"/"+e.Resource+"/"+e.ExposeAs)
+	}
+	// Neither list has a guaranteed order across replicas or reloads — the
+	// role-derived toolkit is a union — so sort both: the same configuration
+	// must always fingerprint the same.
+	sort.Strings(parts)
+	sort.Strings(entries)
+	sum := sha256.Sum256([]byte(strings.Join(append(parts, entries...), "|")))
+	return hex.EncodeToString(sum[:6])
 }
 
 func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 	var (
 		rpcErr        *appmcp.RPCError
 		consentErr    *appmcp.ConsentRequiredError
+		notPermitted  *appmcp.ToolNotPermittedError
 		invalidParams *InvalidParamsError
 	)
 	switch {
 	case errors.As(err, &rpcErr):
-		return writeJSON(c, rpcResponse{
+		switch {
+		case appmcp.IsPolicyBlockedCode(rpcErr.Code):
+			middleware.SetOpsOutcome(c, o11y.OutcomeDeniedPolicy)
+		case rpcErr.Code == appmcp.CodeRateLimited:
+			middleware.SetOpsOutcome(c, o11y.OutcomeDeniedThrottled)
+		default:
+			middleware.SetOpsOutcome(c, o11y.OutcomeServerError)
+		}
+		applyRPCErrorHeaders(c, rpcErr)
+		return writeJSONStatus(c, httpStatusForRPCError(rpcErr), rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
 			Error:   &rpcError{Code: int(rpcErr.Code), Message: rpcErr.Message, Data: rpcErr.Data},
 		})
 	case errors.As(err, &consentErr):
+		middleware.SetOpsOutcome(c, o11y.OutcomeClientError)
 		connectURL := fmt.Sprintf("%s%s/connect?ticket=%s", c.BaseURL(), consentErr.Path, consentErr.Ticket)
 		data, _ := json.Marshal(fiber.Map{
 			"provider":    consentErr.Provider,
 			"connect_url": connectURL,
 		})
+		// HTTP 200 carrying a JSON-RPC error, not a 4xx. MCP streamable-HTTP
+		// clients treat any non-2xx on this endpoint as a transport failure: they
+		// drop the connection and restart authentication instead of reading the
+		// body, so the connect URL never reaches the user. The refusal is
+		// reported to the agent through the JSON-RPC error, and the semantic
+		// status (403) is recorded on the span for metrics and traces.
 		return writeJSON(c, rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
@@ -207,6 +267,17 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 				Message: fmt.Sprintf("user consent required: open %s to connect %s", connectURL, consentErr.Provider),
 				Data:    data,
 			},
+		})
+	case errors.As(err, &notPermitted):
+		// A denial the agent should read and act on, so it rides on HTTP 200 for
+		// the same transport reason as the consent case above; the span records
+		// it as forbidden. Written inline rather than through writeRPCError,
+		// which would reclassify the outcome as a generic client error.
+		middleware.SetOpsOutcome(c, o11y.OutcomeDeniedPolicy)
+		return writeJSON(c, rpcResponse{
+			JSONRPC: "2.0",
+			ID:      normalizeID(id),
+			Error:   &rpcError{Code: codePolicyBlocked, Message: notPermitted.Error()},
 		})
 	case errors.As(err, &invalidParams):
 		return writeRPCError(c, id, codeInvalidParams, invalidParams.Reason)
@@ -223,6 +294,13 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 		return writeRPCError(c, id, codeResourceNotFound, err.Error())
 	case errors.Is(err, appmcp.ErrNoMCPRegistries):
 		return writeRPCError(c, id, codeInvalidRequest, err.Error())
+	case errors.Is(err, ratelimitapp.ErrUnavailable):
+		middleware.SetOpsOutcome(c, o11y.OutcomeServerError)
+		return writeJSONStatus(c, fiber.StatusServiceUnavailable, rpcResponse{
+			JSONRPC: "2.0",
+			ID:      normalizeID(id),
+			Error:   &rpcError{Code: int(appmcp.CodeUnavailable), Message: err.Error()},
+		})
 	default:
 		return writeRPCError(c, id, codeInternalError, err.Error())
 	}
@@ -245,6 +323,11 @@ func writeRawRPCResult(c *fiber.Ctx, id json.RawMessage, result json.RawMessage)
 }
 
 func writeRPCError(c *fiber.Ctx, id json.RawMessage, code int, message string) error {
+	outcome := o11y.OutcomeClientError
+	if code == codeInternalError {
+		outcome = o11y.OutcomeServerError
+	}
+	middleware.SetOpsOutcome(c, outcome)
 	return writeJSON(c, rpcResponse{
 		JSONRPC: "2.0",
 		ID:      normalizeID(id),
@@ -253,7 +336,35 @@ func writeRPCError(c *fiber.Ctx, id json.RawMessage, code int, message string) e
 }
 
 func writeJSON(c *fiber.Ctx, body any) error {
-	return c.Status(fiber.StatusOK).JSON(body)
+	return writeJSONStatus(c, fiber.StatusOK, body)
+}
+
+func writeJSONStatus(c *fiber.Ctx, status int, body any) error {
+	return c.Status(status).JSON(body)
+}
+
+// httpStatusForRPCError maps gateway denials onto the wire HTTP status so
+// agents and telemetry see the real outcome. Upstream JSON-RPC errors stay on 200.
+// httpStatusForRPCError is always 200: on the MCP wire a JSON-RPC error is a
+// successful exchange carrying a failed call. Clients treat a 4xx/5xx here as a
+// transport failure — they drop the connection and restart authentication
+// without reading the body — so a policy denial answered with 403 killed the
+// session instead of telling the agent it was blocked. The status the refusal
+// means (403, 429, 503) is recorded on the span, and rate-limit headers still
+// ride along on the response.
+func httpStatusForRPCError(_ *appmcp.RPCError) int {
+	return fiber.StatusOK
+}
+
+func applyRPCErrorHeaders(c *fiber.Ctx, err *appmcp.RPCError) {
+	if err == nil {
+		return
+	}
+	for name, values := range err.HTTPHeaders {
+		for _, value := range values {
+			c.Response().Header.Add(name, value)
+		}
+	}
 }
 
 func normalizeID(id json.RawMessage) json.RawMessage {
@@ -297,7 +408,11 @@ func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 	if rc.Consumer.Type != consumerdomain.TypeMCP {
 		return nil, fiber.NewError(fiber.StatusNotFound, "consumer is not an MCP consumer")
 	}
-	if !hasAuth(rc, authID) {
+	// The built-in NeuralTrust default identity provider is not attached to the
+	// consumer's AuthIDs (the consumer has no identity provider of its own). The
+	// auth chain only resolves a default-IdP session on a path that has no
+	// oauth2 provider, so accepting it here is consistent with that scoping.
+	if !hasAuth(rc, authID) && authID != appauth.DefaultIdPAuthID() {
 		return nil, fiber.NewError(fiber.StatusForbidden, "credential not allowed for this consumer")
 	}
 	return rc, nil

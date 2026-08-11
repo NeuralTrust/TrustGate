@@ -62,7 +62,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"rate_limiter": {
 		name:        "Rate Limiter",
 		group:       groupTrafficControl,
-		description: "Limit request volume using a sliding window. The limit applies gateway-wide when the policy is global, otherwise per consumer.",
+		description: "Limit request volume with a sliding window. Counts gateway-wide for global policies, otherwise per consumer, with an optional header-based partition.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -76,15 +76,14 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "window",
 					Label:       "Window",
 					Type:        FieldTypeDuration,
-					Description: "Sliding window duration (e.g. 1s, 1m, 1h).",
+					Description: "Sliding window duration, one second or longer (e.g. 1s, 1m, 1h).",
 					Required:    true,
 				},
 				{
 					Key:         "retry_after",
 					Label:       "Retry After",
 					Type:        FieldTypeString,
-					Description: "Value sent in the Retry-After header, in seconds, when the limit is exceeded.",
-					Default:     "60",
+					Description: "Value sent in the Retry-After header, in seconds, when the limit is exceeded. Defaults to the window, which is when the budget actually returns.",
 				},
 				{
 					Key:         "group_by_header",
@@ -98,7 +97,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"request_size_limiter": {
 		name:        "Request Size Limiter",
 		group:       groupTrafficControl,
-		description: "Reject requests whose body exceeds configured byte or character limits.",
+		description: "Reject requests whose body exceeds configured byte or character limits, and optionally require a Content-Length header before the request continues.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -121,7 +120,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "max_chars_per_request",
 					Label:       "Max Characters Per Request",
 					Type:        FieldTypeInteger,
-					Description: "Maximum number of UTF-8 characters allowed in the request body.",
+					Description: "Maximum number of UTF-8 characters allowed in the request body. Leave it out to use the default; zero is not a valid ceiling.",
 					Default:     100000,
 				},
 				{
@@ -137,7 +136,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"token_rate_limiter": {
 		name:        "LLM Budget",
 		group:       groupQuota,
-		description: "Cap LLM spend with token or dollar budgets over time windows, as one aggregate counter or per-model rules. Applies gateway-wide for global policies, otherwise per consumer.",
+		description: "Cap LLM spend with token or dollar budgets over time windows, as one aggregate counter or per-model rules. Global applies gateway-wide; otherwise per consumer.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -225,13 +224,6 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Description: "Target model used when behavior is downgrade_model. Must be on the same provider.",
 				},
 				{
-					Key:         "stream_usage_injection",
-					Label:       "Stream Usage Injection",
-					Type:        FieldTypeBoolean,
-					Description: "Request and inject usage on streaming responses so accrual works on streams.",
-					Default:     false,
-				},
-				{
 					Key:         "count_cache_reads",
 					Label:       "Count Cache Reads",
 					Type:        FieldTypeBoolean,
@@ -275,7 +267,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"per_tool_rate_limiter": {
 		name:        "Per-Tool Rate Limiter",
 		group:       groupTrafficControl,
-		description: "Count and enforce limits per real tool execution across LLM and native MCP traffic. The limit applies gateway-wide when the policy is global, otherwise per consumer.",
+		description: "Enforce limits per real tool execution across LLM and native MCP traffic, with sliding windows. Applies gateway-wide for global policies, otherwise per consumer.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -328,7 +320,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 								Key:         "behavior",
 								Label:       "Behavior",
 								Type:        FieldTypeEnum,
-								Description: "Action when a window is exceeded. reject_response and strip_tool_from_request act on the next request (PreRequest); inject_error_result rewrites the response (PreResponse). Defaults to the policy-level default behavior.",
+								Description: "Action when a window is exceeded. reject_response and strip_tool_from_request act on the next request (PreRequest); inject_error_result rewrites the response (PreResponse). Defaults to the policy-level default behavior. LLM consumers only: on MCP the gateway is the tool caller, so there is no request to rewrite and only reject_response can be attached.",
 								Enum:        enumOptions("reject_response", "inject_error_result", "strip_tool_from_request"),
 							},
 						},
@@ -338,16 +330,9 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "behavior_default",
 					Label:       "Default Behavior",
 					Type:        FieldTypeEnum,
-					Description: "Behavior applied to rules without an explicit behavior and to tools matched by a catch-all rule.",
+					Description: "Behavior applied to rules without an explicit behavior and to tools matched by a catch-all rule. LLM consumers only: on MCP a policy can only be attached with reject_response.",
 					Enum:        enumOptions("reject_response", "inject_error_result", "strip_tool_from_request"),
 					Default:     "reject_response",
-				},
-				{
-					Key:         "scope",
-					Label:       "Scope",
-					Type:        FieldTypeEnum,
-					Description: "Informational; effective scope derives from the policy global flag.",
-					Enum:        enumOptions("consumer", "global"),
 				},
 			},
 		},
@@ -355,7 +340,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"semantic_cache": {
 		name:        "Semantic Cache",
 		group:       groupRouting,
-		description: "Serve cached responses for exact or semantically similar requests, with configurable match mode, scope, and vector store.",
+		description: "Serve cached responses for exact or semantically similar requests. Configure match mode, cache scope, and the vector store used for similarity lookup.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -476,7 +461,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"model_allowlist": {
 		name:        "Model Allowlist",
 		group:       groupRouting,
-		description: "Restrict which models a consumer or gateway may call, matching by name with glob patterns. Reject disallowed models with a 403 or transparently substitute them.",
+		description: "Restrict which models a consumer or gateway may call, matching names with glob patterns. Reject disallowed models with a 403 or transparently substitute them.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -513,7 +498,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"tool_allowlist": {
 		name:        "Tool Allowlist",
 		group:       groupRouting,
-		description: "Glob-based access control for the request tools[] array: allow_tools whitelists patterns and deny_tools removes patterns (deny overrides allow) before the model sees the tools. When filtering empties the array, reject the request, strip the tools field, or pass through an empty array. Scope is informational; effective scope derives from the policy global flag.",
+		description: "Control which tools appear on the request with allow and deny glob patterns. Deny wins; choose how to handle an empty tools list after filtering.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -559,7 +544,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Label:       "Template Engine",
 					Type:        FieldTypeEnum,
 					Description: "Placeholder rendering engine. Only mustache is supported in v1.",
-					Enum:        enumOptions("mustache", "jinja2_subset"),
+					Enum:        enumOptions("mustache"),
 					Default:     "mustache",
 				},
 				{
@@ -760,10 +745,73 @@ var pluginCatalogMeta = map[string]catalogMeta{
 			},
 		},
 	},
+	"prompt_compression": {
+		name:        "Prompt Compression",
+		group:       groupPromptManagement,
+		description: "Shrink the request prompt before the model: minify JSON, strip ANSI escapes, and collapse whitespace. Deterministic and fail-open to keep prompt caches stable.",
+		schema: SettingsSchema{
+			Fields: []Field{
+				{
+					Key:         "compress_json",
+					Label:       "Compress JSON",
+					Type:        FieldTypeBoolean,
+					Description: "Minify standalone JSON message content, ```json fenced blocks and tool-call arguments. At least one transform must stay enabled.",
+					Default:     true,
+				},
+				{
+					Key:         "normalize_whitespace",
+					Label:       "Normalize Whitespace",
+					Type:        FieldTypeBoolean,
+					Description: "Trim trailing spaces per line, keeping Markdown hard line breaks, and collapse runs of blank lines.",
+					Default:     true,
+				},
+				{
+					Key:         "strip_ansi",
+					Label:       "Strip ANSI Escapes",
+					Type:        FieldTypeBoolean,
+					Description: "Remove ANSI colour and cursor sequences, common in captured terminal and CI logs.",
+					Default:     true,
+				},
+				{
+					Key:         "max_consecutive_blank_lines",
+					Label:       "Max Consecutive Blank Lines",
+					Type:        FieldTypeInteger,
+					Description: "Longest run of blank lines kept when whitespace is normalized. Between 1 and 1000.",
+					Default:     1,
+				},
+				{
+					Key:         "min_length",
+					Label:       "Minimum Content Length",
+					Type:        FieldTypeInteger,
+					Description: "Skip message content shorter than this many bytes; 0 compresses everything. Leaving small messages byte-identical protects provider prompt-cache prefixes.",
+					Default:     256,
+				},
+				{
+					Key:         "max_body_bytes",
+					Label:       "Max Body Bytes",
+					Type:        FieldTypeInteger,
+					Description: "Skip the whole pipeline for request bodies larger than this, bounding per-request CPU cost; 0 disables the cap.",
+					Default:     1048576,
+				},
+				{
+					Key:         "target_roles",
+					Label:       "Target Roles",
+					Type:        FieldTypeArray,
+					Description: "Restrict compression to messages with these roles. Empty compresses every role.",
+					Item: &Field{
+						Key:   "role",
+						Label: "Role",
+						Type:  FieldTypeEnum,
+						Enum:  enumOptions("system", "user", "assistant", "tool"),
+					},
+				},
+			},
+		},
+	},
 	"tool_injection": {
 		name:        "Tool Injection",
 		group:       groupToolGovernance,
-		description: "Inject operator-authored tools into the request before it reaches the model; name collisions are resolved by the on_conflict policy. A governance layer, not an access gate.",
+		description: "Inject operator-authored tools into the request before the model runs. Name collisions follow the on_conflict policy; this is governance, not an access gate.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -836,7 +884,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"trustguard": {
 		name:        "TrustGuard",
 		group:       groupGuardrails,
-		description: "Inspect request and/or response content with the external TrustGuard service and block flagged content. Fails open on any error; streaming responses cannot be blocked in realtime.",
+		description: "Inspect request or response content with TrustGuard, block flagged material, and apply data-masking. Fails open on guard errors. Streaming responses are inspected after the stream completes (post_response), not live.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -860,7 +908,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"openai_moderation": {
 		name:        "OpenAI Moderation",
 		group:       groupGuardrails,
-		description: "Screen request and/or response text with the OpenAI Moderations API and block content that crosses configured category thresholds. Fails closed in enforce mode. Text-only.",
+		description: "Screen request or response text with the OpenAI Moderations API and block content that crosses category thresholds. Fails closed in enforce mode. Text-only.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -937,7 +985,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"azure_content_safety": {
 		name:        "Azure Content Safety",
 		group:       groupGuardrails,
-		description: "Screen request content with the Azure AI Content Safety Analyze Text API and block categories whose severity meets the configured threshold. Fails closed in enforce mode.",
+		description: "Screen request text with Azure AI Content Safety and block categories whose severity meets the configured threshold. Fails closed in enforce mode.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -995,7 +1043,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"bedrock_guardrail": {
 		name:        "AWS Bedrock Guardrail",
 		group:       groupGuardrails,
-		description: "Apply an AWS Bedrock guardrail to request prompts and/or responses, blocking flagged content with a 403 or anonymizing PII in place. Streaming responses are passed through untouched.",
+		description: "Apply an AWS Bedrock guardrail to prompts and/or responses, blocking flagged content or anonymizing PII in place. Streaming responses pass through untouched.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
@@ -1043,7 +1091,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 							Key:         "use_role",
 							Label:       "Use IAM Role",
 							Type:        FieldTypeBoolean,
-							Description: "Assume an IAM role via STS instead of using static keys.",
+							Description: "Assume an IAM role via STS. On EKS, omit access keys and use the pod IRSA identity as the base.",
 							Default:     false,
 						},
 						{
@@ -1063,13 +1111,13 @@ var pluginCatalogMeta = map[string]catalogMeta{
 							Key:         "access_key_id",
 							Label:       "Access Key ID",
 							Type:        FieldTypeString,
-							Description: "Required for static-key auth (Use IAM Role disabled).",
+							Description: "Optional when Use IAM Role is enabled (IRSA / default chain). Required for static-key auth.",
 						},
 						{
 							Key:         "secret_access_key",
 							Label:       "Secret Access Key",
 							Type:        FieldTypeString,
-							Description: "Required for static-key auth (Use IAM Role disabled).",
+							Description: "Optional when Use IAM Role is enabled (IRSA / default chain). Required for static-key auth.",
 						},
 						{
 							Key:         "session_token",
@@ -1085,7 +1133,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"regex_replace": {
 		name:        "Regex Replace",
 		group:       groupGuardrails,
-		description: "Rewrite the request prompt or the LLM response with ordered RE2 regular expressions that chain, each rule seeing the previous rule's output. Streaming responses pass through untouched.",
+		description: "Rewrite the request prompt or LLM response with ordered RE2 regex rules that chain, each seeing the previous output. Streaming responses pass through untouched.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{

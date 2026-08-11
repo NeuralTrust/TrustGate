@@ -1,0 +1,19 @@
+# Default telemetry exporters for the metrics pipeline (ENG-1016).
+#
+# Mounted read-only at /etc/telemetry (TELEMETRY_EXPORTERS_FILE) and loaded at
+# boot; applied to every gateway that does not declare its own exporters.
+#
+# Both classes ship to the OTel Collector (ClickStack). Connection settings are
+# intentionally omitted so they resolve from the OTEL_EXPORTER_OTLP_* env vars
+# in config.env (endpoint, protocol, insecure, headers, timeout, compression);
+# nothing here is hardcoded per environment.
+#   - metadata: sanitized, non-sensitive request metadata.
+#   - raw: request/response payloads; an otlp exporter under raw emits the
+#     payloads instead of the sanitized metadata view.
+exporters:
+  metadata:
+    - name: metadata-otlp
+      type: otlp
+  raw:
+    - name: raw-otlp
+      type: otlp

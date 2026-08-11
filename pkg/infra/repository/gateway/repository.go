@@ -23,6 +23,7 @@ import (
 
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
@@ -66,6 +67,35 @@ func (r *Repository) Save(ctx context.Context, g *domain.Gateway) error {
 	if g == nil {
 		return errors.New("gateway repository: nil gateway")
 	}
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		return insertGatewayTx(ctx, tx, g)
+	})
+}
+
+// SaveWithTenantCap serializes the count-then-insert behind a tenant-keyed Postgres advisory lock so concurrent creates can't both pass the cap check.
+func (r *Repository) SaveWithTenantCap(ctx context.Context, g *domain.Gateway, tenantID string, maxInstances int) error {
+	if g == nil {
+		return errors.New("gateway repository: nil gateway")
+	}
+	if tenantID == "" || maxInstances <= 0 {
+		return r.Save(ctx, g)
+	}
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, tenantID); err != nil {
+			return fmt.Errorf("gateway repository: acquire tenant lock: %w", err)
+		}
+		var count int
+		if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM gateways WHERE metadata->>'tenant_id' = $1`, tenantID).Scan(&count); err != nil {
+			return fmt.Errorf("gateway repository: count by tenant: %w", err)
+		}
+		if count >= maxInstances {
+			return ratelimit.ErrInstanceLimit
+		}
+		return insertGatewayTx(ctx, tx, g)
+	})
+}
+
+func insertGatewayTx(ctx context.Context, tx pgx.Tx, g *domain.Gateway) error {
 	metadataBytes, err := marshalJSON(g.Metadata)
 	if err != nil {
 		return fmt.Errorf("gateway repository: marshal metadata: %w", err)
@@ -82,17 +112,19 @@ func (r *Repository) Save(ctx context.Context, g *domain.Gateway) error {
 	if err != nil {
 		return fmt.Errorf("gateway repository: marshal session_config: %w", err)
 	}
+	entitlementsBytes, err := marshalJSON(g.Entitlements)
+	if err != nil {
+		return fmt.Errorf("gateway repository: marshal entitlements: %w", err)
+	}
 	const query = `
-		INSERT INTO gateways (id, slug, status, domain, metadata, telemetry, client_tls, session_config, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
-	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, query,
-			g.ID, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, g.CreatedAt, g.UpdatedAt,
-		); err != nil {
-			return mapPgError(err)
-		}
-		return nil
-	})
+		INSERT INTO gateways (id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+	if _, err := tx.Exec(ctx, query,
+		g.ID, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, entitlementsBytes, g.CreatedAt, g.UpdatedAt,
+	); err != nil {
+		return mapPgError(err)
+	}
+	return nil
 }
 
 func (r *Repository) Update(ctx context.Context, g *domain.Gateway) error {
@@ -115,6 +147,10 @@ func (r *Repository) Update(ctx context.Context, g *domain.Gateway) error {
 	if err != nil {
 		return fmt.Errorf("gateway repository: marshal session_config: %w", err)
 	}
+	entitlementsBytes, err := marshalJSON(g.Entitlements)
+	if err != nil {
+		return fmt.Errorf("gateway repository: marshal entitlements: %w", err)
+	}
 	const query = `
 		UPDATE gateways
 		   SET slug           = $2,
@@ -124,11 +160,76 @@ func (r *Repository) Update(ctx context.Context, g *domain.Gateway) error {
 		       telemetry      = $6,
 		       client_tls     = $7,
 		       session_config = $8,
-		       updated_at     = $9
+		       entitlements   = $9,
+		       updated_at     = $10
 		 WHERE id = $1`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query,
-			g.ID, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, g.UpdatedAt,
+			g.ID, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, entitlementsBytes, g.UpdatedAt,
+		)
+		if err != nil {
+			return mapPgError(err)
+		}
+		if cmd.RowsAffected() == 0 {
+			return domain.ErrNotFound
+		}
+		return nil
+	})
+}
+
+// UpdateWithTenantCap serializes the count-then-update behind the same tenant advisory lock as SaveWithTenantCap.
+func (r *Repository) UpdateWithTenantCap(ctx context.Context, g *domain.Gateway, tenantID string, maxInstances int) error {
+	if g == nil {
+		return errors.New("gateway repository: nil gateway")
+	}
+	if tenantID == "" || maxInstances <= 0 {
+		return r.Update(ctx, g)
+	}
+	metadataBytes, err := marshalJSON(g.Metadata)
+	if err != nil {
+		return fmt.Errorf("gateway repository: marshal metadata: %w", err)
+	}
+	telemetryBytes, err := marshalJSON(g.Telemetry)
+	if err != nil {
+		return fmt.Errorf("gateway repository: marshal telemetry: %w", err)
+	}
+	clientTLSBytes, err := marshalJSON(g.ClientTLSConfig)
+	if err != nil {
+		return fmt.Errorf("gateway repository: marshal client_tls: %w", err)
+	}
+	sessionBytes, err := marshalJSON(g.SessionConfig)
+	if err != nil {
+		return fmt.Errorf("gateway repository: marshal session_config: %w", err)
+	}
+	entitlementsBytes, err := marshalJSON(g.Entitlements)
+	if err != nil {
+		return fmt.Errorf("gateway repository: marshal entitlements: %w", err)
+	}
+	const query = `
+		UPDATE gateways
+		   SET slug           = $2,
+		       status         = $3,
+		       domain         = $4,
+		       metadata       = $5,
+		       telemetry      = $6,
+		       client_tls     = $7,
+		       session_config = $8,
+		       entitlements   = $9,
+		       updated_at     = $10
+		 WHERE id = $1`
+	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, tenantID); err != nil {
+			return fmt.Errorf("gateway repository: acquire tenant lock: %w", err)
+		}
+		var count int
+		if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM gateways WHERE metadata->>'tenant_id' = $1`, tenantID).Scan(&count); err != nil {
+			return fmt.Errorf("gateway repository: count by tenant: %w", err)
+		}
+		if count > maxInstances {
+			return ratelimit.ErrInstanceLimit
+		}
+		cmd, err := tx.Exec(ctx, query,
+			g.ID, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, entitlementsBytes, g.UpdatedAt,
 		)
 		if err != nil {
 			return mapPgError(err)
@@ -175,7 +276,7 @@ func (r *Repository) Delete(ctx context.Context, id ids.GatewayID) error {
 
 func (r *Repository) FindByID(ctx context.Context, id ids.GatewayID) (*domain.Gateway, error) {
 	const query = `
-		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, created_at, updated_at
+		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at
 		  FROM gateways
 		 WHERE id = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, id)
@@ -191,7 +292,7 @@ func (r *Repository) FindByID(ctx context.Context, id ids.GatewayID) (*domain.Ga
 
 func (r *Repository) FindByDomain(ctx context.Context, host string) (*domain.Gateway, error) {
 	const query = `
-		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, created_at, updated_at
+		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at
 		  FROM gateways
 		 WHERE domain = $1 AND domain <> ''`
 	row := r.conn.Pool.QueryRow(ctx, query, host)
@@ -207,7 +308,7 @@ func (r *Repository) FindByDomain(ctx context.Context, host string) (*domain.Gat
 
 func (r *Repository) FindBySlug(ctx context.Context, slug string) (*domain.Gateway, error) {
 	const query = `
-		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, created_at, updated_at
+		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at
 		  FROM gateways
 		 WHERE slug = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, domain.NormalizeSlug(slug))
@@ -233,19 +334,21 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	const countQuery = `
 		SELECT COUNT(*)
 		  FROM gateways
-		 WHERE ($1 = '' OR lower(slug) LIKE '%' || lower($1) || '%')`
+		 WHERE ($1 = '' OR lower(slug) LIKE '%' || lower($1) || '%')
+		   AND ($2 = '' OR metadata->>'tenant_id' = $2)`
 	var total int
-	if err := r.conn.Pool.QueryRow(ctx, countQuery, filter.SlugContains).Scan(&total); err != nil {
+	if err := r.conn.Pool.QueryRow(ctx, countQuery, filter.SlugContains, filter.TenantID).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("gateway repository: count: %w", err)
 	}
 
 	const listQuery = `
-		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, created_at, updated_at
+		SELECT id, slug, status, domain, metadata, telemetry, client_tls, session_config, entitlements, created_at, updated_at
 		  FROM gateways
 		 WHERE ($1 = '' OR lower(slug) LIKE '%' || lower($1) || '%')
+		   AND ($2 = '' OR metadata->>'tenant_id' = $2)
 		 ORDER BY created_at DESC, id
-		 LIMIT $2 OFFSET $3`
-	rows, err := r.conn.Pool.Query(ctx, listQuery, filter.SlugContains, filter.Size, offset)
+		 LIMIT $3 OFFSET $4`
+	rows, err := r.conn.Pool.Query(ctx, listQuery, filter.SlugContains, filter.TenantID, filter.Size, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("gateway repository: list: %w", err)
 	}
@@ -265,16 +368,25 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	return items, total, nil
 }
 
+func (r *Repository) CountByTenantID(ctx context.Context, tenantID string) (int, error) {
+	const query = `SELECT COUNT(*) FROM gateways WHERE metadata->>'tenant_id' = $1`
+	var count int
+	if err := r.conn.Pool.QueryRow(ctx, query, tenantID).Scan(&count); err != nil {
+		return 0, fmt.Errorf("gateway repository: count by tenant: %w", err)
+	}
+	return count, nil
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }
 
 func scanGateway(s rowScanner) (*domain.Gateway, error) {
 	g := &domain.Gateway{}
-	var metadataRaw, telemetryRaw, clientTLSRaw, sessionRaw []byte
+	var metadataRaw, telemetryRaw, clientTLSRaw, sessionRaw, entitlementsRaw []byte
 	if err := s.Scan(
 		&g.ID, &g.Slug, &g.Status, &g.Domain,
-		&metadataRaw, &telemetryRaw, &clientTLSRaw, &sessionRaw,
+		&metadataRaw, &telemetryRaw, &clientTLSRaw, &sessionRaw, &entitlementsRaw,
 		&g.CreatedAt, &g.UpdatedAt,
 	); err != nil {
 		return nil, err
@@ -307,6 +419,17 @@ func scanGateway(s rowScanner) (*domain.Gateway, error) {
 			return nil, fmt.Errorf("scan session_config: %w", err)
 		}
 		g.SessionConfig = &sc
+	}
+	g.Entitlements = domain.DefaultEntitlements()
+	if len(entitlementsRaw) > 0 {
+		var e domain.Entitlements
+		if err := json.Unmarshal(entitlementsRaw, &e); err != nil {
+			return nil, fmt.Errorf("scan entitlements: %w", err)
+		}
+		if strings.TrimSpace(e.Tier) == "" {
+			e = domain.DefaultEntitlements()
+		}
+		g.Entitlements = e
 	}
 
 	return g, nil

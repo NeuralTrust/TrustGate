@@ -41,6 +41,8 @@ func (s stubPricing) Resolve(_ context.Context, providerCode, slug string) appca
 	return s.price
 }
 
+func (stubPricing) InvalidateCache() {}
+
 func newBuilder(price appcatalog.Pricing) *Builder {
 	return NewBuilder(adapter.NewRegistry(), stubPricing{price: price})
 }
@@ -163,8 +165,7 @@ func TestBuilder_SyncSuccessFoldsCostAndLatency(t *testing.T) {
 	assert.Equal(t, int64(320), evt.Latency.TotalMs)
 	assert.Equal(t, int64(300), evt.Latency.ProviderMs)
 	assert.Equal(t, int64(6), evt.Latency.PoliciesMs)
-	assert.Equal(t, int64(14), evt.Latency.RoutingMs)
-	assert.Equal(t, int64(20), evt.Latency.GatewayMs)
+	assert.Equal(t, int64(14), evt.Latency.GatewayMs)
 
 	require.Len(t, evt.Attempts, 1)
 	assert.Equal(t, "openai", evt.Attempts[0].Provider)
@@ -172,6 +173,48 @@ func TestBuilder_SyncSuccessFoldsCostAndLatency(t *testing.T) {
 	assert.Equal(t, "rate_limiter", evt.PolicyChain[0].Name)
 	assert.False(t, evt.PolicyChain[0].Flagged)
 	assert.False(t, evt.IsFlagged)
+}
+
+func TestBuilder_PostResponsePoliciesCountAsPoliciesButNotAgainstGateway(t *testing.T) {
+	rt := trace.New("trace-async", trace.Metadata{GatewayID: "gw-1"})
+	_ = rt.AddSpan(pluginSpan("rate_limiter",
+		&trace.PluginAttrs{Stage: "pre_request", Decision: "allow"}, 200, 6*time.Millisecond, ""))
+	_ = rt.AddSpan(pluginSpan("moderation",
+		&trace.PluginAttrs{Stage: "pre_response", Decision: "allow"}, 200, 4*time.Millisecond, ""))
+	_ = rt.AddSpan(pluginSpan("semantic_cache",
+		&trace.PluginAttrs{Stage: "post_response", Decision: "allow"}, 200, 100*time.Millisecond, ""))
+	_ = rt.AddSpan(llmSpan("openai",
+		&trace.LLMAttrs{
+			Provider: "openai",
+			Model:    "gpt-4o",
+			Attempt:  1,
+			Outcome:  "success",
+		}, 200, 300*time.Millisecond, ""))
+
+	req := &infracontext.RequestContext{
+		GatewayID:    "gw-1",
+		Method:       "POST",
+		Path:         "/v1/chat/completions",
+		Body:         []byte(openAIRequestBody),
+		SourceFormat: string(adapter.FormatOpenAI),
+	}
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"id":"x","choices":[]}`)}
+
+	start := time.UnixMilli(1_000_000)
+	end := start.Add(320 * time.Millisecond)
+
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, end)
+
+	assert.Equal(t, int64(110), evt.Latency.PoliciesMs, "policies_ms must cover every stage, post_response included")
+	assert.Equal(t, int64(10), evt.Latency.GatewayMs,
+		"gateway_ms is the wall clock left after the provider and the blocking policies (6+4), not clamped to zero")
+
+	stageLatency := make(map[string]int64, len(evt.PolicyChain))
+	for _, entry := range evt.PolicyChain {
+		stageLatency[entry.Stage] = entry.LatencyMs
+	}
+	assert.Equal(t, map[string]int64{"pre_request": 6, "pre_response": 4, "post_response": 100}, stageLatency,
+		"the per-stage split must stay derivable from the policy chain")
 }
 
 func TestBuilder_CostUsesRequestedModelForPricingLookup(t *testing.T) {

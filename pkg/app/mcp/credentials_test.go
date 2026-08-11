@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -120,7 +121,7 @@ func regWithAuth(gw ids.GatewayID, auth *registrydomain.MCPAuth) *registrydomain
 func TestCredentialResolver_Passthrough(t *testing.T) {
 	t.Parallel()
 	gw := ids.New[ids.GatewayKind]()
-	r := NewCredentialResolver(nil, nil, nil, nil)
+	r := NewCredentialResolver(nil, nil, nil, nil, discardLogger())
 	reg := regWithAuth(gw, &registrydomain.MCPAuth{
 		Mode: registrydomain.MCPAuthModePassthrough, ExpectedAudience: "api://up",
 	})
@@ -163,7 +164,7 @@ func TestCredentialResolver_Exchange_InjectsAndIsolatesCacheKey(t *testing.T) {
 	t.Parallel()
 	gw := ids.New[ids.GatewayKind]()
 	ex := &stubExchanger{token: &sts.Token{AccessToken: "minted", TokenType: "Bearer", ExpiresAt: time.Now().Add(time.Minute)}}
-	r := NewCredentialResolver(ex, nil, nil, nil)
+	r := NewCredentialResolver(ex, nil, nil, nil, discardLogger())
 	reg := regWithAuth(gw, &registrydomain.MCPAuth{
 		Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeImpersonation, Audience: "aud",
 	})
@@ -191,9 +192,29 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 	}
 	reg := regWithAuth(gw, cfg)
 
+	// A credential that exists but cannot be decrypted (the vault key rotated)
+	// must still elicit consent — reconnecting rewrites it under the current key
+	// — rather than surfacing as a raw error the composer would treat as an
+	// upstream failure. The distinct reason is what makes a key rotation
+	// diagnosable instead of looking like the user never connected.
+	t.Run("undecryptable credential elicits consent, not a raw error", func(t *testing.T) {
+		t.Parallel()
+		r := NewCredentialResolver(nil, undecryptableVault{}, &stubConnect{ticket: "tk-dec"}, infraoauth.NewProviderClient(nil), discardLogger())
+		ctx := principalCtx(&identity.Principal{Subject: "alice"})
+		target := Target{}
+		err := r.Apply(ctx, mcpConsumer(gw), reg, &target)
+		var consent *ConsentRequiredError
+		if !errors.As(err, &consent) {
+			t.Fatalf("error = %v, want ConsentRequiredError for an undecryptable credential", err)
+		}
+		if target.Headers["Authorization"] != "" {
+			t.Fatal("an undecryptable credential must not be injected")
+		}
+	})
+
 	t.Run("missing credential returns consent elicitation", func(t *testing.T) {
 		t.Parallel()
-		r := NewCredentialResolver(nil, &memVault{}, &stubConnect{ticket: "tckt"}, infraoauth.NewProviderClient(nil))
+		r := NewCredentialResolver(nil, &memVault{}, &stubConnect{ticket: "tckt"}, infraoauth.NewProviderClient(nil), discardLogger())
 		ctx := principalCtx(&identity.Principal{Subject: "alice"})
 		target := Target{}
 		err := r.Apply(ctx, mcpConsumer(gw), reg, &target)
@@ -211,7 +232,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		vault := &memVault{}
 		cred, _ := vaultdomain.NewCredential(gw, "alice", "github", "", "gh-token", "", nil, time.Now().Add(time.Hour))
 		_ = vault.Upsert(context.Background(), cred)
-		r := NewCredentialResolver(nil, vault, &stubConnect{}, infraoauth.NewProviderClient(nil))
+		r := NewCredentialResolver(nil, vault, &stubConnect{}, infraoauth.NewProviderClient(nil), discardLogger())
 		ctx := principalCtx(&identity.Principal{Subject: "alice"})
 		target := Target{}
 		if err := r.Apply(ctx, mcpConsumer(gw), reg, &target); err != nil {
@@ -227,7 +248,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		vault := &memVault{}
 		cred, _ := vaultdomain.NewCredential(gw, "alice", "github", "", "alice-token", "", nil, time.Now().Add(time.Hour))
 		_ = vault.Upsert(context.Background(), cred)
-		r := NewCredentialResolver(nil, vault, &stubConnect{ticket: "t2"}, infraoauth.NewProviderClient(nil))
+		r := NewCredentialResolver(nil, vault, &stubConnect{ticket: "t2"}, infraoauth.NewProviderClient(nil), discardLogger())
 		ctx := principalCtx(&identity.Principal{Subject: "bob"})
 		target := Target{}
 		err := r.Apply(ctx, mcpConsumer(gw), reg, &target)
@@ -255,7 +276,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		connect := &stubConnect{refreshCfg: &registrydomain.MCPAuth{
 			Provider: "github", ClientID: "dcr-id", TokenURL: idp.URL,
 		}}
-		r := NewCredentialResolver(nil, vault, connect, infraoauth.NewProviderClient(nil))
+		r := NewCredentialResolver(nil, vault, connect, infraoauth.NewProviderClient(nil), discardLogger())
 		ctx := principalCtx(&identity.Principal{Subject: "alice"})
 		target := Target{}
 		if err := r.Apply(ctx, mcpConsumer(gw), reg, &target); err != nil {
@@ -276,7 +297,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		_ = vault.Upsert(context.Background(), cred)
 		transient := errors.New("client registration store unavailable")
 		connect := &stubConnect{ticket: "t4", refreshErr: transient}
-		r := NewCredentialResolver(nil, vault, connect, infraoauth.NewProviderClient(nil))
+		r := NewCredentialResolver(nil, vault, connect, infraoauth.NewProviderClient(nil), discardLogger())
 		ctx := principalCtx(&identity.Principal{Subject: "alice"})
 		target := Target{}
 		err := r.Apply(ctx, mcpConsumer(gw), reg, &target)
@@ -286,6 +307,28 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		var consent *ConsentRequiredError
 		if errors.As(err, &consent) {
 			t.Fatal("transient failures must not force the user back through consent")
+		}
+	})
+
+	// A lost DCR client (Redis flush) makes the stored refresh token unusable:
+	// only the consent flow re-registers a client, so this must elicit consent
+	// rather than propagate as a transient error that skips the upstream.
+	t.Run("lost registered client elicits consent", func(t *testing.T) {
+		t.Parallel()
+		vault := &memVault{}
+		cred, _ := vaultdomain.NewCredential(gw, "alice", "github", "", "old", "refresh-me", nil, time.Now().Add(-time.Hour))
+		_ = vault.Upsert(context.Background(), cred)
+		connect := &stubConnect{
+			ticket:     "t7",
+			refreshErr: fmt.Errorf("%w: provider %q", appoauth.ErrNoRegisteredClient, "github"),
+		}
+		r := NewCredentialResolver(nil, vault, connect, infraoauth.NewProviderClient(nil), discardLogger())
+		ctx := principalCtx(&identity.Principal{Subject: "alice"})
+		target := Target{}
+		err := r.Apply(ctx, mcpConsumer(gw), reg, &target)
+		var consent *ConsentRequiredError
+		if !errors.As(err, &consent) || consent.Ticket != "t7" {
+			t.Fatalf("error = %v, want consent for a lost registered client", err)
 		}
 	})
 
@@ -302,7 +345,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		connect := &stubConnect{ticket: "t5", refreshCfg: &registrydomain.MCPAuth{
 			Provider: "github", ClientID: "dcr-id", TokenURL: idp.URL,
 		}}
-		r := NewCredentialResolver(nil, vault, connect, infraoauth.NewProviderClient(nil))
+		r := NewCredentialResolver(nil, vault, connect, infraoauth.NewProviderClient(nil), discardLogger())
 		ctx := principalCtx(&identity.Principal{Subject: "alice"})
 		target := Target{}
 		err := r.Apply(ctx, mcpConsumer(gw), reg, &target)
@@ -312,12 +355,45 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		}
 	})
 
+	// Providers that rotate refresh tokens reject the previous one, so a sibling
+	// replica refreshing concurrently makes this replica's call fail with
+	// invalid_grant even though the account is perfectly connected. The resolver
+	// must pick up the credential the peer stored instead of dragging the user
+	// back through the consent screen.
+	t.Run("invalid_grant recovers when a peer replica already rotated the credential", func(t *testing.T) {
+		t.Parallel()
+		vault := &memVault{}
+		cred, _ := vaultdomain.NewCredential(gw, "alice", "github", "", "old", "refresh-me", nil, time.Now().Add(-time.Hour))
+		_ = vault.Upsert(context.Background(), cred)
+		idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			peer, _ := vaultdomain.NewCredential(gw, "alice", "github", "", "peer-fresh", "rotated", nil, time.Now().Add(time.Hour))
+			_ = vault.Upsert(context.Background(), peer)
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": "invalid_grant", "error_description": "refresh token already used",
+			})
+		}))
+		defer idp.Close()
+		connect := &stubConnect{ticket: "t6", refreshCfg: &registrydomain.MCPAuth{
+			Provider: "github", ClientID: "dcr-id", TokenURL: idp.URL,
+		}}
+		r := NewCredentialResolver(nil, vault, connect, infraoauth.NewProviderClient(nil), discardLogger())
+		ctx := principalCtx(&identity.Principal{Subject: "alice"})
+		target := Target{}
+		if err := r.Apply(ctx, mcpConsumer(gw), reg, &target); err != nil {
+			t.Fatalf("Apply must recover from the rotation race, got %v", err)
+		}
+		if target.Headers["Authorization"] != "Bearer peer-fresh" {
+			t.Fatalf("Authorization = %q, want the token the peer stored", target.Headers["Authorization"])
+		}
+	})
+
 	t.Run("expired without refresh token returns consent", func(t *testing.T) {
 		t.Parallel()
 		vault := &memVault{}
 		cred, _ := vaultdomain.NewCredential(gw, "alice", "github", "", "old", "", nil, time.Now().Add(-time.Hour))
 		_ = vault.Upsert(context.Background(), cred)
-		r := NewCredentialResolver(nil, vault, &stubConnect{ticket: "t3"}, infraoauth.NewProviderClient(nil))
+		r := NewCredentialResolver(nil, vault, &stubConnect{ticket: "t3"}, infraoauth.NewProviderClient(nil), discardLogger())
 		ctx := principalCtx(&identity.Principal{Subject: "alice"})
 		target := Target{}
 		err := r.Apply(ctx, mcpConsumer(gw), reg, &target)
@@ -331,7 +407,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 func TestCredentialResolver_NoneAndStaticAreNoops(t *testing.T) {
 	t.Parallel()
 	gw := ids.New[ids.GatewayKind]()
-	r := NewCredentialResolver(nil, nil, nil, nil)
+	r := NewCredentialResolver(nil, nil, nil, nil, discardLogger())
 	for _, auth := range []*registrydomain.MCPAuth{
 		{Mode: registrydomain.MCPAuthModeNone},
 		{Mode: registrydomain.MCPAuthModeStatic, Header: "Authorization", Value: "Bearer static"},
@@ -343,3 +419,16 @@ func TestCredentialResolver_NoneAndStaticAreNoops(t *testing.T) {
 		}
 	}
 }
+
+// undecryptableVault holds a credential the current key cannot read, the way
+// the real vault reports it after SERVER_SECRET_KEY changes.
+type undecryptableVault struct{}
+
+func (undecryptableVault) Upsert(context.Context, *vaultdomain.Credential) error { return nil }
+func (undecryptableVault) Find(context.Context, ids.GatewayID, string, string) (*vaultdomain.Credential, error) {
+	return nil, vaultdomain.ErrUndecryptable
+}
+func (undecryptableVault) ListByPrincipal(context.Context, ids.GatewayID, string) ([]*vaultdomain.Credential, error) {
+	return nil, nil
+}
+func (undecryptableVault) Delete(context.Context, ids.GatewayID, string, string) error { return nil }

@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Server, Users, KeyRound, ShieldCheck, FlaskConical } from "lucide-react";
+import { Server, Users, UsersRound, KeyRound, ShieldCheck, FlaskConical } from "lucide-react";
 import { Logo } from "./logo";
 import { cn } from "@/lib/cn";
 
 const nav = [
   { href: "/dashboard/consumers", label: "Consumers", icon: Users },
   { href: "/dashboard/registries", label: "Registry", icon: Server },
+  { href: "/dashboard/roles", label: "Roles", icon: UsersRound },
   { href: "/dashboard/policies", label: "Policies", icon: ShieldCheck },
   { href: "/dashboard/auth", label: "Auth", icon: KeyRound },
   { href: "/dashboard/playground", label: "Playground", icon: FlaskConical },

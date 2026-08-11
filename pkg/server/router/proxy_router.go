@@ -23,6 +23,7 @@ import (
 
 type proxyRouter struct {
 	middlewareTransport *middleware.Transport
+	opsMetrics          *middleware.OpsMetricsMiddleware
 	healthHandler       *apihandler.HealthHandler
 	proxyHandler        *proxyhttp.ForwardedHandler
 }
@@ -31,16 +32,23 @@ func NewProxyRouter(
 	middlewareTransport *middleware.Transport,
 	healthHandler *apihandler.HealthHandler,
 	proxyHandler *proxyhttp.ForwardedHandler,
+	opsMetrics *middleware.OpsMetricsMiddleware,
 ) ServerRouter {
 	return &proxyRouter{
 		middlewareTransport: middlewareTransport,
+		opsMetrics:          opsMetrics,
 		healthHandler:       healthHandler,
 		proxyHandler:        proxyHandler,
 	}
 }
 
 func (r *proxyRouter) BuildRoutes(app *fiber.App) error {
+	// OPS metrics wrap probes and traffic; auth stays after readiness routes.
+	if r.opsMetrics != nil {
+		app.Use(r.opsMetrics.Middleware())
+	}
 	app.Get(HealthPath, r.healthHandler.Liveness)
+	app.Get(HealthPathAlias, r.healthHandler.Liveness)
 	app.Get(ReadyPath, r.healthHandler.Readiness)
 
 	installMiddlewares(app, r.middlewareTransport)

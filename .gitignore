@@ -34,11 +34,17 @@ var/
 .env.local
 
 # k8s per-overlay secret blobs (real sensitive data; only *.example is committed)
+secrets.env
 secret.env
+k8s/overlays/*/secrets.env
 k8s/overlays/*/secret.env
+
 
 # Local-only secret decrypt/encrypt helper (never commit)
 scripts/secret/
+
+# Accidental local OAuth signing keys (never commit)
+mcp-oauth.key
 
 # Editor/IDE
 .idea/
@@ -46,3 +52,4 @@ scripts/secret/
 .DS_Store
 .cursor/sdd
 docs/internal/*
+downloads/start.sh

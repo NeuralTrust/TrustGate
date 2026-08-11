@@ -23,6 +23,7 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/consumer/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/stretchr/testify/mock"
 )
@@ -97,7 +98,7 @@ func TestFinder_List(t *testing.T) {
 		Once()
 
 	f := appconsumer.NewFinder(repo, newCacheManager(), newTestLogger())
-	got, total, err := f.List(context.Background(), domain.ListFilter{Page: 1, Size: 10})
+	got, total, err := f.List(context.Background(), domain.ListFilter{Page: listing.Page{Number: 1, Size: 10}})
 	if err != nil {
 		t.Fatalf("List error: %v", err)
 	}

@@ -24,6 +24,7 @@ import (
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
@@ -243,13 +244,8 @@ func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, rol
 }
 
 func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*domain.Role, int, error) {
-	if filter.Page < 1 {
-		filter.Page = 1
-	}
-	if filter.Size < 1 {
-		filter.Size = 20
-	}
-	offset := (filter.Page - 1) * filter.Size
+	page := filter.Page.Normalize()
+	offset := page.Offset()
 	gatewayParam := nullableUUID(filter.GatewayID.UUID())
 	const countQuery = `
 		SELECT COUNT(*)
@@ -257,21 +253,21 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		 WHERE ($1::uuid IS NULL OR gateway_id = $1)
 		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')`
 	var total int
-	if err := r.conn.Pool.QueryRow(ctx, countQuery, gatewayParam, filter.NameContains).Scan(&total); err != nil {
+	if err := r.conn.Pool.QueryRow(ctx, countQuery, gatewayParam, filter.Search).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("role repository: count: %w", err)
 	}
 	listQuery := roleSelectColumns + `
 		  FROM roles r
 		 WHERE ($1::uuid IS NULL OR r.gateway_id = $1)
 		   AND ($2 = '' OR lower(r.name) LIKE '%' || lower($2) || '%')
-		 ORDER BY r.created_at DESC, r.id
+		 ORDER BY ` + roleOrderBy(filter.Sort) + `
 		 LIMIT $3 OFFSET $4`
-	rows, err := r.conn.Pool.Query(ctx, listQuery, gatewayParam, filter.NameContains, filter.Size, offset)
+	rows, err := r.conn.Pool.Query(ctx, listQuery, gatewayParam, filter.Search, page.Size, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("role repository: list: %w", err)
 	}
 	defer rows.Close()
-	items := make([]*domain.Role, 0, filter.Size)
+	items := make([]*domain.Role, 0, page.Size)
 	for rows.Next() {
 		role, err := scanRole(rows)
 		if err != nil {
@@ -503,6 +499,28 @@ func nullableUUID(id uuid.UUID) any {
 		return nil
 	}
 	return id
+}
+
+// roleOrderBy maps a validated Sort onto a constant SQL fragment. Unknown
+// fields fall back to the default so user input is never interpolated.
+func roleOrderBy(sort listing.Sort) string {
+	col := "r.created_at"
+	dir := listing.Desc
+	if !sort.IsZero() {
+		switch sort.Field {
+		case "name":
+			col = "r.name"
+		case "created_at":
+			col = "r.created_at"
+		case "updated_at":
+			col = "r.updated_at"
+		}
+		dir = sort.Direction
+		if dir == "" {
+			dir = listing.Asc
+		}
+	}
+	return col + " " + dir.SQL() + ", r.id"
 }
 
 func mapPgError(err error) error {

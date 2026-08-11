@@ -16,7 +16,6 @@ package routing_test
 
 import (
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -149,22 +148,27 @@ func TestCandidateSet_ResolveShortModelSingleProvider(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if out.Len() != 2 {
-		t.Fatalf("same-provider registries must stay balanceable, got %d", out.Len())
+		t.Fatalf("expected both matching registries, got %d", out.Len())
 	}
 }
 
-func TestCandidateSet_ResolveShortModelAmbiguous(t *testing.T) {
+func TestCandidateSet_ResolveShortModelPreservesRegistryOrder(t *testing.T) {
 	t.Parallel()
+	openai := newTestRegistry(t, "openai")
+	azure := newTestRegistry(t, "azure")
 	s := routing.NewCandidateSet()
-	s.Add(routing.Candidate{Registry: newTestRegistry(t, "openai"), Allowed: []string{"gpt-5"}})
-	s.Add(routing.Candidate{Registry: newTestRegistry(t, "azure"), Allowed: []string{"gpt-5"}})
+	s.Add(routing.Candidate{Registry: openai, Allowed: []string{"gpt-5"}})
+	s.Add(routing.Candidate{Registry: azure, Allowed: []string{"gpt-5"}})
 
-	_, err := s.ResolveIntent(routing.Intent{Model: "gpt-5"})
-	if !errors.Is(err, routing.ErrAmbiguousModel) {
-		t.Fatalf("expected ErrAmbiguousModel, got %v", err)
+	out, err := s.ResolveIntent(routing.Intent{Model: "gpt-5"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "azure/gpt-5") || !strings.Contains(err.Error(), "openai/gpt-5") {
-		t.Fatalf("error must list qualified alternatives, got %q", err.Error())
+	if out.Len() != 2 {
+		t.Fatalf("expected both matching registries, got %d", out.Len())
+	}
+	if out.Candidates()[0].Registry.ID != openai.ID {
+		t.Fatalf("expected first registry to stay first, got %s", out.Candidates()[0].Registry.ID)
 	}
 }
 
@@ -174,6 +178,37 @@ func TestCandidateSet_ResolveShortModelDenied(t *testing.T) {
 	s.Add(routing.Candidate{Registry: newTestRegistry(t, "openai"), Allowed: []string{"gpt-5"}})
 
 	_, err := s.ResolveIntent(routing.Intent{Model: "claude-4"})
+	if !errors.Is(err, routing.ErrModelDenied) {
+		t.Fatalf("expected ErrModelDenied, got %v", err)
+	}
+}
+
+func TestCandidateSet_ResolveAutoFiltersRegistriesWithoutDefaults(t *testing.T) {
+	t.Parallel()
+	withDefault := newTestRegistry(t, "openai")
+	withoutDefault := newTestRegistry(t, "anthropic")
+	s := routing.NewCandidateSet()
+	s.Add(routing.Candidate{Registry: withoutDefault, Allowed: []string{"claude-4"}})
+	s.Add(routing.Candidate{Registry: withDefault, Allowed: []string{"gpt-5"}, Default: "gpt-5"})
+
+	out, err := s.ResolveIntent(routing.Intent{Auto: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Len() != 1 || !out.HasRegistry(withDefault.ID) {
+		t.Fatalf("auto candidates = %v, want only %s", out.Registries(), withDefault.ID)
+	}
+}
+
+func TestCandidateSet_ResolveAutoDeniedWithoutDefaults(t *testing.T) {
+	t.Parallel()
+	s := routing.NewCandidateSet()
+	s.Add(routing.Candidate{
+		Registry: newTestRegistry(t, "openai"),
+		Allowed:  []string{"gpt-5"},
+	})
+
+	_, err := s.ResolveIntent(routing.Intent{Auto: true})
 	if !errors.Is(err, routing.ErrModelDenied) {
 		t.Fatalf("expected ErrModelDenied, got %v", err)
 	}

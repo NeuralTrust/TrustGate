@@ -30,8 +30,11 @@ type AuthResponse struct {
 	Enabled   bool           `json:"enabled"`
 	Config    ConfigResponse `json:"config"`
 	APIKey    string         `json:"api_key,omitempty"` // #nosec G101
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
+	// Non-secret recognition hint for api_key auths (e.g. "ag_3dlXk" + "Rv8Q").
+	KeyPrefix string    `json:"key_prefix,omitempty"`
+	KeySuffix string    `json:"key_suffix,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type ConfigResponse struct {
@@ -81,6 +84,8 @@ func FromAuth(a *domain.Auth) AuthResponse {
 		Type:      string(a.Type),
 		Enabled:   a.Enabled,
 		Config:    fromConfig(a.Config),
+		KeyPrefix: a.KeyPrefix,
+		KeySuffix: a.KeySuffix,
 		CreatedAt: a.CreatedAt,
 		UpdatedAt: a.UpdatedAt,
 	}

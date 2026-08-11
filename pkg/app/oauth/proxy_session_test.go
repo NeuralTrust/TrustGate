@@ -275,6 +275,7 @@ func TestExchangeCodeSessionModeMintsSessionToken(t *testing.T) {
 	rec := store.peekSession(refresh)
 	if rec == nil {
 		t.Fatal("SaveSession must persist a record")
+		return
 	}
 	if rec.Subject != "user-42" || strings.Join(rec.Scopes, " ") != "mcp.access openid" {
 		t.Fatalf("session record mismatch: %+v", rec)
@@ -321,21 +322,35 @@ func TestRefreshSessionReMintsAndRotates(t *testing.T) {
 	rotated := store.peekSession(newRefresh)
 	if rotated == nil {
 		t.Fatal("rotated session must be persisted")
+		return
 	}
 	if rotated.Subject != "user-42" || strings.Join(rotated.Scopes, " ") != "mcp.access openid" {
 		t.Fatalf("rotated record must preserve subject/scopes, got %+v", rotated)
 	}
 
-	if _, err := proxy.Exchange(ctx, "http://gw.example.com", TokenRequest{
+	// Rotation must leave the old token usable for a short grace window: MCP
+	// clients refresh concurrently from several workers and retry lost token
+	// responses, and a hard single-use token turns those into invalid_grant —
+	// which clients treat as session death. The proxy retires the old token
+	// (the store bounds its remaining TTL) instead of deleting it.
+	replay, err := proxy.Exchange(ctx, "http://gw.example.com", TokenRequest{
 		GrantType:    "refresh_token",
 		RefreshToken: oldRefresh,
-	}); err == nil {
-		t.Fatal("old refresh_token must be single-use after rotation")
-	} else {
-		var oe *OAuthError
-		if !errors.As(err, &oe) || oe.Code != "invalid_grant" {
-			t.Fatalf("expected invalid_grant for a consumed refresh token, got %v", err)
+	})
+	if err != nil {
+		t.Fatalf("old refresh_token must keep working during the rotation grace window: %v", err)
+	}
+	if rt, _ := replay["refresh_token"].(string); !strings.HasPrefix(rt, "gwrt_") {
+		t.Fatalf("grace-window refresh must still rotate, got %v", replay["refresh_token"])
+	}
+	retired := false
+	for _, tok := range store.retired {
+		if tok == oldRefresh {
+			retired = true
 		}
+	}
+	if !retired {
+		t.Fatal("rotation must retire the old refresh token so its lifetime is bounded by the grace window")
 	}
 
 	access, _ := resp["access_token"].(string)

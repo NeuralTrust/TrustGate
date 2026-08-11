@@ -9,7 +9,6 @@ exporters:
         insecure: true
         compression: "none"
         timeout: "10s"
-        max_body_bytes: 65536
 
   raw:
     - name: raw-otlp
@@ -21,7 +20,6 @@ exporters:
         insecure: true
         compression: "none"
         timeout: "10s"
-        max_body_bytes: 65536
     - name: sensible-pg
       type: postgres
       settings:

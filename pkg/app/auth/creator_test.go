@@ -27,8 +27,8 @@ import (
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/cachetest"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -38,15 +38,6 @@ func newTestLogger() *slog.Logger {
 
 func newCacheManager() *cache.TTLMapManager {
 	return cache.NewTTLMapManager(time.Hour)
-}
-
-type capturePublisher struct {
-	events []event.Event
-}
-
-func (p *capturePublisher) Publish(_ context.Context, evt event.Event) error {
-	p.events = append(p.events, evt)
-	return nil
 }
 
 // validConfig is the empty config an api_key credential carries: its secret is
@@ -67,7 +58,11 @@ func TestCreator_Create_Success(t *testing.T) {
 		Once()
 
 	mgr := newCacheManager()
-	publisher := &capturePublisher{}
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
 	creator := appauth.NewCreator(repo, mgr, publisher, newTestLogger(), nil)
 
 	a, err := creator.Create(context.Background(), appauth.CreateInput{
@@ -87,9 +82,6 @@ func TestCreator_Create_Success(t *testing.T) {
 	if cached.(*domain.Auth).ID != a.ID {
 		t.Fatal("cached auth ID mismatch")
 	}
-	if len(publisher.events) != 1 {
-		t.Fatalf("published events = %d, want 1", len(publisher.events))
-	}
 }
 
 func TestCreator_Create_APIKey_GeneratesKeyAndWarmsKeyCache(t *testing.T) {
@@ -106,7 +98,12 @@ func TestCreator_Create_APIKey_GeneratesKeyAndWarmsKeyCache(t *testing.T) {
 		Once()
 
 	mgr := newCacheManager()
-	creator := appauth.NewCreator(repo, mgr, cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+	creator := appauth.NewCreator(repo, mgr, publisher, newTestLogger(), nil)
 
 	a, err := creator.Create(context.Background(), appauth.CreateInput{
 		GatewayID: gwID,
@@ -133,7 +130,8 @@ func TestCreator_Create_APIKey_GeneratesKeyAndWarmsKeyCache(t *testing.T) {
 func TestCreator_Create_RejectsInvalid(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	creator := appauth.NewCreator(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	creator := appauth.NewCreator(repo, newCacheManager(), publisher, newTestLogger(), nil)
 
 	_, err := creator.Create(context.Background(), appauth.CreateInput{
 		GatewayID: ids.New[ids.GatewayKind](),
@@ -144,13 +142,15 @@ func TestCreator_Create_RejectsInvalid(t *testing.T) {
 	if !errors.Is(err, domain.ErrInvalidName) {
 		t.Fatalf("err = %v, want ErrInvalidName", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(domain.ErrAlreadyExists).Once()
-	creator := appauth.NewCreator(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	creator := appauth.NewCreator(repo, newCacheManager(), publisher, newTestLogger(), nil)
 
 	_, err := creator.Create(context.Background(), appauth.CreateInput{
 		GatewayID: ids.New[ids.GatewayKind](),
@@ -161,4 +161,5 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 	if !errors.Is(err, domain.ErrAlreadyExists) {
 		t.Fatalf("err = %v, want ErrAlreadyExists", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }

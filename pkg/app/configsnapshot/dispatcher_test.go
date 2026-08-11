@@ -70,6 +70,7 @@ func newDispatchCompiler(gateways appsnapshot.GatewayReader) *appsnapshot.Compil
 type fakeBroadcaster struct {
 	mu       sync.Mutex
 	versions []string
+	scoped   map[string][]string
 }
 
 func (b *fakeBroadcaster) Broadcast(version string) {
@@ -78,11 +79,32 @@ func (b *fakeBroadcaster) Broadcast(version string) {
 	b.versions = append(b.versions, version)
 }
 
+func (b *fakeBroadcaster) BroadcastScope(scope, version string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if scope == "" {
+		b.versions = append(b.versions, version)
+		return
+	}
+	if b.scoped == nil {
+		b.scoped = map[string][]string{}
+	}
+	b.scoped[scope] = append(b.scoped[scope], version)
+}
+
 func (b *fakeBroadcaster) broadcasted() []string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	out := make([]string, len(b.versions))
 	copy(out, b.versions)
+	return out
+}
+
+func (b *fakeBroadcaster) scopedBroadcasted(scope string) []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make([]string, len(b.scoped[scope]))
+	copy(out, b.scoped[scope])
 	return out
 }
 
@@ -244,6 +266,32 @@ func TestDispatch_ChangedDataBroadcastsNewVersion(t *testing.T) {
 	}
 }
 
+func TestDispatch_ScopedBroadcastOnlyWakesChangedInstance(t *testing.T) {
+	t.Parallel()
+	gwA := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
+	gwB := mustGatewayID(t, "22222222-2222-2222-2222-222222222222")
+	gateways := &settableGateways{items: []*gatewaydomain.Gateway{{ID: gwA}}}
+	holder := appsnapshot.NewHolder()
+	broadcaster := &fakeBroadcaster{}
+	outbox := &fakeOutbox{}
+	d := appsnapshot.NewDispatcher(newDispatchCompiler(gateways), infrasnapshot.NewCodec(), holder, broadcaster, outbox, nil, appsnapshot.DispatcherConfig{})
+
+	if err := d.Dispatch(context.Background()); err != nil {
+		t.Fatalf("first dispatch: %v", err)
+	}
+	gateways.set([]*gatewaydomain.Gateway{{ID: gwA}, {ID: gwB}})
+	if err := d.Dispatch(context.Background()); err != nil {
+		t.Fatalf("second dispatch: %v", err)
+	}
+
+	if got := broadcaster.scopedBroadcasted(gwA.String()); len(got) != 1 {
+		t.Fatalf("adding gwB must not wake gwA's pods; gwA scoped broadcasts = %v", got)
+	}
+	if got := broadcaster.scopedBroadcasted(gwB.String()); len(got) != 1 {
+		t.Fatalf("the new gwB scope must be notified exactly once, got %v", got)
+	}
+}
+
 func TestDispatch_DrainsPreCompileFrontierSoMidCycleMarkerSurvives(t *testing.T) {
 	t.Parallel()
 	gwA := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
@@ -359,6 +407,65 @@ func TestRun_BootWithPendingMarkersTriggersDispatch(t *testing.T) {
 	}()
 
 	waitFor(t, func() bool { return len(broadcaster.broadcasted()) == 1 }, 2*time.Second)
+
+	cancel()
+	<-done
+}
+
+func TestRun_FirstSignalDispatchesWithoutWaitingDebounce(t *testing.T) {
+	t.Parallel()
+	gwA := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
+	gateways := &settableGateways{items: []*gatewaydomain.Gateway{{ID: gwA}}}
+	holder := appsnapshot.NewHolder()
+	broadcaster := &fakeBroadcaster{}
+	outbox := &fakeOutbox{}
+	// An hour-long debounce would starve the broadcast entirely under
+	// trailing-edge-only semantics; the leading edge must fire regardless.
+	d := appsnapshot.NewDispatcher(newDispatchCompiler(gateways), infrasnapshot.NewCodec(), holder, broadcaster, outbox, nil,
+		appsnapshot.DispatcherConfig{Debounce: time.Hour, Backstop: time.Hour})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_ = d.Run(ctx)
+		close(done)
+	}()
+
+	d.Signal()
+	waitFor(t, func() bool { return len(broadcaster.broadcasted()) == 1 }, 2*time.Second)
+
+	cancel()
+	<-done
+}
+
+func TestRun_SignalInsideWindowFoldsToTrailingEdge(t *testing.T) {
+	t.Parallel()
+	gwA := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
+	gwB := mustGatewayID(t, "22222222-2222-2222-2222-222222222222")
+	gateways := &settableGateways{items: []*gatewaydomain.Gateway{{ID: gwA}}}
+	holder := appsnapshot.NewHolder()
+	broadcaster := &fakeBroadcaster{}
+	outbox := &fakeOutbox{}
+	d := appsnapshot.NewDispatcher(newDispatchCompiler(gateways), infrasnapshot.NewCodec(), holder, broadcaster, outbox, nil,
+		appsnapshot.DispatcherConfig{Debounce: 500 * time.Millisecond, Backstop: time.Hour})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_ = d.Run(ctx)
+		close(done)
+	}()
+
+	d.Signal()
+	waitFor(t, func() bool { return len(broadcaster.broadcasted()) == 1 }, 2*time.Second)
+
+	gateways.set([]*gatewaydomain.Gateway{{ID: gwA}, {ID: gwB}})
+	d.Signal()
+	time.Sleep(100 * time.Millisecond)
+	if got := len(broadcaster.broadcasted()); got != 1 {
+		t.Fatalf("a signal inside the debounce window must wait for the trailing edge, got %d broadcasts", got)
+	}
+	waitFor(t, func() bool { return len(broadcaster.broadcasted()) == 2 }, 2*time.Second)
 
 	cancel()
 	<-done

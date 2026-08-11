@@ -112,6 +112,7 @@ func TestService_GetSnapshotStreamsHeaderThenChunks(t *testing.T) {
 	header := first.GetHeader()
 	if header == nil {
 		t.Fatal("first message is not a header")
+		return
 	}
 	if header.GetNotModified() {
 		t.Fatal("not_modified = true, want false for a stale applied version")

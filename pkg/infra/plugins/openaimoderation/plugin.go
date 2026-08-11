@@ -153,6 +153,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	if len(violations) > 0 && appplugins.Blocks(in.Mode) {
 		data.Decision = decisionBlock
 		setExtras(in.Event, data)
+		recordScore(in.Event, data)
 		appplugins.SetDecisionFromOutcome(in.Event, decisionBlock)
 		return nil, blockError(cfg.Action.Message, violations)
 	}
@@ -163,6 +164,9 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		data.Decision = decisionAllowed
 	}
 	setExtras(in.Event, data)
+	if len(violations) > 0 {
+		recordScore(in.Event, data)
+	}
 	appplugins.SetDecisionFromOutcome(in.Event, data.Decision)
 	return passThrough(), nil
 }

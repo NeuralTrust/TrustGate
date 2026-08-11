@@ -17,8 +17,10 @@ package httpio
 import (
 	"errors"
 	"strconv"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -31,6 +33,8 @@ const (
 var ErrInvalidUUIDParam = errors.New("invalid uuid path parameter")
 var ErrInvalidPage = errors.New("invalid page parameter")
 var ErrInvalidSize = errors.New("invalid size parameter")
+var ErrInvalidSort = errors.New("invalid sort parameter")
+var ErrInvalidFilter = errors.New("invalid filter parameter")
 
 func ParseUUIDParam[K ids.Kind](c *fiber.Ctx, name string) (ids.ID[K], error) {
 	raw := c.Params(name)
@@ -101,4 +105,96 @@ func ParseSize(c *fiber.Ctx) (int, error) {
 		return MaxSize, nil
 	}
 	return v, nil
+}
+
+// ParseListingPage parses page and size into a listing.Page.
+func ParseListingPage(c *fiber.Ctx) (listing.Page, error) {
+	page, err := ParsePage(c)
+	if err != nil {
+		return listing.Page{}, err
+	}
+	size, err := ParseSize(c)
+	if err != nil {
+		return listing.Page{}, err
+	}
+	return listing.Page{Number: page, Size: size}, nil
+}
+
+// ParseSearch returns the search query. `search` takes precedence; `name` is
+// kept as a backwards-compatible alias.
+func ParseSearch(c *fiber.Ctx) string {
+	if s := c.Query("search"); s != "" {
+		return s
+	}
+	return c.Query("name")
+}
+
+// ParseSort validates sort/order against an allowed field whitelist. An empty
+// sort returns a zero listing.Sort (repository default). Order without sort,
+// unknown fields, and unknown directions are rejected.
+func ParseSort(c *fiber.Ctx, allowed []string) (listing.Sort, error) {
+	field := strings.TrimSpace(c.Query("sort"))
+	order := strings.ToLower(strings.TrimSpace(c.Query("order")))
+	if field == "" {
+		if order != "" {
+			return listing.Sort{}, ErrInvalidSort
+		}
+		return listing.Sort{}, nil
+	}
+	if !containsString(allowed, field) {
+		return listing.Sort{}, ErrInvalidSort
+	}
+	dir := listing.Asc
+	switch order {
+	case "", "asc":
+		// dir already Asc
+	case "desc":
+		dir = listing.Desc
+	default:
+		return listing.Sort{}, ErrInvalidSort
+	}
+	return listing.Sort{Field: field, Direction: dir}, nil
+}
+
+// ParseOptionalBool parses an optional boolean query param. Missing returns nil.
+func ParseOptionalBool(c *fiber.Ctx, name string) (*bool, error) {
+	raw := c.Query(name)
+	if raw == "" {
+		return nil, nil
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		return nil, ErrInvalidFilter
+	}
+	return &v, nil
+}
+
+func ParseCSVQuery(c *fiber.Ctx, name string) []string {
+	args := c.Context().QueryArgs()
+	rawValues := args.PeekMulti(name)
+	if len(rawValues) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(rawValues))
+	for _, raw := range rawValues {
+		for _, part := range strings.Split(string(raw), ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				out = append(out, part)
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func containsString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }

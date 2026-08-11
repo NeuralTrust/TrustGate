@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
+	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -30,15 +31,18 @@ import (
 )
 
 type UpdateInput struct {
-	ID            ids.ConsumerID
-	GatewayID     ids.GatewayID
-	Name          *string
-	Type          *domain.Type
-	RoutingMode   *domain.RoutingMode
-	LBConfig      *domain.LBConfig
-	Headers       *map[string]string
-	Active        *bool
-	Fallback      *domain.Fallback
+	ID          ids.ConsumerID
+	GatewayID   ids.GatewayID
+	Name        *string
+	Type        *domain.Type
+	RoutingMode *domain.RoutingMode
+	LBConfig    *domain.LBConfig
+	Headers     *map[string]string
+	Active      *bool
+	Fallback    *domain.Fallback
+	// Registries replaces the whole registry association set. A nil value keeps
+	// the associations the consumer already has.
+	Registries    *domain.RegistryBindings
 	ModelPolicies *domain.ModelPolicies
 	Toolkit       *domain.Toolkit
 	FailMode      *domain.FailMode
@@ -52,16 +56,18 @@ type Updater interface {
 var _ Updater = (*updater)(nil)
 
 type updater struct {
-	repo        domain.Repository
-	authRepo    authdomain.Repository
-	memoryCache *cache.TTLMap
-	publisher   cache.EventPublisher
-	logger      *slog.Logger
-	signaler    configsyncport.SnapshotSignaler
+	repo         domain.Repository
+	registryRepo registrydomain.Repository
+	authRepo     authdomain.Repository
+	memoryCache  *cache.TTLMap
+	publisher    cache.EventPublisher
+	logger       *slog.Logger
+	signaler     configsyncport.SnapshotSignaler
 }
 
 func NewUpdater(
 	repo domain.Repository,
+	registryRepo registrydomain.Repository,
 	authRepo authdomain.Repository,
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
@@ -69,12 +75,13 @@ func NewUpdater(
 	signaler configsyncport.SnapshotSignaler,
 ) Updater {
 	return &updater{
-		repo:        repo,
-		authRepo:    authRepo,
-		memoryCache: manager.GetTTLMap(cache.ConsumerTTLName),
-		publisher:   publisher,
-		logger:      logger,
-		signaler:    signaler,
+		repo:         repo,
+		registryRepo: registryRepo,
+		authRepo:     authRepo,
+		memoryCache:  manager.GetTTLMap(cache.ConsumerTTLName),
+		publisher:    publisher,
+		logger:       logger,
+		signaler:     signaler,
 	}
 }
 
@@ -118,6 +125,12 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	if previousMode != existing.RoutingMode {
 		cleanIncompatibleModeConfig(existing)
 	}
+	// Applied after the mode cleanup so that sending registries alongside
+	// routing_mode=role_based is rejected by Validate instead of silently dropped.
+	if in.Registries != nil {
+		existing.RegistryIDs = in.Registries.IDs
+		existing.RegistryWeights = in.Registries.Weights
+	}
 	existing.UpdatedAt = time.Now().UTC()
 	if err := validateRegistryRefsAssociated(existing); err != nil {
 		return nil, err
@@ -125,18 +138,34 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	if err := existing.Validate(); err != nil {
 		return nil, err
 	}
+	if in.Registries != nil {
+		if err := ensureRegistriesInGateway(ctx, u.registryRepo, existing.GatewayID, existing.RegistryIDs); err != nil {
+			return nil, err
+		}
+	}
 	if err := u.revalidateAuthsForTransition(ctx, existing, previousType, previousMode); err != nil {
 		return nil, err
 	}
-	if err := u.repo.Update(ctx, existing); err != nil {
+	if err := u.repo.Update(ctx, existing, requestedRegistryBindings(existing, in.Registries)); err != nil {
 		return nil, err
 	}
 	u.memoryCache.Set(existing.ID.String(), existing)
-	publishGatewayDataInvalidation(ctx, u.publisher, u.logger, existing.GatewayID)
+	invalidation.GatewayData(ctx, u.publisher, u.logger, existing.GatewayID)
 	if u.signaler != nil {
 		u.signaler.Signal(ctx)
 	}
 	return existing, nil
+}
+
+// requestedRegistryBindings returns the association set the repository must
+// persist, or nil when the caller did not ask to change it. It reads the
+// validated aggregate rather than the input so a switch to role_based, which
+// drops every registry, is reflected.
+func requestedRegistryBindings(c *domain.Consumer, requested *domain.RegistryBindings) *domain.RegistryBindings {
+	if requested == nil {
+		return nil
+	}
+	return &domain.RegistryBindings{IDs: c.RegistryIDs, Weights: c.RegistryWeights}
 }
 
 func (u *updater) revalidateAuthsForTransition(
@@ -225,6 +254,7 @@ func cleanIncompatibleModeConfig(c *domain.Consumer) {
 	switch c.RoutingMode {
 	case domain.RoutingModeRoleBased:
 		c.RegistryIDs = nil
+		c.RegistryWeights = nil
 		c.Fallback = nil
 		c.LBConfig = nil
 		c.ModelPolicies = nil

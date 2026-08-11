@@ -19,9 +19,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
+	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
@@ -36,10 +38,15 @@ func (e *InvalidParamsError) Error() string { return "mcp: invalid params: " + e
 type RPCGateway struct {
 	composer appmcp.Composer
 	plugins  *appmcp.PluginRunner
+	limiter  ratelimitapp.Checker
 }
 
-func NewRPCGateway(composer appmcp.Composer, plugins *appmcp.PluginRunner) *RPCGateway {
-	return &RPCGateway{composer: composer, plugins: plugins}
+// NewRPCGateway wires MCP dispatch; nil limiter defaults to noop.
+func NewRPCGateway(composer appmcp.Composer, plugins *appmcp.PluginRunner, limiter ratelimitapp.Checker) *RPCGateway {
+	if limiter == nil {
+		limiter = ratelimitapp.NewNoopChecker()
+	}
+	return &RPCGateway{composer: composer, plugins: plugins, limiter: limiter}
 }
 
 func (g *RPCGateway) Dispatch(ctx context.Context, rc *appconsumer.RoutableConsumer, method string, params json.RawMessage) (any, error) {
@@ -66,19 +73,32 @@ func (g *RPCGateway) finishSpan(span *trace.Span, err error) {
 	}
 	defer span.End()
 	if err == nil {
-		span.SetMCPStatus("ok", 0)
+		span.SetMCPStatus(http.StatusOK, 0)
 		return
 	}
 	span.SetError(err.Error())
-	var rpcErr *appmcp.RPCError
+	var (
+		rpcErr       *appmcp.RPCError
+		consentErr   *appmcp.ConsentRequiredError
+		notPermitted *appmcp.ToolNotPermittedError
+	)
 	switch {
 	case errors.As(err, &rpcErr):
-		span.SetMCPStatus("error", int(rpcErr.Code))
+		span.SetMCPStatus(rpcErr.ResolvedHTTPStatus(), int(rpcErr.Code))
+	case errors.As(err, &consentErr):
+		// Both of these answer HTTP 200 on the wire so MCP clients parse the
+		// JSON-RPC error instead of tearing down the transport. The status the
+		// refusal *means* belongs in telemetry, which is what this records:
+		// otherwise an unconnected upstream showed up as a 502 and buried real
+		// upstream failures among routine consent prompts.
+		span.SetMCPStatus(http.StatusForbidden, codeConsentRequired)
+	case errors.As(err, &notPermitted):
+		span.SetMCPStatus(http.StatusForbidden, codePolicyBlocked)
 	case errors.Is(err, appmcp.ErrToolNotFound), errors.Is(err, appmcp.ErrPromptNotFound),
 		errors.Is(err, appmcp.ErrResourceNotFound):
-		span.SetMCPStatus("not_found", 0)
+		span.SetMCPStatus(http.StatusNotFound, 0)
 	default:
-		span.SetMCPStatus("error", 0)
+		span.SetMCPStatus(http.StatusBadGateway, 0)
 	}
 }
 
@@ -115,9 +135,38 @@ func mcpRequestAttrs(method string, params json.RawMessage) (operation, tool, pr
 	}
 }
 
+func (g *RPCGateway) checkRateLimit(ctx context.Context, rc *appconsumer.RoutableConsumer) error {
+	if rc == nil || rc.Consumer == nil {
+		return nil
+	}
+	err := g.limiter.Check(ctx, rc.Consumer.GatewayID)
+	if err == nil {
+		return nil
+	}
+	var exceeded *ratelimitapp.Exceeded
+	if errors.As(err, &exceeded) {
+		return &appmcp.RPCError{
+			Code:        appmcp.CodeRateLimited,
+			Message:     exceeded.Error(),
+			Data:        json.RawMessage(exceeded.Body()),
+			HTTPHeaders: exceeded.Headers(),
+		}
+	}
+	if errors.Is(err, ratelimitapp.ErrUnavailable) {
+		return &appmcp.RPCError{
+			Code:    appmcp.CodeUnavailable,
+			Message: err.Error(),
+		}
+	}
+	return err
+}
+
 func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsumer, method string, params json.RawMessage) (any, error) {
 	switch method {
 	case "tools/list":
+		if err := g.checkRateLimit(ctx, rc); err != nil {
+			return nil, err
+		}
 		tools, err := g.composer.ListTools(ctx, rc)
 		if err != nil {
 			return nil, err
@@ -125,7 +174,19 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		if tools == nil {
 			tools = []appmcp.Tool{}
 		}
-		return map[string]any{"tools": tools}, nil
+		result := map[string]any{"tools": tools}
+		raw, err := json.Marshal(result)
+		if err != nil {
+			return nil, err
+		}
+		// A tool listing is static server metadata, so it is scanned only for
+		// threats in the tool descriptions (indirect prompt injection, code
+		// injection): a genuine block stops discovery, while a data-masking
+		// transform is ignored — the listing is never redacted or rewritten.
+		if err := g.plugins.PreResponseDiscovery(ctx, rc, raw); err != nil {
+			return nil, err
+		}
+		return result, nil
 	case "tools/call":
 		var p struct {
 			Name      string          `json:"name"`
@@ -134,18 +195,41 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		if err := json.Unmarshal(params, &p); err != nil || p.Name == "" {
 			return nil, &InvalidParamsError{Reason: "tools/call requires params.name"}
 		}
-		if err := g.plugins.PreRequest(ctx, rc, p.Name, p.Arguments); err != nil {
+		if err := g.checkRateLimit(ctx, rc); err != nil {
 			return nil, err
 		}
-		result, err := g.composer.CallTool(ctx, rc, p.Name, p.Arguments)
+		pre, err := g.plugins.PreRequest(ctx, rc, p.Name, p.Arguments)
 		if err != nil {
 			return nil, err
 		}
-		if err := g.plugins.PreResponse(ctx, rc, p.Name, p.Arguments, result); err != nil {
+		// The request stage may rewrite the tool input (data-masking) or answer
+		// the call outright. Carry both forward: reusing the original arguments
+		// would send upstream exactly what a plugin just redacted.
+		arguments := p.Arguments
+		if pre != nil {
+			if pre.Result != nil {
+				return pre.Result, nil
+			}
+			if pre.Arguments != nil {
+				arguments = pre.Arguments
+			}
+		}
+		result, err := g.composer.CallTool(ctx, rc, p.Name, arguments)
+		if err != nil {
 			return nil, err
+		}
+		post, err := g.plugins.PreResponse(ctx, rc, p.Name, arguments, result)
+		if err != nil {
+			return nil, err
+		}
+		if post != nil && post.Result != nil {
+			result = post.Result
 		}
 		return result, nil
 	case "resources/list":
+		if err := g.checkRateLimit(ctx, rc); err != nil {
+			return nil, err
+		}
 		resources, err := g.composer.ListResources(ctx, rc)
 		if err != nil {
 			return nil, err
@@ -155,6 +239,9 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		}
 		return map[string]any{"resources": resources}, nil
 	case "resources/templates/list":
+		if err := g.checkRateLimit(ctx, rc); err != nil {
+			return nil, err
+		}
 		templates, err := g.composer.ListResourceTemplates(ctx, rc)
 		if err != nil {
 			return nil, err
@@ -170,8 +257,14 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		if err := json.Unmarshal(params, &p); err != nil || p.URI == "" {
 			return nil, &InvalidParamsError{Reason: "resources/read requires params.uri"}
 		}
+		if err := g.checkRateLimit(ctx, rc); err != nil {
+			return nil, err
+		}
 		return g.composer.ReadResource(ctx, rc, p.URI)
 	case "prompts/list":
+		if err := g.checkRateLimit(ctx, rc); err != nil {
+			return nil, err
+		}
 		prompts, err := g.composer.ListPrompts(ctx, rc)
 		if err != nil {
 			return nil, err
@@ -187,6 +280,9 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		}
 		if err := json.Unmarshal(params, &p); err != nil || p.Name == "" {
 			return nil, &InvalidParamsError{Reason: "prompts/get requires params.name"}
+		}
+		if err := g.checkRateLimit(ctx, rc); err != nil {
+			return nil, err
 		}
 		return g.composer.GetPrompt(ctx, rc, p.Name, p.Arguments)
 	default:

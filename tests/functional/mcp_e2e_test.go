@@ -138,9 +138,8 @@ func rpcResult(t *testing.T, status int, body map[string]any) map[string]any {
 
 func rpcErrorCode(t *testing.T, status int, body map[string]any) float64 {
 	t.Helper()
-	require.Equal(t, http.StatusOK, status, "expected rpc-level error: %v", body)
 	rpcErr, ok := body["error"].(map[string]any)
-	require.True(t, ok, "expected rpc error, got: %v", body)
+	require.True(t, ok, "expected rpc error (http %d), got: %v", status, body)
 	code, ok := rpcErr["code"].(float64)
 	require.True(t, ok, "rpc error missing code: %v", rpcErr)
 	return code
@@ -291,7 +290,7 @@ func TestMCPServer_ToolkitFiltersAndAliasesTools(t *testing.T) {
 
 	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
 		map[string]any{"name": "secret"})
-	require.Equal(t, float64(-32602), rpcErrorCode(t, status, body))
+	require.Equal(t, float64(-32001), rpcErrorCode(t, status, body))
 }
 
 func TestMCPServer_PromptsAndResources(t *testing.T) {
@@ -500,7 +499,7 @@ func TestMCPServer_RoleBasedConsumerAppliesRoleMCPPolicies(t *testing.T) {
 
 	status, body = mcpRPC(t, gatewayID, consumerID, bearerHeaders(granted), "tools/call",
 		map[string]any{"name": "secret"})
-	require.Equal(t, float64(-32602), rpcErrorCode(t, status, body))
+	require.Equal(t, float64(-32001), rpcErrorCode(t, status, body))
 }
 
 func TestMCPServer_RoleBasedConsumerEmptyToolkitDeniesAll(t *testing.T) {

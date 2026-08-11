@@ -17,16 +17,18 @@ package gateway
 import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 
 type DeleteGatewayHandler struct {
 	deleter appgateway.Deleter
+	finder  appgateway.Finder
 }
 
-func NewDeleteGatewayHandler(deleter appgateway.Deleter) *DeleteGatewayHandler {
-	return &DeleteGatewayHandler{deleter: deleter}
+func NewDeleteGatewayHandler(deleter appgateway.Deleter, finder appgateway.Finder) *DeleteGatewayHandler {
+	return &DeleteGatewayHandler{deleter: deleter, finder: finder}
 }
 
 // Handle godoc
@@ -45,6 +47,16 @@ func (h *DeleteGatewayHandler) Handle(c *fiber.Ctx) error {
 	id, err := httpio.ParseUUIDParam[ids.GatewayKind](c, "id")
 	if err != nil {
 		return httpio.WriteError(c, err)
+	}
+	caller := tenantIDFromContext(c)
+	if caller != "" {
+		existing, err := h.finder.FindByID(c.UserContext(), id)
+		if err != nil {
+			return httpio.WriteError(c, err)
+		}
+		if !callerOwnsGateway(caller, existing) {
+			return httpio.WriteError(c, domain.ErrNotFound)
+		}
 	}
 	if err := h.deleter.Delete(c.UserContext(), id); err != nil {
 		return httpio.WriteError(c, err)

@@ -39,11 +39,12 @@ func NewHealthHandler(checks ...ReadinessCheck) *HealthHandler {
 
 // Liveness godoc
 // @Summary      Liveness probe
-// @Description  Reports whether the process is alive.
+// @Description  Reports whether the process is alive. Canonical path is /healthz; /health is an alias for load-balancer defaults.
 // @Tags         system
 // @Produce      json
 // @Success      200  {object}  map[string]string
 // @Router       /healthz [get]
+// @Router       /health [get]
 func (h *HealthHandler) Liveness(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"status":  "healthy",

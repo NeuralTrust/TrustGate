@@ -1,0 +1,58 @@
+# Config-sync gRPC TLS for prod-us. Public leaf for
+# agentgateway-configsync.us.neuraltrust.ai (cert-manager + Let's Encrypt).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentgateway-admin
+spec:
+  template:
+    spec:
+      containers:
+      - name: admin
+        env:
+        - name: CONFIG_SYNC_GRPC_TLS_CERT
+          value: /etc/config-sync-tls/tls.crt
+        - name: CONFIG_SYNC_GRPC_TLS_KEY
+          value: /etc/config-sync-tls/tls.key
+        volumeMounts:
+        - name: config-sync-tls
+          mountPath: /etc/config-sync-tls
+          readOnly: true
+      volumes:
+      - name: config-sync-tls
+        secret:
+          secretName: agentgateway-config-sync-tls
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentgateway-proxy
+spec:
+  template:
+    spec:
+      containers:
+      - name: proxy
+        env:
+        - name: CONFIG_SYNC_TLS_INSECURE
+          value: "false"
+        - name: CONFIG_SYNC_TLS_CA
+          value: ""
+        - name: CONFIG_SYNC_TLS_SERVER_NAME
+          value: agentgateway-configsync.us.neuraltrust.ai
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentgateway-mcp
+spec:
+  template:
+    spec:
+      containers:
+      - name: mcp
+        env:
+        - name: CONFIG_SYNC_TLS_INSECURE
+          value: "false"
+        - name: CONFIG_SYNC_TLS_CA
+          value: ""
+        - name: CONFIG_SYNC_TLS_SERVER_NAME
+          value: agentgateway-configsync.us.neuraltrust.ai

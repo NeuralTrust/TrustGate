@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -31,6 +32,53 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
+
+func llmPayloadInput(t *testing.T, raw json.RawMessage) string {
+	t.Helper()
+	var p GuardPayload
+	if err := json.Unmarshal(raw, &p); err != nil {
+		t.Fatalf("unmarshal llm payload: %v", err)
+	}
+	return p.Input
+}
+
+func llmPayloadMessages(t *testing.T, raw json.RawMessage) []map[string]any {
+	t.Helper()
+	var p struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		t.Fatalf("unmarshal llm messages payload: %v", err)
+	}
+	return p.Messages
+}
+
+func assertLLMRequestMessages(t *testing.T, raw json.RawMessage, wantRoles []string, wantContents []string) {
+	t.Helper()
+	msgs := llmPayloadMessages(t, raw)
+	if len(msgs) != len(wantRoles) {
+		t.Fatalf("messages len = %d, want %d (%#v)", len(msgs), len(wantRoles), msgs)
+	}
+	for i := range wantRoles {
+		if got, _ := msgs[i]["role"].(string); got != wantRoles[i] {
+			t.Fatalf("messages[%d].role = %q, want %q", i, got, wantRoles[i])
+		}
+		if i < len(wantContents) && wantContents[i] != "" {
+			if got, _ := msgs[i]["content"].(string); got != wantContents[i] {
+				t.Fatalf("messages[%d].content = %q, want %q", i, got, wantContents[i])
+			}
+		}
+	}
+}
+
+func mcpPayloadMap(t *testing.T, raw json.RawMessage) map[string]any {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal mcp payload: %v", err)
+	}
+	return m
+}
 
 const testTimeout = 2 * time.Second
 
@@ -73,6 +121,7 @@ type fakeGuard struct {
 	lastTraceID string
 	directions  []string
 	status      int
+	headers     map[string]string
 	response    GuardResponse
 	responseFor map[string]GuardResponse
 }
@@ -110,6 +159,9 @@ func (f *fakeGuard) handler() http.HandlerFunc {
 			resp = r
 		}
 		w.Header().Set("Content-Type", "application/json")
+		for k, v := range f.headers {
+			w.Header().Set(k, v)
+		}
 		w.WriteHeader(status)
 		_ = json.NewEncoder(w).Encode(resp)
 	}
@@ -225,8 +277,142 @@ func TestExecutePreRequestBlockReturns403(t *testing.T) {
 	if got.Attributes.Model.Name != "gpt-4o-mini" || got.Attributes.Model.Provider != "openai" {
 		t.Fatalf("model = %+v, want gpt-4o-mini/openai", got.Attributes.Model)
 	}
-	if got.Payload.Input != "be safe\nhello world" {
-		t.Fatalf("input = %q, want %q", got.Payload.Input, "be safe\nhello world")
+	assertLLMRequestMessages(t, got.Payload, []string{"system", "user"}, []string{"be safe", "hello world"})
+}
+
+func TestExecutePreRequestRateLimitReturns429(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{
+		status: http.StatusTooManyRequests,
+		headers: map[string]string{
+			"Retry-After":           "42",
+			"X-RateLimit-Limit":     "60",
+			"X-RateLimit-Remaining": "0",
+			"X-RateLimit-Reason":    "burst",
+		},
+	}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil)
+	res, err := p.Execute(context.Background(), in)
+	if res != nil {
+		t.Fatalf("expected nil result on rate limit, got %+v", res)
+	}
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("expected *PluginError, got %v", err)
+	}
+	if pe.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d", pe.StatusCode, http.StatusTooManyRequests)
+	}
+	if pe.Type != typeRateLimited {
+		t.Fatalf("type = %q, want %q", pe.Type, typeRateLimited)
+	}
+	if got := pe.Headers["Retry-After"]; len(got) != 1 || got[0] != "42" {
+		t.Fatalf("Retry-After = %v, want [42]", got)
+	}
+	if got := pe.Headers["X-RateLimit-Reason"]; len(got) != 1 || got[0] != "burst" {
+		t.Fatalf("X-RateLimit-Reason = %v, want [burst]", got)
+	}
+	if got := pe.Headers["X-RateLimit-Limit"]; len(got) != 1 || got[0] != "60" {
+		t.Fatalf("X-RateLimit-Limit = %v, want [60]", got)
+	}
+	if got := pe.Headers["X-RateLimit-Remaining"]; len(got) != 1 || got[0] != "0" {
+		t.Fatalf("X-RateLimit-Remaining = %v, want [0]", got)
+	}
+	if len(pe.Body) == 0 {
+		t.Fatal("expected non-empty rate limit body")
+	}
+}
+
+func TestExecutePreResponseRateLimitReturns429(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{
+		status: http.StatusTooManyRequests,
+		headers: map[string]string{
+			"Retry-After":           "10",
+			"X-RateLimit-Limit":     "10000",
+			"X-RateLimit-Remaining": "0",
+			"X-RateLimit-Reason":    "quota",
+		},
+	}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: openAIResponseBody()}
+	in := execInput(policy.StagePreResponse, policy.ModeEnforce, settings(""), requestContext(), resp)
+	res, err := p.Execute(context.Background(), in)
+	if res != nil {
+		t.Fatalf("expected nil result on rate limit, got %+v", res)
+	}
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("expected *PluginError, got %v", err)
+	}
+	if pe.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", pe.StatusCode)
+	}
+	if got := pe.Headers["X-RateLimit-Reason"]; len(got) != 1 || got[0] != "quota" {
+		t.Fatalf("X-RateLimit-Reason = %v, want [quota]", got)
+	}
+}
+
+func TestExecuteRateLimitDoesNotFailOpen(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{status: http.StatusTooManyRequests}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	in := execInput(policy.StagePreRequest, policy.ModeObserve, settings(""), requestContext(), nil)
+	_, err := p.Execute(context.Background(), in)
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("rate limit must not fail-open even in observe mode, got %v", err)
+	}
+	if pe.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", pe.StatusCode)
+	}
+}
+
+func TestExecuteUnavailableDoesNotFailOpen(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{status: http.StatusServiceUnavailable}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	in := execInput(policy.StagePreRequest, policy.ModeObserve, settings(""), requestContext(), nil)
+	_, err := p.Execute(context.Background(), in)
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("entitlements unavailable must not fail-open, got %v", err)
+	}
+	if pe.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", pe.StatusCode)
+	}
+	if pe.Type != typeUnavailable {
+		t.Fatalf("type = %q, want %q", pe.Type, typeUnavailable)
+	}
+}
+
+func TestExecuteServerErrorStillFailsOpen(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{status: http.StatusInternalServerError}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("expected fail-open pass on 500, got error %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK || res.StopUpstream {
+		t.Fatalf("expected pass-through on 500, got %+v", res)
 	}
 }
 
@@ -254,9 +440,7 @@ func TestExecutePreResponseBlockReturns403(t *testing.T) {
 	if got.Direction != directionOutput {
 		t.Fatalf("direction = %q, want %q", got.Direction, directionOutput)
 	}
-	if got.Payload.Input != "the answer" {
-		t.Fatalf("input = %q, want %q", got.Payload.Input, "the answer")
-	}
+	assertLLMRequestMessages(t, got.Payload, []string{"assistant"}, []string{"the answer"})
 }
 
 func TestExecuteObserveModeOnBlockPassesThrough(t *testing.T) {
@@ -282,7 +466,7 @@ func TestExecuteObserveModeOnBlockPassesThrough(t *testing.T) {
 func TestExecuteAllowStatusesPassThrough(t *testing.T) {
 	t.Parallel()
 
-	for _, status := range []string{"report", "transform", ""} {
+	for _, status := range []string{"report", ""} {
 		status := status
 		t.Run("status_"+status, func(t *testing.T) {
 			t.Parallel()
@@ -384,7 +568,103 @@ func TestExecuteStreamingResponsePassThrough(t *testing.T) {
 		t.Fatalf("expected pass-through, got %+v", res)
 	}
 	if f.count() != 0 {
-		t.Fatalf("expected guard not called for streaming, got %d hits", f.count())
+		t.Fatalf("expected guard not called for streaming pre_response, got %d hits", f.count())
+	}
+}
+
+func TestExecutePostResponseStreamingInspects(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: "allowed", TraceID: "trace-stream"}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	sse := "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"the \"}}]}\n" +
+		"data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"answer\"}}]}\n" +
+		"data: [DONE]\n"
+	resp := &infracontext.ResponseContext{StatusCode: 200, Streaming: true, Body: []byte(sse)}
+	in := execInput(policy.StagePostResponse, policy.ModeObserve, settings(""), requestContext(), resp)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("expected pass-through, got %+v", res)
+	}
+	if f.count() != 1 {
+		t.Fatalf("expected guard called once for streamed post_response, got %d", f.count())
+	}
+	got := f.captured()
+	if got.Direction != directionOutput {
+		t.Fatalf("direction = %q, want %q", got.Direction, directionOutput)
+	}
+	assertLLMRequestMessages(t, got.Payload, []string{"assistant"}, []string{"the answer"})
+}
+
+func TestExecutePostResponseStreamingInspectsReasoningAndToolCalls(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: "allowed", TraceID: "trace-stream-rich"}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	sse := "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"plan\"}}]}\n" +
+		"data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"}}]}\n" +
+		"data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{}\"}}]}}]}\n" +
+		"data: [DONE]\n"
+	resp := &infracontext.ResponseContext{StatusCode: 200, Streaming: true, Body: []byte(sse)}
+	in := execInput(policy.StagePostResponse, policy.ModeObserve, settings(""), requestContext(), resp)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("expected pass-through, got %+v", res)
+	}
+	if f.count() != 1 {
+		t.Fatalf("expected guard called once, got %d", f.count())
+	}
+	got := f.captured()
+	var payload struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	if err := json.Unmarshal(got.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if len(payload.Messages) != 1 {
+		t.Fatalf("messages = %#v", payload.Messages)
+	}
+	msg := payload.Messages[0]
+	if msg["content"] != "ok" {
+		t.Fatalf("content = %#v", msg["content"])
+	}
+	if msg["reasoning_content"] != "plan" {
+		t.Fatalf("reasoning_content = %#v", msg["reasoning_content"])
+	}
+	calls, ok := msg["tool_calls"].([]any)
+	if !ok || len(calls) != 1 {
+		t.Fatalf("tool_calls = %#v", msg["tool_calls"])
+	}
+}
+
+func TestExecutePostResponseNonStreamingPassThrough(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusBlock}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	resp := &infracontext.ResponseContext{StatusCode: 200, Streaming: false, Body: openAIResponseBody()}
+	in := execInput(policy.StagePostResponse, policy.ModeEnforce, settings(""), requestContext(), resp)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("expected pass-through, got %+v", res)
+	}
+	if f.count() != 0 {
+		t.Fatalf("expected no guard call for non-stream post_response, got %d", f.count())
 	}
 }
 
@@ -601,9 +881,7 @@ func TestExecuteForwardsFullGuardRequest(t *testing.T) {
 	if got.ConsumerID != "consumer-real-42" {
 		t.Fatalf("consumer_id = %q, want consumer-real-42", got.ConsumerID)
 	}
-	if got.Payload.Input != "be safe\nhello world" {
-		t.Fatalf("input = %q, want %q", got.Payload.Input, "be safe\nhello world")
-	}
+	assertLLMRequestMessages(t, got.Payload, []string{"system", "user"}, []string{"be safe", "hello world"})
 	if got.Attributes.ContentType != contentTypeJSON {
 		t.Fatalf("attributes.content_type = %q, want %q", got.Attributes.ContentType, contentTypeJSON)
 	}
@@ -714,6 +992,294 @@ func TestExecuteRetriesOnceOn401(t *testing.T) {
 	}
 }
 
+func TestMutatesBodyReportsTrue(t *testing.T) {
+	t.Parallel()
+
+	p := New(adapter.NewRegistry(), "", testTimeout, "id", "secret", nil)
+	if !p.MutatesRequestBody() {
+		t.Fatal("MutatesRequestBody must be true so the planner runs TrustGuard sequentially")
+	}
+	if !p.MutatesResponseBody() {
+		t.Fatal("MutatesResponseBody must be true so the planner runs TrustGuard sequentially")
+	}
+}
+
+func transformResponse(masked string) GuardResponse {
+	return GuardResponse{
+		Status:             statusTransform,
+		TransformedPayload: map[string]any{"input": masked},
+		Findings: []GuardFinding{{
+			Source:  &GuardFindingSource{Kind: "detector", Plugin: "data_loss_prevention"},
+			Signal:  &GuardFindingSignal{Type: "pii"},
+			Outcome: &GuardFindingOutcome{Action: "transform"},
+		}},
+		TraceID: "trace-transform",
+	}
+}
+
+func TestExecutePreRequestTransformRewritesBody(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: transformResponse("be safe\nhello [MASKED_PII]")}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil, event)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK || res.StopUpstream {
+		t.Fatalf("expected pass-through result carrying request body, got %+v", res)
+	}
+	if len(res.RequestBody) == 0 {
+		t.Fatal("expected rewritten RequestBody, got none")
+	}
+	if res.Body != nil {
+		t.Fatalf("pre_request must not set response Body, got %q", res.Body)
+	}
+	got := string(res.RequestBody)
+	if !strings.Contains(got, "hello [MASKED_PII]") {
+		t.Fatalf("rewritten body missing masked text: %s", got)
+	}
+	if strings.Contains(got, "hello world") {
+		t.Fatalf("rewritten body still contains unmasked text: %s", got)
+	}
+	if attrs := span.PluginAttrsCopy(); attrs.Decision != decisionTransformed {
+		t.Fatalf("span decision = %q, want %q", attrs.Decision, decisionTransformed)
+	}
+}
+
+func TestExecutePreResponseTransformRewritesBody(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: transformResponse("the [MASKED_PII]")}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: openAIResponseBody()}
+	in := execInput(policy.StagePreResponse, policy.ModeEnforce, settings(""), requestContext(), resp)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK || !res.StopUpstream {
+		t.Fatalf("expected response rewrite with StopUpstream, got %+v", res)
+	}
+	if len(res.Body) == 0 {
+		t.Fatal("expected rewritten response Body, got none")
+	}
+	got := string(res.Body)
+	if !strings.Contains(got, "the [MASKED_PII]") {
+		t.Fatalf("rewritten response missing masked text: %s", got)
+	}
+	if strings.Contains(got, "the answer") {
+		t.Fatalf("rewritten response still contains unmasked text: %s", got)
+	}
+}
+
+func TestExecuteTransformObserveDoesNotRewrite(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: transformResponse("be safe\nhello [MASKED_PII]")}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeObserve, settings(""), requestContext(), nil, event)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("observe mode must not error, got %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK || res.StopUpstream {
+		t.Fatalf("expected pass-through in observe mode, got %+v", res)
+	}
+	if res.RequestBody != nil {
+		t.Fatalf("observe mode must not rewrite the body, got %q", res.RequestBody)
+	}
+	if attrs := span.PluginAttrsCopy(); attrs.Decision != decisionReported {
+		t.Fatalf("span decision = %q, want %q", attrs.Decision, decisionReported)
+	}
+}
+
+func TestExecuteTransformMissingPayloadBlocks(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: statusTransform, TraceID: "trace-empty"}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil, event)
+	res, err := p.Execute(context.Background(), in)
+	if res != nil {
+		t.Fatalf("expected block on unapplicable transform, got %+v", res)
+	}
+	if _, ok := appplugins.AsPluginError(err); !ok {
+		t.Fatalf("expected *PluginError, got %v", err)
+	}
+	attrs := span.PluginAttrsCopy()
+	extras, ok := attrs.Extras.(guardData)
+	if !ok {
+		t.Fatalf("extras type = %T, want guardData", attrs.Extras)
+	}
+	if !extras.Degraded || extras.DegradedReason != reasonTransformNoPayload {
+		t.Fatalf("extras = %+v, want degraded no-payload", extras)
+	}
+}
+
+func TestExecuteTransformLineCountMismatchBlocks(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: transformResponse("be safe\nhello\n[MASKED_PII]")}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil)
+	res, err := p.Execute(context.Background(), in)
+	if res != nil {
+		t.Fatalf("expected block on ambiguous transform, got %+v", res)
+	}
+	if _, ok := appplugins.AsPluginError(err); !ok {
+		t.Fatalf("expected *PluginError, got %v", err)
+	}
+}
+
+// Enforce + transform on MCP masks the tool arguments, the same way the LLM path
+// masks message content. It used to degrade to a block because the MCP branch
+// built no rewrite target.
+func TestExecuteMCPTransformEnforceMasksArguments(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: transformResponse("search\nfind [MASKED_PII]")}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), mcpRequestContext(), nil, event)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("masking must not fail the call, got %v", err)
+	}
+	if res == nil || res.RequestBody == nil {
+		t.Fatalf("expected a rewritten request body, got %+v", res)
+	}
+	var call mcpToolCall
+	if uerr := json.Unmarshal(res.RequestBody, &call); uerr != nil {
+		t.Fatalf("rewritten body is not a tools/call: %v", uerr)
+	}
+	if call.Name != "search" {
+		t.Fatalf("tool name = %q, want it left alone", call.Name)
+	}
+	if got := string(call.Arguments); got != `{"query":"find [MASKED_PII]"}` {
+		t.Fatalf("arguments = %s, want the masked value", got)
+	}
+	attrs := span.PluginAttrsCopy()
+	extras, ok := attrs.Extras.(guardData)
+	if !ok {
+		t.Fatalf("extras type = %T, want guardData", attrs.Extras)
+	}
+	if extras.Degraded || extras.Decision != decisionTransformed {
+		t.Fatalf("extras = %+v, want a clean transformed outcome", extras)
+	}
+}
+
+// The response direction masks the text blocks of the tool result and keeps
+// fields the gateway does not model.
+func TestExecuteMCPTransformEnforceMasksResult(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: transformResponse("the [MASKED_PII]")}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	resp := &infracontext.ResponseContext{
+		GatewayID: "gw-test",
+		Body:      []byte(`{"content":[{"type":"text","text":"the answer"}],"isError":false,"_meta":{"k":"v"}}`),
+	}
+	in := execInput(policy.StagePreResponse, policy.ModeEnforce, settings(""), mcpRequestContext(), resp)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("masking must not fail the call, got %v", err)
+	}
+	if res == nil || !res.StopUpstream || res.Body == nil {
+		t.Fatalf("expected a rewritten result body, got %+v", res)
+	}
+	var out map[string]any
+	if uerr := json.Unmarshal(res.Body, &out); uerr != nil {
+		t.Fatalf("rewritten body is not JSON: %v", uerr)
+	}
+	blocks := out["content"].([]any)
+	first := blocks[0].(map[string]any)
+	if first["text"] != "the [MASKED_PII]" {
+		t.Fatalf("text = %v, want the masked value", first["text"])
+	}
+	if _, ok := out["_meta"]; !ok {
+		t.Fatal("the rewrite dropped fields the gateway does not model")
+	}
+}
+
+func TestExecuteMCPTransformObservePassesThrough(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: transformResponse("search\nfind [MASKED_PII]")}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	in := execInput(policy.StagePreRequest, policy.ModeObserve, settings(""), mcpRequestContext(), nil)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("observe mode must not error, got %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK || res.StopUpstream {
+		t.Fatalf("expected pass-through in observe mode, got %+v", res)
+	}
+}
+
+func TestExecutePreRequestSendsOpenAIToolMessages(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	req := requestContext()
+	req.Body = []byte(`{
+		"model":"gpt-4o",
+		"messages":[
+			{"role":"system","content":"be safe"},
+			{"role":"user","content":"get weather"},
+			{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}]},
+			{"role":"tool","tool_call_id":"call_1","content":"{\"temp\":18}"}
+		],
+		"tools":[{"type":"function","function":{"name":"get_weather","parameters":{"type":"object"}}}]
+	}`)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), req, nil)
+	if _, err := p.Execute(context.Background(), in); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := f.captured()
+	if got.Protocol != protocolLLM {
+		t.Fatalf("protocol = %q, want %q", got.Protocol, protocolLLM)
+	}
+	msgs := llmPayloadMessages(t, got.Payload)
+	if len(msgs) != 4 {
+		t.Fatalf("messages = %#v, want 4 turns", msgs)
+	}
+	if msgs[3]["role"] != "tool" {
+		t.Fatalf("last role = %#v, want tool", msgs[3]["role"])
+	}
+	if msgs[3]["content"] != `{"temp":18}` {
+		t.Fatalf("tool content = %#v", msgs[3]["content"])
+	}
+	calls, _ := msgs[2]["tool_calls"].([]any)
+	if len(calls) != 1 {
+		t.Fatalf("assistant tool_calls = %#v", msgs[2]["tool_calls"])
+	}
+}
+
 func mcpToolCallJSON() []byte {
 	return []byte(`{"name":"search","arguments":{"query":"find me"}}`)
 }
@@ -758,8 +1324,17 @@ func TestExecuteMCPInputBlock(t *testing.T) {
 	if got.Attributes.Model.Provider != "" {
 		t.Fatalf("provider = %q, want empty", got.Attributes.Model.Provider)
 	}
-	if got.Payload.Input != "search\nfind me" {
-		t.Fatalf("input = %q, want %q", got.Payload.Input, "search\nfind me")
+	payload := mcpPayloadMap(t, got.Payload)
+	if payload["jsonrpc"] != "2.0" || payload["method"] != "tools/call" {
+		t.Fatalf("mcp payload = %#v, want jsonrpc tools/call", payload)
+	}
+	params, _ := payload["params"].(map[string]any)
+	if params["name"] != "search" {
+		t.Fatalf("params.name = %#v, want search", params["name"])
+	}
+	args, _ := params["arguments"].(map[string]any)
+	if args["query"] != "find me" {
+		t.Fatalf("params.arguments = %#v, want query=find me", args)
 	}
 }
 
@@ -807,8 +1382,18 @@ func TestExecuteMCPOutputBlock(t *testing.T) {
 	if got.Protocol != protocolMCP {
 		t.Fatalf("protocol = %q, want %q", got.Protocol, protocolMCP)
 	}
-	if got.Payload.Input != "the answer" {
-		t.Fatalf("input = %q, want %q", got.Payload.Input, "the answer")
+	payload := mcpPayloadMap(t, got.Payload)
+	if payload["jsonrpc"] != "2.0" {
+		t.Fatalf("mcp payload jsonrpc = %#v, want 2.0", payload["jsonrpc"])
+	}
+	result, _ := payload["result"].(map[string]any)
+	content, _ := result["content"].([]any)
+	if len(content) == 0 {
+		t.Fatalf("mcp result missing content: %#v", payload)
+	}
+	block, _ := content[0].(map[string]any)
+	if block["text"] != "the answer" {
+		t.Fatalf("result content text = %#v, want the answer", block["text"])
 	}
 }
 
@@ -867,8 +1452,8 @@ func TestExecuteMCPInputBlockWithNilRegistry(t *testing.T) {
 	if _, ok := appplugins.AsPluginError(err); !ok {
 		t.Fatalf("expected *PluginError, got %v", err)
 	}
-	if got := f.captured(); got.Payload.Input != "search\nfind me" {
-		t.Fatalf("input = %q, want %q", got.Payload.Input, "search\nfind me")
+	if got := f.captured(); mcpPayloadMap(t, got.Payload)["method"] != "tools/call" {
+		t.Fatalf("mcp payload = %#v, want tools/call", mcpPayloadMap(t, got.Payload))
 	}
 }
 
@@ -1009,5 +1594,76 @@ func TestExecuteBlocksOnlyOnFlaggedLeg(t *testing.T) {
 	}
 	if _, ok := appplugins.AsPluginError(err); !ok {
 		t.Fatalf("expected *PluginError on response block, got %v", err)
+	}
+}
+
+// The real TrustGuard contract for protocol=mcp: transformed_payload is the
+// whole masked JSON-RPC envelope, not an {"input": "..."} string. Reading it as
+// a string found nothing and degraded to a block, which is what a DLP policy in
+// transform mode produced on a live tools/call.
+func TestExecuteMCPTransformUsesEnvelopePayload(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{
+		Status: statusTransform,
+		TransformedPayload: map[string]any{
+			"id":      float64(1),
+			"jsonrpc": "2.0",
+			"method":  "tools/call",
+			"params": map[string]any{
+				"name": "notion-create-pages",
+				"arguments": map[string]any{
+					"pages": []any{map[string]any{
+						"content":    "## Datos de contacto\n\n- **Email:** [MASKED_EMAIL]\n- **Teléfono:** [MASKED_PHONE]",
+						"icon":       "👤",
+						"properties": map[string]any{"title": "Victor — Contacto"},
+					}},
+				},
+			},
+		},
+		TraceID: "trace-mcp-transform",
+	}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	reqCtx := mcpRequestContext()
+	reqCtx.Body = []byte(`{"name":"notion-create-pages","arguments":{"pages":[{"content":"## Datos de contacto\n\n- **Email:** victor@neuraltrust.ai\n- **Teléfono:** 600123456","icon":"👤","properties":{"title":"Victor — Contacto"}}]}}`)
+
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), reqCtx, nil, event)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("a transform outcome must not block, got %v", err)
+	}
+	if res == nil || res.RequestBody == nil {
+		t.Fatalf("expected the masked request body, got %+v", res)
+	}
+
+	var call mcpToolCall
+	if uerr := json.Unmarshal(res.RequestBody, &call); uerr != nil {
+		t.Fatalf("rewritten body is not a tools/call: %v", uerr)
+	}
+	if call.Name != "notion-create-pages" {
+		t.Fatalf("tool name = %q, want it preserved", call.Name)
+	}
+	args := string(call.Arguments)
+	if strings.Contains(args, "victor@neuraltrust.ai") || strings.Contains(args, "600123456") {
+		t.Fatalf("unmasked PII survived into the upstream arguments: %s", args)
+	}
+	if !strings.Contains(args, "[MASKED_EMAIL]") || !strings.Contains(args, "[MASKED_PHONE]") {
+		t.Fatalf("masked values missing from the arguments: %s", args)
+	}
+	// The structure the detector left must survive untouched.
+	if !strings.Contains(args, `"title":"Victor — Contacto"`) {
+		t.Fatalf("the rewrite lost non-masked structure: %s", args)
+	}
+
+	attrs := span.PluginAttrsCopy()
+	extras, ok := attrs.Extras.(guardData)
+	if !ok {
+		t.Fatalf("extras type = %T, want guardData", attrs.Extras)
+	}
+	if extras.Degraded || extras.Decision != decisionTransformed {
+		t.Fatalf("extras = %+v, want a clean transformed outcome", extras)
 	}
 }

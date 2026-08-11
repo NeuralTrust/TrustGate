@@ -28,12 +28,14 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	appproxy "github.com/NeuralTrust/TrustGate/pkg/app/proxy"
+	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domainconsumer "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
 )
@@ -47,16 +49,17 @@ var errPathNotFound = errors.New("no consumer matches the request path")
 var errForbidden = errors.New("credential is not authorized for the matched consumer")
 
 const (
-	errCodePluginRejected     = "plugin_rejected"
-	errCodeUnauthenticated    = "unauthenticated"
-	errCodeForbidden          = "forbidden"
-	errCodeNotFound           = "not_found"
-	errCodeNoBackendAvailable = "no_backend_available"
-	errCodeInvalidRequest     = "invalid_request"
-	errCodeInvalidModel       = "invalid_model"
-	errCodeModelNotAllowed    = "model_not_allowed"
-	errCodeProviderCredential = "provider_credential_error"
-	errCodeBackendError       = "backend_error"
+	errCodePluginRejected       = "plugin_rejected"
+	errCodeUnauthenticated      = "unauthenticated"
+	errCodeForbidden            = "forbidden"
+	errCodeNotFound             = "not_found"
+	errCodeNoBackendAvailable   = "no_backend_available"
+	errCodeInvalidRequest       = "invalid_request"
+	errCodeInvalidModel         = "invalid_model"
+	errCodeModelNotAllowed      = "model_not_allowed"
+	errCodeProviderCredential   = "provider_credential_error"
+	errCodeBackendError         = "backend_error"
+	errCodeRateLimitUnavailable = "rate_limit_unavailable"
 )
 
 var hopByHopHeaders = map[string]struct{}{
@@ -81,13 +84,14 @@ func NewForwardedHandler(forwarder appproxy.Forwarder) *ForwardedHandler {
 
 // Handle godoc
 // @Summary      Proxy chat completion
-// @Description  Forwards an OpenAI Chat Completions request to the selected provider. Proxy plane route: /{consumer_slug}/v1/chat/completions. Other fixed routes include /v1/messages (Anthropic) and /v1/responses (OpenAI Responses).
+// @Description  Forwards an OpenAI Chat Completions request to the selected provider. Proxy plane route: /{consumer_slug}/v1/chat/completions. Other fixed routes include /v1/messages (Anthropic) and /v1/responses (OpenAI Responses). Inline consumers may authenticate with an api key via X-AG-API-Key, x-api-key, or Authorization: Bearer ag_….
 // @Tags         proxy
 // @Accept       json
 // @Produce      json
 // @Param        consumer_slug      path   string  true   "Consumer slug"
 // @Param        X-AG-API-Key       header string  false  "API key for inline consumers"
-// @Param        Authorization      header string  false  "Bearer token for OAuth2 or OIDC consumers"
+// @Param        x-api-key          header string  false  "API key for inline consumers (Anthropic-compatible clients)"
+// @Param        Authorization      header string  false  "Bearer ag_… for inline api-key auth, or Bearer JWT for OAuth2/OIDC consumers"
 // @Param        X-AG-Gateway-Slug  header string  false  "Gateway slug when using header-based gateway discovery"
 // @Param        body               body   object  true   "OpenAI Chat Completions request body"
 // @Success      200                {object}  map[string]interface{}
@@ -323,15 +327,15 @@ func buildRequestContext(c *fiber.Ctx, gatewayID ids.GatewayID, route apiresolve
 	})
 
 	return &infracontext.RequestContext{
-		GatewayID:    gatewayID.String(),
-		Headers:      headers,
-		Method:       c.Method(),
-		Path:         c.Path(),
-		Query:        query,
-		Body:         c.Body(),
-		IP:           c.IP(),
-		SessionID:    sessionIDFromContext(c),
-		SourceFormat: string(route.SourceFormat),
+		GatewayID:       gatewayID.String(),
+		Headers:         headers,
+		Method:          c.Method(),
+		Path:            c.Path(),
+		Query:           query,
+		Body:            c.Body(),
+		IP:              c.IP(),
+		SessionID:       sessionIDFromContext(c),
+		SourceFormat:    string(route.SourceFormat),
 		ProxyCapability: string(route.Capability),
 	}
 }
@@ -348,6 +352,10 @@ func sessionIDFromContext(c *fiber.Ctx) string {
 
 func writeProxyError(c *fiber.Ctx, err error) error {
 	status, body := mapProxyError(err)
+	if status == fiber.StatusForbidden &&
+		(body.Error == errCodePluginRejected || body.Error == errCodeModelNotAllowed) {
+		middleware.SetOpsOutcome(c, o11y.OutcomeDeniedPolicy)
+	}
 	if rt := trace.FromContext(c.UserContext()); rt != nil {
 		rt.SetStatusReason(body.Error)
 	}
@@ -369,11 +377,12 @@ func mapProxyError(err error) (int, httpio.ErrorBody) {
 	case errors.Is(err, appproxy.ErrNoBackendAvailable),
 		errors.Is(err, appproxy.ErrNoBackendsInPool):
 		return fiber.StatusServiceUnavailable, httpio.ErrorBody{Error: errCodeNoBackendAvailable, Message: err.Error()}
+	case errors.Is(err, ratelimitapp.ErrUnavailable):
+		return fiber.StatusServiceUnavailable, httpio.ErrorBody{Error: errCodeRateLimitUnavailable, Message: err.Error()}
 	case errors.Is(err, appproxy.ErrInvalidRequestPayload):
 		return fiber.StatusBadRequest, httpio.ErrorBody{Error: errCodeInvalidRequest, Message: err.Error()}
 	case errors.Is(err, routingdomain.ErrInvalidModelRef),
-		errors.Is(err, routingdomain.ErrUnknownPoolAlias),
-		errors.Is(err, routingdomain.ErrAmbiguousModel):
+		errors.Is(err, routingdomain.ErrUnknownPoolAlias):
 		return fiber.StatusBadRequest, httpio.ErrorBody{Error: errCodeInvalidModel, Message: err.Error()}
 	case errors.Is(err, routingdomain.ErrModelDenied),
 		errors.Is(err, appproxy.ErrModelNotAllowed):

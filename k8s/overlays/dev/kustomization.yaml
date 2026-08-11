@@ -8,15 +8,33 @@ resources:
 - secretproviderclass/agentgateway-secrets.yaml
 - service-configsync-external.yaml
 - config-sync-cert.yaml
-# - patches/hpa-patch.yaml
 patchesStrategicMerge:
-- patches/replicas-patch.yaml
+- patches/hpa-patch.yaml
 - patches/resources-patch.yaml
 - patches/pdb-patch.yaml
 - patches/httproute-patch.yaml
 - patches/sa-annotation-patch.yaml
 - patches/config-sync-tls-patch.yaml
 - patches/config-sync-internal-lb-patch.yaml
+patches:
+- patch: |-
+    - op: remove
+      path: /spec/replicas
+  target:
+    kind: Deployment
+    name: agentgateway-admin
+- patch: |-
+    - op: remove
+      path: /spec/replicas
+  target:
+    kind: Deployment
+    name: agentgateway-proxy
+- patch: |-
+    - op: remove
+      path: /spec/replicas
+  target:
+    kind: Deployment
+    name: agentgateway-mcp
 commonLabels:
   app.kubernetes.io/managed-by: kustomize
   environment: dev
@@ -24,7 +42,7 @@ namespace: agentgateway
 images:
 - name: agentgateway
   newName: europe-west1-docker.pkg.dev/neuraltrust-app-dev/nt-docker/agentgateway
-  newTag: 236f1c301e599773f38d7059d99e9fa815cbdd6b
+  newTag: ec4d448983fcc259a23bebb50e2287e674a34881
 configMapGenerator:
 - behavior: create
   envs:

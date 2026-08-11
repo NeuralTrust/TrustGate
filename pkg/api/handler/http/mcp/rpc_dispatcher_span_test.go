@@ -17,10 +17,12 @@ package mcp_test
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"testing"
 
 	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcp/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
@@ -40,7 +42,7 @@ func TestRPCGateway_Dispatch_RecordsToolSpan(t *testing.T) {
 	rt := trace.New("t-1", trace.Metadata{Kind: events.KindMCP})
 	ctx := trace.NewContext(context.Background(), rt)
 
-	g := mcphttp.NewRPCGateway(composer, noopRunner())
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), nil)
 	_, err := g.Dispatch(ctx, &appconsumer.RoutableConsumer{}, "tools/call", json.RawMessage(`{"name":"echo"}`))
 	require.NoError(t, err)
 
@@ -52,7 +54,7 @@ func TestRPCGateway_Dispatch_RecordsToolSpan(t *testing.T) {
 	assert.Equal(t, "tools/call", attrs.Method)
 	assert.Equal(t, "tool", attrs.Operation)
 	assert.Equal(t, "echo", attrs.Tool)
-	assert.Equal(t, "ok", attrs.UpstreamStatus)
+	assert.Equal(t, http.StatusOK, attrs.UpstreamStatus)
 }
 
 func TestRPCGateway_Dispatch_RecordsErrorStatus(t *testing.T) {
@@ -65,7 +67,7 @@ func TestRPCGateway_Dispatch_RecordsErrorStatus(t *testing.T) {
 	rt := trace.New("t-2", trace.Metadata{Kind: events.KindMCP})
 	ctx := trace.NewContext(context.Background(), rt)
 
-	g := mcphttp.NewRPCGateway(composer, noopRunner())
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), nil)
 	_, err := g.Dispatch(ctx, &appconsumer.RoutableConsumer{}, "tools/list", nil)
 	require.Error(t, err)
 
@@ -74,9 +76,61 @@ func TestRPCGateway_Dispatch_RecordsErrorStatus(t *testing.T) {
 	attrs, ok := spans[0].MCPAttrsCopy()
 	require.True(t, ok)
 	assert.Equal(t, "discovery", attrs.Operation)
-	assert.Equal(t, "error", attrs.UpstreamStatus)
+	assert.Equal(t, http.StatusBadGateway, attrs.UpstreamStatus)
+}
+
+func TestRPCGateway_Dispatch_RecordsPolicyBlockedHTTPStatus(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().
+		CallTool(mock.Anything, mock.Anything, "echo", mock.Anything).
+		Return(nil, &appmcp.RPCError{
+			Code:       -32001,
+			Message:    "blocked",
+			HTTPStatus: http.StatusForbidden,
+		}).Once()
+
+	rt := trace.New("t-3", trace.Metadata{Kind: events.KindMCP})
+	ctx := trace.NewContext(context.Background(), rt)
+
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), nil)
+	_, err := g.Dispatch(ctx, &appconsumer.RoutableConsumer{}, "tools/call", json.RawMessage(`{"name":"echo"}`))
+	require.Error(t, err)
+
+	attrs, ok := rt.Spans()[0].MCPAttrsCopy()
+	require.True(t, ok)
+	assert.Equal(t, http.StatusForbidden, attrs.UpstreamStatus)
+	assert.Equal(t, -32001, attrs.RPCErrorCode)
+}
+
+// The wire answers 200 so MCP clients parse the error, but telemetry must still
+// say what the refusal means: an upstream the user has not connected is an
+// authorization gap, not a broken gateway. Recording it as 502 hid real
+// upstream failures among routine consent prompts.
+func TestRPCGateway_Dispatch_RecordsConsentAsForbidden(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().
+		CallTool(mock.Anything, mock.Anything, "notion-search", mock.Anything).
+		Return(nil, &appmcp.ConsentRequiredError{
+			Provider: "com.notion/mcp", Ticket: "tk", Path: "/p/mcp",
+		}).Once()
+
+	rt := trace.New("t-4", trace.Metadata{Kind: events.KindMCP})
+	ctx := trace.NewContext(context.Background(), rt)
+
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), nil)
+	_, err := g.Dispatch(ctx, &appconsumer.RoutableConsumer{}, "tools/call",
+		json.RawMessage(`{"name":"notion-search"}`))
+	require.Error(t, err)
+
+	attrs, ok := rt.Spans()[0].MCPAttrsCopy()
+	require.True(t, ok)
+	assert.Equal(t, http.StatusForbidden, attrs.UpstreamStatus)
+	assert.Equal(t, -32003, attrs.RPCErrorCode)
 }
 
 type assertErr struct{}
 
 func (assertErr) Error() string { return "boom" }
+

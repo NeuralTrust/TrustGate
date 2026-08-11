@@ -39,9 +39,32 @@ const docTemplate = `{
                 }
             }
         },
+        "/health": {
+            "get": {
+                "description": "Reports whether the process is alive. Canonical path is /healthz; /health is an alias for load-balancer defaults.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Liveness probe",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/healthz": {
             "get": {
-                "description": "Reports whether the process is alive.",
+                "description": "Reports whether the process is alive. Canonical path is /healthz; /health is an alias for load-balancer defaults.",
                 "produces": [
                     "application/json"
                 ],
@@ -201,7 +224,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Creates a new gateway. The slug is optional: when omitted the server generates a unique random slug. If provided it must be a lowercase DNS label and unique.",
+                "description": "Creates a new gateway. Ownership tenant_id is required (JWT claim, or body for platform admins). The slug is optional: when omitted the server generates a unique random slug. If provided it must be a lowercase DNS label and unique. Platform JWT create requires stamped entitlements (tier + caps); tenant JWTs must omit entitlements (422 if sent). With RATE_LIMIT_ENABLED, create returns 409 when the tenant is already at MaxInstances for the effective tier.",
                 "consumes": [
                     "application/json"
                 ],
@@ -247,6 +270,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
                     }
                 }
             }
@@ -277,8 +306,38 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filter by name (substring match)",
+                        "description": "Substring match on name (alias: name)",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Alias of search",
                         "name": "name",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by auth type (api_key, oauth2, oidc, mtls)",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Filter by enabled flag",
+                        "name": "enabled",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort field (name, created_at, updated_at, type)",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort order (asc, desc)",
+                        "name": "order",
                         "in": "query"
                     },
                     {
@@ -309,6 +368,12 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -611,8 +676,45 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filter by name (substring match)",
+                        "description": "Substring match on name or slug (alias: name)",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Alias of search",
                         "name": "name",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by consumer type (LLM, MCP, A2A)",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Filter by active flag",
+                        "name": "active",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Filter consumers linked to this auth id",
+                        "name": "auth_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort field (name, created_at, updated_at, type)",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort order (asc, desc)",
+                        "name": "order",
                         "in": "query"
                     },
                     {
@@ -643,6 +745,12 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -785,7 +893,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Updates an existing consumer.",
+                "description": "Updates an existing consumer. The optional ` + "`" + `registries` + "`" + ` field replaces the whole registry association set, so switching a role_based consumer to inline routing and attaching its registries happens in a single atomic request.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1482,8 +1590,56 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filter by name (substring match)",
+                        "description": "Substring match on name or slug (alias: name)",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Alias of search",
                         "name": "name",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Filter by enabled flag",
+                        "name": "enabled",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Filter by global flag",
+                        "name": "global",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by mode (enforce, throttle, observe)",
+                        "name": "mode",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Catalog category (group type); comma-separated multi",
+                        "name": "category",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Plugin slug (FE type filter); comma-separated multi",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort field (name, created_at, updated_at, priority)",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort order (asc, desc)",
+                        "name": "order",
                         "in": "query"
                     },
                     {
@@ -1514,6 +1670,12 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -2408,8 +2570,26 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filter by name (substring match)",
+                        "description": "Substring match on name (alias: name)",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Alias of search",
                         "name": "name",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort field (name, created_at, updated_at)",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort order (asc, desc)",
+                        "name": "order",
                         "in": "query"
                     },
                     {
@@ -2440,6 +2620,12 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -2910,7 +3096,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Updates an existing gateway.",
+                "description": "Updates an existing gateway. Tenant JWTs may not send entitlements (422). Platform tier downgrades that would leave the tenant over the new MaxInstances return 409 — delete excess gateways first.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2967,6 +3153,12 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -3060,7 +3252,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the catalog of supported models, optionally filtered by provider.",
+                "description": "Returns the catalog of supported models, optionally filtered by provider. When gateway_id and registry_id are supplied for an AWS Bedrock registry, the list is narrowed to the models those credentials can invoke serverless (on-demand base models and system-defined inference profiles), excluding Bedrock Marketplace, Provisioned Throughput and custom models. Malformed ids and unreachable AWS endpoints are ignored and yield the full catalog.",
                 "produces": [
                     "application/json"
                 ],
@@ -3073,6 +3265,20 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Filter by provider id",
                         "name": "provider",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway of the registry to scope availability to",
+                        "name": "gateway_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Registry whose credentials decide model availability",
+                        "name": "registry_id",
                         "in": "query"
                     }
                 ],
@@ -3220,7 +3426,7 @@ const docTemplate = `{
         },
         "/{consumer_slug}/v1/chat/completions": {
             "post": {
-                "description": "Forwards an OpenAI Chat Completions request to the selected provider. Proxy plane route: /{consumer_slug}/v1/chat/completions. Other fixed routes include /v1/messages (Anthropic) and /v1/responses (OpenAI Responses).",
+                "description": "Forwards an OpenAI Chat Completions request to the selected provider. Proxy plane route: /{consumer_slug}/v1/chat/completions. Other fixed routes include /v1/messages (Anthropic) and /v1/responses (OpenAI Responses). Inline consumers may authenticate with an api key via X-AG-API-Key, x-api-key, or Authorization: Bearer ag_….",
                 "consumes": [
                     "application/json"
                 ],
@@ -3247,7 +3453,13 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Bearer token for OAuth2 or OIDC consumers",
+                        "description": "API key for inline consumers (Anthropic-compatible clients)",
+                        "name": "x-api-key",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Bearer ag_… for inline api-key auth, or Bearer JWT for OAuth2/OIDC consumers",
                         "name": "Authorization",
                         "in": "header"
                     },
@@ -3495,6 +3707,13 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "id": {
+                    "type": "string"
+                },
+                "key_prefix": {
+                    "description": "Non-secret recognition hint for api_key auths (e.g. \"ag_3dlXk\" + \"Rv8Q\").",
+                    "type": "string"
+                },
+                "key_suffix": {
                     "type": "string"
                 },
                 "name": {
@@ -3948,12 +4167,19 @@ const docTemplate = `{
                 },
                 "pool_alias": {
                     "type": "string"
+                },
+                "smart_routing": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SmartRoutingConfigRequest"
                 }
             }
         },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.LBPoolMemberRequest": {
             "type": "object",
             "properties": {
+                "model": {
+                    "description": "Model pins this pool entry to a single model, which is what allows the same\nregistry to appear several times as independently balanced routes.",
+                    "type": "string"
+                },
                 "models": {
                     "type": "array",
                     "items": {
@@ -3962,6 +4188,13 @@ const docTemplate = `{
                 },
                 "registry_id": {
                     "type": "string"
+                },
+                "weight": {
+                    "description": "Weight is the relative weighted-round-robin share of this route on a 1..100\nscale, defaulting to the consumer's registry weight.",
+                    "type": "integer",
+                    "maximum": 100,
+                    "minimum": 1,
+                    "example": 1
                 }
             }
         },
@@ -4010,6 +4243,32 @@ const docTemplate = `{
                     }
                 },
                 "default": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SmartRoutingConfigRequest": {
+            "type": "object",
+            "properties": {
+                "tiers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SmartRoutingTierRequest"
+                    }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SmartRoutingTierRequest": {
+            "type": "object",
+            "properties": {
+                "min_score": {
+                    "type": "number"
+                },
+                "model": {
+                    "description": "Model selects which route of the registry this tier targets. It is required\nwhen the pool declares the registry more than once.",
+                    "type": "string"
+                },
+                "registry_id": {
                     "type": "string"
                 }
             }
@@ -4063,6 +4322,13 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "registries": {
+                    "description": "Registries replaces the whole registry association set: registries absent\nfrom the list are detached. Omit the field to leave the associations as\nthey are; send an empty list to detach every registry.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.RegistryBindingRequest"
+                    }
                 },
                 "routing_mode": {
                     "type": "string"
@@ -4253,12 +4519,18 @@ const docTemplate = `{
                 },
                 "pool_alias": {
                     "type": "string"
+                },
+                "smart_routing": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SmartRoutingConfigResponse"
                 }
             }
         },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.LBPoolMemberResponse": {
             "type": "object",
             "properties": {
+                "model": {
+                    "type": "string"
+                },
                 "models": {
                     "type": "array",
                     "items": {
@@ -4267,6 +4539,9 @@ const docTemplate = `{
                 },
                 "registry_id": {
                     "type": "string"
+                },
+                "weight": {
+                    "type": "integer"
                 }
             }
         },
@@ -4318,6 +4593,31 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SmartRoutingConfigResponse": {
+            "type": "object",
+            "properties": {
+                "tiers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SmartRoutingTierResponse"
+                    }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SmartRoutingTierResponse": {
+            "type": "object",
+            "properties": {
+                "min_score": {
+                    "type": "number"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "registry_id": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ToolkitEntryResponse": {
             "type": "object",
             "properties": {
@@ -4347,6 +4647,14 @@ const docTemplate = `{
                 "domain": {
                     "type": "string"
                 },
+                "entitlements": {
+                    "description": "Entitlements is required for platform (empty JWT tenant) create and must include full stamped caps.\nTenant callers must omit it (422 if sent). When a tenant omits it, the gateway defaults to free\nor inherits the highest sibling tier.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Entitlements"
+                        }
+                    ]
+                },
                 "metadata": {
                     "type": "object",
                     "additionalProperties": {
@@ -4363,6 +4671,10 @@ const docTemplate = `{
                 },
                 "telemetry": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry"
+                },
+                "tenant_id": {
+                    "description": "TenantID is required ownership for platform (empty JWT) create-for-tenant; tenant JWTs may match or omit it (JWT wins).",
+                    "type": "string"
                 }
             }
         },
@@ -4374,6 +4686,14 @@ const docTemplate = `{
                 },
                 "domain": {
                     "type": "string"
+                },
+                "entitlements": {
+                    "description": "Entitlements is optional; only platform admins may set it (tenant callers get 422).\nWhen omitted the gateway's entitlements are left unchanged. Downgrading when the tenant already\nhas more gateways than the new MaxInstances returns 409 — delete excess first.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Entitlements"
+                        }
+                    ]
                 },
                 "metadata": {
                     "type": "object",
@@ -4417,6 +4737,9 @@ const docTemplate = `{
                 },
                 "domain": {
                     "type": "string"
+                },
+                "entitlements": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Entitlements"
                 },
                 "hosts": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_response.GatewayHosts"
@@ -5973,6 +6296,23 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Entitlements": {
+            "type": "object",
+            "properties": {
+                "burst_per_min": {
+                    "type": "integer"
+                },
+                "max_instances": {
+                    "type": "integer"
+                },
+                "quota_per_month": {
+                    "type": "integer"
+                },
+                "tier": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_domain_gateway.SessionConfig": {
             "type": "object",
             "properties": {
@@ -6238,9 +6578,6 @@ const docTemplate = `{
                 "provider_ms": {
                     "type": "integer"
                 },
-                "routing_ms": {
-                    "type": "integer"
-                },
                 "total_ms": {
                     "type": "integer"
                 }
@@ -6289,7 +6626,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "upstream_status": {
-                    "type": "string"
+                    "type": "integer"
                 },
                 "upstream_tool": {
                     "type": "string"

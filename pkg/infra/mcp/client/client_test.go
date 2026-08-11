@@ -108,6 +108,7 @@ func TestCallTool_UnknownToolIsRPCError(t *testing.T) {
 	_, err := sess.CallTool(context.Background(), "missing", nil)
 	if err == nil {
 		t.Fatal("expected an error for an unknown tool")
+		return
 	}
 	if !appmcp.IsRPCError(err) {
 		t.Fatalf("error = %v, want a JSON-RPC error", err)

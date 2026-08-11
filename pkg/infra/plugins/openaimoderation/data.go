@@ -60,3 +60,13 @@ func setExtras(event *metrics.EventContext, data ModerationData) {
 	}
 	event.SetExtras(data)
 }
+
+// recordScore surfaces the dominant moderation category on the metrics span so
+// it feeds the analytics Security Engine breakdown. It no-ops when no category
+// score was produced (e.g. fail-open or empty input).
+func recordScore(event *metrics.EventContext, data ModerationData) {
+	if event == nil || data.MaxScoreCategory == "" {
+		return
+	}
+	event.SetScore(data.MaxScore, data.MaxScoreCategory)
+}

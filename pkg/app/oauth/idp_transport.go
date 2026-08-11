@@ -81,13 +81,24 @@ func (t *idpTransport) tokenCall(ctx context.Context, endpoint string, form url.
 	if err != nil {
 		return nil, fmt.Errorf("oauth: unparseable IdP token response (status %d)", res.StatusCode)
 	}
-	if res.StatusCode != http.StatusOK {
-		code, _ := doc["error"].(string)
+	// Some identity providers — notably GitHub — report token-endpoint failures
+	// with HTTP 200 and an `error` field in the body rather than a 4xx status.
+	// Surface that embedded error regardless of the status code; otherwise the
+	// empty access_token flows downstream and the failure resurfaces as a
+	// misleading "fetch userinfo: unexpected status 401" instead of the real
+	// cause (e.g. redirect_uri_mismatch, bad_verification_code).
+	if code, _ := doc["error"].(string); code != "" {
 		desc, _ := doc["error_description"].(string)
-		if code == "" {
-			code = "server_error"
-		}
 		return nil, oauthErr(code, desc)
+	}
+	if res.StatusCode != http.StatusOK {
+		return nil, oauthErr("server_error",
+			fmt.Sprintf("identity provider token endpoint returned status %d", res.StatusCode))
+	}
+	// A 200 with no error and no access_token is equally unusable: fail loudly
+	// here rather than letting an empty bearer reach the userinfo/subject step.
+	if token, _ := doc["access_token"].(string); token == "" {
+		return nil, oauthErr("server_error", "identity provider returned no access token")
 	}
 	return doc, nil
 }

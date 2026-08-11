@@ -219,6 +219,53 @@ func (_c *Registry_Validate_Call) RunAndReturn(run func(string, map[string]inter
 	return _c
 }
 
+// ValidateMode provides a mock function with given fields: name, selected
+func (_m *Registry) ValidateMode(name string, selected policy.Mode) error {
+	ret := _m.Called(name, selected)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ValidateMode")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(string, policy.Mode) error); ok {
+		r0 = rf(name, selected)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Registry_ValidateMode_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ValidateMode'
+type Registry_ValidateMode_Call struct {
+	*mock.Call
+}
+
+// ValidateMode is a helper method to define mock.On call
+//   - name string
+//   - selected policy.Mode
+func (_e *Registry_Expecter) ValidateMode(name interface{}, selected interface{}) *Registry_ValidateMode_Call {
+	return &Registry_ValidateMode_Call{Call: _e.mock.On("ValidateMode", name, selected)}
+}
+
+func (_c *Registry_ValidateMode_Call) Run(run func(name string, selected policy.Mode)) *Registry_ValidateMode_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(string), args[1].(policy.Mode))
+	})
+	return _c
+}
+
+func (_c *Registry_ValidateMode_Call) Return(_a0 error) *Registry_ValidateMode_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Registry_ValidateMode_Call) RunAndReturn(run func(string, policy.Mode) error) *Registry_ValidateMode_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // ValidateStages provides a mock function with given fields: name, selected
 func (_m *Registry) ValidateStages(name string, selected []policy.Stage) error {
 	ret := _m.Called(name, selected)

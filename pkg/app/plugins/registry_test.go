@@ -29,17 +29,24 @@ type stagePlugin struct {
 	mandatory []policy.Stage
 	supported []policy.Stage
 	protocols []Protocol
+	modes     []policy.Mode
 }
 
 func (s *stagePlugin) Name() string                                        { return s.name }
 func (s *stagePlugin) MandatoryStages() []policy.Stage                     { return s.mandatory }
 func (s *stagePlugin) SupportedStages() []policy.Stage                     { return s.supported }
-func (s *stagePlugin) SupportedModes() []policy.Mode                       { return []policy.Mode{policy.ModeEnforce} }
 func (s *stagePlugin) ValidateConfig(map[string]any) error                 { return nil }
 func (s *stagePlugin) Execute(context.Context, ExecInput) (*Result, error) { return nil, nil }
 func (s *stagePlugin) MutatesRequestBody() bool                            { return false }
 func (s *stagePlugin) MutatesResponseBody() bool                           { return false }
 func (s *stagePlugin) MutatesMetadata() bool                               { return false }
+
+func (s *stagePlugin) SupportedModes() []policy.Mode {
+	if s.modes != nil {
+		return s.modes
+	}
+	return []policy.Mode{policy.ModeEnforce}
+}
 
 func (s *stagePlugin) SupportedProtocols() []Protocol {
 	if s.protocols != nil {
@@ -171,4 +178,28 @@ func TestRegistry_ValidateStages(t *testing.T) {
 	require.NoError(t, reg.ValidateStages("mandatoryonly", nil))
 	// Unknown plugin.
 	require.ErrorIs(t, reg.ValidateStages("missing", nil), ErrUnknownPlugin)
+}
+
+func TestRegistry_ValidateMode(t *testing.T) {
+	reg := NewRegistry()
+	require.NoError(t, reg.Register(&stagePlugin{
+		name:      "enforceonly",
+		mandatory: []policy.Stage{policy.StagePreRequest},
+		supported: []policy.Stage{policy.StagePreRequest},
+	}))
+	require.NoError(t, reg.Register(&stagePlugin{
+		name:      "observable",
+		mandatory: []policy.Stage{policy.StagePreRequest},
+		supported: []policy.Stage{policy.StagePreRequest},
+		modes:     []policy.Mode{policy.ModeEnforce, policy.ModeObserve},
+	}))
+
+	require.NoError(t, reg.ValidateMode("enforceonly", policy.ModeEnforce))
+	// An empty mode is the default one, which every plugin supports.
+	require.NoError(t, reg.ValidateMode("enforceonly", ""))
+	// A plugin that cannot dry-run must not be configured to.
+	require.ErrorIs(t, reg.ValidateMode("enforceonly", policy.ModeObserve), ErrModeNotSupported)
+	require.NoError(t, reg.ValidateMode("observable", policy.ModeObserve))
+	require.ErrorIs(t, reg.ValidateMode("observable", policy.ModeThrottle), ErrModeNotSupported)
+	require.ErrorIs(t, reg.ValidateMode("missing", policy.ModeEnforce), ErrUnknownPlugin)
 }

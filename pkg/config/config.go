@@ -40,9 +40,6 @@ const (
 	defaultGatewayBaseDomain  = "llm.neuraltrust.ai"
 	defaultMCPBaseDomain      = "mcp.neuraltrust.ai"
 
-	GatewayDiscoveryModeHeader    = "header"
-	GatewayDiscoveryModeSubdomain = "subdomain"
-
 	defaultDBHost                    = "localhost"
 	defaultDBPort                    = 5432
 	defaultDBUser                    = "trustgate"
@@ -79,6 +76,8 @@ const (
 	defaultTelemetryEnableRequestTraces = true
 	defaultTelemetryEnablePluginTraces  = true
 	defaultTelemetryExportersFile       = "config/telemetry.yaml"
+	// OPS metrics are off by default; product telemetry stays independent.
+	defaultOpsMetricsEnabled = false
 
 	defaultMetricsEnabled       = true
 	defaultMetricsQueueSize     = 1000
@@ -109,13 +108,21 @@ const (
 
 	defaultTrustGuardTimeout = 15 * time.Second
 
+	defaultFirewallComplexityTimeout = 30 * time.Second
+
 	defaultOpenAIModerationTimeout = 15 * time.Second
 
-	defaultConfigSyncDataPlaneEnabled  = false
-	defaultConfigSyncLKGPath           = "/var/lib/trustgate/snapshot.lkg"
-	defaultConfigSyncPollInterval      = 5 * time.Minute
-	defaultConfigSyncRecompileDebounce = 2 * time.Second
+	defaultConfigSyncDataPlaneEnabled = false
+	defaultConfigSyncLKGPath          = "/var/lib/trustgate/snapshot.lkg"
+	defaultConfigSyncPollInterval     = 5 * time.Minute
+	// The dispatcher fires immediately on the first write signal (leading edge);
+	// the debounce is only the horizon for folding a burst of follow-up writes
+	// into one trailing recompile, so it stays short to keep propagation of
+	// multi-call admin flows (create consumer + key + policies) near-immediate.
+	defaultConfigSyncRecompileDebounce = 250 * time.Millisecond
 	defaultConfigSyncRecompileBackstop = 5 * time.Minute
+
+	defaultRateLimitEnabled = true
 
 	defaultConfigSyncGRPCListenAddr             = ":8083"
 	defaultConfigSyncGRPCKeepaliveTime          = 30 * time.Second
@@ -129,25 +136,27 @@ const (
 )
 
 type Config struct {
-	AppEnv           string
-	Server           ServerConfig
-	Database         DatabaseConfig
-	Redis            RedisConfig
-	Cache            CacheConfig
-	SemanticCache    SemanticCacheConfig
-	SessionStore     SessionStoreConfig
-	Kafka            KafkaConfig
-	Telemetry        TelemetryConfig
-	Metrics          MetricsConfig
-	Playground       PlaygroundConfig
-	Upstream         UpstreamConfig
-	Provider         ProviderConfig
-	Catalog          CatalogConfig
-	CORS             CORSConfig
-	Logger           LoggerConfig
-	TrustGuard       TrustGuardConfig
-	OpenAIModeration OpenAIModerationConfig
-	ConfigSync       ConfigSyncConfig
+	AppEnv             string
+	Server             ServerConfig
+	Database           DatabaseConfig
+	Redis              RedisConfig
+	Cache              CacheConfig
+	SemanticCache      SemanticCacheConfig
+	SessionStore       SessionStoreConfig
+	Kafka              KafkaConfig
+	Telemetry          TelemetryConfig
+	Metrics            MetricsConfig
+	Playground         PlaygroundConfig
+	Upstream           UpstreamConfig
+	Provider           ProviderConfig
+	Catalog            CatalogConfig
+	CORS               CORSConfig
+	Logger             LoggerConfig
+	TrustGuard         TrustGuardConfig
+	FirewallComplexity FirewallComplexityConfig
+	OpenAIModeration   OpenAIModerationConfig
+	ConfigSync         ConfigSyncConfig
+	RateLimit          RateLimitConfig
 }
 
 const (
@@ -211,15 +220,41 @@ type ServerConfig struct {
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
 	IdleTimeout  time.Duration
-	// SecretKey signs and verifies admin-plane JWTs. Empty disables admin auth
-	// token acceptance (every token is rejected).
-	SecretKey            string
-	GatewayBaseDomain    string
-	MCPBaseDomain        string
-	GatewayDiscoveryMode string
-	STSIssuer            string
-	STSSigningKey        string
-	TrustXFCCFrom        []string
+	// SecretKey signs and verifies admin-plane JWTs and encrypts vault material.
+	// Empty disables admin auth token acceptance until resolved. In prod, when
+	// empty at boot, the DI layer auto-provisions a shared value in Redis
+	// (see crypto.ResolveSharedSecretKey) so replicas converge.
+	SecretKey         string
+	GatewayBaseDomain string
+	MCPBaseDomain     string
+	STSIssuer         string
+	STSSigningKey     string
+	TrustXFCCFrom     []string
+	// MCPDefaultIdP is the built-in NeuralTrust identity provider used as the
+	// fallback OAuth2 login for MCP consumers that have no identity provider of
+	// their own. Empty Issuer disables it (behaviour unchanged).
+	MCPDefaultIdP MCPDefaultIdPConfig
+}
+
+// MCPDefaultIdPConfig configures the built-in NeuralTrust identity provider
+// that MCP consumers fall back to when they have no oauth2 auth of their own.
+// The gateway brokers the interactive login to this provider (the NeuralTrust
+// platform acting as an OAuth2 authorization server) and mints its own MCP
+// session token bound to the platform user, so operators do not have to stand
+// up and register an identity provider just to run a PoC.
+type MCPDefaultIdPConfig struct {
+	// Issuer is the authorization server's issuer URL (e.g.
+	// https://app.neuraltrust.ai/api/mcp/oauth). Empty disables the default.
+	Issuer string
+	// AuthorizeURL/TokenURL/JWKSURL default to {Issuer}/authorize, /token and
+	// /jwks respectively when left empty.
+	AuthorizeURL string
+	TokenURL     string
+	JWKSURL      string
+	ClientID     string
+	ClientSecret string // #nosec G117 -- config struct field, not a hardcoded credential
+	Audiences    []string
+	Scopes       []string
 }
 
 type DatabaseConfig struct {
@@ -280,7 +315,11 @@ type TelemetryConfig struct {
 	ExportersFile       string
 	EnableRequestTraces bool
 	EnablePluginTraces  bool
-	OTLP                OTLPConfig
+	// OpsMetricsEnabled turns on AgentGateway operational OTel metrics
+	// (http.server.request.duration / agentgateway.request.outcome_total).
+	// Independent of Enabled (product-event pipeline). Default false.
+	OpsMetricsEnabled bool
+	OTLP              OTLPConfig
 }
 
 // OTLPConfig holds process-level OTLP exporter defaults read from the standard
@@ -316,8 +355,9 @@ type UpstreamConfig struct {
 }
 
 type ProviderConfig struct {
-	RequestTimeout time.Duration
-	MaxRetries     int
+	RequestTimeout        time.Duration
+	ResponseHeaderTimeout time.Duration
+	MaxRetries            int
 }
 
 type CatalogConfig struct {
@@ -348,32 +388,48 @@ type TrustGuardConfig struct {
 	ClientSecret string
 }
 
+// FirewallComplexityConfig configures the Firewall Complexity API used by the
+// smart-routing load balancer. An empty BaseURL or SecretKey disables smart
+// routing at runtime.
+type FirewallComplexityConfig struct {
+	BaseURL   string
+	SecretKey string // #nosec G117 -- config struct field, not a hardcoded credential
+	Timeout   time.Duration
+}
+
 type OpenAIModerationConfig struct {
 	BaseURL string
 	Timeout time.Duration
 }
 
+// RateLimitConfig gates the per-gateway plan rate limiter.
+type RateLimitConfig struct {
+	Enabled bool
+}
+
 func LoadConfig() (*Config, error) {
 	cfg := &Config{
-		AppEnv:           getEnv("APP_ENV", defaultAppEnv),
-		Server:           getServerConfig(),
-		Database:         getDatabaseConfig(),
-		Redis:            getRedisConfig(),
-		Cache:            getCacheConfig(),
-		SemanticCache:    getSemanticCacheConfig(),
-		SessionStore:     getSessionStoreConfig(),
-		Kafka:            getKafkaConfig(),
-		Telemetry:        getTelemetryConfig(),
-		Metrics:          getMetricsConfig(),
-		Playground:       getPlaygroundConfig(),
-		Upstream:         getUpstreamConfig(),
-		Provider:         getProviderConfig(),
-		Catalog:          getCatalogConfig(),
-		CORS:             getCORSConfig(),
-		Logger:           getLoggerConfig(),
-		TrustGuard:       getTrustGuardConfig(),
-		OpenAIModeration: getOpenAIModerationConfig(),
-		ConfigSync:       getConfigSyncConfig(),
+		AppEnv:             getEnv("APP_ENV", defaultAppEnv),
+		Server:             getServerConfig(),
+		Database:           getDatabaseConfig(),
+		Redis:              getRedisConfig(),
+		Cache:              getCacheConfig(),
+		SemanticCache:      getSemanticCacheConfig(),
+		SessionStore:       getSessionStoreConfig(),
+		Kafka:              getKafkaConfig(),
+		Telemetry:          getTelemetryConfig(),
+		Metrics:            getMetricsConfig(),
+		Playground:         getPlaygroundConfig(),
+		Upstream:           getUpstreamConfig(),
+		Provider:           getProviderConfig(),
+		Catalog:            getCatalogConfig(),
+		CORS:               getCORSConfig(),
+		Logger:             getLoggerConfig(),
+		TrustGuard:         getTrustGuardConfig(),
+		FirewallComplexity: getFirewallComplexityConfig(),
+		OpenAIModeration:   getOpenAIModerationConfig(),
+		ConfigSync:         getConfigSyncConfig(),
+		RateLimit:          getRateLimitConfig(),
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -398,13 +454,19 @@ func getServerConfig() ServerConfig {
 			"MCP_BASE_DOMAIN",
 			defaultMCPBaseDomain,
 		),
-		GatewayDiscoveryMode: strings.ToLower(strings.TrimSpace(getEnv(
-			"GATEWAY_DISCOVERY_MODE",
-			GatewayDiscoveryModeHeader,
-		))),
 		STSIssuer:     getEnv("STS_ISSUER", "trustgate"),
 		STSSigningKey: getEnv("STS_SIGNING_KEY", ""),
 		TrustXFCCFrom: splitCSV(getEnv("TRUST_XFCC_FROM", "")),
+		MCPDefaultIdP: MCPDefaultIdPConfig{
+			Issuer:       getEnv("MCP_DEFAULT_IDP_ISSUER", ""),
+			AuthorizeURL: getEnv("MCP_DEFAULT_IDP_AUTHORIZE_URL", ""),
+			TokenURL:     getEnv("MCP_DEFAULT_IDP_TOKEN_URL", ""),
+			JWKSURL:      getEnv("MCP_DEFAULT_IDP_JWKS_URL", ""),
+			ClientID:     getEnv("MCP_DEFAULT_IDP_CLIENT_ID", ""),
+			ClientSecret: getEnv("MCP_DEFAULT_IDP_CLIENT_SECRET", ""),
+			Audiences:    splitCSV(getEnv("MCP_DEFAULT_IDP_AUDIENCE", "")),
+			Scopes:       splitCSV(getEnv("MCP_DEFAULT_IDP_SCOPES", "")),
+		},
 	}
 }
 
@@ -500,6 +562,7 @@ func getTelemetryConfig() TelemetryConfig {
 		ExportersFile:       getEnv("TELEMETRY_EXPORTERS_FILE", defaultTelemetryExportersFile),
 		EnableRequestTraces: getEnvBool("TELEMETRY_ENABLE_REQUEST_TRACES", defaultTelemetryEnableRequestTraces),
 		EnablePluginTraces:  getEnvBool("TELEMETRY_ENABLE_PLUGIN_TRACES", defaultTelemetryEnablePluginTraces),
+		OpsMetricsEnabled:   getEnvBool("OPS_METRICS_ENABLED", defaultOpsMetricsEnabled),
 		OTLP:                getOTLPConfig(),
 	}
 }
@@ -590,9 +653,15 @@ func getUpstreamConfig() UpstreamConfig {
 }
 
 func getProviderConfig() ProviderConfig {
+	requestTimeout := getEnvDuration("PROVIDER_REQUEST_TIMEOUT", defaultProviderRequestTimeout)
+	// Non-streaming providers withhold response headers until the whole
+	// completion is generated, so a header timeout below the request timeout
+	// would cap generation time without the request timeout ever applying.
+	// Defaulting to the request timeout keeps the two from drifting apart.
 	return ProviderConfig{
-		RequestTimeout: getEnvDuration("PROVIDER_REQUEST_TIMEOUT", defaultProviderRequestTimeout),
-		MaxRetries:     getEnvInt("PROVIDER_MAX_RETRIES", defaultProviderMaxRetries),
+		RequestTimeout:        requestTimeout,
+		ResponseHeaderTimeout: getEnvDuration("PROVIDER_RESPONSE_HEADER_TIMEOUT", requestTimeout),
+		MaxRetries:            getEnvInt("PROVIDER_MAX_RETRIES", defaultProviderMaxRetries),
 	}
 }
 
@@ -642,6 +711,14 @@ func getTrustGuardConfig() TrustGuardConfig {
 	}
 }
 
+func getFirewallComplexityConfig() FirewallComplexityConfig {
+	return FirewallComplexityConfig{
+		BaseURL:   getEnv("FIREWALL_BASE_URL", ""),
+		SecretKey: getEnv("FIREWALL_SECRET_KEY", ""),
+		Timeout:   defaultFirewallComplexityTimeout,
+	}
+}
+
 func getOpenAIModerationConfig() OpenAIModerationConfig {
 	return OpenAIModerationConfig{
 		BaseURL: getEnv("OPENAI_MODERATION_BASE_URL", "https://api.openai.com"),
@@ -678,6 +755,12 @@ func getConfigSyncConfig() ConfigSyncConfig {
 		GRPCMaxBackoff:       getEnvDuration("CONFIG_SYNC_GRPC_MAX_BACKOFF", defaultConfigSyncGRPCMaxBackoff),
 		OutboxRetention:      getEnvDuration("CONFIG_SYNC_OUTBOX_RETENTION", defaultConfigSyncOutboxRetention),
 		OutboxMaxRows:        getEnvInt64("CONFIG_SYNC_OUTBOX_MAX_ROWS", defaultConfigSyncOutboxMaxRows),
+	}
+}
+
+func getRateLimitConfig() RateLimitConfig {
+	return RateLimitConfig{
+		Enabled: getEnvBool("RATE_LIMIT_ENABLED", defaultRateLimitEnabled),
 	}
 }
 
@@ -734,13 +817,6 @@ func (c *Config) Validate() error {
 	case postgresLoginDefault, postgresLoginAWS:
 	default:
 		return fmt.Errorf("%w: POSTGRES_LOGIN must be %q or %q", errors.ErrInvalidConfig, postgresLoginDefault, postgresLoginAWS)
-	}
-	if c.Server.GatewayDiscoveryMode != GatewayDiscoveryModeHeader &&
-		c.Server.GatewayDiscoveryMode != GatewayDiscoveryModeSubdomain {
-		return fmt.Errorf(
-			"%w: GATEWAY_DISCOVERY_MODE must be %q or %q",
-			errors.ErrInvalidConfig, GatewayDiscoveryModeHeader, GatewayDiscoveryModeSubdomain,
-		)
 	}
 	if strings.Trim(strings.ToLower(strings.TrimSpace(c.Server.GatewayBaseDomain)), ".") == "" {
 		return fmt.Errorf("%w: GATEWAY_BASE_DOMAIN is required", errors.ErrInvalidConfig)

@@ -22,6 +22,7 @@ func TestCreateRegistryRequest_ToLLMTarget_NilHealthChecks(t *testing.T) {
 	got := r.ToLLMTarget()
 	if got == nil {
 		t.Fatal("expected LLM target for LLM request")
+		return
 	}
 	if got.HealthChecks != nil {
 		t.Fatalf("expected nil HealthChecks when field is omitted, got %+v", got.HealthChecks)

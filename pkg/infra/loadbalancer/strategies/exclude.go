@@ -15,27 +15,34 @@
 package strategies
 
 import (
-	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 )
 
-func isExcluded(id ids.RegistryID, exclude map[ids.RegistryID]struct{}) bool {
+func isExcluded(key routingdomain.RouteKey, exclude map[routingdomain.RouteKey]struct{}) bool {
 	if len(exclude) == 0 {
 		return false
 	}
-	_, ok := exclude[id]
+	_, ok := exclude[key]
 	return ok
 }
 
-func filterExcluded(registries []*registry.Registry, exclude map[ids.RegistryID]struct{}) []*registry.Registry {
+func filterExcluded(
+	routes []routingdomain.Route,
+	exclude map[routingdomain.RouteKey]struct{},
+) []routingdomain.Route {
 	if len(exclude) == 0 {
-		return registries
+		return routes
 	}
-	out := make([]*registry.Registry, 0, len(registries))
-	for _, b := range registries {
-		if !isExcluded(b.ID, exclude) {
-			out = append(out, b)
+	out := make([]routingdomain.Route, 0, len(routes))
+	for _, route := range routes {
+		if !isExcluded(route.Key(), exclude) {
+			out = append(out, route)
 		}
 	}
 	return out
+}
+
+// Copies the route so callers cannot mutate the pool through the returned pointer.
+func pick(route routingdomain.Route) *routingdomain.Route {
+	return &route
 }

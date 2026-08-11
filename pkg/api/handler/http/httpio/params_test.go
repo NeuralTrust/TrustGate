@@ -17,9 +17,11 @@ package httpio
 import (
 	"errors"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -163,6 +165,165 @@ func TestParseSize(t *testing.T) {
 			}
 			if got != tc.want {
 				t.Fatalf("got %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseSearch(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		target string
+		want   string
+	}{
+		{name: "empty", target: "/test", want: ""},
+		{name: "name alias", target: "/test?name=foo", want: "foo"},
+		{name: "search preferred", target: "/test?search=bar&name=foo", want: "bar"},
+		{name: "search only", target: "/test?search=baz", want: "baz"},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := runInCtx(t, tc.target, "/test", func(c *fiber.Ctx) (string, error) {
+				return ParseSearch(c), nil
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseSort(t *testing.T) {
+	t.Parallel()
+	allowed := []string{"name", "created_at"}
+
+	tests := []struct {
+		name    string
+		target  string
+		want    listing.Sort
+		wantErr error
+	}{
+		{name: "empty is zero", target: "/test", want: listing.Sort{}},
+		{name: "field defaults to asc", target: "/test?sort=name", want: listing.Sort{Field: "name", Direction: listing.Asc}},
+		{name: "explicit desc", target: "/test?sort=created_at&order=desc", want: listing.Sort{Field: "created_at", Direction: listing.Desc}},
+		{name: "explicit asc", target: "/test?sort=name&order=asc", want: listing.Sort{Field: "name", Direction: listing.Asc}},
+		{name: "unknown field", target: "/test?sort=priority", wantErr: ErrInvalidSort},
+		{name: "unknown order", target: "/test?sort=name&order=sideways", wantErr: ErrInvalidSort},
+		{name: "order without sort", target: "/test?order=desc", wantErr: ErrInvalidSort},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := runInCtx(t, tc.target, "/test", func(c *fiber.Ctx) (listing.Sort, error) {
+				return ParseSort(c, allowed)
+			})
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("got err %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("got %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseOptionalBool(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		target  string
+		wantNil bool
+		want    bool
+		wantErr error
+	}{
+		{name: "missing", target: "/test", wantNil: true},
+		{name: "true", target: "/test?active=true", want: true},
+		{name: "false", target: "/test?active=false", want: false},
+		{name: "invalid", target: "/test?active=maybe", wantErr: ErrInvalidFilter},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := runInCtx(t, tc.target, "/test", func(c *fiber.Ctx) (*bool, error) {
+				return ParseOptionalBool(c, "active")
+			})
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("got err %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tc.wantNil {
+				if got != nil {
+					t.Fatalf("got %v, want nil", *got)
+				}
+				return
+			}
+			if got == nil || *got != tc.want {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseCSVQuery(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		target string
+		want   []string
+	}{
+		{name: "missing", target: "/test", want: nil},
+		{name: "single", target: "/test?category=Guardrails", want: []string{"Guardrails"}},
+		{name: "comma separated", target: "/test?category=Guardrails,Quota", want: []string{"Guardrails", "Quota"}},
+		{name: "trims spaces", target: "/test?category=Guardrails,%20Quota", want: []string{"Guardrails", "Quota"}},
+		{name: "repeated keys", target: "/test?type=a&type=b", want: []string{"a", "b"}},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := runInCtx(t, tc.target, "/test", func(c *fiber.Ctx) ([]string, error) {
+				name := "category"
+				if strings.Contains(tc.target, "type=") {
+					name = "type"
+				}
+				return ParseCSVQuery(c, name), nil
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Fatalf("got %v, want %v", got, tc.want)
+				}
 			}
 		})
 	}

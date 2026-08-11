@@ -53,6 +53,11 @@ type Model struct {
 	// types (e.g. "text", "image", "audio"); empty when unreported.
 	InputModalities  []string
 	OutputModalities []string
+	// AltAPI is set when models.dev reports the model is reached through an
+	// endpoint other than the provider's default one (e.g. an OpenAI-compatible
+	// URL). Callers that can only speak the provider's native API use this to
+	// skip entries they could never invoke.
+	AltAPI string
 }
 
 type Client struct {
@@ -86,6 +91,9 @@ type apiModel struct {
 		Input  []string `json:"input"`
 		Output []string `json:"output"`
 	} `json:"modalities"`
+	Provider *struct {
+		API string `json:"api"`
+	} `json:"provider"`
 }
 
 type apiProvider struct {
@@ -132,6 +140,10 @@ func (c *Client) ListModels(ctx context.Context) ([]Model, error) {
 			if displayName == "" {
 				displayName = id
 			}
+			altAPI := ""
+			if m.Provider != nil {
+				altAPI = m.Provider.API
+			}
 			out = append(out, Model{
 				ProviderCode:     providerCode,
 				Slug:             id,
@@ -144,6 +156,7 @@ func (c *Client) ListModels(ctx context.Context) ([]Model, error) {
 				ReleaseDate:      m.ReleaseDate,
 				InputModalities:  m.Modalities.Input,
 				OutputModalities: m.Modalities.Output,
+				AltAPI:           altAPI,
 			})
 		}
 	}

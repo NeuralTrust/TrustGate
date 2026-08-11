@@ -18,13 +18,24 @@ import (
 	"context"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 )
 
+var SortableFields = []string{"name", "created_at", "updated_at", "priority"}
+
 type ListFilter struct {
-	GatewayID    ids.GatewayID
-	NameContains string
-	Page         int
-	Size         int
+	GatewayID  ids.GatewayID
+	Search     string
+	Enabled    *bool
+	Global     *bool
+	Mode       Mode
+	Categories []string
+	Types      []string
+	// RestrictToSlugs with empty Slugs means match nothing (ENG-1242).
+	RestrictToSlugs bool
+	Slugs           []string
+	Page            listing.Page
+	Sort            listing.Sort
 }
 
 //go:generate mockery --name=Repository --dir=. --output=./mocks --filename=policy_repository_mock.go --case=underscore --with-expecter

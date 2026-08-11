@@ -26,6 +26,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	gatewayrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/repository/gatewaystate"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 )
 
@@ -43,18 +44,23 @@ func provideGatewayRepository(c *container.Container) error {
 }
 
 func provideGatewayServices(c *container.Container) error {
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, exporterFactory appmetrics.ExporterFactory, logger *slog.Logger, sig snapshotSignalParams) appgateway.Creator {
-		return appgateway.NewCreator(repo, manager, exporterFactory, logger, sig.Signaler)
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, exporterFactory appmetrics.ExporterFactory, logger *slog.Logger, sig snapshotSignalParams, cfg *config.Config) appgateway.Creator {
+		return appgateway.NewCreator(repo, manager, exporterFactory, logger, sig.Signaler, cfg.RateLimit.Enabled)
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, exporterFactory appmetrics.ExporterFactory, logger *slog.Logger, sig snapshotSignalParams) appgateway.Updater {
-		return appgateway.NewUpdater(repo, manager, publisher, exporterFactory, logger, sig.Signaler)
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, exporterFactory appmetrics.ExporterFactory, logger *slog.Logger, sig snapshotSignalParams, cfg *config.Config) appgateway.Updater {
+		return appgateway.NewUpdater(repo, manager, publisher, exporterFactory, logger, sig.Signaler, cfg.RateLimit.Enabled)
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appgateway.Deleter {
-		return appgateway.NewDeleter(repo, manager, publisher, logger, sig.Signaler)
+	if err := c.Provide(func(cc cache.Client) appgateway.StatePurger {
+		return gatewaystate.NewPurger(cc.RedisClient())
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, purger appgateway.StatePurger) appgateway.Deleter {
+		return appgateway.NewDeleter(repo, manager, publisher, logger, sig.Signaler, purger)
 	}); err != nil {
 		return err
 	}
@@ -77,12 +83,14 @@ func provideGatewayServices(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(updater appgateway.Updater, cfg *config.Config) *gatewayhttp.UpdateGatewayHandler {
-		return gatewayhttp.NewUpdateGatewayHandler(updater, cfg.Server.GatewayBaseDomain, cfg.Server.MCPBaseDomain)
+	if err := c.Provide(func(updater appgateway.Updater, finder appgateway.Finder, cfg *config.Config) *gatewayhttp.UpdateGatewayHandler {
+		return gatewayhttp.NewUpdateGatewayHandler(updater, finder, cfg.Server.GatewayBaseDomain, cfg.Server.MCPBaseDomain)
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(gatewayhttp.NewDeleteGatewayHandler); err != nil {
+	if err := c.Provide(func(deleter appgateway.Deleter, finder appgateway.Finder) *gatewayhttp.DeleteGatewayHandler {
+		return gatewayhttp.NewDeleteGatewayHandler(deleter, finder)
+	}); err != nil {
 		return err
 	}
 	return nil

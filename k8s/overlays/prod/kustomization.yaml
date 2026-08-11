@@ -9,14 +9,52 @@ resources:
 - cloudflare-backendpolicy.yaml
 - service-configsync-external.yaml
 - config-sync-cert.yaml
-# - patches/hpa-patch.yaml
 patchesStrategicMerge:
-- patches/replicas-patch.yaml
+- patches/hpa-patch.yaml
 - patches/resources-patch.yaml
 - patches/pdb-patch.yaml
 - patches/httproute-patch.yaml
 - patches/sa-annotation-patch.yaml
 - patches/config-sync-tls-patch.yaml
+# minAvailable and maxUnavailable are mutually exclusive, so the base
+# minAvailable has to be removed before maxUnavailable can be set.
+patches:
+- patch: |-
+    - op: remove
+      path: /spec/replicas
+  target:
+    kind: Deployment
+    name: agentgateway-admin
+- patch: |-
+    - op: remove
+      path: /spec/replicas
+  target:
+    kind: Deployment
+    name: agentgateway-proxy
+- patch: |-
+    - op: remove
+      path: /spec/replicas
+  target:
+    kind: Deployment
+    name: agentgateway-mcp
+- patch: |-
+    - op: remove
+      path: /spec/minAvailable
+    - op: add
+      path: /spec/maxUnavailable
+      value: 1
+  target:
+    kind: PodDisruptionBudget
+    name: agentgateway-proxy
+- patch: |-
+    - op: remove
+      path: /spec/minAvailable
+    - op: add
+      path: /spec/maxUnavailable
+      value: 1
+  target:
+    kind: PodDisruptionBudget
+    name: agentgateway-mcp
 commonLabels:
   app.kubernetes.io/managed-by: kustomize
   environment: prod
@@ -24,7 +62,7 @@ namespace: agentgateway
 images:
 - name: agentgateway
   newName: europe-west1-docker.pkg.dev/neuraltrust-app-prod/nt-docker/agentgateway
-  newTag: v0.7.0
+  newTag: v0.35.1
 configMapGenerator:
 - behavior: create
   envs:

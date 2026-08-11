@@ -6,14 +6,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/database/migrations"
@@ -243,6 +247,126 @@ func TestRepository_Delete(t *testing.T) {
 	}
 	if err := r.Delete(ctx, g.ID); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("second Delete err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestRepository_CountByTenantID(t *testing.T) {
+	r, _ := setupRepo(t)
+	ctx := context.Background()
+
+	for _, slug := range []string{"acme-a", "acme-b"} {
+		g, _ := domain.New(slug)
+		g.Metadata = domain.WithTenantID(nil, "acme")
+		if err := r.Save(ctx, g); err != nil {
+			t.Fatalf("Save %s: %v", slug, err)
+		}
+	}
+	g, _ := domain.New("globex-a")
+	g.Metadata = domain.WithTenantID(nil, "globex")
+	if err := r.Save(ctx, g); err != nil {
+		t.Fatalf("Save globex-a: %v", err)
+	}
+
+	count, err := r.CountByTenantID(ctx, "acme")
+	if err != nil {
+		t.Fatalf("CountByTenantID: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("count = %d, want 2", count)
+	}
+
+	count, err = r.CountByTenantID(ctx, "globex")
+	if err != nil {
+		t.Fatalf("CountByTenantID: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("count = %d, want 1", count)
+	}
+
+	count, err = r.CountByTenantID(ctx, "unknown-tenant")
+	if err != nil {
+		t.Fatalf("CountByTenantID: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("count = %d, want 0", count)
+	}
+}
+
+func TestRepository_SaveWithTenantCap_EnforcesLimit(t *testing.T) {
+	r, _ := setupRepo(t)
+	ctx := context.Background()
+
+	g1, _ := domain.New("cap-a")
+	g1.Metadata = domain.WithTenantID(nil, "cap-tenant")
+	if err := r.SaveWithTenantCap(ctx, g1, "cap-tenant", 1); err != nil {
+		t.Fatalf("first SaveWithTenantCap: %v", err)
+	}
+
+	g2, _ := domain.New("cap-b")
+	g2.Metadata = domain.WithTenantID(nil, "cap-tenant")
+	err := r.SaveWithTenantCap(ctx, g2, "cap-tenant", 1)
+	if !errors.Is(err, ratelimit.ErrInstanceLimit) {
+		t.Fatalf("err = %v, want ErrInstanceLimit", err)
+	}
+
+	if _, err := r.FindByID(ctx, g2.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("rejected gateway must not be persisted: err = %v", err)
+	}
+}
+
+func TestRepository_SaveWithTenantCap_ConcurrentCreatesRespectCap(t *testing.T) {
+	r, _ := setupRepo(t)
+	ctx := context.Background()
+
+	const attempts = 8
+	const maxInstances = 2
+	var wg sync.WaitGroup
+	var succeeded atomic.Int32
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			g, _ := domain.New(fmt.Sprintf("race-%d", n))
+			g.Metadata = domain.WithTenantID(nil, "race-tenant")
+			if err := r.SaveWithTenantCap(ctx, g, "race-tenant", maxInstances); err == nil {
+				succeeded.Add(1)
+			} else if !errors.Is(err, ratelimit.ErrInstanceLimit) {
+				t.Errorf("unexpected error: %v", err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	if got := succeeded.Load(); got != int32(maxInstances) {
+		t.Fatalf("succeeded = %d, want exactly %d (advisory lock must serialize the cap check)", got, maxInstances)
+	}
+	count, err := r.CountByTenantID(ctx, "race-tenant")
+	if err != nil {
+		t.Fatalf("CountByTenantID: %v", err)
+	}
+	if count != maxInstances {
+		t.Fatalf("persisted count = %d, want %d", count, maxInstances)
+	}
+}
+
+func TestRepository_SaveWithTenantCap_UnlimitedSkipsCheck(t *testing.T) {
+	r, _ := setupRepo(t)
+	ctx := context.Background()
+
+	for _, slug := range []string{"unl-a", "unl-b", "unl-c"} {
+		g, _ := domain.New(slug)
+		g.Metadata = domain.WithTenantID(nil, "unlimited-tenant")
+		if err := r.SaveWithTenantCap(ctx, g, "unlimited-tenant", 0); err != nil {
+			t.Fatalf("SaveWithTenantCap %s: %v", slug, err)
+		}
+	}
+
+	count, err := r.CountByTenantID(ctx, "unlimited-tenant")
+	if err != nil {
+		t.Fatalf("CountByTenantID: %v", err)
+	}
+	if count != 3 {
+		t.Fatalf("count = %d, want 3", count)
 	}
 }
 

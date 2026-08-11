@@ -190,6 +190,7 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 
 	if res.block != nil {
 		applyFinding(data, res.block)
+		recordScore(in.Event, data)
 		if appplugins.Blocks(in.Mode) {
 			data.Decision = decisionBlocked
 			setExtras(in.Event, data)
@@ -204,6 +205,7 @@ func (p *Plugin) runGuardrail(ctx context.Context, in appplugins.ExecInput, cfg 
 
 	if res.anonymize != nil {
 		applyFinding(data, res.anonymize)
+		recordScore(in.Event, data)
 		if appplugins.Blocks(in.Mode) {
 			return p.anonymizeEnforce(in, data, out, span, res.anonymize)
 		}

@@ -16,6 +16,7 @@ package metrics
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
@@ -36,7 +37,7 @@ func mcpSpan(name string, attrs *trace.MCPAttrs, latency time.Duration) *trace.S
 func TestBuilder_MCPFoldsUpstreamAndLatency(t *testing.T) {
 	rt := trace.New("trace-mcp", trace.Metadata{
 		GatewayID:    "gw-1",
-		TenantID:       "team-9",
+		TenantID:     "team-9",
 		ConsumerID:   "c-1",
 		ConsumerName: "agent",
 		Kind:         events.KindMCP,
@@ -51,7 +52,7 @@ func TestBuilder_MCPFoldsUpstreamAndLatency(t *testing.T) {
 		Host:           "mcp.asana.com",
 		CatalogCode:    "com.asana/mcp",
 		Transport:      "streamable-http",
-		UpstreamStatus: "ok",
+		UpstreamStatus: http.StatusOK,
 	}, 120*time.Millisecond))
 
 	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/mcp", Body: []byte(`{"jsonrpc":"2.0"}`)}
@@ -71,17 +72,66 @@ func TestBuilder_MCPFoldsUpstreamAndLatency(t *testing.T) {
 	assert.Equal(t, "mcp.asana.com", evt.MCP.Host)
 	assert.Equal(t, "asana", evt.MCP.ServerName)
 	assert.Equal(t, "com.asana/mcp", evt.MCP.CatalogCode)
-	assert.Equal(t, "ok", evt.MCP.UpstreamStatus)
+	assert.Equal(t, http.StatusOK, evt.MCP.UpstreamStatus)
 	assert.Equal(t, int64(120), evt.MCP.UpstreamLatencyMs)
 
 	assert.Equal(t, int64(200), evt.Latency.TotalMs)
 	assert.Equal(t, int64(120), evt.Latency.ProviderMs)
+	assert.Equal(t, int64(0), evt.Latency.PoliciesMs)
 	assert.Equal(t, int64(80), evt.Latency.GatewayMs)
 
 	assert.Nil(t, evt.Usage)
 	assert.Nil(t, evt.Cost)
 	assert.Empty(t, evt.Attempts)
 	assert.Empty(t, evt.PolicyChain)
+	assert.False(t, evt.IsFlagged)
+	assert.Empty(t, evt.Security)
+}
+
+func TestBuilder_MCPFoldsPolicyChain(t *testing.T) {
+	rt := trace.New("trace-mcp-policy", trace.Metadata{
+		GatewayID:  "gw-1",
+		TenantID:   "team-9",
+		ConsumerID: "c-1",
+		Kind:       events.KindMCP,
+	})
+	_ = rt.AddSpan(pluginSpan("trustguard",
+		&trace.PluginAttrs{Stage: "pre_request", Decision: "block", ScoreLabel: "jailbreak"},
+		403, 31*time.Millisecond, ""))
+	_ = rt.AddSpan(mcpSpan("tools/call", &trace.MCPAttrs{
+		Method:         "tools/call",
+		Operation:      "tool",
+		Tool:           "list_projects",
+		UpstreamStatus: http.StatusForbidden,
+		RPCErrorCode:   -32001,
+	}, 3*time.Millisecond))
+
+	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/mcp"}
+	resp := &infracontext.ResponseContext{StatusCode: 200}
+	start := time.UnixMilli(2_000_000)
+	end := start.Add(34 * time.Millisecond)
+
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, end)
+
+	assert.Equal(t, events.KindMCP, evt.Kind)
+	require.NotNil(t, evt.MCP)
+	assert.Equal(t, http.StatusForbidden, evt.MCP.UpstreamStatus)
+	assert.Equal(t, -32001, evt.MCP.RPCErrorCode)
+	assert.Equal(t, http.StatusForbidden, evt.Response.StatusCode)
+	assert.Equal(t, http.StatusForbidden, evt.Status.Code)
+
+	require.Len(t, evt.PolicyChain, 1)
+	assert.Equal(t, "trustguard", evt.PolicyChain[0].Name)
+	assert.Equal(t, "pre_request", evt.PolicyChain[0].Stage)
+	assert.Equal(t, "block", evt.PolicyChain[0].Decision)
+	assert.True(t, evt.PolicyChain[0].Flagged)
+	assert.True(t, evt.IsFlagged)
+	assert.Equal(t, []string{"jailbreak"}, evt.Security)
+
+	assert.Equal(t, int64(34), evt.Latency.TotalMs)
+	assert.Equal(t, int64(3), evt.Latency.ProviderMs)
+	assert.Equal(t, int64(31), evt.Latency.PoliciesMs)
+	assert.Equal(t, int64(0), evt.Latency.GatewayMs)
 }
 
 func TestBuilder_LLMKindDefault(t *testing.T) {

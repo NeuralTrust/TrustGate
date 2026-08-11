@@ -75,6 +75,23 @@ func TestConfigValidate(t *testing.T) {
 			settings: map[string]any{},
 			wantErr:  true,
 		},
+		{
+			name: "omitted type defaults to function",
+			settings: map[string]any{
+				"inject_tools": []any{
+					map[string]any{"function": map[string]any{"name": "safety_check"}},
+				},
+			},
+		},
+		{
+			name: "type outside the catalog enum",
+			settings: map[string]any{
+				"inject_tools": []any{
+					map[string]any{"type": "retrieval", "function": map[string]any{"name": "safety_check"}},
+				},
+			},
+			wantErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -199,6 +216,7 @@ func TestApplyInjections(t *testing.T) {
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("applyInjections() error = nil, want error")
+					return
 				}
 				pe, ok := appplugins.AsPluginError(err)
 				if !ok {
@@ -393,6 +411,7 @@ func TestPluginPreRequestNoOpSmoke(t *testing.T) {
 			}
 			if res == nil {
 				t.Fatalf("Execute() result = nil, want okResult")
+				return
 			}
 			if res.StatusCode != http.StatusOK {
 				t.Fatalf("StatusCode = %d, want %d", res.StatusCode, http.StatusOK)
@@ -713,6 +732,7 @@ func TestPluginExecuteNoOpMatrix(t *testing.T) {
 			}
 			if res == nil {
 				t.Fatalf("Execute() result = nil, want okResult")
+				return
 			}
 			if res.StatusCode != http.StatusOK {
 				t.Fatalf("StatusCode = %d, want %d", res.StatusCode, http.StatusOK)

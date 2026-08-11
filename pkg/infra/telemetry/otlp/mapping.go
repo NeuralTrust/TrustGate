@@ -81,7 +81,6 @@ const (
 	attrLatencyTotalMs       = "trustgate.latency.total_ms"
 	attrLatencyProviderMs    = "trustgate.latency.provider_ms"
 	attrLatencyPoliciesMs    = "trustgate.latency.policies_ms"
-	attrLatencyRoutingMs     = "trustgate.latency.routing_ms"
 	attrLatencyGatewayMs     = "trustgate.latency.gateway_ms"
 	attrIsFlagged            = "trustgate.is_flagged"
 	attrSecurity             = "trustgate.security"
@@ -155,7 +154,9 @@ func eventToRecord(evt *events.Event) otellog.Record {
 		appendStr(attrMCPUpstreamTool, evt.MCP.UpstreamTool)
 		appendStr(attrMCPPrompt, evt.MCP.Prompt)
 		appendStr(attrMCPResourceURI, evt.MCP.ResourceURI)
-		appendStr(attrMCPUpstreamStatus, evt.MCP.UpstreamStatus)
+		if evt.MCP.UpstreamStatus != 0 {
+			attrs = append(attrs, otellog.Int(attrMCPUpstreamStatus, evt.MCP.UpstreamStatus))
+		}
 		if evt.MCP.Targets > 0 {
 			attrs = append(attrs, otellog.Int(attrMCPTargets, evt.MCP.Targets))
 		}
@@ -193,7 +194,6 @@ func eventToRecord(evt *events.Event) otellog.Record {
 		otellog.Int64(attrLatencyTotalMs, evt.Latency.TotalMs),
 		otellog.Int64(attrLatencyProviderMs, evt.Latency.ProviderMs),
 		otellog.Int64(attrLatencyPoliciesMs, evt.Latency.PoliciesMs),
-		otellog.Int64(attrLatencyRoutingMs, evt.Latency.RoutingMs),
 		otellog.Int64(attrLatencyGatewayMs, evt.Latency.GatewayMs),
 		otellog.Bool(attrIsFlagged, evt.IsFlagged),
 	)

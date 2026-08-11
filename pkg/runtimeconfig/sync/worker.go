@@ -234,6 +234,14 @@ func (w *Worker[T]) watchLoop(ctx context.Context) {
 				return
 			}
 			backoff = nextBackoff(backoff, w.maxBackoff)
+			// A version broadcast while the stream was down is never replayed on
+			// reconnect, so converge to catch up; when nothing changed this is a
+			// cheap not-modified fetch. Without it a missed notice would wait for
+			// the poll backstop.
+			if cerr := w.Converge(ctx); cerr != nil && ctx.Err() == nil {
+				w.logger.Warn("catch-up converge after stream break failed",
+					slog.String("component", component), slog.String("error", cerr.Error()))
+			}
 			continue
 		}
 		backoff = w.minBackoff

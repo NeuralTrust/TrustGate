@@ -43,6 +43,18 @@ func TestFromDomain_IncludesSlug(t *testing.T) {
 	}
 }
 
+func TestFromDomain_IncludesEntitlements(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC()
+	gw := domain.Rehydrate(ids.New[ids.GatewayKind](), "acme", "active", "", nil, nil, nil, now, now)
+	gw.Entitlements = domain.Entitlements{Tier: "standard"}
+
+	got := FromDomain(gw, "llm.neuraltrust.ai", "mcp.neuraltrust.ai")
+	if got.Entitlements.Tier != "standard" {
+		t.Fatalf("Entitlements.Tier = %q, want standard", got.Entitlements.Tier)
+	}
+}
+
 func TestFromDomain_CustomDomainHost(t *testing.T) {
 	t.Parallel()
 	now := time.Now().UTC()

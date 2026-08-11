@@ -66,16 +66,29 @@ type ModelPolicyResponse struct {
 }
 
 type LBConfigResponse struct {
-	Enabled         bool                     `json:"enabled"`
-	Algorithm       string                   `json:"algorithm,omitempty"`
-	PoolAlias       string                   `json:"pool_alias,omitempty"`
-	Members         []LBPoolMemberResponse   `json:"members,omitempty"`
-	EmbeddingConfig *EmbeddingConfigResponse `json:"embedding_config,omitempty"`
+	Enabled         bool                        `json:"enabled"`
+	Algorithm       string                      `json:"algorithm,omitempty"`
+	PoolAlias       string                      `json:"pool_alias,omitempty"`
+	Members         []LBPoolMemberResponse      `json:"members,omitempty"`
+	EmbeddingConfig *EmbeddingConfigResponse    `json:"embedding_config,omitempty"`
+	SmartRouting    *SmartRoutingConfigResponse `json:"smart_routing,omitempty"`
+}
+
+type SmartRoutingConfigResponse struct {
+	Tiers []SmartRoutingTierResponse `json:"tiers"`
+}
+
+type SmartRoutingTierResponse struct {
+	MinScore   float64        `json:"min_score"`
+	RegistryID ids.RegistryID `json:"registry_id"`
+	Model      string         `json:"model,omitempty"`
 }
 
 type LBPoolMemberResponse struct {
 	RegistryID ids.RegistryID `json:"registry_id"`
 	Models     []string       `json:"models,omitempty"`
+	Model      string         `json:"model,omitempty"`
+	Weight     *int           `json:"weight,omitempty"`
 }
 
 type EmbeddingConfigResponse struct {
@@ -167,6 +180,8 @@ func fromLBConfig(config *domain.LBConfig) *LBConfigResponse {
 		members = append(members, LBPoolMemberResponse{
 			RegistryID: member.RegistryID,
 			Models:     member.Models,
+			Model:      member.Model,
+			Weight:     member.Weight,
 		})
 	}
 	var embedding *EmbeddingConfigResponse
@@ -183,7 +198,23 @@ func fromLBConfig(config *domain.LBConfig) *LBConfigResponse {
 		PoolAlias:       config.PoolAlias,
 		Members:         members,
 		EmbeddingConfig: embedding,
+		SmartRouting:    fromSmartRouting(config.SmartRouting),
 	}
+}
+
+func fromSmartRouting(config *registrydomain.SmartRoutingConfig) *SmartRoutingConfigResponse {
+	if config == nil {
+		return nil
+	}
+	tiers := make([]SmartRoutingTierResponse, 0, len(config.Tiers))
+	for _, tier := range config.Tiers {
+		tiers = append(tiers, SmartRoutingTierResponse{
+			MinScore:   tier.MinScore,
+			RegistryID: tier.RegistryID,
+			Model:      tier.Model,
+		})
+	}
+	return &SmartRoutingConfigResponse{Tiers: tiers}
 }
 
 func fromToolkit(t domain.Toolkit) []ToolkitEntryResponse {

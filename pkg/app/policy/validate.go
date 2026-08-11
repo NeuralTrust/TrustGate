@@ -22,8 +22,17 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 )
 
-func validatePlugin(reg appplugins.Registry, slug string, stages []domain.Stage, settings map[string]any) error {
+func validatePlugin(
+	reg appplugins.Registry,
+	slug string,
+	stages []domain.Stage,
+	mode domain.Mode,
+	settings map[string]any,
+) error {
 	if err := reg.ValidateStages(slug, stages); err != nil {
+		return errors.Join(commonerrors.ErrValidation, err)
+	}
+	if err := reg.ValidateMode(slug, mode); err != nil {
 		return errors.Join(commonerrors.ErrValidation, err)
 	}
 	if err := reg.Validate(slug, settings); err != nil {

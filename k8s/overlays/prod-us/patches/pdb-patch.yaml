@@ -1,0 +1,10 @@
+# PDB patch for prod-us - agentgateway
+# proxy and mcp use maxUnavailable (set in kustomization.yaml, which also has
+# to drop the base minAvailable): minAvailable: 1 stays fixed while the HPA
+# scales to 20, so a node-pool upgrade could evict all but one pod at once.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: agentgateway-admin
+spec:
+  minAvailable: 1

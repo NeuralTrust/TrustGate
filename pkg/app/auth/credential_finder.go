@@ -28,6 +28,11 @@ type CredentialFinder interface {
 	OAuth2Auths(ctx context.Context) ([]*domain.Auth, error)
 	OAuth2AuthsForGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*domain.Auth, error)
 	MTLSAuths(ctx context.Context) ([]*domain.Auth, error)
+	// DefaultOAuth2ForGateway returns the built-in NeuralTrust identity
+	// provider scoped to the given gateway (a copy carrying that GatewayID), or
+	// nil when the default IdP is not configured. It is used as the fallback
+	// when an MCP consumer has no oauth2 identity provider of its own.
+	DefaultOAuth2ForGateway(gatewayID ids.GatewayID) *domain.Auth
 }
 
 var _ CredentialFinder = (*credentialFinder)(nil)
@@ -39,21 +44,50 @@ const (
 )
 
 type credentialFinder struct {
-	repo   domain.Repository
-	cache  *cache.TTLMap
-	logger *slog.Logger
+	repo       domain.Repository
+	cache      *cache.TTLMap
+	logger     *slog.Logger
+	defaultIdP *domain.Auth
 }
 
-func NewCredentialFinder(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger) CredentialFinder {
+func NewCredentialFinder(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger, defaultIdP *domain.Auth) CredentialFinder {
 	return &credentialFinder{
-		repo:   repo,
-		cache:  manager.GetTTLMap(cache.AuthTTLName),
-		logger: logger,
+		repo:       repo,
+		cache:      manager.GetTTLMap(cache.AuthTTLName),
+		logger:     logger,
+		defaultIdP: defaultIdP,
 	}
 }
 
+// OAuth2Auths returns every enabled oauth2 auth, plus the built-in NeuralTrust
+// identity provider when configured. The default is appended to a copy of the
+// cached slice so the synthetic entry is never written into the cache and the
+// cached slice is never aliased by callers.
 func (f *credentialFinder) OAuth2Auths(ctx context.Context) ([]*domain.Auth, error) {
-	return f.findByType(ctx, oauth2CacheKey, domain.TypeOAuth2)
+	auths, err := f.findByType(ctx, oauth2CacheKey, domain.TypeOAuth2)
+	if err != nil {
+		return nil, err
+	}
+	if f.defaultIdP == nil {
+		return auths, nil
+	}
+	out := make([]*domain.Auth, 0, len(auths)+1)
+	out = append(out, auths...)
+	out = append(out, f.defaultIdP)
+	return out, nil
+}
+
+// DefaultOAuth2ForGateway returns the built-in NeuralTrust identity provider
+// bound to the given gateway, or nil when it is not configured. The default is
+// platform-wide, so its owning gateway is resolved per request from the
+// addressed MCP consumer.
+func (f *credentialFinder) DefaultOAuth2ForGateway(gatewayID ids.GatewayID) *domain.Auth {
+	if f.defaultIdP == nil {
+		return nil
+	}
+	clone := *f.defaultIdP
+	clone.GatewayID = gatewayID
+	return &clone
 }
 
 func (f *credentialFinder) OAuth2AuthsForGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*domain.Auth, error) {

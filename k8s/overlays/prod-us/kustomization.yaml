@@ -1,0 +1,76 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+metadata:
+  name: agentgateway
+# US regional SaaS — public config-sync for Americas hybrid data planes.
+resources:
+- ../../base
+- secretproviderclass/agentgateway-secrets.yaml
+- cloudflare-backendpolicy.yaml
+- service-configsync-external.yaml
+- config-sync-cert.yaml
+- psc-services.yaml
+- psc-httproutes.yaml
+- psc-healthchecks.yaml
+patchesStrategicMerge:
+- patches/hpa-patch.yaml
+- patches/resources-patch.yaml
+- patches/pdb-patch.yaml
+- patches/httproute-patch.yaml
+- patches/sa-annotation-patch.yaml
+- patches/config-sync-tls-patch.yaml
+# PDB: maxUnavailable is HPA-safe at the prod-us floor of 2 (wave-2 rule 2).
+patches:
+- patch: |-
+    - op: remove
+      path: /spec/replicas
+  target:
+    kind: Deployment
+    name: agentgateway-admin
+- patch: |-
+    - op: remove
+      path: /spec/replicas
+  target:
+    kind: Deployment
+    name: agentgateway-proxy
+- patch: |-
+    - op: remove
+      path: /spec/replicas
+  target:
+    kind: Deployment
+    name: agentgateway-mcp
+- patch: |-
+    - op: remove
+      path: /spec/minAvailable
+    - op: add
+      path: /spec/maxUnavailable
+      value: 1
+  target:
+    kind: PodDisruptionBudget
+    name: agentgateway-proxy
+- patch: |-
+    - op: remove
+      path: /spec/minAvailable
+    - op: add
+      path: /spec/maxUnavailable
+      value: 1
+  target:
+    kind: PodDisruptionBudget
+    name: agentgateway-mcp
+commonLabels:
+  app.kubernetes.io/managed-by: kustomize
+  environment: prod-us
+namespace: agentgateway
+images:
+- name: agentgateway
+  newName: europe-west1-docker.pkg.dev/neuraltrust-app-prod/nt-docker/agentgateway
+  newTag: v0.35.1
+configMapGenerator:
+- behavior: create
+  envs:
+  - config.env
+  name: agentgateway-config
+- behavior: create
+  files:
+  - telemetry.yaml
+  name: agentgateway-telemetry

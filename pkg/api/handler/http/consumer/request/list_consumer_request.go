@@ -14,8 +14,17 @@
 
 package request
 
+import (
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
+)
+
 type ListConsumerRequest struct {
-	Name string
-	Page int
-	Size int
+	Search string
+	Type   domain.Type
+	Active *bool
+	AuthID ids.AuthID
+	Page   listing.Page
+	Sort   listing.Sort
 }

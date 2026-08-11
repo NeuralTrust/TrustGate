@@ -77,6 +77,34 @@ func TestProviderInvoke_SameFormatPassthrough(t *testing.T) {
 	assert.Equal(t, "openai", req.TargetFormat)
 }
 
+func TestProviderInvoke_AdvertisesServedRoute(t *testing.T) {
+	const defaultModel = "gpt-4o-mini"
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		Return([]byte(openaiResponseBody), nil).
+		Once()
+
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	target := apiKeyTarget("openai")
+	req := &infracontext.RequestContext{
+		Body:          []byte(`{"messages":[{"role":"user","content":"hi"}]}`),
+		AllowedModels: []string{defaultModel},
+		DefaultModel:  defaultModel,
+	}
+	resp, err := inv.Invoke(context.Background(), target, req)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"openai"}, resp.Headers["X-Selected-Provider"])
+	assert.Empty(t, resp.Headers["X-Selected-Registry"])
+	assert.Equal(t, []string{defaultModel}, resp.Headers["X-Selected-Model"],
+		"the header must carry the model the route resolved to, which the client never sent")
+}
+
 func TestProviderInvoke_DecodesUsageOnFinish(t *testing.T) {
 	client := providermocks.NewClient(t)
 	client.EXPECT().
@@ -177,6 +205,9 @@ func TestProviderInvoke_BackendErrorPassthrough(t *testing.T) {
 	assert.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
 	assert.Equal(t, errBody, resp.Body)
 	assert.Equal(t, []string{"application/json"}, resp.Headers["Content-Type"])
+	assert.Equal(t, []string{"openai"}, resp.Headers["X-Selected-Provider"])
+	assert.Equal(t, []string{"gpt-4"}, resp.Headers["X-Selected-Model"],
+		"a failed attempt must still say which route was tried")
 }
 
 func TestProviderInvoke_SourceFormatFromPath(t *testing.T) {
@@ -223,4 +254,36 @@ func TestProviderInvoke_SourceFormatFromPath(t *testing.T) {
 		require.NoError(t, json.Unmarshal(resp.Body, &anthropicResp))
 		assert.Equal(t, "message", anthropicResp.Type, "response adapted back to anthropic")
 	})
+}
+
+func TestProviderInvoke_GeminiUsesDefaultModelAfterAutoRouting(t *testing.T) {
+	const defaultModel = "gemini-2.5-flash"
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, config *providers.Config, body []byte) ([]byte, error) {
+			model, err := adapter.ExtractModel(body)
+			require.NoError(t, err)
+			assert.Equal(t, defaultModel, model)
+			assert.Equal(t, defaultModel, config.Model)
+			assert.NotContains(t, string(body), `"auto"`)
+			return []byte(`{"candidates":[]}`), nil
+		}).
+		Once()
+
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("google").Return(client, nil).Once()
+
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+	req := &infracontext.RequestContext{
+		Body:          []byte(`{"contents":[]}`),
+		SourceFormat:  string(adapter.FormatGemini),
+		AllowedModels: []string{defaultModel},
+		DefaultModel:  defaultModel,
+	}
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("google"), req)
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }

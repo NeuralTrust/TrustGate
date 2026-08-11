@@ -23,12 +23,15 @@ import (
 	"testing"
 
 	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcp/mocks"
+	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	approle "github.com/NeuralTrust/TrustGate/pkg/app/role"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/mock"
 )
@@ -45,6 +48,11 @@ func noopRunner() *appmcp.PluginRunner {
 }
 
 func newAppWithRunner(t *testing.T, composer appmcp.Composer, plugins *appmcp.PluginRunner, consumerType consumerdomain.Type, authorized bool) *fiber.App {
+	t.Helper()
+	return newAppWithRunnerAndLimiter(t, composer, plugins, nil, consumerType, authorized)
+}
+
+func newAppWithRunnerAndLimiter(t *testing.T, composer appmcp.Composer, plugins *appmcp.PluginRunner, limiter ratelimitapp.Checker, consumerType consumerdomain.Type, authorized bool) *fiber.App {
 	t.Helper()
 	authID := ids.New[ids.AuthKind]()
 	gwID := ids.New[ids.GatewayKind]()
@@ -68,9 +76,43 @@ func newAppWithRunner(t *testing.T, composer appmcp.Composer, plugins *appmcp.Pl
 		c.SetUserContext(ctx)
 		return c.Next()
 	})
-	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(composer, plugins), appmcp.NewRoleScoper(approle.NewOIDCResolver()))
+	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(composer, plugins, limiter), appmcp.NewRoleScoper(approle.NewOIDCResolver()))
 	app.Post(mcpPath, handler.Handle)
 	app.Get(mcpPath, handler.MethodNotAllowed)
+	return app
+}
+
+// newAppWithRegistries builds an MCP consumer bound to the given registries, so
+// a test can observe how the initialize response reflects the tool surface.
+func newAppWithRegistries(t *testing.T, registries ...*registrydomain.Registry) *fiber.App {
+	t.Helper()
+	authID := ids.New[ids.AuthKind]()
+	gwID := ids.New[ids.GatewayKind]()
+	cons := &consumerdomain.Consumer{
+		ID:        ids.New[ids.ConsumerKind](),
+		GatewayID: gwID,
+		Name:      "virtual",
+		Type:      consumerdomain.TypeMCP,
+		Slug:      "virtual",
+		Active:    true,
+		AuthIDs:   []ids.AuthID{authID},
+	}
+	data := appconsumer.NewData(gwID, []appconsumer.RoutableConsumer{
+		{Consumer: cons, Registries: registries},
+	})
+
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		ctx := appconsumer.WithAuthID(c.UserContext(), authID)
+		ctx = appconsumer.WithData(ctx, data)
+		c.SetUserContext(ctx)
+		return c.Next()
+	})
+	handler := mcphttp.NewHandler(
+		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
+		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
+	)
+	app.Post(mcpPath, handler.Handle)
 	return app
 }
 
@@ -93,6 +135,39 @@ func rpcCall(t *testing.T, app *fiber.App, body string) (int, map[string]any) {
 		_ = json.Unmarshal(raw, &decoded)
 	}
 	return res.StatusCode, decoded
+}
+
+func TestHandler_DefaultIdP_AllowedWithoutAttachedAuth(t *testing.T) {
+	t.Parallel()
+	// An MCP consumer with no identity provider of its own (empty AuthIDs)
+	// authenticated via the built-in NeuralTrust default IdP: the resolved
+	// AuthID is the well-known default sentinel, which the handler must accept
+	// even though it is not attached to the consumer.
+	gwID := ids.New[ids.GatewayKind]()
+	cons := &consumerdomain.Consumer{
+		ID:        ids.New[ids.ConsumerKind](),
+		GatewayID: gwID,
+		Name:      "virtual",
+		Type:      consumerdomain.TypeMCP,
+		Slug:      "virtual",
+		Active:    true,
+	}
+	data := appconsumer.NewData(gwID, []appconsumer.RoutableConsumer{{Consumer: cons}})
+
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		ctx := appconsumer.WithAuthID(c.UserContext(), appauth.DefaultIdPAuthID())
+		ctx = appconsumer.WithData(ctx, data)
+		c.SetUserContext(ctx)
+		return c.Next()
+	})
+	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil), appmcp.NewRoleScoper(approle.NewOIDCResolver()))
+	app.Post(mcpPath, handler.Handle)
+
+	status, _ := rpcCall(t, app, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}`)
+	if status != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200 (default IdP must be accepted for a consumer with no attached auth)", status)
+	}
 }
 
 func TestHandler_Initialize_EchoesSupportedVersion(t *testing.T) {
@@ -149,6 +224,102 @@ func TestHandler_ToolsCall_PassesUpstreamRPCErrorThrough(t *testing.T) {
 	rpcErr := body["error"].(map[string]any)
 	if rpcErr["code"].(float64) != -32099 || rpcErr["message"] != "upstream exploded" {
 		t.Fatalf("error = %v, want upstream error verbatim", rpcErr)
+	}
+}
+
+// The consent refusal must reach the agent, so it rides on HTTP 200 carrying
+// the JSON-RPC error and the connect URL. Any 4xx here is read by MCP clients
+// as a transport failure: they drop the connection and restart authentication
+// without ever parsing the body.
+func TestHandler_ToolsCall_ConsentRequiredRidesOn200(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "notion-search", mock.Anything).
+		Return(nil, &appmcp.ConsentRequiredError{
+			Provider: "com.notion/mcp", Ticket: "tk", Path: "/virtual/mcp",
+		}).Once()
+	app := newApp(t, composer, consumerdomain.TypeMCP, true)
+
+	status, body := rpcCall(t, app,
+		`{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"notion-search"}}`)
+	if status != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200 so the client parses the JSON-RPC error", status)
+	}
+	rpcErr := body["error"].(map[string]any)
+	if rpcErr["code"].(float64) != -32003 {
+		t.Fatalf("code = %v, want -32003", rpcErr["code"])
+	}
+	data := rpcErr["data"].(map[string]any)
+	if data["provider"] != "com.notion/mcp" {
+		t.Fatalf("provider = %v", data["provider"])
+	}
+	connectURL, _ := data["connect_url"].(string)
+	if !strings.Contains(connectURL, "/virtual/mcp/connect?ticket=tk") {
+		t.Fatalf("connect_url = %q, want the consumer's connect page", connectURL)
+	}
+}
+
+// A tool the toolkit forbids is reported to the agent as a policy denial over
+// HTTP 200, so the client surfaces the reason instead of failing the transport.
+func TestHandler_ToolsCall_ToolNotPermittedRidesOn200(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "notion-search", mock.Anything).
+		Return(nil, &appmcp.ToolNotPermittedError{Tool: "notion-search"}).Once()
+	app := newApp(t, composer, consumerdomain.TypeMCP, true)
+
+	status, body := rpcCall(t, app,
+		`{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"notion-search"}}`)
+	if status != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200 so the client parses the JSON-RPC error", status)
+	}
+	rpcErr := body["error"].(map[string]any)
+	if rpcErr["code"].(float64) != -32001 {
+		t.Fatalf("code = %v, want the policy-blocked code", rpcErr["code"])
+	}
+	if msg, _ := rpcErr["message"].(string); !strings.Contains(msg, "not permitted") {
+		t.Fatalf("message = %q, want it to say the tool is not permitted", msg)
+	}
+}
+
+// serverInfo.version carries a fingerprint of the tool surface, so a client
+// that caches a server's tool list keyed on its reported version re-lists once
+// the consumer gains or loses a registry. A constant "1.0" left a newly
+// attached registry invisible no matter how often the client reconnected.
+func TestHandler_Initialize_VersionTracksTheToolSurface(t *testing.T) {
+	t.Parallel()
+	reg := func(name string) *registrydomain.Registry {
+		r, err := registrydomain.NewMCPRegistry(
+			ids.New[ids.GatewayKind](), name, "",
+			&registrydomain.MCPTarget{URL: "https://" + name + ".example.com/mcp"},
+		)
+		if err != nil {
+			t.Fatalf("registry: %v", err)
+		}
+		return r
+	}
+	notion, linear := reg("notion"), reg("linear")
+
+	versionFor := func(regs ...*registrydomain.Registry) string {
+		app := newAppWithRegistries(t, regs...)
+		_, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+		info := body["result"].(map[string]any)["serverInfo"].(map[string]any)
+		return info["version"].(string)
+	}
+
+	one := versionFor(notion)
+	if !strings.HasPrefix(one, "1.0+") {
+		t.Fatalf("version = %q, want the implementation version plus a fingerprint", one)
+	}
+	if again := versionFor(notion); again != one {
+		t.Fatalf("version is unstable for the same configuration: %q vs %q", one, again)
+	}
+	// Order must not matter, only the set.
+	if versionFor(notion, linear) != versionFor(linear, notion) {
+		t.Fatal("version must not depend on registry ordering")
+	}
+	if two := versionFor(notion, linear); two == one {
+		t.Fatalf("version %q did not change after attaching a registry", two)
 	}
 }
 

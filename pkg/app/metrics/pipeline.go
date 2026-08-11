@@ -19,7 +19,7 @@ import (
 	"log/slog"
 	"time"
 
-	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	telemetrydomain 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"

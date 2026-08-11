@@ -31,6 +31,8 @@ func TestParseModelRef(t *testing.T) {
 	}{
 		{"empty is zero intent", "", routing.Intent{}, nil},
 		{"whitespace is zero intent", "   ", routing.Intent{}, nil},
+		{"auto", "auto", routing.Intent{Auto: true}, nil},
+		{"auto is case insensitive", "AUTO", routing.Intent{Auto: true}, nil},
 		{"qualified provider model", "@openai/gpt-5", routing.Intent{Provider: "openai", Model: "gpt-5"}, nil},
 		{"provider is lowercased", "@OpenAI/gpt-5", routing.Intent{Provider: "openai", Model: "gpt-5"}, nil},
 		{"model keeps nested slashes", "@openrouter/meta-llama/llama-3-70b", routing.Intent{Provider: "openrouter", Model: "meta-llama/llama-3-70b"}, nil},
@@ -83,5 +85,9 @@ func TestRoutingIntentPredicates(t *testing.T) {
 	pool := routing.Intent{PoolAlias: "fast"}
 	if !pool.IsPool() || pool.IsZero() {
 		t.Fatal("pool intent predicates mismatch")
+	}
+	auto := routing.Intent{Auto: true}
+	if !auto.IsAuto() || auto.IsZero() || auto.IsShortModel() || auto.IsQualified() || auto.IsPool() {
+		t.Fatal("auto intent predicates mismatch")
 	}
 }

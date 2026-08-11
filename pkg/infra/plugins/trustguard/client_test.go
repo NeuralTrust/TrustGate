@@ -15,6 +15,7 @@
 package trustguard
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -26,8 +27,12 @@ import (
 )
 
 func sampleRequest() GuardRequest {
+	payload, err := llmPayload("hello world")
+	if err != nil {
+		panic(err)
+	}
 	return GuardRequest{
-		Payload:    GuardPayload{Input: "hello world"},
+		Payload:    payload,
 		Direction:  "input",
 		Protocol:   "llm",
 		SessionID:  "session-1",
@@ -105,8 +110,8 @@ func TestGuardDecodesResponses(t *testing.T) {
 				if got.ConsumerID != "consumer-1" {
 					t.Errorf("consumer_id = %q, want %q", got.ConsumerID, "consumer-1")
 				}
-				if got.Payload.Input != "hello world" {
-					t.Errorf("payload.input = %q, want %q", got.Payload.Input, "hello world")
+				if llmPayloadInput(t, got.Payload) != "hello world" {
+					t.Errorf("payload.input = %q, want %q", llmPayloadInput(t, got.Payload), "hello world")
 				}
 				w.WriteHeader(tt.statusCode)
 				_, _ = io.WriteString(w, tt.respBody)
@@ -114,7 +119,7 @@ func TestGuardDecodesResponses(t *testing.T) {
 			defer srv.Close()
 
 			c := newClient(2 * time.Second)
-			resp, err := c.Guard(context.Background(), srv.URL, "secret-key", "", sampleRequest())
+			resp, err := c.Guard(context.Background(), srv.URL, "secret-key", "", sampleRequest(), false)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("expected error, got nil")
@@ -163,7 +168,7 @@ func TestGuardTrimsTrailingSlash(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient(time.Second)
-	if _, err := c.Guard(context.Background(), srv.URL+"/", "k", "", sampleRequest()); err != nil {
+	if _, err := c.Guard(context.Background(), srv.URL+"/", "k", "", sampleRequest(), false); err != nil {
 		t.Fatalf("Guard returned error: %v", err)
 	}
 }
@@ -174,7 +179,7 @@ func TestGuardTransportError(t *testing.T) {
 	srv.Close()
 
 	c := newClient(time.Second)
-	if _, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest()); err == nil {
+	if _, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest(), false); err == nil {
 		t.Fatal("expected transport error, got nil")
 	}
 }
@@ -187,9 +192,107 @@ func TestGuardUnauthorizedReturnsSentinel(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient(time.Second)
-	_, err := c.Guard(context.Background(), srv.URL, "stale-token", "", sampleRequest())
+	_, err := c.Guard(context.Background(), srv.URL, "stale-token", "", sampleRequest(), false)
 	if !errors.Is(err, errUnauthorized) {
 		t.Fatalf("err = %v, want errUnauthorized", err)
+	}
+}
+
+func TestGuardUnavailableReturnsTypedError(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"error":"rate limit entitlements unavailable"}`)
+	}))
+	defer srv.Close()
+
+	c := newClient(time.Second)
+	_, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest(), false)
+	var unavailable *entitlementsUnavailableError
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("err = %v, want *entitlementsUnavailableError", err)
+	}
+	if !bytes.Contains(unavailable.body, []byte(`entitlements unavailable`)) {
+		t.Fatalf("body = %s", unavailable.body)
+	}
+}
+
+func TestGuardRateLimitedReturnsTypedError(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "30")
+		w.Header().Set("X-RateLimit-Limit", "300")
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.Header().Set("X-RateLimit-Reason", "quota")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":"rate limit exceeded","reason":"quota"}`)
+	}))
+	defer srv.Close()
+
+	c := newClient(time.Second)
+	_, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest(), false)
+	var limited *rateLimitedError
+	if !errors.As(err, &limited) {
+		t.Fatalf("err = %v, want *rateLimitedError", err)
+	}
+	if got := limited.headers["Retry-After"]; len(got) != 1 || got[0] != "30" {
+		t.Fatalf("Retry-After = %v, want [30]", got)
+	}
+	if got := limited.headers["X-RateLimit-Reason"]; len(got) != 1 || got[0] != "quota" {
+		t.Fatalf("X-RateLimit-Reason = %v, want [quota]", got)
+	}
+	if !bytes.Contains(limited.body, []byte(`"reason":"quota"`)) {
+		t.Fatalf("body = %s, want quota reason", limited.body)
+	}
+}
+
+func TestGuardRateLimitedWithoutHeaders(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":"rate limit exceeded"}`)
+	}))
+	defer srv.Close()
+
+	c := newClient(time.Second)
+	_, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest(), false)
+	var limited *rateLimitedError
+	if !errors.As(err, &limited) {
+		t.Fatalf("err = %v, want *rateLimitedError", err)
+	}
+	if len(limited.headers) != 0 {
+		t.Fatalf("headers = %v, want empty", limited.headers)
+	}
+	if len(limited.body) == 0 {
+		t.Fatal("expected body preserved")
+	}
+}
+
+func TestGuardRateLimitedIgnoresUnrelatedHeaders(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "5")
+		w.Header().Set("X-RateLimit-Reason", "burst")
+		w.Header().Set("X-Secret-Internal", "nope")
+		w.Header().Set("Set-Cookie", "session=abc")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	c := newClient(time.Second)
+	_, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest(), false)
+	var limited *rateLimitedError
+	if !errors.As(err, &limited) {
+		t.Fatalf("err = %v, want *rateLimitedError", err)
+	}
+	if _, ok := limited.headers["X-Secret-Internal"]; ok {
+		t.Fatal("must not forward unrelated headers")
+	}
+	if _, ok := limited.headers["Set-Cookie"]; ok {
+		t.Fatal("must not forward Set-Cookie")
+	}
+	if got := limited.headers["Retry-After"]; len(got) != 1 || got[0] != "5" {
+		t.Fatalf("Retry-After = %v", got)
 	}
 }
 
@@ -204,7 +307,7 @@ func TestGuardContextCanceled(t *testing.T) {
 	cancel()
 
 	c := newClient(time.Second)
-	if _, err := c.Guard(ctx, srv.URL, "k", "", sampleRequest()); err == nil {
+	if _, err := c.Guard(ctx, srv.URL, "k", "", sampleRequest(), false); err == nil {
 		t.Fatal("expected context error, got nil")
 	}
 }
@@ -221,7 +324,7 @@ func TestGuardSetsTraceIDHeader(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient(time.Second)
-	if _, err := c.Guard(context.Background(), srv.URL, "k", wantTraceID, sampleRequest()); err != nil {
+	if _, err := c.Guard(context.Background(), srv.URL, "k", wantTraceID, sampleRequest(), false); err != nil {
 		t.Fatalf("Guard returned error: %v", err)
 	}
 }
@@ -237,7 +340,7 @@ func TestGuardOmitsTraceIDHeaderWhenEmpty(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient(time.Second)
-	if _, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest()); err != nil {
+	if _, err := c.Guard(context.Background(), srv.URL, "k", "", sampleRequest(), false); err != nil {
 		t.Fatalf("Guard returned error: %v", err)
 	}
 }

@@ -27,6 +27,7 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
+	"golang.org/x/sync/singleflight"
 )
 
 //go:generate mockery --name=Composer --dir=. --output=./mocks --filename=mcp_composer_mock.go --case=underscore --with-expecter
@@ -46,6 +47,7 @@ type composer struct {
 	dialer    Dialer
 	creds     CredentialResolver
 	discovery DiscoveryCache
+	flight    singleflight.Group
 	logger    *slog.Logger
 }
 
@@ -66,12 +68,15 @@ type binding struct {
 
 func (c *composer) ListTools(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Tool, error) {
 	annotateTargets(ctx, len(mcpRegistries(rc)))
-	bindings, err := c.compose(ctx, rc)
+	// Partial federation: upstreams still awaiting consent are skipped and the
+	// linked ones are listed. Only when every upstream needs consent does
+	// compose report it, so the client is told to visit the connect page.
+	comp, err := c.compose(ctx, rc)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Tool, 0, len(bindings))
-	for _, b := range bindings {
+	out := make([]Tool, 0, len(comp.bindings))
+	for _, b := range comp.bindings {
 		t := b.tool
 		t.Name = b.exposed
 		out = append(out, t)
@@ -80,11 +85,11 @@ func (c *composer) ListTools(ctx context.Context, rc *appconsumer.RoutableConsum
 }
 
 func (c *composer) CallTool(ctx context.Context, rc *appconsumer.RoutableConsumer, name string, arguments json.RawMessage) (json.RawMessage, error) {
-	bindings, err := c.compose(ctx, rc)
+	comp, err := c.compose(ctx, rc)
 	if err != nil {
 		return nil, err
 	}
-	for _, b := range bindings {
+	for _, b := range comp.bindings {
 		if b.exposed != name {
 			continue
 		}
@@ -100,6 +105,22 @@ func (c *composer) CallTool(ctx context.Context, rc *appconsumer.RoutableConsume
 		}
 		defer up.Close(ctx)
 		return up.CallTool(ctx, b.tool.Name, arguments)
+	}
+	// The upstream offers this tool but the consumer's toolkit excludes it: a
+	// policy denial, and the answer must say so. Connecting an account would not
+	// change it, so this is checked before any pending consent — otherwise a
+	// forbidden tool sends the user off to an authorization flow that cannot
+	// grant it.
+	if _, forbidden := comp.denied[name]; forbidden {
+		return nil, &ToolNotPermittedError{Tool: name}
+	}
+	// No reachable upstream exposes this tool. If another upstream is still
+	// awaiting consent it may be the one that owns the tool, so the consent
+	// requirement is the useful answer; otherwise the tool genuinely does not
+	// exist. A tool served by a reachable upstream never reaches this point, so
+	// an unconnected provider can no longer break calls routed elsewhere.
+	if comp.consent != nil {
+		return nil, comp.consent
 	}
 	return nil, fmt.Errorf("%w: %s", ErrToolNotFound, name)
 }
@@ -117,7 +138,7 @@ func annotateUpstream(ctx context.Context, reg *registrydomain.Registry, upstrea
 		catalog = reg.MCPTarget.Code
 		transport = string(reg.MCPTarget.Transport)
 	}
-	span.SetMCPUpstream(reg.Name, reg.ID.String(), host, catalog, transport, upstreamTool, "")
+	span.SetMCPUpstream(reg.Name, reg.ID.String(), host, catalog, transport, upstreamTool)
 	start := time.Now()
 	return func() { span.SetLatency(time.Since(start)) }
 }
@@ -139,7 +160,14 @@ func hostFromURL(raw string) string {
 	return u.Host
 }
 
-func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]binding, error) {
+// compose discovers every upstream bound to the consumer and returns the tool
+// bindings of the reachable ones. An upstream awaiting user consent never
+// aborts the composition — it is skipped so the linked upstreams still federate
+// — and its consent requirement is reported separately so each caller can
+// decide whether it is relevant: listing ignores it, calling a tool no reachable
+// upstream serves reports it. Only when nothing at all could be composed does it
+// become the returned error.
+func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer) (*composition, error) {
 	registries := mcpRegistries(rc)
 	if len(registries) == 0 {
 		return nil, ErrNoMCPRegistries
@@ -148,16 +176,25 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 	toolkit := rc.Consumer.Toolkit()
 
 	var candidates []binding
+	var pendingConsent *ConsentRequiredError
+	denied := make(map[string]struct{})
 	reachable := 0
-	for _, reg := range registries {
-		tools, err := c.discover(ctx, rc, reg)
-		if err != nil {
+	for _, found := range c.discoverTools(ctx, rc, registries) {
+		reg, tools := found.registry, found.items
+		if err := found.err; err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
 			var consentErr *ConsentRequiredError
 			if errors.As(err, &consentErr) {
-				return nil, err
+				// Partial consent is allowed on the connect page — skip unlinked
+				// upstreams during federation and serve tools from linked ones.
+				if pendingConsent == nil {
+					pendingConsent = consentErr
+				}
+				c.logger.Info("mcp composer: skipping upstream pending consent",
+					"registry", reg.Name, "provider", consentErr.Provider)
+				continue
 			}
 			if !failOpen {
 				return nil, fmt.Errorf("%w: registry %q: %w", ErrUpstreamUnavailable, reg.Name, err)
@@ -167,12 +204,46 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 			continue
 		}
 		reachable++
-		candidates = append(candidates, selectTools(toolkit, reg, tools)...)
+		kept := selectTools(toolkit, reg, tools)
+		candidates = append(candidates, kept...)
+		// Remember what the toolkit turned away. A call for one of these is a
+		// policy denial, and answering it with "not found" — or worse, with a
+		// consent prompt for an unrelated upstream — hides the real reason.
+		if toolkit != nil {
+			allowed := make(map[string]struct{}, len(kept))
+			for _, b := range kept {
+				allowed[b.tool.Name] = struct{}{}
+			}
+			for _, t := range tools {
+				if _, ok := allowed[t.Name]; !ok {
+					denied[t.Name] = struct{}{}
+				}
+			}
+		}
 	}
 	if reachable == 0 {
+		// Nothing could be composed. A pending consent requirement is the more
+		// actionable explanation, so it wins over a bare "unreachable".
+		if pendingConsent != nil {
+			return nil, pendingConsent
+		}
 		return nil, fmt.Errorf("%w: no upstream MCP server reachable", ErrUpstreamUnavailable)
 	}
-	return resolveNames(candidates), nil
+	bindings := resolveNames(candidates)
+	// A name that another registry ends up exposing was never really denied.
+	for _, b := range bindings {
+		delete(denied, b.exposed)
+	}
+	return &composition{bindings: bindings, denied: denied, consent: pendingConsent}, nil
+}
+
+// composition is the consumer's effective MCP surface for one request: the tool
+// bindings it may use, the tools its toolkit turned away, and any upstream that
+// is still awaiting user consent.
+type composition struct {
+	bindings []binding
+	denied   map[string]struct{}
+	consent  *ConsentRequiredError
 }
 
 func selectTools(toolkit consumerdomain.Toolkit, reg *registrydomain.Registry, tools []Tool) []binding {

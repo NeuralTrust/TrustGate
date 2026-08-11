@@ -78,8 +78,23 @@ func TestNewAPIKeyAuth_GeneratesKey(t *testing.T) {
 	if a.KeyHash != HashAPIKey(a.RawKey) {
 		t.Fatal("KeyHash must be the hash of RawKey")
 	}
+	wantPrefix, wantSuffix := APIKeyPreview(a.RawKey)
+	if a.KeyPrefix != wantPrefix || a.KeySuffix != wantSuffix {
+		t.Fatalf("preview = %q…%q, want %q…%q", a.KeyPrefix, a.KeySuffix, wantPrefix, wantSuffix)
+	}
 	if a.CreatedAt.IsZero() || a.UpdatedAt.IsZero() {
 		t.Fatal("expected timestamps to be set")
+	}
+}
+
+func TestAPIKeyPreview(t *testing.T) {
+	t.Parallel()
+	prefix, suffix := APIKeyPreview("ag_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd")
+	if prefix != "ag_ABCDE" || suffix != "abcd" {
+		t.Fatalf("preview = %q…%q, want ag_ABCDE…abcd", prefix, suffix)
+	}
+	if p, s := APIKeyPreview("short"); p != "" || s != "" {
+		t.Fatalf("short key preview = %q…%q, want empty", p, s)
 	}
 }
 
@@ -118,6 +133,19 @@ func TestHashAPIKey_Deterministic(t *testing.T) {
 	}
 	if HashAPIKey("ag_a") == HashAPIKey("ag_b") {
 		t.Fatal("different keys must hash differently")
+	}
+}
+
+func TestHasAPIKeyPrefix(t *testing.T) {
+	t.Parallel()
+	if !HasAPIKeyPrefix("ag_secret") {
+		t.Fatal("generated api keys must match the prefix")
+	}
+	if HasAPIKeyPrefix("eyJhbGciOiJIUzI1NiJ9.payload.sig") {
+		t.Fatal("JWTs must not match the api-key prefix")
+	}
+	if HasAPIKeyPrefix("") {
+		t.Fatal("empty string must not match the prefix")
 	}
 }
 

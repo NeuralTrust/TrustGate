@@ -16,6 +16,7 @@ package trustguard
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -26,6 +27,7 @@ import (
 
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
@@ -45,13 +47,23 @@ const (
 )
 
 const (
-	decisionBlocked    = "blocked"
-	decisionReported   = "reported"
-	decisionAllowed    = "allowed"
-	decisionFailedOpen = "failed_open"
-	statusBlock        = "block"
-	statusReport       = "report"
+	decisionBlocked     = "blocked"
+	decisionReported    = "reported"
+	decisionAllowed     = "allowed"
+	decisionFailedOpen  = "failed_open"
+	decisionTransformed = "transformed"
+	statusBlock         = "block"
+	statusReport        = "report"
+	statusTransform     = "transform"
 )
+
+const (
+	reasonTransformNoPayload    = "transform_no_payload"
+	reasonTransformUnsupported  = "transform_unsupported_path"
+	reasonTransformEncodeFailed = "transform_encode_failed"
+)
+
+const transformedInputKey = "input"
 
 var _ appplugins.Plugin = (*Plugin)(nil)
 
@@ -79,11 +91,13 @@ func New(registry *adapter.Registry, baseURL string, timeout time.Duration, clie
 func (p *Plugin) Name() string { return PluginName }
 
 func (p *Plugin) MandatoryStages() []policy.Stage {
-	return []policy.Stage{policy.StagePreRequest, policy.StagePreResponse}
+	// PostResponse is mandatory so streamed responses are buffered and inspected
+	// after the client drain (PreResponse sees Streaming=true and cannot inspect).
+	return []policy.Stage{policy.StagePreRequest, policy.StagePreResponse, policy.StagePostResponse}
 }
 
 func (p *Plugin) SupportedStages() []policy.Stage {
-	return []policy.Stage{policy.StagePreRequest, policy.StagePreResponse}
+	return []policy.Stage{policy.StagePreRequest, policy.StagePreResponse, policy.StagePostResponse}
 }
 
 func (p *Plugin) SupportedProtocols() []appplugins.Protocol {
@@ -94,9 +108,16 @@ func (p *Plugin) SupportedModes() []policy.Mode {
 	return []policy.Mode{policy.ModeEnforce, policy.ModeObserve}
 }
 
-func (p *Plugin) MutatesRequestBody() bool { return false }
+// MutatesRequestBody reports that TrustGuard may rewrite the request body when
+// TrustGuard returns a transform (data-masking) outcome. Declaring this keeps
+// the plugin out of parallel batches with other body writers so the masked body
+// is applied deterministically and downstream plugins observe it.
+func (p *Plugin) MutatesRequestBody() bool { return true }
 
-func (p *Plugin) MutatesResponseBody() bool { return false }
+// MutatesResponseBody reports that TrustGuard may rewrite the response body when
+// TrustGuard returns a transform (data-masking) outcome. See MutatesRequestBody
+// for why this forces sequential execution.
+func (p *Plugin) MutatesResponseBody() bool { return true }
 
 func (p *Plugin) MutatesMetadata() bool { return false }
 
@@ -144,7 +165,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 
 	direction := directionInput
-	if in.Stage == policy.StagePreResponse {
+	if in.Stage == policy.StagePreResponse || in.Stage == policy.StagePostResponse {
 		direction = directionOutput
 	}
 
@@ -159,17 +180,57 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 
 	var text string
+	var payload json.RawMessage
+	tgt := transformTarget{isResponse: direction == directionOutput}
 	if mcpMode {
 		if direction == directionInput {
 			if len(in.Request.Body) == 0 {
 				return passThrough(), nil
 			}
 			text = mcpInputText(in.Request.Body)
-		} else {
-			if in.Response == nil || in.Response.Streaming || len(in.Response.Body) == 0 {
+			if strings.TrimSpace(text) == "" {
 				return passThrough(), nil
 			}
-			text = mcpOutputText(in.Response.Body)
+			reqBody := in.Request.Body
+			toolName := mcpToolName(reqBody)
+			tgt.applyPayload = func(payload map[string]any) ([]byte, bool) {
+				return mcpTransformedRequest(payload, toolName)
+			}
+			tgt.apply = func(masked string) ([]byte, bool) {
+				return rewriteMCPRequest(reqBody, masked)
+			}
+			raw, err := mcpToolsCallPayload(in.Request.Body)
+			if err != nil {
+				p.warn(ctx, "trustguard mcp tools/call payload build failed, failing open",
+					slog.String("plugin", PluginName),
+					slog.Any("error", err),
+				)
+				setExtras(in.Event, guardData{Direction: direction, Decision: decisionFailedOpen, FailedOpen: true})
+				return passThrough(), nil
+			}
+			payload = raw
+		} else {
+			if skipOutputInspect(in.Stage, in.Response) {
+				return passThrough(), nil
+			}
+			if !mcpOutputInspectable(in.Response.Body) {
+				return passThrough(), nil
+			}
+			respBody := in.Response.Body
+			tgt.applyPayload = mcpTransformedResult
+			tgt.apply = func(masked string) ([]byte, bool) {
+				return rewriteMCPResponse(respBody, masked)
+			}
+			raw, err := mcpToolsResultPayload(in.Response.Body)
+			if err != nil {
+				p.warn(ctx, "trustguard mcp tools/result payload build failed, failing open",
+					slog.String("plugin", PluginName),
+					slog.Any("error", err),
+				)
+				setExtras(in.Event, guardData{Direction: direction, Decision: decisionFailedOpen, FailedOpen: true})
+				return passThrough(), nil
+			}
+			payload = raw
 		}
 	} else {
 		format, err := adapter.ResolveAgentFormat(in.Request.Provider, in.Request.SourceFormat, nil)
@@ -184,20 +245,61 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 			if decErr != nil || creq == nil {
 				return passThrough(), nil
 			}
-			text = joinRequestText(creq)
+			if strings.TrimSpace(joinRequestText(creq)) == "" && len(extractPayloadAttachments(in.Request.Body)) == 0 {
+				return passThrough(), nil
+			}
+			reg := p.registry
+			tgt.apply = func(masked string) ([]byte, bool) {
+				return rewriteRequest(reg, format, creq, masked)
+			}
+			raw, err := llmRequestPayloadWithAttachments(creq, extractPayloadAttachments(in.Request.Body))
+			if err != nil {
+				p.warn(ctx, "trustguard llm payload build failed, failing open",
+					slog.String("plugin", PluginName),
+					slog.Any("error", err),
+				)
+				setExtras(in.Event, guardData{Direction: direction, Decision: decisionFailedOpen, FailedOpen: true})
+				return passThrough(), nil
+			}
+			payload = raw
 		} else {
-			if in.Response == nil || in.Response.Streaming || len(in.Response.Body) == 0 {
+			if skipOutputInspect(in.Stage, in.Response) {
 				return passThrough(), nil
 			}
-			cresp, decErr := p.registry.DecodeResponseFor(in.Response.Body, format)
-			if decErr != nil || cresp == nil {
+			var cresp *adapter.CanonicalResponse
+			var reqTools []adapter.CanonicalTool
+			if creq, decErr := p.registry.DecodeRequestFor(in.Request.Body, format); decErr == nil && creq != nil {
+				reqTools = creq.Tools
+			}
+			if in.Response.Streaming {
+				cresp = streamCanonicalResponse(p.registry, in.Response.Body, format)
+			} else {
+				var decErr error
+				cresp, decErr = p.registry.DecodeResponseFor(in.Response.Body, format)
+				if decErr != nil || cresp == nil {
+					return passThrough(), nil
+				}
+			}
+			if !responseHasInspectableContent(cresp) && len(reqTools) == 0 {
 				return passThrough(), nil
 			}
-			text = cresp.Content
+			if cresp != nil && strings.TrimSpace(cresp.Content) != "" {
+				reg := p.registry
+				tgt.apply = func(masked string) ([]byte, bool) {
+					return rewriteResponse(reg, format, cresp, masked)
+				}
+			}
+			raw, err := llmResponsePayload(cresp, reqTools)
+			if err != nil {
+				p.warn(ctx, "trustguard llm payload build failed, failing open",
+					slog.String("plugin", PluginName),
+					slog.Any("error", err),
+				)
+				setExtras(in.Event, guardData{Direction: direction, Decision: decisionFailedOpen, FailedOpen: true})
+				return passThrough(), nil
+			}
+			payload = raw
 		}
-	}
-	if strings.TrimSpace(text) == "" {
-		return passThrough(), nil
 	}
 
 	protocol := protocolFor(in.Request.ConsumerType)
@@ -205,7 +307,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		protocol = protocolMCP
 	}
 	body := GuardRequest{
-		Payload:    GuardPayload{Input: text},
+		Payload:    payload,
 		Direction:  direction,
 		Protocol:   protocol,
 		GatewayID:  in.Request.GatewayID,
@@ -221,8 +323,19 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 
 	traceID := gatewayTraceID(ctx)
-	resp, err := p.guard(ctx, baseURL, cfg.CollectorID, traceID, body)
+	playground := requestHasPlaygroundToken(in.Request)
+	resp, err := p.guard(ctx, baseURL, cfg.CollectorID, traceID, body, playground)
 	if err != nil {
+		var limited *rateLimitedError
+		if errors.As(err, &limited) {
+			setExtras(in.Event, guardData{Direction: direction, Decision: decisionBlocked})
+			return nil, rateLimitError(limited)
+		}
+		var unavailable *entitlementsUnavailableError
+		if errors.As(err, &unavailable) {
+			setExtras(in.Event, guardData{Direction: direction, Decision: decisionBlocked})
+			return nil, unavailableError(unavailable)
+		}
 		p.warn(ctx, "trustguard call failed, failing open",
 			slog.String("plugin", PluginName),
 			slog.String("stage", string(in.Stage)),
@@ -242,6 +355,10 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		Findings:      resp.Findings,
 	}
 
+	if resp.Status == statusTransform {
+		return p.applyTransform(in, data, resp, tgt)
+	}
+
 	data.Decision = guardOutcomeDecision(resp.Status, in.Mode)
 	if data.Decision == decisionBlocked {
 		recordGuardOutcome(in.Event, data)
@@ -249,6 +366,61 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 	recordGuardOutcome(in.Event, data)
 	return passThrough(), nil
+}
+
+// applyTransform enforces a TrustGuard transform (data-masking) outcome. In
+// observe mode the masked body is not applied and the outcome is reported. In
+// enforce mode the masked payload is written back into the provider body; when
+// it cannot be applied safely (missing payload, path without body propagation,
+// or re-encode failure) the request is blocked rather than forwarding the
+// unmasked data upstream.
+func (p *Plugin) applyTransform(in appplugins.ExecInput, data guardData, resp *GuardResponse, tgt transformTarget) (*appplugins.Result, error) {
+	if !appplugins.Blocks(in.Mode) {
+		data.Decision = decisionReported
+		recordGuardOutcome(in.Event, data)
+		return passThrough(), nil
+	}
+
+	// A structured payload is preferred where the protocol has one: TrustGuard
+	// returns the masked MCP envelope whole, so the values are lifted out of it
+	// instead of being re-split from a joined string.
+	if tgt.applyPayload != nil {
+		if body, ok := tgt.applyPayload(resp.TransformedPayload); ok {
+			return p.transformApplied(in, data, tgt, body)
+		}
+	}
+
+	masked, ok := transformedInput(resp.TransformedPayload)
+	if !ok {
+		return p.transformDegraded(in, data, resp, reasonTransformNoPayload)
+	}
+	if tgt.apply == nil {
+		return p.transformDegraded(in, data, resp, reasonTransformUnsupported)
+	}
+	body, ok := tgt.apply(masked)
+	if !ok {
+		return p.transformDegraded(in, data, resp, reasonTransformEncodeFailed)
+	}
+	return p.transformApplied(in, data, tgt, body)
+}
+
+// transformApplied records a successful rewrite and hands the masked body back
+// in the direction it belongs to.
+func (p *Plugin) transformApplied(in appplugins.ExecInput, data guardData, tgt transformTarget, body []byte) (*appplugins.Result, error) {
+	data.Decision = decisionTransformed
+	recordGuardOutcome(in.Event, data)
+	if tgt.isResponse {
+		return &appplugins.Result{StatusCode: http.StatusOK, Body: body, StopUpstream: true}, nil
+	}
+	return &appplugins.Result{StatusCode: http.StatusOK, RequestBody: body}, nil
+}
+
+func (p *Plugin) transformDegraded(in appplugins.ExecInput, data guardData, resp *GuardResponse, reason string) (*appplugins.Result, error) {
+	data.Decision = decisionBlocked
+	data.Degraded = true
+	data.DegradedReason = reason
+	recordGuardOutcome(in.Event, data)
+	return nil, blockError(resp)
 }
 
 func guardOutcomeDecision(status string, mode policy.Mode) string {
@@ -278,8 +450,17 @@ func (p *Plugin) config(settings map[string]any) (Settings, error) {
 	return cfg, nil
 }
 
+// configCacheKey must name every setting parseConfig reads, direction included:
+// it is an alias for inspect, so omitting it gives a policy that sets only
+// direction the same key as one that sets neither, and the first of the two to
+// be parsed decides which legs both of them inspect.
 func configCacheKey(settings map[string]any) string {
-	return fmt.Sprintf("%v\x00%v", settings["inspect"], settings["collector_id"])
+	return fmt.Sprintf(
+		"%v\x00%v\x00%v",
+		settings["inspect"],
+		settings["direction"],
+		settings["collector_id"],
+	)
 }
 
 func gatewayTraceID(ctx context.Context) string {
@@ -290,7 +471,24 @@ func gatewayTraceID(ctx context.Context) string {
 	return rt.TraceID()
 }
 
-func (p *Plugin) guard(ctx context.Context, baseURL, collectorID, traceID string, body GuardRequest) (*GuardResponse, error) {
+func requestHasPlaygroundToken(req *infracontext.RequestContext) bool {
+	if req == nil {
+		return false
+	}
+	for key, values := range req.Headers {
+		if !strings.EqualFold(key, "x-ag-playground-token") {
+			continue
+		}
+		for _, v := range values {
+			if v != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (p *Plugin) guard(ctx context.Context, baseURL, collectorID, traceID string, body GuardRequest, playground bool) (*GuardResponse, error) {
 	params := tokenParams{
 		baseURL:     baseURL,
 		collectorID: collectorID,
@@ -300,7 +498,7 @@ func (p *Plugin) guard(ctx context.Context, baseURL, collectorID, traceID string
 	if err != nil {
 		return nil, err
 	}
-	resp, err := p.client.Guard(ctx, baseURL, token, traceID, body)
+	resp, err := p.client.Guard(ctx, baseURL, token, traceID, body, playground)
 	if err == nil {
 		return resp, nil
 	}
@@ -312,7 +510,7 @@ func (p *Plugin) guard(ctx context.Context, baseURL, collectorID, traceID string
 	if err != nil {
 		return nil, err
 	}
-	return p.client.Guard(ctx, baseURL, token, traceID, body)
+	return p.client.Guard(ctx, baseURL, token, traceID, body, playground)
 }
 
 func (p *Plugin) warn(ctx context.Context, msg string, attrs ...any) {
@@ -333,17 +531,21 @@ func protocolFor(consumerType string) string {
 	}
 }
 
-func joinRequestText(creq *adapter.CanonicalRequest) string {
-	parts := make([]string, 0, len(creq.Messages)+1)
-	if strings.TrimSpace(creq.System) != "" {
-		parts = append(parts, creq.System)
+// skipOutputInspect reports whether this stage should skip response inspection.
+// PreResponse defers streaming bodies to PostResponse (body is empty until drain);
+// PostResponse skips non-streaming bodies already inspected at PreResponse.
+func skipOutputInspect(stage policy.Stage, resp *infracontext.ResponseContext) bool {
+	if resp == nil || len(resp.Body) == 0 {
+		return true
 	}
-	for _, msg := range creq.Messages {
-		if strings.TrimSpace(msg.Content) != "" {
-			parts = append(parts, msg.Content)
-		}
+	switch stage {
+	case policy.StagePreResponse:
+		return resp.Streaming
+	case policy.StagePostResponse:
+		return !resp.Streaming
+	default:
+		return true
 	}
-	return strings.Join(parts, "\n")
 }
 
 func passThrough() *appplugins.Result {

@@ -20,13 +20,20 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
 )
 
 func TestBaseFactory_CreateStrategy_KnownAlgorithms(t *testing.T) {
 	t.Parallel()
-	factory := loadbalancer.NewBaseFactory(nil, nil)
-	registries := []*registry.Registry{{ID: ids.New[ids.RegistryKind](), Name: "a", LLMTarget: &registry.LLMTarget{Provider: "openai"}}}
+	factory := loadbalancer.NewBaseFactory(nil, nil, nil, nil)
+	routes := []routingdomain.Route{
+		routingdomain.RouteForRegistry(&registry.Registry{
+			ID:        ids.New[ids.RegistryKind](),
+			Name:      "a",
+			LLMTarget: &registry.LLMTarget{Provider: "openai"},
+		}),
+	}
 
 	cases := []struct {
 		name     string
@@ -38,14 +45,15 @@ func TestBaseFactory_CreateStrategy_KnownAlgorithms(t *testing.T) {
 		{name: "weighted", alg: loadbalancer.AlgorithmWeightedRoundRobin, wantName: "weighted-round-robin"},
 		{name: "least-conn", alg: loadbalancer.AlgorithmLeastConnections, wantName: "least-connections"},
 		{name: "semantic", alg: loadbalancer.AlgorithmSemantic, wantName: "semantic"},
+		{name: "smart-routing", alg: loadbalancer.AlgorithmSmartRouting, wantName: "smart-routing"},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s, err := factory.CreateStrategy(loadbalancer.StrategyInput{
-				Algorithm:  tc.alg,
-				Registries: registries,
+				Algorithm: tc.alg,
+				Routes:    routes,
 			})
 			if err != nil {
 				t.Fatalf("CreateStrategy(%s) returned error: %v", tc.alg, err)
@@ -59,7 +67,7 @@ func TestBaseFactory_CreateStrategy_KnownAlgorithms(t *testing.T) {
 
 func TestBaseFactory_CreateStrategy_UnknownAlgorithm(t *testing.T) {
 	t.Parallel()
-	factory := loadbalancer.NewBaseFactory(nil, nil)
+	factory := loadbalancer.NewBaseFactory(nil, nil, nil, nil)
 	_, err := factory.CreateStrategy(loadbalancer.StrategyInput{Algorithm: "bogus"})
 	if err == nil {
 		t.Fatal("expected error for unknown algorithm")
@@ -72,8 +80,8 @@ func TestBaseFactory_CreateStrategy_UnknownAlgorithm(t *testing.T) {
 func TestExportedConstantsMatchAlgorithmPackage(t *testing.T) {
 	t.Parallel()
 	algs := loadbalancer.Algorithms()
-	if len(algs) != 5 {
-		t.Fatalf("len(Algorithms) = %d, want 5", len(algs))
+	if len(algs) != 6 {
+		t.Fatalf("len(Algorithms) = %d, want 6", len(algs))
 	}
 	for _, a := range algs {
 		if !loadbalancer.IsValidAlgorithm(a) {

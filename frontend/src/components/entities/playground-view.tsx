@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Send, FlaskConical } from "lucide-react";
 import { useList, errorMessage } from "@/lib/hooks";
+import { useGateway } from "@/components/layout/gateway-context";
 import { useToast } from "@/components/ui/toast";
 import { PageHeader } from "@/components/ui/page";
 import { Button } from "@/components/ui/button";
@@ -36,6 +37,7 @@ export function PlaygroundView() {
   const { data: consumers, isLoading } = useList<Consumer>("consumers");
   const llmConsumers = (consumers ?? []).filter((c) => c.type === "LLM" && c.active);
 
+  const { active: activeGateway } = useGateway();
   const { toast } = useToast();
   const [consumerId, setConsumerId] = useState("");
   const [model, setModel] = useState("");
@@ -67,9 +69,12 @@ export function PlaygroundView() {
     setResponse("");
     setErrorText(null);
     try {
-      const res = await fetch(`/api/playground${selected.path}`, {
+      const res = await fetch(`/api/playground/${selected.slug}/v1/chat/completions`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-AG-Gateway-Slug": activeGateway.slug,
+        },
         body: JSON.stringify(body),
       });
 
@@ -121,7 +126,7 @@ export function PlaygroundView() {
             </Field>
             {selected && (
               <p className="text-[12px] text-muted -mt-1">
-                Route <Mono>POST {selected.path}</Mono>
+                Route <Mono>POST /{selected.slug}/v1/chat/completions</Mono>
               </p>
             )}
 

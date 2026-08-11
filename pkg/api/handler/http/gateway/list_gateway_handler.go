@@ -63,6 +63,7 @@ func (h *ListGatewayHandler) Handle(c *fiber.Ctx) error {
 
 	items, total, err := h.finder.List(c.UserContext(), domain.ListFilter{
 		SlugContains: req.Slug,
+		TenantID:     tenantIDFromContext(c),
 		Page:         req.Page,
 		Size:         req.Size,
 	})

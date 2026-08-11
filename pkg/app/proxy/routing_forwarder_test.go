@@ -17,6 +17,7 @@ package proxy_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -28,6 +29,7 @@ import (
 	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/stretchr/testify/mock"
 )
@@ -259,7 +261,7 @@ func TestForward_RoleBasedWithoutRolesIs503(t *testing.T) {
 	}
 }
 
-func TestForward_ShortModelAmbiguousAcrossProviders(t *testing.T) {
+func TestForward_ShortModelPinsFirstMatchingProvider(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	openai := backendFor(gatewayID, "openai")
 	azure := backendFor(gatewayID, "azure")
@@ -269,20 +271,31 @@ func TestForward_ShortModelAmbiguousAcrossProviders(t *testing.T) {
 		azure.ID:  {Allowed: []string{"gpt-5"}},
 	}
 
-	fwd := newTestForwarder(t, proxymocks.NewProviderInvoker(t))
-	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.MatchedBy(func(bk *registrydomain.Registry) bool {
+			return bk.ID == openai.ID
+		}), mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil).
+		Once()
+
+	fwd := newTestForwarder(t, invoker)
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
 		Request: &infracontext.RequestContext{
 			Body: []byte(`{"model":"gpt-5"}`),
 		},
 	})
-	if !errors.Is(err, routingdomain.ErrAmbiguousModel) {
-		t.Fatalf("expected ErrAmbiguousModel, got %v", err)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if res.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", res.StatusCode)
 	}
 }
 
-func TestForward_ShortModelSingleProviderKeepsBalancing(t *testing.T) {
+func TestForward_ShortModelPinsFirstMatchingRegistry(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	a := backendFor(gatewayID, "openai")
 	b := backendFor(gatewayID, "openai")
@@ -294,7 +307,9 @@ func TestForward_ShortModelSingleProviderKeepsBalancing(t *testing.T) {
 
 	invoker := proxymocks.NewProviderInvoker(t)
 	invoker.EXPECT().
-		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Invoke(mock.Anything, mock.MatchedBy(func(bk *registrydomain.Registry) bool {
+			return bk.ID == a.ID
+		}), mock.Anything).
 		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil).
 		Once()
 
@@ -304,6 +319,106 @@ func TestForward_ShortModelSingleProviderKeepsBalancing(t *testing.T) {
 		Consumer:  rc,
 		Request: &infracontext.RequestContext{
 			Body: []byte(`{"model":"gpt-5"}`),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if res.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", res.StatusCode)
+	}
+}
+
+func TestForward_AutoUsesLoadBalancerAndStripsSentinel(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	a := backendFor(gatewayID, "openai")
+	b := backendFor(gatewayID, "anthropic")
+	withoutDefault := backendFor(gatewayID, "mistral")
+	rc := routableConsumerWith(gatewayID, a, b, withoutDefault)
+	rc.Consumer.ModelPolicies = domainconsumer.ModelPolicies{
+		a.ID:              {Allowed: []string{"gpt-5"}, Default: "gpt-5"},
+		b.ID:              {Allowed: []string{"claude-4"}, Default: "claude-4"},
+		withoutDefault.ID: {Allowed: []string{"mistral-large"}},
+	}
+
+	wantDefaults := map[ids.RegistryID]string{
+		a.ID: "gpt-5",
+		b.ID: "claude-4",
+	}
+	invocations := make(map[ids.RegistryID]int)
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Run(func(_ context.Context, bk *registrydomain.Registry, req *infracontext.RequestContext) {
+			if strings.Contains(string(req.Body), `"auto"`) {
+				t.Fatalf("auto sentinel reached provider body: %s", req.Body)
+			}
+			wantDefault, ok := wantDefaults[bk.ID]
+			if !ok {
+				t.Fatalf("auto selected registry without a default model: %s", bk.ID)
+			}
+			if req.DefaultModel != wantDefault {
+				t.Fatalf("backend %s default = %q, want %q", bk.ID, req.DefaultModel, wantDefault)
+			}
+			invocations[bk.ID]++
+		}).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil).
+		Times(6)
+
+	fwd := newTestForwarder(t, invoker)
+	for range 6 {
+		res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+			GatewayID: gatewayID,
+			Consumer:  rc,
+			Request: &infracontext.RequestContext{
+				Body: []byte(`{"model":"auto","messages":[]}`),
+			},
+		})
+		if err != nil {
+			t.Fatalf("Forward: %v", err)
+		}
+		if res.StatusCode != 200 {
+			t.Fatalf("expected 200, got %d", res.StatusCode)
+		}
+	}
+	if len(invocations) != 2 {
+		t.Fatalf("auto must balance across both registries, got invocations %v", invocations)
+	}
+	if invocations[withoutDefault.ID] != 0 {
+		t.Fatalf("registry without default received %d invocations", invocations[withoutDefault.ID])
+	}
+}
+
+func TestForward_GeminiAutoFromPathUsesBackendDefault(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	google := backendFor(gatewayID, "google")
+	rc := routableConsumerWith(gatewayID, google)
+	rc.Consumer.ModelPolicies = domainconsumer.ModelPolicies{
+		google.ID: {Allowed: []string{"gemini-2.5-flash"}, Default: "gemini-2.5-flash"},
+	}
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Run(func(_ context.Context, _ *registrydomain.Registry, req *infracontext.RequestContext) {
+			if strings.Contains(string(req.Body), `"auto"`) {
+				t.Fatalf("auto sentinel reached Gemini provider body: %s", req.Body)
+			}
+			if req.DefaultModel != "gemini-2.5-flash" {
+				t.Fatalf("Gemini default = %q, want gemini-2.5-flash", req.DefaultModel)
+			}
+		}).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil).
+		Once()
+
+	fwd := newTestForwarder(t, invoker)
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request: &infracontext.RequestContext{
+			Path:         "/v1beta/models/auto:generateContent",
+			Body:         []byte(`{"contents":[]}`),
+			SourceFormat: string(adapter.FormatGemini),
 		},
 	})
 	if err != nil {

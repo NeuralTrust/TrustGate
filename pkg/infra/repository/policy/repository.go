@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
@@ -229,40 +230,70 @@ func (r *Repository) ListByGateway(ctx context.Context, gatewayID ids.GatewayID)
 }
 
 func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*domain.Policy, int, error) {
-	if filter.Page < 1 {
-		filter.Page = 1
-	}
-	if filter.Size < 1 {
-		filter.Size = 20
-	}
-	offset := (filter.Page - 1) * filter.Size
+	page := filter.Page.Normalize()
+	offset := page.Offset()
 
 	const countQuery = `
 		SELECT COUNT(*)
 		  FROM policies
 		 WHERE ($1::uuid IS NULL OR gateway_id = $1)
-		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')`
+		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%' OR lower(slug) LIKE '%' || lower($2) || '%')
+		   AND ($3::boolean IS NULL OR enabled = $3)
+		   AND ($4::boolean IS NULL OR global = $4)
+		   AND ($5 = '' OR mode = $5)
+		   AND (NOT $6::boolean OR slug = ANY($7::text[]))`
 
 	gatewayParam := nullableUUID(filter.GatewayID.UUID())
+	modeParam := string(filter.Mode)
+	slugs := filter.Slugs
+	if slugs == nil {
+		slugs = []string{}
+	}
 
 	var total int
-	if err := r.conn.Pool.QueryRow(ctx, countQuery, gatewayParam, filter.NameContains).Scan(&total); err != nil {
+	if err := r.conn.Pool.QueryRow(
+		ctx,
+		countQuery,
+		gatewayParam,
+		filter.Search,
+		filter.Enabled,
+		filter.Global,
+		modeParam,
+		filter.RestrictToSlugs,
+		slugs,
+	).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("policy repository: count: %w", err)
 	}
 
 	listQuery := policySelectColumns + `
 		  FROM policies p
 		 WHERE ($1::uuid IS NULL OR p.gateway_id = $1)
-		   AND ($2 = '' OR lower(p.name) LIKE '%' || lower($2) || '%')
-		 ORDER BY p.created_at DESC, p.id
-		 LIMIT $3 OFFSET $4`
-	rows, err := r.conn.Pool.Query(ctx, listQuery, gatewayParam, filter.NameContains, filter.Size, offset)
+		   AND ($2 = '' OR lower(p.name) LIKE '%' || lower($2) || '%' OR lower(p.slug) LIKE '%' || lower($2) || '%')
+		   AND ($3::boolean IS NULL OR p.enabled = $3)
+		   AND ($4::boolean IS NULL OR p.global = $4)
+		   AND ($5 = '' OR p.mode = $5)
+		   AND (NOT $6::boolean OR p.slug = ANY($7::text[]))
+		 ORDER BY ` + policyOrderBy(filter.Sort) + `
+		 LIMIT $8 OFFSET $9`
+	rows, err := r.conn.Pool.Query(
+		ctx,
+		listQuery,
+		gatewayParam,
+		filter.Search,
+		filter.Enabled,
+		filter.Global,
+		modeParam,
+		filter.RestrictToSlugs,
+		slugs,
+		page.Size,
+		offset,
+	)
 	if err != nil {
 		return nil, 0, fmt.Errorf("policy repository: list: %w", err)
 	}
 	defer rows.Close()
 
-	items := make([]*domain.Policy, 0, filter.Size)
+	items := make([]*domain.Policy, 0, page.Size)
 	for rows.Next() {
 		p, err := scanPolicy(rows)
 		if err != nil {
@@ -329,6 +360,28 @@ func nullableUUID(id uuid.UUID) any {
 		return nil
 	}
 	return id
+}
+
+func policyOrderBy(sort listing.Sort) string {
+	col := "p.created_at"
+	dir := listing.Desc
+	if !sort.IsZero() {
+		switch sort.Field {
+		case "name":
+			col = "p.name"
+		case "created_at":
+			col = "p.created_at"
+		case "updated_at":
+			col = "p.updated_at"
+		case "priority":
+			col = "p.priority"
+		}
+		dir = sort.Direction
+		if dir == "" {
+			dir = listing.Asc
+		}
+	}
+	return col + " " + dir.SQL() + ", p.id"
 }
 
 func mapPgError(err error) error {

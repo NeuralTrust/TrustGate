@@ -26,6 +26,8 @@ type fakeUpstream struct {
 	hits     int64
 	mu       sync.Mutex
 	lastBody []byte
+	lastAuth string
+	lastPath string
 }
 
 func (u *fakeUpstream) URL() string { return u.server.URL }
@@ -38,11 +40,27 @@ func (u *fakeUpstream) LastBody() []byte {
 	return u.lastBody
 }
 
+func (u *fakeUpstream) LastAuth() string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.lastAuth
+}
+
+// LastPath reports the endpoint the gateway called, which is how a test tells
+// the OpenAI chat surfaces apart.
+func (u *fakeUpstream) LastPath() string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.lastPath
+}
+
 func (u *fakeUpstream) record(r *http.Request) {
 	atomic.AddInt64(&u.hits, 1)
 	body, _ := io.ReadAll(r.Body)
 	u.mu.Lock()
 	u.lastBody = body
+	u.lastAuth = r.Header.Get("Authorization")
+	u.lastPath = r.URL.Path
 	u.mu.Unlock()
 }
 
@@ -174,16 +192,23 @@ func expectedAttempts() int {
 // status, response headers and the full (buffered or streamed) body.
 func proxyPost(t *testing.T, apiKey, path string, body any) (int, http.Header, []byte) {
 	t.Helper()
+	return proxyPostWithAuth(t, apiKey, path, body, proxyAPIKeyHeader, apiKey)
+}
+
+// proxyPostWithAuth is like proxyPost but lets the caller choose which header
+// carries the gateway api key (X-AG-API-Key, Authorization, or x-api-key).
+func proxyPostWithAuth(t *testing.T, hostKey, path string, body any, authHeader, authValue string) (int, http.Header, []byte) {
+	t.Helper()
 	buf, err := json.Marshal(body)
 	require.NoError(t, err)
 
 	req, err := http.NewRequest(http.MethodPost, ProxyURL+path, bytes.NewReader(buf))
 	require.NoError(t, err)
-	host, ok := proxyHosts.Load(apiKey)
+	host, ok := proxyHosts.Load(hostKey)
 	require.True(t, ok, "proxy host missing for api key")
 	req.Host = host.(string)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(proxyAPIKeyHeader, apiKey)
+	req.Header.Set(authHeader, authValue)
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -228,6 +253,8 @@ func TestProxyE2E_NonStreaming_NoLB(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, status, "body: %s", body)
 		assert.Equal(t, "openai", headers.Get("X-Selected-Provider"))
+		assert.Equal(t, "gpt-4o-mini", headers.Get("X-Selected-Model"))
+		assert.Empty(t, headers.Get("X-Selected-Registry"))
 		assert.Contains(t, string(body), "hello-from-upstream")
 		assert.Equal(t, 1, up.Hits(), "a successful call must hit the upstream exactly once")
 	})
@@ -241,6 +268,36 @@ func TestProxyE2E_NonStreaming_NoLB(t *testing.T) {
 		assert.Equal(t, http.StatusInternalServerError, status, "the final upstream error is relayed, body: %s", body)
 		assert.Equal(t, expectedAttempts(), up.Hits(), "every attempt (first + retries) must reach the upstream")
 	})
+}
+
+// TestProxyE2E_APIKeyAuthHeaders checks that the same gateway api key authenticates
+// when presented via X-AG-API-Key, Authorization: Bearer, or x-api-key, and that
+// the registry credential (not the gateway key) is what reaches the upstream.
+func TestProxyE2E_APIKeyAuthHeaders(t *testing.T) {
+	defer Track(t, "ProxyE2E")()
+
+	up := newJSONUpstream(t, "auth-header-ok")
+	apiKey, path := setupRoute(t, "", up)
+
+	cases := []struct {
+		name   string
+		header string
+		value  string
+	}{
+		{name: "X-AG-API-Key", header: proxyAPIKeyHeader, value: apiKey},
+		{name: "Authorization Bearer", header: "Authorization", value: "Bearer " + apiKey},
+		{name: "x-api-key", header: "x-api-key", value: apiKey},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			status, _, body := proxyPostWithAuth(t, apiKey, path, chatRequest(false), tc.header, tc.value)
+			assert.Equal(t, http.StatusOK, status, "body: %s", body)
+			assert.Contains(t, string(body), "auth-header-ok")
+			assert.Equal(t, "Bearer sk-test", up.LastAuth(),
+				"upstream must receive the registry credential, not the gateway api key")
+		})
+	}
+	assert.Equal(t, len(cases), up.Hits())
 }
 
 func TestProxyE2E_Streaming_NoLB(t *testing.T) {
@@ -318,7 +375,7 @@ func TestProxyE2E_NonStreaming_LB(t *testing.T) {
 
 	const total = 6
 	for i := 0; i < total; i++ {
-		status, headers, body := proxyPost(t, apiKey, path, chatRequest(false))
+		status, headers, body := proxyPost(t, apiKey, path, chatRequestNoModel())
 		assert.Equal(t, http.StatusOK, status, "request %d body: %s", i, body)
 		assert.Equal(t, "openai", headers.Get("X-Selected-Provider"))
 	}
@@ -338,7 +395,9 @@ func TestProxyE2E_Streaming_LB(t *testing.T) {
 	const total = 6
 	servedByA, servedByB := 0, 0
 	for i := 0; i < total; i++ {
-		status, headers, body := proxyPost(t, apiKey, path, chatRequest(true))
+		request := chatRequestNoModel()
+		request["stream"] = true
+		status, headers, body := proxyPost(t, apiKey, path, request)
 		assert.Equal(t, http.StatusOK, status, "request %d body: %s", i, body)
 		assert.Equal(t, "openai", headers.Get("X-Selected-Provider"))
 		assert.Contains(t, string(body), "[DONE]", "request %d must yield a terminated stream", i)
@@ -506,7 +565,7 @@ func TestProxyE2E_Fallback(t *testing.T) {
 		fallback := newJSONUpstream(t, "fallback-served")
 		apiKey, path := setupFallbackRoute(t, primary, fallback, true)
 
-		status, headers, body := proxyPost(t, apiKey, path, chatRequest(false))
+		status, headers, body := proxyPost(t, apiKey, path, chatRequestNoModel())
 
 		assert.Equal(t, http.StatusOK, status, "the fallback must rescue the request, body: %s", body)
 		assert.Contains(t, string(body), "fallback-served")
@@ -520,7 +579,7 @@ func TestProxyE2E_Fallback(t *testing.T) {
 		fallback := newFailingUpstream(t, http.StatusBadGateway)
 		apiKey, path := setupFallbackRoute(t, primary, fallback, true)
 
-		status, _, body := proxyPost(t, apiKey, path, chatRequest(false))
+		status, _, body := proxyPost(t, apiKey, path, chatRequestNoModel())
 
 		assert.Equal(t, http.StatusBadGateway, status, "the final fallback error is relayed, body: %s", body)
 		assert.Equal(t, expectedAttempts(), primary.Hits(), "primary must be fully retried")
@@ -532,7 +591,7 @@ func TestProxyE2E_Fallback(t *testing.T) {
 		fallback := newJSONUpstream(t, "must-not-serve")
 		apiKey, path := setupFallbackRoute(t, primary, fallback, true, "http_5xx")
 
-		status, _, body := proxyPost(t, apiKey, path, chatRequest(false))
+		status, _, body := proxyPost(t, apiKey, path, chatRequestNoModel())
 
 		assert.Equal(t, http.StatusTooManyRequests, status, "the 429 must be relayed verbatim, body: %s", body)
 		assert.Equal(t, expectedAttempts(), primary.Hits(), "primary retries are not gated by triggers")
@@ -544,7 +603,7 @@ func TestProxyE2E_Fallback(t *testing.T) {
 		fallback := newJSONUpstream(t, "rescued-from-429")
 		apiKey, path := setupFallbackRoute(t, primary, fallback, true, "http_429")
 
-		status, _, body := proxyPost(t, apiKey, path, chatRequest(false))
+		status, _, body := proxyPost(t, apiKey, path, chatRequestNoModel())
 
 		assert.Equal(t, http.StatusOK, status, "body: %s", body)
 		assert.Contains(t, string(body), "rescued-from-429")
@@ -556,7 +615,7 @@ func TestProxyE2E_Fallback(t *testing.T) {
 		fallback := newJSONUpstream(t, "rescued-from-timeout")
 		apiKey, path := setupFallbackRoute(t, primary, fallback, true, "timeout")
 
-		status, _, body := proxyPost(t, apiKey, path, chatRequest(false))
+		status, _, body := proxyPost(t, apiKey, path, chatRequestNoModel())
 
 		assert.Equal(t, http.StatusOK, status, "body: %s", body)
 		assert.Contains(t, string(body), "rescued-from-timeout")
@@ -569,7 +628,7 @@ func TestProxyE2E_Fallback(t *testing.T) {
 		fallback := newJSONUpstream(t, "must-not-serve")
 		apiKey, path := setupFallbackRoute(t, primary, fallback, true, "http_5xx")
 
-		status, _, body := proxyPost(t, apiKey, path, chatRequest(false))
+		status, _, body := proxyPost(t, apiKey, path, chatRequestNoModel())
 
 		assert.Equal(t, http.StatusRequestTimeout, status, "the 408 must be relayed verbatim, body: %s", body)
 		assert.Equal(t, expectedAttempts(), primary.Hits(), "primary retries are not gated by triggers")
@@ -581,7 +640,7 @@ func TestProxyE2E_Fallback(t *testing.T) {
 		fallback := newJSONUpstream(t, "must-not-serve")
 		apiKey, path := setupFallbackRoute(t, primary, fallback, false)
 
-		status, _, body := proxyPost(t, apiKey, path, chatRequest(false))
+		status, _, body := proxyPost(t, apiKey, path, chatRequestNoModel())
 
 		assert.Equal(t, http.StatusInternalServerError, status, "body: %s", body)
 		assert.Equal(t, expectedAttempts(), primary.Hits())

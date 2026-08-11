@@ -75,11 +75,15 @@ make down
 Then hit the health probes:
 
 ```bash
-curl localhost:8080/healthz       # admin
+curl localhost:8080/healthz       # admin (canonical; /health is an alias)
 curl localhost:8081/healthz       # proxy
 curl localhost:8082/healthz       # mcp
 curl localhost:8080/__/version    # build info (version, commit, build date)
 ```
+
+To configure MCP registries/consumers and smoke-test JSON-RPC (`tools/list`,
+`tools/call`) or point Cursor at the MCP plane, follow
+[`docs/mcp/testing-guide.md`](docs/mcp/testing-guide.md).
 
 > The image is pinned to `linux/amd64` because `confluent-kafka-go` only bundles
 > an amd64 `librdkafka`; on Apple Silicon the build runs under emulation out of the box.
@@ -285,7 +289,7 @@ flowchart LR
 |-------|------|------------------|
 | **Admin** | `8080` | Gateway, registry, consumer, auth, policy and catalog management. Applies DB migrations. |
 | **Proxy** | `8081` | Request routing, load balancing, policy & plugin execution, provider forwarding, telemetry. |
-| **MCP** | `8082` | Model Context Protocol server: exposes registered MCP targets and tools to agents. |
+| **MCP** | `8082` | Model Context Protocol server: exposes registered MCP targets and tools to agents. See the [MCP testing guide](docs/mcp/testing-guide.md). |
 
 ## 🔌 Plugins
 

@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
@@ -39,6 +40,7 @@ type memFlowStore struct {
 	codes    map[string]CodeGrant
 	clients  map[string]RegisteredGatewayClient
 	sessions map[string]SessionRecord
+	retired  []string
 }
 
 func newMemFlowStore() *memFlowStore {
@@ -57,15 +59,21 @@ func (s *memFlowStore) SaveSession(_ context.Context, refreshToken string, rec S
 	return nil
 }
 
-func (s *memFlowStore) TakeSession(_ context.Context, refreshToken string) (*SessionRecord, error) {
+func (s *memFlowStore) GetSession(_ context.Context, refreshToken string) (*SessionRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec, ok := s.sessions[refreshToken]
 	if !ok {
 		return nil, nil
 	}
-	delete(s.sessions, refreshToken)
 	return &rec, nil
+}
+
+func (s *memFlowStore) RetireSession(_ context.Context, refreshToken string, _ time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.retired = append(s.retired, refreshToken)
+	return nil
 }
 
 func (s *memFlowStore) peekSession(refreshToken string) *SessionRecord {
@@ -755,15 +763,17 @@ func TestRefreshAcceptsFormEncodedIdP(t *testing.T) {
 }
 
 type fakeChainer struct {
-	url      string
-	calls    int
-	resource string
-	sub      string
-	resume   string
+	url       string
+	calls     int
+	gatewayID ids.GatewayID
+	resource  string
+	sub       string
+	resume    string
 }
 
-func (f *fakeChainer) ChainURL(_ context.Context, _ string, _ ids.GatewayID, resource, principalSub, resumeURL string) (string, error) {
+func (f *fakeChainer) ChainURL(_ context.Context, _ string, gatewayID ids.GatewayID, resource, principalSub, resumeURL string) (string, error) {
 	f.calls++
+	f.gatewayID = gatewayID
 	f.resource, f.sub, f.resume = resource, principalSub, resumeURL
 	return f.url, nil
 }

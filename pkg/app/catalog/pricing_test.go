@@ -23,24 +23,35 @@ import (
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 type priceRepo struct {
 	*fakeRepo
-	model *domain.Model
+	byKey map[string]*domain.Model
 	err   error
 	calls int
 }
 
-func (p *priceRepo) FindModel(_ context.Context, _ string, _ string) (*domain.Model, error) {
+func (p *priceRepo) FindModel(_ context.Context, providerCode string, slug string) (*domain.Model, error) {
 	p.calls++
-	return p.model, p.err
+	if p.err != nil {
+		return nil, p.err
+	}
+	if p.byKey != nil {
+		if m, ok := p.byKey[providerCode+":"+slug]; ok {
+			return m, nil
+		}
+		return nil, commonerrors.ErrNotFound
+	}
+	return nil, commonerrors.ErrNotFound
 }
 
 func newPricingResolver(repo domain.Repository) PricingResolver {
 	mgr := cache.NewTTLMapManager(cache.CatalogModelCacheTTL)
+	mgr.CreateTTLMap(cache.CatalogModelTTLName, cache.CatalogModelCacheTTL)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return NewPricingResolver(repo, mgr, logger)
 }
@@ -48,10 +59,12 @@ func newPricingResolver(repo domain.Repository) PricingResolver {
 func TestPricingResolver_ComputesPriceAndCachesLookup(t *testing.T) {
 	repo := &priceRepo{
 		fakeRepo: newFakeRepo(),
-		model: &domain.Model{
-			DisplayName: "GPT-4o",
-			InputPrice:  "0.0000025",
-			OutputPrice: "0.00001",
+		byKey: map[string]*domain.Model{
+			"openai:gpt-4o": {
+				DisplayName: "GPT-4o",
+				InputPrice:  "0.0000025",
+				OutputPrice: "0.00001",
+			},
 		},
 	}
 	resolver := newPricingResolver(repo)
@@ -86,6 +99,70 @@ func TestPricingResolver_EmptyKeySkipsLookup(t *testing.T) {
 	assert.False(t, resolver.Resolve(context.Background(), "", "gpt-4o").Found)
 	assert.False(t, resolver.Resolve(context.Background(), "openai", "").Found)
 	assert.Equal(t, 0, repo.calls)
+}
+
+func TestPricingResolver_OpenAICompatibleFallsBackToOpenAIPrices(t *testing.T) {
+	repo := &priceRepo{
+		fakeRepo: newFakeRepo(),
+		byKey: map[string]*domain.Model{
+			"openai:gpt-4o": {
+				DisplayName: "GPT-4o",
+				InputPrice:  "0.0000025",
+				OutputPrice: "0.00001",
+			},
+		},
+	}
+	resolver := newPricingResolver(repo)
+
+	got := resolver.Resolve(context.Background(), providers.ProviderOpenAICompatible, "gpt-4o")
+	require.True(t, got.Found)
+	assert.Equal(t, "GPT-4o", got.ModelLabel)
+	assert.InDelta(t, 0.0000025, got.InputPrice, 1e-12)
+	assert.InDelta(t, 0.00001, got.OutputPrice, 1e-12)
+	assert.Equal(t, 2, repo.calls, "compatible miss then openai hit")
+
+	cached := resolver.Resolve(context.Background(), providers.ProviderOpenAICompatible, "gpt-4o")
+	assert.Equal(t, got, cached)
+	assert.Equal(t, 2, repo.calls, "compatible hit must stay cached under openai_compatible key")
+}
+
+func TestPricingResolver_EmptyPricesAreNotFound(t *testing.T) {
+	repo := &priceRepo{
+		fakeRepo: newFakeRepo(),
+		byKey: map[string]*domain.Model{
+			"openai:free-model": {
+				DisplayName: "Free",
+				InputPrice:  "",
+				OutputPrice: "",
+			},
+		},
+	}
+	resolver := newPricingResolver(repo)
+
+	got := resolver.Resolve(context.Background(), "openai", "free-model")
+	assert.False(t, got.Found)
+}
+
+func TestPricingResolver_InvalidateCacheDropsNegativeAndPositiveEntries(t *testing.T) {
+	repo := &priceRepo{
+		fakeRepo: newFakeRepo(),
+		byKey: map[string]*domain.Model{
+			"openai:gpt-4o": {
+				DisplayName: "GPT-4o",
+				InputPrice:  "0.0000025",
+				OutputPrice: "0.00001",
+			},
+		},
+	}
+	resolver := newPricingResolver(repo)
+
+	require.True(t, resolver.Resolve(context.Background(), "openai", "gpt-4o").Found)
+	assert.Equal(t, 1, repo.calls)
+
+	resolver.InvalidateCache()
+
+	require.True(t, resolver.Resolve(context.Background(), "openai", "gpt-4o").Found)
+	assert.Equal(t, 2, repo.calls, "after invalidate the next resolve must hit the repository again")
 }
 
 func TestParsePrice(t *testing.T) {

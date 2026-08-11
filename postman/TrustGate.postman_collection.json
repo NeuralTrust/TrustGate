@@ -330,6 +330,11 @@
     {
       "key": "okta_bearer_token",
       "value": "replace-with-okta-issued-jwt"
+    },
+    {
+      "key": "tenant_id",
+      "value": "postman-tenant",
+      "type": "string"
     }
   ],
   "item": [
@@ -469,7 +474,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"slug\": \"team-a-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+              "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"slug\": \"team-a-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways",
@@ -481,7 +486,45 @@
                 "gateways"
               ]
             },
-            "description": "Optional `slug` (lowercase DNS label): when omitted the server generates a unique random slug. The slug identifies the gateway on the proxy plane: `X-AG-Gateway-Slug` header (GATEWAY_DISCOVERY_MODE=header, default) or `{slug}.<GATEWAY_BASE_DOMAIN>` host (subdomain mode)."
+            "description": "Optional slug (lowercase DNS label); omitted → server generates. Tenant JWT must not send entitlements (422). Platform create requires full stamped entitlements and body tenant_id (create-for-tenant). With RATE_LIMIT_ENABLED, 409 at MaxInstances; free create inherits highest sibling tier. Ownership tenant_id is required (JWT claim or body for platform admins)."
+          }
+        },
+        {
+          "name": "Create Gateway with entitlements (tenant → 422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('tenant cannot stamp entitlements', function () { pm.response.to.have.status(422); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"slug\": \"team-a-ent-{{$randomInt}}\",\n  \"entitlements\": {\n    \"tier\": \"standard\",\n    \"burst_per_min\": 300,\n    \"quota_per_month\": 100000,\n    \"max_instances\": 5\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways"
+              ]
+            },
+            "description": "Tenant JWT must not send entitlements; platform create requires full stamped entitlements (tier + burst_per_min + quota_per_month + max_instances); tenant JWTs must omit entitlements. Expect 422 when using a tenant-scoped admin token. Ownership tenant_id is required (JWT claim or body for platform admins)."
           }
         },
         {
@@ -558,7 +601,8 @@
                 "gateways",
                 "{{gateway_id}}"
               ]
-            }
+            },
+            "description": "Update gateway fields. Tenant JWT + entitlements → 422. Platform tier downgrade when count > new MaxInstances → 409 (delete excess first)."
           }
         },
         {
@@ -1293,7 +1337,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"team-a-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"headers\": {},\n  \"registries\": [\n    {\n      \"id\": \"{{registry_id}}\",\n      \"weight\": 1,\n      \"model_policies\": {\n        \"allowed\": [\n          \"gpt-4o\"\n        ],\n        \"default\": \"gpt-4o\"\n      }\n    }\n  ],\n  \"lb_config\": {\n    \"enabled\": true,\n    \"algorithm\": \"round-robin\",\n    \"pool_alias\": \"fast-chat\",\n    \"members\": [\n      {\n        \"registry_id\": \"{{registry_id}}\"\n      }\n    ]\n  },\n  \"fallback\": {\n    \"enabled\": true,\n    \"triggers\": [\n      \"http_5xx\"\n    ],\n    \"chain\": [\n      \"{{registry_id}}\"\n    ],\n    \"budget\": {\n      \"max_attempts\": 2,\n      \"max_total_latency_ms\": 5000\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"team-a-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"headers\": {},\n  \"registries\": [\n    {\n      \"id\": \"{{registry_id}}\",\n      \"weight\": 1,\n      \"model_policies\": {\n        \"allowed\": [\n          \"gpt-4o\",\n          \"gpt-4o-mini\"\n        ],\n        \"default\": \"gpt-4o\"\n      }\n    }\n  ],\n  \"lb_config\": {\n    \"enabled\": true,\n    \"algorithm\": \"weighted-round-robin\",\n    \"pool_alias\": \"fast-chat\",\n    \"members\": [\n      {\n        \"registry_id\": \"{{registry_id}}\",\n        \"model\": \"gpt-4o\",\n        \"weight\": 70\n      },\n      {\n        \"registry_id\": \"{{registry_id}}\",\n        \"model\": \"gpt-4o-mini\",\n        \"weight\": 30\n      }\n    ]\n  },\n  \"fallback\": {\n    \"enabled\": true,\n    \"triggers\": [\n      \"http_5xx\"\n    ],\n    \"chain\": [\n      \"{{registry_id}}\"\n    ],\n    \"budget\": {\n      \"max_attempts\": 2,\n      \"max_total_latency_ms\": 5000\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers",
@@ -1307,7 +1351,7 @@
                 "consumers"
               ]
             },
-            "description": "`routing_mode` is `inline` (default) or `role_based`. Inline consumers own their registries, model policies, `lb_config` (with optional `pool_alias` addressable as `pool:<alias>` in the payload) and `fallback`. LB and fallback never apply to role_based consumers."
+            "description": "`routing_mode` is `inline` (default) or `role_based`. Inline consumers own their registries, model policies, `lb_config` (with optional `pool_alias` addressable as `pool:<alias>` in the payload) and `fallback`. LB and fallback never apply to role_based consumers.\n\nThe load balancer distributes over routes, not registries: a route is a `(registry_id, model)` pair, so the same registry can appear several times with a different `model` (as in this example, where `gpt-4o` takes 70% of the share and `gpt-4o-mini` 30%). Rules: every member sharing a registry must declare `model`, each `(registry_id, model)` must be unique, and the model must be allowed by `model_policies`. `members[].weight` (`1..100`) applies to weighted-round-robin and defaults to the registry weight when omitted."
           }
         },
         {
@@ -1419,7 +1463,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"team-a-{{$guid}}\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"model_policies\": [\n    {\n      \"registry_id\": \"{{registry_id}}\",\n      \"allowed\": [\n        \"gpt-4o\"\n      ],\n      \"default\": \"gpt-4o\"\n    }\n  ],\n  \"lb_config\": {\n    \"enabled\": true,\n    \"algorithm\": \"round-robin\",\n    \"pool_alias\": \"fast-chat\",\n    \"members\": [\n      {\n        \"registry_id\": \"{{registry_id}}\"\n      }\n    ]\n  },\n  \"fallback\": {\n    \"enabled\": true,\n    \"triggers\": [\n      \"http_5xx\"\n    ],\n    \"chain\": [\n      \"{{registry_id}}\"\n    ],\n    \"budget\": {\n      \"max_attempts\": 2,\n      \"max_total_latency_ms\": 5000\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"team-a-{{$guid}}\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"model_policies\": [\n    {\n      \"registry_id\": \"{{registry_id}}\",\n      \"allowed\": [\n        \"gpt-4o-mini\",\n        \"gpt-4o\"\n      ],\n      \"default\": \"gpt-4o-mini\"\n    }\n  ],\n  \"lb_config\": {\n    \"enabled\": true,\n    \"algorithm\": \"smart-routing\",\n    \"pool_alias\": \"fast-chat\",\n    \"members\": [\n      {\n        \"registry_id\": \"{{registry_id}}\",\n        \"model\": \"gpt-4o-mini\"\n      },\n      {\n        \"registry_id\": \"{{registry_id}}\",\n        \"model\": \"gpt-4o\"\n      }\n    ],\n    \"smart_routing\": {\n      \"tiers\": [\n        {\n          \"min_score\": 0,\n          \"registry_id\": \"{{registry_id}}\",\n          \"model\": \"gpt-4o-mini\"\n        },\n        {\n          \"min_score\": 0.5,\n          \"registry_id\": \"{{registry_id}}\",\n          \"model\": \"gpt-4o\"\n        }\n      ]\n    }\n  },\n  \"fallback\": {\n    \"enabled\": true,\n    \"triggers\": [\n      \"http_5xx\"\n    ],\n    \"chain\": [\n      \"{{registry_id}}\"\n    ],\n    \"budget\": {\n      \"max_attempts\": 2,\n      \"max_total_latency_ms\": 5000\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}",
@@ -1434,7 +1478,7 @@
                 "{{consumer_id}}"
               ]
             },
-            "description": "Partial update. Registries are managed via attach/detach endpoints; `model_policies` here updates policies for already-bound registries. Send `lb_config`/`fallback` with `enabled: false` to clear them."
+            "description": "Partial update. Registries are managed via attach/detach endpoints; `model_policies` here updates policies for already-bound registries. Send `lb_config`/`fallback` with `enabled: false` to clear them.\n\nThis example uses `smart-routing`: the firewall scores prompt complexity in `0..1` and each tier sends everything at or above its `min_score` to one route. `tiers[].model` picks which route of the registry the tier targets and is required whenever the pool declares that registry more than once — here cheap prompts go to `gpt-4o-mini` and complex ones (score >= 0.5) to `gpt-4o` on the same registry."
           }
         },
         {
@@ -2233,7 +2277,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"slug\": \"team-a-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+              "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"slug\": \"team-a-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways",
@@ -2245,7 +2289,7 @@
                 "gateways"
               ]
             },
-            "description": "Optional `slug` (lowercase DNS label): when omitted the server generates a unique random slug. The slug identifies the gateway on the proxy plane: `X-AG-Gateway-Slug` header (GATEWAY_DISCOVERY_MODE=header, default) or `{slug}.<GATEWAY_BASE_DOMAIN>` host (subdomain mode)."
+            "description": "Optional `slug` (lowercase DNS label): when omitted the server generates a unique random slug. The slug identifies the gateway on the proxy plane: `X-AG-Gateway-Slug` header takes precedence, and when it is absent the `{slug}.<GATEWAY_BASE_DOMAIN>` host is used as fallback. Ownership tenant_id is required (JWT claim or body for platform admins)."
           }
         },
         {
@@ -2922,7 +2966,9 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                  "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));",
+                  "pm.test('served registry is not advertised', () => !pm.response.headers.get('X-Selected-Registry'));"
                 ]
               }
             }
@@ -2998,7 +3044,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"slug\": \"team-a-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+              "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"slug\": \"team-a-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways",
@@ -3259,7 +3305,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                  "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                 ]
               }
             }
@@ -3335,7 +3382,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"slug\": \"team-a-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+              "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"slug\": \"team-a-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways",
@@ -3670,7 +3717,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                  "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                 ]
               }
             }
@@ -3816,7 +3864,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"slug\": \"entra-team-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+              "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"slug\": \"entra-team-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways",
@@ -4151,7 +4199,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                  "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                 ]
               }
             }
@@ -4296,7 +4345,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"slug\": \"okta-team-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+              "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"slug\": \"okta-team-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways",
@@ -4631,7 +4680,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                  "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                 ]
               }
             }
@@ -4709,9 +4759,9 @@
                 "url": "{{admin_url}}/v1/gateways",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"flow-a-simple\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"flow-a-simple\"\n}"
                 },
-                "description": "Optionally add \"domain\": \"tenant-a.gw.example.com\" (bare hostname) for host-based tenant isolation: requests carrying that Host header resolve against this gateway only. Domains are unique across gateways."
+                "description": "Optionally add \"domain\": \"tenant-a.gw.example.com\" (bare hostname) for host-based tenant isolation: requests carrying that Host header resolve against this gateway only. Domains are unique across gateways. Ownership tenant_id is required (JWT claim or body for platform admins)."
               }
             },
             {
@@ -5116,7 +5166,7 @@
                 "url": "{{admin_url}}/v1/gateways",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"flow-b-hub\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"flow-b-hub\"\n}"
                 }
               }
             },
@@ -5456,7 +5506,7 @@
                 "url": "{{admin_url}}/v1/gateways",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"flow-c-entra\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"flow-c-entra\"\n}"
                 }
               }
             },
@@ -5815,7 +5865,7 @@
                 "url": "{{admin_url}}/v1/gateways",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"flow-d-discovery\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"flow-d-discovery\"\n}"
                 }
               }
             },
@@ -6134,7 +6184,7 @@
                 "url": "{{admin_url}}/v1/gateways",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"flow-e-downstream\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"flow-e-downstream\"\n}"
                 }
               }
             },
@@ -6283,7 +6333,7 @@
                 "url": "{{admin_url}}/v1/gateways",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"flow-f-linear\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"flow-f-linear\"\n}"
                 }
               }
             },
@@ -6633,7 +6683,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"flow-g-surface\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"flow-g-surface\"\n}"
                 }
               },
               "event": [
@@ -7167,7 +7217,7 @@
                 "url": "{{admin_url}}/v1/gateways",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"flow-h-okta\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"flow-h-okta\"\n}"
                 }
               }
             },
@@ -7642,7 +7692,7 @@
                 "url": "{{admin_url}}/v1/gateways",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"flow-i-github\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"flow-i-github\"\n}"
                 }
               }
             },
@@ -7882,7 +7932,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"e2e-model-allowlist-{{$guid}}\",\n  \"slug\": \"model-allowlist-{{$randomInt}}\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"e2e-model-allowlist-{{$guid}}\",\n  \"slug\": \"model-allowlist-{{$randomInt}}\"\n}"
                 },
                 "url": {
                   "raw": "{{base_url}}/v1/gateways",
@@ -8146,7 +8196,8 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }
@@ -8294,7 +8345,8 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }
@@ -8380,7 +8432,7 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"e2e-prompt-template-{{$guid}}\",\n  \"slug\": \"prompt-template-{{$randomInt}}\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"e2e-prompt-template-{{$guid}}\",\n  \"slug\": \"prompt-template-{{$randomInt}}\"\n}"
                 }
               }
             },
@@ -8634,7 +8686,8 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }
@@ -8785,7 +8838,8 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }
@@ -9077,7 +9131,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"e2e-tool-allowlist-{{$guid}}\",\n  \"slug\": \"tool-allowlist-{{$randomInt}}\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"e2e-tool-allowlist-{{$guid}}\",\n  \"slug\": \"tool-allowlist-{{$randomInt}}\"\n}"
                 },
                 "url": {
                   "raw": "{{base_url}}/v1/gateways",
@@ -9341,7 +9395,8 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }
@@ -9489,7 +9544,8 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }
@@ -9575,7 +9631,7 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"e2e-budget-{{$guid}}\",\n  \"slug\": \"budget-{{$randomInt}}\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"e2e-budget-{{$guid}}\",\n  \"slug\": \"budget-{{$randomInt}}\"\n}"
                 }
               }
             },
@@ -9829,7 +9885,8 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }
@@ -9977,8 +10034,9 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                      "pm.test('model was downgraded', () => pm.response.headers.get('X-NeuralTrust-Model-Downgraded') === 'gpt-4o\u2192gpt-4o-mini');",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('model was downgraded', () => pm.response.headers.get('X-NeuralTrust-Model-Downgraded') === 'gpt-4o→gpt-4o-mini');",
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }
@@ -10018,7 +10076,7 @@
                     "completions"
                   ]
                 },
-                "description": "Same over-ceiling `gpt-4o` request as step 9, but the cost cap is now in `downgrade` mode, so the plugin rewrites the outbound model to `gpt-4o-mini`, emits `X-NeuralTrust-Model-Downgraded: gpt-4o\u2192gpt-4o-mini`, and the request succeeds against OpenAI."
+                "description": "Same over-ceiling `gpt-4o` request as step 9, but the cost cap is now in `downgrade` mode, so the plugin rewrites the outbound model to `gpt-4o-mini`, emits `X-NeuralTrust-Model-Downgraded: gpt-4o→gpt-4o-mini`, and the request succeeds against OpenAI."
               }
             },
             {
@@ -10071,7 +10129,8 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }
@@ -10213,7 +10272,7 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"e2e-rate-limiter-{{$guid}}\",\n  \"slug\": \"rate-limiter-{{$randomInt}}\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"e2e-rate-limiter-{{$guid}}\",\n  \"slug\": \"rate-limiter-{{$randomInt}}\"\n}"
                 }
               }
             },
@@ -10646,7 +10705,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"e2e-per-tool-rate-limiter-{{$guid}}\",\n  \"slug\": \"per-tool-rl-{{$randomInt}}\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"e2e-per-tool-rate-limiter-{{$guid}}\",\n  \"slug\": \"per-tool-rl-{{$randomInt}}\"\n}"
                 },
                 "url": {
                   "raw": "{{base_url}}/v1/gateways",
@@ -11194,7 +11253,7 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"e2e-request-size-{{$guid}}\",\n  \"slug\": \"request-size-{{$randomInt}}\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"e2e-request-size-{{$guid}}\",\n  \"slug\": \"request-size-{{$randomInt}}\"\n}"
                 }
               }
             },
@@ -11584,7 +11643,7 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"e2e-semantic-cache-{{$guid}}\",\n  \"slug\": \"semantic-cache-{{$randomInt}}\"\n}"
+                  "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"entitlements\": {\n    \"tier\": \"free\",\n    \"burst_per_min\": 60,\n    \"quota_per_month\": 10000,\n    \"max_instances\": 5\n  },\n  \"name\": \"e2e-semantic-cache-{{$guid}}\",\n  \"slug\": \"semantic-cache-{{$randomInt}}\"\n}"
                 }
               }
             },

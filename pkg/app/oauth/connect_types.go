@@ -26,6 +26,11 @@ import (
 var (
 	ErrTicketNotFound   = errors.New("oauth connect: ticket expired or unknown")
 	ErrProviderNotFound = errors.New("oauth connect: provider not configured for this consumer")
+	// ErrNoRegisteredClient means the dynamically registered OAuth client for an
+	// upstream is gone from the store (Redis flush/eviction). A stored refresh
+	// token is useless without the client it was issued to, so the only way
+	// forward is the consent flow, which re-registers via EnsureClient.
+	ErrNoRegisteredClient = errors.New("oauth connect: no dynamically registered client for this upstream")
 )
 
 type ConnectTicket struct {
@@ -55,6 +60,11 @@ type ProviderStatus struct {
 	Linked     bool
 	AccountRef string
 	ExpiresAt  time.Time
+	// NeedsReconnect marks a stored grant that can never be renewed: its access
+	// token has expired and it carries no refresh token. Every downstream call
+	// against it demands consent, so the page must not advertise it as a live
+	// connection.
+	NeedsReconnect bool
 }
 
 type ConnectPage struct {

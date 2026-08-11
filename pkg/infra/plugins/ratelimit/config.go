@@ -16,12 +16,14 @@ package ratelimit
 
 import (
 	"fmt"
+	"math"
+	"strconv"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 )
 
-const defaultRetryAfter = "60"
+const minWindow = time.Second
 
 // config is the rate_limiter settings. The limit is a single sliding window;
 // whether it is enforced gateway-wide or per consumer is decided by the policy
@@ -47,9 +49,21 @@ func parseConfig(settings map[string]any) (*config, error) {
 		return nil, err
 	}
 	if cfg.RetryAfter == "" {
-		cfg.RetryAfter = defaultRetryAfter
+		cfg.RetryAfter = defaultRetryAfter(cfg.Window)
 	}
 	return &cfg, nil
+}
+
+// defaultRetryAfter is the window itself: telling a client to come back in a
+// fixed minute when the budget returns in ten seconds wastes the difference.
+// The window has already been validated as a duration of at least one second.
+func defaultRetryAfter(window string) string {
+	parsed, err := time.ParseDuration(window)
+	if err != nil {
+		return "60"
+	}
+	seconds := int64(math.Ceil(parsed.Seconds()))
+	return strconv.FormatInt(seconds, 10)
 }
 
 func (c *config) validate() error {
@@ -59,8 +73,15 @@ func (c *config) validate() error {
 	if c.Window == "" {
 		return fmt.Errorf("rate_limiter: window is required")
 	}
-	if _, err := time.ParseDuration(c.Window); err != nil {
+	window, err := time.ParseDuration(c.Window)
+	if err != nil {
 		return fmt.Errorf("rate_limiter: invalid window: %w", err)
+	}
+	// Requests are counted at one-second resolution, so a shorter window would
+	// be silently rounded up and a non-positive one would let everything
+	// through while still looking like a limit.
+	if window < minWindow {
+		return fmt.Errorf("rate_limiter: window must be at least %s, got %s", minWindow, c.Window)
 	}
 	return nil
 }

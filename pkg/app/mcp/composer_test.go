@@ -105,9 +105,16 @@ func (f *fakeDialer) Connect(_ context.Context, target Target) (Upstream, error)
 
 type fakeCreds struct {
 	err error
+	// errByURL optionally returns a per-upstream error keyed by MCPTarget.URL.
+	errByURL map[string]error
 }
 
-func (f *fakeCreds) Apply(context.Context, *appconsumer.RoutableConsumer, *registrydomain.Registry, *Target) error {
+func (f *fakeCreds) Apply(_ context.Context, _ *appconsumer.RoutableConsumer, reg *registrydomain.Registry, _ *Target) error {
+	if f.errByURL != nil && reg != nil && reg.MCPTarget != nil {
+		if err, ok := f.errByURL[reg.MCPTarget.URL]; ok {
+			return err
+		}
+	}
 	return f.err
 }
 
@@ -287,7 +294,7 @@ func TestComposer_FailMode(t *testing.T) {
 	})
 }
 
-func TestComposer_ConsentRequiredBypassesFailOpen(t *testing.T) {
+func TestComposer_ConsentRequiredWhenAllNeedConsent(t *testing.T) {
 	t.Parallel()
 	regA := mcpRegistry(t, "coda", "https://a.example.com/mcp")
 	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
@@ -300,7 +307,34 @@ func TestComposer_ConsentRequiredBypassesFailOpen(t *testing.T) {
 	_, err := c.ListTools(context.Background(), routable(consumer, regA))
 	var consentErr *ConsentRequiredError
 	if !errors.As(err, &consentErr) {
-		t.Fatalf("error = %v, want ConsentRequiredError to propagate even in fail-open", err)
+		t.Fatalf("error = %v, want ConsentRequiredError when every upstream needs consent", err)
+	}
+}
+
+func TestComposer_PartialConsentServesLinkedUpstream(t *testing.T) {
+	t.Parallel()
+	regLinked := mcpRegistry(t, "linear", "https://linear.example.com/mcp")
+	regPending := mcpRegistry(t, "notion", "https://notion.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://linear.example.com/mcp": {tools: tools("search")},
+		"https://notion.example.com/mcp": {tools: tools("query")},
+	}}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://notion.example.com/mcp": &ConsentRequiredError{
+			Provider: "com.notion/mcp",
+			Ticket:   "tk",
+			Path:     "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+
+	consumer := &consumerdomain.Consumer{Type: consumerdomain.TypeMCP, MCP: &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeClosed}}
+	got, err := c.ListTools(context.Background(), routable(consumer, regLinked, regPending))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if names := toolNames(got); len(names) != 1 || names[0] != "search" {
+		t.Fatalf("tools = %v, want [search] from the linked upstream only", names)
 	}
 }
 
@@ -332,6 +366,163 @@ func TestComposer_CallTool_RoutesToOwningUpstream(t *testing.T) {
 	}
 
 	if _, err := c.CallTool(context.Background(), rc, "missing_tool", nil); !errors.Is(err, ErrToolNotFound) {
+		t.Fatalf("error = %v, want ErrToolNotFound", err)
+	}
+}
+
+// A tool served by a healthy upstream must still be callable while a different
+// upstream awaits user consent: an unconnected Notion must not break a call
+// routed to another MCP server.
+func TestComposer_CallTool_UnrelatedConsentDoesNotBlockOtherUpstream(t *testing.T) {
+	t.Parallel()
+	notion := mcpRegistry(t, "notion", "https://notion.example.com/mcp")
+	graphite := mcpRegistry(t, "graphite", "https://graphite.example.com/mcp")
+	upGraphite := &fakeUpstream{tools: tools("list_diffs"), result: json.RawMessage(`{"content":[]}`)}
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://notion.example.com/mcp":   {tools: tools("search")},
+		"https://graphite.example.com/mcp": upGraphite,
+	}}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://notion.example.com/mcp": &ConsentRequiredError{
+			Provider: "com.notion/mcp", Ticket: "tk", Path: "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP:  &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen},
+	}, notion, graphite)
+
+	res, err := c.CallTool(context.Background(), rc, "list_diffs", nil)
+	if err != nil {
+		t.Fatalf("call routed to a healthy upstream must succeed, got %v", err)
+	}
+	if string(res) != `{"content":[]}` {
+		t.Fatalf("result = %s", res)
+	}
+	if upGraphite.lastCall != "list_diffs" {
+		t.Fatalf("upstream call = %q, want list_diffs", upGraphite.lastCall)
+	}
+}
+
+// A tool that no reachable upstream exposes, while another upstream awaits
+// consent, still reports the consent requirement: the tool may well live behind
+// the unconnected provider.
+func TestComposer_CallTool_UnknownToolSurfacesPendingConsent(t *testing.T) {
+	t.Parallel()
+	notion := mcpRegistry(t, "notion", "https://notion.example.com/mcp")
+	graphite := mcpRegistry(t, "graphite", "https://graphite.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://notion.example.com/mcp":   {tools: tools("search")},
+		"https://graphite.example.com/mcp": {tools: tools("list_diffs")},
+	}}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://notion.example.com/mcp": &ConsentRequiredError{
+			Provider: "com.notion/mcp", Ticket: "tk", Path: "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP:  &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen},
+	}, notion, graphite)
+
+	_, err := c.CallTool(context.Background(), rc, "search", nil)
+	var consentErr *ConsentRequiredError
+	if !errors.As(err, &consentErr) {
+		t.Fatalf("error = %v, want ConsentRequiredError for the unconnected provider", err)
+	}
+	if consentErr.Provider != "com.notion/mcp" {
+		t.Fatalf("provider = %q, want com.notion/mcp", consentErr.Provider)
+	}
+}
+
+// A tool the upstream offers but the toolkit excludes is a policy denial: it
+// must answer 403 rather than "not found", and never an authorization prompt —
+// connecting an account cannot grant a tool the consumer is not allowed to use.
+func TestComposer_CallTool_ToolkitDeniedIsForbidden(t *testing.T) {
+	t.Parallel()
+	notion := mcpRegistry(t, "notion", "https://notion.example.com/mcp")
+	up := &fakeUpstream{
+		tools:  tools("notion-create-pages", "notion-search"),
+		result: json.RawMessage(`{"content":[]}`),
+	}
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{"https://notion.example.com/mcp": up}}
+	c := newTestComposer(dialer)
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP: &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{
+			{RegistryID: notion.ID, Tool: "notion-create-pages"},
+		}},
+	}, notion)
+
+	_, err := c.CallTool(context.Background(), rc, "notion-search", nil)
+	var denied *ToolNotPermittedError
+	if !errors.As(err, &denied) {
+		t.Fatalf("error = %v, want ToolNotPermittedError", err)
+	}
+	if denied.Tool != "notion-search" {
+		t.Fatalf("tool = %q, want notion-search", denied.Tool)
+	}
+	if up.lastCall != "" {
+		t.Fatalf("upstream was invoked with %q for a denied tool", up.lastCall)
+	}
+}
+
+// The denial wins over a pending consent on another upstream: the tool is
+// forbidden regardless of whether the user connects anything.
+func TestComposer_CallTool_DeniedToolBeatsPendingConsent(t *testing.T) {
+	t.Parallel()
+	notion := mcpRegistry(t, "notion", "https://notion.example.com/mcp")
+	linear := mcpRegistry(t, "linear", "https://linear.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://notion.example.com/mcp": {tools: tools("notion-create-pages", "notion-search")},
+		"https://linear.example.com/mcp": {tools: tools("linear-search")},
+	}}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://linear.example.com/mcp": &ConsentRequiredError{
+			Provider: "app.linear/mcp", Ticket: "tk", Path: "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP: &consumerdomain.MCPPolicy{
+			FailMode: consumerdomain.FailModeOpen,
+			Toolkit: consumerdomain.Toolkit{
+				{RegistryID: notion.ID, Tool: "notion-create-pages"},
+				{RegistryID: linear.ID, Tool: consumerdomain.ToolWildcard},
+			},
+		},
+	}, notion, linear)
+
+	_, err := c.CallTool(context.Background(), rc, "notion-search", nil)
+	var consent *ConsentRequiredError
+	if errors.As(err, &consent) {
+		t.Fatal("a forbidden tool must not send the user through a consent flow")
+	}
+	var denied *ToolNotPermittedError
+	if !errors.As(err, &denied) {
+		t.Fatalf("error = %v, want a policy denial", err)
+	}
+}
+
+// A tool nobody offers is still a plain not-found, not a denial.
+func TestComposer_CallTool_UnknownToolStaysNotFound(t *testing.T) {
+	t.Parallel()
+	notion := mcpRegistry(t, "notion", "https://notion.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://notion.example.com/mcp": {tools: tools("notion-create-pages")},
+	}}
+	c := newTestComposer(dialer)
+	rc := routable(&consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP: &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{
+			{RegistryID: notion.ID, Tool: "notion-create-pages"},
+		}},
+	}, notion)
+
+	if _, err := c.CallTool(context.Background(), rc, "does-not-exist", nil); !errors.Is(err, ErrToolNotFound) {
 		t.Fatalf("error = %v, want ErrToolNotFound", err)
 	}
 }
@@ -590,5 +781,94 @@ func TestComposer_ReadResource_RoutesByURI(t *testing.T) {
 	}
 	if upB.lastRead != "chan://b" || upA.lastRead != "" {
 		t.Fatalf("read routed to wrong upstream: a=%q b=%q", upA.lastRead, upB.lastRead)
+	}
+}
+
+// A consumer with no MCP policy (fail mode unset) must degrade the same way
+// for prompts as it does for tools: an upstream still awaiting consent is
+// skipped, and prompts from the linked upstreams are served. This is exactly
+// the virtual-MCP-with-optional-providers setup, where a hard failure here
+// makes clients abort their whole surface refresh.
+func TestComposer_ListPrompts_PartialConsentServesLinkedUpstream(t *testing.T) {
+	t.Parallel()
+	regLinked := mcpRegistry(t, "linear", "https://linear.example.com/mcp")
+	regPending := mcpRegistry(t, "notion", "https://notion.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://linear.example.com/mcp": {prompts: prompts("triage")},
+		"https://notion.example.com/mcp": {prompts: prompts("summarize")},
+	}}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://notion.example.com/mcp": &ConsentRequiredError{
+			Provider: "com.notion/mcp",
+			Ticket:   "tk",
+			Path:     "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+
+	for _, consumer := range []*consumerdomain.Consumer{
+		{Type: consumerdomain.TypeMCP},
+		{Type: consumerdomain.TypeMCP, MCP: &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeClosed}},
+	} {
+		got, err := c.ListPrompts(context.Background(), routable(consumer, regLinked, regPending))
+		if err != nil {
+			t.Fatalf("unexpected error (fail mode %q): %v", consumer.FailMode(), err)
+		}
+		names := make([]string, 0, len(got))
+		for _, p := range got {
+			names = append(names, p.Name)
+		}
+		if len(names) != 1 || names[0] != "triage" {
+			t.Fatalf("prompts = %v, want [triage] from the linked upstream only", names)
+		}
+	}
+}
+
+func TestComposer_ListPrompts_ConsentRequiredWhenAllNeedConsent(t *testing.T) {
+	t.Parallel()
+	regA := mcpRegistry(t, "coda", "https://a.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://a.example.com/mcp": {prompts: prompts("x")},
+	}}
+	creds := &fakeCreds{err: &ConsentRequiredError{Provider: "coda", Ticket: "tk", Path: "/p/mcp"}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+
+	_, err := c.ListPrompts(context.Background(), routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, regA))
+	var consentErr *ConsentRequiredError
+	if !errors.As(err, &consentErr) {
+		t.Fatalf("error = %v, want ConsentRequiredError when every upstream needs consent", err)
+	}
+}
+
+// A prompt no reachable upstream serves may live behind the upstream that is
+// still awaiting consent, so the consent requirement is the useful answer —
+// mirroring CallTool.
+func TestComposer_GetPrompt_UnknownPromptSurfacesPendingConsent(t *testing.T) {
+	t.Parallel()
+	regLinked := mcpRegistry(t, "linear", "https://linear.example.com/mcp")
+	regPending := mcpRegistry(t, "notion", "https://notion.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://linear.example.com/mcp": {prompts: prompts("triage")},
+		"https://notion.example.com/mcp": {prompts: prompts("summarize")},
+	}}
+	creds := &fakeCreds{errByURL: map[string]error{
+		"https://notion.example.com/mcp": &ConsentRequiredError{
+			Provider: "com.notion/mcp",
+			Ticket:   "tk",
+			Path:     "/p/mcp",
+		},
+	}}
+	c := NewComposer(dialer, creds, newMapCache(), slog.New(slog.DiscardHandler))
+	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, regLinked, regPending)
+
+	var consentErr *ConsentRequiredError
+	if _, err := c.GetPrompt(context.Background(), rc, "summarize", nil); !errors.As(err, &consentErr) {
+		t.Fatalf("error = %v, want ConsentRequiredError for the unconnected provider", err)
+	}
+	if consentErr.Provider != "com.notion/mcp" {
+		t.Fatalf("provider = %q, want com.notion/mcp", consentErr.Provider)
+	}
+	if _, err := c.GetPrompt(context.Background(), rc, "triage", nil); err != nil {
+		t.Fatalf("prompt on the linked upstream must still resolve: %v", err)
 	}
 }

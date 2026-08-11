@@ -24,7 +24,8 @@ import (
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/consumer/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/cachetest"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -39,7 +40,13 @@ func TestDeleter_Delete_Success(t *testing.T) {
 	mgr := newCacheManager()
 	mgr.GetTTLMap(cache.ConsumerTTLName).Set(id.String(), &domain.Consumer{ID: id})
 
-	d := appconsumer.NewDeleter(repo, mgr, cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	d := appconsumer.NewDeleter(repo, mgr, publisher, newTestLogger(), nil)
 	if err := d.Delete(context.Background(), gwID, id); err != nil {
 		t.Fatalf("Delete error: %v", err)
 	}
@@ -54,10 +61,12 @@ func TestDeleter_Delete_NotFound(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
 
-	d := appconsumer.NewDeleter(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	d := appconsumer.NewDeleter(repo, newCacheManager(), publisher, newTestLogger(), nil)
 	if err := d.Delete(context.Background(), ids.New[ids.GatewayKind](), id); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestDeleter_Delete_WrongGateway(t *testing.T) {
@@ -66,10 +75,12 @@ func TestDeleter_Delete_WrongGateway(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Consumer{ID: id, GatewayID: ids.New[ids.GatewayKind]()}, nil).Once()
 
-	d := appconsumer.NewDeleter(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	d := appconsumer.NewDeleter(repo, newCacheManager(), publisher, newTestLogger(), nil)
 	if err := d.Delete(context.Background(), ids.New[ids.GatewayKind](), id); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound for cross-gateway delete", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestDeleter_Delete_PropagatesRepoError(t *testing.T) {
@@ -80,8 +91,10 @@ func TestDeleter_Delete_PropagatesRepoError(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Consumer{ID: id, GatewayID: gwID}, nil).Once()
 	repo.EXPECT().Delete(mock.Anything, gwID, id).Return(domain.ErrAlreadyExists).Once()
 
-	d := appconsumer.NewDeleter(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	d := appconsumer.NewDeleter(repo, newCacheManager(), publisher, newTestLogger(), nil)
 	if err := d.Delete(context.Background(), gwID, id); !errors.Is(err, domain.ErrAlreadyExists) {
 		t.Fatalf("err = %v, want ErrAlreadyExists", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }

@@ -100,16 +100,35 @@ type FallbackBudgetRequest struct {
 }
 
 type LBConfigRequest struct {
-	Enabled         bool                    `json:"enabled"`
-	Algorithm       string                  `json:"algorithm,omitempty"`
-	PoolAlias       string                  `json:"pool_alias,omitempty"`
-	Members         []LBPoolMemberRequest   `json:"members,omitempty"`
-	EmbeddingConfig *EmbeddingConfigRequest `json:"embedding_config,omitempty"`
+	Enabled         bool                       `json:"enabled"`
+	Algorithm       string                     `json:"algorithm,omitempty"`
+	PoolAlias       string                     `json:"pool_alias,omitempty"`
+	Members         []LBPoolMemberRequest      `json:"members,omitempty"`
+	EmbeddingConfig *EmbeddingConfigRequest    `json:"embedding_config,omitempty"`
+	SmartRouting    *SmartRoutingConfigRequest `json:"smart_routing,omitempty"`
+}
+
+type SmartRoutingConfigRequest struct {
+	Tiers []SmartRoutingTierRequest `json:"tiers"`
+}
+
+type SmartRoutingTierRequest struct {
+	MinScore   float64 `json:"min_score"`
+	RegistryID string  `json:"registry_id"`
+	// Model selects which route of the registry this tier targets. It is required
+	// when the pool declares the registry more than once.
+	Model string `json:"model,omitempty"`
 }
 
 type LBPoolMemberRequest struct {
 	RegistryID string   `json:"registry_id"`
 	Models     []string `json:"models,omitempty"`
+	// Model pins this pool entry to a single model, which is what allows the same
+	// registry to appear several times as independently balanced routes.
+	Model string `json:"model,omitempty"`
+	// Weight is the relative weighted-round-robin share of this route on a 1..100
+	// scale, defaulting to the consumer's registry weight.
+	Weight *int `json:"weight,omitempty" example:"1" minimum:"1" maximum:"100"`
 }
 
 func (r *FallbackRequest) ToFallback() (*domain.Fallback, error) {
@@ -150,6 +169,25 @@ type APIKeyAuthRequest struct {
 	ParamName     string `json:"param_name,omitempty"`
 	ParamValue    string `json:"param_value,omitempty"`
 	ParamLocation string `json:"param_location,omitempty"`
+}
+
+func (s *SmartRoutingConfigRequest) ToDomain() (*registrydomain.SmartRoutingConfig, error) {
+	if s == nil {
+		return nil, nil
+	}
+	tiers := make([]registrydomain.SmartRoutingTier, 0, len(s.Tiers))
+	for i, tier := range s.Tiers {
+		registryID, err := ids.Parse[ids.RegistryKind](tier.RegistryID)
+		if err != nil {
+			return nil, fmt.Errorf("lb_config.smart_routing.tiers[%d]: invalid registry_id %q: %w", i, tier.RegistryID, commonerrors.ErrValidation)
+		}
+		tiers = append(tiers, registrydomain.SmartRoutingTier{
+			MinScore:   tier.MinScore,
+			RegistryID: registryID,
+			Model:      tier.Model,
+		})
+	}
+	return &registrydomain.SmartRoutingConfig{Tiers: tiers}, nil
 }
 
 func (e *EmbeddingConfigRequest) ToDomain() *registrydomain.EmbeddingConfig {
@@ -218,35 +256,52 @@ func (r CreateConsumerRequest) ToRegistryBindings() ([]ids.RegistryID, map[ids.R
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	if len(r.Registries) == 0 {
+	bindings, policies, err := parseRegistryBindings(r.Registries, policies)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if bindings == nil {
 		return nil, nil, policies, nil
 	}
-	registryIDs := make([]ids.RegistryID, 0, len(r.Registries))
-	weights := make(map[ids.RegistryID]int, len(r.Registries))
-	seen := make(map[ids.RegistryID]struct{}, len(r.Registries))
-	for i, binding := range r.Registries {
+	return bindings.IDs, bindings.Weights, policies, nil
+}
+
+// parseRegistryBindings turns the wire registry bindings into the domain
+// association set and merges every per-binding model policy into policies,
+// which may be nil. An empty list yields a nil binding set.
+func parseRegistryBindings(
+	raw []RegistryBindingRequest,
+	policies domain.ModelPolicies,
+) (*domain.RegistryBindings, domain.ModelPolicies, error) {
+	if len(raw) == 0 {
+		return nil, policies, nil
+	}
+	bindings := &domain.RegistryBindings{
+		IDs:     make([]ids.RegistryID, 0, len(raw)),
+		Weights: make(map[ids.RegistryID]int, len(raw)),
+	}
+	for i, binding := range raw {
 		id, err := ids.Parse[ids.RegistryKind](binding.ID)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("registries[%d]: invalid id %q: %w", i, binding.ID, commonerrors.ErrValidation)
+			return nil, nil, fmt.Errorf("registries[%d]: invalid id %q: %w", i, binding.ID, commonerrors.ErrValidation)
 		}
-		if _, dup := seen[id]; dup {
-			return nil, nil, nil, fmt.Errorf("registries[%d]: duplicate id %q: %w", i, binding.ID, commonerrors.ErrValidation)
+		if _, dup := bindings.Weights[id]; dup {
+			return nil, nil, fmt.Errorf("registries[%d]: duplicate id %q: %w", i, binding.ID, commonerrors.ErrValidation)
 		}
-		seen[id] = struct{}{}
-		registryIDs = append(registryIDs, id)
 		weight, err := normalizeBindingWeight(binding.Weight)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("registries[%d]: %w", i, err)
+			return nil, nil, fmt.Errorf("registries[%d]: %w", i, err)
 		}
-		weights[id] = weight
+		bindings.IDs = append(bindings.IDs, id)
+		bindings.Weights[id] = weight
 		if binding.ModelPolicies == nil {
 			continue
 		}
 		if policies == nil {
-			policies = make(domain.ModelPolicies, len(r.Registries))
+			policies = make(domain.ModelPolicies, len(raw))
 		}
 		if _, dup := policies[id]; dup {
-			return nil, nil, nil, fmt.Errorf(
+			return nil, nil, fmt.Errorf(
 				"registries[%d]: model policy for %q already declared in model_policies: %w",
 				i, binding.ID, commonerrors.ErrValidation,
 			)
@@ -256,7 +311,7 @@ func (r CreateConsumerRequest) ToRegistryBindings() ([]ids.RegistryID, map[ids.R
 			Default: binding.ModelPolicies.Default,
 		}
 	}
-	return registryIDs, weights, policies, nil
+	return bindings, policies, nil
 }
 
 func normalizeBindingWeight(weight *int) (int, error) {
@@ -292,7 +347,13 @@ func (r *LBConfigRequest) ToDomain() (*domain.LBConfig, error) {
 		members = append(members, domain.LBPoolMember{
 			RegistryID: registryID,
 			Models:     member.Models,
+			Model:      member.Model,
+			Weight:     member.Weight,
 		})
+	}
+	smartRouting, err := r.SmartRouting.ToDomain()
+	if err != nil {
+		return nil, err
 	}
 	return &domain.LBConfig{
 		Enabled:         r.Enabled,
@@ -300,6 +361,7 @@ func (r *LBConfigRequest) ToDomain() (*domain.LBConfig, error) {
 		PoolAlias:       r.PoolAlias,
 		Members:         members,
 		EmbeddingConfig: r.EmbeddingConfig.ToDomain(),
+		SmartRouting:    smartRouting,
 	}, nil
 }
 

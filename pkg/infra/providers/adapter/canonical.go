@@ -23,20 +23,20 @@ const MetadataUsageKey = "usage"
 
 // CanonicalRequest is the internal neutral representation of any AI provider
 type CanonicalRequest struct {
-	Model          string                 `json:"model,omitempty"`
-	System         string                 `json:"system,omitempty"`
-	Messages       []CanonicalMessage     `json:"messages,omitempty"`
-	Tools          []CanonicalTool        `json:"tools,omitempty"`
-	ToolChoice     *CanonicalToolChoice   `json:"tool_choice,omitempty"`
-	MaxTokens      int                    `json:"max_tokens,omitempty"`
-	Temperature    *float64               `json:"temperature,omitempty"`
-	TopP           *float64               `json:"top_p,omitempty"`
-	TopK           *int                   `json:"top_k,omitempty"`
-	Stop           []string               `json:"stop,omitempty"`
-	Stream         bool                   `json:"stream,omitempty"`
-	ResponseFormat *CanonicalRespFormat          `json:"response_format,omitempty"`
-	Metadata       map[string]interface{}        `json:"metadata,omitempty"`
-	RequestExtensions map[string]json.RawMessage   `json:"request_extensions,omitempty"`
+	Model             string                     `json:"model,omitempty"`
+	System            string                     `json:"system,omitempty"`
+	Messages          []CanonicalMessage         `json:"messages,omitempty"`
+	Tools             []CanonicalTool            `json:"tools,omitempty"`
+	ToolChoice        *CanonicalToolChoice       `json:"tool_choice,omitempty"`
+	MaxTokens         int                        `json:"max_tokens,omitempty"`
+	Temperature       *float64                   `json:"temperature,omitempty"`
+	TopP              *float64                   `json:"top_p,omitempty"`
+	TopK              *int                       `json:"top_k,omitempty"`
+	Stop              []string                   `json:"stop,omitempty"`
+	Stream            bool                       `json:"stream,omitempty"`
+	ResponseFormat    *CanonicalRespFormat       `json:"response_format,omitempty"`
+	Metadata          map[string]interface{}     `json:"metadata,omitempty"`
+	RequestExtensions map[string]json.RawMessage `json:"request_extensions,omitempty"`
 }
 
 // CanonicalMessage represents a single turn in the conversation.
@@ -47,11 +47,28 @@ type CanonicalMessage struct {
 	ToolCallID string              `json:"tool_call_id,omitempty"`
 }
 
+// CanonicalToolKind distinguishes the tool shapes the gateway can represent.
+// The zero value is ToolKindFunction so tools built before custom tools existed
+// keep their meaning.
+type CanonicalToolKind string
+
+const (
+	// ToolKindFunction is a JSON-schema tool (OpenAI "function", Anthropic tool).
+	ToolKindFunction CanonicalToolKind = ""
+	// ToolKindCustom is a freeform tool that takes raw text instead of a JSON
+	// schema (OpenAI "custom" tools, introduced with GPT-5).
+	ToolKindCustom CanonicalToolKind = "custom"
+)
+
 // CanonicalTool represents a tool/function the model can call.
 type CanonicalTool struct {
+	Kind        CanonicalToolKind      `json:"kind,omitempty"`
 	Name        string                 `json:"name"`
 	Description string                 `json:"description,omitempty"`
 	Schema      map[string]interface{} `json:"schema,omitempty"`
+	// Format carries the grammar/format payload of a ToolKindCustom tool
+	// verbatim. It is nil for function tools.
+	Format json.RawMessage `json:"format,omitempty"`
 }
 
 // CanonicalToolChoice controls how the model selects tools.
@@ -64,9 +81,12 @@ type CanonicalToolChoice struct {
 
 // CanonicalToolCall represents a tool invocation by the model.
 type CanonicalToolCall struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"` // raw JSON string
+	ID   string            `json:"id"`
+	Kind CanonicalToolKind `json:"kind,omitempty"`
+	Name string            `json:"name"`
+	// Arguments holds a raw JSON string for function calls and the freeform
+	// text input for ToolKindCustom calls.
+	Arguments string `json:"arguments"`
 }
 
 // CanonicalRespFormat controls the response format.
@@ -143,10 +163,13 @@ func newCanonicalUsage(in, out, total int) *CanonicalUsage {
 // StreamToolCallDelta is one tool-call delta in a streamed response (OpenAI
 // streams tool_calls with incremental arguments; Anthropic uses input_json_delta).
 type StreamToolCallDelta struct {
-	Index          int    `json:"index"`
-	ID             string `json:"id,omitempty"`
-	Name           string `json:"name,omitempty"`
-	ArgumentsDelta string `json:"arguments_delta,omitempty"` // incremental piece
+	Index int               `json:"index"`
+	ID    string            `json:"id,omitempty"`
+	Kind  CanonicalToolKind `json:"kind,omitempty"`
+	Name  string            `json:"name,omitempty"`
+	// ArgumentsDelta is an incremental piece of the JSON arguments, or of the
+	// freeform text input when Kind is ToolKindCustom.
+	ArgumentsDelta string `json:"arguments_delta,omitempty"`
 }
 
 // CanonicalStreamChunk is one piece of a streamed response.
@@ -155,6 +178,7 @@ type CanonicalStreamChunk struct {
 	Model              string                     `json:"model,omitempty"`
 	Role               string                     `json:"role,omitempty"`  // only on first chunk
 	Delta              string                     `json:"delta,omitempty"` // text content delta
+	ReasoningDelta     string                     `json:"reasoning_delta,omitempty"`
 	FinishReason       string                     `json:"finish_reason,omitempty"`
 	ToolCallDeltas     []StreamToolCallDelta      `json:"tool_call_deltas,omitempty"`
 	Usage              *CanonicalUsage            `json:"usage,omitempty"` // present in the final chunk of some providers

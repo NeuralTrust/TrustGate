@@ -23,4 +23,7 @@ import (
 
 type ConsumerReader interface {
 	ListByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*consumerdomain.Consumer, error)
+	// List with a zero GatewayID pages across every gateway; the compiler's
+	// bulk collect path uses it to load all consumers in one scan.
+	List(ctx context.Context, filter consumerdomain.ListFilter) ([]*consumerdomain.Consumer, int, error)
 }

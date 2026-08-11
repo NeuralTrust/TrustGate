@@ -784,3 +784,39 @@ func TestUsageSubCounts_OpenAIResponses_CachedInput(t *testing.T) {
 	assert.Equal(t, 4, cr.Usage.CachedInputTokens)
 	assert.Equal(t, 5, cr.Usage.InputTokens, "CachedInputTokens is a sub-count; InputTokens must not be reduced")
 }
+
+// Responses API custom tools are flat (no nested "custom" object). They used to
+// be dropped on decode, silently removing the tool from the request (ENG-1281).
+func TestCanonical_OpenAIResponses_CustomToolRoundtrip(t *testing.T) {
+	a := &OpenAIResponsesAdapter{}
+	body := []byte(`{
+		"model":"gpt-5.1",
+		"input":"hi",
+		"tools":[
+			{"type":"function","name":"read_file","parameters":{"type":"object"}},
+			{"type":"custom","name":"bash","description":"Run a shell command","format":{"type":"text"}}
+		]
+	}`)
+
+	cr, err := a.DecodeRequest(body)
+	require.NoError(t, err)
+	require.Len(t, cr.Tools, 2, "custom tools must not be dropped")
+	assert.Equal(t, ToolKindFunction, cr.Tools[0].Kind)
+	assert.Equal(t, ToolKindCustom, cr.Tools[1].Kind)
+	assert.Equal(t, "bash", cr.Tools[1].Name)
+
+	encoded, err := a.EncodeRequest(cr)
+	require.NoError(t, err)
+
+	var out struct {
+		Tools []map[string]any `json:"tools"`
+	}
+	require.NoError(t, json.Unmarshal(encoded, &out))
+	require.Len(t, out.Tools, 2)
+	assert.Equal(t, "function", out.Tools[0]["type"])
+	assert.Equal(t, "custom", out.Tools[1]["type"])
+	assert.Equal(t, "bash", out.Tools[1]["name"])
+	format, ok := out.Tools[1]["format"].(map[string]any)
+	require.True(t, ok, "format must survive: %v", out.Tools[1])
+	assert.Equal(t, "text", format["type"])
+}

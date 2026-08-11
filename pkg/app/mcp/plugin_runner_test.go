@@ -20,6 +20,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
 	"testing"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -91,6 +92,42 @@ func TestPluginRunner_PreRequest(t *testing.T) {
 			wantRPCData: `{"trace_id":"t2"}`,
 		},
 		{
+			name: "trustguard plan rate limit via plugin error",
+			execErr: &appplugins.PluginError{
+				StatusCode: 429,
+				Type:       "trustguard_rate_limited",
+				Message:    "rate limit exceeded",
+				Body:       []byte(`{"error":"rate limit exceeded","reason":"burst"}`),
+				Headers:    map[string][]string{"Retry-After": {"42"}, "X-RateLimit-Reason": {"burst"}},
+			},
+			wantRPCCode: CodeRateLimited,
+			wantRPCData: `{"error":"rate limit exceeded","reason":"burst"}`,
+		},
+		{
+			name: "trustguard entitlements unavailable via plugin error",
+			execErr: &appplugins.PluginError{
+				StatusCode: 503,
+				Type:       "trustguard_unavailable",
+				Message:    "rate limit entitlements unavailable",
+				Body:       []byte(`{"error":"rate limit entitlements unavailable"}`),
+			},
+			wantRPCCode: CodeUnavailable,
+			wantRPCData: `{"error":"rate limit entitlements unavailable"}`,
+		},
+		{
+			// A tool budget is a matter of timing, so it gets the code a client
+			// can act on rather than the one that means "never".
+			name: "policy rate limit 429 is throttling, not a veto",
+			execErr: &appplugins.PluginError{
+				StatusCode: 429,
+				Message:    "tool rate limit exceeded",
+				Body:       []byte(`{"error":"rate limit exceeded"}`),
+				Headers:    map[string][]string{"X-RateLimit-Tool": {"send_email"}},
+			},
+			wantRPCCode: CodeRateLimited,
+			wantRPCData: `{"error":"rate limit exceeded"}`,
+		},
+		{
 			name:    "generic executor error fails open",
 			execErr: errors.New("boom"),
 			wantNil: true,
@@ -111,7 +148,7 @@ func TestPluginRunner_PreRequest(t *testing.T) {
 			rc := routableMCPConsumer(preResponsePolicy(policydomain.StagePreRequest))
 			runner := NewPluginRunner(exec, discardLogger())
 
-			err := runner.PreRequest(context.Background(), rc, testToolName, json.RawMessage(testToolArgs))
+			_, err := runner.PreRequest(context.Background(), rc, testToolName, json.RawMessage(testToolArgs))
 
 			assertStageInput(t, captured, policydomain.StagePreRequest, rc)
 			assert.Nil(t, captured.Response)
@@ -120,10 +157,28 @@ func TestPluginRunner_PreRequest(t *testing.T) {
 			case tt.wantNil:
 				require.NoError(t, err)
 			case tt.wantRPCCode != 0:
-				assertRPCError(t, err, tt.wantRPCCode, tt.wantRPCData)
+				rpcErr := assertRPCError(t, err, tt.wantRPCCode, tt.wantRPCData)
+				assert.Equal(t, expectedHTTPStatus(tt.execErr, tt.outcome), rpcErr.HTTPStatus)
+				// The headers are how a throttled client learns when to come
+				// back, so whatever the plugin set has to survive the trip.
+				var pe *appplugins.PluginError
+				if errors.As(tt.execErr, &pe) && len(pe.Headers) > 0 {
+					assert.Equal(t, pe.Headers, rpcErr.HTTPHeaders)
+				}
 			}
 		})
 	}
+}
+
+func expectedHTTPStatus(execErr error, outcome *appplugins.StageOutcome) int {
+	var pe *appplugins.PluginError
+	if errors.As(execErr, &pe) && pe.StatusCode != 0 {
+		return pe.StatusCode
+	}
+	if outcome != nil && outcome.StatusCode != 0 {
+		return outcome.StatusCode
+	}
+	return http.StatusForbidden
 }
 
 func TestPluginRunner_PreResponse(t *testing.T) {
@@ -194,7 +249,7 @@ func TestPluginRunner_PreResponse(t *testing.T) {
 			rc := routableMCPConsumer(preResponsePolicy(tt.plan...))
 			runner := NewPluginRunner(exec, discardLogger())
 
-			err := runner.PreResponse(
+			_, err := runner.PreResponse(
 				context.Background(),
 				rc,
 				testToolName,
@@ -211,7 +266,8 @@ func TestPluginRunner_PreResponse(t *testing.T) {
 			case tt.wantNil:
 				require.NoError(t, err)
 			case tt.wantRPCCode != 0:
-				assertRPCError(t, err, tt.wantRPCCode, tt.wantRPCData)
+				rpcErr := assertRPCError(t, err, tt.wantRPCCode, tt.wantRPCData)
+				assert.Equal(t, expectedHTTPStatus(tt.execErr, tt.outcome), rpcErr.HTTPStatus)
 			}
 		})
 	}
@@ -223,10 +279,12 @@ func TestPluginRunner_NilExecutor(t *testing.T) {
 	runner := NewPluginRunner(nil, discardLogger())
 	rc := routableMCPConsumer()
 
-	require.NoError(t, runner.PreRequest(context.Background(), rc, testToolName, json.RawMessage(testToolArgs)))
-	require.NoError(t, runner.PreResponse(
+	_, err := runner.PreRequest(context.Background(), rc, testToolName, json.RawMessage(testToolArgs))
+	require.NoError(t, err)
+	_, err = runner.PreResponse(
 		context.Background(), rc, testToolName, json.RawMessage(testToolArgs), json.RawMessage(testResult),
-	))
+	)
+	require.NoError(t, err)
 }
 
 func assertStageInput(t *testing.T, in appplugins.StageInput, stage policydomain.Stage, rc *appconsumer.RoutableConsumer) {
@@ -244,7 +302,7 @@ func assertStageInput(t *testing.T, in appplugins.StageInput, stage policydomain
 	assert.JSONEq(t, `{"name":"`+testToolName+`","arguments":`+testToolArgs+`}`, string(in.Request.Body))
 }
 
-func assertRPCError(t *testing.T, err error, code int64, data string) {
+func assertRPCError(t *testing.T, err error, code int64, data string) *RPCError {
 	t.Helper()
 	var rpcErr *RPCError
 	require.True(t, errors.As(err, &rpcErr), "expected *RPCError, got %v", err)
@@ -252,4 +310,91 @@ func assertRPCError(t *testing.T, err error, code int64, data string) {
 	if data != "" {
 		assert.JSONEq(t, data, string(rpcErr.Data))
 	}
+	return rpcErr
+}
+
+// TrustGuard data-masking rewrites the request body in place instead of
+// blocking. The runner has to read the masked arguments back out: forwarding
+// the originals would send upstream exactly what the plugin just redacted.
+func TestPluginRunner_PreRequest_ReturnsMaskedArguments(t *testing.T) {
+	t.Parallel()
+	exec := pluginmocks.NewExecutor(t)
+	exec.EXPECT().RunStage(mock.Anything, mock.Anything).
+		Run(func(_ context.Context, in appplugins.StageInput) {
+			in.Request.Body = []byte(`{"name":"search","arguments":{"q":"[REDACTED]"}}`)
+		}).
+		Return(&appplugins.StageOutcome{}, nil).Once()
+
+	runner := NewPluginRunner(exec, discardLogger())
+	rc := routableMCPConsumer(preResponsePolicy(policydomain.StagePreRequest))
+
+	got, err := runner.PreRequest(context.Background(), rc, testToolName, json.RawMessage(testToolArgs))
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.JSONEq(t, `{"q":"[REDACTED]"}`, string(got.Arguments))
+}
+
+// Untouched arguments must not be reported as a rewrite, so the caller keeps
+// forwarding the value it already has.
+func TestPluginRunner_PreRequest_NoRewriteLeavesArgumentsEmpty(t *testing.T) {
+	t.Parallel()
+	exec := pluginmocks.NewExecutor(t)
+	exec.EXPECT().RunStage(mock.Anything, mock.Anything).
+		Return(&appplugins.StageOutcome{}, nil).Once()
+
+	runner := NewPluginRunner(exec, discardLogger())
+	rc := routableMCPConsumer(preResponsePolicy(policydomain.StagePreRequest))
+
+	got, err := runner.PreRequest(context.Background(), rc, testToolName, json.RawMessage(testToolArgs))
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Nil(t, got.Arguments)
+}
+
+// A masked tool result arrives as a 2xx short-circuit carrying a body. That is
+// a rewrite, not a denial: the masked payload becomes the tool's output.
+func TestPluginRunner_PreResponse_MaskedResultReplacesOutput(t *testing.T) {
+	t.Parallel()
+	masked := `{"content":[{"type":"text","text":"[REDACTED]"}]}`
+	exec := pluginmocks.NewExecutor(t)
+	exec.EXPECT().RunStage(mock.Anything, mock.Anything).
+		Return(&appplugins.StageOutcome{
+			ShortCircuit: true,
+			StatusCode:   http.StatusOK,
+			Body:         []byte(masked),
+		}, nil).Once()
+
+	runner := NewPluginRunner(exec, discardLogger())
+	rc := routableMCPConsumer(preResponsePolicy(policydomain.StagePreResponse))
+
+	got, err := runner.PreResponse(
+		context.Background(), rc, testToolName,
+		json.RawMessage(testToolArgs), json.RawMessage(testResult),
+	)
+	require.NoError(t, err, "a masked result must not fail the call")
+	require.NotNil(t, got)
+	assert.JSONEq(t, masked, string(got.Result))
+}
+
+// A non-2xx short-circuit is still a denial and must fail the call.
+func TestPluginRunner_PreResponse_NonSuccessShortCircuitBlocks(t *testing.T) {
+	t.Parallel()
+	exec := pluginmocks.NewExecutor(t)
+	exec.EXPECT().RunStage(mock.Anything, mock.Anything).
+		Return(&appplugins.StageOutcome{
+			ShortCircuit: true,
+			StatusCode:   http.StatusForbidden,
+			Body:         []byte(`{"reason":"blocked"}`),
+		}, nil).Once()
+
+	runner := NewPluginRunner(exec, discardLogger())
+	rc := routableMCPConsumer(preResponsePolicy(policydomain.StagePreResponse))
+
+	_, err := runner.PreResponse(
+		context.Background(), rc, testToolName,
+		json.RawMessage(testToolArgs), json.RawMessage(testResult),
+	)
+	var rpcErr *RPCError
+	require.ErrorAs(t, err, &rpcErr)
+	assert.True(t, IsPolicyBlockedCode(rpcErr.Code))
 }

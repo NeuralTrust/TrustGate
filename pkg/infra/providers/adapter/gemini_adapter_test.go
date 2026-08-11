@@ -315,3 +315,29 @@ func TestUsageExtraction_Gemini_Stream_ToolUseInput(t *testing.T) {
 	require.NotNil(t, sc.Usage)
 	assert.Equal(t, 6, sc.Usage.ToolUseInputTokens)
 }
+
+func TestGemini_DecodeRequest_SkipsThoughtParts(t *testing.T) {
+	input := `{
+		"contents":[{
+			"role":"user",
+			"parts":[
+				{"thought":true,"text":"secret thought"},
+				{"text":"Weather?"}
+			]
+		}]
+	}`
+	cr, err := (&GeminiAdapter{}).DecodeRequest([]byte(input))
+	require.NoError(t, err)
+	require.Len(t, cr.Messages, 1)
+	assert.Equal(t, "Weather?", cr.Messages[0].Content)
+	assert.NotContains(t, cr.Messages[0].Content, "secret")
+}
+
+func TestGemini_DecodeStreamChunk_SkipsThoughtParts(t *testing.T) {
+	chunk := []byte(`{"candidates":[{"content":{"role":"model","parts":[{"thought":true,"text":"secret"},{"text":"hello"}]}}]}`)
+	sc, err := (&GeminiAdapter{}).DecodeStreamChunk(chunk)
+	require.NoError(t, err)
+	require.NotNil(t, sc)
+	assert.Equal(t, "hello", sc.Delta)
+	assert.NotContains(t, sc.Delta, "secret")
+}

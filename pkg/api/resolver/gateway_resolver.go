@@ -31,17 +31,14 @@ import (
 
 const HeaderGatewaySlug = "X-AG-Gateway-Slug"
 
-const gatewayDiscoveryModeSubdomain = "subdomain"
-
 type GatewayResolver interface {
 	Resolve(c *fiber.Ctx) (*gatewaydomain.Gateway, error)
 }
 
 // WithResolvedGateway best-effort resolves the gateway addressed by the request
-// (gateway-slug header or subdomain, per the configured discovery mode) and
-// returns a context carrying it. On any resolution miss it returns the request
-// context unchanged, so callers that can still operate without a pinned gateway
-// keep working.
+// (gateway-slug header first, then subdomain host) and returns a context carrying
+// it. On any resolution miss it returns the request context unchanged, so callers
+// that can still operate without a pinned gateway keep working.
 func WithResolvedGateway(c *fiber.Ctx, r GatewayResolver) context.Context {
 	ctx := c.UserContext()
 	if r == nil {
@@ -54,12 +51,15 @@ func WithResolvedGateway(c *fiber.Ctx, r GatewayResolver) context.Context {
 	return appgateway.WithGateway(ctx, gw)
 }
 
-func NewGatewayResolver(finder appgateway.Finder, mode, baseDomain string) GatewayResolver {
-	subdomain := NewSubdomainGatewayResolver(finder, baseDomain)
-	if strings.ToLower(strings.TrimSpace(mode)) == gatewayDiscoveryModeSubdomain {
-		return subdomain
+// NewGatewayResolver builds the resolver that identifies the gateway addressed by
+// a request. The X-AG-Gateway-Slug header always takes precedence; when it is
+// absent the resolver falls back to the {slug}.{baseDomain} subdomain host, and it
+// only fails when neither identifies a gateway.
+func NewGatewayResolver(finder appgateway.Finder, baseDomain string) GatewayResolver {
+	return &HeaderGatewayResolver{
+		finder:       finder,
+		hostFallback: NewSubdomainGatewayResolver(finder, baseDomain),
 	}
-	return &HeaderGatewayResolver{finder: finder, hostFallback: subdomain}
 }
 
 type SubdomainGatewayResolver struct {

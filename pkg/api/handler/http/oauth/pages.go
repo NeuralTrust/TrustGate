@@ -70,6 +70,8 @@ code{
 .reg{color:var(--faint);font-size:12px;margin-top:2px}
 .status{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--success)}
 .status .dot{width:7px;height:7px;border-radius:99px;background:var(--success);flex:none}
+.status.expired{color:var(--danger)}
+.status.expired .dot{background:var(--danger)}
 .actions{display:flex;align-items:center;gap:10px;flex:none}
 a.btn,button.btn{
   display:inline-block;border-radius:var(--radius);padding:8px 18px;font-size:13.5px;font-weight:600;
@@ -113,7 +115,10 @@ var connectPageTmpl = template.Must(template.New("connect").Parse(`<!doctype htm
 {{if not .Providers}}<p class="empty">No third-party providers are configured for this virtual MCP.</p>{{end}}
 {{range .Providers}}<div class="row">
   <div><div class="name">{{.Registry}}</div><div class="reg">{{.Provider}}</div></div>
-  <div class="actions">{{if .Linked}}
+  <div class="actions">{{if .NeedsReconnect}}
+    <span class="status expired"><span class="dot"></span>Expired</span>
+    <a class="btn" href="/oauth/connect/{{.Provider}}?ticket={{$.Ticket}}">Reconnect</a>
+  {{else if .Linked}}
     <span class="status"><span class="dot"></span>Connected</span>
     <form method="post" action="/oauth/disconnect/{{.Provider}}?ticket={{$.Ticket}}"><button class="btn revoke">Revoke</button></form>
   {{else}}

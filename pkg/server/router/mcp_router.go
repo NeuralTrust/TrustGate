@@ -26,6 +26,7 @@ import (
 type mcpRouter struct {
 	baseTransport              *middleware.Transport
 	authTransport              *middleware.Transport
+	opsMetrics                 *middleware.OpsMetricsMiddleware
 	healthHandler              *apihandler.HealthHandler
 	mcpHandler                 *mcphttp.Handler
 	protectedResourceHandler   *oauthhttp.ProtectedResourceHandler
@@ -51,10 +52,12 @@ func NewMCPRouter(
 	tokenHandler *oauthhttp.TokenHandler,
 	connectHandler *oauthhttp.ConnectHandler,
 	jwksHandler *oauthhttp.JWKSHandler,
+	opsMetrics *middleware.OpsMetricsMiddleware,
 ) ServerRouter {
 	return &mcpRouter{
 		baseTransport:              baseTransport,
 		authTransport:              authTransport,
+		opsMetrics:                 opsMetrics,
 		healthHandler:              healthHandler,
 		mcpHandler:                 mcpHandler,
 		protectedResourceHandler:   protectedResourceHandler,
@@ -69,7 +72,11 @@ func NewMCPRouter(
 }
 
 func (r *mcpRouter) BuildRoutes(app *fiber.App) error {
+	if r.opsMetrics != nil {
+		app.Use(r.opsMetrics.Middleware())
+	}
 	app.Get(HealthPath, r.healthHandler.Liveness)
+	app.Get(HealthPathAlias, r.healthHandler.Liveness)
 	app.Get(ReadyPath, r.healthHandler.Readiness)
 
 	installMiddlewares(app, r.baseTransport)

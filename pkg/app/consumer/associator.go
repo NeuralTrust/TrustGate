@@ -20,6 +20,7 @@ import (
 	"log/slog"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
+	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -91,7 +92,10 @@ func (a *associator) AttachRegistry(ctx context.Context, gatewayID ids.GatewayID
 		return err
 	}
 	if cons.RoutingMode == domain.RoutingModeRoleBased {
-		return commonerrors.ErrConflict
+		return fmt.Errorf(
+			"%w: consumer %s routes by role, registries can only be attached in inline routing;"+
+				" send routing_mode and registries together in PUT /v1/gateways/{gateway_id}/consumers/{id}",
+			commonerrors.ErrConflict, consumerID)
 	}
 	reg, err := a.registryInGateway(ctx, gatewayID, registryID)
 	if err != nil {
@@ -123,7 +127,10 @@ func (a *associator) AttachRole(ctx context.Context, gatewayID ids.GatewayID, co
 		return err
 	}
 	if cons.RoutingMode == domain.RoutingModeInline {
-		return commonerrors.ErrConflict
+		return fmt.Errorf(
+			"%w: consumer %s routes inline, roles can only be attached in role_based routing;"+
+				" send routing_mode in PUT /v1/gateways/{gateway_id}/consumers/{id} first",
+			commonerrors.ErrConflict, consumerID)
 	}
 	if err := a.roleInGateway(ctx, gatewayID, roleID); err != nil {
 		return err
@@ -228,10 +235,17 @@ func (a *associator) validatePolicyProtocol(cons *domain.Consumer, pol *policydo
 	}
 	for _, protocol := range protocols {
 		if protocol == string(cons.Type) {
-			return nil
+			return a.validatePolicySettings(cons, pol)
 		}
 	}
 	return fmt.Errorf("%w: plugin %s does not support consumer protocol %s", domain.ErrPolicyProtocolMismatch, pol.Slug, cons.Type)
+}
+
+func (a *associator) validatePolicySettings(cons *domain.Consumer, pol *policydomain.Policy) error {
+	if err := a.resolver.ValidateSettingsForProtocol(pol.Slug, string(cons.Type), pol.Settings); err != nil {
+		return fmt.Errorf("%w: %s", domain.ErrPolicyProtocolMismatch, err)
+	}
+	return nil
 }
 
 func (a *associator) DetachPolicy(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, policyID ids.PolicyID) error {
@@ -304,7 +318,7 @@ func (a *associator) policyInGateway(ctx context.Context, gatewayID ids.GatewayI
 
 func (a *associator) invalidate(ctx context.Context, cons *domain.Consumer) {
 	a.memoryCache.Delete(cons.ID.String())
-	publishGatewayDataInvalidation(ctx, a.publisher, a.logger, cons.GatewayID)
+	invalidation.GatewayData(ctx, a.publisher, a.logger, cons.GatewayID)
 	if a.signaler != nil {
 		a.signaler.Signal(ctx)
 	}

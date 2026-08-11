@@ -1,0 +1,21 @@
+# L4 LoadBalancer for Americas hybrid AgentGateway data planes (config-sync gRPC).
+# DNS: agentgateway-configsync.us.neuraltrust.ai (grey-cloud) → this Service IP.
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentgateway-configsync-external
+  labels:
+    app.kubernetes.io/instance: agentgateway
+    app.kubernetes.io/component: admin
+    component: admin
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/instance: agentgateway
+    app.kubernetes.io/component: admin
+    component: admin
+  ports:
+    - name: grpc-tls
+      port: 443
+      targetPort: 8083
+      protocol: TCP

@@ -25,6 +25,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 )
 
@@ -102,10 +103,9 @@ func (d *duplicator) Duplicate(ctx context.Context, gatewayID ids.GatewayID, id 
 
 func (d *duplicator) takenNames(ctx context.Context, gatewayID ids.GatewayID, base string) (map[string]struct{}, error) {
 	items, _, err := d.finder.List(ctx, domain.ListFilter{
-		GatewayID:    gatewayID,
-		NameContains: base,
-		Page:         1,
-		Size:         duplicateNameScanSize,
+		GatewayID: gatewayID,
+		Search:    base,
+		Page:      listing.Page{Number: 1, Size: duplicateNameScanSize},
 	})
 	if err != nil {
 		return nil, err

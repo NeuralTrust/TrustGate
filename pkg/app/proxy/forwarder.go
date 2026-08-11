@@ -24,6 +24,7 @@ import (
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
 	appsession "github.com/NeuralTrust/TrustGate/pkg/app/session"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
@@ -82,10 +83,12 @@ type forwarder struct {
 	executor   appplugins.Executor
 	sessions   appsession.Store
 	resolver   approuting.Resolver
+	limiter    ratelimitapp.Checker
 	maxRetries int
 	logger     *slog.Logger
 }
 
+// NewForwarder builds the proxy forwarder; nil limiter defaults to noop.
 func NewForwarder(
 	factory loadbalancer.Factory,
 	cacheClient loadbalancer.RedisProvider,
@@ -94,15 +97,20 @@ func NewForwarder(
 	executor appplugins.Executor,
 	sessions appsession.Store,
 	resolver approuting.Resolver,
+	limiter ratelimitapp.Checker,
 	cfg *config.Config,
 	logger *slog.Logger,
 ) Forwarder {
+	if limiter == nil {
+		limiter = ratelimitapp.NewNoopChecker()
+	}
 	return &forwarder{
 		balancers:  newLoadBalancerCache(factory, cacheClient, manager.GetTTLMap(cache.LoadBalancerTTLName), logger),
 		invoker:    invoker,
 		executor:   executor,
 		sessions:   sessions,
 		resolver:   resolver,
+		limiter:    limiter,
 		maxRetries: maxRetriesFromConfig(cfg),
 		logger:     logger,
 	}
@@ -120,6 +128,10 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 		return nil, ErrNoBackendsInPool
 	}
 
+	if result, err := f.checkRateLimit(ctx, in.GatewayID); result != nil || err != nil {
+		return result, err
+	}
+
 	intent, candidates, err := f.resolveRouting(in)
 	if err != nil {
 		return nil, err
@@ -134,7 +146,7 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 		return nil, err
 	}
 
-	stampTarget(in.Request, route.backend)
+	stampTarget(in.Request, route.route.Registry)
 	resp := &infracontext.ResponseContext{
 		GatewayID:  in.Request.GatewayID,
 		RegistryID: in.Request.RegistryID,
@@ -149,7 +161,7 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	}
 
 	dto := &forwardRequestDTO{
-		backend:     route.backend,
+		backend:     route.route.Registry,
 		candidates:  candidates,
 		pinned:      route.pinned,
 		request:     in.Request,
@@ -177,15 +189,16 @@ func (f *forwarder) invokeWithFailover(
 	lb := route.lb
 	excluded := route.excluded
 	if excluded == nil {
-		excluded = make(map[ids.RegistryID]struct{})
+		excluded = make(map[routingdomain.RouteKey]struct{})
 	}
 
 	last := failoverState{}
 	lastKind := failureNone
-	current := dto.backend
+	current := route.route
 	fromFallback := route.fromFallback
-	for current != nil {
-		f.retarget(dto, current)
+	for current.Registry != nil {
+		bk := current.Registry
+		f.retarget(dto, bk)
 		f.stampRoutingPolicy(dto, rc, current)
 		for r := 0; r < attemptsPerBackend; r++ {
 			if budget.exhausted() {
@@ -194,13 +207,13 @@ func (f *forwarder) invokeWithFailover(
 			budget.recordAttempt()
 
 			startedAt := time.Now()
-			resp, err := f.invokeOnce(ctx, current, dto.request, stream)
+			resp, err := f.invokeOnce(ctx, bk, dto.request, stream)
 			elapsed := time.Since(startedAt)
 			outcome := classifyOutcome(resp, err, triggers)
 			span := f.recordSpan(ctx, dto, current, fromFallback, budget.attempts, outcome, resp, elapsed)
 			switch outcome {
 			case OutcomeSuccess:
-				reportSuccess(lb, current)
+				reportSuccess(lb, bk)
 				if stream && resp.Stream != nil {
 					// The provider stream is lazy: invokeOnce only measured
 					// time-to-first-byte. Keep the LLM span open and re-time it
@@ -216,28 +229,32 @@ func (f *forwarder) invokeWithFailover(
 
 				last = failoverState{rejection: result}
 				lastKind = failurePluginRejection
-				f.logRetry(current, pe, budget)
+				f.logRetry(bk, pe, budget)
 			case OutcomeTerminal:
 				if resp == nil {
 					return nil, err
 				}
-				reportSuccess(lb, current)
+				reportSuccess(lb, bk)
 				return f.finalizeBody(ctx, dto, resp), nil
 			case OutcomeRetryable:
 				reason := failureReason(resp, err)
-				reportFailure(lb, current, reason)
+				reportFailure(lb, bk, reason)
 				last = failoverState{resp: resp, err: err}
 				lastKind = classifyFailure(resp, err)
-				f.logRetry(current, reason, budget)
+				f.logRetry(bk, reason, budget)
 				continue
 			}
 			break
 		}
-		excluded[current.ID] = struct{}{}
+		excluded[current.Key()] = struct{}{}
 		if route.pinned {
 			break
 		}
-		current, fromFallback = f.nextCandidate(ctx, lb, rc, dto.request, excluded, triggers.allowsFallback(lastKind))
+		next, viaFallback := f.nextCandidate(ctx, lb, rc, dto.request, excluded, triggers.allowsFallback(lastKind))
+		if next == nil {
+			break
+		}
+		current, fromFallback = *next, viaFallback
 	}
 
 	return f.relayLast(ctx, dto, last)
@@ -278,16 +295,16 @@ func (f *forwarder) nextCandidate(
 	lb *loadbalancer.LoadBalancer,
 	rc *appconsumer.RoutableConsumer,
 	req *infracontext.RequestContext,
-	excluded map[ids.RegistryID]struct{},
+	excluded map[routingdomain.RouteKey]struct{},
 	allowChain bool,
-) (*domain.Registry, bool) {
+) (*routingdomain.Route, bool) {
 	if isRoleBased(rc) {
 		return nil, false
 	}
 	if lb != nil {
-		if bk, err := lb.NextBackend(ctx, req, excluded); err == nil && bk != nil {
-			if _, seen := excluded[bk.ID]; !seen {
-				return bk, false
+		if next, err := lb.NextRoute(ctx, req, excluded); err == nil && next != nil {
+			if _, seen := excluded[next.Key()]; !seen {
+				return next, false
 			}
 		}
 	}
@@ -295,7 +312,8 @@ func (f *forwarder) nextCandidate(
 		return nil, false
 	}
 	if bk := firstAvailableFallback(rc, excluded); bk != nil {
-		return bk, true
+		fallback := routingdomain.RouteForRegistry(bk)
+		return &fallback, true
 	}
 	return nil, false
 }
@@ -315,7 +333,7 @@ func reportFailure(lb *loadbalancer.LoadBalancer, bk *domain.Registry, reason er
 func (f *forwarder) recordSpan(
 	ctx context.Context,
 	dto *forwardRequestDTO,
-	bk *domain.Registry,
+	route routingdomain.Route,
 	fromFallback bool,
 	attempt int,
 	outcome Outcome,
@@ -326,6 +344,7 @@ func (f *forwarder) recordSpan(
 	if rt == nil {
 		return nil
 	}
+	bk := route.Registry
 	span := &trace.Span{
 		Type:      trace.SpanLLM,
 		Name:      bk.Provider(),
@@ -333,6 +352,7 @@ func (f *forwarder) recordSpan(
 		LLM: &trace.LLMAttrs{
 			RegistryID:     bk.ID.String(),
 			Provider:       bk.Provider(),
+			RouteModel:     route.Model,
 			RequestedModel: dto.request.RequestedModel,
 			Attempt:        attempt,
 			Fallback:       fromFallback,

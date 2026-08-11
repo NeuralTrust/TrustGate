@@ -23,16 +23,20 @@ import (
 )
 
 type UpdateConsumerRequest struct {
-	Name          *string                `json:"name,omitempty"`
-	Type          *string                `json:"type,omitempty"`
-	RoutingMode   *string                `json:"routing_mode,omitempty"`
-	LBConfig      *LBConfigRequest       `json:"lb_config,omitempty"`
-	Headers       *map[string]string     `json:"headers,omitempty"`
-	Active        *bool                  `json:"active,omitempty"`
-	Fallback      *FallbackRequest       `json:"fallback,omitempty"`
-	ModelPolicies *[]ModelPolicyRequest  `json:"model_policies,omitempty"`
-	Toolkit       *[]ToolkitEntryRequest `json:"toolkit,omitempty"`
-	FailMode      *string                `json:"fail_mode,omitempty"`
+	Name        *string            `json:"name,omitempty"`
+	Type        *string            `json:"type,omitempty"`
+	RoutingMode *string            `json:"routing_mode,omitempty"`
+	LBConfig    *LBConfigRequest   `json:"lb_config,omitempty"`
+	Headers     *map[string]string `json:"headers,omitempty"`
+	Active      *bool              `json:"active,omitempty"`
+	Fallback    *FallbackRequest   `json:"fallback,omitempty"`
+	// Registries replaces the whole registry association set: registries absent
+	// from the list are detached. Omit the field to leave the associations as
+	// they are; send an empty list to detach every registry.
+	Registries    *[]RegistryBindingRequest `json:"registries,omitempty"`
+	ModelPolicies *[]ModelPolicyRequest     `json:"model_policies,omitempty"`
+	Toolkit       *[]ToolkitEntryRequest    `json:"toolkit,omitempty"`
+	FailMode      *string                   `json:"fail_mode,omitempty"`
 }
 
 func (r UpdateConsumerRequest) Validate() error {
@@ -42,6 +46,17 @@ func (r UpdateConsumerRequest) Validate() error {
 		}
 		if len(*r.Name) > 255 {
 			return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
+		}
+	}
+	if r.Registries == nil {
+		return nil
+	}
+	for i, binding := range *r.Registries {
+		if binding.ModelPolicies != nil {
+			return fmt.Errorf(
+				"registries[%d].model_policies is not supported on update, declare them in model_policies: %w",
+				i, commonerrors.ErrValidation,
+			)
 		}
 	}
 	return nil
@@ -69,6 +84,22 @@ func (r UpdateConsumerRequest) ToLBConfig() (*domain.LBConfig, error) {
 
 func (r UpdateConsumerRequest) ToFallback() (*domain.Fallback, error) {
 	return r.Fallback.ToFallback()
+}
+
+// ToRegistryBindings parses the optional registries block. A nil result means
+// the caller did not send the field and the current associations must be kept.
+func (r UpdateConsumerRequest) ToRegistryBindings() (*domain.RegistryBindings, error) {
+	if r.Registries == nil {
+		return nil, nil
+	}
+	bindings, _, err := parseRegistryBindings(*r.Registries, nil)
+	if err != nil {
+		return nil, err
+	}
+	if bindings == nil {
+		return &domain.RegistryBindings{}, nil
+	}
+	return bindings, nil
 }
 
 func (r UpdateConsumerRequest) ToModelPolicies() (*domain.ModelPolicies, error) {

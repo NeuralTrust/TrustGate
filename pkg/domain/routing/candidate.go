@@ -16,7 +16,6 @@ package routing
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -139,6 +138,9 @@ func (s *CandidateSet) ResolveIntent(intent Intent) (*CandidateSet, error) {
 	if s == nil || intent.IsZero() {
 		return s, nil
 	}
+	if intent.IsAuto() {
+		return s.resolveAuto()
+	}
 	if intent.IsQualified() {
 		return s.resolveQualified(intent.Provider, intent.Model)
 	}
@@ -146,6 +148,20 @@ func (s *CandidateSet) ResolveIntent(intent Intent) (*CandidateSet, error) {
 		return s.resolveShortModel(intent.Model)
 	}
 	return s, nil
+}
+
+func (s *CandidateSet) resolveAuto() (*CandidateSet, error) {
+	out := NewCandidateSet()
+	for _, c := range s.candidates {
+		if c.Default == "" {
+			continue
+		}
+		out.Add(c)
+	}
+	if out.Len() == 0 {
+		return nil, fmt.Errorf("%w: auto routing requires at least one registry with a default model", ErrModelDenied)
+	}
+	return out, nil
 }
 
 func (s *CandidateSet) resolveQualified(provider, model string) (*CandidateSet, error) {
@@ -172,38 +188,16 @@ func (s *CandidateSet) resolveQualified(provider, model string) (*CandidateSet, 
 }
 
 func (s *CandidateSet) resolveShortModel(model string) (*CandidateSet, error) {
-	providers := make(map[string]struct{})
-	matches := make([]Candidate, 0, len(s.candidates))
+	out := NewCandidateSet()
 	for _, c := range s.candidates {
 		if !c.AllowsModel(model) {
 			continue
 		}
-		providers[strings.ToLower(c.Registry.Provider())] = struct{}{}
-		matches = append(matches, c)
+		c.Model = model
+		out.Add(c)
 	}
-	switch len(providers) {
-	case 0:
+	if out.Len() == 0 {
 		return nil, fmt.Errorf("%w: model %q is not allowed for this consumer", ErrModelDenied, model)
-	case 1:
-		out := NewCandidateSet()
-		for _, c := range matches {
-			c.Model = model
-			out.Add(c)
-		}
-		return out, nil
-	default:
-		return nil, fmt.Errorf(
-			"%w: model %q is available from multiple providers, use one of: %s",
-			ErrAmbiguousModel, model, strings.Join(qualifiedAlternatives(providers, model), ", "),
-		)
 	}
-}
-
-func qualifiedAlternatives(providers map[string]struct{}, model string) []string {
-	out := make([]string, 0, len(providers))
-	for provider := range providers {
-		out = append(out, qualifiedPrefix+provider+"/"+model)
-	}
-	sort.Strings(out)
-	return out
+	return out, nil
 }

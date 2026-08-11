@@ -3429,46 +3429,6 @@
       ]
     },
     {
-      "name": "app.rube/mcp",
-      "vendor": "Composio",
-      "category": "Automation",
-      "description": "Composio Rube: universal MCP across 500+ apps (Bearer token or OAuth).",
-      "transport": "streamable-http",
-      "server_url": "https://rube.app/mcp",
-      "requires_auth": true,
-      "oauth": {
-        "required": true,
-        "resource_metadata": true,
-        "registration": "auto",
-        "dcr": true,
-        "pkce": true,
-        "resource": "https://rube.app/mcp"
-      },
-      "relevance": 60,
-      "tools": [
-        {
-          "name": "RUBE_SEARCH_TOOLS",
-          "description": "Meta tool that returns best tools/toolkits and connection status for a task"
-        },
-        {
-          "name": "RUBE_MANAGE_CONNECTIONS",
-          "description": "Create/manage app connections, returns auth links"
-        },
-        {
-          "name": "RUBE_CREATE_PLAN",
-          "description": "Planning meta tool producing a structured multi-step workflow"
-        },
-        {
-          "name": "RUBE_MULTI_EXECUTE_TOOL",
-          "description": "Orchestrator that runs multiple tools in parallel"
-        },
-        {
-          "name": "RUBE_REMOTE_WORKBENCH",
-          "description": "Cloud Python sandbox for processing between tool calls"
-        }
-      ]
-    },
-    {
       "name": "com.contentful/mcp",
       "vendor": "Contentful",
       "category": "CMS",
@@ -3821,9 +3781,9 @@
       "name": "com.datadoghq/mcp",
       "vendor": "Datadog",
       "category": "Observability",
-      "description": "Metrics, logs, traces, monitors, and incidents (US1; regional sites use mcp.<site>). OAuth, or DD_API_KEY/DD_APPLICATION_KEY headers.",
+      "description": "Metrics, logs, traces, monitors, and incidents via Datadog MCP (US1). Endpoint https://mcp.datadoghq.com/v1/mcp; other sites use https://mcp.<site>/v1/mcp. OAuth (recommended), or DD_API_KEY + DD_APPLICATION_KEY headers. Optional ?toolsets=… to filter tools.",
       "transport": "streamable-http",
-      "server_url": "https://mcp.datadoghq.com",
+      "server_url": "https://mcp.datadoghq.com/v1/mcp",
       "requires_auth": true,
       "oauth": {
         "required": true,
@@ -3832,7 +3792,7 @@
         "dcr": true,
         "pkce": true,
         "authorize_url": "https://app.datadoghq.com/oauth2/v1/authorize",
-        "token_url": "https://app.datadoghq.com/oauth2/v1/token",
+        "token_url": "https://app.datadoghq.com/api/v2/oauth2/token",
         "resource": "https://mcp.datadoghq.com"
       },
       "relevance": 95,
@@ -4774,32 +4734,6 @@
       ]
     },
     {
-      "name": "com.docusign/mcp",
-      "vendor": "DocuSign",
-      "category": "E-signature & Legal",
-      "description": "Intelligent Agreement Management: eSignature, Maestro, Navigator (developer endpoint; production via beta).",
-      "transport": "streamable-http",
-      "server_url": "https://mcp-d.docusign.com/mcp",
-      "requires_auth": true,
-      "oauth": {
-        "required": true,
-        "resource_metadata": true,
-        "registration": "manual",
-        "dcr": false,
-        "pkce": true,
-        "authorize_url": "https://account-d.docusign.com/oauth/auth",
-        "token_url": "https://account-d.docusign.com/oauth/token",
-        "scopes": [
-          "signature",
-          "aow_manage",
-          "manage_app_keys",
-          "adm_store_unified_repo_read"
-        ],
-        "resource": "https://mcp-d.docusign.com/mcp"
-      },
-      "relevance": 75
-    },
-    {
       "name": "com.dropbox/mcp",
       "vendor": "Dropbox",
       "category": "Productivity & Docs",
@@ -5051,6 +4985,59 @@
       ]
     },
     {
+      "name": "ai.fathom/mcp",
+      "vendor": "Fathom",
+      "category": "Productivity & Docs",
+      "description": "Meeting recordings, transcripts, AI summaries, teams, and webhooks via browser OAuth (DCR).",
+      "transport": "streamable-http",
+      "server_url": "https://api.fathom.ai/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://fathom.video/mcp/oauth/authorize",
+        "token_url": "https://api.fathom.ai/mcp/oauth/token",
+        "scopes": [
+          "mcp"
+        ],
+        "resource": "https://api.fathom.ai/mcp"
+      },
+      "relevance": 70,
+      "tools": [
+        {
+          "name": "list_meetings",
+          "description": "List recorded meetings (filter by date, participants, team)"
+        },
+        {
+          "name": "get_summary",
+          "description": "Fetch AI summary for a meeting recording"
+        },
+        {
+          "name": "get_transcript",
+          "description": "Fetch full transcript with speakers and timestamps"
+        },
+        {
+          "name": "list_teams",
+          "description": "List accessible Fathom teams"
+        },
+        {
+          "name": "list_team_members",
+          "description": "List members of a Fathom team"
+        },
+        {
+          "name": "create_webhook",
+          "description": "Subscribe to new meeting content (summary, transcript, action items)"
+        },
+        {
+          "name": "delete_webhook",
+          "description": "Delete a webhook subscription"
+        }
+      ]
+    },
+    {
       "name": "io.fibery/mcp",
       "vendor": "Fibery",
       "category": "Project Management",
@@ -5100,47 +5087,6 @@
         {
           "name": "current_date",
           "description": "Get today's date (ISO 8601)"
-        }
-      ]
-    },
-    {
-      "name": "com.figma/mcp",
-      "vendor": "Figma",
-      "category": "Design",
-      "description": "Design-to-code, design tokens, and FigJam.",
-      "transport": "streamable-http",
-      "server_url": "https://mcp.figma.com/mcp",
-      "requires_auth": true,
-      "oauth": {
-        "required": true,
-        "resource_metadata": true,
-        "registration": "auto",
-        "dcr": true,
-        "pkce": true,
-        "authorize_url": "https://www.figma.com/oauth/mcp",
-        "token_url": "https://api.figma.com/v1/oauth/token",
-        "scopes": [
-          "mcp:connect"
-        ],
-        "resource": "https://mcp.figma.com/mcp"
-      },
-      "relevance": 95,
-      "tools": [
-        {
-          "name": "get_design_context",
-          "description": "Structured design→code (React+Tailwind) for selection (aka get_code)"
-        },
-        {
-          "name": "get_metadata",
-          "description": "Selection metadata"
-        },
-        {
-          "name": "get_screenshot",
-          "description": "Visual reference of selection"
-        },
-        {
-          "name": "get_variable_defs",
-          "description": "Variables/styles in selection (local only)"
         }
       ]
     },
@@ -5545,6 +5491,165 @@
         {
           "name": "create_scheduled_export",
           "description": "Recurring dashboard/visualization exports"
+        }
+      ]
+    },
+    {
+      "name": "com.slack/mcp",
+      "vendor": "Slack",
+      "category": "Communication",
+      "description": "Slack remote MCP: search messages, files, channels and users; read channels and threads; send messages; and read/create/update canvases. Confidential OAuth with a pre-registered Slack app (directory or internal); Streamable HTTP only.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.slack.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": false,
+        "authorize_url": "https://slack.com/oauth/v2_user/authorize",
+        "token_url": "https://slack.com/api/oauth.v2.user.access",
+        "scopes": [
+          "search:read",
+          "channels:history",
+          "groups:history",
+          "im:history",
+          "mpim:history",
+          "channels:read",
+          "users:read",
+          "chat:write",
+          "reactions:write",
+          "files:read",
+          "canvases:read",
+          "canvases:write"
+        ],
+        "resource": "https://mcp.slack.com/mcp"
+      },
+      "relevance": 95
+    },
+    {
+      "name": "com.google.workspace/gmail",
+      "vendor": "Gmail",
+      "category": "Productivity & Docs",
+      "description": "Gmail remote MCP: search threads, retrieve messages, list labels, and create drafts (Google Workspace, OAuth).",
+      "transport": "streamable-http",
+      "server_url": "https://gmailmcp.googleapis.com/mcp/v1",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "scopes": [
+          "https://www.googleapis.com/auth/gmail.readonly",
+          "https://www.googleapis.com/auth/gmail.compose"
+        ],
+        "resource": "https://gmailmcp.googleapis.com/mcp/v1"
+      },
+      "relevance": 92,
+      "tools": [
+        {
+          "name": "search_threads",
+          "description": "Search Gmail threads matching a query."
+        },
+        {
+          "name": "get_thread",
+          "description": "Retrieve the messages of a Gmail thread."
+        },
+        {
+          "name": "list_labels",
+          "description": "List the labels in the mailbox."
+        },
+        {
+          "name": "label_message",
+          "description": "Apply a label to a message."
+        },
+        {
+          "name": "unlabel_message",
+          "description": "Remove a label from a message."
+        },
+        {
+          "name": "label_thread",
+          "description": "Apply a label to a thread."
+        },
+        {
+          "name": "unlabel_thread",
+          "description": "Remove a label from a thread."
+        },
+        {
+          "name": "create_draft",
+          "description": "Create a draft email for review before sending."
+        },
+        {
+          "name": "list_drafts",
+          "description": "List draft emails in the mailbox."
+        }
+      ]
+    },
+    {
+      "name": "com.google.workspace/calendar",
+      "vendor": "Google Calendar",
+      "category": "Productivity & Docs",
+      "description": "Google Calendar remote MCP: list calendars, search and manage events, suggest free time, and RSVP (Google Workspace, OAuth).",
+      "transport": "streamable-http",
+      "server_url": "https://calendarmcp.googleapis.com/mcp/v1",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "scopes": [
+          "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+          "https://www.googleapis.com/auth/calendar.events",
+          "https://www.googleapis.com/auth/calendar.events.freebusy"
+        ],
+        "resource": "https://calendarmcp.googleapis.com/mcp/v1"
+      },
+      "relevance": 91,
+      "tools": [
+        {
+          "name": "list_calendars",
+          "description": "List calendars the user can access"
+        },
+        {
+          "name": "list_events",
+          "description": "List events matching time and filter constraints"
+        },
+        {
+          "name": "search_events",
+          "description": "Semantic search over primary-calendar events"
+        },
+        {
+          "name": "get_event",
+          "description": "Get a single event by ID"
+        },
+        {
+          "name": "suggest_time",
+          "description": "Suggest free time slots across calendars"
+        },
+        {
+          "name": "create_event",
+          "description": "Create a calendar event"
+        },
+        {
+          "name": "update_event",
+          "description": "Update an existing calendar event"
+        },
+        {
+          "name": "delete_event",
+          "description": "Delete a calendar event"
+        },
+        {
+          "name": "respond_to_event",
+          "description": "RSVP to an event invitation"
         }
       ]
     },
@@ -6711,6 +6816,55 @@
       "relevance": 80
     },
     {
+      "name": "ai.granola/mcp",
+      "vendor": "Granola",
+      "category": "Productivity & Docs",
+      "description": "Meeting notes, transcripts, folders, and action items via browser OAuth (DCR).",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.granola.ai/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp-auth.granola.ai/oauth2/authorize",
+        "token_url": "https://mcp-auth.granola.ai/oauth2/token",
+        "scopes": [
+          "mcp"
+        ],
+        "resource": "https://mcp.granola.ai/mcp"
+      },
+      "relevance": 70,
+      "tools": [
+        {
+          "name": "query_granola_meetings",
+          "description": "Chat with Granola meeting notes"
+        },
+        {
+          "name": "list_meeting_folders",
+          "description": "List accessible folders (paid plans)"
+        },
+        {
+          "name": "list_meetings",
+          "description": "List meeting notes (filter by folder on paid plans)"
+        },
+        {
+          "name": "get_meetings",
+          "description": "Read meeting notes, attendees, and summaries"
+        },
+        {
+          "name": "get_meeting_transcript",
+          "description": "Fetch raw meeting transcripts (paid plans)"
+        },
+        {
+          "name": "get_account_info",
+          "description": "Connected Granola account email and active workspace"
+        }
+      ]
+    },
+    {
       "name": "com.getguru/mcp",
       "vendor": "Guru",
       "category": "Productivity & Docs",
@@ -7304,15 +7458,6 @@
           "description": "Update an article"
         }
       ]
-    },
-    {
-      "name": "io.invideo/mcp",
-      "vendor": "InVideo",
-      "category": "Media",
-      "description": "AI video generation and editing via InVideo.",
-      "transport": "sse",
-      "server_url": "https://mcp.invideo.io/sse",
-      "requires_auth": false
     },
     {
       "name": "dev.jam/mcp",
@@ -10545,9 +10690,9 @@
       "name": "com.paypal/mcp",
       "vendor": "PayPal",
       "category": "Payments",
-      "description": "Invoices, payments, and transactions via PayPal.",
+      "description": "Invoices, payments, orders, and disputes via PayPal remote MCP. Production streamable HTTP: https://mcp.paypal.com/mcp (sandbox: https://mcp.sandbox.paypal.com/mcp). OAuth login; docs also document SSE at /sse.",
       "transport": "streamable-http",
-      "server_url": "https://mcp.paypal.com/http",
+      "server_url": "https://mcp.paypal.com/mcp",
       "requires_auth": true,
       "oauth": {
         "required": true,
@@ -11736,7 +11881,7 @@
       "name": "com.replicate/mcp",
       "vendor": "Replicate",
       "category": "AI & ML",
-      "description": "Discover, compare, and run thousands of AI models on Replicate.",
+      "description": "Official hosted Replicate MCP (SSE): discover, compare, and run models. Endpoint https://mcp.replicate.com/sse. OAuth (DCR) or Replicate API token via client login.",
       "transport": "sse",
       "server_url": "https://mcp.replicate.com/sse",
       "requires_auth": true,
@@ -12867,14 +13012,14 @@
       "name": "com.sonarsource/cloud-mcp",
       "vendor": "SonarQube",
       "category": "Code Quality",
-      "description": "SonarQube Cloud code quality and security findings (US: api.sonarqube.us/mcp).",
+      "description": "SonarQube Cloud-hosted MCP (fixed tool subset). Default https://api.sonarcloud.io/mcp; US-region orgs use https://api.sonarqube.us/mcp. Auth: Bearer user token + SONARQUBE_ORG. Optional SONARQUBE_READ_ONLY (default true) and SONARQUBE_TOOLSETS.",
       "transport": "streamable-http",
       "server_url": "https://api.sonarcloud.io/mcp",
       "requires_auth": true,
       "auth_headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <SonarQube user token>.",
+          "description": "Bearer <YourSonarQubeUserToken> (SonarQube Cloud user token).",
           "required": true,
           "secret": true,
           "scheme": "Bearer"
@@ -12883,6 +13028,20 @@
           "name": "SONARQUBE_ORG",
           "description": "Your SonarQube Cloud organization key.",
           "required": true,
+          "secret": false,
+          "scheme": "raw"
+        },
+        {
+          "name": "SONARQUBE_READ_ONLY",
+          "description": "true (default) for read-only tools; false to allow write operations.",
+          "required": false,
+          "secret": false,
+          "scheme": "raw"
+        },
+        {
+          "name": "SONARQUBE_TOOLSETS",
+          "description": "Optional comma-separated toolsets (replaces defaults), e.g. issues,projects,quality-gates,security-hotspots.",
+          "required": false,
           "secret": false,
           "scheme": "raw"
         }
@@ -15115,89 +15274,6 @@
         }
       ],
       "relevance": 60
-    },
-    {
-      "name": "com.zapier/mcp",
-      "vendor": "Zapier",
-      "category": "Automation",
-      "description": "Official Zapier MCP: actions across 8,000+ apps (per-account server; OAuth connect or API key).",
-      "transport": "streamable-http",
-      "server_url": "https://mcp.zapier.com/api/mcp",
-      "requires_auth": true,
-      "oauth": {
-        "required": true,
-        "resource_metadata": true,
-        "registration": "auto",
-        "dcr": true,
-        "pkce": true,
-        "authorize_url": "https://mcp.zapier.com/oauth/authorize",
-        "token_url": "https://mcp.zapier.com/api/v1/oauth/token",
-        "scopes": [
-          "openid",
-          "profile",
-          "email"
-        ],
-        "resource": "https://mcp.zapier.com/api/mcp"
-      },
-      "relevance": 80,
-      "tools": [
-        {
-          "name": "list_enabled_zapier_actions",
-          "description": "See currently enabled actions"
-        },
-        {
-          "name": "discover_zapier_actions",
-          "description": "Search apps/actions available to add"
-        },
-        {
-          "name": "enable_zapier_action",
-          "description": "Enable an action as a tool"
-        },
-        {
-          "name": "disable_zapier_action",
-          "description": "Disable an action"
-        },
-        {
-          "name": "auto_provision_mcp",
-          "description": "Auto-setup tools from existing connections"
-        },
-        {
-          "name": "execute_zapier_read_action",
-          "description": "Run a read/search action"
-        },
-        {
-          "name": "execute_zapier_write_action",
-          "description": "Run a write action"
-        },
-        {
-          "name": "get_configuration_url",
-          "description": "Get the MCP config page URL"
-        },
-        {
-          "name": "list_zapier_skills",
-          "description": "List saved skills/workflows"
-        },
-        {
-          "name": "get_zapier_skill",
-          "description": "Retrieve a skill"
-        },
-        {
-          "name": "create_zapier_skill",
-          "description": "Create a skill"
-        },
-        {
-          "name": "update_zapier_skill",
-          "description": "Update a skill"
-        },
-        {
-          "name": "delete_zapier_skill",
-          "description": "Delete a skill"
-        },
-        {
-          "name": "send_feedback",
-          "description": "Send feedback to Zapier"
-        }
-      ]
     },
     {
       "name": "us.zoom/docs",

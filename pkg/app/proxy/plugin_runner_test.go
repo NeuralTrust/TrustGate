@@ -71,8 +71,8 @@ func forwarderWithPlugin(t *testing.T, invoker appproxy.ProviderInvoker, p apppl
 	exec := appplugins.NewExecutor(reg, newTestLogger())
 	mgr := cache.NewTTLMapManager(time.Minute)
 	return appproxy.NewForwarder(
-		loadbalancer.NewBaseFactory(nil, nil),
-		newPermissiveCache(t), mgr, invoker, exec, nil, approuting.NewResolver(), nil, newTestLogger(),
+		loadbalancer.NewBaseFactory(nil, nil, nil, nil),
+		newPermissiveCache(t), mgr, invoker, exec, nil, approuting.NewResolver(), nil, nil, newTestLogger(),
 	)
 }
 

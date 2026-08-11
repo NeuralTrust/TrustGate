@@ -24,6 +24,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock/controlplane"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/catalog/modelsdev"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	catalogrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/catalog"
@@ -55,18 +56,26 @@ func provideCatalogServices(c *container.Container) error {
 	if err := c.Provide(appcatalog.NewService); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, client *modelsdev.Client, logger *slog.Logger, sig snapshotSignalParams) appcatalog.Syncer {
-		return appcatalog.NewSyncer(repo, client, logger, sig.Signaler)
-	}); err != nil {
+	if err := c.Provide(appcatalog.NewPricingResolver); err != nil {
 		return err
 	}
-	if err := c.Provide(appcatalog.NewPricingResolver); err != nil {
+	if err := c.Provide(func(repo domain.Repository, client *modelsdev.Client, logger *slog.Logger, sig snapshotSignalParams, pricing appcatalog.PricingResolver) appcatalog.Syncer {
+		return appcatalog.NewSyncer(repo, client, logger, sig.Signaler, pricing)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(cataloghttp.NewListProvidersHandler); err != nil {
 		return err
 	}
 	if err := c.Provide(appcatalog.NewMCPServerCatalog); err != nil {
+		return err
+	}
+	if err := c.Provide(func() controlplane.Client {
+		return controlplane.NewClient()
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(appcatalog.NewServerlessFilter); err != nil {
 		return err
 	}
 	if err := c.Provide(cataloghttp.NewListMCPServersHandler); err != nil {

@@ -20,6 +20,7 @@ import (
 	"log/slog"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
+	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -75,7 +76,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Role, err
 		return nil, err
 	}
 	c.memoryCache.Set(role.ID.String(), role)
-	publishGatewayDataInvalidation(ctx, c.publisher, c.logger, role.GatewayID)
+	invalidation.GatewayData(ctx, c.publisher, c.logger, role.GatewayID)
 	if c.signaler != nil {
 		c.signaler.Signal(ctx)
 	}

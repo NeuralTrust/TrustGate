@@ -19,6 +19,8 @@ const (
 	trustGuardFunctionalAccessToken  = "functional-trustguard-access-token"
 	trustGuardBlockWord              = "sql-injection-flag"
 	trustGuardErrorWord              = "guard-boom-flag"
+	trustGuardMaskWord               = "mask-me-flag"
+	trustGuardMaskToken              = "[MASKED_PII]"
 )
 
 var TrustGuardFunctionalStub *trustGuardStub
@@ -61,13 +63,62 @@ type trustGuardTokenCapture struct {
 }
 
 type trustGuardGuardCapture struct {
-	Payload struct {
+	Payload    json.RawMessage `json:"payload"`
+	Direction  string          `json:"direction"`
+	Protocol   string          `json:"protocol"`
+	GatewayID  string          `json:"gateway_id"`
+	ConsumerID string          `json:"consumer_id"`
+}
+
+func trustGuardInspectText(payload json.RawMessage) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	var llm struct {
 		Input string `json:"input"`
-	} `json:"payload"`
-	Direction  string `json:"direction"`
-	Protocol   string `json:"protocol"`
-	GatewayID  string `json:"gateway_id"`
-	ConsumerID string `json:"consumer_id"`
+	}
+	if err := json.Unmarshal(payload, &llm); err == nil && strings.TrimSpace(llm.Input) != "" {
+		return llm.Input
+	}
+	var mcp map[string]any
+	if err := json.Unmarshal(payload, &mcp); err != nil {
+		return string(payload)
+	}
+	var parts []string
+	if params, ok := mcp["params"].(map[string]any); ok {
+		parts = append(parts, flattenJSONStrings(params)...)
+	}
+	if result, ok := mcp["result"].(map[string]any); ok {
+		parts = append(parts, flattenJSONStrings(result)...)
+	}
+	if len(parts) == 0 {
+		return string(payload)
+	}
+	return strings.Join(parts, "\n")
+}
+
+func flattenJSONStrings(v any) []string {
+	switch x := v.(type) {
+	case string:
+		if strings.TrimSpace(x) == "" {
+			return nil
+		}
+		return []string{x}
+	case map[string]any:
+		out := make([]string, 0, len(x))
+		for _, child := range x {
+			out = append(out, flattenJSONStrings(child)...)
+		}
+		return out
+	case []any:
+		out := make([]string, 0, len(x))
+		for _, child := range x {
+			out = append(out, flattenJSONStrings(child)...)
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func (s *trustGuardStub) URL() string { return s.server.URL }
@@ -146,13 +197,20 @@ func (s *trustGuardStub) handleGuard(w http.ResponseWriter, r *http.Request) {
 	s.lastGuardAuth = r.Header.Get("Authorization")
 	s.mu.Unlock()
 
-	if strings.Contains(strings.ToLower(req.Payload.Input), trustGuardErrorWord) {
+	text := trustGuardInspectText(req.Payload)
+	if strings.Contains(strings.ToLower(text), trustGuardErrorWord) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	if strings.Contains(strings.ToLower(req.Payload.Input), trustGuardBlockWord) {
+	if strings.Contains(strings.ToLower(text), trustGuardBlockWord) {
 		_, _ = io.WriteString(w, `{"status":"block","findings":[{"source":{"kind":"detector","plugin":"prompt_guard"},"signal":{"type":"prompt_injection"},"outcome":{"action":"block"}}],"trace_id":"tg-trace-1","request_id":"tg-req-1"}`)
+		return
+	}
+	if strings.Contains(text, trustGuardMaskWord) {
+		masked := strings.ReplaceAll(text, trustGuardMaskWord, trustGuardMaskToken)
+		payload, _ := json.Marshal(map[string]string{"input": masked})
+		_, _ = io.WriteString(w, `{"status":"transform","transformed_payload":`+string(payload)+`,"findings":[{"source":{"kind":"detector","plugin":"data_loss_prevention"},"signal":{"type":"pii"},"outcome":{"action":"transform"}}],"trace_id":"tg-trace-3","request_id":"tg-req-3"}`)
 		return
 	}
 	_, _ = io.WriteString(w, `{"status":"allowed","findings":[],"trace_id":"tg-trace-2","request_id":"tg-req-2"}`)

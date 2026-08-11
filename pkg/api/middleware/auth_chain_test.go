@@ -45,8 +45,18 @@ func (f fakeAPIKeyFinder) FindByAPIKey(_ context.Context, _ string) (*authdomain
 }
 
 type fakeCredentialFinder struct {
-	oauth2 []*authdomain.Auth
-	mtls   []*authdomain.Auth
+	oauth2     []*authdomain.Auth
+	mtls       []*authdomain.Auth
+	defaultIdP *authdomain.Auth
+}
+
+func (f fakeCredentialFinder) DefaultOAuth2ForGateway(gatewayID ids.GatewayID) *authdomain.Auth {
+	if f.defaultIdP == nil {
+		return nil
+	}
+	clone := *f.defaultIdP
+	clone.GatewayID = gatewayID
+	return &clone
 }
 
 func (f fakeCredentialFinder) OAuth2Auths(context.Context) ([]*authdomain.Auth, error) {
@@ -141,7 +151,7 @@ func TestChain_JWTBearer_MatchesIssuerCandidate(t *testing.T) {
 	jwtVal := &fakeTokenValidator{principal: &identity.Principal{Subject: "u1", Method: identity.MethodJWT}}
 	intro := &fakeTokenValidator{err: errors.New("must not be called")}
 	resolver := middleware.NewChainIdentityResolver(
-		fakeAPIKeyFinder{}, fakeCredentialFinder{oauth2: []*authdomain.Auth{a}}, nil, jwtVal, intro, &fakeMTLSValidator{}, nil, nil, nil,
+		fakeAPIKeyFinder{}, fakeCredentialFinder{oauth2: []*authdomain.Auth{a}}, nil, jwtVal, intro, &fakeMTLSValidator{}, nil, nil, nil, false,
 	)
 
 	id, err := resolveChain(t, resolver, map[string]string{
@@ -160,7 +170,7 @@ func TestChain_JWTBearer_NoIssuerMatch_Unauthenticated(t *testing.T) {
 	a := oauth2Auth(t, "https://idp.example.com", true)
 	jwtVal := &fakeTokenValidator{principal: &identity.Principal{Subject: "u1"}}
 	resolver := middleware.NewChainIdentityResolver(
-		fakeAPIKeyFinder{}, fakeCredentialFinder{oauth2: []*authdomain.Auth{a}}, nil, jwtVal, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil,
+		fakeAPIKeyFinder{}, fakeCredentialFinder{oauth2: []*authdomain.Auth{a}}, nil, jwtVal, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil, false,
 	)
 
 	_, err := resolveChain(t, resolver, map[string]string{
@@ -174,7 +184,7 @@ func TestChain_OpaqueBearer_GoesToIntrospection(t *testing.T) {
 	a := oauth2Auth(t, "https://idp.example.com", false)
 	intro := &fakeTokenValidator{principal: &identity.Principal{Subject: "svc", Method: identity.MethodIntrospection}}
 	resolver := middleware.NewChainIdentityResolver(
-		fakeAPIKeyFinder{}, fakeCredentialFinder{oauth2: []*authdomain.Auth{a}}, nil, &fakeTokenValidator{}, intro, &fakeMTLSValidator{}, nil, nil, nil,
+		fakeAPIKeyFinder{}, fakeCredentialFinder{oauth2: []*authdomain.Auth{a}}, nil, &fakeTokenValidator{}, intro, &fakeMTLSValidator{}, nil, nil, nil, false,
 	)
 
 	id, err := resolveChain(t, resolver, map[string]string{"Authorization": "Bearer opaque-reference-token"})
@@ -189,7 +199,7 @@ func TestChain_AntiDowngrade_InvalidBearerDoesNotFallThroughToAPIKey(t *testing.
 	require.NoError(t, err)
 	jwtVal := &fakeTokenValidator{err: errors.New("bad signature")}
 	resolver := middleware.NewChainIdentityResolver(
-		fakeAPIKeyFinder{auth: apiKeyAuth}, fakeCredentialFinder{oauth2: []*authdomain.Auth{a}}, nil, jwtVal, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil,
+		fakeAPIKeyFinder{auth: apiKeyAuth}, fakeCredentialFinder{oauth2: []*authdomain.Auth{a}}, nil, jwtVal, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil, false,
 	)
 
 	_, err = resolveChain(t, resolver, map[string]string{
@@ -204,7 +214,7 @@ func TestChain_APIKeyFallback_BuildsPrincipal(t *testing.T) {
 	apiKeyAuth, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "partner-key", true)
 	require.NoError(t, err)
 	resolver := middleware.NewChainIdentityResolver(
-		fakeAPIKeyFinder{auth: apiKeyAuth}, fakeCredentialFinder{}, nil, &fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil,
+		fakeAPIKeyFinder{auth: apiKeyAuth}, fakeCredentialFinder{}, nil, &fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil, false,
 	)
 
 	id, err := resolveChain(t, resolver, map[string]string{apiresolver.HeaderAPIKey: apiKeyAuth.RawKey})
@@ -217,7 +227,7 @@ func TestChain_APIKeyFallback_BuildsPrincipal(t *testing.T) {
 
 func TestChain_NoCredential_Unauthenticated(t *testing.T) {
 	resolver := middleware.NewChainIdentityResolver(
-		fakeAPIKeyFinder{}, fakeCredentialFinder{}, nil, &fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil,
+		fakeAPIKeyFinder{}, fakeCredentialFinder{}, nil, &fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil, false,
 	)
 
 	_, err := resolveChain(t, resolver, nil)
@@ -250,7 +260,7 @@ func TestChain_PathFirst_SameIssuerPicksAttachedAuth(t *testing.T) {
 		fakeAPIKeyFinder{},
 		fakeCredentialFinder{oauth2: []*authdomain.Auth{authA, authB}},
 		fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(authB)}},
-		jwtVal, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil,
+		jwtVal, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil, false,
 	)
 
 	id, err := resolveChain(t, resolver, map[string]string{
@@ -270,7 +280,7 @@ func TestChain_PathFirst_UnattachedCredentialRejected(t *testing.T) {
 		fakeAPIKeyFinder{},
 		fakeCredentialFinder{oauth2: []*authdomain.Auth{authA}},
 		fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(otherConsumerAuth)}},
-		jwtVal, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil,
+		jwtVal, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil, false,
 	)
 
 	_, err := resolveChain(t, resolver, map[string]string{
@@ -287,7 +297,7 @@ func TestChain_PathFirst_NoConsumerMatchRejectsJWT(t *testing.T) {
 		fakeAPIKeyFinder{},
 		fakeCredentialFinder{oauth2: []*authdomain.Auth{a}},
 		fakePathResolver{},
-		jwtVal, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil,
+		jwtVal, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil, false,
 	)
 
 	// Issuer+audience pairs are only exclusive per gateway, so a JWT on a path
@@ -307,7 +317,7 @@ func TestChain_PathFirst_APIKeyMustBeAttached(t *testing.T) {
 		fakeAPIKeyFinder{auth: apiKeyAuth},
 		fakeCredentialFinder{},
 		fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(otherConsumerAuth)}},
-		&fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil,
+		&fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil, false,
 	)
 
 	_, err = resolveChain(t, resolver, map[string]string{apiresolver.HeaderAPIKey: apiKeyAuth.RawKey})
@@ -337,7 +347,7 @@ func TestChain_XFCC_IgnoredWithoutTrustedPeerConfig(t *testing.T) {
 		&fakeMTLSValidator{principal: &identity.Principal{Subject: "spoofed", Method: identity.MethodMTLS}},
 		extractor,
 		nil,
-		nil,
+		nil, false,
 	)
 
 	_, err = resolveChain(t, resolver, map[string]string{
@@ -361,7 +371,7 @@ func TestChain_XFCC_AcceptedFromTrustedPeer(t *testing.T) {
 		&fakeMTLSValidator{principal: &identity.Principal{Subject: "svc", Method: identity.MethodMTLS}},
 		extractor,
 		nil,
-		[]string{"0.0.0.0/0", "::/0"},
+		[]string{"0.0.0.0/0", "::/0"}, false,
 	)
 
 	id, err := resolveChain(t, resolver, map[string]string{
@@ -379,7 +389,7 @@ func TestChain_PathFirst_LookupErrorFailsClosed(t *testing.T) {
 		fakeAPIKeyFinder{},
 		fakeCredentialFinder{oauth2: []*authdomain.Auth{a}},
 		fakePathResolver{err: errors.New("db down")},
-		jwtVal, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil,
+		jwtVal, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil, false,
 	)
 
 	_, err := resolveChain(t, resolver, map[string]string{
@@ -414,7 +424,7 @@ func TestChain_SessionToken_ResolvesByAuthID(t *testing.T) {
 	jwtVal := &fakeTokenValidator{err: errors.New("must not be called")}
 	resolver := middleware.NewChainIdentityResolver(
 		fakeAPIKeyFinder{}, fakeCredentialFinder{oauth2: []*authdomain.Auth{a}}, nil,
-		jwtVal, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, verifier, nil,
+		jwtVal, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, verifier, nil, false,
 	)
 
 	token := mintSession(t, signer, jwt.MapClaims{
@@ -442,7 +452,7 @@ func TestChain_SessionVerifierPresent_OktaJWTStillUsesResolveJWT(t *testing.T) {
 	intro := &fakeTokenValidator{err: errors.New("must not be called")}
 	resolver := middleware.NewChainIdentityResolver(
 		fakeAPIKeyFinder{}, fakeCredentialFinder{oauth2: []*authdomain.Auth{a}}, nil,
-		jwtVal, intro, &fakeMTLSValidator{}, nil, verifier, nil,
+		jwtVal, intro, &fakeMTLSValidator{}, nil, verifier, nil, false,
 	)
 
 	id, err := resolveChain(t, resolver, map[string]string{
@@ -461,7 +471,7 @@ func TestChain_SessionVerifierPresent_OpaqueTokenStillIntrospects(t *testing.T) 
 	intro := &fakeTokenValidator{principal: &identity.Principal{Subject: "svc", Method: identity.MethodIntrospection}}
 	resolver := middleware.NewChainIdentityResolver(
 		fakeAPIKeyFinder{}, fakeCredentialFinder{oauth2: []*authdomain.Auth{a}}, nil,
-		&fakeTokenValidator{}, intro, &fakeMTLSValidator{}, nil, verifier, nil,
+		&fakeTokenValidator{}, intro, &fakeMTLSValidator{}, nil, verifier, nil, false,
 	)
 
 	id, err := resolveChain(t, resolver, map[string]string{"Authorization": "Bearer opaque-reference-token"})
@@ -478,7 +488,7 @@ func TestChain_SessionToken_CrossAuthIDOnScopedPathRejected(t *testing.T) {
 		fakeAPIKeyFinder{},
 		fakeCredentialFinder{oauth2: []*authdomain.Auth{authA, authB}},
 		fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(authA)}},
-		&fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, verifier, nil,
+		&fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, verifier, nil, false,
 	)
 
 	token := mintSession(t, signer, jwt.MapClaims{
@@ -497,7 +507,7 @@ func TestChain_SessionToken_WrongTokenUseRejected(t *testing.T) {
 	a := oauth2Auth(t, "https://idp.example.com", true)
 	resolver := middleware.NewChainIdentityResolver(
 		fakeAPIKeyFinder{}, fakeCredentialFinder{oauth2: []*authdomain.Auth{a}}, nil,
-		&fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, verifier, nil,
+		&fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, verifier, nil, false,
 	)
 
 	token := mintSession(t, signer, jwt.MapClaims{
@@ -516,7 +526,7 @@ func TestChain_SessionToken_AudienceMismatchRejected(t *testing.T) {
 	a := oauth2Auth(t, "https://idp.example.com", true)
 	resolver := middleware.NewChainIdentityResolver(
 		fakeAPIKeyFinder{}, fakeCredentialFinder{oauth2: []*authdomain.Auth{a}}, nil,
-		&fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, verifier, nil,
+		&fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, verifier, nil, false,
 	)
 
 	token := mintSession(t, signer, jwt.MapClaims{
@@ -535,7 +545,7 @@ func TestChain_SessionToken_EmptySubjectRejected(t *testing.T) {
 	a := oauth2Auth(t, "https://idp.example.com", true)
 	resolver := middleware.NewChainIdentityResolver(
 		fakeAPIKeyFinder{}, fakeCredentialFinder{oauth2: []*authdomain.Auth{a}}, nil,
-		&fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, verifier, nil,
+		&fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, verifier, nil, false,
 	)
 
 	token := mintSession(t, signer, jwt.MapClaims{

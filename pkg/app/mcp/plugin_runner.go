@@ -15,10 +15,12 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
@@ -30,6 +32,20 @@ import (
 // -32000..-32099 range) used when the plugin chain blocks a tools/call;
 // -32002 and -32003 are already used elsewhere in the MCP handler.
 const codePolicyBlocked int64 = -32001
+
+// CodeRateLimited is returned whenever a denial is a matter of timing rather
+// than of permission: the gateway plan throttle (rpc_dispatcher), TrustGuard's
+// evaluate 429, and any policy plugin answering 429. Clients act on the two
+// codes very differently — -32001 is never worth retrying and this one is worth
+// retrying after Retry-After — so the distinction has to follow the status the
+// plugin chose, not the plugin's identity.
+const CodeRateLimited int64 = -32004
+
+// CodeUnavailable is returned when gateway plan entitlements cannot be resolved
+// (unknown tier) or TrustGuard evaluate returns 503. Aligns with HTTP 503 on the proxy path.
+const CodeUnavailable int64 = -32005
+
+const trustGuardUnavailableType = "trustguard_unavailable"
 
 const (
 	directionInput  = "input"
@@ -45,6 +61,9 @@ type PluginRunner struct {
 	logger   *slog.Logger
 }
 
+// IsPolicyBlockedCode reports whether a JSON-RPC error is a policy denial.
+func IsPolicyBlockedCode(code int64) bool { return code == codePolicyBlocked }
+
 // NewPluginRunner accepts the shared executor port; a nil executor makes every
 // method a no-op (plugin-free parity with today's MCP path).
 func NewPluginRunner(executor appplugins.Executor, logger *slog.Logger) *PluginRunner {
@@ -56,24 +75,50 @@ type mcpToolCallParams struct {
 	Arguments json.RawMessage `json:"arguments,omitempty"`
 }
 
-// PreRequest runs StagePreRequest over the tools/call params. It returns nil to
-// allow the call; a non-nil *RPCError means a policy blocked it (caller skips the
-// upstream dial and writes the error). Per RUN-832 the call fails open on any
-// non-block error (guard unavailable, decode failure): it is logged and nil is
-// returned so the tools/call proceeds.
+// StageResult is what a plugin stage decided for a tools/call. A plugin may
+// rewrite the payload rather than block it — TrustGuard's data-masking does
+// exactly that — so the caller has to carry the rewritten value forward instead
+// of reusing the one it sent in.
+type StageResult struct {
+	// Arguments is the effective tool input after the request stage. Empty when
+	// no plugin rewrote it.
+	Arguments json.RawMessage
+	// Result is a payload that stands in for the tool's output: the masked
+	// result from the response stage, or a reply a plugin produced itself in the
+	// request stage instead of letting the call reach the upstream.
+	Result json.RawMessage
+}
+
+// replacesPayload reports whether a short-circuit outcome is a plugin supplying
+// a payload rather than denying the call. A denial arrives as a PluginError; a
+// 2xx short-circuit is a rewrite, which is how the LLM path reads it too — it
+// forwards the outcome's status and body as the response.
+func replacesPayload(outcome *appplugins.StageOutcome) bool {
+	if outcome == nil || !outcome.ShortCircuit {
+		return false
+	}
+	return outcome.StatusCode == 0 || (outcome.StatusCode >= 200 && outcome.StatusCode < 300)
+}
+
+// PreRequest runs StagePreRequest over the tools/call params. The returned
+// StageResult carries the effective tool input — a plugin may have rewritten it
+// — or a payload a plugin produced in place of calling the upstream at all. A
+// non-nil error is an *RPCError: a policy denied the call and the caller skips
+// the upstream dial. Per RUN-832 the call fails open on any non-block error
+// (guard unavailable, decode failure): it is logged and the call proceeds.
 func (r *PluginRunner) PreRequest(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
 	name string,
 	arguments json.RawMessage,
-) error {
+) (*StageResult, error) {
 	if r.executor == nil || rc == nil || rc.Consumer == nil {
-		return nil
+		return nil, nil
 	}
 	reqCtx, err := r.buildRequestContext(ctx, rc, name, arguments)
 	if err != nil {
 		r.logFailOpen(rc, policy.StagePreRequest, directionInput, err)
-		return nil
+		return nil, nil
 	}
 	outcome, err := r.executor.RunStage(ctx, appplugins.StageInput{
 		Stage:    policy.StagePreRequest,
@@ -83,40 +128,138 @@ func (r *PluginRunner) PreRequest(
 	})
 	if err != nil {
 		if pe, ok := appplugins.AsPluginError(err); ok {
-			return blockToRPCError(pe)
+			return nil, blockToRPCError(pe)
 		}
 		r.logFailOpen(rc, policy.StagePreRequest, directionInput, err)
-		return nil
+		return nil, nil
 	}
 	if outcome != nil && outcome.ShortCircuit {
-		return blockToRPCError(&appplugins.PluginError{
+		if replacesPayload(outcome) {
+			// A plugin answered the call itself instead of denying it.
+			return &StageResult{Result: outcome.Body}, nil
+		}
+		return nil, blockToRPCError(&appplugins.PluginError{
 			StatusCode: outcome.StatusCode,
 			Message:    "request blocked by policy",
 			Body:       outcome.Body,
 		})
 	}
-	return nil
+	// A body writer (TrustGuard data-masking) rewrites the request context in
+	// place. Read the arguments back out so the upstream receives the masked
+	// payload; forwarding the originals would leak exactly what the plugin was
+	// asked to redact.
+	return &StageResult{Arguments: r.rewrittenArguments(rc, name, arguments, reqCtx.Body)}, nil
 }
 
-// PreResponse runs StagePreResponse over the tool result. It returns nil to keep
-// the original result; a non-nil *RPCError means the response is blocked (caller
-// discards the result and writes the error). Per RUN-832 the call fails open on
-// any non-block error in this direction too: it is logged and the original
-// result is kept.
+// rewrittenArguments extracts the tool arguments a plugin left in the request
+// body, or nil when nothing usable changed. The tool name is deliberately not
+// honoured: routing is the gateway's decision, not a body writer's.
+func (r *PluginRunner) rewrittenArguments(
+	rc *appconsumer.RoutableConsumer,
+	name string,
+	original json.RawMessage,
+	body []byte,
+) json.RawMessage {
+	if len(body) == 0 {
+		return nil
+	}
+	var params mcpToolCallParams
+	if err := json.Unmarshal(body, &params); err != nil {
+		r.logFailOpen(rc, policy.StagePreRequest, directionInput,
+			fmt.Errorf("mcp: plugin left an unparseable tools/call body: %w", err))
+		return nil
+	}
+	if params.Name != name && r.logger != nil {
+		r.logger.Warn("mcp plugin rewrote the tool name; ignoring the change",
+			slog.String("tool", name), slog.String("rewritten", params.Name))
+	}
+	if bytes.Equal(params.Arguments, original) {
+		return nil
+	}
+	return params.Arguments
+}
+
+// PreResponse runs StagePreResponse over the tool result. A StageResult with a
+// Result replaces the tool's output (TrustGuard data-masking); nil keeps the
+// original. A non-nil error is an *RPCError: the response was blocked and the
+// caller discards the result. Per RUN-832 the call fails open on any non-block
+// error in this direction too: it is logged and the original result is kept.
 func (r *PluginRunner) PreResponse(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
 	name string,
 	arguments json.RawMessage,
 	result json.RawMessage,
-) error {
+) (*StageResult, error) {
 	if r.executor == nil || rc == nil || rc.Consumer == nil {
-		return nil
+		return nil, nil
 	}
 	reqCtx, err := r.buildRequestContext(ctx, rc, name, arguments)
 	if err != nil {
 		r.logFailOpen(rc, policy.StagePreResponse, directionOutput, err)
+		return nil, nil
+	}
+	respCtx := &infracontext.ResponseContext{
+		GatewayID: rc.Consumer.GatewayID.String(),
+		Body:      result,
+		Streaming: false,
+	}
+	outcome, err := r.executor.RunStage(ctx, appplugins.StageInput{
+		Stage:    policy.StagePreResponse,
+		Policies: rc.Policies,
+		Plan:     rc.PolicyPlan,
+		Request:  reqCtx,
+		Response: respCtx,
+	})
+	if err != nil {
+		if pe, ok := appplugins.AsPluginError(err); ok {
+			return nil, blockToRPCError(pe)
+		}
+		r.logFailOpen(rc, policy.StagePreResponse, directionOutput, err)
+		return nil, nil
+	}
+	if outcome != nil && outcome.ShortCircuit {
+		// TrustGuard signals a masked result the same way it signals a canned
+		// reply: a short-circuit carrying a body. A 2xx one is a rewrite, so the
+		// masked payload becomes the tool's output — treating it as a denial
+		// failed the call and handed the agent nothing.
+		if replacesPayload(outcome) {
+			return &StageResult{Result: outcome.Body}, nil
+		}
+		return nil, blockToRPCError(&appplugins.PluginError{
+			StatusCode: outcome.StatusCode,
+			Message:    "response blocked by policy",
+			Body:       outcome.Body,
+		})
+	}
+	return nil, nil
+}
+
+// PreResponseDiscovery runs StagePreResponse over a discovery result (a tool
+// listing) but applies only the outcomes that make sense for static server
+// metadata. A tool listing is not user data: a threat detector — indirect prompt
+// injection or code injection reading a malicious tool description — should be
+// able to block it, but a data-masking transform (DLP) must not touch it.
+// Redacting example emails baked into a description is pointless and would mangle
+// or, when the mask cannot be applied, destroy discovery.
+//
+// So a genuine denial (a PluginError or a non-2xx short-circuit) stops the
+// listing, while a 2xx transform (the masking path) is dropped and the original
+// listing is kept. Fails open on any non-block error, like the other stages.
+func (r *PluginRunner) PreResponseDiscovery(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	result json.RawMessage,
+) error {
+	if r.executor == nil || rc == nil || rc.Consumer == nil {
 		return nil
+	}
+	reqCtx := &infracontext.RequestContext{
+		GatewayID:    rc.Consumer.GatewayID.String(),
+		ConsumerID:   rc.Consumer.ID.String(),
+		ConsumerType: string(rc.Consumer.Type),
+		MCP:          true,
+		Body:         []byte(`{}`),
 	}
 	respCtx := &infracontext.ResponseContext{
 		GatewayID: rc.Consumer.GatewayID.String(),
@@ -138,6 +281,12 @@ func (r *PluginRunner) PreResponse(
 		return nil
 	}
 	if outcome != nil && outcome.ShortCircuit {
+		// A 2xx short-circuit is a data-masking rewrite; discovery is never
+		// rewritten, so drop it and keep the original listing. Anything else is a
+		// real denial (a threat detector) and stops discovery.
+		if replacesPayload(outcome) {
+			return nil
+		}
 		return blockToRPCError(&appplugins.PluginError{
 			StatusCode: outcome.StatusCode,
 			Message:    "response blocked by policy",
@@ -187,9 +336,34 @@ func (r *PluginRunner) buildRequestContext(
 }
 
 func blockToRPCError(pe *appplugins.PluginError) *RPCError {
+	code := codePolicyBlocked
+	if pe != nil && pe.StatusCode == http.StatusTooManyRequests {
+		code = CodeRateLimited
+	}
+	if pe != nil && pe.StatusCode == http.StatusServiceUnavailable && pe.Type == trustGuardUnavailableType {
+		code = CodeUnavailable
+	}
+	var headers map[string][]string
+	if pe != nil && len(pe.Headers) > 0 {
+		headers = pe.Headers
+	}
+	msg := "request blocked by policy"
+	var body json.RawMessage
+	if pe != nil {
+		if pe.Message != "" {
+			msg = pe.Message
+		}
+		body = pe.Body
+	}
+	httpStatus := http.StatusForbidden
+	if pe != nil && pe.StatusCode != 0 {
+		httpStatus = pe.StatusCode
+	}
 	return &RPCError{
-		Code:    codePolicyBlocked,
-		Message: pe.Message,
-		Data:    pe.Body,
+		Code:        code,
+		Message:     msg,
+		Data:        body,
+		HTTPStatus:  httpStatus,
+		HTTPHeaders: headers,
 	}
 }

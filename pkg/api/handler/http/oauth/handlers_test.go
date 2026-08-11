@@ -20,6 +20,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
@@ -47,6 +48,10 @@ func (f *fakeCredentialFinder) OAuth2AuthsForGateway(_ context.Context, gatewayI
 
 func (f *fakeCredentialFinder) MTLSAuths(context.Context) ([]*authdomain.Auth, error) {
 	return nil, nil
+}
+
+func (f *fakeCredentialFinder) DefaultOAuth2ForGateway(ids.GatewayID) *authdomain.Auth {
+	return nil
 }
 
 type memFlowStore struct {
@@ -88,9 +93,11 @@ func (s *memFlowStore) SaveSession(context.Context, string, appoauth.SessionReco
 	return nil
 }
 
-func (s *memFlowStore) TakeSession(context.Context, string) (*appoauth.SessionRecord, error) {
+func (s *memFlowStore) GetSession(context.Context, string) (*appoauth.SessionRecord, error) {
 	return nil, nil
 }
+
+func (s *memFlowStore) RetireSession(context.Context, string, time.Duration) error { return nil }
 
 func newTestApp(auths ...*authdomain.Auth) *fiber.App {
 	svc := appoauth.NewMetadataService(&fakeCredentialFinder{oauth2: auths}, nil, nil, newMemFlowStore())

@@ -23,7 +23,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/policy/mocks"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/cachetest"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	cachemocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -37,7 +38,13 @@ func TestScoper_SetGlobal_Success(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().SetGlobal(mock.Anything, gwID, existing.ID, true).Return(nil).Once()
 
-	scoper := apppolicy.NewScoper(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	scoper := apppolicy.NewScoper(repo, newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := scoper.SetGlobal(context.Background(), gwID, existing.ID)
 	if err != nil {
 		t.Fatalf("SetGlobal error: %v", err)
@@ -58,7 +65,9 @@ func TestScoper_SetGlobal_AlreadyGlobalIsNoop(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	// No SetGlobal call expected: the state is unchanged.
 
-	scoper := apppolicy.NewScoper(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+
+	scoper := apppolicy.NewScoper(repo, newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := scoper.SetGlobal(context.Background(), gwID, existing.ID)
 	if err != nil {
 		t.Fatalf("SetGlobal error: %v", err)
@@ -66,6 +75,9 @@ func TestScoper_SetGlobal_AlreadyGlobalIsNoop(t *testing.T) {
 	if !got.Global {
 		t.Fatal("policy should remain global")
 	}
+	// The no-op short-circuits before the publish, so replicas are not woken up
+	// for a scope that did not actually change.
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestScoper_SetGlobal_RejectsForeignGateway(t *testing.T) {
@@ -75,11 +87,14 @@ func TestScoper_SetGlobal_RejectsForeignGateway(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 
-	scoper := apppolicy.NewScoper(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+
+	scoper := apppolicy.NewScoper(repo, newCacheManager(), publisher, newTestLogger(), nil)
 	_, err := scoper.SetGlobal(context.Background(), ids.New[ids.GatewayKind](), existing.ID)
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
+	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestScoper_UnsetGlobal_Success(t *testing.T) {
@@ -93,7 +108,13 @@ func TestScoper_UnsetGlobal_Success(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().SetGlobal(mock.Anything, gwID, existing.ID, false).Return(nil).Once()
 
-	scoper := apppolicy.NewScoper(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger(), nil)
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	scoper := apppolicy.NewScoper(repo, newCacheManager(), publisher, newTestLogger(), nil)
 	got, err := scoper.UnsetGlobal(context.Background(), gwID, existing.ID)
 	if err != nil {
 		t.Fatalf("UnsetGlobal error: %v", err)

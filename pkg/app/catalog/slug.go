@@ -14,6 +14,15 @@
 
 package catalog
 
+import "strings"
+
+// inferenceProfilePrefixes are the geographies AWS puts in front of a Bedrock
+// model ID to name a cross-region inference profile, which is the only way to
+// invoke many newer models. The catalog stores the bare ID (and a "global."
+// twin), so a request routed through a regional profile finds no price — and
+// therefore no cost, and no dollar budget — unless the geography is dropped.
+var inferenceProfilePrefixes = []string{"us.", "eu.", "apac.", "us-gov.", "jp.", "au.", "ca."}
+
 func SlugCandidates(models ...string) []string {
 	var slugs []string
 	for _, model := range models {
@@ -26,11 +35,28 @@ func appendModelSlugs(dst []string, model string) []string {
 	if model == "" {
 		return dst
 	}
+	dst = appendDated(dst, model)
+	if bare := withoutInferenceProfile(model); bare != model {
+		dst = appendDated(dst, bare)
+	}
+	return dst
+}
+
+func appendDated(dst []string, model string) []string {
 	dst = append(dst, model)
 	if base := DeploymentCatalogSlug(model); base != model {
 		dst = append(dst, base)
 	}
 	return dst
+}
+
+func withoutInferenceProfile(model string) string {
+	for _, geography := range inferenceProfilePrefixes {
+		if strings.HasPrefix(model, geography) {
+			return model[len(geography):]
+		}
+	}
+	return model
 }
 
 func DeploymentCatalogSlug(model string) string {

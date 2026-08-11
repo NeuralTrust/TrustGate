@@ -15,26 +15,41 @@
 package bedrock
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
 	"net/http"
-	"strings"
+	"strconv"
 	"sync"
+	"time"
 
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	bedrockClient "github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
 	"github.com/aws/aws-sdk-go-v2/config"
+	awscredentials "github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	bedrockTypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
-	stsTypes "github.com/aws/aws-sdk-go-v2/service/sts/types"
 	smithy "github.com/aws/smithy-go"
+	"github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
+)
+
+const credentialsExpiryWindow = 5 * time.Minute
+
+// Bedrock reports the token counts of a buffered answer in these headers, for
+// every family, whether or not the body repeats them.
+const (
+	inputCountHeader  = "X-Amzn-Bedrock-Input-Token-Count"
+	outputCountHeader = "X-Amzn-Bedrock-Output-Token-Count"
 )
 
 type client struct {
@@ -73,7 +88,7 @@ func (c *client) Completions(
 		ModelId:     aws.String(model),
 		ContentType: aws.String("application/json"),
 		Body:        reqBody,
-	})
+	}, withRawResponse)
 	if err != nil {
 		if backendErr := newBedrockBackendError(err); backendErr != nil {
 			return nil, backendErr
@@ -81,7 +96,76 @@ func (c *client) Completions(
 		return nil, fmt.Errorf("failed to invoke model: %w", err)
 	}
 
-	return resp.Body, nil
+	return withHeaderTokenCounts(resp.Body, rawResponseHeaders(resp.ResultMetadata)), nil
+}
+
+// withRawResponse keeps the HTTP response reachable from the output metadata,
+// which is the only way to read the token-count headers: they are not modelled
+// in InvokeModelOutput. The SDK copies the options per call, so appending here
+// does not touch the pooled client.
+func withRawResponse(o *bedrockruntime.Options) {
+	o.APIOptions = append(o.APIOptions, awsmiddleware.AddRawResponseToMetadata)
+}
+
+func rawResponseHeaders(md middleware.Metadata) http.Header {
+	raw, ok := awsmiddleware.GetRawResponse(md).(*smithyhttp.Response)
+	if !ok || raw == nil || raw.Response == nil {
+		return nil
+	}
+	return raw.Header
+}
+
+// withHeaderTokenCounts splices the token counts Bedrock reports in headers into
+// the response body, under the same key the streaming path already carries them
+// in. Some families report usage nowhere else — a legacy Mistral answer is a
+// bare {"outputs":[…]} — so without this a buffered call looks free to every
+// plugin that charges for tokens.
+//
+// The counts go in first on purpose: a body that already carries real metrics
+// repeats the key, and the last occurrence is the one Go decodes, so the
+// upstream's own figures still win.
+func withHeaderTokenCounts(body []byte, headers http.Header) []byte {
+	if headers == nil {
+		return body
+	}
+	in := headerCount(headers, inputCountHeader)
+	out := headerCount(headers, outputCountHeader)
+	if in == 0 && out == 0 {
+		return body
+	}
+
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return body
+	}
+	rest := bytes.TrimLeft(trimmed[1:], " \t\r\n")
+	if len(rest) == 0 {
+		return body
+	}
+
+	metrics := fmt.Sprintf(
+		`"amazon-bedrock-invocationMetrics":{"inputTokenCount":%d,"outputTokenCount":%d}`,
+		in, out,
+	)
+	merged := make([]byte, 0, len(metrics)+len(trimmed)+1)
+	merged = append(merged, '{')
+	merged = append(merged, metrics...)
+	if rest[0] != '}' {
+		merged = append(merged, ',')
+	}
+	return append(merged, rest...)
+}
+
+func headerCount(headers http.Header, name string) int {
+	value := headers.Get(name)
+	if value == "" {
+		return 0
+	}
+	count, err := strconv.Atoi(value)
+	if err != nil || count < 0 {
+		return 0
+	}
+	return count
 }
 
 func (c *client) CompletionsStream(
@@ -260,53 +344,36 @@ func buildAwsConfig(ctx context.Context, credentials providers.Credentials) (aws
 
 	accessKey := credentials.AwsBedrock.AccessKey
 	secretKey := credentials.AwsBedrock.SecretKey
+	sessionToken := credentials.AwsBedrock.SessionToken
 
-	if credentials.AwsBedrock.UseRole && credentials.AwsBedrock.RoleARN != "" {
-		creds, err := assumeRole(ctx, accessKey, secretKey, credentials.AwsBedrock.RoleARN, region)
-		if err != nil {
-			return aws.Config{}, err
-		}
-		return loadAWSConfig(ctx, *creds.AccessKeyId, *creds.SecretAccessKey, *creds.SessionToken, region)
+	awsCfg, err := loadAWSConfig(ctx, accessKey, secretKey, sessionToken, region)
+	if err != nil {
+		return aws.Config{}, err
 	}
 
-	return loadAWSConfig(ctx, accessKey, secretKey, "", region)
+	if credentials.AwsBedrock.UseRole && credentials.AwsBedrock.RoleARN != "" {
+		stsClient := sts.NewFromConfig(awsCfg)
+		provider := stscreds.NewAssumeRoleProvider(stsClient, credentials.AwsBedrock.RoleARN, func(o *stscreds.AssumeRoleOptions) {
+			o.RoleSessionName = "BedrockClientSession"
+		})
+		awsCfg.Credentials = aws.NewCredentialsCache(provider, func(o *aws.CredentialsCacheOptions) {
+			o.ExpiryWindow = credentialsExpiryWindow
+		})
+	}
+
+	return awsCfg, nil
 }
 
 func loadAWSConfig(ctx context.Context, accessKey, secretKey, sessionToken, region string) (aws.Config, error) {
-	return config.LoadDefaultConfig(ctx,
-		config.WithCredentialsProvider(aws.CredentialsProviderFunc(
-			func(ctx context.Context) (aws.Credentials, error) {
-				return aws.Credentials{
-					AccessKeyID:     accessKey,
-					SecretAccessKey: secretKey,
-					SessionToken:    sessionToken,
-				}, nil
-			},
-		)),
+	opts := []func(*config.LoadOptions) error{
 		config.WithRegion(region),
-	)
-}
-
-func assumeRole(ctx context.Context, accessKey, secretKey, roleARN, region string, sessionName ...string) (*stsTypes.Credentials, error) {
-	baseCfg, err := loadAWSConfig(ctx, accessKey, secretKey, "", region)
-	if err != nil {
-		return nil, fmt.Errorf("unable to load base AWS config: %w", err)
 	}
-	stsClient := sts.NewFromConfig(baseCfg)
-
-	roleName := "BedrockClientSession"
-	if len(sessionName) > 0 && sessionName[0] != "" {
-		roleName = sessionName[0]
+	if accessKey != "" && secretKey != "" {
+		opts = append(opts, config.WithCredentialsProvider(
+			awscredentials.NewStaticCredentialsProvider(accessKey, secretKey, sessionToken),
+		))
 	}
-
-	output, err := stsClient.AssumeRole(ctx, &sts.AssumeRoleInput{
-		RoleArn:         aws.String(roleARN),
-		RoleSessionName: aws.String(roleName),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to assume role: %w", err)
-	}
-	return output.Credentials, nil
+	return config.LoadDefaultConfig(ctx, opts...)
 }
 
 // stripBedrockFields removes keys from the JSON body that the Bedrock
@@ -328,19 +395,18 @@ func stripBedrockFields(body []byte) []byte {
 }
 
 // Cross-format adaptation strips the model from the body (Bedrock resolves it
-// from the InvokeModel path), so it falls back to cfg. The "eu." region prefix
-// is trimmed to the standard Bedrock model ID.
+// from the InvokeModel path), so it falls back to cfg.
 func (c *client) resolveModel(reqBody []byte, cfg *providers.Config) string {
 	if modelID, err := extractBedrockModelID(reqBody); err == nil && modelID != "" {
 		return modelID
 	}
 	if extracted, err := adapter.ExtractModel(reqBody); err == nil && extracted != "" {
-		return bedrockModelID(extracted)
+		return extracted
 	}
 	if cfg.Model != "" {
-		return bedrockModelID(cfg.Model)
+		return cfg.Model
 	}
-	return bedrockModelID(cfg.DefaultModel)
+	return cfg.DefaultModel
 }
 
 func extractBedrockModelID(body []byte) (string, error) {
@@ -353,13 +419,8 @@ func extractBedrockModelID(body []byte) (string, error) {
 	return probe.ModelID, nil
 }
 
-// bedrockModelID returns the model ID to pass to InvokeModel. Removes a leading
-// "eu." region prefix when present so the API receives the standard Bedrock
-// identifier. The "us." prefix is left as-is since it is part of some Bedrock
-// model IDs.
-func bedrockModelID(model string) string {
-	if strings.HasPrefix(model, "eu.") {
-		return strings.TrimPrefix(model, "eu.")
-	}
-	return model
-}
+// The model identifier is passed through to InvokeModel untouched. A geography
+// prefix such as "eu." or "us." names a cross-region inference profile, which is
+// the only way to invoke many newer models: rewriting it to the bare model ID
+// makes AWS answer "Invocation of model ID … with on-demand throughput isn't
+// supported. Retry your request with the ID or ARN of an inference profile".

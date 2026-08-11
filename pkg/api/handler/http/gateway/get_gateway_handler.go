@@ -18,6 +18,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway/response"
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
@@ -52,6 +53,9 @@ func (h *GetGatewayHandler) Handle(c *fiber.Ctx) error {
 	g, err := h.finder.FindByID(c.UserContext(), id)
 	if err != nil {
 		return httpio.WriteError(c, err)
+	}
+	if !callerOwnsGateway(tenantIDFromContext(c), g) {
+		return httpio.WriteError(c, domain.ErrNotFound)
 	}
 	return httpio.WriteOK(c, response.FromDomain(g, h.baseDomain, h.mcpBaseDomain))
 }

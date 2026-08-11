@@ -24,7 +24,7 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | Attribute | Event field |
 |-----------|-------------|
 | `http.request.method` | `request.method` |
-| `http.response.status_code` | `response.status_code` |
+| `http.response.status_code` | `response.status_code` (for MCP, aligned with `trustgate.mcp.upstream_status` / gateway denial outcome) |
 | `url.path` | `request.path` |
 
 ## GenAI semconv
@@ -67,7 +67,6 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.latency.total_ms` | `latency.total_ms` |
 | `trustgate.latency.provider_ms` | `latency.provider_ms` |
 | `trustgate.latency.policies_ms` | `latency.policies_ms` |
-| `trustgate.latency.routing_ms` | `latency.routing_ms` |
 | `trustgate.latency.gateway_ms` | `latency.gateway_ms` |
 | `trustgate.is_flagged` | `is_flagged` (bool) |
 | `trustgate.security` | `security[]` string array (when non-empty) |
@@ -75,6 +74,46 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.attempts` | `attempts[]` as JSON string (when non-empty) |
 | `trustgate.attempts.count` | `len(attempts)` (when non-empty) |
 | `trustgate.mcp.*` | `mcp.*` fields (when the request is an MCP call) |
+
+### Latency semantics
+
+The four latency attributes split the request wall clock into stages that can be acted on
+separately:
+
+| Attribute | Meaning |
+|-----------|---------|
+| `total_ms` | Wall clock from the moment the gateway accepted the request until the response was written. |
+| `provider_ms` | Time spent in the upstream provider, summed across attempts (retries and fallbacks included). |
+| `policies_ms` | Time spent in the policy chain across **every** stage: `pre_request`, `pre_response` and `post_response`. |
+| `gateway_ms` | The gateway's own overhead: routing, adapter translation, serialization. |
+
+`post_response` policies run after the client already received its response, so the client
+never waited for them. `gateway_ms` therefore discounts that asynchronous share:
+
+```
+gateway_ms  = max(0, total_ms - provider_ms - blocking_policies_ms)
+total_ms    = provider_ms + blocking_policies_ms + gateway_ms
+```
+
+where `blocking_policies_ms` is the `pre_request` + `pre_response` share of `policies_ms`.
+Discounting the async part is what makes the attribute usable: it is routinely larger than
+the gateway's own overhead, so counting it drives the remainder negative and flattens
+`gateway_ms` to zero on most requests.
+
+The per-stage split is deliberately **not** duplicated into its own attribute — it is
+derivable from `trustgate.policy_chain`, where each entry already carries `stage` and
+`latency_ms`. To chart the full policy cost use `policies_ms`; to chart what the client
+actually waited for, subtract the `post_response` entries of the policy chain:
+
+```sql
+SELECT
+  JSONExtractInt(latency, 'policies_ms') AS policies_ms,
+  arraySum(arrayMap(
+    p -> if(JSONExtractString(p, 'stage') = 'post_response', JSONExtractInt(p, 'latency_ms'), 0),
+    JSONExtractArrayRaw(policy_chain)
+  )) AS policies_async_ms
+FROM trustgate_events
+```
 
 ## Raw stream
 

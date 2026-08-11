@@ -52,6 +52,8 @@ func TestPlugin_ValidateConfig(t *testing.T) {
 		{name: "zero payload", settings: map[string]any{"allowed_payload_size": 0}, wantErr: true},
 		{name: "bad unit", settings: map[string]any{"allowed_payload_size": 5, "size_unit": "gigabytes"}, wantErr: true},
 		{name: "negative chars", settings: map[string]any{"allowed_payload_size": 5, "max_chars_per_request": -1}, wantErr: true},
+		{name: "zero chars means nothing", settings: map[string]any{"allowed_payload_size": 5, "max_chars_per_request": 0}, wantErr: true},
+		{name: "omitted chars takes the default", settings: map[string]any{"allowed_payload_size": 5}},
 	}
 	p := New()
 	for _, tt := range tests {
@@ -75,6 +77,8 @@ func TestPlugin_Execute_AllowsSmallBody(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"5"}, res.Headers["X-Request-Size-Bytes"])
 	assert.Equal(t, []string{"5"}, res.Headers["X-Request-Size-Chars"])
+	assert.Equal(t, []string{"100000"}, res.Headers["X-Size-Limit-Chars"],
+		"an omitted character ceiling falls back to the default")
 }
 
 func TestPlugin_Execute_RejectsLargeBytes(t *testing.T) {

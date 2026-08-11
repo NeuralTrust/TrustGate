@@ -17,10 +17,12 @@ package modules
 import (
 	"context"
 	"log/slog"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/logger"
@@ -74,7 +76,21 @@ func provideRuntimeBase(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	return c.Provide(func(cfg *config.Config) (vaultdomain.Encrypter, error) {
-		return crypto.NewCipher(cfg.Server.SecretKey)
+	return c.Provide(func(cfg *config.Config, cc cache.Client, logger *slog.Logger) (vaultdomain.Encrypter, error) {
+		secret := cfg.Server.SecretKey
+		if secret == "" {
+			env := strings.ToLower(strings.TrimSpace(cfg.AppEnv))
+			if env == "prod" || env == "production" {
+				resolved, err := crypto.ResolveSharedSecretKey(context.Background(), cc.RedisClient(), logger)
+				if err != nil {
+					return nil, err
+				}
+				secret = resolved
+				// Mutate the shared ServerConfig so JWT managers (which hold a
+				// pointer to it) verify with the same secret as the vault cipher.
+				cfg.Server.SecretKey = resolved
+			}
+		}
+		return crypto.NewCipher(secret)
 	})
 }

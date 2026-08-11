@@ -161,7 +161,10 @@ func TestPlugin_PerModel_CountingOutput(t *testing.T) {
 	reqA := &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: []byte(`{"model":"model-a"}`)}
 	resp := &infracontext.ResponseContext{StatusCode: 200, Body: usageResponseBody()}
 
-	res, err := p.Execute(context.Background(), input(policy.StagePostResponse, settings, reqA, resp))
+	_, err := p.Execute(context.Background(), input(policy.StagePostResponse, settings, reqA, resp))
 	require.NoError(t, err)
-	assert.Equal(t, []string{"5"}, res.Headers["X-Tokens-Consumed"], "only output tokens are counted")
+
+	res, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, reqA, &infracontext.ResponseContext{}))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"1"}, res.Headers["X-Ratelimit-Remaining-Tokens"], "only output tokens are counted")
 }

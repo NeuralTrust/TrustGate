@@ -16,6 +16,7 @@ package ratelimit
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -116,6 +117,20 @@ func TestPlugin_ValidateConfig(t *testing.T) {
 			wantErr:  true,
 		},
 		{
+			name:     "zero window would let everything through",
+			settings: limitSettings(5, "0s"),
+			wantErr:  true,
+		},
+		{
+			name:     "window below the counting resolution",
+			settings: limitSettings(5, "500ms"),
+			wantErr:  true,
+		},
+		{
+			name:     "window at the counting resolution",
+			settings: limitSettings(5, "1s"),
+		},
+		{
 			name:     "rejects legacy nested limits map",
 			settings: map[string]any{"limits": map[string]any{"global": map[string]any{"limit": 5, "window": "1m"}}},
 			wantErr:  true,
@@ -146,7 +161,8 @@ func TestPlugin_Execute_AllowsUnderLimit(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	assert.Equal(t, []string{"3"}, res.Headers["X-RateLimit-consumer-Limit"])
-	assert.Equal(t, []string{"3"}, res.Headers["X-RateLimit-consumer-Remaining"])
+	assert.Equal(t, []string{"2"}, res.Headers["X-RateLimit-consumer-Remaining"],
+		"remaining counts the budget left once this request is counted")
 }
 
 func TestPlugin_Execute_RejectsOverLimit(t *testing.T) {
@@ -165,6 +181,33 @@ func TestPlugin_Execute_RejectsOverLimit(t *testing.T) {
 	assert.Equal(t, 429, pe.StatusCode)
 	assert.Equal(t, []string{"30"}, pe.Headers["Retry-After"])
 	assert.Equal(t, []string{"0"}, pe.Headers["X-RateLimit-consumer-Remaining"])
+	require.NotEmpty(t, pe.Body)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(pe.Body, &payload))
+	assert.Equal(t, "rate limit exceeded", payload["error"])
+	assert.Equal(t, "consumer", payload["reason"])
+	assert.Equal(t, float64(2), payload["limit"])
+	assert.Equal(t, float64(30), payload["retry_after_seconds"])
+	assert.Contains(t, payload["message"], "consumer rate limit exceeded")
+}
+
+// A client that reads "1 remaining" must be able to spend it, so the countdown
+// reaches zero on the last request the window still allows.
+func TestPlugin_Execute_RemainingHitsZeroOnTheLastAllowedRequest(t *testing.T) {
+	p, _ := newTestPlugin(t)
+	settings := limitSettings(3, "1m")
+
+	var remaining []string
+	for i := 0; i < 3; i++ {
+		res, err := p.Execute(context.Background(), execInput(settings, consumerScope("c-1")))
+		require.NoError(t, err, "request %d should pass", i)
+		remaining = append(remaining, res.Headers["X-RateLimit-consumer-Remaining"][0])
+	}
+
+	assert.Equal(t, []string{"2", "1", "0"}, remaining)
+
+	_, err := p.Execute(context.Background(), execInput(settings, consumerScope("c-1")))
+	require.Error(t, err, "the request after a zero remaining must be rejected")
 }
 
 // A non-global policy must give each consumer an independent budget even when
@@ -257,7 +300,7 @@ func TestPlugin_Execute_ObserveReportsExceeded(t *testing.T) {
 
 func TestPlugin_Execute_ThrottleDelaysButAllows(t *testing.T) {
 	p, _ := newTestPlugin(t)
-	settings := limitSettings(1, "200ms")
+	settings := limitSettings(1, "1s")
 
 	for i := 0; i < 3; i++ {
 		in := execInput(settings, consumerScope("c-1"))
@@ -342,14 +385,27 @@ func TestThrottleDelay(t *testing.T) {
 	assert.Equal(t, 100*time.Millisecond, throttleDelay(time.Second, 10))
 }
 
-func TestPlugin_Execute_DefaultRetryAfter(t *testing.T) {
-	p, _ := newTestPlugin(t)
-	settings := limitSettings(1, "1m")
+// Without an explicit retry_after the client is told to come back when the
+// window releases the budget, not after an unrelated fixed minute.
+func TestPlugin_Execute_DefaultRetryAfterIsTheWindow(t *testing.T) {
+	for _, tt := range []struct {
+		window string
+		want   string
+	}{
+		{window: "1m", want: "60"},
+		{window: "10s", want: "10"},
+		{window: "1500ms", want: "2"},
+	} {
+		t.Run(tt.window, func(t *testing.T) {
+			p, _ := newTestPlugin(t)
+			settings := limitSettings(1, tt.window)
 
-	_, err := p.Execute(context.Background(), execInput(settings, globalScope()))
-	require.NoError(t, err)
-	_, err = p.Execute(context.Background(), execInput(settings, globalScope()))
-	require.Error(t, err)
-	pe, _ := appplugins.AsPluginError(err)
-	assert.Equal(t, []string{"60"}, pe.Headers["Retry-After"])
+			_, err := p.Execute(context.Background(), execInput(settings, globalScope()))
+			require.NoError(t, err)
+			_, err = p.Execute(context.Background(), execInput(settings, globalScope()))
+			require.Error(t, err)
+			pe, _ := appplugins.AsPluginError(err)
+			assert.Equal(t, []string{tt.want}, pe.Headers["Retry-After"])
+		})
+	}
 }

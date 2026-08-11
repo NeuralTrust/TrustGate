@@ -70,6 +70,17 @@ func (e *EventContext) SetDecision(decision string) {
 	e.span.SetDecision(decision)
 }
 
+// SetScore records the detection score and its label on the metrics span. The
+// label is what the analytics Security Engine breakdown groups by, so security
+// plugins should pass the detected category (e.g. the moderation category or the
+// guard signal type) rather than a plugin-internal identifier.
+func (e *EventContext) SetScore(score float64, label string) {
+	if e == nil || e.span == nil {
+		return
+	}
+	e.span.SetScore(score, label)
+}
+
 func (e *EventContext) HasDecision() bool {
 	if e == nil || e.span == nil {
 		return false

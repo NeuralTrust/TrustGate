@@ -40,6 +40,38 @@ func (_m *PricingResolver) Resolve(ctx context.Context, providerCode string, slu
 	return r0
 }
 
+// InvalidateCache provides a mock function with no fields
+func (_m *PricingResolver) InvalidateCache() {
+	_m.Called()
+}
+
+// PricingResolver_InvalidateCache_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'InvalidateCache'
+type PricingResolver_InvalidateCache_Call struct {
+	*mock.Call
+}
+
+// InvalidateCache is a helper method to define mock.On call
+func (_e *PricingResolver_Expecter) InvalidateCache() *PricingResolver_InvalidateCache_Call {
+	return &PricingResolver_InvalidateCache_Call{Call: _e.mock.On("InvalidateCache")}
+}
+
+func (_c *PricingResolver_InvalidateCache_Call) Run(run func()) *PricingResolver_InvalidateCache_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *PricingResolver_InvalidateCache_Call) Return() *PricingResolver_InvalidateCache_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *PricingResolver_InvalidateCache_Call) RunAndReturn(run func()) *PricingResolver_InvalidateCache_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // PricingResolver_Resolve_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Resolve'
 type PricingResolver_Resolve_Call struct {
 	*mock.Call

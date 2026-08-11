@@ -246,10 +246,15 @@ func TestTokenRateLimiterSchema_BudgetTree(t *testing.T) {
 	assert.Equal(t, []string{"reject", "downgrade_model"}, enumValues(behavior.Enum))
 	assert.Equal(t, []string{"Reject", "Downgrade Model"}, enumLabels(behavior.Enum))
 
-	for _, k := range []string{"downgrade_to", "stream_usage_injection", "count_cache_reads", "custom_pricing", "group_by_header"} {
+	for _, k := range []string{"downgrade_to", "count_cache_reads", "custom_pricing", "group_by_header"} {
 		_, ok := fieldByKey(fields, k)
 		assert.Truef(t, ok, "missing top-level field %q", k)
 	}
+
+	// The proxy always asks OpenAI-format upstreams for streaming usage, so the
+	// budget has no switch of its own to offer.
+	_, ok = fieldByKey(fields, "stream_usage_injection")
+	assert.False(t, ok, "stream_usage_injection must not be advertised")
 
 	// Cost cap, the legacy window block, per_model and pricing_table moved out
 	// of the budget catalog schema even though their parsing is preserved.
@@ -659,7 +664,8 @@ func TestPromptTemplateSchema_Tree(t *testing.T) {
 	engineField, ok := fieldByKey(fields, "template_engine")
 	require.True(t, ok)
 	assert.Equal(t, FieldTypeEnum, engineField.Type)
-	assert.Equal(t, []string{"mustache", "jinja2_subset"}, enumValues(engineField.Enum))
+	assert.Equal(t, []string{"mustache"}, enumValues(engineField.Enum),
+		"jinja2_subset is refused by the plugin, so the catalog must not offer it")
 	assert.Equal(t, "mustache", engineField.Default)
 
 	contextVars, ok := fieldByKey(fields, "context_variables")
@@ -742,4 +748,40 @@ func TestPromptTemplateSchema_Tree(t *testing.T) {
 		_, ok := fieldByKey(fields, k)
 		assert.Truef(t, ok, "missing top-level field %q", k)
 	}
+}
+
+// The keys are string literals rather than the plugin's config struct because
+// infra plugins depend on this package; the point of the test is that the two
+// lists cannot drift apart unnoticed. Settings are not validated against the
+// schema, so an option missing here still works over the API and is simply
+// unreachable from the admin UI — the failure mode this test exists to prevent.
+func TestPromptCompressionSchema_AdvertisesEveryHonouredOption(t *testing.T) {
+	meta, ok := pluginCatalogMeta["prompt_compression"]
+	require.True(t, ok)
+
+	fields := meta.schema.Fields
+	for _, expected := range []struct {
+		key       string
+		fieldType FieldType
+		def       any
+	}{
+		{"compress_json", FieldTypeBoolean, true},
+		{"normalize_whitespace", FieldTypeBoolean, true},
+		{"strip_ansi", FieldTypeBoolean, true},
+		{"max_consecutive_blank_lines", FieldTypeInteger, 1},
+		{"min_length", FieldTypeInteger, 256},
+		{"max_body_bytes", FieldTypeInteger, 1048576},
+	} {
+		field, found := fieldByKey(fields, expected.key)
+		require.Truef(t, found, "the plugin honours %q but the catalog does not offer it", expected.key)
+		assert.Equal(t, expected.fieldType, field.Type, expected.key)
+		assert.Equal(t, expected.def, field.Default,
+			"%s must advertise the default the plugin actually applies", expected.key)
+	}
+
+	roles, found := fieldByKey(fields, "target_roles")
+	require.True(t, found)
+	assert.Equal(t, FieldTypeArray, roles.Type)
+	require.NotNil(t, roles.Item)
+	assert.Equal(t, []string{"system", "user", "assistant", "tool"}, enumValues(roles.Item.Enum))
 }

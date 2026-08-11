@@ -15,12 +15,14 @@
 package trustguard
 
 import (
+	"encoding/json"
+
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 )
 
 type GuardRequest struct {
-	Payload    GuardPayload    `json:"payload"`
+	Payload    json.RawMessage `json:"payload"`
 	Direction  string          `json:"direction"`
 	Protocol   string          `json:"protocol"`
 	GatewayID  string          `json:"gateway_id"`
@@ -29,6 +31,8 @@ type GuardRequest struct {
 	Attributes GuardAttributes `json:"attributes"`
 }
 
+// GuardPayload is the minimal LLM evaluate body used for response-direction
+// inspect (assistant text). Request-direction LLM evaluates use messages[].
 type GuardPayload struct {
 	Input       string            `json:"input"`
 	Attachments []GuardAttachment `json:"attachments,omitempty"`
@@ -89,14 +93,16 @@ type GuardFinding struct {
 }
 
 type guardData struct {
-	Direction     string         `json:"direction,omitempty"`
-	Status        string         `json:"status,omitempty"`
-	Decision      string         `json:"decision,omitempty"`
-	TraceID       string         `json:"trace_id,omitempty"`
-	RequestID     string         `json:"request_id,omitempty"`
-	FindingsCount int            `json:"findings_count,omitempty"`
-	Findings      []GuardFinding `json:"findings,omitempty"`
-	FailedOpen    bool           `json:"failed_open,omitempty"`
+	Direction      string         `json:"direction,omitempty"`
+	Status         string         `json:"status,omitempty"`
+	Decision       string         `json:"decision,omitempty"`
+	TraceID        string         `json:"trace_id,omitempty"`
+	RequestID      string         `json:"request_id,omitempty"`
+	FindingsCount  int            `json:"findings_count,omitempty"`
+	Findings       []GuardFinding `json:"findings,omitempty"`
+	FailedOpen     bool           `json:"failed_open,omitempty"`
+	Degraded       bool           `json:"degraded,omitempty"`
+	DegradedReason string         `json:"degraded_reason,omitempty"`
 }
 
 func setExtras(event *metrics.EventContext, data guardData) {
@@ -108,5 +114,58 @@ func setExtras(event *metrics.EventContext, data guardData) {
 
 func recordGuardOutcome(event *metrics.EventContext, data guardData) {
 	setExtras(event, data)
+	if scoreLabelWorthy(data.Decision) {
+		if label, score, ok := primaryFinding(data.Findings); ok {
+			event.SetScore(score, label)
+		}
+	}
 	appplugins.SetDecisionFromOutcome(event, data.Decision)
+}
+
+// scoreLabelWorthy reports whether a guard decision represents an actual
+// detection worth surfacing in the Security Engine breakdown. Pass-through
+// outcomes (allowed, failed_open) must not emit a score label.
+func scoreLabelWorthy(decision string) bool {
+	switch decision {
+	case decisionBlocked, decisionReported, decisionTransformed:
+		return true
+	default:
+		return false
+	}
+}
+
+// primaryFinding selects the finding that best represents the guard decision for
+// the Security Engine metric: the enforced detection with the highest
+// confidence, falling back to the highest-confidence signal when nothing was
+// enforced. It returns ok=false when no finding carries a usable signal type.
+func primaryFinding(findings []GuardFinding) (label string, score float64, ok bool) {
+	chosen := selectPrimaryFinding(findings)
+	if chosen == nil || chosen.Signal == nil {
+		return "", 0, false
+	}
+	return chosen.Signal.Type, chosen.Signal.Confidence, true
+}
+
+// selectPrimaryFinding returns the enforced finding with the highest
+// confidence, or the highest-confidence signal when nothing was enforced.
+func selectPrimaryFinding(findings []GuardFinding) *GuardFinding {
+	var enforced, any *GuardFinding
+	for i := range findings {
+		f := &findings[i]
+		if f.Signal == nil || f.Signal.Type == "" {
+			continue
+		}
+		if any == nil || f.Signal.Confidence > any.Signal.Confidence {
+			any = f
+		}
+		if f.Outcome != nil && f.Outcome.Action != "" {
+			if enforced == nil || f.Signal.Confidence > enforced.Signal.Confidence {
+				enforced = f
+			}
+		}
+	}
+	if enforced != nil {
+		return enforced
+	}
+	return any
 }

@@ -123,6 +123,12 @@ definitions:
         type: string
       id:
         type: string
+      key_prefix:
+        description: Non-secret recognition hint for api_key auths (e.g. "ag_3dlXk"
+          + "Rv8Q").
+        type: string
+      key_suffix:
+        type: string
       name:
         type: string
       type:
@@ -427,15 +433,30 @@ definitions:
         type: array
       pool_alias:
         type: string
+      smart_routing:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SmartRoutingConfigRequest'
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.LBPoolMemberRequest:
     properties:
+      model:
+        description: |-
+          Model pins this pool entry to a single model, which is what allows the same
+          registry to appear several times as independently balanced routes.
+        type: string
       models:
         items:
           type: string
         type: array
       registry_id:
         type: string
+      weight:
+        description: |-
+          Weight is the relative weighted-round-robin share of this route on a 1..100
+          scale, defaulting to the consumer's registry weight.
+        example: 1
+        maximum: 100
+        minimum: 1
+        type: integer
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ModelPolicyRequest:
     properties:
@@ -471,6 +492,25 @@ definitions:
       default:
         type: string
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SmartRoutingConfigRequest:
+    properties:
+      tiers:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SmartRoutingTierRequest'
+        type: array
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.SmartRoutingTierRequest:
+    properties:
+      min_score:
+        type: number
+      model:
+        description: |-
+          Model selects which route of the registry this tier targets. It is required
+          when the pool declares the registry more than once.
+        type: string
+      registry_id:
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ToolkitEntryRequest:
     properties:
       expose_as:
@@ -504,6 +544,14 @@ definitions:
         type: array
       name:
         type: string
+      registries:
+        description: |-
+          Registries replaces the whole registry association set: registries absent
+          from the list are detached. Omit the field to leave the associations as
+          they are; send an empty list to detach every registry.
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.RegistryBindingRequest'
+        type: array
       routing_mode:
         type: string
       toolkit:
@@ -629,15 +677,21 @@ definitions:
         type: array
       pool_alias:
         type: string
+      smart_routing:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SmartRoutingConfigResponse'
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.LBPoolMemberResponse:
     properties:
+      model:
+        type: string
       models:
         items:
           type: string
         type: array
       registry_id:
         type: string
+      weight:
+        type: integer
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ListConsumerResponse:
     properties:
@@ -670,6 +724,22 @@ definitions:
       weight:
         type: integer
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SmartRoutingConfigResponse:
+    properties:
+      tiers:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SmartRoutingTierResponse'
+        type: array
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.SmartRoutingTierResponse:
+    properties:
+      min_score:
+        type: number
+      model:
+        type: string
+      registry_id:
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ToolkitEntryResponse:
     properties:
       expose_as:
@@ -689,6 +759,13 @@ definitions:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.ClientTLSConfig'
       domain:
         type: string
+      entitlements:
+        allOf:
+        - $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Entitlements'
+        description: |-
+          Entitlements is required for platform (empty JWT tenant) create and must include full stamped caps.
+          Tenant callers must omit it (422 if sent). When a tenant omits it, the gateway defaults to free
+          or inherits the highest sibling tier.
       metadata:
         additionalProperties:
           type: string
@@ -702,6 +779,10 @@ definitions:
         type: string
       telemetry:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry'
+      tenant_id:
+        description: TenantID is required ownership for platform (empty JWT) create-for-tenant;
+          tenant JWTs may match or omit it (JWT wins).
+        type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_request.UpdateGatewayRequest:
     properties:
@@ -709,6 +790,13 @@ definitions:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.ClientTLSConfig'
       domain:
         type: string
+      entitlements:
+        allOf:
+        - $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Entitlements'
+        description: |-
+          Entitlements is optional; only platform admins may set it (tenant callers get 422).
+          When omitted the gateway's entitlements are left unchanged. Downgrading when the tenant already
+          has more gateways than the new MaxInstances returns 409 — delete excess first.
       metadata:
         additionalProperties:
           type: string
@@ -737,6 +825,8 @@ definitions:
         type: string
       domain:
         type: string
+      entitlements:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Entitlements'
       hosts:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_gateway_response.GatewayHosts'
       id:
@@ -1812,6 +1902,17 @@ definitions:
         type: integer
       type: array
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Entitlements:
+    properties:
+      burst_per_min:
+        type: integer
+      max_instances:
+        type: integer
+      quota_per_month:
+        type: integer
+      tier:
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_domain_gateway.SessionConfig:
     properties:
       body_param_name:
@@ -1991,8 +2092,6 @@ definitions:
         type: integer
       provider_ms:
         type: integer
-      routing_ms:
-        type: integer
       total_ms:
         type: integer
     type: object
@@ -2025,7 +2124,7 @@ definitions:
       upstream_latency_ms:
         type: integer
       upstream_status:
-        type: string
+        type: integer
       upstream_tool:
         type: string
     type: object
@@ -2188,7 +2287,9 @@ paths:
       - application/json
       description: 'Forwards an OpenAI Chat Completions request to the selected provider.
         Proxy plane route: /{consumer_slug}/v1/chat/completions. Other fixed routes
-        include /v1/messages (Anthropic) and /v1/responses (OpenAI Responses).'
+        include /v1/messages (Anthropic) and /v1/responses (OpenAI Responses). Inline
+        consumers may authenticate with an api key via X-AG-API-Key, x-api-key, or
+        Authorization: Bearer ag_….'
       parameters:
       - description: Consumer slug
         in: path
@@ -2199,7 +2300,12 @@ paths:
         in: header
         name: X-AG-API-Key
         type: string
-      - description: Bearer token for OAuth2 or OIDC consumers
+      - description: API key for inline consumers (Anthropic-compatible clients)
+        in: header
+        name: x-api-key
+        type: string
+      - description: Bearer ag_… for inline api-key auth, or Bearer JWT for OAuth2/OIDC
+          consumers
         in: header
         name: Authorization
         type: string
@@ -2244,9 +2350,26 @@ paths:
       summary: Proxy chat completion
       tags:
       - proxy
+  /health:
+    get:
+      description: Reports whether the process is alive. Canonical path is /healthz;
+        /health is an alias for load-balancer defaults.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Liveness probe
+      tags:
+      - system
   /healthz:
     get:
-      description: Reports whether the process is alive.
+      description: Reports whether the process is alive. Canonical path is /healthz;
+        /health is an alias for load-balancer defaults.
       produces:
       - application/json
       responses:
@@ -2348,9 +2471,13 @@ paths:
     post:
       consumes:
       - application/json
-      description: 'Creates a new gateway. The slug is optional: when omitted the
-        server generates a unique random slug. If provided it must be a lowercase
-        DNS label and unique.'
+      description: 'Creates a new gateway. Ownership tenant_id is required (JWT claim,
+        or body for platform admins). The slug is optional: when omitted the server
+        generates a unique random slug. If provided it must be a lowercase DNS label
+        and unique. Platform JWT create requires stamped entitlements (tier + caps);
+        tenant JWTs must omit entitlements (422 if sent). With RATE_LIMIT_ENABLED,
+        create returns 409 when the tenant is already at MaxInstances for the effective
+        tier.'
       parameters:
       - description: Gateway to create
         in: body
@@ -2377,6 +2504,10 @@ paths:
           description: Conflict
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Create a gateway
@@ -2392,9 +2523,29 @@ paths:
         name: gateway_id
         required: true
         type: string
-      - description: Filter by name (substring match)
+      - description: 'Substring match on name (alias: name)'
+        in: query
+        name: search
+        type: string
+      - description: Alias of search
         in: query
         name: name
+        type: string
+      - description: Filter by auth type (api_key, oauth2, oidc, mtls)
+        in: query
+        name: type
+        type: string
+      - description: Filter by enabled flag
+        in: query
+        name: enabled
+        type: boolean
+      - description: Sort field (name, created_at, updated_at, type)
+        in: query
+        name: sort
+        type: string
+      - description: Sort order (asc, desc)
+        in: query
+        name: order
         type: string
       - description: Page number (1-based)
         in: query
@@ -2417,6 +2568,10 @@ paths:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
@@ -2611,9 +2766,34 @@ paths:
         name: gateway_id
         required: true
         type: string
-      - description: Filter by name (substring match)
+      - description: 'Substring match on name or slug (alias: name)'
+        in: query
+        name: search
+        type: string
+      - description: Alias of search
         in: query
         name: name
+        type: string
+      - description: Filter by consumer type (LLM, MCP, A2A)
+        in: query
+        name: type
+        type: string
+      - description: Filter by active flag
+        in: query
+        name: active
+        type: boolean
+      - description: Filter consumers linked to this auth id
+        format: uuid
+        in: query
+        name: auth_id
+        type: string
+      - description: Sort field (name, created_at, updated_at, type)
+        in: query
+        name: sort
+        type: string
+      - description: Sort order (asc, desc)
+        in: query
+        name: order
         type: string
       - description: Page number (1-based)
         in: query
@@ -2636,6 +2816,10 @@ paths:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
@@ -2772,7 +2956,9 @@ paths:
     put:
       consumes:
       - application/json
-      description: Updates an existing consumer.
+      description: Updates an existing consumer. The optional `registries` field replaces
+        the whole registry association set, so switching a role_based consumer to
+        inline routing and attaching its registries happens in a single atomic request.
       parameters:
       - description: Gateway id
         format: uuid
@@ -3193,9 +3379,41 @@ paths:
         name: gateway_id
         required: true
         type: string
-      - description: Filter by name (substring match)
+      - description: 'Substring match on name or slug (alias: name)'
+        in: query
+        name: search
+        type: string
+      - description: Alias of search
         in: query
         name: name
+        type: string
+      - description: Filter by enabled flag
+        in: query
+        name: enabled
+        type: boolean
+      - description: Filter by global flag
+        in: query
+        name: global
+        type: boolean
+      - description: Filter by mode (enforce, throttle, observe)
+        in: query
+        name: mode
+        type: string
+      - description: Catalog category (group type); comma-separated multi
+        in: query
+        name: category
+        type: string
+      - description: Plugin slug (FE type filter); comma-separated multi
+        in: query
+        name: type
+        type: string
+      - description: Sort field (name, created_at, updated_at, priority)
+        in: query
+        name: sort
+        type: string
+      - description: Sort order (asc, desc)
+        in: query
+        name: order
         type: string
       - description: Page number (1-based)
         in: query
@@ -3218,6 +3436,10 @@ paths:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
@@ -3807,9 +4029,21 @@ paths:
         name: gateway_id
         required: true
         type: string
-      - description: Filter by name (substring match)
+      - description: 'Substring match on name (alias: name)'
+        in: query
+        name: search
+        type: string
+      - description: Alias of search
         in: query
         name: name
+        type: string
+      - description: Sort field (name, created_at, updated_at)
+        in: query
+        name: sort
+        type: string
+      - description: Sort order (asc, desc)
+        in: query
+        name: order
         type: string
       - description: Page number (1-based)
         in: query
@@ -3832,6 +4066,10 @@ paths:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
@@ -4178,7 +4416,9 @@ paths:
     put:
       consumes:
       - application/json
-      description: Updates an existing gateway.
+      description: Updates an existing gateway. Tenant JWTs may not send entitlements
+        (422). Platform tier downgrades that would leave the tenant over the new MaxInstances
+        return 409 — delete excess gateways first.
       parameters:
       - description: Gateway id
         format: uuid
@@ -4215,6 +4455,10 @@ paths:
           description: Conflict
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
       - BearerAuth: []
       summary: Update a gateway
@@ -4243,11 +4487,25 @@ paths:
   /v1/models-catalog:
     get:
       description: Returns the catalog of supported models, optionally filtered by
-        provider.
+        provider. When gateway_id and registry_id are supplied for an AWS Bedrock
+        registry, the list is narrowed to the models those credentials can invoke
+        serverless (on-demand base models and system-defined inference profiles),
+        excluding Bedrock Marketplace, Provisioned Throughput and custom models. Malformed
+        ids and unreachable AWS endpoints are ignored and yield the full catalog.
       parameters:
       - description: Filter by provider id
         in: query
         name: provider
+        type: string
+      - description: Gateway of the registry to scope availability to
+        format: uuid
+        in: query
+        name: gateway_id
+        type: string
+      - description: Registry whose credentials decide model availability
+        format: uuid
+        in: query
+        name: registry_id
         type: string
       produces:
       - application/json

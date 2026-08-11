@@ -60,6 +60,66 @@ func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	}
 }
 
+func TestGetFirewallComplexityConfig(t *testing.T) {
+	t.Setenv("FIREWALL_BASE_URL", "https://firewall.example")
+	t.Setenv("FIREWALL_SECRET_KEY", "signing-secret")
+	cfg := getFirewallComplexityConfig()
+	if cfg.BaseURL != "https://firewall.example" {
+		t.Errorf("BaseURL = %q, want %q", cfg.BaseURL, "https://firewall.example")
+	}
+	if cfg.SecretKey != "signing-secret" {
+		t.Errorf("SecretKey = %q, want configured value", cfg.SecretKey)
+	}
+	if cfg.Timeout != 30*time.Second {
+		t.Errorf("Timeout = %s, want 30s", cfg.Timeout)
+	}
+}
+
+func TestGetProviderConfig_ResponseHeaderTimeout(t *testing.T) {
+	tests := []struct {
+		name           string
+		requestTimeout string
+		headerTimeout  string
+		wantRequest    time.Duration
+		wantHeader     time.Duration
+	}{
+		{
+			name:        "both unset fall back to defaults",
+			wantRequest: defaultProviderRequestTimeout,
+			wantHeader:  defaultProviderRequestTimeout,
+		},
+		{
+			name:           "header timeout tracks request timeout when unset",
+			requestTimeout: "300s",
+			wantRequest:    300 * time.Second,
+			wantHeader:     300 * time.Second,
+		},
+		{
+			name:           "explicit header timeout wins",
+			requestTimeout: "300s",
+			headerTimeout:  "45s",
+			wantRequest:    300 * time.Second,
+			wantHeader:     45 * time.Second,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("PROVIDER_REQUEST_TIMEOUT", tc.requestTimeout)
+			t.Setenv("PROVIDER_RESPONSE_HEADER_TIMEOUT", tc.headerTimeout)
+
+			cfg := getProviderConfig()
+
+			if cfg.RequestTimeout != tc.wantRequest {
+				t.Errorf("RequestTimeout = %s, want %s", cfg.RequestTimeout, tc.wantRequest)
+			}
+			if cfg.ResponseHeaderTimeout != tc.wantHeader {
+				t.Errorf("ResponseHeaderTimeout = %s, want %s", cfg.ResponseHeaderTimeout, tc.wantHeader)
+			}
+		})
+	}
+}
+
 func TestLoadConfig_PostgresLoginModes(t *testing.T) {
 	tests := []struct {
 		name, login, password, sslMode, wantLogin, wantPassword string
@@ -128,7 +188,7 @@ func TestNormalizeRedisLogin(t *testing.T) {
 func TestLoadConfig_RedisLoginModes(t *testing.T) {
 	tests := []struct {
 		name, login, password, wantLogin, wantPassword string
-		awsExtras                                       bool
+		awsExtras                                      bool
 	}{
 		{name: "blank defaults to default and preserves password", password: "configured-password", wantLogin: redisLoginDefault, wantPassword: "configured-password"},
 		{name: "whitespace defaults to default", login: " \t ", password: "configured-password", wantLogin: redisLoginDefault, wantPassword: "configured-password"},
@@ -320,6 +380,9 @@ func TestLoadConfig_B1RuntimeDefaultsAndOverrides(t *testing.T) {
 	}
 	if cfg.Telemetry.KafkaTopic != defaultTelemetryKafkaTopic {
 		t.Errorf("Telemetry.KafkaTopic = %q, want %q", cfg.Telemetry.KafkaTopic, defaultTelemetryKafkaTopic)
+	}
+	if cfg.Telemetry.OpsMetricsEnabled {
+		t.Errorf("Telemetry.OpsMetricsEnabled default = true, want false")
 	}
 	if cfg.Metrics.QueueSize != defaultMetricsQueueSize {
 		t.Errorf("Metrics.QueueSize = %d, want %d", cfg.Metrics.QueueSize, defaultMetricsQueueSize)
@@ -539,8 +602,7 @@ func valid() *Config {
 
 func validServer() ServerConfig {
 	return ServerConfig{
-		GatewayDiscoveryMode: GatewayDiscoveryModeHeader,
-		GatewayBaseDomain:    "gw.example",
+		GatewayBaseDomain: "gw.example",
 	}
 }
 

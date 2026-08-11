@@ -34,6 +34,7 @@ import (
 	authsession "github.com/NeuralTrust/TrustGate/pkg/infra/auth/session"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	playgroundstore "github.com/NeuralTrust/TrustGate/pkg/infra/metrics/playground"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
@@ -46,6 +47,9 @@ type healthParams struct {
 }
 
 func API(c *container.Container) error {
+	if err := c.Provide(o11y.NewProvider); err != nil {
+		return err
+	}
 	if err := c.Provide(func(p healthParams) *apihandler.HealthHandler {
 		var checks []apihandler.ReadinessCheck
 		if p.Store != nil {
@@ -118,6 +122,7 @@ func API(c *container.Container) error {
 			mtls.NewXFCCExtractor(),
 			sessionVerifier,
 			cfg.Server.TrustXFCCFrom,
+			cfg.Server.MCPDefaultIdP.Issuer != "",
 		)
 	}); err != nil {
 		return err
@@ -129,7 +134,7 @@ func API(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(func(cfg *config.Config, finder appgateway.Finder) resolver.GatewayResolver {
-		return resolver.NewGatewayResolver(finder, cfg.Server.GatewayDiscoveryMode, cfg.Server.GatewayBaseDomain)
+		return resolver.NewGatewayResolver(finder, cfg.Server.GatewayBaseDomain)
 	}); err != nil {
 		return err
 	}
@@ -191,7 +196,7 @@ func API(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(func(proxy appoauth.AuthProxy, finder appgateway.Finder, cfg *config.Config) *oauthhttp.AuthorizeHandler {
-		gateways := resolver.NewGatewayResolver(finder, cfg.Server.GatewayDiscoveryMode, cfg.Server.MCPBaseDomain)
+		gateways := resolver.NewGatewayResolver(finder, cfg.Server.MCPBaseDomain)
 		return oauthhttp.NewAuthorizeHandler(proxy, gateways)
 	}); err != nil {
 		return err
@@ -200,7 +205,7 @@ func API(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(func(proxy appoauth.AuthProxy, finder appgateway.Finder, cfg *config.Config) *oauthhttp.TokenHandler {
-		gateways := resolver.NewGatewayResolver(finder, cfg.Server.GatewayDiscoveryMode, cfg.Server.MCPBaseDomain)
+		gateways := resolver.NewGatewayResolver(finder, cfg.Server.MCPBaseDomain)
 		return oauthhttp.NewTokenHandler(proxy, gateways)
 	}); err != nil {
 		return err

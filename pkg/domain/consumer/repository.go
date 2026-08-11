@@ -18,13 +18,20 @@ import (
 	"context"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 )
 
+// SortableFields are the whitelist of query fields accepted by list sort.
+var SortableFields = []string{"name", "created_at", "updated_at", "type"}
+
 type ListFilter struct {
-	GatewayID    ids.GatewayID
-	NameContains string
-	Page         int
-	Size         int
+	GatewayID ids.GatewayID
+	Search    string
+	Type      Type
+	Active    *bool
+	AuthID    ids.AuthID
+	Page      listing.Page
+	Sort      listing.Sort
 }
 
 // Reader exposes the read-only queries over the consumer store.
@@ -39,7 +46,10 @@ type Reader interface {
 // Writer persists consumer aggregate lifecycle changes.
 type Writer interface {
 	Save(ctx context.Context, c *Consumer) error
-	Update(ctx context.Context, c *Consumer) error
+	// Update persists the consumer row and, when registries is non-nil, replaces
+	// its registry association set in the same transaction. A nil registries
+	// leaves the existing links untouched.
+	Update(ctx context.Context, c *Consumer, registries *RegistryBindings) error
 	Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.ConsumerID) error
 }
 

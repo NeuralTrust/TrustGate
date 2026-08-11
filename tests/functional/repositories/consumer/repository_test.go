@@ -13,6 +13,7 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/listing"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
@@ -192,6 +193,118 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	}
 	if got.RoutingMode != domain.RoutingModeInline {
 		t.Fatalf("RoutingMode = %q, want %q", got.RoutingMode, domain.RoutingModeInline)
+	}
+}
+
+func TestRepository_SavePreservesRegistryOrder(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "ordered-registries")
+	first := seedRegistry(t, f.be, gwID, "be-first")
+	second := seedRegistry(t, f.be, gwID, "be-second")
+	third := seedRegistry(t, f.be, gwID, "be-third")
+
+	want := []ids.RegistryID{third, first, second}
+	c := validConsumer(t, gwID, "ordered-consumer", want...)
+	if err := f.repo.Save(ctx, c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if len(got.RegistryIDs) != len(want) {
+		t.Fatalf("RegistryIDs = %v, want %v", got.RegistryIDs, want)
+	}
+	for i := range want {
+		if got.RegistryIDs[i] != want[i] {
+			t.Fatalf("RegistryIDs = %v, want %v", got.RegistryIDs, want)
+		}
+	}
+}
+
+// TestRepository_UpdateSwitchesRoleBasedToInlineWithRegistries pins the write
+// order the routing-mode DB guard imposes: the consumers row has to leave
+// role_based before any registry link can be inserted.
+func TestRepository_UpdateSwitchesRoleBasedToInlineWithRegistries(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "rb-to-inline")
+	beID := seedRegistry(t, f.be, gwID, "rb-to-inline-be")
+	roleID := seedRole(t, f.roles, gwID, "rb-to-inline-role")
+
+	c, err := domain.New(domain.CreateParams{
+		GatewayID:   gwID,
+		Name:        "rb-consumer",
+		Type:        domain.TypeLLM,
+		RoutingMode: domain.RoutingModeRoleBased,
+		RoleIDs:     []ids.RoleID{roleID},
+	})
+	if err != nil {
+		t.Fatalf("consumer domain.New: %v", err)
+	}
+	if err := f.repo.Save(ctx, c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	c.RoutingMode = domain.RoutingModeInline
+	c.RoleIDs = nil
+	c.RegistryIDs = []ids.RegistryID{beID}
+	c.RegistryWeights = map[ids.RegistryID]int{beID: 40}
+	bindings := &domain.RegistryBindings{IDs: c.RegistryIDs, Weights: c.RegistryWeights}
+	if err := f.repo.Update(ctx, c, bindings); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	got, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.RoutingMode != domain.RoutingModeInline {
+		t.Fatalf("RoutingMode = %q, want %q", got.RoutingMode, domain.RoutingModeInline)
+	}
+	if len(got.RegistryIDs) != 1 || got.RegistryIDs[0] != beID {
+		t.Fatalf("RegistryIDs = %v, want [%s]", got.RegistryIDs, beID)
+	}
+	if got.WeightFor(beID) != 40 {
+		t.Fatalf("WeightFor(%s) = %d, want 40", beID, got.WeightFor(beID))
+	}
+	if len(got.RoleIDs) != 0 {
+		t.Fatalf("RoleIDs = %v, want none", got.RoleIDs)
+	}
+}
+
+// TestRepository_UpdateReplacesRegistryLinks asserts Update persists the whole
+// association set: dropped registries are detached and order is rewritten.
+func TestRepository_UpdateReplacesRegistryLinks(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "replace-links")
+	first := seedRegistry(t, f.be, gwID, "replace-be-first")
+	second := seedRegistry(t, f.be, gwID, "replace-be-second")
+	third := seedRegistry(t, f.be, gwID, "replace-be-third")
+
+	c := validConsumer(t, gwID, "replace-consumer", first, second)
+	saveWithRegistries(t, f, c)
+
+	c.RegistryIDs = []ids.RegistryID{third, second}
+	if err := f.repo.Update(ctx, c, &domain.RegistryBindings{IDs: c.RegistryIDs}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	got, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	want := []ids.RegistryID{third, second}
+	if len(got.RegistryIDs) != len(want) {
+		t.Fatalf("RegistryIDs = %v, want %v", got.RegistryIDs, want)
+	}
+	for i := range want {
+		if got.RegistryIDs[i] != want[i] {
+			t.Fatalf("RegistryIDs = %v, want %v", got.RegistryIDs, want)
+		}
 	}
 }
 
@@ -575,7 +688,7 @@ func TestRepository_Update_RejectsRegistryReferenceAfterDetach(t *testing.T) {
 
 	c.ModelPolicies = domain.ModelPolicies{beID: {Allowed: []string{"gpt-4o"}}}
 	c.UpdatedAt = time.Now().UTC()
-	err := f.repo.Update(ctx, c)
+	err := f.repo.Update(ctx, c, nil)
 	if !errors.Is(err, registrydomain.ErrInvalidRegistryID) {
 		t.Fatalf("err = %v, want ErrInvalidRegistryID", err)
 	}
@@ -586,7 +699,7 @@ func TestRepository_Update_NotFound(t *testing.T) {
 	gwID := seedGateway(t, f.gw, "pool-u2")
 	beID := seedRegistry(t, f.be, gwID, "be-u2")
 	c := validConsumer(t, gwID, "ghost", beID)
-	err := f.repo.Update(context.Background(), c)
+	err := f.repo.Update(context.Background(), c, nil)
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
@@ -634,7 +747,7 @@ func TestRepository_List_FilterByGatewayAndName(t *testing.T) {
 	mustSave(validConsumer(t, gw1, "openai-stag", be1))
 	mustSave(validConsumer(t, gw2, "anthropic-prod", be2))
 
-	items, total, err := f.repo.List(ctx, domain.ListFilter{GatewayID: gw1, Page: 1, Size: 10})
+	items, total, err := f.repo.List(ctx, domain.ListFilter{GatewayID: gw1, Page: listing.Page{Number: 1, Size: 10}})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -642,7 +755,7 @@ func TestRepository_List_FilterByGatewayAndName(t *testing.T) {
 		t.Fatalf("List(gw1) total=%d len=%d, want 2/2", total, len(items))
 	}
 
-	items, total, err = f.repo.List(ctx, domain.ListFilter{NameContains: "anthropic", Page: 1, Size: 10})
+	items, total, err = f.repo.List(ctx, domain.ListFilter{Search: "anthropic", Page: listing.Page{Number: 1, Size: 10}})
 	if err != nil {
 		t.Fatalf("List name: %v", err)
 	}
