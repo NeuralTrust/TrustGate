@@ -165,3 +165,14 @@ func TestCanonical_OpenAI_Completions_DeveloperAndRefusal(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "I cannot help with that.", cresp.Content)
 }
+
+func TestDecodeCompletionsStreamChunk_ReasoningOnly(t *testing.T) {
+	t.Parallel()
+
+	chunk := []byte(`{"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"reasoning_content":"think"}}]}`)
+	sc, err := (&OpenAIAdapter{}).DecodeStreamChunk(chunk)
+	require.NoError(t, err)
+	require.NotNil(t, sc)
+	assert.Equal(t, "think", sc.ReasoningDelta)
+	assert.Empty(t, sc.Delta)
+}

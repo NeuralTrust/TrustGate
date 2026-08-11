@@ -44,3 +44,45 @@ func TestStreamAssistantTextEmpty(t *testing.T) {
 		t.Fatalf("nil registry got %q, want empty", got)
 	}
 }
+
+func TestStreamCanonicalResponseContentReasoningToolCalls(t *testing.T) {
+	t.Parallel()
+
+	reg := adapter.NewRegistry()
+	sse := "" +
+		"data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"think \"}}]}\n" +
+		"data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"hard\"}}]}\n" +
+		"data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi \"}}]}\n" +
+		"data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"there\"}}]}\n" +
+		"data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"search\",\"arguments\":\"{\\\"q\\\"\"}}]}}]}\n" +
+		"data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\":\\\"x\\\"}\"}}]}}]}\n" +
+		"data: [DONE]\n"
+
+	got := streamCanonicalResponse(reg, []byte(sse), adapter.FormatOpenAI)
+	if got == nil {
+		t.Fatal("expected canonical response")
+	}
+	if got.Content != "hi there" {
+		t.Fatalf("content = %q, want %q", got.Content, "hi there")
+	}
+	if got.Reasoning == nil || got.Reasoning.ThinkingText != "think hard" {
+		t.Fatalf("reasoning = %#v, want ThinkingText=%q", got.Reasoning, "think hard")
+	}
+	if len(got.ToolCalls) != 1 {
+		t.Fatalf("tool_calls len = %d, want 1", len(got.ToolCalls))
+	}
+	tc := got.ToolCalls[0]
+	if tc.ID != "call_1" || tc.Name != "search" || tc.Arguments != `{"q":"x"}` {
+		t.Fatalf("tool_call = %#v", tc)
+	}
+}
+
+func TestStreamCanonicalResponseKeepaliveAndEmpty(t *testing.T) {
+	t.Parallel()
+
+	reg := adapter.NewRegistry()
+	sse := ": keepalive\n\ndata: [DONE]\n"
+	if got := streamCanonicalResponse(reg, []byte(sse), adapter.FormatOpenAI); got != nil {
+		t.Fatalf("got %#v, want nil", got)
+	}
+}
