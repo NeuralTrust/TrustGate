@@ -2966,7 +2966,9 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                  "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));",
+                  "pm.test('served registry is not advertised', () => !pm.response.headers.get('X-Selected-Registry'));"
                 ]
               }
             }
@@ -3303,7 +3305,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                  "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                 ]
               }
             }
@@ -3714,7 +3717,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                  "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                 ]
               }
             }
@@ -4195,7 +4199,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                  "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                 ]
               }
             }
@@ -4675,7 +4680,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                  "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                 ]
               }
             }
@@ -8190,7 +8196,8 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }
@@ -8338,7 +8345,8 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }
@@ -8678,7 +8686,8 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }
@@ -8829,7 +8838,8 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }
@@ -9385,7 +9395,8 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }
@@ -9533,7 +9544,8 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }
@@ -9873,7 +9885,8 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }
@@ -10022,7 +10035,8 @@
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
                       "pm.test('model was downgraded', () => pm.response.headers.get('X-NeuralTrust-Model-Downgraded') === 'gpt-4o→gpt-4o-mini');",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }
@@ -10115,7 +10129,8 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }

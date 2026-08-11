@@ -116,6 +116,7 @@ func TestSmartRouting_MapsScoreToModelOnOneRegistry(t *testing.T) {
 
 			if got == nil {
 				t.Fatalf("score %g: expected a route", tc.score)
+				return
 			}
 			if got.Model != tc.want {
 				t.Fatalf("score %g: model = %q, want %q", tc.score, got.Model, tc.want)

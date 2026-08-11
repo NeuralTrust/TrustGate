@@ -76,6 +76,7 @@ func injectStreamIncludeUsage(body []byte) []byte {
 // toolCallEntry holds accumulated tool call data for a single index.
 type toolCallEntry struct {
 	ID   string
+	Kind adapter.CanonicalToolKind
 	Name string
 	Args string
 }
@@ -96,7 +97,7 @@ func (a *toolCallAccumulator) Merge(deltas []adapter.StreamToolCallDelta) {
 		tc := &deltas[i]
 		cur := (*a)[tc.Index]
 		if cur == nil {
-			cur = &toolCallEntry{ID: tc.ID, Name: tc.Name}
+			cur = &toolCallEntry{ID: tc.ID, Kind: tc.Kind, Name: tc.Name}
 			(*a)[tc.Index] = cur
 		}
 		if tc.Name != "" {
@@ -104,6 +105,9 @@ func (a *toolCallAccumulator) Merge(deltas []adapter.StreamToolCallDelta) {
 		}
 		if tc.ID != "" {
 			cur.ID = tc.ID
+		}
+		if tc.Kind != adapter.ToolKindFunction {
+			cur.Kind = tc.Kind
 		}
 		cur.Args += tc.ArgumentsDelta
 	}
@@ -125,6 +129,7 @@ func (a *toolCallAccumulator) Flush() []adapter.StreamToolCallDelta {
 		deltas = append(deltas, adapter.StreamToolCallDelta{
 			Index:          idx,
 			ID:             cur.ID,
+			Kind:           cur.Kind,
 			Name:           cur.Name,
 			ArgumentsDelta: cur.Args,
 		})

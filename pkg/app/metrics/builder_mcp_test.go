@@ -78,7 +78,6 @@ func TestBuilder_MCPFoldsUpstreamAndLatency(t *testing.T) {
 	assert.Equal(t, int64(200), evt.Latency.TotalMs)
 	assert.Equal(t, int64(120), evt.Latency.ProviderMs)
 	assert.Equal(t, int64(0), evt.Latency.PoliciesMs)
-	assert.Equal(t, int64(80), evt.Latency.RoutingMs)
 	assert.Equal(t, int64(80), evt.Latency.GatewayMs)
 
 	assert.Nil(t, evt.Usage)
@@ -132,8 +131,7 @@ func TestBuilder_MCPFoldsPolicyChain(t *testing.T) {
 	assert.Equal(t, int64(34), evt.Latency.TotalMs)
 	assert.Equal(t, int64(3), evt.Latency.ProviderMs)
 	assert.Equal(t, int64(31), evt.Latency.PoliciesMs)
-	assert.Equal(t, int64(0), evt.Latency.RoutingMs)
-	assert.Equal(t, int64(31), evt.Latency.GatewayMs)
+	assert.Equal(t, int64(0), evt.Latency.GatewayMs)
 }
 
 func TestBuilder_LLMKindDefault(t *testing.T) {

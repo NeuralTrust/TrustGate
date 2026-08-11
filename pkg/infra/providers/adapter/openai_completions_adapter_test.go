@@ -165,3 +165,214 @@ func TestCanonical_OpenAI_Completions_DeveloperAndRefusal(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "I cannot help with that.", cresp.Content)
 }
+
+func TestDecodeCompletionsStreamChunk_ReasoningOnly(t *testing.T) {
+	t.Parallel()
+
+	chunk := []byte(`{"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"reasoning_content":"think"}}]}`)
+	sc, err := (&OpenAIAdapter{}).DecodeStreamChunk(chunk)
+	require.NoError(t, err)
+	require.NotNil(t, sc)
+	assert.Equal(t, "think", sc.ReasoningDelta)
+	assert.Empty(t, sc.Delta)
+}
+
+// GPT-5 models accept freeform "custom" tools alongside classic "function"
+// tools. A canonical round-trip must not turn one into the other (ENG-1281).
+func TestCanonical_OpenAI_Completions_CustomToolRoundtrip(t *testing.T) {
+	tests := []struct {
+		name  string
+		tool  string
+		check func(t *testing.T, canonical CanonicalTool, encoded map[string]any)
+	}{
+		{
+			name: "custom tool keeps its type, name and format",
+			tool: `{"type":"custom","custom":{"name":"bash","description":"Run a shell command","format":{"type":"grammar","syntax":"lark","definition":"start: /.+/"}}}`,
+			check: func(t *testing.T, canonical CanonicalTool, encoded map[string]any) {
+				assert.Equal(t, ToolKindCustom, canonical.Kind)
+				assert.Equal(t, "bash", canonical.Name)
+				assert.Equal(t, "Run a shell command", canonical.Description)
+
+				assert.Equal(t, "custom", encoded["type"])
+				assert.Nil(t, encoded["function"], "a custom tool must not be emitted as a function")
+
+				custom, ok := encoded["custom"].(map[string]any)
+				require.True(t, ok, "custom payload must survive: %v", encoded)
+				assert.Equal(t, "bash", custom["name"])
+				format, ok := custom["format"].(map[string]any)
+				require.True(t, ok, "format must survive verbatim: %v", custom)
+				assert.Equal(t, "lark", format["syntax"])
+				assert.Equal(t, "start: /.+/", format["definition"])
+			},
+		},
+		{
+			name: "custom tool without a format stays a custom tool",
+			tool: `{"type":"custom","custom":{"name":"freeform"}}`,
+			check: func(t *testing.T, canonical CanonicalTool, encoded map[string]any) {
+				assert.Equal(t, ToolKindCustom, canonical.Kind)
+				assert.Equal(t, "freeform", canonical.Name)
+				assert.Equal(t, "custom", encoded["type"])
+				custom, ok := encoded["custom"].(map[string]any)
+				require.True(t, ok)
+				assert.Equal(t, "freeform", custom["name"])
+			},
+		},
+		{
+			name: "function tool is unaffected",
+			tool: `{"type":"function","function":{"name":"read_file","description":"Read","parameters":{"type":"object","properties":{"p":{"type":"string"}}}}}`,
+			check: func(t *testing.T, canonical CanonicalTool, encoded map[string]any) {
+				assert.Equal(t, ToolKindFunction, canonical.Kind)
+				assert.Equal(t, "read_file", canonical.Name)
+				assert.Equal(t, "function", encoded["type"])
+				assert.Nil(t, encoded["custom"])
+				fn, ok := encoded["function"].(map[string]any)
+				require.True(t, ok)
+				assert.Equal(t, "read_file", fn["name"])
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			a := &OpenAIAdapter{}
+			body := `{"model":"gpt-5.1","messages":[{"role":"user","content":"hi"}],"tools":[` + tc.tool + `]}`
+
+			canonical, err := a.DecodeRequest([]byte(body))
+			require.NoError(t, err)
+			require.Len(t, canonical.Tools, 1)
+
+			encoded, err := a.EncodeRequest(canonical)
+			require.NoError(t, err)
+
+			var out struct {
+				Tools []map[string]any `json:"tools"`
+			}
+			require.NoError(t, json.Unmarshal(encoded, &out))
+			require.Len(t, out.Tools, 1)
+
+			tc.check(t, canonical.Tools[0], out.Tools[0])
+		})
+	}
+}
+
+// An agent loop replays previous custom tool calls in the message history, so
+// the call shape must round-trip as faithfully as the tool declaration.
+func TestCanonical_OpenAI_Completions_CustomToolCallRoundtrip(t *testing.T) {
+	a := &OpenAIAdapter{}
+	body := `{
+		"model":"gpt-5.1",
+		"messages":[
+			{"role":"user","content":"run ls"},
+			{"role":"assistant","tool_calls":[
+				{"id":"call_1","type":"custom","custom":{"name":"bash","input":"ls -la /tmp"}},
+				{"id":"call_2","type":"function","function":{"name":"read_file","arguments":"{\"p\":\"a.txt\"}"}}
+			]},
+			{"role":"tool","tool_call_id":"call_1","content":"total 0"}
+		]
+	}`
+
+	cr, err := a.DecodeRequest([]byte(body))
+	require.NoError(t, err)
+	require.Len(t, cr.Messages, 3)
+
+	calls := cr.Messages[1].ToolCalls
+	require.Len(t, calls, 2)
+	assert.Equal(t, ToolKindCustom, calls[0].Kind)
+	assert.Equal(t, "bash", calls[0].Name)
+	assert.Equal(t, "ls -la /tmp", calls[0].Arguments, "freeform input is carried in Arguments")
+	assert.Equal(t, ToolKindFunction, calls[1].Kind)
+	assert.Equal(t, "read_file", calls[1].Name)
+
+	encoded, err := a.EncodeRequest(cr)
+	require.NoError(t, err)
+
+	var out struct {
+		Messages []struct {
+			Role      string           `json:"role"`
+			ToolCalls []map[string]any `json:"tool_calls"`
+		} `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(encoded, &out))
+
+	var assistant []map[string]any
+	for _, m := range out.Messages {
+		if m.Role == "assistant" {
+			assistant = m.ToolCalls
+		}
+	}
+	require.Len(t, assistant, 2)
+
+	assert.Equal(t, "custom", assistant[0]["type"])
+	assert.Nil(t, assistant[0]["function"])
+	custom, ok := assistant[0]["custom"].(map[string]any)
+	require.True(t, ok, "custom call payload must survive: %v", assistant[0])
+	assert.Equal(t, "bash", custom["name"])
+	assert.Equal(t, "ls -la /tmp", custom["input"])
+
+	assert.Equal(t, "function", assistant[1]["type"])
+	assert.Nil(t, assistant[1]["custom"])
+}
+
+// Streamed custom tool calls put their freeform payload under "input" rather
+// than "arguments"; re-encoding a chunk must not flatten them into an empty
+// function call (ENG-1281).
+func TestCanonical_OpenAI_Completions_CustomToolCallStreamRoundtrip(t *testing.T) {
+	a := &OpenAIAdapter{}
+	chunks := []string{
+		`{"id":"c1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"custom","custom":{"name":"bash"}}]}}]}`,
+		`{"id":"c1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"custom":{"input":"ls -la"}}]}}]}`,
+	}
+
+	var name, input string
+	for _, raw := range chunks {
+		sc, err := a.DecodeStreamChunk([]byte(raw))
+		require.NoError(t, err)
+		require.Len(t, sc.ToolCallDeltas, 1)
+		delta := sc.ToolCallDeltas[0]
+		assert.Equal(t, ToolKindCustom, delta.Kind)
+		if delta.Name != "" {
+			name = delta.Name
+		}
+		input += delta.ArgumentsDelta
+
+		lines, err := a.EncodeStreamChunk(sc)
+		require.NoError(t, err)
+		require.NotEmpty(t, lines)
+
+		payload := string(lines[0])
+		assert.Contains(t, payload, `"type":"custom"`)
+		assert.NotContains(t, payload, `"function"`, "a custom call must not be re-encoded as a function")
+	}
+
+	assert.Equal(t, "bash", name)
+	assert.Equal(t, "ls -la", input)
+}
+
+// Tool-rewriting plugins re-encode the canonical request; a custom tool that
+// survives the cycle must still be filterable by name.
+func TestCanonical_OpenAI_Completions_CustomToolIsNamedForPlugins(t *testing.T) {
+	a := &OpenAIAdapter{}
+	body := `{"model":"gpt-5.1","messages":[{"role":"user","content":"hi"}],"tools":[
+		{"type":"function","function":{"name":"read_file","parameters":{"type":"object"}}},
+		{"type":"custom","custom":{"name":"bash","format":{"type":"text"}}}
+	]}`
+
+	canonical, err := a.DecodeRequest([]byte(body))
+	require.NoError(t, err)
+	require.Len(t, canonical.Tools, 2)
+
+	names := []string{canonical.Tools[0].Name, canonical.Tools[1].Name}
+	assert.Equal(t, []string{"read_file", "bash"}, names)
+
+	canonical.Tools = canonical.Tools[1:]
+	encoded, err := a.EncodeRequest(canonical)
+	require.NoError(t, err)
+
+	var out struct {
+		Tools []map[string]any `json:"tools"`
+	}
+	require.NoError(t, json.Unmarshal(encoded, &out))
+	require.Len(t, out.Tools, 1)
+	assert.Equal(t, "custom", out.Tools[0]["type"])
+}

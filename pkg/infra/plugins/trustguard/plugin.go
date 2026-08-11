@@ -272,8 +272,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 				reqTools = creq.Tools
 			}
 			if in.Response.Streaming {
-				text = streamAssistantText(p.registry, in.Response.Body, format)
-				cresp = &adapter.CanonicalResponse{Content: text}
+				cresp = streamCanonicalResponse(p.registry, in.Response.Body, format)
 			} else {
 				var decErr error
 				cresp, decErr = p.registry.DecodeResponseFor(in.Response.Body, format)

@@ -27,6 +27,7 @@ type fakeUpstream struct {
 	mu       sync.Mutex
 	lastBody []byte
 	lastAuth string
+	lastPath string
 }
 
 func (u *fakeUpstream) URL() string { return u.server.URL }
@@ -45,12 +46,21 @@ func (u *fakeUpstream) LastAuth() string {
 	return u.lastAuth
 }
 
+// LastPath reports the endpoint the gateway called, which is how a test tells
+// the OpenAI chat surfaces apart.
+func (u *fakeUpstream) LastPath() string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.lastPath
+}
+
 func (u *fakeUpstream) record(r *http.Request) {
 	atomic.AddInt64(&u.hits, 1)
 	body, _ := io.ReadAll(r.Body)
 	u.mu.Lock()
 	u.lastBody = body
 	u.lastAuth = r.Header.Get("Authorization")
+	u.lastPath = r.URL.Path
 	u.mu.Unlock()
 }
 
@@ -243,6 +253,8 @@ func TestProxyE2E_NonStreaming_NoLB(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, status, "body: %s", body)
 		assert.Equal(t, "openai", headers.Get("X-Selected-Provider"))
+		assert.Equal(t, "gpt-4o-mini", headers.Get("X-Selected-Model"))
+		assert.Empty(t, headers.Get("X-Selected-Registry"))
 		assert.Contains(t, string(body), "hello-from-upstream")
 		assert.Equal(t, 1, up.Hits(), "a successful call must hit the upstream exactly once")
 	})

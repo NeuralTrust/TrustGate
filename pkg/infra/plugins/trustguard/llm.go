@@ -57,6 +57,11 @@ func llmResponsePayload(cresp *adapter.CanonicalResponse, reqTools []adapter.Can
 			content = ""
 		}
 		msg["content"] = content
+		if cresp.Reasoning != nil {
+			if thinking := strings.TrimSpace(cresp.Reasoning.ThinkingText); thinking != "" {
+				msg["reasoning_content"] = thinking
+			}
+		}
 		if len(cresp.ToolCalls) > 0 {
 			calls := make([]map[string]any, 0, len(cresp.ToolCalls))
 			for _, tc := range cresp.ToolCalls {
@@ -201,6 +206,9 @@ func responseHasInspectableContent(cresp *adapter.CanonicalResponse) bool {
 		content = ""
 	}
 	if strings.TrimSpace(content) != "" {
+		return true
+	}
+	if cresp.Reasoning != nil && strings.TrimSpace(cresp.Reasoning.ThinkingText) != "" {
 		return true
 	}
 	return len(cresp.ToolCalls) > 0
