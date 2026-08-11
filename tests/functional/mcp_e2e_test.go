@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,16 +27,107 @@ import (
 
 // startMCPUpstream runs a real MCP server (streamable HTTP) inside the test
 // process; the gateway process reaches it through the loopback interface.
+// The handler is stateful, so it serves the legacy era only: the SDK withholds
+// the 2026-07-28 protocol version unless the transport is stateless.
 func startMCPUpstream(t *testing.T, configure func(*sdk.Server)) *httptest.Server {
+	return startMCPUpstreamWithOptions(t, configure, nil)
+}
+
+// startModernMCPUpstream runs a stateless MCP server, the only mode in which the
+// SDK advertises and serves the 2026-07-28 protocol.
+func startModernMCPUpstream(t *testing.T, configure func(*sdk.Server)) *httptest.Server {
+	return startMCPUpstreamWithOptions(t, configure, &sdk.StreamableHTTPOptions{Stateless: true})
+}
+
+func startMCPUpstreamWithOptions(
+	t *testing.T,
+	configure func(*sdk.Server),
+	options *sdk.StreamableHTTPOptions,
+) *httptest.Server {
 	t.Helper()
 	server := sdk.NewServer(&sdk.Implementation{Name: "fake-upstream", Version: "1.0"}, nil)
 	if configure != nil {
 		configure(server)
 	}
 	srv := httptest.NewServer(sdk.NewStreamableHTTPHandler(
-		func(*http.Request) *sdk.Server { return server }, nil))
+		func(*http.Request) *sdk.Server { return server }, options))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+type eraMCPFixture struct {
+	server      *httptest.Server
+	initializes atomic.Int64
+	rejected    atomic.Int64
+}
+
+func startEraMCPUpstream(t *testing.T, legacyOnly bool, toolName string) *eraMCPFixture {
+	return startAuthenticatedEraMCPUpstream(t, legacyOnly, toolName, nil)
+}
+
+func startAuthenticatedEraMCPUpstream(
+	t *testing.T,
+	legacyOnly bool,
+	toolName string,
+	expectedHeaders map[string]string,
+) *eraMCPFixture {
+	t.Helper()
+	server := sdk.NewServer(&sdk.Implementation{Name: "era-upstream", Version: "1.0"}, nil)
+	addTool(server, toolName)
+	var options *sdk.StreamableHTTPOptions
+	if !legacyOnly {
+		options = &sdk.StreamableHTTPOptions{Stateless: true}
+	}
+	sdkHandler := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, options)
+	fixture := &eraMCPFixture{}
+	fixture.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for key, expected := range expectedHeaders {
+			if r.Header.Get(key) != expected {
+				fixture.rejected.Add(1)
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if err := r.Body.Close(); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		r.Body = io.NopCloser(strings.NewReader(string(raw)))
+		var envelope struct {
+			Method string `json:"method"`
+		}
+		if err := json.Unmarshal(raw, &envelope); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if legacyOnly && envelope.Method == "server/discover" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			if _, err := w.Write([]byte(`{`)); err != nil {
+				return
+			}
+			return
+		}
+		if !legacyOnly && envelope.Method == "initialize" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			if _, err := w.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32022,"message":"modern only"}}`)); err != nil {
+				return
+			}
+			return
+		}
+		if envelope.Method == "initialize" {
+			fixture.initializes.Add(1)
+		}
+		sdkHandler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(fixture.server.Close)
+	return fixture
 }
 
 func addTool(server *sdk.Server, name string) {
@@ -160,11 +252,19 @@ func listedNames(t *testing.T, result map[string]any, key string) []string {
 }
 
 func mcpRegistryPayload(name, url string) map[string]any {
+	return mcpRegistryPayloadMode(name, url, "")
+}
+
+func mcpRegistryPayloadMode(name, url, protocolMode string) map[string]any {
+	target := map[string]any{"url": url}
+	if protocolMode != "" {
+		target["protocol_mode"] = protocolMode
+	}
 	return map[string]any{
 		"name":       name,
 		"type":       "mcp",
 		"weight":     1,
-		"mcp_target": map[string]any{"url": url},
+		"mcp_target": target,
 	}
 }
 
@@ -265,6 +365,129 @@ func TestMCPServer_ToolsListAndCallWithFullAccess(t *testing.T) {
 	raw, err := json.Marshal(result)
 	require.NoError(t, err)
 	require.Contains(t, string(raw), "echo:hola")
+}
+
+func TestMCPServer_ProtocolModeMatrixPreservesTools(t *testing.T) {
+	for _, mode := range []string{"auto", "modern", "legacy"} {
+		t.Run(mode, func(t *testing.T) {
+			start := startMCPUpstream
+			if mode == "modern" {
+				start = startModernMCPUpstream
+			}
+			upstream := start(t, func(s *sdk.Server) { addTool(s, "echo-"+mode) })
+			gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
+			registryID := CreateRegistry(
+				t,
+				gatewayID,
+				mcpRegistryPayloadMode(uniqueName("mcp-reg"), upstream.URL, mode),
+			)
+			consumerID, key := createMCPConsumer(t, gatewayID, []string{registryID}, nil, "")
+
+			status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
+			names := listedNames(t, rpcResult(t, status, body), "tools")
+			require.Equal(t, []string{"echo-" + mode}, names)
+
+			status, body = mcpRPC(
+				t,
+				gatewayID,
+				consumerID,
+				apiKeyHeaders(key),
+				"tools/call",
+				map[string]any{"name": "echo-" + mode, "arguments": map[string]any{"message": mode}},
+			)
+			raw, err := json.Marshal(rpcResult(t, status, body))
+			require.NoError(t, err)
+			require.Contains(t, string(raw), "echo-"+mode+":"+mode)
+		})
+	}
+}
+
+func TestMCPServer_AutoNegotiatesEraSpecificUpstreams(t *testing.T) {
+	tests := []struct {
+		name            string
+		legacyOnly      bool
+		wantInitializes int64
+	}{
+		{name: "modern only"},
+		{name: "legacy only", legacyOnly: true, wantInitializes: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			toolName := "echo-" + strings.ReplaceAll(tt.name, " ", "-")
+			fixture := startEraMCPUpstream(t, tt.legacyOnly, toolName)
+			gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
+			registryID := CreateRegistry(
+				t,
+				gatewayID,
+				mcpRegistryPayloadMode(uniqueName("mcp-reg"), fixture.server.URL, "auto"),
+			)
+			consumerID, key := createMCPConsumer(
+				t,
+				gatewayID,
+				[]string{registryID},
+				[]map[string]any{{"registry_id": registryID, "tool": toolName, "expose_as": "alias-era"}},
+				"closed",
+			)
+			for range 2 {
+				status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
+				require.Equal(t, []string{"alias-era"}, listedNames(t, rpcResult(t, status, body), "tools"))
+			}
+			require.Equal(t, tt.wantInitializes, fixture.initializes.Load())
+		})
+	}
+}
+
+func TestMCPServer_AutoNegotiationIsolatesSouthboundCredentials(t *testing.T) {
+	const (
+		modernAuthorization = "Bearer modern-southbound-secret"
+		legacyAuthorization = "Bearer legacy-southbound-secret"
+	)
+	modern := startAuthenticatedEraMCPUpstream(t, false, "modern-authenticated", map[string]string{
+		"Authorization": modernAuthorization,
+		"X-Target-ID":   "modern-target",
+	})
+	legacy := startAuthenticatedEraMCPUpstream(t, true, "legacy-authenticated", map[string]string{
+		"Authorization": legacyAuthorization,
+		"X-Target-ID":   "legacy-target",
+	})
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
+	createRegistry := func(name string, fixture *eraMCPFixture, authorization string, marker string) string {
+		payload := mcpRegistryPayloadMode(name, fixture.server.URL, "auto")
+		target := payload["mcp_target"].(map[string]any)
+		target["headers"] = map[string]string{"X-Target-ID": marker}
+		target["auth"] = map[string]any{
+			"mode":   "static",
+			"header": "Authorization",
+			"value":  authorization,
+		}
+		return CreateRegistry(t, gatewayID, payload)
+	}
+	modernRegistry := createRegistry(uniqueName("mcp-modern"), modern, modernAuthorization, "modern-target")
+	legacyRegistry := createRegistry(uniqueName("mcp-legacy"), legacy, legacyAuthorization, "legacy-target")
+	consumerID, key := createMCPConsumer(
+		t,
+		gatewayID,
+		[]string{modernRegistry, legacyRegistry},
+		[]map[string]any{
+			{"registry_id": modernRegistry, "tool": "modern-authenticated", "expose_as": "modern-tool"},
+			{"registry_id": legacyRegistry, "tool": "legacy-authenticated", "expose_as": "legacy-tool"},
+		},
+		"closed",
+	)
+
+	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
+	require.ElementsMatch(t, []string{"modern-tool", "legacy-tool"}, listedNames(t, rpcResult(t, status, body), "tools"))
+	for _, tool := range []string{"modern-tool", "legacy-tool"} {
+		status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
+			map[string]any{"name": tool, "arguments": map[string]any{"message": "isolated"}})
+		raw, err := json.Marshal(rpcResult(t, status, body))
+		require.NoError(t, err)
+		require.NotContains(t, string(raw), modernAuthorization)
+		require.NotContains(t, string(raw), legacyAuthorization)
+	}
+	require.Zero(t, modern.rejected.Load())
+	require.Zero(t, legacy.rejected.Load())
+	require.Equal(t, int64(1), legacy.initializes.Load())
 }
 
 func TestMCPServer_ToolkitFiltersAndAliasesTools(t *testing.T) {

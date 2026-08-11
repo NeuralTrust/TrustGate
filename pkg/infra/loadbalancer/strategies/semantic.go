@@ -23,8 +23,7 @@ import (
 	"sync"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
@@ -35,9 +34,10 @@ type backendVector struct {
 	magnitude float64
 }
 
+// Similarity is a registry property, so sibling routes of one registry score identically.
 type Semantic struct {
 	mu              sync.RWMutex
-	registries      []*registry.Registry
+	routes          []routingdomain.Route
 	embeddingRepo   embedding.Repository
 	serviceLocator  factory.EmbeddingServiceLocator
 	embeddingConfig *embedding.Config
@@ -48,12 +48,12 @@ type Semantic struct {
 
 func NewSemantic(
 	embeddingCfg *embedding.Config,
-	registries []*registry.Registry,
+	routes []routingdomain.Route,
 	embeddingRepo embedding.Repository,
 	serviceLocator factory.EmbeddingServiceLocator,
 ) *Semantic {
 	return &Semantic{
-		registries:      registries,
+		routes:          routes,
 		embeddingRepo:   embeddingRepo,
 		serviceLocator:  serviceLocator,
 		embeddingConfig: embeddingCfg,
@@ -61,30 +61,34 @@ func NewSemantic(
 	}
 }
 
-func (s *Semantic) Next(ctx context.Context, req *infracontext.RequestContext, exclude map[ids.RegistryID]struct{}) *registry.Registry {
+func (s *Semantic) Next(
+	ctx context.Context,
+	req *infracontext.RequestContext,
+	exclude map[routingdomain.RouteKey]struct{},
+) *routingdomain.Route {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	candidates := filterExcluded(s.registries, exclude)
+	candidates := filterExcluded(s.routes, exclude)
 	if len(candidates) == 0 {
 		return nil
 	}
 	if len(candidates) == 1 {
-		return candidates[0]
+		return pick(candidates[0])
 	}
 	if s.embeddingConfig == nil || s.serviceLocator == nil || s.embeddingRepo == nil || req == nil {
-		return candidates[0]
+		return pick(candidates[0])
 	}
 
 	prompt, err := extractPromptFromRequest(req.Body)
 	if err != nil {
-		return candidates[0]
+		return pick(candidates[0])
 	}
 	promptEmbedding, err := s.generateEmbedding(ctx, prompt)
 	if err != nil {
-		return candidates[0]
+		return pick(candidates[0])
 	}
-	return s.findBestRegistry(ctx, promptEmbedding, candidates)
+	return s.findBestRoute(ctx, promptEmbedding, candidates)
 }
 
 func (s *Semantic) Name() string {
@@ -151,32 +155,32 @@ func (s *Semantic) generateEmbedding(ctx context.Context, text string) ([]float6
 	return emb.Value, nil
 }
 
-func (s *Semantic) findBestRegistry(
+func (s *Semantic) findBestRoute(
 	ctx context.Context,
 	promptEmbedding []float64,
-	candidates []*registry.Registry,
-) *registry.Registry {
+	candidates []routingdomain.Route,
+) *routingdomain.Route {
 	promptMagnitude := magnitude(promptEmbedding)
-	var bestBackend *registry.Registry
+	best := -1
 	bestSimilarity := -1.0
-	for _, b := range candidates {
-		if b.Description == "" {
+	for i, route := range candidates {
+		if route.Registry == nil || route.Registry.Description == "" {
 			continue
 		}
-		bv := s.backendVector(ctx, b.ID.String())
+		bv := s.backendVector(ctx, route.Registry.ID.String())
 		if bv == nil {
 			continue
 		}
 		similarity := cosineSimilarity(promptEmbedding, promptMagnitude, bv.value, bv.magnitude)
 		if similarity > bestSimilarity {
 			bestSimilarity = similarity
-			bestBackend = b
+			best = i
 		}
 	}
-	if bestBackend == nil {
-		return candidates[0]
+	if best < 0 {
+		return pick(candidates[0])
 	}
-	return bestBackend
+	return pick(candidates[best])
 }
 
 // backendVector returns the target's embedding and its precomputed magnitude,

@@ -49,9 +49,11 @@ const (
 	defaultSignal       = SignalLogs
 	defaultCompression  = compressionGzip
 	defaultTimeout      = 10 * time.Second
-	// Keep Activity raw request/response bodies intact past the 64KiB sanitize
-	// cap; the previous 4KiB OTel attribute limit mid-cut JSON and blanked UI.
-	defaultMaxBodyBytes = 256 * 1024
+	// Kept above events.MaxSanitizedBodyBytes on purpose: the sanitizer is the
+	// only component allowed to truncate a body, because it marks the cut. When
+	// this limit is the smaller of the two the SDK silently slices attributes
+	// mid-JSON, which drops the trailing usage chunk of streamed responses.
+	defaultMaxBodyBytes = 2 * 1024 * 1024
 )
 
 // TLSSettings configures mutual or server-only TLS for the OTLP transport.

@@ -69,11 +69,12 @@ func (r *resolver) resolveInline(in ResolveInput) (*routingdomain.CandidateSet, 
 	}
 	base := routingdomain.NewCandidateSet()
 	policies := in.Consumer.Consumer.ModelPolicies
+	pinned := memberPinnedModels(in.Consumer.Consumer.LBConfig)
 	for _, reg := range in.Consumer.Registries {
-		base.Add(inlineCandidate(reg, policies, sourceConsumer))
+		base.Add(inlineCandidate(reg, policies, pinned, sourceConsumer))
 	}
 	for _, reg := range in.Consumer.FallbackBackends {
-		base.Add(inlineCandidate(reg, policies, sourceFallback))
+		base.Add(inlineCandidate(reg, policies, pinned, sourceFallback))
 	}
 	return base.ResolveIntent(in.Intent)
 }
@@ -81,16 +82,25 @@ func (r *resolver) resolveInline(in ResolveInput) (*routingdomain.CandidateSet, 
 func inlineCandidate(
 	reg *registrydomain.Registry,
 	policies consumerdomain.ModelPolicies,
+	pinned map[ids.RegistryID]string,
 	source string,
 ) routingdomain.Candidate {
 	policy, ok := policies.For(reg.ID)
 	if !ok {
-		return routingdomain.Candidate{Registry: reg, Sources: []string{source}}
+		return routingdomain.Candidate{
+			Registry: reg,
+			Default:  pinned[reg.ID],
+			Sources:  []string{source},
+		}
+	}
+	defaultModel := policy.Default
+	if defaultModel == "" {
+		defaultModel = pinned[reg.ID]
 	}
 	return routingdomain.Candidate{
 		Registry: reg,
 		Allowed:  policy.Allowed,
-		Default:  policy.Default,
+		Default:  defaultModel,
 		Sources:  []string{source},
 	}
 }

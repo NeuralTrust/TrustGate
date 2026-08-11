@@ -27,8 +27,12 @@ const (
 	multipartPlaceholder = `{"_multipart": true}`
 	truncatedSuffix      = "...[truncated]"
 
-	maxSanitizedBodyBytes = 64 * 1024
-	maxMultipartFieldValueBytes = 256
+	// MaxSanitizedBodyBytes caps the request/response bodies kept for Activity
+	// traces. Truncation must happen here so it is always explicit and marked
+	// (_nt_truncated for JSON, the ...[truncated] suffix otherwise); the OTel
+	// attribute limit is deliberately kept above this value so the SDK never
+	// silently cuts a body mid-JSON.
+	MaxSanitizedBodyBytes = 1 << 20
 
 	redactedValue = "[REDACTED]"
 
@@ -72,14 +76,10 @@ var sensitiveHeaders = map[string]struct{}{
 	"x-xsrf-token":          {},
 }
 
-// SanitizeBody returns a loggable representation of a request/response body.
+// SanitizeBody returns a loggable representation of a request/response body,
+// capped at MaxSanitizedBodyBytes.
 func SanitizeBody(body []byte, headers map[string][]string) string {
-	return sanitizeBody(body, headers, maxSanitizedBodyBytes)
-}
-
-// SanitizeBodyFull behaves like SanitizeBody but never truncates by size.
-func SanitizeBodyFull(body []byte, headers map[string][]string) string {
-	return sanitizeBody(body, headers, 0)
+	return sanitizeBody(body, headers, MaxSanitizedBodyBytes)
 }
 
 // SanitizeExtras redacts credential-shaped keys from plugin extras before export.

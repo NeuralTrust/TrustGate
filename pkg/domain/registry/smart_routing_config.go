@@ -16,15 +16,21 @@ package registry
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
-// SmartRoutingTier binds a complexity-score threshold to a target registry. A
-// tier is selected when the score is at least MinScore.
+// SmartRoutingTier binds a complexity-score threshold to a target route. A tier
+// is selected when the score is at least MinScore.
 type SmartRoutingTier struct {
 	MinScore   float64        `json:"min_score"`
 	RegistryID ids.RegistryID `json:"registry_id"`
+	Model      string         `json:"model,omitempty"`
+}
+
+func (t SmartRoutingTier) RouteModel() string {
+	return strings.TrimSpace(t.Model)
 }
 
 // SmartRoutingConfig maps complexity scores in [0,1] to registries. The tier
@@ -53,12 +59,12 @@ func (c *SmartRoutingConfig) Validate() error {
 	return nil
 }
 
-// RegistryForScore returns the registry mapped to the given complexity score:
-// the tier with the greatest MinScore that is not above the score. It reports
-// false when no tier applies (e.g. the score is below every threshold).
-func (c *SmartRoutingConfig) RegistryForScore(score float64) (ids.RegistryID, bool) {
+// TierForScore returns the tier mapped to the given complexity score: the one
+// with the greatest MinScore that is not above the score. It reports false when
+// no tier applies (e.g. the score is below every threshold).
+func (c *SmartRoutingConfig) TierForScore(score float64) (SmartRoutingTier, bool) {
 	var (
-		best     ids.RegistryID
+		best     SmartRoutingTier
 		bestMin  float64
 		selected bool
 	)
@@ -67,7 +73,7 @@ func (c *SmartRoutingConfig) RegistryForScore(score float64) (ids.RegistryID, bo
 			continue
 		}
 		if !selected || tier.MinScore > bestMin {
-			best = tier.RegistryID
+			best = tier
 			bestMin = tier.MinScore
 			selected = true
 		}

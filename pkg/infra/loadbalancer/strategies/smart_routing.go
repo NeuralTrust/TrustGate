@@ -19,8 +19,8 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 )
@@ -32,30 +32,30 @@ type ComplexityScorer interface {
 }
 
 // SmartRouting routes by the complexity of the incoming message: it asks the
-// Firewall Complexity API for a score and maps that score to a target via the
+// Firewall Complexity API for a score and maps that score to a route via the
 // configured tiers. It fails open to round-robin whenever the scorer is not
 // configured, the score is unavailable, or no candidate matches the score.
 type SmartRouting struct {
-	registries []*registry.Registry
-	config     *registry.SmartRoutingConfig
-	scorer     ComplexityScorer
-	fallback   *RoundRobin
-	logger     *slog.Logger
-	warnOnce   sync.Once
+	routes   []routingdomain.Route
+	config   *registry.SmartRoutingConfig
+	scorer   ComplexityScorer
+	fallback *RoundRobin
+	logger   *slog.Logger
+	warnOnce sync.Once
 }
 
 func NewSmartRouting(
-	registries []*registry.Registry,
+	routes []routingdomain.Route,
 	config *registry.SmartRoutingConfig,
 	scorer ComplexityScorer,
 	logger *slog.Logger,
 ) *SmartRouting {
 	return &SmartRouting{
-		registries: registries,
-		config:     config,
-		scorer:     scorer,
-		fallback:   NewRoundRobin(registries),
-		logger:     logger,
+		routes:   routes,
+		config:   config,
+		scorer:   scorer,
+		fallback: NewRoundRobin(routes),
+		logger:   logger,
 	}
 }
 
@@ -64,14 +64,14 @@ func (s *SmartRouting) Name() string { return algorithm.SmartRouting }
 func (s *SmartRouting) Next(
 	ctx context.Context,
 	req *infracontext.RequestContext,
-	exclude map[ids.RegistryID]struct{},
-) *registry.Registry {
-	candidates := filterExcluded(s.registries, exclude)
+	exclude map[routingdomain.RouteKey]struct{},
+) *routingdomain.Route {
+	candidates := filterExcluded(s.routes, exclude)
 	if len(candidates) == 0 {
 		return nil
 	}
 	if len(candidates) == 1 {
-		return candidates[0]
+		return pick(candidates[0])
 	}
 	if s.config == nil || s.scorer == nil || !s.scorer.Configured() || req == nil {
 		return s.fallbackNext(ctx, req, exclude, "smart routing not configured")
@@ -84,28 +84,34 @@ func (s *SmartRouting) Next(
 	if err != nil {
 		return s.fallbackNext(ctx, req, exclude, "complexity score unavailable")
 	}
-	target := s.registryForScore(score, candidates)
+	target := s.routeForScore(score, candidates)
 	if target == nil {
 		return s.fallbackNext(ctx, req, exclude, "no candidate matched complexity score")
 	}
 	if s.logger != nil {
-		s.logger.Debug("smart routing selected registry",
-			slog.String("registry_id", target.ID.String()),
+		s.logger.Debug("smart routing selected route",
+			slog.String("registry_id", target.Registry.ID.String()),
+			slog.String("model", target.Model),
 			slog.Float64("score", score),
 		)
 	}
 	return target
 }
 
-func (s *SmartRouting) registryForScore(score float64, candidates []*registry.Registry) *registry.Registry {
-	id, ok := s.config.RegistryForScore(score)
+func (s *SmartRouting) routeForScore(score float64, candidates []routingdomain.Route) *routingdomain.Route {
+	tier, ok := s.config.TierForScore(score)
 	if !ok {
 		return nil
 	}
-	for _, b := range candidates {
-		if b.ID == id {
-			return b
+	model := tier.RouteModel()
+	for _, route := range candidates {
+		if route.Registry == nil || route.Registry.ID != tier.RegistryID {
+			continue
 		}
+		if model != "" && route.Model != model {
+			continue
+		}
+		return pick(route)
 	}
 	return nil
 }
@@ -113,9 +119,9 @@ func (s *SmartRouting) registryForScore(score float64, candidates []*registry.Re
 func (s *SmartRouting) fallbackNext(
 	ctx context.Context,
 	req *infracontext.RequestContext,
-	exclude map[ids.RegistryID]struct{},
+	exclude map[routingdomain.RouteKey]struct{},
 	reason string,
-) *registry.Registry {
+) *routingdomain.Route {
 	if s.logger != nil {
 		s.warnOnce.Do(func() {
 			s.logger.Warn("smart routing falling back to round-robin", slog.String("reason", reason))
