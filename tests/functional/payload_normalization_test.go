@@ -76,7 +76,9 @@ func TestPayloadNormalization_CrossFormat(t *testing.T) {
 		assert.Equal(t, 1, up.Hits())
 	})
 
-	t.Run("responses request to an openai upstream is adapted both ways", func(t *testing.T) {
+	// A client picks an OpenAI chat surface by the route it calls, and the
+	// gateway serves that one instead of downgrading it (ENG-1281).
+	t.Run("responses request to an openai upstream reaches the responses surface", func(t *testing.T) {
 		up := newJSONUpstream(t, "responses-served")
 		apiKey, slug := setupSlugRoute(t, up, []string{"gpt-4o-mini"}, "")
 
@@ -84,13 +86,47 @@ func TestPayloadNormalization_CrossFormat(t *testing.T) {
 		status, _, body := proxyPost(t, apiKey, "/"+slug+"/v1/responses", payload)
 
 		assert.Equal(t, http.StatusOK, status, "body: %s", body)
-		assert.Contains(t, string(body), `"object":"response"`,
-			"the client must receive a responses-format payload")
-		assert.Contains(t, string(body), "responses-served")
 		assert.Equal(t, 1, up.Hits())
+		assert.Equal(t, "/responses", up.LastPath(),
+			"the upstream must be called on the surface the client asked for")
+		assert.Contains(t, string(up.LastBody()), `"input"`,
+			"the responses body must reach the upstream intact")
+		assert.NotContains(t, string(up.LastBody()), `"messages"`,
+			"the request must not be downgraded to chat completions")
+		assert.Contains(t, string(up.LastBody()), `"model":"gpt-4o-mini"`)
+		assert.NotContains(t, string(up.LastBody()), "@openai/",
+			"the routing prefix must never leak upstream")
+	})
+
+	// Setting provider_options.api is the only way to reach a surface the
+	// client did not ask for, and the answer still comes back in the client's
+	// own dialect.
+	t.Run("an explicit completions option overrides the responses route", func(t *testing.T) {
+		up := newJSONUpstream(t, "responses-served")
+		gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("norm-gw")})
+		backend := openaiBackendPayload(uniqueName("be"), up.URL())
+		backend["provider_options"] = map[string]any{"base_url": up.URL(), "api": "completions"}
+		backendID := CreateRegistry(t, gatewayID, backend)
+		coID := CreateConsumer(t, gatewayID, map[string]any{
+			"name": uniqueName("cons"),
+			"registries": []map[string]any{
+				{"id": backendID, "model_policies": map[string]any{"allowed": []string{"gpt-4o-mini"}}},
+			},
+		})
+		apiKey := createAndAttachAPIKey(t, gatewayID, coID)
+
+		payload := map[string]any{"model": "@openai/gpt-4o-mini", "input": "Hello"}
+		status, _, body := proxyPost(t, apiKey, "/"+ConsumerSlug(t, coID)+"/v1/responses", payload)
+
+		assert.Equal(t, http.StatusOK, status, "body: %s", body)
+		assert.Equal(t, 1, up.Hits())
+		assert.Equal(t, "/chat/completions", up.LastPath(),
+			"the explicit option must win over the inbound route")
 		assert.Contains(t, string(up.LastBody()), `"messages"`,
 			"the upstream must receive a chat-completions body")
-		assert.Contains(t, string(up.LastBody()), `"model":"gpt-4o-mini"`)
+		assert.Contains(t, string(body), `"object":"response"`,
+			"the client must still receive a responses-format payload")
+		assert.Contains(t, string(body), "responses-served")
 	})
 
 	t.Run("gemini request with the model in the path is adapted both ways", func(t *testing.T) {
