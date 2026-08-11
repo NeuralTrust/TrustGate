@@ -460,7 +460,9 @@ func withSelectionHeaders(
 	bk *registry.Registry,
 	sentModel string,
 ) map[string][]string {
-	out := make(map[string][]string, len(headers)+2)
+	// No capacity hint: len(headers)+N trips CodeQL's allocation-overflow check
+	// and HTTP header maps are tiny, so the hint buys nothing.
+	out := make(map[string][]string)
 	for name, values := range headers {
 		out[name] = values
 	}
