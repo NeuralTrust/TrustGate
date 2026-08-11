@@ -110,7 +110,7 @@ func TestInvokeStream_AdvertisesServedRouteBeforeFirstChunk(t *testing.T) {
 	resp, err := inv.InvokeStream(context.Background(), target, req)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"openai"}, resp.Headers["X-Selected-Provider"])
-	assert.Equal(t, []string{target.ID.String()}, resp.Headers["X-Selected-Registry"])
+	assert.Empty(t, resp.Headers["X-Selected-Registry"])
 	assert.Equal(t, []string{defaultModel}, resp.Headers["X-Selected-Model"])
 
 	collectStream(t, resp.Stream)
@@ -185,7 +185,7 @@ func TestInvokeStream_PreStreamBackendErrorPassthrough(t *testing.T) {
 	assert.Equal(t, 429, resp.StatusCode)
 	assert.Equal(t, errBody, resp.Body)
 	assert.Equal(t, []string{"openai"}, resp.Headers["X-Selected-Provider"])
-	assert.Equal(t, []string{target.ID.String()}, resp.Headers["X-Selected-Registry"])
+	assert.Empty(t, resp.Headers["X-Selected-Registry"])
 	assert.Equal(t, []string{"gpt-4"}, resp.Headers["X-Selected-Model"],
 		"a route that fails before streaming must still be identifiable")
 }

@@ -2968,7 +2968,7 @@
                   "pm.test('proxy returned 200', () => pm.response.code === 200);",
                   "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
                   "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));",
-                  "pm.test('served registry is advertised', () => /^[0-9a-f-]{36}$/.test(pm.response.headers.get('X-Selected-Registry')));"
+                  "pm.test('served registry is not advertised', () => !pm.response.headers.get('X-Selected-Registry'));"
                 ]
               }
             }

@@ -34,7 +34,6 @@ import (
 
 const (
 	headerSelectedProvider = "X-Selected-Provider"
-	headerSelectedRegistry = "X-Selected-Registry"
 	headerSelectedModel    = "X-Selected-Model"
 	headerContentType      = "Content-Type"
 	contentTypeJSON        = "application/json"
@@ -461,15 +460,12 @@ func withSelectionHeaders(
 	bk *registry.Registry,
 	sentModel string,
 ) map[string][]string {
-	out := make(map[string][]string, len(headers)+3)
+	out := make(map[string][]string, len(headers)+2)
 	for name, values := range headers {
 		out[name] = values
 	}
 	if provider := bk.Provider(); provider != "" {
 		out[headerSelectedProvider] = []string{provider}
-	}
-	if !bk.ID.IsNil() {
-		out[headerSelectedRegistry] = []string{bk.ID.String()}
 	}
 	if sentModel != "" {
 		out[headerSelectedModel] = []string{sentModel}
