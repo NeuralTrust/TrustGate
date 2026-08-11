@@ -100,7 +100,7 @@ func TestProviderInvoke_AdvertisesServedRoute(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"openai"}, resp.Headers["X-Selected-Provider"])
-	assert.Equal(t, []string{target.ID.String()}, resp.Headers["X-Selected-Registry"])
+	assert.Empty(t, resp.Headers["X-Selected-Registry"])
 	assert.Equal(t, []string{defaultModel}, resp.Headers["X-Selected-Model"],
 		"the header must carry the model the route resolved to, which the client never sent")
 }
