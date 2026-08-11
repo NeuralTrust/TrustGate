@@ -199,4 +199,48 @@ func TestLLMResponsePayloadSkipsPureThinking(t *testing.T) {
 	if payload.Messages[0]["content"] != "" {
 		t.Fatalf("content = %#v, want empty (thinking-only)", payload.Messages[0]["content"])
 	}
+	if payload.Messages[0]["reasoning_content"] != "private thought" {
+		t.Fatalf("reasoning_content = %#v, want private thought", payload.Messages[0]["reasoning_content"])
+	}
+}
+
+func TestLLMResponsePayloadContentReasoningToolCalls(t *testing.T) {
+	t.Parallel()
+
+	raw, err := llmResponsePayload(&adapter.CanonicalResponse{
+		Content: "answer",
+		Reasoning: &adapter.CanonicalReasoning{ThinkingText: "plan first"},
+		ToolCalls: []adapter.CanonicalToolCall{{ID: "1", Name: "search", Arguments: `{"q":"x"}`}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("llmResponsePayload: %v", err)
+	}
+	var payload struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(payload.Messages) != 1 {
+		t.Fatalf("messages = %#v", payload.Messages)
+	}
+	msg := payload.Messages[0]
+	if msg["role"] != "assistant" || msg["content"] != "answer" {
+		t.Fatalf("message = %#v", msg)
+	}
+	if msg["reasoning_content"] != "plan first" {
+		t.Fatalf("reasoning_content = %#v", msg["reasoning_content"])
+	}
+	if _, ok := msg["tool_calls"]; !ok {
+		t.Fatal("expected tool_calls")
+	}
+}
+
+func TestResponseHasInspectableContentReasoningOnly(t *testing.T) {
+	t.Parallel()
+	if !responseHasInspectableContent(&adapter.CanonicalResponse{
+		Reasoning: &adapter.CanonicalReasoning{ThinkingText: "only thinking"},
+	}) {
+		t.Fatal("reasoning-only should be inspectable")
+	}
 }

@@ -601,6 +601,52 @@ func TestExecutePostResponseStreamingInspects(t *testing.T) {
 	assertLLMRequestMessages(t, got.Payload, []string{"assistant"}, []string{"the answer"})
 }
 
+func TestExecutePostResponseStreamingInspectsReasoningAndToolCalls(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{response: GuardResponse{Status: "allowed", TraceID: "trace-stream-rich"}}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	sse := "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"plan\"}}]}\n" +
+		"data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"}}]}\n" +
+		"data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{}\"}}]}}]}\n" +
+		"data: [DONE]\n"
+	resp := &infracontext.ResponseContext{StatusCode: 200, Streaming: true, Body: []byte(sse)}
+	in := execInput(policy.StagePostResponse, policy.ModeObserve, settings(""), requestContext(), resp)
+	res, err := p.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res == nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("expected pass-through, got %+v", res)
+	}
+	if f.count() != 1 {
+		t.Fatalf("expected guard called once, got %d", f.count())
+	}
+	got := f.captured()
+	var payload struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	if err := json.Unmarshal(got.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if len(payload.Messages) != 1 {
+		t.Fatalf("messages = %#v", payload.Messages)
+	}
+	msg := payload.Messages[0]
+	if msg["content"] != "ok" {
+		t.Fatalf("content = %#v", msg["content"])
+	}
+	if msg["reasoning_content"] != "plan" {
+		t.Fatalf("reasoning_content = %#v", msg["reasoning_content"])
+	}
+	calls, ok := msg["tool_calls"].([]any)
+	if !ok || len(calls) != 1 {
+		t.Fatalf("tool_calls = %#v", msg["tool_calls"])
+	}
+}
+
 func TestExecutePostResponseNonStreamingPassThrough(t *testing.T) {
 	t.Parallel()
 

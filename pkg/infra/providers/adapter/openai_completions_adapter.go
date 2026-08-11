@@ -506,6 +506,7 @@ func decodeCompletionsStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 		delta := choice.Delta
 		sc.Role = delta.Role
 		sc.Delta = delta.Content
+		sc.ReasoningDelta = delta.ReasoningContent
 		if choice.FinishReason != nil {
 			sc.FinishReason = *choice.FinishReason
 		}
@@ -534,6 +535,7 @@ func decodeCompletionsStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 	}
 
 	if sc.Delta == "" &&
+		sc.ReasoningDelta == "" &&
 		sc.Role == "" &&
 		sc.FinishReason == "" &&
 		len(sc.ToolCallDeltas) == 0 &&

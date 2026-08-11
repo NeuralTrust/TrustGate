@@ -88,6 +88,7 @@ func TestRoundRobin_RotatesThroughModelsOfOneRegistry(t *testing.T) {
 		route := rr.Next(context.Background(), nil, nil)
 		if route == nil {
 			t.Fatalf("step %d: expected a route", i)
+			return
 		}
 		got = append(got, route.Model)
 	}
