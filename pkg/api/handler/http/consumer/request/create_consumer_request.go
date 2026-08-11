@@ -115,11 +115,20 @@ type SmartRoutingConfigRequest struct {
 type SmartRoutingTierRequest struct {
 	MinScore   float64 `json:"min_score"`
 	RegistryID string  `json:"registry_id"`
+	// Model selects which route of the registry this tier targets. It is required
+	// when the pool declares the registry more than once.
+	Model string `json:"model,omitempty"`
 }
 
 type LBPoolMemberRequest struct {
 	RegistryID string   `json:"registry_id"`
 	Models     []string `json:"models,omitempty"`
+	// Model pins this pool entry to a single model, which is what allows the same
+	// registry to appear several times as independently balanced routes.
+	Model string `json:"model,omitempty"`
+	// Weight is the relative weighted-round-robin share of this route on a 1..100
+	// scale, defaulting to the consumer's registry weight.
+	Weight *int `json:"weight,omitempty" example:"1" minimum:"1" maximum:"100"`
 }
 
 func (r *FallbackRequest) ToFallback() (*domain.Fallback, error) {
@@ -175,6 +184,7 @@ func (s *SmartRoutingConfigRequest) ToDomain() (*registrydomain.SmartRoutingConf
 		tiers = append(tiers, registrydomain.SmartRoutingTier{
 			MinScore:   tier.MinScore,
 			RegistryID: registryID,
+			Model:      tier.Model,
 		})
 	}
 	return &registrydomain.SmartRoutingConfig{Tiers: tiers}, nil
@@ -337,6 +347,8 @@ func (r *LBConfigRequest) ToDomain() (*domain.LBConfig, error) {
 		members = append(members, domain.LBPoolMember{
 			RegistryID: registryID,
 			Models:     member.Models,
+			Model:      member.Model,
+			Weight:     member.Weight,
 		})
 	}
 	smartRouting, err := r.SmartRouting.ToDomain()

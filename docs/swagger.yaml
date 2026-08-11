@@ -438,12 +438,25 @@ definitions:
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.LBPoolMemberRequest:
     properties:
+      model:
+        description: |-
+          Model pins this pool entry to a single model, which is what allows the same
+          registry to appear several times as independently balanced routes.
+        type: string
       models:
         items:
           type: string
         type: array
       registry_id:
         type: string
+      weight:
+        description: |-
+          Weight is the relative weighted-round-robin share of this route on a 1..100
+          scale, defaulting to the consumer's registry weight.
+        example: 1
+        maximum: 100
+        minimum: 1
+        type: integer
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.ModelPolicyRequest:
     properties:
@@ -490,6 +503,11 @@ definitions:
     properties:
       min_score:
         type: number
+      model:
+        description: |-
+          Model selects which route of the registry this tier targets. It is required
+          when the pool declares the registry more than once.
+        type: string
       registry_id:
         type: string
     type: object
@@ -664,12 +682,16 @@ definitions:
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.LBPoolMemberResponse:
     properties:
+      model:
+        type: string
       models:
         items:
           type: string
         type: array
       registry_id:
         type: string
+      weight:
+        type: integer
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.ListConsumerResponse:
     properties:
@@ -713,6 +735,8 @@ definitions:
     properties:
       min_score:
         type: number
+      model:
+        type: string
       registry_id:
         type: string
     type: object
@@ -2067,8 +2091,6 @@ definitions:
       policies_ms:
         type: integer
       provider_ms:
-        type: integer
-      routing_ms:
         type: integer
       total_ms:
         type: integer

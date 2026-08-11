@@ -22,6 +22,7 @@ import (
 	embeddingmocks "github.com/NeuralTrust/TrustGate/pkg/domain/embedding/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	factorymocks "github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory/mocks"
 	"github.com/stretchr/testify/mock"
@@ -47,12 +48,15 @@ func TestSemantic_CachesBackendEmbeddingsAcrossRequests(t *testing.T) {
 	locator.EXPECT().GetService(mock.Anything).Return(creator, nil)
 
 	s := NewSemantic(&embedding.Config{Provider: "openai", Model: "m"},
-		[]*registry.Registry{backendA, backendB}, repo, locator)
+		[]routingdomain.Route{
+			routingdomain.RouteForRegistry(backendA),
+			routingdomain.RouteForRegistry(backendB),
+		}, repo, locator)
 
 	req := &infracontext.RequestContext{Body: []byte(`{"prompt":"hello"}`)}
 	for i := 0; i < 3; i++ {
 		got := s.Next(context.Background(), req, nil)
-		if got == nil || got.ID != backendA.ID {
+		if got == nil || got.RegistryID() != backendA.ID {
 			t.Fatalf("request %d: expected backend A (highest similarity), got %+v", i, got)
 		}
 	}

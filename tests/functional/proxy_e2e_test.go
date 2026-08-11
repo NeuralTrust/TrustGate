@@ -253,6 +253,8 @@ func TestProxyE2E_NonStreaming_NoLB(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, status, "body: %s", body)
 		assert.Equal(t, "openai", headers.Get("X-Selected-Provider"))
+		assert.Equal(t, "gpt-4o-mini", headers.Get("X-Selected-Model"))
+		assert.Empty(t, headers.Get("X-Selected-Registry"))
 		assert.Contains(t, string(body), "hello-from-upstream")
 		assert.Equal(t, 1, up.Hits(), "a successful call must hit the upstream exactly once")
 	})

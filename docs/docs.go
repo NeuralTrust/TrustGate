@@ -4176,6 +4176,10 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_request.LBPoolMemberRequest": {
             "type": "object",
             "properties": {
+                "model": {
+                    "description": "Model pins this pool entry to a single model, which is what allows the same\nregistry to appear several times as independently balanced routes.",
+                    "type": "string"
+                },
                 "models": {
                     "type": "array",
                     "items": {
@@ -4184,6 +4188,13 @@ const docTemplate = `{
                 },
                 "registry_id": {
                     "type": "string"
+                },
+                "weight": {
+                    "description": "Weight is the relative weighted-round-robin share of this route on a 1..100\nscale, defaulting to the consumer's registry weight.",
+                    "type": "integer",
+                    "maximum": 100,
+                    "minimum": 1,
+                    "example": 1
                 }
             }
         },
@@ -4252,6 +4263,10 @@ const docTemplate = `{
             "properties": {
                 "min_score": {
                     "type": "number"
+                },
+                "model": {
+                    "description": "Model selects which route of the registry this tier targets. It is required\nwhen the pool declares the registry more than once.",
+                    "type": "string"
                 },
                 "registry_id": {
                     "type": "string"
@@ -4513,6 +4528,9 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_consumer_response.LBPoolMemberResponse": {
             "type": "object",
             "properties": {
+                "model": {
+                    "type": "string"
+                },
                 "models": {
                     "type": "array",
                     "items": {
@@ -4521,6 +4539,9 @@ const docTemplate = `{
                 },
                 "registry_id": {
                     "type": "string"
+                },
+                "weight": {
+                    "type": "integer"
                 }
             }
         },
@@ -4588,6 +4609,9 @@ const docTemplate = `{
             "properties": {
                 "min_score": {
                     "type": "number"
+                },
+                "model": {
+                    "type": "string"
                 },
                 "registry_id": {
                     "type": "string"
@@ -6552,9 +6576,6 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "provider_ms": {
-                    "type": "integer"
-                },
-                "routing_ms": {
                     "type": "integer"
                 },
                 "total_ms": {

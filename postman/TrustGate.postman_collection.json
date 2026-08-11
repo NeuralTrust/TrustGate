@@ -1337,7 +1337,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"team-a-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"headers\": {},\n  \"registries\": [\n    {\n      \"id\": \"{{registry_id}}\",\n      \"weight\": 1,\n      \"model_policies\": {\n        \"allowed\": [\n          \"gpt-4o\"\n        ],\n        \"default\": \"gpt-4o\"\n      }\n    }\n  ],\n  \"lb_config\": {\n    \"enabled\": true,\n    \"algorithm\": \"round-robin\",\n    \"pool_alias\": \"fast-chat\",\n    \"members\": [\n      {\n        \"registry_id\": \"{{registry_id}}\"\n      }\n    ]\n  },\n  \"fallback\": {\n    \"enabled\": true,\n    \"triggers\": [\n      \"http_5xx\"\n    ],\n    \"chain\": [\n      \"{{registry_id}}\"\n    ],\n    \"budget\": {\n      \"max_attempts\": 2,\n      \"max_total_latency_ms\": 5000\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"team-a-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"headers\": {},\n  \"registries\": [\n    {\n      \"id\": \"{{registry_id}}\",\n      \"weight\": 1,\n      \"model_policies\": {\n        \"allowed\": [\n          \"gpt-4o\",\n          \"gpt-4o-mini\"\n        ],\n        \"default\": \"gpt-4o\"\n      }\n    }\n  ],\n  \"lb_config\": {\n    \"enabled\": true,\n    \"algorithm\": \"weighted-round-robin\",\n    \"pool_alias\": \"fast-chat\",\n    \"members\": [\n      {\n        \"registry_id\": \"{{registry_id}}\",\n        \"model\": \"gpt-4o\",\n        \"weight\": 70\n      },\n      {\n        \"registry_id\": \"{{registry_id}}\",\n        \"model\": \"gpt-4o-mini\",\n        \"weight\": 30\n      }\n    ]\n  },\n  \"fallback\": {\n    \"enabled\": true,\n    \"triggers\": [\n      \"http_5xx\"\n    ],\n    \"chain\": [\n      \"{{registry_id}}\"\n    ],\n    \"budget\": {\n      \"max_attempts\": 2,\n      \"max_total_latency_ms\": 5000\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers",
@@ -1351,7 +1351,7 @@
                 "consumers"
               ]
             },
-            "description": "`routing_mode` is `inline` (default) or `role_based`. Inline consumers own their registries, model policies, `lb_config` (with optional `pool_alias` addressable as `pool:<alias>` in the payload) and `fallback`. LB and fallback never apply to role_based consumers."
+            "description": "`routing_mode` is `inline` (default) or `role_based`. Inline consumers own their registries, model policies, `lb_config` (with optional `pool_alias` addressable as `pool:<alias>` in the payload) and `fallback`. LB and fallback never apply to role_based consumers.\n\nThe load balancer distributes over routes, not registries: a route is a `(registry_id, model)` pair, so the same registry can appear several times with a different `model` (as in this example, where `gpt-4o` takes 70% of the share and `gpt-4o-mini` 30%). Rules: every member sharing a registry must declare `model`, each `(registry_id, model)` must be unique, and the model must be allowed by `model_policies`. `members[].weight` (`1..100`) applies to weighted-round-robin and defaults to the registry weight when omitted."
           }
         },
         {
@@ -1463,7 +1463,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"team-a-{{$guid}}\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"model_policies\": [\n    {\n      \"registry_id\": \"{{registry_id}}\",\n      \"allowed\": [\n        \"gpt-4o\"\n      ],\n      \"default\": \"gpt-4o\"\n    }\n  ],\n  \"lb_config\": {\n    \"enabled\": true,\n    \"algorithm\": \"round-robin\",\n    \"pool_alias\": \"fast-chat\",\n    \"members\": [\n      {\n        \"registry_id\": \"{{registry_id}}\"\n      }\n    ]\n  },\n  \"fallback\": {\n    \"enabled\": true,\n    \"triggers\": [\n      \"http_5xx\"\n    ],\n    \"chain\": [\n      \"{{registry_id}}\"\n    ],\n    \"budget\": {\n      \"max_attempts\": 2,\n      \"max_total_latency_ms\": 5000\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"team-a-{{$guid}}\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"model_policies\": [\n    {\n      \"registry_id\": \"{{registry_id}}\",\n      \"allowed\": [\n        \"gpt-4o-mini\",\n        \"gpt-4o\"\n      ],\n      \"default\": \"gpt-4o-mini\"\n    }\n  ],\n  \"lb_config\": {\n    \"enabled\": true,\n    \"algorithm\": \"smart-routing\",\n    \"pool_alias\": \"fast-chat\",\n    \"members\": [\n      {\n        \"registry_id\": \"{{registry_id}}\",\n        \"model\": \"gpt-4o-mini\"\n      },\n      {\n        \"registry_id\": \"{{registry_id}}\",\n        \"model\": \"gpt-4o\"\n      }\n    ],\n    \"smart_routing\": {\n      \"tiers\": [\n        {\n          \"min_score\": 0,\n          \"registry_id\": \"{{registry_id}}\",\n          \"model\": \"gpt-4o-mini\"\n        },\n        {\n          \"min_score\": 0.5,\n          \"registry_id\": \"{{registry_id}}\",\n          \"model\": \"gpt-4o\"\n        }\n      ]\n    }\n  },\n  \"fallback\": {\n    \"enabled\": true,\n    \"triggers\": [\n      \"http_5xx\"\n    ],\n    \"chain\": [\n      \"{{registry_id}}\"\n    ],\n    \"budget\": {\n      \"max_attempts\": 2,\n      \"max_total_latency_ms\": 5000\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}",
@@ -1478,7 +1478,7 @@
                 "{{consumer_id}}"
               ]
             },
-            "description": "Partial update. Registries are managed via attach/detach endpoints; `model_policies` here updates policies for already-bound registries. Send `lb_config`/`fallback` with `enabled: false` to clear them."
+            "description": "Partial update. Registries are managed via attach/detach endpoints; `model_policies` here updates policies for already-bound registries. Send `lb_config`/`fallback` with `enabled: false` to clear them.\n\nThis example uses `smart-routing`: the firewall scores prompt complexity in `0..1` and each tier sends everything at or above its `min_score` to one route. `tiers[].model` picks which route of the registry the tier targets and is required whenever the pool declares that registry more than once — here cheap prompts go to `gpt-4o-mini` and complex ones (score >= 0.5) to `gpt-4o` on the same registry."
           }
         },
         {
@@ -2966,7 +2966,9 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                  "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));",
+                  "pm.test('served registry is not advertised', () => !pm.response.headers.get('X-Selected-Registry'));"
                 ]
               }
             }
@@ -3303,7 +3305,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                  "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                 ]
               }
             }
@@ -3714,7 +3717,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                  "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                 ]
               }
             }
@@ -4195,7 +4199,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                  "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                 ]
               }
             }
@@ -4675,7 +4680,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                  "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                 ]
               }
             }
@@ -8190,7 +8196,8 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }
@@ -8338,7 +8345,8 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }
@@ -8678,7 +8686,8 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }
@@ -8829,7 +8838,8 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }
@@ -9385,7 +9395,8 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }
@@ -9533,7 +9544,8 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }
@@ -9873,7 +9885,8 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }
@@ -10022,7 +10035,8 @@
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
                       "pm.test('model was downgraded', () => pm.response.headers.get('X-NeuralTrust-Model-Downgraded') === 'gpt-4o→gpt-4o-mini');",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }
@@ -10115,7 +10129,8 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test('proxy returned 200', () => pm.response.code === 200);",
-                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                      "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');",
+                      "pm.test('served model is advertised', () => !!pm.response.headers.get('X-Selected-Model'));"
                     ]
                   }
                 }

@@ -34,6 +34,7 @@ import (
 
 const (
 	headerSelectedProvider = "X-Selected-Provider"
+	headerSelectedModel    = "X-Selected-Model"
 	headerContentType      = "Content-Type"
 	contentTypeJSON        = "application/json"
 
@@ -139,7 +140,7 @@ func (p *providerInvoker) Invoke(
 		if be, ok := registry.IsBackendError(err); ok {
 			return &ProviderResponse{
 				StatusCode: be.StatusCode,
-				Headers:    be.PassthroughHeaders(),
+				Headers:    withSelectionHeaders(be.PassthroughHeaders(), bk, prep.sentModel),
 				Body:       be.Body,
 			}, nil
 		}
@@ -160,10 +161,11 @@ func (p *providerInvoker) Invoke(
 
 	return &ProviderResponse{
 		StatusCode: http.StatusOK,
-		Headers: map[string][]string{
-			headerSelectedProvider: {bk.Provider()},
-			headerContentType:      {contentTypeJSON},
-		},
+		Headers: withSelectionHeaders(
+			map[string][]string{headerContentType: {contentTypeJSON}},
+			bk,
+			prep.sentModel,
+		),
 		Body:         respBody,
 		Usage:        usage,
 		Model:        model,
@@ -207,7 +209,7 @@ func (p *providerInvoker) InvokeStream(
 		if be, ok := registry.IsBackendError(err); ok {
 			return &ProviderResponse{
 				StatusCode: be.StatusCode,
-				Headers:    be.PassthroughHeaders(),
+				Headers:    withSelectionHeaders(be.PassthroughHeaders(), bk, prep.sentModel),
 				Body:       be.Body,
 			}, nil
 		}
@@ -218,7 +220,7 @@ func (p *providerInvoker) InvokeStream(
 
 	return &ProviderResponse{
 		StatusCode: http.StatusOK,
-		Headers:    streamHeaders(bk.Provider()),
+		Headers:    withSelectionHeaders(streamHeaders(), bk, prep.sentModel),
 		Stream:     stream,
 		SentModel:  prep.sentModel,
 	}, nil
@@ -444,14 +446,33 @@ func (p *providerInvoker) streamObserver(ctx context.Context, req *infracontext.
 	}
 }
 
-func streamHeaders(provider string) map[string][]string {
+func streamHeaders() map[string][]string {
 	return map[string][]string{
-		headerContentType:      {"text/event-stream"},
-		"Cache-Control":        {"no-cache"},
-		"Connection":           {"keep-alive"},
-		"X-Accel-Buffering":    {"no"},
-		headerSelectedProvider: {provider},
+		headerContentType:   {"text/event-stream"},
+		"Cache-Control":     {"no-cache"},
+		"Connection":        {"keep-alive"},
+		"X-Accel-Buffering": {"no"},
 	}
+}
+
+func withSelectionHeaders(
+	headers map[string][]string,
+	bk *registry.Registry,
+	sentModel string,
+) map[string][]string {
+	// No capacity hint: len(headers)+N trips CodeQL's allocation-overflow check
+	// and HTTP header maps are tiny, so the hint buys nothing.
+	out := make(map[string][]string)
+	for name, values := range headers {
+		out[name] = values
+	}
+	if provider := bk.Provider(); provider != "" {
+		out[headerSelectedProvider] = []string{provider}
+	}
+	if sentModel != "" {
+		out[headerSelectedModel] = []string{sentModel}
+	}
+	return out
 }
 
 func sourceFormatFromRequest(req *infracontext.RequestContext) adapter.Format {

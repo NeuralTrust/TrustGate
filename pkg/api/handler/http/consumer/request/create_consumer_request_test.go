@@ -67,6 +67,45 @@ func TestCreateConsumerRequest_ToRegistryBindings_RejectsNonPositiveWeight(t *te
 	}
 }
 
+func TestLBConfigRequest_ToDomain_RoutesPerModel(t *testing.T) {
+	t.Parallel()
+	registryID := ids.New[ids.RegistryKind]()
+	req := LBConfigRequest{
+		Enabled:   true,
+		Algorithm: "smart-routing",
+		Members: []LBPoolMemberRequest{
+			{RegistryID: registryID.String(), Model: "gpt-5-mini", Weight: intPtr(3)},
+			{RegistryID: registryID.String(), Model: "gpt-5"},
+		},
+		SmartRouting: &SmartRoutingConfigRequest{
+			Tiers: []SmartRoutingTierRequest{
+				{MinScore: 0, RegistryID: registryID.String(), Model: "gpt-5-mini"},
+				{MinScore: 0.5, RegistryID: registryID.String(), Model: "gpt-5"},
+			},
+		},
+	}
+
+	cfg, err := req.ToDomain()
+	if err != nil {
+		t.Fatalf("ToDomain error: %v", err)
+	}
+	if len(cfg.Members) != 2 {
+		t.Fatalf("members len = %d, want 2", len(cfg.Members))
+	}
+	if got := cfg.Members[0].RouteModel(); got != "gpt-5-mini" {
+		t.Fatalf("members[0].Model = %q, want gpt-5-mini", got)
+	}
+	if got := cfg.Members[0].RouteWeight(1); got != 3 {
+		t.Fatalf("members[0] weight = %d, want 3", got)
+	}
+	if got := cfg.Members[1].RouteWeight(7); got != 7 {
+		t.Fatalf("members[1] weight = %d, want the fallback 7", got)
+	}
+	if got := cfg.SmartRouting.Tiers[1].RouteModel(); got != "gpt-5" {
+		t.Fatalf("tiers[1].Model = %q, want gpt-5", got)
+	}
+}
+
 func TestCreateConsumerRequest_ToRegistryBindings_RejectsWeightAboveMax(t *testing.T) {
 	t.Parallel()
 	req := CreateConsumerRequest{

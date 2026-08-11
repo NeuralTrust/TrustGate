@@ -18,34 +18,37 @@ import (
 	"context"
 	"sync"
 
-	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 )
 
 type RoundRobin struct {
-	mu         sync.Mutex
-	registries []*registry.Registry
-	current    int
+	mu      sync.Mutex
+	routes  []routingdomain.Route
+	current int
 }
 
-func NewRoundRobin(registries []*registry.Registry) *RoundRobin {
-	return &RoundRobin{registries: registries}
+func NewRoundRobin(routes []routingdomain.Route) *RoundRobin {
+	return &RoundRobin{routes: routes}
 }
 
-func (rr *RoundRobin) Next(_ context.Context, _ *infracontext.RequestContext, exclude map[ids.RegistryID]struct{}) *registry.Registry {
+func (rr *RoundRobin) Next(
+	_ context.Context,
+	_ *infracontext.RequestContext,
+	exclude map[routingdomain.RouteKey]struct{},
+) *routingdomain.Route {
 	rr.mu.Lock()
 	defer rr.mu.Unlock()
-	n := len(rr.registries)
+	n := len(rr.routes)
 	if n == 0 {
 		return nil
 	}
 	for i := 0; i < n; i++ {
-		b := rr.registries[rr.current]
+		route := rr.routes[rr.current]
 		rr.current = (rr.current + 1) % n
-		if !isExcluded(b.ID, exclude) {
-			return b
+		if !isExcluded(route.Key(), exclude) {
+			return pick(route)
 		}
 	}
 	return nil
