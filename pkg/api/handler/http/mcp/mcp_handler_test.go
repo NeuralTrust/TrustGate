@@ -105,6 +105,7 @@ func newAppWithRunnerAndLimiter(t *testing.T, composer appmcp.Composer, plugins 
 	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(composer, plugins, limiter), appmcp.NewRoleScoper(approle.NewOIDCResolver()))
 	app.Post(mcpPath, handler.Handle)
 	app.Get(mcpPath, handler.MethodNotAllowed)
+	app.Delete(mcpPath, handler.MethodNotAllowed)
 	return app
 }
 
@@ -188,6 +189,22 @@ func modernHeadersWithName(method, name string) http.Header {
 	headers := modernHeadersFor(method)
 	headers.Set("Mcp-Name", name)
 	return headers
+}
+
+func TestHandler_UnsupportedTransportMethodsReturn405(t *testing.T) {
+	t.Parallel()
+	for _, method := range []string{fiber.MethodGet, fiber.MethodDelete} {
+		method := method
+		t.Run(method, func(t *testing.T) {
+			t.Parallel()
+			app := newApp(t, mocks.NewComposer(t), consumerdomain.TypeMCP, true)
+			res, err := app.Test(httptest.NewRequest(method, mcpPath, nil), -1)
+			require.NoError(t, err)
+			defer func() { _ = res.Body.Close() }()
+			require.Equal(t, fiber.StatusMethodNotAllowed, res.StatusCode)
+			require.Equal(t, fiber.MethodPost, res.Header.Get(fiber.HeaderAllow))
+		})
+	}
 }
 
 func containsHeaderAnnotation(value any) bool {
@@ -681,6 +698,45 @@ func TestHandler_LegacyNullIDIsNotification(t *testing.T) {
 	require.Empty(t, raw)
 }
 
+func TestHandler_ModernServerDiscoverNotificationSkipsDownstreamEffects(t *testing.T) {
+	t.Parallel()
+	authID := ids.New[ids.AuthKind]()
+	data := appconsumer.NewData(ids.New[ids.GatewayKind](), nil)
+	requestTrace := trace.New("discover-notification", trace.Metadata{Kind: events.KindMCP})
+	var metricsSkipped bool
+
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		ctx := appconsumer.WithAuthID(c.UserContext(), authID)
+		ctx = appconsumer.WithData(ctx, data)
+		ctx = trace.NewContext(ctx, requestTrace)
+		c.SetUserContext(ctx)
+		err := c.Next()
+		metricsSkipped, _ = c.Locals(string(infracontext.MCPSkipMetricsKey)).(bool)
+		return err
+	})
+	composer := mocks.NewComposer(t)
+	roleScoper := mocks.NewRoleScoper(t)
+	executor := pluginmocks.NewExecutor(t)
+	limiter := ratelimitmocks.NewChecker(t)
+	handler := mcphttp.NewHandler(
+		mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(executor, discardLogger()), limiter),
+		roleScoper,
+	)
+	app.Post(mcpPath, handler.Handle)
+
+	body := `{"jsonrpc":"2.0","method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`
+	status, raw := rpcRawCallWithHeaders(t, app, body, modernHeadersFor("server/discover"))
+	require.Equal(t, fiber.StatusAccepted, status)
+	require.Empty(t, raw)
+	require.True(t, metricsSkipped)
+	require.Empty(t, requestTrace.Spans())
+	require.Empty(t, roleScoper.Calls)
+	require.Empty(t, limiter.Calls)
+	require.Empty(t, executor.Calls)
+	require.Empty(t, composer.Calls)
+}
+
 func TestHandler_ModernNullIDIsRequest(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
@@ -722,7 +778,7 @@ func TestHandler_ModernInvalidIDsReturnInvalidRequest(t *testing.T) {
 
 func TestHandler_ModernUnsupportedMethodsReturn404(t *testing.T) {
 	t.Parallel()
-	for _, method := range []string{"ping", "tools/subscribe", "server/discover"} {
+	for _, method := range []string{"ping", "tools/subscribe"} {
 		method := method
 		t.Run(method, func(t *testing.T) {
 			t.Parallel()
@@ -751,10 +807,95 @@ func TestHandler_ModernMethodFilteringPrecedesConsumerLookup(t *testing.T) {
 		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
 	)
 	app.Post(mcpPath, handler.Handle)
-	body := `{"jsonrpc":"2.0","id":8,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`
-	status, response := rpcCallWithHeaders(t, app, body, modernHeadersFor("server/discover"))
+	body := `{"jsonrpc":"2.0","id":8,"method":"tools/subscribe","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`
+	status, response := rpcCallWithHeaders(t, app, body, modernHeadersFor("tools/subscribe"))
 	require.Equal(t, fiber.StatusNotFound, status)
 	require.Equal(t, float64(-32601), response["error"].(map[string]any)["code"])
+}
+
+func TestHandler_ModernServerDiscoverUsesScopedLocalView(t *testing.T) {
+	t.Parallel()
+	authID := ids.New[ids.AuthKind]()
+	gatewayID := ids.New[ids.GatewayKind]()
+	registryID := ids.New[ids.RegistryKind]()
+	consumer := &consumerdomain.Consumer{
+		ID:          ids.New[ids.ConsumerKind](),
+		GatewayID:   gatewayID,
+		Name:        "virtual",
+		Type:        consumerdomain.TypeMCP,
+		Slug:        "virtual",
+		Active:      true,
+		AuthIDs:     []ids.AuthID{authID},
+		RoutingMode: consumerdomain.RoutingModeRoleBased,
+	}
+	scopedConsumer := *consumer
+	scopedConsumer.MCP = &consumerdomain.MCPPolicy{
+		Toolkit: consumerdomain.Toolkit{{RegistryID: registryID, Tool: "search"}},
+	}
+	scoped := &appconsumer.RoutableConsumer{Consumer: &scopedConsumer}
+	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{{Consumer: consumer}})
+	requestTrace := trace.New("discover", trace.Metadata{Kind: events.KindMCP})
+	var metricsSkipped bool
+
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		ctx := appconsumer.WithAuthID(c.UserContext(), authID)
+		ctx = appconsumer.WithData(ctx, data)
+		ctx = trace.NewContext(ctx, requestTrace)
+		c.SetUserContext(ctx)
+		err := c.Next()
+		metricsSkipped, _ = c.Locals(string(infracontext.MCPSkipMetricsKey)).(bool)
+		return err
+	})
+	composer := mocks.NewComposer(t)
+	roleScoper := mocks.NewRoleScoper(t)
+	roleScoper.EXPECT().Scope(mock.Anything, mock.Anything, data).Return(scoped, nil).Once()
+	executor := pluginmocks.NewExecutor(t)
+	limiter := ratelimitmocks.NewChecker(t)
+	handler := mcphttp.NewHandler(
+		mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(executor, discardLogger()), limiter),
+		roleScoper,
+	)
+	app.Post(mcpPath, handler.Handle)
+
+	body := `{"jsonrpc":"2.0","id":21,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`
+	req := httptest.NewRequest(fiber.MethodPost, mcpPath, strings.NewReader(body))
+	req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+	req.Header.Set("MCP-Protocol-Version", "2026-07-28")
+	req.Header.Set("Mcp-Method", "server/discover")
+	req.Header.Set("Mcp-Session-Id", "ignored")
+	res, err := app.Test(req, -1)
+	require.NoError(t, err)
+	defer func() { _ = res.Body.Close() }()
+	var response map[string]any
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&response))
+
+	require.Equal(t, fiber.StatusOK, res.StatusCode)
+	require.Empty(t, res.Header.Get("Mcp-Session-Id"))
+	result := response["result"].(map[string]any)
+	require.Equal(t, []any{"2026-07-28", "2025-06-18", "2025-03-26", "2024-11-05"}, result["supportedVersions"])
+	require.Equal(t, map[string]any{"tools": map[string]any{}}, result["capabilities"])
+	require.Equal(t, "complete", result["resultType"])
+	require.Equal(t, float64(300000), result["ttlMs"])
+	require.Equal(t, "private", result["cacheScope"])
+	require.Contains(t, result["_meta"].(map[string]any), "io.modelcontextprotocol/serverInfo")
+	require.False(t, metricsSkipped)
+	require.Empty(t, composer.Calls)
+	require.Empty(t, executor.Calls)
+	require.Empty(t, limiter.Calls)
+
+	spans := requestTrace.Spans()
+	require.Len(t, spans, 1)
+	attrs, ok := spans[0].MCPAttrsCopy()
+	require.True(t, ok)
+	require.Equal(t, "server/discover", attrs.Method)
+	require.Equal(t, "discovery", attrs.Operation)
+	require.Zero(t, attrs.Targets)
+	require.Zero(t, attrs.RPCErrorCode)
+	require.Equal(t, fiber.StatusOK, attrs.UpstreamStatus)
+	require.Empty(t, attrs.ServerName)
+	require.Empty(t, attrs.RegistryID)
+	require.False(t, spans[0].EndedAt().IsZero())
 }
 
 func TestHandler_ModernHappyPathUsesExistingDispatcher(t *testing.T) {

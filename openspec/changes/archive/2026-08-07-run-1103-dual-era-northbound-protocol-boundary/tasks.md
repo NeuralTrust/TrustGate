@@ -46,9 +46,9 @@ Each child PR must show only its slice; merge to `main` in order and retarget th
 
 ## Phase 3: Scoped discovery and transport closure (PR 3)
 
-- [ ] 3.1 Create `server_discover.go` and tests for scoped kinds, newest-first versions, fingerprinted identity, private 300000 TTL, and zero upstream targets. Depends: Phases 1–2.
-- [ ] 3.2 Wire local discovery and telemetry in `mcp_handler.go`; prove no limiter, plugin, consent, composer, or upstream effects for `server/discover`.
-- [ ] 3.3 Extend `mcp_handler_test.go` (and `pkg/server/router/mcp_router_test.go` if needed) for modern 404/`-32601`, resource `-32602`, notification 202, ignored/unemitted session ID, POST path, GET/DELETE 405, and legacy regressions.
-- [ ] 3.4 Run `clean-comments` on phase files; retain tooling directives only.
-- [ ] 3.5 Run `/reviewer` against the complete stack; resolve role-leakage, telemetry, and compatibility findings.
-- [ ] 3.6 Run `/verifier` with focused race tests, `go vet ./...`, and `golangci-lint run`. Done: complete chain green; composer contracts unchanged.
+- [x] 3.1 Create `server_discover.go` and tests for scoped kinds, newest-first versions, fingerprinted identity, private 300000 TTL, and zero upstream targets. Depends: Phases 1–2.
+- [x] 3.2 Wire local discovery and telemetry in `mcp_handler.go`; prove no limiter, plugin, consent, composer, or upstream effects for `server/discover`.
+- [x] 3.3 Extend `mcp_handler_test.go` (and `pkg/server/router/mcp_router_test.go` if needed) for modern 404/`-32601`, resource `-32602`, notification 202, ignored/unemitted session ID, POST path, GET/DELETE 405, and legacy regressions.
+- [x] 3.4 Run `clean-comments` on phase files; retain tooling directives only.
+- [x] 3.5 Run `/reviewer` against the complete stack; resolve role-leakage, telemetry, and compatibility findings.
+- [x] 3.6 Run `/verifier` with focused race tests, `go vet ./...`, and `golangci-lint run`. Done: complete chain green; composer contracts unchanged.
