@@ -197,7 +197,13 @@ func ResolveAgentFormat(providerName, sourceFormat string, providerOptions map[s
 }
 
 // ResolveTargetFormatForCapability picks the provider wire format for a proxy capability.
-func ResolveTargetFormatForCapability(providerName string, capability string, providerOptions map[string]any) Format {
+// sourceFormat is the dialect the client spoke, derived from the inbound route.
+func ResolveTargetFormatForCapability(
+	providerName string,
+	capability string,
+	sourceFormat Format,
+	providerOptions map[string]any,
+) Format {
 	switch capability {
 	case "embeddings":
 		if providerName == provider.Cohere {
@@ -207,8 +213,64 @@ func ResolveTargetFormatForCapability(providerName string, capability string, pr
 	case "rerank":
 		return FormatCohereRerank
 	default:
-		return ResolveTargetFormat(providerName, providerOptions)
+		return resolveChatTargetFormat(providerName, sourceFormat, providerOptions)
 	}
+}
+
+// Values accepted by provider_options.api for the OpenAI provider. Duplicated
+// from pkg/infra/providers to keep this package free of that dependency.
+const (
+	OpenAIAPICompletions = "completions"
+	OpenAIAPIResponses   = "responses"
+)
+
+// OpenAI exposes two chat surfaces, and a client picks one by calling either
+// /v1/chat/completions or /v1/responses. Honour that choice: downgrading a
+// Responses request to Chat Completions drops everything the newer surface
+// adds. An explicit provider_options.api still wins, which is the only way to
+// reach a surface the client did not ask for. Azure is excluded from the
+// mirroring because its client only builds chat/completions URLs.
+func resolveChatTargetFormat(providerName string, sourceFormat Format, providerOptions map[string]any) Format {
+	wireFormat := resolveProviderWireFormat(providerName)
+	providerFormat := Format(providerName)
+	if providerFormat != FormatOpenAI && providerFormat != FormatAzure {
+		return wireFormat
+	}
+	if api, ok := providerOptions["api"].(string); ok {
+		switch api {
+		case OpenAIAPIResponses:
+			return FormatOpenAIResponses
+		case OpenAIAPICompletions:
+			return wireFormat
+		}
+	}
+	if providerFormat == FormatOpenAI && sourceFormat == FormatOpenAIResponses {
+		return FormatOpenAIResponses
+	}
+	return wireFormat
+}
+
+// OpenAIProviderOptionsForTarget restates the resolved chat surface in the
+// options handed to the provider client, which picks its endpoint from
+// provider_options.api. Without this the route-derived decision and the URL the
+// client builds could disagree. The input map is never mutated.
+func OpenAIProviderOptionsForTarget(providerName string, targetFormat Format, options map[string]any) map[string]any {
+	if Format(providerName) != FormatOpenAI {
+		return options
+	}
+	api := OpenAIAPICompletions
+	if targetFormat == FormatOpenAIResponses {
+		api = OpenAIAPIResponses
+	}
+	if current, ok := options["api"].(string); ok && current == api {
+		return options
+	}
+	out := make(map[string]any, len(options)+1)
+	for k, v := range options {
+		out[k] = v
+	}
+	out["api"] = api
+	return out
 }
 
 func IsSameWireFormat(a, b Format) bool {

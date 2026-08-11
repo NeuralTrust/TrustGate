@@ -231,6 +231,115 @@ func TestResolveTargetFormat_OpenAICompatible(t *testing.T) {
 		"openai_compatible must stay Chat Completions regardless of the api option")
 }
 
+// A client picks an OpenAI chat surface by calling either /v1/chat/completions
+// or /v1/responses, and the gateway must serve the one it asked for instead of
+// downgrading a Responses request to Chat Completions.
+func TestResolveTargetFormatForCapability_MirrorsInboundRoute(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider string
+		source   Format
+		options  map[string]any
+		want     Format
+	}{
+		{
+			name:     "responses route reaches the responses surface",
+			provider: "openai",
+			source:   FormatOpenAIResponses,
+			want:     FormatOpenAIResponses,
+		},
+		{
+			name:     "completions route reaches the completions surface",
+			provider: "openai",
+			source:   FormatOpenAI,
+			want:     FormatOpenAI,
+		},
+		{
+			// The Azure client only builds chat/completions URLs, so mirroring
+			// there would produce a body its endpoint cannot accept.
+			name:     "azure does not mirror the route",
+			provider: "azure",
+			source:   FormatOpenAIResponses,
+			want:     FormatAzure,
+		},
+		{
+			name:     "azure still honours an explicit api option",
+			provider: "azure",
+			source:   FormatOpenAI,
+			options:  map[string]any{"api": "responses"},
+			want:     FormatOpenAIResponses,
+		},
+		{
+			name:     "an explicit api option overrides the route",
+			provider: "openai",
+			source:   FormatOpenAI,
+			options:  map[string]any{"api": "responses"},
+			want:     FormatOpenAIResponses,
+		},
+		{
+			name:     "an explicit completions option overrides the route",
+			provider: "openai",
+			source:   FormatOpenAIResponses,
+			options:  map[string]any{"api": "completions"},
+			want:     FormatOpenAI,
+		},
+		{
+			name:     "providers with a single chat surface ignore the route",
+			provider: "anthropic",
+			source:   FormatOpenAIResponses,
+			want:     FormatAnthropic,
+		},
+		{
+			name:     "openai_compatible stays chat completions",
+			provider: "openai_compatible",
+			source:   FormatOpenAIResponses,
+			want:     FormatOpenAI,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := ResolveTargetFormatForCapability(tc.provider, "chat", tc.source, tc.options)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// The provider client picks its endpoint from provider_options.api, so the
+// resolved surface has to be restated there or the two decisions can disagree.
+func TestOpenAIProviderOptionsForTarget(t *testing.T) {
+	t.Run("responses target sets the api option", func(t *testing.T) {
+		in := map[string]any{"base_url": "https://host/v1"}
+		got := OpenAIProviderOptionsForTarget("openai", FormatOpenAIResponses, in)
+
+		assert.Equal(t, "responses", got["api"])
+		assert.Equal(t, "https://host/v1", got["base_url"])
+		assert.NotContains(t, in, "api", "the registry options must not be mutated")
+	})
+
+	t.Run("completions target pins the api option", func(t *testing.T) {
+		got := OpenAIProviderOptionsForTarget("openai", FormatOpenAI, nil)
+		assert.Equal(t, "completions", got["api"])
+	})
+
+	t.Run("other providers are left alone", func(t *testing.T) {
+		in := map[string]any{"project": "p"}
+		assert.Equal(t, in, OpenAIProviderOptionsForTarget("vertex", FormatOpenAIResponses, in))
+	})
+}
+
+// Embeddings and rerank have a single surface, so the chat route must not leak
+// into them.
+func TestResolveTargetFormatForCapability_NonChatCapabilitiesIgnoreRoute(t *testing.T) {
+	assert.Equal(t, FormatOpenAIEmbeddings,
+		ResolveTargetFormatForCapability("openai", "embeddings", FormatOpenAIResponses, nil))
+	assert.Equal(t, FormatCohereEmbed,
+		ResolveTargetFormatForCapability("cohere", "embeddings", FormatOpenAIResponses, nil))
+	assert.Equal(t, FormatCohereRerank,
+		ResolveTargetFormatForCapability("cohere", "rerank", FormatOpenAIResponses, nil))
+}
+
 // ---------------------------------------------------------------------------
 // Cross-provider: OpenAI → Anthropic
 // ---------------------------------------------------------------------------

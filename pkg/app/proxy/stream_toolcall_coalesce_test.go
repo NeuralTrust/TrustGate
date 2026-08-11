@@ -106,6 +106,39 @@ func TestCoalesceOpenAIToolCallStream_MergesFragmentedArguments(t *testing.T) {
 	assert.Contains(t, out, "data: [DONE]")
 }
 
+// GPT-5 custom tool calls stream their freeform payload under custom.input.
+// Coalescing them into a function call loses both the name and the input, so
+// the client sees an unusable tool call (ENG-1281).
+func TestCoalesceOpenAIToolCallStream_MergesCustomToolCall(t *testing.T) {
+	out := collectLines(t, coalesceOpenAIToolCallStream(linesSeq(
+		`data: {"id":"c1","object":"chat.completion.chunk","model":"gpt-5.1","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"custom","custom":{"name":"bash","input":""}}]},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"c1","object":"chat.completion.chunk","model":"gpt-5.1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"custom":{"input":"ls -la "}}]},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"c1","object":"chat.completion.chunk","model":"gpt-5.1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"custom":{"input":"/tmp"}}]},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"c1","object":"chat.completion.chunk","model":"gpt-5.1","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		``,
+		`data: [DONE]`,
+		``,
+	)))
+
+	chunks := dataChunks(t, out)
+	require.Len(t, chunks, 3)
+
+	calls := chunkToolCalls(chunks[1])
+	require.Len(t, calls, 1)
+	call := calls[0].(map[string]any)
+	assert.Equal(t, "call_1", call["id"])
+	assert.Equal(t, "custom", call["type"])
+	assert.Nil(t, call["function"], "a custom call must not be coalesced into a function")
+
+	custom, ok := call["custom"].(map[string]any)
+	require.True(t, ok, "custom payload must survive: %v", call)
+	assert.Equal(t, "bash", custom["name"])
+	assert.Equal(t, "ls -la /tmp", custom["input"], "fragmented input must be reassembled")
+}
+
 func TestCoalesceOpenAIToolCallStream_ContentOnlyPassthroughVerbatim(t *testing.T) {
 	in := []string{
 		`data: {"id":"c1","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}`,

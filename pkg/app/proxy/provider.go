@@ -239,7 +239,7 @@ func (p *providerInvoker) prepare(
 
 	sourceFormat := sourceFormatFromRequest(req)
 	capability := capabilityFromRequest(req)
-	targetFormat := adapter.ResolveTargetFormatForCapability(bk.Provider(), capability, bk.ProviderOptions())
+	targetFormat := adapter.ResolveTargetFormatForCapability(bk.Provider(), capability, sourceFormat, bk.ProviderOptions())
 
 	req.Provider = bk.Provider()
 	req.SourceFormat = string(sourceFormat)
@@ -281,7 +281,7 @@ func (p *providerInvoker) prepare(
 	return &preparedInvocation{
 		client: client,
 		cfg: &providers.Config{
-			Options:       bk.ProviderOptions(),
+			Options:       adapter.OpenAIProviderOptionsForTarget(bk.Provider(), targetFormat, bk.ProviderOptions()),
 			Credentials:   providers.CredentialsFromTargetAuth(bk.Auth()),
 			Model:         sentModel,
 			DefaultModel:  req.DefaultModel,
