@@ -173,6 +173,17 @@ func addReadmeResource(server *sdk.Server, uri, text string) {
 // gateway domain so the path-first auth scope resolves.
 func mcpPost(t *testing.T, gatewayID, consumerID string, headers map[string]string, body any) (int, map[string]any) {
 	t.Helper()
+	status, _, out := mcpExchange(t, gatewayID, consumerID, headers, body)
+	return status, out
+}
+
+func mcpExchange(
+	t *testing.T,
+	gatewayID, consumerID string,
+	headers map[string]string,
+	body any,
+) (int, http.Header, map[string]any) {
+	t.Helper()
 	raw, err := json.Marshal(body)
 	require.NoError(t, err)
 	url := MCPURL + "/" + ConsumerSlug(t, consumerID) + "/mcp"
@@ -197,7 +208,7 @@ func mcpPost(t *testing.T, gatewayID, consumerID string, headers map[string]stri
 			out = map[string]any{"_raw": string(decoded)}
 		}
 	}
-	return resp.StatusCode, out
+	return resp.StatusCode, resp.Header.Clone(), out
 }
 
 // mcpRPC posts a JSON-RPC request to the virtual MCP server and returns the
