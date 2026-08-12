@@ -1,14 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Plus, Pencil, Trash2, ShieldCheck, Globe } from "lucide-react";
+import { useState } from "react";
+import { Plus, Pencil, Trash2, ShieldCheck, Globe, Copy } from "lucide-react";
 import { api, gatewayScope } from "@/lib/admin-client";
 import { useActiveGatewayId } from "@/components/layout/gateway-context";
-import { useList, useInvalidate, usePolicyCatalog, errorMessage } from "@/lib/hooks";
+import { usePagedList, useInvalidate, usePolicyCatalog, errorMessage } from "@/lib/hooks";
 import { useToast } from "@/components/ui/toast";
 import { PageHeader, ConfirmDialog, useDisclosure } from "@/components/ui/page";
 import { Button } from "@/components/ui/button";
 import { Table, THead, TBody, TH, TR, TD } from "@/components/ui/table";
+import {
+  FilterSelect,
+  ListToolbar,
+  NoMatches,
+  Pagination,
+  SortHeader,
+  useListControls,
+} from "@/components/ui/list-controls";
 import { Badge, EmptyState, PageLoader, Dot } from "@/components/ui/misc";
 import {
   Dialog,
@@ -36,7 +44,17 @@ const FALLBACK_SLUGS = [
 ];
 
 export function PoliciesView() {
-  const { data: policies, isLoading } = useList<Policy>("policies");
+  const controls = useListControls();
+  const { data, isLoading } = usePagedList<Policy>("policies", controls.query);
+  const policies = data?.items ?? [];
+  const total = data?.total ?? 0;
+  // `category` filters by catalog group, `type` by plugin slug — the API
+  // intersects them, so the plugin list narrows to the chosen category.
+  const { data: catalog } = usePolicyCatalog();
+  const category = controls.filters.category ?? "";
+  const plugins = (catalog ?? [])
+    .filter((group) => category === "" || group.type === category)
+    .flatMap((group) => group.items);
   const form = useDisclosure();
   const [editing, setEditing] = useState<Policy | null>(null);
   const [toDelete, setToDelete] = useState<Policy | null>(null);
@@ -61,75 +79,151 @@ export function PoliciesView() {
 
       {isLoading ? (
         <PageLoader />
-      ) : !policies || policies.length === 0 ? (
+      ) : total === 0 && !controls.isFiltered ? (
         <EmptyState
           icon={<ShieldCheck className="h-5 w-5" />}
           title="No policies yet"
           description="Create a plugin policy to enforce limits or transform traffic."
         />
       ) : (
-        <Table>
-          <THead>
-            <TH>Name</TH>
-            <TH>Plugin</TH>
-            <TH>Scope</TH>
-            <TH>Stages</TH>
-            <TH>Status</TH>
-            <TH className="text-right pr-4">Actions</TH>
-          </THead>
-          <TBody>
-            {policies.map((p) => (
-              <TR key={p.id}>
-                <TD>
-                  <span className="font-medium text-fg">{p.name}</span>
-                </TD>
-                <TD>
-                  <Badge tone="accent">{p.slug}</Badge>
-                </TD>
-                <TD>
-                  {p.global ? (
-                    <Badge tone="warning">
-                      <Globe className="h-3 w-3" />
-                      Global
-                    </Badge>
-                  ) : (
-                    <span className="text-faint">scoped</span>
-                  )}
-                </TD>
-                <TD>
-                  <span className="text-[12px] text-muted">
-                    {p.stages && p.stages.length > 0 ? p.stages.join(", ") : "—"}
-                  </span>
-                </TD>
-                <TD>
-                  <span className="inline-flex items-center gap-2 text-muted">
-                    <Dot active={p.enabled} />
-                    {p.enabled ? "Enabled" : "Disabled"}
-                  </span>
-                </TD>
-                <TD className="text-right pr-4">
-                  <div className="inline-flex gap-1">
-                    <GlobalToggle policy={p} />
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => {
-                        setEditing(p);
-                        form.onOpen();
-                      }}
-                      aria-label="Edit"
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button variant="ghost" size="icon" onClick={() => setToDelete(p)} aria-label="Delete">
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </TD>
-              </TR>
-            ))}
-          </TBody>
-        </Table>
+        <>
+          <ListToolbar controls={controls} placeholder="Search policies by name or slug…">
+            <FilterSelect
+              label="Category"
+              value={category}
+              onChange={(v) => {
+                controls.setFilter("category", v);
+                // The selected plugin may not belong to the new category.
+                controls.setFilter("type", "");
+              }}
+            >
+              <option value="">Any category</option>
+              {(catalog ?? []).map((group) => (
+                <option key={group.type} value={group.type}>
+                  {group.type}
+                </option>
+              ))}
+            </FilterSelect>
+            <FilterSelect
+              label="Plugin"
+              value={controls.filters.type ?? ""}
+              onChange={(v) => controls.setFilter("type", v)}
+            >
+              <option value="">Any plugin</option>
+              {plugins.map((plugin) => (
+                <option key={plugin.slug} value={plugin.slug}>
+                  {plugin.name}
+                </option>
+              ))}
+            </FilterSelect>
+            <FilterSelect
+              label="Mode"
+              value={controls.filters.mode ?? ""}
+              onChange={(v) => controls.setFilter("mode", v)}
+            >
+              <option value="">Any mode</option>
+              <option value="enforce">enforce</option>
+              <option value="throttle">throttle</option>
+              <option value="observe">observe</option>
+            </FilterSelect>
+            <FilterSelect
+              label="Scope"
+              value={controls.filters.global ?? ""}
+              onChange={(v) => controls.setFilter("global", v)}
+            >
+              <option value="">Any scope</option>
+              <option value="true">Global</option>
+              <option value="false">Scoped</option>
+            </FilterSelect>
+            <FilterSelect
+              label="Status"
+              value={controls.filters.enabled ?? ""}
+              onChange={(v) => controls.setFilter("enabled", v)}
+            >
+              <option value="">Any status</option>
+              <option value="true">Enabled</option>
+              <option value="false">Disabled</option>
+            </FilterSelect>
+          </ListToolbar>
+
+          {policies.length === 0 ? (
+            <NoMatches controls={controls} label="policies" />
+          ) : (
+            <Table>
+              <THead>
+                <SortHeader controls={controls} field="name">
+                  Name
+                </SortHeader>
+                <TH>Plugin</TH>
+                <TH>Scope</TH>
+                <SortHeader controls={controls} field="priority">
+                  Priority
+                </SortHeader>
+                <TH>Stages</TH>
+                <TH>Status</TH>
+                <TH className="text-right pr-4">Actions</TH>
+              </THead>
+              <TBody>
+                {policies.map((p) => (
+                  <TR key={p.id}>
+                    <TD>
+                      <span className="font-medium text-fg">{p.name}</span>
+                    </TD>
+                    <TD>
+                      <Badge tone="accent">{p.slug}</Badge>
+                    </TD>
+                    <TD>
+                      {p.global ? (
+                        <Badge tone="warning">
+                          <Globe className="h-3 w-3" />
+                          Global
+                        </Badge>
+                      ) : (
+                        <span className="text-faint">scoped</span>
+                      )}
+                    </TD>
+                    <TD>
+                      <span className="text-[12px] text-muted tabular-nums">{p.priority}</span>
+                    </TD>
+                    <TD>
+                      <span className="text-[12px] text-muted">
+                        {p.stages && p.stages.length > 0 ? p.stages.join(", ") : "—"}
+                      </span>
+                    </TD>
+                    <TD>
+                      <span className="inline-flex items-center gap-2 text-muted">
+                        <Dot active={p.enabled} />
+                        {p.enabled ? "Enabled" : "Disabled"}
+                      </span>
+                    </TD>
+                    <TD className="text-right pr-4">
+                      <div className="inline-flex gap-1">
+                        <GlobalToggle policy={p} />
+                        <DuplicateButton policy={p} />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            setEditing(p);
+                            form.onOpen();
+                          }}
+                          aria-label="Edit"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => setToDelete(p)} aria-label="Delete">
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TD>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+          )}
+
+          <Pagination controls={controls} total={total} />
+        </>
       )}
 
       {form.open && <PolicyFormDialog open={form.open} onOpenChange={form.setOpen} policy={editing} />}
@@ -173,6 +267,49 @@ function GlobalToggle({ policy }: { policy: Policy }) {
       className={cn(policy.global && "text-warning")}
     >
       <Globe className="h-4 w-4" />
+    </Button>
+  );
+}
+
+/**
+ * Copies a policy through the API. The copy is named with a numeric suffix,
+ * starts scoped (never global) and carries no consumer associations, so the
+ * toast says so instead of implying an identical twin.
+ */
+function DuplicateButton({ policy }: { policy: Policy }) {
+  const gatewayId = useActiveGatewayId();
+  const invalidate = useInvalidate();
+  const { toast } = useToast();
+  const [loading, setLoading] = useState(false);
+
+  async function duplicate() {
+    setLoading(true);
+    try {
+      const copy = await api.post<Policy>(
+        `${gatewayScope(gatewayId)}/policies/${policy.id}/duplicate`,
+      );
+      toast({
+        variant: "success",
+        title: "Policy duplicated",
+        description: `${copy.name} — scoped, with no consumers attached`,
+      });
+      void invalidate("policies");
+    } catch (err) {
+      toast({ variant: "error", title: "Could not duplicate", description: errorMessage(err) });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={duplicate}
+      loading={loading}
+      aria-label="Duplicate"
+    >
+      <Copy className="h-4 w-4" />
     </Button>
   );
 }
@@ -241,20 +378,20 @@ function PolicyFormDialog({
   const settingsFields = entry?.settings_schema?.fields ?? [];
 
   // When creating, derive stages, mode and default settings from the selected
-  // plugin's catalog schema. Editing keeps the persisted policy values.
-  useEffect(() => {
-    if (isEdit) return;
-    const catalogEntry = entries.find((e) => e.slug === slug);
-    if (!catalogEntry) return;
+  // plugin's catalog schema. Editing keeps the persisted policy values. Done
+  // during render (not in an effect) so the defaults land in the same commit as
+  // the slug change; `appliedSlug` also covers the catalog arriving late.
+  const [appliedSlug, setAppliedSlug] = useState<string | null>(null);
+  if (!isEdit && entry && appliedSlug !== slug) {
+    setAppliedSlug(slug);
     setStages(
-      catalogEntry.mandatory_stages.length > 0
-        ? catalogEntry.mandatory_stages
-        : catalogEntry.supported_stages.slice(0, 1),
+      entry.mandatory_stages.length > 0
+        ? entry.mandatory_stages
+        : entry.supported_stages.slice(0, 1),
     );
-    setMode(catalogEntry.default_mode || "");
-    setSettings(buildSettingsDefaults(catalogEntry.settings_schema?.fields ?? []));
-    // entries is derived from catalogGroups; depend on the stable query data.
-  }, [slug, isEdit, catalogGroups]);
+    setMode(entry.default_mode || "");
+    setSettings(buildSettingsDefaults(entry.settings_schema?.fields ?? []));
+  }
 
   async function submit() {
     if (!name.trim() || !slug.trim()) {
