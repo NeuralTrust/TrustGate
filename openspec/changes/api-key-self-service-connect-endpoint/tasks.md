@@ -55,10 +55,10 @@ Size exception rationale: the security matrix, DI graph, and route precedence fo
 
 ## Phase 3: HTTP Adapter (RUN-1141)
 
-- [ ] 3.1 Create `pkg/api/handler/http/oauth/api_key_connect_handler.go` with thin Host/slug GET and form-urlencoded POST methods.
-- [ ] 3.2 Map GET misses to 404; POST authorization 401, malformed 400, media 415, dependencies 500, success no-store 303.
-- [ ] 3.3 Create `pkg/api/handler/http/oauth/api_key_connect_handler_test.go` for body-only input, no-Origin acceptance, statuses, redirect, and secret absence.
-- [ ] 3.4 Run focused tests, formatting/import checks, and comment cleanup.
+- [x] 3.1 Create `pkg/api/handler/http/oauth/api_key_connect_handler.go` with thin Host/slug GET and form-urlencoded POST methods.
+- [x] 3.2 Map GET misses to 404; POST authorization 401, malformed 400, media 415, dependencies 500, success no-store 303.
+- [x] 3.3 Create `pkg/api/handler/http/oauth/api_key_connect_handler_test.go` for body-only input, no-Origin acceptance, statuses, redirect, and secret absence.
+- [x] 3.4 Run focused tests, formatting/import checks, and comment cleanup.
 
 ## Phase 4: Routing and Dependency Injection (RUN-1141)
 
