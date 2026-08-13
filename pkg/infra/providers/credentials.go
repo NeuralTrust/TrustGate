@@ -18,8 +18,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
-// CredentialsFromTargetAuth maps a registry target's auth configuration onto
-// the provider credentials DTO consumed by the provider clients.
 func CredentialsFromTargetAuth(a *registry.TargetAuth) Credentials {
 	creds := Credentials{}
 	if a == nil {
