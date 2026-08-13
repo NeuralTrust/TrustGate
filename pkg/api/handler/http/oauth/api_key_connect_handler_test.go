@@ -187,6 +187,41 @@ func TestAPIKeyConnectHandlerPost_UsesBodyOnlyAfterHostResolution(t *testing.T) 
 	assertAPIKeyConnectSecretAbsent(t, res, body)
 }
 
+func TestAPIKeyConnectHandlerPost_InvalidHostPrecedesMalformedBody(t *testing.T) {
+	t.Parallel()
+
+	resolverCalls := 0
+	handler := NewAPIKeyConnectHandler(
+		gatewayResolverFunc(func(*fiber.Ctx) (*gatewaydomain.Gateway, error) {
+			resolverCalls++
+			return nil, appauth.ErrInvalidAuthRequest
+		}),
+		appoauthmocks.NewAPIKeyConnectService(t),
+	)
+
+	res := performAPIKeyConnectRequest(
+		t,
+		handler,
+		fiber.MethodPost,
+		"/tools/connect",
+		fiber.MIMEApplicationForm,
+		"api_key="+apiKeyConnectTestSecret+"%zz",
+	)
+	body := readAPIKeyConnectBody(t, res)
+
+	if resolverCalls != 1 {
+		t.Fatalf("gateway resolver calls = %d, want 1", resolverCalls)
+	}
+	if res.StatusCode != fiber.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", res.StatusCode, fiber.StatusUnauthorized)
+	}
+	if body != http.StatusText(fiber.StatusUnauthorized) {
+		t.Fatalf("body = %q, want generic %q", body, http.StatusText(fiber.StatusUnauthorized))
+	}
+	assertAPIKeyConnectNoStore(t, res)
+	assertAPIKeyConnectSecretAbsent(t, res, body)
+}
+
 func TestAPIKeyConnectHandlerPost_IgnoresQueryAndHeaderCredentials(t *testing.T) {
 	t.Parallel()
 
@@ -250,7 +285,7 @@ func TestAPIKeyConnectHandlerPost_StatusMapping(t *testing.T) {
 			wantStatus:  fiber.StatusUnsupportedMediaType,
 		},
 		{
-			name:        "malformed form",
+			name:        "malformed form with valid host",
 			contentType: fiber.MIMEApplicationForm,
 			body:        "api_key=%zz",
 			wantStatus:  fiber.StatusBadRequest,

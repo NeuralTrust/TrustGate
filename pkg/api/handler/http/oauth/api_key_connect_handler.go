@@ -77,13 +77,6 @@ func (h *APIKeyConnectHandler) Post(c *fiber.Ctx) error {
 		return writeAPIKeyConnectStatus(c, fiber.StatusUnsupportedMediaType)
 	}
 
-	rawBody := c.Body()
-	values, err := url.ParseQuery(string(rawBody))
-	if err != nil {
-		return writeAPIKeyConnectStatus(c, fiber.StatusBadRequest)
-	}
-	body := request.APIKeyConnectRequest{APIKey: values.Get("api_key")}
-
 	gateway, err := h.gateways.Resolve(c)
 	if err != nil {
 		if errors.Is(err, appauth.ErrInvalidAuthRequest) {
@@ -94,6 +87,13 @@ func (h *APIKeyConnectHandler) Post(c *fiber.Ctx) error {
 	if gateway == nil {
 		return writeAPIKeyConnectStatus(c, fiber.StatusUnauthorized)
 	}
+
+	rawBody := c.Body()
+	values, err := url.ParseQuery(string(rawBody))
+	if err != nil {
+		return writeAPIKeyConnectStatus(c, fiber.StatusBadRequest)
+	}
+	body := request.APIKeyConnectRequest{APIKey: values.Get("api_key")}
 
 	slug := c.Params("slug")
 	ticket, err := h.connect.CreateTicket(c.UserContext(), gateway.ID, slug, body.APIKey)
