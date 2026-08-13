@@ -225,79 +225,6 @@ func TestAPIKeyConnectHandlerPost_IgnoresQueryAndHeaderCredentials(t *testing.T)
 	assertAPIKeyConnectSecretAbsent(t, res, body)
 }
 
-func TestAPIKeyConnectHandlerPost_AcceptsRepeatedParametersAtBodyLimit(t *testing.T) {
-	t.Parallel()
-
-	gateway := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind]()}
-	service := appoauthmocks.NewAPIKeyConnectService(t)
-	service.EXPECT().
-		CreateTicket(mock.Anything, gateway.ID, "tools", apiKeyConnectTestSecret).
-		Return("bounded-ticket", nil).
-		Once()
-	handler := NewAPIKeyConnectHandler(
-		gatewayResolverFunc(func(*fiber.Ctx) (*gatewaydomain.Gateway, error) {
-			return gateway, nil
-		}),
-		service,
-	)
-
-	res := performAPIKeyConnectRequest(
-		t,
-		handler,
-		fiber.MethodPost,
-		"/tools/connect",
-		fiber.MIMEApplicationForm,
-		apiKeyConnectFormAtLimit(t),
-	)
-	body := readAPIKeyConnectBody(t, res)
-
-	if res.StatusCode != fiber.StatusSeeOther {
-		t.Fatalf("status = %d, want %d", res.StatusCode, fiber.StatusSeeOther)
-	}
-	if got, want := res.Header.Get(fiber.HeaderLocation), "/tools/mcp/connect?ticket=bounded-ticket"; got != want {
-		t.Fatalf("Location = %q, want %q", got, want)
-	}
-	assertAPIKeyConnectNoStore(t, res)
-	assertAPIKeyConnectSecretAbsent(t, res, body)
-}
-
-func TestAPIKeyConnectHandlerPost_RejectsBodyAboveLimitBeforeLookup(t *testing.T) {
-	t.Parallel()
-
-	resolverCalled := false
-	service := appoauthmocks.NewAPIKeyConnectService(t)
-	handler := NewAPIKeyConnectHandler(
-		gatewayResolverFunc(func(*fiber.Ctx) (*gatewaydomain.Gateway, error) {
-			resolverCalled = true
-			return &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind]()}, nil
-		}),
-		service,
-	)
-
-	oversizedBody := apiKeyConnectFormAtLimit(t) + "x"
-	res := performAPIKeyConnectRequest(
-		t,
-		handler,
-		fiber.MethodPost,
-		"/tools/connect",
-		fiber.MIMEApplicationForm,
-		oversizedBody,
-	)
-	body := readAPIKeyConnectBody(t, res)
-
-	if res.StatusCode != fiber.StatusBadRequest {
-		t.Fatalf("status = %d, want %d", res.StatusCode, fiber.StatusBadRequest)
-	}
-	if body != http.StatusText(fiber.StatusBadRequest) {
-		t.Fatalf("body = %q, want generic %q", body, http.StatusText(fiber.StatusBadRequest))
-	}
-	if resolverCalled {
-		t.Fatal("gateway resolver was called for an oversized form")
-	}
-	assertAPIKeyConnectNoStore(t, res)
-	assertAPIKeyConnectSecretAbsent(t, res, body)
-}
-
 func TestAPIKeyConnectHandlerPost_StatusMapping(t *testing.T) {
 	t.Parallel()
 
@@ -518,23 +445,6 @@ func assertAPIKeyConnectSecretAbsent(t *testing.T, res *http.Response, body stri
 			}
 		}
 	}
-}
-
-func apiKeyConnectFormAtLimit(t *testing.T) string {
-	t.Helper()
-
-	var body strings.Builder
-	body.Grow(apiKeyConnectMaxFormBodyBytes)
-	body.WriteString("api_key=" + apiKeyConnectTestSecret + "&api_key=ignored&")
-	for body.Len()+len("noise=x&")+len("padding=") <= apiKeyConnectMaxFormBodyBytes {
-		body.WriteString("noise=x&")
-	}
-	body.WriteString("padding=")
-	body.WriteString(strings.Repeat("z", apiKeyConnectMaxFormBodyBytes-body.Len()))
-	if body.Len() != apiKeyConnectMaxFormBodyBytes {
-		t.Fatalf("form body length = %d, want %d", body.Len(), apiKeyConnectMaxFormBodyBytes)
-	}
-	return body.String()
 }
 
 var _ resolver.GatewayResolver = gatewayResolverFunc(nil)

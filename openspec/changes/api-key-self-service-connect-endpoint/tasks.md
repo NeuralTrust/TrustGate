@@ -70,6 +70,6 @@ Size exception rationale: the security matrix, DI graph, and route precedence fo
 
 ## Phase 5: Final Verification (RUN-1141)
 
-- [ ] 5.1 Audit leakage, generic failures, unchanged runtime/vault/OAuth2, and exclusion of RUN-1142/RUN-1140.
-- [ ] 5.2 Re-run generation; reject drift and remove non-directive/Swagger/license Go comments.
-- [ ] 5.3 Run `goimports`, `gofmt`, `go vet ./...`, focused tests, `make lint`, and `go test -race ./...`.
+- [x] 5.1 Audit leakage, generic failures, unchanged runtime/vault/OAuth2, and exclusion of RUN-1142/RUN-1140.
+- [x] 5.2 Re-run generation; reject drift and remove non-directive/Swagger/license Go comments.
+- [x] 5.3 Run `goimports`, `gofmt`, `go vet ./...`, focused tests, `make lint`, and `go test -race ./...`.

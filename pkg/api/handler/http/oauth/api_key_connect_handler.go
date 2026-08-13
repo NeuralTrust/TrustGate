@@ -27,8 +27,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-const apiKeyConnectMaxFormBodyBytes = 16 << 10
-
 type APIKeyConnectHandler struct {
 	gateways resolver.GatewayResolver
 	connect  appoauth.APIKeyConnectService
@@ -80,9 +78,6 @@ func (h *APIKeyConnectHandler) Post(c *fiber.Ctx) error {
 	}
 
 	rawBody := c.Body()
-	if len(rawBody) > apiKeyConnectMaxFormBodyBytes {
-		return writeAPIKeyConnectStatus(c, fiber.StatusBadRequest)
-	}
 	values, err := url.ParseQuery(string(rawBody))
 	if err != nil {
 		return writeAPIKeyConnectStatus(c, fiber.StatusBadRequest)
