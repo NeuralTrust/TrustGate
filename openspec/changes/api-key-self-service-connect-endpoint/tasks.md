@@ -48,10 +48,10 @@ Size exception rationale: the security matrix, DI graph, and route precedence fo
 
 ## Phase 2: Secure Form Foundation (RUN-1141)
 
-- [ ] 2.1 Generate, never hand-edit, `pkg/app/oauth/mocks/oauth_api_key_connect_service_mock.go`.
-- [ ] 2.2 Create `pkg/api/handler/http/oauth/request/api_key_connect_request.go` with the sole body-only `api_key` form DTO.
-- [ ] 2.3 Update `pkg/api/handler/http/oauth/pages.go` for escaped action, blank password, `autocomplete="off"`, and no-store rendering.
-- [ ] 2.4 Extend `pkg/api/handler/http/oauth/pages_test.go` for escaping, blank secret, field attributes, and cache headers; run focused checks.
+- [x] 2.1 Generate, never hand-edit, `pkg/app/oauth/mocks/oauth_api_key_connect_service_mock.go`.
+- [x] 2.2 Create `pkg/api/handler/http/oauth/request/api_key_connect_request.go` with the sole body-only `api_key` form DTO.
+- [x] 2.3 Update `pkg/api/handler/http/oauth/pages.go` for escaped action, blank password, `autocomplete="off"`, and no-store rendering.
+- [x] 2.4 Extend `pkg/api/handler/http/oauth/pages_test.go` for escaping, blank secret, field attributes, and cache headers; run focused checks.
 
 ## Phase 3: HTTP Adapter (RUN-1141)
 
