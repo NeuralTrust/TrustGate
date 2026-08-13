@@ -21,9 +21,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/provider"
 )
 
-// Provider name constants. Use these as keys for HTTPClientPool.Get() and
-// anywhere a provider needs to be identified by name. They alias the domain
-// provider source of truth.
 const (
 	ProviderOpenAI           = provider.OpenAI
 	ProviderOpenAICompatible = provider.OpenAICompatible
@@ -57,6 +54,11 @@ type Credentials struct {
 	ApiKey     string      `json:"api_key"` // #nosec G117 -- DTO field for provider API key configuration
 	AwsBedrock *AwsBedrock `json:"aws,omitempty"`
 	Azure      *Azure      `json:"azure,omitempty"`
+	GCP        *GCP        `json:"gcp,omitempty"`
+}
+
+type GCP struct {
+	ServiceAccountJSON string `json:"service_account_json"` // #nosec G117 -- DTO field for GCP service account configuration
 }
 
 type AwsBedrock struct {
@@ -93,10 +95,7 @@ type Client interface {
 		config *Config,
 		reqBody []byte,
 	) ([]byte, error)
-	// CompletionsStream performs the streaming request. The outer error carries
-	// pre-stream failures (e.g. a registry.BackendError on a non-2xx response, for
-	// verbatim passthrough). The returned sequence yields raw SSE lines and
-	// surfaces mid-stream read errors as the second value.
+	// The outer error carries pre-stream failures; mid-stream read errors surface as the sequence's second value.
 	CompletionsStream(
 		ctx context.Context,
 		config *Config,
@@ -104,12 +103,10 @@ type Client interface {
 	) (iter.Seq2[[]byte, error], error)
 }
 
-// EmbeddingsClient performs non-streaming embedding requests.
 type EmbeddingsClient interface {
 	Embeddings(ctx context.Context, config *Config, reqBody []byte) ([]byte, error)
 }
 
-// RerankClient performs non-streaming rerank requests.
 type RerankClient interface {
 	Rerank(ctx context.Context, config *Config, reqBody []byte) ([]byte, error)
 }
