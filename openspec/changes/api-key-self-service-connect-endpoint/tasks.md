@@ -41,10 +41,10 @@ Size exception rationale: the security matrix, DI graph, and route precedence fo
 
 ## Phase 1: Application Authorization (RUN-1141)
 
-- [ ] 1.1 Create `pkg/app/oauth/api_key_connect.go`: sentinel, mockery directive, single interface/implementation, constructor, and methods.
-- [ ] 1.2 Enforce target-first `DataFinder`/`MatchSlug`, MCP/API-key state, gateway/AuthID isolation, exact `auth.Name`, and `MCPPath(slug)`.
-- [ ] 1.3 Create `pkg/app/oauth/api_key_connect_test.go` for success, call order, target/auth matrix, dependency errors, and exact ticket arguments.
-- [ ] 1.4 Run focused tests, `goimports`/`gofmt`, and directive-only comment cleanup.
+- [x] 1.1 Create `pkg/app/oauth/api_key_connect.go`: sentinel, mockery directive, single interface/implementation, constructor, and methods.
+- [x] 1.2 Enforce target-first `DataFinder`/`MatchSlug`, MCP/API-key state, gateway/AuthID isolation, exact `auth.Name`, and `MCPPath(slug)`.
+- [x] 1.3 Create `pkg/app/oauth/api_key_connect_test.go` for success, call order, target/auth matrix, dependency errors, and exact ticket arguments.
+- [x] 1.4 Run focused tests, `goimports`/`gofmt`, and directive-only comment cleanup.
 
 ## Phase 2: Secure Form Foundation (RUN-1141)
 
