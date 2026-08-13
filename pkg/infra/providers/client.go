@@ -57,6 +57,11 @@ type Credentials struct {
 	ApiKey     string      `json:"api_key"` // #nosec G117 -- DTO field for provider API key configuration
 	AwsBedrock *AwsBedrock `json:"aws,omitempty"`
 	Azure      *Azure      `json:"azure,omitempty"`
+	GCP        *GCP        `json:"gcp,omitempty"`
+}
+
+type GCP struct {
+	ServiceAccountJSON string `json:"service_account_json"` // #nosec G117 -- DTO field for GCP service account configuration
 }
 
 type AwsBedrock struct {
