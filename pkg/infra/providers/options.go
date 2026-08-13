@@ -98,7 +98,8 @@ func DecodeVertexOptions(options map[string]any) (VertexOptions, error) {
 	}
 
 	opts.Project = strings.TrimSpace(opts.Project)
-	opts.Location = strings.TrimSpace(opts.Location)
+	// The location reaches both the host and the URL path, where mixed case would not resolve.
+	opts.Location = strings.ToLower(strings.TrimSpace(opts.Location))
 	opts.Version = strings.TrimSpace(opts.Version)
 
 	if opts.Project == "" {
