@@ -55,7 +55,11 @@ func CredentialsFromTargetAuth(a *registry.TargetAuth) Credentials {
 				ClientSecret: a.Azure.ClientSecret,
 			}
 		}
-	case registry.AuthTypeOAuth2, registry.AuthTypeGCPServiceAccount:
+	case registry.AuthTypeGCPServiceAccount:
+		if a.GCPServiceAccount != nil && *a.GCPServiceAccount != "" {
+			creds.GCP = &GCP{ServiceAccountJSON: *a.GCPServiceAccount}
+		}
+	case registry.AuthTypeOAuth2:
 	}
 	return creds
 }

@@ -147,8 +147,6 @@ func unsupportedReason(auth *domain.TargetAuth) (bool, string) {
 	switch auth.Type {
 	case domain.AuthTypeOAuth2:
 		return true, "connection testing is not supported for oauth2 credentials yet"
-	case domain.AuthTypeGCPServiceAccount:
-		return true, "connection testing is not supported for gcp service account credentials yet"
 	default:
 		return false, ""
 	}
