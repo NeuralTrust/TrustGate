@@ -62,11 +62,11 @@ Size exception rationale: the security matrix, DI graph, and route precedence fo
 
 ## Phase 4: Routing and Dependency Injection (RUN-1141)
 
-- [ ] 4.1 Update `pkg/container/modules/mcp.go` to provide the use case from exact-typed dependencies.
-- [ ] 4.2 Update `pkg/container/modules/api.go` with a local `MCPBaseDomain` resolver factory, avoiding global resolver collision.
-- [ ] 4.3 Update `pkg/container/modules/server_mcp.go` and `pkg/server/router/mcp_router.go`; register GET/POST before `/+/connect`.
-- [ ] 4.4 Create `pkg/server/router/mcp_router_test.go` for real Fiber precedence and OAuth/existing-MCP regressions.
-- [ ] 4.5 Run container/router tests and prove minimal DI resolution without collisions.
+- [x] 4.1 Update `pkg/container/modules/mcp.go` to provide the use case from exact-typed dependencies.
+- [x] 4.2 Update `pkg/container/modules/api.go` with a local `MCPBaseDomain` resolver factory, avoiding global resolver collision.
+- [x] 4.3 Update `pkg/container/modules/server_mcp.go` and `pkg/server/router/mcp_router.go`; register GET/POST before `/+/connect`.
+- [x] 4.4 Create `pkg/server/router/mcp_router_test.go` for real Fiber precedence and OAuth/existing-MCP regressions.
+- [x] 4.5 Run container/router tests and prove minimal DI resolution without collisions.
 
 ## Phase 5: Final Verification (RUN-1141)
 

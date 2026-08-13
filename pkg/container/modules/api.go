@@ -213,8 +213,20 @@ func API(c *container.Container) error {
 	if err := c.Provide(oauthhttp.NewConnectHandler); err != nil {
 		return err
 	}
+	if err := c.Provide(provideAPIKeyConnectHandler); err != nil {
+		return err
+	}
 	if err := c.Provide(oauthhttp.NewJWKSHandler); err != nil {
 		return err
 	}
 	return nil
+}
+
+func provideAPIKeyConnectHandler(
+	finder appgateway.Finder,
+	cfg *config.Config,
+	connect appoauth.APIKeyConnectService,
+) *oauthhttp.APIKeyConnectHandler {
+	gateways := resolver.NewSubdomainGatewayResolver(finder, cfg.Server.MCPBaseDomain)
+	return oauthhttp.NewAPIKeyConnectHandler(gateways, connect)
 }

@@ -104,6 +104,9 @@ func MCP(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	if err := c.Provide(provideAPIKeyConnectService); err != nil {
+		return err
+	}
 	if err := c.Provide(func(
 		exchanger sts.Exchanger,
 		vault vaultdomain.Repository,
@@ -141,6 +144,14 @@ func MCP(c *container.Container) error {
 		return err
 	}
 	return c.Provide(mcphttp.NewHandler)
+}
+
+func provideAPIKeyConnectService(
+	apiKeys appauth.APIKeyFinder,
+	consumers appconsumer.DataFinder,
+	connect appoauth.ConnectService,
+) appoauth.APIKeyConnectService {
+	return appoauth.NewAPIKeyConnectService(apiKeys, consumers, connect)
 }
 
 func MCPVaultPostgres(c *container.Container) error {
