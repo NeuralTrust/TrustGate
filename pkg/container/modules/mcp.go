@@ -140,7 +140,9 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(appmcp.NewRoleScoper); err != nil {
 		return err
 	}
-	return c.Provide(mcphttp.NewHandler)
+	return c.Provide(func(gw *mcphttp.RPCGateway, scoper appmcp.RoleScoper, cfg *config.Config) *mcphttp.Handler {
+		return mcphttp.NewHandler(gw, scoper, mcphttp.NewProtocolValidationRecorder(cfg.Telemetry.OpsMetricsEnabled))
+	})
 }
 
 func MCPVaultPostgres(c *container.Container) error {

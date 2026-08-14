@@ -63,6 +63,7 @@ func recordServerDiscovery(c *fiber.Ctx) {
 	}
 	span := requestTrace.StartSpan(trace.SpanMCP, "server/discover")
 	span.SetMCPRequest("server/discover", "discovery", "", "", "")
+	stampMCPProtocol(span, c.UserContext())
 	span.SetMCPTargets(0)
 	span.SetMCPStatus(fiber.StatusOK, 0)
 	span.End()

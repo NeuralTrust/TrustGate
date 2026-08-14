@@ -26,7 +26,7 @@ type Event struct {
 	Kind          string `json:"kind"`
 	TraceID       string `json:"trace_id"`
 	GatewayID     string `json:"gateway_id"`
-	TenantID        string `json:"tenant_id,omitempty"`
+	TenantID      string `json:"tenant_id,omitempty"`
 
 	Timestamp    string `json:"timestamp"`
 	OccurredOn   int64  `json:"occurred_on"`
@@ -66,9 +66,11 @@ type MCP struct {
 	Prompt            string `json:"prompt,omitempty"`
 	ResourceURI       string `json:"resource_uri,omitempty"`
 	Targets           int    `json:"targets,omitempty"`
-	UpstreamStatus    int   `json:"upstream_status,omitempty"`
-	UpstreamLatencyMs int64 `json:"upstream_latency_ms,omitempty"`
-	RPCErrorCode      int   `json:"rpc_error_code,omitempty"`
+	UpstreamStatus    int    `json:"upstream_status,omitempty"`
+	UpstreamLatencyMs int64  `json:"upstream_latency_ms,omitempty"`
+	RPCErrorCode      int    `json:"rpc_error_code,omitempty"`
+	ProtocolEra       string `json:"protocol_era,omitempty"`
+	ProtocolVersion   string `json:"protocol_version,omitempty"`
 }
 
 type Consumer struct {

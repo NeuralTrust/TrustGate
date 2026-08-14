@@ -15,9 +15,11 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/require"
 )
@@ -77,4 +79,16 @@ func TestClassifyEra(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStampMCPProtocolBoundsUnknownVersion(t *testing.T) {
+	t.Parallel()
+	span := &trace.Span{Type: trace.SpanMCP}
+	stampMCPProtocol(span, withMCPProtocol(context.Background(), protocolEraModern, "2099-01-01"))
+	attrs, ok := span.MCPAttrsCopy()
+	require.True(t, ok)
+	require.Equal(t, trace.MCPProtocolEraModern, attrs.ProtocolEra)
+	require.Equal(t, trace.MCPProtocolVersionUnsupported, attrs.ProtocolVersion)
+	require.Nil(t, NewProtocolValidationRecorder(false))
+	require.Equal(t, ValidationClass("acceptance_denied"), ValidationClassAcceptanceDenied)
 }

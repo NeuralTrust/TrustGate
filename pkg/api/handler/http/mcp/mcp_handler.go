@@ -61,10 +61,15 @@ const (
 type Handler struct {
 	gateway    *RPCGateway
 	roleScoper appmcp.RoleScoper
+	protocol   ProtocolValidationRecorder
 }
 
-func NewHandler(gateway *RPCGateway, roleScoper appmcp.RoleScoper) *Handler {
-	return &Handler{gateway: gateway, roleScoper: roleScoper}
+func NewHandler(gateway *RPCGateway, roleScoper appmcp.RoleScoper, rec ...ProtocolValidationRecorder) *Handler {
+	h := &Handler{gateway: gateway, roleScoper: roleScoper}
+	if len(rec) > 0 {
+		h.protocol = rec[0]
+	}
+	return h
 }
 
 type rpcRequest struct {
@@ -106,25 +111,31 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 	era := protocolEraLegacy
 	if parseErr != nil || invalidTopLevel {
 		if protocolHeader != "" && !isSupportedProtocolVersion(protocolHeader) {
+			h.recordProtocolValidation(c, codeUnsupportedProtocolVersion, protocolEraModern)
 			skipMetrics(c)
 			return writeProtocolError(c, nil, unsupportedProtocolVersion(protocolHeader))
 		}
 		if parseErrorEra(protocolHeader) == protocolEraModern {
-			skipMetrics(c)
 			if invalidTopLevel {
+				h.recordProtocolValidation(c, codeInvalidRequest, protocolEraModern)
+				skipMetrics(c)
 				return writeBoundaryRPCError(c, nil, protocolEraModern, codeInvalidRequest, "invalid request")
 			}
+			h.recordProtocolValidation(c, codeParseError, protocolEraModern)
+			skipMetrics(c)
 			return writeBoundaryRPCError(c, nil, protocolEraModern, codeParseError, "parse error")
 		}
 	} else {
 		var protocolErr *protocolError
 		era, protocolErr = classifyEra(req, protocolHeader)
 		if protocolErr != nil {
+			h.recordProtocolValidation(c, protocolErr.code, era)
 			skipMetrics(c)
 			return writeProtocolError(c, req.ID, protocolErr)
 		}
 		if era == protocolEraModern {
 			if protocolErr := validateModernRequest(req, modernHeaders(c)); protocolErr != nil {
+				h.recordProtocolValidation(c, protocolErr.code, era)
 				skipMetrics(c)
 				return writeProtocolError(c, req.ID, protocolErr)
 			}
@@ -137,6 +148,7 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 				return writeRPCErrorStatus(c, req.ID, fiber.StatusNotFound, codeMethodNotFound, "method not found", nil)
 			}
 		}
+		c.SetUserContext(withMCPProtocol(c.UserContext(), era, resolvedProtocolVersion(req, protocolHeader)))
 	}
 
 	rc, err := resolveMCPConsumer(c)
@@ -207,6 +219,17 @@ func skipMetrics(c *fiber.Ctx) {
 	c.Locals(string(infracontext.MCPSkipMetricsKey), true)
 }
 
+func (h *Handler) recordProtocolValidation(c *fiber.Ctx, code int, era protocolEra) {
+	if h.protocol == nil {
+		return
+	}
+	class, ok := validationClassForCode(code)
+	if !ok {
+		return
+	}
+	h.protocol.Record(c.UserContext(), class, eraLabel(era))
+}
+
 func ensureMCPAuthenticated(c *fiber.Ctx) error {
 	if _, ok := appconsumer.AuthIDFromContext(c.UserContext()); !ok {
 		return fiber.NewError(fiber.StatusUnauthorized, "not authenticated")
@@ -236,6 +259,7 @@ func (h *Handler) recordInitialize(c *fiber.Ctx) {
 	}
 	span := rt.StartSpan(trace.SpanMCP, "initialize")
 	span.SetMCPRequest("initialize", "initialize", "", "", "")
+	stampMCPProtocol(span, c.UserContext())
 	span.SetMCPStatus(fiber.StatusOK, 0)
 	span.End()
 }
