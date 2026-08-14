@@ -26,15 +26,18 @@ import (
 
 const opsOutcomeKey = "trustgate.ops.outcome"
 
+// OpsMetricsMiddleware records bounded RED and outcome metrics for one plane.
 type OpsMetricsMiddleware struct {
 	recorder o11y.RequestRecorder
 	plane    o11y.Plane
 }
 
+// NewOpsMetricsMiddleware binds operational metrics to a fixed plane.
 func NewOpsMetricsMiddleware(recorder o11y.RequestRecorder, plane o11y.Plane) *OpsMetricsMiddleware {
 	return &OpsMetricsMiddleware{recorder: recorder, plane: plane}
 }
 
+// Middleware returns a Fiber handler that never records raw request data.
 func (m *OpsMetricsMiddleware) Middleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if m == nil || m.recorder == nil || !m.recorder.Enabled() {
@@ -67,6 +70,8 @@ func (m *OpsMetricsMiddleware) Middleware() fiber.Handler {
 	}
 }
 
+// SetOpsOutcome records a bounded logical outcome for protocols whose errors
+// are not represented by the HTTP status.
 func SetOpsOutcome(c *fiber.Ctx, outcome o11y.Outcome) {
 	c.Locals(opsOutcomeKey, outcome)
 }
@@ -96,24 +101,12 @@ func classifyRoute(plane o11y.Plane, path string) o11y.Route {
 	case o11y.PlaneMCP:
 		if strings.HasPrefix(path, "/oauth/") ||
 			strings.HasPrefix(path, "/.well-known/") ||
-			path == "/+/connect" ||
-			isSelfServiceConnectPath(path) ||
-			strings.HasSuffix(path, "/mcp/connect") {
+			path == "/+/connect" {
 			return o11y.RouteMCPOAuth
 		}
 		return o11y.RouteMCPRPC
 	}
 	return o11y.RouteOther
-}
-
-func isSelfServiceConnectPath(path string) bool {
-	if !strings.HasPrefix(path, "/") ||
-		!strings.HasSuffix(path, "/connect") ||
-		strings.Count(path, "/") != 2 {
-		return false
-	}
-	slug := strings.TrimSuffix(strings.TrimPrefix(path, "/"), "/connect")
-	return slug != ""
 }
 
 func boundedMethod(method string) string {
