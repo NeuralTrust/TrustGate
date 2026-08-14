@@ -191,7 +191,7 @@ func TestMCPServer_ModernNorthboundValidation(t *testing.T) {
 			map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": map[string]any{}},
 		)
 		require.Equal(t, http.StatusBadRequest, status)
-		require.Equal(t, float64(-32602), rpcErrorCode(t, status, body))
+		require.Equal(t, float64(-32020), rpcErrorCode(t, status, body))
 	})
 
 	t.Run("header body protocol mismatch", func(t *testing.T) {
@@ -209,7 +209,7 @@ func TestMCPServer_ModernNorthboundValidation(t *testing.T) {
 			map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": params},
 		)
 		require.Equal(t, http.StatusBadRequest, status)
-		require.Equal(t, float64(-32602), rpcErrorCode(t, status, body))
+		require.Equal(t, float64(-32020), rpcErrorCode(t, status, body))
 	})
 
 	t.Run("method mismatch", func(t *testing.T) {
@@ -226,7 +226,7 @@ func TestMCPServer_ModernNorthboundValidation(t *testing.T) {
 			},
 		)
 		require.Equal(t, http.StatusBadRequest, status)
-		require.Equal(t, float64(-32602), rpcErrorCode(t, status, body))
+		require.Equal(t, float64(-32020), rpcErrorCode(t, status, body))
 	})
 
 	t.Run("name mismatch", func(t *testing.T) {
@@ -240,7 +240,7 @@ func TestMCPServer_ModernNorthboundValidation(t *testing.T) {
 			"other",
 		)
 		require.Equal(t, http.StatusBadRequest, status)
-		require.Equal(t, float64(-32602), rpcErrorCode(t, status, body))
+		require.Equal(t, float64(-32020), rpcErrorCode(t, status, body))
 	})
 }
 
