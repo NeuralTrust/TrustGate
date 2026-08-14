@@ -90,7 +90,7 @@ func githubSessionProxy(t *testing.T, idpURL string, signer *infrasts.Signer, ch
 			RequiredScopes: []string{"mcp.access"},
 		}),
 	}}
-	return NewAuthProxy(finder, nil, http.DefaultClient, newMemFlowStore(), chainer, signer, httpUserInfo{http.DefaultClient})
+	return NewAuthProxy(finder, nil, http.DefaultClient, newMemFlowStore(), chainer, signer, httpUserInfo{http.DefaultClient}, nil)
 }
 
 func exchangeCodeFrom(t *testing.T, resumeURL string) string {
@@ -295,7 +295,7 @@ func TestSessionFlowGitHubExplicitEndpointsNoDiscovery(t *testing.T) {
 			TokenURL:       idp.URL + "/login/oauth/access_token",
 		}),
 	}}
-	proxy := NewAuthProxy(finder, nil, http.DefaultClient, newMemFlowStore(), &fakeChainer{url: ""}, signer, httpUserInfo{http.DefaultClient})
+	proxy := NewAuthProxy(finder, nil, http.DefaultClient, newMemFlowStore(), &fakeChainer{url: ""}, signer, httpUserInfo{http.DefaultClient}, nil)
 	ctx := context.Background()
 
 	location, err := proxy.Authorize(ctx, "http://gw.example.com", AuthorizeRequest{

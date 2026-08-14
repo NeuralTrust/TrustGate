@@ -147,10 +147,13 @@ func (s *metadataService) AuthorizationServer(ctx context.Context, baseURL strin
 		"token_endpoint":                                 baseURL + "/oauth/token",
 		"registration_endpoint":                          baseURL + "/oauth/register",
 		"response_types_supported":                       []string{"code"},
-		"grant_types_supported":                          []string{"authorization_code", "refresh_token"},
+		"grant_types_supported":                          grantTypesSupported(auths),
 		"code_challenge_methods_supported":               []string{"S256"},
 		"token_endpoint_auth_methods_supported":          []string{"none"},
 		"authorization_response_iss_parameter_supported": true,
+	}
+	if advertisesEMA(auths) {
+		doc[emaExtension] = true
 	}
 	if scopes := scopesOf(auths); len(scopes) > 0 {
 		doc["scopes_supported"] = scopes
@@ -198,7 +201,7 @@ func (s *metadataService) RegisterClient(ctx context.Context, req RegisterReques
 		RedirectURIs:            client.RedirectURIs,
 		ClientName:              client.ClientName,
 		ApplicationType:         appType,
-		GrantTypes:              []string{"authorization_code", "refresh_token"},
+		GrantTypes:              grantTypesSupported(auths),
 		ResponseTypes:           []string{"code"},
 		TokenEndpointAuthMethod: "none",
 	}, nil
@@ -343,4 +346,24 @@ func scopesOf(auths []*authdomain.Auth) []string {
 		}
 	}
 	return out
+}
+
+func advertisesEMA(auths []*authdomain.Auth) bool {
+	for _, a := range auths {
+		if a == nil || a.Config.OAuth2 == nil {
+			continue
+		}
+		if a.Config.OAuth2.AdvertisesEMA() {
+			return true
+		}
+	}
+	return false
+}
+
+func grantTypesSupported(auths []*authdomain.Auth) []string {
+	grants := []string{"authorization_code", "refresh_token"}
+	if advertisesEMA(auths) {
+		grants = append(grants, grantJWTBearer)
+	}
+	return grants
 }

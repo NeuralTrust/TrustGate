@@ -41,6 +41,8 @@ type memFlowStore struct {
 	clients  map[string]RegisteredGatewayClient
 	sessions map[string]SessionRecord
 	retired  []string
+	jtis     map[string]struct{}
+	jtiErr   error
 }
 
 func newMemFlowStore() *memFlowStore {
@@ -73,6 +75,25 @@ func (s *memFlowStore) RetireSession(_ context.Context, refreshToken string, _ t
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.retired = append(s.retired, refreshToken)
+	return nil
+}
+
+func (s *memFlowStore) ConsumeJTI(_ context.Context, jti string, exp time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.jtiErr != nil {
+		return s.jtiErr
+	}
+	if !exp.After(time.Now()) {
+		return errors.New("jti expired")
+	}
+	if s.jtis == nil {
+		s.jtis = map[string]struct{}{}
+	}
+	if _, ok := s.jtis[jti]; ok {
+		return ErrJTIReplay
+	}
+	s.jtis[jti] = struct{}{}
 	return nil
 }
 
@@ -194,7 +215,7 @@ func newProxyUnderTest(t *testing.T, idpURL string, store FlowStore) AuthProxy {
 			RequiredScopes: []string{"api://gw-client-id/mcp.access"},
 		}),
 	}}
-	return NewAuthProxy(finder, nil, http.DefaultClient, store, nil, nil, nil)
+	return NewAuthProxy(finder, nil, http.DefaultClient, store, nil, nil, nil, nil)
 }
 
 func TestBrokeredFlowEndToEnd(t *testing.T) {
@@ -493,7 +514,7 @@ func TestResourceScopedFacadeSelectsIdPPerTenant(t *testing.T) {
 		"/v1/mcp/tenant-b": {{GatewayID: authB.GatewayID, Auths: []*authdomain.Auth{authB}}},
 	}}
 	store := newMemFlowStore()
-	proxy := NewAuthProxy(finder, paths, http.DefaultClient, store, nil, nil, nil)
+	proxy := NewAuthProxy(finder, paths, http.DefaultClient, store, nil, nil, nil, nil)
 	ctx := context.Background()
 
 	location, err := proxy.Authorize(ctx, "http://gw.example.com", AuthorizeRequest{
@@ -548,7 +569,7 @@ func TestAuthorizeResourceFallsBackToGatewayScopedIdP(t *testing.T) {
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
 		"/cons/mcp": {{GatewayID: gatewayID, Auths: nil}},
 	}}
-	proxy := NewAuthProxy(finder, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil)
+	proxy := NewAuthProxy(finder, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil, nil)
 
 	location, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
@@ -588,7 +609,7 @@ func TestAuthorizeResourceAmbiguousWithinGateway(t *testing.T) {
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
 		"/cons/mcp": {{GatewayID: gatewayID, Auths: nil}},
 	}}
-	proxy := NewAuthProxy(finder, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil)
+	proxy := NewAuthProxy(finder, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil, nil)
 
 	_, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
@@ -611,7 +632,7 @@ func TestAuthorizeResourceNoOAuth2GivesClearError(t *testing.T) {
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
 		"/cons/mcp": {{GatewayID: gatewayID, Auths: nil}},
 	}}
-	proxy := NewAuthProxy(finder, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil)
+	proxy := NewAuthProxy(finder, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil, nil)
 
 	_, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
@@ -635,7 +656,7 @@ func TestAuthorizeMultiIssuerRequiresResource(t *testing.T) {
 		enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-a.example.com", ClientID: "client-a"}),
 		enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-b.example.com", ClientID: "client-b"}),
 	}}
-	proxy := NewAuthProxy(finder, &fakePathResolver{}, http.DefaultClient, newMemFlowStore(), nil, nil, nil)
+	proxy := NewAuthProxy(finder, &fakePathResolver{}, http.DefaultClient, newMemFlowStore(), nil, nil, nil, nil)
 
 	_, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
@@ -664,7 +685,7 @@ func TestAuthorizeFallsBackToContextGatewayWithoutResource(t *testing.T) {
 	otherAuth := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: idpOther.URL, ClientID: "client-other"})
 
 	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{gatewayAuth, otherAuth}}
-	proxy := NewAuthProxy(finder, &fakePathResolver{}, http.DefaultClient, newMemFlowStore(), nil, nil, nil)
+	proxy := NewAuthProxy(finder, &fakePathResolver{}, http.DefaultClient, newMemFlowStore(), nil, nil, nil, nil)
 
 	ctx := appgateway.WithGateway(context.Background(), &gatewaydomain.Gateway{ID: gatewayID, Slug: "acme"})
 	location, err := proxy.Authorize(ctx, "https://acme.mcp.example.com", AuthorizeRequest{
@@ -701,7 +722,7 @@ func TestRefreshUsesResourceIndicator(t *testing.T) {
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
 		"/v1/mcp/tenant-b": {{GatewayID: authB.GatewayID, Auths: []*authdomain.Auth{authB}}},
 	}}
-	proxy := NewAuthProxy(finder, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil)
+	proxy := NewAuthProxy(finder, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil, nil)
 
 	if _, err := proxy.Exchange(context.Background(), "http://gw.example.com", TokenRequest{
 		GrantType:    "refresh_token",
@@ -836,7 +857,7 @@ func chainProxyUnderTest(t *testing.T, idpURL string, store FlowStore, chainer C
 			ClientID: "gw-client-id",
 		}),
 	}}
-	return NewAuthProxy(finder, nil, http.DefaultClient, store, chainer, nil, nil)
+	return NewAuthProxy(finder, nil, http.DefaultClient, store, chainer, nil, nil, nil)
 }
 
 func authorizeAndGetState(t *testing.T, proxy AuthProxy, resource string) string {
@@ -1082,7 +1103,7 @@ func TestCallbackStaticIdPOmitISSAllowed(t *testing.T) {
 			ClientSecret: "gw-secret",
 		}),
 	}}
-	proxy := NewAuthProxy(finder, nil, http.DefaultClient, store, nil, nil, nil)
+	proxy := NewAuthProxy(finder, nil, http.DefaultClient, store, nil, nil, nil, nil)
 
 	gwState := authorizeAndGetState(t, proxy, "")
 	if _, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "", ""); err != nil {
