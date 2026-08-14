@@ -14,19 +14,18 @@
 
 package mcp
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
+)
 
 const (
 	modernProtocolVersion       = "2026-07-28"
 	latestLegacyProtocolVersion = "2025-06-18"
 )
 
-var supportedProtocolVersions = []string{
-	modernProtocolVersion,
-	latestLegacyProtocolVersion,
-	"2025-03-26",
-	"2024-11-05",
-}
+var supportedProtocolVersions = trace.MCPProtocolVersions
 
 var legacyProtocolVersions = map[string]struct{}{
 	latestLegacyProtocolVersion: {},
