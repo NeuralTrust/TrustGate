@@ -252,92 +252,6 @@ func pathMatchWith(auths ...*authdomain.Auth) appconsumer.PathMatch {
 	return m
 }
 
-func resolveChallengeEligibility(
-	t *testing.T,
-	resolver middleware.IdentityResolver,
-) (any, error) {
-	t.Helper()
-
-	var (
-		eligibility any
-		resolveErr  error
-	)
-	app := fiber.New()
-	app.Post("/runtime/mcp", func(c *fiber.Ctx) error {
-		_, resolveErr = resolver.Resolve(c)
-		eligibility = c.Locals(middleware.OAuthChallengeAllowedLocal)
-		return c.SendStatus(fiber.StatusOK)
-	})
-	_, err := app.Test(httptest.NewRequest(fiber.MethodPost, "/runtime/mcp", nil))
-	require.NoError(t, err)
-	return eligibility, resolveErr
-}
-
-func TestChain_PathFirst_SetsChallengeEligibility(t *testing.T) {
-	t.Parallel()
-
-	enabledOAuth := oauth2Auth(t, "https://idp.example.com", true)
-	disabledOAuth := oauth2Auth(t, "https://disabled.example.com", true)
-	disabledOAuth.Enabled = false
-	apiKey, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "key", true)
-	require.NoError(t, err)
-	lookupErr := errors.New("lookup failed")
-	tests := []struct {
-		name       string
-		paths      appconsumer.PathResolver
-		defaultIdP bool
-		want       any
-	}{
-		{
-			name:  "enabled OAuth2",
-			paths: fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(enabledOAuth)}},
-			want:  true,
-		},
-		{
-			name:       "usable default IdP",
-			paths:      fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(apiKey)}},
-			defaultIdP: true,
-			want:       true,
-		},
-		{
-			name:  "API key only",
-			paths: fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(apiKey)}},
-			want:  false,
-		},
-		{
-			name:       "disabled OAuth2 blocks default IdP",
-			paths:      fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(disabledOAuth)}},
-			defaultIdP: true,
-			want:       false,
-		},
-		{name: "unknown path", paths: fakePathResolver{}},
-		{name: "lookup failure", paths: fakePathResolver{err: lookupErr}},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			resolver := middleware.NewChainIdentityResolver(
-				fakeAPIKeyFinder{},
-				fakeCredentialFinder{},
-				tt.paths,
-				&fakeTokenValidator{},
-				&fakeTokenValidator{},
-				&fakeMTLSValidator{},
-				nil,
-				nil,
-				nil,
-				tt.defaultIdP,
-			)
-			got, resolveErr := resolveChallengeEligibility(t, resolver)
-			require.ErrorIs(t, resolveErr, apiresolver.ErrUnauthenticated)
-			require.Equal(t, tt.want, got)
-		})
-	}
-}
-
 func TestChain_PathFirst_SameIssuerPicksAttachedAuth(t *testing.T) {
 	authA := oauth2Auth(t, "https://idp.example.com", true)
 	authB := oauth2Auth(t, "https://idp.example.com", true)
@@ -386,6 +300,9 @@ func TestChain_PathFirst_NoConsumerMatchRejectsJWT(t *testing.T) {
 		jwtVal, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil, false,
 	)
 
+	// Issuer+audience pairs are only exclusive per gateway, so a JWT on a path
+	// without a consumer match cannot be attributed unambiguously and must be
+	// rejected (same contract as opaque tokens).
 	_, err := resolveChain(t, resolver, map[string]string{
 		"Authorization": "Bearer " + unsignedJWT(t, "https://idp.example.com"),
 	})

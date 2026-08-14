@@ -15,14 +15,11 @@
 package container_test
 
 import (
-	"bytes"
 	"encoding/base64"
 	"strings"
 	"testing"
 
-	oauthhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/oauth"
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
-	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/container/modules"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -53,51 +50,6 @@ func TestDISmoke_PlaneAwareModuleSets_Register(t *testing.T) {
 			t.Fatalf("New(modules.All(%q, %v)...): %v", tc.plane, tc.dbless, err)
 		}
 	}
-}
-
-func TestDISmoke_MCPAPIKeyConnectModuleSets(t *testing.T) {
-	t.Run("full registers API and MCP providers", func(t *testing.T) {
-		c, err := container.New(modules.All("mcp", false)...)
-		if err != nil {
-			t.Fatalf("New(modules.All(mcp, false)...): %v", err)
-		}
-
-		var graph bytes.Buffer
-		if err := dig.Visualize(c.Container, &graph); err != nil {
-			t.Fatalf("Visualize(full mcp graph): %v", err)
-		}
-		for _, provider := range []string{"provideAPIKeyConnectService", "provideAPIKeyConnectHandler"} {
-			if !strings.Contains(graph.String(), provider) {
-				t.Fatalf("full mcp graph does not register %s", provider)
-			}
-		}
-	})
-
-	t.Run("DB-less resolves API and MCP composition", func(t *testing.T) {
-		setDBLessSmokeEnv(t)
-		c, err := container.New(modules.All("mcp", true)...)
-		if err != nil {
-			t.Fatalf("New(modules.All(mcp, true)...): %v", err)
-		}
-
-		if err := c.Invoke(func(
-			service appoauth.APIKeyConnectService,
-			handler *oauthhttp.APIKeyConnectHandler,
-			serverParam dblessMCPServerParam,
-		) {
-			if service == nil {
-				t.Fatal("DB-less mcp graph resolved a nil API-key connect service")
-			}
-			if handler == nil {
-				t.Fatal("DB-less mcp graph resolved a nil API-key connect handler")
-			}
-			if serverParam.Srv == nil {
-				t.Fatal("DB-less mcp graph resolved a nil MCP server")
-			}
-		}); err != nil {
-			t.Fatalf("Invoke(DB-less API-key connect composition): %v", err)
-		}
-	})
 }
 
 func TestDISmoke_DBLessDataPlane_ResolvesRepositoriesWithoutPool(t *testing.T) {

@@ -54,41 +54,6 @@ func TestRenderedPagesAreNotCacheable(t *testing.T) {
 	}
 }
 
-func TestAPIKeyConnectPage_RendersSecureForm(t *testing.T) {
-	t.Parallel()
-	const formAction = "/virtual-mcp/connect?next=one&mode=two"
-
-	app := fiber.New()
-	app.Get("/page", func(c *fiber.Ctx) error {
-		return renderAPIKeyConnectPage(c, formAction)
-	})
-	res, err := app.Test(httptest.NewRequest("GET", "/page", nil))
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	bodyBytes, err := io.ReadAll(res.Body)
-	if err != nil {
-		t.Fatalf("read body: %v", err)
-	}
-	body := string(bodyBytes)
-
-	if !strings.Contains(body, `action="/virtual-mcp/connect?next=one&amp;mode=two"`) {
-		t.Fatalf("form action must be escaped, body:\n%s", body)
-	}
-	if !strings.Contains(body, `method="post"`) {
-		t.Fatalf("API-key form must submit with POST, body:\n%s", body)
-	}
-	if !strings.Contains(body, `<input id="api-key" name="api_key" type="password" autocomplete="off" required>`) {
-		t.Fatalf("missing secure API-key field attributes, body:\n%s", body)
-	}
-	if strings.Contains(body, "value=") {
-		t.Fatalf("API-key field must not render a value, body:\n%s", body)
-	}
-	if got := res.Header.Get(fiber.HeaderCacheControl); !strings.Contains(got, "no-store") {
-		t.Fatalf("API-key connect page must send a no-store Cache-Control, got %q", got)
-	}
-}
-
 func TestConnectPage_RendersCustomSchemeResume(t *testing.T) {
 	t.Parallel()
 	body := renderToString(t, func(c *fiber.Ctx) error {

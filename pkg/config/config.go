@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package config loads configuration from environment variables.
 package config
 
 import (
@@ -19,7 +20,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -76,7 +76,8 @@ const (
 	defaultTelemetryEnableRequestTraces = true
 	defaultTelemetryEnablePluginTraces  = true
 	defaultTelemetryExportersFile       = "config/telemetry.yaml"
-	defaultOpsMetricsEnabled            = false
+	// OPS metrics are off by default; product telemetry stays independent.
+	defaultOpsMetricsEnabled = false
 
 	defaultMetricsEnabled       = true
 	defaultMetricsQueueSize     = 1000
@@ -111,18 +112,17 @@ const (
 
 	defaultOpenAIModerationTimeout = 15 * time.Second
 
-	defaultConfigSyncDataPlaneEnabled  = false
-	defaultConfigSyncLKGPath           = "/var/lib/trustgate/snapshot.lkg"
-	defaultConfigSyncPollInterval      = 5 * time.Minute
+	defaultConfigSyncDataPlaneEnabled = false
+	defaultConfigSyncLKGPath          = "/var/lib/trustgate/snapshot.lkg"
+	defaultConfigSyncPollInterval     = 5 * time.Minute
+	// The dispatcher fires immediately on the first write signal (leading edge);
+	// the debounce is only the horizon for folding a burst of follow-up writes
+	// into one trailing recompile, so it stays short to keep propagation of
+	// multi-call admin flows (create consumer + key + policies) near-immediate.
 	defaultConfigSyncRecompileDebounce = 250 * time.Millisecond
 	defaultConfigSyncRecompileBackstop = 5 * time.Minute
 
 	defaultRateLimitEnabled = true
-
-	defaultMCPConnectRateLimitEnabled  = true
-	defaultMCPConnectRateLimitSource   = 10
-	defaultMCPConnectRateLimitConsumer = 100
-	defaultMCPConnectRateLimitWindow   = time.Minute
 
 	defaultConfigSyncGRPCListenAddr             = ":8083"
 	defaultConfigSyncGRPCKeepaliveTime          = 30 * time.Second
@@ -136,55 +136,72 @@ const (
 )
 
 type Config struct {
-	AppEnv              string
-	Server              ServerConfig
-	Database            DatabaseConfig
-	Redis               RedisConfig
-	Cache               CacheConfig
-	SemanticCache       SemanticCacheConfig
-	SessionStore        SessionStoreConfig
-	Kafka               KafkaConfig
-	Telemetry           TelemetryConfig
-	Metrics             MetricsConfig
-	Playground          PlaygroundConfig
-	Upstream            UpstreamConfig
-	Provider            ProviderConfig
-	Catalog             CatalogConfig
-	CORS                CORSConfig
-	Logger              LoggerConfig
-	TrustGuard          TrustGuardConfig
-	FirewallComplexity  FirewallComplexityConfig
-	OpenAIModeration    OpenAIModerationConfig
-	ConfigSync          ConfigSyncConfig
-	RateLimit           RateLimitConfig
-	MCPConnectRateLimit MCPConnectRateLimitConfig
+	AppEnv             string
+	Server             ServerConfig
+	Database           DatabaseConfig
+	Redis              RedisConfig
+	Cache              CacheConfig
+	SemanticCache      SemanticCacheConfig
+	SessionStore       SessionStoreConfig
+	Kafka              KafkaConfig
+	Telemetry          TelemetryConfig
+	Metrics            MetricsConfig
+	Playground         PlaygroundConfig
+	Upstream           UpstreamConfig
+	Provider           ProviderConfig
+	Catalog            CatalogConfig
+	CORS               CORSConfig
+	Logger             LoggerConfig
+	TrustGuard         TrustGuardConfig
+	FirewallComplexity FirewallComplexityConfig
+	OpenAIModeration   OpenAIModerationConfig
+	ConfigSync         ConfigSyncConfig
+	RateLimit          RateLimitConfig
 }
 
 const (
-	ConfigSyncAuthModeShared    = "shared"
-	ConfigSyncAuthModeSigned    = "signed"
+	ConfigSyncAuthModeShared = "shared"
+	ConfigSyncAuthModeSigned = "signed"
+	// ConfigSyncAuthModeComposite accepts both a signed per-tenant JWT (external
+	// data planes → scoped snapshot) and the shared bearer token (in-cluster data
+	// plane → global snapshot) on a single control plane.
 	ConfigSyncAuthModeComposite = "composite"
 )
 
 type ConfigSyncConfig struct {
-	DataPlaneEnabled     bool
-	Token                string // #nosec G117 -- config struct field, not a hardcoded credential
-	TokenPrevious        string // #nosec G117 -- config struct field, not a hardcoded credential
-	AuthMode             string
-	JWTSecret            string // #nosec G117 -- config struct field, not a hardcoded credential
-	JWTSecretPrevious    string // #nosec G117 -- config struct field, not a hardcoded credential
-	JWTIssuer            string
-	JWTAudience          string
-	LKGPath              string
-	LKGKey               string // #nosec G117 -- config struct field, not a hardcoded credential
-	PollInterval         time.Duration
-	RecompileDebounce    time.Duration
-	RecompileBackstop    time.Duration
-	InstanceID           string
-	GRPCEndpoint         string
-	GRPCListenAddr       string
-	TLSCAPath            string
-	TLSServerName        string
+	DataPlaneEnabled bool
+	Token            string // #nosec G117 -- config struct field, not a hardcoded credential
+	// TokenPrevious is the prior bearer accepted alongside Token so a token can be
+	// rotated without a window where in-flight data planes fail to authenticate.
+	TokenPrevious string // #nosec G117 -- config struct field, not a hardcoded credential
+	AuthMode      string
+	// JWTSecret is the HS256 shared secret used to verify config-sync credentials
+	// minted by DataCore. JWTSecretPrevious is the prior secret accepted alongside
+	// it so the secret can be rotated without a window where data planes fail to
+	// authenticate.
+	JWTSecret         string // #nosec G117 -- config struct field, not a hardcoded credential
+	JWTSecretPrevious string // #nosec G117 -- config struct field, not a hardcoded credential
+	JWTIssuer         string
+	JWTAudience       string
+	LKGPath           string
+	LKGKey            string // #nosec G117 -- config struct field, not a hardcoded credential
+	PollInterval      time.Duration
+	RecompileDebounce time.Duration
+	// RecompileBackstop periodically recompiles even without a write signal so the
+	// control plane recovers from a failed boot compile and picks up out-of-band
+	// mutations.
+	RecompileBackstop time.Duration
+	InstanceID        string
+	// GRPCEndpoint is the control-plane host:port the data plane dials for the
+	// config-sync gRPC transport (ENG-959).
+	GRPCEndpoint string
+	// GRPCListenAddr is the control-plane listen address for the config-sync gRPC
+	// server.
+	GRPCListenAddr string
+	TLSCAPath      string
+	TLSServerName  string
+	// TLSInsecure disables transport security on the data-plane dial. It is a
+	// dev-only escape hatch and is rejected in deployed environments.
 	TLSInsecure          bool
 	GRPCTLSCertPath      string
 	GRPCTLSKeyPath       string // #nosec G117 -- config struct field, not a hardcoded credential
@@ -197,23 +214,40 @@ type ConfigSyncConfig struct {
 }
 
 type ServerConfig struct {
-	AdminPort         int
-	ProxyPort         int
-	MCPPort           int
-	ReadTimeout       time.Duration
-	WriteTimeout      time.Duration
-	IdleTimeout       time.Duration
+	AdminPort    int
+	ProxyPort    int
+	MCPPort      int
+	ReadTimeout  time.Duration
+	WriteTimeout time.Duration
+	IdleTimeout  time.Duration
+	// SecretKey signs and verifies admin-plane JWTs and encrypts vault material.
+	// Empty disables admin auth token acceptance until resolved. In prod, when
+	// empty at boot, the DI layer auto-provisions a shared value in Redis
+	// (see crypto.ResolveSharedSecretKey) so replicas converge.
 	SecretKey         string
 	GatewayBaseDomain string
 	MCPBaseDomain     string
 	STSIssuer         string
 	STSSigningKey     string
 	TrustXFCCFrom     []string
-	MCPDefaultIdP     MCPDefaultIdPConfig
+	// MCPDefaultIdP is the built-in NeuralTrust identity provider used as the
+	// fallback OAuth2 login for MCP consumers that have no identity provider of
+	// their own. Empty Issuer disables it (behaviour unchanged).
+	MCPDefaultIdP MCPDefaultIdPConfig
 }
 
+// MCPDefaultIdPConfig configures the built-in NeuralTrust identity provider
+// that MCP consumers fall back to when they have no oauth2 auth of their own.
+// The gateway brokers the interactive login to this provider (the NeuralTrust
+// platform acting as an OAuth2 authorization server) and mints its own MCP
+// session token bound to the platform user, so operators do not have to stand
+// up and register an identity provider just to run a PoC.
 type MCPDefaultIdPConfig struct {
-	Issuer       string
+	// Issuer is the authorization server's issuer URL (e.g.
+	// https://app.neuraltrust.ai/api/mcp/oauth). Empty disables the default.
+	Issuer string
+	// AuthorizeURL/TokenURL/JWKSURL default to {Issuer}/authorize, /token and
+	// /jwks respectively when left empty.
 	AuthorizeURL string
 	TokenURL     string
 	JWKSURL      string
@@ -253,10 +287,15 @@ type RedisConfig struct {
 	AWSServerless     bool
 }
 
+// CacheConfig drives the in-process TTL cache used by app-layer
+// finders. RUN-291 (B.1) will add a parallel Redis-backed layer; the
+// finder contract will not change.
 type CacheConfig struct {
 	LocalTTL time.Duration
 }
 
+// SemanticCacheConfig selects the vector store backing the semantic cache
+// plugin. VectorStore defaults to "redis".
 type SemanticCacheConfig struct {
 	VectorStore string
 }
@@ -276,10 +315,16 @@ type TelemetryConfig struct {
 	ExportersFile       string
 	EnableRequestTraces bool
 	EnablePluginTraces  bool
-	OpsMetricsEnabled   bool
-	OTLP                OTLPConfig
+	// OpsMetricsEnabled turns on AgentGateway operational OTel metrics
+	// (http.server.request.duration / agentgateway.request.outcome_total).
+	// Independent of Enabled (product-event pipeline). Default false.
+	OpsMetricsEnabled bool
+	OTLP              OTLPConfig
 }
 
+// OTLPConfig holds process-level OTLP exporter defaults read from the standard
+// OTEL_EXPORTER_OTLP_* environment variables. Per-gateway telemetry settings
+// override any field present in the gateway configuration.
 type OTLPConfig struct {
 	Endpoint    string
 	Headers     map[string]string
@@ -296,6 +341,9 @@ type MetricsConfig struct {
 	FlushInterval time.Duration
 }
 
+// PlaygroundConfig drives the default Redis-backed trace store that lets the
+// dashboard playground fetch the metrics Event for a request it just made.
+// Only requests carrying the playground token are stored, with a short TTL.
 type PlaygroundConfig struct {
 	TraceStoreEnabled bool
 	TraceStoreTTL     time.Duration
@@ -316,6 +364,8 @@ type CatalogConfig struct {
 	ModelsDevBaseURL string
 }
 
+// CORSConfig drives the CORSMiddleware applied by both admin and proxy.
+// Lists are comma-separated in env. Use "*" in AllowOrigins to allow any.
 type CORSConfig struct {
 	AllowOrigins     []string
 	AllowMethods     []string
@@ -338,6 +388,9 @@ type TrustGuardConfig struct {
 	ClientSecret string
 }
 
+// FirewallComplexityConfig configures the Firewall Complexity API used by the
+// smart-routing load balancer. An empty BaseURL or SecretKey disables smart
+// routing at runtime.
 type FirewallComplexityConfig struct {
 	BaseURL   string
 	SecretKey string // #nosec G117 -- config struct field, not a hardcoded credential
@@ -349,46 +402,34 @@ type OpenAIModerationConfig struct {
 	Timeout time.Duration
 }
 
+// RateLimitConfig gates the per-gateway plan rate limiter.
 type RateLimitConfig struct {
 	Enabled bool
 }
 
-type MCPConnectRateLimitConfig struct {
-	Enabled           bool
-	SourceLimit       int
-	ConsumerLimit     int
-	Window            time.Duration
-	TrustedProxyCIDRs []netip.Prefix
-}
-
 func LoadConfig() (*Config, error) {
-	mcpConnectRateLimit, err := getMCPConnectRateLimitConfig()
-	if err != nil {
-		return nil, err
-	}
 	cfg := &Config{
-		AppEnv:              getEnv("APP_ENV", defaultAppEnv),
-		Server:              getServerConfig(),
-		Database:            getDatabaseConfig(),
-		Redis:               getRedisConfig(),
-		Cache:               getCacheConfig(),
-		SemanticCache:       getSemanticCacheConfig(),
-		SessionStore:        getSessionStoreConfig(),
-		Kafka:               getKafkaConfig(),
-		Telemetry:           getTelemetryConfig(),
-		Metrics:             getMetricsConfig(),
-		Playground:          getPlaygroundConfig(),
-		Upstream:            getUpstreamConfig(),
-		Provider:            getProviderConfig(),
-		Catalog:             getCatalogConfig(),
-		CORS:                getCORSConfig(),
-		Logger:              getLoggerConfig(),
-		TrustGuard:          getTrustGuardConfig(),
-		FirewallComplexity:  getFirewallComplexityConfig(),
-		OpenAIModeration:    getOpenAIModerationConfig(),
-		ConfigSync:          getConfigSyncConfig(),
-		RateLimit:           getRateLimitConfig(),
-		MCPConnectRateLimit: mcpConnectRateLimit,
+		AppEnv:             getEnv("APP_ENV", defaultAppEnv),
+		Server:             getServerConfig(),
+		Database:           getDatabaseConfig(),
+		Redis:              getRedisConfig(),
+		Cache:              getCacheConfig(),
+		SemanticCache:      getSemanticCacheConfig(),
+		SessionStore:       getSessionStoreConfig(),
+		Kafka:              getKafkaConfig(),
+		Telemetry:          getTelemetryConfig(),
+		Metrics:            getMetricsConfig(),
+		Playground:         getPlaygroundConfig(),
+		Upstream:           getUpstreamConfig(),
+		Provider:           getProviderConfig(),
+		Catalog:            getCatalogConfig(),
+		CORS:               getCORSConfig(),
+		Logger:             getLoggerConfig(),
+		TrustGuard:         getTrustGuardConfig(),
+		FirewallComplexity: getFirewallComplexityConfig(),
+		OpenAIModeration:   getOpenAIModerationConfig(),
+		ConfigSync:         getConfigSyncConfig(),
+		RateLimit:          getRateLimitConfig(),
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -537,6 +578,10 @@ func getOTLPConfig() OTLPConfig {
 	}
 }
 
+// getOTLPTimeout reads OTEL_EXPORTER_OTLP_TIMEOUT. Per the OpenTelemetry spec the
+// value is an integer number of milliseconds; a Go duration string (such as
+// "10s") is also accepted for convenience. Returns 0 when unset or invalid so
+// the exporter applies its own default.
 func getOTLPTimeout() time.Duration {
 	raw := strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_TIMEOUT"))
 	if raw == "" {
@@ -554,6 +599,8 @@ func getOTLPTimeout() time.Duration {
 	return 0
 }
 
+// parseOTLPHeaders parses the standard OTEL_EXPORTER_OTLP_HEADERS format
+// ("key1=value1,key2=value2") into a map. Malformed pairs are skipped.
 func parseOTLPHeaders(raw string) map[string]string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -607,6 +654,10 @@ func getUpstreamConfig() UpstreamConfig {
 
 func getProviderConfig() ProviderConfig {
 	requestTimeout := getEnvDuration("PROVIDER_REQUEST_TIMEOUT", defaultProviderRequestTimeout)
+	// Non-streaming providers withhold response headers until the whole
+	// completion is generated, so a header timeout below the request timeout
+	// would cap generation time without the request timeout ever applying.
+	// Defaulting to the request timeout keeps the two from drifting apart.
 	return ProviderConfig{
 		RequestTimeout:        requestTimeout,
 		ResponseHeaderTimeout: getEnvDuration("PROVIDER_RESPONSE_HEADER_TIMEOUT", requestTimeout),
@@ -620,6 +671,7 @@ func getCatalogConfig() CatalogConfig {
 	}
 }
 
+// splitCSV trims whitespace and drops empty tokens so " a, , b " -> ["a","b"].
 func splitCSV(raw string) []string {
 	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))
@@ -710,91 +762,6 @@ func getRateLimitConfig() RateLimitConfig {
 	return RateLimitConfig{
 		Enabled: getEnvBool("RATE_LIMIT_ENABLED", defaultRateLimitEnabled),
 	}
-}
-
-func getMCPConnectRateLimitConfig() (MCPConnectRateLimitConfig, error) {
-	enabled, err := parseStrictBoolEnv("MCP_CONNECT_RATE_LIMIT_ENABLED", defaultMCPConnectRateLimitEnabled)
-	if err != nil {
-		return MCPConnectRateLimitConfig{}, err
-	}
-	sourceLimit, err := parsePositiveIntEnv("MCP_CONNECT_RATE_LIMIT_SOURCE", defaultMCPConnectRateLimitSource)
-	if err != nil {
-		return MCPConnectRateLimitConfig{}, err
-	}
-	consumerLimit, err := parsePositiveIntEnv("MCP_CONNECT_RATE_LIMIT_CONSUMER", defaultMCPConnectRateLimitConsumer)
-	if err != nil {
-		return MCPConnectRateLimitConfig{}, err
-	}
-	window, err := parsePositiveDurationEnv("MCP_CONNECT_RATE_LIMIT_WINDOW", defaultMCPConnectRateLimitWindow)
-	if err != nil {
-		return MCPConnectRateLimitConfig{}, err
-	}
-	trustedProxyCIDRs, err := parsePrefixListEnv("MCP_CONNECT_TRUSTED_PROXY_CIDRS")
-	if err != nil {
-		return MCPConnectRateLimitConfig{}, err
-	}
-	return MCPConnectRateLimitConfig{
-		Enabled:           enabled,
-		SourceLimit:       sourceLimit,
-		ConsumerLimit:     consumerLimit,
-		Window:            window,
-		TrustedProxyCIDRs: trustedProxyCIDRs,
-	}, nil
-}
-
-func parseStrictBoolEnv(key string, defaultValue bool) (bool, error) {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return defaultValue, nil
-	}
-	switch strings.ToLower(value) {
-	case "true":
-		return true, nil
-	case "false":
-		return false, nil
-	default:
-		return false, fmt.Errorf("%w: %s must be true or false", errors.ErrInvalidConfig, key)
-	}
-}
-
-func parsePositiveIntEnv(key string, defaultValue int) (int, error) {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return defaultValue, nil
-	}
-	parsed, err := strconv.Atoi(value)
-	if err != nil || parsed <= 0 {
-		return 0, fmt.Errorf("%w: %s must be a positive integer", errors.ErrInvalidConfig, key)
-	}
-	return parsed, nil
-}
-
-func parsePositiveDurationEnv(key string, defaultValue time.Duration) (time.Duration, error) {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return defaultValue, nil
-	}
-	parsed, err := time.ParseDuration(value)
-	if err != nil || parsed <= 0 {
-		return 0, fmt.Errorf("%w: %s must be a positive duration", errors.ErrInvalidConfig, key)
-	}
-	return parsed, nil
-}
-
-func parsePrefixListEnv(key string) ([]netip.Prefix, error) {
-	values := splitCSV(os.Getenv(key))
-	prefixes := make([]netip.Prefix, 0, len(values))
-	for _, value := range values {
-		prefix, err := netip.ParsePrefix(value)
-		if err != nil {
-			return nil, fmt.Errorf("%w: %s must contain valid CIDR prefixes", errors.ErrInvalidConfig, key)
-		}
-		if prefix.Bits() == 0 {
-			return nil, fmt.Errorf("%w: %s must not trust all addresses", errors.ErrInvalidConfig, key)
-		}
-		prefixes = append(prefixes, prefix.Masked())
-	}
-	return prefixes, nil
 }
 
 func normalizeConfigSyncAuthMode(mode string) string {
@@ -907,9 +874,6 @@ func (c *Config) Validate() error {
 	if c.Provider.MaxRetries < 0 {
 		return fmt.Errorf("%w: PROVIDER_MAX_RETRIES must be zero or greater", errors.ErrInvalidConfig)
 	}
-	if err := c.MCPConnectRateLimit.Validate(); err != nil {
-		return err
-	}
 	if c.isDeployed() && c.ConfigSync.DataPlaneEnabled && c.ConfigSync.TLSInsecure {
 		return fmt.Errorf("%w: CONFIG_SYNC_TLS_INSECURE must not be true in deployed environments so the config-sync channel is not sent in cleartext", errors.ErrInvalidConfig)
 	}
@@ -918,27 +882,6 @@ func (c *Config) Validate() error {
 	}
 	if err := c.ConfigSync.Validate(); err != nil {
 		return err
-	}
-	return nil
-}
-
-func (c MCPConnectRateLimitConfig) Validate() error {
-	if !c.Enabled {
-		return nil
-	}
-	if c.SourceLimit <= 0 {
-		return fmt.Errorf("%w: MCP_CONNECT_RATE_LIMIT_SOURCE must be a positive integer", errors.ErrInvalidConfig)
-	}
-	if c.ConsumerLimit <= 0 {
-		return fmt.Errorf("%w: MCP_CONNECT_RATE_LIMIT_CONSUMER must be a positive integer", errors.ErrInvalidConfig)
-	}
-	if c.Window <= 0 {
-		return fmt.Errorf("%w: MCP_CONNECT_RATE_LIMIT_WINDOW must be a positive duration", errors.ErrInvalidConfig)
-	}
-	for _, prefix := range c.TrustedProxyCIDRs {
-		if !prefix.IsValid() {
-			return fmt.Errorf("%w: MCP_CONNECT_TRUSTED_PROXY_CIDRS must contain valid CIDR prefixes", errors.ErrInvalidConfig)
-		}
 	}
 	return nil
 }
@@ -969,6 +912,9 @@ func (cs ConfigSyncConfig) validateSignedJWTParams() error {
 	return nil
 }
 
+// IsDeployed reports whether APP_ENV marks a non-local deployment (staging or
+// production), so plane wiring can enforce deployed-only requirements such as the
+// control-plane config-sync gRPC server TLS certificate.
 func (c *Config) IsDeployed() bool {
 	return c.isDeployed()
 }
@@ -1077,6 +1023,8 @@ func getLogLevel() slog.Level {
 	return level
 }
 
+// sanitizeLogValue strips control characters so user-supplied env values
+// cannot inject newlines / fake fields into structured logs.
 func sanitizeLogValue(s string) string {
 	return strings.Map(func(r rune) rune {
 		if r == '\n' || r == '\r' || r == '\t' {
