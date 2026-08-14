@@ -74,6 +74,60 @@ func (r *otelProtocolValidationRecorder) Record(ctx context.Context, class Valid
 	r.counter.Add(ctx, 1, metric.WithAttributes(attrs...))
 }
 
+// MRTROutcome is a bounded multi round-trip mediation outcome label.
+type MRTROutcome string
+
+const (
+	MRTROutcomeInputRequired  MRTROutcome = trace.MRTROutcomeInputRequired
+	MRTROutcomeComplete       MRTROutcome = trace.MRTROutcomeComplete
+	MRTROutcomeCancelled      MRTROutcome = trace.MRTROutcomeCancelled
+	MRTROutcomePolicyDenied   MRTROutcome = trace.MRTROutcomePolicyDenied
+	MRTROutcomeTimeout        MRTROutcome = trace.MRTROutcomeTimeout
+	MRTROutcomeRoundLimit     MRTROutcome = trace.MRTROutcomeRoundLimit
+	MRTROutcomeReplayRejected MRTROutcome = trace.MRTROutcomeReplayRejected
+)
+
+// MRTRRecorder records bounded multi round-trip outcomes.
+type MRTRRecorder interface {
+	Record(ctx context.Context, outcome MRTROutcome, era, round string)
+}
+
+type otelMRTRRecorder struct {
+	counter metric.Int64Counter
+}
+
+// NewMRTRRecorder returns a no-op nil recorder unless ops metrics are enabled.
+func NewMRTRRecorder(enabled bool) MRTRRecorder {
+	if !enabled {
+		return nil
+	}
+	counter, err := otel.Meter("trustgate/mcp_northbound").Int64Counter(
+		"mcp.northbound.mrtr.outcome_total",
+		metric.WithUnit("{outcome}"),
+	)
+	if err != nil {
+		return nil
+	}
+	return &otelMRTRRecorder{counter: counter}
+}
+
+func (r *otelMRTRRecorder) Record(ctx context.Context, outcome MRTROutcome, era, round string) {
+	if r == nil || r.counter == nil {
+		return
+	}
+	if trace.BoundMRTROutcome(string(outcome)) == "" {
+		return
+	}
+	attrs := []attribute.KeyValue{attribute.String("outcome", string(outcome))}
+	if era != "" {
+		attrs = append(attrs, attribute.String("era", era))
+	}
+	if bounded := trace.BoundMRTRRoundLabel(round); bounded != "" {
+		attrs = append(attrs, attribute.String("round", bounded))
+	}
+	r.counter.Add(ctx, 1, metric.WithAttributes(attrs...))
+}
+
 type mcpProtocolContextKey struct{}
 
 type mcpProtocolAttrs struct {

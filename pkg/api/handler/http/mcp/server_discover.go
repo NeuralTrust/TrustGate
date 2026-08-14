@@ -16,44 +16,56 @@ package mcp
 
 import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
 )
 
-func serverDiscoveryResult(rc *appconsumer.RoutableConsumer) map[string]any {
+func serverDiscoveryResult(rc *appconsumer.RoutableConsumer, mrtr bool) map[string]any {
 	return map[string]any{
 		"supportedVersions": append([]string(nil), supportedProtocolVersions...),
-		"capabilities":      configuredCapabilities(rc),
+		"capabilities":      configuredCapabilities(rc, mrtr),
 	}
 }
 
-func configuredCapabilities(rc *appconsumer.RoutableConsumer) map[string]any {
+func configuredCapabilities(rc *appconsumer.RoutableConsumer, mrtr bool) map[string]any {
 	capabilities := make(map[string]any)
 	if rc == nil || rc.Consumer == nil {
 		return capabilities
 	}
 	toolkit := rc.Consumer.Toolkit()
 	if toolkit == nil {
-		addCapability(capabilities, "tools")
-		addCapability(capabilities, "prompts")
-		addCapability(capabilities, "resources")
+		addCapability(capabilities, "tools", mrtr)
+		addCapability(capabilities, "prompts", false)
+		addCapability(capabilities, "resources", false)
 		return capabilities
 	}
 	for _, entry := range toolkit {
 		switch {
 		case entry.Tool != "":
-			addCapability(capabilities, "tools")
+			addCapability(capabilities, "tools", mrtr)
 		case entry.Prompt != "":
-			addCapability(capabilities, "prompts")
+			addCapability(capabilities, "prompts", false)
 		case entry.Resource != "":
-			addCapability(capabilities, "resources")
+			addCapability(capabilities, "resources", false)
 		}
 	}
 	return capabilities
 }
 
-func addCapability(capabilities map[string]any, kind string) {
+func addCapability(capabilities map[string]any, kind string, mrtr bool) {
+	if mrtr && kind == "tools" {
+		capabilities[kind] = map[string]any{"inputRequests": map[string]any{}}
+		return
+	}
 	capabilities[kind] = map[string]any{}
+}
+
+// mrtrEndToEnd reports whether continuation can survive the whole path: a
+// mediation secret must be configured and at least one bound registry must
+// speak the modern protocol.
+func mrtrEndToEnd(signer *appmcp.TicketSigner, rc *appconsumer.RoutableConsumer) bool {
+	return signer.Enabled() && appmcp.HasNonLegacyMCPRegistry(rc)
 }
 
 func recordServerDiscovery(c *fiber.Ctx) {

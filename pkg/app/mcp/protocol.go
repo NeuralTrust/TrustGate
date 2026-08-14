@@ -193,9 +193,17 @@ var ErrNotSupported = errors.New("mcp upstream does not support this method")
 
 var ErrProtocolIncompatible = errors.New("mcp upstream protocol incompatible")
 
+// ToolCall is the Composer and Upstream input for tools/call.
+type ToolCall struct {
+	Name           string
+	Arguments      json.RawMessage
+	InputResponses json.RawMessage
+	RequestState   string
+}
+
 type Upstream interface {
 	ListTools(ctx context.Context) ([]Tool, error)
-	CallTool(ctx context.Context, name string, arguments json.RawMessage) (json.RawMessage, error)
+	CallTool(ctx context.Context, call ToolCall) (json.RawMessage, error)
 	ListResources(ctx context.Context) ([]Resource, error)
 	ListResourceTemplates(ctx context.Context) ([]ResourceTemplate, error)
 	ReadResource(ctx context.Context, uri string) (json.RawMessage, error)

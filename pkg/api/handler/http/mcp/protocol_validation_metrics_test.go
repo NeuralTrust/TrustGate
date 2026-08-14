@@ -175,7 +175,7 @@ func TestHandler_LegacyOnlyRejectsModern(t *testing.T) {
 	rpcErr, _ := body["error"].(map[string]any)
 	require.Equal(t, float64(-32021), rpcErr["code"])
 	composer.AssertNotCalled(t, "ListTools", mock.Anything, mock.Anything)
-	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestHandler_LegacyOnlyAcceptsLegacy(t *testing.T) {

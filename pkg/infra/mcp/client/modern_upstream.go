@@ -429,15 +429,19 @@ func (m *modernUpstream) ListTools(ctx context.Context) ([]appmcp.Tool, error) {
 	})
 }
 
-func (m *modernUpstream) CallTool(
-	ctx context.Context,
-	name string,
-	arguments json.RawMessage,
-) (json.RawMessage, error) {
-	params := &sdk.CallToolParams{Meta: m.metadata(), Name: name}
-	if len(arguments) > 0 {
-		params.Arguments = arguments
+func (m *modernUpstream) CallTool(ctx context.Context, call appmcp.ToolCall) (json.RawMessage, error) {
+	params := &sdk.CallToolParams{Meta: m.metadataForToolCall(ctx, call), Name: call.Name}
+	if len(call.Arguments) > 0 {
+		params.Arguments = call.Arguments
 	}
+	if len(call.InputResponses) > 0 {
+		var responses sdk.InputResponseMap
+		if err := json.Unmarshal(call.InputResponses, &responses); err != nil {
+			return nil, fmt.Errorf("%w: %w", appmcp.ErrInvalidContinuation, err)
+		}
+		params.InputResponses = responses
+	}
+	params.RequestState = call.RequestState
 	return m.call(ctx, "tools/call", params)
 }
 
@@ -527,6 +531,23 @@ func (m *modernUpstream) metadata() sdk.Meta {
 		},
 		sdk.MetaKeyClientCapabilities: map[string]any{},
 	}
+}
+
+// metadataForToolCall forwards the northbound client's allowlisted capabilities
+// so the upstream may ask for input. An empty capability object would tell the
+// upstream that nothing can be elicited, so it is omitted on continuation calls
+// rather than sent as `{}`.
+func (m *modernUpstream) metadataForToolCall(ctx context.Context, call appmcp.ToolCall) sdk.Meta {
+	meta := m.metadata()
+	caps := appmcp.ClientCapabilitiesFromContext(ctx)
+	if len(caps) > 0 {
+		meta[sdk.MetaKeyClientCapabilities] = caps
+		return meta
+	}
+	if call.RequestState != "" || len(call.InputResponses) > 0 {
+		delete(meta, sdk.MetaKeyClientCapabilities)
+	}
+	return meta
 }
 
 func (m *modernUpstream) call(ctx context.Context, method string, params any) (json.RawMessage, error) {

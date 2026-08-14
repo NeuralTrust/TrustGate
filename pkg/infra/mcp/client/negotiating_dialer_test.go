@@ -43,7 +43,7 @@ func (f legacyConnectorFunc) ConnectLegacy(ctx context.Context, target appmcp.Ta
 
 type upstreamStub struct {
 	listTools func(context.Context) ([]appmcp.Tool, error)
-	callTool  func(context.Context, string, json.RawMessage) (json.RawMessage, error)
+	callTool  func(context.Context, appmcp.ToolCall) (json.RawMessage, error)
 	close     func(context.Context)
 }
 
@@ -54,11 +54,11 @@ func (u *upstreamStub) ListTools(ctx context.Context) ([]appmcp.Tool, error) {
 	return u.listTools(ctx)
 }
 
-func (u *upstreamStub) CallTool(ctx context.Context, name string, arguments json.RawMessage) (json.RawMessage, error) {
+func (u *upstreamStub) CallTool(ctx context.Context, call appmcp.ToolCall) (json.RawMessage, error) {
 	if u.callTool == nil {
 		return nil, nil
 	}
-	return u.callTool(ctx, name, arguments)
+	return u.callTool(ctx, call)
 }
 
 func (u *upstreamStub) ListResources(context.Context) ([]appmcp.Resource, error) {
@@ -1441,7 +1441,7 @@ func TestGuardedUpstreamConcurrentMutationNeverRetries(t *testing.T) {
 	releaseOldCalls := make(chan struct{})
 	dialer := newNegotiatingDialer(
 		legacyConnectorFunc(func(context.Context, appmcp.Target) (appmcp.Upstream, error) {
-			return &upstreamStub{callTool: func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+			return &upstreamStub{callTool: func(context.Context, appmcp.ToolCall) (json.RawMessage, error) {
 				replacementCalls.Add(1)
 				return json.RawMessage(`{"ok":true}`), nil
 			}}, nil
@@ -1457,7 +1457,7 @@ func TestGuardedUpstreamConcurrentMutationNeverRetries(t *testing.T) {
 		appmcp.Target{URL: "https://example.com/mcp"},
 		origin,
 		entry,
-		&upstreamStub{callTool: func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+		&upstreamStub{callTool: func(context.Context, appmcp.ToolCall) (json.RawMessage, error) {
 			if oldCalls.Add(1) == contenders {
 				close(allOldCallsStarted)
 			}
@@ -1471,7 +1471,7 @@ func TestGuardedUpstreamConcurrentMutationNeverRetries(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := guarded.CallTool(context.Background(), "mutate", nil)
+			_, err := guarded.CallTool(context.Background(), appmcp.ToolCall{Name: "mutate"})
 			errs <- err
 		}()
 	}
@@ -1496,12 +1496,12 @@ func TestNegotiatingDialerNeverRetriesToolsCallAfterCorrection(t *testing.T) {
 	var probes atomic.Int64
 	var legacyCalls atomic.Int64
 	modern := &upstreamStub{
-		callTool: func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+		callTool: func(context.Context, appmcp.ToolCall) (json.RawMessage, error) {
 			return nil, newEraCandidateError(eraLegacy)
 		},
 	}
 	legacy := &upstreamStub{
-		callTool: func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+		callTool: func(context.Context, appmcp.ToolCall) (json.RawMessage, error) {
 			legacyCalls.Add(1)
 			return json.RawMessage(`{"ok":true}`), nil
 		},
@@ -1523,7 +1523,7 @@ func TestNegotiatingDialerNeverRetriesToolsCallAfterCorrection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	if _, err := upstream.CallTool(context.Background(), "mutate", nil); err == nil {
+	if _, err := upstream.CallTool(context.Background(), appmcp.ToolCall{Name: "mutate"}); err == nil {
 		t.Fatal("tools/call unexpectedly succeeded")
 	}
 	if legacyCalls.Load() != 0 {
@@ -1533,7 +1533,7 @@ func TestNegotiatingDialerNeverRetriesToolsCallAfterCorrection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect after correction: %v", err)
 	}
-	if _, err := next.CallTool(context.Background(), "mutate", nil); err != nil {
+	if _, err := next.CallTool(context.Background(), appmcp.ToolCall{Name: "mutate"}); err != nil {
 		t.Fatalf("next tools/call: %v", err)
 	}
 	if legacyCalls.Load() != 1 {

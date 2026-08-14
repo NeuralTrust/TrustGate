@@ -310,6 +310,8 @@ func (b *Builder) foldMCPSpans(requestTrace *trace.RequestTrace) (*events.MCP, i
 			RPCErrorCode:    attrs.RPCErrorCode,
 			ProtocolEra:     trace.BoundMCPProtocolEra(attrs.ProtocolEra),
 			ProtocolVersion: trace.BoundMCPProtocolVersion(attrs.ProtocolVersion),
+			MRTROutcome:     trace.BoundMRTROutcome(attrs.MRTROutcome),
+			MRTRRound:       trace.BoundMRTRRoundLabel(attrs.MRTRRound),
 		}
 	}
 	return mcp, upstreamMs

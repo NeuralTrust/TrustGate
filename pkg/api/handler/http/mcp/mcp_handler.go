@@ -16,6 +16,7 @@ package mcp
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -58,14 +59,34 @@ const (
 	codePolicyBlocked    = -32001
 )
 
+const methodNotificationsCancelled = "notifications/cancelled"
+
+// MRTRSupport carries the multi round-trip dependencies the northbound handler
+// needs: an unset signer keeps mediation fail-closed.
+type MRTRSupport struct {
+	Signer   *appmcp.TicketSigner
+	Recorder MRTRRecorder
+}
+
 type Handler struct {
 	gateway    *RPCGateway
 	roleScoper appmcp.RoleScoper
 	protocol   ProtocolValidationRecorder
+	mrtr       MRTRSupport
 }
 
 func NewHandler(gateway *RPCGateway, roleScoper appmcp.RoleScoper, rec ...ProtocolValidationRecorder) *Handler {
-	h := &Handler{gateway: gateway, roleScoper: roleScoper}
+	return NewHandlerWithMRTR(gateway, roleScoper, MRTRSupport{}, rec...)
+}
+
+// NewHandlerWithMRTR wires the handler with multi round-trip mediation support.
+func NewHandlerWithMRTR(
+	gateway *RPCGateway,
+	roleScoper appmcp.RoleScoper,
+	mrtr MRTRSupport,
+	rec ...ProtocolValidationRecorder,
+) *Handler {
+	h := &Handler{gateway: gateway, roleScoper: roleScoper, mrtr: mrtr}
 	if len(rec) > 0 {
 		h.protocol = rec[0]
 	}
@@ -140,6 +161,12 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 				return writeProtocolError(c, req.ID, protocolErr)
 			}
 			if isNotification(req, era) {
+				// A cancellation ends the exchange without any stored state to
+				// discard: the ticket is the only continuation record and the
+				// client already holds it.
+				if req.Method == methodNotificationsCancelled {
+					h.recordMRTR(c, MRTROutcomeCancelled, era, trace.BoundMRTRRound(1))
+				}
 				skipMetrics(c)
 				return c.Status(fiber.StatusAccepted).Send(nil)
 			}
@@ -149,6 +176,9 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 			}
 		}
 		c.SetUserContext(withMCPProtocol(c.UserContext(), era, resolvedProtocolVersion(req, protocolHeader)))
+		if era == protocolEraModern {
+			c.SetUserContext(appmcp.WithClientCapabilities(c.UserContext(), declaredClientCapabilities(req.Params)))
+		}
 	}
 
 	rc, err := resolveMCPConsumer(c)
@@ -186,7 +216,8 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 	}
 
 	if era == protocolEraModern && req.Method == "server/discover" {
-		normalized, err := normalizeModernResult(req.Method, serverDiscoveryResult(rc), rc)
+		discovery := serverDiscoveryResult(rc, mrtrEndToEnd(h.mrtr.Signer, rc))
+		normalized, err := normalizeModernResult(req.Method, discovery, rc, nil)
 		if err != nil {
 			return writeRPCErrorStatus(c, req.ID, fiber.StatusInternalServerError, codeInternalError, "internal error", nil)
 		}
@@ -205,13 +236,16 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 
 	result, err := h.gateway.Dispatch(c.UserContext(), rc, req.Method, req.Params)
 	if err != nil {
+		h.recordToolCallFailure(c, req.Method, era, err)
 		return writeAppError(c, req.ID, err, era, req.Method)
 	}
 	if era == protocolEraModern {
-		normalized, err := normalizeModernResult(req.Method, result, rc)
+		caps := appmcp.ClientCapabilitiesFromContext(c.UserContext())
+		normalized, err := normalizeModernResult(req.Method, result, rc, caps)
 		if err != nil {
 			return writeRPCErrorStatus(c, req.ID, fiber.StatusInternalServerError, codeInternalError, "internal error", nil)
 		}
+		h.recordToolCallOutcome(c, req.Method, era, normalized)
 		return writeRPCResult(c, req.ID, normalized)
 	}
 	if raw, ok := result.(json.RawMessage); ok {
@@ -222,6 +256,98 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 
 func skipMetrics(c *fiber.Ctx) {
 	c.Locals(string(infracontext.MCPSkipMetricsKey), true)
+}
+
+func (h *Handler) recordMRTR(c *fiber.Ctx, outcome MRTROutcome, era protocolEra, round string) {
+	if h.mrtr.Recorder == nil {
+		return
+	}
+	h.mrtr.Recorder.Record(c.UserContext(), outcome, eraLabel(era), round)
+}
+
+func (h *Handler) recordToolCallOutcome(c *fiber.Ctx, method string, era protocolEra, normalized map[string]any) {
+	if method != "tools/call" {
+		return
+	}
+	outcome := MRTROutcomeComplete
+	if normalized["resultType"] == trace.MRTROutcomeInputRequired {
+		outcome = MRTROutcomeInputRequired
+	}
+	h.recordMRTR(c, outcome, era, mrtrRoundFromTrace(c.UserContext()))
+}
+
+func (h *Handler) recordToolCallFailure(c *fiber.Ctx, method string, era protocolEra, err error) {
+	if method != "tools/call" {
+		return
+	}
+	outcome, ok := mrtrFailureOutcome(err)
+	if !ok {
+		return
+	}
+	h.recordMRTR(c, outcome, era, mrtrRoundFromTrace(c.UserContext()))
+}
+
+func mrtrFailureOutcome(err error) (MRTROutcome, bool) {
+	var (
+		rpcErr       *appmcp.RPCError
+		notPermitted *appmcp.ToolNotPermittedError
+	)
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return MRTROutcomeTimeout, true
+	case errors.As(err, &notPermitted):
+		return MRTROutcomePolicyDenied, true
+	case errors.As(err, &rpcErr):
+		switch {
+		case rpcErr.Code == appmcp.CodeMRTRReplayRejected:
+			return MRTROutcomeReplayRejected, true
+		case rpcErr.Code == appmcp.CodeMRTRRoundLimit:
+			return MRTROutcomeRoundLimit, true
+		case appmcp.IsPolicyBlockedCode(rpcErr.Code):
+			return MRTROutcomePolicyDenied, true
+		}
+	}
+	return "", false
+}
+
+// mrtrRoundFromTrace reads back the round the composer stamped on the MCP span.
+// Only the mediating layer knows the ticket's round, and the ticket payload must
+// never be re-parsed at the edge.
+func mrtrRoundFromTrace(ctx context.Context) string {
+	requestTrace := trace.FromContext(ctx)
+	if requestTrace == nil {
+		return trace.BoundMRTRRound(1)
+	}
+	round := ""
+	for _, span := range requestTrace.Spans() {
+		attrs, ok := span.MCPAttrsCopy()
+		if !ok || attrs.MRTRRound == "" {
+			continue
+		}
+		round = attrs.MRTRRound
+	}
+	if round == "" {
+		return trace.BoundMRTRRound(1)
+	}
+	return round
+}
+
+// declaredClientCapabilities keeps only the allowlisted kinds a modern client
+// declared in request metadata.
+func declaredClientCapabilities(params json.RawMessage) map[string]any {
+	metadata, ok := decodeObject(params)
+	if !ok {
+		return nil
+	}
+	meta, ok := decodeObject(metadata["_meta"])
+	if !ok {
+		return nil
+	}
+	var caps map[string]any
+	if err := json.Unmarshal(meta[appmcp.MetaKeyClientCapabilities], &caps); err != nil {
+		return nil
+	}
+	return appmcp.AllowlistedClientCapabilities(caps)
 }
 
 func (h *Handler) recordProtocolValidation(c *fiber.Ctx, code int, era protocolEra) {

@@ -40,6 +40,10 @@ const (
 	defaultGatewayBaseDomain  = "llm.neuraltrust.ai"
 	defaultMCPBaseDomain      = "mcp.neuraltrust.ai"
 
+	defaultMCPMRTRMaxRounds            = 8
+	defaultMCPMRTRTicketTTL            = 5 * time.Minute
+	defaultMCPMRTRMaxContinuationBytes = 256 * 1024
+
 	defaultDBHost                    = "localhost"
 	defaultDBPort                    = 5432
 	defaultDBUser                    = "trustgate"
@@ -234,6 +238,16 @@ type ServerConfig struct {
 	// fallback OAuth2 login for MCP consumers that have no identity provider of
 	// their own. Empty Issuer disables it (behaviour unchanged).
 	MCPDefaultIdP MCPDefaultIdPConfig
+	MCPMRTR       MCPMRTRConfig
+}
+
+// MCPMRTRConfig holds env-only HMAC ticket settings for modern tools/call MRTR.
+type MCPMRTRConfig struct {
+	TicketSecret         string // #nosec G117 -- config struct field, not a hardcoded credential
+	TicketSecretPrev     string // #nosec G117 -- config struct field, not a hardcoded credential
+	MaxRounds            int
+	TicketTTL            time.Duration
+	MaxContinuationBytes int
 }
 
 // MCPDefaultIdPConfig configures the built-in NeuralTrust identity provider
@@ -466,6 +480,13 @@ func getServerConfig() ServerConfig {
 			ClientSecret: getEnv("MCP_DEFAULT_IDP_CLIENT_SECRET", ""),
 			Audiences:    splitCSV(getEnv("MCP_DEFAULT_IDP_AUDIENCE", "")),
 			Scopes:       splitCSV(getEnv("MCP_DEFAULT_IDP_SCOPES", "")),
+		},
+		MCPMRTR: MCPMRTRConfig{
+			TicketSecret:         getEnv("MCP_MRTR_TICKET_SECRET", ""),
+			TicketSecretPrev:     getEnv("MCP_MRTR_TICKET_SECRET_PREV", ""),
+			MaxRounds:            defaultMCPMRTRMaxRounds,
+			TicketTTL:            defaultMCPMRTRTicketTTL,
+			MaxContinuationBytes: defaultMCPMRTRMaxContinuationBytes,
 		},
 	}
 }
