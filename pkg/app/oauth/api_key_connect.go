@@ -100,11 +100,13 @@ func (s *apiKeyConnectService) CreateTicket(
 		return "", ErrAPIKeyConnectUnauthorized
 	}
 
-	ticket, err := s.connectService.CreateTicket(
+	ticket, err := s.connectService.CreateAPIKeyTicket(
 		ctx,
 		gatewayID,
 		auth.Name,
 		appconsumer.MCPPath(slug),
+		target.Consumer.ID,
+		auth.ID,
 	)
 	if err != nil {
 		return "", fmt.Errorf("oauth api-key connect: create ticket: %w", err)

@@ -63,7 +63,14 @@ func TestAPIKeyConnectService_CreateTicket(t *testing.T) {
 		Once()
 	keyCall.NotBefore(limitCall)
 	connectService.EXPECT().
-		CreateTicket(ctx, gatewayID, "Exact Principal", appconsumer.MCPPath(slug)).
+		CreateAPIKeyTicket(
+			ctx,
+			gatewayID,
+			"Exact Principal",
+			appconsumer.MCPPath(slug),
+			target.Consumer.ID,
+			authID,
+		).
 		Return("ticket-123", nil).
 		Once()
 
@@ -222,7 +229,14 @@ func TestAPIKeyConnectService_CreateTicketConsumerBoundary(t *testing.T) {
 		Return(auth, nil).
 		Times(100)
 	connectService.EXPECT().
-		CreateTicket(ctx, gatewayID, "Exact Principal", "/runtime/mcp").
+		CreateAPIKeyTicket(
+			ctx,
+			gatewayID,
+			"Exact Principal",
+			"/runtime/mcp",
+			target.Consumer.ID,
+			authID,
+		).
 		Return("ticket-123", nil).
 		Times(100)
 
@@ -405,6 +419,8 @@ func TestAPIKeyConnectService_CreateTicketWrapsDependencyErrors(t *testing.T) {
 	authID := ids.New[ids.AuthKind]()
 	data := consumerData(gatewayID, gatewayID, "runtime", consumerdomain.TypeMCP, true, authID)
 	auth := validAPIKeyAuth(gatewayID, authID)
+	target, ok := data.MatchSlug("runtime")
+	require.True(t, ok)
 
 	tests := []string{"data finder", "API key finder", "connect service"}
 
@@ -439,7 +455,14 @@ func TestAPIKeyConnectService_CreateTicketWrapsDependencyErrors(t *testing.T) {
 						Return(auth, nil).
 						Once()
 					connectService.EXPECT().
-						CreateTicket(ctx, gatewayID, "Exact Principal", "/runtime/mcp").
+						CreateAPIKeyTicket(
+							ctx,
+							gatewayID,
+							"Exact Principal",
+							"/runtime/mcp",
+							target.Consumer.ID,
+							authID,
+						).
 						Return("", dependencyErr).
 						Once()
 				}

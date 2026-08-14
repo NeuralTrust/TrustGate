@@ -6,9 +6,9 @@
 |---|---:|---|
 | 1. Limiter foundation | 975 actual | Commit 1 |
 | 2. Endpoint enforcement | 552 actual | Commit 2 |
-| 3. Lifecycle audit | 190–280 | Commit 3 |
+| 3. Lifecycle audit | 1,122 actual | Commit 3 |
 | 4. Observability regressions | 220–330 | Commit 4 |
-| **Total** | **1,937–2,137 projected** | |
+| **Total** | **2,869–2,979 projected** | |
 
 Delivery strategy: `exception-ok`; one child PR with approved `size:exception`.
 
@@ -17,6 +17,8 @@ Exception rationale: the user accepted the high review load so the coupled limit
 Phase 1 actual size is 933 additions plus 42 deletions, excluding OpenSpec planning artifacts. The approved global `size:exception` remains in force; do not split the child PR.
 
 Phase 2 final size is 508 additions plus 44 deletions, 552 changed code lines excluding planning artifacts. The approved global `size:exception` explicitly covers this work unit; do not split the child PR.
+
+Phase 3 final size is 1,041 additions plus 81 deletions, 1,122 changed code lines excluding planning artifacts. The approved global `size:exception` explicitly covers this work unit; do not split the child PR.
 
 Decision needed before apply: No
 Chained PRs recommended: No
@@ -57,11 +59,11 @@ flowchart LR
 
 ## Phase 3: Lifecycle Audit — Commit 3
 
-- [ ] 3.1 Add optional `ConsumerID`/`AuthID` in `connect_types.go`; propagate authorization-time identity through ticket creation.
-- [ ] 3.2 Create `connect_auditor.go` and generated mock enforcing exact events and attribute allowlists.
-- [ ] 3.3 Emit once after successful ticket/upsert/delete in `api_key_connect.go` and `connect.go`; remove broader grant logging; skip failures/incomplete tickets.
-- [ ] 3.4 Test lifecycle behavior plus `pkg/infra/oauth/connect_store_test.go`: ticket `15m` reusable `GET`, state `10m` atomic `GETDEL`; never change constants.
-- [ ] 3.5 Verify `go test -race ./pkg/app/oauth ./pkg/infra/oauth`; finish Commit 3 without observability changes.
+- [x] 3.1 Add optional `ConsumerID`/`AuthID` in `connect_types.go`; propagate authorization-time identity through ticket creation.
+- [x] 3.2 Create `connect_auditor.go` and generated mock enforcing exact events and attribute allowlists.
+- [x] 3.3 Emit once after successful ticket/upsert/delete in `api_key_connect.go` and `connect.go`; remove broader grant logging; skip failures/incomplete tickets.
+- [x] 3.4 Test lifecycle behavior plus `pkg/infra/oauth/connect_store_test.go`: ticket `15m` reusable `GET`, state `10m` atomic `GETDEL`; never change constants.
+- [x] 3.5 Verify `go test -race ./pkg/app/oauth ./pkg/infra/oauth`; finish Commit 3 without observability changes.
 
 ## Phase 4: Observability Regressions — Commit 4
 

@@ -97,14 +97,18 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(provideConnectAttemptLimiter); err != nil {
 		return err
 	}
+	if err := c.Provide(appoauth.NewConnectAuditor); err != nil {
+		return err
+	}
 	if err := c.Provide(func(
 		store appoauth.ConnectStore,
 		vault vaultdomain.Repository,
 		consumers appconsumer.DataFinder,
 		provider appoauth.ProviderClient,
 		registrar appoauth.UpstreamRegistrar,
+		auditor appoauth.ConnectAuditor,
 	) appoauth.ConnectService {
-		return appoauth.NewConnectService(store, vault, consumers, provider, registrar)
+		return appoauth.NewConnectService(store, vault, consumers, provider, registrar, auditor)
 	}); err != nil {
 		return err
 	}
