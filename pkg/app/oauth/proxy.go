@@ -44,6 +44,7 @@ type authProxy struct {
 	chainer     ConsentChainer
 	signer      appsts.TokenSigner
 	userinfo    UserInfoClient
+	verifier    appauth.OIDCVerifier
 }
 
 func NewAuthProxy(
@@ -54,6 +55,7 @@ func NewAuthProxy(
 	chainer ConsentChainer,
 	signer appsts.TokenSigner,
 	userinfo UserInfoClient,
+	verifier appauth.OIDCVerifier,
 ) AuthProxy {
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
@@ -67,6 +69,7 @@ func NewAuthProxy(
 		chainer:     chainer,
 		signer:      signer,
 		userinfo:    userinfo,
+		verifier:    verifier,
 	}
 }
 
@@ -85,6 +88,9 @@ func (p *authProxy) Authorize(ctx context.Context, baseURL string, req Authorize
 		return "", err
 	}
 	cfg := auth.Config.OAuth2
+	if cfg != nil && cfg.EffectiveNorthboundMode() == authdomain.NorthboundModeEMA {
+		return "", oauthErr("access_denied", "authorization code flow is disabled for this identity provider")
+	}
 	if err := p.validateClientRedirect(ctx, req.ClientID, req.RedirectURI); err != nil {
 		return "", err
 	}
@@ -338,9 +344,78 @@ func (p *authProxy) Exchange(ctx context.Context, baseURL string, req TokenReque
 		return p.exchangeCode(ctx, req)
 	case "refresh_token":
 		return p.refresh(ctx, req)
+	case grantJWTBearer:
+		return p.exchangeJWTBearer(ctx, baseURL, req)
 	default:
 		return nil, oauthErr("unsupported_grant_type", "supported: authorization_code, refresh_token")
 	}
+}
+
+func (p *authProxy) exchangeJWTBearer(ctx context.Context, baseURL string, req TokenRequest) (map[string]any, error) {
+	if strings.TrimSpace(req.Assertion) == "" {
+		return nil, oauthErr("invalid_request", "assertion is required")
+	}
+	auth, err := p.authForResource(ctx, req.Resource)
+	if err != nil {
+		return nil, err
+	}
+	cfg := auth.Config.OAuth2
+	if cfg == nil || cfg.EffectiveNorthboundMode() == authdomain.NorthboundModeOIDC {
+		return nil, oauthErr("unsupported_grant_type", "supported: authorization_code, refresh_token")
+	}
+	if req.ClientID == "" {
+		return nil, oauthErr("invalid_client", "client_id is required")
+	}
+	if p.store == nil {
+		logEMADeny(auth.ID.String(), auth.GatewayID.String(), "store")
+		return nil, oauthErr("invalid_grant", "invalid assertion")
+	}
+	client, err := p.store.GetGatewayClient(ctx, req.ClientID)
+	if err != nil {
+		return nil, fmt.Errorf("oauth: load client registration: %w", err)
+	}
+	if client == nil {
+		return nil, oauthErr("invalid_client", "unknown client_id; register via /oauth/register")
+	}
+	jag, err := p.validateIDJAG(ctx, baseURL, auth, req)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.store.ConsumeJTI(ctx, jag.jti, jag.exp); err != nil {
+		logEMADeny(auth.ID.String(), auth.GatewayID.String(), "jti")
+		return nil, oauthErr("invalid_grant", "invalid assertion")
+	}
+	grant := CodeGrant{
+		ClientID:    req.ClientID,
+		Subject:     jag.subject,
+		AuthID:      auth.ID.String(),
+		GatewayID:   auth.GatewayID.String(),
+		Audiences:   cfg.Audiences,
+		Scopes:      jag.scopes,
+		SessionMode: true,
+		Claims:      jag.claims,
+	}
+	resp, err := p.mintSession(grant)
+	if err != nil {
+		return nil, err
+	}
+	token, err := randomToken()
+	if err != nil {
+		return nil, err
+	}
+	refresh := gatewayRefreshPrefix + token
+	rec := SessionRecord{
+		Subject:   grant.Subject,
+		Scopes:    grant.Scopes,
+		GatewayID: grant.GatewayID,
+		AuthID:    grant.AuthID,
+		Audiences: grant.Audiences,
+	}
+	if err := p.store.SaveSession(ctx, refresh, rec); err != nil {
+		return nil, fmt.Errorf("oauth: persist session: %w", err)
+	}
+	resp["refresh_token"] = refresh
+	return resp, nil
 }
 
 func (p *authProxy) exchangeCode(ctx context.Context, req TokenRequest) (map[string]any, error) {
@@ -390,12 +465,19 @@ func (p *authProxy) exchangeCode(ctx context.Context, req TokenRequest) (map[str
 }
 
 func (p *authProxy) mintSession(grant CodeGrant) (map[string]any, error) {
-	claims := jwt.MapClaims{
-		"sub":       grant.Subject,
-		"scope":     strings.Join(grant.Scopes, " "),
-		"authid":    grant.AuthID,
-		"token_use": "mcp_session",
+	claims := jwt.MapClaims{}
+	for k, v := range grant.Claims {
+		switch k {
+		case "act", "jti", "client_id":
+			continue
+		default:
+			claims[k] = v
+		}
 	}
+	claims["sub"] = grant.Subject
+	claims["scope"] = strings.Join(grant.Scopes, " ")
+	claims["authid"] = grant.AuthID
+	claims["token_use"] = "mcp_session"
 	// gwid binds the session to the gateway the login was brokered for. It is
 	// authoritative for the built-in default identity provider, whose synthetic
 	// auth record carries no gateway of its own.

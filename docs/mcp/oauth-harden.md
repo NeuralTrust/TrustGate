@@ -36,7 +36,7 @@ Issuer compare trims a trailing `/` only. No scheme rewrite.
 | Dynamic Client Registration | **Current runtime.** Not removed. |
 | `POST /oauth/register` | **Remains.** |
 | CIMD (`client_id` as URL) | **Documentation / future only.** No CIMD routes, types, or catalog flags. |
-| Enterprise Managed Auth (RUN-1112) | **Not started.** Do not begin it here. |
+| Enterprise Managed Auth (RUN-1112) | **This change.** See [Enterprise-Managed Authorization](enterprise-managed-authorization.md). |
 
 Do not read this page as “CIMD is implemented” or “DCR is going away.”
 
@@ -79,7 +79,6 @@ does **not** add a product MCP event or a new audit bus.
 
 - CIMD runtime (routes, types, catalog flags)
 - Removal of DCR or `/oauth/register`
-- RUN-1112 Enterprise Managed Auth
 - Vault `Credential` issuer field
 - Redis key migration
 - Feature-flag / observe-then-enforce mode
@@ -95,4 +94,5 @@ does **not** add a product MCP event or a new audit bus.
 ## Next step
 
 Workspace and other omit-`iss` IdPs: [Google Workspace MCP OAuth](google-workspace-oauth.md).
+Enterprise-managed authorization (jwt-bearer / ID-JAG): [Enterprise-Managed Authorization](enterprise-managed-authorization.md).
 Exercise the plane: [MCP testing guide](testing-guide.md).
