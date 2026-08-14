@@ -18,7 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
+	"log/slog"
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -35,7 +35,6 @@ type connectService struct {
 	consumers appconsumer.DataFinder
 	provider  ProviderClient
 	registrar UpstreamRegistrar
-	auditor   ConnectAuditor
 }
 
 func NewConnectService(
@@ -44,16 +43,8 @@ func NewConnectService(
 	consumers appconsumer.DataFinder,
 	provider ProviderClient,
 	registrar UpstreamRegistrar,
-	auditor ConnectAuditor,
 ) ConnectService {
-	return &connectService{
-		store:     store,
-		vault:     vault,
-		consumers: consumers,
-		provider:  provider,
-		registrar: registrar,
-		auditor:   auditor,
-	}
+	return &connectService{store: store, vault: vault, consumers: consumers, provider: provider, registrar: registrar}
 }
 
 func (s *connectService) CreateTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) (string, error) {
@@ -62,35 +53,6 @@ func (s *connectService) CreateTicket(ctx context.Context, gatewayID ids.Gateway
 		PrincipalSub: principalSub,
 		ConsumerPath: consumerPath,
 	})
-}
-
-func (s *connectService) CreateAPIKeyTicket(
-	ctx context.Context,
-	gatewayID ids.GatewayID,
-	principalSub,
-	consumerPath string,
-	consumerID ids.ConsumerID,
-	authID ids.AuthID,
-	providers []string,
-) (string, error) {
-	providerSnapshot := append([]string(nil), providers...)
-	ticket := ConnectTicket{
-		GatewayID:    gatewayID.String(),
-		PrincipalSub: principalSub,
-		ConsumerPath: consumerPath,
-		ConsumerID:   consumerID.String(),
-		AuthID:       authID.String(),
-		Providers:    &providerSnapshot,
-	}
-	id, err := s.mintTicket(ctx, ticket)
-	if err != nil {
-		return "", err
-	}
-	identity, ok := connectAuditIdentity(&ticket)
-	if ok {
-		s.auditor.TicketCreated(ctx, identity)
-	}
-	return id, nil
 }
 
 func (s *connectService) mintTicket(ctx context.Context, t ConnectTicket) (string, error) {
@@ -104,6 +66,9 @@ func (s *connectService) mintTicket(ctx context.Context, t ConnectTicket) (strin
 	return id, nil
 }
 
+// credentialExpiryGrace mirrors the refresh skew the MCP credential resolver
+// applies, so the connect page and the downstream calls agree on when a stored
+// grant has run out.
 const credentialExpiryGrace = 60 * time.Second
 
 func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPage, error) {
@@ -117,9 +82,6 @@ func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPag
 		if cfg == nil {
 			continue
 		}
-		if !connectProviderAllowed(ticket, data, rc, cfg.Provider) {
-			continue
-		}
 		status := ProviderStatus{Provider: cfg.Provider, Registry: reg.Name}
 		cred, err := s.vault.Find(ctx, gatewayID, ticket.PrincipalSub, cfg.Provider)
 		switch {
@@ -127,8 +89,15 @@ func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPag
 			status.Linked = true
 			status.AccountRef = cred.AccountRef
 			status.ExpiresAt = cred.ExpiresAt
+			// A grant whose access token has expired and that carries no refresh
+			// token is dead: the resolver will demand consent on every call. Say so
+			// here instead of showing "Connected" while the agent is being told the
+			// opposite.
 			status.NeedsReconnect = cred.RefreshToken == "" && cred.Expired(credentialExpiryGrace)
 		case errors.Is(err, vaultdomain.ErrUndecryptable):
+			// Stored but unreadable under the current key: show it as linked so
+			// the operator sees which provider is affected, but flag it for
+			// reconnect since the resolver cannot use it.
 			status.Linked = true
 			status.NeedsReconnect = true
 		case !errors.Is(err, vaultdomain.ErrNotFound):
@@ -143,9 +112,6 @@ func (s *connectService) Start(ctx context.Context, baseURL, ticketID, provider 
 	ticket, gatewayID, data, rc, err := s.resolve(ctx, ticketID)
 	if err != nil {
 		return "", err
-	}
-	if !connectProviderAllowed(ticket, data, rc, provider) {
-		return "", ErrProviderNotFound
 	}
 	reg := providerRegistry(data.EffectiveRegistries(rc), provider)
 	if reg == nil {
@@ -189,9 +155,6 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	if err != nil {
 		return st.TicketID, err
 	}
-	if !connectProviderAllowed(&st.Ticket, data, rc, provider) {
-		return st.TicketID, ErrProviderNotFound
-	}
 	reg := providerRegistry(data.EffectiveRegistries(rc), provider)
 	if reg == nil {
 		return st.TicketID, ErrProviderNotFound
@@ -204,8 +167,19 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	if err != nil {
 		return st.TicketID, err
 	}
+	// Whether the provider handed us a refresh token decides everything that
+	// follows: without one the grant dies with its access token and every later
+	// call demands consent again. Record it at the moment of truth so that loop
+	// is diagnosable from the logs.
+	slog.Info("oauth connect: provider grant stored",
+		"provider", provider,
+		"subject", st.Ticket.PrincipalSub,
+		"gateway_id", gatewayID.String(),
+		"has_refresh_token", token.RefreshToken != "",
+		"expires_at", token.ExpiresAt,
+		"scopes", token.Scopes)
 	cred, err := vaultdomain.NewCredential(
-		gatewayID, st.Ticket.PrincipalSub, cfg.Provider, "",
+		gatewayID, st.Ticket.PrincipalSub, provider, "",
 		token.AccessToken, token.RefreshToken, token.Scopes, token.ExpiresAt,
 	)
 	if err != nil {
@@ -214,27 +188,15 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	if err := s.vault.Upsert(ctx, cred); err != nil {
 		return st.TicketID, err
 	}
-	if identity, ok := connectAuditIdentity(&st.Ticket); ok {
-		s.auditor.ProviderLinked(ctx, identity, cfg.Provider)
-	}
 	return st.TicketID, nil
 }
 
 func (s *connectService) Disconnect(ctx context.Context, ticketID, provider string) error {
-	ticket, gatewayID, data, rc, err := s.resolve(ctx, ticketID)
+	ticket, gatewayID, _, _, err := s.resolve(ctx, ticketID)
 	if err != nil {
 		return err
 	}
-	if !connectProviderAllowed(ticket, data, rc, provider) {
-		return ErrProviderNotFound
-	}
-	if err := s.vault.Delete(ctx, gatewayID, ticket.PrincipalSub, provider); err != nil {
-		return err
-	}
-	if identity, ok := connectAuditIdentity(ticket); ok {
-		s.auditor.ProviderUnlinked(ctx, identity, provider)
-	}
-	return nil
+	return s.vault.Delete(ctx, gatewayID, ticket.PrincipalSub, provider)
 }
 
 func (s *connectService) resolve(ctx context.Context, ticketID string) (*ConnectTicket, ids.GatewayID, *appconsumer.Data, *appconsumer.RoutableConsumer, error) {
@@ -265,71 +227,7 @@ func (s *connectService) routable(ctx context.Context, ticket *ConnectTicket) (i
 	if !ok {
 		return ids.GatewayID{}, nil, nil, fmt.Errorf("oauth connect: consumer path %s no longer exists", ticket.ConsumerPath)
 	}
-	if apiKeyConnectTicket(ticket) &&
-		(ticket.Providers == nil ||
-			ticket.ConsumerID == "" ||
-			ticket.AuthID == "" ||
-			!currentAPIKeyIdentity(ticket, rc, gatewayID)) {
-		return ids.GatewayID{}, nil, nil, ErrTicketNotFound
-	}
 	return gatewayID, data, rc, nil
-}
-
-func apiKeyConnectTicket(ticket *ConnectTicket) bool {
-	return ticket != nil &&
-		(ticket.Providers != nil || ticket.ConsumerID != "" || ticket.AuthID != "")
-}
-
-func currentAPIKeyIdentity(
-	ticket *ConnectTicket,
-	rc *appconsumer.RoutableConsumer,
-	gatewayID ids.GatewayID,
-) bool {
-	if ticket == nil || rc == nil || rc.Consumer == nil ||
-		rc.Consumer.ID.String() != ticket.ConsumerID {
-		return false
-	}
-	for _, auth := range rc.Auths {
-		if auth != nil && auth.ID.String() == ticket.AuthID {
-			return validAPIKeyAuth(auth, rc.Consumer, gatewayID)
-		}
-	}
-	return false
-}
-
-func connectProviderAllowed(
-	ticket *ConnectTicket,
-	data *appconsumer.Data,
-	rc *appconsumer.RoutableConsumer,
-	provider string,
-) bool {
-	if ticket.Providers == nil {
-		return providerRegistry(data.EffectiveRegistries(rc), provider) != nil
-	}
-	for _, allowed := range *ticket.Providers {
-		if allowed == provider {
-			return true
-		}
-	}
-	return false
-}
-
-func forwardedProviderIDs(registries []*registrydomain.Registry) []string {
-	providers := make([]string, 0)
-	seen := make(map[string]struct{})
-	for _, registry := range registries {
-		cfg := forwardedAuth(registry)
-		if cfg == nil {
-			continue
-		}
-		if _, ok := seen[cfg.Provider]; ok {
-			continue
-		}
-		seen[cfg.Provider] = struct{}{}
-		providers = append(providers, cfg.Provider)
-	}
-	sort.Strings(providers)
-	return providers
 }
 
 func forwardedAuth(reg *registrydomain.Registry) *registrydomain.MCPAuth {

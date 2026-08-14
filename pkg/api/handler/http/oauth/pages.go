@@ -99,15 +99,6 @@ a.btn.continue:hover{background:#6ee7a0}
 .hint{color:var(--faint);font-size:12.5px;margin-top:18px;line-height:1.5}
 .hint a{color:var(--muted);text-decoration:underline;text-underline-offset:2px}
 .hint a:hover{color:var(--fg)}
-.field{display:flex;flex-direction:column;gap:8px}
-.field label{font-size:13px;font-weight:600}
-.field input{
-  width:100%;border:1px solid var(--border-strong);border-radius:var(--radius);
-  background:var(--elevated);color:var(--fg);font:inherit;padding:10px 12px;
-}
-.field input:focus{outline:2px solid var(--accent);outline-offset:2px}
-.connect-form{display:flex;flex-direction:column;gap:20px}
-.connect-form .btn{align-self:flex-start}
 `
 
 const brandMark = `<svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><g clip-path="url(#ntClip)"><path fill="url(#ntGrad)" d="M32 0H0v32h32z"/><path fill="#fff" d="M18.092 20.06a.67.67 0 0 1-.55.3.7.7 0 0 1-.565-.286l-2.704-3.814-1.45 2.103 2.197 3.098a3.08 3.08 0 0 0 2.51 1.297h.038a3.06 3.06 0 0 0 2.502-1.342l8.02-11.477h-2.926z"/><path fill="#fff" d="M14.292 11.518a.63.63 0 0 1 .552.286l2.652 3.74 1.449-2.103-2.145-3.024a3.08 3.08 0 0 0-2.509-1.297h-.039a3.06 3.06 0 0 0-2.506 1.35L3.925 21.85l-.085.123h2.91l6.98-10.155a.68.68 0 0 1 .562-.3"/></g><defs><linearGradient id="ntGrad" x1="30.667" x2="6.667" y1="0" y2="32" gradientUnits="userSpaceOnUse"><stop stop-color="#03AFFF"/><stop offset="1" stop-color="#9B29FF"/></linearGradient><clipPath id="ntClip"><path fill="#fff" d="M0 0h32v32H0z"/></clipPath></defs></svg>`
@@ -138,21 +129,6 @@ var connectPageTmpl = template.Must(template.New("connect").Parse(`<!doctype htm
   <div><div class="name">Done connecting?</div><div class="reg">Return to your application to finish signing in.</div></div>
   <a class="btn continue" href="{{.ResumeURL}}">Continue</a>
 </div>{{end}}
-</div></body></html>`))
-
-var apiKeyConnectPageTmpl = template.Must(template.New("api-key-connect").Parse(`<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Connect API key - NeuralTrust TrustGate</title><style>` + pageCSS + `</style></head>
-<body><div class="card">` + brandHeader + `
-<h1>Connect with an API key</h1>
-<p class="sub">Enter the API key for this virtual MCP. The key is used only to authorize this connection.</p>
-<form class="connect-form" method="post" action="{{.FormAction}}">
-  <div class="field">
-    <label for="api-key">API key</label>
-    <input id="api-key" name="api_key" type="password" autocomplete="off" required>
-  </div>
-  <button class="btn" type="submit">Continue</button>
-</form>
 </div></body></html>`))
 
 var deepLinkPageTmpl = template.Must(template.New("deeplink").Parse(`<!doctype html>
@@ -201,16 +177,6 @@ func renderConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, flash s
 	})
 }
 
-type apiKeyConnectPageView struct {
-	FormAction string
-}
-
-func renderAPIKeyConnectPage(c *fiber.Ctx, formAction string) error {
-	return renderHTML(c, apiKeyConnectPageTmpl, apiKeyConnectPageView{
-		FormAction: formAction,
-	})
-}
-
 var knownSchemeApps = map[string]string{
 	"cursor":          "Cursor",
 	"vscode":          "VS Code",
@@ -252,6 +218,9 @@ func renderHTML(c *fiber.Ctx, tmpl *template.Template, data any) error {
 		return err
 	}
 	c.Set(fiber.HeaderContentType, fiber.MIMETextHTMLCharsetUTF8)
+	// Ticket- and principal-scoped OAuth pages must never be reused from a
+	// browser/proxy cache: a reload (same ticket URL) would otherwise show a
+	// stale provider list after registries or linked accounts change.
 	c.Set(fiber.HeaderCacheControl, "no-store, must-revalidate")
 	c.Set(fiber.HeaderPragma, "no-cache")
 	return c.Status(fiber.StatusOK).Send(buf.Bytes())
