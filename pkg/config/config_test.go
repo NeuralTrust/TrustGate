@@ -58,6 +58,78 @@ func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	if cfg.Database.MaxConns != defaultDBMaxConns {
 		t.Errorf("DB.MaxConns default = %d, want %d", cfg.Database.MaxConns, defaultDBMaxConns)
 	}
+	if !cfg.MCPConnectRateLimit.Enabled {
+		t.Error("MCP connect rate limit must default to enabled")
+	}
+	if cfg.MCPConnectRateLimit.SourceLimit != defaultMCPConnectRateLimitSource {
+		t.Errorf("MCP source limit default = %d, want %d", cfg.MCPConnectRateLimit.SourceLimit, defaultMCPConnectRateLimitSource)
+	}
+	if cfg.MCPConnectRateLimit.ConsumerLimit != defaultMCPConnectRateLimitConsumer {
+		t.Errorf("MCP consumer limit default = %d, want %d", cfg.MCPConnectRateLimit.ConsumerLimit, defaultMCPConnectRateLimitConsumer)
+	}
+	if cfg.MCPConnectRateLimit.Window != defaultMCPConnectRateLimitWindow {
+		t.Errorf("MCP rate limit window default = %s, want %s", cfg.MCPConnectRateLimit.Window, defaultMCPConnectRateLimitWindow)
+	}
+	if len(cfg.MCPConnectRateLimit.TrustedProxyCIDRs) != 0 {
+		t.Errorf("trusted proxy CIDRs default = %v, want empty", cfg.MCPConnectRateLimit.TrustedProxyCIDRs)
+	}
+}
+
+func TestLoadConfig_MCPConnectRateLimitConfigured(t *testing.T) {
+	minimumEnv(t)
+	t.Setenv("MCP_CONNECT_RATE_LIMIT_ENABLED", "false")
+	t.Setenv("MCP_CONNECT_RATE_LIMIT_SOURCE", "20")
+	t.Setenv("MCP_CONNECT_RATE_LIMIT_CONSUMER", "200")
+	t.Setenv("MCP_CONNECT_RATE_LIMIT_WINDOW", "2m")
+	t.Setenv("MCP_CONNECT_TRUSTED_PROXY_CIDRS", "10.0.0.1/8, 2001:db8::/32")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	got := cfg.MCPConnectRateLimit
+	if got.Enabled || got.SourceLimit != 20 || got.ConsumerLimit != 200 || got.Window != 2*time.Minute {
+		t.Fatalf("MCP connect rate limit = %+v", got)
+	}
+	if len(got.TrustedProxyCIDRs) != 2 {
+		t.Fatalf("trusted proxy CIDRs = %v, want two prefixes", got.TrustedProxyCIDRs)
+	}
+	if got.TrustedProxyCIDRs[0].String() != "10.0.0.0/8" || got.TrustedProxyCIDRs[1].String() != "2001:db8::/32" {
+		t.Fatalf("trusted proxy CIDRs = %v, want canonical prefixes", got.TrustedProxyCIDRs)
+	}
+}
+
+func TestLoadConfig_RejectsInvalidMCPConnectRateLimit(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "invalid enabled", key: "MCP_CONNECT_RATE_LIMIT_ENABLED", value: "yes"},
+		{name: "zero source", key: "MCP_CONNECT_RATE_LIMIT_SOURCE", value: "0"},
+		{name: "negative source", key: "MCP_CONNECT_RATE_LIMIT_SOURCE", value: "-1"},
+		{name: "malformed source", key: "MCP_CONNECT_RATE_LIMIT_SOURCE", value: "ten"},
+		{name: "zero consumer", key: "MCP_CONNECT_RATE_LIMIT_CONSUMER", value: "0"},
+		{name: "negative window", key: "MCP_CONNECT_RATE_LIMIT_WINDOW", value: "-1s"},
+		{name: "zero window", key: "MCP_CONNECT_RATE_LIMIT_WINDOW", value: "0s"},
+		{name: "malformed window", key: "MCP_CONNECT_RATE_LIMIT_WINDOW", value: "minute"},
+		{name: "invalid CIDR", key: "MCP_CONNECT_TRUSTED_PROXY_CIDRS", value: "10.0.0.0/8,invalid"},
+		{name: "all IPv4 addresses", key: "MCP_CONNECT_TRUSTED_PROXY_CIDRS", value: "0.0.0.0/0"},
+		{name: "all IPv6 addresses", key: "MCP_CONNECT_TRUSTED_PROXY_CIDRS", value: "::/0"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			minimumEnv(t)
+			t.Setenv(tc.key, tc.value)
+
+			_, err := LoadConfig()
+			if err == nil || !stderrors.Is(err, errors.ErrInvalidConfig) || !strings.Contains(err.Error(), tc.key) {
+				t.Fatalf("error %q must be ErrInvalidConfig naming %s", err, tc.key)
+			}
+		})
+	}
 }
 
 func TestGetFirewallComplexityConfig(t *testing.T) {
