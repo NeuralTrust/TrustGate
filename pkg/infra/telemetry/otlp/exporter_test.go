@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
@@ -58,13 +59,13 @@ func (m *memExporter) all() []sdklog.Record {
 
 func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-func recordAttr(rec sdklog.Record, key string) (otellog.Value, bool) {
+func recordAttr(rec sdklog.Record, key string) (attribute.Value, bool) {
 	var (
-		value otellog.Value
+		value attribute.Value
 		found bool
 	)
-	rec.WalkAttributes(func(kv otellog.KeyValue) bool {
-		if kv.Key == key {
+	rec.WalkAttributes(func(kv attribute.KeyValue) bool {
+		if string(kv.Key) == key {
 			value, found = kv.Value, true
 			return false
 		}
