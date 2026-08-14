@@ -72,6 +72,59 @@ func TestOpsMetricsMiddlewareDisabledIsPassthrough(t *testing.T) {
 	require.Equal(t, 0, recorder.count)
 }
 
+func TestOpsMetricsMiddlewareConnectRouteIsBounded(t *testing.T) {
+	t.Parallel()
+
+	const slug = "customer-secret-slug"
+	recorder := &recordingOps{enabled: true}
+	app := fiber.New()
+	app.Use(NewOpsMetricsMiddleware(recorder, o11y.PlaneMCP).Middleware())
+	app.Get("/*", func(c *fiber.Ctx) error {
+		return c.SendStatus(fiber.StatusOK)
+	})
+
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/"+slug+"/connect", nil))
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, o11y.RouteMCPOAuth, recorder.request.Route)
+	require.NotContains(t, string(recorder.request.Route), slug)
+}
+
+func TestOpsMetricsMiddlewareConnectOutcomesRemainBounded(t *testing.T) {
+	t.Parallel()
+
+	const slug = "raw-api-key-sentinel"
+	tests := []struct {
+		status  int
+		outcome o11y.Outcome
+	}{
+		{status: fiber.StatusSeeOther, outcome: o11y.OutcomeAllowed},
+		{status: fiber.StatusUnauthorized, outcome: o11y.OutcomeDeniedAuth},
+		{status: fiber.StatusTooManyRequests, outcome: o11y.OutcomeDeniedThrottled},
+		{status: fiber.StatusInternalServerError, outcome: o11y.OutcomeServerError},
+		{status: fiber.StatusServiceUnavailable, outcome: o11y.OutcomeServerError},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(http.StatusText(tt.status), func(t *testing.T) {
+			t.Parallel()
+
+			recorder := &recordingOps{enabled: true}
+			app := fiber.New()
+			app.Use(NewOpsMetricsMiddleware(recorder, o11y.PlaneMCP).Middleware())
+			app.Post("/:slug/connect", func(c *fiber.Ctx) error {
+				return c.SendStatus(tt.status)
+			})
+			resp, err := app.Test(httptest.NewRequest(http.MethodPost, "/"+slug+"/connect", nil))
+			require.NoError(t, err)
+			require.NoError(t, resp.Body.Close())
+			require.Equal(t, o11y.RouteMCPOAuth, recorder.request.Route)
+			require.Equal(t, tt.outcome, recorder.request.Outcome)
+			require.NotContains(t, string(recorder.request.Route), slug)
+		})
+	}
+}
+
 func TestOpsMetricsMiddlewarePrefersBoundedLogicalOutcome(t *testing.T) {
 	recorder := &recordingOps{enabled: true}
 	app := fiber.New()
@@ -104,7 +157,19 @@ func TestClassifyRouteUsesLinearEnums(t *testing.T) {
 		{name: "docs", plane: o11y.PlaneAdmin, path: "/docs/index.html", want: o11y.RouteAdminDocs},
 		{name: "proxy", plane: o11y.PlaneProxy, path: "/tenant/private", want: o11y.RouteProxyForward},
 		{name: "mcp rpc", plane: o11y.PlaneMCP, path: "/tenant/rpc", want: o11y.RouteMCPRPC},
-		{name: "mcp oauth", plane: o11y.PlaneMCP, path: "/oauth/token", want: o11y.RouteMCPOAuth},
+		{name: "oauth", plane: o11y.PlaneMCP, path: "/oauth/token", want: o11y.RouteMCPOAuth},
+		{name: "well known", plane: o11y.PlaneMCP, path: "/.well-known/oauth-protected-resource", want: o11y.RouteMCPOAuth},
+		{name: "literal connect", plane: o11y.PlaneMCP, path: "/+/connect", want: o11y.RouteMCPOAuth},
+		{name: "self service connect", plane: o11y.PlaneMCP, path: "/tools/connect", want: o11y.RouteMCPOAuth},
+		{name: "nested mcp connect", plane: o11y.PlaneMCP, path: "/tools/mcp/connect", want: o11y.RouteMCPOAuth},
+		{name: "root mcp connect", plane: o11y.PlaneMCP, path: "/mcp/connect", want: o11y.RouteMCPOAuth},
+		{name: "root connect", plane: o11y.PlaneMCP, path: "/connect", want: o11y.RouteMCPRPC},
+		{name: "empty slug connect", plane: o11y.PlaneMCP, path: "//connect", want: o11y.RouteMCPRPC},
+		{name: "nested generic connect", plane: o11y.PlaneMCP, path: "/tools/other/connect", want: o11y.RouteMCPRPC},
+		{name: "connect suffix extension", plane: o11y.PlaneMCP, path: "/tools/connect/extra", want: o11y.RouteMCPRPC},
+		{name: "mcp segment prefix", plane: o11y.PlaneMCP, path: "/tools/notmcp/connect", want: o11y.RouteMCPRPC},
+		{name: "oauth prefix boundary", plane: o11y.PlaneMCP, path: "/oauthish/token", want: o11y.RouteMCPRPC},
+		{name: "well known prefix boundary", plane: o11y.PlaneMCP, path: "/.well-knownish/oauth", want: o11y.RouteMCPRPC},
 		{name: "version is admin only", plane: o11y.PlaneProxy, path: "/__/version", want: o11y.RouteProxyForward},
 		{name: "other", plane: o11y.PlaneAdmin, path: "/unknown/id", want: o11y.RouteOther},
 	}
