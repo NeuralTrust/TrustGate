@@ -1,0 +1,644 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package oauth
+
+import (
+	"context"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
+	"github.com/NeuralTrust/TrustGate/pkg/api/resolver"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	appoauthmocks "github.com/NeuralTrust/TrustGate/pkg/app/oauth/mocks"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/gofiber/fiber/v2"
+	"github.com/stretchr/testify/mock"
+)
+
+const apiKeyConnectTestSecret = "raw-super-secret-key"
+
+type gatewayResolverFunc func(*fiber.Ctx) (*gatewaydomain.Gateway, error)
+
+func (f gatewayResolverFunc) Resolve(c *fiber.Ctx) (*gatewaydomain.Gateway, error) {
+	return f(c)
+}
+
+func TestAPIKeyConnectHandlerGet_RendersValidatedTarget(t *testing.T) {
+	t.Parallel()
+
+	gateway := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
+	service := appoauthmocks.NewAPIKeyConnectService(t)
+	service.EXPECT().
+		ValidateTarget(mock.Anything, gateway.ID, "tools").
+		Return(nil).
+		Once()
+	handler := newAPIKeyConnectTestHandler(
+		gatewayResolverFunc(func(c *fiber.Ctx) (*gatewaydomain.Gateway, error) {
+			if got := string(c.Request().Host()); got != "acme.mcp.example.com" {
+				t.Fatalf("Host = %q, want direct request host", got)
+			}
+			return gateway, nil
+		}),
+		service,
+	)
+
+	res := performAPIKeyConnectRequest(t, handler, fiber.MethodGet, "/tools/connect", "", "")
+	body := readAPIKeyConnectBody(t, res)
+
+	if res.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, want %d", res.StatusCode, fiber.StatusOK)
+	}
+	if !strings.Contains(body, `action="/tools/connect"`) {
+		t.Fatalf("form action missing from body: %s", body)
+	}
+	if !strings.Contains(body, `type="password"`) || strings.Contains(body, `value=`) {
+		t.Fatalf("form does not preserve blank password behavior: %s", body)
+	}
+	assertAPIKeyConnectNoStore(t, res)
+	assertAPIKeyConnectSecretAbsent(t, res, body)
+}
+
+func TestAPIKeyConnectHandlerGet_StatusMapping(t *testing.T) {
+	t.Parallel()
+
+	operationalErr := errors.New("dependency unavailable")
+	tests := []struct {
+		name       string
+		resolveErr error
+		targetErr  error
+		wantStatus int
+	}{
+		{
+			name:       "invalid host",
+			resolveErr: appauth.ErrInvalidAuthRequest,
+			wantStatus: fiber.StatusNotFound,
+		},
+		{
+			name:       "unknown target",
+			targetErr:  appoauth.ErrAPIKeyConnectUnauthorized,
+			wantStatus: fiber.StatusNotFound,
+		},
+		{
+			name:       "resolver failure",
+			resolveErr: operationalErr,
+			wantStatus: fiber.StatusInternalServerError,
+		},
+		{
+			name:       "target dependency failure",
+			targetErr:  operationalErr,
+			wantStatus: fiber.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			gateway := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind]()}
+			service := appoauthmocks.NewAPIKeyConnectService(t)
+			if tt.resolveErr == nil {
+				service.EXPECT().
+					ValidateTarget(mock.Anything, gateway.ID, "tools").
+					Return(tt.targetErr).
+					Once()
+			}
+			handler := newAPIKeyConnectTestHandler(
+				gatewayResolverFunc(func(*fiber.Ctx) (*gatewaydomain.Gateway, error) {
+					return gateway, tt.resolveErr
+				}),
+				service,
+			)
+
+			res := performAPIKeyConnectRequest(t, handler, fiber.MethodGet, "/tools/connect", "", "")
+			body := readAPIKeyConnectBody(t, res)
+
+			if res.StatusCode != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", res.StatusCode, tt.wantStatus)
+			}
+			if body != http.StatusText(tt.wantStatus) {
+				t.Fatalf("body = %q, want generic %q", body, http.StatusText(tt.wantStatus))
+			}
+			assertAPIKeyConnectNoStore(t, res)
+			assertAPIKeyConnectSecretAbsent(t, res, body)
+		})
+	}
+}
+
+func TestAPIKeyConnectHandlerPost_UsesBodyOnlyAfterHostResolution(t *testing.T) {
+	t.Parallel()
+
+	gateway := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind]()}
+	events := make([]string, 0, 2)
+	service := appoauthmocks.NewAPIKeyConnectService(t)
+	service.EXPECT().
+		CreateTicket(mock.Anything, gateway.ID, "tools", apiKeyConnectTestSecret).
+		Run(func(context.Context, ids.GatewayID, string, string) {
+			events = append(events, "create-ticket")
+			if len(events) != 2 || events[0] != "resolve-host" {
+				t.Fatalf("call order = %v, want host resolution before service", events)
+			}
+		}).
+		Return("ticket value&?", nil).
+		Once()
+	handler := newAPIKeyConnectTestHandler(
+		gatewayResolverFunc(func(*fiber.Ctx) (*gatewaydomain.Gateway, error) {
+			events = append(events, "resolve-host")
+			return gateway, nil
+		}),
+		service,
+	)
+
+	res := performAPIKeyConnectRequest(
+		t,
+		handler,
+		fiber.MethodPost,
+		"/tools/connect?api_key=query-secret",
+		fiber.MIMEApplicationForm+"; charset=UTF-8",
+		"api_key="+apiKeyConnectTestSecret,
+	)
+	body := readAPIKeyConnectBody(t, res)
+
+	if res.StatusCode != fiber.StatusSeeOther {
+		t.Fatalf("status = %d, want %d", res.StatusCode, fiber.StatusSeeOther)
+	}
+	if got, want := res.Header.Get(fiber.HeaderLocation), "/tools/mcp/connect?ticket=ticket+value%26%3F"; got != want {
+		t.Fatalf("Location = %q, want %q", got, want)
+	}
+	assertAPIKeyConnectNoStore(t, res)
+	assertAPIKeyConnectSecretAbsent(t, res, body)
+}
+
+func TestAPIKeyConnectHandlerPost_SourceBoundary(t *testing.T) {
+	t.Parallel()
+
+	attempts := 0
+	resolverCalls := 0
+	limiter := appoauthmocks.NewConnectAttemptLimiter(t)
+	limiter.EXPECT().
+		Check(mock.Anything, appoauth.ConnectAttemptScopeSource, "203.0.113.9").
+		RunAndReturn(func(context.Context, appoauth.ConnectAttemptScope, string) error {
+			attempts++
+			if attempts == 11 {
+				return &appoauth.ConnectRateLimitExceeded{RetryAfter: 1500 * time.Millisecond}
+			}
+			return nil
+		}).
+		Times(11)
+	handler := NewAPIKeyConnectHandler(
+		gatewayResolverFunc(func(*fiber.Ctx) (*gatewaydomain.Gateway, error) {
+			resolverCalls++
+			return nil, appauth.ErrInvalidAuthRequest
+		}),
+		appoauthmocks.NewAPIKeyConnectService(t),
+		limiter,
+		func(peer, forwardedFor string) string {
+			if peer == "" {
+				t.Fatal("peer is empty")
+			}
+			if forwardedFor != "" {
+				t.Fatalf("X-Forwarded-For = %q, want empty", forwardedFor)
+			}
+			return "203.0.113.9"
+		},
+	)
+
+	for attempt := 1; attempt <= 11; attempt++ {
+		res := performAPIKeyConnectRequest(
+			t,
+			handler,
+			fiber.MethodPost,
+			"/tools/connect",
+			fiber.MIMEApplicationForm,
+			"api_key="+apiKeyConnectTestSecret,
+		)
+		body := readAPIKeyConnectBody(t, res)
+		wantStatus := fiber.StatusUnauthorized
+		if attempt == 11 {
+			wantStatus = fiber.StatusTooManyRequests
+			if got := res.Header.Get(fiber.HeaderRetryAfter); got != "2" {
+				t.Fatalf("Retry-After = %q, want 2", got)
+			}
+		}
+		if res.StatusCode != wantStatus {
+			t.Fatalf("attempt %d status = %d, want %d", attempt, res.StatusCode, wantStatus)
+		}
+		if body != http.StatusText(wantStatus) {
+			t.Fatalf("attempt %d body = %q, want generic %q", attempt, body, http.StatusText(wantStatus))
+		}
+		assertAPIKeyConnectNoStore(t, res)
+		assertAPIKeyConnectSecretAbsent(t, res, body)
+	}
+	if resolverCalls != 10 {
+		t.Fatalf("gateway resolver calls = %d, want 10", resolverCalls)
+	}
+}
+
+func TestAPIKeyConnectHandlerPost_LimiterOutageShortCircuits(t *testing.T) {
+	t.Parallel()
+
+	resolverCalls := 0
+	limiter := appoauthmocks.NewConnectAttemptLimiter(t)
+	limiter.EXPECT().
+		Check(mock.Anything, appoauth.ConnectAttemptScopeSource, "203.0.113.9").
+		Return(errors.New("backend failed with " + apiKeyConnectTestSecret)).
+		Once()
+	handler := NewAPIKeyConnectHandler(
+		gatewayResolverFunc(func(*fiber.Ctx) (*gatewaydomain.Gateway, error) {
+			resolverCalls++
+			return nil, nil
+		}),
+		appoauthmocks.NewAPIKeyConnectService(t),
+		limiter,
+		func(string, string) string { return "203.0.113.9" },
+	)
+	app := fiber.New()
+	app.Post("/:slug/connect", func(c *fiber.Ctx) error {
+		err := handler.Post(c)
+		allowed, ok := c.Locals(middleware.OAuthChallengeAllowedLocal).(bool)
+		if !ok || allowed {
+			t.Fatalf("challenge local = (%v, %t), want false", allowed, ok)
+		}
+		return err
+	})
+	req := httptest.NewRequest(
+		fiber.MethodPost,
+		"/tools/connect",
+		strings.NewReader("api_key="+apiKeyConnectTestSecret+"%zz"),
+	)
+	req.Host = "acme.mcp.example.com"
+	res, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	body := readAPIKeyConnectBody(t, res)
+
+	if res.StatusCode != fiber.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", res.StatusCode, fiber.StatusServiceUnavailable)
+	}
+	if body != http.StatusText(fiber.StatusServiceUnavailable) {
+		t.Fatalf("body = %q, want generic %q", body, http.StatusText(fiber.StatusServiceUnavailable))
+	}
+	if resolverCalls != 0 {
+		t.Fatalf("gateway resolver calls = %d, want 0", resolverCalls)
+	}
+	assertAPIKeyConnectNoStore(t, res)
+	assertAPIKeyConnectSecretAbsent(t, res, body)
+}
+
+func TestAPIKeyConnectHandlerPost_InvalidHostPrecedesMalformedBody(t *testing.T) {
+	t.Parallel()
+
+	resolverCalls := 0
+	handler := newAPIKeyConnectTestHandler(
+		gatewayResolverFunc(func(*fiber.Ctx) (*gatewaydomain.Gateway, error) {
+			resolverCalls++
+			return nil, appauth.ErrInvalidAuthRequest
+		}),
+		appoauthmocks.NewAPIKeyConnectService(t),
+	)
+
+	res := performAPIKeyConnectRequest(
+		t,
+		handler,
+		fiber.MethodPost,
+		"/tools/connect",
+		fiber.MIMEApplicationForm,
+		"api_key="+apiKeyConnectTestSecret+"%zz",
+	)
+	body := readAPIKeyConnectBody(t, res)
+
+	if resolverCalls != 1 {
+		t.Fatalf("gateway resolver calls = %d, want 1", resolverCalls)
+	}
+	if res.StatusCode != fiber.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", res.StatusCode, fiber.StatusUnauthorized)
+	}
+	if body != http.StatusText(fiber.StatusUnauthorized) {
+		t.Fatalf("body = %q, want generic %q", body, http.StatusText(fiber.StatusUnauthorized))
+	}
+	assertAPIKeyConnectNoStore(t, res)
+	assertAPIKeyConnectSecretAbsent(t, res, body)
+}
+
+func TestAPIKeyConnectHandlerPost_IgnoresQueryAndHeaderCredentials(t *testing.T) {
+	t.Parallel()
+
+	gateway := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind]()}
+	service := appoauthmocks.NewAPIKeyConnectService(t)
+	service.EXPECT().
+		CreateTicket(mock.Anything, gateway.ID, "tools", "").
+		Return("", appoauth.ErrAPIKeyConnectUnauthorized).
+		Once()
+	handler := newAPIKeyConnectTestHandler(
+		gatewayResolverFunc(func(*fiber.Ctx) (*gatewaydomain.Gateway, error) {
+			return gateway, nil
+		}),
+		service,
+	)
+
+	app := apiKeyConnectTestApp(handler)
+	req := httptest.NewRequest(
+		fiber.MethodPost,
+		"/tools/connect?api_key=query-secret",
+		strings.NewReader("other=value"),
+	)
+	req.Host = "acme.mcp.example.com"
+	req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationForm)
+	req.Header.Set("X-AG-API-Key", "header-secret")
+	res, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	body := readAPIKeyConnectBody(t, res)
+
+	if res.StatusCode != fiber.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", res.StatusCode, fiber.StatusUnauthorized)
+	}
+	assertAPIKeyConnectNoStore(t, res)
+	assertAPIKeyConnectSecretAbsent(t, res, body)
+}
+
+func TestAPIKeyConnectHandlerPost_StatusMapping(t *testing.T) {
+	t.Parallel()
+
+	operationalErr := errors.New("dependency failed with " + apiKeyConnectTestSecret)
+	tests := []struct {
+		name        string
+		contentType string
+		body        string
+		resolveErr  error
+		serviceErr  error
+		wantStatus  int
+		wantRetry   string
+	}{
+		{
+			name:        "unsupported media type",
+			contentType: fiber.MIMEApplicationJSON,
+			body:        `{"api_key":"` + apiKeyConnectTestSecret + `"}`,
+			wantStatus:  fiber.StatusUnsupportedMediaType,
+		},
+		{
+			name:        "malformed media type",
+			contentType: fiber.MIMEApplicationForm + "; charset=",
+			body:        "api_key=" + apiKeyConnectTestSecret,
+			wantStatus:  fiber.StatusUnsupportedMediaType,
+		},
+		{
+			name:        "malformed form with valid host",
+			contentType: fiber.MIMEApplicationForm,
+			body:        "api_key=%zz",
+			wantStatus:  fiber.StatusBadRequest,
+		},
+		{
+			name:        "invalid host",
+			contentType: fiber.MIMEApplicationForm,
+			body:        "api_key=" + apiKeyConnectTestSecret,
+			resolveErr:  appauth.ErrInvalidAuthRequest,
+			wantStatus:  fiber.StatusUnauthorized,
+		},
+		{
+			name:        "authorization miss",
+			contentType: fiber.MIMEApplicationForm,
+			body:        "api_key=" + apiKeyConnectTestSecret,
+			serviceErr:  appoauth.ErrAPIKeyConnectUnauthorized,
+			wantStatus:  fiber.StatusUnauthorized,
+		},
+		{
+			name:        "consumer rate limit exceeded",
+			contentType: fiber.MIMEApplicationForm,
+			body:        "api_key=" + apiKeyConnectTestSecret,
+			serviceErr:  &appoauth.ConnectRateLimitExceeded{RetryAfter: 1500 * time.Millisecond},
+			wantStatus:  fiber.StatusTooManyRequests,
+			wantRetry:   "2",
+		},
+		{
+			name:        "consumer limiter outage",
+			contentType: fiber.MIMEApplicationForm,
+			body:        "api_key=" + apiKeyConnectTestSecret,
+			serviceErr: appoauth.NewConnectRateLimitUnavailable(
+				errors.New("backend failed with " + apiKeyConnectTestSecret),
+			),
+			wantStatus: fiber.StatusServiceUnavailable,
+		},
+		{
+			name:        "resolver failure",
+			contentType: fiber.MIMEApplicationForm,
+			body:        "api_key=" + apiKeyConnectTestSecret,
+			resolveErr:  operationalErr,
+			wantStatus:  fiber.StatusInternalServerError,
+		},
+		{
+			name:        "ticket dependency failure",
+			contentType: fiber.MIMEApplicationForm,
+			body:        "api_key=" + apiKeyConnectTestSecret,
+			serviceErr:  operationalErr,
+			wantStatus:  fiber.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			gateway := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind]()}
+			service := appoauthmocks.NewAPIKeyConnectService(t)
+			if tt.wantStatus != fiber.StatusUnsupportedMediaType &&
+				tt.wantStatus != fiber.StatusBadRequest &&
+				tt.resolveErr == nil {
+				service.EXPECT().
+					CreateTicket(mock.Anything, gateway.ID, "tools", apiKeyConnectTestSecret).
+					Return("", tt.serviceErr).
+					Once()
+			}
+			handler := newAPIKeyConnectTestHandler(
+				gatewayResolverFunc(func(*fiber.Ctx) (*gatewaydomain.Gateway, error) {
+					return gateway, tt.resolveErr
+				}),
+				service,
+			)
+
+			res := performAPIKeyConnectRequest(
+				t,
+				handler,
+				fiber.MethodPost,
+				"/tools/connect",
+				tt.contentType,
+				tt.body,
+			)
+			body := readAPIKeyConnectBody(t, res)
+
+			if res.StatusCode != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", res.StatusCode, tt.wantStatus)
+			}
+			if body != http.StatusText(tt.wantStatus) {
+				t.Fatalf("body = %q, want generic %q", body, http.StatusText(tt.wantStatus))
+			}
+			if got := res.Header.Get(fiber.HeaderRetryAfter); got != tt.wantRetry {
+				t.Fatalf("Retry-After = %q, want %q", got, tt.wantRetry)
+			}
+			assertAPIKeyConnectNoStore(t, res)
+			assertAPIKeyConnectSecretAbsent(t, res, body)
+		})
+	}
+}
+
+func TestAPIKeyConnectHandlerPost_AuthorizationMissesAreIndistinguishable(t *testing.T) {
+	t.Parallel()
+
+	gateway := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind]()}
+	invalidHostHandler := newAPIKeyConnectTestHandler(
+		gatewayResolverFunc(func(*fiber.Ctx) (*gatewaydomain.Gateway, error) {
+			return nil, appauth.ErrInvalidAuthRequest
+		}),
+		appoauthmocks.NewAPIKeyConnectService(t),
+	)
+	service := appoauthmocks.NewAPIKeyConnectService(t)
+	service.EXPECT().
+		CreateTicket(mock.Anything, gateway.ID, "tools", apiKeyConnectTestSecret).
+		Return("", appoauth.ErrAPIKeyConnectUnauthorized).
+		Once()
+	invalidKeyHandler := newAPIKeyConnectTestHandler(
+		gatewayResolverFunc(func(*fiber.Ctx) (*gatewaydomain.Gateway, error) {
+			return gateway, nil
+		}),
+		service,
+	)
+
+	hostMiss := performAPIKeyConnectRequest(
+		t,
+		invalidHostHandler,
+		fiber.MethodPost,
+		"/tools/connect",
+		fiber.MIMEApplicationForm,
+		"api_key="+apiKeyConnectTestSecret,
+	)
+	keyMiss := performAPIKeyConnectRequest(
+		t,
+		invalidKeyHandler,
+		fiber.MethodPost,
+		"/tools/connect",
+		fiber.MIMEApplicationForm,
+		"api_key="+apiKeyConnectTestSecret,
+	)
+	hostBody := readAPIKeyConnectBody(t, hostMiss)
+	keyBody := readAPIKeyConnectBody(t, keyMiss)
+
+	if hostMiss.StatusCode != keyMiss.StatusCode || hostBody != keyBody {
+		t.Fatalf(
+			"authorization misses differ: host=(%d,%q) key=(%d,%q)",
+			hostMiss.StatusCode,
+			hostBody,
+			keyMiss.StatusCode,
+			keyBody,
+		)
+	}
+}
+
+func apiKeyConnectTestApp(handler *APIKeyConnectHandler) *fiber.App {
+	app := fiber.New()
+	app.Use(middleware.NewOAuthChallengeMiddleware().Middleware())
+	app.Get("/:slug/connect", handler.Get)
+	app.Post("/:slug/connect", handler.Post)
+	return app
+}
+
+func newAPIKeyConnectTestHandler(
+	gateways resolver.GatewayResolver,
+	connect appoauth.APIKeyConnectService,
+) *APIKeyConnectHandler {
+	return NewAPIKeyConnectHandler(
+		gateways,
+		connect,
+		appoauth.NewNoopConnectAttemptLimiter(),
+		func(peer, _ string) string { return peer },
+	)
+}
+
+func performAPIKeyConnectRequest(
+	t *testing.T,
+	handler *APIKeyConnectHandler,
+	method string,
+	target string,
+	contentType string,
+	body string,
+) *http.Response {
+	t.Helper()
+
+	app := apiKeyConnectTestApp(handler)
+	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	req.Host = "acme.mcp.example.com"
+	if contentType != "" {
+		req.Header.Set(fiber.HeaderContentType, contentType)
+	}
+	res, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	return res
+}
+
+func readAPIKeyConnectBody(t *testing.T, res *http.Response) string {
+	t.Helper()
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("read response body: %v", err)
+	}
+	if err := res.Body.Close(); err != nil {
+		t.Fatalf("close response body: %v", err)
+	}
+	return string(body)
+}
+
+func assertAPIKeyConnectNoStore(t *testing.T, res *http.Response) {
+	t.Helper()
+
+	if got := res.Header.Get(fiber.HeaderCacheControl); !strings.Contains(got, "no-store") {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+	if got := res.Header.Get("Referrer-Policy"); got != "no-referrer" {
+		t.Fatalf("Referrer-Policy = %q, want no-referrer", got)
+	}
+}
+
+func assertAPIKeyConnectSecretAbsent(t *testing.T, res *http.Response, body string) {
+	t.Helper()
+
+	if strings.Contains(body, apiKeyConnectTestSecret) {
+		t.Fatalf("response body contains API key: %q", body)
+	}
+	for name, values := range res.Header {
+		for _, value := range values {
+			if strings.Contains(value, apiKeyConnectTestSecret) {
+				t.Fatalf("response header %s contains API key", name)
+			}
+		}
+	}
+	if got := res.Header.Get(fiber.HeaderWWWAuthenticate); got != "" {
+		t.Fatalf("WWW-Authenticate = %q, want empty", got)
+	}
+}
+
+var _ resolver.GatewayResolver = gatewayResolverFunc(nil)
