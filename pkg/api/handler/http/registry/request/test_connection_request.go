@@ -33,6 +33,13 @@ func (r TestConnectionRequest) IsByID() bool {
 	return strings.TrimSpace(r.RegistryID) != ""
 }
 
+func (r *TestConnectionRequest) Normalize() {
+	if r == nil || r.IsByID() {
+		return
+	}
+	r.ProviderOptions = inferVertexProject(r.Provider, r.ProviderOptions, r.Auth)
+}
+
 func (r TestConnectionRequest) Validate() error {
 	if r.IsByID() {
 		if r.Provider != "" || r.Auth != nil {
