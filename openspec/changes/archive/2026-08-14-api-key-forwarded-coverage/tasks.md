@@ -116,10 +116,10 @@ Verify: as Phase 4.
 
 Spec: *OAuth2 per-user regression without new tests*; *Verification changes no production behavior*.
 
-- [ ] 6.1 `docs/mcp/testing-guide.md` §5 (line 262): add rows for both new tests and the operator + Cursor self-service connect flow, plus the note that `TestMCPOAuth_SharedHostScopesChallengeAndResolvesConsumerIdP` and `TestMCPServer_RoleBasedConsumer*` passing unmodified **is** scenario 10. **14 lines**
-- [ ] 6.2 Run `clean-comments` over the new file and confirm zero comments survive; confirm `git diff --stat` shows no `pkg/` change — a needed production change means the test found a defect, so escalate against RUN-1136 instead of adapting the test. **0 lines**
-- [ ] 6.3 Audit `git diff --stat -- tests docs .env.functional.example` against 400; pull the levers above in order if it drifts. **0 lines**
-- [ ] 6.4 Rebase onto `feat/api-key-self-service-connect-endpoint` (unmerged and moving), open the **draft** PR against it with `RUN-1139` in the body. **0 lines**
+- [x] 6.1 `docs/mcp/testing-guide.md` §5 (line 262): add rows for both new tests and the operator + Cursor self-service connect flow, plus the note that `TestMCPOAuth_SharedHostScopesChallengeAndResolvesConsumerIdP` and `TestMCPServer_RoleBasedConsumer*` passing unmodified **is** scenario 10. **26 lines** (§5 rows at 286, new §5.1, scenario-10 note at 313; commit `4d3b906c`)
+- [x] 6.2 Run `clean-comments` over the new file and confirm zero comments survive; confirm `git diff --stat` shows no `pkg/` change — a needed production change means the test found a defect, so escalate against RUN-1136 instead of adapting the test. **0 lines** (only line matching a comment pattern is the `//go:build functional` directive; `git diff --stat 8c5cd730 -- pkg` empty)
+- [x] 6.3 Audit `git diff --stat -- tests docs .env.functional.example` against 400; pull the levers above in order if it drifts. **0 lines** (final 462; levers not pulled, `size-exception` is the recorded delivery decision)
+- [x] 6.4 Rebase onto `feat/api-key-self-service-connect-endpoint` (unmerged and moving), open the **draft** PR against it with `RUN-1139` in the body. **0 lines** (draft PR #448, base `feat/api-key-self-service-connect-endpoint`, head `test/api-key-forwarded-coverage`)
 
 Verify: `go vet -tags functional ./tests/functional/...`; `golangci-lint run --build-tags functional ./tests/functional/...`; `make lint`; CI Functional Tests job green on the full package under `-race`.
 
@@ -132,8 +132,14 @@ Verify: `go vet -tags functional ./tests/functional/...`; `golangci-lint run --b
 | 3 — Connect helpers | 92 | 143 |
 | 4 — Flow test | 85 | 40 |
 | 5 — Isolation test | 58 | 38 |
-| 6 — Docs | 14 | pending |
-| **Total** | **380 / 400** | **443 + docs** |
+| 6 — Docs | 14 | 26 |
+| **Total** | **380 / 400** | **462** |
+
+Final measurement at archive time, `git diff --stat 8c5cd730 -- tests docs .env.functional.example`:
+3 in `.env.functional.example`, 433 in `tests/functional/mcp_api_key_connect_test.go`, 26 in
+`docs/mcp/testing-guide.md` = **462**, delivered under the recorded `size-exception`. This
+supersedes the 443 + docs projection below: commit `4de1da12` tightened the assertions and took
+the test file from 440 to 433, and the guide edit cost 26 rather than the forecast 14.
 
 Cumulative `git diff --stat 8c5cd730 -- tests docs .env.functional.example` is **443**
 (3 in `.env.functional.example`, 440 in the test file), up 14 from the 429 that went into
