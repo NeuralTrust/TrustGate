@@ -99,6 +99,8 @@ func (s *memFlowStore) GetSession(context.Context, string) (*appoauth.SessionRec
 
 func (s *memFlowStore) RetireSession(context.Context, string, time.Duration) error { return nil }
 
+func (s *memFlowStore) ConsumeJTI(context.Context, string, time.Time) error { return nil }
+
 func newTestApp(auths ...*authdomain.Auth) *fiber.App {
 	svc := appoauth.NewMetadataService(&fakeCredentialFinder{oauth2: auths}, nil, nil, newMemFlowStore())
 	app := fiber.New()
@@ -284,6 +286,7 @@ func TestRegisterHandlerApplicationType(t *testing.T) {
 type capturingProxy struct {
 	iss string
 	loc string
+	got appoauth.TokenRequest
 }
 
 func (p *capturingProxy) Authorize(context.Context, string, appoauth.AuthorizeRequest) (string, error) {
@@ -295,8 +298,40 @@ func (p *capturingProxy) Callback(_ context.Context, _, _, _, _, _, iss string) 
 	return p.loc, nil
 }
 
-func (p *capturingProxy) Exchange(context.Context, string, appoauth.TokenRequest) (map[string]any, error) {
-	return nil, nil
+func (p *capturingProxy) Exchange(_ context.Context, _ string, req appoauth.TokenRequest) (map[string]any, error) {
+	p.got = req
+	return map[string]any{"token_type": "Bearer"}, nil
+}
+
+func TestTokenHandlerForwardsAssertion(t *testing.T) {
+	t.Parallel()
+	proxy := &capturingProxy{}
+	app := fiber.New()
+	app.Post("/oauth/token", NewTokenHandler(proxy, nil).Handle)
+
+	body := strings.NewReader("grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=id-jag.jwt&client_id=agw-1&resource=https%3A%2F%2Fgw.example.com%2Fv1%2Fmcp%2Fdev")
+	req := httptest.NewRequest(fiber.MethodPost, "/oauth/token", body)
+	req.Host = "gw.example.com"
+	req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationForm)
+	res, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
+	}
+	if proxy.got.GrantType != "urn:ietf:params:oauth:grant-type:jwt-bearer" {
+		t.Fatalf("grant_type = %q", proxy.got.GrantType)
+	}
+	if proxy.got.Assertion != "id-jag.jwt" {
+		t.Fatalf("assertion = %q", proxy.got.Assertion)
+	}
+	if proxy.got.ClientID != "agw-1" {
+		t.Fatalf("client_id = %q", proxy.got.ClientID)
+	}
+	if proxy.got.Resource != "https://gw.example.com/v1/mcp/dev" {
+		t.Fatalf("resource = %q", proxy.got.Resource)
+	}
 }
 
 func TestCallbackHandlerForwardsISS(t *testing.T) {

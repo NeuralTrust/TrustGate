@@ -225,6 +225,69 @@ func TestRegisterClient(t *testing.T) {
 	}
 }
 
+func TestAuthorizationServerMetadataEMAAdvertisement(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		mode      string
+		wantEMA   bool
+		wantGrant bool
+	}{
+		{name: "empty oidc hides", mode: "", wantEMA: false, wantGrant: false},
+		{name: "oidc hides", mode: authdomain.NorthboundModeOIDC, wantEMA: false, wantGrant: false},
+		{name: "ema advertises", mode: authdomain.NorthboundModeEMA, wantEMA: true, wantGrant: true},
+		{name: "both advertises", mode: authdomain.NorthboundModeBoth, wantEMA: true, wantGrant: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{
+				oauth2Auth(t, authdomain.OAuth2Config{
+					Issuer:         "https://idp.example.com",
+					ClientID:       "mcp-public-client",
+					NorthboundMode: tc.mode,
+				}),
+			}}
+			svc := NewMetadataService(finder, nil, nil, newMemFlowStore())
+			doc, err := svc.AuthorizationServer(context.Background(), "https://gw.example.com")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			_, hasExt := doc[emaExtension]
+			if hasExt != tc.wantEMA {
+				t.Fatalf("extension present = %v, want %v", hasExt, tc.wantEMA)
+			}
+			grants, _ := doc["grant_types_supported"].([]string)
+			hasJWT := false
+			for _, g := range grants {
+				if g == grantJWTBearer {
+					hasJWT = true
+					break
+				}
+			}
+			if hasJWT != tc.wantGrant {
+				t.Fatalf("jwt-bearer present = %v, want %v (grants=%v)", hasJWT, tc.wantGrant, grants)
+			}
+			reg, err := svc.RegisterClient(context.Background(), RegisterRequest{
+				RedirectURIs: []string{"cursor://anysphere.cursor-mcp/oauth/callback"},
+			})
+			if err != nil {
+				t.Fatalf("register: %v", err)
+			}
+			regHas := false
+			for _, g := range reg.GrantTypes {
+				if g == grantJWTBearer {
+					regHas = true
+					break
+				}
+			}
+			if regHas != tc.wantGrant {
+				t.Fatalf("DCR grant_types jwt-bearer = %v, want %v (%v)", regHas, tc.wantGrant, reg.GrantTypes)
+			}
+		})
+	}
+}
+
 func TestRegisterClientAcceptsPrivateUseRedirects(t *testing.T) {
 	t.Parallel()
 	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{

@@ -197,7 +197,7 @@ func TestCallbackSessionModeEmptySubjectDenied(t *testing.T) {
 	store := newMemFlowStore()
 	userinfo := &fakeUserInfo{info: map[string]any{"login": "octocat"}}
 	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{sessionAuth(t, idp.URL)}}
-	proxy := NewAuthProxy(finder, nil, http.DefaultClient, store, nil, newTestSigner(t), userinfo)
+	proxy := NewAuthProxy(finder, nil, http.DefaultClient, store, nil, newTestSigner(t), userinfo, nil)
 
 	gwState := authorizeAndGetState(t, proxy, "")
 	_, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "", "")
@@ -214,7 +214,7 @@ func TestExchangeCodeSessionModeMintsSessionToken(t *testing.T) {
 	t.Parallel()
 	store := newMemFlowStore()
 	signer := newTestSigner(t)
-	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, http.DefaultClient, store, nil, signer, nil)
+	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, http.DefaultClient, store, nil, signer, nil, nil)
 	ctx := context.Background()
 
 	if err := store.SaveCode(ctx, "gw-code", CodeGrant{
@@ -287,7 +287,7 @@ func TestRefreshSessionReMintsAndRotates(t *testing.T) {
 	store := newMemFlowStore()
 	signer := newTestSigner(t)
 	noIdP := &http.Client{Transport: failingTransport{t}}
-	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, noIdP, store, nil, signer, nil)
+	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, noIdP, store, nil, signer, nil, nil)
 	ctx := context.Background()
 
 	const oldRefresh = "gwrt_old-refresh"
@@ -393,7 +393,7 @@ func TestRefreshUnknownTokenFallsBackToIdP(t *testing.T) {
 func TestRefreshUnknownGatewayTokenRejected(t *testing.T) {
 	t.Parallel()
 	noIdP := &http.Client{Transport: failingTransport{t}}
-	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, noIdP, newMemFlowStore(), nil, newTestSigner(t), nil)
+	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, noIdP, newMemFlowStore(), nil, newTestSigner(t), nil, nil)
 
 	_, err := proxy.Exchange(context.Background(), "http://gw.example.com", TokenRequest{
 		GrantType:    "refresh_token",
@@ -418,7 +418,7 @@ func TestCallbackSessionMintsIdPGrantedScopes(t *testing.T) {
 			RequiredScopes: []string{"api://gw-client-id/mcp.access"},
 		}),
 	}}
-	proxy := NewAuthProxy(finder, nil, http.DefaultClient, store, nil, signer, nil)
+	proxy := NewAuthProxy(finder, nil, http.DefaultClient, store, nil, signer, nil, nil)
 	ctx := context.Background()
 
 	gwState := authorizeAndGetState(t, proxy, "")
@@ -488,7 +488,7 @@ func fakeIdPWithScopedToken(t *testing.T, scope, idToken string) *httptest.Serve
 func TestExchangeCodeOffModeReturnsTokenVerbatim(t *testing.T) {
 	t.Parallel()
 	store := newMemFlowStore()
-	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, http.DefaultClient, store, nil, newTestSigner(t), nil)
+	proxy := NewAuthProxy(&fakeCredentialFinder{}, nil, http.DefaultClient, store, nil, newTestSigner(t), nil, nil)
 	ctx := context.Background()
 
 	idpToken := map[string]any{"access_token": "idp-access-token", "token_type": "Bearer", "expires_in": 3600}
