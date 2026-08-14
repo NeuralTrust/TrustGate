@@ -72,7 +72,7 @@ func (t *Template) ValidateConfig(settings map[string]interface{}) error {
 // WithSettings validates the settings, opens a dedicated pool, and applies the
 // schema migrations (advisory-locked) before returning the exporter.
 //
-// Connection precedence: literal dsn > dsn_env > service DatabaseConfig.
+// Connection precedence: literal dsn > dsn_env > SENSIBLE_PG_DSN > service DatabaseConfig.
 func (t *Template) WithSettings(settings map[string]interface{}) (appmetrics.Exporter, error) {
 	s, err := parseSettings(settings)
 	if err != nil {
@@ -96,16 +96,16 @@ func (t *Template) WithSettings(settings map[string]interface{}) (appmetrics.Exp
 }
 
 func (t *Template) openPool(ctx context.Context, s Settings) (*pgxpool.Pool, error) {
-	if s.hasDSNSource() {
-		dsn, err := s.resolveDSN()
-		if err != nil {
-			return nil, err
-		}
+	dsn, err := s.resolveDSN()
+	if err == nil {
 		pool, err := pgxpool.New(ctx, dsn)
 		if err != nil {
 			return nil, fmt.Errorf("postgres: open pool: %w", err)
 		}
 		return pool, nil
+	}
+	if s.hasDSNSource() {
+		return nil, err
 	}
 	conf, err := t.fallbackPoolConfig(ctx)
 	if err != nil {
