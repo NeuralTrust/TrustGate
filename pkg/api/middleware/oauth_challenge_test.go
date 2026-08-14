@@ -105,3 +105,41 @@ func TestOAuthChallengeOnDirectStatus401(t *testing.T) {
 		t.Fatalf("expected challenge on direct 401 status, got %q", got)
 	}
 }
+
+func TestOAuthChallengeUsesTriStateEligibility(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		eligibility any
+		want        bool
+	}{
+		{name: "unknown preserves challenge", want: true},
+		{name: "allowed challenges", eligibility: true, want: true},
+		{name: "disallowed suppresses challenge", eligibility: false},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			app := fiber.New()
+			app.Use(NewOAuthChallengeMiddleware().Middleware())
+			app.Post("/v1/mcp/dev", func(c *fiber.Ctx) error {
+				if tt.eligibility != nil {
+					c.Locals(OAuthChallengeAllowedLocal, tt.eligibility)
+				}
+				return fiber.NewError(fiber.StatusUnauthorized, "unauthenticated")
+			})
+
+			res, err := app.Test(httptest.NewRequest(fiber.MethodPost, "/v1/mcp/dev", nil))
+			if err != nil {
+				t.Fatalf("app.Test: %v", err)
+			}
+			got := res.Header.Get(fiber.HeaderWWWAuthenticate) != ""
+			if got != tt.want {
+				t.Fatalf("challenge present = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
