@@ -20,8 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-
-	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 type Tool struct {
@@ -144,10 +142,9 @@ func stringField(payload map[string]json.RawMessage, key string) string {
 }
 
 type Target struct {
-	URL          string
-	Headers      map[string]string
-	PinKey       string
-	ProtocolMode registrydomain.MCPProtocolMode
+	URL     string
+	Headers map[string]string
+	PinKey  string
 }
 
 type RPCError struct {
@@ -190,8 +187,6 @@ func IsRPCError(err error) bool {
 var ErrUnreachable = errors.New("mcp upstream unreachable")
 
 var ErrNotSupported = errors.New("mcp upstream does not support this method")
-
-var ErrProtocolIncompatible = errors.New("mcp upstream protocol incompatible")
 
 type Upstream interface {
 	ListTools(ctx context.Context) ([]Tool, error)

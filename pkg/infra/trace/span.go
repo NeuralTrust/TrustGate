@@ -62,60 +62,21 @@ type PluginAttrs struct {
 	Extras     any
 }
 
-const (
-	MCPProtocolEraLegacy          = "legacy"
-	MCPProtocolEraModern          = "modern"
-	MCPProtocolVersionUnsupported = "unsupported"
-)
-
-// MCPProtocolVersions is the newest-first allowlist shared with the MCP handler.
-var MCPProtocolVersions = []string{
-	"2026-07-28",
-	"2025-06-18",
-	"2025-03-26",
-	"2024-11-05",
-}
-
 type MCPAttrs struct {
-	Method          string
-	Operation       string
-	ServerName      string
-	RegistryID      string
-	Host            string
-	CatalogCode     string
-	Transport       string
-	Tool            string
-	UpstreamTool    string
-	Prompt          string
-	ResourceURI     string
-	Targets         int
-	UpstreamStatus  int
-	RPCErrorCode    int
-	ProtocolEra     string
-	ProtocolVersion string
-}
-
-// BoundMCPProtocolVersion maps unknown revisions to "unsupported".
-func BoundMCPProtocolVersion(version string) string {
-	if version == "" {
-		return ""
-	}
-	for _, known := range MCPProtocolVersions {
-		if version == known {
-			return version
-		}
-	}
-	return MCPProtocolVersionUnsupported
-}
-
-// BoundMCPProtocolEra keeps only legacy or modern labels.
-func BoundMCPProtocolEra(era string) string {
-	switch era {
-	case MCPProtocolEraLegacy, MCPProtocolEraModern:
-		return era
-	default:
-		return ""
-	}
+	Method         string
+	Operation      string
+	ServerName     string
+	RegistryID     string
+	Host           string
+	CatalogCode    string
+	Transport      string
+	Tool           string
+	UpstreamTool   string
+	Prompt         string
+	ResourceURI    string
+	Targets        int
+	UpstreamStatus int
+	RPCErrorCode   int
 }
 
 type Span struct {
@@ -368,15 +329,6 @@ func (s *Span) SetMCPStatus(httpStatus, rpcErrorCode int) {
 	s.ensureMCP()
 	s.MCP.UpstreamStatus = httpStatus
 	s.MCP.RPCErrorCode = rpcErrorCode
-}
-
-// SetMCPProtocol records bounded protocol era and version on the MCP span.
-func (s *Span) SetMCPProtocol(era, version string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.ensureMCP()
-	s.MCP.ProtocolEra = BoundMCPProtocolEra(era)
-	s.MCP.ProtocolVersion = BoundMCPProtocolVersion(version)
 }
 
 func (s *Span) MCPAttrsCopy() (MCPAttrs, bool) {

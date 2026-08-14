@@ -126,13 +126,6 @@ func (c *Consumer) FailMode() FailMode {
 	return c.MCP.FailMode
 }
 
-func (c *Consumer) ProtocolAcceptance() ProtocolAcceptance {
-	if c.MCP == nil {
-		return ""
-	}
-	return c.MCP.ProtocolAcceptance
-}
-
 type CreateParams struct {
 	GatewayID       ids.GatewayID
 	Name            string

@@ -51,9 +51,7 @@ type PendingAuthorization struct {
 	// captured at authorize time so the built-in default identity provider —
 	// which has no owning gateway of its own — can still bind the minted
 	// session to the right gateway at callback time.
-	GatewayID     string `json:"gateway_id,omitempty"`
-	Issuer        string `json:"issuer,omitempty"`
-	IssAdvertised bool   `json:"iss_advertised,omitempty"`
+	GatewayID string `json:"gateway_id,omitempty"`
 }
 
 type CodeGrant struct {
@@ -128,6 +126,6 @@ type ConsentChainer interface {
 
 type AuthProxy interface {
 	Authorize(ctx context.Context, baseURL string, req AuthorizeRequest) (string, error)
-	Callback(ctx context.Context, baseURL, state, code, idpErr, idpErrDesc, iss string) (string, error)
+	Callback(ctx context.Context, baseURL, state, code, idpErr, idpErrDesc string) (string, error)
 	Exchange(ctx context.Context, baseURL string, req TokenRequest) (map[string]any, error)
 }

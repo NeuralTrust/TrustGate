@@ -15,7 +15,6 @@
 package configsnapshot_test
 
 import (
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -24,11 +23,9 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
-	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
 )
 
 func TestCodecPreservesRegistrySecrets(t *testing.T) {
@@ -55,8 +52,7 @@ func TestCodecPreservesRegistrySecrets(t *testing.T) {
 		Type:      registrydomain.TypeMCP,
 		Enabled:   true,
 		MCPTarget: &registrydomain.MCPTarget{
-			URL:          "https://mcp.example.com",
-			ProtocolMode: registrydomain.MCPProtocolModeModern,
+			URL: "https://mcp.example.com",
 			Auth: &registrydomain.MCPAuth{
 				Mode:   registrydomain.MCPAuthModeStatic,
 				Header: "Authorization",
@@ -86,65 +82,6 @@ func TestCodecPreservesRegistrySecrets(t *testing.T) {
 	require.NotNil(t, gotMCP.MCPTarget)
 	require.NotNil(t, gotMCP.MCPTarget.Auth)
 	assert.Equal(t, "Bearer mcp-secret", gotMCP.MCPTarget.Auth.Value)
-	assert.Equal(t, registrydomain.MCPProtocolModeModern, gotMCP.MCPTarget.ProtocolMode)
-}
-
-func TestCodecProtocolModeCompatibility(t *testing.T) {
-	t.Parallel()
-	codec := configsnapshot.NewCodec()
-	for _, mode := range []registrydomain.MCPProtocolMode{
-		registrydomain.MCPProtocolModeAuto,
-		registrydomain.MCPProtocolModeModern,
-		registrydomain.MCPProtocolModeLegacy,
-	} {
-		mode := mode
-		t.Run(string(mode), func(t *testing.T) {
-			t.Parallel()
-			reg := registrydomain.Registry{
-				ID:        ids.New[ids.RegistryKind](),
-				GatewayID: ids.New[ids.GatewayKind](),
-				Name:      "mcp",
-				Type:      registrydomain.TypeMCP,
-				MCPTarget: &registrydomain.MCPTarget{URL: "https://mcp.example.com", ProtocolMode: mode},
-			}
-			raw, err := codec.Encode(readmodel.Build(readmodel.Data{Registries: []registrydomain.Registry{reg}}))
-			require.NoError(t, err)
-			snap, err := codec.Decode(raw)
-			require.NoError(t, err)
-			got, ok := snap.RegistryByID(reg.ID)
-			require.True(t, ok)
-			require.Equal(t, mode, got.MCPTarget.ProtocolMode)
-		})
-	}
-}
-
-func TestCodecDefaultsOldProtocolModeAndRejectsInvalid(t *testing.T) {
-	t.Parallel()
-	codec := configsnapshot.NewCodec()
-	reg := registrydomain.Registry{
-		ID:        ids.New[ids.RegistryKind](),
-		GatewayID: ids.New[ids.GatewayKind](),
-		Name:      "mcp",
-		Type:      registrydomain.TypeMCP,
-		MCPTarget: &registrydomain.MCPTarget{URL: "https://mcp.example.com"},
-	}
-	oldJSON, err := json.Marshal(reg)
-	require.NoError(t, err)
-	oldRaw, err := proto.Marshal(&snapshotpb.Snapshot{Registries: []*snapshotpb.Registry{{Json: oldJSON}}})
-	require.NoError(t, err)
-	snap, err := codec.Decode(oldRaw)
-	require.NoError(t, err)
-	got, ok := snap.RegistryByID(reg.ID)
-	require.True(t, ok)
-	require.Equal(t, registrydomain.MCPProtocolModeAuto, got.MCPTarget.ProtocolMode)
-
-	reg.MCPTarget.ProtocolMode = "future"
-	invalidJSON, err := json.Marshal(reg)
-	require.NoError(t, err)
-	invalidRaw, err := proto.Marshal(&snapshotpb.Snapshot{Registries: []*snapshotpb.Registry{{Json: invalidJSON}}})
-	require.NoError(t, err)
-	_, err = codec.Decode(invalidRaw)
-	require.ErrorIs(t, err, registrydomain.ErrInvalidMCPTarget)
 }
 
 func TestCodecPreservesAuthKeyHash(t *testing.T) {
