@@ -316,15 +316,15 @@ func consumerHasRole(rc *appconsumer.RoutableConsumer, roleIDs []ids.RoleID) boo
 
 func buildRequestContext(c *fiber.Ctx, gatewayID ids.GatewayID, route apiresolver.ProxyRoute) *infracontext.RequestContext {
 	headers := make(map[string][]string)
-	c.Request().Header.VisitAll(func(key, value []byte) {
+	for key, value := range c.Request().Header.All() {
 		name := string(key)
 		headers[name] = append(headers[name], string(value))
-	})
+	}
 
 	query := url.Values{}
-	c.Context().QueryArgs().VisitAll(func(key, value []byte) {
+	for key, value := range c.Context().QueryArgs().All() {
 		query.Add(string(key), string(value))
-	})
+	}
 
 	return &infracontext.RequestContext{
 		GatewayID:       gatewayID.String(),

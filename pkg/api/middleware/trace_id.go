@@ -14,9 +14,19 @@
 
 package middleware
 
+import "github.com/google/uuid"
+
 // HeaderTraceID is the response header the proxy sets with the request trace id.
 // A gateway-specific name avoids the upstream X-Request-Id some providers emit.
 const HeaderTraceID = "X-AG-Trace-Id"
+
+// newTraceID mints the identity of a gateway request. An inbound HeaderTraceID
+// is never reused: the trace id keys telemetry storage, so honouring a
+// caller-supplied value lets any client silently drop another request's row,
+// including one belonging to a different tenant (RUN-1138).
+func newTraceID() string {
+	return uuid.New().String()
+}
 
 // StrippedProxyResponseHeaders lists upstream headers that must not be forwarded to clients.
 var StrippedProxyResponseHeaders = map[string]struct{}{
