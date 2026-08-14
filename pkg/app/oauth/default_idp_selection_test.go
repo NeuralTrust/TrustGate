@@ -130,7 +130,7 @@ func TestCallbackDefaultIdPConsentUsesEffectiveGateway(t *testing.T) {
 	store := newMemFlowStore()
 	chainer := &fakeChainer{url: "http://localhost:8082/oMTXK0qG/mcp/connect?ticket=tk"}
 	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{def}, defaultIdP: def}
-	proxy := NewAuthProxy(finder, nil, http.DefaultClient, store, chainer, nil, nil)
+	proxy := NewAuthProxy(finder, nil, http.DefaultClient, store, chainer, nil, nil, nil)
 
 	gw := ids.New[ids.GatewayKind]()
 	state := "state-1"
