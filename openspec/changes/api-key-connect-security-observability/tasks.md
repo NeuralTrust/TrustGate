@@ -7,8 +7,8 @@
 | 1. Limiter foundation | 975 actual | Commit 1 |
 | 2. Endpoint enforcement | 552 actual | Commit 2 |
 | 3. Lifecycle audit | 1,122 actual | Commit 3 |
-| 4. Observability regressions | 220–330 | Commit 4 |
-| **Total** | **2,869–2,979 projected** | |
+| 4. Observability regressions | 403 actual | Commit 4 |
+| **Total** | **3,052 actual** | |
 
 Delivery strategy: `exception-ok`; one child PR with approved `size:exception`.
 
@@ -19,6 +19,8 @@ Phase 1 actual size is 933 additions plus 42 deletions, excluding OpenSpec plann
 Phase 2 final size is 508 additions plus 44 deletions, 552 changed code lines excluding planning artifacts. The approved global `size:exception` explicitly covers this work unit; do not split the child PR.
 
 Phase 3 final size is 1,041 additions plus 81 deletions, 1,122 changed code lines excluding planning artifacts. The approved global `size:exception` explicitly covers this work unit; do not split the child PR.
+
+Phase 4 final size is 375 additions plus 28 deletions, 403 changed code lines excluding planning artifacts. The approved global `size:exception` explicitly covers the completed child PR; do not split it.
 
 Decision needed before apply: No
 Chained PRs recommended: No
@@ -67,8 +69,8 @@ flowchart LR
 
 ## Phase 4: Observability Regressions — Commit 4
 
-- [ ] 4.1 Fix bounded shapes in `ops_metrics.go`; test OAuth/connect inclusions, exclusions, and no raw path labels.
-- [ ] 4.2 Carry tri-state eligibility from `auth_chain.go` to `oauth_challenge.go`; test OAuth/default-IdP, API-key-only, form, unknown, and errors.
-- [ ] 4.3 Extend handler/access-log tests across `303/401/429/500/503`; assert sentinel absence from responses, redirects, logs, audits, keys, and metrics.
-- [ ] 4.4 Extend `mcp_router_test.go` for no-store/no-referrer, middleware order, metrics, and challenges.
-- [ ] 4.5 Finish with `gofmt`, `goimports`, focused race tests, `golangci-lint run`, and `go test -race ./...`; all scenarios pass before the single PR merges.
+- [x] 4.1 Fix bounded shapes in `ops_metrics.go`; test OAuth/connect inclusions, exclusions, and no raw path labels.
+- [x] 4.2 Carry tri-state eligibility from `auth_chain.go` to `oauth_challenge.go`; test OAuth/default-IdP, API-key-only, form, unknown, and errors.
+- [x] 4.3 Extend handler/access-log tests across `303/401/429/500/503`; assert sentinel absence from responses, redirects, logs, audits, keys, and metrics.
+- [x] 4.4 Extend `mcp_router_test.go` for no-store/no-referrer, middleware order, metrics, and challenges.
+- [x] 4.5 Finish with `gofmt`, `goimports`, focused race tests, `golangci-lint run`, and `go test -race ./...`; all scenarios pass before the single PR merges.

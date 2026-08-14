@@ -101,12 +101,24 @@ func classifyRoute(plane o11y.Plane, path string) o11y.Route {
 	case o11y.PlaneMCP:
 		if strings.HasPrefix(path, "/oauth/") ||
 			strings.HasPrefix(path, "/.well-known/") ||
-			path == "/+/connect" {
+			path == "/+/connect" ||
+			isSelfServiceConnectPath(path) ||
+			strings.HasSuffix(path, "/mcp/connect") {
 			return o11y.RouteMCPOAuth
 		}
 		return o11y.RouteMCPRPC
 	}
 	return o11y.RouteOther
+}
+
+func isSelfServiceConnectPath(path string) bool {
+	if !strings.HasPrefix(path, "/") ||
+		!strings.HasSuffix(path, "/connect") ||
+		strings.Count(path, "/") != 2 {
+		return false
+	}
+	slug := strings.TrimSuffix(strings.TrimPrefix(path, "/"), "/connect")
+	return slug != ""
 }
 
 func boundedMethod(method string) string {

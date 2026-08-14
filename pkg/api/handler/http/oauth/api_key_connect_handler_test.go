@@ -558,6 +558,7 @@ func TestAPIKeyConnectHandlerPost_AuthorizationMissesAreIndistinguishable(t *tes
 
 func apiKeyConnectTestApp(handler *APIKeyConnectHandler) *fiber.App {
 	app := fiber.New()
+	app.Use(middleware.NewOAuthChallengeMiddleware().Middleware())
 	app.Get("/:slug/connect", handler.Get)
 	app.Post("/:slug/connect", handler.Post)
 	return app
@@ -617,6 +618,9 @@ func assertAPIKeyConnectNoStore(t *testing.T, res *http.Response) {
 	if got := res.Header.Get(fiber.HeaderCacheControl); !strings.Contains(got, "no-store") {
 		t.Fatalf("Cache-Control = %q, want no-store", got)
 	}
+	if got := res.Header.Get("Referrer-Policy"); got != "no-referrer" {
+		t.Fatalf("Referrer-Policy = %q, want no-referrer", got)
+	}
 }
 
 func assertAPIKeyConnectSecretAbsent(t *testing.T, res *http.Response, body string) {
@@ -631,6 +635,9 @@ func assertAPIKeyConnectSecretAbsent(t *testing.T, res *http.Response, body stri
 				t.Fatalf("response header %s contains API key", name)
 			}
 		}
+	}
+	if got := res.Header.Get(fiber.HeaderWWWAuthenticate); got != "" {
+		t.Fatalf("WWW-Authenticate = %q, want empty", got)
 	}
 }
 

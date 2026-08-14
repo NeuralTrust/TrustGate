@@ -33,11 +33,16 @@ func NewOAuthChallengeMiddleware() *OAuthChallengeMiddleware {
 func (m *OAuthChallengeMiddleware) Middleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		err := c.Next()
-		if isUnauthorized(c, err) {
+		if isUnauthorized(c, err) && oauthChallengeAllowed(c) {
 			c.Set(fiber.HeaderWWWAuthenticate, bearerChallenge(c))
 		}
 		return err
 	}
+}
+
+func oauthChallengeAllowed(c *fiber.Ctx) bool {
+	allowed, known := c.Locals(OAuthChallengeAllowedLocal).(bool)
+	return !known || allowed
 }
 
 func bearerChallenge(c *fiber.Ctx) string {

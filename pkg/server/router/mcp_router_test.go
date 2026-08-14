@@ -15,6 +15,7 @@
 package router_test
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -31,12 +32,38 @@ import (
 	oauthmocks "github.com/NeuralTrust/TrustGate/pkg/app/oauth/mocks"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	"github.com/NeuralTrust/TrustGate/pkg/server/router"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+type routerOpsRecorder struct {
+	request o11y.Request
+	count   int
+}
+
+type challengeEligibilityMiddleware map[string]bool
+
+func (m challengeEligibilityMiddleware) Middleware() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		if allowed, ok := m[c.Path()]; ok {
+			c.Locals(middleware.OAuthChallengeAllowedLocal, allowed)
+		}
+		return c.Next()
+	}
+}
+
+func (r *routerOpsRecorder) Enabled() bool {
+	return true
+}
+
+func (r *routerOpsRecorder) RecordRequest(_ context.Context, request o11y.Request) {
+	r.request = request
+	r.count++
+}
 
 func TestMCPRouterDispatch(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
@@ -69,9 +96,17 @@ func TestMCPRouterDispatch(t *testing.T) {
 	)
 	connectHandler := oauthhttp.NewConnectHandler(connect)
 	mcpHandler := mcphttp.NewHandler(nil, nil)
+	ops := &routerOpsRecorder{}
 	mcpRouter := router.NewMCPRouter(
 		middleware.NewTransport(),
-		middleware.NewTransport(middleware.NewSecurityHeadersMiddleware()),
+		middleware.NewTransport(
+			middleware.NewOAuthChallengeMiddleware(),
+			challengeEligibilityMiddleware{
+				"/tools/mcp":         false,
+				"/oauth-enabled/mcp": true,
+			},
+			middleware.NewSecurityHeadersMiddleware(),
+		),
 		apihandler.NewHealthHandler(),
 		mcpHandler,
 		new(oauthhttp.ProtectedResourceHandler),
@@ -83,7 +118,7 @@ func TestMCPRouterDispatch(t *testing.T) {
 		apiKeyHandler,
 		connectHandler,
 		new(oauthhttp.JWKSHandler),
-		nil,
+		middleware.NewOpsMetricsMiddleware(ops, o11y.PlaneMCP),
 	)
 	app := fiber.New()
 	require.NoError(t, mcpRouter.BuildRoutes(app))
@@ -93,6 +128,9 @@ func TestMCPRouterDispatch(t *testing.T) {
 
 		assert.Equal(t, fiber.StatusOK, res.StatusCode)
 		assert.Contains(t, body, `action="/tools/connect"`)
+		assertMCPResponsePolicies(t, res)
+		assert.Empty(t, res.Header.Get(fiber.HeaderWWWAuthenticate))
+		assert.Equal(t, o11y.RouteMCPOAuth, ops.request.Route)
 	})
 
 	t.Run("GET single-segment connect with ticket stays self-service", func(t *testing.T) {
@@ -108,6 +146,8 @@ func TestMCPRouterDispatch(t *testing.T) {
 		assert.Equal(t, fiber.StatusOK, res.StatusCode)
 		assert.Contains(t, body, `action="/tools/connect"`)
 		assert.NotContains(t, body, "shadow-ticket")
+		assertMCPResponsePolicies(t, res)
+		assert.Equal(t, o11y.RouteMCPOAuth, ops.request.Route)
 	})
 
 	t.Run("POST self-service route", func(t *testing.T) {
@@ -123,6 +163,11 @@ func TestMCPRouterDispatch(t *testing.T) {
 		assert.Equal(t, fiber.StatusSeeOther, res.StatusCode)
 		assert.Equal(t, "/tools/mcp/connect?ticket=self-service-ticket", res.Header.Get(fiber.HeaderLocation))
 		assert.Empty(t, res.Header.Get("X-Frame-Options"))
+		assertMCPResponsePolicies(t, res)
+		assert.Empty(t, res.Header.Get(fiber.HeaderWWWAuthenticate))
+		assert.NotContains(t, res.Header.Get(fiber.HeaderLocation), "secret-key")
+		assert.Equal(t, o11y.RouteMCPOAuth, ops.request.Route)
+		assert.Equal(t, o11y.OutcomeAllowed, ops.request.Outcome)
 	})
 
 	t.Run("existing nested connect route", func(t *testing.T) {
@@ -137,6 +182,7 @@ func TestMCPRouterDispatch(t *testing.T) {
 
 		assert.Equal(t, fiber.StatusOK, res.StatusCode)
 		assert.Contains(t, body, "/tools/mcp")
+		assert.Equal(t, o11y.RouteMCPOAuth, ops.request.Route)
 	})
 
 	t.Run("existing OAuth connect route", func(t *testing.T) {
@@ -151,6 +197,7 @@ func TestMCPRouterDispatch(t *testing.T) {
 
 		assert.Equal(t, fiber.StatusFound, res.StatusCode)
 		assert.Equal(t, "https://provider.example/authorize", res.Header.Get(fiber.HeaderLocation))
+		assert.Equal(t, o11y.RouteMCPOAuth, ops.request.Route)
 	})
 
 	t.Run("generic MCP methods", func(t *testing.T) {
@@ -165,7 +212,26 @@ func TestMCPRouterDispatch(t *testing.T) {
 		postResponse, _ := dispatchMCPRequest(t, app, fiber.MethodPost, "/tools/mcp", `{}`, fiber.MIMEApplicationJSON)
 		assert.Equal(t, fiber.StatusUnauthorized, postResponse.StatusCode)
 		assert.Equal(t, "DENY", postResponse.Header.Get("X-Frame-Options"))
+		assert.Empty(t, postResponse.Header.Get(fiber.HeaderWWWAuthenticate))
+		assert.Equal(t, o11y.RouteMCPRPC, ops.request.Route)
+		assert.Equal(t, o11y.OutcomeDeniedAuth, ops.request.Outcome)
+
+		oauthResponse, _ := dispatchMCPRequest(t, app, fiber.MethodPost, "/oauth-enabled/mcp", `{}`, fiber.MIMEApplicationJSON)
+		assert.Equal(t, fiber.StatusUnauthorized, oauthResponse.StatusCode)
+		assert.Contains(t, oauthResponse.Header.Get(fiber.HeaderWWWAuthenticate), "Bearer ")
+
+		unknownResponse, _ := dispatchMCPRequest(t, app, fiber.MethodPost, "/unknown/mcp", `{}`, fiber.MIMEApplicationJSON)
+		assert.Equal(t, fiber.StatusUnauthorized, unknownResponse.StatusCode)
+		assert.Contains(t, unknownResponse.Header.Get(fiber.HeaderWWWAuthenticate), "Bearer ")
 	})
+
+	assert.Equal(t, 10, ops.count)
+}
+
+func assertMCPResponsePolicies(t *testing.T, response *http.Response) {
+	t.Helper()
+	assert.Contains(t, response.Header.Get(fiber.HeaderCacheControl), "no-store")
+	assert.Equal(t, "no-referrer", response.Header.Get("Referrer-Policy"))
 }
 
 func dispatchMCPRequest(

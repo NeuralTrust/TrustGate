@@ -54,7 +54,8 @@ func NewAPIKeyConnectHandler(
 }
 
 func (h *APIKeyConnectHandler) Get(c *fiber.Ctx) error {
-	setAPIKeyConnectNoStore(c)
+	setAPIKeyConnectResponsePolicies(c)
+	c.Locals(middleware.OAuthChallengeAllowedLocal, false)
 
 	gateway, err := h.gateways.Resolve(c)
 	if err != nil {
@@ -82,7 +83,7 @@ func (h *APIKeyConnectHandler) Get(c *fiber.Ctx) error {
 }
 
 func (h *APIKeyConnectHandler) Post(c *fiber.Ctx) error {
-	setAPIKeyConnectNoStore(c)
+	setAPIKeyConnectResponsePolicies(c)
 	c.Locals(middleware.OAuthChallengeAllowedLocal, false)
 
 	source := h.resolveSource(
@@ -144,8 +145,9 @@ func isFormURLEncoded(contentType string) bool {
 	return err == nil && mediaType == fiber.MIMEApplicationForm
 }
 
-func setAPIKeyConnectNoStore(c *fiber.Ctx) {
+func setAPIKeyConnectResponsePolicies(c *fiber.Ctx) {
 	c.Set(fiber.HeaderCacheControl, "no-store")
+	c.Set("Referrer-Policy", "no-referrer")
 }
 
 func writeAPIKeyConnectLimiterStatus(c *fiber.Ctx, err error) error {
