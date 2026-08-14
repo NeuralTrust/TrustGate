@@ -35,12 +35,11 @@ type CreateRegistryRequest struct {
 }
 
 type MCPTargetRequest struct {
-	Code         string            `json:"code,omitempty"`
-	URL          string            `json:"url"`
-	Transport    string            `json:"transport,omitempty"`
-	ProtocolMode string            `json:"protocol_mode,omitempty"`
-	Headers      map[string]string `json:"headers,omitempty"`
-	Auth         *MCPAuthRequest   `json:"auth,omitempty"`
+	Code      string            `json:"code,omitempty"`
+	URL       string            `json:"url"`
+	Transport string            `json:"transport,omitempty"`
+	Headers   map[string]string `json:"headers,omitempty"`
+	Auth      *MCPAuthRequest   `json:"auth,omitempty"`
 }
 
 type MCPAuthRequest struct {
@@ -145,9 +144,6 @@ func (r CreateRegistryRequest) Validate() error {
 		if r.MCPTarget == nil {
 			return fmt.Errorf("mcp_target is required for MCP registries: %w", commonerrors.ErrValidation)
 		}
-		if err := r.MCPTarget.validateProtocolMode(); err != nil {
-			return err
-		}
 		return nil
 	}
 	if strings.TrimSpace(r.Provider) == "" {
@@ -190,11 +186,10 @@ func (t *MCPTargetRequest) ToDomain() *domain.MCPTarget {
 		return nil
 	}
 	out := &domain.MCPTarget{
-		Code:         t.Code,
-		URL:          t.URL,
-		Transport:    domain.MCPTransport(t.Transport),
-		ProtocolMode: domain.MCPProtocolMode(t.ProtocolMode),
-		Headers:      t.Headers,
+		Code:      t.Code,
+		URL:       t.URL,
+		Transport: domain.MCPTransport(t.Transport),
+		Headers:   t.Headers,
 	}
 	if t.Auth != nil {
 		out.Auth = &domain.MCPAuth{
@@ -217,13 +212,6 @@ func (t *MCPTargetRequest) ToDomain() *domain.MCPTarget {
 		}
 	}
 	return out
-}
-
-func (t *MCPTargetRequest) validateProtocolMode() error {
-	if t == nil {
-		return nil
-	}
-	return domain.MCPProtocolMode(t.ProtocolMode).Validate()
 }
 
 func (h *HealthChecksRequest) ToDomain() *domain.HealthChecks {

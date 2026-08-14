@@ -112,8 +112,6 @@ func (p *authProxy) Authorize(ctx context.Context, baseURL string, req Authorize
 		Resource:            req.Resource,
 		AuthID:              auth.ID.String(),
 		GatewayID:           auth.GatewayID.String(),
-		Issuer:              endpoints.issuer,
-		IssAdvertised:       endpoints.advertised,
 	}
 	if err := p.store.SavePending(ctx, state, pending); err != nil {
 		return "", fmt.Errorf("oauth: park authorization: %w", err)
@@ -132,7 +130,7 @@ func (p *authProxy) Authorize(ctx context.Context, baseURL string, req Authorize
 	return endpoints.authorize + "?" + q.Encode(), nil
 }
 
-func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, idpErrDesc, iss string) (string, error) {
+func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, idpErrDesc string) (string, error) {
 	pending, err := p.store.TakePending(ctx, state)
 	if err != nil {
 		return "", fmt.Errorf("oauth: load pending authorization: %w", err)
@@ -144,12 +142,7 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 		return clientRedirect(pending.RedirectURI, url.Values{
 			"error":             {idpErr},
 			"error_description": {idpErrDesc},
-			"iss":               {baseURL},
 		}, pending.State), nil
-	}
-	if err := validateResponseISS(iss, pending.Issuer, pending.IssAdvertised); err != nil {
-		logIssuerMismatch(pending.Issuer, iss, pending.GatewayID, "", "")
-		return "", err
 	}
 
 	auth, err := p.pendingAuth(ctx, pending)
@@ -216,7 +209,7 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 	if err := p.store.SaveCode(ctx, gwCode, grant); err != nil {
 		return "", fmt.Errorf("oauth: store code grant: %w", err)
 	}
-	resume := clientRedirect(pending.RedirectURI, url.Values{"code": {gwCode}, "iss": {baseURL}}, pending.State)
+	resume := clientRedirect(pending.RedirectURI, url.Values{"code": {gwCode}}, pending.State)
 	if detour := p.consentDetour(ctx, baseURL, effectiveGatewayID, pending.Resource, capturedSubject, token, resume); detour != "" {
 		return detour, nil
 	}

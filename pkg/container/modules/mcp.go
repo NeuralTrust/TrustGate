@@ -41,8 +41,8 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(mcpclient.New); err != nil {
 		return err
 	}
-	if err := c.Provide(func(client *mcpclient.Client, logger *slog.Logger, cfg *config.Config) appmcp.Dialer {
-		return mcpclient.NewNegotiatingDialer(client, logger, mcpclient.NewProtocolDecisionRecorder(cfg.Telemetry.OpsMetricsEnabled))
+	if err := c.Provide(func(client *mcpclient.Client, logger *slog.Logger) appmcp.Dialer {
+		return mcpclient.NewCachedDialer(client, logger)
 	}); err != nil {
 		return err
 	}
@@ -140,9 +140,7 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(appmcp.NewRoleScoper); err != nil {
 		return err
 	}
-	return c.Provide(func(gw *mcphttp.RPCGateway, scoper appmcp.RoleScoper, cfg *config.Config) *mcphttp.Handler {
-		return mcphttp.NewHandler(gw, scoper, mcphttp.NewProtocolValidationRecorder(cfg.Telemetry.OpsMetricsEnabled))
-	})
+	return c.Provide(mcphttp.NewHandler)
 }
 
 func MCPVaultPostgres(c *container.Container) error {

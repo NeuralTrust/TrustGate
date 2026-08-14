@@ -18,6 +18,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"time"
 
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -26,36 +28,37 @@ import (
 const (
 	clientName    = "trustgate"
 	clientVersion = "1.0"
+
+	responseHeaderTimeout = 30 * time.Second
 )
+
+var upstreamTransport = func() http.RoundTripper {
+	t, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return http.DefaultTransport
+	}
+	cloned := t.Clone()
+	cloned.ResponseHeaderTimeout = responseHeaderTimeout
+	return cloned
+}()
 
 type Client struct{}
 
 func New() *Client { return &Client{} }
 
 type Session struct {
-	cs     *sdk.ClientSession
-	origin string
+	cs  *sdk.ClientSession
+	url string
 }
 
 var _ appmcp.Upstream = (*Session)(nil)
 
 func (c *Client) Connect(ctx context.Context, target appmcp.Target) (*Session, error) {
-	return c.ConnectLegacy(ctx, target)
-}
-
-func (c *Client) ConnectLegacy(ctx context.Context, target appmcp.Target) (*Session, error) {
-	origin, err := canonicalOrigin(target.URL)
-	if err != nil {
-		return nil, fmt.Errorf("%w: invalid upstream endpoint: %w", appmcp.ErrUnreachable, err)
-	}
-	httpClient, err := newTargetHTTPClient(target.Headers)
-	if err != nil {
-		return nil, fmt.Errorf("%w: invalid upstream HTTP configuration: %w", appmcp.ErrUnreachable, err)
-	}
-	httpClient.Transport = newLegacyDiscoverRoundTripper(httpClient.Transport)
 	transport := &sdk.StreamableClientTransport{
-		Endpoint:             target.URL,
-		HTTPClient:           httpClient,
+		Endpoint: target.URL,
+		HTTPClient: &http.Client{
+			Transport: &headerRoundTripper{headers: target.Headers},
+		},
 		DisableStandaloneSSE: true,
 	}
 	cli := sdk.NewClient(
@@ -64,9 +67,20 @@ func (c *Client) ConnectLegacy(ctx context.Context, target appmcp.Target) (*Sess
 	)
 	cs, err := cli.Connect(ctx, transport, nil)
 	if err != nil {
-		return nil, wrapUnreachable(origin, "connect", err)
+		return nil, wrapUnreachable(target.URL, err)
 	}
-	return &Session{cs: cs, origin: origin}, nil
+	return &Session{cs: cs, url: target.URL}, nil
+}
+
+type headerRoundTripper struct {
+	headers map[string]string
+}
+
+func (t *headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	for k, v := range t.headers {
+		req.Header.Set(k, v)
+	}
+	return upstreamTransport.RoundTrip(req)
 }
 
 func (s *Session) capabilities() *sdk.ServerCapabilities {
@@ -133,7 +147,7 @@ func (s *Session) ListResourceTemplates(ctx context.Context) ([]appmcp.ResourceT
 
 func (s *Session) ReadResource(ctx context.Context, uri string) (json.RawMessage, error) {
 	if !s.SupportsResources() {
-		return nil, fmt.Errorf("%w: resources/read: %s", appmcp.ErrNotSupported, s.origin)
+		return nil, fmt.Errorf("%w: resources/read: %s", appmcp.ErrNotSupported, s.url)
 	}
 	res, err := s.cs.ReadResource(ctx, &sdk.ReadResourceParams{URI: uri})
 	if err != nil {
@@ -158,7 +172,7 @@ func (s *Session) ListPrompts(ctx context.Context) ([]appmcp.Prompt, error) {
 
 func (s *Session) GetPrompt(ctx context.Context, name string, arguments map[string]string) (json.RawMessage, error) {
 	if !s.SupportsPrompts() {
-		return nil, fmt.Errorf("%w: prompts/get: %s", appmcp.ErrNotSupported, s.origin)
+		return nil, fmt.Errorf("%w: prompts/get: %s", appmcp.ErrNotSupported, s.url)
 	}
 	res, err := s.cs.GetPrompt(ctx, &sdk.GetPromptParams{Name: name, Arguments: arguments})
 	if err != nil {

@@ -38,21 +38,6 @@ func (m FailMode) Validate() error {
 	return fmt.Errorf("%w: %q", ErrInvalidFailMode, m)
 }
 
-type ProtocolAcceptance string
-
-const (
-	ProtocolAcceptanceDualEra    ProtocolAcceptance = "dual_era"
-	ProtocolAcceptanceLegacyOnly ProtocolAcceptance = "legacy_only"
-)
-
-func (a ProtocolAcceptance) Validate() error {
-	switch a {
-	case "", ProtocolAcceptanceDualEra, ProtocolAcceptanceLegacyOnly:
-		return nil
-	}
-	return fmt.Errorf("%w: %q", ErrInvalidProtocolAcceptance, a)
-}
-
 type ToolkitEntry struct {
 	RegistryID ids.RegistryID `json:"registry_id"`
 	Tool       string         `json:"tool,omitempty"`

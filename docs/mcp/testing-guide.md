@@ -31,10 +31,8 @@ flowchart LR
 2. **Registry** (`type: mcp`) — `mcp_target.url` (+ optional auth:
    `none` / `static` / `passthrough` / `exchange` / `forwarded`).
 3. **Consumer** (`type: mcp`) — binds registries; optional `toolkit`,
-   `fail_mode` (`open` \| `closed`), `protocol_acceptance` (`dual_era` \|
-   `legacy_only`, empty → `dual_era`), or `routing_mode: role_based` with
-   `mcp_policies` on roles. Rollout, rollback, and deprecation exit:
-   [Dual-era rollout](dual-era-rollout.md).
+   `fail_mode` (`open` \| `closed`), or `routing_mode: role_based` with
+   `mcp_policies` on roles.
 
 ### Auth (consumer → TrustGate)
 
@@ -285,78 +283,9 @@ make test-functional
 | Plugin enforce / observe | TrustGuard (or stub) on tool call chain | `tests/functional/mcp_plugin_chain_test.go` |
 | Per-tool rate limit | Rate limiter deny on `tools/call` | `TestPluginE2E_PerToolRateLimiter_MCPToolCallDeny` |
 | DB-less OAuth vault | Redis-backed vault without Postgres session store | `tests/functional/dbless_mcp_vault_test.go` |
-| Dual-era client×upstream matrix | modern/legacy client × modern/legacy upstream | `TestMCPServer_DualEraClientUpstreamMatrix` |
-| Modern `server/discover` | local discovery, cache hints, no session header | `TestMCPServer_ModernServerDiscoverAndNoSession` |
-| Modern northbound validation | unsupported version, missing `_meta`, mismatches | `TestMCPServer_ModernNorthboundValidation` |
-| Strict `protocol_mode=modern` | fail closed against legacy-only upstream | `TestMCPServer_StrictModernModeFailsClosedAgainstLegacyUpstream` |
-| Cached era under concurrency | one legacy initialize for concurrent modern clients | `TestMCPServer_CachedEraSurvivesConcurrentModernClients` |
 
-Living documentation: [`tests/functional/mcp_e2e_test.go`](../../tests/functional/mcp_e2e_test.go)
-and [`tests/functional/mcp_dual_era_test.go`](../../tests/functional/mcp_dual_era_test.go).
+Living documentation: [`tests/functional/mcp_e2e_test.go`](../../tests/functional/mcp_e2e_test.go).
 
-## 5.1 Dual-era matrix (MCP `2026-07-28`)
-
-TrustGate accepts both legacy (≤`2025-06-18`) and modern (`2026-07-28`) on the
-same `POST /{consumer_slug}/mcp` endpoint. Era is selected at the wire boundary;
-composer/policy layers stay era-neutral.
-
-| Client → Upstream | How to select | Functional coverage |
-|-------------------|---------------|---------------------|
-| modern → modern | Client sends modern headers + `_meta`; upstream `protocol_mode=auto\|modern` with a stateless server | `TestMCPServer_DualEraClientUpstreamMatrix` / `modern→modern` |
-| modern → legacy | Same modern client; legacy/stateful upstream under `auto` | `modern→legacy` |
-| legacy → modern | Legacy initialize path; modern upstream under `auto` | `legacy→modern` |
-| legacy → legacy | Unchanged happy path | `legacy→legacy`, Flow A |
-
-Modern requests **must** include:
-
-```http
-MCP-Protocol-Version: 2026-07-28
-Mcp-Method: tools/list
-Content-Type: application/json
-X-AG-API-Key: <consumer key>
-```
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "tools/list",
-  "params": {
-    "_meta": {
-      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-      "io.modelcontextprotocol/clientCapabilities": {}
-    }
-  }
-}
-```
-
-For `tools/call` / `prompts/get` also send `Mcp-Name` matching `params.name`.
-Modern responses include `resultType`, `ttlMs`, and `cacheScope` on list/discover
-results and **must not** set `Mcp-Session-Id`.
-
-Rollout runbook (dashboards, config rollback, deprecation exit):
-[Dual-era rollout](dual-era-rollout.md).
-
-Registry field `mcp_target.protocol_mode`:
-
-| Value | Behaviour |
-|-------|-----------|
-| `auto` (default) | Probe once per origin, cache era, no steady-state probe latency |
-| `modern` | Skip probe; fail closed if the upstream is not modern |
-| `legacy` | Skip probe; use initialized session caching |
-
-Local commands:
-
-```bash
-# Unit packages for dual-era boundary + southbound negotiation
-go test -race ./pkg/api/handler/http/mcp/... ./pkg/infra/mcp/client/...
-
-# Functional MCP suite (requires make up / CI harness)
-go test -race -tags=functional ./tests/functional -run 'TestMCPServer_'
-```
-
-Postman: under **MCP Gateway**, use **Legacy (≤2025-06-18)** for Flows A–I and
-**MCP 2026-07-28** for discover/list/call plus negative mismatch examples.
 ## 6. Catalog health / hide broken vendors
 
 The curated list lives in
