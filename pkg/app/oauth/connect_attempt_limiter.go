@@ -2,8 +2,31 @@ package oauth
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+var ErrConnectRateLimitUnavailable = errors.New("connect rate limit unavailable")
+
+type ConnectRateLimitUnavailable struct {
+	cause error
+}
+
+func NewConnectRateLimitUnavailable(cause error) *ConnectRateLimitUnavailable {
+	return &ConnectRateLimitUnavailable{cause: cause}
+}
+
+func (e *ConnectRateLimitUnavailable) Error() string {
+	return ErrConnectRateLimitUnavailable.Error()
+}
+
+func (e *ConnectRateLimitUnavailable) Unwrap() error {
+	return e.cause
+}
+
+func (e *ConnectRateLimitUnavailable) Is(target error) bool {
+	return target == ErrConnectRateLimitUnavailable
+}
 
 type ConnectAttemptScope uint8
 
@@ -23,4 +46,14 @@ func (e *ConnectRateLimitExceeded) Error() string {
 //go:generate mockery --name=ConnectAttemptLimiter --dir=. --output=./mocks --filename=oauth_connect_attempt_limiter_mock.go --case=underscore --with-expecter
 type ConnectAttemptLimiter interface {
 	Check(ctx context.Context, scope ConnectAttemptScope, subject string) error
+}
+
+type noopConnectAttemptLimiter struct{}
+
+func NewNoopConnectAttemptLimiter() ConnectAttemptLimiter {
+	return noopConnectAttemptLimiter{}
+}
+
+func (noopConnectAttemptLimiter) Check(context.Context, ConnectAttemptScope, string) error {
+	return nil
 }

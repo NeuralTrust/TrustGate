@@ -19,26 +19,37 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"strconv"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/oauth/request"
+	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/api/resolver"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/gofiber/fiber/v2"
 )
 
+type ConnectSourceResolver func(peer, forwardedFor string) string
+
 type APIKeyConnectHandler struct {
-	gateways resolver.GatewayResolver
-	connect  appoauth.APIKeyConnectService
+	gateways      resolver.GatewayResolver
+	connect       appoauth.APIKeyConnectService
+	limiter       appoauth.ConnectAttemptLimiter
+	resolveSource ConnectSourceResolver
 }
 
 func NewAPIKeyConnectHandler(
 	gateways resolver.GatewayResolver,
 	connect appoauth.APIKeyConnectService,
+	limiter appoauth.ConnectAttemptLimiter,
+	resolveSource ConnectSourceResolver,
 ) *APIKeyConnectHandler {
 	return &APIKeyConnectHandler{
-		gateways: gateways,
-		connect:  connect,
+		gateways:      gateways,
+		connect:       connect,
+		limiter:       limiter,
+		resolveSource: resolveSource,
 	}
 }
 
@@ -72,6 +83,19 @@ func (h *APIKeyConnectHandler) Get(c *fiber.Ctx) error {
 
 func (h *APIKeyConnectHandler) Post(c *fiber.Ctx) error {
 	setAPIKeyConnectNoStore(c)
+	c.Locals(middleware.OAuthChallengeAllowedLocal, false)
+
+	source := h.resolveSource(
+		c.Context().RemoteAddr().String(),
+		c.Get(fiber.HeaderXForwardedFor),
+	)
+	if err := h.limiter.Check(
+		c.UserContext(),
+		appoauth.ConnectAttemptScopeSource,
+		source,
+	); err != nil {
+		return writeAPIKeyConnectLimiterStatus(c, err)
+	}
 
 	if !isFormURLEncoded(c.Get(fiber.HeaderContentType)) {
 		return writeAPIKeyConnectStatus(c, fiber.StatusUnsupportedMediaType)
@@ -98,6 +122,13 @@ func (h *APIKeyConnectHandler) Post(c *fiber.Ctx) error {
 	slug := c.Params("slug")
 	ticket, err := h.connect.CreateTicket(c.UserContext(), gateway.ID, slug, body.APIKey)
 	if err != nil {
+		var exceeded *appoauth.ConnectRateLimitExceeded
+		if errors.As(err, &exceeded) {
+			return writeAPIKeyConnectRateLimited(c, exceeded)
+		}
+		if errors.Is(err, appoauth.ErrConnectRateLimitUnavailable) {
+			return writeAPIKeyConnectStatus(c, fiber.StatusServiceUnavailable)
+		}
 		if errors.Is(err, appoauth.ErrAPIKeyConnectUnauthorized) {
 			return writeAPIKeyConnectStatus(c, fiber.StatusUnauthorized)
 		}
@@ -115,6 +146,26 @@ func isFormURLEncoded(contentType string) bool {
 
 func setAPIKeyConnectNoStore(c *fiber.Ctx) {
 	c.Set(fiber.HeaderCacheControl, "no-store")
+}
+
+func writeAPIKeyConnectLimiterStatus(c *fiber.Ctx, err error) error {
+	var exceeded *appoauth.ConnectRateLimitExceeded
+	if errors.As(err, &exceeded) {
+		return writeAPIKeyConnectRateLimited(c, exceeded)
+	}
+	return writeAPIKeyConnectStatus(c, fiber.StatusServiceUnavailable)
+}
+
+func writeAPIKeyConnectRateLimited(c *fiber.Ctx, exceeded *appoauth.ConnectRateLimitExceeded) error {
+	retryAfter := exceeded.RetryAfter / time.Second
+	if exceeded.RetryAfter%time.Second != 0 {
+		retryAfter++
+	}
+	if retryAfter < 1 {
+		retryAfter = 1
+	}
+	c.Set(fiber.HeaderRetryAfter, strconv.FormatInt(int64(retryAfter), 10))
+	return writeAPIKeyConnectStatus(c, fiber.StatusTooManyRequests)
 }
 
 func writeAPIKeyConnectStatus(c *fiber.Ctx, status int) error {

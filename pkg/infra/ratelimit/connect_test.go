@@ -292,7 +292,7 @@ func TestConnectAttemptLimiterRedisErrorsAreOpaque(t *testing.T) {
 	if strings.Contains(err.Error(), subject) || strings.Contains(err.Error(), "127.0.0.1") {
 		t.Fatalf("error exposes backend or subject: %v", err)
 	}
-	if !errors.Is(err, errConnectRateLimitUnavailable) {
+	if !errors.Is(err, appoauth.ErrConnectRateLimitUnavailable) {
 		t.Fatalf("error must match unavailable sentinel: %v", err)
 	}
 }

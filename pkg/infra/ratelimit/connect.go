@@ -19,7 +19,6 @@ import (
 const connectBucketPrefix = "gt:mcp:connect:rl:v1"
 
 var (
-	errConnectRateLimitUnavailable  = errors.New("connect rate limit unavailable")
 	errInvalidConnectRateLimitInput = errors.New("invalid connect rate limit input")
 )
 
@@ -28,7 +27,7 @@ type opaqueConnectRateLimitError struct {
 }
 
 func (e *opaqueConnectRateLimitError) Error() string {
-	return errConnectRateLimitUnavailable.Error()
+	return appoauth.ErrConnectRateLimitUnavailable.Error()
 }
 
 func (e *opaqueConnectRateLimitError) Unwrap() error {
@@ -36,7 +35,7 @@ func (e *opaqueConnectRateLimitError) Unwrap() error {
 }
 
 func (e *opaqueConnectRateLimitError) Is(target error) bool {
-	return target == errConnectRateLimitUnavailable
+	return target == appoauth.ErrConnectRateLimitUnavailable
 }
 
 var connectWindowScript = redis.NewScript(`
@@ -76,7 +75,7 @@ func (l *connectAttemptLimiter) Check(
 	subject string,
 ) error {
 	if l == nil || l.redis == nil {
-		return wrapConnectRateLimitError(errConnectRateLimitUnavailable)
+		return wrapConnectRateLimitError(appoauth.ErrConnectRateLimitUnavailable)
 	}
 	domain, limit, ok := l.scopeConfig(scope)
 	if !ok || subject == "" {
@@ -101,12 +100,12 @@ func (l *connectAttemptLimiter) Check(
 		return wrapConnectRateLimitError(err)
 	}
 	if len(result) != 2 {
-		return wrapConnectRateLimitError(errConnectRateLimitUnavailable)
+		return wrapConnectRateLimitError(appoauth.ErrConnectRateLimitUnavailable)
 	}
 	count, countOK := result[0].(int64)
 	ttlMilliseconds, ttlOK := result[1].(int64)
 	if !countOK || !ttlOK {
-		return wrapConnectRateLimitError(errConnectRateLimitUnavailable)
+		return wrapConnectRateLimitError(appoauth.ErrConnectRateLimitUnavailable)
 	}
 	if count <= int64(limit) {
 		return nil
@@ -139,13 +138,13 @@ func (l *connectAttemptLimiter) scopeConfig(scope appoauth.ConnectAttemptScope) 
 func (l *connectAttemptLimiter) bucketKey(domain, subject string) (string, error) {
 	mac := hmac.New(sha256.New, l.secret)
 	if _, err := mac.Write([]byte(domain)); err != nil {
-		return "", fmt.Errorf("build connect rate limit key: %w", errConnectRateLimitUnavailable)
+		return "", fmt.Errorf("build connect rate limit key: %w", appoauth.ErrConnectRateLimitUnavailable)
 	}
 	if _, err := mac.Write([]byte{0}); err != nil {
-		return "", fmt.Errorf("build connect rate limit key: %w", errConnectRateLimitUnavailable)
+		return "", fmt.Errorf("build connect rate limit key: %w", appoauth.ErrConnectRateLimitUnavailable)
 	}
 	if _, err := mac.Write([]byte(subject)); err != nil {
-		return "", fmt.Errorf("build connect rate limit key: %w", errConnectRateLimitUnavailable)
+		return "", fmt.Errorf("build connect rate limit key: %w", appoauth.ErrConnectRateLimitUnavailable)
 	}
 	return connectBucketPrefix + ":" + domain + ":" + hex.EncodeToString(mac.Sum(nil)), nil
 }

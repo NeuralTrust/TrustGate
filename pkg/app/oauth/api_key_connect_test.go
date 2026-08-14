@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	appauthmocks "github.com/NeuralTrust/TrustGate/pkg/app/auth/mocks"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -43,22 +44,30 @@ func TestAPIKeyConnectService_CreateTicket(t *testing.T) {
 	dataFinder := appconsumermocks.NewDataFinder(t)
 	apiKeyFinder := appauthmocks.NewAPIKeyFinder(t)
 	connectService := oauthmocks.NewConnectService(t)
+	limiter := oauthmocks.NewConnectAttemptLimiter(t)
+	target, ok := data.MatchSlug(slug)
+	require.True(t, ok)
 
 	targetCall := dataFinder.EXPECT().
 		FindByGateway(ctx, gatewayID).
 		Return(data, nil).
 		Once()
+	limitCall := limiter.EXPECT().
+		Check(ctx, oauth.ConnectAttemptScopeConsumer, target.Consumer.ID.String()).
+		Return(nil).
+		Once()
+	limitCall.NotBefore(targetCall)
 	keyCall := apiKeyFinder.EXPECT().
 		FindByAPIKey(ctx, rawKey).
 		Return(auth, nil).
 		Once()
-	keyCall.NotBefore(targetCall)
+	keyCall.NotBefore(limitCall)
 	connectService.EXPECT().
 		CreateTicket(ctx, gatewayID, "Exact Principal", appconsumer.MCPPath(slug)).
 		Return("ticket-123", nil).
 		Once()
 
-	service := oauth.NewAPIKeyConnectService(apiKeyFinder, dataFinder, connectService)
+	service := oauth.NewAPIKeyConnectService(apiKeyFinder, dataFinder, connectService, limiter)
 	ticket, err := service.CreateTicket(ctx, gatewayID, slug, rawKey)
 
 	require.NoError(t, err)
@@ -134,6 +143,7 @@ func TestAPIKeyConnectService_ValidateTarget(t *testing.T) {
 				appauthmocks.NewAPIKeyFinder(t),
 				dataFinder,
 				oauthmocks.NewConnectService(t),
+				oauth.NewNoopConnectAttemptLimiter(),
 			)
 			err := service.ValidateTarget(ctx, gatewayID, tt.slug)
 
@@ -169,11 +179,135 @@ func TestAPIKeyConnectService_CreateTicketRejectsTargetBeforeKeyLookup(t *testin
 		appauthmocks.NewAPIKeyFinder(t),
 		dataFinder,
 		oauthmocks.NewConnectService(t),
+		oauth.NewNoopConnectAttemptLimiter(),
 	)
 	ticket, err := service.CreateTicket(ctx, gatewayID, "runtime", "ag_secret")
 
 	require.Empty(t, ticket)
 	require.ErrorIs(t, err, oauth.ErrAPIKeyConnectUnauthorized)
+}
+
+func TestAPIKeyConnectService_CreateTicketConsumerBoundary(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	gatewayID := ids.New[ids.GatewayKind]()
+	authID := ids.New[ids.AuthKind]()
+	data := consumerData(gatewayID, gatewayID, "runtime", consumerdomain.TypeMCP, true, authID)
+	target, ok := data.MatchSlug("runtime")
+	require.True(t, ok)
+	auth := validAPIKeyAuth(gatewayID, authID)
+	dataFinder := appconsumermocks.NewDataFinder(t)
+	apiKeyFinder := appauthmocks.NewAPIKeyFinder(t)
+	connectService := oauthmocks.NewConnectService(t)
+	limiter := oauthmocks.NewConnectAttemptLimiter(t)
+	attempts := 0
+
+	dataFinder.EXPECT().
+		FindByGateway(ctx, gatewayID).
+		Return(data, nil).
+		Times(101)
+	limiter.EXPECT().
+		Check(ctx, oauth.ConnectAttemptScopeConsumer, target.Consumer.ID.String()).
+		RunAndReturn(func(context.Context, oauth.ConnectAttemptScope, string) error {
+			attempts++
+			if attempts == 101 {
+				return &oauth.ConnectRateLimitExceeded{RetryAfter: time.Minute}
+			}
+			return nil
+		}).
+		Times(101)
+	apiKeyFinder.EXPECT().
+		FindByAPIKey(ctx, "ag_secret").
+		Return(auth, nil).
+		Times(100)
+	connectService.EXPECT().
+		CreateTicket(ctx, gatewayID, "Exact Principal", "/runtime/mcp").
+		Return("ticket-123", nil).
+		Times(100)
+
+	service := oauth.NewAPIKeyConnectService(apiKeyFinder, dataFinder, connectService, limiter)
+	for attempt := 1; attempt <= 101; attempt++ {
+		ticket, err := service.CreateTicket(ctx, gatewayID, "runtime", "ag_secret")
+		if attempt <= 100 {
+			require.NoError(t, err)
+			require.Equal(t, "ticket-123", ticket)
+			continue
+		}
+		require.Empty(t, ticket)
+		var exceeded *oauth.ConnectRateLimitExceeded
+		require.ErrorAs(t, err, &exceeded)
+		require.Equal(t, time.Minute, exceeded.RetryAfter)
+	}
+}
+
+func TestAPIKeyConnectService_CreateTicketLimiterOutagePrecedesKeyLookup(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		cause error
+	}{
+		{
+			name:  "arbitrary backend failure",
+			cause: errors.New("redis failed with limiter-detail"),
+		},
+		{
+			name:  "context canceled",
+			cause: context.Canceled,
+		},
+		{
+			name:  "deadline exceeded",
+			cause: context.DeadlineExceeded,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := context.Background()
+			gatewayID := ids.New[ids.GatewayKind]()
+			authID := ids.New[ids.AuthKind]()
+			data := consumerData(gatewayID, gatewayID, "runtime", consumerdomain.TypeMCP, true, authID)
+			target, ok := data.MatchSlug("runtime")
+			require.True(t, ok)
+			dataFinder := appconsumermocks.NewDataFinder(t)
+			limiter := oauthmocks.NewConnectAttemptLimiter(t)
+			dataFinder.EXPECT().
+				FindByGateway(ctx, gatewayID).
+				Return(data, nil).
+				Once()
+			limiter.EXPECT().
+				Check(ctx, oauth.ConnectAttemptScopeConsumer, target.Consumer.ID.String()).
+				Return(tt.cause).
+				Once()
+
+			service := oauth.NewAPIKeyConnectService(
+				appauthmocks.NewAPIKeyFinder(t),
+				dataFinder,
+				oauthmocks.NewConnectService(t),
+				limiter,
+			)
+			ticket, err := service.CreateTicket(ctx, gatewayID, "runtime", "ag_secret")
+
+			require.Empty(t, ticket)
+			require.Equal(
+				t,
+				"oauth api-key connect: check consumer rate limit: connect rate limit unavailable",
+				err.Error(),
+			)
+			require.ErrorIs(t, err, oauth.ErrConnectRateLimitUnavailable)
+			require.ErrorIs(t, err, tt.cause)
+			var unavailable *oauth.ConnectRateLimitUnavailable
+			require.ErrorAs(t, err, &unavailable)
+			require.Equal(t, tt.cause, errors.Unwrap(unavailable))
+			require.NotContains(t, err.Error(), "ag_secret")
+			require.NotContains(t, err.Error(), target.Consumer.ID.String())
+			require.NotContains(t, err.Error(), "limiter-detail")
+		})
+	}
 }
 
 func TestAPIKeyConnectService_CreateTicketRejectsInvalidAuth(t *testing.T) {
@@ -253,6 +387,7 @@ func TestAPIKeyConnectService_CreateTicketRejectsInvalidAuth(t *testing.T) {
 				apiKeyFinder,
 				dataFinder,
 				oauthmocks.NewConnectService(t),
+				oauth.NewNoopConnectAttemptLimiter(),
 			)
 			ticket, err := service.CreateTicket(ctx, gatewayID, "runtime", "ag_secret")
 
@@ -310,7 +445,12 @@ func TestAPIKeyConnectService_CreateTicketWrapsDependencyErrors(t *testing.T) {
 				}
 			}
 
-			service := oauth.NewAPIKeyConnectService(apiKeyFinder, dataFinder, connectService)
+			service := oauth.NewAPIKeyConnectService(
+				apiKeyFinder,
+				dataFinder,
+				connectService,
+				oauth.NewNoopConnectAttemptLimiter(),
+			)
 			ticket, err := service.CreateTicket(ctx, gatewayID, "runtime", "ag_secret")
 
 			require.Empty(t, ticket)

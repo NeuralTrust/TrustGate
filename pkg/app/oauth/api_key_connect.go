@@ -40,17 +40,20 @@ type apiKeyConnectService struct {
 	apiKeyFinder   appauth.APIKeyFinder
 	dataFinder     appconsumer.DataFinder
 	connectService ConnectService
+	limiter        ConnectAttemptLimiter
 }
 
 func NewAPIKeyConnectService(
 	apiKeyFinder appauth.APIKeyFinder,
 	dataFinder appconsumer.DataFinder,
 	connectService ConnectService,
+	limiter ConnectAttemptLimiter,
 ) APIKeyConnectService {
 	return &apiKeyConnectService{
 		apiKeyFinder:   apiKeyFinder,
 		dataFinder:     dataFinder,
 		connectService: connectService,
+		limiter:        limiter,
 	}
 }
 
@@ -72,6 +75,18 @@ func (s *apiKeyConnectService) CreateTicket(
 	target, err := s.findTarget(ctx, gatewayID, slug)
 	if err != nil {
 		return "", err
+	}
+
+	if err := s.limiter.Check(
+		ctx,
+		ConnectAttemptScopeConsumer,
+		target.Consumer.ID.String(),
+	); err != nil {
+		var exceeded *ConnectRateLimitExceeded
+		if !errors.As(err, &exceeded) {
+			err = NewConnectRateLimitUnavailable(err)
+		}
+		return "", fmt.Errorf("oauth api-key connect: check consumer rate limit: %w", err)
 	}
 
 	auth, err := s.apiKeyFinder.FindByAPIKey(ctx, rawKey)

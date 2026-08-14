@@ -5,16 +5,18 @@
 | Phase / commit | Lines | Work unit |
 |---|---:|---|
 | 1. Limiter foundation | 975 actual | Commit 1 |
-| 2. Endpoint enforcement | 180–260 | Commit 2 |
+| 2. Endpoint enforcement | 552 actual | Commit 2 |
 | 3. Lifecycle audit | 190–280 | Commit 3 |
 | 4. Observability regressions | 220–330 | Commit 4 |
-| **Total** | **1,565–1,845 projected** | |
+| **Total** | **1,937–2,137 projected** | |
 
 Delivery strategy: `exception-ok`; one child PR with approved `size:exception`.
 
 Exception rationale: the user accepted the high review load so the coupled limiter, audit identity, middleware policy, and end-to-end security regressions ship atomically against the unmerged RUN-1141 integrator. The four phases remain independently reviewable commits.
 
 Phase 1 actual size is 933 additions plus 42 deletions, excluding OpenSpec planning artifacts. The approved global `size:exception` remains in force; do not split the child PR.
+
+Phase 2 final size is 508 additions plus 44 deletions, 552 changed code lines excluding planning artifacts. The approved global `size:exception` explicitly covers this work unit; do not split the child PR.
 
 Decision needed before apply: No
 Chained PRs recommended: No
@@ -47,11 +49,11 @@ flowchart LR
 
 ## Phase 2: Endpoint Enforcement — Commit 2
 
-- [ ] 2.1 In `api_key_connect_handler.go`, source-limit before parsing/target work; map exceeded/error to generic `429`/`503`, `Retry-After`, no-store, and challenge false.
-- [ ] 2.2 In `api_key_connect.go`, consumer-limit after target resolution and before key lookup; preserve uniform `401`, unrelated `500`, and target-first order.
-- [ ] 2.3 Wire enabled/no-op behavior through `pkg/container/modules/{mcp,api}.go`; update generated service mock.
-- [ ] 2.4 Test ordering, 10/11 and 100/101 boundaries, outage short-circuit, Origin absence, and sentinel-secret absence in handler/app/module tests.
-- [ ] 2.5 Verify focused packages with `go test -race`; finish Commit 2 without mixing audit work.
+- [x] 2.1 In `api_key_connect_handler.go`, source-limit before parsing/target work; map exceeded/error to generic `429`/`503`, `Retry-After`, no-store, and challenge false.
+- [x] 2.2 In `api_key_connect.go`, consumer-limit after target resolution and before key lookup; preserve uniform `401`, unrelated `500`, and target-first order.
+- [x] 2.3 Wire enabled/no-op behavior through `pkg/container/modules/{mcp,api}.go`; update generated service mock.
+- [x] 2.4 Test ordering, 10/11 and 100/101 boundaries, outage short-circuit, Origin absence, and sentinel-secret absence in handler/app/module tests.
+- [x] 2.5 Verify focused packages with `go test -race`; finish Commit 2 without mixing audit work.
 
 ## Phase 3: Lifecycle Audit — Commit 3
 

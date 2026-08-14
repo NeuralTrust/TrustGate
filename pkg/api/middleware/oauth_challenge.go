@@ -22,6 +22,7 @@ import (
 )
 
 const protectedResourceMetadataPath = "/.well-known/oauth-protected-resource"
+const OAuthChallengeAllowedLocal = "trustgate.oauth.challenge.allowed"
 
 type OAuthChallengeMiddleware struct{}
 
@@ -39,10 +40,6 @@ func (m *OAuthChallengeMiddleware) Middleware() fiber.Handler {
 	}
 }
 
-// bearerChallenge builds an RFC 9728 challenge whose resource_metadata points at
-// the protected-resource document scoped to the requested MCP path, so clients
-// send an RFC 8707 resource that identifies the consumer and its identity
-// provider rather than the gateway root.
 func bearerChallenge(c *fiber.Ctx) string {
 	metadata := c.BaseURL() + protectedResourceMetadataPath
 	if resourcePath := strings.Trim(c.Path(), "/"); resourcePath != "" {

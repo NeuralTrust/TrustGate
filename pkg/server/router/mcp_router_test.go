@@ -64,6 +64,8 @@ func TestMCPRouterDispatch(t *testing.T) {
 	apiKeyHandler := oauthhttp.NewAPIKeyConnectHandler(
 		resolver.NewSubdomainGatewayResolver(gateways, "mcp.test"),
 		apiKeyConnect,
+		appoauth.NewNoopConnectAttemptLimiter(),
+		func(string, string) string { return "127.0.0.1" },
 	)
 	connectHandler := oauthhttp.NewConnectHandler(connect)
 	mcpHandler := mcphttp.NewHandler(nil, nil)
