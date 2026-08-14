@@ -14,7 +14,7 @@ import { Field, Input, Select } from "@/components/ui/field";
 import { SwitchRow, Divider, Section } from "@/components/ui/form-bits";
 import { Button } from "@/components/ui/button";
 import { errorMessage } from "@/lib/hooks";
-import type { Gateway } from "@/lib/types";
+import type { Entitlements, Gateway } from "@/lib/types";
 import { cn } from "@/lib/cn";
 
 export function GatewaySwitcher() {
@@ -220,6 +220,13 @@ function GatewaySettingsDialog({
               </>
             )}
           </Section>
+
+          {gateway.entitlements && (
+            <>
+              <Divider />
+              <EntitlementsSection entitlements={gateway.entitlements} />
+            </>
+          )}
         </DialogBody>
         <DialogFooter>
           <DialogClose asChild>
@@ -231,6 +238,43 @@ function GatewaySettingsDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// Entitlements are stamped by the platform: only platform admins can write them
+// (tenant callers get a 422), so they are shown read-only here. The three caps
+// are stamped together or not at all — unstamped means no plan metering.
+function EntitlementsSection({ entitlements }: { entitlements: Entitlements }) {
+  const { tier, burst_per_min, quota_per_month, max_instances } = entitlements;
+  const metered =
+    burst_per_min !== undefined && quota_per_month !== undefined && max_instances !== undefined;
+  return (
+    <Section title="Plan" description="Stamped by the platform — read-only.">
+      <div className="rounded-(--radius) border border-border bg-surface-2/40 px-3.5 py-2.5 flex flex-col gap-1.5">
+        <div className="flex items-center justify-between gap-4">
+          <span className="text-[13px] text-muted">Tier</span>
+          <span className="text-[13px] font-medium text-fg">{tier || "free"}</span>
+        </div>
+        {metered ? (
+          <>
+            <EntitlementRow label="Burst / min" value={burst_per_min} />
+            <EntitlementRow label="Quota / month" value={quota_per_month} />
+            <EntitlementRow label="Max instances" value={max_instances} />
+          </>
+        ) : (
+          <p className="text-[12px] text-faint">No caps stamped — plan metering is not enforced.</p>
+        )}
+      </div>
+    </Section>
+  );
+}
+
+function EntitlementRow({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <span className="text-[13px] text-muted">{label}</span>
+      <span className="text-[13px] text-fg">{value.toLocaleString()}</span>
+    </div>
   );
 }
 

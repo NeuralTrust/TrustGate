@@ -143,11 +143,11 @@ func modernHeaders(c *fiber.Ctx) modernRequestHeaders {
 		method:          c.Get("Mcp-Method"),
 		name:            c.Get("Mcp-Name"),
 	}
-	c.Request().Header.VisitAll(func(name, _ []byte) {
+	for name := range c.Request().Header.All() {
 		if strings.HasPrefix(strings.ToLower(string(name)), "mcp-param-") {
 			headers.hasToolParam = true
 		}
-	})
+	}
 	return headers
 }
 

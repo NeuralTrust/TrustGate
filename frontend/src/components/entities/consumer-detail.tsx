@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Server, KeyRound, ShieldCheck, ArrowUp, ArrowDown, X, UsersRound } from "lucide-react";
 import { api, gatewayScope } from "@/lib/admin-client";
 import { useActiveGatewayId } from "@/components/layout/gateway-context";
-import { useList, useInvalidate, errorMessage } from "@/lib/hooks";
+import { useAllList, useInvalidate, errorMessage } from "@/lib/hooks";
 import { useToast } from "@/components/ui/toast";
 import { Dialog, DialogContent, DialogHeader, DialogBody } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabTrigger, TabContent } from "@/components/ui/tabs";
@@ -19,7 +19,15 @@ import {
   buildModelPolicies,
   modelPolicyStateFrom,
 } from "./model-policy-editor";
-import type { Consumer, Registry, Auth, Policy, Role, Algorithm, ModelPolicy, RoutingMode } from "@/lib/types";
+import {
+  ToolkitEditor,
+  FailModeField,
+  buildToolkit,
+  toolkitError,
+  toolkitRowsFrom,
+  type ToolkitRow,
+} from "./toolkit-editor";
+import type { Consumer, Registry, Algorithm, ModelPolicy, RoutingMode } from "@/lib/types";
 
 const TRIGGERS = ["http_5xx", "http_429", "timeout", "provider_error", "plugin_rejection"];
 
@@ -136,6 +144,7 @@ export function ConsumerDetail({
                 <TabTrigger value="bindings">Bindings</TabTrigger>
                 <TabTrigger value="routing">Routing</TabTrigger>
                 <TabTrigger value="models">Model policies</TabTrigger>
+                {consumer.type === "MCP" && <TabTrigger value="toolkit">MCP toolkit</TabTrigger>}
               </TabsList>
             </div>
             <DialogBody className="min-h-[340px]">
@@ -148,6 +157,11 @@ export function ConsumerDetail({
               <TabContent value="models">
                 <ModelPoliciesTab consumer={consumer} onClose={() => onOpenChange(false)} />
               </TabContent>
+              {consumer.type === "MCP" && (
+                <TabContent value="toolkit">
+                  <ToolkitTab consumer={consumer} onClose={() => onOpenChange(false)} />
+                </TabContent>
+              )}
             </DialogBody>
           </Tabs>
         )}
@@ -177,7 +191,6 @@ function BindingsTab({ consumer }: { consumer: Consumer }) {
           title="Roles"
           icon={<UsersRound className="h-4 w-4" />}
           boundIds={consumer.role_ids}
-          useItems={() => useList<Role>("roles")}
         />
       ) : (
         <BindingSection
@@ -186,7 +199,6 @@ function BindingsTab({ consumer }: { consumer: Consumer }) {
           title="Registries"
           icon={<Server className="h-4 w-4" />}
           boundIds={consumer.registry_ids}
-          useItems={() => useList<Registry>("registries")}
         />
       )}
       <BindingSection
@@ -195,7 +207,6 @@ function BindingsTab({ consumer }: { consumer: Consumer }) {
         title="Auth"
         icon={<KeyRound className="h-4 w-4" />}
         boundIds={consumer.auth_ids}
-        useItems={() => useList<Auth>("auths")}
       />
       <BindingSection
         consumer={consumer}
@@ -203,7 +214,6 @@ function BindingsTab({ consumer }: { consumer: Consumer }) {
         title="Policies"
         icon={<ShieldCheck className="h-4 w-4" />}
         boundIds={[]}
-        useItems={() => useList<Policy>("policies")}
         isPolicyBound={(p) => (p.consumer_ids ?? []).includes(consumer.id)}
       />
     </div>
@@ -217,13 +227,12 @@ interface NamedEntity {
   consumer_ids?: string[];
 }
 
-function BindingSection<T extends NamedEntity>({
+function BindingSection({
   consumer,
   kind,
   title,
   icon,
   boundIds,
-  useItems,
   isPolicyBound,
 }: {
   consumer: Consumer;
@@ -231,18 +240,19 @@ function BindingSection<T extends NamedEntity>({
   title: string;
   icon: React.ReactNode;
   boundIds: string[];
-  useItems: () => { data?: T[]; isLoading: boolean };
-  isPolicyBound?: (item: T) => boolean;
+  isPolicyBound?: (item: NamedEntity) => boolean;
 }) {
   const gatewayId = useActiveGatewayId();
   const invalidate = useConsumerInvalidate(consumer.id);
   const { toast } = useToast();
-  const { data: items, isLoading } = useItems();
+  // `kind` doubles as the list resource name, so the section fetches its own
+  // candidates instead of taking a hook as a prop.
+  const { data: items, isLoading } = useAllList<NamedEntity>(kind);
   const [pending, setPending] = useState<string | null>(null);
 
   const bound = new Set(boundIds);
 
-  async function toggle(item: T, isBound: boolean) {
+  async function toggle(item: NamedEntity, isBound: boolean) {
     setPending(item.id);
     const url = `${gatewayScope(gatewayId)}/consumers/${consumer.id}/${kind}/${item.id}`;
     try {
@@ -376,7 +386,7 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
   const gatewayId = useActiveGatewayId();
   const invalidate = useConsumerInvalidate(consumer.id);
   const { toast } = useToast();
-  const { data: registries } = useList<Registry>("registries");
+  const { data: registries } = useAllList<Registry>("registries");
 
   const attached = (registries ?? []).filter((r) => consumer.registry_ids.includes(r.id));
 
@@ -912,7 +922,7 @@ function ModelPoliciesTab({ consumer, onClose }: { consumer: Consumer; onClose: 
   const gatewayId = useActiveGatewayId();
   const invalidate = useConsumerInvalidate(consumer.id);
   const { toast } = useToast();
-  const { data: registries } = useList<Registry>("registries");
+  const { data: registries } = useAllList<Registry>("registries");
 
   const attached = (registries ?? []).filter((r) => consumer.registry_ids.includes(r.id));
 
@@ -957,6 +967,81 @@ function ModelPoliciesTab({ consumer, onClose }: { consumer: Consumer; onClose: 
       <div className="flex justify-end pt-2">
         <Button variant="primary" onClick={save} loading={saving}>
           Save model policies
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// The MCP policy (toolkit + fail_mode) lives on the consumer only in inline
+// mode; a role-based consumer takes it from the roles it resolves to.
+function ToolkitTab({ consumer, onClose }: { consumer: Consumer; onClose: () => void }) {
+  const gatewayId = useActiveGatewayId();
+  const invalidate = useConsumerInvalidate(consumer.id);
+  const { toast } = useToast();
+  const { data: registries } = useAllList<Registry>("registries");
+
+  const attached = (registries ?? []).filter(
+    (r) => r.type === "MCP" && consumer.registry_ids.includes(r.id),
+  );
+
+  const [rows, setRows] = useState<ToolkitRow[]>(() => toolkitRowsFrom(consumer.toolkit));
+  const [failMode, setFailMode] = useState(consumer.fail_mode || "open");
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    const error = toolkitError(rows);
+    if (error) {
+      toast({ variant: "error", title: error });
+      return;
+    }
+    setSaving(true);
+    try {
+      // An empty toolkit is stored as "no restriction", so clearing every entry
+      // goes back to exposing whatever the attached servers advertise.
+      await api.put(`${gatewayScope(gatewayId)}/consumers/${consumer.id}`, {
+        toolkit: buildToolkit(rows),
+        fail_mode: failMode,
+      });
+      toast({ variant: "success", title: "MCP toolkit saved" });
+      invalidate();
+      onClose();
+    } catch (err) {
+      toast({ variant: "error", title: "Save failed", description: errorMessage(err) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (consumer.routing_mode === "role_based") {
+    return (
+      <p className="text-[13px] text-faint py-8 text-center">
+        This consumer resolves its access through roles — configure the toolkit on each role instead.
+      </p>
+    );
+  }
+
+  if (attached.length === 0 && rows.length === 0) {
+    return (
+      <p className="text-[13px] text-faint py-8 text-center">
+        Attach an MCP server first (Bindings tab) to restrict which tools it exposes.
+      </p>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <p className="text-[12px] text-muted">
+        With no entries at all, everything the attached servers advertise is exposed. Add entries to
+        expose only those, per server: a name, or <span className="font-mono">*</span> for every tool,
+        prompt or resource of that kind. Resource patterns accept a trailing{" "}
+        <span className="font-mono">*</span>; tools and prompts can be renamed with an exposed name.
+      </p>
+      <ToolkitEditor registries={attached} rows={rows} onChange={setRows} />
+      <FailModeField value={failMode} onChange={setFailMode} />
+      <div className="flex justify-end pt-2">
+        <Button variant="primary" onClick={save} loading={saving}>
+          Save MCP toolkit
         </Button>
       </div>
     </div>

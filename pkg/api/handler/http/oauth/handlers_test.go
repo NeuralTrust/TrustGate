@@ -126,7 +126,9 @@ func TestProtectedResourceHandlerRootAndPathScoped(t *testing.T) {
 		"/.well-known/oauth-protected-resource":            "http://gw.example.com",
 		"/.well-known/oauth-protected-resource/v1/mcp/dev": "http://gw.example.com/v1/mcp/dev",
 	} {
-		res, err := app.Test(httptest.NewRequest(fiber.MethodGet, "http://gw.example.com"+path, nil))
+		req := httptest.NewRequest(fiber.MethodGet, path, nil)
+		req.Host = "gw.example.com"
+		res, err := app.Test(req)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -149,7 +151,9 @@ func TestProtectedResourceHandlerRootAndPathScoped(t *testing.T) {
 func TestAuthorizationServerHandlerNotFoundWithoutIssuer(t *testing.T) {
 	t.Parallel()
 	app := newTestApp()
-	res, err := app.Test(httptest.NewRequest(fiber.MethodGet, "http://gw.example.com"+WellKnownAuthorizationServerPath, nil))
+	req := httptest.NewRequest(fiber.MethodGet, WellKnownAuthorizationServerPath, nil)
+	req.Host = "gw.example.com"
+	res, err := app.Test(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -163,7 +167,8 @@ func TestRegisterHandler(t *testing.T) {
 	app := newTestApp(oauth2Auth("https://idp.example.com", "mcp-public-client"))
 
 	body := strings.NewReader(`{"redirect_uris":["http://127.0.0.1:33418/callback"],"client_name":"Cursor"}`)
-	req := httptest.NewRequest(fiber.MethodPost, "http://gw.example.com"+RegisterPath, body)
+	req := httptest.NewRequest(fiber.MethodPost, RegisterPath, body)
+	req.Host = "gw.example.com"
 	req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
 
 	res, err := app.Test(req)
@@ -186,7 +191,8 @@ func TestRegisterHandlerUnavailable(t *testing.T) {
 	t.Parallel()
 	app := newTestApp(oauth2Auth("https://idp.example.com", ""))
 
-	req := httptest.NewRequest(fiber.MethodPost, "http://gw.example.com"+RegisterPath, strings.NewReader(`{}`))
+	req := httptest.NewRequest(fiber.MethodPost, RegisterPath, strings.NewReader(`{}`))
+	req.Host = "gw.example.com"
 	req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
 
 	res, err := app.Test(req)
@@ -201,7 +207,9 @@ func TestRegisterHandlerUnavailable(t *testing.T) {
 func TestAuthorizationServerHandlerAdvertisesISS(t *testing.T) {
 	t.Parallel()
 	app := newTestApp(oauth2Auth("https://idp.example.com", "mcp-public-client"))
-	res, err := app.Test(httptest.NewRequest(fiber.MethodGet, "http://gw.example.com"+WellKnownAuthorizationServerPath, nil))
+	req := httptest.NewRequest(fiber.MethodGet, WellKnownAuthorizationServerPath, nil)
+	req.Host = "gw.example.com"
+	res, err := app.Test(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -249,7 +257,8 @@ func TestRegisterHandlerApplicationType(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			req := httptest.NewRequest(fiber.MethodPost, "http://gw.example.com"+RegisterPath, strings.NewReader(tc.body))
+			req := httptest.NewRequest(fiber.MethodPost, RegisterPath, strings.NewReader(tc.body))
+			req.Host = "gw.example.com"
 			req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
 			res, err := app.Test(req)
 			if err != nil {
@@ -296,7 +305,8 @@ func TestCallbackHandlerForwardsISS(t *testing.T) {
 	app := fiber.New()
 	app.Get("/oauth/callback", NewCallbackHandler(proxy).Handle)
 
-	req := httptest.NewRequest(fiber.MethodGet, "http://gw.example.com/oauth/callback?state=s&code=secret-code&iss=https://idp.example/issuer", nil)
+	req := httptest.NewRequest(fiber.MethodGet, "/oauth/callback?state=s&code=secret-code&iss=https://idp.example/issuer", nil)
+	req.Host = "gw.example.com"
 	res, err := app.Test(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
