@@ -321,7 +321,10 @@ func TestModernUpstreamOperationsAndStatelessWire(t *testing.T) {
 		promptRaw,
 	)
 
-	toolRaw, err := upstream.CallTool(context.Background(), "tool-one", json.RawMessage(`{"value":42}`))
+	toolRaw, err := upstream.CallTool(context.Background(), appmcp.ToolCall{
+		Name:      "tool-one",
+		Arguments: json.RawMessage(`{"value":42}`),
+	})
 	if err != nil {
 		t.Fatalf("call tool: %v", err)
 	}
@@ -820,7 +823,7 @@ func TestModernUpstreamPreservesRPCBusinessError(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	upstream := newTestModernUpstream(t, srv.URL, sharedHTTPTransport)
-	_, err := upstream.CallTool(context.Background(), "tool", json.RawMessage(`{}`))
+	_, err := upstream.CallTool(context.Background(), appmcp.ToolCall{Name: "tool", Arguments: json.RawMessage(`{}`)})
 	var rpcErr *appmcp.RPCError
 	if !errors.As(err, &rpcErr) {
 		t.Fatalf("error = %v, want RPCError", err)
@@ -850,7 +853,7 @@ func TestModernUpstreamPreservesRPCErrorFromHTTP400And404(t *testing.T) {
 
 			tracker := &countingResponseRoundTripper{transport: sharedHTTPTransport}
 			upstream := newTestModernUpstream(t, srv.URL, tracker)
-			_, err := upstream.CallTool(context.Background(), "tool", json.RawMessage(`{}`))
+			_, err := upstream.CallTool(context.Background(), appmcp.ToolCall{Name: "tool", Arguments: json.RawMessage(`{}`)})
 			var rpcErr *appmcp.RPCError
 			if !errors.As(err, &rpcErr) {
 				t.Fatalf("error = %v, want RPCError", err)
@@ -1249,7 +1252,7 @@ func TestModernUpstreamDoesNotNormalizeInvalidHTTPErrorResponses(t *testing.T) {
 
 			tracker := &countingResponseRoundTripper{transport: sharedHTTPTransport}
 			upstream := newTestModernUpstream(t, srv.URL, tracker)
-			_, err := upstream.CallTool(context.Background(), "tool", json.RawMessage(`{}`))
+			_, err := upstream.CallTool(context.Background(), appmcp.ToolCall{Name: "tool", Arguments: json.RawMessage(`{}`)})
 			if !errors.Is(err, appmcp.ErrUnreachable) {
 				t.Fatalf("error = %v, want ErrUnreachable", err)
 			}
@@ -1620,8 +1623,10 @@ func TestModernUpstreamConcurrentCallsUseUniqueIDsAndCloseBodies(t *testing.T) {
 			defer wg.Done()
 			results[index], errs[index] = upstream.CallTool(
 				context.Background(),
-				"tool",
-				json.RawMessage(fmt.Sprintf(`{"value":%d}`, index)),
+				appmcp.ToolCall{
+					Name:      "tool",
+					Arguments: json.RawMessage(fmt.Sprintf(`{"value":%d}`, index)),
+				},
 			)
 		}(index)
 	}

@@ -258,9 +258,9 @@ func (u *cachedUpstream) ListTools(ctx context.Context) ([]appmcp.Tool, error) {
 	return out, err
 }
 
-func (u *cachedUpstream) CallTool(ctx context.Context, name string, arguments json.RawMessage) (json.RawMessage, error) {
+func (u *cachedUpstream) CallTool(ctx context.Context, call appmcp.ToolCall) (json.RawMessage, error) {
 	sess := u.sess()
-	res, err := sess.CallTool(ctx, name, arguments)
+	res, err := sess.CallTool(ctx, call)
 	if err != nil && shouldDrop(ctx, err) {
 		u.dialer.drop(ctx, u.key, sess)
 	}

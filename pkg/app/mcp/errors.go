@@ -15,6 +15,7 @@
 package mcp
 
 import (
+	"errors"
 	"fmt"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
@@ -26,7 +27,40 @@ var (
 	ErrResourceNotFound    = fmt.Errorf("mcp: resource not found: %w", commonerrors.ErrNotFound)
 	ErrNoMCPRegistries     = fmt.Errorf("mcp: no MCP registries attached to consumer: %w", commonerrors.ErrValidation)
 	ErrUpstreamUnavailable = fmt.Errorf("mcp: upstream unavailable")
+	ErrMRTRReplayRejected  = fmt.Errorf("mcp: continuation rejected")
+	ErrMRTRRoundLimit      = fmt.Errorf("mcp: continuation round limit exceeded")
+	ErrInvalidContinuation = fmt.Errorf("mcp: invalid continuation")
 )
+
+const (
+	CodeMRTRReplayRejected int64 = -32023
+	CodeMRTRRoundLimit     int64 = -32024
+)
+
+// MRTRReplayRPCError is the JSON-RPC error for a rejected continuation.
+func MRTRReplayRPCError() *RPCError {
+	return &RPCError{Code: CodeMRTRReplayRejected, Message: ErrMRTRReplayRejected.Error()}
+}
+
+// MRTRRoundLimitRPCError is the JSON-RPC error for an exhausted continuation.
+func MRTRRoundLimitRPCError() *RPCError {
+	return &RPCError{Code: CodeMRTRRoundLimit, Message: ErrMRTRRoundLimit.Error()}
+}
+
+// MapMRTRError converts continuation sentinels into their JSON-RPC errors and
+// leaves every other error untouched.
+func MapMRTRError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, ErrMRTRRoundLimit) {
+		return MRTRRoundLimitRPCError()
+	}
+	if errors.Is(err, ErrMRTRReplayRejected) {
+		return MRTRReplayRPCError()
+	}
+	return err
+}
 
 // ToolNotPermittedError reports a tool the upstream offers but the consumer's
 // toolkit excludes. It is a denial, not a missing tool and not an upstream

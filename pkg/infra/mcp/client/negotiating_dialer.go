@@ -722,15 +722,11 @@ func (g *guardedUpstream) ListTools(ctx context.Context) ([]appmcp.Tool, error) 
 	})
 }
 
-func (g *guardedUpstream) CallTool(
-	ctx context.Context,
-	name string,
-	arguments json.RawMessage,
-) (json.RawMessage, error) {
+func (g *guardedUpstream) CallTool(ctx context.Context, call appmcp.ToolCall) (json.RawMessage, error) {
 	g.lifecycleMu.RLock()
 	defer g.lifecycleMu.RUnlock()
 	result, entry, err := guardedCallCurrent(g, func(upstream appmcp.Upstream) (json.RawMessage, error) {
-		return upstream.CallTool(ctx, name, arguments)
+		return upstream.CallTool(ctx, call)
 	})
 	if err != nil && oppositeEraCandidate(entry.era, err) {
 		_, reconcileErr := g.reconcile(ctx)

@@ -238,7 +238,10 @@ func TestListTools_AndCallTool(t *testing.T) {
 		t.Fatalf("tools = %+v, want [echo]", tools)
 	}
 
-	raw, err := sess.CallTool(context.Background(), "echo", json.RawMessage(`{"message":"hi"}`))
+	raw, err := sess.CallTool(context.Background(), appmcp.ToolCall{
+		Name:      "echo",
+		Arguments: json.RawMessage(`{"message":"hi"}`),
+	})
 	if err != nil {
 		t.Fatalf("call tool: %v", err)
 	}
@@ -252,7 +255,7 @@ func TestCallTool_UnknownToolIsRPCError(t *testing.T) {
 	srv := newUpstream(t, addEchoTool, nil)
 	sess := connect(t, appmcp.Target{URL: srv.URL})
 
-	_, err := sess.CallTool(context.Background(), "missing", nil)
+	_, err := sess.CallTool(context.Background(), appmcp.ToolCall{Name: "missing"})
 	if err == nil {
 		t.Fatal("expected an error for an unknown tool")
 		return

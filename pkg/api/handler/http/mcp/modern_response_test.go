@@ -55,10 +55,16 @@ func TestNormalizeModernResult(t *testing.T) {
 					modernServerInfoKey: map[string]any{"name": "upstream", "version": "0"},
 				},
 			}
-			normalized, err := normalizeModernResult(method, source, rc)
+			normalized, err := normalizeModernResult(method, source, rc, nil)
 			require.NoError(t, err)
 			require.Equal(t, "preserved", normalized["value"])
-			require.Equal(t, "complete", normalized["resultType"])
+			// Only tools/call may keep an upstream input_required; every other
+			// method is forced back to complete.
+			wantResultType := "complete"
+			if method == "tools/call" {
+				wantResultType = "input_required"
+			}
+			require.Equal(t, wantResultType, normalized["resultType"])
 			metadata := normalized["_meta"].(map[string]any)
 			require.Equal(t, "preserved", metadata["upstream"])
 			serverInfo := metadata[modernServerInfoKey].(map[string]any)
@@ -78,9 +84,70 @@ func TestNormalizeModernResult(t *testing.T) {
 	}
 }
 
+func TestNormalizeModernResultToolsCallKeepsContinuation(t *testing.T) {
+	t.Parallel()
+	source := map[string]any{
+		"resultType":   "input_required",
+		"requestState": "tg1.c.payload.sig",
+		"inputRequests": map[string]any{
+			"confirm": map[string]any{"method": "elicitation/create", "params": map[string]any{}},
+		},
+	}
+	caps := map[string]any{"elicitation": map[string]any{}}
+
+	normalized, err := normalizeModernResult("tools/call", source, nil, caps)
+	require.NoError(t, err)
+	require.Equal(t, "input_required", normalized["resultType"])
+	require.Equal(t, "tg1.c.payload.sig", normalized["requestState"])
+	require.Contains(t, normalized["inputRequests"], "confirm")
+}
+
+func TestNormalizeModernResultToolsCallDropsUndeclaredKinds(t *testing.T) {
+	t.Parallel()
+	source := map[string]any{
+		"resultType":   "input_required",
+		"requestState": "tg1.c.payload.sig",
+		"inputRequests": map[string]any{
+			"confirm": map[string]any{"method": "elicitation/create"},
+			"sample":  map[string]any{"method": "sampling/createMessage"},
+			"weird":   map[string]any{"method": "made/up"},
+		},
+	}
+	caps := map[string]any{"elicitation": map[string]any{}}
+
+	normalized, err := normalizeModernResult("tools/call", source, nil, caps)
+	require.NoError(t, err)
+	requests, ok := normalized["inputRequests"].(map[string]any)
+	require.True(t, ok)
+	require.Contains(t, requests, "confirm")
+	require.NotContains(t, requests, "sample")
+	require.NotContains(t, requests, "weird")
+}
+
+func TestNormalizeModernResultNonToolsStripsMRTRFields(t *testing.T) {
+	t.Parallel()
+	for _, method := range []string{"prompts/get", "resources/read"} {
+		t.Run(method, func(t *testing.T) {
+			t.Parallel()
+			source := map[string]any{
+				"resultType":    "input_required",
+				"requestState":  "tg1.c.payload.sig",
+				"inputRequests": map[string]any{"confirm": map[string]any{"method": "elicitation/create"}},
+			}
+			caps := map[string]any{"elicitation": map[string]any{}}
+
+			normalized, err := normalizeModernResult(method, source, nil, caps)
+			require.NoError(t, err)
+			require.Equal(t, "complete", normalized["resultType"])
+			require.NotContains(t, normalized, "requestState")
+			require.NotContains(t, normalized, "inputRequests")
+		})
+	}
+}
+
 func TestNormalizeModernResultPreservesJSONNumbers(t *testing.T) {
 	t.Parallel()
-	normalized, err := normalizeModernResult("tools/call", json.RawMessage(`{"value":9007199254740993}`), nil)
+	normalized, err := normalizeModernResult("tools/call", json.RawMessage(`{"value":9007199254740993}`), nil, nil)
 	require.NoError(t, err)
 	raw, err := json.Marshal(normalized)
 	require.NoError(t, err)
@@ -113,7 +180,7 @@ func TestNormalizeModernToolsListConcurrentImmutability(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			normalized, err := normalizeModernResult("tools/list", source, nil)
+			normalized, err := normalizeModernResult("tools/list", source, nil, nil)
 			if err != nil {
 				errs <- err
 				return

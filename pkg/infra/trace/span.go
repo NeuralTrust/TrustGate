@@ -76,6 +76,29 @@ var MCPProtocolVersions = []string{
 	"2024-11-05",
 }
 
+const (
+	MRTROutcomeInputRequired  = "input_required"
+	MRTROutcomeComplete       = "complete"
+	MRTROutcomeCancelled      = "cancelled"
+	MRTROutcomePolicyDenied   = "policy_denied"
+	MRTROutcomeTimeout        = "timeout"
+	MRTROutcomeRoundLimit     = "round_limit"
+	MRTROutcomeReplayRejected = "replay_rejected"
+)
+
+// MRTRRoundOverflow is the bucket every round beyond the second collapses into.
+const MRTRRoundOverflow = "3+"
+
+var mrtrOutcomes = []string{
+	MRTROutcomeInputRequired,
+	MRTROutcomeComplete,
+	MRTROutcomeCancelled,
+	MRTROutcomePolicyDenied,
+	MRTROutcomeTimeout,
+	MRTROutcomeRoundLimit,
+	MRTROutcomeReplayRejected,
+}
+
 type MCPAttrs struct {
 	Method          string
 	Operation       string
@@ -93,6 +116,8 @@ type MCPAttrs struct {
 	RPCErrorCode    int
 	ProtocolEra     string
 	ProtocolVersion string
+	MRTROutcome     string
+	MRTRRound       string
 }
 
 // BoundMCPProtocolVersion maps unknown revisions to "unsupported".
@@ -113,6 +138,40 @@ func BoundMCPProtocolEra(era string) string {
 	switch era {
 	case MCPProtocolEraLegacy, MCPProtocolEraModern:
 		return era
+	default:
+		return ""
+	}
+}
+
+// BoundMRTROutcome drops any outcome outside the enumerated MRTR set.
+func BoundMRTROutcome(outcome string) string {
+	for _, known := range mrtrOutcomes {
+		if outcome == known {
+			return outcome
+		}
+	}
+	return ""
+}
+
+// BoundMRTRRound buckets a continuation round into 1, 2, or 3+.
+func BoundMRTRRound(round int) string {
+	switch {
+	case round <= 0:
+		return ""
+	case round == 1:
+		return "1"
+	case round == 2:
+		return "2"
+	default:
+		return MRTRRoundOverflow
+	}
+}
+
+// BoundMRTRRoundLabel keeps only the bucketed round labels.
+func BoundMRTRRoundLabel(round string) string {
+	switch round {
+	case "1", "2", MRTRRoundOverflow:
+		return round
 	default:
 		return ""
 	}
@@ -377,6 +436,20 @@ func (s *Span) SetMCPProtocol(era, version string) {
 	s.ensureMCP()
 	s.MCP.ProtocolEra = BoundMCPProtocolEra(era)
 	s.MCP.ProtocolVersion = BoundMCPProtocolVersion(version)
+}
+
+// SetMCPMRTR records bounded MRTR outcome and round labels; empty values keep
+// whatever the span already carries.
+func (s *Span) SetMCPMRTR(outcome, round string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureMCP()
+	if bounded := BoundMRTROutcome(outcome); bounded != "" {
+		s.MCP.MRTROutcome = bounded
+	}
+	if bounded := BoundMRTRRoundLabel(round); bounded != "" {
+		s.MCP.MRTRRound = bounded
+	}
 }
 
 func (s *Span) MCPAttrsCopy() (MCPAttrs, bool) {
