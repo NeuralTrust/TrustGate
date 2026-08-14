@@ -21,6 +21,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/metrics"
+	"go.opentelemetry.io/otel/attribute"
 	otellog "go.opentelemetry.io/otel/log"
 	semconv "go.opentelemetry.io/otel/semconv/v1.41.0"
 )
@@ -109,40 +110,40 @@ func eventToRecord(evt *events.Event) otellog.Record {
 	rec.SetObservedTimestamp(time.Now())
 	rec.SetSeverity(severityForStatus(evt.Status.Code))
 
-	attrs := make([]otellog.KeyValue, 0, 32)
+	attrs := make([]attribute.KeyValue, 0, 32)
 	appendStr := func(key, value string) {
 		if value != "" {
-			attrs = append(attrs, otellog.String(key, value))
+			attrs = append(attrs, attribute.String(key, value))
 		}
 	}
 
 	appendStr(string(semconv.HTTPRequestMethodKey), evt.Request.Method)
-	attrs = append(attrs, otellog.Int(string(semconv.HTTPResponseStatusCodeKey), evt.Response.StatusCode))
+	attrs = append(attrs, attribute.Int(string(semconv.HTTPResponseStatusCodeKey), evt.Response.StatusCode))
 	appendStr(string(semconv.URLPathKey), evt.Request.Path)
 	appendStr(string(semconv.GenAIProviderNameKey), evt.Request.Provider)
 	appendStr(string(semconv.GenAIRequestModelKey), evt.Request.Model)
 	if evt.Response.FinishReason != "" {
-		attrs = append(attrs, otellog.Slice(
+		attrs = append(attrs, attribute.StringSlice(
 			string(semconv.GenAIResponseFinishReasonsKey),
-			otellog.StringValue(evt.Response.FinishReason),
+			[]string{evt.Response.FinishReason},
 		))
 	}
-	attrs = append(attrs, otellog.Bool(genAIRequestStreamKey, evt.Request.Stream || evt.Response.Streaming))
+	attrs = append(attrs, attribute.Bool(genAIRequestStreamKey, evt.Request.Stream || evt.Response.Streaming))
 	if evt.Usage != nil {
 		attrs = append(attrs,
-			otellog.Int(string(semconv.GenAIUsageInputTokensKey), evt.Usage.PromptTokens),
-			otellog.Int(string(semconv.GenAIUsageOutputTokensKey), evt.Usage.CompletionTokens),
-			otellog.Int(attrUsageTotalTokens, evt.Usage.TotalTokens),
+			attribute.Int(string(semconv.GenAIUsageInputTokensKey), evt.Usage.PromptTokens),
+			attribute.Int(string(semconv.GenAIUsageOutputTokensKey), evt.Usage.CompletionTokens),
+			attribute.Int(attrUsageTotalTokens, evt.Usage.TotalTokens),
 		)
 		if evt.Usage.CachedInputTokens > 0 {
-			attrs = append(attrs, otellog.Int(attrUsageCachedInput, evt.Usage.CachedInputTokens))
+			attrs = append(attrs, attribute.Int(attrUsageCachedInput, evt.Usage.CachedInputTokens))
 		}
 		if evt.Usage.ReasoningOutputTokens > 0 {
-			attrs = append(attrs, otellog.Int(attrUsageReasoningOutput, evt.Usage.ReasoningOutputTokens))
+			attrs = append(attrs, attribute.Int(attrUsageReasoningOutput, evt.Usage.ReasoningOutputTokens))
 		}
 	}
 
-	attrs = append(attrs, otellog.Int(attrSchemaVersion, evt.SchemaVersion))
+	attrs = append(attrs, attribute.Int(attrSchemaVersion, evt.SchemaVersion))
 	appendStr(attrKind, evt.Kind)
 	if evt.MCP != nil {
 		appendStr(attrMCPMethod, evt.MCP.Method)
@@ -157,16 +158,16 @@ func eventToRecord(evt *events.Event) otellog.Record {
 		appendStr(attrMCPPrompt, evt.MCP.Prompt)
 		appendStr(attrMCPResourceURI, evt.MCP.ResourceURI)
 		if evt.MCP.UpstreamStatus != 0 {
-			attrs = append(attrs, otellog.Int(attrMCPUpstreamStatus, evt.MCP.UpstreamStatus))
+			attrs = append(attrs, attribute.Int(attrMCPUpstreamStatus, evt.MCP.UpstreamStatus))
 		}
 		if evt.MCP.Targets > 0 {
-			attrs = append(attrs, otellog.Int(attrMCPTargets, evt.MCP.Targets))
+			attrs = append(attrs, attribute.Int(attrMCPTargets, evt.MCP.Targets))
 		}
 		if evt.MCP.UpstreamLatencyMs > 0 {
-			attrs = append(attrs, otellog.Int64(attrMCPUpstreamLatencyMs, evt.MCP.UpstreamLatencyMs))
+			attrs = append(attrs, attribute.Int64(attrMCPUpstreamLatencyMs, evt.MCP.UpstreamLatencyMs))
 		}
 		if evt.MCP.RPCErrorCode != 0 {
-			attrs = append(attrs, otellog.Int(attrMCPRPCErrorCode, evt.MCP.RPCErrorCode))
+			attrs = append(attrs, attribute.Int(attrMCPRPCErrorCode, evt.MCP.RPCErrorCode))
 		}
 		appendStr(attrMCPProtocolEra, evt.MCP.ProtocolEra)
 		appendStr(attrMCPProtocolVersion, evt.MCP.ProtocolVersion)
@@ -184,36 +185,36 @@ func eventToRecord(evt *events.Event) otellog.Record {
 	appendStr(attrStatusOutcome, evt.Status.Outcome)
 	appendStr(attrStatusReason, evt.Status.Reason)
 	if evt.Status.IsTimeout {
-		attrs = append(attrs, otellog.Bool(attrStatusIsTimeout, true))
+		attrs = append(attrs, attribute.Bool(attrStatusIsTimeout, true))
 	}
 	if evt.Cost != nil {
 		attrs = append(attrs,
-			otellog.Float64(attrCostTotalUsd, float64(evt.Cost.TotalUsd)),
-			otellog.Float64(attrCostPromptUsd, float64(evt.Cost.PromptUsd)),
-			otellog.Float64(attrCostCompletionUsd, float64(evt.Cost.CompletionUsd)),
+			attribute.Float64(attrCostTotalUsd, float64(evt.Cost.TotalUsd)),
+			attribute.Float64(attrCostPromptUsd, float64(evt.Cost.PromptUsd)),
+			attribute.Float64(attrCostCompletionUsd, float64(evt.Cost.CompletionUsd)),
 		)
 		appendStr(attrCostCurrency, evt.Cost.Currency)
 	}
 	attrs = append(attrs,
-		otellog.Int64(attrLatencyTotalMs, evt.Latency.TotalMs),
-		otellog.Int64(attrLatencyProviderMs, evt.Latency.ProviderMs),
-		otellog.Int64(attrLatencyPoliciesMs, evt.Latency.PoliciesMs),
-		otellog.Int64(attrLatencyGatewayMs, evt.Latency.GatewayMs),
-		otellog.Bool(attrIsFlagged, evt.IsFlagged),
+		attribute.Int64(attrLatencyTotalMs, evt.Latency.TotalMs),
+		attribute.Int64(attrLatencyProviderMs, evt.Latency.ProviderMs),
+		attribute.Int64(attrLatencyPoliciesMs, evt.Latency.PoliciesMs),
+		attribute.Int64(attrLatencyGatewayMs, evt.Latency.GatewayMs),
+		attribute.Bool(attrIsFlagged, evt.IsFlagged),
 	)
 	if len(evt.Security) > 0 {
-		attrs = append(attrs, otellog.Slice(attrSecurity, stringValues(evt.Security)...))
+		attrs = append(attrs, attribute.StringSlice(attrSecurity, evt.Security))
 	}
 	if len(evt.PolicyChain) > 0 {
 		if encoded := jsonString(evt.PolicyChain); encoded != "" {
-			attrs = append(attrs, otellog.String(attrPolicyChain, encoded))
+			attrs = append(attrs, attribute.String(attrPolicyChain, encoded))
 		}
 	}
 	if len(evt.Attempts) > 0 {
 		if encoded := jsonString(evt.Attempts); encoded != "" {
-			attrs = append(attrs, otellog.String(attrAttempts, encoded))
+			attrs = append(attrs, attribute.String(attrAttempts, encoded))
 		}
-		attrs = append(attrs, otellog.Int(attrAttemptsCount, len(evt.Attempts)))
+		attrs = append(attrs, attribute.Int(attrAttemptsCount, len(evt.Attempts)))
 	}
 
 	rec.AddAttributes(attrs...)
@@ -232,14 +233,14 @@ func rawEventToRecord(evt *events.Event) otellog.Record {
 	}
 	rec.SetObservedTimestamp(time.Now())
 
-	attrs := make([]otellog.KeyValue, 0, 6)
+	attrs := make([]attribute.KeyValue, 0, 6)
 	appendStr := func(key, value string) {
 		if value != "" {
-			attrs = append(attrs, otellog.String(key, value))
+			attrs = append(attrs, attribute.String(key, value))
 		}
 	}
 
-	attrs = append(attrs, otellog.Int(attrSchemaVersion, evt.SchemaVersion))
+	attrs = append(attrs, attribute.Int(attrSchemaVersion, evt.SchemaVersion))
 	appendStr(attrTraceID, evt.TraceID)
 	appendStr(attrGatewayID, evt.GatewayID)
 	appendStr(attrTenantID, evt.TenantID)
@@ -261,14 +262,6 @@ func severityForStatus(code int) otellog.Severity {
 	default:
 		return otellog.SeverityInfo
 	}
-}
-
-func stringValues(in []string) []otellog.Value {
-	out := make([]otellog.Value, 0, len(in))
-	for _, value := range in {
-		out = append(out, otellog.StringValue(value))
-	}
-	return out
 }
 
 func jsonString(v interface{}) string {

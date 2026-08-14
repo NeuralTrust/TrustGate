@@ -4,11 +4,19 @@ import { useState } from "react";
 import { Plus, Pencil, Trash2, KeyRound, Copy, Check } from "lucide-react";
 import { api, gatewayScope } from "@/lib/admin-client";
 import { useActiveGatewayId } from "@/components/layout/gateway-context";
-import { useList, useInvalidate, errorMessage } from "@/lib/hooks";
+import { usePagedList, useInvalidate, errorMessage } from "@/lib/hooks";
 import { useToast } from "@/components/ui/toast";
 import { PageHeader, ConfirmDialog, useDisclosure } from "@/components/ui/page";
 import { Button } from "@/components/ui/button";
 import { Table, THead, TBody, TH, TR, TD } from "@/components/ui/table";
+import {
+  FilterSelect,
+  ListToolbar,
+  NoMatches,
+  Pagination,
+  SortHeader,
+  useListControls,
+} from "@/components/ui/list-controls";
 import { Badge, EmptyState, PageLoader, Dot } from "@/components/ui/misc";
 import {
   Dialog,
@@ -22,8 +30,18 @@ import { Field, Input, Select } from "@/components/ui/field";
 import { Section, SwitchRow, Grid2, Divider } from "@/components/ui/form-bits";
 import type { Auth, AuthType } from "@/lib/types";
 
+const AUTH_TYPES: { value: AuthType; label: string }[] = [
+  { value: "api_key", label: "API key" },
+  { value: "oauth2", label: "OAuth2" },
+  { value: "oidc", label: "OIDC" },
+  { value: "mtls", label: "mTLS" },
+];
+
 export function AuthView() {
-  const { data: auths, isLoading } = useList<Auth>("auths");
+  const controls = useListControls();
+  const { data, isLoading } = usePagedList<Auth>("auths", controls.query);
+  const auths = data?.items ?? [];
+  const total = data?.total ?? 0;
   const form = useDisclosure();
   const [editing, setEditing] = useState<Auth | null>(null);
   const [toDelete, setToDelete] = useState<Auth | null>(null);
@@ -49,57 +67,103 @@ export function AuthView() {
 
       {isLoading ? (
         <PageLoader />
-      ) : !auths || auths.length === 0 ? (
+      ) : total === 0 && !controls.isFiltered ? (
         <EmptyState
           icon={<KeyRound className="h-5 w-5" />}
           title="No auth credentials"
           description="Create an API key, OAuth2 or mTLS credential for your consumers."
         />
       ) : (
-        <Table>
-          <THead>
-            <TH>Name</TH>
-            <TH>Type</TH>
-            <TH>Status</TH>
-            <TH className="text-right pr-4">Actions</TH>
-          </THead>
-          <TBody>
-            {auths.map((a) => (
-              <TR key={a.id}>
-                <TD>
-                  <span className="font-medium text-fg">{a.name}</span>
-                </TD>
-                <TD>
-                  <Badge tone="accent">{a.type}</Badge>
-                </TD>
-                <TD>
-                  <span className="inline-flex items-center gap-2 text-muted">
-                    <Dot active={a.enabled} />
-                    {a.enabled ? "Enabled" : "Disabled"}
-                  </span>
-                </TD>
-                <TD className="text-right pr-4">
-                  <div className="inline-flex gap-1">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => {
-                        setEditing(a);
-                        form.onOpen();
-                      }}
-                      aria-label="Edit"
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button variant="ghost" size="icon" onClick={() => setToDelete(a)} aria-label="Delete">
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </TD>
-              </TR>
-            ))}
-          </TBody>
-        </Table>
+        <>
+          <ListToolbar controls={controls} placeholder="Search auths by name…">
+            <FilterSelect
+              label="Type"
+              value={controls.filters.type ?? ""}
+              onChange={(v) => controls.setFilter("type", v)}
+            >
+              <option value="">Any type</option>
+              {AUTH_TYPES.map((t) => (
+                <option key={t.value} value={t.value}>
+                  {t.label}
+                </option>
+              ))}
+            </FilterSelect>
+            <FilterSelect
+              label="Status"
+              value={controls.filters.enabled ?? ""}
+              onChange={(v) => controls.setFilter("enabled", v)}
+            >
+              <option value="">Any status</option>
+              <option value="true">Enabled</option>
+              <option value="false">Disabled</option>
+            </FilterSelect>
+          </ListToolbar>
+
+          {auths.length === 0 ? (
+            <NoMatches controls={controls} label="auth credentials" />
+          ) : (
+            <Table>
+              <THead>
+                <SortHeader controls={controls} field="name">
+                  Name
+                </SortHeader>
+                <SortHeader controls={controls} field="type">
+                  Type
+                </SortHeader>
+                <TH>Key</TH>
+                <TH>Status</TH>
+                <TH className="text-right pr-4">Actions</TH>
+              </THead>
+              <TBody>
+                {auths.map((a) => (
+                  <TR key={a.id}>
+                    <TD>
+                      <span className="font-medium text-fg">{a.name}</span>
+                    </TD>
+                    <TD>
+                      <Badge tone="accent">{a.type}</Badge>
+                    </TD>
+                    <TD>
+                      {a.key_prefix ? (
+                        <span className="font-mono text-[12px] text-muted">
+                          {a.key_prefix}…{a.key_suffix}
+                        </span>
+                      ) : (
+                        <span className="text-faint">—</span>
+                      )}
+                    </TD>
+                    <TD>
+                      <span className="inline-flex items-center gap-2 text-muted">
+                        <Dot active={a.enabled} />
+                        {a.enabled ? "Enabled" : "Disabled"}
+                      </span>
+                    </TD>
+                    <TD className="text-right pr-4">
+                      <div className="inline-flex gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            setEditing(a);
+                            form.onOpen();
+                          }}
+                          aria-label="Edit"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => setToDelete(a)} aria-label="Delete">
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TD>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+          )}
+
+          <Pagination controls={controls} total={total} />
+        </>
       )}
 
       {form.open && (
@@ -326,10 +390,11 @@ function AuthFormDialog({
                 onChange={(e) => setType(e.target.value as AuthType)}
                 disabled={isEdit}
               >
-                <option value="api_key">API key</option>
-                <option value="oauth2">OAuth2</option>
-                <option value="oidc">OIDC</option>
-                <option value="mtls">mTLS</option>
+                {AUTH_TYPES.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
               </Select>
             </Field>
           </Grid2>

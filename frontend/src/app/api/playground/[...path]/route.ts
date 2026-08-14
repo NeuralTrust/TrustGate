@@ -13,6 +13,11 @@ const PLAYGROUND_TOKEN_HEADER = "X-AG-Playground-Token";
 // runs in header mode, so this replaces subdomain host resolution.
 const GATEWAY_SLUG_HEADER = "X-AG-Gateway-Slug";
 
+// Header the proxy stamps every response with (see backend
+// pkg/api/middleware/metrics.go). Echoed back so the playground can fetch the
+// trace from GET /v1/playground/traces/{trace_id}.
+const TRACE_ID_HEADER = "X-AG-Trace-Id";
+
 interface RouteContext {
   params: Promise<{ path: string[] }>;
 }
@@ -53,10 +58,12 @@ async function handler(req: NextRequest, ctx: RouteContext): Promise<NextRespons
       body: body.length > 0 ? body : undefined,
       cache: "no-store",
     });
-    return new NextResponse(res.body, {
-      status: res.status,
-      headers: { "Content-Type": res.headers.get("content-type") ?? "application/json" },
-    });
+    const headers: Record<string, string> = {
+      "Content-Type": res.headers.get("content-type") ?? "application/json",
+    };
+    const traceId = res.headers.get(TRACE_ID_HEADER);
+    if (traceId) headers[TRACE_ID_HEADER] = traceId;
+    return new NextResponse(res.body, { status: res.status, headers });
   } catch (err) {
     const message = err instanceof Error ? err.message : "playground request failed";
     return NextResponse.json({ error: "bff_error", message }, { status: 502 });

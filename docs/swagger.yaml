@@ -1597,6 +1597,11 @@ definitions:
       type:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_catalog.OptionFieldType'
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_app_mcp.Tool:
+    properties:
+      name:
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_app_plugins.Catalog:
     properties:
       groups:
@@ -2008,6 +2013,12 @@ definitions:
         type: string
       route:
         type: string
+      route_model:
+        description: |-
+          RouteModel is the model pinned by the load balancer route this attempt
+          used. It is empty when the route deferred to the registry default, and it
+          is what tells two attempts on the same registry apart.
+        type: string
       status_code:
         type: integer
     type: object
@@ -2256,6 +2267,13 @@ definitions:
       mcp_servers:
         items:
           $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPServer'
+        type: array
+    type: object
+  pkg_api_handler_http_registry.ListRegistryToolsResponse:
+    properties:
+      tools:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_mcp.Tool'
         type: array
     type: object
 info:
@@ -3968,6 +3986,53 @@ paths:
       security:
       - BearerAuth: []
       summary: Update a backend
+      tags:
+      - registries
+  /v1/gateways/{gateway_id}/registries/{id}/tools:
+    get:
+      description: Introspects the MCP server behind the registry and returns its
+        advertised tools. Each tool is passed through as the server declared it (name
+        plus whatever else it exposes, e.g. description and inputSchema). Returns
+        502 when the upstream MCP server is unreachable.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Registry id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/pkg_api_handler_http_registry.ListRegistryToolsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List an MCP backend's tools
       tags:
       - registries
   /v1/gateways/{gateway_id}/registries/test-connection:
