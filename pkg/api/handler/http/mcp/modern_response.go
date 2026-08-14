@@ -20,6 +20,8 @@ import (
 	"errors"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
 const (
@@ -30,7 +32,12 @@ const (
 
 var errModernResultNotObject = errors.New("modern MCP result must be an object")
 
-func normalizeModernResult(method string, result any, rc *appconsumer.RoutableConsumer) (map[string]any, error) {
+func normalizeModernResult(
+	method string,
+	result any,
+	rc *appconsumer.RoutableConsumer,
+	caps map[string]any,
+) (map[string]any, error) {
 	encoded, err := json.Marshal(result)
 	if err != nil {
 		return nil, err
@@ -60,7 +67,7 @@ func normalizeModernResult(method string, result any, rc *appconsumer.RoutableCo
 		"version": serverVersion + "+" + surfaceFingerprint(rc),
 	}
 	normalized["_meta"] = metadata
-	normalized["resultType"] = "complete"
+	applyMRTRFields(method, normalized, caps)
 	delete(normalized, "ttlMs")
 	delete(normalized, "cacheScope")
 
@@ -74,6 +81,43 @@ func normalizeModernResult(method string, result any, rc *appconsumer.RoutableCo
 	}
 
 	return normalized, nil
+}
+
+// applyMRTRFields keeps continuation state on tools/call and nowhere else: the
+// mediation contract is tools-first, so every other method reports complete and
+// loses any upstream MRTR fields.
+func applyMRTRFields(method string, normalized map[string]any, caps map[string]any) {
+	if method != "tools/call" || normalized["resultType"] != trace.MRTROutcomeInputRequired {
+		normalized["resultType"] = trace.MRTROutcomeComplete
+		delete(normalized, "requestState")
+		delete(normalized, "inputRequests")
+		return
+	}
+	normalized["resultType"] = trace.MRTROutcomeInputRequired
+	requests, ok := normalized["inputRequests"].(map[string]any)
+	if !ok {
+		return
+	}
+	normalized["inputRequests"] = declaredInputRequests(requests, caps)
+}
+
+// declaredInputRequests drops kinds the client never declared: forwarding them
+// would ask for input the client cannot supply.
+func declaredInputRequests(requests map[string]any, caps map[string]any) map[string]any {
+	allowed := make(map[string]any, len(requests))
+	for id, request := range requests {
+		entry, ok := request.(map[string]any)
+		if !ok {
+			continue
+		}
+		method, _ := entry["method"].(string)
+		kind := appmcp.InputRequestKind(method)
+		if kind == "" || !appmcp.DeclaredCapability(caps, kind) {
+			continue
+		}
+		allowed[id] = request
+	}
+	return allowed
 }
 
 func removeMCPHeaderAnnotations(value any) {

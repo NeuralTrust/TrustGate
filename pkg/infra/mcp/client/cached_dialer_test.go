@@ -30,6 +30,10 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+func echoToolCall() appmcp.ToolCall {
+	return appmcp.ToolCall{Name: "echo", Arguments: json.RawMessage(`{}`)}
+}
+
 type upstreamStub struct {
 	srv       *httptest.Server
 	handler   atomic.Pointer[http.Handler]
@@ -110,7 +114,7 @@ func TestCachedDialer_RecoversFromLostUpstreamSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	if _, err := up.CallTool(context.Background(), "echo", json.RawMessage(`{}`)); err != nil {
+	if _, err := up.CallTool(context.Background(), echoToolCall()); err != nil {
 		t.Fatalf("call: %v", err)
 	}
 
@@ -120,7 +124,7 @@ func TestCachedDialer_RecoversFromLostUpstreamSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reconnect: %v", err)
 	}
-	if _, err := up2.CallTool(context.Background(), "echo", json.RawMessage(`{}`)); err == nil {
+	if _, err := up2.CallTool(context.Background(), echoToolCall()); err == nil {
 		t.Fatal("call on a lost session must propagate the error instead of retrying")
 	}
 
@@ -128,7 +132,7 @@ func TestCachedDialer_RecoversFromLostUpstreamSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reconnect after eviction: %v", err)
 	}
-	if _, err := up3.CallTool(context.Background(), "echo", json.RawMessage(`{}`)); err != nil {
+	if _, err := up3.CallTool(context.Background(), echoToolCall()); err != nil {
 		t.Fatalf("call after re-dial: %v", err)
 	}
 	if got := upstream.inits.Load(); got != 2 {

@@ -26,6 +26,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
@@ -115,13 +116,26 @@ func MCP(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	if err := c.Provide(func(cfg *config.Config) *appmcp.TicketSigner {
+		mrtr := cfg.Server.MCPMRTR
+		return appmcp.NewTicketSigner(mrtr.TicketSecret, mrtr.TicketSecretPrev, mrtr.TicketTTL, mrtr.MaxRounds)
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(func(
 		dialer appmcp.Dialer,
 		creds appmcp.CredentialResolver,
 		manager *cache.TTLMapManager,
 		logger *slog.Logger,
+		signer *appmcp.TicketSigner,
 	) appmcp.Composer {
-		return appmcp.NewComposer(dialer, creds, manager.GetTTLMap(cache.MCPToolsTTLName), logger)
+		return appmcp.NewComposerWithSigner(
+			dialer,
+			creds,
+			manager.GetTTLMap(cache.MCPToolsTTLName),
+			logger,
+			signer,
+		)
 	}); err != nil {
 		return err
 	}
@@ -134,14 +148,39 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(appmcp.NewPluginRunner); err != nil {
 		return err
 	}
-	if err := c.Provide(mcphttp.NewRPCGateway); err != nil {
+	if err := c.Provide(func(
+		composer appmcp.Composer,
+		plugins *appmcp.PluginRunner,
+		limiter ratelimitapp.Checker,
+		cfg *config.Config,
+	) *mcphttp.RPCGateway {
+		return mcphttp.NewRPCGatewayWithLimits(
+			composer,
+			plugins,
+			limiter,
+			cfg.Server.MCPMRTR.MaxContinuationBytes,
+		)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(appmcp.NewRoleScoper); err != nil {
 		return err
 	}
-	return c.Provide(func(gw *mcphttp.RPCGateway, scoper appmcp.RoleScoper, cfg *config.Config) *mcphttp.Handler {
-		return mcphttp.NewHandler(gw, scoper, mcphttp.NewProtocolValidationRecorder(cfg.Telemetry.OpsMetricsEnabled))
+	return c.Provide(func(
+		gw *mcphttp.RPCGateway,
+		scoper appmcp.RoleScoper,
+		signer *appmcp.TicketSigner,
+		cfg *config.Config,
+	) *mcphttp.Handler {
+		return mcphttp.NewHandlerWithMRTR(
+			gw,
+			scoper,
+			mcphttp.MRTRSupport{
+				Signer:   signer,
+				Recorder: mcphttp.NewMRTRRecorder(cfg.Telemetry.OpsMetricsEnabled),
+			},
+			mcphttp.NewProtocolValidationRecorder(cfg.Telemetry.OpsMetricsEnabled),
+		)
 	})
 }
 

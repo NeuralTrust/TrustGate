@@ -71,6 +71,8 @@ type MCP struct {
 	RPCErrorCode      int    `json:"rpc_error_code,omitempty"`
 	ProtocolEra       string `json:"protocol_era,omitempty"`
 	ProtocolVersion   string `json:"protocol_version,omitempty"`
+	MRTROutcome       string `json:"mrtr_outcome,omitempty"`
+	MRTRRound         string `json:"mrtr_round,omitempty"`
 }
 
 type Consumer struct {

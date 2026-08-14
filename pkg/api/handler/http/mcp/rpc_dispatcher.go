@@ -35,18 +35,58 @@ type InvalidParamsError struct {
 
 func (e *InvalidParamsError) Error() string { return "mcp: invalid params: " + e.Reason }
 
+// DefaultMaxContinuationBytes caps the multi round-trip payload a client may
+// echo back on tools/call.
+const DefaultMaxContinuationBytes = 256 * 1024
+
 type RPCGateway struct {
-	composer appmcp.Composer
-	plugins  *appmcp.PluginRunner
-	limiter  ratelimitapp.Checker
+	composer             appmcp.Composer
+	plugins              *appmcp.PluginRunner
+	limiter              ratelimitapp.Checker
+	maxContinuationBytes int
 }
 
 // NewRPCGateway wires MCP dispatch; nil limiter defaults to noop.
 func NewRPCGateway(composer appmcp.Composer, plugins *appmcp.PluginRunner, limiter ratelimitapp.Checker) *RPCGateway {
+	return NewRPCGatewayWithLimits(composer, plugins, limiter, DefaultMaxContinuationBytes)
+}
+
+// NewRPCGatewayWithLimits wires MCP dispatch with an explicit continuation cap.
+func NewRPCGatewayWithLimits(
+	composer appmcp.Composer,
+	plugins *appmcp.PluginRunner,
+	limiter ratelimitapp.Checker,
+	maxContinuationBytes int,
+) *RPCGateway {
 	if limiter == nil {
 		limiter = ratelimitapp.NewNoopChecker()
 	}
-	return &RPCGateway{composer: composer, plugins: plugins, limiter: limiter}
+	if maxContinuationBytes <= 0 {
+		maxContinuationBytes = DefaultMaxContinuationBytes
+	}
+	return &RPCGateway{
+		composer:             composer,
+		plugins:              plugins,
+		limiter:              limiter,
+		maxContinuationBytes: maxContinuationBytes,
+	}
+}
+
+func validateContinuationSize(inputResponses json.RawMessage, requestState string, limit int) error {
+	if limit <= 0 {
+		limit = DefaultMaxContinuationBytes
+	}
+	if len(inputResponses)+len(requestState) > limit {
+		return &InvalidParamsError{Reason: "tools/call continuation exceeds the maximum size"}
+	}
+	if len(inputResponses) == 0 {
+		return nil
+	}
+	var shape map[string]json.RawMessage
+	if err := json.Unmarshal(inputResponses, &shape); err != nil {
+		return &InvalidParamsError{Reason: "tools/call inputResponses must be an object"}
+	}
+	return nil
 }
 
 func (g *RPCGateway) Dispatch(ctx context.Context, rc *appconsumer.RoutableConsumer, method string, params json.RawMessage) (any, error) {
@@ -190,36 +230,51 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		return result, nil
 	case "tools/call":
 		var p struct {
-			Name      string          `json:"name"`
-			Arguments json.RawMessage `json:"arguments,omitempty"`
+			Name           string          `json:"name"`
+			Arguments      json.RawMessage `json:"arguments,omitempty"`
+			InputResponses json.RawMessage `json:"inputResponses,omitempty"`
+			RequestState   string          `json:"requestState,omitempty"`
 		}
 		if err := json.Unmarshal(params, &p); err != nil || p.Name == "" {
 			return nil, &InvalidParamsError{Reason: "tools/call requires params.name"}
 		}
+		if err := validateContinuationSize(p.InputResponses, p.RequestState, g.maxContinuationBytes); err != nil {
+			return nil, err
+		}
+		// Every round runs the full policy pass: rate limits, plugins, and the
+		// composer's toolkit check. A continuation is never a shortcut past them.
 		if err := g.checkRateLimit(ctx, rc); err != nil {
 			return nil, err
 		}
-		pre, err := g.plugins.PreRequest(ctx, rc, p.Name, p.Arguments)
+		pre, err := g.plugins.PreRequest(ctx, rc, p.Name, p.Arguments, p.InputResponses)
 		if err != nil {
 			return nil, err
 		}
 		// The request stage may rewrite the tool input (data-masking) or answer
 		// the call outright. Carry both forward: reusing the original arguments
 		// would send upstream exactly what a plugin just redacted.
-		arguments := p.Arguments
+		call := appmcp.ToolCall{
+			Name:           p.Name,
+			Arguments:      p.Arguments,
+			InputResponses: p.InputResponses,
+			RequestState:   p.RequestState,
+		}
 		if pre != nil {
 			if pre.Result != nil {
 				return pre.Result, nil
 			}
 			if pre.Arguments != nil {
-				arguments = pre.Arguments
+				call.Arguments = pre.Arguments
+			}
+			if pre.InputResponses != nil {
+				call.InputResponses = pre.InputResponses
 			}
 		}
-		result, err := g.composer.CallTool(ctx, rc, p.Name, arguments)
+		result, err := g.composer.CallTool(ctx, rc, call)
 		if err != nil {
 			return nil, err
 		}
-		post, err := g.plugins.PreResponse(ctx, rc, p.Name, arguments, result)
+		post, err := g.plugins.PreResponse(ctx, rc, p.Name, call.Arguments, result)
 		if err != nil {
 			return nil, err
 		}

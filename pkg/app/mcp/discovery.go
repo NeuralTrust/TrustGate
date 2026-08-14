@@ -155,6 +155,20 @@ func mcpRegistries(rc *appconsumer.RoutableConsumer) []*registrydomain.Registry 
 	return out
 }
 
+// HasNonLegacyMCPRegistry reports whether the consumer binds at least one MCP
+// registry that is not pinned to the legacy protocol.
+func HasNonLegacyMCPRegistry(rc *appconsumer.RoutableConsumer) bool {
+	if rc == nil {
+		return false
+	}
+	for _, reg := range mcpRegistries(rc) {
+		if reg.MCPTarget.ProtocolMode != registrydomain.MCPProtocolModeLegacy {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *composer) discoverTools(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,

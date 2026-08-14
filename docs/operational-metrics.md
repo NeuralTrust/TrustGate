@@ -38,6 +38,22 @@ product metrics and do **not** increment this counter.
 `acceptance_denied` is the consumer gate (`protocol_acceptance=legacy_only`
 rejecting a modern request). It is distinct from `unsupported_version`.
 
+`mcp.northbound.mrtr.outcome_total` (`{outcome}`): one sample per mediated
+multi round-trip `tools/call` outcome, plus one per accepted modern
+`notifications/cancelled`. Tickets, `inputResponses`, and tool arguments are
+never labels and never logged.
+
+| Label | Values |
+|-------|--------|
+| `outcome` | `input_required`, `complete`, `cancelled`, `policy_denied`, `timeout`, `round_limit`, `replay_rejected` |
+| `era` | `legacy`, `modern` |
+| `round` | `1`, `2`, `3+` (every round past the second collapses into `3+`) |
+
+`replay_rejected` covers HMAC, expiry, and binding mismatches (`-32023`);
+`round_limit` is the 8-round cap (`-32024`). Oversized or malformed
+continuations are `-32602` shape rejections and are not counted here: no
+mediation round happened.
+
 ### Southbound
 
 `mcp.upstream.protocol.decision_total` (`{decision}`): one sample per

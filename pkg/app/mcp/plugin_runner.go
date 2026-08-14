@@ -71,8 +71,9 @@ func NewPluginRunner(executor appplugins.Executor, logger *slog.Logger) *PluginR
 }
 
 type mcpToolCallParams struct {
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments,omitempty"`
+	Name           string          `json:"name"`
+	Arguments      json.RawMessage `json:"arguments,omitempty"`
+	InputResponses json.RawMessage `json:"inputResponses,omitempty"`
 }
 
 // StageResult is what a plugin stage decided for a tools/call. A plugin may
@@ -83,6 +84,9 @@ type StageResult struct {
 	// Arguments is the effective tool input after the request stage. Empty when
 	// no plugin rewrote it.
 	Arguments json.RawMessage
+	// InputResponses is the effective multi round-trip continuation payload after
+	// the request stage. Empty when no plugin rewrote it.
+	InputResponses json.RawMessage
 	// Result is a payload that stands in for the tool's output: the masked
 	// result from the response stage, or a reply a plugin produced itself in the
 	// request stage instead of letting the call reach the upstream.
@@ -111,11 +115,12 @@ func (r *PluginRunner) PreRequest(
 	rc *appconsumer.RoutableConsumer,
 	name string,
 	arguments json.RawMessage,
+	inputResponses json.RawMessage,
 ) (*StageResult, error) {
 	if r.executor == nil || rc == nil || rc.Consumer == nil {
 		return nil, nil
 	}
-	reqCtx, err := r.buildRequestContext(ctx, rc, name, arguments)
+	reqCtx, err := r.buildRequestContext(ctx, rc, name, arguments, inputResponses)
 	if err != nil {
 		r.logFailOpen(rc, policy.StagePreRequest, directionInput, err)
 		return nil, nil
@@ -145,38 +150,45 @@ func (r *PluginRunner) PreRequest(
 		})
 	}
 	// A body writer (TrustGuard data-masking) rewrites the request context in
-	// place. Read the arguments back out so the upstream receives the masked
-	// payload; forwarding the originals would leak exactly what the plugin was
+	// place. Read the payload back out so the upstream receives the masked
+	// values; forwarding the originals would leak exactly what the plugin was
 	// asked to redact.
-	return &StageResult{Arguments: r.rewrittenArguments(rc, name, arguments, reqCtx.Body)}, nil
+	rewrittenArgs, rewrittenResponses := r.rewrittenParams(rc, name, arguments, inputResponses, reqCtx.Body)
+	return &StageResult{Arguments: rewrittenArgs, InputResponses: rewrittenResponses}, nil
 }
 
-// rewrittenArguments extracts the tool arguments a plugin left in the request
-// body, or nil when nothing usable changed. The tool name is deliberately not
-// honoured: routing is the gateway's decision, not a body writer's.
-func (r *PluginRunner) rewrittenArguments(
+// rewrittenParams extracts the tool arguments and continuation responses a
+// plugin left in the request body, or nil for whichever did not change. The tool
+// name is deliberately not honoured: routing is the gateway's decision, not a
+// body writer's.
+func (r *PluginRunner) rewrittenParams(
 	rc *appconsumer.RoutableConsumer,
 	name string,
-	original json.RawMessage,
+	originalArgs json.RawMessage,
+	originalResponses json.RawMessage,
 	body []byte,
-) json.RawMessage {
+) (json.RawMessage, json.RawMessage) {
 	if len(body) == 0 {
-		return nil
+		return nil, nil
 	}
 	var params mcpToolCallParams
 	if err := json.Unmarshal(body, &params); err != nil {
 		r.logFailOpen(rc, policy.StagePreRequest, directionInput,
 			fmt.Errorf("mcp: plugin left an unparseable tools/call body: %w", err))
-		return nil
+		return nil, nil
 	}
 	if params.Name != name && r.logger != nil {
 		r.logger.Warn("mcp plugin rewrote the tool name; ignoring the change",
 			slog.String("tool", name), slog.String("rewritten", params.Name))
 	}
-	if bytes.Equal(params.Arguments, original) {
-		return nil
+	var rewrittenArgs, rewrittenResponses json.RawMessage
+	if !bytes.Equal(params.Arguments, originalArgs) {
+		rewrittenArgs = params.Arguments
 	}
-	return params.Arguments
+	if !bytes.Equal(params.InputResponses, originalResponses) {
+		rewrittenResponses = params.InputResponses
+	}
+	return rewrittenArgs, rewrittenResponses
 }
 
 // PreResponse runs StagePreResponse over the tool result. A StageResult with a
@@ -194,7 +206,7 @@ func (r *PluginRunner) PreResponse(
 	if r.executor == nil || rc == nil || rc.Consumer == nil {
 		return nil, nil
 	}
-	reqCtx, err := r.buildRequestContext(ctx, rc, name, arguments)
+	reqCtx, err := r.buildRequestContext(ctx, rc, name, arguments, nil)
 	if err != nil {
 		r.logFailOpen(rc, policy.StagePreResponse, directionOutput, err)
 		return nil, nil
@@ -317,8 +329,13 @@ func (r *PluginRunner) buildRequestContext(
 	rc *appconsumer.RoutableConsumer,
 	name string,
 	arguments json.RawMessage,
+	inputResponses json.RawMessage,
 ) (*infracontext.RequestContext, error) {
-	body, err := json.Marshal(mcpToolCallParams{Name: name, Arguments: arguments})
+	body, err := json.Marshal(mcpToolCallParams{
+		Name:           name,
+		Arguments:      arguments,
+		InputResponses: inputResponses,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("mcp: marshal tools/call params: %w", err)
 	}
