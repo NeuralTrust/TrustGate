@@ -44,6 +44,7 @@ func (s *stubConnectService) CreateAPIKeyTicket(
 	string,
 	ids.ConsumerID,
 	ids.AuthID,
+	[]string,
 ) (string, error) {
 	return "t", nil
 }

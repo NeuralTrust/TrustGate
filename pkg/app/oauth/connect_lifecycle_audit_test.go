@@ -24,17 +24,23 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	oauthmocks "github.com/NeuralTrust/TrustGate/pkg/app/oauth/mocks"
+	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
+	vaultrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/vault"
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
 
@@ -79,8 +85,15 @@ func newConnectAuditFixture(
 			Type:      consumerdomain.TypeMCP,
 			Slug:      "runtime",
 			Active:    true,
+			AuthIDs:   []ids.AuthID{authID},
 		},
 		Registries: []*registrydomain.Registry{reg},
+		Auths: []*authdomain.Auth{{
+			ID:        authID,
+			GatewayID: gatewayID,
+			Type:      authdomain.TypeAPIKey,
+			Enabled:   true,
+		}},
 	}})
 	store := newMemConnectStore()
 	vault := &memVaultRepo{}
@@ -118,13 +131,71 @@ func newConnectAuditTokenServer(t *testing.T) *httptest.Server {
 }
 
 func completeConnectTicket(fixture connectAuditFixtureData) oauth.ConnectTicket {
+	providers := []string{connectAuditProviderID}
 	return oauth.ConnectTicket{
 		GatewayID:    fixture.gatewayID.String(),
 		PrincipalSub: "subject-sentinel",
 		ConsumerPath: "/runtime/mcp",
 		ConsumerID:   fixture.consumerID.String(),
 		AuthID:       fixture.authID.String(),
+		Providers:    &providers,
 	}
+}
+
+func addConnectAuditProvider(
+	t *testing.T,
+	fixture connectAuditFixtureData,
+	name,
+	provider string,
+) {
+	t.Helper()
+
+	registry, err := registrydomain.NewMCPRegistry(
+		fixture.gatewayID,
+		name,
+		"",
+		&registrydomain.MCPTarget{
+			URL: "https://added.example/mcp",
+			Auth: &registrydomain.MCPAuth{
+				Mode:         registrydomain.MCPAuthModeForwarded,
+				Provider:     provider,
+				Registration: registrydomain.RegistrationAuto,
+			},
+		},
+	)
+	require.NoError(t, err)
+	target, ok := fixture.data.MatchSlug("runtime")
+	require.True(t, ok)
+	target.Registries = append(target.Registries, registry)
+}
+
+func TestConnectTicketProviderSnapshotJSONCompatibility(t *testing.T) {
+	t.Parallel()
+
+	var legacy oauth.ConnectTicket
+	require.NoError(
+		t,
+		json.Unmarshal(
+			[]byte(`{"gateway_id":"gateway","principal_sub":"subject","consumer_path":"/runtime/mcp"}`),
+			&legacy,
+		),
+	)
+	require.Nil(t, legacy.Providers)
+
+	providers := []string{}
+	payload, err := json.Marshal(oauth.ConnectTicket{
+		GatewayID:    "gateway",
+		PrincipalSub: "subject",
+		ConsumerPath: "/runtime/mcp",
+		Providers:    &providers,
+	})
+	require.NoError(t, err)
+	require.Contains(t, string(payload), `"providers":[]`)
+
+	var current oauth.ConnectTicket
+	require.NoError(t, json.Unmarshal(payload, &current))
+	require.NotNil(t, current.Providers)
+	require.Empty(t, *current.Providers)
 }
 
 func TestConnectServiceAPIKeyLifecycleAudit(t *testing.T) {
@@ -156,6 +227,7 @@ func TestConnectServiceAPIKeyLifecycleAudit(t *testing.T) {
 		"/runtime/mcp",
 		fixture.consumerID,
 		fixture.authID,
+		[]string{connectAuditProviderID},
 	)
 	require.NoError(t, err)
 	require.Equal(t, completeConnectTicket(fixture), fixture.store.tickets[ticketID])
@@ -182,6 +254,205 @@ func TestConnectServiceAPIKeyLifecycleAudit(t *testing.T) {
 	require.NoError(t, fixture.service.Disconnect(ctx, ticketID, connectAuditProviderID))
 }
 
+func TestConnectServiceProviderSnapshotProtectsStartAndCallback(t *testing.T) {
+	t.Parallel()
+
+	t.Run("provider added after mint is rejected before state", func(t *testing.T) {
+		t.Parallel()
+
+		fixture := newConnectAuditFixture(
+			t,
+			oauthmocks.NewConnectAuditor(t),
+			"https://unused.example/token",
+		)
+		fixture.store.tickets["ticket-sentinel"] = completeConnectTicket(fixture)
+		addConnectAuditProvider(t, fixture, "added-registry", "added-provider")
+
+		location, err := fixture.service.Start(
+			context.Background(),
+			"https://gateway.example",
+			"ticket-sentinel",
+			"added-provider",
+		)
+
+		require.Empty(t, location)
+		require.ErrorIs(t, err, oauth.ErrProviderNotFound)
+		require.Empty(t, fixture.store.connects)
+	})
+
+	t.Run("tampered state provider is rejected before exchange", func(t *testing.T) {
+		t.Parallel()
+
+		fixture := newConnectAuditFixture(
+			t,
+			oauthmocks.NewConnectAuditor(t),
+			"https://unused.example/token",
+		)
+		addConnectAuditProvider(t, fixture, "added-registry", "added-provider")
+		fixture.store.connects["state-sentinel"] = oauth.ConnectState{
+			Ticket:   completeConnectTicket(fixture),
+			TicketID: "ticket-sentinel",
+			Provider: "added-provider",
+			Verifier: "verifier-sentinel",
+		}
+
+		ticketID, err := fixture.service.Callback(
+			context.Background(),
+			"https://gateway.example",
+			"added-provider",
+			"state-sentinel",
+			"code-sentinel",
+			"",
+			"",
+		)
+
+		require.Equal(t, "ticket-sentinel", ticketID)
+		require.ErrorIs(t, err, oauth.ErrProviderNotFound)
+		require.Empty(t, fixture.vault.creds)
+	})
+
+	t.Run("tampered ticket metadata fails closed", func(t *testing.T) {
+		t.Parallel()
+
+		fixture := newConnectAuditFixture(
+			t,
+			oauthmocks.NewConnectAuditor(t),
+			"https://unused.example/token",
+		)
+		ticket := completeConnectTicket(fixture)
+		ticket.Providers = nil
+		fixture.store.connects["state-sentinel"] = oauth.ConnectState{
+			Ticket:   ticket,
+			TicketID: "ticket-sentinel",
+			Provider: connectAuditProviderID,
+			Verifier: "verifier-sentinel",
+		}
+
+		ticketID, err := fixture.service.Callback(
+			context.Background(),
+			"https://gateway.example",
+			connectAuditProviderID,
+			"state-sentinel",
+			"code-sentinel",
+			"",
+			"",
+		)
+
+		require.Equal(t, "ticket-sentinel", ticketID)
+		require.ErrorIs(t, err, oauth.ErrTicketNotFound)
+		require.Empty(t, fixture.vault.creds)
+	})
+
+	t.Run("valid snapshot permits start and callback", func(t *testing.T) {
+		t.Parallel()
+
+		tokenServer := newConnectAuditTokenServer(t)
+		fixture := newConnectAuditFixture(t, discardConnectAuditor(), tokenServer.URL)
+		fixture.store.tickets["ticket-sentinel"] = completeConnectTicket(fixture)
+
+		location, err := fixture.service.Start(
+			context.Background(),
+			"https://gateway.example",
+			"ticket-sentinel",
+			connectAuditProviderID,
+		)
+		require.NoError(t, err)
+		parsed, err := url.Parse(location)
+		require.NoError(t, err)
+
+		ticketID, err := fixture.service.Callback(
+			context.Background(),
+			"https://gateway.example",
+			connectAuditProviderID,
+			parsed.Query().Get("state"),
+			"code-sentinel",
+			"",
+			"",
+		)
+
+		require.NoError(t, err)
+		require.Equal(t, "ticket-sentinel", ticketID)
+		require.Len(t, fixture.vault.creds, 1)
+	})
+}
+
+func TestConnectServicePageUsesProviderSnapshot(t *testing.T) {
+	t.Parallel()
+
+	t.Run("provider added after mint is not listed or queried", func(t *testing.T) {
+		t.Parallel()
+
+		fixture := newConnectAuditFixture(
+			t,
+			oauthmocks.NewConnectAuditor(t),
+			"https://unused.example/token",
+		)
+		fixture.store.tickets["ticket-sentinel"] = completeConnectTicket(fixture)
+		addConnectAuditProvider(t, fixture, "added-registry", "added-provider")
+
+		page, err := fixture.service.Page(context.Background(), "ticket-sentinel")
+
+		require.NoError(t, err)
+		require.Len(t, page.Providers, 1)
+		require.Equal(t, connectAuditProviderID, page.Providers[0].Provider)
+		require.Equal(t, "registry-name", page.Providers[0].Registry)
+		require.Equal(t, []string{connectAuditProviderID}, fixture.vault.findProviders)
+	})
+
+	t.Run("valid snapshot provider is listed and queried", func(t *testing.T) {
+		t.Parallel()
+
+		fixture := newConnectAuditFixture(
+			t,
+			oauthmocks.NewConnectAuditor(t),
+			"https://unused.example/token",
+		)
+		fixture.store.tickets["ticket-sentinel"] = completeConnectTicket(fixture)
+
+		page, err := fixture.service.Page(context.Background(), "ticket-sentinel")
+
+		require.NoError(t, err)
+		require.Len(t, page.Providers, 1)
+		require.Equal(t, connectAuditProviderID, page.Providers[0].Provider)
+		require.Equal(t, "registry-name", page.Providers[0].Registry)
+		require.Equal(t, []string{connectAuditProviderID}, fixture.vault.findProviders)
+	})
+
+	t.Run("legacy ticket lists and queries current providers", func(t *testing.T) {
+		t.Parallel()
+
+		fixture := newConnectAuditFixture(
+			t,
+			oauthmocks.NewConnectAuditor(t),
+			"https://unused.example/token",
+		)
+		ticket := completeConnectTicket(fixture)
+		ticket.ConsumerID = ""
+		ticket.AuthID = ""
+		ticket.Providers = nil
+		fixture.store.tickets["ticket-sentinel"] = ticket
+		addConnectAuditProvider(t, fixture, "added-registry", "added-provider")
+
+		page, err := fixture.service.Page(context.Background(), "ticket-sentinel")
+
+		require.NoError(t, err)
+		require.Len(t, page.Providers, 2)
+		require.Equal(
+			t,
+			[]string{connectAuditProviderID, "added-provider"},
+			fixture.vault.findProviders,
+		)
+		require.ElementsMatch(
+			t,
+			[]oauth.ProviderStatus{
+				{Provider: connectAuditProviderID, Registry: "registry-name"},
+				{Provider: "added-provider", Registry: "added-registry"},
+			},
+			page.Providers,
+		)
+	})
+}
+
 func TestConnectServiceDisconnectSurvivesProviderConfigRemoval(t *testing.T) {
 	t.Parallel()
 
@@ -205,6 +476,7 @@ func TestConnectServiceDisconnectSurvivesProviderConfigRemoval(t *testing.T) {
 		"/runtime/mcp",
 		fixture.consumerID,
 		fixture.authID,
+		[]string{connectAuditProviderID},
 	)
 	require.NoError(t, err)
 	credential, err := vaultdomain.NewCredential(
@@ -229,6 +501,314 @@ func TestConnectServiceDisconnectSurvivesProviderConfigRemoval(t *testing.T) {
 	require.Empty(t, fixture.vault.creds)
 }
 
+func TestConnectServiceDisconnectRejectsProviderOutsideSnapshot(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	fixture := newConnectAuditFixture(
+		t,
+		oauthmocks.NewConnectAuditor(t),
+		"https://unused.example/token",
+	)
+	ticket := completeConnectTicket(fixture)
+	fixture.store.tickets["ticket-sentinel"] = ticket
+	otherRegistry, err := registrydomain.NewMCPRegistry(
+		fixture.gatewayID,
+		"other-registry",
+		"",
+		&registrydomain.MCPTarget{
+			URL: "https://other.example/mcp",
+			Auth: &registrydomain.MCPAuth{
+				Mode:         registrydomain.MCPAuthModeForwarded,
+				Provider:     "other-provider",
+				Registration: registrydomain.RegistrationAuto,
+			},
+		},
+	)
+	require.NoError(t, err)
+	fixture.data.Consumers = append(fixture.data.Consumers, appconsumer.RoutableConsumer{
+		Consumer: &consumerdomain.Consumer{
+			ID:        ids.New[ids.ConsumerKind](),
+			GatewayID: fixture.gatewayID,
+			Type:      consumerdomain.TypeMCP,
+			Slug:      "other",
+			Active:    true,
+		},
+		Registries: []*registrydomain.Registry{otherRegistry},
+	})
+	credential, err := vaultdomain.NewCredential(
+		fixture.gatewayID,
+		ticket.PrincipalSub,
+		"other-provider",
+		"",
+		"access-token-sentinel",
+		"",
+		nil,
+		time.Now().Add(time.Hour),
+	)
+	require.NoError(t, err)
+	fixture.vault.creds = map[string]*vaultdomain.Credential{
+		fixture.vault.k(fixture.gatewayID, ticket.PrincipalSub, "other-provider"): credential,
+	}
+
+	err = fixture.service.Disconnect(ctx, "ticket-sentinel", "other-provider")
+
+	require.ErrorIs(t, err, oauth.ErrProviderNotFound)
+	require.Len(t, fixture.vault.creds, 1)
+}
+
+func TestConnectServiceDisconnectLegacyTicketUsesCurrentProviders(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		provider   string
+		wantErr    error
+		wantStored int
+	}{
+		{
+			name:     "configured provider",
+			provider: connectAuditProviderID,
+		},
+		{
+			name:       "unconfigured provider",
+			provider:   "other-provider",
+			wantErr:    oauth.ErrProviderNotFound,
+			wantStored: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			fixture := newConnectAuditFixture(
+				t,
+				oauthmocks.NewConnectAuditor(t),
+				"https://unused.example/token",
+			)
+			ticket := completeConnectTicket(fixture)
+			ticket.ConsumerID = ""
+			ticket.AuthID = ""
+			ticket.Providers = nil
+			fixture.store.tickets["ticket-sentinel"] = ticket
+			credential, err := vaultdomain.NewCredential(
+				fixture.gatewayID,
+				ticket.PrincipalSub,
+				tt.provider,
+				"",
+				"access-token-sentinel",
+				"",
+				nil,
+				time.Now().Add(time.Hour),
+			)
+			require.NoError(t, err)
+			fixture.vault.creds = map[string]*vaultdomain.Credential{
+				fixture.vault.k(fixture.gatewayID, ticket.PrincipalSub, tt.provider): credential,
+			}
+
+			err = fixture.service.Disconnect(
+				context.Background(),
+				"ticket-sentinel",
+				tt.provider,
+			)
+
+			if tt.wantErr == nil {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, tt.wantErr)
+			}
+			require.Len(t, fixture.vault.creds, tt.wantStored)
+		})
+	}
+}
+
+func TestConnectServiceRejectsStaleAPIKeyTicketIdentity(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		mutate func(*appconsumer.RoutableConsumer)
+	}{
+		{
+			name: "consumer recreated",
+			mutate: func(target *appconsumer.RoutableConsumer) {
+				target.Consumer.ID = ids.New[ids.ConsumerKind]()
+			},
+		},
+		{
+			name: "auth detached",
+			mutate: func(target *appconsumer.RoutableConsumer) {
+				target.Consumer.AuthIDs = nil
+				target.Auths = nil
+			},
+		},
+		{
+			name: "auth disabled",
+			mutate: func(target *appconsumer.RoutableConsumer) {
+				target.Auths[0].Enabled = false
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			fixture := newConnectAuditFixture(
+				t,
+				oauthmocks.NewConnectAuditor(t),
+				"https://unused.example/token",
+			)
+			ticket := completeConnectTicket(fixture)
+			fixture.store.tickets["ticket-sentinel"] = ticket
+			credential, err := vaultdomain.NewCredential(
+				fixture.gatewayID,
+				ticket.PrincipalSub,
+				connectAuditProviderID,
+				"",
+				"access-token-sentinel",
+				"",
+				nil,
+				time.Now().Add(time.Hour),
+			)
+			require.NoError(t, err)
+			fixture.vault.creds = map[string]*vaultdomain.Credential{
+				fixture.vault.k(
+					fixture.gatewayID,
+					ticket.PrincipalSub,
+					connectAuditProviderID,
+				): credential,
+			}
+			target, ok := fixture.data.MatchSlug("runtime")
+			require.True(t, ok)
+			tt.mutate(target)
+
+			err = fixture.service.Disconnect(
+				context.Background(),
+				"ticket-sentinel",
+				connectAuditProviderID,
+			)
+
+			require.ErrorIs(t, err, oauth.ErrTicketNotFound)
+			require.Len(t, fixture.vault.creds, 1)
+		})
+	}
+}
+
+func TestConnectServiceConcurrentDisconnectAuditsExactlyOnce(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	auditor := oauthmocks.NewConnectAuditor(t)
+	fixture := newConnectAuditFixture(t, auditor, "https://unused.example/token")
+	ticket := completeConnectTicket(fixture)
+	fixture.store.tickets["ticket-sentinel"] = ticket
+	identity := oauth.ConnectAuditIdentity{
+		GatewayID:  fixture.gatewayID.String(),
+		ConsumerID: fixture.consumerID.String(),
+		AuthID:     fixture.authID.String(),
+	}
+	auditor.EXPECT().
+		ProviderUnlinked(ctx, identity, connectAuditProviderID).
+		Once()
+
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() {
+		require.NoError(t, client.Close())
+	})
+	cipher, err := crypto.NewCipher("test-secret-key-that-is-long-enough-1234567890")
+	require.NoError(t, err)
+	vault := vaultrepo.NewRedisRepository(client, cipher)
+	credential, err := vaultdomain.NewCredential(
+		fixture.gatewayID,
+		ticket.PrincipalSub,
+		connectAuditProviderID,
+		"",
+		"access-token-sentinel",
+		"",
+		nil,
+		time.Now().Add(time.Hour),
+	)
+	require.NoError(t, err)
+	require.NoError(t, vault.Upsert(ctx, credential))
+	service := oauth.NewConnectService(
+		fixture.store,
+		vault,
+		&stubDataFinder{data: fixture.data},
+		infraoauth.NewProviderClient(nil),
+		infraoauth.NewUpstreamRegistrar(fixture.store, nil),
+		auditor,
+	)
+
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	var wait sync.WaitGroup
+	for range 2 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			results <- service.Disconnect(ctx, "ticket-sentinel", connectAuditProviderID)
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(results)
+
+	var deleted, notFound int
+	for result := range results {
+		switch {
+		case result == nil:
+			deleted++
+		case errors.Is(result, vaultdomain.ErrNotFound):
+			notFound++
+		default:
+			t.Fatalf("unexpected disconnect error: %v", result)
+		}
+	}
+	require.Equal(t, 1, deleted)
+	require.Equal(t, 1, notFound)
+}
+
+func TestConnectServiceCorruptCredentialDoesNotAudit(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	auditor := oauthmocks.NewConnectAuditor(t)
+	fixture := newConnectAuditFixture(t, auditor, "https://unused.example/token")
+	ticket := completeConnectTicket(fixture)
+	fixture.store.tickets["ticket-sentinel"] = ticket
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() {
+		require.NoError(t, client.Close())
+	})
+	cipher, err := crypto.NewCipher("test-secret-key-that-is-long-enough-1234567890")
+	require.NoError(t, err)
+	key := "vault:" + fixture.gatewayID.String() + ":" +
+		ticket.PrincipalSub + ":" + connectAuditProviderID
+	require.NoError(t, server.Set(key, "{corrupt"))
+	service := oauth.NewConnectService(
+		fixture.store,
+		vaultrepo.NewRedisRepository(client, cipher),
+		&stubDataFinder{data: fixture.data},
+		infraoauth.NewProviderClient(nil),
+		infraoauth.NewUpstreamRegistrar(fixture.store, nil),
+		auditor,
+	)
+
+	err = service.Disconnect(ctx, "ticket-sentinel", connectAuditProviderID)
+
+	require.ErrorIs(t, err, vaultdomain.ErrNotFound)
+	raw, err := server.Get(key)
+	require.NoError(t, err)
+	require.Equal(t, "{corrupt", raw)
+}
+
 func TestConnectServiceLifecycleAuditDoesNotLeakSecrets(t *testing.T) {
 	t.Parallel()
 
@@ -245,6 +825,7 @@ func TestConnectServiceLifecycleAuditDoesNotLeakSecrets(t *testing.T) {
 		"/runtime/mcp",
 		fixture.consumerID,
 		fixture.authID,
+		[]string{connectAuditProviderID},
 	)
 	require.NoError(t, err)
 	location, err := fixture.service.Start(
@@ -320,16 +901,38 @@ func TestConnectServiceSkipsAuditForNonAPIKeyTicket(t *testing.T) {
 	require.Empty(t, ticket.AuthID)
 }
 
-func TestConnectServiceSkipsAuditForIncompleteTickets(t *testing.T) {
+func TestConnectServiceRejectsPartialAPIKeyTicketIdentity(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		consumerID string
-		authID     string
+		name   string
+		mutate func(*oauth.ConnectTicket)
 	}{
-		{name: "missing consumer", authID: "auth-sentinel"},
-		{name: "missing auth", consumerID: "consumer-sentinel"},
+		{
+			name: "missing consumer",
+			mutate: func(ticket *oauth.ConnectTicket) {
+				ticket.ConsumerID = ""
+			},
+		},
+		{
+			name: "missing auth",
+			mutate: func(ticket *oauth.ConnectTicket) {
+				ticket.AuthID = ""
+			},
+		},
+		{
+			name: "identity without provider snapshot",
+			mutate: func(ticket *oauth.ConnectTicket) {
+				ticket.Providers = nil
+			},
+		},
+		{
+			name: "provider snapshot without identity",
+			mutate: func(ticket *oauth.ConnectTicket) {
+				ticket.ConsumerID = ""
+				ticket.AuthID = ""
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -341,8 +944,7 @@ func TestConnectServiceSkipsAuditForIncompleteTickets(t *testing.T) {
 			auditor := oauthmocks.NewConnectAuditor(t)
 			fixture := newConnectAuditFixture(t, auditor, "https://unused.example/token")
 			ticket := completeConnectTicket(fixture)
-			ticket.ConsumerID = tt.consumerID
-			ticket.AuthID = tt.authID
+			tt.mutate(&ticket)
 			fixture.store.tickets["ticket-sentinel"] = ticket
 			credential, err := vaultdomain.NewCredential(
 				fixture.gatewayID,
@@ -359,10 +961,14 @@ func TestConnectServiceSkipsAuditForIncompleteTickets(t *testing.T) {
 				fixture.vault.k(fixture.gatewayID, ticket.PrincipalSub, connectAuditProviderID): credential,
 			}
 
-			require.NoError(
-				t,
-				fixture.service.Disconnect(ctx, "ticket-sentinel", connectAuditProviderID),
+			err = fixture.service.Disconnect(
+				ctx,
+				"ticket-sentinel",
+				connectAuditProviderID,
 			)
+
+			require.ErrorIs(t, err, oauth.ErrTicketNotFound)
+			require.Len(t, fixture.vault.creds, 1)
 		})
 	}
 }
@@ -386,6 +992,7 @@ func TestConnectServiceSkipsAuditWhenPersistenceFails(t *testing.T) {
 					"/runtime/mcp",
 					fixture.consumerID,
 					fixture.authID,
+					[]string{connectAuditProviderID},
 				)
 				return err
 			},

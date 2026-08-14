@@ -17,6 +17,7 @@ package oauth_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/stretchr/testify/require"
 )
 
@@ -70,12 +72,77 @@ func TestAPIKeyConnectService_CreateTicket(t *testing.T) {
 			appconsumer.MCPPath(slug),
 			target.Consumer.ID,
 			authID,
+			[]string{},
 		).
 		Return("ticket-123", nil).
 		Once()
 
 	service := oauth.NewAPIKeyConnectService(apiKeyFinder, dataFinder, connectService, limiter)
 	ticket, err := service.CreateTicket(ctx, gatewayID, slug, rawKey)
+
+	require.NoError(t, err)
+	require.Equal(t, "ticket-123", ticket)
+}
+
+func TestAPIKeyConnectService_CreateTicketSnapshotsProviders(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	gatewayID := ids.New[ids.GatewayKind]()
+	authID := ids.New[ids.AuthKind]()
+	data := consumerData(
+		gatewayID,
+		gatewayID,
+		"runtime",
+		consumerdomain.TypeMCP,
+		true,
+		authID,
+	)
+	target, ok := data.MatchSlug("runtime")
+	require.True(t, ok)
+	for index, provider := range []string{"provider-z", "provider-a", "provider-z"} {
+		registry, err := registrydomain.NewMCPRegistry(
+			gatewayID,
+			fmt.Sprintf("registry-%d", index),
+			"",
+			&registrydomain.MCPTarget{
+				URL: "https://upstream.example/mcp",
+				Auth: &registrydomain.MCPAuth{
+					Mode:         registrydomain.MCPAuthModeForwarded,
+					Provider:     provider,
+					Registration: registrydomain.RegistrationAuto,
+				},
+			},
+		)
+		require.NoError(t, err)
+		target.Registries = append(target.Registries, registry)
+	}
+	auth := validAPIKeyAuth(gatewayID, authID)
+	dataFinder := appconsumermocks.NewDataFinder(t)
+	apiKeyFinder := appauthmocks.NewAPIKeyFinder(t)
+	connectService := oauthmocks.NewConnectService(t)
+	dataFinder.EXPECT().FindByGateway(ctx, gatewayID).Return(data, nil).Once()
+	apiKeyFinder.EXPECT().FindByAPIKey(ctx, "ag_secret").Return(auth, nil).Once()
+	connectService.EXPECT().
+		CreateAPIKeyTicket(
+			ctx,
+			gatewayID,
+			auth.Name,
+			"/runtime/mcp",
+			target.Consumer.ID,
+			authID,
+			[]string{"provider-a", "provider-z"},
+		).
+		Return("ticket-123", nil).
+		Once()
+
+	service := oauth.NewAPIKeyConnectService(
+		apiKeyFinder,
+		dataFinder,
+		connectService,
+		oauth.NewNoopConnectAttemptLimiter(),
+	)
+	ticket, err := service.CreateTicket(ctx, gatewayID, "runtime", "ag_secret")
 
 	require.NoError(t, err)
 	require.Equal(t, "ticket-123", ticket)
@@ -236,6 +303,7 @@ func TestAPIKeyConnectService_CreateTicketConsumerBoundary(t *testing.T) {
 			"/runtime/mcp",
 			target.Consumer.ID,
 			authID,
+			[]string{},
 		).
 		Return("ticket-123", nil).
 		Times(100)
@@ -462,6 +530,7 @@ func TestAPIKeyConnectService_CreateTicketWrapsDependencyErrors(t *testing.T) {
 							"/runtime/mcp",
 							target.Consumer.ID,
 							authID,
+							[]string{},
 						).
 						Return("", dependencyErr).
 						Once()

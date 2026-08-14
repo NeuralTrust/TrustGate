@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -70,13 +71,16 @@ func (s *connectService) CreateAPIKeyTicket(
 	consumerPath string,
 	consumerID ids.ConsumerID,
 	authID ids.AuthID,
+	providers []string,
 ) (string, error) {
+	providerSnapshot := append([]string(nil), providers...)
 	ticket := ConnectTicket{
 		GatewayID:    gatewayID.String(),
 		PrincipalSub: principalSub,
 		ConsumerPath: consumerPath,
 		ConsumerID:   consumerID.String(),
 		AuthID:       authID.String(),
+		Providers:    &providerSnapshot,
 	}
 	id, err := s.mintTicket(ctx, ticket)
 	if err != nil {
@@ -113,6 +117,9 @@ func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPag
 		if cfg == nil {
 			continue
 		}
+		if !connectProviderAllowed(ticket, data, rc, cfg.Provider) {
+			continue
+		}
 		status := ProviderStatus{Provider: cfg.Provider, Registry: reg.Name}
 		cred, err := s.vault.Find(ctx, gatewayID, ticket.PrincipalSub, cfg.Provider)
 		switch {
@@ -136,6 +143,9 @@ func (s *connectService) Start(ctx context.Context, baseURL, ticketID, provider 
 	ticket, gatewayID, data, rc, err := s.resolve(ctx, ticketID)
 	if err != nil {
 		return "", err
+	}
+	if !connectProviderAllowed(ticket, data, rc, provider) {
+		return "", ErrProviderNotFound
 	}
 	reg := providerRegistry(data.EffectiveRegistries(rc), provider)
 	if reg == nil {
@@ -179,6 +189,9 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	if err != nil {
 		return st.TicketID, err
 	}
+	if !connectProviderAllowed(&st.Ticket, data, rc, provider) {
+		return st.TicketID, ErrProviderNotFound
+	}
 	reg := providerRegistry(data.EffectiveRegistries(rc), provider)
 	if reg == nil {
 		return st.TicketID, ErrProviderNotFound
@@ -208,9 +221,12 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 }
 
 func (s *connectService) Disconnect(ctx context.Context, ticketID, provider string) error {
-	ticket, gatewayID, _, _, err := s.resolve(ctx, ticketID)
+	ticket, gatewayID, data, rc, err := s.resolve(ctx, ticketID)
 	if err != nil {
 		return err
+	}
+	if !connectProviderAllowed(ticket, data, rc, provider) {
+		return ErrProviderNotFound
 	}
 	if err := s.vault.Delete(ctx, gatewayID, ticket.PrincipalSub, provider); err != nil {
 		return err
@@ -249,7 +265,71 @@ func (s *connectService) routable(ctx context.Context, ticket *ConnectTicket) (i
 	if !ok {
 		return ids.GatewayID{}, nil, nil, fmt.Errorf("oauth connect: consumer path %s no longer exists", ticket.ConsumerPath)
 	}
+	if apiKeyConnectTicket(ticket) &&
+		(ticket.Providers == nil ||
+			ticket.ConsumerID == "" ||
+			ticket.AuthID == "" ||
+			!currentAPIKeyIdentity(ticket, rc, gatewayID)) {
+		return ids.GatewayID{}, nil, nil, ErrTicketNotFound
+	}
 	return gatewayID, data, rc, nil
+}
+
+func apiKeyConnectTicket(ticket *ConnectTicket) bool {
+	return ticket != nil &&
+		(ticket.Providers != nil || ticket.ConsumerID != "" || ticket.AuthID != "")
+}
+
+func currentAPIKeyIdentity(
+	ticket *ConnectTicket,
+	rc *appconsumer.RoutableConsumer,
+	gatewayID ids.GatewayID,
+) bool {
+	if ticket == nil || rc == nil || rc.Consumer == nil ||
+		rc.Consumer.ID.String() != ticket.ConsumerID {
+		return false
+	}
+	for _, auth := range rc.Auths {
+		if auth != nil && auth.ID.String() == ticket.AuthID {
+			return validAPIKeyAuth(auth, rc.Consumer, gatewayID)
+		}
+	}
+	return false
+}
+
+func connectProviderAllowed(
+	ticket *ConnectTicket,
+	data *appconsumer.Data,
+	rc *appconsumer.RoutableConsumer,
+	provider string,
+) bool {
+	if ticket.Providers == nil {
+		return providerRegistry(data.EffectiveRegistries(rc), provider) != nil
+	}
+	for _, allowed := range *ticket.Providers {
+		if allowed == provider {
+			return true
+		}
+	}
+	return false
+}
+
+func forwardedProviderIDs(registries []*registrydomain.Registry) []string {
+	providers := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, registry := range registries {
+		cfg := forwardedAuth(registry)
+		if cfg == nil {
+			continue
+		}
+		if _, ok := seen[cfg.Provider]; ok {
+			continue
+		}
+		seen[cfg.Provider] = struct{}{}
+		providers = append(providers, cfg.Provider)
+	}
+	sort.Strings(providers)
+	return providers
 }
 
 func forwardedAuth(reg *registrydomain.Registry) *registrydomain.MCPAuth {
