@@ -41,10 +41,12 @@ type ConnectTicket struct {
 }
 
 type ConnectState struct {
-	Ticket   ConnectTicket `json:"ticket"`
-	TicketID string        `json:"ticket_id"`
-	Provider string        `json:"provider"`
-	Verifier string        `json:"verifier,omitempty"`
+	Ticket        ConnectTicket `json:"ticket"`
+	TicketID      string        `json:"ticket_id"`
+	Provider      string        `json:"provider"`
+	Verifier      string        `json:"verifier,omitempty"`
+	Issuer        string        `json:"issuer,omitempty"`
+	IssAdvertised bool          `json:"iss_advertised,omitempty"`
 }
 
 type ConnectStore interface {
@@ -78,7 +80,7 @@ type ConnectService interface {
 	CreateTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) (string, error)
 	Page(ctx context.Context, ticketID string) (*ConnectPage, error)
 	Start(ctx context.Context, baseURL, ticketID, provider string) (string, error)
-	Callback(ctx context.Context, baseURL, provider, state, code, errCode, errDesc string) (string, error)
+	Callback(ctx context.Context, baseURL, provider, state, code, errCode, errDesc, iss string) (string, error)
 	Disconnect(ctx context.Context, ticketID, provider string) error
 	RefreshAuth(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) (*registrydomain.MCPAuth, error)
 	ChainURL(ctx context.Context, baseURL string, gatewayID ids.GatewayID, resource, principalSub, resumeURL string) (string, error)

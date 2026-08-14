@@ -64,6 +64,7 @@ func (g *RPCGateway) startSpan(ctx context.Context, method string, params json.R
 	span := rt.StartSpan(trace.SpanMCP, method)
 	operation, tool, prompt, resourceURI := mcpRequestAttrs(method, params)
 	span.SetMCPRequest(method, operation, tool, prompt, resourceURI)
+	stampMCPProtocol(span, ctx)
 	return span, trace.NewSpanContext(ctx, span)
 }
 
