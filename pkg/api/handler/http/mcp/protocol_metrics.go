@@ -110,6 +110,8 @@ func validationClassForCode(code int) (ValidationClass, bool) {
 	switch code {
 	case codeHeaderMismatch:
 		return ValidationClassHeaderMismatch, true
+	case codeAcceptanceDenied:
+		return ValidationClassAcceptanceDenied, true
 	case codeUnsupportedProtocolVersion:
 		return ValidationClassUnsupportedVersion, true
 	case codeInvalidRequest:

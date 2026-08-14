@@ -53,16 +53,16 @@ Each child PR must show only its slice; merge to `main` in order and retarget th
 
 ## Phase 3: Consumer gate (PR 3)
 
-- [ ] 3.1 RED: `toolkit_test.go` / `mcp_policy` tests — empty → `dual_era`; invalid rejected; `legacy_only`/`dual_era` accepted. Spec: Default preserves dual-era.
-- [ ] 3.2 GREEN: `ProtocolAcceptance` on `pkg/domain/consumer/mcp_policy.go`; accessor on `consumer.go`; default empty → `dual_era` in `Validate`.
-- [ ] 3.3 GREEN: API `protocol_acceptance` on `pkg/api/handler/http/consumer/request/*.go` + `response/`; thread through `pkg/app/consumer/creator.go` + `updater.go` like `fail_mode`.
-- [ ] 3.4 GREEN: goose migration `ADD COLUMN IF NOT EXISTS protocol_acceptance TEXT` (nullable, MCP-only like `fail_mode`); persist/scan in `pkg/infra/repository/consumer/repository.go` + `repository_test.go`. Snapshot/JSONB hydrate must round-trip without process restart. Spec: Config sync round-trip.
-- [ ] 3.5 GREEN: after `resolveMCPConsumer` and before dispatch in `mcp_handler.go`: `legacy_only` + modern → HTTP 400 bounded error, `validation_class=acceptance_denied`, `skipMetrics`, no composer/upstream; `legacy_only` + legacy unchanged; unset/`dual_era` keeps dual-era. Spec: Legacy-only rejects modern; Legacy-only accepts legacy; Default preserves dual-era.
-- [ ] 3.6 `clean-comments`; `/reviewer` + `/verifier`: `go test -race ./pkg/domain/consumer ./pkg/app/consumer ./pkg/api/handler/http/consumer ./pkg/api/handler/http/mcp ./pkg/infra/repository/consumer`, `go vet ./...`, `golangci-lint run`. If diff >400, add `size:exception`.
+- [x] 3.1 RED: `toolkit_test.go` / `mcp_policy` tests — empty → `dual_era`; invalid rejected; `legacy_only`/`dual_era` accepted. Spec: Default preserves dual-era.
+- [x] 3.2 GREEN: `ProtocolAcceptance` on `pkg/domain/consumer/mcp_policy.go`; accessor on `consumer.go`; default empty → `dual_era` in `Validate`.
+- [x] 3.3 GREEN: API `protocol_acceptance` on `pkg/api/handler/http/consumer/request/*.go` + `response/`; thread through `pkg/app/consumer/creator.go` + `updater.go` like `fail_mode`.
+- [x] 3.4 GREEN: goose migration `ADD COLUMN IF NOT EXISTS protocol_acceptance TEXT` (nullable, MCP-only like `fail_mode`); persist/scan in `pkg/infra/repository/consumer/repository.go` + `repository_test.go`. Snapshot/JSONB hydrate must round-trip without process restart. Spec: Config sync round-trip.
+- [x] 3.5 GREEN: after `resolveMCPConsumer` and before dispatch in `mcp_handler.go`: `legacy_only` + modern → HTTP 400 bounded error, `validation_class=acceptance_denied`, `skipMetrics`, no composer/upstream; `legacy_only` + legacy unchanged; unset/`dual_era` keeps dual-era. Spec: Legacy-only rejects modern; Legacy-only accepts legacy; Default preserves dual-era.
+- [x] 3.6 `clean-comments`; `/reviewer` + `/verifier`: `go test -race ./pkg/domain/consumer ./pkg/app/consumer ./pkg/api/handler/http/consumer ./pkg/api/handler/http/mcp ./pkg/infra/repository/consumer`, `go vet ./...`, `golangci-lint run`. If diff >400, add `size:exception`.
 
 ## Phase 4: Docs (PR 4)
 
-- [ ] 4.1 Document `trustgate.mcp.protocol_era` / `protocol_version` (bounded; unknown → `unsupported`) in `docs/telemetry/otlp-metadata-contract.md`.
-- [ ] 4.2 Document northbound `validation_total` and southbound decision/probe instruments + `OPS_METRICS_ENABLED` in `docs/operational-metrics.md`. Enum labels only; no origin/PII.
-- [ ] 4.3 Create `docs/mcp/dual-era-rollout.md`: dashboards (cache hits vs probes, validation classes including `acceptance_denied`), config rollback (`protocol_acceptance=legacy_only` and/or `protocol_mode=legacy`) without redeploy, deprecation exit (12 months, residual usage, notice, approval). MUST NOT remove legacy. Spec: Rollback without redeploy; Deprecation exit published.
-- [ ] 4.4 Link the runbook from `docs/mcp/testing-guide.md`. No e2e unless already covered.
+- [x] 4.1 Document `trustgate.mcp.protocol_era` / `protocol_version` (bounded; unknown → `unsupported`) in `docs/telemetry/otlp-metadata-contract.md`.
+- [x] 4.2 Document northbound `validation_total` and southbound decision/probe instruments + `OPS_METRICS_ENABLED` in `docs/operational-metrics.md`. Enum labels only; no origin/PII.
+- [x] 4.3 Create `docs/mcp/dual-era-rollout.md`: dashboards (cache hits vs probes, validation classes including `acceptance_denied`), config rollback (`protocol_acceptance=legacy_only` and/or `protocol_mode=legacy`) without redeploy, deprecation exit (12 months, residual usage, notice, approval). MUST NOT remove legacy. Spec: Rollback without redeploy; Deprecation exit published.
+- [x] 4.4 Link the runbook from `docs/mcp/testing-guide.md`. No e2e unless already covered.
