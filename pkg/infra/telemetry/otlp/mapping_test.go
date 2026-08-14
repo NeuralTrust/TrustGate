@@ -20,15 +20,16 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/stretchr/testify/assert"
+	"go.opentelemetry.io/otel/attribute"
 	otellog "go.opentelemetry.io/otel/log"
 )
 
 func strptr(s string) *string { return &s }
 
-func attrsOf(rec otellog.Record) map[string]otellog.Value {
-	m := make(map[string]otellog.Value, rec.AttributesLen())
-	rec.WalkAttributes(func(kv otellog.KeyValue) bool {
-		m[kv.Key] = kv.Value
+func attrsOf(rec otellog.Record) map[string]attribute.Value {
+	m := make(map[string]attribute.Value, rec.AttributesLen())
+	rec.WalkAttributes(func(kv attribute.KeyValue) bool {
+		m[string(kv.Key)] = kv.Value
 		return true
 	})
 	return m
@@ -94,9 +95,8 @@ func TestEventToRecord_StandardAndProprietaryCoexist(t *testing.T) {
 	assert.Equal(t, int64(200), attrs["http.response.status_code"].AsInt64())
 	assert.Equal(t, "/v1/chat/completions", attrs["url.path"].AsString())
 
-	finish := attrs["gen_ai.response.finish_reasons"].AsSlice()
-	assert.Len(t, finish, 1)
-	assert.Equal(t, "stop", finish[0].AsString())
+	finish := attrs["gen_ai.response.finish_reasons"].AsStringSlice()
+	assert.Equal(t, []string{"stop"}, finish)
 
 	assert.Equal(t, int64(events.SchemaVersion), attrs["trustgate.schema_version"].AsInt64())
 	assert.Equal(t, "trace-123", attrs["trustgate.trace_id"].AsString())

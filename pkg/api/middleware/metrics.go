@@ -27,7 +27,6 @@ import (
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 )
 
 type MetricsMiddleware struct {
@@ -57,7 +56,7 @@ func (m *MetricsMiddleware) Middleware() fiber.Handler {
 		gw := gatewayFromContext(c)
 		exporters := gatewayExporters(gw)
 
-		traceID := m.resolveTraceID(c)
+		traceID := newTraceID()
 		c.Set(HeaderTraceID, traceID)
 		requestTrace := trace.New(traceID, m.buildTraceMetadata(c, gatewayID, gw))
 		// Gating is set once here, before the trace is shared with any
@@ -120,13 +119,6 @@ func (m *MetricsMiddleware) enabled() bool {
 	return m.telemetryEnabled
 }
 
-func (m *MetricsMiddleware) resolveTraceID(c *fiber.Ctx) string {
-	if tid := c.Get(HeaderTraceID); tid != "" {
-		return tid
-	}
-	return uuid.New().String()
-}
-
 func (m *MetricsMiddleware) attachTrace(c *fiber.Ctx, requestTrace *trace.RequestTrace) {
 	c.SetUserContext(trace.NewContext(c.UserContext(), requestTrace))
 }
@@ -134,7 +126,7 @@ func (m *MetricsMiddleware) attachTrace(c *fiber.Ctx, requestTrace *trace.Reques
 func (m *MetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string, gw *gatewaydomain.Gateway) trace.Metadata {
 	meta := trace.Metadata{
 		GatewayID: gatewayID,
-		TenantID:    gw.TenantID(),
+		TenantID:  gw.TenantID(),
 		Path:      c.Path(),
 		Method:    c.Method(),
 		IP:        c.IP(),
@@ -152,9 +144,9 @@ func (m *MetricsMiddleware) buildRequestContext(c *fiber.Ctx, gatewayID string) 
 	}
 
 	query := url.Values{}
-	c.Context().QueryArgs().VisitAll(func(key, value []byte) {
+	for key, value := range c.Context().QueryArgs().All() {
 		query.Add(string(key), string(value))
-	})
+	}
 
 	return &infracontext.RequestContext{
 		GatewayID: gatewayID,

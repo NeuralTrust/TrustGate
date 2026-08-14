@@ -92,3 +92,53 @@ func TestCredentialsFromTargetAuth_Azure(t *testing.T) {
 		})
 	}
 }
+
+func TestCredentialsFromTargetAuth_GCPServiceAccount(t *testing.T) {
+	t.Parallel()
+
+	serviceAccount := `{"type":"service_account","client_email":"sa@proj.iam.gserviceaccount.com"}`
+	empty := ""
+
+	tests := []struct {
+		name    string
+		auth    *registry.TargetAuth
+		wantSA  string
+		wantNil bool
+	}{
+		{
+			name:   "service account json is carried over",
+			auth:   registry.NewGCPServiceAccountAuth(serviceAccount),
+			wantSA: serviceAccount,
+		},
+		{
+			name:    "empty payload yields no credentials",
+			auth:    &registry.TargetAuth{Type: registry.AuthTypeGCPServiceAccount, GCPServiceAccount: &empty},
+			wantNil: true,
+		},
+		{
+			name:    "missing payload yields no credentials",
+			auth:    &registry.TargetAuth{Type: registry.AuthTypeGCPServiceAccount},
+			wantNil: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			creds := providers.CredentialsFromTargetAuth(tc.auth)
+			if tc.wantNil {
+				if creds.GCP != nil {
+					t.Fatalf("GCP credentials = %+v, want nil", *creds.GCP)
+				}
+				return
+			}
+			if creds.GCP == nil {
+				t.Fatal("GCP credentials are nil: the service account payload never reaches the provider client")
+			}
+			if creds.GCP.ServiceAccountJSON != tc.wantSA {
+				t.Fatalf("ServiceAccountJSON = %q, want %q", creds.GCP.ServiceAccountJSON, tc.wantSA)
+			}
+		})
+	}
+}

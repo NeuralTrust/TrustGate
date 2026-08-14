@@ -33,6 +33,7 @@ import (
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -137,6 +138,55 @@ func TestMetricsMiddleware_TraceIDMatchesTraceIDHeader(t *testing.T) {
 	defer mu.Unlock()
 	require.Equal(t, 1, processCalls)
 	assert.Equal(t, respTraceID, gotTraceID, "event TraceID must equal the X-AG-Trace-Id returned to the client")
+}
+
+func TestMetricsMiddleware_IgnoresInboundTraceIDHeader(t *testing.T) {
+	const inbound = "550e8400-e29b-41d4-a716-446655440000"
+	worker := appmetricsmocks.NewWorker(t)
+
+	var (
+		mu         sync.Mutex
+		gotTraceID string
+	)
+	worker.EXPECT().
+		Process(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Run(func(rt *trace.RequestTrace, _ *infracontext.RequestContext, _ *infracontext.ResponseContext, _ time.Time, _ time.Time, _ []telemetrydomain.ExporterConfig) {
+			mu.Lock()
+			defer mu.Unlock()
+			gotTraceID = rt.TraceID()
+		}).
+		Return().
+		Once()
+
+	cfg := &config.Config{}
+	cfg.Telemetry.Enabled = true
+	mw := middleware.NewMetricsMiddleware(worker, cfg)
+
+	gatewayID := ids.New[ids.GatewayKind]()
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		c.SetUserContext(appconsumer.WithGatewayID(c.UserContext(), gatewayID))
+		return c.Next()
+	})
+	app.Use(mw.Middleware())
+	app.Post("/v1/chat/completions", func(c *fiber.Ctx) error {
+		return c.Status(fiber.StatusOK).SendString("ok")
+	})
+
+	req := httptest.NewRequest(fiber.MethodPost, "/v1/chat/completions", nil)
+	req.Header.Set(middleware.HeaderTraceID, inbound)
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	respTraceID := resp.Header.Get(middleware.HeaderTraceID)
+	assert.NotEqual(t, inbound, respTraceID, "a caller must not choose the trace id that keys telemetry")
+	_, parseErr := uuid.Parse(respTraceID)
+	require.NoError(t, parseErr, "minted trace id must be a UUID, got %q", respTraceID)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, respTraceID, gotTraceID)
 }
 
 func TestMetricsMiddleware_StreamingEmitsViaFinalizer(t *testing.T) {
