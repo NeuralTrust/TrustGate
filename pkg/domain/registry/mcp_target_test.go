@@ -15,6 +15,7 @@
 package registry
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -48,6 +49,69 @@ func TestNewMCPRegistry_HappyPath(t *testing.T) {
 	}
 	if b.MCPTarget.Transport != MCPTransportStreamableHTTP {
 		t.Fatalf("Transport = %q, want default streamable-http", b.MCPTarget.Transport)
+	}
+	if b.MCPTarget.ProtocolMode != MCPProtocolModeAuto {
+		t.Fatalf("ProtocolMode = %q, want auto", b.MCPTarget.ProtocolMode)
+	}
+}
+
+func TestMCPTarget_ProtocolModeValidation(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []MCPProtocolMode{MCPProtocolModeAuto, MCPProtocolModeModern, MCPProtocolModeLegacy} {
+		mode := mode
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			target := validMCPTarget()
+			target.ProtocolMode = mode
+			if err := target.Validate(); err != nil {
+				t.Fatalf("Validate() = %v, want nil", err)
+			}
+		})
+	}
+
+	target := validMCPTarget()
+	target.ProtocolMode = "future"
+	if err := target.Validate(); !errors.Is(err, ErrInvalidMCPTarget) {
+		t.Fatalf("Validate() = %v, want ErrInvalidMCPTarget", err)
+	}
+}
+
+func TestMCPTarget_AcceptsUppercaseHTTPS(t *testing.T) {
+	t.Parallel()
+
+	target := validMCPTarget()
+	target.URL = "HTTPS://MCP.EXAMPLE.COM/mcp"
+	if err := target.Validate(); err != nil {
+		t.Fatalf("Validate() = %v, want nil", err)
+	}
+}
+
+func TestMCPTarget_JSONRoundTripDefaultsAndValidatesProtocolMode(t *testing.T) {
+	t.Parallel()
+	var old MCPTarget
+	if err := json.Unmarshal([]byte(`{"url":"https://mcp.example.com/mcp"}`), &old); err != nil {
+		t.Fatalf("Unmarshal old target: %v", err)
+	}
+	if old.ProtocolMode != MCPProtocolModeAuto {
+		t.Fatalf("old ProtocolMode = %q, want auto", old.ProtocolMode)
+	}
+
+	want := validMCPTarget()
+	want.ProtocolMode = MCPProtocolModeLegacy
+	raw, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var got MCPTarget
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.ProtocolMode != MCPProtocolModeLegacy {
+		t.Fatalf("round-trip ProtocolMode = %q, want legacy", got.ProtocolMode)
+	}
+
+	if err := json.Unmarshal([]byte(`{"url":"https://mcp.example.com/mcp","protocol_mode":"future"}`), &got); !errors.Is(err, ErrInvalidMCPTarget) {
+		t.Fatalf("invalid Unmarshal error = %v, want ErrInvalidMCPTarget", err)
 	}
 }
 

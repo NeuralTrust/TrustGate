@@ -142,17 +142,29 @@ func (s *memFlowStore) TakeCode(_ context.Context, code string) (*CodeGrant, err
 // fakeIdP serves AS metadata and a token endpoint, capturing the exchange form.
 func fakeIdP(t *testing.T) (*httptest.Server, *url.Values) {
 	t.Helper()
+	srv, captured, _ := fakeIdPConfigured(t, false)
+	return srv, captured
+}
+
+func fakeIdPConfigured(t *testing.T, advertiseISS bool) (*httptest.Server, *url.Values, *int) {
+	t.Helper()
 	captured := &url.Values{}
+	tokenHits := 0
 	var srv *httptest.Server
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/.well-known/oauth-authorization-server":
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			doc := map[string]any{
 				"issuer":                 srv.URL,
 				"authorization_endpoint": srv.URL + "/authorize",
 				"token_endpoint":         srv.URL + "/token",
-			})
+			}
+			if advertiseISS {
+				doc["authorization_response_iss_parameter_supported"] = true
+			}
+			_ = json.NewEncoder(w).Encode(doc)
 		case "/token":
+			tokenHits++
 			if err := r.ParseForm(); err != nil {
 				http.Error(w, "bad form", http.StatusBadRequest)
 				return
@@ -169,7 +181,7 @@ func fakeIdP(t *testing.T) (*httptest.Server, *url.Values) {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	return srv, captured
+	return srv, captured, &tokenHits
 }
 
 func newProxyUnderTest(t *testing.T, idpURL string, store FlowStore) AuthProxy {
@@ -224,7 +236,7 @@ func TestBrokeredFlowEndToEnd(t *testing.T) {
 	gwState := q.Get("state")
 
 	// Leg 2: IdP callback -> gateway exchanges code, mints its own.
-	clientLoc, err := proxy.Callback(ctx, "http://gw.example.com", gwState, "idp-code", "", "")
+	clientLoc, err := proxy.Callback(ctx, "http://gw.example.com", gwState, "idp-code", "", "", "")
 	if err != nil {
 		t.Fatalf("callback: %v", err)
 	}
@@ -417,7 +429,7 @@ func TestCallbackRelaysIdPDenial(t *testing.T) {
 		State:       "client-state",
 	})
 
-	loc, err := proxy.Callback(ctx, "http://gw.example.com", "gw-state", "", "access_denied", "user cancelled")
+	loc, err := proxy.Callback(ctx, "http://gw.example.com", "gw-state", "", "access_denied", "user cancelled", "")
 	if err != nil {
 		t.Fatalf("callback: %v", err)
 	}
@@ -508,7 +520,7 @@ func TestResourceScopedFacadeSelectsIdPPerTenant(t *testing.T) {
 	}
 
 	// Callback must exchange the code at the same IdP (pinned via AuthID).
-	if _, err := proxy.Callback(ctx, "http://gw.example.com", loc.Query().Get("state"), "idp-code", "", ""); err != nil {
+	if _, err := proxy.Callback(ctx, "http://gw.example.com", loc.Query().Get("state"), "idp-code", "", "", ""); err != nil {
 		t.Fatalf("callback: %v", err)
 	}
 	if len(*capturedA) != 0 {
@@ -858,7 +870,7 @@ func TestCallbackChainsDownstreamConsent(t *testing.T) {
 	proxy := chainProxyUnderTest(t, idp.URL, store, chainer)
 
 	gwState := authorizeAndGetState(t, proxy, "http://gw.example.com/v1/mcp/linear")
-	loc, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "")
+	loc, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "", "")
 	if err != nil {
 		t.Fatalf("callback: %v", err)
 	}
@@ -887,7 +899,7 @@ func TestCallbackSkipsChainWhenNothingToLink(t *testing.T) {
 	proxy := chainProxyUnderTest(t, idp.URL, store, chainer)
 
 	gwState := authorizeAndGetState(t, proxy, "http://gw.example.com/v1/mcp/linear")
-	loc, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "")
+	loc, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "", "")
 	if err != nil {
 		t.Fatalf("callback: %v", err)
 	}
@@ -909,7 +921,7 @@ func TestCallbackChainsWithoutResource(t *testing.T) {
 	proxy := chainProxyUnderTest(t, idp.URL, store, chainer)
 
 	gwState := authorizeAndGetState(t, proxy, "")
-	loc, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "")
+	loc, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "", "")
 	if err != nil {
 		t.Fatalf("callback: %v", err)
 	}
@@ -931,7 +943,7 @@ func TestCallbackOpaqueTokenSkipsChain(t *testing.T) {
 	proxy := chainProxyUnderTest(t, idp.URL, store, chainer)
 
 	gwState := authorizeAndGetState(t, proxy, "http://gw.example.com/v1/mcp/linear")
-	loc, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "")
+	loc, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "", "")
 	if err != nil {
 		t.Fatalf("callback: %v", err)
 	}
@@ -940,5 +952,143 @@ func TestCallbackOpaqueTokenSkipsChain(t *testing.T) {
 	}
 	if chainer.calls != 0 {
 		t.Fatalf("chainer must not run without a subject, calls=%d", chainer.calls)
+	}
+}
+
+func TestCallbackRedirectIncludesISS(t *testing.T) {
+	t.Parallel()
+	idp, _ := fakeIdP(t)
+	store := newMemFlowStore()
+	proxy := newProxyUnderTest(t, idp.URL, store)
+	const baseURL = "http://gw.example.com"
+
+	gwState := authorizeAndGetState(t, proxy, "")
+	loc, err := proxy.Callback(context.Background(), baseURL, gwState, "idp-code", "", "", "")
+	if err != nil {
+		t.Fatalf("callback: %v", err)
+	}
+	cu, err := url.Parse(loc)
+	if err != nil {
+		t.Fatalf("parse client redirect: %v", err)
+	}
+	if cu.Query().Get("iss") != baseURL {
+		t.Fatalf("iss = %q, want %s", cu.Query().Get("iss"), baseURL)
+	}
+	if cu.Query().Get("code") == "" {
+		t.Fatal("expected gateway-minted code on redirect")
+	}
+}
+
+func TestCallbackMixUpRejectedBeforeTokenHTTP(t *testing.T) {
+	idp, _, tokenHits := fakeIdPConfigured(t, true)
+	store := newMemFlowStore()
+	proxy := newProxyUnderTest(t, idp.URL, store)
+	buf := captureDefaultSlog(t)
+
+	gwState := authorizeAndGetState(t, proxy, "")
+	_, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code-secret", "", "", "https://attacker.example")
+	var oe *OAuthError
+	if !errors.As(err, &oe) || oe.Code != "invalid_request" {
+		t.Fatalf("error = %v, want invalid_request", err)
+	}
+	if *tokenHits != 0 {
+		t.Fatalf("token HTTP was reached (%d hits); mix-up must fail before redeem", *tokenHits)
+	}
+	logged := buf.String()
+	if !strings.Contains(logged, "oauth.issuer_mismatch") {
+		t.Fatalf("expected oauth.issuer_mismatch, got %s", logged)
+	}
+	assertNoSecrets(t, logged)
+}
+
+func TestCallbackMatchingISSAccepted(t *testing.T) {
+	t.Parallel()
+	idp, _, tokenHits := fakeIdPConfigured(t, true)
+	store := newMemFlowStore()
+	proxy := newProxyUnderTest(t, idp.URL, store)
+
+	gwState := authorizeAndGetState(t, proxy, "")
+	loc, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "", idp.URL)
+	if err != nil {
+		t.Fatalf("callback: %v", err)
+	}
+	if *tokenHits != 1 {
+		t.Fatalf("token hits = %d, want 1 after matching iss", *tokenHits)
+	}
+	cu, _ := url.Parse(loc)
+	if cu.Query().Get("iss") != "http://gw.example.com" {
+		t.Fatalf("client redirect iss = %q", cu.Query().Get("iss"))
+	}
+}
+
+func TestCallbackMissingISSRejectedWhenAdvertised(t *testing.T) {
+	t.Parallel()
+	idp, _, tokenHits := fakeIdPConfigured(t, true)
+	store := newMemFlowStore()
+	proxy := newProxyUnderTest(t, idp.URL, store)
+
+	gwState := authorizeAndGetState(t, proxy, "")
+	_, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code-secret", "", "", "")
+	var oe *OAuthError
+	if !errors.As(err, &oe) || oe.Code != "invalid_request" {
+		t.Fatalf("error = %v, want invalid_request", err)
+	}
+	if *tokenHits != 0 {
+		t.Fatalf("token HTTP was reached (%d hits); missing iss must skip redeem", *tokenHits)
+	}
+}
+
+func TestCallbackGoogleOmitISSAllowedWhenNotAdvertised(t *testing.T) {
+	t.Parallel()
+	idp, captured, tokenHits := fakeIdPConfigured(t, false)
+	store := newMemFlowStore()
+	proxy := newProxyUnderTest(t, idp.URL, store)
+
+	gwState := authorizeAndGetState(t, proxy, "")
+	loc, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "", "")
+	if err != nil {
+		t.Fatalf("omit-iss callback: %v", err)
+	}
+	if *tokenHits != 1 {
+		t.Fatalf("token hits = %d, want 1 when advertised=false and iss omitted", *tokenHits)
+	}
+	if captured.Get("code") != "idp-code" {
+		t.Fatalf("IdP exchange form = %v", *captured)
+	}
+	cu, _ := url.Parse(loc)
+	if cu.Query().Get("iss") != "http://gw.example.com" {
+		t.Fatalf("northbound redirect must still include iss, got %q", cu.Query().Get("iss"))
+	}
+}
+
+func TestCallbackStaticIdPOmitISSAllowed(t *testing.T) {
+	t.Parallel()
+	tokenHits := 0
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tokenHits++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "g-access", "token_type": "Bearer", "expires_in": 3600,
+		})
+	}))
+	t.Cleanup(tokenSrv.Close)
+
+	store := newMemFlowStore()
+	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{
+		oauth2Auth(t, authdomain.OAuth2Config{
+			Issuer:       "https://accounts.google.com",
+			AuthorizeURL: "https://accounts.google.com/o/oauth2/v2/auth",
+			TokenURL:     tokenSrv.URL,
+			ClientID:     "gw-client-id",
+			ClientSecret: "gw-secret",
+		}),
+	}}
+	proxy := NewAuthProxy(finder, nil, http.DefaultClient, store, nil, nil, nil)
+
+	gwState := authorizeAndGetState(t, proxy, "")
+	if _, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "", ""); err != nil {
+		t.Fatalf("google omit-iss: %v", err)
+	}
+	if tokenHits != 1 {
+		t.Fatalf("token hits = %d, want 1", tokenHits)
 	}
 }

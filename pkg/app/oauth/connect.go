@@ -121,6 +121,7 @@ func (s *connectService) Start(ctx context.Context, baseURL, ticketID, provider 
 	if err != nil {
 		return "", err
 	}
+	parked := s.parkConnectIssuer(ctx, reg, cfg)
 	state, err := randomToken()
 	if err != nil {
 		return "", err
@@ -130,17 +131,35 @@ func (s *connectService) Start(ctx context.Context, baseURL, ticketID, provider 
 		return "", err
 	}
 	if err := s.store.SaveConnect(ctx, state, ConnectState{
-		Ticket:   *ticket,
-		TicketID: ticketID,
-		Provider: provider,
-		Verifier: verifier,
+		Ticket:        *ticket,
+		TicketID:      ticketID,
+		Provider:      provider,
+		Verifier:      verifier,
+		Issuer:        parked.issuer,
+		IssAdvertised: parked.advertised,
 	}); err != nil {
 		return "", err
 	}
 	return s.provider.AuthorizeURL(cfg, connectCallbackURL(baseURL, provider), state, s256(verifier)), nil
 }
 
-func (s *connectService) Callback(ctx context.Context, baseURL, provider, state, code, errCode, errDesc string) (string, error) {
+type parkedIssuer struct {
+	issuer     string
+	advertised bool
+}
+
+func (s *connectService) parkConnectIssuer(ctx context.Context, reg *registrydomain.Registry, cfg *registrydomain.MCPAuth) parkedIssuer {
+	if cfg.Registration != registrydomain.RegistrationAuto {
+		return parkedIssuer{}
+	}
+	meta, err := s.registrar.Discover(ctx, reg.MCPTarget.URL)
+	if err != nil || meta == nil {
+		return parkedIssuer{}
+	}
+	return parkedIssuer{issuer: meta.Issuer, advertised: meta.AuthorizationResponseIssParameterSupported}
+}
+
+func (s *connectService) Callback(ctx context.Context, baseURL, provider, state, code, errCode, errDesc, iss string) (string, error) {
 	st, err := s.store.TakeConnect(ctx, state)
 	if err != nil {
 		return "", err
@@ -150,6 +169,10 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	}
 	if errCode != "" {
 		return st.TicketID, oauthErr(errCode, errDesc)
+	}
+	if err := validateResponseISS(iss, st.Issuer, st.IssAdvertised); err != nil {
+		logIssuerMismatch(st.Issuer, iss, st.Ticket.GatewayID, provider, "")
+		return st.TicketID, err
 	}
 	gatewayID, data, rc, err := s.routable(ctx, &st.Ticket)
 	if err != nil {

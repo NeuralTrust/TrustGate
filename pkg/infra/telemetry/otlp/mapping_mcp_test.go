@@ -48,6 +48,8 @@ func TestEventToRecord_MCPAttributes(t *testing.T) {
 			Targets:           3,
 			UpstreamStatus:    http.StatusOK,
 			UpstreamLatencyMs: 120,
+			ProtocolEra:       "modern",
+			ProtocolVersion:   "2026-07-28",
 		},
 	}
 
@@ -65,6 +67,8 @@ func TestEventToRecord_MCPAttributes(t *testing.T) {
 	assert.Equal(t, int64(http.StatusOK), attrs[attrMCPUpstreamStatus].AsInt64())
 	assert.Equal(t, int64(3), attrs[attrMCPTargets].AsInt64())
 	assert.Equal(t, int64(120), attrs[attrMCPUpstreamLatencyMs].AsInt64())
+	assert.Equal(t, "modern", attrs[attrMCPProtocolEra].AsString())
+	assert.Equal(t, "2026-07-28", attrs[attrMCPProtocolVersion].AsString())
 }
 
 func TestEventToRecord_LLMKindNoMCP(t *testing.T) {

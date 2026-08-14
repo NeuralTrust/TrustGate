@@ -44,6 +44,23 @@ Google does **not** support Dynamic Client Registration (DCR) for these MCP
 endpoints. The host cannot invent a client at connect time (unlike Granola,
 Notion-style DCR servers with `registration: "auto"`).
 
+### Authorization `iss` (RFC 9207)
+
+Google Workspace and other **manual** IdPs typically **omit** `iss` on the
+authorization redirect. That still works. TrustGate does not require `iss`
+unless the AS advertised `authorization_response_iss_parameter_supported`.
+A **wrong** `iss` is always rejected. Google’s metadata does not advertise
+the parameter, so a callback without `iss` proceeds to redeem.
+
+| Callback `iss` | Workspace / manual (param not advertised) | AS that advertised the param |
+|----------------|-------------------------------------------|------------------------------|
+| Matching | Redeem | Redeem |
+| Missing | Redeem | Reject |
+| Wrong | Reject | Reject |
+
+This is **not** CIMD. Catalog stays `registration: "manual"` / `dcr: false`.
+RFC 9207, DCR bind, and slog: [OAuth harden](oauth-harden.md).
+
 ## 2. Why Claude does not ask for client ID / secret
 
 Claude (and Antigravity) still use a Google OAuth client. Users simply never
@@ -297,6 +314,7 @@ production.
 | Forwarded MCP credentials | `pkg/app/mcp/credentials.go` |
 | Registry UI (manual client fields) | App `McpServerConfigPanel` / `mcpCatalog.ts` |
 | Local MCP plane testing | `docs/mcp/testing-guide.md` |
+| RFC 9207 `iss` / DCR bind (CIMD is future only) | [OAuth harden](oauth-harden.md) |
 | Google Calendar MCP setup | https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server |
 
 ---
@@ -317,3 +335,8 @@ form fields, and complete Google verification for production users.
 
 **Can we put the client secret in `enterprise-servers.json`?**  
 No. Secrets belong in platform config / secret manager, not the public catalog.
+
+**Does RFC 9207 mix-up protection break Workspace because Google omits `iss`?**  
+No. Missing `iss` is allowed when the AS did not advertise
+`authorization_response_iss_parameter_supported`. Workspace and other
+manual IdPs keep working. See [OAuth harden](oauth-harden.md).

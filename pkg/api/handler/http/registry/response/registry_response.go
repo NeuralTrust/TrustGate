@@ -39,11 +39,12 @@ type RegistryResponse struct {
 }
 
 type MCPTargetResponse struct {
-	Code      string            `json:"code,omitempty"`
-	URL       string            `json:"url"`
-	Transport string            `json:"transport,omitempty"`
-	Headers   map[string]string `json:"headers,omitempty"`
-	Auth      *MCPAuthResponse  `json:"auth,omitempty"`
+	Code         string            `json:"code,omitempty"`
+	URL          string            `json:"url"`
+	Transport    string            `json:"transport,omitempty"`
+	ProtocolMode string            `json:"protocol_mode"`
+	Headers      map[string]string `json:"headers,omitempty"`
+	Auth         *MCPAuthResponse  `json:"auth,omitempty"`
 }
 
 type MCPAuthResponse struct {
@@ -161,11 +162,16 @@ func fromMCPTarget(t *domain.MCPTarget) *MCPTargetResponse {
 	if t == nil {
 		return nil
 	}
+	mode := t.ProtocolMode
+	if mode == "" {
+		mode = domain.MCPProtocolModeAuto
+	}
 	out := &MCPTargetResponse{
-		Code:      t.Code,
-		URL:       t.URL,
-		Transport: string(t.Transport),
-		Headers:   t.Headers,
+		Code:         t.Code,
+		URL:          t.URL,
+		Transport:    string(t.Transport),
+		ProtocolMode: string(mode),
+		Headers:      t.Headers,
 	}
 	if t.Auth != nil {
 		out.Auth = &MCPAuthResponse{
