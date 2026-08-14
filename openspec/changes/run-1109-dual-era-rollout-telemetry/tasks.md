@@ -46,10 +46,10 @@ Each child PR must show only its slice; merge to `main` in order and retarget th
 
 ## Phase 2: Dialer meters (PR 2)
 
-- [ ] 2.1 RED: `negotiating_dialer_test.go` + fake meter — cache → `source=cache` and no probe histogram; probe → `source=probe` + latency; `modern`/`legacy` → `source=override` no probe; contradiction labeled; no origin/credential/tool-arg attrs. Spec: Steady-state cache; Probe without origin label; Override skips probe; Forbidden fields absent.
-- [ ] 2.2 GREEN: create `pkg/infra/mcp/client/protocol_metrics.go` (`otel.Meter("trustgate/mcp_upstream")`): `mcp.upstream.protocol.decision_total{source,mode,era,result,category?}`, `mcp.upstream.protocol.probe_latency_seconds` only when `source=probe`. Soft no-op if meter init fails or `OPS_METRICS_ENABLED` is false.
-- [ ] 2.3 GREEN: record from `logDecision`/`logSelection` in `negotiating_dialer.go`; inject recorder via ctor (nil no-op); wire in `pkg/container/modules/mcp.go`. Leave slog origin as-is. Do not change `protocol_mode` semantics.
-- [ ] 2.4 `clean-comments`; `/reviewer` + `/verifier`: `go test -race ./pkg/infra/mcp/client`, `go vet ./...`, `golangci-lint run`.
+- [x] 2.1 RED: `negotiating_dialer_test.go` + fake meter — cache → `source=cache` and no probe histogram; probe → `source=probe` + latency; `modern`/`legacy` → `source=override` no probe; contradiction labeled; no origin/credential/tool-arg attrs. Spec: Steady-state cache; Probe without origin label; Override skips probe; Forbidden fields absent.
+- [x] 2.2 GREEN: create `pkg/infra/mcp/client/protocol_metrics.go` (`otel.Meter("trustgate/mcp_upstream")`): `mcp.upstream.protocol.decision_total{source,mode,era,result,category?}`, `mcp.upstream.protocol.probe_latency_seconds` only when `source=probe`. Soft no-op if meter init fails or `OPS_METRICS_ENABLED` is false.
+- [x] 2.3 GREEN: record from `logDecision`/`logSelection` in `negotiating_dialer.go`; inject recorder via ctor (nil no-op); wire in `pkg/container/modules/mcp.go`. Leave slog origin as-is. Do not change `protocol_mode` semantics.
+- [x] 2.4 `clean-comments`; `/reviewer` + `/verifier`: `go test -race ./pkg/infra/mcp/client`, `go vet ./...`, `golangci-lint run`.
 
 ## Phase 3: Consumer gate (PR 3)
 

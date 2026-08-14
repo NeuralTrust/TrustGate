@@ -41,8 +41,8 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(mcpclient.New); err != nil {
 		return err
 	}
-	if err := c.Provide(func(client *mcpclient.Client, logger *slog.Logger) appmcp.Dialer {
-		return mcpclient.NewNegotiatingDialer(client, logger)
+	if err := c.Provide(func(client *mcpclient.Client, logger *slog.Logger, cfg *config.Config) appmcp.Dialer {
+		return mcpclient.NewNegotiatingDialer(client, logger, mcpclient.NewProtocolDecisionRecorder(cfg.Telemetry.OpsMetricsEnabled))
 	}); err != nil {
 		return err
 	}

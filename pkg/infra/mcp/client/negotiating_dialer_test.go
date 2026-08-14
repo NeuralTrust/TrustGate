@@ -1892,3 +1892,217 @@ func TestModernRoundTripperTracksOnlyAmbiguousBadRequest(t *testing.T) {
 		})
 	}
 }
+
+type recordingProtocolDecision struct {
+	mu    sync.Mutex
+	calls []recordedProtocolDecision
+}
+
+type recordedProtocolDecision struct {
+	source         string
+	mode           string
+	era            string
+	result         string
+	category       string
+	probeHistogram bool
+	probeLatency   time.Duration
+	labels         map[string]string
+}
+
+func (r *recordingProtocolDecision) Record(_ context.Context, d ProtocolDecision) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	labels := map[string]string{
+		"source": d.Source,
+		"mode":   d.Mode,
+		"era":    d.Era,
+		"result": d.Result,
+	}
+	if d.Category != "" {
+		labels["category"] = d.Category
+	}
+	r.calls = append(r.calls, recordedProtocolDecision{
+		source:         d.Source,
+		mode:           d.Mode,
+		era:            d.Era,
+		result:         d.Result,
+		category:       d.Category,
+		probeHistogram: d.Source == string(decisionProbe),
+		probeLatency:   d.Latency,
+		labels:         labels,
+	})
+}
+
+func (r *recordingProtocolDecision) snapshot() []recordedProtocolDecision {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]recordedProtocolDecision, len(r.calls))
+	copy(out, r.calls)
+	return out
+}
+
+func metricTarget(url string, mode registrydomain.MCPProtocolMode) appmcp.Target {
+	return appmcp.Target{
+		URL:          url,
+		ProtocolMode: mode,
+		Headers:      map[string]string{"Authorization": "Bearer secret-token"},
+	}
+}
+
+func assertNoForbiddenProtocolMetricLabels(t *testing.T, calls []recordedProtocolDecision) {
+	t.Helper()
+	forbidden := []string{"origin", "credential", "token", "authorization", "header", "body", "tool", "argument", "url"}
+	for _, call := range calls {
+		for key, value := range call.labels {
+			blob := strings.ToLower(key + " " + value)
+			for _, needle := range forbidden {
+				if strings.Contains(blob, needle) {
+					t.Fatalf("forbidden metric field %q=%q", key, value)
+				}
+			}
+			if strings.Contains(value, "secret-token") || strings.Contains(strings.ToLower(value), "example.com") {
+				t.Fatalf("sensitive value leaked in %q=%q", key, value)
+			}
+		}
+	}
+}
+
+func TestNewProtocolDecisionRecorderDisabledIsNil(t *testing.T) {
+	t.Parallel()
+	if rec := NewProtocolDecisionRecorder(false); rec != nil {
+		t.Fatal("disabled recorder must be nil")
+	}
+}
+
+func TestNegotiatingDialerMetricsProbeThenCache(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingProtocolDecision{}
+	var probes atomic.Int64
+	dialer := newNegotiatingDialer(
+		legacyConnectorFunc(func(context.Context, appmcp.Target) (appmcp.Upstream, error) {
+			return nil, errors.New("legacy fallback must not run")
+		}),
+		newEraCoordinator(probeFunc(func(context.Context, appmcp.Target) (probeOutcome, error) {
+			probes.Add(1)
+			return probeOutcome{kind: probeModern, version: modernProtocolVersion}, nil
+		}), time.Second),
+		func(appmcp.Target, string) (appmcp.Upstream, error) { return &upstreamStub{}, nil },
+		slog.New(slog.DiscardHandler),
+		rec,
+	)
+	target := metricTarget("https://example.com/mcp", registrydomain.MCPProtocolModeAuto)
+	for range 2 {
+		if _, err := dialer.Connect(context.Background(), target); err != nil {
+			t.Fatalf("connect: %v", err)
+		}
+	}
+	calls := rec.snapshot()
+	if len(calls) != 2 {
+		t.Fatalf("records = %d, want 2", len(calls))
+	}
+	if calls[0].source != string(decisionProbe) || !calls[0].probeHistogram || calls[0].probeLatency < 0 {
+		t.Fatalf("probe record = %+v", calls[0])
+	}
+	if calls[1].source != string(decisionCache) || calls[1].probeHistogram {
+		t.Fatalf("cache record = %+v", calls[1])
+	}
+	if probes.Load() != 1 {
+		t.Fatalf("probes = %d, want 1", probes.Load())
+	}
+	assertNoForbiddenProtocolMetricLabels(t, calls)
+}
+
+func TestNegotiatingDialerMetricsOverrideSkipsProbe(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingProtocolDecision{}
+	var probes atomic.Int64
+	dialer := newNegotiatingDialer(
+		legacyConnectorFunc(func(context.Context, appmcp.Target) (appmcp.Upstream, error) {
+			return &upstreamStub{}, nil
+		}),
+		newEraCoordinator(probeFunc(func(context.Context, appmcp.Target) (probeOutcome, error) {
+			probes.Add(1)
+			return probeOutcome{}, errors.New("probe must not run")
+		}), time.Second),
+		func(appmcp.Target, string) (appmcp.Upstream, error) { return &upstreamStub{}, nil },
+		slog.New(slog.DiscardHandler),
+		rec,
+	)
+	if _, err := dialer.Connect(context.Background(), metricTarget("https://example.com/legacy", registrydomain.MCPProtocolModeLegacy)); err != nil {
+		t.Fatalf("legacy override: %v", err)
+	}
+	if _, err := dialer.Connect(context.Background(), metricTarget("https://example.com/modern", registrydomain.MCPProtocolModeModern)); err != nil {
+		t.Fatalf("modern override: %v", err)
+	}
+	calls := rec.snapshot()
+	if len(calls) != 2 {
+		t.Fatalf("records = %d, want 2", len(calls))
+	}
+	for _, call := range calls {
+		if call.source != string(decisionOverride) || call.probeHistogram {
+			t.Fatalf("override record = %+v", call)
+		}
+	}
+	if probes.Load() != 0 {
+		t.Fatalf("probes = %d, want 0", probes.Load())
+	}
+	assertNoForbiddenProtocolMetricLabels(t, calls)
+}
+
+func TestNegotiatingDialerMetricsContradictionLabeled(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingProtocolDecision{}
+	var probes atomic.Int64
+	modern := &upstreamStub{
+		listTools: func(context.Context) ([]appmcp.Tool, error) {
+			return nil, newEraCandidateError(eraLegacy)
+		},
+	}
+	legacy := &upstreamStub{
+		listTools: func(context.Context) ([]appmcp.Tool, error) {
+			return []appmcp.Tool{{Name: "legacy"}}, nil
+		},
+	}
+	dialer := newNegotiatingDialer(
+		legacyConnectorFunc(func(context.Context, appmcp.Target) (appmcp.Upstream, error) {
+			return legacy, nil
+		}),
+		newEraCoordinator(probeFunc(func(context.Context, appmcp.Target) (probeOutcome, error) {
+			switch probes.Add(1) {
+			case 1:
+				return probeOutcome{kind: probeModern, version: modernProtocolVersion}, nil
+			default:
+				return probeOutcome{kind: probeLegacyCandidate}, nil
+			}
+		}), time.Second),
+		func(appmcp.Target, string) (appmcp.Upstream, error) { return modern, nil },
+		slog.New(slog.DiscardHandler),
+		rec,
+	)
+	upstream, err := dialer.Connect(context.Background(), metricTarget("https://example.com/mcp", registrydomain.MCPProtocolModeAuto))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	if _, err := upstream.ListTools(context.Background()); err != nil {
+		t.Fatalf("guarded list: %v", err)
+	}
+	var contradiction recordedProtocolDecision
+	found := false
+	for _, call := range rec.snapshot() {
+		if call.source == string(decisionContradiction) {
+			contradiction = call
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("missing contradiction record: %+v", rec.snapshot())
+	}
+	if contradiction.probeHistogram {
+		t.Fatalf("contradiction must not record probe latency: %+v", contradiction)
+	}
+	assertNoForbiddenProtocolMetricLabels(t, rec.snapshot())
+}

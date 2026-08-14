@@ -39,6 +39,7 @@ type negotiatingDialer struct {
 	coordinator         *eraCoordinator
 	modern              modernUpstreamFactory
 	logger              *slog.Logger
+	metrics             ProtocolDecisionRecorder
 	now                 func() time.Time
 	confirmationFlight  singleflight.Group
 	confirmationRetry   singleflight.Group
@@ -47,7 +48,7 @@ type negotiatingDialer struct {
 	reconcileConfirmed  func()
 }
 
-func NewNegotiatingDialer(client *Client, logger *slog.Logger) appmcp.Dialer {
+func NewNegotiatingDialer(client *Client, logger *slog.Logger, rec ...ProtocolDecisionRecorder) appmcp.Dialer {
 	legacy := newCachedDialer(client, logger)
 	return newNegotiatingDialer(
 		legacy,
@@ -56,6 +57,7 @@ func NewNegotiatingDialer(client *Client, logger *slog.Logger) appmcp.Dialer {
 			return newModernUpstream(target, protocolVersion)
 		},
 		logger,
+		rec...,
 	)
 }
 
@@ -64,17 +66,22 @@ func newNegotiatingDialer(
 	coordinator *eraCoordinator,
 	modern modernUpstreamFactory,
 	logger *slog.Logger,
+	rec ...ProtocolDecisionRecorder,
 ) *negotiatingDialer {
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
-	return &negotiatingDialer{
+	d := &negotiatingDialer{
 		legacy:      legacy,
 		coordinator: coordinator,
 		modern:      modern,
 		logger:      logger,
 		now:         time.Now,
 	}
+	if len(rec) > 0 {
+		d.metrics = rec[0]
+	}
+	return d
 }
 
 func (d *negotiatingDialer) Connect(ctx context.Context, target appmcp.Target) (appmcp.Upstream, error) {
@@ -459,6 +466,7 @@ func (d *negotiatingDialer) logDecision(
 	started time.Time,
 	err error,
 ) {
+	latency := d.now().Sub(started)
 	attrs := []slog.Attr{
 		slog.String("component", "mcp_upstream_protocol"),
 		slog.String("origin", origin),
@@ -467,12 +475,26 @@ func (d *negotiatingDialer) logDecision(
 		slog.String("source", string(source)),
 		slog.String("result", outcome),
 		slog.String("version", version),
-		slog.Int64("latency_ms", d.now().Sub(started).Milliseconds()),
+		slog.Int64("latency_ms", latency.Milliseconds()),
 	}
 	if err != nil {
 		attrs = append(attrs, slog.String("category", negotiationErrorCategory(err)))
 	}
 	d.logger.LogAttrs(ctx, slog.LevelInfo, "mcp upstream protocol selection", attrs...)
+	if d.metrics == nil {
+		return
+	}
+	decision := ProtocolDecision{
+		Source:  string(source),
+		Mode:    string(mode),
+		Era:     era.String(),
+		Result:  outcome,
+		Latency: latency,
+	}
+	if err != nil {
+		decision.Category = negotiationErrorCategory(err)
+	}
+	d.metrics.Record(ctx, decision)
 }
 
 func negotiationErrorCategory(err error) string {
