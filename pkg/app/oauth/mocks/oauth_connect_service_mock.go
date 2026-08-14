@@ -127,8 +127,8 @@ func (_c *ConnectService_ChainURL_Call) RunAndReturn(run func(context.Context, s
 	return _c
 }
 
-func (_m *ConnectService) CreateAPIKeyTicket(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], principalSub string, consumerPath string, consumerID ids.ID[ids.ConsumerKind], authID ids.ID[ids.AuthKind]) (string, error) {
-	ret := _m.Called(ctx, gatewayID, principalSub, consumerPath, consumerID, authID)
+func (_m *ConnectService) CreateAPIKeyTicket(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], principalSub string, consumerPath string, consumerID ids.ID[ids.ConsumerKind], authID ids.ID[ids.AuthKind], providers []string) (string, error) {
+	ret := _m.Called(ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers)
 
 	if len(ret) == 0 {
 		panic("no return value specified for CreateAPIKeyTicket")
@@ -136,17 +136,17 @@ func (_m *ConnectService) CreateAPIKeyTicket(ctx context.Context, gatewayID ids.
 
 	var r0 string
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, string, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind]) (string, error)); ok {
-		return rf(ctx, gatewayID, principalSub, consumerPath, consumerID, authID)
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, string, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind], []string) (string, error)); ok {
+		return rf(ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, string, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind]) string); ok {
-		r0 = rf(ctx, gatewayID, principalSub, consumerPath, consumerID, authID)
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, string, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind], []string) string); ok {
+		r0 = rf(ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers)
 	} else {
 		r0 = ret.Get(0).(string)
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], string, string, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind]) error); ok {
-		r1 = rf(ctx, gatewayID, principalSub, consumerPath, consumerID, authID)
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], string, string, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind], []string) error); ok {
+		r1 = rf(ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -158,13 +158,13 @@ type ConnectService_CreateAPIKeyTicket_Call struct {
 	*mock.Call
 }
 
-func (_e *ConnectService_Expecter) CreateAPIKeyTicket(ctx interface{}, gatewayID interface{}, principalSub interface{}, consumerPath interface{}, consumerID interface{}, authID interface{}) *ConnectService_CreateAPIKeyTicket_Call {
-	return &ConnectService_CreateAPIKeyTicket_Call{Call: _e.mock.On("CreateAPIKeyTicket", ctx, gatewayID, principalSub, consumerPath, consumerID, authID)}
+func (_e *ConnectService_Expecter) CreateAPIKeyTicket(ctx interface{}, gatewayID interface{}, principalSub interface{}, consumerPath interface{}, consumerID interface{}, authID interface{}, providers interface{}) *ConnectService_CreateAPIKeyTicket_Call {
+	return &ConnectService_CreateAPIKeyTicket_Call{Call: _e.mock.On("CreateAPIKeyTicket", ctx, gatewayID, principalSub, consumerPath, consumerID, authID, providers)}
 }
 
-func (_c *ConnectService_CreateAPIKeyTicket_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], principalSub string, consumerPath string, consumerID ids.ID[ids.ConsumerKind], authID ids.ID[ids.AuthKind])) *ConnectService_CreateAPIKeyTicket_Call {
+func (_c *ConnectService_CreateAPIKeyTicket_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], principalSub string, consumerPath string, consumerID ids.ID[ids.ConsumerKind], authID ids.ID[ids.AuthKind], providers []string)) *ConnectService_CreateAPIKeyTicket_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(string), args[3].(string), args[4].(ids.ID[ids.ConsumerKind]), args[5].(ids.ID[ids.AuthKind]))
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(string), args[3].(string), args[4].(ids.ID[ids.ConsumerKind]), args[5].(ids.ID[ids.AuthKind]), args[6].([]string))
 	})
 	return _c
 }
@@ -174,7 +174,7 @@ func (_c *ConnectService_CreateAPIKeyTicket_Call) Return(_a0 string, _a1 error) 
 	return _c
 }
 
-func (_c *ConnectService_CreateAPIKeyTicket_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], string, string, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind]) (string, error)) *ConnectService_CreateAPIKeyTicket_Call {
+func (_c *ConnectService_CreateAPIKeyTicket_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], string, string, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind], []string) (string, error)) *ConnectService_CreateAPIKeyTicket_Call {
 	_c.Call.Return(run)
 	return _c
 }

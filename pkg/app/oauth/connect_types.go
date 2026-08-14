@@ -30,12 +30,13 @@ var (
 )
 
 type ConnectTicket struct {
-	GatewayID    string `json:"gateway_id"`
-	PrincipalSub string `json:"principal_sub"`
-	ConsumerPath string `json:"consumer_path"`
-	ResumeURL    string `json:"resume_url,omitempty"`
-	ConsumerID   string `json:"consumer_id,omitempty"`
-	AuthID       string `json:"auth_id,omitempty"`
+	GatewayID    string    `json:"gateway_id"`
+	PrincipalSub string    `json:"principal_sub"`
+	ConsumerPath string    `json:"consumer_path"`
+	ResumeURL    string    `json:"resume_url,omitempty"`
+	ConsumerID   string    `json:"consumer_id,omitempty"`
+	AuthID       string    `json:"auth_id,omitempty"`
+	Providers    *[]string `json:"providers,omitempty"`
 }
 
 type ConnectState struct {
@@ -77,6 +78,7 @@ type ConnectService interface {
 		consumerPath string,
 		consumerID ids.ConsumerID,
 		authID ids.AuthID,
+		providers []string,
 	) (string, error)
 	Page(ctx context.Context, ticketID string) (*ConnectPage, error)
 	Start(ctx context.Context, baseURL, ticketID, provider string) (string, error)

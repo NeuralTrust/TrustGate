@@ -22,13 +22,18 @@ Define a browser flow that exchanges an MCP consumer API key for a connect ticke
 
 ### Requirement: Secure form and caching
 
-The form MUST use a password input with `autocomplete="off"`, MUST NOT render a key value, and every endpoint response MUST include `Cache-Control: no-store`.
+The form MUST use a blank password input with `autocomplete="off"`, MUST NOT render a key value, and every endpoint response MUST include `Cache-Control: no-store` and `Referrer-Policy: no-referrer`.
 
 #### Scenario: Form rendering
 - GIVEN a valid target
 - WHEN the form is rendered
 - THEN it contains a blank password field with autocomplete disabled
-- AND the response is marked `no-store`
+- AND the response includes both required policies
+
+#### Scenario: Response policy across outcomes
+- GIVEN any success or error outcome
+- WHEN the endpoint responds
+- THEN both required policies are present
 
 ### Requirement: Body-only form submission
 
@@ -70,27 +75,27 @@ The system MUST resolve the Host gateway and active MCP consumer before key look
 
 ### Requirement: Ticket creation and redirect
 
-After authorization, the system MUST create a ticket for the resolved gateway, exact auth name, and MCP path derived from the route slug, then MUST redirect with `303` to `/{slug}/mcp/connect?ticket={ticket}`.
+After authorization, the system MUST persist a reusable fifteen-minute ticket for the resolved gateway, exact auth name, consumer path, consumer ID, AuthID, and a stable, deduplicated snapshot of the exact forwarded `MCPAuth.Provider` IDs authorized for that consumer, then MUST redirect with `303` to `/{slug}/mcp/connect?ticket={ticket}`. The provider snapshot MUST NOT contain registry names or credentials. This change MUST NOT alter the existing ticket TTL.
 
 #### Scenario: Successful exchange
 - GIVEN an authorized API key
-- WHEN ticket creation succeeds
-- THEN the exact gateway, principal, and consumer path are used
-- AND the response is a `303` redirect containing only the ticket
+- WHEN persistence succeeds
+- THEN the exact identity fields and sorted provider-ID snapshot persist with a fifteen-minute TTL
+- AND the redirect contains only the opaque ticket
 
 #### Scenario: Internal failure
-- GIVEN an unexpected dependency or ticket failure
-- WHEN the request is processed
-- THEN the system returns `500`
+- GIVEN unexpected non-limiter failure
+- WHEN processed
+- THEN generic `500` is returned
 
 ### Requirement: Secret non-disclosure
 
-The system MUST NOT place the API key in a URL, log, redirect, rendered response, or error response.
+The API key or hash MUST NOT appear in URLs, bucket keys, logs, audit events, metric attributes, redirects, response bodies, or response headers.
 
 #### Scenario: No leakage across outcomes
-- GIVEN any submitted API key
-- WHEN processing ends in success or any error class
-- THEN the key is absent from response bodies, headers, locations, and logs
+- GIVEN a sentinel key
+- WHEN processing ends in success, `401`, `429`, `500`, or `503`
+- THEN the key and hash are absent from every listed surface
 
 ### Requirement: Routing and compatibility
 
@@ -108,9 +113,19 @@ The new GET and POST routes MUST take precedence over `/+/connect`. Existing OAu
 
 ### Requirement: Existing security boundaries
 
-The endpoint MUST NOT require Origin validation and MUST NOT add a gateway-status gate. Dedicated brute-force rate limiting MAY be added separately under RUN-1142.
+The endpoint MUST NOT require Origin validation or add a gateway-status gate. It MUST apply the source limit before target resolution, preserve target-before-key lookup, and apply the consumer limit after target resolution but before key lookup. Expected authorization misses below limits MUST remain uniform.
+
+#### Scenario: Uniform authorization miss
+- GIVEN any nonexistent, disabled, wrong-type, wrong-gateway, or cross-consumer key below limits
+- WHEN submitted
+- THEN the same generic `401` status/body is returned
+
+#### Scenario: Invalid target avoids key lookup
+- GIVEN the target cannot be resolved
+- WHEN submitted below the source limit
+- THEN generic `401` is returned without key lookup
 
 #### Scenario: Valid request without Origin
 - GIVEN an otherwise valid request without an Origin header
-- WHEN it is processed
+- WHEN processed
 - THEN absence of Origin does not cause rejection

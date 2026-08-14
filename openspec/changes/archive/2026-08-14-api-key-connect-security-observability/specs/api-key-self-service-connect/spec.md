@@ -18,13 +18,13 @@ The form MUST use a blank password input with `autocomplete="off"`, MUST NOT ren
 - THEN both required policies are present
 
 ### Requirement: Ticket creation and redirect
-After authorization, the system MUST persist a reusable fifteen-minute ticket for the resolved gateway, exact auth name, consumer path, consumer ID, and AuthID, then MUST redirect with `303` to `/{slug}/mcp/connect?ticket={ticket}`. This change MUST NOT alter the existing ticket TTL.
-(Previously: consumer ID, AuthID, reusability, and TTL were not normative.)
+After authorization, the system MUST persist a reusable fifteen-minute ticket for the resolved gateway, exact auth name, consumer path, consumer ID, AuthID, and a stable, deduplicated snapshot of the exact forwarded `MCPAuth.Provider` IDs authorized for that consumer, then MUST redirect with `303` to `/{slug}/mcp/connect?ticket={ticket}`. The provider snapshot MUST NOT contain registry names or credentials. This change MUST NOT alter the existing ticket TTL.
+(Previously: consumer ID, AuthID, provider authorization snapshot, reusability, and TTL were not normative.)
 
 #### Scenario: Successful exchange
 - GIVEN an authorized API key
 - WHEN persistence succeeds
-- THEN the exact identity fields persist with a fifteen-minute TTL
+- THEN the exact identity fields and sorted provider-ID snapshot persist with a fifteen-minute TTL
 - AND the redirect contains only the opaque ticket
 
 #### Scenario: Internal failure

@@ -72,6 +72,68 @@ Each successful identity-complete API-key-origin ticket, provider upsert, or pro
 - WHEN processing ends
 - THEN no lifecycle event is emitted
 
+### Requirement: Provider authorization and identity freshness
+A ticket MUST be classified as API-key-origin when `providers` is present or either ConsumerID or AuthID is non-empty. Every API-key-origin ticket MUST have a provider snapshot and both identity IDs; partial identity and identity-complete tickets without a snapshot MUST fail with `ErrTicketNotFound` before state, provider exchange, vault mutation, or audit. Only a ticket with absent `providers` and both IDs empty is legacy.
+
+API-key-origin tickets MUST authorize page visibility, start, callback, and disconnect only for exact provider IDs captured in their ticket snapshot. Page MUST list and query vault status only for snapshot providers that remain in current effective registries, so providers added after mint expose neither provider/registry metadata nor credential status. Disconnect MUST retain authorization if the captured provider's registry is later removed or renamed. Start and callback MUST still require the provider in current effective registries, and MUST reject a provider added after mint. Legacy tickets MUST list and authorize providers against current effective registries. API-key tickets MUST fail safely when the current consumer ID differs or the captured API-key AuthID is no longer attached, enabled, and applicable.
+
+#### Scenario: Cross-consumer provider
+- GIVEN an API-key ticket whose provider snapshot excludes a provider configured for another consumer
+- WHEN disconnect requests that other provider
+- THEN it fails before vault deletion or audit
+
+#### Scenario: Provider configuration changes after mint
+- GIVEN an API-key ticket whose snapshot includes a provider
+- WHEN that provider's registry is later removed or renamed and disconnect requests the captured provider
+- THEN the canonical provider credential is deleted and audited
+
+#### Scenario: Legacy ticket fallback
+- GIVEN a ticket without a provider snapshot
+- WHEN disconnect requests a provider
+- THEN only an exact provider in the consumer's current effective registries is accepted
+
+#### Scenario: Stale API-key identity
+- GIVEN an identity-complete API-key ticket
+- WHEN its path resolves to another consumer or its AuthID is detached, disabled, or otherwise no longer applicable
+- THEN the operation fails before vault mutation or audit
+
+#### Scenario: Partial API-key identity
+- GIVEN a ticket with any API-key marker but a missing provider snapshot, ConsumerID, or AuthID
+- WHEN any lifecycle operation resolves it
+- THEN it fails with `ErrTicketNotFound` before state, exchange, vault mutation, or audit
+
+#### Scenario: Provider added after mint
+- GIVEN an API-key ticket whose snapshot excludes a provider added later to current registries
+- WHEN page, start, or callback processes that provider
+- THEN page omits its metadata and does not query its credential
+- AND start/callback fail before state creation, exchange, vault upsert, or audit
+
+#### Scenario: Page provider visibility
+- GIVEN a valid API-key ticket
+- WHEN its connect page is built
+- THEN only currently configured providers in its authorization-time snapshot are listed and queried
+- AND a fully legacy ticket continues to list and query current effective providers
+
+#### Scenario: Callback ticket tampering
+- GIVEN callback state whose embedded ticket metadata or provider authorization was changed
+- WHEN callback revalidates the ticket and snapshot
+- THEN it fails before exchange, vault upsert, or audit
+
+### Requirement: Atomic credential deletion
+Vault credential deletion MUST atomically verify and delete the exact stored tuple and MUST return `ErrNotFound` when no key is deleted. Concurrent disconnects MUST therefore emit exactly one unlink audit, from the call that deleted the credential.
+
+#### Scenario: Concurrent disconnect
+- GIVEN two concurrent disconnects for the same credential
+- WHEN both reach vault deletion
+- THEN exactly one succeeds and emits the unlink audit
+- AND the other returns `ErrNotFound` without an audit
+
+#### Scenario: Corrupt stored credential
+- GIVEN the Redis key contains malformed JSON
+- WHEN deletion attempts to decode and compare it
+- THEN the key remains untouched
+- AND deletion returns `ErrNotFound` without a script error or audit
+
 ### Requirement: Bounded metrics
 `/:slug/connect`, paths ending `/mcp/connect`, and existing OAuth shapes MUST classify as MCP OAuth using bounded enums. Slugs and paths MUST NOT become labels; unrelated connect-looking paths MUST remain outside that class.
 

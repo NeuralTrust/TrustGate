@@ -103,9 +103,10 @@ func (m *memConnectStore) TakeConnect(_ context.Context, state string) (*oauth.C
 }
 
 type memVaultRepo struct {
-	creds     map[string]*vaultdomain.Credential
-	upsertErr error
-	deleteErr error
+	creds         map[string]*vaultdomain.Credential
+	findProviders []string
+	upsertErr     error
+	deleteErr     error
 }
 
 func (m *memVaultRepo) k(gw ids.GatewayID, sub, p string) string { return gw.String() + sub + p }
@@ -122,6 +123,7 @@ func (m *memVaultRepo) Upsert(_ context.Context, c *vaultdomain.Credential) erro
 }
 
 func (m *memVaultRepo) Find(_ context.Context, gw ids.GatewayID, sub, p string) (*vaultdomain.Credential, error) {
+	m.findProviders = append(m.findProviders, p)
 	c, ok := m.creds[m.k(gw, sub, p)]
 	if !ok {
 		return nil, vaultdomain.ErrNotFound

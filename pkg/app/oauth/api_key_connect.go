@@ -62,7 +62,7 @@ func (s *apiKeyConnectService) ValidateTarget(
 	gatewayID ids.GatewayID,
 	slug string,
 ) error {
-	_, err := s.findTarget(ctx, gatewayID, slug)
+	_, _, err := s.findTarget(ctx, gatewayID, slug)
 	return err
 }
 
@@ -72,7 +72,7 @@ func (s *apiKeyConnectService) CreateTicket(
 	slug string,
 	rawKey string,
 ) (string, error) {
-	target, err := s.findTarget(ctx, gatewayID, slug)
+	data, target, err := s.findTarget(ctx, gatewayID, slug)
 	if err != nil {
 		return "", err
 	}
@@ -107,6 +107,7 @@ func (s *apiKeyConnectService) CreateTicket(
 		appconsumer.MCPPath(slug),
 		target.Consumer.ID,
 		auth.ID,
+		forwardedProviderIDs(data.EffectiveRegistries(target)),
 	)
 	if err != nil {
 		return "", fmt.Errorf("oauth api-key connect: create ticket: %w", err)
@@ -118,16 +119,16 @@ func (s *apiKeyConnectService) findTarget(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	slug string,
-) (*appconsumer.RoutableConsumer, error) {
+) (*appconsumer.Data, *appconsumer.RoutableConsumer, error) {
 	data, err := s.dataFinder.FindByGateway(ctx, gatewayID)
 	if err != nil {
-		return nil, fmt.Errorf("oauth api-key connect: find target: %w", err)
+		return nil, nil, fmt.Errorf("oauth api-key connect: find target: %w", err)
 	}
 	target, ok := data.MatchSlug(slug)
 	if !ok || !validMCPConsumer(target, gatewayID) {
-		return nil, ErrAPIKeyConnectUnauthorized
+		return nil, nil, ErrAPIKeyConnectUnauthorized
 	}
-	return target, nil
+	return data, target, nil
 }
 
 func validMCPConsumer(target *appconsumer.RoutableConsumer, gatewayID ids.GatewayID) bool {
