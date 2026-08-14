@@ -4,11 +4,19 @@ import { useState } from "react";
 import { Plus, Trash2, Users, Settings2, ChevronDown } from "lucide-react";
 import { api, gatewayScope } from "@/lib/admin-client";
 import { useActiveGatewayId } from "@/components/layout/gateway-context";
-import { useList, useInvalidate, errorMessage } from "@/lib/hooks";
+import { useAllList, usePagedList, useInvalidate, errorMessage } from "@/lib/hooks";
 import { useToast } from "@/components/ui/toast";
 import { PageHeader, ConfirmDialog, useDisclosure } from "@/components/ui/page";
 import { Button } from "@/components/ui/button";
 import { Table, THead, TBody, TH, TR, TD } from "@/components/ui/table";
+import {
+  FilterSelect,
+  ListToolbar,
+  NoMatches,
+  Pagination,
+  SortHeader,
+  useListControls,
+} from "@/components/ui/list-controls";
 import { Badge, EmptyState, PageLoader, Dot, Mono } from "@/components/ui/misc";
 import {
   Dialog,
@@ -42,7 +50,12 @@ function routingLabel(c: Consumer): string {
 }
 
 export function ConsumersView() {
-  const { data: consumers, isLoading } = useList<Consumer>("consumers");
+  const controls = useListControls();
+  const { data, isLoading } = usePagedList<Consumer>("consumers", controls.query);
+  const consumers = data?.items ?? [];
+  const total = data?.total ?? 0;
+  // Only to label the auth filter; the consumer rows carry ids, not names.
+  const { data: auths } = useAllList<Auth>("auths");
   const create = useDisclosure();
   const [detail, setDetail] = useState<Consumer | null>(null);
   const [toDelete, setToDelete] = useState<Consumer | null>(null);
@@ -62,7 +75,7 @@ export function ConsumersView() {
 
       {isLoading ? (
         <PageLoader />
-      ) : !consumers || consumers.length === 0 ? (
+      ) : total === 0 && !controls.isFiltered ? (
         <EmptyState
           icon={<Users className="h-5 w-5" />}
           title="No consumers yet"
@@ -75,56 +88,104 @@ export function ConsumersView() {
           }
         />
       ) : (
-        <Table>
-          <THead>
-            <TH>Name</TH>
-            <TH>Slug</TH>
-            <TH>Type</TH>
-            <TH>Routing</TH>
-            <TH>Bindings</TH>
-            <TH>Status</TH>
-            <TH className="text-right pr-4">Actions</TH>
-          </THead>
-          <TBody>
-            {consumers.map((c) => (
-              <TR key={c.id}>
-                <TD>
-                  <span className="font-medium text-fg">{c.name}</span>
-                </TD>
-                <TD>
-                  <Mono>{c.slug}</Mono>
-                </TD>
-                <TD>
-                  <Badge>{c.type}</Badge>
-                </TD>
-                <TD>
-                  <span className="text-muted text-[12px]">{routingLabel(c)}</span>
-                </TD>
-                <TD>
-                  <span className="text-[12px] text-muted">
-                    {c.registry_ids.length}r · {c.auth_ids.length}a
-                  </span>
-                </TD>
-                <TD>
-                  <span className="inline-flex items-center gap-2 text-muted">
-                    <Dot active={c.active} />
-                    {c.active ? "Active" : "Inactive"}
-                  </span>
-                </TD>
-                <TD className="text-right pr-4">
-                  <div className="inline-flex gap-1">
-                    <Button variant="ghost" size="icon" onClick={() => setDetail(c)} aria-label="Configure">
-                      <Settings2 className="h-4 w-4" />
-                    </Button>
-                    <Button variant="ghost" size="icon" onClick={() => setToDelete(c)} aria-label="Delete">
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </TD>
-              </TR>
-            ))}
-          </TBody>
-        </Table>
+        <>
+          <ListToolbar controls={controls} placeholder="Search consumers by name or slug…">
+            <FilterSelect
+              label="Protocol"
+              value={controls.filters.type ?? ""}
+              onChange={(v) => controls.setFilter("type", v)}
+            >
+              <option value="">Any protocol</option>
+              {PROTOCOLS.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
+                </option>
+              ))}
+            </FilterSelect>
+            <FilterSelect
+              label="Auth"
+              value={controls.filters.auth_id ?? ""}
+              onChange={(v) => controls.setFilter("auth_id", v)}
+            >
+              <option value="">Any auth</option>
+              {(auths ?? []).map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </FilterSelect>
+            <FilterSelect
+              label="Status"
+              value={controls.filters.active ?? ""}
+              onChange={(v) => controls.setFilter("active", v)}
+            >
+              <option value="">Any status</option>
+              <option value="true">Active</option>
+              <option value="false">Inactive</option>
+            </FilterSelect>
+          </ListToolbar>
+
+          {consumers.length === 0 ? (
+            <NoMatches controls={controls} label="consumers" />
+          ) : (
+            <Table>
+              <THead>
+                <SortHeader controls={controls} field="name">
+                  Name
+                </SortHeader>
+                <TH>Slug</TH>
+                <SortHeader controls={controls} field="type">
+                  Type
+                </SortHeader>
+                <TH>Routing</TH>
+                <TH>Bindings</TH>
+                <TH>Status</TH>
+                <TH className="text-right pr-4">Actions</TH>
+              </THead>
+              <TBody>
+                {consumers.map((c) => (
+                  <TR key={c.id}>
+                    <TD>
+                      <span className="font-medium text-fg">{c.name}</span>
+                    </TD>
+                    <TD>
+                      <Mono>{c.slug}</Mono>
+                    </TD>
+                    <TD>
+                      <Badge>{c.type}</Badge>
+                    </TD>
+                    <TD>
+                      <span className="text-muted text-[12px]">{routingLabel(c)}</span>
+                    </TD>
+                    <TD>
+                      <span className="text-[12px] text-muted">
+                        {c.registry_ids.length}r · {c.auth_ids.length}a
+                      </span>
+                    </TD>
+                    <TD>
+                      <span className="inline-flex items-center gap-2 text-muted">
+                        <Dot active={c.active} />
+                        {c.active ? "Active" : "Inactive"}
+                      </span>
+                    </TD>
+                    <TD className="text-right pr-4">
+                      <div className="inline-flex gap-1">
+                        <Button variant="ghost" size="icon" onClick={() => setDetail(c)} aria-label="Configure">
+                          <Settings2 className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => setToDelete(c)} aria-label="Delete">
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TD>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+          )}
+
+          <Pagination controls={controls} total={total} />
+        </>
       )}
 
       {create.open && (
@@ -192,8 +253,8 @@ function CreateConsumerDialog({
   const gatewayId = useActiveGatewayId();
   const invalidate = useInvalidate();
   const { toast } = useToast();
-  const { data: registries } = useList<Registry>("registries");
-  const { data: auths } = useList<Auth>("auths");
+  const { data: registries } = useAllList<Registry>("registries");
+  const { data: auths } = useAllList<Auth>("auths");
 
   const [name, setName] = useState("");
   const [type, setType] = useState<ConsumerType>("LLM");

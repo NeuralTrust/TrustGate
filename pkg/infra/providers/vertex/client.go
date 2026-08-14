@@ -33,14 +33,20 @@ const (
 	streamAction  = "streamGenerateContent"
 
 	optKeyAction = "action"
+
+	globalLocation = "global"
 )
 
 type client struct {
-	pool *providers.HTTPClientPool
+	pool        *providers.HTTPClientPool
+	tokenSource tokenSource
 }
 
 func NewVertexClient() providers.Client {
-	return &client{pool: providers.NewHTTPClientPool()}
+	return &client{
+		pool:        providers.NewHTTPClientPool(),
+		tokenSource: defaultTokenCache.token,
+	}
 }
 
 func (c *client) Completions(
@@ -53,7 +59,12 @@ func (c *client) Completions(
 		return nil, err
 	}
 
-	req, err := c.newHTTPRequest(ctx, url, config.Credentials.ApiKey, reqBody)
+	token, err := c.bearerToken(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := c.newHTTPRequest(ctx, url, token, reqBody)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +96,12 @@ func (c *client) CompletionsStream(
 		return nil, err
 	}
 
-	req, err := c.newHTTPRequest(ctx, url, config.Credentials.ApiKey, reqBody)
+	token, err := c.bearerToken(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := c.newHTTPRequest(ctx, url, token, reqBody)
 	if err != nil {
 		return nil, err
 	}
@@ -104,11 +120,29 @@ func (c *client) CompletionsStream(
 	return providers.StreamResponse(ctx, resp.Body), nil
 }
 
-func (c *client) buildRequestURL(config *providers.Config, reqBody []byte, stream bool) (string, error) {
-	if config.Credentials.ApiKey == "" {
-		return "", fmt.Errorf("bearer token (api_key) is required for Vertex AI")
+func (c *client) bearerToken(ctx context.Context, config *providers.Config) (string, error) {
+	if config.Credentials.GCP != nil {
+		source := c.tokenSource
+		if source == nil {
+			source = defaultTokenCache.token
+		}
+		token, err := source(ctx, config.Credentials.GCP)
+		if err != nil {
+			return "", fmt.Errorf("%w: failed to get Vertex AI bearer token: %w", registry.ErrCredentialAcquisition, err)
+		}
+		return token, nil
 	}
 
+	if config.Credentials.ApiKey == "" {
+		return "", fmt.Errorf(
+			"%w: vertex requires either gcp service account credentials or a bearer token (api_key)",
+			registry.ErrCredentialAcquisition,
+		)
+	}
+	return config.Credentials.ApiKey, nil
+}
+
+func (c *client) buildRequestURL(config *providers.Config, reqBody []byte, stream bool) (string, error) {
 	opts, err := providers.DecodeVertexOptions(config.Options)
 	if err != nil {
 		return "", err
@@ -178,11 +212,19 @@ func isModelAllowed(model string, allowed []string) bool {
 	return false
 }
 
+// The global endpoint is the only location reached through an unprefixed host.
+func vertexHost(location string) string {
+	if location == globalLocation {
+		return "aiplatform.googleapis.com"
+	}
+	return location + "-aiplatform.googleapis.com"
+}
+
 func buildVertexURL(opts providers.VertexOptions, model, action string) string {
 	var sb strings.Builder
 	sb.WriteString("https://")
-	sb.WriteString(opts.Location)
-	sb.WriteString("-aiplatform.googleapis.com/")
+	sb.WriteString(vertexHost(opts.Location))
+	sb.WriteByte('/')
 	sb.WriteString(opts.Version)
 	sb.WriteString("/projects/")
 	sb.WriteString(opts.Project)

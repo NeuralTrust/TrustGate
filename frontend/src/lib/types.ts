@@ -15,6 +15,13 @@ export interface GatewayHosts {
   mcp?: string;
 }
 
+export interface Entitlements {
+  tier: string;
+  burst_per_min?: number;
+  quota_per_month?: number;
+  max_instances?: number;
+}
+
 export interface Gateway {
   id: string;
   slug: string;
@@ -26,6 +33,7 @@ export interface Gateway {
   telemetry?: Record<string, unknown> | null;
   client_tls?: Record<string, unknown> | null;
   session_config?: SessionConfig | null;
+  entitlements?: Entitlements;
   created_at: string;
   updated_at: string;
 }
@@ -126,6 +134,18 @@ export interface MCPTarget {
   auth?: MCPAuth | null;
 }
 
+// A tool as the upstream MCP server advertised it: `name` plus whatever else it
+// declared (description, inputSchema, …), passed through untouched.
+export interface McpTool {
+  name: string;
+  description?: string;
+  [key: string]: unknown;
+}
+
+export interface McpToolsResponse {
+  tools: McpTool[];
+}
+
 export interface Registry {
   id: string;
   gateway_id: string;
@@ -140,6 +160,20 @@ export interface Registry {
   mcp_target?: MCPTarget | null;
   created_at: string;
   updated_at: string;
+}
+
+// Probe stage the connection test reached (Go: providers.ProbeStage).
+export type ProbeStage = "connectivity" | "authentication" | "provider" | "unsupported";
+
+// POST /v1/gateways/{id}/registries/test-connection always answers 200; `ok` and
+// `stage` carry the outcome.
+export interface TestConnectionResult {
+  ok: boolean;
+  stage: ProbeStage;
+  provider: string;
+  status_code?: number;
+  latency_ms: number;
+  message?: string;
 }
 
 export type ConsumerType = "LLM" | "MCP" | "A2A";
@@ -300,6 +334,10 @@ export interface Auth {
   enabled: boolean;
   config: AuthConfig;
   api_key?: string;
+  // Non-secret recognition hints for api_key auths; the full key is only
+  // returned once, at creation.
+  key_prefix?: string;
+  key_suffix?: string;
   created_at: string;
   updated_at: string;
 }
@@ -437,7 +475,8 @@ export interface ProviderOptionField {
   description?: string;
   required?: boolean;
   default?: unknown;
-  enum?: string[];
+  // Same shape as the plugin catalog's enum options (Go: appplugins.EnumOption).
+  enum?: PolicyCatalogEnumOption[];
 }
 
 export interface Provider {
@@ -519,4 +558,157 @@ export interface MCPServer {
 
 export interface MCPServersResponse {
   mcp_servers: MCPServer[];
+}
+
+// GET /v1/playground/traces/{trace_id} mirrors the metrics event the proxy
+// captured (Go: events.Event, schema_version 3). Traces are kept in Redis behind
+// a short TTL and only when the trace store is enabled, so a 404 means
+// "expired, or never recorded".
+export interface TraceConsumer {
+  id?: string;
+  name?: string;
+}
+
+export interface TraceStatus {
+  code: number;
+  is_timeout: boolean;
+  outcome?: string;
+  reason?: string;
+}
+
+export interface TraceRequest {
+  method?: string;
+  path?: string;
+  provider?: string;
+  registry_id?: string;
+  model?: string;
+  requested_model?: string;
+  model_label?: string;
+  temperature?: number;
+  max_tokens?: number;
+  stream: boolean;
+  prompt_tokens?: number;
+  body?: string;
+  headers?: Record<string, string[]>;
+}
+
+export interface TraceResponse {
+  status_code: number;
+  latency_ms: number;
+  completion_tokens?: number;
+  finish_reason?: string;
+  streaming: boolean;
+  body?: string | null;
+  headers?: Record<string, string[]>;
+}
+
+export interface TraceUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cached_input_tokens?: number;
+  reasoning_output_tokens?: number;
+}
+
+export interface TraceCost {
+  prompt_usd: number;
+  completion_usd: number;
+  total_usd: number;
+  currency: string;
+}
+
+// The stages the wall clock splits into. PoliciesMs covers every stage the chain
+// ran (post_response included), and gateway_ms discounts that async share.
+export interface TraceLatency {
+  total_ms: number;
+  provider_ms: number;
+  policies_ms: number;
+  gateway_ms: number;
+}
+
+export interface TraceAttempt {
+  registry_id?: string;
+  provider?: string;
+  attempt: number;
+  fallback: boolean;
+  pinned: boolean;
+  route?: string;
+  route_model?: string;
+  outcome?: string;
+  status_code: number;
+  latency_ms: number;
+}
+
+export interface TracePolicyEntry {
+  name: string;
+  stage?: string;
+  decision?: string;
+  latency_ms: number;
+  status_code?: number;
+  error: boolean;
+  flagged: boolean;
+  score?: number;
+  score_label?: string;
+  extras?: unknown;
+}
+
+export interface TraceMcp {
+  method: string;
+  operation?: string;
+  server_name?: string;
+  registry_id?: string;
+  host?: string;
+  catalog_code?: string;
+  transport?: string;
+  tool?: string;
+  upstream_tool?: string;
+  prompt?: string;
+  resource_uri?: string;
+  targets?: number;
+  upstream_status?: number;
+  upstream_latency_ms?: number;
+  rpc_error_code?: number;
+}
+
+export interface PlaygroundTrace {
+  schema_version: number;
+  kind: string;
+  trace_id: string;
+  gateway_id: string;
+  tenant_id?: string;
+  timestamp: string;
+  occurred_on: number;
+  end_timestamp: number;
+  consumer: TraceConsumer;
+  session_id?: string;
+  turn_id?: string;
+  ip?: string;
+  status: TraceStatus;
+  is_flagged: boolean;
+  security?: string[];
+  request: TraceRequest;
+  response: TraceResponse;
+  usage?: TraceUsage;
+  cost?: TraceCost;
+  latency: TraceLatency;
+  attempts?: TraceAttempt[];
+  policy_chain?: TracePolicyEntry[];
+  mcp?: TraceMcp | null;
+}
+
+// GET /v1/config-sync/connections — data-plane liveness. Not gateway-scoped and
+// without a pagination envelope: it returns every observed connection.
+export interface ConfigSyncConnection {
+  /** Opaque scope the data plane registered under. */
+  scope: string;
+  instance_id: string;
+  /** "connected" or "disconnected"; treated as free-form for forward safety. */
+  state: string;
+  applied_version: string;
+  first_seen: string;
+  last_seen: string;
+}
+
+export interface ConfigSyncConnectionsResponse {
+  items: ConfigSyncConnection[];
 }
