@@ -16,13 +16,11 @@ package oauth
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
 
-	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/stretchr/testify/require"
 )
 
@@ -76,44 +74,4 @@ func TestIDPTokenCall_FormEncodedSuccess(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "gho_ok", doc["access_token"])
-}
-
-func TestIDPEndpoints_StaticAdvertisedFalse(t *testing.T) {
-	t.Parallel()
-	tr := &idpTransport{}
-	ep, err := tr.endpoints(context.Background(), &authdomain.OAuth2Config{
-		Issuer:       "https://accounts.google.com",
-		AuthorizeURL: "https://accounts.google.com/o/oauth2/v2/auth",
-		TokenURL:     "https://oauth2.googleapis.com/token",
-	})
-	require.NoError(t, err)
-	require.False(t, ep.advertised)
-	require.Equal(t, "https://accounts.google.com", ep.issuer)
-	require.Equal(t, "https://accounts.google.com/o/oauth2/v2/auth", ep.authorize)
-	require.Equal(t, "https://oauth2.googleapis.com/token", ep.token)
-}
-
-func TestIDPEndpoints_MetadataAdvertisedTrue(t *testing.T) {
-	t.Parallel()
-	var srv *httptest.Server
-	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/.well-known/oauth-authorization-server" {
-			http.NotFound(w, r)
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"issuer":                 srv.URL,
-			"authorization_endpoint": srv.URL + "/authorize",
-			"token_endpoint":         srv.URL + "/token",
-			"authorization_response_iss_parameter_supported": true,
-		})
-	}))
-	t.Cleanup(srv.Close)
-
-	meta := &metadataService{client: srv.Client(), asCache: map[string]asCacheEntry{}}
-	tr := newIDPTransport(srv.Client(), meta)
-	ep, err := tr.endpoints(context.Background(), &authdomain.OAuth2Config{Issuer: srv.URL})
-	require.NoError(t, err)
-	require.True(t, ep.advertised)
-	require.Equal(t, srv.URL, ep.issuer)
 }

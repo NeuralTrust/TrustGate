@@ -29,10 +29,8 @@ import (
 )
 
 type idpEndpoints struct {
-	authorize  string
-	token      string
-	issuer     string
-	advertised bool
+	authorize string
+	token     string
 }
 
 // idpTransport talks to the upstream identity provider: it resolves the
@@ -49,12 +47,7 @@ func newIDPTransport(client *http.Client, meta *metadataService) *idpTransport {
 
 func (t *idpTransport) endpoints(ctx context.Context, cfg *authdomain.OAuth2Config) (*idpEndpoints, error) {
 	if cfg.AuthorizeURL != "" && cfg.TokenURL != "" {
-		return &idpEndpoints{
-			authorize:  cfg.AuthorizeURL,
-			token:      cfg.TokenURL,
-			issuer:     cfg.Issuer,
-			advertised: false,
-		}, nil
+		return &idpEndpoints{authorize: cfg.AuthorizeURL, token: cfg.TokenURL}, nil
 	}
 	doc, err := t.meta.fetchASMetadata(ctx, cfg.Issuer)
 	if err != nil {
@@ -65,12 +58,7 @@ func (t *idpTransport) endpoints(ctx context.Context, cfg *authdomain.OAuth2Conf
 	if authorize == "" || token == "" {
 		return nil, fmt.Errorf("oauth: IdP metadata for %s lacks authorization/token endpoints", cfg.Issuer)
 	}
-	issuer, _ := doc["issuer"].(string)
-	if issuer == "" {
-		issuer = cfg.Issuer
-	}
-	advertised, _ := doc["authorization_response_iss_parameter_supported"].(bool)
-	return &idpEndpoints{authorize: authorize, token: token, issuer: issuer, advertised: advertised}, nil
+	return &idpEndpoints{authorize: authorize, token: token}, nil
 }
 
 func (t *idpTransport) tokenCall(ctx context.Context, endpoint string, form url.Values) (map[string]any, error) {

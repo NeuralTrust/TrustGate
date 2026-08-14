@@ -86,20 +86,19 @@ func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	cons, err := h.updater.Update(c.UserContext(), appconsumer.UpdateInput{
-		ID:                 id,
-		GatewayID:          gatewayID,
-		Name:               req.Name,
-		Type:               req.ToType(),
-		RoutingMode:        req.ToRoutingMode(),
-		LBConfig:           lbConfig,
-		Headers:            req.Headers,
-		Active:             req.Active,
-		Fallback:           fallback,
-		Registries:         registries,
-		ModelPolicies:      modelPolicies,
-		Toolkit:            toolkit,
-		FailMode:           req.ToFailMode(),
-		ProtocolAcceptance: req.ToProtocolAcceptance(),
+		ID:            id,
+		GatewayID:     gatewayID,
+		Name:          req.Name,
+		Type:          req.ToType(),
+		RoutingMode:   req.ToRoutingMode(),
+		LBConfig:      lbConfig,
+		Headers:       req.Headers,
+		Active:        req.Active,
+		Fallback:      fallback,
+		Registries:    registries,
+		ModelPolicies: modelPolicies,
+		Toolkit:       toolkit,
+		FailMode:      req.ToFailMode(),
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)
