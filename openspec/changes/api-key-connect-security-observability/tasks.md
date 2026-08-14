@@ -9,9 +9,9 @@
 | 3. Lifecycle audit | 1,160 actual | Commit 3 |
 | 4. Observability regressions | 409 actual | Commit 4 |
 | Final review fixes | 180 actual | Commit 5 |
-| PR #438 additional review fixes | 615 actual | Uncommitted |
-| PR #438 second review fixes | 277 actual | Uncommitted |
-| PR #438 Page snapshot consistency | 88 actual | Uncommitted |
+| PR #438 additional review fixes | 615 actual | Commit 6 |
+| PR #438 second review fixes | 277 actual | Commit 6 |
+| PR #438 Page snapshot consistency | 88 actual | Commit 6 |
 | **Cumulative diff** | **4,303 actual** | |
 
 Delivery strategy: `exception-ok`; one child PR with approved `size:exception`.
@@ -34,7 +34,7 @@ Chain strategy: size-exception
 ## Single-PR Dependency Order
 
 - **Single child PR:** `fix/api-key-connect-security-observability` → `feat/api-key-self-service-connect-endpoint@fd8782b5`.
-- Commit order: Phase 1 → Phase 2 → Phase 3 → Phase 4 → final review fixes. Merge the completed child once into the RUN-1141 integrator; only that integrator later targets `develop`.
+- Commit order: Phase 1 → Phase 2 → Phase 3 → Phase 4 → final review fixes → PR #438 code-review hardening. Merge the completed child once into the RUN-1141 integrator; only that integrator later targets `develop`.
 
 ```mermaid
 flowchart LR
@@ -43,10 +43,8 @@ flowchart LR
   C2 --> C3[Commit 3 audit]
   C3 --> C4[Commit 4 observability]
   C4 --> C5[Commit 5 review fixes]
-  C5 --> C6[PR 438 review fixes]
-  C6 --> C7[PR 438 second review fixes]
-  C7 --> C8[PR 438 Page snapshot consistency]
-  C8 --> M[Merge single RUN-1142 child PR into integrator]
+  C5 --> C6[Commit 6 PR 438 code-review hardening]
+  C6 --> M[Merge single RUN-1142 child PR into integrator]
 ```
 
 **Human gate:** Infrastructure/SRE must approve immediate GKE proxy CIDRs before a non-empty `MCP_CONNECT_TRUSTED_PROXY_CIDRS` rollout. Until approval, keep the safe empty default.
@@ -91,7 +89,7 @@ flowchart LR
 - [x] 5.4 Align router middleware composition, strengthen redirect-log secrecy, and remove exploration trailing whitespace.
 - [x] 5.5 Run focused and full race tests, `go vet`, `golangci-lint`, and `git diff --check`; record accepted and rejected review triage.
 
-## PR #438 Additional Review Fixes — Uncommitted
+## PR #438 Additional Review Fixes — Commit 6
 
 - [x] 6.1 Snapshot stable, deduplicated forwarded provider IDs in API-key tickets and authorize disconnect by snapshot with a current-registry fallback for legacy tickets.
 - [x] 6.2 Reject stale identity-complete API-key tickets when the consumer changed or the API-key auth is no longer attached and applicable.
@@ -99,7 +97,7 @@ flowchart LR
 - [x] 6.4 Add required Apache headers and update normative provider-snapshot, identity-freshness, and atomic-delete artifacts.
 - [x] 6.5 Run `make license-check`, focused and full race tests, `go vet`, `golangci-lint`, and `git diff --check`.
 
-## PR #438 Second Review Fixes — Uncommitted
+## PR #438 Second Review Fixes — Commit 6
 
 - [x] 7.1 Fail closed for any partial API-key ticket marker and require provider snapshot plus ConsumerID/AuthID revalidation.
 - [x] 7.2 Authorize snapshot membership in `Start` before state creation and in `Callback` before exchange/upsert; retain fully legacy current-registry fallback.
@@ -107,7 +105,7 @@ flowchart LR
 - [x] 7.4 Protect Redis credential JSON decoding and return `ErrNotFound` without delete/audit for malformed payloads.
 - [x] 7.5 Run formatting, license, focused/full race, vet, lint, and diff verification.
 
-## PR #438 Page Snapshot Consistency — Uncommitted
+## PR #438 Page Snapshot Consistency — Commit 6
 
 - [x] 8.1 Restrict API-key `Page` provider visibility and vault lookup to current providers included in the ticket snapshot by reusing canonical provider authorization.
 - [x] 8.2 Preserve fully legacy `Page` behavior over current effective registries without changing Start, Callback, Disconnect, or audits.
