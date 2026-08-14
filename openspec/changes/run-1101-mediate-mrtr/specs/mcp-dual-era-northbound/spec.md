@@ -1,38 +1,11 @@
 # Delta for MCP Dual-Era Northbound
 
-## ADDED Requirements
-
-### Requirement: Era classification
-
-After authentication, the server MUST parse each POST independently before consumer lookup. `initialize` or a known legacy header MUST select legacy despite modern metadata. Any `2026-07-28` header or metadata signal MUST select modern; an unknown version header MUST produce `-32022`; no modern signal MUST select legacy.
-
-#### Scenario: Legacy precedence
-- GIVEN `initialize` or a known legacy header with modern metadata
-- WHEN the request is classified
-- THEN legacy semantics apply
-
-#### Scenario: Modern intent
-- GIVEN one or both modern signals
-- WHEN the request is classified
-- THEN modern validation runs and missing counterparts fail closed
-
-### Requirement: Modern request validation
-
-A modern request MUST contain JSON-RPC 2.0, object `params._meta`, matching `MCP-Protocol-Version` and `io.modelcontextprotocol/protocolVersion`, object `io.modelcontextprotocol/clientCapabilities`, and matching `Mcp-Method`. `tools/call`, `resources/read`, and `prompts/get` MUST match `Mcp-Name` after exact Base64-sentinel UTF-8 decoding. Any `Mcp-Param-*` MUST be rejected. Header names are case-insensitive; values are case-sensitive.
-
-#### Scenario: Valid modern request
-- GIVEN all metadata and mirrored headers match
-- WHEN validation runs
-- THEN execution MAY continue
-
-#### Scenario: Invalid modern request
-- GIVEN malformed metadata, a mismatch, invalid Base64, or `Mcp-Param-*`
-- WHEN validation runs
-- THEN HTTP 400 returns `-32602` for body shape or `-32020` for header validation
+## MODIFIED Requirements
 
 ### Requirement: Modern statuses and errors
 
 Unsupported versions MUST return HTTP 400 `-32022` with exact `data.requested` and newest-first `data.supported`: `[2026-07-28, 2025-06-18, 2025-03-26, 2024-11-05]`. Unknown modern methods MUST return HTTP 404 `-32601`. Valid modern notifications, including `notifications/cancelled`, MUST return HTTP 202 without a body.
+(Previously: cancelled was not an accepted modern notification.)
 
 #### Scenario: Unsupported version
 - GIVEN an unknown non-legacy version
@@ -52,6 +25,7 @@ Unsupported versions MUST return HTTP 400 `-32022` with exact `data.requested` a
 ### Requirement: Role-scoped discovery
 
 `server/discover` MUST use only the role-scoped configured view and MUST NOT probe upstreams. It SHALL advertise supported versions, server identity, and capabilities; denied kinds MUST be omitted. Allowed kinds MUST map to `{}` except when MRTR is end-to-end: then `tools` MUST be `{"inputRequests":{}}`. End-to-end means modern northbound, ticket secret set, and at least one bound registry is not `protocol_mode=legacy`. MUST NOT advertise if all registries are `legacy` or the secret is missing. MUST NOT advertise on legacy `initialize`.
+(Previously: allowed kinds always mapped to `{}`.)
 
 #### Scenario: Different role grants
 - GIVEN two principals have different visible primitive kinds
@@ -81,6 +55,7 @@ Unsupported versions MUST return HTTP 400 `-32022` with exact `data.requested` a
 ### Requirement: Modern response and caching
 
 Every modern success MUST preserve existing fields and add `io.modelcontextprotocol/serverInfo`. Modern `tools/call` MUST set `resultType` to `"input_required"` when the mediated upstream result is `input_required`; otherwise `"complete"`. All other modern methods MUST set `resultType: "complete"` and MUST strip MRTR fields. Discover/list results MUST use `ttlMs: 300000`; `resources/read` MUST use `ttlMs: 0`; all MUST use `cacheScope: "private"`.
+(Previously: every modern success forced `resultType: "complete"`.)
 
 #### Scenario: Cacheable result
 - GIVEN a successful modern discover, list, or resource read
@@ -101,35 +76,3 @@ Every modern success MUST preserve existing fields and add `io.modelcontextproto
 - GIVEN a modern `prompts/get` or `resources/read` with upstream MRTR fields
 - WHEN serialized
 - THEN `resultType` is `complete` and MRTR fields are absent
-
-### Requirement: Northbound schema sanitization
-
-Modern `tools/list` output MUST recursively omit every `x-mcp-header` key and MUST preserve all other schema fields. Sanitization MUST NOT mutate cached or southbound payloads.
-
-#### Scenario: Concurrent sanitization
-- GIVEN a shared tool schema contains nested `x-mcp-header` keys
-- WHEN concurrent modern and legacy responses serialize it
-- THEN modern omits only those keys while cached, legacy, and southbound views remain unchanged
-
-### Requirement: Validation isolation
-
-Modern parsing and validation MUST finish before consumer lookup, role scoping, routing, rate limiting, plugins, composer, or upstream discovery. Failures MUST create no composer span and MUST mark operation metrics skipped.
-
-#### Scenario: Boundary rejection
-- GIVEN any modern parse or validation failure
-- WHEN the handler rejects it
-- THEN none of the downstream collaborators or policy effects occur
-
-### Requirement: Transport and legacy compatibility
-
-The endpoint MUST remain `POST /{consumer_slug}/mcp`; validated non-discover requests SHALL use the existing gateway/composer. Modern handling MUST ignore and never emit `Mcp-Session-Id`. GET and DELETE MUST return 405 with `Allow: POST`. All existing legacy initialization, methods, errors, policies, filtering, consent, and telemetry MUST remain unchanged.
-
-#### Scenario: Stateless modern transport
-- GIVEN a modern request carries a session ID
-- WHEN handled
-- THEN the ID has no effect and no response session header is emitted
-
-#### Scenario: Legacy regression
-- GIVEN an existing legacy request or unsupported HTTP method
-- WHEN handled
-- THEN prior legacy behavior or HTTP 405 with `Allow: POST` is preserved

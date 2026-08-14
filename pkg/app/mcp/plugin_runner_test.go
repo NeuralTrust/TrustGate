@@ -148,7 +148,7 @@ func TestPluginRunner_PreRequest(t *testing.T) {
 			rc := routableMCPConsumer(preResponsePolicy(policydomain.StagePreRequest))
 			runner := NewPluginRunner(exec, discardLogger())
 
-			_, err := runner.PreRequest(context.Background(), rc, testToolName, json.RawMessage(testToolArgs))
+			_, err := runner.PreRequest(context.Background(), rc, testToolName, json.RawMessage(testToolArgs), nil)
 
 			assertStageInput(t, captured, policydomain.StagePreRequest, rc)
 			assert.Nil(t, captured.Response)
@@ -279,7 +279,7 @@ func TestPluginRunner_NilExecutor(t *testing.T) {
 	runner := NewPluginRunner(nil, discardLogger())
 	rc := routableMCPConsumer()
 
-	_, err := runner.PreRequest(context.Background(), rc, testToolName, json.RawMessage(testToolArgs))
+	_, err := runner.PreRequest(context.Background(), rc, testToolName, json.RawMessage(testToolArgs), nil)
 	require.NoError(t, err)
 	_, err = runner.PreResponse(
 		context.Background(), rc, testToolName, json.RawMessage(testToolArgs), json.RawMessage(testResult),
@@ -328,7 +328,7 @@ func TestPluginRunner_PreRequest_ReturnsMaskedArguments(t *testing.T) {
 	runner := NewPluginRunner(exec, discardLogger())
 	rc := routableMCPConsumer(preResponsePolicy(policydomain.StagePreRequest))
 
-	got, err := runner.PreRequest(context.Background(), rc, testToolName, json.RawMessage(testToolArgs))
+	got, err := runner.PreRequest(context.Background(), rc, testToolName, json.RawMessage(testToolArgs), nil)
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.JSONEq(t, `{"q":"[REDACTED]"}`, string(got.Arguments))
@@ -345,7 +345,7 @@ func TestPluginRunner_PreRequest_NoRewriteLeavesArgumentsEmpty(t *testing.T) {
 	runner := NewPluginRunner(exec, discardLogger())
 	rc := routableMCPConsumer(preResponsePolicy(policydomain.StagePreRequest))
 
-	got, err := runner.PreRequest(context.Background(), rc, testToolName, json.RawMessage(testToolArgs))
+	got, err := runner.PreRequest(context.Background(), rc, testToolName, json.RawMessage(testToolArgs), nil)
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Nil(t, got.Arguments)

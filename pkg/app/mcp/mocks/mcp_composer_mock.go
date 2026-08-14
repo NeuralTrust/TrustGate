@@ -24,9 +24,9 @@ func (_m *Composer) EXPECT() *Composer_Expecter {
 	return &Composer_Expecter{mock: &_m.Mock}
 }
 
-// CallTool provides a mock function with given fields: ctx, rc, name, arguments
-func (_m *Composer) CallTool(ctx context.Context, rc *consumer.RoutableConsumer, name string, arguments json.RawMessage) (json.RawMessage, error) {
-	ret := _m.Called(ctx, rc, name, arguments)
+// CallTool provides a mock function with given fields: ctx, rc, call
+func (_m *Composer) CallTool(ctx context.Context, rc *consumer.RoutableConsumer, call mcp.ToolCall) (json.RawMessage, error) {
+	ret := _m.Called(ctx, rc, call)
 
 	if len(ret) == 0 {
 		panic("no return value specified for CallTool")
@@ -34,19 +34,19 @@ func (_m *Composer) CallTool(ctx context.Context, rc *consumer.RoutableConsumer,
 
 	var r0 json.RawMessage
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, *consumer.RoutableConsumer, string, json.RawMessage) (json.RawMessage, error)); ok {
-		return rf(ctx, rc, name, arguments)
+	if rf, ok := ret.Get(0).(func(context.Context, *consumer.RoutableConsumer, mcp.ToolCall) (json.RawMessage, error)); ok {
+		return rf(ctx, rc, call)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, *consumer.RoutableConsumer, string, json.RawMessage) json.RawMessage); ok {
-		r0 = rf(ctx, rc, name, arguments)
+	if rf, ok := ret.Get(0).(func(context.Context, *consumer.RoutableConsumer, mcp.ToolCall) json.RawMessage); ok {
+		r0 = rf(ctx, rc, call)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(json.RawMessage)
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, *consumer.RoutableConsumer, string, json.RawMessage) error); ok {
-		r1 = rf(ctx, rc, name, arguments)
+	if rf, ok := ret.Get(1).(func(context.Context, *consumer.RoutableConsumer, mcp.ToolCall) error); ok {
+		r1 = rf(ctx, rc, call)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -62,15 +62,14 @@ type Composer_CallTool_Call struct {
 // CallTool is a helper method to define mock.On call
 //   - ctx context.Context
 //   - rc *consumer.RoutableConsumer
-//   - name string
-//   - arguments json.RawMessage
-func (_e *Composer_Expecter) CallTool(ctx interface{}, rc interface{}, name interface{}, arguments interface{}) *Composer_CallTool_Call {
-	return &Composer_CallTool_Call{Call: _e.mock.On("CallTool", ctx, rc, name, arguments)}
+//   - call mcp.ToolCall
+func (_e *Composer_Expecter) CallTool(ctx interface{}, rc interface{}, call interface{}) *Composer_CallTool_Call {
+	return &Composer_CallTool_Call{Call: _e.mock.On("CallTool", ctx, rc, call)}
 }
 
-func (_c *Composer_CallTool_Call) Run(run func(ctx context.Context, rc *consumer.RoutableConsumer, name string, arguments json.RawMessage)) *Composer_CallTool_Call {
+func (_c *Composer_CallTool_Call) Run(run func(ctx context.Context, rc *consumer.RoutableConsumer, call mcp.ToolCall)) *Composer_CallTool_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(*consumer.RoutableConsumer), args[2].(string), args[3].(json.RawMessage))
+		run(args[0].(context.Context), args[1].(*consumer.RoutableConsumer), args[2].(mcp.ToolCall))
 	})
 	return _c
 }
@@ -80,7 +79,7 @@ func (_c *Composer_CallTool_Call) Return(_a0 json.RawMessage, _a1 error) *Compos
 	return _c
 }
 
-func (_c *Composer_CallTool_Call) RunAndReturn(run func(context.Context, *consumer.RoutableConsumer, string, json.RawMessage) (json.RawMessage, error)) *Composer_CallTool_Call {
+func (_c *Composer_CallTool_Call) RunAndReturn(run func(context.Context, *consumer.RoutableConsumer, mcp.ToolCall) (json.RawMessage, error)) *Composer_CallTool_Call {
 	_c.Call.Return(run)
 	return _c
 }

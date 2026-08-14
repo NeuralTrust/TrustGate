@@ -91,10 +91,12 @@ func (s *Session) ListTools(ctx context.Context) ([]appmcp.Tool, error) {
 	return mapItems[appmcp.Tool]("tools/list", items)
 }
 
-func (s *Session) CallTool(ctx context.Context, name string, arguments json.RawMessage) (json.RawMessage, error) {
-	params := &sdk.CallToolParams{Name: name}
-	if len(arguments) > 0 {
-		params.Arguments = arguments
+// CallTool runs a legacy tools/call. The legacy era has no multi round-trip
+// contract, so continuation fields are dropped instead of forwarded.
+func (s *Session) CallTool(ctx context.Context, call appmcp.ToolCall) (json.RawMessage, error) {
+	params := &sdk.CallToolParams{Name: call.Name}
+	if len(call.Arguments) > 0 {
+		params.Arguments = call.Arguments
 	}
 	res, err := s.cs.CallTool(ctx, params)
 	if err != nil {

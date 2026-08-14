@@ -304,7 +304,7 @@ func TestHandler_ToolsList_ComposedSurface(t *testing.T) {
 func TestHandler_ToolsCall_PassesUpstreamRPCErrorThrough(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "boom", mock.Anything).
+	composer.EXPECT().CallTool(mock.Anything, mock.Anything, toolCallNamed("boom")).
 		Return(nil, &appmcp.RPCError{Code: -32099, Message: "upstream exploded"}).Once()
 	app := newApp(t, composer, consumerdomain.TypeMCP, true)
 
@@ -357,7 +357,7 @@ func TestHandler_RPCErrorSessionHeaderIsolationByEra(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			composer := mocks.NewComposer(t)
-			composer.EXPECT().CallTool(mock.Anything, mock.Anything, "boom", mock.Anything).
+			composer.EXPECT().CallTool(mock.Anything, mock.Anything, toolCallNamed("boom")).
 				Return(nil, &appmcp.RPCError{
 					Code:    -32099,
 					Message: "upstream exploded",
@@ -386,7 +386,7 @@ func TestHandler_RPCErrorSessionHeaderIsolationByEra(t *testing.T) {
 func TestHandler_ToolsCall_ConsentRequiredRidesOn200(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "notion-search", mock.Anything).
+	composer.EXPECT().CallTool(mock.Anything, mock.Anything, toolCallNamed("notion-search")).
 		Return(nil, &appmcp.ConsentRequiredError{
 			Provider: "com.notion/mcp", Ticket: "tk", Path: "/virtual/mcp",
 		}).Once()
@@ -414,7 +414,7 @@ func TestHandler_ToolsCall_ConsentRequiredRidesOn200(t *testing.T) {
 func TestHandler_ToolsCall_ToolNotPermittedRidesOn200(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "notion-search", mock.Anything).
+	composer.EXPECT().CallTool(mock.Anything, mock.Anything, toolCallNamed("notion-search")).
 		Return(nil, &appmcp.ToolNotPermittedError{Tool: "notion-search"}).Once()
 	app := newApp(t, composer, consumerdomain.TypeMCP, true)
 
@@ -949,7 +949,7 @@ func TestHandler_ModernMethodsDispatchAndAdaptFields(t *testing.T) {
 			body:    `{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"search","arguments":{"q":"value"},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`,
 			headers: modernHeadersWithName("tools/call", "search"),
 			setup: func(composer *mocks.Composer) {
-				composer.EXPECT().CallTool(mock.Anything, mock.Anything, "search", mock.Anything).
+				composer.EXPECT().CallTool(mock.Anything, mock.Anything, toolCallNamed("search")).
 					Return(json.RawMessage(`{"content":[{"type":"text","text":"kept"}],"extra":"preserved"}`), nil).Once()
 			},
 			resultKey: "content",
@@ -1039,7 +1039,7 @@ func TestHandler_ModernInvalidSuccessPayloadReturnsInternalError(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			composer := mocks.NewComposer(t)
-			composer.EXPECT().CallTool(mock.Anything, mock.Anything, "search", mock.Anything).
+			composer.EXPECT().CallTool(mock.Anything, mock.Anything, toolCallNamed("search")).
 				Return(tc.result, nil).Once()
 			app := newApp(t, composer, consumerdomain.TypeMCP, true)
 			body := `{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"search","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`
@@ -1140,7 +1140,7 @@ func TestHandler_ModernValidationPrecedesDownstream(t *testing.T) {
 	roleScoper.AssertNotCalled(t, "Scope", mock.Anything, mock.Anything, mock.Anything)
 	limiter.AssertNotCalled(t, "Check", mock.Anything, mock.Anything)
 	executor.AssertNotCalled(t, "RunStage", mock.Anything, mock.Anything)
-	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestHandler_ModernValidationPrecedesConsumerLookup(t *testing.T) {

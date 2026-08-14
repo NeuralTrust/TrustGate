@@ -62,7 +62,7 @@ func TestServerDiscoveryResultCapabilities(t *testing.T) {
 			rc := &appconsumer.RoutableConsumer{
 				Consumer: &consumerdomain.Consumer{MCP: tc.policy},
 			}
-			result := serverDiscoveryResult(rc)
+			result := serverDiscoveryResult(rc, false)
 			require.Equal(t, supportedProtocolVersions, result["supportedVersions"])
 			capabilities := result["capabilities"].(map[string]any)
 			require.Len(t, capabilities, len(tc.want))
@@ -81,7 +81,7 @@ func TestServerDiscoveryResultUsesModernNormalization(t *testing.T) {
 			ID: ids.New[ids.ConsumerKind](),
 		},
 	}
-	normalized, err := normalizeModernResult("server/discover", serverDiscoveryResult(rc), rc)
+	normalized, err := normalizeModernResult("server/discover", serverDiscoveryResult(rc, false), rc, nil)
 	require.NoError(t, err)
 	require.Equal(t, "complete", normalized["resultType"])
 	require.Equal(t, modernCacheTTLDefault, normalized["ttlMs"])
@@ -108,9 +108,14 @@ func TestSurfaceFingerprintDistinguishesNilAndEmptyToolkit(t *testing.T) {
 	emptyFingerprint := surfaceFingerprint(emptyToolkit)
 	require.NotEqual(t, nilFingerprint, emptyFingerprint)
 
-	nilResult, err := normalizeModernResult("server/discover", serverDiscoveryResult(nilToolkit), nilToolkit)
+	nilResult, err := normalizeModernResult("server/discover", serverDiscoveryResult(nilToolkit, false), nilToolkit, nil)
 	require.NoError(t, err)
-	emptyResult, err := normalizeModernResult("server/discover", serverDiscoveryResult(emptyToolkit), emptyToolkit)
+	emptyResult, err := normalizeModernResult(
+		"server/discover",
+		serverDiscoveryResult(emptyToolkit, false),
+		emptyToolkit,
+		nil,
+	)
 	require.NoError(t, err)
 	nilVersion := nilResult["_meta"].(map[string]any)[modernServerInfoKey].(map[string]any)["version"]
 	emptyVersion := emptyResult["_meta"].(map[string]any)[modernServerInfoKey].(map[string]any)["version"]
