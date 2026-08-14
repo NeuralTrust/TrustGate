@@ -421,7 +421,8 @@ The metrics pipeline's **default** exporters (applied to every gateway unless a
 gateway declares its own) are loaded at boot from a declarative YAML file,
 selected by `TELEMETRY_EXPORTERS_FILE` (default `config/telemetry.yaml`).
 If that file is missing, the same entries can be declared as YAML or JSON lists
-in `TELEMETRY_EXPORTERS_METADATA` and `TELEMETRY_EXPORTERS_RAW`. A present file
+in `TELEMETRY_EXPORTERS_METADATA` and `TELEMETRY_EXPORTERS_RAW`, or as type
+tokens (`otlp`, `postgres`; `otel` is an alias of `otlp`). A present file
 wins over the env lists. Invalid config aborts boot; if neither source declares
 exporters, a warning is logged and the pipeline starts with no defaults.
 Exporters are grouped by data class, and the class is intrinsic to the `type`:

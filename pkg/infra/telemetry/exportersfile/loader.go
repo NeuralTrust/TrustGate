@@ -92,13 +92,51 @@ func parseDocument(data []byte, source string) ([]telemetrydomain.ExporterConfig
 }
 
 func unmarshalList(raw string, dest *[]exporterEntry, source string) error {
-	if strings.TrimSpace(raw) == "" {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
 		return nil
 	}
-	if err := yaml.Unmarshal([]byte(raw), dest); err != nil {
+	if looksLikeExporterDocument(raw) {
+		if err := yaml.Unmarshal([]byte(raw), dest); err != nil {
+			return fmt.Errorf("parsing %s: %w", source, err)
+		}
+		return nil
+	}
+	entries, err := parseTypeTokens(raw)
+	if err != nil {
 		return fmt.Errorf("parsing %s: %w", source, err)
 	}
+	*dest = entries
 	return nil
+}
+
+func looksLikeExporterDocument(raw string) bool {
+	switch raw[0] {
+	case '[', '{', '-':
+		return true
+	}
+	return strings.Contains(raw, ":")
+}
+
+func parseTypeTokens(raw string) ([]exporterEntry, error) {
+	parts := strings.Split(raw, ",")
+	out := make([]exporterEntry, 0, len(parts))
+	for _, part := range parts {
+		typ := canonicalExporterType(part)
+		if typ == "" {
+			return nil, fmt.Errorf("empty exporter type")
+		}
+		out = append(out, exporterEntry{Name: typ, Type: typ})
+	}
+	return out, nil
+}
+
+func canonicalExporterType(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "otel" {
+		return otelExporterType
+	}
+	return s
 }
 
 func fromGroups(groups exporterGroups) ([]telemetrydomain.ExporterConfig, error) {
