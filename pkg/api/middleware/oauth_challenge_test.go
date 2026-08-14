@@ -30,7 +30,9 @@ func TestOAuthChallengeAddsWWWAuthenticateOn401(t *testing.T) {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthenticated")
 	})
 
-	res, err := app.Test(httptest.NewRequest(fiber.MethodPost, "http://gw.example.com/v1/mcp/dev", nil))
+	req := httptest.NewRequest(fiber.MethodPost, "/v1/mcp/dev", nil)
+	req.Host = "gw.example.com"
+	res, err := app.Test(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -54,7 +56,9 @@ func TestOAuthChallengeUsesRootMetadataForRootPath(t *testing.T) {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthenticated")
 	})
 
-	res, err := app.Test(httptest.NewRequest(fiber.MethodPost, "http://gw.example.com/", nil))
+	req := httptest.NewRequest(fiber.MethodPost, "/", nil)
+	req.Host = "gw.example.com"
+	res, err := app.Test(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -72,7 +76,9 @@ func TestOAuthChallengeSkipsNon401(t *testing.T) {
 		return c.SendStatus(fiber.StatusOK)
 	})
 
-	res, err := app.Test(httptest.NewRequest(fiber.MethodPost, "http://gw.example.com/v1/mcp/dev", nil))
+	req := httptest.NewRequest(fiber.MethodPost, "/v1/mcp/dev", nil)
+	req.Host = "gw.example.com"
+	res, err := app.Test(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -89,7 +95,9 @@ func TestOAuthChallengeOnDirectStatus401(t *testing.T) {
 		return c.SendStatus(fiber.StatusUnauthorized)
 	})
 
-	res, err := app.Test(httptest.NewRequest(fiber.MethodPost, "http://gw.example.com/v1/mcp/dev", nil))
+	req := httptest.NewRequest(fiber.MethodPost, "/v1/mcp/dev", nil)
+	req.Host = "gw.example.com"
+	res, err := app.Test(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
