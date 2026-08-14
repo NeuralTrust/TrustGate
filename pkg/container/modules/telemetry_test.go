@@ -33,11 +33,13 @@ func TestNewDefaultExporters(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		write   bool
-		content string
-		setup   func(factory *mocks.ExporterFactory)
-		assert  func(t *testing.T, configs []telemetrydomain.ExporterConfig, err error)
+		name        string
+		write       bool
+		content     string
+		metadataEnv string
+		rawEnv      string
+		setup       func(factory *mocks.ExporterFactory)
+		assert      func(t *testing.T, configs []telemetrydomain.ExporterConfig, err error)
 	}{
 		{
 			name:  "valid entries are returned as configs in file order and not built",
@@ -94,6 +96,20 @@ func TestNewDefaultExporters(t *testing.T) {
 				assert.Empty(t, configs)
 			},
 		},
+		{
+			name:        "missing file uses env lists",
+			write:       false,
+			metadataEnv: `[{"name":"env-otlp","type":"otlp"}]`,
+			rawEnv:      `[{"name":"env-raw","type":"otlp"}]`,
+			setup: func(factory *mocks.ExporterFactory) {
+				factory.EXPECT().Validate(mock.Anything).Return(nil)
+			},
+			assert: func(t *testing.T, configs []telemetrydomain.ExporterConfig, err error) {
+				require.NoError(t, err)
+				require.Len(t, configs, 2)
+				assert.Equal(t, []string{"env-otlp", "env-raw"}, []string{configs[0].Name, configs[1].Name})
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -110,7 +126,7 @@ func TestNewDefaultExporters(t *testing.T) {
 			tt.setup(factory)
 
 			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-			configs, err := newDefaultExporters(logger, factory, path)
+			configs, err := newDefaultExporters(logger, factory, path, tt.metadataEnv, tt.rawEnv)
 			tt.assert(t, configs, err)
 		})
 	}

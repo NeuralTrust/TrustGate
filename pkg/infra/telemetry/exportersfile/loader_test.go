@@ -249,3 +249,81 @@ func TestLoad(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadDefaults(t *testing.T) {
+	t.Parallel()
+
+	fileYAML := `exporters:
+  metadata:
+    - name: from-file
+      type: otlp
+`
+	envMetadata := `[{"name":"from-env-meta","type":"otlp"}]`
+	envRaw := `[{"name":"from-env-raw","type":"otlp"}]`
+
+	t.Run("file present wins over env", func(t *testing.T) {
+		t.Parallel()
+		path := filepath.Join(t.TempDir(), "telemetry.yaml")
+		require.NoError(t, os.WriteFile(path, []byte(fileYAML), 0o600))
+
+		configs, err := exportersfile.LoadDefaults(path, envMetadata, envRaw)
+		require.NoError(t, err)
+		require.Len(t, configs, 1)
+		assert.Equal(t, "from-file", configs[0].Name)
+		assert.Equal(t, metricsschema.Metadata, configs[0].Class)
+	})
+
+	t.Run("missing file uses env lists", func(t *testing.T) {
+		t.Parallel()
+		path := filepath.Join(t.TempDir(), "missing.yaml")
+
+		configs, err := exportersfile.LoadDefaults(path, envMetadata, envRaw)
+		require.NoError(t, err)
+		require.Len(t, configs, 2)
+		assert.Equal(t, "from-env-meta", configs[0].Name)
+		assert.Equal(t, metricsschema.Metadata, configs[0].Class)
+		assert.Equal(t, "from-env-raw", configs[1].Name)
+		assert.Equal(t, metricsschema.Raw, configs[1].Class)
+	})
+
+	t.Run("empty path uses env lists", func(t *testing.T) {
+		t.Parallel()
+		configs, err := exportersfile.LoadDefaults("", envMetadata, envRaw)
+		require.NoError(t, err)
+		require.Len(t, configs, 2)
+	})
+
+	t.Run("missing file and empty env yields no exporters", func(t *testing.T) {
+		t.Parallel()
+		configs, err := exportersfile.LoadDefaults(filepath.Join(t.TempDir(), "missing.yaml"), "", "")
+		require.NoError(t, err)
+		assert.Empty(t, configs)
+	})
+
+	t.Run("yaml lists are accepted", func(t *testing.T) {
+		t.Parallel()
+		metadata := "- name: yaml-meta\n  type: otlp\n"
+		raw := "- name: yaml-raw\n  type: postgres\n  settings:\n    dsn_env: SENSIBLE_PG_DSN\n"
+		configs, err := exportersfile.LoadDefaults("", metadata, raw)
+		require.NoError(t, err)
+		require.Len(t, configs, 2)
+		assert.Equal(t, "yaml-meta", configs[0].Name)
+		assert.Equal(t, "yaml-raw", configs[1].Name)
+		assert.Equal(t, "postgres", configs[1].Type)
+	})
+
+	t.Run("invalid env list fails boot", func(t *testing.T) {
+		t.Parallel()
+		_, err := exportersfile.LoadDefaults("", "[{", "")
+		require.Error(t, err)
+		assert.False(t, errors.Is(err, exportersfile.ErrFileNotFound))
+		assert.ErrorContains(t, err, "TELEMETRY_EXPORTERS_METADATA")
+	})
+
+	t.Run("postgres in metadata env aborts", func(t *testing.T) {
+		t.Parallel()
+		_, err := exportersfile.LoadDefaults("", `[{"name":"pg","type":"postgres"}]`, "")
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "metadata")
+	})
+}
