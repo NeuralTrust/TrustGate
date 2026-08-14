@@ -326,4 +326,35 @@ func TestLoadDefaults(t *testing.T) {
 		require.Error(t, err)
 		assert.ErrorContains(t, err, "metadata")
 	})
+
+	t.Run("shorthand type tokens", func(t *testing.T) {
+		t.Parallel()
+		configs, err := exportersfile.LoadDefaults("", "otlp", "postgres")
+		require.NoError(t, err)
+		require.Len(t, configs, 2)
+		assert.Equal(t, "otlp", configs[0].Name)
+		assert.Equal(t, "otlp", configs[0].Type)
+		assert.Equal(t, metricsschema.Metadata, configs[0].Class)
+		assert.Equal(t, "postgres", configs[1].Name)
+		assert.Equal(t, "postgres", configs[1].Type)
+		assert.Equal(t, metricsschema.Raw, configs[1].Class)
+	})
+
+	t.Run("shorthand otel aliases otlp", func(t *testing.T) {
+		t.Parallel()
+		configs, err := exportersfile.LoadDefaults("", "", "otel")
+		require.NoError(t, err)
+		require.Len(t, configs, 1)
+		assert.Equal(t, "otlp", configs[0].Name)
+		assert.Equal(t, "otlp", configs[0].Type)
+		assert.Equal(t, metricsschema.Raw, configs[0].Class)
+	})
+
+	t.Run("shorthand csv types", func(t *testing.T) {
+		t.Parallel()
+		configs, err := exportersfile.LoadDefaults("", "", "postgres,otlp")
+		require.NoError(t, err)
+		require.Len(t, configs, 2)
+		assert.Equal(t, []string{"postgres", "otlp"}, []string{configs[0].Type, configs[1].Type})
+	})
 }
