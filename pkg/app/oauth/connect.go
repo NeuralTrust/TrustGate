@@ -208,20 +208,15 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 }
 
 func (s *connectService) Disconnect(ctx context.Context, ticketID, provider string) error {
-	ticket, gatewayID, data, rc, err := s.resolve(ctx, ticketID)
+	ticket, gatewayID, _, _, err := s.resolve(ctx, ticketID)
 	if err != nil {
 		return err
 	}
-	reg := providerRegistry(data.EffectiveRegistries(rc), provider)
-	cfg := forwardedAuth(reg)
-	if cfg == nil {
-		return ErrProviderNotFound
-	}
-	if err := s.vault.Delete(ctx, gatewayID, ticket.PrincipalSub, cfg.Provider); err != nil {
+	if err := s.vault.Delete(ctx, gatewayID, ticket.PrincipalSub, provider); err != nil {
 		return err
 	}
 	if identity, ok := connectAuditIdentity(ticket); ok {
-		s.auditor.ProviderUnlinked(ctx, identity, cfg.Provider)
+		s.auditor.ProviderUnlinked(ctx, identity, provider)
 	}
 	return nil
 }

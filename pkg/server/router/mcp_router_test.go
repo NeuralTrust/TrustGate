@@ -98,14 +98,15 @@ func TestMCPRouterDispatch(t *testing.T) {
 	mcpHandler := mcphttp.NewHandler(nil, nil)
 	ops := &routerOpsRecorder{}
 	mcpRouter := router.NewMCPRouter(
-		middleware.NewTransport(),
+		middleware.NewTransport(
+			middleware.NewSecurityHeadersMiddleware(),
+		),
 		middleware.NewTransport(
 			middleware.NewOAuthChallengeMiddleware(),
 			challengeEligibilityMiddleware{
 				"/tools/mcp":         false,
 				"/oauth-enabled/mcp": true,
 			},
-			middleware.NewSecurityHeadersMiddleware(),
 		),
 		apihandler.NewHealthHandler(),
 		mcpHandler,
@@ -162,7 +163,7 @@ func TestMCPRouterDispatch(t *testing.T) {
 
 		assert.Equal(t, fiber.StatusSeeOther, res.StatusCode)
 		assert.Equal(t, "/tools/mcp/connect?ticket=self-service-ticket", res.Header.Get(fiber.HeaderLocation))
-		assert.Empty(t, res.Header.Get("X-Frame-Options"))
+		assert.Equal(t, "DENY", res.Header.Get("X-Frame-Options"))
 		assertMCPResponsePolicies(t, res)
 		assert.Empty(t, res.Header.Get(fiber.HeaderWWWAuthenticate))
 		assert.NotContains(t, res.Header.Get(fiber.HeaderLocation), "secret-key")

@@ -140,17 +140,22 @@ func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) (authScope, error) {
 		return nil, nil
 	}
 	scope := authScope{}
+	hasOAuth2 := false
 	hasEnabledOAuth2 := false
 	for _, m := range matches {
 		for _, a := range m.Auths {
 			scope[a.ID] = struct{}{}
-			if a.Enabled && a.Type == authdomain.TypeOAuth2 {
-				hasEnabledOAuth2 = true
+			if a.Type == authdomain.TypeOAuth2 {
+				hasOAuth2 = true
+				if a.Enabled {
+					hasEnabledOAuth2 = true
+				}
 			}
 		}
 	}
-	c.Locals(OAuthChallengeAllowedLocal, hasEnabledOAuth2 || r.defaultIdPEnabled)
-	if r.defaultIdPEnabled && !hasEnabledOAuth2 {
+	defaultIdPUsable := r.defaultIdPEnabled && !hasOAuth2
+	c.Locals(OAuthChallengeAllowedLocal, hasEnabledOAuth2 || defaultIdPUsable)
+	if defaultIdPUsable {
 		scope[appauth.DefaultIdPAuthID()] = struct{}{}
 	}
 	return scope, nil

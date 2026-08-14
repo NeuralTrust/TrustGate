@@ -31,7 +31,10 @@ import (
 func TestAccessLogConnectOutcomesDoNotLeakRequestSecrets(t *testing.T) {
 	t.Parallel()
 
-	const secret = "raw-api-key-sentinel"
+	const (
+		secret       = "raw-api-key-sentinel"
+		opaqueTicket = "opaque-ticket-sentinel"
+	)
 	for _, status := range []int{
 		fiber.StatusSeeOther,
 		fiber.StatusUnauthorized,
@@ -49,7 +52,7 @@ func TestAccessLogConnectOutcomesDoNotLeakRequestSecrets(t *testing.T) {
 			app.Use(NewAccessLogMiddleware(logger).Middleware())
 			app.Post("/tools/connect", func(c *fiber.Ctx) error {
 				if status == fiber.StatusSeeOther {
-					return c.Redirect("/tools/mcp/connect?ticket=opaque", status)
+					return c.Redirect("/tools/mcp/connect?ticket="+opaqueTicket, status)
 				}
 				return c.Status(status).SendString(http.StatusText(status))
 			})
@@ -68,6 +71,8 @@ func TestAccessLogConnectOutcomesDoNotLeakRequestSecrets(t *testing.T) {
 			require.Equal(t, status, res.StatusCode)
 			require.Contains(t, output.String(), `"status":`+strconv.Itoa(status))
 			require.NotContains(t, output.String(), secret)
+			require.NotContains(t, output.String(), "ticket=")
+			require.NotContains(t, output.String(), opaqueTicket)
 		})
 	}
 }

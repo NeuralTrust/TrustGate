@@ -789,6 +789,9 @@ func parsePrefixListEnv(key string) ([]netip.Prefix, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s must contain valid CIDR prefixes", errors.ErrInvalidConfig, key)
 		}
+		if prefix.Bits() == 0 {
+			return nil, fmt.Errorf("%w: %s must not trust all addresses", errors.ErrInvalidConfig, key)
+		}
 		prefixes = append(prefixes, prefix.Masked())
 	}
 	return prefixes, nil

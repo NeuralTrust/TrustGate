@@ -305,9 +305,10 @@ func TestChain_PathFirst_SetsChallengeEligibility(t *testing.T) {
 			want:  false,
 		},
 		{
-			name:  "disabled OAuth2 only",
-			paths: fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(disabledOAuth)}},
-			want:  false,
+			name:       "disabled OAuth2 blocks default IdP",
+			paths:      fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(disabledOAuth)}},
+			defaultIdP: true,
+			want:       false,
 		},
 		{name: "unknown path", paths: fakePathResolver{}},
 		{name: "lookup failure", paths: fakePathResolver{err: lookupErr}},

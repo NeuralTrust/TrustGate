@@ -232,4 +232,3 @@ Use Approach B with the following boundaries:
 - Operation metric misclassification is confirmed for real connect paths.
 - Conditional challenge behavior is feasible from the existing path-first auth lookup without changing OAuth2 validation.
 - Additive ticket identity fields can preserve the fifteen-minute reusable ticket TTL, the ten-minute OAuth state TTL and one-time state behavior.
-

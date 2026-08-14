@@ -115,6 +115,8 @@ func TestLoadConfig_RejectsInvalidMCPConnectRateLimit(t *testing.T) {
 		{name: "zero window", key: "MCP_CONNECT_RATE_LIMIT_WINDOW", value: "0s"},
 		{name: "malformed window", key: "MCP_CONNECT_RATE_LIMIT_WINDOW", value: "minute"},
 		{name: "invalid CIDR", key: "MCP_CONNECT_TRUSTED_PROXY_CIDRS", value: "10.0.0.0/8,invalid"},
+		{name: "all IPv4 addresses", key: "MCP_CONNECT_TRUSTED_PROXY_CIDRS", value: "0.0.0.0/0"},
+		{name: "all IPv6 addresses", key: "MCP_CONNECT_TRUSTED_PROXY_CIDRS", value: "::/0"},
 	}
 
 	for _, tc := range tests {

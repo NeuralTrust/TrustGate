@@ -16,7 +16,11 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const connectBucketPrefix = "gt:mcp:connect:rl:v1"
+const (
+	connectBucketPrefix = "gt:mcp:connect:rl:v1"
+	maxXForwardedForLen = 2048
+	maxXForwardedHops   = 16
+)
 
 var (
 	errInvalidConnectRateLimitInput = errors.New("invalid connect rate limit input")
@@ -155,6 +159,10 @@ func ResolveConnectSource(peer, forwardedFor string, trustedProxyCIDRs []netip.P
 		return ""
 	}
 	if !trustedAddress(peerAddress, trustedProxyCIDRs) {
+		return peerAddress.String()
+	}
+	if len(forwardedFor) > maxXForwardedForLen ||
+		strings.Count(forwardedFor, ",")+1 > maxXForwardedHops {
 		return peerAddress.String()
 	}
 

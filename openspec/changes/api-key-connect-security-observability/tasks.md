@@ -4,23 +4,24 @@
 
 | Phase / commit | Lines | Work unit |
 |---|---:|---|
-| 1. Limiter foundation | 975 actual | Commit 1 |
-| 2. Endpoint enforcement | 552 actual | Commit 2 |
-| 3. Lifecycle audit | 1,122 actual | Commit 3 |
-| 4. Observability regressions | 403 actual | Commit 4 |
-| **Total** | **3,052 actual** | |
+| 1. Limiter foundation | 1,124 actual | Commit 1 |
+| 2. Endpoint enforcement | 560 actual | Commit 2 |
+| 3. Lifecycle audit | 1,160 actual | Commit 3 |
+| 4. Observability regressions | 409 actual | Commit 4 |
+| Final review fixes | 180 actual | Uncommitted |
+| **Cumulative diff** | **3,365 actual** | |
 
 Delivery strategy: `exception-ok`; one child PR with approved `size:exception`.
 
 Exception rationale: the user accepted the high review load so the coupled limiter, audit identity, middleware policy, and end-to-end security regressions ship atomically against the unmerged RUN-1141 integrator. The four phases remain independently reviewable commits.
 
-Phase 1 actual size is 933 additions plus 42 deletions, excluding OpenSpec planning artifacts. The approved global `size:exception` remains in force; do not split the child PR.
+Phase 1 actual size is 969 additions plus 155 deletions, excluding OpenSpec planning artifacts. The approved global `size:exception` remains in force; do not split the child PR.
 
-Phase 2 final size is 508 additions plus 44 deletions, 552 changed code lines excluding planning artifacts. The approved global `size:exception` explicitly covers this work unit; do not split the child PR.
+Phase 2 final size is 510 additions plus 50 deletions, 560 changed code lines excluding planning artifacts. The approved global `size:exception` explicitly covers this work unit; do not split the child PR.
 
-Phase 3 final size is 1,041 additions plus 81 deletions, 1,122 changed code lines excluding planning artifacts. The approved global `size:exception` explicitly covers this work unit; do not split the child PR.
+Phase 3 final size is 1,048 additions plus 112 deletions, 1,160 changed code lines excluding planning artifacts. The approved global `size:exception` explicitly covers this work unit; do not split the child PR.
 
-Phase 4 final size is 375 additions plus 28 deletions, 403 changed code lines excluding planning artifacts. The approved global `size:exception` explicitly covers the completed child PR; do not split it.
+Phase 4 final size is 375 additions plus 34 deletions, 409 changed code lines excluding planning artifacts. Final-review fixes add 158 additions plus 22 deletions. The cumulative diff from `fd8782b5` is 3,026 additions plus 339 deletions, 3,365 changed code lines excluding planning artifacts; work-unit totals are larger because later commits and review fixes revise earlier lines. The approved global `size:exception` explicitly covers the completed child PR; do not split it.
 
 Decision needed before apply: No
 Chained PRs recommended: No
@@ -74,3 +75,11 @@ flowchart LR
 - [x] 4.3 Extend handler/access-log tests across `303/401/429/500/503`; assert sentinel absence from responses, redirects, logs, audits, keys, and metrics.
 - [x] 4.4 Extend `mcp_router_test.go` for no-store/no-referrer, middleware order, metrics, and challenges.
 - [x] 4.5 Finish with `gofmt`, `goimports`, focused race tests, `golangci-lint run`, and `go test -race ./...`; all scenarios pass before the single PR merges.
+
+## Final Review Fixes — Uncommitted
+
+- [x] 5.1 Restore provider-argument disconnect compatibility and audit the provider deleted after successful persistence.
+- [x] 5.2 Bound trusted XFF to 2,048 bytes and 16 hops; reject all-address trusted proxy CIDRs.
+- [x] 5.3 Preserve default-IdP exclusivity for any configured OAuth2 auth while carrying accurate challenge eligibility.
+- [x] 5.4 Align router middleware composition, strengthen redirect-log secrecy, and remove exploration trailing whitespace.
+- [x] 5.5 Run focused and full race tests, `go vet`, `golangci-lint`, and `git diff --check`; record accepted and rejected review triage.

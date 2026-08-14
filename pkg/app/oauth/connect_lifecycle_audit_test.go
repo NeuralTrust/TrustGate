@@ -44,6 +44,7 @@ type connectAuditFixtureData struct {
 	service    oauth.ConnectService
 	store      *memConnectStore
 	vault      *memVaultRepo
+	data       *appconsumer.Data
 	gatewayID  ids.GatewayID
 	consumerID ids.ConsumerID
 	authID     ids.AuthID
@@ -95,6 +96,7 @@ func newConnectAuditFixture(
 		service:    service,
 		store:      store,
 		vault:      vault,
+		data:       data,
 		gatewayID:  gatewayID,
 		consumerID: consumerID,
 		authID:     authID,
@@ -178,6 +180,53 @@ func TestConnectServiceAPIKeyLifecycleAudit(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.NoError(t, fixture.service.Disconnect(ctx, ticketID, connectAuditProviderID))
+}
+
+func TestConnectServiceDisconnectSurvivesProviderConfigRemoval(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	auditor := oauthmocks.NewConnectAuditor(t)
+	fixture := newConnectAuditFixture(t, auditor, "https://unused.example/token")
+	identity := oauth.ConnectAuditIdentity{
+		GatewayID:  fixture.gatewayID.String(),
+		ConsumerID: fixture.consumerID.String(),
+		AuthID:     fixture.authID.String(),
+	}
+	auditor.EXPECT().TicketCreated(ctx, identity).Once()
+	auditor.EXPECT().
+		ProviderUnlinked(ctx, identity, connectAuditProviderID).
+		Once()
+
+	ticketID, err := fixture.service.CreateAPIKeyTicket(
+		ctx,
+		fixture.gatewayID,
+		"subject-sentinel",
+		"/runtime/mcp",
+		fixture.consumerID,
+		fixture.authID,
+	)
+	require.NoError(t, err)
+	credential, err := vaultdomain.NewCredential(
+		fixture.gatewayID,
+		"subject-sentinel",
+		connectAuditProviderID,
+		"",
+		"access-token-sentinel",
+		"",
+		nil,
+		time.Now().Add(time.Hour),
+	)
+	require.NoError(t, err)
+	fixture.vault.creds = map[string]*vaultdomain.Credential{
+		fixture.vault.k(fixture.gatewayID, "subject-sentinel", connectAuditProviderID): credential,
+	}
+	target, ok := fixture.data.MatchSlug("runtime")
+	require.True(t, ok)
+	target.Registries = nil
+
+	require.NoError(t, fixture.service.Disconnect(ctx, ticketID, connectAuditProviderID))
+	require.Empty(t, fixture.vault.creds)
 }
 
 func TestConnectServiceLifecycleAuditDoesNotLeakSecrets(t *testing.T) {

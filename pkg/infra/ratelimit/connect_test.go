@@ -198,6 +198,10 @@ func TestResolveConnectSource(t *testing.T) {
 		netip.MustParsePrefix("10.0.0.0/8"),
 		netip.MustParsePrefix("2001:db8:ffff::/48"),
 	}
+	sixteenHops := "198.51.100.20," + strings.Repeat("10.0.0.3,", 14) + "10.0.0.3"
+	seventeenHops := "198.51.100.20," + strings.Repeat("10.0.0.3,", 15) + "10.0.0.3"
+	maxLengthHeader := "198.51.100.20" + strings.Repeat(" ", maxXForwardedForLen-len("198.51.100.20"))
+	oversizedHeader := maxLengthHeader + " "
 	tests := []struct {
 		name           string
 		peer           string
@@ -247,6 +251,41 @@ func TestResolveConnectSource(t *testing.T) {
 			name:           "all trusted forwarding falls back",
 			peer:           "10.0.0.2:54321",
 			forwardedFor:   "10.2.0.3, 10.1.0.4",
+			trustedProxies: trusted,
+			want:           "10.0.0.2",
+		},
+		{
+			name:           "sixteen hops accepted",
+			peer:           "10.0.0.2:54321",
+			forwardedFor:   sixteenHops,
+			trustedProxies: trusted,
+			want:           "198.51.100.20",
+		},
+		{
+			name:           "seventeen hops fall back",
+			peer:           "10.0.0.2:54321",
+			forwardedFor:   seventeenHops,
+			trustedProxies: trusted,
+			want:           "10.0.0.2",
+		},
+		{
+			name:           "2048 bytes accepted",
+			peer:           "10.0.0.2:54321",
+			forwardedFor:   maxLengthHeader,
+			trustedProxies: trusted,
+			want:           "198.51.100.20",
+		},
+		{
+			name:           "2049 bytes fall back",
+			peer:           "10.0.0.2:54321",
+			forwardedFor:   oversizedHeader,
+			trustedProxies: trusted,
+			want:           "10.0.0.2",
+		},
+		{
+			name:           "adversarial input falls back",
+			peer:           "10.0.0.2:54321",
+			forwardedFor:   strings.Repeat("x", 1<<20),
 			trustedProxies: trusted,
 			want:           "10.0.0.2",
 		},
