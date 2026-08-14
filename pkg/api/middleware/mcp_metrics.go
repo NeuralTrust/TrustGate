@@ -24,7 +24,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 )
 
 type MCPMetricsMiddleware struct {
@@ -54,7 +53,7 @@ func (m *MCPMetricsMiddleware) Middleware() fiber.Handler {
 		gw := gatewayFromContext(c)
 		exporters := gatewayExporters(gw)
 
-		traceID := m.resolveTraceID(c)
+		traceID := newTraceID()
 		c.Set(HeaderTraceID, traceID)
 		requestTrace := trace.New(traceID, m.buildTraceMetadata(c, gatewayID, gw))
 		requestTrace.SetGating(m.enableRequestTraces, m.enablePluginTraces)
@@ -76,13 +75,6 @@ func (m *MCPMetricsMiddleware) Middleware() fiber.Handler {
 
 		return c.Next()
 	}
-}
-
-func (m *MCPMetricsMiddleware) resolveTraceID(c *fiber.Ctx) string {
-	if tid := c.Get(HeaderTraceID); tid != "" {
-		return tid
-	}
-	return uuid.New().String()
 }
 
 func (m *MCPMetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string, gw *gatewaydomain.Gateway) trace.Metadata {

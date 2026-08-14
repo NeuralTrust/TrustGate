@@ -5,11 +5,18 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Pencil, Trash2, UsersRound, Settings2, Check, Server, X } from "lucide-react";
 import { api, gatewayScope } from "@/lib/admin-client";
 import { useActiveGatewayId } from "@/components/layout/gateway-context";
-import { useList, useInvalidate, errorMessage } from "@/lib/hooks";
+import { useAllList, usePagedList, useInvalidate, errorMessage } from "@/lib/hooks";
 import { useToast } from "@/components/ui/toast";
 import { PageHeader, ConfirmDialog, useDisclosure } from "@/components/ui/page";
 import { Button } from "@/components/ui/button";
 import { Table, THead, TBody, TH, TR, TD } from "@/components/ui/table";
+import {
+  ListToolbar,
+  NoMatches,
+  Pagination,
+  SortHeader,
+  useListControls,
+} from "@/components/ui/list-controls";
 import { EmptyState, PageLoader } from "@/components/ui/misc";
 import {
   Dialog,
@@ -29,6 +36,14 @@ import {
   modelPolicyStateFrom,
   type ModelPolicyState,
 } from "./model-policy-editor";
+import {
+  ToolkitEditor,
+  FailModeField,
+  buildToolkit,
+  toolkitError,
+  toolkitRowsFrom,
+  type ToolkitRow,
+} from "./toolkit-editor";
 import type { Role, Registry, OidcMapping, OidcClaim, OidcClaimOp } from "@/lib/types";
 
 const CLAIM_OPS: { value: OidcClaimOp; label: string }[] = [
@@ -38,7 +53,10 @@ const CLAIM_OPS: { value: OidcClaimOp; label: string }[] = [
 ];
 
 export function RolesView() {
-  const { data: roles, isLoading } = useList<Role>("roles");
+  const controls = useListControls();
+  const { data, isLoading } = usePagedList<Role>("roles", controls.query);
+  const roles = data?.items ?? [];
+  const total = data?.total ?? 0;
   const form = useDisclosure();
   const [editing, setEditing] = useState<Role | null>(null);
   const [detail, setDetail] = useState<Role | null>(null);
@@ -64,64 +82,76 @@ export function RolesView() {
 
       {isLoading ? (
         <PageLoader />
-      ) : !roles || roles.length === 0 ? (
+      ) : total === 0 && !controls.isFiltered ? (
         <EmptyState
           icon={<UsersRound className="h-5 w-5" />}
           title="No roles yet"
           description="Create a role to route identity-authenticated consumers by their claims."
         />
       ) : (
-        <Table>
-          <THead>
-            <TH>Name</TH>
-            <TH>OIDC mapping</TH>
-            <TH>Registries</TH>
-            <TH className="text-right pr-4">Actions</TH>
-          </THead>
-          <TBody>
-            {roles.map((r) => (
-              <TR key={r.id}>
-                <TD>
-                  <span className="font-medium text-fg">{r.name}</span>
-                </TD>
-                <TD>
-                  {r.oidc_mapping ? (
-                    <span className="text-[12px] text-muted">
-                      match {r.oidc_mapping.match} · {r.oidc_mapping.claims.length} claim
-                      {r.oidc_mapping.claims.length === 1 ? "" : "s"}
-                    </span>
-                  ) : (
-                    <span className="text-faint">—</span>
-                  )}
-                </TD>
-                <TD>
-                  <span className="text-[12px] text-muted">{r.registry_ids.length}</span>
-                </TD>
-                <TD className="text-right pr-4">
-                  <div className="inline-flex gap-1">
-                    <Button variant="ghost" size="icon" onClick={() => setDetail(r)} aria-label="Configure">
-                      <Settings2 className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => {
-                        setEditing(r);
-                        form.onOpen();
-                      }}
-                      aria-label="Edit"
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button variant="ghost" size="icon" onClick={() => setToDelete(r)} aria-label="Delete">
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </TD>
-              </TR>
-            ))}
-          </TBody>
-        </Table>
+        <>
+          <ListToolbar controls={controls} placeholder="Search roles by name…" />
+
+          {roles.length === 0 ? (
+            <NoMatches controls={controls} label="roles" />
+          ) : (
+            <Table>
+              <THead>
+                <SortHeader controls={controls} field="name">
+                  Name
+                </SortHeader>
+                <TH>OIDC mapping</TH>
+                <TH>Registries</TH>
+                <TH className="text-right pr-4">Actions</TH>
+              </THead>
+              <TBody>
+                {roles.map((r) => (
+                  <TR key={r.id}>
+                    <TD>
+                      <span className="font-medium text-fg">{r.name}</span>
+                    </TD>
+                    <TD>
+                      {r.oidc_mapping ? (
+                        <span className="text-[12px] text-muted">
+                          match {r.oidc_mapping.match} · {r.oidc_mapping.claims.length} claim
+                          {r.oidc_mapping.claims.length === 1 ? "" : "s"}
+                        </span>
+                      ) : (
+                        <span className="text-faint">—</span>
+                      )}
+                    </TD>
+                    <TD>
+                      <span className="text-[12px] text-muted">{r.registry_ids.length}</span>
+                    </TD>
+                    <TD className="text-right pr-4">
+                      <div className="inline-flex gap-1">
+                        <Button variant="ghost" size="icon" onClick={() => setDetail(r)} aria-label="Configure">
+                          <Settings2 className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            setEditing(r);
+                            form.onOpen();
+                          }}
+                          aria-label="Edit"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => setToDelete(r)} aria-label="Delete">
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TD>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+          )}
+
+          <Pagination controls={controls} total={total} />
+        </>
       )}
 
       {form.open && <RoleFormDialog open={form.open} onOpenChange={form.setOpen} role={editing} />}
@@ -364,7 +394,7 @@ function RoleDetail({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent size="xl">
-        <DialogHeader title={role ? role.name : "Role"} description="Registries and model policies" />
+        <DialogHeader title={role ? role.name : "Role"} description="Registries, model policies and MCP toolkit" />
         {isLoading || !role ? (
           <DialogBody>
             <PageLoader />
@@ -375,6 +405,7 @@ function RoleDetail({
               <TabsList>
                 <TabTrigger value="registries">Registries</TabTrigger>
                 <TabTrigger value="models">Model policies</TabTrigger>
+                <TabTrigger value="toolkit">MCP toolkit</TabTrigger>
               </TabsList>
             </div>
             <DialogBody className="min-h-[340px]">
@@ -383,6 +414,9 @@ function RoleDetail({
               </TabContent>
               <TabContent value="models">
                 <RoleModelPoliciesTab role={role} onClose={() => onOpenChange(false)} />
+              </TabContent>
+              <TabContent value="toolkit">
+                <RoleToolkitTab role={role} onClose={() => onOpenChange(false)} />
               </TabContent>
             </DialogBody>
           </Tabs>
@@ -406,7 +440,7 @@ function RoleRegistriesTab({ role }: { role: Role }) {
   const gatewayId = useActiveGatewayId();
   const invalidate = useRoleInvalidate(role.id);
   const { toast } = useToast();
-  const { data: registries, isLoading } = useList<Registry>("registries");
+  const { data: registries, isLoading } = useAllList<Registry>("registries");
   const [pending, setPending] = useState<string | null>(null);
 
   const bound = new Set(role.registry_ids);
@@ -480,7 +514,7 @@ function RoleModelPoliciesTab({ role, onClose }: { role: Role; onClose: () => vo
   const gatewayId = useActiveGatewayId();
   const invalidate = useRoleInvalidate(role.id);
   const { toast } = useToast();
-  const { data: registries } = useList<Registry>("registries");
+  const { data: registries } = useAllList<Registry>("registries");
 
   const attached = (registries ?? []).filter((r) => role.registry_ids.includes(r.id));
   const [state, setState] = useState<Record<string, ModelPolicyState>>(() =>
@@ -517,6 +551,75 @@ function RoleModelPoliciesTab({ role, onClose }: { role: Role; onClose: () => vo
       <div className="flex justify-end pt-2">
         <Button variant="primary" onClick={save} loading={saving}>
           Save model policies
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// A role-based MCP consumer takes its toolkit from the union of the roles the
+// caller's claims resolve to, so the entries live here rather than on the
+// consumer.
+function RoleToolkitTab({ role, onClose }: { role: Role; onClose: () => void }) {
+  const gatewayId = useActiveGatewayId();
+  const invalidate = useRoleInvalidate(role.id);
+  const { toast } = useToast();
+  const { data: registries } = useAllList<Registry>("registries");
+
+  const attached = (registries ?? []).filter(
+    (r) => r.type === "MCP" && role.registry_ids.includes(r.id),
+  );
+
+  const configured = role.mcp_policies != null;
+  const [rows, setRows] = useState<ToolkitRow[]>(() => toolkitRowsFrom(role.mcp_policies?.toolkit));
+  const [failMode, setFailMode] = useState(role.mcp_policies?.fail_mode || "open");
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    const error = toolkitError(rows);
+    if (error) {
+      toast({ variant: "error", title: error });
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.put(`${gatewayScope(gatewayId)}/roles/${role.id}`, {
+        mcp_policies: { toolkit: buildToolkit(rows), fail_mode: failMode },
+      });
+      toast({ variant: "success", title: "MCP toolkit saved" });
+      invalidate();
+      onClose();
+    } catch (err) {
+      toast({ variant: "error", title: "Save failed", description: errorMessage(err) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (attached.length === 0 && rows.length === 0) {
+    return (
+      <p className="text-[13px] text-faint py-8 text-center">
+        Attach an MCP server first (Registries tab) to restrict which tools this role exposes.
+      </p>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <p className="text-[12px] text-muted">
+        {configured
+          ? "Only the entries below are exposed. Saving an empty list exposes nothing — use “Allow everything” per server to grant full access."
+          : "This role has no toolkit yet, so it grants everything its MCP servers advertise. Saving replaces that with the explicit list below, and cannot be undone from the API — “Allow everything” per server reproduces full access."}
+      </p>
+      <ToolkitEditor registries={attached} rows={rows} onChange={setRows} />
+      <FailModeField value={failMode} onChange={setFailMode} />
+      <p className="text-[12px] text-faint -mt-1">
+        When a caller matches several roles, the request only fails open if every contributing role
+        does.
+      </p>
+      <div className="flex justify-end pt-2">
+        <Button variant="primary" onClick={save} loading={saving}>
+          Save MCP toolkit
         </Button>
       </div>
     </div>

@@ -1,10 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Trash2, Server } from "lucide-react";
+import { Plus, Trash2, Server, PlugZap, Check, X } from "lucide-react";
 import { api, gatewayScope } from "@/lib/admin-client";
 import { useActiveGatewayId } from "@/components/layout/gateway-context";
-import { useList, useCatalogQuery, errorMessage } from "@/lib/hooks";
+import { useAllList, useCatalogQuery, errorMessage } from "@/lib/hooks";
 import { useInvalidate } from "@/lib/hooks";
 import { useToast } from "@/components/ui/toast";
 import { PageHeader, ConfirmDialog, useDisclosure } from "@/components/ui/page";
@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Table, THead, TBody, TH, TR, TD } from "@/components/ui/table";
 import { Tabs, TabsList, TabTrigger, TabContent } from "@/components/ui/tabs";
 import { Badge, EmptyState, PageLoader } from "@/components/ui/misc";
+import { cn } from "@/lib/cn";
 import { McpRegistriesView } from "./mcp-registries-view";
 import {
   Dialog,
@@ -34,10 +35,17 @@ import {
   providerAuthOptions,
   type AuthFieldValues,
 } from "@/lib/auth-catalog";
-import type { CatalogAuthField, Registry, Provider } from "@/lib/types";
+import type {
+  CatalogAuthField,
+  Registry,
+  Provider,
+  ProviderOptionField,
+  ProbeStage,
+  TestConnectionResult,
+} from "@/lib/types";
 
 export function RegistriesView() {
-  const { data: registries, isLoading } = useList<Registry>("registries");
+  const { data: registries, isLoading } = useAllList<Registry>("registries");
   const { data: providers, isLoading: providersLoading } = useCatalogQuery<Provider>(
     "providers",
     "/v1/providers-catalog",
@@ -263,21 +271,135 @@ interface HeaderRow {
   value: string;
 }
 
-const PROVIDER_OPTIONS_PROVIDER = "openai_compatible";
+type OptionTextValues = Record<string, string>;
+type OptionMapValues = Record<string, HeaderRow[]>;
 
-function readBaseUrl(options: Record<string, unknown> | undefined): string {
-  return typeof options?.base_url === "string" ? options.base_url : "";
-}
-
-function readHeaderRows(options: Record<string, unknown> | undefined): HeaderRow[] {
-  const headers = options?.headers;
-  if (headers && typeof headers === "object" && !Array.isArray(headers)) {
-    return Object.entries(headers as Record<string, unknown>).map(([key, value]) => ({
+function readMapRows(value: unknown): HeaderRow[] {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return Object.entries(value as Record<string, unknown>).map(([key, entry]) => ({
       key,
-      value: String(value),
+      value: String(entry),
     }));
   }
   return [];
+}
+
+function initialOptionText(
+  fields: ProviderOptionField[],
+  options: Record<string, unknown> | undefined,
+  isEdit: boolean,
+): OptionTextValues {
+  const values: OptionTextValues = {};
+  for (const field of fields) {
+    if (field.type === "map") continue;
+    const current = options?.[field.key];
+    if (typeof current === "string") {
+      values[field.key] = current;
+    } else if (!isEdit && typeof field.default === "string") {
+      values[field.key] = field.default;
+    } else {
+      values[field.key] = "";
+    }
+  }
+  return values;
+}
+
+function initialOptionMaps(
+  fields: ProviderOptionField[],
+  options: Record<string, unknown> | undefined,
+): OptionMapValues {
+  const values: OptionMapValues = {};
+  for (const field of fields) {
+    if (field.type === "map") values[field.key] = readMapRows(options?.[field.key]);
+  }
+  return values;
+}
+
+function missingRequiredOptions(
+  fields: ProviderOptionField[],
+  text: OptionTextValues,
+  maps: OptionMapValues,
+): ProviderOptionField[] {
+  return fields.filter((field) => {
+    if (!field.required) return false;
+    if (field.type === "map") return (maps[field.key] ?? []).every((row) => !row.key.trim());
+    return !(text[field.key] ?? "").trim();
+  });
+}
+
+// Schema-managed keys are rebuilt from the form, so clearing a field removes it.
+// Keys the catalog schema does not describe (e.g. options a newer backend added)
+// are carried over so the write does not drop them.
+function buildProviderOptions(
+  fields: ProviderOptionField[],
+  text: OptionTextValues,
+  maps: OptionMapValues,
+  existing: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const managed = new Set(fields.map((field) => field.key));
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(existing ?? {})) {
+    if (!managed.has(key)) out[key] = value;
+  }
+  for (const field of fields) {
+    if (field.type === "map") {
+      const entries: Record<string, string> = {};
+      for (const row of maps[field.key] ?? []) {
+        const key = row.key.trim();
+        if (key) entries[key] = row.value;
+      }
+      if (Object.keys(entries).length > 0) out[field.key] = entries;
+      continue;
+    }
+    const value = (text[field.key] ?? "").trim();
+    if (value) out[field.key] = value;
+  }
+  return out;
+}
+
+const STAGE_LABELS: Record<ProbeStage, string> = {
+  connectivity: "Reaching the provider",
+  authentication: "Authenticating",
+  provider: "Provider response",
+  unsupported: "Not supported",
+};
+
+function TestConnectionCard({
+  result,
+  scope,
+}: {
+  result: TestConnectionResult;
+  scope: "form" | "saved";
+}) {
+  return (
+    <div
+      className={cn(
+        "flex flex-col gap-1 rounded-(--radius) border px-3.5 py-2.5",
+        result.ok ? "border-success/30 bg-success/8" : "border-danger/30 bg-danger/8",
+      )}
+    >
+      <div className="flex items-center gap-2 text-[13px] font-medium">
+        {result.ok ? (
+          <Check className="h-4 w-4 text-success" />
+        ) : (
+          <X className="h-4 w-4 text-danger" />
+        )}
+        <span className={result.ok ? "text-success" : "text-danger"}>
+          {result.ok ? "Connection ok" : `Failed at: ${STAGE_LABELS[result.stage] ?? result.stage}`}
+        </span>
+        <span className="ml-auto text-[12px] font-normal text-muted">
+          {result.latency_ms} ms
+          {result.status_code ? ` · HTTP ${result.status_code}` : ""}
+        </span>
+      </div>
+      {result.message && <p className="text-[12px] text-muted">{result.message}</p>}
+      <p className="text-[12px] text-faint">
+        {scope === "saved"
+          ? "Tested the saved configuration — re-enter the credentials to test unsaved changes."
+          : "Tested the values in this form."}
+      </p>
+    </div>
+  );
 }
 
 function RegistryFormDialog({
@@ -314,9 +436,21 @@ function RegistryFormDialog({
       ? fieldValuesFromAuth(registry.auth, initialOption)
       : emptyFieldValues(initialOption),
   );
-  const [baseUrl, setBaseUrl] = useState(() => readBaseUrl(registry?.provider_options));
-  const [headerRows, setHeaderRows] = useState<HeaderRow[]>(() => readHeaderRows(registry?.provider_options));
+  // The provider catalog declares which provider_options a provider takes, so
+  // the form renders them instead of hardcoding one provider's fields.
+  const optionFields = providerEntry?.provider_options_schema ?? [];
+  const [optionText, setOptionText] = useState<OptionTextValues>(() =>
+    initialOptionText(optionFields, registry?.provider_options, isEdit),
+  );
+  const [optionMaps, setOptionMaps] = useState<OptionMapValues>(() =>
+    initialOptionMaps(optionFields, registry?.provider_options),
+  );
   const [submitting, setSubmitting] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{
+    result: TestConnectionResult;
+    scope: "form" | "saved";
+  } | null>(null);
 
   const selectedOption = findAuthOption(authOptions, selectedAuthKey) ?? defaultOption;
 
@@ -333,25 +467,88 @@ function RegistryFormDialog({
     setFieldValues(emptyFieldValues(option));
   }
 
-  function updateHeaderRow(index: number, field: keyof HeaderRow, value: string) {
-    setHeaderRows((prev) => prev.map((row, i) => (i === index ? { ...row, [field]: value } : row)));
+  function setOptionValue(key: string, value: string) {
+    setOptionText((prev) => ({ ...prev, [key]: value }));
   }
 
-  function addHeaderRow() {
-    setHeaderRows((prev) => [...prev, { key: "", value: "" }]);
+  function updateMapRow(fieldKey: string, index: number, part: keyof HeaderRow, value: string) {
+    setOptionMaps((prev) => ({
+      ...prev,
+      [fieldKey]: (prev[fieldKey] ?? []).map((row, i) =>
+        i === index ? { ...row, [part]: value } : row,
+      ),
+    }));
   }
 
-  function removeHeaderRow(index: number) {
-    setHeaderRows((prev) => prev.filter((_, i) => i !== index));
+  function addMapRow(fieldKey: string) {
+    setOptionMaps((prev) => ({ ...prev, [fieldKey]: [...(prev[fieldKey] ?? []), { key: "", value: "" }] }));
+  }
+
+  function removeMapRow(fieldKey: string, index: number) {
+    setOptionMaps((prev) => ({
+      ...prev,
+      [fieldKey]: (prev[fieldKey] ?? []).filter((_, i) => i !== index),
+    }));
+  }
+
+  // Tests the values currently in the form when they are complete; when editing
+  // an existing connection whose secrets were not re-entered, tests the stored
+  // configuration by id instead (the API accepts either shape, not both).
+  async function testConnection() {
+    const missingOptions = missingRequiredOptions(optionFields, optionText, optionMaps);
+    const missingCredentials = missingRequiredFields(selectedOption, fieldValues, false);
+    const canTestForm = missingOptions.length === 0 && missingCredentials.length === 0;
+
+    let body: Record<string, unknown>;
+    let scope: "form" | "saved";
+    if (canTestForm) {
+      scope = "form";
+      body = { provider, auth: buildTargetAuth(selectedOption, fieldValues) };
+      if (optionFields.length > 0) {
+        body.provider_options = buildProviderOptions(
+          optionFields,
+          optionText,
+          optionMaps,
+          registry?.provider_options,
+        );
+      }
+    } else if (isEdit) {
+      scope = "saved";
+      body = { registry_id: registry.id };
+    } else {
+      toast({
+        variant: "error",
+        title: "Fill in the credentials first",
+        description: [...missingOptions, ...missingCredentials]
+          .map((field) => field.label)
+          .join(", "),
+      });
+      return;
+    }
+
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const result = await api.post<TestConnectionResult>(
+        `${gatewayScope(gatewayId)}/registries/test-connection`,
+        body,
+      );
+      setTestResult({ result, scope });
+    } catch (err) {
+      toast({ variant: "error", title: "Could not run the test", description: errorMessage(err) });
+    } finally {
+      setTesting(false);
+    }
   }
 
   async function submit() {
     const missing = missingRequiredFields(selectedOption, fieldValues, isEdit);
-    if (missing.length > 0) {
+    const missingOptions = missingRequiredOptions(optionFields, optionText, optionMaps);
+    if (missing.length > 0 || missingOptions.length > 0) {
       toast({
         variant: "error",
         title: "Missing required fields",
-        description: missing.map((field) => field.label).join(", "),
+        description: [...missingOptions, ...missing].map((field) => field.label).join(", "),
       });
       return;
     }
@@ -361,28 +558,13 @@ function RegistryFormDialog({
       provider,
       auth: buildTargetAuth(selectedOption, fieldValues),
     };
-    if (provider === PROVIDER_OPTIONS_PROVIDER) {
-      if (!baseUrl.trim()) {
-        toast({
-          variant: "error",
-          title: "Base URL is required",
-          description: "OpenAI-compatible providers need a base URL.",
-        });
-        return;
-      }
-      const headers: Record<string, string> = {};
-      for (const row of headerRows) {
-        const key = row.key.trim();
-        if (key) headers[key] = row.value;
-      }
-      body.provider_options = {
-        base_url: baseUrl.trim(),
-        ...(Object.keys(headers).length > 0 ? { headers } : {}),
-      };
-    } else if (isEdit && registry.provider === provider && registry.provider_options) {
-      // Preserve provider_options the form does not manage (e.g. vertex
-      // project/location) so a full-replace PUT does not wipe them.
-      body.provider_options = registry.provider_options;
+    if (optionFields.length > 0) {
+      body.provider_options = buildProviderOptions(
+        optionFields,
+        optionText,
+        optionMaps,
+        registry?.provider_options,
+      );
     }
 
     setSubmitting(true);
@@ -419,48 +601,71 @@ function RegistryFormDialog({
           }
         />
         <DialogBody className="flex flex-col gap-5">
-          {provider === PROVIDER_OPTIONS_PROVIDER && (
-            <>
-              <Field label="Base URL" hint="required">
-                <Input
-                  value={baseUrl}
-                  onChange={(e) => setBaseUrl(e.target.value)}
-                  placeholder="https://api.together.xyz/v1"
-                />
-              </Field>
-              <div className="flex flex-col gap-2">
-                <Label hint="optional">Custom headers</Label>
-                {headerRows.map((row, i) => (
-                  <div key={i} className="flex items-center gap-2">
-                    <Input
-                      value={row.key}
-                      onChange={(e) => updateHeaderRow(i, "key", e.target.value)}
-                      placeholder="X-Custom-Header"
-                    />
-                    <Input
-                      value={row.value}
-                      onChange={(e) => updateHeaderRow(i, "value", e.target.value)}
-                      placeholder="value"
-                    />
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => removeHeaderRow(i)}
-                      aria-label="Remove header"
-                    >
-                      <Trash2 className="h-4 w-4" />
+          {optionFields.map((field) => {
+            const hint = field.required ? "required" : "optional";
+            if (field.type === "map") {
+              const rows = optionMaps[field.key] ?? [];
+              return (
+                <div key={field.key} className="flex flex-col gap-2">
+                  <Label hint={hint}>{field.label}</Label>
+                  {rows.map((row, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <Input
+                        value={row.key}
+                        onChange={(e) => updateMapRow(field.key, i, "key", e.target.value)}
+                        placeholder="X-Custom-Header"
+                      />
+                      <Input
+                        value={row.value}
+                        onChange={(e) => updateMapRow(field.key, i, "value", e.target.value)}
+                        placeholder="value"
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeMapRow(field.key, i)}
+                        aria-label={`Remove ${field.label} entry`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                  <div>
+                    <Button variant="ghost" size="sm" onClick={() => addMapRow(field.key)}>
+                      <Plus className="h-4 w-4" />
+                      Add entry
                     </Button>
                   </div>
-                ))}
-                <div>
-                  <Button variant="ghost" size="sm" onClick={addHeaderRow}>
-                    <Plus className="h-4 w-4" />
-                    Add header
-                  </Button>
                 </div>
-              </div>
-            </>
-          )}
+              );
+            }
+            if (field.type === "enum") {
+              return (
+                <Field key={field.key} label={field.label} hint={hint}>
+                  <Select
+                    value={optionText[field.key] ?? ""}
+                    onChange={(e) => setOptionValue(field.key, e.target.value)}
+                  >
+                    {!field.required && <option value="">Provider default</option>}
+                    {(field.enum ?? []).map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              );
+            }
+            return (
+              <Field key={field.key} label={field.label} hint={hint}>
+                <Input
+                  value={optionText[field.key] ?? ""}
+                  onChange={(e) => setOptionValue(field.key, e.target.value)}
+                  placeholder={field.description}
+                />
+              </Field>
+            );
+          })}
 
           {authOptions.length > 1 && (
             <Field label="Credential mode">
@@ -486,6 +691,10 @@ function RegistryFormDialog({
               onChange={(value) => setFieldValue(field.key, value)}
             />
           ))}
+
+          {testResult && (
+            <TestConnectionCard result={testResult.result} scope={testResult.scope} />
+          )}
         </DialogBody>
         <DialogFooter>
           {isEdit && onDelete && (
@@ -494,6 +703,15 @@ function RegistryFormDialog({
               Disconnect
             </Button>
           )}
+          <Button
+            variant="outline"
+            onClick={testConnection}
+            loading={testing}
+            className={isEdit && onDelete ? undefined : "mr-auto"}
+          >
+            <PlugZap className="h-4 w-4" />
+            Test connection
+          </Button>
           <DialogClose asChild>
             <Button variant="ghost">Cancel</Button>
           </DialogClose>

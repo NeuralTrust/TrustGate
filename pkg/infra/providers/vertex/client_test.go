@@ -43,6 +43,25 @@ func TestBuildVertexURL(t *testing.T) {
 	)
 }
 
+func TestBuildVertexURLGlobalEndpoint(t *testing.T) {
+	opts := providers.VertexOptions{Project: "my-proj", Location: "global", Version: "v1"}
+
+	assert.Equal(t,
+		"https://aiplatform.googleapis.com/v1/projects/my-proj/locations/global/publishers/google/models/gemini-2.5-flash:generateContent",
+		buildVertexURL(opts, "gemini-2.5-flash", "generateContent"),
+		"the global endpoint has no region prefix in the host",
+	)
+	assert.Equal(t,
+		"https://aiplatform.googleapis.com/v1/projects/my-proj/locations/global/publishers/google/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+		buildVertexURL(opts, "gemini-2.5-flash", "streamGenerateContent"),
+	)
+}
+
+func TestVertexHost(t *testing.T) {
+	assert.Equal(t, "aiplatform.googleapis.com", vertexHost("global"))
+	assert.Equal(t, "europe-west1-aiplatform.googleapis.com", vertexHost("europe-west1"))
+}
+
 func TestResolveModel(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -97,10 +116,13 @@ func TestIsModelAllowed(t *testing.T) {
 func TestBuildRequestURL(t *testing.T) {
 	c := &client{}
 
-	t.Run("missing credentials", func(t *testing.T) {
-		_, err := c.buildRequestURL(&providers.Config{}, []byte(`{}`), false)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "bearer token")
+	t.Run("credentials are not needed to build the URL", func(t *testing.T) {
+		cfg := &providers.Config{
+			Model:   "gemini-2.5-flash",
+			Options: map[string]any{"project": "p", "location": "us-central1"},
+		}
+		_, err := c.buildRequestURL(cfg, []byte(`{}`), false)
+		require.NoError(t, err)
 	})
 
 	t.Run("missing project", func(t *testing.T) {
@@ -112,6 +134,34 @@ func TestBuildRequestURL(t *testing.T) {
 		_, err := c.buildRequestURL(cfg, []byte(`{}`), false)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "project")
+	})
+
+	t.Run("global location", func(t *testing.T) {
+		cfg := &providers.Config{
+			Credentials: providers.Credentials{ApiKey: "tok"},
+			Model:       "gemini-2.5-flash",
+			Options:     map[string]any{"project": "p", "location": "global"},
+		}
+		url, err := c.buildRequestURL(cfg, []byte(`{}`), false)
+		require.NoError(t, err)
+		assert.Equal(t,
+			"https://aiplatform.googleapis.com/v1/projects/p/locations/global/publishers/google/models/gemini-2.5-flash:generateContent",
+			url,
+		)
+	})
+
+	t.Run("location casing is normalized", func(t *testing.T) {
+		cfg := &providers.Config{
+			Credentials: providers.Credentials{ApiKey: "tok"},
+			Model:       "gemini-2.5-flash",
+			Options:     map[string]any{"project": "p", "location": " Europe-West1 "},
+		}
+		url, err := c.buildRequestURL(cfg, []byte(`{}`), false)
+		require.NoError(t, err)
+		assert.Equal(t,
+			"https://europe-west1-aiplatform.googleapis.com/v1/projects/p/locations/europe-west1/publishers/google/models/gemini-2.5-flash:generateContent",
+			url,
+		)
 	})
 
 	t.Run("full pipeline non-streaming", func(t *testing.T) {
