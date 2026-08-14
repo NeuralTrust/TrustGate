@@ -31,8 +31,10 @@ flowchart LR
 2. **Registry** (`type: mcp`) — `mcp_target.url` (+ optional auth:
    `none` / `static` / `passthrough` / `exchange` / `forwarded`).
 3. **Consumer** (`type: mcp`) — binds registries; optional `toolkit`,
-   `fail_mode` (`open` \| `closed`), or `routing_mode: role_based` with
-   `mcp_policies` on roles.
+   `fail_mode` (`open` \| `closed`), `protocol_acceptance` (`dual_era` \|
+   `legacy_only`, empty → `dual_era`), or `routing_mode: role_based` with
+   `mcp_policies` on roles. Rollout, rollback, and deprecation exit:
+   [Dual-era rollout](dual-era-rollout.md).
 
 ### Auth (consumer → TrustGate)
 
@@ -331,6 +333,9 @@ X-AG-API-Key: <consumer key>
 For `tools/call` / `prompts/get` also send `Mcp-Name` matching `params.name`.
 Modern responses include `resultType`, `ttlMs`, and `cacheScope` on list/discover
 results and **must not** set `Mcp-Session-Id`.
+
+Rollout runbook (dashboards, config rollback, deprecation exit):
+[Dual-era rollout](dual-era-rollout.md).
 
 Registry field `mcp_target.protocol_mode`:
 

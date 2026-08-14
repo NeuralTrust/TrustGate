@@ -52,7 +52,7 @@ const (
 )
 
 const consumerSelectColumns = `
-		SELECT c.id, c.gateway_id, c.name, c.type, c.slug, c.routing_mode, c.lb_config, c.fallback, c.model_policies, c.toolkit, c.fail_mode, c.headers, c.active,
+		SELECT c.id, c.gateway_id, c.name, c.type, c.slug, c.routing_mode, c.lb_config, c.fallback, c.model_policies, c.toolkit, c.fail_mode, c.protocol_acceptance, c.headers, c.active,
 		       c.created_at, c.updated_at,
 		       COALESCE((SELECT array_agg(cb.registry_id ORDER BY cb.position NULLS FIRST, cb.registry_id)
 		                   FROM consumer_registry cb WHERE cb.consumer_id = c.id), '{}')::uuid[] AS registry_ids,
@@ -114,9 +114,9 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 	}
 	const insertConsumer = `
 		INSERT INTO consumers (
-			id, gateway_id, name, type, slug, routing_mode, lb_config, fallback, model_policies, toolkit, fail_mode, headers, active, created_at, updated_at
+			id, gateway_id, name, type, slug, routing_mode, lb_config, fallback, model_policies, toolkit, fail_mode, protocol_acceptance, headers, active, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
 		)`
 	const insertConsumerRegistry = `
 		INSERT INTO consumer_registry (consumer_id, registry_id, weight) VALUES ($1, $2, $3)
@@ -126,7 +126,7 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, insertConsumer,
 			c.ID, c.GatewayID, c.Name, string(c.Type), c.Slug, string(c.RoutingMode), lbConfigBytes, fallbackBytes, modelPoliciesBytes,
-			toolkitBytes, nullableFailMode(c.FailMode()), headersBytes, c.Active, c.CreatedAt, c.UpdatedAt,
+			toolkitBytes, nullableFailMode(c.FailMode()), nullableProtocolAcceptance(c.ProtocolAcceptance()), headersBytes, c.Active, c.CreatedAt, c.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -176,12 +176,13 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer, registries 
 		       lb_config        = $5,
 		       fallback         = $6,
 		       model_policies   = $7,
-		       toolkit          = $8,
-		       fail_mode        = $9,
-		       headers          = $10,
-		       active           = $11,
-		       updated_at       = $12
-		 WHERE id = $1 AND gateway_id = $13`
+		       toolkit             = $8,
+		       fail_mode           = $9,
+		       protocol_acceptance = $10,
+		       headers             = $11,
+		       active              = $12,
+		       updated_at          = $13
+		 WHERE id = $1 AND gateway_id = $14`
 	// The consumers row is written before the registry links because the
 	// routing-mode DB guard rejects registry rows on a role_based consumer: a
 	// role_based → inline switch has to land the new mode first.
@@ -194,7 +195,7 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer, registries 
 		}
 		cmd, err := tx.Exec(ctx, updateConsumer,
 			c.ID, c.Name, string(c.Type), string(c.RoutingMode), lbConfigBytes, fallbackBytes, modelPoliciesBytes,
-			toolkitBytes, nullableFailMode(c.FailMode()), headersBytes, c.Active, c.UpdatedAt, c.GatewayID,
+			toolkitBytes, nullableFailMode(c.FailMode()), nullableProtocolAcceptance(c.ProtocolAcceptance()), headersBytes, c.Active, c.UpdatedAt, c.GatewayID,
 		)
 		if err != nil {
 			return mapPgError(err)
@@ -703,21 +704,22 @@ type rowScanner interface {
 func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 	c := &domain.Consumer{}
 	var (
-		headersRaw       []byte
-		lbConfigRaw      []byte
-		fallbackRaw      []byte
-		modelPoliciesRaw []byte
-		toolkitRaw       []byte
-		failModeRaw      *string
-		consumerType     string
-		routingMode      string
-		registryIDs      []uuid.UUID
-		registryWeights  []byte
-		roleIDs          []uuid.UUID
-		authIDs          []uuid.UUID
+		headersRaw            []byte
+		lbConfigRaw           []byte
+		fallbackRaw           []byte
+		modelPoliciesRaw      []byte
+		toolkitRaw            []byte
+		failModeRaw           *string
+		protocolAcceptanceRaw *string
+		consumerType          string
+		routingMode           string
+		registryIDs           []uuid.UUID
+		registryWeights       []byte
+		roleIDs               []uuid.UUID
+		authIDs               []uuid.UUID
 	)
 	if err := s.Scan(
-		&c.ID, &c.GatewayID, &c.Name, &consumerType, &c.Slug, &routingMode, &lbConfigRaw, &fallbackRaw, &modelPoliciesRaw, &toolkitRaw, &failModeRaw, &headersRaw, &c.Active,
+		&c.ID, &c.GatewayID, &c.Name, &consumerType, &c.Slug, &routingMode, &lbConfigRaw, &fallbackRaw, &modelPoliciesRaw, &toolkitRaw, &failModeRaw, &protocolAcceptanceRaw, &headersRaw, &c.Active,
 		&c.CreatedAt, &c.UpdatedAt,
 		&registryIDs, &registryWeights, &roleIDs, &authIDs,
 	); err != nil {
@@ -755,17 +757,15 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 	if failModeRaw != nil {
 		failMode = *failModeRaw
 	}
-	if len(toolkitRaw) > 0 || failMode != "" {
-		mcp := &domain.MCPPolicy{FailMode: domain.FailMode(failMode)}
-		if len(toolkitRaw) > 0 {
-			if err := json.Unmarshal(toolkitRaw, &mcp.Toolkit); err != nil {
-				return nil, fmt.Errorf("scan toolkit: %w", err)
-			}
-		}
-		if len(mcp.Toolkit) > 0 || mcp.FailMode != "" {
-			c.MCP = mcp
-		}
+	protocolAcceptance := ""
+	if protocolAcceptanceRaw != nil {
+		protocolAcceptance = *protocolAcceptanceRaw
 	}
+	mcp, err := mcpPolicyFromColumns(toolkitRaw, failMode, protocolAcceptance)
+	if err != nil {
+		return nil, err
+	}
+	c.MCP = mcp
 	c.RegistryIDs = ids.FromUUIDs[ids.RegistryKind](registryIDs)
 	c.RoleIDs = ids.FromUUIDs[ids.RoleKind](roleIDs)
 	c.AuthIDs = ids.FromUUIDs[ids.AuthKind](authIDs)
@@ -843,11 +843,37 @@ func marshalToolkit(t domain.Toolkit) ([]byte, error) {
 	return json.Marshal(t)
 }
 
+func mcpPolicyFromColumns(toolkitRaw []byte, failMode, protocolAcceptance string) (*domain.MCPPolicy, error) {
+	if len(toolkitRaw) == 0 && failMode == "" && protocolAcceptance == "" {
+		return nil, nil
+	}
+	mcp := &domain.MCPPolicy{
+		FailMode:           domain.FailMode(failMode),
+		ProtocolAcceptance: domain.ProtocolAcceptance(protocolAcceptance),
+	}
+	if len(toolkitRaw) > 0 {
+		if err := json.Unmarshal(toolkitRaw, &mcp.Toolkit); err != nil {
+			return nil, fmt.Errorf("scan toolkit: %w", err)
+		}
+	}
+	if len(mcp.Toolkit) == 0 && mcp.FailMode == "" && mcp.ProtocolAcceptance == "" {
+		return nil, nil
+	}
+	return mcp, nil
+}
+
 func nullableFailMode(fm domain.FailMode) any {
 	if fm == "" {
 		return nil
 	}
 	return string(fm)
+}
+
+func nullableProtocolAcceptance(a domain.ProtocolAcceptance) any {
+	if a == "" {
+		return nil
+	}
+	return string(a)
 }
 
 func nullableUUID(id uuid.UUID) any {

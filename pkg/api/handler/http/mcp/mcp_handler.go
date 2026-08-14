@@ -156,6 +156,11 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 		skipMetrics(c)
 		return err
 	}
+	if protocolErr := denyModernIfLegacyOnly(rc, era); protocolErr != nil {
+		h.recordProtocolValidation(c, protocolErr.code, era)
+		skipMetrics(c)
+		return writeProtocolError(c, req.ID, protocolErr)
+	}
 	rc, err = h.scopeByRoles(c, rc)
 	if err != nil {
 		skipMetrics(c)
@@ -551,6 +556,16 @@ func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 		return nil, fiber.NewError(fiber.StatusForbidden, "credential not allowed for this consumer")
 	}
 	return rc, nil
+}
+
+func denyModernIfLegacyOnly(rc *appconsumer.RoutableConsumer, era protocolEra) *protocolError {
+	if era != protocolEraModern || rc == nil || rc.Consumer == nil {
+		return nil
+	}
+	if rc.Consumer.ProtocolAcceptance() != consumerdomain.ProtocolAcceptanceLegacyOnly {
+		return nil
+	}
+	return acceptanceDenied()
 }
 
 func hasAuth(rc *appconsumer.RoutableConsumer, authID ids.AuthID) bool {

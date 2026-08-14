@@ -27,6 +27,7 @@ import (
 
 const (
 	codeHeaderMismatch             = -32020
+	codeAcceptanceDenied           = -32021
 	codeUnsupportedProtocolVersion = -32022
 	base64SentinelPrefix           = "=?base64?"
 	base64SentinelSuffix           = "?="
@@ -194,6 +195,10 @@ func newProtocolError(code int, message string) *protocolError {
 
 func headerMismatch(message string) *protocolError {
 	return newProtocolError(codeHeaderMismatch, "Header mismatch: "+message)
+}
+
+func acceptanceDenied() *protocolError {
+	return newProtocolError(codeAcceptanceDenied, "protocol acceptance denied")
 }
 
 func unsupportedProtocolVersion(requested string) *protocolError {

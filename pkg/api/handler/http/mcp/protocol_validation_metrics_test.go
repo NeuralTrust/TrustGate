@@ -16,6 +16,7 @@ package mcp_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -30,6 +31,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/gofiber/fiber/v2"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -119,4 +121,100 @@ func newAppWithProtocolRecorder(t *testing.T, rec mcphttp.ProtocolValidationReco
 	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil), appmcp.NewRoleScoper(approle.NewOIDCResolver()), rec)
 	app.Post(mcpPath, handler.Handle)
 	return app
+}
+
+const modernToolsListBody = `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`
+
+func newAppWithMCPPolicy(
+	t *testing.T,
+	rec mcphttp.ProtocolValidationRecorder,
+	composer appmcp.Composer,
+	mcp *consumerdomain.MCPPolicy,
+	after func(*fiber.Ctx),
+) *fiber.App {
+	t.Helper()
+	app := fiber.New()
+	authID := ids.New[ids.AuthKind]()
+	gwID := ids.New[ids.GatewayKind]()
+	cons := &consumerdomain.Consumer{
+		ID: ids.New[ids.ConsumerKind](), GatewayID: gwID, Name: "virtual",
+		Type: consumerdomain.TypeMCP, Slug: "virtual", Active: true, AuthIDs: []ids.AuthID{authID},
+		MCP: mcp,
+	}
+	data := appconsumer.NewData(gwID, []appconsumer.RoutableConsumer{{Consumer: cons}})
+	app.Use(func(c *fiber.Ctx) error {
+		ctx := appconsumer.WithAuthID(c.UserContext(), authID)
+		ctx = appconsumer.WithData(ctx, data)
+		c.SetUserContext(ctx)
+		err := c.Next()
+		if after != nil {
+			after(c)
+		}
+		return err
+	})
+	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(composer, noopRunner(), nil), appmcp.NewRoleScoper(approle.NewOIDCResolver()), rec)
+	app.Post(mcpPath, handler.Handle)
+	return app
+}
+
+func TestHandler_LegacyOnlyRejectsModern(t *testing.T) {
+	t.Parallel()
+	rec := &recordingProtocolValidator{}
+	var skipped bool
+	composer := mocks.NewComposer(t)
+	app := newAppWithMCPPolicy(t, rec, composer, &consumerdomain.MCPPolicy{
+		ProtocolAcceptance: consumerdomain.ProtocolAcceptanceLegacyOnly,
+	}, func(c *fiber.Ctx) {
+		skipped, _ = c.Locals(string(infracontext.MCPSkipMetricsKey)).(bool)
+	})
+
+	status, body := rpcCallWithHeaders(t, app, modernToolsListBody, modernHeadersFor("tools/list"))
+	require.Equal(t, fiber.StatusBadRequest, status)
+	require.True(t, skipped)
+	require.Equal(t, []protocolValidationCall{{class: mcphttp.ValidationClassAcceptanceDenied, era: "modern"}}, rec.records)
+	rpcErr, _ := body["error"].(map[string]any)
+	require.Equal(t, float64(-32021), rpcErr["code"])
+	composer.AssertNotCalled(t, "ListTools", mock.Anything, mock.Anything)
+	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestHandler_LegacyOnlyAcceptsLegacy(t *testing.T) {
+	t.Parallel()
+	rec := &recordingProtocolValidator{}
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().ListTools(mock.Anything, mock.Anything).Return([]appmcp.Tool{}, nil).Once()
+	app := newAppWithMCPPolicy(t, rec, composer, &consumerdomain.MCPPolicy{
+		ProtocolAcceptance: consumerdomain.ProtocolAcceptanceLegacyOnly,
+	}, nil)
+
+	status, _ := rpcCall(t, app, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	require.Equal(t, fiber.StatusOK, status)
+	require.Empty(t, rec.records)
+}
+
+func TestHandler_DefaultPreservesDualEra(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		mcp  *consumerdomain.MCPPolicy
+	}{
+		{"unset", nil},
+		{"empty policy", &consumerdomain.MCPPolicy{}},
+		{"dual_era", &consumerdomain.MCPPolicy{ProtocolAcceptance: consumerdomain.ProtocolAcceptanceDualEra}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			rec := &recordingProtocolValidator{}
+			composer := mocks.NewComposer(t)
+			var tool appmcp.Tool
+			require.NoError(t, json.Unmarshal([]byte(`{"name":"gh_search","inputSchema":{"type":"object"}}`), &tool))
+			composer.EXPECT().ListTools(mock.Anything, mock.Anything).Return([]appmcp.Tool{tool}, nil).Once()
+			app := newAppWithMCPPolicy(t, rec, composer, tc.mcp, nil)
+
+			status, _ := rpcCallWithHeaders(t, app, modernToolsListBody, modernHeadersFor("tools/list"))
+			require.Equal(t, fiber.StatusOK, status)
+			require.Empty(t, rec.records)
+		})
+	}
 }

@@ -120,3 +120,40 @@ func TestCreateConsumerRequest_ToRegistryBindings_RejectsWeightAboveMax(t *testi
 		t.Fatalf("err = %v, want ErrValidation", err)
 	}
 }
+
+func TestCreateConsumerRequest_ToMCPPolicy_ProtocolAcceptance(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty omitted", func(t *testing.T) {
+		t.Parallel()
+		got, err := CreateConsumerRequest{Name: "c"}.ToMCPPolicy()
+		if err != nil {
+			t.Fatalf("ToMCPPolicy error: %v", err)
+		}
+		if got != nil {
+			t.Fatalf("ToMCPPolicy = %+v, want nil", got)
+		}
+	})
+
+	t.Run("legacy_only", func(t *testing.T) {
+		t.Parallel()
+		got, err := CreateConsumerRequest{Name: "c", ProtocolAcceptance: "LEGACY_ONLY"}.ToMCPPolicy()
+		if err != nil {
+			t.Fatalf("ToMCPPolicy error: %v", err)
+		}
+		if got == nil || got.ProtocolAcceptance != domain.ProtocolAcceptanceLegacyOnly {
+			t.Fatalf("ProtocolAcceptance = %v, want legacy_only", got)
+		}
+	})
+
+	t.Run("dual_era", func(t *testing.T) {
+		t.Parallel()
+		got, err := CreateConsumerRequest{Name: "c", ProtocolAcceptance: "dual_era"}.ToMCPPolicy()
+		if err != nil {
+			t.Fatalf("ToMCPPolicy error: %v", err)
+		}
+		if got == nil || got.ProtocolAcceptance != domain.ProtocolAcceptanceDualEra {
+			t.Fatalf("ProtocolAcceptance = %v, want dual_era", got)
+		}
+	})
+}

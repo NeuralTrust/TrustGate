@@ -58,6 +58,8 @@ const (
 	attrMCPUpstreamStatus    = "trustgate.mcp.upstream_status"
 	attrMCPUpstreamLatencyMs = "trustgate.mcp.upstream_latency_ms"
 	attrMCPRPCErrorCode      = "trustgate.mcp.rpc_error_code"
+	attrMCPProtocolEra       = "trustgate.mcp.protocol_era"
+	attrMCPProtocolVersion   = "trustgate.mcp.protocol_version"
 	attrStatusOutcome        = "trustgate.status.outcome"
 	attrStatusReason         = "trustgate.status.reason"
 	attrStatusIsTimeout      = "trustgate.status.is_timeout"
@@ -166,6 +168,8 @@ func eventToRecord(evt *events.Event) otellog.Record {
 		if evt.MCP.RPCErrorCode != 0 {
 			attrs = append(attrs, otellog.Int(attrMCPRPCErrorCode, evt.MCP.RPCErrorCode))
 		}
+		appendStr(attrMCPProtocolEra, evt.MCP.ProtocolEra)
+		appendStr(attrMCPProtocolVersion, evt.MCP.ProtocolVersion)
 	}
 	appendStr(attrTraceID, evt.TraceID)
 	appendStr(attrGatewayID, evt.GatewayID)
