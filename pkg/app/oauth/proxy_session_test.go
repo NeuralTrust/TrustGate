@@ -200,7 +200,7 @@ func TestCallbackSessionModeEmptySubjectDenied(t *testing.T) {
 	proxy := NewAuthProxy(finder, nil, http.DefaultClient, store, nil, newTestSigner(t), userinfo)
 
 	gwState := authorizeAndGetState(t, proxy, "")
-	_, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "")
+	_, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "", "")
 	var oe *OAuthError
 	if !errors.As(err, &oe) || oe.Code != "access_denied" {
 		t.Fatalf("expected access_denied for empty subject, got %v", err)
@@ -422,7 +422,7 @@ func TestCallbackSessionMintsIdPGrantedScopes(t *testing.T) {
 	ctx := context.Background()
 
 	gwState := authorizeAndGetState(t, proxy, "")
-	clientLoc, err := proxy.Callback(ctx, "http://gw.example.com", gwState, "idp-code", "", "")
+	clientLoc, err := proxy.Callback(ctx, "http://gw.example.com", gwState, "idp-code", "", "", "")
 	if err != nil {
 		t.Fatalf("callback: %v", err)
 	}

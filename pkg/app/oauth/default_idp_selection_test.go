@@ -145,7 +145,7 @@ func TestCallbackDefaultIdPConsentUsesEffectiveGateway(t *testing.T) {
 		GatewayID:     gw.String(),
 	}))
 
-	loc, err := proxy.Callback(context.Background(), "http://localhost:8082", state, "the-code", "", "")
+	loc, err := proxy.Callback(context.Background(), "http://localhost:8082", state, "the-code", "", "", "")
 	require.NoError(t, err)
 	require.Equal(t, chainer.url, loc, "callback must detour to the upstream-connect page")
 	require.Equal(t, 1, chainer.calls)
