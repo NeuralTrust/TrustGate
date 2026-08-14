@@ -62,12 +62,6 @@ func (s *oauthProviderStub) bearer() string {
 	return "Bearer " + s.accessToken
 }
 
-func (s *oauthProviderStub) refreshedBearer() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return "Bearer " + s.refreshedToken
-}
-
 func (s *oauthProviderStub) tokenExchanges() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -360,7 +354,7 @@ func newForwardedFixture(t *testing.T) forwardedFixture {
 }
 
 func TestMCPAPIKeyConnect_ForwardedFlowEndToEnd(t *testing.T) {
-	require.False(t, GlobalConfig.MCPConnectRateLimit.Enabled)
+	require.False(t, GlobalConfig.MCPConnectRateLimit.Enabled, "set MCP_CONNECT_RATE_LIMIT_ENABLED=false, see .env.functional.example")
 
 	fx := newForwardedFixture(t)
 	consumerID, key := createMCPConsumer(t, fx.gatewayID, []string{fx.registryID}, nil, "")
@@ -395,13 +389,12 @@ func TestMCPAPIKeyConnect_ForwardedFlowEndToEnd(t *testing.T) {
 		last, seen := fx.capture.observed()
 		require.GreaterOrEqual(t, seen, 1, "the upstream must have been called")
 		requireBearerMatches(t, fx.idp.bearer(), last)
-		require.False(t, last == fx.idp.refreshedBearer(), "the injected bearer must come from the vault, not from a refresh exchange")
-		require.Equal(t, 1, fx.idp.tokenExchanges())
+		require.Equal(t, 1, fx.idp.tokenExchanges(), "the injected bearer must come from the vault, not from a refresh exchange")
 	})
 }
 
 func TestMCPAPIKeyConnect_SharedKeyReusesGrantAndIsolatesPrincipals(t *testing.T) {
-	require.False(t, GlobalConfig.MCPConnectRateLimit.Enabled)
+	require.False(t, GlobalConfig.MCPConnectRateLimit.Enabled, "set MCP_CONNECT_RATE_LIMIT_ENABLED=false, see .env.functional.example")
 
 	fx := newForwardedFixture(t)
 	consumerA, keyA := createMCPConsumer(t, fx.gatewayID, []string{fx.registryID}, nil, "")

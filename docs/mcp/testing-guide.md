@@ -292,7 +292,7 @@ Living documentation: [`tests/functional/mcp_e2e_test.go`](../../tests/functiona
 
 For an MCP consumer whose registries use `forwarded` auth, the admin sends users
 two URLs and the header. Users authorize their own upstream accounts from the
-browser; no OAuth2 IdP is involved.
+browser; no gateway-side OAuth2 IdP is involved.
 
 ```text
 MCP URL:            https://{mcp_host}/{slug}/mcp   with  X-AG-API-Key: <key>
