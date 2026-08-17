@@ -235,6 +235,15 @@ Fixing only the auth chain leaves a client offering an authorization prompt
 that ends in a session the gateway rejects, so all three follow the same
 condition.
 
+The `invalid_target` refusal travels back on the client's `redirect_uri` as
+RFC 6749 §4.1.2.1 prescribes, carrying `state` and a description that names the
+`X-AG-API-Key` header. Rendering it on the gateway instead would strand an MCP
+client that is parked on its callback: the access is denied either way, but the
+client only learns of it through the redirect. The `redirect_uri` is therefore
+validated against the client before the resource is resolved — a request whose
+redirect cannot be trusted is still refused on the gateway, since following it
+would be an open redirect.
+
 ## 6. URLs the App must expose
 
 For an MCP consumer with an `api_key` auth, the consumer detail view should show:
