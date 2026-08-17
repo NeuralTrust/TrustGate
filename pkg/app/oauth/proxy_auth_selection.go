@@ -39,7 +39,8 @@ func (p *authProxy) authForResource(ctx context.Context, resource string) (*auth
 		// would only walk the user through a flow that cannot reach it.
 		if m.protected {
 			return nil, oauthErr("invalid_target",
-				"this MCP server authenticates with its own credential; interactive login is not available")
+				"this MCP server authenticates with a credential of its own: send it on every request "+
+					"(an api key travels in the X-AG-API-Key header) instead of signing in here")
 		}
 		// The resource pinned a consumer but it has no OAuth2 identity provider of
 		// its own: fall back to the single IdP configured on that consumer's
