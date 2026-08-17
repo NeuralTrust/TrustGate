@@ -22,21 +22,29 @@ import (
 	"net/url"
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 func (p *authProxy) authForResource(ctx context.Context, resource string) (*authdomain.Auth, error) {
-	auth, gatewayID, matched := p.resourceAuth(ctx, resource)
-	if auth != nil {
-		return auth, nil
+	m := p.resourceAuth(ctx, resource)
+	if m.auth != nil {
+		return m.auth, nil
 	}
-	// The resource pinned a consumer but it has no OAuth2 identity provider of
-	// its own: fall back to the single IdP configured on that consumer's
-	// gateway instead of scanning every tenant on the platform.
-	if matched {
-		return p.gatewayScopedAuth(ctx, gatewayID)
+	if m.matched {
+		// The consumer authenticates with a credential of its own, so a session
+		// brokered here would be refused by the auth chain. Advertising a login
+		// would only walk the user through a flow that cannot reach it.
+		if m.protected {
+			return nil, oauthErr("invalid_target",
+				"this MCP server authenticates with its own credential; interactive login is not available")
+		}
+		// The resource pinned a consumer but it has no OAuth2 identity provider of
+		// its own: fall back to the single IdP configured on that consumer's
+		// gateway instead of scanning every tenant on the platform.
+		return p.gatewayScopedAuth(ctx, m.gatewayID)
 	}
 	// No usable resource indicator, but the request was still routed to a
 	// specific gateway (by subdomain or by the gateway-slug header). Scope the
@@ -91,35 +99,67 @@ func (p *authProxy) gatewayScopedAuth(ctx context.Context, gatewayID ids.Gateway
 	return a, err
 }
 
+// resourceMatch is the outcome of resolving an RFC 8707 resource indicator to
+// the consumer it addresses.
+type resourceMatch struct {
+	// auth is the OAuth2 provider attached to the consumer, if any.
+	auth *authdomain.Auth
+	// gatewayID owns the addressed consumer, so a fallback can be scoped to
+	// that tenant rather than the whole platform.
+	gatewayID ids.GatewayID
+	// matched reports whether the resource addressed a known consumer.
+	matched bool
+	// protected reports whether the consumer carries an enabled credential of
+	// its own, which rules out any identity-provider fallback.
+	protected bool
+}
+
 // resourceAuth resolves the RFC 8707 resource indicator to the OAuth2 auth
 // attached to the addressed consumer. When the consumer is found but exposes no
 // usable OAuth2 auth, it still reports the consumer's gateway so the caller can
 // scope the identity-provider fallback to that tenant.
-func (p *authProxy) resourceAuth(ctx context.Context, resource string) (*authdomain.Auth, ids.GatewayID, bool) {
+func (p *authProxy) resourceAuth(ctx context.Context, resource string) resourceMatch {
 	if p.paths == nil || resource == "" {
-		return nil, ids.GatewayID{}, false
+		return resourceMatch{}
 	}
 	u, err := url.Parse(resource)
 	if err != nil || u.Path == "" {
-		return nil, ids.GatewayID{}, false
+		return resourceMatch{}
 	}
 	matches, err := p.paths.Match(ctx, u.Host, u.Path)
 	if err != nil {
 		slog.Warn("oauth: resource lookup failed; falling back to single-issuer selection",
 			"resource", resource, "error", err)
-		return nil, ids.GatewayID{}, false
+		return resourceMatch{}
 	}
+	if len(matches) == 0 {
+		return resourceMatch{}
+	}
+	providers, protected := pathOAuth2Auths(matches)
+	out := resourceMatch{gatewayID: matches[0].GatewayID, matched: true, protected: protected}
+	if len(providers) > 0 {
+		out.auth = providers[0]
+	}
+	return out
+}
+
+// pathOAuth2Auths returns the usable OAuth2 providers attached to the matched
+// paths, and whether those paths carry an enabled credential of their own.
+func pathOAuth2Auths(matches []appconsumer.PathMatch) ([]*authdomain.Auth, bool) {
+	var providers []*authdomain.Auth
+	protected := false
 	for _, m := range matches {
 		for _, a := range m.Auths {
-			if a.Enabled && a.Type == authdomain.TypeOAuth2 && a.Config.OAuth2 != nil {
-				return a, m.GatewayID, true
+			if !a.Enabled {
+				continue
+			}
+			protected = true
+			if a.Type == authdomain.TypeOAuth2 && a.Config.OAuth2 != nil {
+				providers = append(providers, a)
 			}
 		}
 	}
-	if len(matches) > 0 {
-		return nil, matches[0].GatewayID, true
-	}
-	return nil, ids.GatewayID{}, false
+	return providers, protected
 }
 
 func (p *authProxy) pendingAuth(ctx context.Context, pending *PendingAuthorization) (*authdomain.Auth, error) {
