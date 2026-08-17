@@ -274,6 +274,8 @@ type TelemetryConfig struct {
 	Enabled             bool
 	KafkaTopic          string
 	ExportersFile       string
+	ExportersMetadata   string
+	ExportersRaw        string
 	EnableRequestTraces bool
 	EnablePluginTraces  bool
 	OpsMetricsEnabled   bool
@@ -519,6 +521,8 @@ func getTelemetryConfig() TelemetryConfig {
 		Enabled:             getEnvBool("TELEMETRY_ENABLED", defaultTelemetryEnabled),
 		KafkaTopic:          getEnv("TELEMETRY_KAFKA_TOPIC", defaultTelemetryKafkaTopic),
 		ExportersFile:       getEnv("TELEMETRY_EXPORTERS_FILE", defaultTelemetryExportersFile),
+		ExportersMetadata:   getEnv("TELEMETRY_EXPORTERS_METADATA", ""),
+		ExportersRaw:        getEnv("TELEMETRY_EXPORTERS_RAW", ""),
 		EnableRequestTraces: getEnvBool("TELEMETRY_ENABLE_REQUEST_TRACES", defaultTelemetryEnableRequestTraces),
 		EnablePluginTraces:  getEnvBool("TELEMETRY_ENABLE_PLUGIN_TRACES", defaultTelemetryEnablePluginTraces),
 		OpsMetricsEnabled:   getEnvBool("OPS_METRICS_ENABLED", defaultOpsMetricsEnabled),

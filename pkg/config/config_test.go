@@ -73,6 +73,12 @@ func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	if len(cfg.MCPConnectRateLimit.TrustedProxyCIDRs) != 0 {
 		t.Errorf("trusted proxy CIDRs default = %v, want empty", cfg.MCPConnectRateLimit.TrustedProxyCIDRs)
 	}
+	if cfg.Telemetry.ExportersFile != defaultTelemetryExportersFile {
+		t.Errorf("Telemetry.ExportersFile default = %q, want %q", cfg.Telemetry.ExportersFile, defaultTelemetryExportersFile)
+	}
+	if cfg.Telemetry.ExportersMetadata != "" || cfg.Telemetry.ExportersRaw != "" {
+		t.Errorf("Telemetry exporters env defaults = %q/%q, want empty", cfg.Telemetry.ExportersMetadata, cfg.Telemetry.ExportersRaw)
+	}
 }
 
 func TestLoadConfig_MCPConnectRateLimitConfigured(t *testing.T) {
@@ -129,6 +135,18 @@ func TestLoadConfig_RejectsInvalidMCPConnectRateLimit(t *testing.T) {
 				t.Fatalf("error %q must be ErrInvalidConfig naming %s", err, tc.key)
 			}
 		})
+	}
+}
+
+func TestGetTelemetryConfig_ExportersEnv(t *testing.T) {
+	t.Setenv("TELEMETRY_EXPORTERS_METADATA", `[{"name":"metadata-otlp","type":"otlp"}]`)
+	t.Setenv("TELEMETRY_EXPORTERS_RAW", `[{"name":"raw-otlp","type":"otlp"}]`)
+	cfg := getTelemetryConfig()
+	if cfg.ExportersMetadata != `[{"name":"metadata-otlp","type":"otlp"}]` {
+		t.Errorf("ExportersMetadata = %q", cfg.ExportersMetadata)
+	}
+	if cfg.ExportersRaw != `[{"name":"raw-otlp","type":"otlp"}]` {
+		t.Errorf("ExportersRaw = %q", cfg.ExportersRaw)
 	}
 }
 
