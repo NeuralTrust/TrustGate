@@ -144,9 +144,9 @@ func (m *MetricsMiddleware) buildRequestContext(c *fiber.Ctx, gatewayID string) 
 	}
 
 	query := url.Values{}
-	c.Context().QueryArgs().VisitAll(func(key, value []byte) {
+	for key, value := range c.Context().QueryArgs().All() {
 		query.Add(string(key), string(value))
-	})
+	}
 
 	return &infracontext.RequestContext{
 		GatewayID: gatewayID,

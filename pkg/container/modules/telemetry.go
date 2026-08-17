@@ -15,7 +15,6 @@
 package modules
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
 
@@ -92,7 +91,13 @@ func buildPipeline(
 		}
 		return nil, nil
 	}
-	defaults, err := newDefaultExporters(logger, factory, cfg.Telemetry.ExportersFile)
+	defaults, err := newDefaultExporters(
+		logger,
+		factory,
+		cfg.Telemetry.ExportersFile,
+		cfg.Telemetry.ExportersMetadata,
+		cfg.Telemetry.ExportersRaw,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -102,19 +107,14 @@ func buildPipeline(
 func newDefaultExporters(
 	logger *slog.Logger,
 	factory appmetrics.ExporterFactory,
-	path string,
+	path, metadataYAML, rawYAML string,
 ) ([]telemetrydomain.ExporterConfig, error) {
-	configs, err := exportersfile.Load(path)
+	configs, err := exportersfile.LoadDefaults(path, metadataYAML, rawYAML)
 	if err != nil {
-		if errors.Is(err, exportersfile.ErrFileNotFound) {
-			logger.Warn("telemetry exporters file not found; starting with no default exporters",
-				slog.String("path", path))
-			return nil, nil
-		}
 		return nil, fmt.Errorf("loading default telemetry exporters: %w", err)
 	}
 	if len(configs) == 0 {
-		logger.Warn("telemetry exporters file declares no exporters; starting with no default exporters",
+		logger.Warn("no default telemetry exporters configured; starting with none",
 			slog.String("path", path))
 		return nil, nil
 	}

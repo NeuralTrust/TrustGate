@@ -420,6 +420,11 @@ or unreachable Collector never affects request latency.
 The metrics pipeline's **default** exporters (applied to every gateway unless a
 gateway declares its own) are loaded at boot from a declarative YAML file,
 selected by `TELEMETRY_EXPORTERS_FILE` (default `config/telemetry.yaml`).
+If that file is missing, the same entries can be declared as YAML or JSON lists
+in `TELEMETRY_EXPORTERS_METADATA` and `TELEMETRY_EXPORTERS_RAW`, or as type
+tokens (`otlp`, `postgres`; `otel` is an alias of `otlp`). A present file
+wins over the env lists. Invalid config aborts boot; if neither source declares
+exporters, a warning is logged and the pipeline starts with no defaults.
 Exporters are grouped by data class, and the class is intrinsic to the `type`:
 **metadata** exporters (e.g. `otlp`) ship sanitized request metadata to an
 external backend, while **raw** exporters (only `postgres`) persist sensitive
@@ -448,7 +453,7 @@ Behaviour:
 - **`postgres` under `metadata`, or any other type under `raw` → boot aborts.**
 - **Routing is by data class:** raw payloads go only to `postgres`; every other exporter gets metadata with bodies stripped.
 - **Invalid or unknown declared exporter → boot aborts (fail-fast).**
-- **File missing or empty → warning logged, pipeline starts with no defaults.**
+- **File present → file wins.** Missing file falls back to `TELEMETRY_EXPORTERS_METADATA` / `TELEMETRY_EXPORTERS_RAW`. If both sources are empty → warning, no defaults.
 - There is no hardcoded default exporter; Kafka runs as a default only if declared.
 
 Copy [`config/telemetry.example.yaml`](config/telemetry.example.yaml) to

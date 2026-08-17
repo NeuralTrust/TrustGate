@@ -78,7 +78,7 @@ type TargetAuthRequest struct {
 	Azure             *AzureAuthRequest         `json:"azure,omitempty"`
 	AWS               *AWSAuthRequest           `json:"aws,omitempty"`
 	OAuth             *TargetOAuthConfigRequest `json:"oauth,omitempty"`
-	GCPServiceAccount *string                   `json:"gcp_service_account,omitempty"`
+	GCPServiceAccount *GCPServiceAccountJSON    `json:"gcp_service_account,omitempty"`
 }
 
 type APIKeyAuthRequest struct {
@@ -124,6 +124,13 @@ type TargetOAuthConfigRequest struct {
 	Username     string            `json:"username,omitempty"`
 	Password     string            `json:"password,omitempty"` // #nosec G117
 	Extra        map[string]string `json:"extra,omitempty"`
+}
+
+func (r *CreateRegistryRequest) Normalize() {
+	if r == nil {
+		return
+	}
+	r.ProviderOptions = inferVertexProject(r.Provider, r.ProviderOptions, r.Auth)
 }
 
 func (r CreateRegistryRequest) Validate() error {
@@ -226,7 +233,7 @@ func (a *TargetAuthRequest) ToDomain() *domain.TargetAuth {
 	}
 	out := &domain.TargetAuth{
 		Type:              domain.AuthType(a.Type),
-		GCPServiceAccount: a.GCPServiceAccount,
+		GCPServiceAccount: a.GCPServiceAccount.stringPtr(),
 	}
 	if a.APIKey != nil {
 		out.APIKey = a.APIKey.ToDomain()
