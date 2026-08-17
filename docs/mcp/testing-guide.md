@@ -285,6 +285,7 @@ make test-functional
 | DB-less OAuth vault | Redis-backed vault without Postgres session store | `tests/functional/dbless_mcp_vault_test.go` |
 | API-key self-service connect | §5.1 below | `TestMCPAPIKeyConnect_ForwardedFlowEndToEnd` |
 | Shared key reuses one grant | Same key from two clients; second principal gets consent-required | `TestMCPAPIKeyConnect_SharedKeyReusesGrantAndIsolatesPrincipals` |
+| Connect credential rejections | Unknown, unbound, empty key and unknown slug all collapse into an opaque `401` | `TestMCPAPIKeyConnect_RejectsCredentialsWithoutLeaking` |
 
 Living documentation: [`tests/functional/mcp_e2e_test.go`](../../tests/functional/mcp_e2e_test.go).
 

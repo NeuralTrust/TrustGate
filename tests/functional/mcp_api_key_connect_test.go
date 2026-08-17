@@ -4,6 +4,7 @@ package functional_test
 
 import (
 	"encoding/json"
+	"io"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -430,4 +431,56 @@ func TestMCPAPIKeyConnect_SharedKeyReusesGrantAndIsolatesPrincipals(t *testing.T
 	rejected := mcpConnectFormPost(t, connectA, host, url.Values{"api_key": {foreignKey}})
 	defer func() { _ = rejected.Body.Close() }()
 	require.Equal(t, http.StatusUnauthorized, rejected.StatusCode)
+}
+
+func TestMCPAPIKeyConnect_RejectsCredentialsWithoutLeaking(t *testing.T) {
+	require.False(t, GlobalConfig.MCPConnectRateLimit.Enabled, "set MCP_CONNECT_RATE_LIMIT_ENABLED=false, see .env.functional.example")
+
+	fx := newForwardedFixture(t)
+	consumerID, key := createMCPConsumer(t, fx.gatewayID, []string{fx.registryID}, nil, "")
+	unboundID, unboundKey := CreateAPIKeyAuth(t, fx.gatewayID, uniqueName("mcp-unbound"))
+	require.NotEmpty(t, unboundID)
+
+	host := mcpHostOf(t, fx.gatewayID)
+	slug := ConsumerSlug(t, consumerID)
+	connectPath := "/" + slug + "/connect"
+	requireConnectPageReachable(t, connectPath, host)
+
+	// Every rejection collapses into the same opaque 401 so the endpoint cannot
+	// be used to tell apart which keys, consumers or gateways exist.
+	for _, tc := range []struct {
+		name string
+		form url.Values
+	}{
+		{name: "unknown key", form: url.Values{"api_key": {"nt-" + uniqueName("nope")}}},
+		{name: "key not bound to the consumer", form: url.Values{"api_key": {unboundKey}}},
+		{name: "empty key", form: url.Values{"api_key": {""}}},
+		{name: "missing field", form: url.Values{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := mcpConnectFormPost(t, connectPath, host, tc.form)
+			defer func() { _ = resp.Body.Close() }()
+			require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+
+			raw, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			require.Empty(t, resp.Header.Get("Location"), "a rejected attempt must not redirect to the provider page")
+			for _, secret := range tc.form["api_key"] {
+				if secret != "" {
+					require.NotContains(t, string(raw), secret, "the rejected credential must not be reflected")
+				}
+			}
+		})
+	}
+
+	t.Run("an unknown consumer slug is indistinguishable from a bad key", func(t *testing.T) {
+		resp := mcpConnectFormPost(t, "/"+uniqueName("ghost")+"/connect", host, url.Values{"api_key": {key}})
+		defer func() { _ = resp.Body.Close() }()
+		require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	})
+
+	t.Run("a valid key still mints a ticket after the rejections", func(t *testing.T) {
+		ticket := connectTicketFrom(t, mcpConnectFormPost(t, connectPath, host, url.Values{"api_key": {key}}), slug)
+		require.NotEmpty(t, ticket)
+	})
 }
