@@ -76,9 +76,6 @@ spec:
         - name: agentgateway-secrets
           mountPath: /etc/secrets
           readOnly: true
-        - name: telemetry-exporters
-          mountPath: /etc/telemetry
-          readOnly: true
       securityContext: {}
       volumes:
       - name: agentgateway-secrets
@@ -87,11 +84,6 @@ spec:
           readOnly: true
           volumeAttributes:
             secretProviderClass: agentgateway-secrets
-      # Default telemetry exporters (TELEMETRY_EXPORTERS_FILE); generated per
-      # overlay from telemetry.yaml so each environment can ship its own set.
-      - name: telemetry-exporters
-        configMap:
-          name: agentgateway-telemetry
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
