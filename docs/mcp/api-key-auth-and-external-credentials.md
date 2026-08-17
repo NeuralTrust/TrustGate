@@ -208,6 +208,20 @@ actually has an enabled OAuth2 auth, so an API-key-only consumer gets a plain
 `401`. Existing TTLs are unchanged: 15 minutes for the reusable ticket, 10
 minutes for the one-time OAuth state.
 
+### The built-in identity provider never covers an API-key consumer
+
+`MCP_DEFAULT_IDP_ISSUER` lets an MCP consumer that carries **no** credential of
+its own fall back to the NeuralTrust platform login, so a PoC does not have to
+register an identity provider. That fallback is added to the path's auth scope,
+and the platform issues a code to any authenticated user without checking team
+membership against the gateway.
+
+It therefore applies only while the path has no enabled credential. As soon as
+one is attached — an api key, mTLS, or the consumer's own OAuth2 IdP — the
+fallback is withheld and that credential is the only way in. Otherwise any
+platform login would reach an API-key consumer without its key, and the key
+would stop being an access control.
+
 ## 6. URLs the App must expose
 
 For an MCP consumer with an `api_key` auth, the consumer detail view should show:
