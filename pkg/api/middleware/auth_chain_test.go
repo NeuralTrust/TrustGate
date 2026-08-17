@@ -281,6 +281,8 @@ func TestChain_PathFirst_SetsChallengeEligibility(t *testing.T) {
 	disabledOAuth.Enabled = false
 	apiKey, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "key", true)
 	require.NoError(t, err)
+	disabledAPIKey, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "disabled-key", false)
+	require.NoError(t, err)
 	lookupErr := errors.New("lookup failed")
 	tests := []struct {
 		name       string
@@ -295,7 +297,7 @@ func TestChain_PathFirst_SetsChallengeEligibility(t *testing.T) {
 		},
 		{
 			name:       "usable default IdP",
-			paths:      fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(apiKey)}},
+			paths:      fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith()}},
 			defaultIdP: true,
 			want:       true,
 		},
@@ -303,6 +305,18 @@ func TestChain_PathFirst_SetsChallengeEligibility(t *testing.T) {
 			name:  "API key only",
 			paths: fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(apiKey)}},
 			want:  false,
+		},
+		{
+			name:       "API key blocks default IdP",
+			paths:      fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(apiKey)}},
+			defaultIdP: true,
+			want:       false,
+		},
+		{
+			name:       "disabled API key does not block default IdP",
+			paths:      fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(disabledAPIKey)}},
+			defaultIdP: true,
+			want:       true,
 		},
 		{
 			name:       "disabled OAuth2 blocks default IdP",
