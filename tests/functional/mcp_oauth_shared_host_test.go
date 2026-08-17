@@ -221,8 +221,15 @@ func TestMCPOAuth_SharedHostScopesChallengeAndResolvesConsumerIdP(t *testing.T) 
 	t.Run("authorize without a resource is ambiguous", func(t *testing.T) {
 		resp := mcpRequestWithHost(t, http.MethodGet, "/oauth/authorize", sharedHost,
 			authorizeQuery(clientA, ""), nil)
-		require.Equal(t, http.StatusBadRequest, resp.StatusCode)
-		require.Equal(t, "invalid_target", decodeBody(t, resp)["error"])
+		defer func() { _ = resp.Body.Close() }()
+		// The refusal rides back on the client's redirect_uri: a client parked on
+		// its callback would otherwise wait out an error it never reads.
+		require.Equal(t, http.StatusFound, resp.StatusCode)
+		loc, err := resp.Location()
+		require.NoError(t, err)
+		require.Equal(t, "https://client.example/oauth/callback", loc.Scheme+"://"+loc.Host+loc.Path)
+		require.Equal(t, "invalid_target", loc.Query().Get("error"))
+		require.NotEmpty(t, loc.Query().Get("state"))
 	})
 
 	t.Run("authorize with the path-scoped resource redirects to the consumer IdP", func(t *testing.T) {
