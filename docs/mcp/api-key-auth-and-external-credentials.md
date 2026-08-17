@@ -222,6 +222,19 @@ fallback is withheld and that credential is the only way in. Otherwise any
 platform login would reach an API-key consumer without its key, and the key
 would stop being an access control.
 
+The rule holds in three places, because a client discovers OAuth through more
+than the challenge header:
+
+| Surface | Behaviour for a credential-protected consumer |
+|---|---|
+| Auth chain scope | The built-in provider is absent, so a brokered session is refused |
+| `/.well-known/oauth-protected-resource/{path}` | No `authorization_servers` advertised |
+| `/oauth/authorize` | `invalid_target`; no login is brokered |
+
+Fixing only the auth chain leaves a client offering an authorization prompt
+that ends in a session the gateway rejects, so all three follow the same
+condition.
+
 ## 6. URLs the App must expose
 
 For an MCP consumer with an `api_key` auth, the consumer detail view should show:
