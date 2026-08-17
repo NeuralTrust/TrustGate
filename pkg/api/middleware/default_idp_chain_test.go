@@ -35,17 +35,16 @@ func defaultIdPForTest() *authdomain.Auth {
 	})
 }
 
-// A session minted for the built-in default IdP resolves on an MCP path that
-// has no identity provider of its own, and binds to the gateway carried in the
-// gwid claim.
 func TestChain_DefaultIdP_SessionResolvesWithGwidClaim(t *testing.T) {
 	verifier, signer := sessionVerifier(t)
 	def := defaultIdPForTest()
 	gw := ids.New[ids.GatewayKind]()
+	apiKey, err := authdomain.NewAPIKeyAuth(gw, "api-key", true)
+	require.NoError(t, err)
 	resolver := middleware.NewChainIdentityResolver(
 		fakeAPIKeyFinder{},
 		fakeCredentialFinder{oauth2: []*authdomain.Auth{def}, defaultIdP: def},
-		fakePathResolver{matches: []appconsumer.PathMatch{{GatewayID: gw}}},
+		fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(apiKey)}},
 		&fakeTokenValidator{err: errors.New("must not be called")}, &fakeTokenValidator{}, &fakeMTLSValidator{},
 		nil, verifier, nil, true,
 	)
@@ -65,8 +64,32 @@ func TestChain_DefaultIdP_SessionResolvesWithGwidClaim(t *testing.T) {
 	require.Equal(t, "platform-user-1", id.Principal.Subject)
 }
 
-// Without a gwid claim there is no gateway to bind the default identity to, so
-// the session is rejected.
+func TestChain_DefaultIdP_NotAddedWhenConsumerHasDisabledOAuth2(t *testing.T) {
+	verifier, signer := sessionVerifier(t)
+	def := defaultIdPForTest()
+	own := oauth2Auth(t, "https://idp.example.com", true)
+	own.Enabled = false
+	gw := own.GatewayID
+	resolver := middleware.NewChainIdentityResolver(
+		fakeAPIKeyFinder{},
+		fakeCredentialFinder{oauth2: []*authdomain.Auth{own, def}, defaultIdP: def},
+		fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(own)}},
+		&fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{},
+		nil, verifier, nil, true,
+	)
+
+	token := mintSession(t, signer, jwt.MapClaims{
+		"sub":       "platform-user-1",
+		"aud":       def.Config.OAuth2.Audiences,
+		"authid":    appauth.DefaultIdPAuthID().String(),
+		"gwid":      gw.String(),
+		"token_use": "mcp_session",
+	})
+
+	_, err := resolveChain(t, resolver, map[string]string{"Authorization": "Bearer " + token})
+	require.ErrorIs(t, err, apiresolver.ErrUnauthenticated)
+}
+
 func TestChain_DefaultIdP_SessionWithoutGwidRejected(t *testing.T) {
 	verifier, signer := sessionVerifier(t)
 	def := defaultIdPForTest()
@@ -90,9 +113,6 @@ func TestChain_DefaultIdP_SessionWithoutGwidRejected(t *testing.T) {
 	require.ErrorIs(t, err, apiresolver.ErrUnauthenticated)
 }
 
-// When the default IdP is not enabled it is not added to the path scope, so a
-// default-minted session is rejected even though the synthetic auth is a
-// candidate.
 func TestChain_DefaultIdP_DisabledRejectsSession(t *testing.T) {
 	verifier, signer := sessionVerifier(t)
 	def := defaultIdPForTest()
@@ -117,9 +137,6 @@ func TestChain_DefaultIdP_DisabledRejectsSession(t *testing.T) {
 	require.ErrorIs(t, err, apiresolver.ErrUnauthenticated)
 }
 
-// An MCP consumer that configures its own oauth2 identity provider does not get
-// the default added to its scope, so a default-minted session is rejected on
-// that consumer's path.
 func TestChain_DefaultIdP_NotAddedWhenConsumerHasOwnIdP(t *testing.T) {
 	verifier, signer := sessionVerifier(t)
 	def := defaultIdPForTest()

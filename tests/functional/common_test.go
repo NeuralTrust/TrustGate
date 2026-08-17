@@ -26,6 +26,7 @@ func gatewayBaseDomain() string {
 
 var (
 	gatewayHosts  sync.Map
+	mcpHosts      sync.Map
 	proxyHosts    sync.Map
 	consumerSlugs sync.Map
 )
@@ -71,6 +72,11 @@ func CreateGateway(t *testing.T, payload map[string]any) string {
 	require.True(t, ok, "create response missing slug: %v", body)
 	require.NotEmpty(t, slug)
 	gatewayHosts.Store(id, slug+"."+gatewayBaseDomain())
+	if hosts, ok := body["hosts"].(map[string]any); ok {
+		if mcp, ok := hosts["mcp"].(string); ok && mcp != "" {
+			mcpHosts.Store(id, mcp)
+		}
+	}
 	return id
 }
 
