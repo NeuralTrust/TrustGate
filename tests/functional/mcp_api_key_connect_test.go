@@ -234,10 +234,10 @@ func mcpForwardedRegistryPayload(name, upstreamURL, provider string, idp *oauthP
 	}
 }
 
-func gatewayHostOf(t *testing.T, gatewayID string) string {
+func mcpHostOf(t *testing.T, gatewayID string) string {
 	t.Helper()
-	host, ok := gatewayHosts.Load(gatewayID)
-	require.True(t, ok, "gateway host missing for %s", gatewayID)
+	host, ok := mcpHosts.Load(gatewayID)
+	require.True(t, ok, "mcp host missing for %s", gatewayID)
 	return host.(string)
 }
 
@@ -360,7 +360,7 @@ func TestMCPAPIKeyConnect_ForwardedFlowEndToEnd(t *testing.T) {
 	consumerID, key := createMCPConsumer(t, fx.gatewayID, []string{fx.registryID}, nil, "")
 
 	slug := ConsumerSlug(t, consumerID)
-	host := gatewayHostOf(t, fx.gatewayID)
+	host := mcpHostOf(t, fx.gatewayID)
 	connectPath := "/" + slug + "/connect"
 	var ticket string
 
@@ -402,7 +402,7 @@ func TestMCPAPIKeyConnect_SharedKeyReusesGrantAndIsolatesPrincipals(t *testing.T
 	otherAuthID, otherKey := CreateAPIKeyAuth(t, fx.gatewayID, uniqueName("mcp-key"))
 	AttachAuth(t, fx.gatewayID, consumerA, otherAuthID)
 
-	host := gatewayHostOf(t, fx.gatewayID)
+	host := mcpHostOf(t, fx.gatewayID)
 	slugA := ConsumerSlug(t, consumerA)
 	connectA := "/" + slugA + "/connect"
 	requireConnectPageReachable(t, connectA, host)
