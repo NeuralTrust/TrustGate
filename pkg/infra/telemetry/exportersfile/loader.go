@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	metricsschema "github.com/NeuralTrust/TrustGate/pkg/metrics"
@@ -54,13 +55,93 @@ func Load(path string) ([]telemetrydomain.ExporterConfig, error) {
 		}
 		return nil, fmt.Errorf("reading telemetry exporters file %q: %w", path, err)
 	}
+	return parseDocument(data, fmt.Sprintf("file %q", path))
+}
+
+func LoadDefaults(path, metadataYAML, rawYAML string) ([]telemetrydomain.ExporterConfig, error) {
+	path = strings.TrimSpace(path)
+	if path != "" {
+		configs, err := Load(path)
+		switch {
+		case err == nil:
+			return configs, nil
+		case !errors.Is(err, ErrFileNotFound):
+			return nil, err
+		}
+	}
+	return ParseGroups(metadataYAML, rawYAML)
+}
+
+func ParseGroups(metadataYAML, rawYAML string) ([]telemetrydomain.ExporterConfig, error) {
+	var groups exporterGroups
+	if err := unmarshalList(metadataYAML, &groups.Metadata, "TELEMETRY_EXPORTERS_METADATA"); err != nil {
+		return nil, err
+	}
+	if err := unmarshalList(rawYAML, &groups.Raw, "TELEMETRY_EXPORTERS_RAW"); err != nil {
+		return nil, err
+	}
+	return fromGroups(groups)
+}
+
+func parseDocument(data []byte, source string) ([]telemetrydomain.ExporterConfig, error) {
 	var spec fileSpec
 	if err := yaml.Unmarshal(data, &spec); err != nil {
-		return nil, fmt.Errorf("parsing telemetry exporters file %q: %w", path, err)
+		return nil, fmt.Errorf("parsing telemetry exporters %s: %w", source, err)
 	}
+	return fromGroups(spec.Exporters)
+}
 
-	configs := make([]telemetrydomain.ExporterConfig, 0, len(spec.Exporters.Metadata)+len(spec.Exporters.Raw))
-	for _, e := range spec.Exporters.Metadata {
+func unmarshalList(raw string, dest *[]exporterEntry, source string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if looksLikeExporterDocument(raw) {
+		if err := yaml.Unmarshal([]byte(raw), dest); err != nil {
+			return fmt.Errorf("parsing %s: %w", source, err)
+		}
+		return nil
+	}
+	entries, err := parseTypeTokens(raw)
+	if err != nil {
+		return fmt.Errorf("parsing %s: %w", source, err)
+	}
+	*dest = entries
+	return nil
+}
+
+func looksLikeExporterDocument(raw string) bool {
+	switch raw[0] {
+	case '[', '{', '-':
+		return true
+	}
+	return strings.Contains(raw, ":")
+}
+
+func parseTypeTokens(raw string) ([]exporterEntry, error) {
+	parts := strings.Split(raw, ",")
+	out := make([]exporterEntry, 0, len(parts))
+	for _, part := range parts {
+		typ := canonicalExporterType(part)
+		if typ == "" {
+			return nil, fmt.Errorf("empty exporter type")
+		}
+		out = append(out, exporterEntry{Name: typ, Type: typ})
+	}
+	return out, nil
+}
+
+func canonicalExporterType(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "otel" {
+		return otelExporterType
+	}
+	return s
+}
+
+func fromGroups(groups exporterGroups) ([]telemetrydomain.ExporterConfig, error) {
+	configs := make([]telemetrydomain.ExporterConfig, 0, len(groups.Metadata)+len(groups.Raw))
+	for _, e := range groups.Metadata {
 		cfg := e.toConfig()
 		if cfg.EffectiveType() == postgresExporterType {
 			return nil, fmt.Errorf("telemetry exporter %q: %q is raw-only and cannot be declared under exporters.metadata", cfg.Name, postgresExporterType)
@@ -68,7 +149,7 @@ func Load(path string) ([]telemetrydomain.ExporterConfig, error) {
 		cfg.Class = metricsschema.Metadata
 		configs = append(configs, cfg)
 	}
-	for _, e := range spec.Exporters.Raw {
+	for _, e := range groups.Raw {
 		cfg := e.toConfig()
 		switch cfg.EffectiveType() {
 		case postgresExporterType, otelExporterType:
