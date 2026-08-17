@@ -142,9 +142,13 @@ func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) (authScope, error) {
 	scope := authScope{}
 	hasOAuth2 := false
 	hasEnabledOAuth2 := false
+	hasEnabledAuth := false
 	for _, m := range matches {
 		for _, a := range m.Auths {
 			scope[a.ID] = struct{}{}
+			if a.Enabled {
+				hasEnabledAuth = true
+			}
 			if a.Type == authdomain.TypeOAuth2 {
 				hasOAuth2 = true
 				if a.Enabled {
@@ -153,7 +157,11 @@ func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) (authScope, error) {
 			}
 		}
 	}
-	defaultIdPUsable := r.defaultIdPEnabled && !hasOAuth2
+	// The built-in provider bootstraps consumers that carry no credential of
+	// their own. Once a path has an enabled one — an api key, mTLS, or its own
+	// oauth2 IdP — that credential is the only way in: falling back here would
+	// let any platform login reach the consumer without it.
+	defaultIdPUsable := r.defaultIdPEnabled && !hasOAuth2 && !hasEnabledAuth
 	c.Locals(OAuthChallengeAllowedLocal, hasEnabledOAuth2 || defaultIdPUsable)
 	if defaultIdPUsable {
 		scope[appauth.DefaultIdPAuthID()] = struct{}{}

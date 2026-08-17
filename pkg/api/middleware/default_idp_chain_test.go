@@ -39,12 +39,10 @@ func TestChain_DefaultIdP_SessionResolvesWithGwidClaim(t *testing.T) {
 	verifier, signer := sessionVerifier(t)
 	def := defaultIdPForTest()
 	gw := ids.New[ids.GatewayKind]()
-	apiKey, err := authdomain.NewAPIKeyAuth(gw, "api-key", true)
-	require.NoError(t, err)
 	resolver := middleware.NewChainIdentityResolver(
 		fakeAPIKeyFinder{},
 		fakeCredentialFinder{oauth2: []*authdomain.Auth{def}, defaultIdP: def},
-		fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(apiKey)}},
+		fakePathResolver{matches: []appconsumer.PathMatch{{GatewayID: gw}}},
 		&fakeTokenValidator{err: errors.New("must not be called")}, &fakeTokenValidator{}, &fakeMTLSValidator{},
 		nil, verifier, nil, true,
 	)
@@ -62,6 +60,33 @@ func TestChain_DefaultIdP_SessionResolvesWithGwidClaim(t *testing.T) {
 	require.Equal(t, gw, id.GatewayID)
 	require.Equal(t, appauth.DefaultIdPAuthID(), id.AuthID)
 	require.Equal(t, "platform-user-1", id.Principal.Subject)
+}
+
+func TestChain_DefaultIdP_NotAddedWhenConsumerHasAPIKey(t *testing.T) {
+	verifier, signer := sessionVerifier(t)
+	def := defaultIdPForTest()
+	gw := ids.New[ids.GatewayKind]()
+	apiKey, err := authdomain.NewAPIKeyAuth(gw, "api-key", true)
+	require.NoError(t, err)
+	resolver := middleware.NewChainIdentityResolver(
+		fakeAPIKeyFinder{},
+		fakeCredentialFinder{oauth2: []*authdomain.Auth{def}, defaultIdP: def},
+		fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(apiKey)}},
+		&fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{},
+		nil, verifier, nil, true,
+	)
+
+	token := mintSession(t, signer, jwt.MapClaims{
+		"sub":       "platform-user-1",
+		"aud":       def.Config.OAuth2.Audiences,
+		"authid":    appauth.DefaultIdPAuthID().String(),
+		"gwid":      gw.String(),
+		"token_use": "mcp_session",
+	})
+
+	_, err = resolveChain(t, resolver, map[string]string{"Authorization": "Bearer " + token})
+	require.ErrorIs(t, err, apiresolver.ErrUnauthenticated,
+		"a platform login must not reach a consumer that requires its api key")
 }
 
 func TestChain_DefaultIdP_NotAddedWhenConsumerHasDisabledOAuth2(t *testing.T) {
