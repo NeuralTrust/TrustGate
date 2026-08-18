@@ -242,13 +242,25 @@ func cachedDiscovery[T any](c *composer, key string) ([]T, error, bool) {
 
 // rememberFailure holds on to an unreachable upstream for a few seconds so it
 // is dialled once per window rather than once per request. Consent is left out:
-// it is the user's to resolve, and resolving it should take effect at once.
+// it is the user's to resolve, and resolving it should take effect at once. So
+// is a caller that ran out of its own budget: the entry is shared by every
+// request for the registry, so remembering one caller's cancellation would
+// answer everybody else's for the rest of the window.
 func (c *composer) rememberFailure(key string, err error) {
 	var consentErr *ConsentRequiredError
 	if errors.As(err, &consentErr) {
 		return
 	}
+	if callerScoped(err) {
+		return
+	}
 	c.discovery.Set(key, discoveryFailure{err: err, until: time.Now().Add(negativeTTL)})
+}
+
+// callerScoped reports whether the error says something about the caller rather
+// than about the upstream.
+func callerScoped(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func discoveryKey(ctx context.Context, reg *registrydomain.Registry, kind string) (string, bool) {
