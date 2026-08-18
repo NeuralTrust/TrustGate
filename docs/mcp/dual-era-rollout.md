@@ -71,5 +71,7 @@ This document does **not** authorize removing the legacy transport.
 
 ## Next step
 
+Bounded `subscriptions/listen` streaming on the modern plane, off by default, is
+documented in [MCP subscriptions](subscriptions.md).
 Exercise the plane with the [MCP testing guide](testing-guide.md).
 Instrument names live in [Operational metrics](../operational-metrics.md).
