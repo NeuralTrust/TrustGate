@@ -348,3 +348,147 @@ RUN-1100, **not** chained PRs. Five sequenced commits on `feat/run-1104-bounded-
 - Honouring `resourceSubscriptions` / `notifications/resources/updated` — blocked on per-registry resource URI namespacing.
 - Token-expiry-derived lease deadlines (proposal decision 10); revisit only if the write-timeout ceiling is ever raised.
 - `guardedUpstream` / `TaskUpstream` gap (`negotiating_dialer.go:203`) — separate RUN issue.
+
+---
+
+# Slice 2: Authorized southbound subscription multiplexing
+
+**Branch**: `feat/run-1104-upstream-subscription-multiplex`
+**Base while stacked**: `feat/run-1104-bounded-mcp-subscriptions` ([PR #464](https://github.com/NeuralTrust/TrustGate/pull/464))
+**Retarget after Slice 1 merges**: the repository integration branch, without rebasing away PR #464's reviewed commits
+**Scope boundary**: modern `2026-07-28` southbound `subscriptions/listen`, complete-key physical-listener pooling, independently authorized northbound fan-out, bounded reconnect/lifecycle, and source telemetry. No legacy listener, URI subscription, task notification, persistence, generated protocol, schema, or migration work.
+
+The completed Slice 1 checklist above is historical and remains unchanged. Every unchecked task below belongs only to the second stacked slice.
+
+## Slice 2 Review Workload Forecast
+
+| Commit / phase | Non-test Go | Test Go | Generated | Docs/spec | Estimated changed lines | Risk |
+|---|---:|---:|---:|---:|---:|---|
+| 1 — Source contracts, negotiation identity, targets, config | 450–600 | 450–600 | 80–120 | — | **980–1,320** | High |
+| 2 — Bounded modern POST/SSE adapter | 500–700 | 600–800 | — | — | **1,100–1,500** | High |
+| 3 — Multiplexer pooling, fan-out, reconnect, lifecycle | 650–900 | 850–1,100 | — | — | **1,500–2,000** | Critical |
+| 4 — Northbound authorization, handler and shutdown wiring | 450–650 | 700–900 | — | — | **1,150–1,550** | Critical |
+| 5 — Fixed-cardinality telemetry, docs and final verification | 150–250 | 180–280 | — | 200–300 | **530–830** | Medium |
+| **Slice 2 total** | **2,200–3,100** | **2,780–3,680** | **80–120** | **200–300** | **5,260–7,200** | **Critical** |
+
+**400-line budget risk:** High
+**Chained PRs recommended:** No additional child PRs — the user accepted `size:exception` for this second stacked slice.
+**Delivery strategy:** exception-ok — one southbound multiplexing PR stacked on PR #464, with the five reviewable commit boundaries below.
+**Decision needed before apply:** No — `size:exception` is accepted. Each sequenced commit must remain buildable, tested, and revertible.
+
+```text
+develop
+  └─ feat/run-1104-bounded-mcp-subscriptions             PR #464
+       └─ feat/run-1104-upstream-subscription-multiplex  Slice 2 (current plan)
+```
+
+## Phase 6: Source contracts, negotiated identity and configuration (Slice 2 commit 1)
+
+**Goal:** Establish non-secret source identity, explicit modern capability retention, app ports, role-scoped target resolution, and validated bounds while the upstream kill switch remains off by default.
+**Commit boundary:** `feat(mcp): define upstream subscription identities`
+**Forecast:** 980–1,320 changed lines.
+
+- [x] 6.1 Modify `pkg/config/config.go` and `pkg/config/config_test.go`: add `MCP_SUBSCRIPTIONS_UPSTREAM_ENABLED`, global/per-origin listener caps, stream queue capacity, idle timeout, reconnect attempts/backoff bounds, and reuse the existing event-byte limit. Validate these fields only when both subscription flags are enabled; reject non-positive caps/durations, `min > max`, and invalid attempt counts with `ErrInvalidConfig`.
+      **Tests:** table-driven defaults; upstream-disabled validation bypass; each invalid boundary; reconnect min/max ordering; both flags enabled with valid values.
+- [x] 6.2 Modify `pkg/app/mcp/protocol.go`, `pkg/app/mcp/errors.go`, `pkg/app/mcp/subscriptions.go`, and `pkg/app/mcp/subscriptions_test.go`: define the list-changed trio, complete non-secret `SubscriptionSourceKey`, prepared source/event values, connector/stream/source/handle ports, AuthID and RegistryID binding identity, and typed unsupported/capacity/slow-consumer/source-drift/idle/reconnect errors.
+      **Tests:** capability-set intersection and equality; source-key equality changes for target, pin, credential fingerprint, protocol, and trio one dimension at a time; deterministic identity derivation; no raw target, pin, header, credential, or subscriber identifier appears in formatted values.
+- [x] 6.3 Modify `pkg/infra/mcp/client/probe.go`, `pkg/infra/mcp/client/probe_test.go`, `pkg/infra/mcp/client/era.go`, and `pkg/infra/mcp/client/era_test.go`: strictly retain only explicit nested `tools|prompts|resources.listChanged` booleans from modern discovery and include the exact trio in prepared-era equality.
+      **Tests:** true, false, missing, malformed, mixed and empty trio cases; unknown fields ignored; a trio or protocol change invalidates era equality; existing legacy negotiation cases remain unchanged.
+- [x] 6.4 Modify `pkg/infra/mcp/client/negotiating_dialer.go` and `pkg/infra/mcp/client/negotiating_dialer_test.go`: expose modern-only subscription preparation through the new port without extending the general `Upstream` interface or falling back to cached legacy sessions.
+      **Tests:** `2026-07-28` with listen plus a non-empty trio prepares; legacy, unsupported modern version, absent listen, and empty trio return `ErrSubscriptionUnsupported`; authentication and malformed discovery retain distinct typed failures.
+- [x] 6.5 Create `pkg/app/mcp/subscription_targets.go` and `pkg/app/mcp/subscription_targets_test.go`: resolve current role-scoped registries through existing target and credential paths into `SubscriptionRequest` values carrying gateway, consumer, principal, AuthID, registry, role-scope, target, and requested-kind identity.
+      **Tests:** detached and role-denied registries excluded; per-principal credentials produce distinct fingerprints; AuthID and RegistryID are retained; legacy/unsupported sources contribute no honoured kind; a real resolution error is not collapsed into unsupported.
+- [x] 6.6 Generate `pkg/app/mcp/mocks/subscription_connector.go` from the connector port with the repository's `go:generate mockery` flow; do not hand-edit generated output.
+      **Tests:** `go generate ./pkg/app/mcp/...` produces no follow-up diff and `go test ./pkg/app/mcp/... ./pkg/infra/mcp/client/... ./pkg/config/...` passes.
+- [x] 6.7 Phase gate: run `gofmt`/`goimports` on touched Go files, `go test -race ./pkg/app/mcp/... ./pkg/infra/mcp/client/... ./pkg/config/...`, and `go vet ./pkg/app/mcp/... ./pkg/infra/mcp/client/... ./pkg/config/...`.
+      **Accept:** kill switch default is false; no listener goroutine or outbound listen can be created; all Slice 1 tests pass unchanged.
+
+## Phase 7: Bounded modern POST/SSE adapter (Slice 2 commit 2)
+
+**Goal:** Open and decode one modern credentialed southbound listen with strict ack, framing, method, byte, idle and cancellation bounds; start no unjoined fan-out goroutine.
+**Commit boundary:** `feat(mcp): add bounded modern subscription transport`
+**Forecast:** 1,100–1,500 changed lines.
+
+- [x] 7.1 Create `pkg/infra/mcp/client/modern_subscription_sse.go` and `pkg/infra/mcp/client/modern_subscription_sse_test.go`: implement incremental SSE parsing with explicit accumulated `data:` byte accounting before JSON decode, CRLF/LF handling, multiline data, comments as idle activity, cancellation, and no retained event id.
+      **Tests:** fragmented reads at every boundary; CRLF and LF; comments; multiline data; blank dispatch; EOF before/after dispatch; exact `MaxEventBytes` accepted and `+1` rejected; context cancellation unblocks `Next`; no `Last-Event-ID` state is retained.
+- [x] 7.2 In the same adapter files, allow only `notifications/tools/list_changed`, `notifications/prompts/list_changed`, and `notifications/resources/list_changed`; classify URI updates, task notifications, malformed JSON-RPC notifications, results after ack, and unknown methods as non-reconnectable protocol failures.
+      **Tests:** one success per allowed kind; table-driven rejection for `notifications/resources/updated`, task, unknown, malformed and oversize frames; no rejected event is returned to the app layer.
+- [x] 7.3 Create `pkg/infra/mcp/client/modern_subscriptions.go` and `pkg/infra/mcp/client/modern_subscriptions_test.go`: implement credentialed `Prepare` and modern stateless POST `Open`, send protocol/auth headers through the existing credential path, synchronously require `notifications/subscriptions/acknowledged`, and require the acknowledged trio to equal the prepared trio before returning the stream.
+      **Tests:** `httptest.Server` asserts method, URL, protocol header, final auth headers, JSON-RPC request, absence of `Mcp-Session-Id` and `Last-Event-ID`, ack-before-event ordering, exact trio match, and request cancellation on `Close`.
+- [x] 7.4 Add adapter failure classification tests in `modern_subscriptions_test.go`: HTTP authentication refusal, unsupported content type/status, missing or malformed ack, changed ack trio, clean terminal, transport close, idle timeout, and close idempotency.
+      **Tests:** only transport close, clean terminal and idle are reconnectable; auth, ack drift, malformed/unknown/oversize input are terminal; `Close` always releases the response body and can be called twice.
+- [x] 7.5 Phase gate: run `go test -race ./pkg/infra/mcp/client/...` and repeat the SSE/POST suites with `-count=100`; then run `go vet ./pkg/infra/mcp/client/...`.
+      **Accept:** no arbitrary sleeps; deadlines are deadlock guards only; no legacy session or GET SSE path is exercised; the adapter owns no background goroutine after `Close`.
+
+## Phase 8: Complete-key multiplexer, queues and reconnect (Slice 2 commit 3)
+
+**Goal:** Share only equivalent physical listeners, atomically bind independently authorized streams, fan out through fixed queues, reconnect only across identical identity, and own deterministic stop/join.
+**Commit boundary:** `feat(mcp): multiplex authorized upstream subscriptions`
+**Forecast:** 1,500–2,000 changed lines.
+
+- [x] 8.1 Create `pkg/app/mcp/subscription_multiplexer.go` and the base fixtures in `pkg/app/mcp/subscription_multiplexer_test.go`: implement root context, closed gate, mutex-protected complete-key pool, global/per-origin reservation counters, listener supervisor ownership, and one fixed queue/terminal state per northbound handle.
+      **Tests:** equal complete keys open one listener; changing target, origin, registry target, pin, credential fingerprint, protocol, or trio opens no shared listener; subscriber identity never weakens the pool key.
+- [x] 8.2 Implement atomic multi-registry `Attach`: prepare before reservation, calculate the definitive honoured union, reserve only new physical listeners, commit all bindings together, and roll back handles, bindings, listeners and counters on any failure.
+      **Tests:** reuse remains allowed at global and per-origin capacity; each cap refuses only a required new listener; failure on the second registry leaves zero partial state; existing subscribers/listeners are undisturbed; empty honoured set returns no live handle.
+- [x] 8.3 Implement listener fan-out: snapshot bindings outside the pool lock, run the injected fresh authorization check, filter by requested/current/source kind, non-blockingly enqueue one event, and atomically detach a full or revoked binding.
+      **Tests:** two healthy bindings receive one event each; non-honoured kinds receive none; queue size one terminates only the slow consumer with `ErrSubscriptionSlowConsumer`; healthy consumers continue; no event is dropped, replaced, coalesced, duplicated, or delivered while the pool mutex is held.
+- [x] 8.4 Implement identity-preserving reconnect supervision with injectable clock, jitter and scripted connector: bounded exponential backoff, context-cancellable waits, prepare-before-open, exact source-key/ack comparison, and reset of consecutive attempts only after a valid event.
+      **Tests:** transient close, clean terminal and idle reconnect with identical identity; credential/protocol/trio/target drift and auth failure terminate all attached leases; malformed/unknown/oversize events do not retry; max attempts produce `ErrSubscriptionReconnectExhausted`; cancellation during backoff exits immediately.
+- [x] 8.5 Implement last-detach and multiplexer `Close(ctx)`: idempotently cancel each outbound request, terminate handles once, join every listener supervisor, reject new attaches after close, and release listener slots only after join.
+      **Tests:** last detach returns both counters to zero; concurrent detach/fan-out/close is idempotent; blocked `Next` is cancelled; close deadline propagates; successful close returns goroutine count to baseline.
+- [x] 8.6 Add focused concurrency and rollback stress tests to `subscription_multiplexer_test.go`: concurrent attach/detach/fan-out/reconnect/close across reused and partitioned source keys with small caps and queues.
+      **Tests:** `go test -race -run 'TestSubscriptionMultiplexer' -count=100 ./pkg/app/mcp`; assert bounded listener, binding, queue and goroutine counts after every iteration.
+- [x] 8.7 Phase gate: run `go test -race ./pkg/app/mcp/...`, `go vet ./pkg/app/mcp/...`, and `golangci-lint run ./pkg/app/mcp/...`.
+      **Accept:** the multiplexer imports no Fiber or concrete HTTP client package; connector calls and authorization calls occur outside the pool mutex; every started goroutine has a tested cancel/join owner.
+
+## Phase 9: Northbound authorization, handler and lifecycle wiring (Slice 2 commit 4)
+
+**Goal:** Make the northbound ack definitive, authorize every upstream event against current complete bindings, preserve Slice 1 polling as a watchdog only, and stop southbound listeners before Fiber drains.
+**Commit boundary:** `feat(mcp): wire authorized subscription fan-out`
+**Forecast:** 1,150–1,550 changed lines.
+
+- [x] 9.1 Modify `pkg/app/mcp/subscription_policy.go` and `pkg/app/mcp/subscription_policy_test.go`: return and compare current gateway, consumer, principal, AuthID, registry, role-scope and source bindings; distinguish revocation/source drift from transient evaluation failures.
+      **Tests:** one-dimension-at-a-time gateway, consumer, principal, AuthID, registry, role-scope, target, credential, protocol and capability drift; detached registry and denied kind terminate; unchanged binding remains authorized; transient lookup failure emits nothing.
+- [x] 9.2 Modify `pkg/api/handler/http/mcp/subscriptions_listen.go` and `pkg/api/handler/http/mcp/subscriptions_listen_test.go`: when upstream is enabled, resolve/attach before ack, acknowledge `requested ∩ role-scoped surface ∩ prepared upstream union`, drain `SubscriptionHandle.Events`, map typed terminal reasons to Slice 1's uniform terminal frame, and make periodic reauth a binding watchdog that emits no polling-derived notification.
+      **Tests:** ack is first and exact; unsupported registries narrow the ack; all unsupported produces ack-then-terminal; each upstream trio event maps once to the existing northbound frame; watchdog surface change without upstream event emits nothing; flag off preserves Slice 1 byte-for-byte behavior.
+- [x] 9.3 Create `pkg/api/handler/http/mcp/subscriptions_listen_isolation_test.go`: attach multiple subscribers to shared and partitioned listeners and mutate one authorization dimension at a time.
+      **Tests:** negative fan-out across gateway, consumer, principal, AuthID, registry and role scope; same origin with different credentials never shares; one revoked binding terminates while an independently authorized binding receives the event.
+- [x] 9.4 Modify `pkg/container/modules/mcp.go` and `pkg/container/modules/mcp_subscriptions_test.go`: provide the connector, target resolver and optional multiplexer only when both flags are enabled; preserve PR #464's registry/policy fallback when upstream is disabled.
+      **Tests:** Dig graph boots with northbound off, northbound on/upstream off, and both on; connector/multiplexer constructors are not called in either disabled mode; enabled graph exposes one process-wide multiplexer.
+- [x] 9.5 Modify `pkg/container/modules/server_mcp.go` and create `pkg/container/modules/server_mcp_test.go`: register multiplexer close/join before the existing northbound subscription drain and propagate the shutdown deadline.
+      **Tests:** a blocking fake southbound `Next` is cancelled and joined before the northbound drain begins; hook failure/deadline is propagated without reversing order; no hook is registered when upstream is disabled.
+- [x] 9.6 Add end-to-end handler coverage with a real Fiber app and `httptest` modern upstream: open two equivalent northbound streams, observe one southbound POST, emit an allowed event, revoke one binding, detach the last subscriber, and shut down.
+      **Tests:** definitive ack before event; isolated event delivery; uniform terminal wire frame; one physical listener; outbound cancellation on last detach; clean server shutdown with no `Mcp-Session-Id`, leaked goroutine, or polling-derived duplicate.
+- [x] 9.7 Phase gate: run `go test -race ./pkg/app/mcp/... ./pkg/infra/mcp/client/... ./pkg/api/handler/http/mcp/... ./pkg/container/modules/...` and `go vet` over the same package set.
+      **Accept:** the full required behavioral matrix in `design.md` passes; all existing northbound flag-off and legacy regression tests pass unedited.
+
+## Phase 10: Source telemetry, operator docs and final verification (Slice 2 commit 5)
+
+**Goal:** Expose only fixed listener/fan-out outcomes, document safe rollout/rollback, publish the complete contract, and verify the stacked slice as one bounded implementation.
+**Commit boundary:** `feat(mcp): add upstream subscription observability`
+**Forecast:** 530–830 changed lines.
+
+- [x] 10.1 Modify `pkg/api/handler/http/mcp/protocol_metrics.go` and `pkg/api/handler/http/mcp/protocol_metrics_test.go`: add physical-listener live gauge plus fixed capability-kind, lifecycle, reconnect, queue and terminal outcome counters; wire increments/decrements to actual join boundaries.
+      **Tests:** exact label-name/value allowlist; live gauge returns to zero after unsupported prepare, failed open, last detach, reconnect exhaustion and shutdown; labels contain no origin, target, pool key or subscriber identity.
+- [x] 10.2 Modify `pkg/infra/o11y/trace/span.go` and `pkg/infra/o11y/trace/span_test.go`: add bounded subscription source outcome enums and reject unknown or identifier-bearing values.
+      **Tests:** every allowed fixed outcome records; unknown values are dropped; spans/log fields contain no payload, URI, event/request/subscription id, gateway/consumer/principal/AuthID/registry id, credential, pin/fingerprint, target, origin or pool key.
+- [x] 10.3 Modify `docs/configuration.md` and `docs/mcp-legacy-protocol-removal.md`: document the eight Slice 2 settings, defaults, cross-field validation, complete-key sharing boundary, modern-only fail-closed behavior, queue-overflow termination, reconnect limits, rollout order and `MCP_SUBSCRIPTIONS_UPSTREAM_ENABLED=false` rollback.
+      **Tests:** documentation values match `config_test.go`; no legacy session, GET SSE, URI/task forwarding, cross-pod pooling, cursor/resumption, or persisted state is implied.
+- [x] 10.4 Publish/validate the updated OpenSpec deltas after implementation: ensure `mcp-subscriptions` and `mcp-dual-era-northbound` include definitive upstream negotiation, complete-key pooling, per-event authorization, listener/queue bounds, reconnect, shutdown ordering, telemetry privacy and explicit legacy fail-closed scenarios.
+      **Tests:** `openspec validate run-1104-bounded-mcp-subscriptions --strict`; every new or modified requirement has at least one scenario; diff review confirms no public MCP message shape or unrelated requirement changed.
+- [x] 10.5 Run final focused stress verification: `go test -race -count=100 ./pkg/app/mcp/... ./pkg/infra/mcp/client/... ./pkg/api/handler/http/mcp/... ./pkg/container/modules/...`.
+      **Accept:** equal identities reuse one listener; each source-key difference partitions; slow consumers terminate alone; reconnect is finite and identity-preserving; last detach and shutdown return listener/goroutine counts to baseline.
+- [x] 10.6 Run repository verification: `go test -race ./...`, `go vet ./...`, `golangci-lint run`, `gofmt`/`goimports` diff check, and a clean-comments review over touched Go files.
+      **Accept:** all checks pass; PR #464's completed Slice 1 behavior remains green with `MCP_SUBSCRIPTIONS_UPSTREAM_ENABLED=false`; no secret, identifier or payload enters telemetry; the proposal success criteria are checked against implementation.
+
+## Slice 2 Delivery and reviewer boundaries
+
+1. **Commit 1** ends with inert contracts/configuration and modern negotiation preparation. It must compile and test with the upstream flag off; it starts no listener.
+2. **Commit 2** ends at the app/infra port with one bounded modern stream. It has no physical-listener pool or Fiber integration.
+3. **Commit 3** ends with a fully tested app-layer multiplexer driven only by fakes. It imports no HTTP ingress adapter.
+4. **Commit 4** is the first commit that enables end-to-end upstream fan-out when the dedicated flag is true. Reviewer focus: authorization isolation and shutdown ordering.
+5. **Commit 5** adds bounded telemetry/docs and is the final verification gate. It must not expand the notification allowlist or sharing identity.
+
+**Reviewer focus:** commits 2–4.
+**Rollback:** set `MCP_SUBSCRIPTIONS_UPSTREAM_ENABLED=false` and restart to return to PR #464 behavior; a full revert removes only Slice 2 and has no migration or persisted-state cleanup.
+**Out of scope for every commit:** legacy/cached-session subscriptions, standalone GET SSE, `Mcp-Session-Id`, URI update fan-out, task/extension notifications, cross-pod pooling, resumption cursors, `Last-Event-ID`, persisted subscription state, schema/migration work, and generated protocol changes.

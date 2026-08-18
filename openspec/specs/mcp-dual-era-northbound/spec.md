@@ -76,7 +76,7 @@ Unsupported versions MUST return HTTP 400 `-32022` with exact `data.requested` a
 
 ### Requirement: Role-scoped discovery
 
-`server/discover` MUST use only the role-scoped configured view and MUST NOT probe upstreams. It SHALL advertise supported versions, server identity, and capabilities; denied kinds MUST be omitted. Allowed kinds MUST map to `{}` except when MRTR is end-to-end: then `tools` MUST be `{"inputRequests":{}}`. End-to-end means modern northbound, ticket secret set, and at least one bound registry is not `protocol_mode=legacy`. MUST NOT advertise if all registries are `legacy` or the secret is missing. MUST NOT advertise on legacy `initialize`. `capabilities.extensions["io.modelcontextprotocol/tasks"]` MUST be advertised as `{}` under the same local-only test applied to `MCP_TASK_HANDLE_SECRET`, and the `extensions` key MUST be absent otherwise. Allowed `tools`, `prompts`, and `resources` MUST additionally carry `listChanged: true` when subscriptions are end-to-end — the feature enabled and at least one bound registry not `protocol_mode=legacy`, decided locally without dialling — merged with MRTR's `inputRequests` rather than replacing it. `resources.subscribe` MUST NEVER be advertised.
+`server/discover` MUST use only the role-scoped configured view and MUST NOT probe upstreams. It SHALL advertise supported versions, server identity, and capabilities; denied kinds MUST be omitted. Allowed kinds MUST map to `{}` except when MRTR is end-to-end: then `tools` MUST be `{"inputRequests":{}}`. MRTR end-to-end means modern northbound, ticket secret set, and at least one bound registry is not `protocol_mode=legacy`. MUST NOT advertise MRTR if all registries are `legacy` or the secret is missing. MUST NOT advertise modern additions on legacy `initialize`. `capabilities.extensions["io.modelcontextprotocol/tasks"]` MUST be advertised as `{}` under the same local-only test applied to `MCP_TASK_HANDLE_SECRET`, and the `extensions` key MUST be absent otherwise. Allowed `tools`, `prompts`, and `resources` MUST carry `listChanged: true` when northbound subscriptions are enabled and the role-scoped view contains at least one potentially modern registry, decided locally without dialling. This advertisement expresses potential support only: when upstream multiplexing is enabled, the definitive `subscriptions/listen` acknowledgement MUST further intersect it with capabilities explicitly negotiated from eligible modern upstreams. `listChanged` MUST be merged with MRTR's `inputRequests` rather than replacing it. `resources.subscribe` MUST NEVER be advertised.
 
 #### Scenario: Different role grants
 - GIVEN two principals have different visible primitive kinds
@@ -112,6 +112,11 @@ Unsupported versions MUST return HTTP 400 `-32022` with exact `data.requested` a
 - GIVEN modern discover with subscriptions enabled and a non-legacy registry, and separately with subscriptions disabled
 - WHEN discover completes
 - THEN allowed kinds carry `listChanged: true` in the first case and omit it in the second, `tools` retains `inputRequests` when MRTR is end-to-end, and `resources.subscribe` is absent in both
+
+#### Scenario: Discovery remains local and acknowledgement is definitive
+- GIVEN upstream multiplexing is enabled and a configured auto registry later negotiates legacy or an incomplete list-changed trio
+- WHEN the client first calls `server/discover` and then opens `subscriptions/listen`
+- THEN discovery performs no upstream probe, and the listen acknowledgement excludes every kind not explicitly negotiated from an eligible modern upstream
 
 ### Requirement: Modern response and caching
 
@@ -167,7 +172,7 @@ Modern parsing and validation MUST finish before consumer lookup, role scoping, 
 
 ### Requirement: Transport and legacy compatibility
 
-The endpoint MUST remain `POST /{consumer_slug}/mcp`; validated non-discover requests SHALL use the existing gateway/composer. Modern handling MUST ignore and never emit `Mcp-Session-Id`, including on a streamed `subscriptions/listen` response. GET and DELETE MUST return 405 with `Allow: POST`, and no subscription transport MUST add a route, a standalone SSE channel, or any other method to the endpoint. A legacy-era `subscriptions/listen` MUST follow existing unknown-legacy-method behaviour. All existing legacy initialization, methods, errors, policies, filtering, consent, and telemetry MUST remain unchanged.
+The endpoint MUST remain `POST /{consumer_slug}/mcp`; validated non-discover requests SHALL use the existing gateway/composer. Modern handling MUST ignore and never emit `Mcp-Session-Id`, including on a streamed northbound response or a southbound listen. GET and DELETE MUST return 405 with `Allow: POST`, and no subscription transport MUST add a route, a standalone SSE channel, or any other method to the endpoint. A legacy-era northbound `subscriptions/listen` MUST follow existing unknown-legacy-method behaviour. A legacy southbound registry MUST NOT be adapted through the cached session and MUST contribute no notification capability; southbound listen is modern `2026-07-28` only. All existing legacy initialization, methods, errors, policies, filtering, consent, and telemetry MUST remain unchanged.
 
 #### Scenario: Stateless modern transport
 - GIVEN a modern request carries a session ID
@@ -188,3 +193,8 @@ The endpoint MUST remain `POST /{consumer_slug}/mcp`; validated non-discover req
 - GIVEN a legacy-era request whose method is `subscriptions/listen`
 - WHEN classified and handled
 - THEN legacy unknown-method behaviour applies and no stream is opened
+
+#### Scenario: Legacy upstream cannot reach the listener pool
+- GIVEN a role-scoped registry is configured legacy or auto-negotiates legacy
+- WHEN a modern northbound client opens `subscriptions/listen`
+- THEN no legacy session or standalone SSE connection is used, the registry contributes no honoured kind, and existing legacy request/response behavior remains unchanged
