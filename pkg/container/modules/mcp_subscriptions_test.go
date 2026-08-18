@@ -1,0 +1,143 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package modules
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/stretchr/testify/require"
+)
+
+func subscriptionsConfig(enabled bool) *config.Config {
+	cfg := &config.Config{}
+	cfg.Server.MCPSubscriptions = config.MCPSubscriptionsConfig{
+		Enabled:         enabled,
+		MaxLifetime:     10 * time.Minute,
+		ReauthInterval:  time.Minute,
+		Keepalive:       15 * time.Second,
+		MaxEventBytes:   8192,
+		MaxURIs:         32,
+		MaxStreams:      1024,
+		MaxPerConsumer:  16,
+		MaxPerPrincipal: 4,
+	}
+	return cfg
+}
+
+// The kill switch has to leave the process exactly as it was: no accountant, no
+// drain hook, and a support value whose predicate is false.
+func TestProvideSubscriptionRegistryFollowsTheKillSwitch(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		enabled    bool
+		wantOn     bool
+		wantHook   bool
+		wantExists bool
+	}{
+		{name: "disabled"},
+		{name: "enabled", enabled: true, wantOn: true, wantHook: true, wantExists: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := subscriptionsConfig(tc.enabled)
+			registry := provideSubscriptionRegistry(cfg)
+			policy := provideSubscriptionPolicy(cfg, nil, nil, nil, nil)
+
+			require.Equal(t, tc.wantExists, registry != nil)
+			require.Equal(t, tc.wantExists, policy != nil,
+				"a disabled feature must provide a nil interface, not a typed nil")
+			require.Equal(t, tc.wantHook, subscriptionDrainHook(registry) != nil)
+
+			support := subscriptionsSupport(cfg.Server.MCPSubscriptions, registry, policy, nil)
+			require.Equal(t, tc.wantOn, support.Enabled())
+		})
+	}
+}
+
+// A lease that cannot re-authorize must never be served, so the predicate needs
+// the policy as much as it needs the accountant.
+func TestSubscriptionsSupportNeedsBothTheRegistryAndThePolicy(t *testing.T) {
+	t.Parallel()
+	cfg := subscriptionsConfig(true)
+	registry := provideSubscriptionRegistry(cfg)
+	policy := provideSubscriptionPolicy(cfg, nil, nil, nil, nil)
+
+	tests := []struct {
+		name         string
+		withPolicy   bool
+		withRegistry bool
+		want         bool
+	}{
+		{name: "neither"},
+		{name: "registry only", withRegistry: true},
+		{name: "policy only", withPolicy: true},
+		{name: "both", withPolicy: true, withRegistry: true, want: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			support := subscriptionsSupport(cfg.Server.MCPSubscriptions, nil, nil, nil)
+			if tc.withRegistry {
+				support.Registry = registry
+			}
+			if tc.withPolicy {
+				support.Policy = policy
+			}
+			require.Equal(t, tc.want, support.Enabled())
+		})
+	}
+}
+
+func TestProvideSubscriptionRegistryCarriesTheConfiguredCaps(t *testing.T) {
+	t.Parallel()
+	cfg := subscriptionsConfig(true)
+	cfg.Server.MCPSubscriptions.MaxStreams = 1
+
+	registry := provideSubscriptionRegistry(cfg)
+	require.NotNil(t, registry)
+
+	first, err := registry.Claim(context.Background(), appmcp.IsolationKey{ConsumerID: "c1"})
+	require.NoError(t, err)
+	_, err = registry.Claim(context.Background(), appmcp.IsolationKey{ConsumerID: "c2"})
+	require.ErrorIs(t, err, appmcp.ErrSubscriptionRefused)
+	first.Release()
+}
+
+// The hook is the registry's own Drain, so shutdown cancels every live lease.
+func TestSubscriptionDrainHookCancelsLiveLeases(t *testing.T) {
+	t.Parallel()
+	registry := provideSubscriptionRegistry(subscriptionsConfig(true))
+	require.NotNil(t, registry)
+
+	lease, err := registry.Claim(context.Background(), appmcp.IsolationKey{ConsumerID: "c1"})
+	require.NoError(t, err)
+	go func() {
+		<-lease.Context().Done()
+		lease.Release()
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, subscriptionDrainHook(registry)(ctx))
+	require.Equal(t, 0, registry.Live())
+}
