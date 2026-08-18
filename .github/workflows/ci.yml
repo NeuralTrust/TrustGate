@@ -1,10 +1,12 @@
 name: CI
 
 on:
-  push:
-    branches: [develop]
   pull_request:
     branches: [main, develop]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -183,3 +185,19 @@ jobs:
       gitleaks_enabled: true
       gosec_enabled: true
       gosec_args: "-severity high ./..."
+
+  image-scan:
+    if: github.base_ref == 'main' && github.head_ref == 'develop'
+    uses: NeuralTrust/workflows/.github/workflows/image-scan.yml@main
+    permissions:
+      contents: read
+      id-token: write
+      security-events: write
+      actions: read
+    with:
+      image_ref: europe-west1-docker.pkg.dev/${{ vars.DEV_GCP_PROJECT_ID }}/nt-docker/agentgateway:latest
+      exit_code: '1'
+      upload_sarif: true
+    secrets:
+      WIF_PROVIDER: ${{ secrets.DEV_WIF_PROVIDER }}
+      WIF_SERVICE_ACCOUNT: ${{ secrets.DEV_WIF_SERVICE_ACCOUNT }}
