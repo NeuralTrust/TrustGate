@@ -31,11 +31,14 @@ import (
 const (
 	defaultAppEnv = "dev"
 
-	defaultServerAdminPort    = 8080
-	defaultServerProxyPort    = 8081
-	defaultServerMCPPort      = 8082
-	defaultServerReadTimeout  = 60 * time.Second
-	defaultServerWriteTimeout = 60 * time.Second
+	defaultServerAdminPort   = 8080
+	defaultServerProxyPort   = 8081
+	defaultServerMCPPort     = 8082
+	defaultServerReadTimeout = 60 * time.Second
+	// defaultServerWriteTimeout must exceed providers.StreamTimeout: fasthttp
+	// applies the write deadline to the whole response and flushing does not
+	// reset it, so a lower value truncates a streamed response mid-frame.
+	defaultServerWriteTimeout = 330 * time.Second
 	defaultServerIdleTimeout  = 120 * time.Second
 	defaultGatewayBaseDomain  = "llm.neuraltrust.ai"
 	defaultMCPBaseDomain      = "mcp.neuraltrust.ai"
