@@ -36,11 +36,18 @@ const MCPTransportStreamableHTTP MCPTransport = "streamable-http"
 type MCPAuthMode string
 
 const (
-	MCPAuthModeNone        MCPAuthMode = "none"
-	MCPAuthModeStatic      MCPAuthMode = "static"
-	MCPAuthModePassthrough MCPAuthMode = "passthrough"
-	MCPAuthModeExchange    MCPAuthMode = "exchange"
-	MCPAuthModeForwarded   MCPAuthMode = "forwarded"
+	MCPAuthModeNone              MCPAuthMode = "none"
+	MCPAuthModeStatic            MCPAuthMode = "static"
+	MCPAuthModePassthrough       MCPAuthMode = "passthrough"
+	MCPAuthModeExchange          MCPAuthMode = "exchange"
+	MCPAuthModeForwarded         MCPAuthMode = "forwarded"
+	MCPAuthModeClientCredentials MCPAuthMode = "client_credentials"
+)
+
+// Token endpoint auth methods for MCPAuthModeClientCredentials (RFC 6749).
+const (
+	TokenEndpointAuthClientSecretBasic = "client_secret_basic"
+	TokenEndpointAuthClientSecretPost  = "client_secret_post"
 )
 
 type MCPClientRegistration string
@@ -78,6 +85,10 @@ type MCPAuth struct {
 	TokenURL     string                `json:"token_url,omitempty"`
 	Scopes       []string              `json:"scopes,omitempty"`
 	Resource     string                `json:"resource,omitempty"`
+	// TokenEndpointAuthMethod selects how client_id/secret are presented to the
+	// token endpoint for client_credentials: client_secret_basic (default) or
+	// client_secret_post.
+	TokenEndpointAuthMethod string `json:"token_endpoint_auth_method,omitempty"`
 }
 
 type MCPTarget struct {
@@ -192,6 +203,22 @@ func (a *MCPAuth) Validate() error {
 		default:
 			return fmt.Errorf("%w: unknown registration mode %q", ErrInvalidMCPTarget, a.Registration)
 		}
+	case MCPAuthModeClientCredentials:
+		if strings.TrimSpace(a.ClientID) == "" || strings.TrimSpace(a.ClientSecret) == "" {
+			return fmt.Errorf("%w: client_credentials requires client_id and client_secret", ErrInvalidMCPTarget)
+		}
+		if strings.TrimSpace(a.TokenURL) == "" || !isHTTPURL(a.TokenURL) {
+			return fmt.Errorf("%w: client_credentials requires a valid http(s) token_url", ErrInvalidMCPTarget)
+		}
+		if secret.IsMasked(a.ClientSecret) {
+			return fmt.Errorf("%w: secret cannot be a masked value; omit the field to keep the stored value",
+				ErrInvalidMCPTarget)
+		}
+		switch a.TokenEndpointAuthMethod {
+		case "", TokenEndpointAuthClientSecretBasic, TokenEndpointAuthClientSecretPost:
+		default:
+			return fmt.Errorf("%w: unknown token_endpoint_auth_method %q", ErrInvalidMCPTarget, a.TokenEndpointAuthMethod)
+		}
 	default:
 		return fmt.Errorf("%w: unknown auth mode %q", ErrInvalidMCPTarget, a.Mode)
 	}
@@ -213,7 +240,7 @@ func (t *MCPTarget) ResolveSecretsFrom(prev *MCPTarget) {
 	switch t.Auth.Mode {
 	case MCPAuthModeStatic:
 		t.Auth.Value = secret.Resolve(t.Auth.Value, prev.Auth.Value)
-	case MCPAuthModeForwarded:
+	case MCPAuthModeForwarded, MCPAuthModeClientCredentials:
 		t.Auth.ClientSecret = secret.Resolve(t.Auth.ClientSecret, prev.Auth.ClientSecret)
 	}
 }
