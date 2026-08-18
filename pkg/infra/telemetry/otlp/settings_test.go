@@ -34,10 +34,10 @@ func TestParseSettings(t *testing.T) {
 	}{
 		{
 			name: "minimal valid applies defaults",
-			raw:  map[string]interface{}{"endpoint": "collector:4317"},
+			raw:  map[string]interface{}{"endpoint": "collector:4318"},
 			assert: func(t *testing.T, s Settings) {
-				assert.Equal(t, "collector:4317", s.Endpoint)
-				assert.Equal(t, ProtocolGRPC, s.Protocol)
+				assert.Equal(t, "collector:4318", s.Endpoint)
+				assert.Equal(t, ProtocolHTTP, s.Protocol)
 				assert.Equal(t, SignalLogs, s.Signal)
 				assert.Equal(t, compressionGzip, s.Compression)
 				assert.Equal(t, defaultTimeout, s.Timeout)
@@ -167,6 +167,44 @@ func TestParseSettingsResolvesProtocolFromEndpoint(t *testing.T) {
 			s, err := parseSettings(map[string]interface{}{"endpoint": tc.endpoint}, tc.env)
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, s.Protocol)
+		})
+	}
+}
+
+func TestWithLogsPath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		endpoint string
+		want     string
+	}{
+		{
+			name:     "endpoint without path gets the signal path",
+			endpoint: "http://collector:4318",
+			want:     "http://collector:4318/v1/logs",
+		},
+		{
+			name:     "trailing slash is not doubled",
+			endpoint: "http://collector:4318/",
+			want:     "http://collector:4318/v1/logs",
+		},
+		{
+			name:     "existing signal path is kept",
+			endpoint: "http://collector:4318/v1/logs",
+			want:     "http://collector:4318/v1/logs",
+		},
+		{
+			name:     "custom path is kept",
+			endpoint: "https://gateway.example.com/otlp/v1/logs",
+			want:     "https://gateway.example.com/otlp/v1/logs",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, withLogsPath(tc.endpoint))
 		})
 	}
 }
