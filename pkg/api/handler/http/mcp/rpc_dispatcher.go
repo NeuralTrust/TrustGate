@@ -171,6 +171,10 @@ func mcpRequestAttrs(method string, params json.RawMessage) (operation, tool, pr
 		}
 		_ = json.Unmarshal(params, &p)
 		return "prompt", "", p.Name, ""
+	case appmcp.MethodTasksGet, appmcp.MethodTasksUpdate, appmcp.MethodTasksCancel:
+		// The tool the task belongs to is only known once the handle is
+		// unwrapped, and the handle itself is never an attribute.
+		return "task", "", "", ""
 	default:
 		return "", "", "", ""
 	}
@@ -341,6 +345,8 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 			return nil, err
 		}
 		return g.composer.GetPrompt(ctx, rc, p.Name, p.Arguments)
+	case appmcp.MethodTasksGet, appmcp.MethodTasksUpdate, appmcp.MethodTasksCancel:
+		return g.dispatchTask(ctx, rc, method, params)
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrMethodNotFound, method)
 	}

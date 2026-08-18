@@ -133,19 +133,34 @@ func MCP(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	if err := c.Provide(func(cfg *config.Config) *appmcp.TaskHandleSigner {
+		tasks := cfg.Server.MCPTasks
+		return appmcp.NewTaskHandleSigner(
+			tasks.HandleSecret,
+			tasks.HandleSecretPrev,
+			tasks.HandleTTL,
+			tasks.HandleMaxBytes,
+		)
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(func(
 		dialer appmcp.Dialer,
 		creds appmcp.CredentialResolver,
 		manager *cache.TTLMapManager,
 		logger *slog.Logger,
 		signer *appmcp.TicketSigner,
+		tasks *appmcp.TaskHandleSigner,
+		cfg *config.Config,
 	) appmcp.Composer {
-		return appmcp.NewComposerWithSigner(
+		return appmcp.NewComposerWithMediation(
 			dialer,
 			creds,
 			manager.GetTTLMap(cache.MCPToolsTTLName),
 			logger,
 			signer,
+			tasks,
+			int64(cfg.Server.MCPTasks.PollIntervalFloorMs),
 		)
 	}); err != nil {
 		return err
@@ -181,14 +196,19 @@ func MCP(c *container.Container) error {
 		gw *mcphttp.RPCGateway,
 		scoper appmcp.RoleScoper,
 		signer *appmcp.TicketSigner,
+		tasks *appmcp.TaskHandleSigner,
 		cfg *config.Config,
 	) *mcphttp.Handler {
-		return mcphttp.NewHandlerWithMRTR(
+		return mcphttp.NewHandlerWithMediation(
 			gw,
 			scoper,
 			mcphttp.MRTRSupport{
 				Signer:   signer,
 				Recorder: mcphttp.NewMRTRRecorder(cfg.Telemetry.OpsMetricsEnabled),
+			},
+			mcphttp.TasksSupport{
+				Signer:   tasks,
+				Recorder: mcphttp.NewTasksRecorder(cfg.Telemetry.OpsMetricsEnabled),
 			},
 			mcphttp.NewProtocolValidationRecorder(cfg.Telemetry.OpsMetricsEnabled),
 		)
