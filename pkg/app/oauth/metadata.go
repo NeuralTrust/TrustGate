@@ -112,16 +112,15 @@ func (s *metadataService) resourceAuths(ctx context.Context, resource string) ([
 		if u, err := url.Parse(resource); err == nil && u.Path != "" {
 			matches, err := s.paths.Match(ctx, u.Host, u.Path)
 			if err == nil && len(matches) > 0 {
-				var out []*authdomain.Auth
-				for _, m := range matches {
-					for _, a := range m.Auths {
-						if a.Enabled && a.Type == authdomain.TypeOAuth2 && a.Config.OAuth2 != nil {
-							out = append(out, a)
-						}
-					}
+				providers, protected := pathOAuth2Auths(matches)
+				if len(providers) > 0 {
+					return providers, nil
 				}
-				if len(out) > 0 {
-					return out, nil
+				// The resource pinned a consumer that authenticates with its own
+				// credential. Advertising the gateway's identity provider would
+				// send a client through a login the auth chain cannot honour.
+				if protected {
+					return nil, nil
 				}
 			}
 		}

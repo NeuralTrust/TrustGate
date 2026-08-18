@@ -40,7 +40,10 @@ func setupEMAProxy(t *testing.T, mode string, stub appauth.OIDCVerifier, store *
 	if store == nil {
 		store = newMemFlowStore()
 	}
-	if err := store.SaveGatewayClient(context.Background(), RegisteredGatewayClient{ClientID: "agw-client"}); err != nil {
+	if err := store.SaveGatewayClient(context.Background(), RegisteredGatewayClient{
+		ClientID:     "agw-client",
+		RedirectURIs: []string{"https://127.0.0.1/cb"},
+	}); err != nil {
 		t.Fatalf("save client: %v", err)
 	}
 	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{auth}}
@@ -117,17 +120,17 @@ func TestEMARejectsAuthorizeKeepsRefresh(t *testing.T) {
 	t.Parallel()
 	store := newMemFlowStore()
 	proxy, _, auth := setupEMAProxy(t, authdomain.NorthboundModeEMA, &stubOIDCVerifier{}, store)
-	_, err := proxy.Authorize(context.Background(), "https://gw.example.com", AuthorizeRequest{
+	location, err := proxy.Authorize(context.Background(), "https://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
 		ClientID:            "agw-client",
 		RedirectURI:         "https://127.0.0.1/cb",
 		CodeChallenge:       s256("verifier"),
 		CodeChallengeMethod: "S256",
 	})
-	var oe *OAuthError
-	if !errors.As(err, &oe) || oe.Code != "access_denied" {
-		t.Fatalf("authorize = %v, want access_denied", err)
+	if err != nil {
+		t.Fatalf("authorize refusal should reach the client: %v", err)
 	}
+	assertClientToldOfError(t, location, "https://127.0.0.1/cb", "https://gw.example.com", "access_denied")
 
 	refresh := gatewayRefreshPrefix + "keep"
 	if err := store.SaveSession(context.Background(), refresh, SessionRecord{

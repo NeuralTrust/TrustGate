@@ -87,3 +87,16 @@ func TestResolveDSNMissingEnvFails(t *testing.T) {
 	_, err := Settings{DSNEnv: "SENSIBLE_PG_DSN_DOES_NOT_EXIST"}.resolveDSN()
 	require.Error(t, err)
 }
+
+func TestResolveDSNDefaultsToSensiblePGDSN(t *testing.T) {
+	t.Setenv(defaultDSNEnv, "postgres://from-default-env")
+	got, err := Settings{}.resolveDSN()
+	require.NoError(t, err)
+	assert.Equal(t, "postgres://from-default-env", got)
+}
+
+func TestResolveDSNEmptyWithoutSensiblePGDSN(t *testing.T) {
+	t.Setenv(defaultDSNEnv, "")
+	_, err := Settings{}.resolveDSN()
+	require.Error(t, err)
+}

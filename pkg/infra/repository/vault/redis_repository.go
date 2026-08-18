@@ -35,6 +35,21 @@ const (
 	redisScanBatchSize = 100
 )
 
+var deleteCredentialScript = redis.NewScript(`
+local raw = redis.call("GET", KEYS[1])
+if not raw then
+  return 0
+end
+local ok, stored = pcall(cjson.decode, raw)
+if not ok or type(stored) ~= "table" then
+  return 0
+end
+if stored.gateway_id ~= ARGV[1] or stored.principal_sub ~= ARGV[2] or stored.provider ~= ARGV[3] then
+  return 0
+end
+return redis.call("DEL", KEYS[1])
+`)
+
 type redisRepository struct {
 	rc     *redis.Client
 	cipher domain.Encrypter
@@ -163,15 +178,19 @@ func (r *redisRepository) ListByPrincipal(ctx context.Context, gatewayID ids.Gat
 
 func (r *redisRepository) Delete(ctx context.Context, gatewayID ids.GatewayID, principalSub, provider string) error {
 	key := redisKey(gatewayID, principalSub, provider)
-	stored, err := r.load(ctx, key)
+	deleted, err := deleteCredentialScript.Run(
+		ctx,
+		r.rc,
+		[]string{key},
+		gatewayID.String(),
+		principalSub,
+		provider,
+	).Int()
 	if err != nil {
-		return err
-	}
-	if !stored.matches(gatewayID, principalSub, provider) {
-		return domain.ErrNotFound
-	}
-	if err := r.rc.Del(ctx, key).Err(); err != nil {
 		return fmt.Errorf("vault repository: delete: %w", err)
+	}
+	if deleted == 0 {
+		return domain.ErrNotFound
 	}
 	return nil
 }
