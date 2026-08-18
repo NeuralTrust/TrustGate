@@ -376,6 +376,37 @@ func TestPluginRunner_PreResponse_MaskedResultReplacesOutput(t *testing.T) {
 	assert.JSONEq(t, masked, string(got.Result))
 }
 
+// The tool output a completed task carries must reach the response stage as an
+// ordinary tool result, under the exposed name recovered from the task handle,
+// so a plugin cannot tell that the output arrived through tasks/get.
+func TestPluginRunner_PreResponse_TerminalTaskResultUsesExposedName(t *testing.T) {
+	t.Parallel()
+	terminal := json.RawMessage(
+		`{"taskId":"u-1","status":"completed","result":{"content":[{"type":"text","text":"ssn 123-45-6789"}]}}`,
+	)
+	inner, ok := TerminalTaskResult(terminal)
+	require.True(t, ok, "a completed task must expose its tool result")
+
+	var captured appplugins.StageInput
+	exec := pluginmocks.NewExecutor(t)
+	exec.EXPECT().RunStage(mock.Anything, mock.Anything).
+		Run(func(_ context.Context, in appplugins.StageInput) { captured = in }).
+		Return(&appplugins.StageOutcome{}, nil).Once()
+
+	runner := NewPluginRunner(exec, discardLogger())
+	rc := routableMCPConsumer(preResponsePolicy(policydomain.StagePreResponse))
+
+	_, err := runner.PreResponse(context.Background(), rc, testToolName, nil, inner)
+	require.NoError(t, err)
+	require.NotNil(t, captured.Response)
+	assert.JSONEq(t, string(inner), string(captured.Response.Body))
+
+	var params mcpToolCallParams
+	require.NoError(t, json.Unmarshal(captured.Request.Body, &params))
+	assert.Equal(t, testToolName, params.Name, "the stage must see the exposed tool name")
+	assert.NotContains(t, string(captured.Request.Body), "u-1", "no task id reaches a plugin")
+}
+
 // A non-2xx short-circuit is still a denial and must fail the call.
 func TestPluginRunner_PreResponse_NonSuccessShortCircuitBlocks(t *testing.T) {
 	t.Parallel()

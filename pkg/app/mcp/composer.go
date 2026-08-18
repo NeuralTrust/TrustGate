@@ -39,17 +39,28 @@ type Composer interface {
 	ReadResource(ctx context.Context, rc *appconsumer.RoutableConsumer, uri string) (json.RawMessage, error)
 	ListPrompts(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Prompt, error)
 	GetPrompt(ctx context.Context, rc *appconsumer.RoutableConsumer, name string, arguments map[string]string) (json.RawMessage, error)
+	UnwrapTaskHandle(ctx context.Context, rc *appconsumer.RoutableConsumer, handle string) (TaskRef, error)
+	GetTask(ctx context.Context, rc *appconsumer.RoutableConsumer, handle string) (json.RawMessage, error)
+	UpdateTask(
+		ctx context.Context,
+		rc *appconsumer.RoutableConsumer,
+		handle string,
+		inputResponses json.RawMessage,
+	) (json.RawMessage, error)
+	CancelTask(ctx context.Context, rc *appconsumer.RoutableConsumer, handle string) (json.RawMessage, error)
 }
 
 var _ Composer = (*composer)(nil)
 
 type composer struct {
-	dialer    Dialer
-	creds     CredentialResolver
-	discovery DiscoveryCache
-	flight    singleflight.Group
-	logger    *slog.Logger
-	signer    *TicketSigner
+	dialer      Dialer
+	creds       CredentialResolver
+	discovery   DiscoveryCache
+	flight      singleflight.Group
+	logger      *slog.Logger
+	signer      *TicketSigner
+	tasks       *TaskHandleSigner
+	pollFloorMs int64
 }
 
 func NewComposer(dialer Dialer, creds CredentialResolver, discovery DiscoveryCache, logger *slog.Logger) Composer {
@@ -63,12 +74,28 @@ func NewComposerWithSigner(
 	logger *slog.Logger,
 	signer *TicketSigner,
 ) Composer {
+	return NewComposerWithMediation(dialer, creds, discovery, logger, signer, nil, 0)
+}
+
+// NewComposerWithMediation wires both mediated continuation primitives: MRTR
+// tickets and task handles. A nil task signer leaves task mediation off.
+func NewComposerWithMediation(
+	dialer Dialer,
+	creds CredentialResolver,
+	discovery DiscoveryCache,
+	logger *slog.Logger,
+	signer *TicketSigner,
+	tasks *TaskHandleSigner,
+	pollFloorMs int64,
+) Composer {
 	return &composer{
-		dialer:    dialer,
-		creds:     creds,
-		discovery: discovery,
-		logger:    logger,
-		signer:    signer,
+		dialer:      dialer,
+		creds:       creds,
+		discovery:   discovery,
+		logger:      logger,
+		signer:      signer,
+		tasks:       tasks,
+		pollFloorMs: pollFloorMs,
 	}
 }
 
@@ -194,6 +221,12 @@ func (c *composer) wrapContinuation(
 	result json.RawMessage,
 ) (json.RawMessage, error) {
 	resultType, upstreamState := mrtrResultFields(result)
+	// A task result is checked before the MRTR branch: it is a third answer
+	// shape, and letting it fall through would report it as complete and strip
+	// the fields the client needs to poll.
+	if resultType == ResultTypeTask {
+		return c.wrapTask(ctx, rc, b, call, result)
+	}
 	if resultType != trace.MRTROutcomeInputRequired {
 		stampMRTR(ctx, trace.MRTROutcomeComplete, 0)
 		return result, nil

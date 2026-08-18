@@ -68,11 +68,24 @@ type MRTRSupport struct {
 	Recorder MRTRRecorder
 }
 
+// TasksSupport carries the tasks-extension dependencies the northbound handler
+// needs: an unset signer keeps task mediation off and the extension unadvertised.
+type TasksSupport struct {
+	Signer   *appmcp.TaskHandleSigner
+	Recorder TasksRecorder
+}
+
+// Enabled reports whether TrustGate can mediate tasks.
+func (s TasksSupport) Enabled() bool {
+	return s.Signer.Enabled()
+}
+
 type Handler struct {
 	gateway    *RPCGateway
 	roleScoper appmcp.RoleScoper
 	protocol   ProtocolValidationRecorder
 	mrtr       MRTRSupport
+	tasks      TasksSupport
 }
 
 func NewHandler(gateway *RPCGateway, roleScoper appmcp.RoleScoper, rec ...ProtocolValidationRecorder) *Handler {
@@ -86,7 +99,19 @@ func NewHandlerWithMRTR(
 	mrtr MRTRSupport,
 	rec ...ProtocolValidationRecorder,
 ) *Handler {
-	h := &Handler{gateway: gateway, roleScoper: roleScoper, mrtr: mrtr}
+	return NewHandlerWithMediation(gateway, roleScoper, mrtr, TasksSupport{}, rec...)
+}
+
+// NewHandlerWithMediation wires the handler with both mediated continuation
+// features: multi round-trip tickets and the tasks extension.
+func NewHandlerWithMediation(
+	gateway *RPCGateway,
+	roleScoper appmcp.RoleScoper,
+	mrtr MRTRSupport,
+	tasks TasksSupport,
+	rec ...ProtocolValidationRecorder,
+) *Handler {
+	h := &Handler{gateway: gateway, roleScoper: roleScoper, mrtr: mrtr, tasks: tasks}
 	if len(rec) > 0 {
 		h.protocol = rec[0]
 	}
@@ -177,7 +202,10 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 		}
 		c.SetUserContext(withMCPProtocol(c.UserContext(), era, resolvedProtocolVersion(req, protocolHeader)))
 		if era == protocolEraModern {
-			c.SetUserContext(appmcp.WithClientCapabilities(c.UserContext(), declaredClientCapabilities(req.Params)))
+			c.SetUserContext(appmcp.WithClientCapabilities(
+				c.UserContext(),
+				h.mediatableCapabilities(declaredClientCapabilities(req.Params)),
+			))
 		}
 	}
 
@@ -216,7 +244,11 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 	}
 
 	if era == protocolEraModern && req.Method == "server/discover" {
-		discovery := serverDiscoveryResult(rc, mrtrEndToEnd(h.mrtr.Signer, rc))
+		discovery := serverDiscoveryResultWithTasks(
+			rc,
+			mrtrEndToEnd(h.mrtr.Signer, rc),
+			tasksEndToEnd(h.tasks, rc),
+		)
 		normalized, err := normalizeModernResult(req.Method, discovery, rc, nil)
 		if err != nil {
 			return writeRPCErrorStatus(c, req.ID, fiber.StatusInternalServerError, codeInternalError, "internal error", nil)
@@ -235,6 +267,7 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 	}
 
 	result, err := h.gateway.Dispatch(c.UserContext(), rc, req.Method, req.Params)
+	h.recordTaskOutcome(c, req.Method, era)
 	if err != nil {
 		h.recordToolCallFailure(c, req.Method, era, err)
 		return writeAppError(c, req.ID, err, era, req.Method)
@@ -310,6 +343,39 @@ func mrtrFailureOutcome(err error) (MRTROutcome, bool) {
 	return "", false
 }
 
+// recordTaskOutcome reports the outcome the dispatcher stamped on the MCP span.
+// Only the dispatch layer knows whether a handle verified, and the handle itself
+// is never an attribute.
+func (h *Handler) recordTaskOutcome(c *fiber.Ctx, method string, era protocolEra) {
+	fallback := trace.BoundTaskOperation(method)
+	if h.tasks.Recorder == nil || fallback == "" {
+		return
+	}
+	operation, outcome := taskAttrsFromTrace(c.UserContext())
+	if outcome == "" {
+		return
+	}
+	if operation == "" {
+		operation = fallback
+	}
+	h.tasks.Recorder.Record(c.UserContext(), operation, outcome, eraLabel(era))
+}
+
+func taskAttrsFromTrace(ctx context.Context) (operation, outcome string) {
+	requestTrace := trace.FromContext(ctx)
+	if requestTrace == nil {
+		return "", ""
+	}
+	for _, span := range requestTrace.Spans() {
+		attrs, ok := span.MCPAttrsCopy()
+		if !ok || attrs.TaskOutcome == "" {
+			continue
+		}
+		operation, outcome = attrs.TaskOperation, attrs.TaskOutcome
+	}
+	return operation, outcome
+}
+
 // mrtrRoundFromTrace reads back the round the composer stamped on the MCP span.
 // Only the mediating layer knows the ticket's round, and the ticket payload must
 // never be re-parsed at the edge.
@@ -348,6 +414,20 @@ func declaredClientCapabilities(params json.RawMessage) map[string]any {
 		return nil
 	}
 	return appmcp.AllowlistedClientCapabilities(caps)
+}
+
+// mediatableCapabilities is the single fail-closed choke point for the tasks
+// extension: with no signer the declaration is dropped here, so nothing
+// downstream can advertise it, forward it southbound, or accept tasks/*.
+func (h *Handler) mediatableCapabilities(caps map[string]any) map[string]any {
+	if h.tasks.Enabled() || caps == nil {
+		return caps
+	}
+	delete(caps, appmcp.CapabilityKindExtensions)
+	if len(caps) == 0 {
+		return nil
+	}
+	return caps
 }
 
 func (h *Handler) recordProtocolValidation(c *fiber.Ctx, code int, era protocolEra) {
@@ -545,7 +625,13 @@ func isSupportedModernMethod(method string) bool {
 		"resources/templates/list",
 		"resources/read",
 		"prompts/list",
-		"prompts/get":
+		"prompts/get",
+		// tasks/* are always routable methods. A client that never declared the
+		// extension is refused by the dispatcher with -32025, not with
+		// method-not-found, so the two failures stay distinguishable.
+		appmcp.MethodTasksGet,
+		appmcp.MethodTasksUpdate,
+		appmcp.MethodTasksCancel:
 		return true
 	default:
 		return false

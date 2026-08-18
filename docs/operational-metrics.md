@@ -54,6 +54,25 @@ never labels and never logged.
 continuations are `-32602` shape rejections and are not counted here: no
 mediation round happened.
 
+`mcp.northbound.tasks.outcome_total` (`{outcome}`): one sample per mediated
+`tasks/get`, `tasks/update`, or `tasks/cancel`. Task handles, upstream task ids,
+`inputResponses`, and task results are never labels and never logged.
+
+| Label | Values |
+|-------|--------|
+| `operation` | `get`, `update`, `cancel` |
+| `outcome` | `accepted`, `working`, `input_required`, `completed`, `cancelled`, `failed`, `handle_rejected`, `capability_required`, `policy_denied` |
+| `era` | `legacy`, `modern` |
+
+`handle_rejected` is every handle refusal collapsed into one label — tamper,
+expiry, a detached registry, a toolkit change, a principal change, an unknown or
+purged upstream task, and credential failure all record it and all answer
+`-32602` with one constant message, so neither the wire nor telemetry can be used
+as an existence oracle. `capability_required` is a client that issued `tasks/*`
+without declaring `io.modelcontextprotocol/tasks` (`-32025`). `policy_denied` is a
+plugin blocking the tool output a completed task carried. A task's own status is
+reported as the outcome for a successful operation.
+
 ### Southbound
 
 `mcp.upstream.protocol.decision_total` (`{decision}`): one sample per
@@ -71,4 +90,6 @@ negotiation outcome.
 `source=probe`. Cache hits and `protocol_mode` overrides must not inflate
 this histogram.
 
-See [Dual-era rollout](mcp/dual-era-rollout.md) for dashboards and rollback.
+See [Dual-era rollout](mcp/dual-era-rollout.md) for dashboards and rollback, and
+[MCP tasks extension](mcp/tasks-extension.md) for the task knobs and its rollback
+lever.

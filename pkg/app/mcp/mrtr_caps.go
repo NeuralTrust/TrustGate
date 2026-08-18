@@ -23,6 +23,10 @@ import (
 // declared capabilities.
 const MetaKeyClientCapabilities = "io.modelcontextprotocol/clientCapabilities"
 
+// CapabilityKindExtensions is the client capability object carrying protocol
+// extension declarations.
+const CapabilityKindExtensions = "extensions"
+
 var mrtrCapabilityKinds = []string{"elicitation", "sampling", "roots"}
 
 type clientCapabilitiesKey struct{}
@@ -40,21 +44,50 @@ func ClientCapabilitiesFromContext(ctx context.Context) map[string]any {
 	return caps
 }
 
-// AllowlistedClientCapabilities keeps only elicitation, sampling, and roots.
+// AllowlistedClientCapabilities keeps only elicitation, sampling, roots, and a
+// bounded extensions object.
 func AllowlistedClientCapabilities(raw map[string]any) map[string]any {
 	if len(raw) == 0 {
 		return nil
 	}
-	out := make(map[string]any, len(mrtrCapabilityKinds))
+	out := make(map[string]any, len(mrtrCapabilityKinds)+1)
 	for _, kind := range mrtrCapabilityKinds {
 		if value, ok := raw[kind]; ok {
 			out[kind] = value
 		}
 	}
+	if extensions := allowlistedExtensions(raw[CapabilityKindExtensions]); extensions != nil {
+		out[CapabilityKindExtensions] = extensions
+	}
 	if len(out) == 0 {
 		return nil
 	}
 	return out
+}
+
+// allowlistedExtensions keeps the tasks extension and nothing else, with its
+// value forced to an empty object so a client cannot smuggle a payload
+// southbound inside the declaration.
+func allowlistedExtensions(raw any) map[string]any {
+	declared, ok := raw.(map[string]any)
+	if !ok {
+		return nil
+	}
+	if _, ok := declared[MetaKeyTasksExtension]; !ok {
+		return nil
+	}
+	return map[string]any{MetaKeyTasksExtension: map[string]any{}}
+}
+
+// DeclaredTasksExtension reports whether the client declared the tasks
+// extension.
+func DeclaredTasksExtension(caps map[string]any) bool {
+	extensions, ok := caps[CapabilityKindExtensions].(map[string]any)
+	if !ok {
+		return false
+	}
+	_, ok = extensions[MetaKeyTasksExtension]
+	return ok
 }
 
 // DeclaredCapability reports whether the client declared the given kind.

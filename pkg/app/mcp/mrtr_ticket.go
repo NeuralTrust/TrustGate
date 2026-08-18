@@ -15,18 +15,17 @@
 package mcp
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
-	"strings"
 	"time"
 )
 
 const (
-	ticketVersion        = "tg1"
-	ticketKidCurrent     = "c"
-	ticketKidPrevious    = "p"
+	ticketVersion    = "tg1"
+	ticketKidCurrent = envelopeKidCurrent
+	// mrtrTicketPurpose is deliberately empty: the MRTR MAC input stays
+	// untagged so tickets minted by any released binary keep verifying across
+	// deploys and rollbacks. Task handles carry their own purpose tag instead.
+	mrtrTicketPurpose    = ""
 	ticketClaimVersion   = 1
 	defaultTicketTTL     = 5 * time.Minute
 	DefaultMRTRMaxRounds = 8
@@ -60,11 +59,8 @@ func (c TicketClaims) Binds(consumerID, registryID, exposed, upstream, method st
 // TicketSigner mints and verifies stateless HMAC continuation tickets. A signer
 // with no current secret is disabled and rejects every ticket.
 type TicketSigner struct {
-	current   []byte
-	previous  []byte
-	ttl       time.Duration
+	env       *signedEnvelope
 	maxRounds int
-	now       func() time.Time
 }
 
 // NewTicketSigner builds a signer from the current and previous secrets, falling
@@ -77,11 +73,8 @@ func NewTicketSigner(secret, prev string, ttl time.Duration, maxRounds int) *Tic
 		maxRounds = DefaultMRTRMaxRounds
 	}
 	return &TicketSigner{
-		current:   []byte(secret),
-		previous:  []byte(prev),
-		ttl:       ttl,
+		env:       newSignedEnvelope(ticketVersion, mrtrTicketPurpose, secret, prev, ttl, 0),
 		maxRounds: maxRounds,
-		now:       time.Now,
 	}
 }
 
@@ -90,13 +83,13 @@ func (s *TicketSigner) WithClock(now func() time.Time) *TicketSigner {
 	if s == nil {
 		return s
 	}
-	s.now = now
+	s.env.withClock(now)
 	return s
 }
 
 // Enabled reports whether a current secret is configured.
 func (s *TicketSigner) Enabled() bool {
-	return s != nil && len(s.current) > 0
+	return s != nil && s.env.enabled()
 }
 
 // MaxRounds is the highest round a continuation may reach.
@@ -115,16 +108,17 @@ func (s *TicketSigner) Mint(claims TicketClaims) (string, error) {
 	}
 	claims.V = ticketClaimVersion
 	if claims.Exp == 0 {
-		claims.Exp = s.now().Add(s.ttl).Unix()
+		claims.Exp = s.env.expiry(0)
 	}
 	payload, err := json.Marshal(claims)
 	if err != nil {
 		return "", err
 	}
-	encoded := base64.RawURLEncoding.EncodeToString(payload)
-	macInput := ticketVersion + "." + ticketKidCurrent + "." + encoded
-	sum := hmacSHA256(s.current, macInput)
-	return macInput + "." + base64.RawURLEncoding.EncodeToString(sum), nil
+	ticket, err := s.env.seal(payload)
+	if err != nil {
+		return "", ErrMRTRReplayRejected
+	}
+	return ticket, nil
 }
 
 // Unwrap verifies a ticket against the current secret, then the previous one, and
@@ -134,24 +128,8 @@ func (s *TicketSigner) Unwrap(ticket string) (*TicketClaims, error) {
 	if !s.Enabled() {
 		return nil, ErrMRTRReplayRejected
 	}
-	parts := strings.Split(ticket, ".")
-	if len(parts) != 4 || parts[0] != ticketVersion {
-		return nil, ErrMRTRReplayRejected
-	}
-	kid := parts[1]
-	if kid != ticketKidCurrent && kid != ticketKidPrevious {
-		return nil, ErrMRTRReplayRejected
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[2])
+	payload, err := s.env.open(ticket)
 	if err != nil {
-		return nil, ErrMRTRReplayRejected
-	}
-	sig, err := base64.RawURLEncoding.DecodeString(parts[3])
-	if err != nil {
-		return nil, ErrMRTRReplayRejected
-	}
-	macInput := parts[0] + "." + parts[1] + "." + parts[2]
-	if !s.verifyMAC(macInput, sig) {
 		return nil, ErrMRTRReplayRejected
 	}
 	var claims TicketClaims
@@ -161,24 +139,8 @@ func (s *TicketSigner) Unwrap(ticket string) (*TicketClaims, error) {
 	if claims.V != ticketClaimVersion {
 		return nil, ErrMRTRReplayRejected
 	}
-	if claims.Exp <= s.now().Unix() {
+	if s.env.expired(claims.Exp) {
 		return nil, ErrMRTRReplayRejected
 	}
 	return &claims, nil
-}
-
-func (s *TicketSigner) verifyMAC(macInput string, sig []byte) bool {
-	if hmac.Equal(sig, hmacSHA256(s.current, macInput)) {
-		return true
-	}
-	if len(s.previous) > 0 && hmac.Equal(sig, hmacSHA256(s.previous, macInput)) {
-		return true
-	}
-	return false
-}
-
-func hmacSHA256(key []byte, macInput string) []byte {
-	mac := hmac.New(sha256.New, key)
-	_, _ = mac.Write([]byte(macInput))
-	return mac.Sum(nil)
 }

@@ -54,6 +54,10 @@ func normalizeModernResult(
 		removeMCPHeaderAnnotations(normalized)
 	}
 
+	// A task-creating tools/call owns resultType and ttlMs. Both scrubs below
+	// would corrupt it, so the verdict is taken once, before _meta is stamped.
+	isTask := isTaskCreationResult(method, normalized)
+
 	metadata := make(map[string]any)
 	if existing, ok := normalized["_meta"]; ok {
 		existingMetadata, ok := existing.(map[string]any)
@@ -67,6 +71,9 @@ func normalizeModernResult(
 		"version": serverVersion + "+" + surfaceFingerprint(rc),
 	}
 	normalized["_meta"] = metadata
+	if isTask {
+		return normalized, nil
+	}
 	applyMRTRFields(method, normalized, caps)
 	delete(normalized, "ttlMs")
 	delete(normalized, "cacheScope")
@@ -75,12 +82,32 @@ func normalizeModernResult(
 	case "server/discover", "tools/list", "resources/list", "resources/templates/list", "prompts/list":
 		normalized["ttlMs"] = modernCacheTTLDefault
 		normalized["cacheScope"] = "private"
-	case "resources/read":
+	case "resources/read",
+		appmcp.MethodTasksGet, appmcp.MethodTasksUpdate, appmcp.MethodTasksCancel:
 		normalized["ttlMs"] = modernCacheTTLRead
 		normalized["cacheScope"] = "private"
 	}
 
 	return normalized, nil
+}
+
+// isTaskCreationResult reports whether the payload is a CreateTaskResult, the one
+// shape whose own resultType and ttlMs outrank the normalizer's.
+func isTaskCreationResult(method string, normalized map[string]any) bool {
+	if method != "tools/call" {
+		return false
+	}
+	resultType, _ := normalized["resultType"].(string)
+	return resultType == appmcp.ResultTypeTask
+}
+
+func isTasksMethod(method string) bool {
+	switch method {
+	case appmcp.MethodTasksGet, appmcp.MethodTasksUpdate, appmcp.MethodTasksCancel:
+		return true
+	default:
+		return false
+	}
 }
 
 // applyMRTRFields keeps continuation state on tools/call and nowhere else: the
@@ -90,10 +117,20 @@ func applyMRTRFields(method string, normalized map[string]any, caps map[string]a
 	if method != "tools/call" || normalized["resultType"] != trace.MRTROutcomeInputRequired {
 		normalized["resultType"] = trace.MRTROutcomeComplete
 		delete(normalized, "requestState")
-		delete(normalized, "inputRequests")
+		// An input_required task reports its pending requests through tasks/get,
+		// so that method keeps them; every other non-MRTR method loses them.
+		if !isTasksMethod(method) {
+			delete(normalized, "inputRequests")
+			return
+		}
+		filterInputRequests(normalized, caps)
 		return
 	}
 	normalized["resultType"] = trace.MRTROutcomeInputRequired
+	filterInputRequests(normalized, caps)
+}
+
+func filterInputRequests(normalized map[string]any, caps map[string]any) {
 	requests, ok := normalized["inputRequests"].(map[string]any)
 	if !ok {
 		return

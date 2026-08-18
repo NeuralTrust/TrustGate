@@ -84,6 +84,66 @@ func (_c *Composer_CallTool_Call) RunAndReturn(run func(context.Context, *consum
 	return _c
 }
 
+// CancelTask provides a mock function with given fields: ctx, rc, handle
+func (_m *Composer) CancelTask(ctx context.Context, rc *consumer.RoutableConsumer, handle string) (json.RawMessage, error) {
+	ret := _m.Called(ctx, rc, handle)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CancelTask")
+	}
+
+	var r0 json.RawMessage
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, *consumer.RoutableConsumer, string) (json.RawMessage, error)); ok {
+		return rf(ctx, rc, handle)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, *consumer.RoutableConsumer, string) json.RawMessage); ok {
+		r0 = rf(ctx, rc, handle)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(json.RawMessage)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, *consumer.RoutableConsumer, string) error); ok {
+		r1 = rf(ctx, rc, handle)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Composer_CancelTask_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CancelTask'
+type Composer_CancelTask_Call struct {
+	*mock.Call
+}
+
+// CancelTask is a helper method to define mock.On call
+//   - ctx context.Context
+//   - rc *consumer.RoutableConsumer
+//   - handle string
+func (_e *Composer_Expecter) CancelTask(ctx interface{}, rc interface{}, handle interface{}) *Composer_CancelTask_Call {
+	return &Composer_CancelTask_Call{Call: _e.mock.On("CancelTask", ctx, rc, handle)}
+}
+
+func (_c *Composer_CancelTask_Call) Run(run func(ctx context.Context, rc *consumer.RoutableConsumer, handle string)) *Composer_CancelTask_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(*consumer.RoutableConsumer), args[2].(string))
+	})
+	return _c
+}
+
+func (_c *Composer_CancelTask_Call) Return(_a0 json.RawMessage, _a1 error) *Composer_CancelTask_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Composer_CancelTask_Call) RunAndReturn(run func(context.Context, *consumer.RoutableConsumer, string) (json.RawMessage, error)) *Composer_CancelTask_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetPrompt provides a mock function with given fields: ctx, rc, name, arguments
 func (_m *Composer) GetPrompt(ctx context.Context, rc *consumer.RoutableConsumer, name string, arguments map[string]string) (json.RawMessage, error) {
 	ret := _m.Called(ctx, rc, name, arguments)
@@ -141,6 +201,66 @@ func (_c *Composer_GetPrompt_Call) Return(_a0 json.RawMessage, _a1 error) *Compo
 }
 
 func (_c *Composer_GetPrompt_Call) RunAndReturn(run func(context.Context, *consumer.RoutableConsumer, string, map[string]string) (json.RawMessage, error)) *Composer_GetPrompt_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetTask provides a mock function with given fields: ctx, rc, handle
+func (_m *Composer) GetTask(ctx context.Context, rc *consumer.RoutableConsumer, handle string) (json.RawMessage, error) {
+	ret := _m.Called(ctx, rc, handle)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetTask")
+	}
+
+	var r0 json.RawMessage
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, *consumer.RoutableConsumer, string) (json.RawMessage, error)); ok {
+		return rf(ctx, rc, handle)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, *consumer.RoutableConsumer, string) json.RawMessage); ok {
+		r0 = rf(ctx, rc, handle)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(json.RawMessage)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, *consumer.RoutableConsumer, string) error); ok {
+		r1 = rf(ctx, rc, handle)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Composer_GetTask_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetTask'
+type Composer_GetTask_Call struct {
+	*mock.Call
+}
+
+// GetTask is a helper method to define mock.On call
+//   - ctx context.Context
+//   - rc *consumer.RoutableConsumer
+//   - handle string
+func (_e *Composer_Expecter) GetTask(ctx interface{}, rc interface{}, handle interface{}) *Composer_GetTask_Call {
+	return &Composer_GetTask_Call{Call: _e.mock.On("GetTask", ctx, rc, handle)}
+}
+
+func (_c *Composer_GetTask_Call) Run(run func(ctx context.Context, rc *consumer.RoutableConsumer, handle string)) *Composer_GetTask_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(*consumer.RoutableConsumer), args[2].(string))
+	})
+	return _c
+}
+
+func (_c *Composer_GetTask_Call) Return(_a0 json.RawMessage, _a1 error) *Composer_GetTask_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Composer_GetTask_Call) RunAndReturn(run func(context.Context, *consumer.RoutableConsumer, string) (json.RawMessage, error)) *Composer_GetTask_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -437,6 +557,125 @@ func (_c *Composer_ReadResource_Call) Return(_a0 json.RawMessage, _a1 error) *Co
 }
 
 func (_c *Composer_ReadResource_Call) RunAndReturn(run func(context.Context, *consumer.RoutableConsumer, string) (json.RawMessage, error)) *Composer_ReadResource_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// UnwrapTaskHandle provides a mock function with given fields: ctx, rc, handle
+func (_m *Composer) UnwrapTaskHandle(ctx context.Context, rc *consumer.RoutableConsumer, handle string) (mcp.TaskRef, error) {
+	ret := _m.Called(ctx, rc, handle)
+
+	if len(ret) == 0 {
+		panic("no return value specified for UnwrapTaskHandle")
+	}
+
+	var r0 mcp.TaskRef
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, *consumer.RoutableConsumer, string) (mcp.TaskRef, error)); ok {
+		return rf(ctx, rc, handle)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, *consumer.RoutableConsumer, string) mcp.TaskRef); ok {
+		r0 = rf(ctx, rc, handle)
+	} else {
+		r0 = ret.Get(0).(mcp.TaskRef)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, *consumer.RoutableConsumer, string) error); ok {
+		r1 = rf(ctx, rc, handle)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Composer_UnwrapTaskHandle_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'UnwrapTaskHandle'
+type Composer_UnwrapTaskHandle_Call struct {
+	*mock.Call
+}
+
+// UnwrapTaskHandle is a helper method to define mock.On call
+//   - ctx context.Context
+//   - rc *consumer.RoutableConsumer
+//   - handle string
+func (_e *Composer_Expecter) UnwrapTaskHandle(ctx interface{}, rc interface{}, handle interface{}) *Composer_UnwrapTaskHandle_Call {
+	return &Composer_UnwrapTaskHandle_Call{Call: _e.mock.On("UnwrapTaskHandle", ctx, rc, handle)}
+}
+
+func (_c *Composer_UnwrapTaskHandle_Call) Run(run func(ctx context.Context, rc *consumer.RoutableConsumer, handle string)) *Composer_UnwrapTaskHandle_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(*consumer.RoutableConsumer), args[2].(string))
+	})
+	return _c
+}
+
+func (_c *Composer_UnwrapTaskHandle_Call) Return(_a0 mcp.TaskRef, _a1 error) *Composer_UnwrapTaskHandle_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Composer_UnwrapTaskHandle_Call) RunAndReturn(run func(context.Context, *consumer.RoutableConsumer, string) (mcp.TaskRef, error)) *Composer_UnwrapTaskHandle_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// UpdateTask provides a mock function with given fields: ctx, rc, handle, inputResponses
+func (_m *Composer) UpdateTask(ctx context.Context, rc *consumer.RoutableConsumer, handle string, inputResponses json.RawMessage) (json.RawMessage, error) {
+	ret := _m.Called(ctx, rc, handle, inputResponses)
+
+	if len(ret) == 0 {
+		panic("no return value specified for UpdateTask")
+	}
+
+	var r0 json.RawMessage
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, *consumer.RoutableConsumer, string, json.RawMessage) (json.RawMessage, error)); ok {
+		return rf(ctx, rc, handle, inputResponses)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, *consumer.RoutableConsumer, string, json.RawMessage) json.RawMessage); ok {
+		r0 = rf(ctx, rc, handle, inputResponses)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(json.RawMessage)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, *consumer.RoutableConsumer, string, json.RawMessage) error); ok {
+		r1 = rf(ctx, rc, handle, inputResponses)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Composer_UpdateTask_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'UpdateTask'
+type Composer_UpdateTask_Call struct {
+	*mock.Call
+}
+
+// UpdateTask is a helper method to define mock.On call
+//   - ctx context.Context
+//   - rc *consumer.RoutableConsumer
+//   - handle string
+//   - inputResponses json.RawMessage
+func (_e *Composer_Expecter) UpdateTask(ctx interface{}, rc interface{}, handle interface{}, inputResponses interface{}) *Composer_UpdateTask_Call {
+	return &Composer_UpdateTask_Call{Call: _e.mock.On("UpdateTask", ctx, rc, handle, inputResponses)}
+}
+
+func (_c *Composer_UpdateTask_Call) Run(run func(ctx context.Context, rc *consumer.RoutableConsumer, handle string, inputResponses json.RawMessage)) *Composer_UpdateTask_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(*consumer.RoutableConsumer), args[2].(string), args[3].(json.RawMessage))
+	})
+	return _c
+}
+
+func (_c *Composer_UpdateTask_Call) Return(_a0 json.RawMessage, _a1 error) *Composer_UpdateTask_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Composer_UpdateTask_Call) RunAndReturn(run func(context.Context, *consumer.RoutableConsumer, string, json.RawMessage) (json.RawMessage, error)) *Composer_UpdateTask_Call {
 	_c.Call.Return(run)
 	return _c
 }

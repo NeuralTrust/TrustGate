@@ -23,6 +23,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/gofiber/fiber/v2"
+
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 )
 
 const (
@@ -31,6 +33,10 @@ const (
 	codeUnsupportedProtocolVersion = -32022
 	base64SentinelPrefix           = "=?base64?"
 	base64SentinelSuffix           = "?="
+	// maxTaskHandleBytes is a hard ceiling on an inbound task handle, above the
+	// configurable mint bound, so raising MCP_TASK_HANDLE_MAX_BYTES cannot make
+	// live handles unroutable while still refusing unbounded input early.
+	maxTaskHandleBytes = 2048
 )
 
 type protocolError struct {
@@ -103,6 +109,8 @@ func validateModernRequest(req rpcRequest, headers modernRequestHeaders) *protoc
 		sourceField = "name"
 	case "resources/read":
 		sourceField = "uri"
+	case appmcp.MethodTasksGet, appmcp.MethodTasksUpdate, appmcp.MethodTasksCancel:
+		sourceField = "taskId"
 	}
 	if sourceField == "" {
 		return nil
@@ -111,6 +119,11 @@ func validateModernRequest(req rpcRequest, headers modernRequestHeaders) *protoc
 	var sourceValue string
 	if err := json.Unmarshal(params[sourceField], &sourceValue); err != nil || sourceValue == "" {
 		return newProtocolError(codeInvalidParams, fmt.Sprintf("%s requires params.%s", req.Method, sourceField))
+	}
+	// A task handle is bounded at mint, so an oversize one can never verify. It
+	// is rejected before the header compare so no work is done on it.
+	if sourceField == "taskId" && len(sourceValue) > maxTaskHandleBytes {
+		return newProtocolError(int(appmcp.CodeTaskHandleRejected), appmcp.TaskHandleRejectedMessage)
 	}
 	decodedName, ok := decodeHeaderValue(headers.name)
 	if headers.name == "" || !ok || decodedName != sourceValue {
