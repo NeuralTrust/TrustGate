@@ -1020,6 +1020,30 @@ func TestGetMCPSubscriptionsConfig_Defaults(t *testing.T) {
 	if got.MaxURIs != defaultMCPSubscriptionsMaxURIs {
 		t.Errorf("MaxURIs = %d, want %d", got.MaxURIs, defaultMCPSubscriptionsMaxURIs)
 	}
+	if got.UpstreamEnabled {
+		t.Error("MCP_SUBSCRIPTIONS_UPSTREAM_ENABLED must default to false")
+	}
+	if got.MaxUpstreamListeners != defaultMCPSubscriptionsMaxUpstreamListeners {
+		t.Errorf("MaxUpstreamListeners = %d, want %d", got.MaxUpstreamListeners, defaultMCPSubscriptionsMaxUpstreamListeners)
+	}
+	if got.MaxUpstreamPerOrigin != defaultMCPSubscriptionsMaxUpstreamPerOrigin {
+		t.Errorf("MaxUpstreamPerOrigin = %d, want %d", got.MaxUpstreamPerOrigin, defaultMCPSubscriptionsMaxUpstreamPerOrigin)
+	}
+	if got.StreamQueue != defaultMCPSubscriptionsStreamQueue {
+		t.Errorf("StreamQueue = %d, want %d", got.StreamQueue, defaultMCPSubscriptionsStreamQueue)
+	}
+	if got.UpstreamIdleTimeout != defaultMCPSubscriptionsUpstreamIdleTimeout {
+		t.Errorf("UpstreamIdleTimeout = %s, want %s", got.UpstreamIdleTimeout, defaultMCPSubscriptionsUpstreamIdleTimeout)
+	}
+	if got.ReconnectMaxAttempts != defaultMCPSubscriptionsReconnectMaxAttempts {
+		t.Errorf("ReconnectMaxAttempts = %d, want %d", got.ReconnectMaxAttempts, defaultMCPSubscriptionsReconnectMaxAttempts)
+	}
+	if got.ReconnectBackoffMin != defaultMCPSubscriptionsReconnectBackoffMin {
+		t.Errorf("ReconnectBackoffMin = %s, want %s", got.ReconnectBackoffMin, defaultMCPSubscriptionsReconnectBackoffMin)
+	}
+	if got.ReconnectBackoffMax != defaultMCPSubscriptionsReconnectBackoffMax {
+		t.Errorf("ReconnectBackoffMax = %s, want %s", got.ReconnectBackoffMax, defaultMCPSubscriptionsReconnectBackoffMax)
+	}
 }
 
 func TestGetMCPSubscriptionsConfig_LifetimeDerivationAndClamps(t *testing.T) {
@@ -1203,6 +1227,111 @@ func TestValidate_MCPSubscriptionsRejectsNonPositiveCaps(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidate_MCPSubscriptionsUpstreamBounds(t *testing.T) {
+	valid := func() MCPSubscriptionsConfig {
+		return MCPSubscriptionsConfig{
+			Enabled:              true,
+			UpstreamEnabled:      true,
+			MaxLifetime:          50 * time.Second,
+			ReauthInterval:       defaultMCPSubscriptionsReauthInterval,
+			Keepalive:            defaultMCPSubscriptionsKeepalive,
+			MaxStreams:           defaultMCPSubscriptionsMaxStreams,
+			MaxPerConsumer:       defaultMCPSubscriptionsMaxPerConsumer,
+			MaxPerPrincipal:      defaultMCPSubscriptionsMaxPerPrincipal,
+			MaxEventBytes:        defaultMCPSubscriptionsMaxEventBytes,
+			MaxURIs:              defaultMCPSubscriptionsMaxURIs,
+			MaxUpstreamListeners: defaultMCPSubscriptionsMaxUpstreamListeners,
+			MaxUpstreamPerOrigin: defaultMCPSubscriptionsMaxUpstreamPerOrigin,
+			StreamQueue:          defaultMCPSubscriptionsStreamQueue,
+			UpstreamIdleTimeout:  defaultMCPSubscriptionsUpstreamIdleTimeout,
+			ReconnectMaxAttempts: defaultMCPSubscriptionsReconnectMaxAttempts,
+			ReconnectBackoffMin:  defaultMCPSubscriptionsReconnectBackoffMin,
+			ReconnectBackoffMax:  defaultMCPSubscriptionsReconnectBackoffMax,
+		}
+	}
+	tests := []struct {
+		name string
+		key  string
+		mut  func(*MCPSubscriptionsConfig)
+	}{
+		{
+			name: "listener cap",
+			key:  "MCP_SUBSCRIPTIONS_MAX_UPSTREAM_LISTENERS",
+			mut:  func(c *MCPSubscriptionsConfig) { c.MaxUpstreamListeners = 0 },
+		},
+		{
+			name: "origin cap",
+			key:  "MCP_SUBSCRIPTIONS_MAX_UPSTREAM_PER_ORIGIN",
+			mut:  func(c *MCPSubscriptionsConfig) { c.MaxUpstreamPerOrigin = -1 },
+		},
+		{
+			name: "queue capacity",
+			key:  "MCP_SUBSCRIPTIONS_STREAM_QUEUE",
+			mut:  func(c *MCPSubscriptionsConfig) { c.StreamQueue = 0 },
+		},
+		{
+			name: "idle timeout",
+			key:  "MCP_SUBSCRIPTIONS_UPSTREAM_IDLE_TIMEOUT",
+			mut:  func(c *MCPSubscriptionsConfig) { c.UpstreamIdleTimeout = 0 },
+		},
+		{
+			name: "negative reconnect attempts",
+			key:  "MCP_SUBSCRIPTIONS_RECONNECT_MAX_ATTEMPTS",
+			mut:  func(c *MCPSubscriptionsConfig) { c.ReconnectMaxAttempts = -1 },
+		},
+		{
+			name: "minimum backoff",
+			key:  "MCP_SUBSCRIPTIONS_RECONNECT_BACKOFF_MIN",
+			mut:  func(c *MCPSubscriptionsConfig) { c.ReconnectBackoffMin = 0 },
+		},
+		{
+			name: "maximum backoff",
+			key:  "MCP_SUBSCRIPTIONS_RECONNECT_BACKOFF_MAX",
+			mut:  func(c *MCPSubscriptionsConfig) { c.ReconnectBackoffMax = 0 },
+		},
+		{
+			name: "backoff ordering",
+			key:  "MCP_SUBSCRIPTIONS_RECONNECT_BACKOFF_MIN",
+			mut: func(c *MCPSubscriptionsConfig) {
+				c.ReconnectBackoffMin = 2 * time.Second
+				c.ReconnectBackoffMax = time.Second
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := valid()
+			tc.mut(&cfg)
+			err := cfg.Validate(defaultServerWriteTimeout)
+			if err == nil || !stderrors.Is(err, errors.ErrInvalidConfig) || !strings.Contains(err.Error(), tc.key) {
+				t.Fatalf("error %q must be ErrInvalidConfig naming %s", err, tc.key)
+			}
+		})
+	}
+
+	t.Run("upstream disabled bypasses upstream bounds", func(t *testing.T) {
+		cfg := valid()
+		cfg.UpstreamEnabled = false
+		cfg.MaxUpstreamListeners = 0
+		cfg.MaxUpstreamPerOrigin = 0
+		cfg.StreamQueue = 0
+		cfg.UpstreamIdleTimeout = 0
+		cfg.ReconnectMaxAttempts = -1
+		cfg.ReconnectBackoffMin = 0
+		cfg.ReconnectBackoffMax = 0
+		if err := cfg.Validate(defaultServerWriteTimeout); err != nil {
+			t.Fatalf("upstream-disabled validation must bypass upstream bounds: %v", err)
+		}
+	})
+
+	t.Run("valid upstream bounds", func(t *testing.T) {
+		if err := valid().Validate(defaultServerWriteTimeout); err != nil {
+			t.Fatalf("valid upstream configuration: %v", err)
+		}
+	})
 }
 
 // reauthBudgetCeiling mirrors the upper end of the [1s, 8s] clamp ReauthBudget

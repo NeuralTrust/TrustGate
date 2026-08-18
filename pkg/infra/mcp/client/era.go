@@ -43,10 +43,11 @@ const (
 )
 
 type eraEntry struct {
-	era        protocolEra
-	version    string
-	generation uint64
-	corrected  bool
+	era         protocolEra
+	version     string
+	listChanged appmcp.ListChangedCapabilities
+	generation  uint64
+	corrected   bool
 }
 
 type eraResolution struct {
@@ -214,7 +215,11 @@ func (c *eraCoordinator) publishClassifiable(
 ) probeWorkResult {
 	switch result.outcome.kind {
 	case probeModern:
-		result.entry = c.storeInitial(origin, eraEntry{era: eraModern, version: result.outcome.version})
+		result.entry = c.storeInitial(origin, eraEntry{
+			era:         eraModern,
+			version:     result.outcome.version,
+			listChanged: result.outcome.capabilities,
+		})
 		result.published = true
 	case probeModernIncompatible:
 		result.entry = c.storeInitial(origin, eraEntry{era: eraModernIncompatible})
@@ -259,8 +264,9 @@ func (c *eraCoordinator) publishProbeResult(
 	switch result.outcome.kind {
 	case probeModern:
 		entry := c.storeInitial(origin, eraEntry{
-			era:     eraModern,
-			version: result.outcome.version,
+			era:         eraModern,
+			version:     result.outcome.version,
+			listChanged: result.outcome.capabilities,
 		})
 		return eraResolution{entry: entry, source: source}, nil
 	case probeModernIncompatible:
@@ -314,6 +320,20 @@ func (c *eraCoordinator) lookup(origin string) (eraEntry, bool) {
 	defer c.mu.RUnlock()
 	entry, ok := c.entries[origin]
 	return entry, ok
+}
+
+func (c *eraCoordinator) lookupSubscription(
+	origin string,
+	listChanged appmcp.ListChangedCapabilities,
+) (eraEntry, bool) {
+	entry, ok := c.lookup(origin)
+	if !ok || entry.era != eraModern || entry.version != modernProtocolVersion {
+		return eraEntry{}, false
+	}
+	if !entry.listChanged.Equal(listChanged) {
+		return eraEntry{}, false
+	}
+	return entry, true
 }
 
 func resolutionForEntry(entry eraEntry, source decisionSource) (eraResolution, error) {

@@ -36,9 +36,26 @@ var (
 	ErrTaskCapabilityRequired = fmt.Errorf("mcp: task capability required")
 	ErrTaskHandleTooLarge     = fmt.Errorf("mcp: task handle too large")
 
-	ErrSubscriptionRefused = fmt.Errorf("%s", SubscriptionRefusedMessage)
-	ErrSubscriptionRevoked = fmt.Errorf("mcp: subscription revoked")
+	ErrSubscriptionRefused            = fmt.Errorf("%s", SubscriptionRefusedMessage)
+	ErrSubscriptionRevoked            = fmt.Errorf("mcp: subscription revoked")
+	ErrSubscriptionUnsupported        = errors.New("mcp: upstream subscriptions unsupported")
+	ErrSubscriptionListenerCapacity   = errors.New("mcp: upstream subscription listener capacity exceeded")
+	ErrSubscriptionSlowConsumer       = errors.New("mcp: subscription consumer is too slow")
+	ErrSubscriptionSourceChanged      = errors.New("mcp: subscription source identity changed")
+	ErrSubscriptionIdle               = errors.New("mcp: upstream subscription idle timeout")
+	ErrSubscriptionReconnectExhausted = errors.New("mcp: upstream subscription reconnect exhausted")
+	ErrSubscriptionProtocol           = errors.New("mcp: upstream subscription protocol failure")
+	ErrSubscriptionTransportClosed    = errors.New("mcp: upstream subscription transport closed")
+	ErrSubscriptionTerminal           = errors.New("mcp: upstream subscription completed")
+	ErrSubscriptionAuthentication     = errors.New("mcp: upstream subscription authentication failed")
 )
+
+// IsSubscriptionReconnectable reports whether retrying can preserve source identity.
+func IsSubscriptionReconnectable(err error) bool {
+	return errors.Is(err, ErrSubscriptionTransportClosed) ||
+		errors.Is(err, ErrSubscriptionTerminal) ||
+		errors.Is(err, ErrSubscriptionIdle)
+}
 
 const (
 	CodeMRTRReplayRejected int64 = -32023

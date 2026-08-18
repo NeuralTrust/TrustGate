@@ -33,6 +33,41 @@ func (f probeFunc) Probe(ctx context.Context, target appmcp.Target) (probeOutcom
 	return f(ctx, target)
 }
 
+func TestEraCoordinatorSubscriptionLookupRequiresExactTrio(t *testing.T) {
+	t.Parallel()
+	coordinator := newEraCoordinator(nil, 0)
+	capabilities := appmcp.ListChangedCapabilities{Tools: true, Resources: true}
+	coordinator.entries["https://upstream.example:443"] = eraEntry{
+		era:         eraModern,
+		version:     modernProtocolVersion,
+		listChanged: capabilities,
+	}
+	if _, ok := coordinator.lookupSubscription("https://upstream.example:443", capabilities); !ok {
+		t.Fatal("exact capability trio was not reusable")
+	}
+	if _, ok := coordinator.lookupSubscription(
+		"https://upstream.example:443",
+		appmcp.ListChangedCapabilities{Tools: true},
+	); ok {
+		t.Fatal("different capability trio reused cached discovery")
+	}
+	coordinator.entries["https://old.example:443"] = eraEntry{
+		era:         eraModern,
+		version:     "2025-11-25",
+		listChanged: capabilities,
+	}
+	if _, ok := coordinator.lookupSubscription("https://old.example:443", capabilities); ok {
+		t.Fatal("different protocol reused cached discovery")
+	}
+	coordinator.entries["https://legacy.example:443"] = eraEntry{era: eraLegacy}
+	if _, ok := coordinator.lookupSubscription(
+		"https://legacy.example:443",
+		appmcp.ListChangedCapabilities{},
+	); ok {
+		t.Fatal("legacy discovery reused for a modern subscription")
+	}
+}
+
 func TestEraCoordinatorSingleflightAndProcessCache(t *testing.T) {
 	t.Parallel()
 
