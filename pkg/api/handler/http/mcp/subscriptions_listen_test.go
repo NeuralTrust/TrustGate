@@ -44,6 +44,40 @@ type recordingSink struct {
 	commentErr error
 }
 
+type handlerSubscriptionHandle struct {
+	events    chan appmcp.SubscriptionEvent
+	done      chan struct{}
+	once      sync.Once
+	err       error
+	authorize func(context.Context, appmcp.SubscriptionEvent) error
+}
+
+func newHandlerSubscriptionHandle() *handlerSubscriptionHandle {
+	return &handlerSubscriptionHandle{
+		events: make(chan appmcp.SubscriptionEvent, 4),
+		done:   make(chan struct{}),
+	}
+}
+
+func (h *handlerSubscriptionHandle) Events() <-chan appmcp.SubscriptionEvent { return h.events }
+func (h *handlerSubscriptionHandle) Done() <-chan struct{}                   { return h.done }
+func (h *handlerSubscriptionHandle) Err() error                              { return h.err }
+func (h *handlerSubscriptionHandle) Authorize(
+	ctx context.Context,
+	event appmcp.SubscriptionEvent,
+) error {
+	if h.authorize != nil {
+		return h.authorize(ctx, event)
+	}
+	return nil
+}
+func (h *handlerSubscriptionHandle) Close() { h.once.Do(func() { close(h.done) }) }
+
+func (h *handlerSubscriptionHandle) terminate(err error) {
+	h.err = err
+	h.Close()
+}
+
 func (s *recordingSink) Frame(payload []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -197,8 +231,9 @@ func (p *scriptedPolicy) seen() []appmcp.SurfaceSnapshot {
 // deadlineObservingPolicy reports how much time the pass was given, which is the
 // only way to see the budget from outside the loop.
 type deadlineObservingPolicy struct {
-	mu   sync.Mutex
-	left time.Duration
+	started chan struct{}
+	mu      sync.Mutex
+	left    time.Duration
 }
 
 type blockingPolicy struct {
@@ -255,6 +290,7 @@ func (p *deadlineObservingPolicy) Evaluate(
 	_ appmcp.LeaseIdentity,
 	prev appmcp.SurfaceSnapshot,
 ) (appmcp.Evaluation, error) {
+	close(p.started)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if deadline, ok := ctx.Deadline(); ok {
@@ -342,6 +378,140 @@ func TestRunSubscriptionStreamEmptyHonouredSubsetClosesAtOnce(t *testing.T) {
 
 	require.Equal(t, subscriptionOutcomeAcked, outcome)
 	require.Equal(t, []string{testAckFrame, testTerminalFrame}, sink.written())
+}
+
+func TestRunSubscriptionStreamUsesUpstreamEventsAndPollingOnlyAsWatchdog(t *testing.T) {
+	t.Parallel()
+	sink := &recordingSink{}
+	timers, fake := newFakeTimers()
+	policy := &scriptedPolicy{passes: []scriptedPass{{
+		changed:  []appmcp.NotificationKind{appmcp.NotificationToolsListChanged},
+		snapshot: appmcp.SurfaceSnapshot{Tools: "changed"},
+	}}}
+	handle := newHandlerSubscriptionHandle()
+	spec := testReauthSpec(policy, timers)
+	spec.source = handle
+	spec.watchdogOnly = true
+	done := startLoop(context.Background(), sink, spec)
+
+	awaitCondition(t, func() bool { return len(sink.written()) == 1 })
+	fake.reauth <- time.Now()
+	awaitScriptedCalls(t, policy, 1)
+	require.Equal(t, []string{testAckFrame}, sink.written(),
+		"watchdog surface changes must not synthesize list_changed")
+
+	handle.events <- appmcp.SubscriptionEvent{Kind: appmcp.NotificationToolsListChanged}
+	awaitCondition(t, func() bool { return len(sink.written()) == 2 })
+	require.Equal(t, []string{testAckFrame, testToolsChangedFrame}, sink.written())
+
+	handle.terminate(appmcp.ErrSubscriptionRevoked)
+	require.Equal(t, subscriptionOutcomeRevoked, awaitOutcome(t, done))
+	require.Equal(t, []string{testAckFrame, testToolsChangedFrame, testTerminalFrame}, sink.written())
+}
+
+func TestRunSubscriptionStreamReauthorizesQueuedEventBeforeWrite(t *testing.T) {
+	t.Parallel()
+	sink := &recordingSink{}
+	timers, _ := newFakeTimers()
+	handle := newHandlerSubscriptionHandle()
+	handle.authorize = func(context.Context, appmcp.SubscriptionEvent) error {
+		return appmcp.ErrSubscriptionRevoked
+	}
+	spec := testStreamSpec(honouredKinds(), timers)
+	spec.source = handle
+	done := startLoop(context.Background(), sink, spec)
+
+	awaitCondition(t, func() bool { return len(sink.written()) == 1 })
+	handle.events <- appmcp.SubscriptionEvent{Kind: appmcp.NotificationToolsListChanged}
+
+	require.Equal(t, subscriptionOutcomeRevoked, awaitOutcome(t, done))
+	require.Equal(t, []string{testAckFrame, testTerminalFrame}, sink.written())
+}
+
+func TestRunSubscriptionStreamServesTimersDuringEmitAuthorization(t *testing.T) {
+	t.Parallel()
+	sink := &recordingSink{}
+	timers, fake := newFakeTimers()
+	handle := newHandlerSubscriptionHandle()
+	authorizationStarted := make(chan struct{})
+	authorizationCancelled := make(chan struct{})
+	releaseAuthorization := make(chan struct{})
+	authorizationExited := make(chan struct{})
+	handle.authorize = func(ctx context.Context, _ appmcp.SubscriptionEvent) error {
+		close(authorizationStarted)
+		<-ctx.Done()
+		close(authorizationCancelled)
+		<-releaseAuthorization
+		close(authorizationExited)
+		return ctx.Err()
+	}
+	spec := testStreamSpec(honouredKinds(), timers)
+	spec.source = handle
+	done := startLoop(context.Background(), sink, spec)
+
+	awaitCondition(t, func() bool { return len(sink.written()) == 1 })
+	handle.events <- appmcp.SubscriptionEvent{Kind: appmcp.NotificationToolsListChanged}
+	select {
+	case <-authorizationStarted:
+	case <-time.After(time.Second):
+		t.Fatal("emit authorization did not start")
+	}
+	fake.keepalive <- time.Now()
+	awaitCondition(t, func() bool { return len(sink.written()) == 2 })
+	require.Equal(t, []string{testAckFrame, ": " + sseKeepalive}, sink.written())
+	fake.deadline <- time.Now()
+	select {
+	case <-authorizationCancelled:
+	case <-time.After(time.Second):
+		t.Fatal("emit authorization was not cancelled")
+	}
+	select {
+	case <-done:
+		t.Fatal("stream completed before emit authorization exited")
+	default:
+	}
+	close(releaseAuthorization)
+	select {
+	case <-authorizationExited:
+	case <-time.After(time.Second):
+		t.Fatal("emit authorization did not exit")
+	}
+	require.Equal(t, subscriptionOutcomeDeadline, awaitOutcome(t, done))
+	require.Equal(t, []string{testAckFrame, ": " + sseKeepalive, testTerminalFrame}, sink.written())
+}
+
+func TestRunSubscriptionStreamMapsEachUpstreamKindExactlyOnce(t *testing.T) {
+	t.Parallel()
+	sink := &recordingSink{}
+	timers, _ := newFakeTimers()
+	handle := newHandlerSubscriptionHandle()
+	spec := testStreamSpec(honouredKinds(), timers)
+	spec.source = handle
+	spec.notifications = map[appmcp.NotificationKind][]byte{
+		appmcp.NotificationToolsListChanged:     []byte(`{"method":"notifications/tools/list_changed"}`),
+		appmcp.NotificationPromptsListChanged:   []byte(`{"method":"notifications/prompts/list_changed"}`),
+		appmcp.NotificationResourcesListChanged: []byte(`{"method":"notifications/resources/list_changed"}`),
+	}
+	done := startLoop(context.Background(), sink, spec)
+
+	for _, kind := range []appmcp.NotificationKind{
+		appmcp.NotificationToolsListChanged,
+		appmcp.NotificationPromptsListChanged,
+		appmcp.NotificationResourcesListChanged,
+	} {
+		handle.events <- appmcp.SubscriptionEvent{Kind: kind}
+	}
+	awaitCondition(t, func() bool { return len(sink.written()) == 4 })
+	handle.terminate(appmcp.ErrSubscriptionTerminal)
+
+	require.Equal(t, subscriptionOutcomeShutdown, awaitOutcome(t, done))
+	require.Equal(t, []string{
+		testAckFrame,
+		`{"method":"notifications/tools/list_changed"}`,
+		`{"method":"notifications/prompts/list_changed"}`,
+		`{"method":"notifications/resources/list_changed"}`,
+		testTerminalFrame,
+	}, sink.written())
 }
 
 // Every termination cause must be indistinguishable on the wire: the client sees
@@ -552,12 +722,13 @@ func TestRunSubscriptionStreamBoundsThePassByTheBudget(t *testing.T) {
 	t.Parallel()
 	sink := &recordingSink{}
 	timers, fake := newFakeTimers()
-	policy := &deadlineObservingPolicy{}
+	policy := &deadlineObservingPolicy{started: make(chan struct{})}
 	spec := testReauthSpec(policy, timers)
 	spec.budget = 3 * time.Second
 	done := startLoop(context.Background(), sink, spec)
 
 	fake.reauth <- time.Now()
+	<-policy.started
 	fake.deadline <- time.Now()
 	require.Equal(t, subscriptionOutcomeDeadline, awaitOutcome(t, done))
 

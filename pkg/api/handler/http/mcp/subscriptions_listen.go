@@ -64,6 +64,9 @@ type SubscriptionsSupport struct {
 	Registry       *appmcp.SubscriptionRegistry
 	Policy         appmcp.SubscriptionPolicy
 	Recorder       SubscriptionsRecorder
+	Upstream       bool
+	Targets        appmcp.SubscriptionTargetResolver
+	Source         appmcp.SubscriptionSource
 }
 
 // Enabled reports whether the feature can serve a lease at all. While it is
@@ -72,6 +75,11 @@ type SubscriptionsSupport struct {
 // never re-authorize, so it is not served either.
 func (s SubscriptionsSupport) Enabled() bool {
 	return s.On && s.Registry != nil && s.Policy != nil
+}
+
+// UpstreamEnabled reports whether definitive upstream negotiation is available.
+func (s SubscriptionsSupport) UpstreamEnabled() bool {
+	return s.Enabled() && s.Upstream && s.Targets != nil && s.Source != nil
 }
 
 // subscriptionOutcome is the bounded reason a lease ended. It never reaches the
@@ -133,6 +141,8 @@ type streamSpec struct {
 	notifications map[appmcp.NotificationKind][]byte
 	timers        subscriptionTimers
 	budget        time.Duration
+	source        appmcp.SubscriptionHandle
+	watchdogOnly  bool
 }
 
 // subscriptionTimers is the loop's three time sources, injectable so every
@@ -211,8 +221,36 @@ func (h *Handler) handleSubscriptionsListen(c *fiber.Ctx, req rpcRequest, rc *ap
 		return writeSubscriptionRefused(c, req.ID)
 	}
 
-	spec, err := h.newStreamSpec(c, req, rc, identity)
+	var source appmcp.SubscriptionHandle
+	if h.subs.UpstreamEnabled() {
+		var attachErr error
+		source, identity.Honoured, attachErr = h.attachUpstream(c, listen.requested, identity)
+		if attachErr != nil {
+			lease.Release()
+			if errors.Is(attachErr, appmcp.ErrSubscriptionListenerCapacity) {
+				h.recordSubscription(c.UserContext(), "", subscriptionOutcomeRefused)
+				stampSubscriptionSpan(c.UserContext(), subscriptionOutcomeRefused)
+				return writeSubscriptionRefused(c, req.ID)
+			}
+			middleware.SetOpsOutcome(c, o11y.OutcomeServerError)
+			h.recordSubscription(c.UserContext(), "", subscriptionOutcomeFailed)
+			stampSubscriptionSpan(c.UserContext(), subscriptionOutcomeFailed)
+			return writeJSONStatus(c, fiber.StatusServiceUnavailable, rpcResponse{
+				JSONRPC: "2.0",
+				ID:      normalizeID(req.ID),
+				Error: &rpcError{
+					Code:    int(appmcp.CodeUnavailable),
+					Message: appmcp.ErrUpstreamUnavailable.Error(),
+				},
+			})
+		}
+	}
+
+	spec, err := h.newStreamSpec(c, req, rc, identity, source)
 	if err != nil {
+		if source != nil {
+			source.Close()
+		}
 		lease.Release()
 		return writeRPCErrorStatus(c, req.ID, fiber.StatusInternalServerError, codeInternalError, "internal error", nil)
 	}
@@ -246,6 +284,27 @@ func (h *Handler) handleSubscriptionsListen(c *fiber.Ctx, req rpcRequest, rc *ap
 		outcome = runSubscriptionStream(leaseCtx, newBufioSink(w, maxEventBytes), spec)
 	})
 	return nil
+}
+
+func (h *Handler) attachUpstream(
+	c *fiber.Ctx,
+	requested appmcp.HonouredSet,
+	identity appmcp.LeaseIdentity,
+) (appmcp.SubscriptionHandle, appmcp.HonouredSet, error) {
+	requests, err := h.subs.Targets.Resolve(
+		c.UserContext(),
+		identity.GatewayID,
+		identity.Path,
+		requested,
+	)
+	if err != nil {
+		return nil, appmcp.HonouredSet{}, err
+	}
+	handle, prepared, err := h.subs.Source.Attach(c.UserContext(), requests)
+	if err != nil {
+		return nil, appmcp.HonouredSet{}, err
+	}
+	return handle, identity.Honoured.Intersect(prepared), nil
 }
 
 func (h *Handler) recordSubscription(
@@ -297,14 +356,6 @@ func stampSubscriptionSpan(ctx context.Context, outcome subscriptionOutcome) {
 	}
 }
 
-// runSubscriptionStream is the lease's single goroutine: fasthttp runs it on the
-// body-stream writer. Ack, ticks, keepalives and the terminal frame all happen
-// here, in one select, so there is no channel hand-off and therefore no buffer
-// and no slow-consumer policy.
-//
-// There is exactly one exit, and it always writes the terminal frame, which is
-// what makes deadline, shutdown, oversize and disconnect indistinguishable on
-// the wire.
 func runSubscriptionStream(ctx context.Context, sink frameSink, spec streamSpec) (outcome subscriptionOutcome) {
 	outcome = subscriptionOutcomeShutdown
 	defer func() {
@@ -317,6 +368,9 @@ func runSubscriptionStream(ctx context.Context, sink frameSink, spec streamSpec)
 		}
 	}()
 	defer spec.timers.Stop()
+	if spec.source != nil {
+		defer spec.source.Close()
+	}
 
 	if err := writeSubscriptionFrame(sink, spec.ack); err != nil {
 		return frameFailureOutcome(err)
@@ -329,16 +383,33 @@ func runSubscriptionStream(ctx context.Context, sink frameSink, spec streamSpec)
 	var (
 		pass       <-chan reauthResult
 		cancelPass context.CancelFunc
+		emit       <-chan emitAuthorizationResult
+		cancelEmit context.CancelFunc
+		emitDone   <-chan struct{}
 	)
 	defer func() {
 		if cancelPass != nil {
 			cancelPass()
 		}
+		if cancelEmit != nil {
+			cancelEmit()
+			<-emitDone
+		}
 	}()
+	var sourceEvents <-chan appmcp.SubscriptionEvent
+	var sourceDone <-chan struct{}
+	if spec.source != nil {
+		sourceEvents = spec.source.Events()
+		sourceDone = spec.source.Done()
+	}
 	for {
 		reauth := spec.timers.Reauth
 		if pass != nil {
 			reauth = nil
+		}
+		nextSourceEvent := sourceEvents
+		if emit != nil {
+			nextSourceEvent = nil
 		}
 		select {
 		case <-ctx.Done():
@@ -357,6 +428,36 @@ func runSubscriptionStream(ctx context.Context, sink frameSink, spec streamSpec)
 			if outcome, ended := applyReauthResult(ctx, sink, spec, &state, result); ended {
 				return outcome
 			}
+		case event, ok := <-nextSourceEvent:
+			if !ok {
+				return subscriptionSourceOutcome(spec.source.Err())
+			}
+			emit, cancelEmit, emitDone = startEmitAuthorization(ctx, spec.source, event)
+		case result := <-emit:
+			cancelEmit()
+			<-emitDone
+			emit = nil
+			cancelEmit = nil
+			emitDone = nil
+			if result.err != nil {
+				if errors.Is(result.err, appmcp.ErrSubscriptionRevoked) ||
+					errors.Is(result.err, appmcp.ErrSubscriptionSourceChanged) ||
+					errors.Is(result.err, appmcp.ErrSubscriptionAuthentication) ||
+					errors.Is(result.err, appmcp.ErrSubscriptionTerminal) {
+					return subscriptionSourceOutcome(result.err)
+				}
+				continue
+			}
+			frame, ok := spec.notifications[result.event.Kind]
+			if !ok {
+				continue
+			}
+			if err := writeSubscriptionFrame(sink, frame); err != nil {
+				return frameFailureOutcome(err)
+			}
+			recordSubscriptionOutcome(ctx, spec.recorder, result.event.Kind, subscriptionOutcomeEmitted)
+		case <-sourceDone:
+			return subscriptionSourceOutcome(spec.source.Err())
 		case <-spec.timers.Keepalive:
 			if err := sink.Comment(sseKeepalive); err != nil {
 				return frameFailureOutcome(err)
@@ -366,6 +467,30 @@ func runSubscriptionStream(ctx context.Context, sink frameSink, spec streamSpec)
 			}
 		}
 	}
+}
+
+type emitAuthorizationResult struct {
+	event appmcp.SubscriptionEvent
+	err   error
+}
+
+func startEmitAuthorization(
+	parent context.Context,
+	source appmcp.SubscriptionHandle,
+	event appmcp.SubscriptionEvent,
+) (<-chan emitAuthorizationResult, context.CancelFunc, <-chan struct{}) {
+	ctx, cancel := context.WithCancel(parent)
+	result := make(chan emitAuthorizationResult, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		err := source.Authorize(ctx, event)
+		select {
+		case result <- emitAuthorizationResult{event: event, err: err}:
+		case <-ctx.Done():
+		}
+	}()
+	return result, cancel, done
 }
 
 // reauthState is the loop's memory between passes: the digest set the next pass
@@ -414,6 +539,9 @@ func applyReauthResult(
 
 	state.failures = 0
 	state.snapshot = result.evaluation.Snapshot
+	if spec.watchdogOnly {
+		return "", false
+	}
 	for _, kind := range result.evaluation.Changed {
 		frame, ok := spec.notifications[kind]
 		if !ok {
@@ -425,6 +553,18 @@ func applyReauthResult(
 		recordSubscriptionOutcome(ctx, spec.recorder, kind, subscriptionOutcomeEmitted)
 	}
 	return "", false
+}
+
+func subscriptionSourceOutcome(err error) subscriptionOutcome {
+	if errors.Is(err, appmcp.ErrSubscriptionRevoked) ||
+		errors.Is(err, appmcp.ErrSubscriptionSourceChanged) ||
+		errors.Is(err, appmcp.ErrSubscriptionAuthentication) {
+		return subscriptionOutcomeRevoked
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, appmcp.ErrSubscriptionTerminal) {
+		return subscriptionOutcomeShutdown
+	}
+	return subscriptionOutcomeDegraded
 }
 
 func writeSubscriptionFrame(sink frameSink, payload []byte) error {
@@ -475,6 +615,7 @@ func (h *Handler) newStreamSpec(
 	req rpcRequest,
 	rc *appconsumer.RoutableConsumer,
 	identity appmcp.LeaseIdentity,
+	source appmcp.SubscriptionHandle,
 ) (streamSpec, error) {
 	honoured := identity.Honoured
 	ack, err := json.Marshal(subscriptionAckNotification(req.ID, honoured))
@@ -512,7 +653,9 @@ func (h *Handler) newStreamSpec(
 			h.subs.Keepalive,
 			subscriptionJitter,
 		),
-		budget: appmcp.ReauthBudget(h.subs.ReauthInterval, h.subs.Keepalive),
+		budget:       appmcp.ReauthBudget(h.subs.ReauthInterval, h.subs.Keepalive),
+		source:       source,
+		watchdogOnly: h.subs.UpstreamEnabled(),
 	}, nil
 }
 

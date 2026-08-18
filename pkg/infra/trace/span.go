@@ -123,6 +123,7 @@ type MCPAttrs struct {
 
 	SubscriptionKind    string
 	SubscriptionOutcome string
+	SubscriptionSource  string
 }
 
 // Task telemetry labels. There is deliberately no task-id attribute: a handle is
@@ -235,6 +236,88 @@ var subscriptionOutcomes = []string{
 	SubscriptionOutcomeOversize,
 }
 
+const (
+	SubscriptionSourceLifecycleUnsupported = "unsupported"
+	SubscriptionSourceLifecycleOpenFailed  = "open_failed"
+	SubscriptionSourceLifecycleOpened      = "opened"
+	SubscriptionSourceLifecycleReused      = "reused"
+	SubscriptionSourceLifecycleJoined      = "joined"
+)
+
+const (
+	SubscriptionSourceFanOutAuthorized = "authorized"
+	SubscriptionSourceFanOutDenied     = "denied"
+	SubscriptionSourceFanOutRevoked    = "revoked"
+	SubscriptionSourceFanOutTransient  = "transient"
+	SubscriptionSourceFanOutRejected   = "rejected"
+)
+
+const (
+	SubscriptionSourceReconnectAttempted     = "attempted"
+	SubscriptionSourceReconnectSucceeded     = "succeeded"
+	SubscriptionSourceReconnectFailed        = "failed"
+	SubscriptionSourceReconnectExhausted     = "exhausted"
+	SubscriptionSourceReconnectSourceChanged = "source_changed"
+	SubscriptionSourceReconnectCancelled     = "cancelled"
+	SubscriptionSourceReconnectTerminal      = "terminal"
+)
+
+const (
+	SubscriptionSourceQueueEnqueued = "enqueued"
+	SubscriptionSourceQueueFull     = "full"
+)
+
+const (
+	SubscriptionSourceTerminalLastDetach         = "last_detach"
+	SubscriptionSourceTerminalShutdown           = "shutdown"
+	SubscriptionSourceTerminalReconnectExhausted = "reconnect_exhausted"
+	SubscriptionSourceTerminalSourceChanged      = "source_changed"
+	SubscriptionSourceTerminalAuthentication     = "authentication"
+	SubscriptionSourceTerminalProtocolFailure    = "protocol_failure"
+	SubscriptionSourceTerminalTransportFailure   = "transport_failure"
+)
+
+var subscriptionSourceLifecycleOutcomes = []string{
+	SubscriptionSourceLifecycleUnsupported,
+	SubscriptionSourceLifecycleOpenFailed,
+	SubscriptionSourceLifecycleOpened,
+	SubscriptionSourceLifecycleReused,
+	SubscriptionSourceLifecycleJoined,
+}
+
+var subscriptionSourceFanOutOutcomes = []string{
+	SubscriptionSourceFanOutAuthorized,
+	SubscriptionSourceFanOutDenied,
+	SubscriptionSourceFanOutRevoked,
+	SubscriptionSourceFanOutTransient,
+	SubscriptionSourceFanOutRejected,
+}
+
+var subscriptionSourceReconnectOutcomes = []string{
+	SubscriptionSourceReconnectAttempted,
+	SubscriptionSourceReconnectSucceeded,
+	SubscriptionSourceReconnectFailed,
+	SubscriptionSourceReconnectExhausted,
+	SubscriptionSourceReconnectSourceChanged,
+	SubscriptionSourceReconnectCancelled,
+	SubscriptionSourceReconnectTerminal,
+}
+
+var subscriptionSourceQueueOutcomes = []string{
+	SubscriptionSourceQueueEnqueued,
+	SubscriptionSourceQueueFull,
+}
+
+var subscriptionSourceTerminalOutcomes = []string{
+	SubscriptionSourceTerminalLastDetach,
+	SubscriptionSourceTerminalShutdown,
+	SubscriptionSourceTerminalReconnectExhausted,
+	SubscriptionSourceTerminalSourceChanged,
+	SubscriptionSourceTerminalAuthentication,
+	SubscriptionSourceTerminalProtocolFailure,
+	SubscriptionSourceTerminalTransportFailure,
+}
+
 // BoundSubscriptionKind drops any notification kind outside the enumerated set,
 // so a client-supplied string can never widen the label.
 func BoundSubscriptionKind(kind string) string {
@@ -249,6 +332,56 @@ func BoundSubscriptionKind(kind string) string {
 // BoundSubscriptionOutcome drops any outcome outside the enumerated lease set.
 func BoundSubscriptionOutcome(outcome string) string {
 	for _, known := range subscriptionOutcomes {
+		if outcome == known {
+			return outcome
+		}
+	}
+	return ""
+}
+
+// BoundSubscriptionSourceLifecycleOutcome drops unknown listener lifecycle outcomes.
+func BoundSubscriptionSourceLifecycleOutcome(outcome string) string {
+	return boundSubscriptionSourceOutcome(outcome, subscriptionSourceLifecycleOutcomes)
+}
+
+// BoundSubscriptionSourceFanOutOutcome drops unknown fan-out outcomes.
+func BoundSubscriptionSourceFanOutOutcome(outcome string) string {
+	return boundSubscriptionSourceOutcome(outcome, subscriptionSourceFanOutOutcomes)
+}
+
+// BoundSubscriptionSourceReconnectOutcome drops unknown reconnect outcomes.
+func BoundSubscriptionSourceReconnectOutcome(outcome string) string {
+	return boundSubscriptionSourceOutcome(outcome, subscriptionSourceReconnectOutcomes)
+}
+
+// BoundSubscriptionSourceQueueOutcome drops unknown queue outcomes.
+func BoundSubscriptionSourceQueueOutcome(outcome string) string {
+	return boundSubscriptionSourceOutcome(outcome, subscriptionSourceQueueOutcomes)
+}
+
+// BoundSubscriptionSourceTerminalOutcome drops unknown listener terminal outcomes.
+func BoundSubscriptionSourceTerminalOutcome(outcome string) string {
+	return boundSubscriptionSourceOutcome(outcome, subscriptionSourceTerminalOutcomes)
+}
+
+// BoundSubscriptionSourceOutcome drops values outside every source outcome enumeration.
+func BoundSubscriptionSourceOutcome(outcome string) string {
+	for _, outcomes := range [][]string{
+		subscriptionSourceLifecycleOutcomes,
+		subscriptionSourceFanOutOutcomes,
+		subscriptionSourceReconnectOutcomes,
+		subscriptionSourceQueueOutcomes,
+		subscriptionSourceTerminalOutcomes,
+	} {
+		if bounded := boundSubscriptionSourceOutcome(outcome, outcomes); bounded != "" {
+			return bounded
+		}
+	}
+	return ""
+}
+
+func boundSubscriptionSourceOutcome(outcome string, allowed []string) string {
+	for _, known := range allowed {
 		if outcome == known {
 			return outcome
 		}
@@ -613,6 +746,16 @@ func (s *Span) SetMCPSubscription(kind, outcome string) {
 	}
 	if bounded := BoundSubscriptionOutcome(outcome); bounded != "" {
 		s.MCP.SubscriptionOutcome = bounded
+	}
+}
+
+// SetMCPSubscriptionSource records a bounded physical-listener outcome.
+func (s *Span) SetMCPSubscriptionSource(outcome string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureMCP()
+	if bounded := BoundSubscriptionSourceOutcome(outcome); bounded != "" {
+		s.MCP.SubscriptionSource = bounded
 	}
 }
 
