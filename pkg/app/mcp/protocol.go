@@ -214,6 +214,25 @@ type Upstream interface {
 	Close(ctx context.Context)
 }
 
+// TaskRef is the resolved, re-authorized coordinates of one upstream task. It
+// carries the real upstream taskId, never the handle the client presented.
+type TaskRef struct {
+	RegistryID string
+	Exposed    string
+	Upstream   string
+	TaskID     string
+	Exp        int64
+}
+
+// TaskUpstream is implemented only by modern upstreams. The composer asserts it,
+// so a legacy session never satisfies it and a task can never be served over the
+// legacy protocol.
+type TaskUpstream interface {
+	GetTask(ctx context.Context, ref TaskRef) (json.RawMessage, error)
+	UpdateTask(ctx context.Context, ref TaskRef, inputResponses json.RawMessage) (json.RawMessage, error)
+	CancelTask(ctx context.Context, ref TaskRef) (json.RawMessage, error)
+}
+
 type Dialer interface {
 	Connect(ctx context.Context, target Target) (Upstream, error)
 }

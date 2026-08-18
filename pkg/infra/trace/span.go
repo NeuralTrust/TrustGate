@@ -118,6 +118,77 @@ type MCPAttrs struct {
 	ProtocolVersion string
 	MRTROutcome     string
 	MRTRRound       string
+	TaskOperation   string
+	TaskOutcome     string
+}
+
+// Task telemetry labels. There is deliberately no task-id attribute: a handle is
+// a credential and an upstream task id is upstream-internal.
+const (
+	TaskOperationGet    = "get"
+	TaskOperationUpdate = "update"
+	TaskOperationCancel = "cancel"
+)
+
+const (
+	TaskOutcomeAccepted           = "accepted"
+	TaskOutcomeWorking            = "working"
+	TaskOutcomeInputRequired      = "input_required"
+	TaskOutcomeCompleted          = "completed"
+	TaskOutcomeCancelled          = "cancelled"
+	TaskOutcomeFailed             = "failed"
+	TaskOutcomeHandleRejected     = "handle_rejected"
+	TaskOutcomeCapabilityRequired = "capability_required"
+	TaskOutcomePolicyDenied       = "policy_denied"
+)
+
+var taskOperations = []string{TaskOperationGet, TaskOperationUpdate, TaskOperationCancel}
+
+var taskOutcomes = []string{
+	TaskOutcomeAccepted,
+	TaskOutcomeWorking,
+	TaskOutcomeInputRequired,
+	TaskOutcomeCompleted,
+	TaskOutcomeCancelled,
+	TaskOutcomeFailed,
+	TaskOutcomeHandleRejected,
+	TaskOutcomeCapabilityRequired,
+	TaskOutcomePolicyDenied,
+}
+
+// BoundTaskOperation maps a tasks/* method onto its label and drops anything
+// else, so an upstream or a client cannot widen the label set.
+func BoundTaskOperation(method string) string {
+	switch method {
+	case "tasks/get":
+		return TaskOperationGet
+	case "tasks/update":
+		return TaskOperationUpdate
+	case "tasks/cancel":
+		return TaskOperationCancel
+	default:
+		return ""
+	}
+}
+
+// BoundTaskOperationLabel keeps only the enumerated operation labels.
+func BoundTaskOperationLabel(operation string) string {
+	for _, known := range taskOperations {
+		if operation == known {
+			return operation
+		}
+	}
+	return ""
+}
+
+// BoundTaskOutcome drops any outcome outside the enumerated task set.
+func BoundTaskOutcome(outcome string) string {
+	for _, known := range taskOutcomes {
+		if outcome == known {
+			return outcome
+		}
+	}
+	return ""
 }
 
 // BoundMCPProtocolVersion maps unknown revisions to "unsupported".
@@ -449,6 +520,19 @@ func (s *Span) SetMCPMRTR(outcome, round string) {
 	}
 	if bounded := BoundMRTRRoundLabel(round); bounded != "" {
 		s.MCP.MRTRRound = bounded
+	}
+}
+
+// SetMCPTask records the mediated task operation and its outcome.
+func (s *Span) SetMCPTask(operation, outcome string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureMCP()
+	if bounded := BoundTaskOperationLabel(operation); bounded != "" {
+		s.MCP.TaskOperation = bounded
+	}
+	if bounded := BoundTaskOutcome(outcome); bounded != "" {
+		s.MCP.TaskOutcome = bounded
 	}
 }
 
