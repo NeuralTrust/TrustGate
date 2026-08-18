@@ -390,8 +390,11 @@ func TestNegotiatingDialerCachesLegacyOnlyAfterSuccessfulInitialize(t *testing.T
 	if probes.Load() != 2 {
 		t.Fatalf("probe calls = %d, want retry after failed initialize then cache hit", probes.Load())
 	}
-	if connects.Load() != 3 {
-		t.Fatalf("legacy connects = %d, want one per dial", connects.Load())
+	if connects.Load() != 4 {
+		t.Fatalf(
+			"legacy connects = %d, want failed classification, successful classification, then one per dial",
+			connects.Load(),
+		)
 	}
 }
 
