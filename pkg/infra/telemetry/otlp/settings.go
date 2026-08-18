@@ -47,10 +47,10 @@ const (
 	compressionGzip = "gzip"
 	compressionNone = "none"
 
-	defaultProtocol     = ProtocolGRPC
-	defaultSignal       = SignalLogs
-	defaultCompression  = compressionGzip
-	defaultTimeout      = 10 * time.Second
+	defaultProtocol    = ProtocolHTTP
+	defaultSignal      = SignalLogs
+	defaultCompression = compressionGzip
+	defaultTimeout     = 10 * time.Second
 	// Kept above events.MaxSanitizedBodyBytes on purpose: the sanitizer is the
 	// only component allowed to truncate a body, because it marks the cut. When
 	// this limit is the smaller of the two the SDK silently slices attributes
@@ -59,6 +59,8 @@ const (
 
 	otlpGRPCPort = "4317"
 	otlpHTTPPort = "4318"
+
+	logsSignalPath = "/v1/logs"
 )
 
 // TLSSettings configures mutual or server-only TLS for the OTLP transport.
@@ -172,6 +174,17 @@ func splitEndpoint(endpoint string) (host, path string) {
 		return endpoint, ""
 	}
 	return u.Host, u.Path
+}
+
+// withLogsPath appends the logs signal path to an endpoint URL that omits it.
+// WithEndpointURL takes the path verbatim and marks it as set, which suppresses
+// the SDK's own /v1/logs fallback and posts every batch to the server root.
+func withLogsPath(endpoint string) string {
+	endpoint = strings.TrimSpace(endpoint)
+	if _, path := splitEndpoint(endpoint); strings.Trim(path, "/") != "" {
+		return endpoint
+	}
+	return strings.TrimSuffix(endpoint, "/") + logsSignalPath
 }
 
 // portOf returns the port of an authority, or an empty string when it carries none.

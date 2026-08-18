@@ -458,6 +458,9 @@ func TestLoadConfig_OTLPDefaultsAndOverrides(t *testing.T) {
 	if cfg.Telemetry.OTLP.Endpoint != "" {
 		t.Errorf("OTLP.Endpoint default = %q, want empty", cfg.Telemetry.OTLP.Endpoint)
 	}
+	if cfg.Telemetry.OTLP.Protocol != "http/protobuf" {
+		t.Errorf("OTLP.Protocol default = %q, want http/protobuf", cfg.Telemetry.OTLP.Protocol)
+	}
 	if cfg.Telemetry.OTLP.Timeout != 0 {
 		t.Errorf("OTLP.Timeout default = %v, want 0", cfg.Telemetry.OTLP.Timeout)
 	}
