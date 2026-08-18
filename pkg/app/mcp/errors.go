@@ -35,6 +35,9 @@ var (
 	ErrTaskHandleRejected     = fmt.Errorf("mcp: task rejected")
 	ErrTaskCapabilityRequired = fmt.Errorf("mcp: task capability required")
 	ErrTaskHandleTooLarge     = fmt.Errorf("mcp: task handle too large")
+
+	ErrSubscriptionRefused = fmt.Errorf("%s", SubscriptionRefusedMessage)
+	ErrSubscriptionRevoked = fmt.Errorf("mcp: subscription revoked")
 )
 
 const (
@@ -51,7 +54,16 @@ const (
 	// CodeTaskHandleTooLarge is an internal failure: a handle TrustGate itself
 	// minted does not fit the configured bound.
 	CodeTaskHandleTooLarge int64 = -32603
+	// CodeSubscriptionRefused answers every capacity refusal. Which cap was hit
+	// — global, per-consumer or per-principal — must not be inferable, so the
+	// code is distinct from the task codes but carries no discriminating data.
+	CodeSubscriptionRefused int64 = -32026
 )
+
+// SubscriptionRefusedMessage is the one message every subscription refusal
+// carries. A global, per-consumer or per-principal cap must be indistinguishable
+// on the wire so the caps cannot be probed for other tenants' stream counts.
+const SubscriptionRefusedMessage = "mcp: subscription refused"
 
 // TaskHandleRejectedMessage is the one message every task rejection carries.
 // Tamper, expiry, a detached registry, a toolkit change, a purged upstream task,
@@ -91,6 +103,12 @@ func TaskCapabilityRequiredRPCError() *RPCError {
 // that exceeds the configured size bound.
 func TaskHandleTooLargeRPCError() *RPCError {
 	return &RPCError{Code: CodeTaskHandleTooLarge, Message: ErrTaskHandleTooLarge.Error()}
+}
+
+// SubscriptionRefusedRPCError is the single JSON-RPC error every subscription
+// capacity refusal answers with: one constant message and never any data.
+func SubscriptionRefusedRPCError() *RPCError {
+	return &RPCError{Code: CodeSubscriptionRefused, Message: SubscriptionRefusedMessage}
 }
 
 // MapTaskError converts task sentinels into their JSON-RPC errors and leaves

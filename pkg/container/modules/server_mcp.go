@@ -22,6 +22,7 @@ import (
 	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
 	oauthhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
@@ -78,9 +79,20 @@ type mcpRouterParams struct {
 
 type mcpServerParams struct {
 	dig.In
-	Cfg    *config.Config
-	Logger *slog.Logger
-	Router router.ServerRouter `name:"mcp"`
+	Cfg           *config.Config
+	Logger        *slog.Logger
+	Router        router.ServerRouter `name:"mcp"`
+	Subscriptions *appmcp.SubscriptionRegistry
+}
+
+// subscriptionDrainHook releases every live lease before the router shutdown
+// begins. It is nil while subscriptions are disabled, so no hook is registered
+// and the shutdown path is the one that shipped.
+func subscriptionDrainHook(registry *appmcp.SubscriptionRegistry) server.ShutdownHook {
+	if registry == nil {
+		return nil
+	}
+	return registry.Drain
 }
 
 func ServerMCP(c *container.Container) error {
@@ -117,7 +129,14 @@ func ServerMCP(c *container.Container) error {
 	return c.Provide(
 		func(p mcpServerParams) server.Server {
 			addr := fmt.Sprintf(":%d", p.Cfg.Server.MCPPort)
-			return server.NewHTTPServer("mcp", addr, p.Cfg.Server, p.Logger, []router.ServerRouter{p.Router})
+			return server.NewHTTPServer(
+				"mcp",
+				addr,
+				p.Cfg.Server,
+				p.Logger,
+				[]router.ServerRouter{p.Router},
+				subscriptionDrainHook(p.Subscriptions),
+			)
 		},
 		dig.Name("mcp"),
 	)
