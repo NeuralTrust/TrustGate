@@ -17,6 +17,7 @@ package oauth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -83,16 +84,20 @@ func (p *authProxy) Authorize(ctx context.Context, baseURL string, req Authorize
 	if req.CodeChallenge == "" || (req.CodeChallengeMethod != "" && req.CodeChallengeMethod != "S256") {
 		return "", oauthErr("invalid_request", "PKCE with code_challenge_method=S256 is required")
 	}
+	// The redirect_uri is only trustworthy once it has been checked against the
+	// client, so that check comes before anything else that can fail: from here
+	// on a protocol error can be reported to the client instead of rendered
+	// here, where an agent waiting on its callback would never read it.
+	if err := p.validateClientRedirect(ctx, req.ClientID, req.RedirectURI); err != nil {
+		return "", err
+	}
 	auth, err := p.authForResource(ctx, req.Resource)
 	if err != nil {
-		return "", err
+		return authorizeFailure(baseURL, req, err)
 	}
 	cfg := auth.Config.OAuth2
 	if cfg != nil && cfg.EffectiveNorthboundMode() == authdomain.NorthboundModeEMA {
-		return "", oauthErr("access_denied", "authorization code flow is disabled for this identity provider")
-	}
-	if err := p.validateClientRedirect(ctx, req.ClientID, req.RedirectURI); err != nil {
-		return "", err
+		return authorizeFailure(baseURL, req, oauthErr("access_denied", "authorization code flow is disabled for this identity provider"))
 	}
 	endpoints, err := p.idp.endpoints(ctx, cfg)
 	if err != nil {
@@ -136,6 +141,22 @@ func (p *authProxy) Authorize(ctx context.Context, baseURL string, req Authorize
 		q.Set("scope", scope)
 	}
 	return endpoints.authorize + "?" + q.Encode(), nil
+}
+
+// authorizeFailure turns a rejected authorization into a redirect back to the
+// client, as RFC 6749 §4.1.2.1 requires once the redirect_uri is validated.
+// Anything that is not a protocol error is a fault on this side and is left to
+// the caller to render.
+func authorizeFailure(baseURL string, req AuthorizeRequest, err error) (string, error) {
+	var oe *OAuthError
+	if !errors.As(err, &oe) {
+		return "", err
+	}
+	return clientRedirect(req.RedirectURI, url.Values{
+		"error":             {oe.Code},
+		"error_description": {oe.Description},
+		"iss":               {baseURL},
+	}, req.State), nil
 }
 
 func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, idpErrDesc, iss string) (string, error) {

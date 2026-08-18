@@ -76,8 +76,8 @@ var providerOptionsCatalog = map[string][]ProviderOptionField{
 			Key:         "project",
 			Label:       "Project",
 			Type:        OptionFieldTypeString,
-			Description: "GCP project ID hosting the Vertex AI models.",
-			Required:    true,
+			Description: "GCP project ID hosting the Vertex AI models. Defaults to project_id from the service account JSON when omitted.",
+			Required:    false,
 		},
 		{
 			Key:         "location",

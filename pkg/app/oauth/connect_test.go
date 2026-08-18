@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -64,9 +65,10 @@ func capturePkgSlog(t *testing.T) *pkgSyncBuffer {
 }
 
 type memConnectStore struct {
-	tickets  map[string]oauth.ConnectTicket
-	connects map[string]oauth.ConnectState
-	clients  map[string]oauth.RegisteredClient
+	tickets       map[string]oauth.ConnectTicket
+	connects      map[string]oauth.ConnectState
+	clients       map[string]oauth.RegisteredClient
+	saveTicketErr error
 }
 
 func newMemConnectStore() *memConnectStore {
@@ -99,6 +101,9 @@ func (m *memConnectStore) SaveClientIfAbsent(_ context.Context, key string, c oa
 }
 
 func (m *memConnectStore) SaveTicket(_ context.Context, id string, t oauth.ConnectTicket) error {
+	if m.saveTicketErr != nil {
+		return m.saveTicketErr
+	}
 	m.tickets[id] = t
 	return nil
 }
@@ -126,12 +131,18 @@ func (m *memConnectStore) TakeConnect(_ context.Context, state string) (*oauth.C
 }
 
 type memVaultRepo struct {
-	creds map[string]*vaultdomain.Credential
+	creds         map[string]*vaultdomain.Credential
+	findProviders []string
+	upsertErr     error
+	deleteErr     error
 }
 
 func (m *memVaultRepo) k(gw ids.GatewayID, sub, p string) string { return gw.String() + sub + p }
 
 func (m *memVaultRepo) Upsert(_ context.Context, c *vaultdomain.Credential) error {
+	if m.upsertErr != nil {
+		return m.upsertErr
+	}
 	if m.creds == nil {
 		m.creds = map[string]*vaultdomain.Credential{}
 	}
@@ -140,6 +151,7 @@ func (m *memVaultRepo) Upsert(_ context.Context, c *vaultdomain.Credential) erro
 }
 
 func (m *memVaultRepo) Find(_ context.Context, gw ids.GatewayID, sub, p string) (*vaultdomain.Credential, error) {
+	m.findProviders = append(m.findProviders, p)
 	c, ok := m.creds[m.k(gw, sub, p)]
 	if !ok {
 		return nil, vaultdomain.ErrNotFound
@@ -152,6 +164,9 @@ func (m *memVaultRepo) ListByPrincipal(context.Context, ids.GatewayID, string) (
 }
 
 func (m *memVaultRepo) Delete(_ context.Context, gw ids.GatewayID, sub, p string) error {
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
 	if _, ok := m.creds[m.k(gw, sub, p)]; !ok {
 		return vaultdomain.ErrNotFound
 	}
@@ -165,6 +180,10 @@ type stubDataFinder struct {
 
 func (s *stubDataFinder) FindByGateway(context.Context, ids.GatewayID) (*appconsumer.Data, error) {
 	return s.data, nil
+}
+
+func discardConnectAuditor() oauth.ConnectAuditor {
+	return oauth.NewConnectAuditor(slog.New(slog.NewJSONHandler(io.Discard, nil)))
 }
 
 func connectFixture(t *testing.T, providerTokenURL string) (oauth.ConnectService, *memVaultRepo, ids.GatewayID) {
@@ -198,7 +217,14 @@ func connectFixtureWithStore(t *testing.T, providerTokenURL string) (oauth.Conne
 	}})
 	vault := &memVaultRepo{}
 	store := newMemConnectStore()
-	svc := oauth.NewConnectService(store, vault, &stubDataFinder{data: data}, infraoauth.NewProviderClient(nil), infraoauth.NewUpstreamRegistrar(store, nil))
+	svc := oauth.NewConnectService(
+		store,
+		vault,
+		&stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil),
+		infraoauth.NewUpstreamRegistrar(store, nil),
+		discardConnectAuditor(),
+	)
 	return svc, store, vault, gw
 }
 
@@ -361,7 +387,14 @@ func TestConnectService_AutoRegistrationFlow(t *testing.T) {
 	store := newMemConnectStore()
 	registrar := infraoauth.NewUpstreamRegistrar(store, nil)
 	vault := &memVaultRepo{}
-	svc := oauth.NewConnectService(store, vault, &stubDataFinder{data: data}, infraoauth.NewProviderClient(nil), registrar)
+	svc := oauth.NewConnectService(
+		store,
+		vault,
+		&stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil),
+		registrar,
+		discardConnectAuditor(),
+	)
 	ctx := context.Background()
 
 	ticket, err := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
@@ -449,7 +482,14 @@ func TestConnectService_AutoRegistrationUpstreamNotDiscoverable(t *testing.T) {
 		Registries: []*registrydomain.Registry{reg},
 	}})
 	store := newMemConnectStore()
-	svc := oauth.NewConnectService(store, &memVaultRepo{}, &stubDataFinder{data: data}, infraoauth.NewProviderClient(nil), infraoauth.NewUpstreamRegistrar(store, nil))
+	svc := oauth.NewConnectService(
+		store,
+		&memVaultRepo{},
+		&stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil),
+		infraoauth.NewUpstreamRegistrar(store, nil),
+		discardConnectAuditor(),
+	)
 	ctx := context.Background()
 	ticket, _ := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
 	if _, err := svc.Start(ctx, "https://gw", ticket, "legacy"); !errors.Is(err, oauth.ErrUpstreamNotDiscoverable) {
@@ -491,10 +531,6 @@ func TestConnectService_UnknownTicketAndProvider(t *testing.T) {
 	}
 }
 
-// A stored grant whose access token expired and that carries no refresh token
-// can never be renewed: the MCP resolver demands consent on every call. The
-// page must report that instead of a green "Connected" that contradicts what
-// the agent is being told.
 func TestConnectService_PageReportsDeadGrantAsNeedingReconnect(t *testing.T) {
 	t.Parallel()
 	svc, vault, gw := connectFixture(t, "https://unused")
@@ -504,7 +540,6 @@ func TestConnectService_PageReportsDeadGrantAsNeedingReconnect(t *testing.T) {
 		t.Fatalf("CreateTicket: %v", err)
 	}
 
-	// Expired and unrefreshable.
 	dead, err := vaultdomain.NewCredential(gw, "alice", "github", "", "tok", "", nil, time.Now().Add(-time.Hour))
 	if err != nil {
 		t.Fatalf("credential: %v", err)
@@ -520,7 +555,6 @@ func TestConnectService_PageReportsDeadGrantAsNeedingReconnect(t *testing.T) {
 		t.Fatalf("status = %+v, want NeedsReconnect for an expired grant with no refresh token", page.Providers[0])
 	}
 
-	// Expired but refreshable: still a live connection, the resolver renews it.
 	renewable, err := vaultdomain.NewCredential(gw, "alice", "github", "", "tok", "ref", nil, time.Now().Add(-time.Hour))
 	if err != nil {
 		t.Fatalf("credential: %v", err)
@@ -632,7 +666,14 @@ func autoConnectSetup(t *testing.T, advertiseISS bool) (oauth.ConnectService, *m
 		Registries: []*registrydomain.Registry{reg},
 	}})
 	store := newMemConnectStore()
-	svc := oauth.NewConnectService(store, &memVaultRepo{}, &stubDataFinder{data: data}, infraoauth.NewProviderClient(nil), infraoauth.NewUpstreamRegistrar(store, nil))
+	svc := oauth.NewConnectService(
+		store,
+		&memVaultRepo{},
+		&stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil),
+		infraoauth.NewUpstreamRegistrar(store, nil),
+		discardConnectAuditor(),
+	)
 	return svc, store, gw, upstream, tokenHits
 }
 

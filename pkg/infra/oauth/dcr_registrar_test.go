@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -379,7 +380,14 @@ func TestRefreshAuth_MismatchReturnsErrNoRegisteredClient(t *testing.T) {
 
 	logs := captureDCRSlog(t)
 	registrar := infraoauth.NewUpstreamRegistrar(store, srv.Client())
-	svc := appoauth.NewConnectService(nil, nil, nil, nil, registrar)
+	svc := appoauth.NewConnectService(
+		nil,
+		nil,
+		nil,
+		nil,
+		registrar,
+		appoauth.NewConnectAuditor(slog.New(slog.NewJSONHandler(io.Discard, nil))),
+	)
 
 	_, err = svc.RefreshAuth(context.Background(), gw, reg)
 	require.ErrorIs(t, err, appoauth.ErrNoRegisteredClient)

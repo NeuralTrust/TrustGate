@@ -24,20 +24,19 @@ import (
 )
 
 var (
-	ErrTicketNotFound   = errors.New("oauth connect: ticket expired or unknown")
-	ErrProviderNotFound = errors.New("oauth connect: provider not configured for this consumer")
-	// ErrNoRegisteredClient means the dynamically registered OAuth client for an
-	// upstream is gone from the store (Redis flush/eviction). A stored refresh
-	// token is useless without the client it was issued to, so the only way
-	// forward is the consent flow, which re-registers via EnsureClient.
+	ErrTicketNotFound     = errors.New("oauth connect: ticket expired or unknown")
+	ErrProviderNotFound   = errors.New("oauth connect: provider not configured for this consumer")
 	ErrNoRegisteredClient = errors.New("oauth connect: no dynamically registered client for this upstream")
 )
 
 type ConnectTicket struct {
-	GatewayID    string `json:"gateway_id"`
-	PrincipalSub string `json:"principal_sub"`
-	ConsumerPath string `json:"consumer_path"`
-	ResumeURL    string `json:"resume_url,omitempty"`
+	GatewayID    string    `json:"gateway_id"`
+	PrincipalSub string    `json:"principal_sub"`
+	ConsumerPath string    `json:"consumer_path"`
+	ResumeURL    string    `json:"resume_url,omitempty"`
+	ConsumerID   string    `json:"consumer_id,omitempty"`
+	AuthID       string    `json:"auth_id,omitempty"`
+	Providers    *[]string `json:"providers,omitempty"`
 }
 
 type ConnectState struct {
@@ -57,15 +56,11 @@ type ConnectStore interface {
 }
 
 type ProviderStatus struct {
-	Provider   string
-	Registry   string
-	Linked     bool
-	AccountRef string
-	ExpiresAt  time.Time
-	// NeedsReconnect marks a stored grant that can never be renewed: its access
-	// token has expired and it carries no refresh token. Every downstream call
-	// against it demands consent, so the page must not advertise it as a live
-	// connection.
+	Provider       string
+	Registry       string
+	Linked         bool
+	AccountRef     string
+	ExpiresAt      time.Time
 	NeedsReconnect bool
 }
 
@@ -78,6 +73,15 @@ type ConnectPage struct {
 //go:generate mockery --name=ConnectService --dir=. --output=./mocks --filename=oauth_connect_service_mock.go --case=underscore --with-expecter
 type ConnectService interface {
 	CreateTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) (string, error)
+	CreateAPIKeyTicket(
+		ctx context.Context,
+		gatewayID ids.GatewayID,
+		principalSub,
+		consumerPath string,
+		consumerID ids.ConsumerID,
+		authID ids.AuthID,
+		providers []string,
+	) (string, error)
 	Page(ctx context.Context, ticketID string) (*ConnectPage, error)
 	Start(ctx context.Context, baseURL, ticketID, provider string) (string, error)
 	Callback(ctx context.Context, baseURL, provider, state, code, errCode, errDesc, iss string) (string, error)

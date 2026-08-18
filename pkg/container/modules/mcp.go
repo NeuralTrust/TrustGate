@@ -35,6 +35,7 @@ import (
 	infrasts "github.com/NeuralTrust/TrustGate/pkg/infra/identity/sts"
 	mcpclient "github.com/NeuralTrust/TrustGate/pkg/infra/mcp/client"
 	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/ratelimit"
 	vaultrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/vault"
 )
 
@@ -94,15 +95,25 @@ func MCP(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	if err := c.Provide(provideConnectAttemptLimiter); err != nil {
+		return err
+	}
+	if err := c.Provide(appoauth.NewConnectAuditor); err != nil {
+		return err
+	}
 	if err := c.Provide(func(
 		store appoauth.ConnectStore,
 		vault vaultdomain.Repository,
 		consumers appconsumer.DataFinder,
 		provider appoauth.ProviderClient,
 		registrar appoauth.UpstreamRegistrar,
+		auditor appoauth.ConnectAuditor,
 	) appoauth.ConnectService {
-		return appoauth.NewConnectService(store, vault, consumers, provider, registrar)
+		return appoauth.NewConnectService(store, vault, consumers, provider, registrar, auditor)
 	}); err != nil {
+		return err
+	}
+	if err := c.Provide(provideAPIKeyConnectService); err != nil {
 		return err
 	}
 	if err := c.Provide(func(
@@ -184,6 +195,30 @@ func MCP(c *container.Container) error {
 	})
 }
 
+func provideAPIKeyConnectService(
+	apiKeys appauth.APIKeyFinder,
+	consumers appconsumer.DataFinder,
+	connect appoauth.ConnectService,
+	limiter appoauth.ConnectAttemptLimiter,
+) appoauth.APIKeyConnectService {
+	return appoauth.NewAPIKeyConnectService(apiKeys, consumers, connect, limiter)
+}
+
+func provideConnectAttemptLimiter(
+	cfg *config.Config,
+	cc cache.Client,
+	_ vaultdomain.Encrypter,
+) appoauth.ConnectAttemptLimiter {
+	if !cfg.MCPConnectRateLimit.Enabled {
+		return appoauth.NewNoopConnectAttemptLimiter()
+	}
+	return ratelimit.NewConnectAttemptLimiter(
+		cc.RedisClient(),
+		cfg.Server.SecretKey,
+		cfg.MCPConnectRateLimit,
+	)
+}
+
 func MCPVaultPostgres(c *container.Container) error {
 	return c.Provide(func(conn *database.Connection, cipher vaultdomain.Encrypter) vaultdomain.Repository {
 		return vaultrepo.NewRepository(conn, cipher)
@@ -192,8 +227,6 @@ func MCPVaultPostgres(c *container.Container) error {
 
 func MCPVaultRedis(c *container.Container) error {
 	return c.Provide(func(cc cache.Client, cipher vaultdomain.Encrypter, logger *slog.Logger) vaultdomain.Repository {
-		// The data plane keeps durable OAuth state (user grants, DCR clients) in
-		// this Redis. Surface at startup any configuration that could shed it.
 		vaultrepo.WarnIfVolatile(context.Background(), cc.RedisClient(), logger)
 		return vaultrepo.NewRedisRepository(cc.RedisClient(), cipher)
 	})

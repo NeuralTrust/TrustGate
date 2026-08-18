@@ -3,8 +3,9 @@
 # This file declares the exporters applied to every gateway unless a gateway
 # declares its own. It is selected by TELEMETRY_EXPORTERS_FILE (default
 # config/telemetry.yaml) and loaded at boot: valid entries are validated and
-# built fail-fast, a missing or empty file logs a warning and starts with no
-# defaults, and invalid config aborts boot.
+# built fail-fast. A missing file falls back to TELEMETRY_EXPORTERS_METADATA and
+# TELEMETRY_EXPORTERS_RAW (YAML or JSON lists). An empty file or empty env lists
+# log a warning and start with no defaults; invalid config aborts boot.
 #
 # Copy this file to config/telemetry.yaml to get started.
 #

@@ -36,6 +36,7 @@ import (
 	playgroundstore "github.com/NeuralTrust/TrustGate/pkg/infra/metrics/playground"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 	"go.uber.org/dig"
@@ -214,8 +215,28 @@ func API(c *container.Container) error {
 	if err := c.Provide(oauthhttp.NewConnectHandler); err != nil {
 		return err
 	}
+	if err := c.Provide(provideAPIKeyConnectHandler); err != nil {
+		return err
+	}
 	if err := c.Provide(oauthhttp.NewJWKSHandler); err != nil {
 		return err
 	}
 	return nil
+}
+
+func provideAPIKeyConnectHandler(
+	finder appgateway.Finder,
+	cfg *config.Config,
+	connect appoauth.APIKeyConnectService,
+	limiter appoauth.ConnectAttemptLimiter,
+) *oauthhttp.APIKeyConnectHandler {
+	gateways := resolver.NewSubdomainGatewayResolver(finder, cfg.Server.MCPBaseDomain)
+	resolveSource := func(peer, forwardedFor string) string {
+		return ratelimit.ResolveConnectSource(
+			peer,
+			forwardedFor,
+			cfg.MCPConnectRateLimit.TrustedProxyCIDRs,
+		)
+	}
+	return oauthhttp.NewAPIKeyConnectHandler(gateways, connect, limiter, resolveSource)
 }

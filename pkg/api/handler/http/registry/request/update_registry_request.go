@@ -33,6 +33,18 @@ type UpdateRegistryRequest struct {
 	MCPTarget       *MCPTargetRequest    `json:"mcp_target,omitempty"`
 }
 
+func (r *UpdateRegistryRequest) Normalize() {
+	if r == nil || r.ProviderOptions == nil {
+		return
+	}
+	provider := ""
+	if r.Provider != nil {
+		provider = *r.Provider
+	}
+	inferred := inferVertexProject(provider, *r.ProviderOptions, r.Auth)
+	r.ProviderOptions = &inferred
+}
+
 func (r UpdateRegistryRequest) Validate() error {
 	if r.Name != nil {
 		if strings.TrimSpace(*r.Name) == "" {

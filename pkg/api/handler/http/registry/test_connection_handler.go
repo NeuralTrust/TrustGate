@@ -59,6 +59,7 @@ func (h *TestConnectionHandler) Handle(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return httpio.WriteError(c, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation))
 	}
+	req.Normalize()
 	if err := req.Validate(); err != nil {
 		return httpio.WriteError(c, err)
 	}

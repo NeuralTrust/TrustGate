@@ -35,6 +35,7 @@ type mcpRouter struct {
 	authorizeHandler           *oauthhttp.AuthorizeHandler
 	callbackHandler            *oauthhttp.CallbackHandler
 	tokenHandler               *oauthhttp.TokenHandler
+	apiKeyConnectHandler       *oauthhttp.APIKeyConnectHandler
 	connectHandler             *oauthhttp.ConnectHandler
 	jwksHandler                *oauthhttp.JWKSHandler
 }
@@ -50,6 +51,7 @@ func NewMCPRouter(
 	authorizeHandler *oauthhttp.AuthorizeHandler,
 	callbackHandler *oauthhttp.CallbackHandler,
 	tokenHandler *oauthhttp.TokenHandler,
+	apiKeyConnectHandler *oauthhttp.APIKeyConnectHandler,
 	connectHandler *oauthhttp.ConnectHandler,
 	jwksHandler *oauthhttp.JWKSHandler,
 	opsMetrics *middleware.OpsMetricsMiddleware,
@@ -66,6 +68,7 @@ func NewMCPRouter(
 		authorizeHandler:           authorizeHandler,
 		callbackHandler:            callbackHandler,
 		tokenHandler:               tokenHandler,
+		apiKeyConnectHandler:       apiKeyConnectHandler,
 		connectHandler:             connectHandler,
 		jwksHandler:                jwksHandler,
 	}
@@ -94,6 +97,8 @@ func (r *mcpRouter) BuildRoutes(app *fiber.App) error {
 	app.Get(oauthhttp.ConnectStartPath, r.connectHandler.Start)
 	app.Get(oauthhttp.ConnectCallbackPath, r.connectHandler.Callback)
 	app.Post(oauthhttp.DisconnectPath, r.connectHandler.Disconnect)
+	app.Get("/:slug/connect", r.apiKeyConnectHandler.Get)
+	app.Post("/:slug/connect", r.apiKeyConnectHandler.Post)
 	app.Get("/+/connect", r.connectHandler.Page)
 
 	app.Get("/*", r.mcpHandler.MethodNotAllowed)
