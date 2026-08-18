@@ -120,6 +120,9 @@ type MCPAttrs struct {
 	MRTRRound       string
 	TaskOperation   string
 	TaskOutcome     string
+
+	SubscriptionKind    string
+	SubscriptionOutcome string
 }
 
 // Task telemetry labels. There is deliberately no task-id attribute: a handle is
@@ -184,6 +187,68 @@ func BoundTaskOperationLabel(operation string) string {
 // BoundTaskOutcome drops any outcome outside the enumerated task set.
 func BoundTaskOutcome(outcome string) string {
 	for _, known := range taskOutcomes {
+		if outcome == known {
+			return outcome
+		}
+	}
+	return ""
+}
+
+// Subscription telemetry labels. There is deliberately no subscription-id,
+// JSON-RPC-id, or resource-URI attribute: the id is the client's own correlation
+// value and a requested URI is client content, so neither may become a label.
+const (
+	SubscriptionKindTools     = "toolsListChanged"
+	SubscriptionKindPrompts   = "promptsListChanged"
+	SubscriptionKindResources = "resourcesListChanged"
+)
+
+const (
+	SubscriptionOutcomeOpened       = "opened"
+	SubscriptionOutcomeAcked        = "acked"
+	SubscriptionOutcomeEmitted      = "emitted"
+	SubscriptionOutcomeDeadline     = "deadline"
+	SubscriptionOutcomeRevoked      = "revoked"
+	SubscriptionOutcomeRefused      = "refused"
+	SubscriptionOutcomeDegraded     = "degraded"
+	SubscriptionOutcomeShutdown     = "shutdown"
+	SubscriptionOutcomeDisconnected = "disconnected"
+	SubscriptionOutcomeOversize     = "oversize"
+)
+
+var subscriptionKinds = []string{
+	SubscriptionKindTools,
+	SubscriptionKindPrompts,
+	SubscriptionKindResources,
+}
+
+var subscriptionOutcomes = []string{
+	SubscriptionOutcomeOpened,
+	SubscriptionOutcomeAcked,
+	SubscriptionOutcomeEmitted,
+	SubscriptionOutcomeDeadline,
+	SubscriptionOutcomeRevoked,
+	SubscriptionOutcomeRefused,
+	SubscriptionOutcomeDegraded,
+	SubscriptionOutcomeShutdown,
+	SubscriptionOutcomeDisconnected,
+	SubscriptionOutcomeOversize,
+}
+
+// BoundSubscriptionKind drops any notification kind outside the enumerated set,
+// so a client-supplied string can never widen the label.
+func BoundSubscriptionKind(kind string) string {
+	for _, known := range subscriptionKinds {
+		if kind == known {
+			return kind
+		}
+	}
+	return ""
+}
+
+// BoundSubscriptionOutcome drops any outcome outside the enumerated lease set.
+func BoundSubscriptionOutcome(outcome string) string {
+	for _, known := range subscriptionOutcomes {
 		if outcome == known {
 			return outcome
 		}
@@ -533,6 +598,21 @@ func (s *Span) SetMCPTask(operation, outcome string) {
 	}
 	if bounded := BoundTaskOutcome(outcome); bounded != "" {
 		s.MCP.TaskOutcome = bounded
+	}
+}
+
+// SetMCPSubscription records the bounded notification kind and lease outcome.
+// Empty or unenumerated values keep whatever the span already carries, so a
+// stamp can never introduce an unbounded label.
+func (s *Span) SetMCPSubscription(kind, outcome string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureMCP()
+	if bounded := BoundSubscriptionKind(kind); bounded != "" {
+		s.MCP.SubscriptionKind = bounded
+	}
+	if bounded := BoundSubscriptionOutcome(outcome); bounded != "" {
+		s.MCP.SubscriptionOutcome = bounded
 	}
 }
 

@@ -96,6 +96,27 @@ func (g *RPCGateway) Dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 	return result, err
 }
 
+// OpenSubscriptionLease runs the gateway-side admission work a lease is charged
+// for. Tools subscriptions must pass the same discovery plugin verdict as an
+// ordinary tools/list before registry capacity is claimed.
+func (g *RPCGateway) OpenSubscriptionLease(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	honoured appmcp.HonouredSet,
+) error {
+	span, ctx := g.startSpan(ctx, appmcp.MethodSubscriptionsListen, nil)
+	err := g.checkRateLimit(ctx, rc)
+	if err == nil && honoured.Has(appmcp.NotificationToolsListChanged) {
+		var tools []appmcp.Tool
+		tools, err = g.composer.ListTools(ctx, rc)
+		if err == nil {
+			err = g.plugins.PreResponseToolsDiscovery(ctx, rc, tools)
+		}
+	}
+	g.finishSpan(span, err)
+	return err
+}
+
 func (g *RPCGateway) startSpan(ctx context.Context, method string, params json.RawMessage) (*trace.Span, context.Context) {
 	rt := trace.FromContext(ctx)
 	if rt == nil {
@@ -175,6 +196,9 @@ func mcpRequestAttrs(method string, params json.RawMessage) (operation, tool, pr
 		// The tool the task belongs to is only known once the handle is
 		// unwrapped, and the handle itself is never an attribute.
 		return "task", "", "", ""
+	case appmcp.MethodSubscriptionsListen:
+		// Neither the subscription id nor any requested URI is ever an attribute.
+		return "subscription", "", "", ""
 	default:
 		return "", "", "", ""
 	}
@@ -220,15 +244,7 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 			tools = []appmcp.Tool{}
 		}
 		result := map[string]any{"tools": tools}
-		raw, err := json.Marshal(result)
-		if err != nil {
-			return nil, err
-		}
-		// A tool listing is static server metadata, so it is scanned only for
-		// threats in the tool descriptions (indirect prompt injection, code
-		// injection): a genuine block stops discovery, while a data-masking
-		// transform is ignored — the listing is never redacted or rewritten.
-		if err := g.plugins.PreResponseDiscovery(ctx, rc, raw); err != nil {
+		if err := g.plugins.PreResponseToolsDiscovery(ctx, rc, tools); err != nil {
 			return nil, err
 		}
 		return result, nil

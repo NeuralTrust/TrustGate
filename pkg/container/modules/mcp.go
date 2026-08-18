@@ -192,14 +192,22 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(appmcp.NewRoleScoper); err != nil {
 		return err
 	}
+	if err := c.Provide(provideSubscriptionRegistry); err != nil {
+		return err
+	}
+	if err := c.Provide(provideSubscriptionPolicy); err != nil {
+		return err
+	}
 	return c.Provide(func(
 		gw *mcphttp.RPCGateway,
 		scoper appmcp.RoleScoper,
 		signer *appmcp.TicketSigner,
 		tasks *appmcp.TaskHandleSigner,
+		registry *appmcp.SubscriptionRegistry,
+		policy appmcp.SubscriptionPolicy,
 		cfg *config.Config,
 	) *mcphttp.Handler {
-		return mcphttp.NewHandlerWithMediation(
+		return mcphttp.NewHandlerWithSubscriptions(
 			gw,
 			scoper,
 			mcphttp.MRTRSupport{
@@ -210,9 +218,68 @@ func MCP(c *container.Container) error {
 				Signer:   tasks,
 				Recorder: mcphttp.NewTasksRecorder(cfg.Telemetry.OpsMetricsEnabled),
 			},
+			subscriptionsSupport(
+				cfg.Server.MCPSubscriptions,
+				registry,
+				policy,
+				mcphttp.NewSubscriptionsRecorder(cfg.Telemetry.OpsMetricsEnabled),
+			),
 			mcphttp.NewProtocolValidationRecorder(cfg.Telemetry.OpsMetricsEnabled),
 		)
 	})
+}
+
+// provideSubscriptionRegistry builds the lease accountant, or nil while the
+// feature is disabled. A nil registry makes SubscriptionsSupport.Enabled false,
+// so the default build behaves exactly as it did before subscriptions existed.
+func provideSubscriptionRegistry(cfg *config.Config) *appmcp.SubscriptionRegistry {
+	subs := cfg.Server.MCPSubscriptions
+	if !subs.Enabled {
+		return nil
+	}
+	return appmcp.NewSubscriptionRegistry(appmcp.SubscriptionCaps{
+		MaxStreams:      subs.MaxStreams,
+		MaxPerConsumer:  subs.MaxPerConsumer,
+		MaxPerPrincipal: subs.MaxPerPrincipal,
+	})
+}
+
+// provideSubscriptionPolicy builds the re-authorization pass, or a nil interface
+// while the feature is disabled. The nil must be a literal rather than a typed
+// nil pointer, since SubscriptionsSupport.Enabled compares the interface itself.
+func provideSubscriptionPolicy(
+	cfg *config.Config,
+	consumers appconsumer.DataFinder,
+	scoper appmcp.RoleScoper,
+	composer appmcp.Composer,
+	plugins *appmcp.PluginRunner,
+) appmcp.SubscriptionPolicy {
+	if !cfg.Server.MCPSubscriptions.Enabled {
+		return nil
+	}
+	return appmcp.NewSubscriptionPolicy(consumers, scoper, composer, plugins)
+}
+
+// subscriptionsSupport carries the configured bounds to the handler. Nothing is
+// constructed while the feature is disabled: the value is inert and the default
+// build behaves exactly as it did before subscriptions existed.
+func subscriptionsSupport(
+	cfg config.MCPSubscriptionsConfig,
+	registry *appmcp.SubscriptionRegistry,
+	policy appmcp.SubscriptionPolicy,
+	recorder mcphttp.SubscriptionsRecorder,
+) mcphttp.SubscriptionsSupport {
+	return mcphttp.SubscriptionsSupport{
+		On:             cfg.Enabled,
+		MaxLifetime:    cfg.MaxLifetime,
+		ReauthInterval: cfg.ReauthInterval,
+		Keepalive:      cfg.Keepalive,
+		MaxEventBytes:  cfg.MaxEventBytes,
+		MaxURIs:        cfg.MaxURIs,
+		Registry:       registry,
+		Policy:         policy,
+		Recorder:       recorder,
+	}
 }
 
 func provideAPIKeyConnectService(

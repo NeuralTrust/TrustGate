@@ -83,7 +83,10 @@ func normalizeModernResult(
 		normalized["ttlMs"] = modernCacheTTLDefault
 		normalized["cacheScope"] = "private"
 	case "resources/read",
-		appmcp.MethodTasksGet, appmcp.MethodTasksUpdate, appmcp.MethodTasksCancel:
+		appmcp.MethodTasksGet, appmcp.MethodTasksUpdate, appmcp.MethodTasksCancel,
+		// A terminal lease result describes a stream that has just ended, so it
+		// is never cacheable.
+		appmcp.MethodSubscriptionsListen:
 		normalized["ttlMs"] = modernCacheTTLRead
 		normalized["cacheScope"] = "private"
 	}

@@ -171,6 +171,74 @@ func (r *otelTasksRecorder) Record(ctx context.Context, operation, outcome, era 
 	r.counter.Add(ctx, 1, metric.WithAttributes(attrs...))
 }
 
+// SubscriptionsRecorder records bounded subscription lease telemetry: one sample
+// per lifecycle event, plus a live-stream up/down counter.
+type SubscriptionsRecorder interface {
+	// Record counts one lease lifecycle event. kind is set only for an emitted
+	// notification and is omitted from the label set otherwise.
+	Record(ctx context.Context, kind, outcome, era string)
+	// Live moves the live-stream counter, +1 when a lease is claimed and -1 when
+	// its writer releases it.
+	Live(ctx context.Context, delta int64, era string)
+}
+
+type otelSubscriptionsRecorder struct {
+	outcomes metric.Int64Counter
+	live     metric.Int64UpDownCounter
+}
+
+// NewSubscriptionsRecorder returns a no-op nil recorder unless ops metrics are enabled.
+func NewSubscriptionsRecorder(enabled bool) SubscriptionsRecorder {
+	if !enabled {
+		return nil
+	}
+	meter := otel.Meter("trustgate/mcp_northbound")
+	outcomes, err := meter.Int64Counter(
+		"mcp.northbound.subscriptions.outcome_total",
+		metric.WithUnit("{outcome}"),
+	)
+	if err != nil {
+		return nil
+	}
+	live, err := meter.Int64UpDownCounter(
+		"mcp.northbound.subscriptions.live",
+		metric.WithUnit("{stream}"),
+	)
+	if err != nil {
+		return nil
+	}
+	return &otelSubscriptionsRecorder{outcomes: outcomes, live: live}
+}
+
+func (r *otelSubscriptionsRecorder) Record(ctx context.Context, kind, outcome, era string) {
+	if r == nil || r.outcomes == nil {
+		return
+	}
+	boundedOutcome := trace.BoundSubscriptionOutcome(outcome)
+	if boundedOutcome == "" {
+		return
+	}
+	attrs := []attribute.KeyValue{attribute.String("outcome", boundedOutcome)}
+	if bounded := trace.BoundSubscriptionKind(kind); bounded != "" {
+		attrs = append(attrs, attribute.String("kind", bounded))
+	}
+	if era != "" {
+		attrs = append(attrs, attribute.String("era", era))
+	}
+	r.outcomes.Add(ctx, 1, metric.WithAttributes(attrs...))
+}
+
+func (r *otelSubscriptionsRecorder) Live(ctx context.Context, delta int64, era string) {
+	if r == nil || r.live == nil || delta == 0 {
+		return
+	}
+	var attrs []attribute.KeyValue
+	if era != "" {
+		attrs = append(attrs, attribute.String("era", era))
+	}
+	r.live.Add(ctx, delta, metric.WithAttributes(attrs...))
+}
+
 type mcpProtocolContextKey struct{}
 
 type mcpProtocolAttrs struct {
