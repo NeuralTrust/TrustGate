@@ -236,6 +236,40 @@ func TestDiscovery_ARememberedFailureIsForgottenWhenItExpires(t *testing.T) {
 	}
 }
 
+func TestDiscovery_ACallerRunningOutOfBudgetIsNotRemembered(t *testing.T) {
+	t.Parallel()
+	// The entry is shared by every request for the registry, so remembering one
+	// caller's cancellation would answer everybody else's for the rest of the
+	// window with a failure the upstream never reported.
+	reg := mcpRegistry(t, "a", "https://a.example.com/mcp")
+	healthy := &fakeUpstream{tools: tools("weather")}
+	dials := 0
+	dialer := newCountingDialer(func(string) (Upstream, error) {
+		dials++
+		if dials == 1 {
+			return nil, context.DeadlineExceeded
+		}
+		return healthy, nil
+	})
+	c := NewComposer(dialer, nil, newMapCache(), slog.New(slog.DiscardHandler))
+	rc := routable(mcpClient(), reg)
+
+	if _, err := c.ListTools(context.Background(), rc); err == nil {
+		t.Fatal("a dial that ran out of budget should surface as an error")
+	}
+
+	got, err := c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("the next caller must reach the upstream: %v", err)
+	}
+	if names := toolNames(got); len(names) != 1 || names[0] != "weather" {
+		t.Fatalf("tools = %v, want the upstream's", names)
+	}
+	if got := dialer.count("https://a.example.com/mcp"); got != 2 {
+		t.Fatalf("dialled %d times, want 2: a caller's own deadline must not be cached", got)
+	}
+}
+
 func TestDiscovery_PendingConsentIsNotRemembered(t *testing.T) {
 	t.Parallel()
 	// Consent is the user's to give, and giving it should be served at once
