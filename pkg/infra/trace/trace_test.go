@@ -210,6 +210,54 @@ func TestFromContext_NilSafe(t *testing.T) {
 	assert.Nil(t, trace.FromContext(context.Background()))
 }
 
+// A subscription label may only ever come from the fixed enumerations, so an
+// unknown kind or outcome has to be dropped rather than stamped: the values reach
+// the span from a client-supplied notification list.
+func TestSpan_SetMCPSubscriptionDropsUnboundedLabels(t *testing.T) {
+	tests := []struct {
+		name        string
+		kind        string
+		outcome     string
+		wantKind    string
+		wantOutcome string
+	}{
+		{
+			name:        "both enumerated",
+			kind:        trace.SubscriptionKindTools,
+			outcome:     trace.SubscriptionOutcomeEmitted,
+			wantKind:    trace.SubscriptionKindTools,
+			wantOutcome: trace.SubscriptionOutcomeEmitted,
+		},
+		{
+			name:        "unknown kind dropped",
+			kind:        "doc://tenant/secret",
+			outcome:     trace.SubscriptionOutcomeDeadline,
+			wantOutcome: trace.SubscriptionOutcomeDeadline,
+		},
+		{
+			name:     "unknown outcome dropped",
+			kind:     trace.SubscriptionKindPrompts,
+			outcome:  "panicked",
+			wantKind: trace.SubscriptionKindPrompts,
+		},
+		{name: "empty keeps the span clean"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := trace.New("t", trace.Metadata{})
+			span := rt.StartSpan(trace.SpanMCP, "subscriptions/listen")
+
+			span.SetMCPSubscription(tc.kind, tc.outcome)
+
+			attrs, ok := span.MCPAttrsCopy()
+			require.True(t, ok)
+			assert.Equal(t, tc.wantKind, attrs.SubscriptionKind)
+			assert.Equal(t, tc.wantOutcome, attrs.SubscriptionOutcome)
+		})
+	}
+}
+
 func TestRequestTrace_ConcurrentSpanRecording(t *testing.T) {
 	rt := trace.New("t", trace.Metadata{})
 	var wg sync.WaitGroup

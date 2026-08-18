@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -234,6 +235,135 @@ func TestDiscovery_ARememberedFailureIsForgottenWhenItExpires(t *testing.T) {
 	if names := toolNames(got); len(names) != 1 || names[0] != "weather" {
 		t.Fatalf("tools = %v, want the recovered upstream's", names)
 	}
+}
+
+// A skipped registry is the difference between "the surface shrank" and "we could
+// not see all of it". A caller that diffs successive compositions has to be told,
+// or a transient blip reads as a removal.
+func TestFederateWithStats_ReportsWhetherARegistryWasSkipped(t *testing.T) {
+	t.Parallel()
+	const (
+		healthyURL = "https://healthy.example.com/mcp"
+		brokenURL  = "https://broken.example.com/mcp"
+	)
+	tests := []struct {
+		name         string
+		failMode     consumerdomain.FailMode
+		brokenErr    error
+		wantItems    []string
+		wantDegraded bool
+		wantErr      error
+	}{
+		{
+			name:      "every registry answered",
+			wantItems: []string{"healthy://doc", "broken://doc"},
+		},
+		{
+			name:         "an unreachable registry is skipped",
+			brokenErr:    errors.New("connection refused"),
+			wantItems:    []string{"healthy://doc"},
+			wantDegraded: true,
+		},
+		{
+			name:         "a registry pending consent is skipped",
+			brokenErr:    &ConsentRequiredError{Provider: "github"},
+			wantItems:    []string{"healthy://doc"},
+			wantDegraded: true,
+		},
+		{
+			name:      "a fail-closed consumer reports the failure instead",
+			failMode:  consumerdomain.FailModeClosed,
+			brokenErr: errors.New("connection refused"),
+			wantErr:   ErrUpstreamUnavailable,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			healthy := mcpRegistry(t, "healthy", healthyURL)
+			broken := mcpRegistry(t, "broken", brokenURL)
+			ups := map[string]*fakeUpstream{
+				healthyURL: {resources: []Resource{{URI: "healthy://doc"}}},
+				brokenURL:  {resources: []Resource{{URI: "broken://doc"}}},
+			}
+			dialer := &fakeDialer{upstreams: ups, dialErr: map[string]error{}}
+			if tc.brokenErr != nil {
+				dialer.dialErr[brokenURL] = tc.brokenErr
+			}
+			c, ok := NewComposer(dialer, nil, newMapCache(), slog.New(slog.DiscardHandler)).(*composer)
+			if !ok {
+				t.Fatal("the composer under test must be the concrete implementation")
+			}
+			consumer := &consumerdomain.Consumer{Type: consumerdomain.TypeMCP}
+			if tc.failMode != "" {
+				consumer.MCP = &consumerdomain.MCPPolicy{FailMode: tc.failMode}
+			}
+
+			items, degraded, err := federateWithStats(
+				c, context.Background(), routable(consumer, healthy, broken), "resources",
+				func(ctx context.Context, up Upstream) ([]Resource, error) { return up.ListResources(ctx) },
+				func(_ *registrydomain.Registry, resources []Resource) []Resource { return resources },
+			)
+
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("error = %v, want %v", err, tc.wantErr)
+				}
+				if degraded {
+					t.Fatal("a refused composition reports no partial surface: it reports the failure")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if degraded != tc.wantDegraded {
+				t.Fatalf("degraded = %v, want %v", degraded, tc.wantDegraded)
+			}
+			if got := resourceURIs(items); !slices.Equal(got, tc.wantItems) {
+				t.Fatalf("resources = %v, want %v", got, tc.wantItems)
+			}
+		})
+	}
+}
+
+// The wrapper is what every existing caller uses, so its answer must be exactly
+// the stats variant's minus the flag.
+func TestFederate_MatchesTheStatsVariant(t *testing.T) {
+	t.Parallel()
+	const url = "https://a.example.com/mcp"
+	reg := mcpRegistry(t, "a", url)
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		url: {resources: []Resource{{URI: "doc://one"}}},
+	}}
+	c, ok := NewComposer(dialer, nil, newMapCache(), slog.New(slog.DiscardHandler)).(*composer)
+	if !ok {
+		t.Fatal("the composer under test must be the concrete implementation")
+	}
+	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, reg)
+	list := func(ctx context.Context, up Upstream) ([]Resource, error) { return up.ListResources(ctx) }
+	keep := func(_ *registrydomain.Registry, resources []Resource) []Resource { return resources }
+
+	wrapped, err := federate(c, context.Background(), rc, "resources", list, keep)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	direct, _, err := federateWithStats(c, context.Background(), rc, "resources", list, keep)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !slices.Equal(resourceURIs(wrapped), resourceURIs(direct)) {
+		t.Fatalf("federate = %v, want %v", resourceURIs(wrapped), resourceURIs(direct))
+	}
+}
+
+func resourceURIs(resources []Resource) []string {
+	out := make([]string, 0, len(resources))
+	for _, r := range resources {
+		out = append(out, r.URI)
+	}
+	return out
 }
 
 func TestDiscovery_PendingConsentIsNotRemembered(t *testing.T) {
