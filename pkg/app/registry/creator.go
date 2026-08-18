@@ -48,14 +48,22 @@ type creator struct {
 	memoryCache *cache.TTLMap
 	logger      *slog.Logger
 	signaler    configsyncport.SnapshotSignaler
+	catalog     MCPAuthCatalog
 }
 
-func NewCreator(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger, signaler configsyncport.SnapshotSignaler) Creator {
+func NewCreator(
+	repo domain.Repository,
+	manager *cache.TTLMapManager,
+	logger *slog.Logger,
+	signaler configsyncport.SnapshotSignaler,
+	catalog MCPAuthCatalog,
+) Creator {
 	return &creator{
 		repo:        repo,
 		memoryCache: manager.GetTTLMap(cache.RegistryTTLName),
 		logger:      logger,
 		signaler:    signaler,
+		catalog:     catalog,
 	}
 }
 
@@ -63,6 +71,9 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Registry,
 	var b *domain.Registry
 	var err error
 	if in.Type == domain.TypeMCP {
+		if err := CanonicalizeMCPAuthFromCatalog(in.MCPTarget, c.catalog); err != nil {
+			return nil, err
+		}
 		b, err = domain.NewMCPRegistry(
 			in.GatewayID,
 			in.Name,

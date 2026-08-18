@@ -119,62 +119,6 @@ func TestParseCuratedMCPServers_OmitsHidden(t *testing.T) {
 	require.NotContains(t, codes, "com.hidden/mcp")
 }
 
-func TestRequiresConfig_Classification(t *testing.T) {
-	t.Parallel()
-
-	boolPtr := func(b bool) *bool { return &b }
-
-	tests := []struct {
-		name string
-		in   rawServer
-		want bool
-	}{
-		{
-			name: "public, no url vars => connect by default",
-			in:   rawServer{RequiresAuth: false},
-			want: false,
-		},
-		{
-			name: "oauth auto, no url vars => connect by default",
-			in:   rawServer{OAuth: &domain.MCPOAuth{Required: true, Registration: "auto", DCR: boolPtr(true)}},
-			want: false,
-		},
-		{
-			name: "oauth manual => needs config",
-			in:   rawServer{OAuth: &domain.MCPOAuth{Required: true, Registration: "manual", DCR: boolPtr(false)}},
-			want: true,
-		},
-		{
-			name: "oauth unknown registration (tenant) => needs config",
-			in:   rawServer{OAuth: &domain.MCPOAuth{Required: true}},
-			want: true,
-		},
-		{
-			name: "static secret => needs config",
-			in: rawServer{
-				RequiresAuth: true,
-				AuthHeaders:  []domain.MCPAuthHeader{{Name: "Authorization", Required: true, Secret: true}},
-			},
-			want: true,
-		},
-		{
-			name: "oauth auto but required url var (tenant host) => needs config",
-			in: rawServer{
-				OAuth:        &domain.MCPOAuth{Required: true, Registration: "auto", DCR: boolPtr(true)},
-				URLVariables: []domain.MCPURLVariable{{Name: "domain", Required: true}},
-			},
-			want: true,
-		},
-	}
-	for _, tc := range tests {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			require.Equal(t, tc.want, requiresConfig(tc.in))
-		})
-	}
-}
-
 func TestAuthHint_Classification(t *testing.T) {
 	t.Parallel()
 
@@ -214,4 +158,98 @@ func TestAuthHint_Classification(t *testing.T) {
 			require.Equal(t, tc.want, authHint(tc.in))
 		})
 	}
+}
+
+func TestRequiresConfig_Classification(t *testing.T) {
+	t.Parallel()
+
+	boolPtr := func(b bool) *bool { return &b }
+
+	tests := []struct {
+		name string
+		in   rawServer
+		want bool
+	}{
+		{
+			name: "public, no url vars => connect by default",
+			in:   rawServer{RequiresAuth: false},
+			want: false,
+		},
+		{
+			name: "oauth auto, no url vars => connect by default",
+			in:   rawServer{OAuth: &domain.MCPOAuth{Required: true, Registration: "auto", DCR: boolPtr(true)}},
+			want: false,
+		},
+		{
+			name: "oauth manual => needs config",
+			in:   rawServer{OAuth: &domain.MCPOAuth{Required: true, Registration: "manual", DCR: boolPtr(false)}},
+			want: true,
+		},
+		{
+			name: "oauth unknown registration (tenant) => needs config",
+			in:   rawServer{OAuth: &domain.MCPOAuth{Required: true}},
+			want: true,
+		},
+		{
+			name: "static secret => needs config",
+			in: rawServer{
+				RequiresAuth: true,
+				AuthHeaders:  []domain.MCPAuthHeader{{Name: "Authorization", Required: true, Secret: true}},
+			},
+			want: true,
+		},
+		{
+			name: "oauth client_credentials => needs config",
+			in: rawServer{OAuth: &domain.MCPOAuth{
+				Required:  true,
+				GrantType: "client_credentials",
+				TokenURL:  "https://idp.example/token",
+			}},
+			want: true,
+		},
+		{
+			name: "oauth auto but required url var (tenant host) => needs config",
+			in: rawServer{
+				OAuth:        &domain.MCPOAuth{Required: true, Registration: "auto", DCR: boolPtr(true)},
+				URLVariables: []domain.MCPURLVariable{{Name: "domain", Required: true}},
+			},
+			want: true,
+		},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, requiresConfig(tc.in))
+		})
+	}
+}
+
+func TestNewMCPServerCatalog_IncludesSectigoN8nHalo(t *testing.T) {
+	t.Parallel()
+	cat, err := NewMCPServerCatalog()
+	require.NoError(t, err)
+
+	sectigo, ok := cat.GetByCode("com.sectigo/mcp")
+	require.True(t, ok)
+	require.Equal(t, "https://mcp.{instance}.sectigo.com/mcp", sectigo.URL)
+	require.Equal(t, authHintOAuth, sectigo.AuthHint)
+	require.True(t, sectigo.RequiresConfig)
+	require.NotNil(t, sectigo.OAuth)
+	require.Equal(t, "client_credentials", sectigo.OAuth.GrantType)
+	require.Contains(t, sectigo.OAuth.TokenURL, "auth.sso.sectigo.com")
+
+	n8n, ok := cat.GetByCode("io.n8n/mcp")
+	require.True(t, ok)
+	require.Equal(t, "https://{domain}/mcp-server/http", n8n.URL)
+	require.Equal(t, authHintOAuth, n8n.AuthHint)
+	require.True(t, n8n.RequiresConfig)
+	require.Equal(t, "auto", n8n.OAuth.Registration)
+
+	halo, ok := cat.GetByCode("com.haloitsm/mcp")
+	require.True(t, ok)
+	require.Equal(t, "https://{instance}/api/mcp", halo.URL)
+	require.Equal(t, authHintStatic, halo.AuthHint)
+	require.True(t, halo.RequiresConfig)
+	require.NotEmpty(t, halo.AuthHeaders)
 }

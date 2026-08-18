@@ -54,14 +54,15 @@ type MCPAuthRequest struct {
 	Scope    string `json:"scope,omitempty"`
 	Actor    string `json:"actor,omitempty"`
 
-	Provider     string   `json:"provider,omitempty"`
-	Registration string   `json:"registration,omitempty"`
-	ClientID     string   `json:"client_id,omitempty"`
-	ClientSecret string   `json:"client_secret,omitempty"` // #nosec G117
-	AuthorizeURL string   `json:"authorize_url,omitempty"`
-	TokenURL     string   `json:"token_url,omitempty"`
-	Scopes       []string `json:"scopes,omitempty"`
-	Resource     string   `json:"resource,omitempty"`
+	Provider                string   `json:"provider,omitempty"`
+	Registration            string   `json:"registration,omitempty"`
+	ClientID                string   `json:"client_id,omitempty"`
+	ClientSecret            string   `json:"client_secret,omitempty"` // #nosec G117
+	AuthorizeURL            string   `json:"authorize_url,omitempty"`
+	TokenURL                string   `json:"token_url,omitempty"`
+	Scopes                  []string `json:"scopes,omitempty"`
+	Resource                string   `json:"resource,omitempty"`
+	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method,omitempty"`
 }
 
 type HealthChecksRequest struct {
@@ -193,22 +194,23 @@ func (t *MCPTargetRequest) ToDomain() *domain.MCPTarget {
 	}
 	if t.Auth != nil {
 		out.Auth = &domain.MCPAuth{
-			Mode:             domain.MCPAuthMode(t.Auth.Mode),
-			Header:           t.Auth.Header,
-			Value:            t.Auth.Value,
-			ExpectedAudience: t.Auth.ExpectedAudience,
-			Pattern:          domain.MCPExchangePattern(t.Auth.Pattern),
-			Audience:         t.Auth.Audience,
-			Scope:            t.Auth.Scope,
-			Actor:            t.Auth.Actor,
-			Provider:         t.Auth.Provider,
-			Registration:     domain.MCPClientRegistration(t.Auth.Registration),
-			ClientID:         t.Auth.ClientID,
-			ClientSecret:     t.Auth.ClientSecret,
-			AuthorizeURL:     t.Auth.AuthorizeURL,
-			TokenURL:         t.Auth.TokenURL,
-			Scopes:           t.Auth.Scopes,
-			Resource:         t.Auth.Resource,
+			Mode:                    domain.MCPAuthMode(t.Auth.Mode),
+			Header:                  t.Auth.Header,
+			Value:                   t.Auth.Value,
+			ExpectedAudience:        t.Auth.ExpectedAudience,
+			Pattern:                 domain.MCPExchangePattern(t.Auth.Pattern),
+			Audience:                t.Auth.Audience,
+			Scope:                   t.Auth.Scope,
+			Actor:                   t.Auth.Actor,
+			Provider:                t.Auth.Provider,
+			Registration:            domain.MCPClientRegistration(t.Auth.Registration),
+			ClientID:                t.Auth.ClientID,
+			ClientSecret:            t.Auth.ClientSecret,
+			AuthorizeURL:            t.Auth.AuthorizeURL,
+			TokenURL:                t.Auth.TokenURL,
+			Scopes:                  t.Auth.Scopes,
+			Resource:                t.Auth.Resource,
+			TokenEndpointAuthMethod: t.Auth.TokenEndpointAuthMethod,
 		}
 	}
 	return out
