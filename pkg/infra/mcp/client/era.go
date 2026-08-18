@@ -59,16 +59,19 @@ type protocolProbe interface {
 	Probe(ctx context.Context, target appmcp.Target) (probeOutcome, error)
 }
 
+type legacyConfirmer func(ctx context.Context, target appmcp.Target) error
+
 type eraCoordinator struct {
-	mu           sync.RWMutex
-	entries      map[string]eraEntry
-	generation   uint64
-	flight       singleflight.Group
-	retryFlight  singleflight.Group
-	probe        protocolProbe
-	timeout      time.Duration
-	originJoined func()
-	retryJoined  func()
+	mu            sync.RWMutex
+	entries       map[string]eraEntry
+	generation    uint64
+	flight        singleflight.Group
+	retryFlight   singleflight.Group
+	probe         protocolProbe
+	confirmLegacy legacyConfirmer
+	timeout       time.Duration
+	originJoined  func()
+	retryJoined   func()
 }
 
 type probeWorkResult struct {
@@ -103,7 +106,7 @@ func (c *eraCoordinator) resolve(
 			return probeWorkResult{entry: entry, cached: true}, nil
 		}
 		result := c.runProbe(ctx, target, credential)
-		return c.publishClassifiable(origin, result), nil
+		return c.publishClassifiable(ctx, target, origin, result), nil
 	})
 	if c.originJoined != nil {
 		c.originJoined()
@@ -165,7 +168,7 @@ func (c *eraCoordinator) retryProbe(
 		if entry, ok := c.lookup(origin); ok {
 			return probeWorkResult{entry: entry, cached: true}, nil
 		}
-		return c.publishClassifiable(origin, result), nil
+		return c.publishClassifiable(ctx, target, origin, result), nil
 	})
 	if c.retryJoined != nil {
 		c.retryJoined()
@@ -203,7 +206,12 @@ func (c *eraCoordinator) runProbe(
 	}
 }
 
-func (c *eraCoordinator) publishClassifiable(origin string, result probeWorkResult) probeWorkResult {
+func (c *eraCoordinator) publishClassifiable(
+	ctx context.Context,
+	target appmcp.Target,
+	origin string,
+	result probeWorkResult,
+) probeWorkResult {
 	switch result.outcome.kind {
 	case probeModern:
 		result.entry = c.storeInitial(origin, eraEntry{era: eraModern, version: result.outcome.version})
@@ -211,7 +219,35 @@ func (c *eraCoordinator) publishClassifiable(origin string, result probeWorkResu
 	case probeModernIncompatible:
 		result.entry = c.storeInitial(origin, eraEntry{era: eraModernIncompatible})
 		result.published = true
+	case probeLegacyCandidate:
+		if result.err == nil {
+			result = c.confirmLegacyCandidate(ctx, target, origin, result)
+		}
 	}
+	return result
+}
+
+// confirmLegacyCandidate settles a legacy candidate inside the probe flight so a
+// cold-start stampede on one origin costs a single strict probe. The era is still
+// only cached once a legacy handshake succeeds, so a rejected strict probe alone
+// never pins an origin to legacy.
+func (c *eraCoordinator) confirmLegacyCandidate(
+	ctx context.Context,
+	target appmcp.Target,
+	origin string,
+	result probeWorkResult,
+) probeWorkResult {
+	if c.confirmLegacy == nil {
+		return result
+	}
+	workCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.timeout)
+	defer cancel()
+	if err := c.confirmLegacy(workCtx, target); err != nil {
+		result.err = err
+		return result
+	}
+	result.entry = c.storeInitial(origin, eraEntry{era: eraLegacy})
+	result.published = true
 	return result
 }
 

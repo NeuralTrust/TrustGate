@@ -81,7 +81,19 @@ func newNegotiatingDialer(
 	if len(rec) > 0 {
 		d.metrics = rec[0]
 	}
+	if coordinator != nil && coordinator.confirmLegacy == nil {
+		coordinator.confirmLegacy = d.confirmLegacyEra
+	}
 	return d
+}
+
+func (d *negotiatingDialer) confirmLegacyEra(ctx context.Context, target appmcp.Target) error {
+	upstream, err := d.legacy.ConnectLegacy(ctx, target)
+	if err != nil {
+		return err
+	}
+	upstream.Close(ctx)
+	return nil
 }
 
 func (d *negotiatingDialer) Connect(ctx context.Context, target appmcp.Target) (appmcp.Upstream, error) {

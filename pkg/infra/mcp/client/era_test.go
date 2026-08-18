@@ -256,6 +256,90 @@ func TestEraCoordinatorSharesLegacyCandidateForSameCredential(t *testing.T) {
 	}
 }
 
+func TestEraCoordinatorSettlesLegacyInsideProbeFlight(t *testing.T) {
+	t.Parallel()
+
+	var probes atomic.Int64
+	var confirms atomic.Int64
+	coordinator := newEraCoordinator(probeFunc(func(context.Context, appmcp.Target) (probeOutcome, error) {
+		probes.Add(1)
+		return probeOutcome{kind: probeLegacyCandidate}, nil
+	}), time.Second)
+	coordinator.confirmLegacy = func(context.Context, appmcp.Target) error {
+		confirms.Add(1)
+		return nil
+	}
+	target := appmcp.Target{URL: "https://example.com/mcp"}
+	origin := "https://example.com:443"
+	for range 3 {
+		resolution, err := coordinator.resolve(context.Background(), target, origin)
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if resolution.legacyCandidate {
+			t.Fatalf("resolution = %+v, want a settled legacy entry", resolution)
+		}
+		if resolution.entry.era != eraLegacy {
+			t.Fatalf("era = %v, want legacy", resolution.entry.era)
+		}
+	}
+	if got := probes.Load(); got != 1 {
+		t.Fatalf("probe calls = %d, want 1", got)
+	}
+	if got := confirms.Load(); got != 1 {
+		t.Fatalf("legacy confirmations = %d, want 1", got)
+	}
+}
+
+func TestEraCoordinatorSharesLegacyConfirmationFailure(t *testing.T) {
+	t.Parallel()
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var probes atomic.Int64
+	var confirms atomic.Int64
+	coordinator := newEraCoordinator(probeFunc(func(context.Context, appmcp.Target) (probeOutcome, error) {
+		probes.Add(1)
+		close(started)
+		<-release
+		return probeOutcome{kind: probeLegacyCandidate}, nil
+	}), time.Second)
+	coordinator.confirmLegacy = func(context.Context, appmcp.Target) error {
+		confirms.Add(1)
+		return appmcp.ErrUnreachable
+	}
+	joined := make(chan struct{}, 2)
+	coordinator.originJoined = func() { joined <- struct{}{} }
+	target := appmcp.Target{URL: "https://example.com/mcp"}
+	origin := "https://example.com:443"
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() {
+			_, err := coordinator.resolve(context.Background(), target, origin)
+			errs <- err
+		}()
+	}
+	<-started
+	for range 2 {
+		<-joined
+	}
+	close(release)
+	for range 2 {
+		if err := <-errs; !errors.Is(err, appmcp.ErrUnreachable) {
+			t.Fatalf("resolve error = %v, want unreachable", err)
+		}
+	}
+	if got := probes.Load(); got != 1 {
+		t.Fatalf("probe calls = %d, want 1", got)
+	}
+	if got := confirms.Load(); got != 1 {
+		t.Fatalf("legacy confirmations = %d, want 1", got)
+	}
+	if entry, ok := coordinator.lookup(origin); ok {
+		t.Fatalf("cached entry = %+v, want no era cached after a failed handshake", entry)
+	}
+}
+
 func TestEraCoordinatorRetriesSharedLegacyCandidateForDifferentCredential(t *testing.T) {
 	t.Parallel()
 
