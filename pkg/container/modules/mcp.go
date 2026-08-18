@@ -16,6 +16,7 @@ package modules
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -195,7 +196,16 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(provideSubscriptionRegistry); err != nil {
 		return err
 	}
+	if err := c.Provide(provideSubscriptionConnector); err != nil {
+		return err
+	}
+	if err := c.Provide(provideSubscriptionTargetResolver); err != nil {
+		return err
+	}
 	if err := c.Provide(provideSubscriptionPolicy); err != nil {
+		return err
+	}
+	if err := c.Provide(provideSubscriptionMultiplexer); err != nil {
 		return err
 	}
 	return c.Provide(func(
@@ -205,6 +215,8 @@ func MCP(c *container.Container) error {
 		tasks *appmcp.TaskHandleSigner,
 		registry *appmcp.SubscriptionRegistry,
 		policy appmcp.SubscriptionPolicy,
+		targets appmcp.SubscriptionTargetResolver,
+		multiplexer *appmcp.SubscriptionMultiplexer,
 		cfg *config.Config,
 	) *mcphttp.Handler {
 		return mcphttp.NewHandlerWithSubscriptions(
@@ -222,6 +234,8 @@ func MCP(c *container.Container) error {
 				cfg.Server.MCPSubscriptions,
 				registry,
 				policy,
+				targets,
+				multiplexer,
 				mcphttp.NewSubscriptionsRecorder(cfg.Telemetry.OpsMetricsEnabled),
 			),
 			mcphttp.NewProtocolValidationRecorder(cfg.Telemetry.OpsMetricsEnabled),
@@ -253,11 +267,82 @@ func provideSubscriptionPolicy(
 	scoper appmcp.RoleScoper,
 	composer appmcp.Composer,
 	plugins *appmcp.PluginRunner,
+	creds appmcp.CredentialResolver,
+	connector appmcp.SubscriptionConnector,
 ) appmcp.SubscriptionPolicy {
 	if !cfg.Server.MCPSubscriptions.Enabled {
 		return nil
 	}
+	if cfg.Server.MCPSubscriptions.UpstreamEnabled {
+		return appmcp.NewSubscriptionPolicyWithUpstream(
+			consumers,
+			scoper,
+			composer,
+			plugins,
+			creds,
+			connector,
+		)
+	}
 	return appmcp.NewSubscriptionPolicy(consumers, scoper, composer, plugins)
+}
+
+func provideSubscriptionConnector(cfg *config.Config) appmcp.SubscriptionConnector {
+	subs := cfg.Server.MCPSubscriptions
+	if !subs.Enabled || !subs.UpstreamEnabled {
+		return nil
+	}
+	return mcpclient.NewModernSubscriptionConnector(subs.MaxEventBytes, subs.UpstreamIdleTimeout)
+}
+
+func provideSubscriptionTargetResolver(
+	cfg *config.Config,
+	consumers appconsumer.DataFinder,
+	scoper appmcp.RoleScoper,
+	creds appmcp.CredentialResolver,
+) appmcp.SubscriptionTargetResolver {
+	subs := cfg.Server.MCPSubscriptions
+	if !subs.Enabled || !subs.UpstreamEnabled {
+		return nil
+	}
+	return appmcp.NewSubscriptionTargetResolver(consumers, scoper, creds)
+}
+
+func provideSubscriptionMultiplexer(
+	cfg *config.Config,
+	policy appmcp.SubscriptionPolicy,
+	connector appmcp.SubscriptionConnector,
+	targets appmcp.SubscriptionTargetResolver,
+) (*appmcp.SubscriptionMultiplexer, error) {
+	subs := cfg.Server.MCPSubscriptions
+	if !subs.Enabled || !subs.UpstreamEnabled {
+		return nil, nil
+	}
+	upstreamPolicy, ok := policy.(appmcp.UpstreamSubscriptionPolicy)
+	if !ok {
+		return nil, fmt.Errorf("mcp: upstream subscription policy is unavailable")
+	}
+	refresher, ok := targets.(appmcp.SubscriptionTargetRefresher)
+	if !ok {
+		return nil, fmt.Errorf("mcp: upstream subscription target refresher is unavailable")
+	}
+	return appmcp.NewSubscriptionMultiplexer(
+		context.Background(),
+		connector,
+		upstreamPolicy.AuthorizeEvent,
+		appmcp.SubscriptionMultiplexerOptions{
+			MaxListeners:         subs.MaxUpstreamListeners,
+			MaxPerOrigin:         subs.MaxUpstreamPerOrigin,
+			QueueCapacity:        subs.StreamQueue,
+			ReconnectAttempts:    subs.ReconnectMaxAttempts,
+			ReconnectBackoffMin:  subs.ReconnectBackoffMin,
+			ReconnectBackoffMax:  subs.ReconnectBackoffMax,
+			AuthorizationTimeout: appmcp.ReauthBudget(subs.ReauthInterval, subs.Keepalive),
+			Refresher:            refresher,
+			Recorder: mcphttp.NewSubscriptionSourceRecorder(
+				cfg.Telemetry.OpsMetricsEnabled,
+			),
+		},
+	)
 }
 
 // subscriptionsSupport carries the configured bounds to the handler. Nothing is
@@ -267,8 +352,14 @@ func subscriptionsSupport(
 	cfg config.MCPSubscriptionsConfig,
 	registry *appmcp.SubscriptionRegistry,
 	policy appmcp.SubscriptionPolicy,
+	targets appmcp.SubscriptionTargetResolver,
+	multiplexer *appmcp.SubscriptionMultiplexer,
 	recorder mcphttp.SubscriptionsRecorder,
 ) mcphttp.SubscriptionsSupport {
+	var source appmcp.SubscriptionSource
+	if multiplexer != nil {
+		source = multiplexer
+	}
 	return mcphttp.SubscriptionsSupport{
 		On:             cfg.Enabled,
 		MaxLifetime:    cfg.MaxLifetime,
@@ -279,6 +370,9 @@ func subscriptionsSupport(
 		Registry:       registry,
 		Policy:         policy,
 		Recorder:       recorder,
+		Upstream:       cfg.UpstreamEnabled,
+		Targets:        targets,
+		Source:         source,
 	}
 }
 
