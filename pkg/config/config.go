@@ -44,6 +44,10 @@ const (
 	defaultMCPMRTRTicketTTL            = 5 * time.Minute
 	defaultMCPMRTRMaxContinuationBytes = 256 * 1024
 
+	defaultMCPTaskHandleTTL           = time.Hour
+	defaultMCPTaskPollIntervalFloorMs = 1000
+	defaultMCPTaskHandleMaxBytes      = 1024
+
 	defaultDBHost                    = "localhost"
 	defaultDBPort                    = 5432
 	defaultDBUser                    = "trustgate"
@@ -239,6 +243,7 @@ type ServerConfig struct {
 	// their own. Empty Issuer disables it (behaviour unchanged).
 	MCPDefaultIdP MCPDefaultIdPConfig
 	MCPMRTR       MCPMRTRConfig
+	MCPTasks      MCPTasksConfig
 }
 
 // MCPMRTRConfig holds env-only HMAC ticket settings for modern tools/call MRTR.
@@ -248,6 +253,17 @@ type MCPMRTRConfig struct {
 	MaxRounds            int
 	TicketTTL            time.Duration
 	MaxContinuationBytes int
+}
+
+// MCPTasksConfig holds env-only settings for the io.modelcontextprotocol/tasks
+// extension. An empty HandleSecret disables task mediation entirely, which is the
+// rollback lever: the gateway then behaves exactly as it did before the feature.
+type MCPTasksConfig struct {
+	HandleSecret        string // #nosec G117 -- config struct field, not a hardcoded credential
+	HandleSecretPrev    string // #nosec G117 -- config struct field, not a hardcoded credential
+	HandleTTL           time.Duration
+	PollIntervalFloorMs int
+	HandleMaxBytes      int
 }
 
 // MCPDefaultIdPConfig configures the built-in NeuralTrust identity provider
@@ -487,6 +503,13 @@ func getServerConfig() ServerConfig {
 			MaxRounds:            defaultMCPMRTRMaxRounds,
 			TicketTTL:            defaultMCPMRTRTicketTTL,
 			MaxContinuationBytes: defaultMCPMRTRMaxContinuationBytes,
+		},
+		MCPTasks: MCPTasksConfig{
+			HandleSecret:        getEnv("MCP_TASK_HANDLE_SECRET", ""),
+			HandleSecretPrev:    getEnv("MCP_TASK_HANDLE_SECRET_PREV", ""),
+			HandleTTL:           getEnvDuration("MCP_TASK_HANDLE_TTL", defaultMCPTaskHandleTTL),
+			PollIntervalFloorMs: getEnvInt("MCP_TASK_POLL_INTERVAL_FLOOR_MS", defaultMCPTaskPollIntervalFloorMs),
+			HandleMaxBytes:      getEnvInt("MCP_TASK_HANDLE_MAX_BYTES", defaultMCPTaskHandleMaxBytes),
 		},
 	}
 }

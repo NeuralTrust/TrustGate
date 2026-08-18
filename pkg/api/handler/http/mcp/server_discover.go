@@ -22,9 +22,31 @@ import (
 )
 
 func serverDiscoveryResult(rc *appconsumer.RoutableConsumer, mrtr bool) map[string]any {
+	return serverDiscoveryResultWithTasks(rc, mrtr, false)
+}
+
+func serverDiscoveryResultWithTasks(rc *appconsumer.RoutableConsumer, mrtr, tasks bool) map[string]any {
+	capabilities := configuredCapabilities(rc, mrtr)
+	addTasksExtension(capabilities, tasks)
 	return map[string]any{
 		"supportedVersions": append([]string(nil), supportedProtocolVersions...),
-		"capabilities":      configuredCapabilities(rc, mrtr),
+		"capabilities":      capabilities,
+	}
+}
+
+// addTasksExtension advertises the extension only when tools are actually
+// visible to this consumer: the extension exists to carry a long-running
+// tools/call, so advertising it on a prompts-only surface would promise a
+// capability the consumer can never reach.
+func addTasksExtension(capabilities map[string]any, tasks bool) {
+	if !tasks {
+		return
+	}
+	if _, ok := capabilities["tools"]; !ok {
+		return
+	}
+	capabilities[appmcp.CapabilityKindExtensions] = map[string]any{
+		appmcp.MetaKeyTasksExtension: map[string]any{},
 	}
 }
 
@@ -66,6 +88,13 @@ func addCapability(capabilities map[string]any, kind string, mrtr bool) {
 // speak the modern protocol.
 func mrtrEndToEnd(signer *appmcp.TicketSigner, rc *appconsumer.RoutableConsumer) bool {
 	return signer.Enabled() && appmcp.HasNonLegacyMCPRegistry(rc)
+}
+
+// tasksEndToEnd reports whether TrustGate can actually mediate a task for this
+// consumer. It is answered from configuration and already-known registry state:
+// discovery never dials an upstream to find out.
+func tasksEndToEnd(tasks TasksSupport, rc *appconsumer.RoutableConsumer) bool {
+	return tasks.Enabled() && appmcp.HasNonLegacyMCPRegistry(rc)
 }
 
 func recordServerDiscovery(c *fiber.Ctx) {

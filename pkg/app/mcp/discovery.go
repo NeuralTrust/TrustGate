@@ -16,15 +16,12 @@ package mcp
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"golang.org/x/sync/errgroup"
 )
@@ -270,10 +267,15 @@ func discoveryKey(ctx context.Context, reg *registrydomain.Registry, kind string
 	if !perPrincipalAuth(reg) {
 		return key, true
 	}
-	p := identity.PrincipalFromContext(ctx)
-	if p == nil {
+	fingerprint := principalFingerprint(ctx)
+	if fingerprint == "" {
 		return "", false
 	}
-	sum := sha256.Sum256([]byte(p.Issuer + "|" + p.Subject))
-	return key + ":" + hex.EncodeToString(sum[:8]), true
+	// The cache key keeps the 64-bit prefix it has always used; the task handle
+	// binds the full digest.
+	return key + ":" + fingerprint[:discoveryFingerprintHexLen], true
 }
+
+// discoveryFingerprintHexLen is the hex width of the truncated principal digest
+// discovery cache keys are built from.
+const discoveryFingerprintHexLen = 16

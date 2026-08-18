@@ -15,6 +15,7 @@
 package mcp
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -30,12 +31,35 @@ var (
 	ErrMRTRReplayRejected  = fmt.Errorf("mcp: continuation rejected")
 	ErrMRTRRoundLimit      = fmt.Errorf("mcp: continuation round limit exceeded")
 	ErrInvalidContinuation = fmt.Errorf("mcp: invalid continuation")
+
+	ErrTaskHandleRejected     = fmt.Errorf("mcp: task rejected")
+	ErrTaskCapabilityRequired = fmt.Errorf("mcp: task capability required")
+	ErrTaskHandleTooLarge     = fmt.Errorf("mcp: task handle too large")
 )
 
 const (
 	CodeMRTRReplayRejected int64 = -32023
 	CodeMRTRRoundLimit     int64 = -32024
+	// CodeTaskCapabilityRequired tells a client it must declare the tasks
+	// extension before issuing tasks/*. It deliberately reuses neither -32003
+	// (consent required) nor -32021 (protocol acceptance denied).
+	CodeTaskCapabilityRequired int64 = -32025
+	// CodeTaskHandleRejected is plain invalid-params: every task handle refusal
+	// answers with it and one constant message, so the handle cannot be used as
+	// an existence oracle.
+	CodeTaskHandleRejected int64 = -32602
+	// CodeTaskHandleTooLarge is an internal failure: a handle TrustGate itself
+	// minted does not fit the configured bound.
+	CodeTaskHandleTooLarge int64 = -32603
 )
+
+// TaskHandleRejectedMessage is the one message every task rejection carries.
+// Tamper, expiry, a detached registry, a toolkit change, a purged upstream task,
+// and a credential failure must be indistinguishable on the wire.
+const TaskHandleRejectedMessage = "mcp: task rejected"
+
+// taskCapabilityRequiredData names the extension a client has to declare.
+const taskCapabilityRequiredData = `{"requiredCapabilities":["` + MetaKeyTasksExtension + `"]}`
 
 // MRTRReplayRPCError is the JSON-RPC error for a rejected continuation.
 func MRTRReplayRPCError() *RPCError {
@@ -45,6 +69,46 @@ func MRTRReplayRPCError() *RPCError {
 // MRTRRoundLimitRPCError is the JSON-RPC error for an exhausted continuation.
 func MRTRRoundLimitRPCError() *RPCError {
 	return &RPCError{Code: CodeMRTRRoundLimit, Message: ErrMRTRRoundLimit.Error()}
+}
+
+// TaskHandleRejectedRPCError is the single JSON-RPC error every task handle
+// refusal answers with: one constant message and never any data.
+func TaskHandleRejectedRPCError() *RPCError {
+	return &RPCError{Code: CodeTaskHandleRejected, Message: TaskHandleRejectedMessage}
+}
+
+// TaskCapabilityRequiredRPCError is the JSON-RPC error for a client that issued
+// tasks/* without declaring the extension.
+func TaskCapabilityRequiredRPCError() *RPCError {
+	return &RPCError{
+		Code:    CodeTaskCapabilityRequired,
+		Message: ErrTaskCapabilityRequired.Error(),
+		Data:    json.RawMessage(taskCapabilityRequiredData),
+	}
+}
+
+// TaskHandleTooLargeRPCError is the JSON-RPC error for a handle TrustGate minted
+// that exceeds the configured size bound.
+func TaskHandleTooLargeRPCError() *RPCError {
+	return &RPCError{Code: CodeTaskHandleTooLarge, Message: ErrTaskHandleTooLarge.Error()}
+}
+
+// MapTaskError converts task sentinels into their JSON-RPC errors and leaves
+// every other error untouched.
+func MapTaskError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, ErrTaskHandleTooLarge) {
+		return TaskHandleTooLargeRPCError()
+	}
+	if errors.Is(err, ErrTaskCapabilityRequired) {
+		return TaskCapabilityRequiredRPCError()
+	}
+	if errors.Is(err, ErrTaskHandleRejected) {
+		return TaskHandleRejectedRPCError()
+	}
+	return err
 }
 
 // MapMRTRError converts continuation sentinels into their JSON-RPC errors and

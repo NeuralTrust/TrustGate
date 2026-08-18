@@ -123,6 +123,7 @@ func (t *modernRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 	cloned.Header = req.Header.Clone()
 	cloned.Header.Set("Mcp-Protocol-Version", t.protocolVersion)
 	cloned.Header.Set("User-Agent", clientName+"/"+t.implementationVersion)
+	setModernRoutingHeaders(cloned)
 	resp, err := t.transport.RoundTrip(cloned)
 	if err != nil {
 		return nil, err

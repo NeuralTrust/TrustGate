@@ -128,6 +128,49 @@ func (r *otelMRTRRecorder) Record(ctx context.Context, outcome MRTROutcome, era,
 	r.counter.Add(ctx, 1, metric.WithAttributes(attrs...))
 }
 
+// TasksRecorder records bounded tasks-extension mediation outcomes.
+type TasksRecorder interface {
+	Record(ctx context.Context, operation, outcome, era string)
+}
+
+type otelTasksRecorder struct {
+	counter metric.Int64Counter
+}
+
+// NewTasksRecorder returns a no-op nil recorder unless ops metrics are enabled.
+func NewTasksRecorder(enabled bool) TasksRecorder {
+	if !enabled {
+		return nil
+	}
+	counter, err := otel.Meter("trustgate/mcp_northbound").Int64Counter(
+		"mcp.northbound.tasks.outcome_total",
+		metric.WithUnit("{outcome}"),
+	)
+	if err != nil {
+		return nil
+	}
+	return &otelTasksRecorder{counter: counter}
+}
+
+func (r *otelTasksRecorder) Record(ctx context.Context, operation, outcome, era string) {
+	if r == nil || r.counter == nil {
+		return
+	}
+	boundedOperation := trace.BoundTaskOperationLabel(operation)
+	boundedOutcome := trace.BoundTaskOutcome(outcome)
+	if boundedOperation == "" || boundedOutcome == "" {
+		return
+	}
+	attrs := []attribute.KeyValue{
+		attribute.String("operation", boundedOperation),
+		attribute.String("outcome", boundedOutcome),
+	}
+	if era != "" {
+		attrs = append(attrs, attribute.String("era", era))
+	}
+	r.counter.Add(ctx, 1, metric.WithAttributes(attrs...))
+}
+
 type mcpProtocolContextKey struct{}
 
 type mcpProtocolAttrs struct {
