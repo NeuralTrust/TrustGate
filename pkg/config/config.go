@@ -48,13 +48,20 @@ const (
 	defaultMCPTaskPollIntervalFloorMs = 1000
 	defaultMCPTaskHandleMaxBytes      = 1024
 
-	defaultMCPSubscriptionsReauthInterval  = 30 * time.Second
-	defaultMCPSubscriptionsKeepalive       = 15 * time.Second
-	defaultMCPSubscriptionsMaxStreams      = 128
-	defaultMCPSubscriptionsMaxPerConsumer  = 16
-	defaultMCPSubscriptionsMaxPerPrincipal = 4
-	defaultMCPSubscriptionsMaxEventBytes   = 8192
-	defaultMCPSubscriptionsMaxURIs         = 32
+	defaultMCPSubscriptionsReauthInterval       = 30 * time.Second
+	defaultMCPSubscriptionsKeepalive            = 15 * time.Second
+	defaultMCPSubscriptionsMaxStreams           = 128
+	defaultMCPSubscriptionsMaxPerConsumer       = 16
+	defaultMCPSubscriptionsMaxPerPrincipal      = 4
+	defaultMCPSubscriptionsMaxEventBytes        = 8192
+	defaultMCPSubscriptionsMaxURIs              = 32
+	defaultMCPSubscriptionsMaxUpstreamListeners = 256
+	defaultMCPSubscriptionsMaxUpstreamPerOrigin = 16
+	defaultMCPSubscriptionsStreamQueue          = 16
+	defaultMCPSubscriptionsUpstreamIdleTimeout  = 60 * time.Second
+	defaultMCPSubscriptionsReconnectMaxAttempts = 3
+	defaultMCPSubscriptionsReconnectBackoffMin  = 250 * time.Millisecond
+	defaultMCPSubscriptionsReconnectBackoffMax  = 5 * time.Second
 
 	// mcpSubscriptionsLifetimeMargin is the write-deadline headroom a lease must
 	// leave so its terminal frame is always deliverable. It is deliberately not
@@ -270,15 +277,23 @@ type MCPTasksConfig struct {
 // capability is advertised, and the gateway behaves exactly as it did before the
 // feature.
 type MCPSubscriptionsConfig struct {
-	Enabled         bool
-	MaxLifetime     time.Duration
-	ReauthInterval  time.Duration
-	Keepalive       time.Duration
-	MaxStreams      int
-	MaxPerConsumer  int
-	MaxPerPrincipal int
-	MaxEventBytes   int
-	MaxURIs         int
+	Enabled              bool
+	UpstreamEnabled      bool
+	MaxLifetime          time.Duration
+	ReauthInterval       time.Duration
+	Keepalive            time.Duration
+	MaxStreams           int
+	MaxPerConsumer       int
+	MaxPerPrincipal      int
+	MaxEventBytes        int
+	MaxURIs              int
+	MaxUpstreamListeners int
+	MaxUpstreamPerOrigin int
+	StreamQueue          int
+	UpstreamIdleTimeout  time.Duration
+	ReconnectMaxAttempts int
+	ReconnectBackoffMin  time.Duration
+	ReconnectBackoffMax  time.Duration
 }
 
 // MCPDefaultIdPConfig configures the built-in NeuralTrust identity provider
@@ -530,8 +545,9 @@ func getMCPSubscriptionsConfig(writeTimeout time.Duration) MCPSubscriptionsConfi
 		maxLifetime = min(writeTimeout-mcpSubscriptionsLifetimeMargin, mcpSubscriptionsLifetimeCeiling)
 	}
 	return MCPSubscriptionsConfig{
-		Enabled:     getEnvBool("MCP_SUBSCRIPTIONS_ENABLED", false),
-		MaxLifetime: maxLifetime,
+		Enabled:         getEnvBool("MCP_SUBSCRIPTIONS_ENABLED", false),
+		UpstreamEnabled: getEnvBool("MCP_SUBSCRIPTIONS_UPSTREAM_ENABLED", false),
+		MaxLifetime:     maxLifetime,
 		ReauthInterval: clampDuration(
 			getEnvDuration("MCP_SUBSCRIPTIONS_REAUTH_INTERVAL", defaultMCPSubscriptionsReauthInterval),
 			mcpSubscriptionsReauthFloor,
@@ -547,6 +563,31 @@ func getMCPSubscriptionsConfig(writeTimeout time.Duration) MCPSubscriptionsConfi
 		MaxPerPrincipal: getEnvInt("MCP_SUBSCRIPTIONS_MAX_PER_PRINCIPAL", defaultMCPSubscriptionsMaxPerPrincipal),
 		MaxEventBytes:   getEnvInt("MCP_SUBSCRIPTIONS_MAX_EVENT_BYTES", defaultMCPSubscriptionsMaxEventBytes),
 		MaxURIs:         getEnvInt("MCP_SUBSCRIPTIONS_MAX_URIS", defaultMCPSubscriptionsMaxURIs),
+		MaxUpstreamListeners: getEnvInt(
+			"MCP_SUBSCRIPTIONS_MAX_UPSTREAM_LISTENERS",
+			defaultMCPSubscriptionsMaxUpstreamListeners,
+		),
+		MaxUpstreamPerOrigin: getEnvInt(
+			"MCP_SUBSCRIPTIONS_MAX_UPSTREAM_PER_ORIGIN",
+			defaultMCPSubscriptionsMaxUpstreamPerOrigin,
+		),
+		StreamQueue: getEnvInt("MCP_SUBSCRIPTIONS_STREAM_QUEUE", defaultMCPSubscriptionsStreamQueue),
+		UpstreamIdleTimeout: getEnvDuration(
+			"MCP_SUBSCRIPTIONS_UPSTREAM_IDLE_TIMEOUT",
+			defaultMCPSubscriptionsUpstreamIdleTimeout,
+		),
+		ReconnectMaxAttempts: getEnvInt(
+			"MCP_SUBSCRIPTIONS_RECONNECT_MAX_ATTEMPTS",
+			defaultMCPSubscriptionsReconnectMaxAttempts,
+		),
+		ReconnectBackoffMin: getEnvDuration(
+			"MCP_SUBSCRIPTIONS_RECONNECT_BACKOFF_MIN",
+			defaultMCPSubscriptionsReconnectBackoffMin,
+		),
+		ReconnectBackoffMax: getEnvDuration(
+			"MCP_SUBSCRIPTIONS_RECONNECT_BACKOFF_MAX",
+			defaultMCPSubscriptionsReconnectBackoffMax,
+		),
 	}
 }
 
@@ -1092,6 +1133,42 @@ func (c MCPSubscriptionsConfig) Validate(writeTimeout time.Duration) error {
 		if entry.value <= 0 {
 			return fmt.Errorf("%w: %s must be a positive integer", errors.ErrInvalidConfig, entry.key)
 		}
+	}
+	if !c.UpstreamEnabled {
+		return nil
+	}
+	upstreamCaps := []struct {
+		key   string
+		value int
+	}{
+		{key: "MCP_SUBSCRIPTIONS_MAX_UPSTREAM_LISTENERS", value: c.MaxUpstreamListeners},
+		{key: "MCP_SUBSCRIPTIONS_MAX_UPSTREAM_PER_ORIGIN", value: c.MaxUpstreamPerOrigin},
+		{key: "MCP_SUBSCRIPTIONS_STREAM_QUEUE", value: c.StreamQueue},
+	}
+	for _, entry := range upstreamCaps {
+		if entry.value <= 0 {
+			return fmt.Errorf("%w: %s must be a positive integer", errors.ErrInvalidConfig, entry.key)
+		}
+	}
+	if c.UpstreamIdleTimeout <= 0 {
+		return fmt.Errorf("%w: MCP_SUBSCRIPTIONS_UPSTREAM_IDLE_TIMEOUT must be a positive duration", errors.ErrInvalidConfig)
+	}
+	if c.ReconnectMaxAttempts < 0 {
+		return fmt.Errorf("%w: MCP_SUBSCRIPTIONS_RECONNECT_MAX_ATTEMPTS must be zero or greater", errors.ErrInvalidConfig)
+	}
+	if c.ReconnectBackoffMin <= 0 {
+		return fmt.Errorf("%w: MCP_SUBSCRIPTIONS_RECONNECT_BACKOFF_MIN must be a positive duration", errors.ErrInvalidConfig)
+	}
+	if c.ReconnectBackoffMax <= 0 {
+		return fmt.Errorf("%w: MCP_SUBSCRIPTIONS_RECONNECT_BACKOFF_MAX must be a positive duration", errors.ErrInvalidConfig)
+	}
+	if c.ReconnectBackoffMin > c.ReconnectBackoffMax {
+		return fmt.Errorf(
+			"%w: MCP_SUBSCRIPTIONS_RECONNECT_BACKOFF_MIN (%s) must not exceed MCP_SUBSCRIPTIONS_RECONNECT_BACKOFF_MAX (%s)",
+			errors.ErrInvalidConfig,
+			c.ReconnectBackoffMin,
+			c.ReconnectBackoffMax,
+		)
 	}
 	return nil
 }

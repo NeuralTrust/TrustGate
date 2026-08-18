@@ -70,5 +70,10 @@ func StaticTarget(reg *registrydomain.Registry) Target {
 	if mode == "" {
 		mode = registrydomain.MCPProtocolModeAuto
 	}
-	return Target{URL: t.URL, Headers: headers, ProtocolMode: mode}
+	return Target{
+		URL:              t.URL,
+		Headers:          headers,
+		RegistryTargetID: reg.ID.String(),
+		ProtocolMode:     mode,
+	}
 }

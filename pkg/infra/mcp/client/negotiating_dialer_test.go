@@ -35,6 +35,52 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+func TestPrepareModernSubscriptionNeverFallsBackToLegacy(t *testing.T) {
+	t.Parallel()
+	target := appmcp.Target{
+		URL:          "https://upstream.example/mcp",
+		ProtocolMode: registrydomain.MCPProtocolModeAuto,
+	}
+	capabilities := appmcp.ListChangedCapabilities{Tools: true}
+	got, err := prepareModernSubscription(
+		context.Background(),
+		subscriptionProbeResult{outcome: probeOutcome{
+			kind:               probeModern,
+			version:            modernProtocolVersion,
+			capabilities:       capabilities,
+			subscriptionListen: true,
+		}},
+		target,
+	)
+	if err != nil || !got.Equal(capabilities) {
+		t.Fatalf("capabilities = %+v, error = %v", got, err)
+	}
+	_, err = prepareModernSubscription(
+		context.Background(),
+		subscriptionProbeResult{outcome: probeOutcome{kind: probeLegacyCandidate}},
+		target,
+	)
+	if !errors.Is(err, appmcp.ErrSubscriptionUnsupported) {
+		t.Fatalf("legacy candidate error = %v", err)
+	}
+	_, err = prepareModernSubscription(
+		context.Background(),
+		subscriptionProbeResult{err: appmcp.ErrSubscriptionAuthentication},
+		target,
+	)
+	if !errors.Is(err, appmcp.ErrSubscriptionAuthentication) {
+		t.Fatalf("authentication error = %v", err)
+	}
+	_, err = prepareModernSubscription(
+		context.Background(),
+		subscriptionProbeResult{err: &probeClassificationError{code: probeErrorInvalidResponse}},
+		target,
+	)
+	if !errors.Is(err, appmcp.ErrSubscriptionProtocol) {
+		t.Fatalf("malformed discovery error = %v", err)
+	}
+}
+
 type legacyConnectorFunc func(context.Context, appmcp.Target) (appmcp.Upstream, error)
 
 func (f legacyConnectorFunc) ConnectLegacy(ctx context.Context, target appmcp.Target) (appmcp.Upstream, error) {

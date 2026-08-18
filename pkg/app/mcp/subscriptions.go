@@ -139,6 +139,44 @@ type IsolationKey struct {
 	RoleScope  string
 }
 
+// SubscriptionIdentity is the complete independently authorized northbound binding identity.
+type SubscriptionIdentity struct {
+	GatewayID            string
+	ConsumerID           string
+	PrincipalFingerprint string
+	AuthID               string
+	RegistryID           string
+	RoleScopeFingerprint string
+	Path                 string
+}
+
+// String returns a safe label without exposing subscriber identity.
+func (SubscriptionIdentity) String() string {
+	return "mcp-subscription-binding"
+}
+
+// SubscriptionRequest binds one role-scoped registry target to requested kinds.
+type SubscriptionRequest struct {
+	Identity  SubscriptionIdentity
+	Target    Target
+	Requested HonouredSet
+}
+
+// SubscriptionHandle owns one bounded northbound event queue and terminal state.
+type SubscriptionHandle interface {
+	Events() <-chan SubscriptionEvent
+	Done() <-chan struct{}
+	Err() error
+	Authorize(ctx context.Context, event SubscriptionEvent) error
+	Close()
+}
+
+// SubscriptionSource atomically attaches northbound bindings and owns outbound lifecycle.
+type SubscriptionSource interface {
+	Attach(ctx context.Context, requests []SubscriptionRequest) (SubscriptionHandle, HonouredSet, error)
+	Close(ctx context.Context) error
+}
+
 // NewIsolationKey derives the key for the acting request. The principal is the
 // full fingerprint, not the truncation used for cache keys, so two subjects
 // cannot collide into one stream identity.
