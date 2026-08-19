@@ -20,12 +20,14 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"golang.org/x/net/publicsuffix"
 )
 
 const (
@@ -47,6 +49,14 @@ const (
 	defaultMCPTaskHandleTTL           = time.Hour
 	defaultMCPTaskPollIntervalFloorMs = 1000
 	defaultMCPTaskHandleMaxBytes      = 1024
+
+	defaultMCPAppsMaxResourceBytes       = 1024 * 1024
+	minMCPAppsMaxResourceBytes           = 64 * 1024
+	maxMCPAppsMaxResourceBytes           = 2 * 1024 * 1024
+	defaultMCPAppsCSPOriginsPerDirective = 16
+	maxMCPAppsCSPOriginsPerDirective     = 64
+	defaultMCPAppsCSPOriginsTotal        = 64
+	maxMCPAppsCSPOriginsTotal            = 64
 
 	defaultMCPSubscriptionsReauthInterval       = 30 * time.Second
 	defaultMCPSubscriptionsKeepalive            = 15 * time.Second
@@ -249,6 +259,7 @@ type ServerConfig struct {
 	MCPDefaultIdP    MCPDefaultIdPConfig
 	MCPMRTR          MCPMRTRConfig
 	MCPTasks         MCPTasksConfig
+	MCPApps          MCPAppsConfig
 	MCPSubscriptions MCPSubscriptionsConfig
 }
 
@@ -270,6 +281,16 @@ type MCPTasksConfig struct {
 	HandleTTL           time.Duration
 	PollIntervalFloorMs int
 	HandleMaxBytes      int
+}
+
+// MCPAppsConfig defines the disabled-by-default policy bounds for MCP Apps.
+type MCPAppsConfig struct {
+	Enabled                   bool
+	MaxResourceBytes          int
+	MaxCSPOriginsPerDirective int
+	MaxCSPOriginsTotal        int
+	AllowedOriginPatterns     []string
+	AllowedPermissions        []string
 }
 
 // MCPSubscriptionsConfig holds env-only settings for bounded subscriptions/listen
@@ -458,9 +479,15 @@ func LoadConfig() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	mcpApps, err := getMCPAppsConfig()
+	if err != nil {
+		return nil, err
+	}
+	server := getServerConfig()
+	server.MCPApps = mcpApps
 	cfg := &Config{
 		AppEnv:              getEnv("APP_ENV", defaultAppEnv),
-		Server:              getServerConfig(),
+		Server:              server,
 		Database:            getDatabaseConfig(),
 		Redis:               getRedisConfig(),
 		Cache:               getCacheConfig(),
@@ -535,6 +562,36 @@ func getServerConfig() ServerConfig {
 		},
 		MCPSubscriptions: getMCPSubscriptionsConfig(writeTimeout),
 	}
+}
+
+func getMCPAppsConfig() (MCPAppsConfig, error) {
+	enabled, err := parseStrictBoolEnv("MCP_APPS_ENABLED", false)
+	if err != nil {
+		return MCPAppsConfig{}, err
+	}
+	limits := [...]struct {
+		key          string
+		defaultValue int
+	}{
+		{"MCP_APPS_MAX_RESOURCE_BYTES", defaultMCPAppsMaxResourceBytes},
+		{"MCP_APPS_MAX_CSP_ORIGINS_PER_DIRECTIVE", defaultMCPAppsCSPOriginsPerDirective},
+		{"MCP_APPS_MAX_CSP_ORIGINS_TOTAL", defaultMCPAppsCSPOriginsTotal},
+	}
+	values := make([]int, len(limits))
+	for i, limit := range limits {
+		values[i], err = parsePositiveIntEnv(limit.key, limit.defaultValue)
+		if err != nil {
+			return MCPAppsConfig{}, err
+		}
+	}
+	return MCPAppsConfig{
+		Enabled:                   enabled,
+		MaxResourceBytes:          values[0],
+		MaxCSPOriginsPerDirective: values[1],
+		MaxCSPOriginsTotal:        values[2],
+		AllowedOriginPatterns:     splitCSV(os.Getenv("MCP_APPS_ALLOWED_ORIGINS")),
+		AllowedPermissions:        splitCSV(os.Getenv("MCP_APPS_ALLOWED_PERMISSIONS")),
+	}, nil
 }
 
 // getMCPSubscriptionsConfig derives the lease bounds from the write timeout the
@@ -1090,6 +1147,13 @@ func (c *Config) Validate() error {
 	if err := c.Server.MCPSubscriptions.Validate(c.Server.WriteTimeout); err != nil {
 		return err
 	}
+	apps := &c.Server.MCPApps
+	if apps.Enabled || apps.MaxResourceBytes != 0 || apps.MaxCSPOriginsPerDirective != 0 ||
+		apps.MaxCSPOriginsTotal != 0 || len(apps.AllowedOriginPatterns) != 0 || len(apps.AllowedPermissions) != 0 {
+		if err := apps.Validate(); err != nil {
+			return err
+		}
+	}
 	if c.isDeployed() && c.ConfigSync.DataPlaneEnabled && c.ConfigSync.TLSInsecure {
 		return fmt.Errorf("%w: CONFIG_SYNC_TLS_INSECURE must not be true in deployed environments so the config-sync channel is not sent in cleartext", errors.ErrInvalidConfig)
 	}
@@ -1100,6 +1164,155 @@ func (c *Config) Validate() error {
 		return err
 	}
 	return nil
+}
+
+// Validate checks and normalizes MCP Apps policy settings.
+func (c *MCPAppsConfig) Validate() error {
+	bounds := [...]struct {
+		key                     string
+		value, minimum, maximum int
+	}{
+		{"MCP_APPS_MAX_RESOURCE_BYTES", c.MaxResourceBytes, minMCPAppsMaxResourceBytes, maxMCPAppsMaxResourceBytes},
+		{"MCP_APPS_MAX_CSP_ORIGINS_PER_DIRECTIVE", c.MaxCSPOriginsPerDirective, 1, maxMCPAppsCSPOriginsPerDirective},
+		{"MCP_APPS_MAX_CSP_ORIGINS_TOTAL", c.MaxCSPOriginsTotal, 1, maxMCPAppsCSPOriginsTotal},
+	}
+	for _, bound := range bounds {
+		if bound.value < bound.minimum || bound.value > bound.maximum {
+			return fmt.Errorf("%w: %s must be between %d and %d", errors.ErrInvalidConfig, bound.key, bound.minimum, bound.maximum)
+		}
+	}
+	if c.MaxCSPOriginsPerDirective > c.MaxCSPOriginsTotal {
+		return fmt.Errorf("%w: MCP_APPS_MAX_CSP_ORIGINS_PER_DIRECTIVE must not exceed MCP_APPS_MAX_CSP_ORIGINS_TOTAL", errors.ErrInvalidConfig)
+	}
+	if len(c.AllowedOriginPatterns) > c.MaxCSPOriginsTotal {
+		return fmt.Errorf("%w: MCP_APPS_ALLOWED_ORIGINS exceeds MCP_APPS_MAX_CSP_ORIGINS_TOTAL", errors.ErrInvalidConfig)
+	}
+	if len(c.AllowedPermissions) > 4 {
+		return fmt.Errorf("%w: MCP_APPS_ALLOWED_PERMISSIONS must not contain more than four entries", errors.ErrInvalidConfig)
+	}
+	origins := make([]string, 0, len(c.AllowedOriginPatterns))
+	seenOrigins := make(map[string]struct{}, len(c.AllowedOriginPatterns))
+	for index, pattern := range c.AllowedOriginPatterns {
+		origin, err := normalizeMCPAppsOrigin(pattern)
+		if err != nil {
+			return fmt.Errorf("%w: MCP_APPS_ALLOWED_ORIGINS entry %d is invalid: %v", errors.ErrInvalidConfig, index+1, err)
+		}
+		if _, exists := seenOrigins[origin]; exists {
+			return fmt.Errorf("%w: MCP_APPS_ALLOWED_ORIGINS contains a duplicate origin", errors.ErrInvalidConfig)
+		}
+		seenOrigins[origin] = struct{}{}
+		origins = append(origins, origin)
+	}
+	seenPermissions := make(map[string]struct{}, len(c.AllowedPermissions))
+	for index, permission := range c.AllowedPermissions {
+		switch permission {
+		case "camera", "microphone", "geolocation", "clipboardWrite":
+		default:
+			return fmt.Errorf("%w: MCP_APPS_ALLOWED_PERMISSIONS entry %d is unsupported", errors.ErrInvalidConfig, index+1)
+		}
+		if _, exists := seenPermissions[permission]; exists {
+			return fmt.Errorf("%w: MCP_APPS_ALLOWED_PERMISSIONS contains a duplicate entry", errors.ErrInvalidConfig)
+		}
+		seenPermissions[permission] = struct{}{}
+	}
+	c.AllowedOriginPatterns = origins
+	return nil
+}
+
+func normalizeMCPAppsOrigin(pattern string) (string, error) {
+	if strings.Contains(pattern, "*") {
+		return "", fmt.Errorf("wildcards are not allowed")
+	}
+	if !strings.HasPrefix(pattern, "https://") && !strings.HasPrefix(pattern, "wss://") {
+		return "", fmt.Errorf("must be a lowercase https or wss origin")
+	}
+	if strings.ContainsAny(pattern, "?#") {
+		return "", fmt.Errorf("query and fragment are not allowed")
+	}
+	parsed, err := url.Parse(pattern)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "wss") || parsed.Host == "" {
+		return "", fmt.Errorf("must be an https or wss origin")
+	}
+	if parsed.User != nil || parsed.Path != "" || parsed.Opaque != "" {
+		return "", fmt.Errorf("credentials and paths are not allowed")
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if !validMCPAppsHostname(host) || net.ParseIP(host) != nil || numericMCPAppsHost(host) {
+		return "", fmt.Errorf("host is not allowed")
+	}
+	if mcpAppsRebindingHost(host) {
+		return "", fmt.Errorf("host is not allowed")
+	}
+	_, icann := publicsuffix.PublicSuffix(host)
+	if !icann {
+		return "", fmt.Errorf("host must use an ICANN public suffix")
+	}
+	if _, err := publicsuffix.EffectiveTLDPlusOne(host); err != nil {
+		return "", fmt.Errorf("host must have a registrable domain")
+	}
+	port := parsed.Port()
+	if port == "" && strings.Contains(parsed.Host, ":") {
+		return "", fmt.Errorf("port is malformed or is the default port")
+	}
+	if port != "" {
+		number, err := strconv.Atoi(port)
+		if err != nil || number < 1 || number > 65535 || strconv.Itoa(number) != port || number == 443 {
+			return "", fmt.Errorf("port is malformed or is the default port")
+		}
+		port = ":" + port
+	}
+	return parsed.Scheme + "://" + host + port, nil
+}
+
+func mcpAppsRebindingHost(host string) bool {
+	for _, zone := range [...]string{"nip.io", "sslip.io", "xip.io", "localtest.me", "lvh.me"} {
+		if host == zone || strings.HasSuffix(host, "."+zone) {
+			return true
+		}
+	}
+	return false
+}
+
+func numericMCPAppsHost(host string) bool {
+	parts := strings.Split(host, ".")
+	if len(parts) > 4 {
+		return false
+	}
+	for _, part := range parts {
+		digits := part
+		base := byte('9')
+		if strings.HasPrefix(part, "0x") {
+			digits = part[2:]
+			base = 'f'
+		}
+		if digits == "" {
+			return false
+		}
+		for index := range digits {
+			value := digits[index]
+			if (value < '0' || value > '9') && (base != 'f' || value < 'a' || value > 'f') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func validMCPAppsHostname(host string) bool {
+	if host == "" || len(host) > 253 || strings.HasSuffix(host, ".") {
+		return false
+	}
+	for _, label := range strings.Split(host, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for i := range label {
+			if b := label[i]; (b < 'a' || b > 'z') && (b < '0' || b > '9') && b != '-' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // Validate refuses to boot when a lease could outlive the server write deadline.

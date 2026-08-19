@@ -79,6 +79,100 @@ func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	if cfg.Telemetry.ExportersMetadata != "" || cfg.Telemetry.ExportersRaw != "" {
 		t.Errorf("Telemetry exporters env defaults = %q/%q, want empty", cfg.Telemetry.ExportersMetadata, cfg.Telemetry.ExportersRaw)
 	}
+	apps := cfg.Server.MCPApps
+	if apps.Enabled || apps.MaxResourceBytes != 1024*1024 ||
+		apps.MaxCSPOriginsPerDirective != 16 || apps.MaxCSPOriginsTotal != 64 ||
+		len(apps.AllowedOriginPatterns) != 0 || len(apps.AllowedPermissions) != 0 {
+		t.Errorf("MCP Apps defaults = %+v", apps)
+	}
+}
+
+func TestLoadConfig_MCPAppsPolicy(t *testing.T) {
+	minimumEnv(t)
+	t.Setenv("MCP_APPS_ENABLED", "true")
+	t.Setenv("MCP_APPS_MAX_RESOURCE_BYTES", "65536")
+	t.Setenv("MCP_APPS_MAX_CSP_ORIGINS_PER_DIRECTIVE", "8")
+	t.Setenv("MCP_APPS_MAX_CSP_ORIGINS_TOTAL", "32")
+	t.Setenv("MCP_APPS_ALLOWED_ORIGINS", "https://EXAMPLE.com,wss://events.example.com:8443")
+	t.Setenv("MCP_APPS_ALLOWED_PERMISSIONS", "camera,clipboardWrite")
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	apps := cfg.Server.MCPApps
+	if !apps.Enabled || apps.MaxResourceBytes != 65536 ||
+		strings.Join(apps.AllowedOriginPatterns, ",") != "https://example.com,wss://events.example.com:8443" ||
+		strings.Join(apps.AllowedPermissions, ",") != "camera,clipboardWrite" {
+		t.Fatalf("MCP Apps policy = %+v", apps)
+	}
+}
+
+func TestLoadConfig_RejectsInvalidMCPAppsPolicy(t *testing.T) {
+	settings := map[string][2]string{
+		"resource below minimum": {"MCP_APPS_MAX_RESOURCE_BYTES", "65535"},
+		"resource above maximum": {"MCP_APPS_MAX_RESOURCE_BYTES", "2097153"},
+		"CSP directive overflow": {"MCP_APPS_MAX_CSP_ORIGINS_PER_DIRECTIVE", "65"},
+		"CSP total overflow":     {"MCP_APPS_MAX_CSP_ORIGINS_TOTAL", "65"},
+		"unknown permission":     {"MCP_APPS_ALLOWED_PERMISSIONS", "clipboard-read"},
+		"duplicate permission":   {"MCP_APPS_ALLOWED_PERMISSIONS", "camera,camera"},
+	}
+	for name, env := range settings {
+		t.Run(name, func(t *testing.T) {
+			minimumEnv(t)
+			t.Setenv(env[0], env[1])
+			_, err := LoadConfig()
+			if err == nil || !stderrors.Is(err, errors.ErrInvalidConfig) || strings.Contains(err.Error(), env[1]) {
+				t.Fatalf("LoadConfig error = %v, want ErrInvalidConfig", err)
+			}
+		})
+	}
+	origins := []string{
+		"https://example.com/app", "https://example.com?x=1", "https://example.com#app",
+		"https://user@example.com", "https://192.0.2.1", "https://[::1]", "https://127.1",
+		"https://127.0.1", "https://0177.0.0.1", "https://127.000.000.001",
+		"https://2130706433", "https://0x7f000001", "HTTPS://example.com", "https://localhost",
+		"https://api.localhost", "https://service.localdomain", "https://service.internal",
+		"https://service.local", "https://service.corp", "https://app.github.io", "https://*.example.com",
+		"https://nip.io", "https://127.0.0.1.nip.io", "https://a.sslip.io", "https://xip.io",
+		"https://foo.localtest.me", "https://lvh.me",
+		"https://example.com:443", "https://example.com:", "https://EXAMPLE.com,https://example.com",
+	}
+	for _, origin := range origins {
+		minimumEnv(t)
+		t.Setenv("MCP_APPS_ALLOWED_ORIGINS", origin)
+		_, err := LoadConfig()
+		if err == nil || !stderrors.Is(err, errors.ErrInvalidConfig) || strings.Contains(err.Error(), origin) {
+			t.Errorf("origin %q rejection error = %v", origin, err)
+		}
+	}
+}
+
+func TestMCPAppsConfigValidateDirectBounds(t *testing.T) {
+	valid := func() MCPAppsConfig {
+		return MCPAppsConfig{MaxResourceBytes: 64 * 1024, MaxCSPOriginsPerDirective: 1, MaxCSPOriginsTotal: 1}
+	}
+	reject := func(name string, mutate func(*MCPAppsConfig)) {
+		t.Helper()
+		cfg := valid()
+		mutate(&cfg)
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("%s: Validate succeeded", name)
+		}
+	}
+	reject("zero resource", func(c *MCPAppsConfig) { c.MaxResourceBytes = 0 })
+	reject("zero config", func(c *MCPAppsConfig) { *c = MCPAppsConfig{} })
+	reject("large resource", func(c *MCPAppsConfig) { c.MaxResourceBytes = 2*1024*1024 + 1 })
+	reject("zero per directive", func(c *MCPAppsConfig) { c.MaxCSPOriginsPerDirective = 0 })
+	reject("large per directive", func(c *MCPAppsConfig) { c.MaxCSPOriginsPerDirective = 65 })
+	reject("zero total", func(c *MCPAppsConfig) { c.MaxCSPOriginsTotal = 0 })
+	reject("large total", func(c *MCPAppsConfig) { c.MaxCSPOriginsTotal = 65 })
+	reject("per exceeds total", func(c *MCPAppsConfig) { c.MaxCSPOriginsPerDirective = 2 })
+	reject("too many origins", func(c *MCPAppsConfig) {
+		c.AllowedOriginPatterns = []string{"https://a.com", "https://b.com"}
+	})
+	reject("too many permissions", func(c *MCPAppsConfig) {
+		c.AllowedPermissions = []string{"camera", "microphone", "geolocation", "clipboardWrite", "camera"}
+	})
 }
 
 func TestLoadConfig_MCPConnectRateLimitConfigured(t *testing.T) {
