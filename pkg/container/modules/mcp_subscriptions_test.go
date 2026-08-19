@@ -27,6 +27,10 @@ import (
 	"go.uber.org/dig"
 )
 
+func TestMCPAppsProductionPipelineIsNotReady(t *testing.T) {
+	require.False(t, mcpAppsPipelineReady)
+}
+
 func subscriptionsConfig(enabled bool) *config.Config {
 	cfg := &config.Config{}
 	cfg.Server.MCPSubscriptions = config.MCPSubscriptionsConfig{

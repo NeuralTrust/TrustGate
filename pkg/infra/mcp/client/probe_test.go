@@ -29,7 +29,10 @@ import (
 	"testing"
 	"time"
 
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/version"
@@ -1222,6 +1225,46 @@ func testAppsResolver(transport http.RoundTripper) *AppCapabilityResolver {
 	resolver.transport = transport
 	return resolver
 }
+
+type appsCredentialPassthrough struct{}
+
+func (appsCredentialPassthrough) Apply(context.Context, *appconsumer.RoutableConsumer, *registrydomain.Registry, *appmcp.Target) error {
+	return nil
+}
+
+func TestAppsMediatorCancelsRealResolverFlights(t *testing.T) {
+	started := make(chan struct{}, 2)
+	var active atomic.Int32
+	resolver := testAppsResolver(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Host == "positive.example" {
+			<-started
+			<-started
+			return appsResponse(appsPositive), nil
+		}
+		active.Add(1)
+		started <- struct{}{}
+		defer active.Add(-1)
+		<-req.Context().Done()
+		return nil, req.Context().Err()
+	}))
+	rc := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{}}
+	for _, host := range []string{"slow-a.example", "slow-b.example", "positive.example"} {
+		rc.Registries = append(rc.Registries, &registrydomain.Registry{
+			ID: ids.New[ids.RegistryKind](), Type: registrydomain.TypeMCP, Enabled: true,
+			MCPTarget: &registrydomain.MCPTarget{URL: "https://" + host + "/mcp", ProtocolMode: registrydomain.MCPProtocolModeModern},
+		})
+	}
+	if !appmcp.NewAppsMediator(true, true, appsCredentialPassthrough{}, resolver).
+		Advertise(context.Background(), true, rc, appmcp.MCPAppsClientCapability{MIMETypes: []string{appmcp.MCPAppsHTMLMIMEType}}) {
+		t.Fatal("positive real resolver did not advertise")
+	}
+	resolver.mu.Lock()
+	defer resolver.mu.Unlock()
+	if active.Load() != 0 || len(resolver.flights) != 0 {
+		t.Fatalf("active=%d flights=%d", active.Load(), len(resolver.flights))
+	}
+}
+
 func TestParseAppsCapability(t *testing.T) {
 	tests := map[string]error{
 		`{}`: ErrAppCapabilityUnsupported,

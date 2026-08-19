@@ -88,6 +88,7 @@ func TestServerDiscoveryResultAdvertisesListChanged(t *testing.T) {
 		policy      *consumerdomain.MCPPolicy
 		mrtr        bool
 		tasks       bool
+		apps        bool
 		listChanged bool
 		want        map[string]any
 	}{
@@ -121,6 +122,7 @@ func TestServerDiscoveryResultAdvertisesListChanged(t *testing.T) {
 		{
 			name:        "on survives the tasks extension",
 			tasks:       true,
+			apps:        true,
 			listChanged: true,
 			want: map[string]any{
 				"tools":     map[string]any{"listChanged": true},
@@ -128,6 +130,9 @@ func TestServerDiscoveryResultAdvertisesListChanged(t *testing.T) {
 				"resources": map[string]any{"listChanged": true},
 				"extensions": map[string]any{
 					"io.modelcontextprotocol/tasks": map[string]any{},
+					"io.modelcontextprotocol/ui": map[string]any{
+						"mimeTypes": []string{"text/html;profile=mcp-app"},
+					},
 				},
 			},
 		},
@@ -157,6 +162,7 @@ func TestServerDiscoveryResultAdvertisesListChanged(t *testing.T) {
 				Consumer: &consumerdomain.Consumer{MCP: tc.policy},
 			}
 			result := serverDiscoveryResultWith(rc, tc.mrtr, tc.tasks, tc.listChanged)
+			addAppsExtension(result["capabilities"].(map[string]any), tc.apps)
 			require.Equal(t, tc.want, result["capabilities"])
 		})
 	}
