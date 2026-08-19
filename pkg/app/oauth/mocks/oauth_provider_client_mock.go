@@ -194,6 +194,65 @@ func (_c *ProviderClient_Refresh_Call) RunAndReturn(run func(context.Context, *r
 	return _c
 }
 
+// ClientCredentials provides a mock function with given fields: ctx, cfg
+func (_m *ProviderClient) ClientCredentials(ctx context.Context, cfg *registry.MCPAuth) (*oauth.ProviderToken, error) {
+	ret := _m.Called(ctx, cfg)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ClientCredentials")
+	}
+
+	var r0 *oauth.ProviderToken
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, *registry.MCPAuth) (*oauth.ProviderToken, error)); ok {
+		return rf(ctx, cfg)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, *registry.MCPAuth) *oauth.ProviderToken); ok {
+		r0 = rf(ctx, cfg)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*oauth.ProviderToken)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, *registry.MCPAuth) error); ok {
+		r1 = rf(ctx, cfg)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// ProviderClient_ClientCredentials_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ClientCredentials'
+type ProviderClient_ClientCredentials_Call struct {
+	*mock.Call
+}
+
+// ClientCredentials is a helper method to define mock.On call
+//   - ctx context.Context
+//   - cfg *registry.MCPAuth
+func (_e *ProviderClient_Expecter) ClientCredentials(ctx interface{}, cfg interface{}) *ProviderClient_ClientCredentials_Call {
+	return &ProviderClient_ClientCredentials_Call{Call: _e.mock.On("ClientCredentials", ctx, cfg)}
+}
+
+func (_c *ProviderClient_ClientCredentials_Call) Run(run func(ctx context.Context, cfg *registry.MCPAuth)) *ProviderClient_ClientCredentials_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(*registry.MCPAuth))
+	})
+	return _c
+}
+
+func (_c *ProviderClient_ClientCredentials_Call) Return(_a0 *oauth.ProviderToken, _a1 error) *ProviderClient_ClientCredentials_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *ProviderClient_ClientCredentials_Call) RunAndReturn(run func(context.Context, *registry.MCPAuth) (*oauth.ProviderToken, error)) *ProviderClient_ClientCredentials_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // NewProviderClient creates a new instance of ProviderClient. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewProviderClient(t interface {

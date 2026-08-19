@@ -17,6 +17,8 @@ package otlp
 import (
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -45,15 +47,20 @@ const (
 	compressionGzip = "gzip"
 	compressionNone = "none"
 
-	defaultProtocol     = ProtocolGRPC
-	defaultSignal       = SignalLogs
-	defaultCompression  = compressionGzip
-	defaultTimeout      = 10 * time.Second
+	defaultProtocol    = ProtocolHTTP
+	defaultSignal      = SignalLogs
+	defaultCompression = compressionGzip
+	defaultTimeout     = 10 * time.Second
 	// Kept above events.MaxSanitizedBodyBytes on purpose: the sanitizer is the
 	// only component allowed to truncate a body, because it marks the cut. When
 	// this limit is the smaller of the two the SDK silently slices attributes
 	// mid-JSON, which drops the trailing usage chunk of streamed responses.
 	defaultMaxBodyBytes = 2 * 1024 * 1024
+
+	otlpGRPCPort = "4317"
+	otlpHTTPPort = "4318"
+
+	logsSignalPath = "/v1/logs"
 )
 
 // TLSSettings configures mutual or server-only TLS for the OTLP transport.
@@ -116,7 +123,7 @@ func parseSettings(raw map[string]interface{}, env config.OTLPConfig) (Settings,
 	}
 
 	if s.Protocol == "" {
-		s.Protocol = defaultProtocol
+		s.Protocol = resolveProtocol(s.Endpoint)
 	}
 	if s.Signal == "" {
 		s.Signal = defaultSignal
@@ -133,6 +140,62 @@ func parseSettings(raw map[string]interface{}, env config.OTLPConfig) (Settings,
 	return s, nil
 }
 
+// resolveProtocol picks the wire protocol for exporters that declare none, either
+// in their settings or through OTEL_EXPORTER_OTLP_PROTOCOL: a gRPC client aimed at
+// an OTLP/HTTP collector fails on every export rather than at boot. A path
+// (/v1/logs) or port 4318 only exist on the HTTP form; gRPC endpoints are
+// host:4317.
+func resolveProtocol(endpoint string) Protocol {
+	host, path := splitEndpoint(endpoint)
+	if strings.Trim(path, "/") != "" {
+		return ProtocolHTTP
+	}
+	switch portOf(host) {
+	case otlpHTTPPort:
+		return ProtocolHTTP
+	case otlpGRPCPort:
+		return ProtocolGRPC
+	}
+	return defaultProtocol
+}
+
+// splitEndpoint separates the authority from the path of an OTLP endpoint, which
+// may be a full URL or a bare host:port.
+func splitEndpoint(endpoint string) (host, path string) {
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		return "", ""
+	}
+	if !hasScheme(endpoint) {
+		endpoint = "//" + endpoint
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return endpoint, ""
+	}
+	return u.Host, u.Path
+}
+
+// withLogsPath appends the logs signal path to an endpoint URL that omits it.
+// WithEndpointURL takes the path verbatim and marks it as set, which suppresses
+// the SDK's own /v1/logs fallback and posts every batch to the server root.
+func withLogsPath(endpoint string) string {
+	endpoint = strings.TrimSpace(endpoint)
+	if _, path := splitEndpoint(endpoint); strings.Trim(path, "/") != "" {
+		return endpoint
+	}
+	return strings.TrimSuffix(endpoint, "/") + logsSignalPath
+}
+
+// portOf returns the port of an authority, or an empty string when it carries none.
+func portOf(host string) string {
+	_, port, err := net.SplitHostPort(host)
+	if err != nil {
+		return ""
+	}
+	return port
+}
+
 // validate performs structural validation only; it never performs network I/O.
 func (s Settings) validate() error {
 	if strings.TrimSpace(s.Endpoint) == "" {
@@ -142,6 +205,14 @@ func (s Settings) validate() error {
 	case ProtocolGRPC, ProtocolHTTP:
 	default:
 		return fmt.Errorf("otlp: invalid protocol %q (want %q or %q)", s.Protocol, ProtocolGRPC, ProtocolHTTP)
+	}
+	if s.Protocol == ProtocolGRPC {
+		if _, path := splitEndpoint(s.Endpoint); strings.Trim(path, "/") != "" {
+			return fmt.Errorf(
+				"otlp: grpc endpoint %q must not carry a path; drop it or set protocol %q",
+				s.Endpoint, ProtocolHTTP,
+			)
+		}
 	}
 	switch s.Signal {
 	case SignalLogs:

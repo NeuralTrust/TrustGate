@@ -25,12 +25,15 @@ import (
 
 type MCPServerCatalog interface {
 	ListMCPServers() []domain.MCPServer
+	// GetByCode returns the curated entry for code, or false when unknown.
+	GetByCode(code string) (domain.MCPServer, bool)
 }
 
 var _ MCPServerCatalog = (*mcpServerCatalog)(nil)
 
 type mcpServerCatalog struct {
 	servers []domain.MCPServer
+	byCode  map[string]domain.MCPServer
 }
 
 // NewMCPServerCatalog loads the curated catalog of remote MCP servers embedded
@@ -41,13 +44,22 @@ func NewMCPServerCatalog() (MCPServerCatalog, error) {
 	if err != nil {
 		return nil, fmt.Errorf("loading curated mcp catalog: %w", err)
 	}
-	return &mcpServerCatalog{servers: servers}, nil
+	byCode := make(map[string]domain.MCPServer, len(servers))
+	for _, s := range servers {
+		byCode[s.Code] = s
+	}
+	return &mcpServerCatalog{servers: servers, byCode: byCode}, nil
 }
 
 func (c *mcpServerCatalog) ListMCPServers() []domain.MCPServer {
 	out := make([]domain.MCPServer, len(c.servers))
 	copy(out, c.servers)
 	return out
+}
+
+func (c *mcpServerCatalog) GetByCode(code string) (domain.MCPServer, bool) {
+	s, ok := c.byCode[code]
+	return s, ok
 }
 
 const curatedSource = "curated"
@@ -63,6 +75,9 @@ const (
 // registrationAuto marks OAuth servers whose client self-registers (DCR), so no
 // operator configuration is needed before connecting.
 const registrationAuto = "auto"
+
+// grantTypeClientCredentials marks machine-to-machine OAuth in the catalog.
+const grantTypeClientCredentials = "client_credentials"
 
 // rawCatalog mirrors the schema of seed/mcp-catalog/enterprise-servers.json.
 type rawCatalog struct {
@@ -175,6 +190,9 @@ func requiresConfig(s rawServer) bool {
 	case authHintStatic:
 		return true
 	case authHintOAuth:
+		if s.OAuth != nil && s.OAuth.GrantType == grantTypeClientCredentials {
+			return true
+		}
 		return s.OAuth.Registration != registrationAuto
 	default:
 		return true

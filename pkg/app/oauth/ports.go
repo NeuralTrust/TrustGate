@@ -34,6 +34,7 @@ type ProviderClient interface {
 	AuthorizeURL(cfg *registrydomain.MCPAuth, redirectURI, state, challenge string) string
 	ExchangeCode(ctx context.Context, cfg *registrydomain.MCPAuth, code, redirectURI, verifier string) (*ProviderToken, error)
 	Refresh(ctx context.Context, cfg *registrydomain.MCPAuth, refreshToken string) (*ProviderToken, error)
+	ClientCredentials(ctx context.Context, cfg *registrydomain.MCPAuth) (*ProviderToken, error)
 }
 
 var ErrUpstreamNotDiscoverable = errors.New(
