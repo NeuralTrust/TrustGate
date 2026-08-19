@@ -71,6 +71,20 @@ func addTasksExtension(capabilities map[string]any, tasks bool) {
 	}
 }
 
+func addAppsExtension(capabilities map[string]any, advertise bool) {
+	if !advertise {
+		return
+	}
+	extensions, _ := capabilities[appmcp.CapabilityKindExtensions].(map[string]any)
+	if extensions == nil {
+		extensions = make(map[string]any)
+		capabilities[appmcp.CapabilityKindExtensions] = extensions
+	}
+	extensions[appmcp.MCPAppsExtensionIdentifier] = map[string]any{
+		"mimeTypes": []string{appmcp.MCPAppsHTMLMIMEType},
+	}
+}
+
 func configuredCapabilities(rc *appconsumer.RoutableConsumer, mrtr bool) map[string]any {
 	capabilities := make(map[string]any)
 	if rc == nil || rc.Consumer == nil {

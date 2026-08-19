@@ -15,12 +15,14 @@
 package mcp_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
@@ -109,7 +111,7 @@ func newAppWithRunnerAndLimiter(t *testing.T, composer appmcp.Composer, plugins 
 	return app
 }
 
-func newAppWithRegistries(t *testing.T, registries ...*registrydomain.Registry) *fiber.App {
+func newAppWithRegistries(t *testing.T, apps appmcp.AppsMediator, registries ...*registrydomain.Registry) *fiber.App {
 	t.Helper()
 	authID := ids.New[ids.AuthKind]()
 	gwID := ids.New[ids.GatewayKind]()
@@ -133,12 +135,23 @@ func newAppWithRegistries(t *testing.T, registries ...*registrydomain.Registry) 
 		c.SetUserContext(ctx)
 		return c.Next()
 	})
-	handler := mcphttp.NewHandler(
+	handler := mcphttp.NewHandlerWithApps(
 		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
 		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
+		mcphttp.MRTRSupport{},
+		mcphttp.TasksSupport{},
+		mcphttp.SubscriptionsSupport{},
+		apps,
 	)
 	app.Post(mcpPath, handler.Handle)
 	return app
+}
+
+type recordingAppsMediator struct{ calls atomic.Int32 }
+
+func (m *recordingAppsMediator) Advertise(_ context.Context, _ bool, _ *appconsumer.RoutableConsumer, client appmcp.MCPAppsClientCapability) bool {
+	m.calls.Add(1)
+	return len(client.MIMETypes) == 1 && client.MIMETypes[0] == appmcp.MCPAppsHTMLMIMEType
 }
 
 func discardLogger() *slog.Logger {
@@ -447,7 +460,7 @@ func TestHandler_Initialize_VersionTracksTheToolSurface(t *testing.T) {
 	notion, linear := reg("notion"), reg("linear")
 
 	versionFor := func(regs ...*registrydomain.Registry) string {
-		app := newAppWithRegistries(t, regs...)
+		app := newAppWithRegistries(t, nil, regs...)
 		_, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
 		info := body["result"].(map[string]any)["serverInfo"].(map[string]any)
 		return info["version"].(string)
@@ -1276,5 +1289,45 @@ func TestHandler_GETIs405(t *testing.T) {
 	}
 	if allow := res.Header.Get(fiber.HeaderAllow); allow != fiber.MethodPost {
 		t.Fatalf("Allow = %q, want POST", allow)
+	}
+}
+
+func TestHandler_ServerDiscover_ParsesMCPApps(t *testing.T) {
+	tests := []struct {
+		name, settings string
+		status         int
+		advertise      bool
+		calls          int32
+	}{
+		{"supported", `{"mimeTypes":["text/html;profile=mcp-app"]}`, fiber.StatusOK, true, 1},
+		{"unsupported", `{"mimeTypes":["text/html"]}`, fiber.StatusOK, false, 1},
+		{"malformed", `{"mimeTypes":[7]}`, fiber.StatusBadRequest, false, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mediator := &recordingAppsMediator{}
+			app := newAppWithRegistries(t, mediator, modernMCPRegistry(t, ids.New[ids.GatewayKind]()))
+			request := `{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{` +
+				`"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":` +
+				`{"extensions":{"io.modelcontextprotocol/ui":` + tt.settings + `}}}}}`
+			status, body := rpcCallWithHeaders(t, app, request, modernHeadersFor("server/discover"))
+			require.Equal(t, tt.status, status)
+			require.Equal(t, tt.calls, mediator.calls.Load())
+			if status == fiber.StatusBadRequest {
+				require.Equal(t, float64(-32602), body["error"].(map[string]any)["code"])
+				return
+			}
+			capabilities := body["result"].(map[string]any)["capabilities"].(map[string]any)
+			for _, kind := range []string{"tools", "prompts", "resources"} {
+				require.Contains(t, capabilities, kind)
+			}
+			if !tt.advertise {
+				require.NotContains(t, capabilities, "extensions")
+				return
+			}
+			require.Equal(t, map[string]any{appmcp.MCPAppsExtensionIdentifier: map[string]any{
+				"mimeTypes": []any{appmcp.MCPAppsHTMLMIMEType},
+			}}, capabilities["extensions"])
+		})
 	}
 }
