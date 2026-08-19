@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/stretchr/testify/require"
@@ -67,6 +68,33 @@ func TestGatewayScopedAuth_FallsBackToDefault(t *testing.T) {
 	require.True(t, appauth.IsDefaultIdP(auth))
 	// The default is bound to the addressed gateway.
 	require.Equal(t, gw, auth.GatewayID)
+}
+
+// A consumer that authenticates with its own credential gets no identity
+// provider at all: brokering a login for it would produce a session the auth
+// chain refuses, so the flow is rejected before it starts.
+func TestAuthForResource_CredentialProtectedConsumerGetsNoIdP(t *testing.T) {
+	def := appauth.BuildDefaultIdP(appauth.DefaultIdPConfig{
+		Issuer: "https://app.neuraltrust.ai/api/mcp/oauth", ClientID: "tg",
+	})
+	gw := ids.New[ids.GatewayKind]()
+	apiKey, err := authdomain.NewAPIKeyAuth(gw, "key", true)
+	require.NoError(t, err)
+	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
+		"/api-key/mcp": {{GatewayID: gw, Auths: []*authdomain.Auth{apiKey}}},
+		"/bare/mcp":    {{GatewayID: gw}},
+	}}
+	p := &authProxy{credentials: &fakeCredentialFinder{defaultIdP: def}, paths: paths}
+
+	_, err = p.authForResource(t.Context(), "https://gw.example.com/api-key/mcp")
+	var oauthError *OAuthError
+	require.True(t, errors.As(err, &oauthError))
+	require.Equal(t, "invalid_target", oauthError.Code)
+
+	// A consumer with no credential of its own still reaches the default.
+	auth, err := p.authForResource(t.Context(), "https://gw.example.com/bare/mcp")
+	require.NoError(t, err)
+	require.True(t, appauth.IsDefaultIdP(auth))
 }
 
 func TestGatewayScopedAuth_NoDefaultKeepsError(t *testing.T) {

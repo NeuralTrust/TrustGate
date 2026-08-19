@@ -21,6 +21,10 @@ on:
       - 'k8s/**'
       - '.github/**'
 
+concurrency:
+  group: deploy-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
   id-token: write

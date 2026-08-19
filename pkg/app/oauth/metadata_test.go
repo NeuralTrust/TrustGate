@@ -127,6 +127,41 @@ func TestProtectedResourceMetadataScopedByResource(t *testing.T) {
 	}
 }
 
+// A consumer that authenticates with its own credential must not be advertised
+// as an OAuth resource: the auth chain refuses a brokered session for it, so a
+// client following the metadata would run a login it can never use.
+func TestProtectedResourceMetadataSkipsCredentialProtectedConsumer(t *testing.T) {
+	t.Parallel()
+	idp := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp.example.com", RequiredScopes: []string{"mcp:use"}})
+	gatewayID := ids.New[ids.GatewayKind]()
+	apiKey, err := authdomain.NewAPIKeyAuth(gatewayID, "key", true)
+	if err != nil {
+		t.Fatalf("build api key auth: %v", err)
+	}
+	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
+		"/api-key/mcp": {{GatewayID: gatewayID, Auths: []*authdomain.Auth{apiKey}}},
+		"/bare/mcp":    {{GatewayID: gatewayID}},
+	}}
+	svc := NewMetadataService(&fakeCredentialFinder{oauth2: []*authdomain.Auth{idp}}, paths, nil, newMemFlowStore())
+
+	meta, err := svc.ProtectedResource(context.Background(), "https://gw.example.com", "https://gw.example.com/api-key/mcp")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(meta.AuthorizationServers) != 0 {
+		t.Fatalf("expected no authorization server for an api-key consumer, got %v", meta.AuthorizationServers)
+	}
+
+	// A consumer with no credential of its own still reaches the fallback.
+	meta, err = svc.ProtectedResource(context.Background(), "https://gw.example.com", "https://gw.example.com/bare/mcp")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(meta.AuthorizationServers) != 1 {
+		t.Fatalf("expected the gateway as authorization server, got %v", meta.AuthorizationServers)
+	}
+}
+
 func TestProtectedResourceMetadataWithoutIdP(t *testing.T) {
 	t.Parallel()
 	svc := NewMetadataService(&fakeCredentialFinder{}, nil, nil, newMemFlowStore())

@@ -283,8 +283,35 @@ make test-functional
 | Plugin enforce / observe | TrustGuard (or stub) on tool call chain | `tests/functional/mcp_plugin_chain_test.go` |
 | Per-tool rate limit | Rate limiter deny on `tools/call` | `TestPluginE2E_PerToolRateLimiter_MCPToolCallDeny` |
 | DB-less OAuth vault | Redis-backed vault without Postgres session store | `tests/functional/dbless_mcp_vault_test.go` |
+| API-key self-service connect | §5.1 below | `TestMCPAPIKeyConnect_ForwardedFlowEndToEnd` |
+| Shared key reuses one grant | Same key from two clients; second principal gets consent-required | `TestMCPAPIKeyConnect_SharedKeyReusesGrantAndIsolatesPrincipals` |
+| Connect credential rejections | Unknown, unbound, empty key and unknown slug all collapse into an opaque `401` | `TestMCPAPIKeyConnect_RejectsCredentialsWithoutLeaking` |
 
 Living documentation: [`tests/functional/mcp_e2e_test.go`](../../tests/functional/mcp_e2e_test.go).
+
+### 5.1 API-key self-service connect
+
+For an MCP consumer whose registries use `forwarded` auth, the admin sends users
+two URLs and the header. Users authorize their own upstream accounts from the
+browser; no gateway-side OAuth2 IdP is involved.
+
+```text
+MCP URL:            https://{mcp_host}/{slug}/mcp   with  X-AG-API-Key: <key>
+Authorization URL:  https://{mcp_host}/{slug}/connect
+```
+
+Open the authorization URL, submit the key in the form, and the gateway
+redirects to the existing provider page carrying a connect ticket. After
+consenting, a `tools/call` with the same key reaches the upstream carrying the
+stored bearer. Everyone holding that key shares those upstream accounts — one
+key is one principal, as explained in
+[`api-key-auth-and-external-credentials.md`](api-key-auth-and-external-credentials.md).
+
+The connect attempt limiter is disabled in `.env.functional.example`: it allows
+10 attempts per minute per source and every functional request arrives from
+`127.0.0.1`, so the suite would share one bucket. Its coverage lives in
+`pkg/infra/ratelimit/connect_test.go`. Per-user OAuth2 behavior is unchanged and
+stays guarded by `TestMCPOAuth_SharedHostScopesChallengeAndResolvesConsumerIdP`.
 
 ## 6. Catalog health / hide broken vendors
 

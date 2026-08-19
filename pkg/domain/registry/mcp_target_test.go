@@ -106,6 +106,21 @@ func TestNewMCPRegistry_Rejects(t *testing.T) {
 			m.Auth = &MCPAuth{Mode: MCPAuthModeForwarded, Provider: "linear", Registration: "magic"}
 			return m
 		}},
+		{"client_credentials without client_id", func(m *MCPTarget) *MCPTarget {
+			m.Auth = &MCPAuth{Mode: MCPAuthModeClientCredentials, ClientSecret: "s", TokenURL: "https://idp/token"}
+			return m
+		}},
+		{"client_credentials without token_url", func(m *MCPTarget) *MCPTarget {
+			m.Auth = &MCPAuth{Mode: MCPAuthModeClientCredentials, ClientID: "id", ClientSecret: "s"}
+			return m
+		}},
+		{"client_credentials with bad auth method", func(m *MCPTarget) *MCPTarget {
+			m.Auth = &MCPAuth{
+				Mode: MCPAuthModeClientCredentials, ClientID: "id", ClientSecret: "s",
+				TokenURL: "https://idp/token", TokenEndpointAuthMethod: "private_key_jwt",
+			}
+			return m
+		}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -191,6 +206,10 @@ func TestMCPAuth_Validate_NewModes(t *testing.T) {
 		{Mode: MCPAuthModeExchange, Pattern: ExchangeTokenExchange, Audience: "https://up.example.com"},
 		{Mode: MCPAuthModeForwarded, Provider: "github", ClientID: "id",
 			AuthorizeURL: "https://github.com/login/oauth/authorize", TokenURL: "https://github.com/login/oauth/access_token"},
+		{Mode: MCPAuthModeClientCredentials, ClientID: "id", ClientSecret: "s",
+			TokenURL: "https://auth.example.com/token", TokenEndpointAuthMethod: TokenEndpointAuthClientSecretBasic},
+		{Mode: MCPAuthModeClientCredentials, ClientID: "id", ClientSecret: "s",
+			TokenURL: "https://auth.example.com/token", TokenEndpointAuthMethod: TokenEndpointAuthClientSecretPost},
 	}
 	for _, a := range valid {
 		if err := a.Validate(); err != nil {
@@ -213,6 +232,28 @@ func TestMCPTarget_ResolveSecretsFrom_ForwardedClientSecret(t *testing.T) {
 	prev := forwarded()
 	next := forwarded()
 	next.Auth.ClientSecret = ""
+	next.ResolveSecretsFrom(prev)
+	if next.Auth.ClientSecret != "s3cret" {
+		t.Fatalf("ClientSecret = %q, want previous secret kept", next.Auth.ClientSecret)
+	}
+}
+
+func TestMCPTarget_ResolveSecretsFrom_ClientCredentialsSecret(t *testing.T) {
+	t.Parallel()
+	prev := &MCPTarget{
+		URL: "https://mcp.example.com/mcp",
+		Auth: &MCPAuth{
+			Mode: MCPAuthModeClientCredentials, ClientID: "id", ClientSecret: "s3cret",
+			TokenURL: "https://idp/token",
+		},
+	}
+	next := &MCPTarget{
+		URL: "https://mcp.example.com/mcp",
+		Auth: &MCPAuth{
+			Mode: MCPAuthModeClientCredentials, ClientID: "id", ClientSecret: "",
+			TokenURL: "https://idp/token",
+		},
+	}
 	next.ResolveSecretsFrom(prev)
 	if next.Auth.ClientSecret != "s3cret" {
 		t.Fatalf("ClientSecret = %q, want previous secret kept", next.Auth.ClientSecret)

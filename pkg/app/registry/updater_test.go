@@ -45,7 +45,7 @@ func TestUpdater_Update_Success(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID:       existing.ID,
 		Name:     ptr("new"),
@@ -78,7 +78,7 @@ func TestUpdater_Update_TogglesEnabled(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID:      existing.ID,
 		Enabled: ptr(false),
@@ -106,7 +106,7 @@ func TestUpdater_Update_EnabledUnchangedWhenNil(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID:   existing.ID,
 		Name: ptr("renamed"),
@@ -139,7 +139,7 @@ func TestUpdater_Update_Partial_PreservesProviderOptionsAndHealthChecks(t *testi
 		Return(nil).
 		Once()
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID:   existing.ID,
 		Name: ptr("renamed"),
@@ -182,7 +182,7 @@ func TestUpdater_Update_PartialMCPTargetPreservesAuthAndHeaders(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID:        existing.ID,
 		MCPTarget: &domain.MCPTarget{URL: "https://new.example.com/mcp"},
@@ -220,7 +220,7 @@ func TestUpdater_Update_MCPTargetAuthClearedExplicitly(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID:        existing.ID,
 		MCPTarget: &domain.MCPTarget{Auth: &domain.MCPAuth{Mode: domain.MCPAuthModeNone}},
@@ -251,7 +251,7 @@ func TestUpdater_Update_PreservesRedactedSecret(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID:       existing.ID,
 		Name:     ptr("old"),
@@ -281,7 +281,7 @@ func TestUpdater_Update_PreservesSecretWhenAuthOmitted(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID:       existing.ID,
 		Name:     ptr("renamed"),
@@ -322,7 +322,7 @@ func TestUpdater_Update_AzurePreservesAPIKeyForSameMode(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID: existing.ID,
 		Auth: &domain.TargetAuth{
@@ -372,7 +372,7 @@ func TestUpdater_Update_AzurePreservesClientSecretForSameServicePrincipal(t *tes
 		Return(nil).
 		Once()
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID: existing.ID,
 		Auth: &domain.TargetAuth{
@@ -424,7 +424,7 @@ func TestUpdater_Update_AzureClearsIncompatibleSecretsOnModeChange(t *testing.T)
 		Return(nil).
 		Once()
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID: existing.ID,
 		Auth: &domain.TargetAuth{
@@ -462,7 +462,7 @@ func TestUpdater_Update_AzureRejectsServicePrincipalSecretForDifferentPrincipal(
 
 	publisher := cachemocks.NewEventPublisher(t)
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
 	_, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID: existing.ID,
 		Auth: &domain.TargetAuth{
@@ -489,7 +489,7 @@ func TestUpdater_Update_RejectsGatewayIDChange(t *testing.T) {
 
 	publisher := cachemocks.NewEventPublisher(t)
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
 	_, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: ids.New[ids.GatewayKind](),
@@ -511,7 +511,7 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 
 	publisher := cachemocks.NewEventPublisher(t)
 
-	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
 	_, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID:       id,
 		Name:     ptr("x"),
