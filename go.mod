@@ -96,7 +96,6 @@ require (
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/sagikazarmark/locafero v0.12.0 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
-	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/spf13/cobra v1.10.2 // indirect
@@ -131,6 +130,7 @@ require (
 	github.com/NeuralTrust/TrustGate/pkg/metrics v0.0.0
 	github.com/aws/aws-sdk-go-v2/feature/rds/auth v1.6.36
 	github.com/redis/go-redis/v9 v9.22.0
+	github.com/segmentio/encoding v0.5.4
 	go.opentelemetry.io/otel/metric v1.45.0
 	go.opentelemetry.io/otel/sdk/metric v1.45.0
 	go.opentelemetry.io/otel/trace v1.45.0
