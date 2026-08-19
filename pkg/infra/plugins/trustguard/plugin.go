@@ -47,14 +47,15 @@ const (
 )
 
 const (
-	decisionBlocked     = "blocked"
-	decisionReported    = "reported"
-	decisionAllowed     = "allowed"
-	decisionFailedOpen  = "failed_open"
-	decisionTransformed = "transformed"
-	statusBlock         = "block"
-	statusReport        = "report"
-	statusTransform     = "transform"
+	decisionBlocked      = "blocked"
+	decisionReported     = "reported"
+	decisionAllowed      = "allowed"
+	decisionFailedOpen   = "failed_open"
+	decisionFailedClosed = "failed_closed"
+	decisionTransformed  = "transformed"
+	statusBlock          = "block"
+	statusReport         = "report"
+	statusTransform      = "transform"
 )
 
 const (
@@ -336,14 +337,14 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 			setExtras(in.Event, guardData{Direction: direction, Decision: decisionBlocked})
 			return nil, unavailableError(unavailable)
 		}
-		p.warn(ctx, "trustguard call failed, failing open",
-			slog.String("plugin", PluginName),
-			slog.String("stage", string(in.Stage)),
-			slog.String("direction", direction),
-			slog.Any("error", err),
-		)
-		setExtras(in.Event, guardData{Direction: direction, Decision: decisionFailedOpen, FailedOpen: true})
-		return passThrough(), nil
+		var auth *authRejectedError
+		if errors.As(err, &auth) {
+			return p.failClosedAuth(ctx, in, direction, err)
+		}
+		if errors.Is(err, errUnauthorized) {
+			return p.failClosedAuth(ctx, in, direction, &authRejectedError{status: http.StatusUnauthorized})
+		}
+		return p.handleTransportError(ctx, in, cfg, direction, err)
 	}
 
 	data := guardData{
@@ -456,10 +457,11 @@ func (p *Plugin) config(settings map[string]any) (Settings, error) {
 // be parsed decides which legs both of them inspect.
 func configCacheKey(settings map[string]any) string {
 	return fmt.Sprintf(
-		"%v\x00%v\x00%v",
+		"%v\x00%v\x00%v\x00%v",
 		settings["inspect"],
 		settings["direction"],
 		settings["collector_id"],
+		settings["on_error"],
 	)
 }
 
@@ -510,7 +512,64 @@ func (p *Plugin) guard(ctx context.Context, baseURL, collectorID, traceID string
 	if err != nil {
 		return nil, err
 	}
-	return p.client.Guard(ctx, baseURL, token, traceID, body, playground)
+	resp, err = p.client.Guard(ctx, baseURL, token, traceID, body, playground)
+	if err == nil {
+		return resp, nil
+	}
+	if errors.Is(err, errUnauthorized) {
+		return nil, &authRejectedError{status: http.StatusUnauthorized}
+	}
+	return nil, err
+}
+
+func (p *Plugin) failClosedAuth(ctx context.Context, in appplugins.ExecInput, direction string, err error) (*appplugins.Result, error) {
+	recordEvaluateFailure(ctx, failureReasonUnauthorized)
+	p.error(ctx, "trustguard auth/config rejected, failing closed",
+		slog.String("plugin", PluginName),
+		slog.String("stage", string(in.Stage)),
+		slog.String("direction", direction),
+		slog.Any("error", err),
+	)
+	var auth *authRejectedError
+	if !errors.As(err, &auth) {
+		auth = &authRejectedError{status: http.StatusUnauthorized}
+	}
+	data := guardData{
+		Direction:     direction,
+		Decision:      decisionFailedClosed,
+		FailedClosed:  true,
+		FailureReason: failureReasonUnauthorized,
+	}
+	recordGuardOutcome(in.Event, data)
+	return nil, unauthorizedError(auth)
+}
+
+func (p *Plugin) handleTransportError(ctx context.Context, in appplugins.ExecInput, cfg Settings, direction string, err error) (*appplugins.Result, error) {
+	if cfg.failClosedOnTransport() {
+		recordEvaluateFailure(ctx, failureReasonTransport)
+		p.error(ctx, "trustguard call failed, failing closed",
+			slog.String("plugin", PluginName),
+			slog.String("stage", string(in.Stage)),
+			slog.String("direction", direction),
+			slog.Any("error", err),
+		)
+		data := guardData{
+			Direction:     direction,
+			Decision:      decisionFailedClosed,
+			FailedClosed:  true,
+			FailureReason: failureReasonTransport,
+		}
+		recordGuardOutcome(in.Event, data)
+		return nil, transportFailClosedError()
+	}
+	p.warn(ctx, "trustguard call failed, failing open",
+		slog.String("plugin", PluginName),
+		slog.String("stage", string(in.Stage)),
+		slog.String("direction", direction),
+		slog.Any("error", err),
+	)
+	setExtras(in.Event, guardData{Direction: direction, Decision: decisionFailedOpen, FailedOpen: true})
+	return passThrough(), nil
 }
 
 func (p *Plugin) warn(ctx context.Context, msg string, attrs ...any) {
@@ -518,6 +577,13 @@ func (p *Plugin) warn(ctx context.Context, msg string, attrs ...any) {
 		return
 	}
 	p.logger.WarnContext(ctx, msg, attrs...)
+}
+
+func (p *Plugin) error(ctx context.Context, msg string, attrs ...any) {
+	if p.logger == nil {
+		return
+	}
+	p.logger.ErrorContext(ctx, msg, attrs...)
 }
 
 func protocolFor(consumerType string) string {

@@ -416,6 +416,124 @@ func TestExecuteServerErrorStillFailsOpen(t *testing.T) {
 	}
 }
 
+func TestExecuteForbiddenFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{status: http.StatusForbidden}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil, event)
+	res, err := p.Execute(context.Background(), in)
+	if res != nil {
+		t.Fatalf("expected nil result on 403, got %+v", res)
+	}
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("expected *PluginError, got %v", err)
+	}
+	if pe.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", pe.StatusCode, http.StatusBadGateway)
+	}
+	if pe.Type != typeUnauthorized {
+		t.Fatalf("type = %q, want %q", pe.Type, typeUnauthorized)
+	}
+	attrs := span.PluginAttrsCopy()
+	extras, ok := attrs.Extras.(guardData)
+	if !ok {
+		t.Fatalf("extras type = %T, want guardData", attrs.Extras)
+	}
+	if !extras.FailedClosed || extras.Decision != decisionFailedClosed || extras.FailureReason != failureReasonUnauthorized {
+		t.Fatalf("extras = %+v, want failed_closed unauthorized", extras)
+	}
+}
+
+func TestExecuteForbiddenFailsClosedEvenWithFailOpenSetting(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{status: http.StatusForbidden}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	set := settings("")
+	set["on_error"] = onErrorFailOpen
+	in := execInput(policy.StagePreRequest, policy.ModeObserve, set, requestContext(), nil)
+	_, err := p.Execute(context.Background(), in)
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("auth rejection must fail closed even when on_error=fail_open, got %v", err)
+	}
+	if pe.Type != typeUnauthorized {
+		t.Fatalf("type = %q, want %q", pe.Type, typeUnauthorized)
+	}
+}
+
+func TestExecuteTransportErrorFailClosed(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeGuard{status: http.StatusInternalServerError}
+	srv := newServer(t, f)
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+
+	set := settings("")
+	set["on_error"] = onErrorFailClosed
+	event, span := newEvent()
+	in := execInputWithEvent(policy.StagePreRequest, policy.ModeEnforce, set, requestContext(), nil, event)
+	res, err := p.Execute(context.Background(), in)
+	if res != nil {
+		t.Fatalf("expected nil result when on_error=fail_closed, got %+v", res)
+	}
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("expected *PluginError, got %v", err)
+	}
+	if pe.StatusCode != http.StatusBadGateway || pe.Type != typeGuardError {
+		t.Fatalf("plugin error = %+v, want 502 %s", pe, typeGuardError)
+	}
+	attrs := span.PluginAttrsCopy()
+	extras, ok := attrs.Extras.(guardData)
+	if !ok {
+		t.Fatalf("extras type = %T, want guardData", attrs.Extras)
+	}
+	if !extras.FailedClosed || extras.FailureReason != failureReasonTransport {
+		t.Fatalf("extras = %+v, want failed_closed transport", extras)
+	}
+}
+
+func TestExecutePersistent401FailsClosed(t *testing.T) {
+	t.Parallel()
+
+	var guardHits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case tokenPath:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "tok", TokenType: "Bearer", ExpiresIn: 3600})
+		case evaluatePath:
+			atomic.AddInt32(&guardHits, 1)
+			w.WriteHeader(http.StatusUnauthorized)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(""), requestContext(), nil)
+	_, err := p.Execute(context.Background(), in)
+	pe, ok := appplugins.AsPluginError(err)
+	if !ok {
+		t.Fatalf("persistent 401 must fail closed, got %v", err)
+	}
+	if pe.Type != typeUnauthorized {
+		t.Fatalf("type = %q, want %q", pe.Type, typeUnauthorized)
+	}
+	if got := atomic.LoadInt32(&guardHits); got != 2 {
+		t.Fatalf("guard hits = %d, want 2 (original + refresh retry)", got)
+	}
+}
+
 func TestExecutePreResponseBlockReturns403(t *testing.T) {
 	t.Parallel()
 
