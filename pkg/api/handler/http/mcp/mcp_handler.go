@@ -17,14 +17,10 @@ package mcp
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
-	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
@@ -86,6 +82,7 @@ type Handler struct {
 	protocol   ProtocolValidationRecorder
 	mrtr       MRTRSupport
 	tasks      TasksSupport
+	subs       SubscriptionsSupport
 }
 
 func NewHandler(gateway *RPCGateway, roleScoper appmcp.RoleScoper, rec ...ProtocolValidationRecorder) *Handler {
@@ -111,7 +108,20 @@ func NewHandlerWithMediation(
 	tasks TasksSupport,
 	rec ...ProtocolValidationRecorder,
 ) *Handler {
-	h := &Handler{gateway: gateway, roleScoper: roleScoper, mrtr: mrtr, tasks: tasks}
+	return NewHandlerWithSubscriptions(gateway, roleScoper, mrtr, tasks, SubscriptionsSupport{}, rec...)
+}
+
+// NewHandlerWithSubscriptions wires the handler with bounded subscriptions on top
+// of the mediated continuation features.
+func NewHandlerWithSubscriptions(
+	gateway *RPCGateway,
+	roleScoper appmcp.RoleScoper,
+	mrtr MRTRSupport,
+	tasks TasksSupport,
+	subs SubscriptionsSupport,
+	rec ...ProtocolValidationRecorder,
+) *Handler {
+	h := &Handler{gateway: gateway, roleScoper: roleScoper, mrtr: mrtr, tasks: tasks, subs: subs}
 	if len(rec) > 0 {
 		h.protocol = rec[0]
 	}
@@ -180,7 +190,9 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 			return writeProtocolError(c, req.ID, protocolErr)
 		}
 		if era == protocolEraModern {
-			if protocolErr := validateModernRequest(req, modernHeaders(c)); protocolErr != nil {
+			headers := modernHeaders(c)
+			headers.subscriptionsEnabled = h.subs.Enabled()
+			if protocolErr := validateModernRequest(req, headers); protocolErr != nil {
 				h.recordProtocolValidation(c, protocolErr.code, era)
 				skipMetrics(c)
 				return writeProtocolError(c, req.ID, protocolErr)
@@ -195,9 +207,20 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 				skipMetrics(c)
 				return c.Status(fiber.StatusAccepted).Send(nil)
 			}
-			if !isSupportedModernMethod(req.Method) {
+			if !isSupportedModernMethod(req.Method, h.subs.Enabled()) {
 				skipMetrics(c)
 				return writeRPCErrorStatus(c, req.ID, fiber.StatusNotFound, codeMethodNotFound, "method not found", nil)
+			}
+			// A listen is refused on its params before the consumer is resolved,
+			// so a malformed negotiation costs no lookup, rate limit or plugin.
+			if req.Method == appmcp.MethodSubscriptionsListen {
+				listen, protocolErr := validateSubscriptionListenParams(req.Params, h.subs.MaxURIs)
+				if protocolErr != nil {
+					h.recordProtocolValidation(c, protocolErr.code, era)
+					skipMetrics(c)
+					return writeProtocolError(c, req.ID, protocolErr)
+				}
+				c.Locals(subscriptionListenParamsLocal, listen)
 			}
 		}
 		c.SetUserContext(withMCPProtocol(c.UserContext(), era, resolvedProtocolVersion(req, protocolHeader)))
@@ -244,10 +267,11 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 	}
 
 	if era == protocolEraModern && req.Method == "server/discover" {
-		discovery := serverDiscoveryResultWithTasks(
+		discovery := serverDiscoveryResultWith(
 			rc,
 			mrtrEndToEnd(h.mrtr.Signer, rc),
 			tasksEndToEnd(h.tasks, rc),
+			subscriptionsEndToEnd(h.subs, rc),
 		)
 		normalized, err := normalizeModernResult(req.Method, discovery, rc, nil)
 		if err != nil {
@@ -255,6 +279,10 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 		}
 		recordServerDiscovery(c)
 		return writeRPCResult(c, req.ID, normalized)
+	}
+
+	if era == protocolEraModern && req.Method == appmcp.MethodSubscriptionsListen {
+		return h.handleSubscriptionsListen(c, req, rc)
 	}
 
 	switch req.Method {
@@ -501,30 +529,7 @@ func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer
 }
 
 func surfaceFingerprint(rc *appconsumer.RoutableConsumer) string {
-	if rc == nil || rc.Consumer == nil {
-		return "0"
-	}
-	parts := make([]string, 0, len(rc.Registries))
-	for _, reg := range rc.Registries {
-		if reg == nil || !reg.IsMCP() {
-			continue
-		}
-		parts = append(parts, reg.ID.String()+"@"+reg.UpdatedAt.UTC().Format(time.RFC3339Nano))
-	}
-	toolkit := rc.Consumer.Toolkit()
-	entries := make([]string, 0, len(toolkit)+1)
-	if toolkit == nil {
-		entries = append(entries, "tk-state:nil")
-	} else {
-		entries = append(entries, "tk-state:configured")
-	}
-	for _, e := range toolkit {
-		entries = append(entries, "tk:"+e.RegistryID.String()+"/"+e.Tool+"/"+e.Prompt+"/"+e.Resource+"/"+e.ExposeAs)
-	}
-	sort.Strings(parts)
-	sort.Strings(entries)
-	sum := sha256.Sum256([]byte(strings.Join(append(parts, entries...), "|")))
-	return hex.EncodeToString(sum[:6])
+	return appmcp.SurfaceConfigFingerprint(rc)
 }
 
 func writeAppError(c *fiber.Ctx, id json.RawMessage, err error, era protocolEra, method string) error {
@@ -616,7 +621,10 @@ func isNotification(req rpcRequest, era protocolEra) bool {
 	return era == protocolEraLegacy && bytes.Equal(bytes.TrimSpace(req.ID), []byte("null"))
 }
 
-func isSupportedModernMethod(method string) bool {
+func isSupportedModernMethod(method string, subscriptions bool) bool {
+	if method == appmcp.MethodSubscriptionsListen {
+		return subscriptions
+	}
 	switch method {
 	case "server/discover",
 		"tools/list",

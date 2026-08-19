@@ -82,6 +82,7 @@ task payloads are never labels and never logged.
 
 ## Not in this change
 
-`notifications/tasks`, `subscriptions/listen`, and `tasks/list` are not exposed.
-TrustGate is POST-only and stateless, so there is nothing to enumerate and no
-channel to push on.
+`notifications/tasks` and `tasks/list` are not exposed. TrustGate keeps no task
+record, so there is nothing to enumerate and no channel to push task progress on.
+Bounded list-change streaming is a separate, independently gated feature — see
+[MCP subscriptions](subscriptions.md).
