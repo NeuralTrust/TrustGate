@@ -15,7 +15,9 @@
 package consumer
 
 import (
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
@@ -171,4 +173,101 @@ func TestConsumer_Validate_ToolkitAndFailMode(t *testing.T) {
 			t.Fatalf("error = %v, want ErrInvalidFailMode", err)
 		}
 	})
+}
+
+func TestConsumer_Validate_ProtocolAcceptance(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+
+	t.Run("empty defaults to dual_era", func(t *testing.T) {
+		t.Parallel()
+		c, err := New(CreateParams{
+			GatewayID: gwID,
+			Name:      "mcp-consumer",
+			Type:      TypeMCP,
+			MCP:       &MCPPolicy{},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if c.ProtocolAcceptance() != ProtocolAcceptanceDualEra {
+			t.Fatalf("ProtocolAcceptance = %q, want %q", c.ProtocolAcceptance(), ProtocolAcceptanceDualEra)
+		}
+	})
+
+	t.Run("dual_era accepted", func(t *testing.T) {
+		t.Parallel()
+		c, err := New(CreateParams{
+			GatewayID: gwID,
+			Name:      "mcp-consumer",
+			Type:      TypeMCP,
+			MCP:       &MCPPolicy{ProtocolAcceptance: ProtocolAcceptanceDualEra},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if c.ProtocolAcceptance() != ProtocolAcceptanceDualEra {
+			t.Fatalf("ProtocolAcceptance = %q, want dual_era", c.ProtocolAcceptance())
+		}
+	})
+
+	t.Run("legacy_only accepted", func(t *testing.T) {
+		t.Parallel()
+		c, err := New(CreateParams{
+			GatewayID: gwID,
+			Name:      "mcp-consumer",
+			Type:      TypeMCP,
+			MCP:       &MCPPolicy{ProtocolAcceptance: ProtocolAcceptanceLegacyOnly},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if c.ProtocolAcceptance() != ProtocolAcceptanceLegacyOnly {
+			t.Fatalf("ProtocolAcceptance = %q, want legacy_only", c.ProtocolAcceptance())
+		}
+	})
+
+	t.Run("invalid rejected", func(t *testing.T) {
+		t.Parallel()
+		_, err := New(CreateParams{
+			GatewayID: gwID,
+			Name:      "mcp-consumer",
+			Type:      TypeMCP,
+			MCP:       &MCPPolicy{ProtocolAcceptance: "modern_only"},
+		})
+		if !errors.Is(err, ErrInvalidProtocolAcceptance) {
+			t.Fatalf("error = %v, want ErrInvalidProtocolAcceptance", err)
+		}
+	})
+}
+
+func TestMCPPolicy_JSONRoundTrip_ProtocolAcceptance(t *testing.T) {
+	t.Parallel()
+	c, err := New(CreateParams{
+		GatewayID: ids.New[ids.GatewayKind](),
+		Name:      "mcp-consumer",
+		Type:      TypeMCP,
+		MCP:       &MCPPolicy{ProtocolAcceptance: ProtocolAcceptanceLegacyOnly},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	raw, err := json.Marshal(c)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got Consumer
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.ProtocolAcceptance() != ProtocolAcceptanceLegacyOnly {
+		t.Fatalf("ProtocolAcceptance = %q, want legacy_only", got.ProtocolAcceptance())
+	}
+	toolkitRaw, err := json.Marshal(c.Toolkit())
+	if err != nil {
+		t.Fatalf("marshal toolkit: %v", err)
+	}
+	if strings.Contains(string(toolkitRaw), "protocol_acceptance") {
+		t.Fatalf("toolkit JSON must not host protocol_acceptance: %s", toolkitRaw)
+	}
 }

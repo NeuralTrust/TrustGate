@@ -78,7 +78,9 @@ func TestMCPPipeline_ToolsCallBuildsMCPEvent(t *testing.T) {
 
 	composer := mcpmocks.NewComposer(t)
 	composer.EXPECT().
-		CallTool(mock.Anything, mock.Anything, "echo", mock.Anything).
+		CallTool(mock.Anything, mock.Anything, mock.MatchedBy(func(call appmcp.ToolCall) bool {
+			return call.Name == "echo"
+		})).
 		Return(json.RawMessage(`{"content":[]}`), nil).
 		Once()
 	gateway := mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(nil, nil), nil)
