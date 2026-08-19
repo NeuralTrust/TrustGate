@@ -19,6 +19,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -192,4 +193,54 @@ func appsDocumentRaw(field, body, extra string) json.RawMessage {
 		return nil
 	}
 	return json.RawMessage(`{"_meta":{"trace":{"ok":true}},"contents":[{"uri":"ui://widget","mimeType":"text/html;profile=mcp-app","` + field + `":` + string(value) + extra + `}]}`)
+}
+
+func TestAppsDocumentHTMLValidation(t *testing.T) {
+	wrap := func(body string) string { return "<!doctype html><html><head></head><body>" + body + "</body></html>" }
+	valid := []struct{ field, body string }{
+		{"text", wrap("plain")}, {"blob", base64.StdEncoding.EncodeToString([]byte(wrap("blob")))},
+		{"text", wrap("<img><br/><svg><path/></svg>")},
+		{"text", "<!doctype html><!--a--><html><head><!--b--></head><body><!--c--></body></html><!--d-->"}, {"text", "\uFEFF" + wrap("bom")},
+		{"text", wrap("<svg><foreignObject><div></div></foreignObject></svg><math><mi><mglyph/></mi></math>")},
+	}
+	for _, tc := range valid {
+		metadata, err := ValidateAppsDocument("ui://widget", minAppsDocumentBytes, appsDocumentRaw(tc.field, tc.body, ""))
+		requireApps(t, err == nil && metadata.DecodedSize > 0)
+	}
+	prefix, suffix := "<!doctype html><html><head></head><body><!--", "--></body></html>"
+	exact := prefix + strings.Repeat("x", minAppsDocumentBytes-len(prefix)-len(suffix)) + suffix
+	metadata, err := ValidateAppsDocument("ui://widget", minAppsDocumentBytes, appsDocumentRaw("text", exact, ""))
+	requireApps(t, err == nil && metadata.DecodedSize == minAppsDocumentBytes)
+
+	invalid := []string{
+		"\uFEFF" + wrap("\uFEFF"), wrap("\x00"), wrap("\x01"), "<!--x-->" + wrap("x"),
+		"<html><head></head><body></body></html>", "<!doctype svg><html><head></head><body></body></html>", "<!doctype html><html><body></body></html>", "<!doctype html><html><head></head></html>",
+		"<!doctype html><html><body></body><head></head></html>", "<!doctype html><html><head></head><head></head><body></body></html>", "<!doctype html><html><head></head><body></body><body></body></html>",
+		"<!doctype html><html><head></head><body></html></body>", "<!doctype html><html><head></head><body><div></body></html>",
+		wrap(`<div A="1" a="2"></div>`), wrap(`<div a="1"b="2"></div>`), wrap("<div/>"), wrap("<p><div></div></p>"), wrap("<ul><li>x<li>y</li></li></ul>"),
+		wrap("<table><div></div></table>"), wrap("x") + "tail", "<!doctype html><!--><html><head></head><body></body></html>",
+		wrap(strings.Repeat("<div>", maxAppsHTMLDepth) + strings.Repeat("</div>", maxAppsHTMLDepth)),
+		wrap(strings.Repeat("<!--x-->", maxAppsHTMLTokens+1)),
+		wrap(strings.Repeat("<!--x-->", maxAppsHTMLNodes+1)),
+	}
+	attributes := make([]string, maxAppsHTMLAttributes+1)
+	for i := range attributes {
+		attributes[i] = " a" + strconv.Itoa(i) + `="x"`
+	}
+	invalid = append(invalid, wrap("<div"+strings.Join(attributes, "")+"></div>"))
+	for _, body := range invalid {
+		_, err := ValidateAppsDocument("ui://widget", minAppsDocumentBytes, appsDocumentRaw("text", body, ""))
+		requireApps(t, appsHTMLDocumentError(err))
+	}
+	badUTF8 := base64.StdEncoding.EncodeToString([]byte{0xff, '<', 'h', 't', 'm', 'l', '>'})
+	_, err = ValidateAppsDocument("ui://widget", minAppsDocumentBytes, appsDocumentRaw("blob", badUTF8, ""))
+	requireApps(t, appsHTMLDocumentError(err))
+	secret := wrap("unique-secret-content")
+	_, err = ValidateAppsDocument("ui://widget", minAppsDocumentBytes, appsDocumentRaw("text", secret+"tail", ""))
+	requireApps(t, !strings.Contains(err.Error(), secret))
+}
+
+func appsHTMLDocumentError(err error) bool {
+	var typed *AppsDocumentError
+	return errors.Is(err, ErrInvalidAppsDocument) && errors.As(err, &typed) && typed.Reason == AppsDocumentHTMLReason
 }
