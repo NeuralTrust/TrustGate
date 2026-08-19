@@ -161,6 +161,78 @@ func discoverError(id any, code int64, data any) string {
 	return string(raw)
 }
 
+func TestDecodeDiscoverProbeRetainsOnlyExplicitListChangedCapabilities(t *testing.T) {
+	t.Parallel()
+	raw := mustJSON(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      testProbeID,
+		"result": map[string]any{
+			"resultType":        "complete",
+			"supportedVersions": []string{modernProtocolVersion},
+			"capabilities": map[string]any{
+				"subscriptions": map[string]any{"listen": true},
+				"tools":         map[string]any{"listChanged": true},
+				"prompts":       map[string]any{"listChanged": false},
+				"resources":     map[string]any{"subscribe": true},
+			},
+		},
+	})
+	_, result, err := decodeDiscoverProbeResponse([]byte(raw))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if result == nil || !result.SubscriptionListen {
+		t.Fatalf("result = %+v", result)
+	}
+	want := appmcp.ListChangedCapabilities{Tools: true}
+	if !result.Capabilities.Equal(want) {
+		t.Fatalf("capabilities = %+v, want %+v", result.Capabilities, want)
+	}
+}
+
+func TestDecodeDiscoverProbeRejectsMalformedCapabilityTrio(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		capabilities map[string]any
+	}{
+		{
+			name:         "kind is not object",
+			capabilities: map[string]any{"tools": []string{}},
+		},
+		{
+			name:         "list changed is not boolean",
+			capabilities: map[string]any{"tools": map[string]any{"listChanged": "true"}},
+		},
+		{
+			name:         "subscriptions is not object",
+			capabilities: map[string]any{"subscriptions": true},
+		},
+		{
+			name:         "listen is not boolean",
+			capabilities: map[string]any{"subscriptions": map[string]any{"listen": "true"}},
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			raw := mustJSON(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      testProbeID,
+				"result": map[string]any{
+					"resultType":        "complete",
+					"supportedVersions": []string{modernProtocolVersion},
+					"capabilities":      test.capabilities,
+				},
+			})
+			if _, _, err := decodeDiscoverProbeResponse([]byte(raw)); err == nil {
+				t.Fatal("expected malformed capability error")
+			}
+		})
+	}
+}
+
 func newTestProbe(t *testing.T, _ appmcp.Target, versions ...string) *strictProbe {
 	t.Helper()
 	return newStrictProbe(sharedHTTPTransport, versions, "9.8.7")

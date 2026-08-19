@@ -84,6 +84,76 @@ func TestNormalizeModernResult(t *testing.T) {
 	}
 }
 
+// The terminal frame of a lease is a result and is normalized as one, but it
+// describes a stream that has already ended, so it is never cacheable.
+func TestNormalizeModernResultSubscriptionsListenIsUncacheable(t *testing.T) {
+	t.Parallel()
+	id := json.RawMessage(`7`)
+	rc := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{}}
+	honoured := appmcp.NewHonouredSet(appmcp.NotificationToolsListChanged)
+
+	normalized, err := normalizeModernResult(
+		appmcp.MethodSubscriptionsListen,
+		subscriptionsListenResult(id, honoured),
+		rc,
+		nil,
+	)
+	require.NoError(t, err)
+
+	require.Equal(t, "complete", normalized["resultType"])
+	require.Equal(t, modernCacheTTLRead, normalized["ttlMs"])
+	require.Equal(t, "private", normalized["cacheScope"])
+	require.Equal(t, []any{"toolsListChanged"}, normalized["notifications"])
+	metadata := normalized["_meta"].(map[string]any)
+	require.Equal(t, json.Number("7"), metadata[appmcp.MetaKeySubscriptionID])
+	require.Contains(t, metadata, modernServerInfoKey)
+}
+
+// The frames a lease streams are notifications, not results, so they bypass
+// normalization entirely: a client must never cache one or read a resultType off
+// it.
+func TestSubscriptionNotificationFramesAreNotResults(t *testing.T) {
+	t.Parallel()
+	id := json.RawMessage(`7`)
+	honoured := appmcp.NewHonouredSet(appmcp.NotificationToolsListChanged)
+	ack, err := json.Marshal(subscriptionAckNotification(id, honoured))
+	require.NoError(t, err)
+	frames, err := subscriptionNotificationFrames(id, honoured)
+	require.NoError(t, err)
+
+	cases := []struct {
+		name       string
+		frame      []byte
+		wantMethod string
+	}{
+		{name: "ack", frame: ack, wantMethod: methodSubscriptionsAcknowledged},
+		{
+			name:       "list changed",
+			frame:      frames[appmcp.NotificationToolsListChanged],
+			wantMethod: appmcp.NotificationToolsListChanged.Method(),
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var decoded map[string]any
+			require.NoError(t, json.Unmarshal(tc.frame, &decoded))
+
+			require.Equal(t, tc.wantMethod, decoded["method"])
+			require.NotContains(t, decoded, "id")
+			require.NotContains(t, decoded, "result")
+			require.NotContains(t, decoded, "resultType")
+			require.NotContains(t, decoded, "ttlMs")
+			require.NotContains(t, decoded, "cacheScope")
+			require.NotContains(t, decoded, "_meta")
+			params := decoded["params"].(map[string]any)
+			require.Equal(t, float64(7), params["_meta"].(map[string]any)[appmcp.MetaKeySubscriptionID])
+		})
+	}
+}
+
 func TestNormalizeModernResultToolsCallKeepsContinuation(t *testing.T) {
 	t.Parallel()
 	source := map[string]any{

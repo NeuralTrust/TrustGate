@@ -50,7 +50,12 @@ type modernRequestHeaders struct {
 	protocolVersion string
 	method          string
 	name            string
+	accept          string
 	hasToolParam    bool
+	// subscriptionsEnabled gates the listen-specific header rules. The zero value
+	// keeps the pre-subscriptions behaviour, so a listen reaches the unknown
+	// method path untouched while the feature is off.
+	subscriptionsEnabled bool
 }
 
 type unsupportedProtocolVersionData struct {
@@ -101,6 +106,10 @@ func validateModernRequest(req rpcRequest, headers modernRequestHeaders) *protoc
 	}
 	if headers.method == "" || headers.method != req.Method {
 		return headerMismatch("Mcp-Method header does not match request method")
+	}
+
+	if req.Method == appmcp.MethodSubscriptionsListen && headers.subscriptionsEnabled {
+		return subscriptionListenHeaders(headers)
 	}
 
 	sourceField := ""
@@ -155,6 +164,7 @@ func modernHeaders(c *fiber.Ctx) modernRequestHeaders {
 		protocolVersion: c.Get("MCP-Protocol-Version"),
 		method:          c.Get("Mcp-Method"),
 		name:            c.Get("Mcp-Name"),
+		accept:          c.Get(fiber.HeaderAccept),
 	}
 	for name := range c.Request().Header.All() {
 		if strings.HasPrefix(strings.ToLower(string(name)), "mcp-param-") {

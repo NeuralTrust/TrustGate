@@ -22,15 +22,36 @@ import (
 )
 
 func serverDiscoveryResult(rc *appconsumer.RoutableConsumer, mrtr bool) map[string]any {
-	return serverDiscoveryResultWithTasks(rc, mrtr, false)
+	return serverDiscoveryResultWith(rc, mrtr, false, false)
 }
 
-func serverDiscoveryResultWithTasks(rc *appconsumer.RoutableConsumer, mrtr, tasks bool) map[string]any {
+func serverDiscoveryResultWith(rc *appconsumer.RoutableConsumer, mrtr, tasks, listChanged bool) map[string]any {
 	capabilities := configuredCapabilities(rc, mrtr)
+	addListChanged(capabilities, listChanged)
 	addTasksExtension(capabilities, tasks)
 	return map[string]any{
 		"supportedVersions": append([]string(nil), supportedProtocolVersions...),
 		"capabilities":      capabilities,
+	}
+}
+
+// addListChanged merges the notification advertisement into each kind already
+// advertised. It has to run after configuredCapabilities and mutate in place:
+// addCapability replaces the whole per-kind map on every call, so a listChanged
+// written inside that loop would be wiped by the next entry for the same kind.
+//
+// A kind the consumer cannot see stays absent, and resources.subscribe is never
+// written — TrustGate honours no per-URI subscription.
+func addListChanged(capabilities map[string]any, listChanged bool) {
+	if !listChanged {
+		return
+	}
+	for kind := range notificationKindsByCapability {
+		existing, ok := capabilities[kind].(map[string]any)
+		if !ok {
+			continue
+		}
+		existing["listChanged"] = true
 	}
 }
 
@@ -95,6 +116,13 @@ func mrtrEndToEnd(signer *appmcp.TicketSigner, rc *appconsumer.RoutableConsumer)
 // discovery never dials an upstream to find out.
 func tasksEndToEnd(tasks TasksSupport, rc *appconsumer.RoutableConsumer) bool {
 	return tasks.Enabled() && appmcp.HasNonLegacyMCPRegistry(rc)
+}
+
+// subscriptionsEndToEnd reports whether a lease could actually be served for this
+// consumer. Like tasks, it is decided from configuration and known registry
+// state: discovery never dials an upstream to find out.
+func subscriptionsEndToEnd(subs SubscriptionsSupport, rc *appconsumer.RoutableConsumer) bool {
+	return subs.Enabled() && appmcp.HasNonLegacyMCPRegistry(rc)
 }
 
 func recordServerDiscovery(c *fiber.Ctx) {

@@ -263,7 +263,7 @@ func (r *PluginRunner) PreResponseDiscovery(
 	rc *appconsumer.RoutableConsumer,
 	result json.RawMessage,
 ) error {
-	if r.executor == nil || rc == nil || rc.Consumer == nil {
+	if r == nil || r.executor == nil || rc == nil || rc.Consumer == nil {
 		return nil
 	}
 	reqCtx := &infracontext.RequestContext{
@@ -306,6 +306,23 @@ func (r *PluginRunner) PreResponseDiscovery(
 		})
 	}
 	return nil
+}
+
+// PreResponseToolsDiscovery applies the tools/list response-plugin contract to
+// an already composed tool surface.
+func (r *PluginRunner) PreResponseToolsDiscovery(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	tools []Tool,
+) error {
+	if tools == nil {
+		tools = []Tool{}
+	}
+	raw, err := json.Marshal(map[string]any{"tools": tools})
+	if err != nil {
+		return fmt.Errorf("mcp: marshal tools discovery: %w", err)
+	}
+	return r.PreResponseDiscovery(ctx, rc, raw)
 }
 
 // logFailOpen records a guard/plugin failure that the runner deliberately does

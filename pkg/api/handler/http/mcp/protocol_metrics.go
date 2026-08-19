@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -169,6 +170,213 @@ func (r *otelTasksRecorder) Record(ctx context.Context, operation, outcome, era 
 		attrs = append(attrs, attribute.String("era", era))
 	}
 	r.counter.Add(ctx, 1, metric.WithAttributes(attrs...))
+}
+
+// SubscriptionsRecorder records bounded subscription lease telemetry: one sample
+// per lifecycle event, plus a live-stream up/down counter.
+type SubscriptionsRecorder interface {
+	// Record counts one lease lifecycle event. kind is set only for an emitted
+	// notification and is omitted from the label set otherwise.
+	Record(ctx context.Context, kind, outcome, era string)
+	// Live moves the live-stream counter, +1 when a lease is claimed and -1 when
+	// its writer releases it.
+	Live(ctx context.Context, delta int64, era string)
+}
+
+type otelSubscriptionsRecorder struct {
+	outcomes metric.Int64Counter
+	live     metric.Int64UpDownCounter
+}
+
+// NewSubscriptionsRecorder returns a no-op nil recorder unless ops metrics are enabled.
+func NewSubscriptionsRecorder(enabled bool) SubscriptionsRecorder {
+	if !enabled {
+		return nil
+	}
+	meter := otel.Meter("trustgate/mcp_northbound")
+	outcomes, err := meter.Int64Counter(
+		"mcp.northbound.subscriptions.outcome_total",
+		metric.WithUnit("{outcome}"),
+	)
+	if err != nil {
+		return nil
+	}
+	live, err := meter.Int64UpDownCounter(
+		"mcp.northbound.subscriptions.live",
+		metric.WithUnit("{stream}"),
+	)
+	if err != nil {
+		return nil
+	}
+	return &otelSubscriptionsRecorder{outcomes: outcomes, live: live}
+}
+
+func (r *otelSubscriptionsRecorder) Record(ctx context.Context, kind, outcome, era string) {
+	if r == nil || r.outcomes == nil {
+		return
+	}
+	boundedOutcome := trace.BoundSubscriptionOutcome(outcome)
+	if boundedOutcome == "" {
+		return
+	}
+	attrs := []attribute.KeyValue{attribute.String("outcome", boundedOutcome)}
+	if bounded := trace.BoundSubscriptionKind(kind); bounded != "" {
+		attrs = append(attrs, attribute.String("kind", bounded))
+	}
+	if era != "" {
+		attrs = append(attrs, attribute.String("era", era))
+	}
+	r.outcomes.Add(ctx, 1, metric.WithAttributes(attrs...))
+}
+
+func (r *otelSubscriptionsRecorder) Live(ctx context.Context, delta int64, era string) {
+	if r == nil || r.live == nil || delta == 0 {
+		return
+	}
+	var attrs []attribute.KeyValue
+	if era != "" {
+		attrs = append(attrs, attribute.String("era", era))
+	}
+	r.live.Add(ctx, delta, metric.WithAttributes(attrs...))
+}
+
+type otelSubscriptionSourceRecorder struct {
+	live      metric.Int64UpDownCounter
+	lifecycle metric.Int64Counter
+	fanOut    metric.Int64Counter
+	reconnect metric.Int64Counter
+	queue     metric.Int64Counter
+	terminal  metric.Int64Counter
+}
+
+// NewSubscriptionSourceRecorder returns bounded physical-listener telemetry.
+func NewSubscriptionSourceRecorder(enabled bool) appmcp.SubscriptionSourceRecorder {
+	if !enabled {
+		return nil
+	}
+	meter := otel.Meter("trustgate/mcp_upstream")
+	live, err := meter.Int64UpDownCounter(
+		"mcp.upstream.subscriptions.listeners.live",
+		metric.WithUnit("{listener}"),
+	)
+	if err != nil {
+		return nil
+	}
+	lifecycle, err := meter.Int64Counter(
+		"mcp.upstream.subscriptions.listener.lifecycle_total",
+		metric.WithUnit("{outcome}"),
+	)
+	if err != nil {
+		return nil
+	}
+	fanOut, err := meter.Int64Counter(
+		"mcp.upstream.subscriptions.fanout_total",
+		metric.WithUnit("{outcome}"),
+	)
+	if err != nil {
+		return nil
+	}
+	reconnect, err := meter.Int64Counter(
+		"mcp.upstream.subscriptions.reconnect_total",
+		metric.WithUnit("{outcome}"),
+	)
+	if err != nil {
+		return nil
+	}
+	queue, err := meter.Int64Counter(
+		"mcp.upstream.subscriptions.queue_total",
+		metric.WithUnit("{outcome}"),
+	)
+	if err != nil {
+		return nil
+	}
+	terminal, err := meter.Int64Counter(
+		"mcp.upstream.subscriptions.listener.terminal_total",
+		metric.WithUnit("{outcome}"),
+	)
+	if err != nil {
+		return nil
+	}
+	return &otelSubscriptionSourceRecorder{
+		live:      live,
+		lifecycle: lifecycle,
+		fanOut:    fanOut,
+		reconnect: reconnect,
+		queue:     queue,
+		terminal:  terminal,
+	}
+}
+
+func (r *otelSubscriptionSourceRecorder) ListenerLive(ctx context.Context, delta int64) {
+	if r == nil || r.live == nil || delta == 0 {
+		return
+	}
+	r.live.Add(ctx, delta)
+}
+
+func (r *otelSubscriptionSourceRecorder) Lifecycle(ctx context.Context, outcome string) {
+	if r == nil || r.lifecycle == nil {
+		return
+	}
+	if bounded := trace.BoundSubscriptionSourceLifecycleOutcome(outcome); bounded != "" {
+		r.lifecycle.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", bounded)))
+	}
+}
+
+func (r *otelSubscriptionSourceRecorder) FanOut(
+	ctx context.Context,
+	kind appmcp.NotificationKind,
+	outcome string,
+) {
+	if r == nil || r.fanOut == nil {
+		return
+	}
+	boundedKind := trace.BoundSubscriptionKind(string(kind))
+	boundedOutcome := trace.BoundSubscriptionSourceFanOutOutcome(outcome)
+	if boundedKind == "" || boundedOutcome == "" {
+		return
+	}
+	r.fanOut.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("kind", boundedKind),
+		attribute.String("outcome", boundedOutcome),
+	))
+}
+
+func (r *otelSubscriptionSourceRecorder) Reconnect(ctx context.Context, outcome string) {
+	if r == nil || r.reconnect == nil {
+		return
+	}
+	if bounded := trace.BoundSubscriptionSourceReconnectOutcome(outcome); bounded != "" {
+		r.reconnect.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", bounded)))
+	}
+}
+
+func (r *otelSubscriptionSourceRecorder) Queue(
+	ctx context.Context,
+	kind appmcp.NotificationKind,
+	outcome string,
+) {
+	if r == nil || r.queue == nil {
+		return
+	}
+	boundedKind := trace.BoundSubscriptionKind(string(kind))
+	boundedOutcome := trace.BoundSubscriptionSourceQueueOutcome(outcome)
+	if boundedKind == "" || boundedOutcome == "" {
+		return
+	}
+	r.queue.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("kind", boundedKind),
+		attribute.String("outcome", boundedOutcome),
+	))
+}
+
+func (r *otelSubscriptionSourceRecorder) Terminal(ctx context.Context, outcome string) {
+	if r == nil || r.terminal == nil {
+		return
+	}
+	if bounded := trace.BoundSubscriptionSourceTerminalOutcome(outcome); bounded != "" {
+		r.terminal.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", bounded)))
+	}
 }
 
 type mcpProtocolContextKey struct{}

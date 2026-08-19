@@ -11,12 +11,20 @@ this rollout.
 2. Enable `OPS_METRICS_ENABLED=true` to see protocol counters.
 3. Restrict a consumer or upstream with a config write — no binary redeploy.
 
+For subscriptions, first enable and observe
+`MCP_SUBSCRIPTIONS_ENABLED=true` with
+`MCP_SUBSCRIPTIONS_UPSTREAM_ENABLED=false`. After northbound lease, capacity,
+and terminal outcomes are stable, enable the upstream flag on one instance,
+verify listener/reconnect/queue metrics, then expand the rollout. Upstream
+listeners are process-local; there is no cross-pod sharing.
+
 ## Controls
 
 | Knob | Where | Default | Effect |
 |------|-------|---------|--------|
 | `protocol_acceptance` | MCP consumer (`dual_era` \| `legacy_only`) | empty → `dual_era` | `legacy_only` rejects modern northbound with HTTP 400 / RPC `-32021` / `validation_class=acceptance_denied`. No composer or upstream. |
 | `protocol_mode` | Registry MCP target (`auto` \| `modern` \| `legacy`) | `auto` | Southbound: `auto` probes once then caches; `modern`/`legacy` skip the probe (`source=override`). |
+| `MCP_SUBSCRIPTIONS_UPSTREAM_ENABLED` | Process environment | `false` | Enables bounded modern `2026-07-28` subscription listeners only when northbound subscriptions are also enabled. A legacy target or an incomplete capability negotiation contributes no honoured kind. |
 
 Config sync applies both fields without a process restart.
 
@@ -49,6 +57,12 @@ Either change lands through config sync.
 To restore dual-era, set `protocol_acceptance=dual_era` (or clear it) and
 `protocol_mode=auto`.
 
+To roll back only southbound subscription fan-out, set
+`MCP_SUBSCRIPTIONS_UPSTREAM_ENABLED=false` and restart. This closes and joins
+physical listeners before northbound drain, retains the public stream shape, and
+returns to Slice 1 polling. No legacy session, GET SSE route, cursor, or
+persisted state needs cleanup.
+
 ## Deprecation exit
 
 Legacy support stays until **all** of the following are true:
@@ -71,5 +85,7 @@ This document does **not** authorize removing the legacy transport.
 
 ## Next step
 
+Bounded `subscriptions/listen` streaming on the modern plane, off by default, is
+documented in [MCP subscriptions](subscriptions.md).
 Exercise the plane with the [MCP testing guide](testing-guide.md).
 Instrument names live in [Operational metrics](../operational-metrics.md).
