@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -228,6 +229,70 @@ func TestRedisRepository_Delete(t *testing.T) {
 	}
 	if err := repo.Delete(ctx, gw, "user-1", "github"); !errors.Is(err, vaultdomain.ErrNotFound) {
 		t.Fatalf("delete missing err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestRedisRepository_DeleteConcurrentExactlyOnce(t *testing.T) {
+	repo, _, _ := newRedisVaultRepo(t)
+	ctx := context.Background()
+	gatewayID := ids.New[ids.GatewayKind]()
+	requireCredential := newTestCredential(t, gatewayID, "user-1", "github", "a", "r")
+	if err := repo.Upsert(ctx, requireCredential); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	const attempts = 16
+	start := make(chan struct{})
+	results := make(chan error, attempts)
+	var wait sync.WaitGroup
+	for range attempts {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			results <- repo.Delete(ctx, gatewayID, "user-1", "github")
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(results)
+
+	var deleted, notFound int
+	for err := range results {
+		switch {
+		case err == nil:
+			deleted++
+		case errors.Is(err, vaultdomain.ErrNotFound):
+			notFound++
+		default:
+			t.Fatalf("unexpected delete error: %v", err)
+		}
+	}
+	if deleted != 1 || notFound != attempts-1 {
+		t.Fatalf("delete outcomes = %d deleted, %d not found", deleted, notFound)
+	}
+}
+
+func TestRedisRepository_DeleteCorruptPayloadReturnsNotFound(t *testing.T) {
+	repo, server, _ := newRedisVaultRepo(t)
+	ctx := context.Background()
+	gatewayID := ids.New[ids.GatewayKind]()
+	key := "vault:" + gatewayID.String() + ":user-1:github"
+	if err := server.Set(key, "{corrupt"); err != nil {
+		t.Fatalf("set corrupt payload: %v", err)
+	}
+
+	err := repo.Delete(ctx, gatewayID, "user-1", "github")
+
+	if !errors.Is(err, vaultdomain.ErrNotFound) {
+		t.Fatalf("delete corrupt payload err = %v, want ErrNotFound", err)
+	}
+	raw, err := server.Get(key)
+	if err != nil {
+		t.Fatalf("get corrupt payload: %v", err)
+	}
+	if raw != "{corrupt" {
+		t.Fatalf("corrupt payload was modified: %q", raw)
 	}
 }
 

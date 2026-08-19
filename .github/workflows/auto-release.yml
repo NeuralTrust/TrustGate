@@ -7,12 +7,23 @@ on:
       - 'k8s/**'
       - '.github/**'
 
+concurrency:
+  group: auto-release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   release:
     uses: NeuralTrust/workflows/.github/workflows/ai-release-bump.yml@main
+    with:
+      image_scan_enabled: true
+      image_name: agentgateway
+      dev_gcp_project_id: ${{ vars.DEV_GCP_PROJECT_ID }}
     secrets:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      WIF_PROVIDER: ${{ secrets.DEV_WIF_PROVIDER }}
+      WIF_SERVICE_ACCOUNT: ${{ secrets.DEV_WIF_SERVICE_ACCOUNT }}

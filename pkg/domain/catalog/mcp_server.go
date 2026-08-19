@@ -87,7 +87,8 @@ type MCPAuthHeader struct {
 // These fields tell the gateway how to drive the "forwarded" auth mode: when
 // DCR is supported it can self-register (registration: auto); otherwise the
 // operator must pre-register a client and the gateway needs AuthorizeURL/
-// TokenURL/Scopes to complete the flow.
+// TokenURL/Scopes to complete the flow. When GrantType is "client_credentials",
+// the gateway instead uses machine-to-machine auth (no per-user consent).
 type MCPOAuth struct {
 	Required         bool `json:"required"`
 	ResourceMetadata bool `json:"resource_metadata"`
@@ -107,10 +108,17 @@ type MCPOAuth struct {
 	// AuthorizeURL / TokenURL are required for manual registration
 	// (Registration == "manual"), where the operator supplies a pre-registered
 	// client_id/secret; they also serve as a discovery fallback otherwise.
+	// TokenURL is also required for GrantType "client_credentials".
 	AuthorizeURL string `json:"authorize_url,omitempty"`
 	TokenURL     string `json:"token_url,omitempty"`
 	// Scopes are the default/required OAuth scopes for the server.
 	Scopes []string `json:"scopes,omitempty"`
 	// Resource is the RFC 8707 resource indicator / expected token audience.
 	Resource string `json:"resource,omitempty"`
+	// GrantType selects the OAuth grant. Empty / omitted means authorization
+	// code (forwarded). "client_credentials" is machine-to-machine.
+	GrantType string `json:"grant_type,omitempty"`
+	// TokenEndpointAuthMethod is used with client_credentials:
+	// client_secret_basic (default) or client_secret_post.
+	TokenEndpointAuthMethod string `json:"token_endpoint_auth_method,omitempty"`
 }

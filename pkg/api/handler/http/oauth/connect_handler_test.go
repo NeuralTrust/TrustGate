@@ -37,6 +37,18 @@ func (s *stubConnectService) CreateTicket(context.Context, ids.GatewayID, string
 	return "t", nil
 }
 
+func (s *stubConnectService) CreateAPIKeyTicket(
+	context.Context,
+	ids.GatewayID,
+	string,
+	string,
+	ids.ConsumerID,
+	ids.AuthID,
+	[]string,
+) (string, error) {
+	return "t", nil
+}
+
 func (s *stubConnectService) Page(context.Context, string) (*appoauth.ConnectPage, error) {
 	return s.page, s.err
 }
