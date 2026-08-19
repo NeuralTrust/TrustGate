@@ -17,9 +17,8 @@ package consumer
 import "github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 
 type MCPPolicy struct {
-	Toolkit            Toolkit            `json:"toolkit"`
-	FailMode           FailMode           `json:"fail_mode,omitempty"`
-	ProtocolAcceptance ProtocolAcceptance `json:"protocol_acceptance,omitempty"`
+	Toolkit  Toolkit  `json:"toolkit"`
+	FailMode FailMode `json:"fail_mode,omitempty"`
 }
 
 func (p *MCPPolicy) Validate(known map[ids.RegistryID]struct{}) error {
@@ -27,12 +26,6 @@ func (p *MCPPolicy) Validate(known map[ids.RegistryID]struct{}) error {
 		p.FailMode = FailModeOpen
 	}
 	if err := p.FailMode.Validate(); err != nil {
-		return err
-	}
-	if p.ProtocolAcceptance == "" {
-		p.ProtocolAcceptance = ProtocolAcceptanceDualEra
-	}
-	if err := p.ProtocolAcceptance.Validate(); err != nil {
 		return err
 	}
 	return p.Toolkit.Validate(known)

@@ -33,11 +33,10 @@ type UpdateConsumerRequest struct {
 	// Registries replaces the whole registry association set: registries absent
 	// from the list are detached. Omit the field to leave the associations as
 	// they are; send an empty list to detach every registry.
-	Registries         *[]RegistryBindingRequest `json:"registries,omitempty"`
-	ModelPolicies      *[]ModelPolicyRequest     `json:"model_policies,omitempty"`
-	Toolkit            *[]ToolkitEntryRequest    `json:"toolkit,omitempty"`
-	FailMode           *string                   `json:"fail_mode,omitempty"`
-	ProtocolAcceptance *string                   `json:"protocol_acceptance,omitempty"`
+	Registries    *[]RegistryBindingRequest `json:"registries,omitempty"`
+	ModelPolicies *[]ModelPolicyRequest     `json:"model_policies,omitempty"`
+	Toolkit       *[]ToolkitEntryRequest    `json:"toolkit,omitempty"`
+	FailMode      *string                   `json:"fail_mode,omitempty"`
 }
 
 func (r UpdateConsumerRequest) Validate() error {
@@ -131,12 +130,4 @@ func (r UpdateConsumerRequest) ToFailMode() *domain.FailMode {
 	}
 	m := domain.FailMode(*r.FailMode)
 	return &m
-}
-
-func (r UpdateConsumerRequest) ToProtocolAcceptance() *domain.ProtocolAcceptance {
-	if r.ProtocolAcceptance == nil || strings.TrimSpace(*r.ProtocolAcceptance) == "" {
-		return nil
-	}
-	a := domain.ProtocolAcceptance(*r.ProtocolAcceptance)
-	return &a
 }

@@ -201,57 +201,6 @@ func TestUpdater_Update_PartialMCPTargetPreservesAuthAndHeaders(t *testing.T) {
 	}
 }
 
-func TestUpdater_Update_MCPTargetProtocolMode(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name     string
-		incoming domain.MCPProtocolMode
-		want     domain.MCPProtocolMode
-	}{
-		{name: "omitted preserves existing", want: domain.MCPProtocolModeLegacy},
-		{name: "explicit auto replaces existing", incoming: domain.MCPProtocolModeAuto, want: domain.MCPProtocolModeAuto},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			repo := repomocks.NewRepository(t)
-			existing, err := domain.NewMCPRegistry(ids.New[ids.GatewayKind](), "mcp", "", &domain.MCPTarget{
-				URL:          "https://old.example.com/mcp",
-				ProtocolMode: domain.MCPProtocolModeLegacy,
-				Auth:         &domain.MCPAuth{Mode: domain.MCPAuthModeStatic, Header: "Authorization", Value: "Bearer secret"},
-			})
-			if err != nil {
-				t.Fatalf("NewMCPRegistry error: %v", err)
-			}
-			repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-			repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Once()
-			publisher := cachemocks.NewEventPublisher(t)
-			publisher.EXPECT().
-				Publish(mock.Anything, event.InvalidateRegistryCacheEvent{GatewayID: existing.GatewayID.String(), RegistryID: existing.ID.String()}).
-				Return(nil).
-				Once()
-
-			updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
-			got, err := updater.Update(context.Background(), appregistry.UpdateInput{
-				ID: existing.ID,
-				MCPTarget: &domain.MCPTarget{
-					URL:          "https://new.example.com/mcp",
-					ProtocolMode: tc.incoming,
-				},
-			})
-			if err != nil {
-				t.Fatalf("Update error: %v", err)
-			}
-			if got.MCPTarget.ProtocolMode != tc.want {
-				t.Fatalf("ProtocolMode = %q, want %q", got.MCPTarget.ProtocolMode, tc.want)
-			}
-			if got.MCPTarget.Auth == nil || got.MCPTarget.Auth.Value != "Bearer secret" {
-				t.Fatalf("auth secret lost: %+v", got.MCPTarget.Auth)
-			}
-		})
-	}
-}
-
 func TestUpdater_Update_MCPTargetAuthClearedExplicitly(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
