@@ -46,6 +46,7 @@ const (
 	AppsDocumentEnvelopeReason
 	AppsDocumentSizeReason
 	AppsDocumentEncodingReason
+	AppsDocumentHTMLReason
 )
 
 // AppsDocumentError reports a bounded document rejection reason.
@@ -85,6 +86,18 @@ type appsDocumentContent struct {
 	Text json.RawMessage `json:"text"`
 	Blob json.RawMessage `json:"blob"`
 	Meta json.RawMessage `json:"_meta"`
+}
+
+// ValidateAppsDocument decodes and structurally validates an MCP Apps document.
+func ValidateAppsDocument(expectedURI string, maxBytes int, raw json.RawMessage) (AppsDocumentMetadata, error) {
+	document, err := decodeAppsDocument(expectedURI, maxBytes, raw)
+	if err != nil {
+		return AppsDocumentMetadata{}, err
+	}
+	if validateAppsHTML(document.body) != nil {
+		return AppsDocumentMetadata{}, invalidAppsDocument(AppsDocumentHTMLReason)
+	}
+	return document.metadata, nil
 }
 
 func decodeAppsDocument(expectedURI string, maxBytes int, raw json.RawMessage) (appsDecodedDocument, error) {
