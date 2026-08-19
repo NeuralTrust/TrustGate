@@ -45,6 +45,7 @@ type authProxy struct {
 	chainer     ConsentChainer
 	signer      appsts.TokenSigner
 	userinfo    UserInfoClient
+	verifier    appauth.OIDCVerifier
 }
 
 func NewAuthProxy(
@@ -55,6 +56,7 @@ func NewAuthProxy(
 	chainer ConsentChainer,
 	signer appsts.TokenSigner,
 	userinfo UserInfoClient,
+	verifier appauth.OIDCVerifier,
 ) AuthProxy {
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
@@ -68,6 +70,7 @@ func NewAuthProxy(
 		chainer:     chainer,
 		signer:      signer,
 		userinfo:    userinfo,
+		verifier:    verifier,
 	}
 }
 
@@ -90,9 +93,12 @@ func (p *authProxy) Authorize(ctx context.Context, baseURL string, req Authorize
 	}
 	auth, err := p.authForResource(ctx, req.Resource)
 	if err != nil {
-		return authorizeFailure(req, err)
+		return authorizeFailure(baseURL, req, err)
 	}
 	cfg := auth.Config.OAuth2
+	if cfg != nil && cfg.EffectiveNorthboundMode() == authdomain.NorthboundModeEMA {
+		return authorizeFailure(baseURL, req, oauthErr("access_denied", "authorization code flow is disabled for this identity provider"))
+	}
 	endpoints, err := p.idp.endpoints(ctx, cfg)
 	if err != nil {
 		return "", err
@@ -117,6 +123,8 @@ func (p *authProxy) Authorize(ctx context.Context, baseURL string, req Authorize
 		Resource:            req.Resource,
 		AuthID:              auth.ID.String(),
 		GatewayID:           auth.GatewayID.String(),
+		Issuer:              endpoints.issuer,
+		IssAdvertised:       endpoints.advertised,
 	}
 	if err := p.store.SavePending(ctx, state, pending); err != nil {
 		return "", fmt.Errorf("oauth: park authorization: %w", err)
@@ -139,7 +147,7 @@ func (p *authProxy) Authorize(ctx context.Context, baseURL string, req Authorize
 // client, as RFC 6749 §4.1.2.1 requires once the redirect_uri is validated.
 // Anything that is not a protocol error is a fault on this side and is left to
 // the caller to render.
-func authorizeFailure(req AuthorizeRequest, err error) (string, error) {
+func authorizeFailure(baseURL string, req AuthorizeRequest, err error) (string, error) {
 	var oe *OAuthError
 	if !errors.As(err, &oe) {
 		return "", err
@@ -147,10 +155,11 @@ func authorizeFailure(req AuthorizeRequest, err error) (string, error) {
 	return clientRedirect(req.RedirectURI, url.Values{
 		"error":             {oe.Code},
 		"error_description": {oe.Description},
+		"iss":               {baseURL},
 	}, req.State), nil
 }
 
-func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, idpErrDesc string) (string, error) {
+func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, idpErrDesc, iss string) (string, error) {
 	pending, err := p.store.TakePending(ctx, state)
 	if err != nil {
 		return "", fmt.Errorf("oauth: load pending authorization: %w", err)
@@ -162,7 +171,12 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 		return clientRedirect(pending.RedirectURI, url.Values{
 			"error":             {idpErr},
 			"error_description": {idpErrDesc},
+			"iss":               {baseURL},
 		}, pending.State), nil
+	}
+	if err := validateResponseISS(iss, pending.Issuer, pending.IssAdvertised); err != nil {
+		logIssuerMismatch(pending.Issuer, iss, pending.GatewayID, "", "")
+		return "", err
 	}
 
 	auth, err := p.pendingAuth(ctx, pending)
@@ -229,7 +243,7 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 	if err := p.store.SaveCode(ctx, gwCode, grant); err != nil {
 		return "", fmt.Errorf("oauth: store code grant: %w", err)
 	}
-	resume := clientRedirect(pending.RedirectURI, url.Values{"code": {gwCode}}, pending.State)
+	resume := clientRedirect(pending.RedirectURI, url.Values{"code": {gwCode}, "iss": {baseURL}}, pending.State)
 	if detour := p.consentDetour(ctx, baseURL, effectiveGatewayID, pending.Resource, capturedSubject, token, resume); detour != "" {
 		return detour, nil
 	}
@@ -351,9 +365,78 @@ func (p *authProxy) Exchange(ctx context.Context, baseURL string, req TokenReque
 		return p.exchangeCode(ctx, req)
 	case "refresh_token":
 		return p.refresh(ctx, req)
+	case grantJWTBearer:
+		return p.exchangeJWTBearer(ctx, baseURL, req)
 	default:
 		return nil, oauthErr("unsupported_grant_type", "supported: authorization_code, refresh_token")
 	}
+}
+
+func (p *authProxy) exchangeJWTBearer(ctx context.Context, baseURL string, req TokenRequest) (map[string]any, error) {
+	if strings.TrimSpace(req.Assertion) == "" {
+		return nil, oauthErr("invalid_request", "assertion is required")
+	}
+	auth, err := p.authForResource(ctx, req.Resource)
+	if err != nil {
+		return nil, err
+	}
+	cfg := auth.Config.OAuth2
+	if cfg == nil || cfg.EffectiveNorthboundMode() == authdomain.NorthboundModeOIDC {
+		return nil, oauthErr("unsupported_grant_type", "supported: authorization_code, refresh_token")
+	}
+	if req.ClientID == "" {
+		return nil, oauthErr("invalid_client", "client_id is required")
+	}
+	if p.store == nil {
+		logEMADeny(auth.ID.String(), auth.GatewayID.String(), "store")
+		return nil, oauthErr("invalid_grant", "invalid assertion")
+	}
+	client, err := p.store.GetGatewayClient(ctx, req.ClientID)
+	if err != nil {
+		return nil, fmt.Errorf("oauth: load client registration: %w", err)
+	}
+	if client == nil {
+		return nil, oauthErr("invalid_client", "unknown client_id; register via /oauth/register")
+	}
+	jag, err := p.validateIDJAG(ctx, baseURL, auth, req)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.store.ConsumeJTI(ctx, jag.jti, jag.exp); err != nil {
+		logEMADeny(auth.ID.String(), auth.GatewayID.String(), "jti")
+		return nil, oauthErr("invalid_grant", "invalid assertion")
+	}
+	grant := CodeGrant{
+		ClientID:    req.ClientID,
+		Subject:     jag.subject,
+		AuthID:      auth.ID.String(),
+		GatewayID:   auth.GatewayID.String(),
+		Audiences:   cfg.Audiences,
+		Scopes:      jag.scopes,
+		SessionMode: true,
+		Claims:      jag.claims,
+	}
+	resp, err := p.mintSession(grant)
+	if err != nil {
+		return nil, err
+	}
+	token, err := randomToken()
+	if err != nil {
+		return nil, err
+	}
+	refresh := gatewayRefreshPrefix + token
+	rec := SessionRecord{
+		Subject:   grant.Subject,
+		Scopes:    grant.Scopes,
+		GatewayID: grant.GatewayID,
+		AuthID:    grant.AuthID,
+		Audiences: grant.Audiences,
+	}
+	if err := p.store.SaveSession(ctx, refresh, rec); err != nil {
+		return nil, fmt.Errorf("oauth: persist session: %w", err)
+	}
+	resp["refresh_token"] = refresh
+	return resp, nil
 }
 
 func (p *authProxy) exchangeCode(ctx context.Context, req TokenRequest) (map[string]any, error) {
@@ -403,12 +486,19 @@ func (p *authProxy) exchangeCode(ctx context.Context, req TokenRequest) (map[str
 }
 
 func (p *authProxy) mintSession(grant CodeGrant) (map[string]any, error) {
-	claims := jwt.MapClaims{
-		"sub":       grant.Subject,
-		"scope":     strings.Join(grant.Scopes, " "),
-		"authid":    grant.AuthID,
-		"token_use": "mcp_session",
+	claims := jwt.MapClaims{}
+	for k, v := range grant.Claims {
+		switch k {
+		case "act", "jti", "client_id":
+			continue
+		default:
+			claims[k] = v
+		}
 	}
+	claims["sub"] = grant.Subject
+	claims["scope"] = strings.Join(grant.Scopes, " ")
+	claims["authid"] = grant.AuthID
+	claims["token_use"] = "mcp_session"
 	// gwid binds the session to the gateway the login was brokered for. It is
 	// authoritative for the built-in default identity provider, whose synthetic
 	// auth record carries no gateway of its own.

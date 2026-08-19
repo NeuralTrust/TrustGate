@@ -15,14 +15,12 @@
 package mcp
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
-	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
@@ -39,16 +37,9 @@ import (
 )
 
 const (
-	serverName            = "trustgate"
-	serverVersion         = "1.0"
-	latestProtocolVersion = "2025-06-18"
+	serverName    = "trustgate"
+	serverVersion = "1.0"
 )
-
-var supportedProtocolVersions = map[string]bool{
-	"2024-11-05": true,
-	"2025-03-26": true,
-	"2025-06-18": true,
-}
 
 const (
 	codeParseError     = -32700
@@ -61,18 +52,80 @@ const (
 const (
 	codeConsentRequired  = -32003
 	codeResourceNotFound = -32002
-	// codePolicyBlocked mirrors the app-layer policy-denial code, so a toolkit
-	// denial is classified alongside plugin blocks.
-	codePolicyBlocked = -32001
+	codePolicyBlocked    = -32001
 )
+
+const methodNotificationsCancelled = "notifications/cancelled"
+
+// MRTRSupport carries the multi round-trip dependencies the northbound handler
+// needs: an unset signer keeps mediation fail-closed.
+type MRTRSupport struct {
+	Signer   *appmcp.TicketSigner
+	Recorder MRTRRecorder
+}
+
+// TasksSupport carries the tasks-extension dependencies the northbound handler
+// needs: an unset signer keeps task mediation off and the extension unadvertised.
+type TasksSupport struct {
+	Signer   *appmcp.TaskHandleSigner
+	Recorder TasksRecorder
+}
+
+// Enabled reports whether TrustGate can mediate tasks.
+func (s TasksSupport) Enabled() bool {
+	return s.Signer.Enabled()
+}
 
 type Handler struct {
 	gateway    *RPCGateway
 	roleScoper appmcp.RoleScoper
+	protocol   ProtocolValidationRecorder
+	mrtr       MRTRSupport
+	tasks      TasksSupport
+	subs       SubscriptionsSupport
 }
 
-func NewHandler(gateway *RPCGateway, roleScoper appmcp.RoleScoper) *Handler {
-	return &Handler{gateway: gateway, roleScoper: roleScoper}
+func NewHandler(gateway *RPCGateway, roleScoper appmcp.RoleScoper, rec ...ProtocolValidationRecorder) *Handler {
+	return NewHandlerWithMRTR(gateway, roleScoper, MRTRSupport{}, rec...)
+}
+
+// NewHandlerWithMRTR wires the handler with multi round-trip mediation support.
+func NewHandlerWithMRTR(
+	gateway *RPCGateway,
+	roleScoper appmcp.RoleScoper,
+	mrtr MRTRSupport,
+	rec ...ProtocolValidationRecorder,
+) *Handler {
+	return NewHandlerWithMediation(gateway, roleScoper, mrtr, TasksSupport{}, rec...)
+}
+
+// NewHandlerWithMediation wires the handler with both mediated continuation
+// features: multi round-trip tickets and the tasks extension.
+func NewHandlerWithMediation(
+	gateway *RPCGateway,
+	roleScoper appmcp.RoleScoper,
+	mrtr MRTRSupport,
+	tasks TasksSupport,
+	rec ...ProtocolValidationRecorder,
+) *Handler {
+	return NewHandlerWithSubscriptions(gateway, roleScoper, mrtr, tasks, SubscriptionsSupport{}, rec...)
+}
+
+// NewHandlerWithSubscriptions wires the handler with bounded subscriptions on top
+// of the mediated continuation features.
+func NewHandlerWithSubscriptions(
+	gateway *RPCGateway,
+	roleScoper appmcp.RoleScoper,
+	mrtr MRTRSupport,
+	tasks TasksSupport,
+	subs SubscriptionsSupport,
+	rec ...ProtocolValidationRecorder,
+) *Handler {
+	h := &Handler{gateway: gateway, roleScoper: roleScoper, mrtr: mrtr, tasks: tasks, subs: subs}
+	if len(rec) > 0 {
+		h.protocol = rec[0]
+	}
+	return h
 }
 
 type rpcRequest struct {
@@ -101,10 +154,93 @@ func (h *Handler) MethodNotAllowed(c *fiber.Ctx) error {
 }
 
 func (h *Handler) Handle(c *fiber.Ctx) error {
+	if err := ensureMCPAuthenticated(c); err != nil {
+		skipMetrics(c)
+		return err
+	}
+
+	protocolHeader := c.Get("MCP-Protocol-Version")
+	body := c.Body()
+	invalidTopLevel := json.Valid(body) && !isJSONObject(body)
+	var req rpcRequest
+	parseErr := json.Unmarshal(body, &req)
+	era := protocolEraLegacy
+	if parseErr != nil || invalidTopLevel {
+		if protocolHeader != "" && !isSupportedProtocolVersion(protocolHeader) {
+			h.recordProtocolValidation(c, codeUnsupportedProtocolVersion, protocolEraModern)
+			skipMetrics(c)
+			return writeProtocolError(c, nil, unsupportedProtocolVersion(protocolHeader))
+		}
+		if parseErrorEra(protocolHeader) == protocolEraModern {
+			if invalidTopLevel {
+				h.recordProtocolValidation(c, codeInvalidRequest, protocolEraModern)
+				skipMetrics(c)
+				return writeBoundaryRPCError(c, nil, protocolEraModern, codeInvalidRequest, "invalid request")
+			}
+			h.recordProtocolValidation(c, codeParseError, protocolEraModern)
+			skipMetrics(c)
+			return writeBoundaryRPCError(c, nil, protocolEraModern, codeParseError, "parse error")
+		}
+	} else {
+		var protocolErr *protocolError
+		era, protocolErr = classifyEra(req, protocolHeader)
+		if protocolErr != nil {
+			h.recordProtocolValidation(c, protocolErr.code, era)
+			skipMetrics(c)
+			return writeProtocolError(c, req.ID, protocolErr)
+		}
+		if era == protocolEraModern {
+			headers := modernHeaders(c)
+			headers.subscriptionsEnabled = h.subs.Enabled()
+			if protocolErr := validateModernRequest(req, headers); protocolErr != nil {
+				h.recordProtocolValidation(c, protocolErr.code, era)
+				skipMetrics(c)
+				return writeProtocolError(c, req.ID, protocolErr)
+			}
+			if isNotification(req, era) {
+				// A cancellation ends the exchange without any stored state to
+				// discard: the ticket is the only continuation record and the
+				// client already holds it.
+				if req.Method == methodNotificationsCancelled {
+					h.recordMRTR(c, MRTROutcomeCancelled, era, trace.BoundMRTRRound(1))
+				}
+				skipMetrics(c)
+				return c.Status(fiber.StatusAccepted).Send(nil)
+			}
+			if !isSupportedModernMethod(req.Method, h.subs.Enabled()) {
+				skipMetrics(c)
+				return writeRPCErrorStatus(c, req.ID, fiber.StatusNotFound, codeMethodNotFound, "method not found", nil)
+			}
+			// A listen is refused on its params before the consumer is resolved,
+			// so a malformed negotiation costs no lookup, rate limit or plugin.
+			if req.Method == appmcp.MethodSubscriptionsListen {
+				listen, protocolErr := validateSubscriptionListenParams(req.Params, h.subs.MaxURIs)
+				if protocolErr != nil {
+					h.recordProtocolValidation(c, protocolErr.code, era)
+					skipMetrics(c)
+					return writeProtocolError(c, req.ID, protocolErr)
+				}
+				c.Locals(subscriptionListenParamsLocal, listen)
+			}
+		}
+		c.SetUserContext(withMCPProtocol(c.UserContext(), era, resolvedProtocolVersion(req, protocolHeader)))
+		if era == protocolEraModern {
+			c.SetUserContext(appmcp.WithClientCapabilities(
+				c.UserContext(),
+				h.mediatableCapabilities(declaredClientCapabilities(req.Params)),
+			))
+		}
+	}
+
 	rc, err := resolveMCPConsumer(c)
 	if err != nil {
 		skipMetrics(c)
 		return err
+	}
+	if protocolErr := denyModernIfLegacyOnly(rc, era); protocolErr != nil {
+		h.recordProtocolValidation(c, protocolErr.code, era)
+		skipMetrics(c)
+		return writeProtocolError(c, req.ID, protocolErr)
 	}
 	rc, err = h.scopeByRoles(c, rc)
 	if err != nil {
@@ -116,19 +252,37 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 		rt.SetConsumer(rc.Consumer.ID.String(), rc.Consumer.Name)
 	}
 
-	var req rpcRequest
-	if err := json.Unmarshal(c.Body(), &req); err != nil {
+	if parseErr != nil {
 		skipMetrics(c)
-		return writeRPCError(c, nil, codeParseError, "parse error")
+		return writeBoundaryRPCError(c, nil, protocolEraLegacy, codeParseError, "parse error")
 	}
-	if req.JSONRPC != "2.0" || req.Method == "" {
+	if era == protocolEraLegacy && (req.JSONRPC != "2.0" || req.Method == "") {
 		skipMetrics(c)
-		return writeRPCError(c, req.ID, codeInvalidRequest, "invalid request")
+		return writeBoundaryRPCError(c, req.ID, era, codeInvalidRequest, "invalid request")
 	}
 
-	if isNotification(req) {
+	if isNotification(req, era) {
 		skipMetrics(c)
-		return c.SendStatus(fiber.StatusAccepted)
+		return c.Status(fiber.StatusAccepted).Send(nil)
+	}
+
+	if era == protocolEraModern && req.Method == "server/discover" {
+		discovery := serverDiscoveryResultWith(
+			rc,
+			mrtrEndToEnd(h.mrtr.Signer, rc),
+			tasksEndToEnd(h.tasks, rc),
+			subscriptionsEndToEnd(h.subs, rc),
+		)
+		normalized, err := normalizeModernResult(req.Method, discovery, rc, nil)
+		if err != nil {
+			return writeRPCErrorStatus(c, req.ID, fiber.StatusInternalServerError, codeInternalError, "internal error", nil)
+		}
+		recordServerDiscovery(c)
+		return writeRPCResult(c, req.ID, normalized)
+	}
+
+	if era == protocolEraModern && req.Method == appmcp.MethodSubscriptionsListen {
+		return h.handleSubscriptionsListen(c, req, rc)
 	}
 
 	switch req.Method {
@@ -141,8 +295,19 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 	}
 
 	result, err := h.gateway.Dispatch(c.UserContext(), rc, req.Method, req.Params)
+	h.recordTaskOutcome(c, req.Method, era)
 	if err != nil {
-		return writeAppError(c, req.ID, err)
+		h.recordToolCallFailure(c, req.Method, era, err)
+		return writeAppError(c, req.ID, err, era, req.Method)
+	}
+	if era == protocolEraModern {
+		caps := appmcp.ClientCapabilitiesFromContext(c.UserContext())
+		normalized, err := normalizeModernResult(req.Method, result, rc, caps)
+		if err != nil {
+			return writeRPCErrorStatus(c, req.ID, fiber.StatusInternalServerError, codeInternalError, "internal error", nil)
+		}
+		h.recordToolCallOutcome(c, req.Method, era, normalized)
+		return writeRPCResult(c, req.ID, normalized)
 	}
 	if raw, ok := result.(json.RawMessage); ok {
 		return writeRawRPCResult(c, req.ID, raw)
@@ -150,10 +315,180 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 	return writeRPCResult(c, req.ID, result)
 }
 
-// skipMetrics tells the MCP metrics middleware not to publish an event for the
-// current request (ping, notifications, or pre-dispatch failures).
 func skipMetrics(c *fiber.Ctx) {
 	c.Locals(string(infracontext.MCPSkipMetricsKey), true)
+}
+
+func (h *Handler) recordMRTR(c *fiber.Ctx, outcome MRTROutcome, era protocolEra, round string) {
+	if h.mrtr.Recorder == nil {
+		return
+	}
+	h.mrtr.Recorder.Record(c.UserContext(), outcome, eraLabel(era), round)
+}
+
+func (h *Handler) recordToolCallOutcome(c *fiber.Ctx, method string, era protocolEra, normalized map[string]any) {
+	if method != "tools/call" {
+		return
+	}
+	outcome := MRTROutcomeComplete
+	if normalized["resultType"] == trace.MRTROutcomeInputRequired {
+		outcome = MRTROutcomeInputRequired
+	}
+	h.recordMRTR(c, outcome, era, mrtrRoundFromTrace(c.UserContext()))
+}
+
+func (h *Handler) recordToolCallFailure(c *fiber.Ctx, method string, era protocolEra, err error) {
+	if method != "tools/call" {
+		return
+	}
+	outcome, ok := mrtrFailureOutcome(err)
+	if !ok {
+		return
+	}
+	h.recordMRTR(c, outcome, era, mrtrRoundFromTrace(c.UserContext()))
+}
+
+func mrtrFailureOutcome(err error) (MRTROutcome, bool) {
+	var (
+		rpcErr       *appmcp.RPCError
+		notPermitted *appmcp.ToolNotPermittedError
+	)
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return MRTROutcomeTimeout, true
+	case errors.As(err, &notPermitted):
+		return MRTROutcomePolicyDenied, true
+	case errors.As(err, &rpcErr):
+		switch {
+		case rpcErr.Code == appmcp.CodeMRTRReplayRejected:
+			return MRTROutcomeReplayRejected, true
+		case rpcErr.Code == appmcp.CodeMRTRRoundLimit:
+			return MRTROutcomeRoundLimit, true
+		case appmcp.IsPolicyBlockedCode(rpcErr.Code):
+			return MRTROutcomePolicyDenied, true
+		}
+	}
+	return "", false
+}
+
+// recordTaskOutcome reports the outcome the dispatcher stamped on the MCP span.
+// Only the dispatch layer knows whether a handle verified, and the handle itself
+// is never an attribute.
+func (h *Handler) recordTaskOutcome(c *fiber.Ctx, method string, era protocolEra) {
+	fallback := trace.BoundTaskOperation(method)
+	if h.tasks.Recorder == nil || fallback == "" {
+		return
+	}
+	operation, outcome := taskAttrsFromTrace(c.UserContext())
+	if outcome == "" {
+		return
+	}
+	if operation == "" {
+		operation = fallback
+	}
+	h.tasks.Recorder.Record(c.UserContext(), operation, outcome, eraLabel(era))
+}
+
+func taskAttrsFromTrace(ctx context.Context) (operation, outcome string) {
+	requestTrace := trace.FromContext(ctx)
+	if requestTrace == nil {
+		return "", ""
+	}
+	for _, span := range requestTrace.Spans() {
+		attrs, ok := span.MCPAttrsCopy()
+		if !ok || attrs.TaskOutcome == "" {
+			continue
+		}
+		operation, outcome = attrs.TaskOperation, attrs.TaskOutcome
+	}
+	return operation, outcome
+}
+
+// mrtrRoundFromTrace reads back the round the composer stamped on the MCP span.
+// Only the mediating layer knows the ticket's round, and the ticket payload must
+// never be re-parsed at the edge.
+func mrtrRoundFromTrace(ctx context.Context) string {
+	requestTrace := trace.FromContext(ctx)
+	if requestTrace == nil {
+		return trace.BoundMRTRRound(1)
+	}
+	round := ""
+	for _, span := range requestTrace.Spans() {
+		attrs, ok := span.MCPAttrsCopy()
+		if !ok || attrs.MRTRRound == "" {
+			continue
+		}
+		round = attrs.MRTRRound
+	}
+	if round == "" {
+		return trace.BoundMRTRRound(1)
+	}
+	return round
+}
+
+// declaredClientCapabilities keeps only the allowlisted kinds a modern client
+// declared in request metadata.
+func declaredClientCapabilities(params json.RawMessage) map[string]any {
+	metadata, ok := decodeObject(params)
+	if !ok {
+		return nil
+	}
+	meta, ok := decodeObject(metadata["_meta"])
+	if !ok {
+		return nil
+	}
+	var caps map[string]any
+	if err := json.Unmarshal(meta[appmcp.MetaKeyClientCapabilities], &caps); err != nil {
+		return nil
+	}
+	return appmcp.AllowlistedClientCapabilities(caps)
+}
+
+// mediatableCapabilities is the single fail-closed choke point for the tasks
+// extension: with no signer the declaration is dropped here, so nothing
+// downstream can advertise it, forward it southbound, or accept tasks/*.
+func (h *Handler) mediatableCapabilities(caps map[string]any) map[string]any {
+	if h.tasks.Enabled() || caps == nil {
+		return caps
+	}
+	delete(caps, appmcp.CapabilityKindExtensions)
+	if len(caps) == 0 {
+		return nil
+	}
+	return caps
+}
+
+func (h *Handler) recordProtocolValidation(c *fiber.Ctx, code int, era protocolEra) {
+	if h.protocol == nil {
+		return
+	}
+	class, ok := validationClassForCode(code)
+	if !ok {
+		return
+	}
+	h.protocol.Record(c.UserContext(), class, eraLabel(era))
+}
+
+func ensureMCPAuthenticated(c *fiber.Ctx) error {
+	if _, ok := appconsumer.AuthIDFromContext(c.UserContext()); !ok {
+		return fiber.NewError(fiber.StatusUnauthorized, "not authenticated")
+	}
+	if data, ok := appconsumer.DataFromContext(c.UserContext()); !ok || data == nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "not authenticated")
+	}
+	return nil
+}
+
+func parseErrorEra(protocolHeader string) protocolEra {
+	if protocolHeader != "" && !isLegacyProtocolVersion(protocolHeader) {
+		return protocolEraModern
+	}
+	return protocolEraLegacy
+}
+
+func isJSONObject(raw []byte) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) > 0 && trimmed[0] == '{'
 }
 
 func (h *Handler) recordInitialize(c *fiber.Ctx) {
@@ -163,6 +498,7 @@ func (h *Handler) recordInitialize(c *fiber.Ctx) {
 	}
 	span := rt.StartSpan(trace.SpanMCP, "initialize")
 	span.SetMCPRequest("initialize", "initialize", "", "", "")
+	stampMCPProtocol(span, c.UserContext())
 	span.SetMCPStatus(fiber.StatusOK, 0)
 	span.End()
 }
@@ -174,8 +510,8 @@ type initializeParams struct {
 func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer.RoutableConsumer) error {
 	var params initializeParams
 	_ = json.Unmarshal(req.Params, &params)
-	version := latestProtocolVersion
-	if supportedProtocolVersions[params.ProtocolVersion] {
+	version := latestLegacyProtocolVersion
+	if isLegacyProtocolVersion(params.ProtocolVersion) {
 		version = params.ProtocolVersion
 	}
 	return writeRPCResult(c, req.ID, fiber.Map{
@@ -192,44 +528,26 @@ func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer
 	})
 }
 
-// surfaceFingerprint summarises everything that decides which tools a virtual
-// MCP exposes: the bound MCP registries, when each was last changed, and the
-// toolkit that filters them. It rides in serverInfo.version as semver build
-// metadata, so a client that caches a server's tool list keyed on its reported
-// version re-lists after the consumer is reconfigured. Without it every virtual
-// MCP reports a constant "1.0" forever and a newly attached registry stays
-// invisible until the client is reinstalled.
 func surfaceFingerprint(rc *appconsumer.RoutableConsumer) string {
-	if rc == nil || rc.Consumer == nil {
-		return "0"
-	}
-	parts := make([]string, 0, len(rc.Registries))
-	for _, reg := range rc.Registries {
-		if reg == nil || !reg.IsMCP() {
-			continue
-		}
-		parts = append(parts, reg.ID.String()+"@"+reg.UpdatedAt.UTC().Format(time.RFC3339Nano))
-	}
-	entries := make([]string, 0, len(rc.Consumer.Toolkit()))
-	for _, e := range rc.Consumer.Toolkit() {
-		entries = append(entries, "tk:"+e.RegistryID.String()+"/"+e.Tool+"/"+e.Prompt+"/"+e.Resource+"/"+e.ExposeAs)
-	}
-	// Neither list has a guaranteed order across replicas or reloads — the
-	// role-derived toolkit is a union — so sort both: the same configuration
-	// must always fingerprint the same.
-	sort.Strings(parts)
-	sort.Strings(entries)
-	sum := sha256.Sum256([]byte(strings.Join(append(parts, entries...), "|")))
-	return hex.EncodeToString(sum[:6])
+	return appmcp.SurfaceConfigFingerprint(rc)
 }
 
-func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
+func writeAppError(c *fiber.Ctx, id json.RawMessage, err error, era protocolEra, method string) error {
 	var (
 		rpcErr        *appmcp.RPCError
 		consentErr    *appmcp.ConsentRequiredError
 		notPermitted  *appmcp.ToolNotPermittedError
 		invalidParams *InvalidParamsError
 	)
+	if era == protocolEraModern && method == "resources/read" {
+		if errors.As(err, &rpcErr) && int(rpcErr.Code) == codeResourceNotFound {
+			applyRPCErrorHeaders(c, rpcErr, era)
+			return writeRPCErrorStatus(c, id, fiber.StatusBadRequest, codeInvalidParams, rpcErr.Message, rpcErr.Data)
+		}
+		if errors.Is(err, appmcp.ErrResourceNotFound) {
+			return writeRPCErrorStatus(c, id, fiber.StatusBadRequest, codeInvalidParams, err.Error(), nil)
+		}
+	}
 	switch {
 	case errors.As(err, &rpcErr):
 		switch {
@@ -240,7 +558,7 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 		default:
 			middleware.SetOpsOutcome(c, o11y.OutcomeServerError)
 		}
-		applyRPCErrorHeaders(c, rpcErr)
+		applyRPCErrorHeaders(c, rpcErr, era)
 		return writeJSONStatus(c, httpStatusForRPCError(rpcErr), rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
@@ -253,12 +571,6 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 			"provider":    consentErr.Provider,
 			"connect_url": connectURL,
 		})
-		// HTTP 200 carrying a JSON-RPC error, not a 4xx. MCP streamable-HTTP
-		// clients treat any non-2xx on this endpoint as a transport failure: they
-		// drop the connection and restart authentication instead of reading the
-		// body, so the connect URL never reaches the user. The refusal is
-		// reported to the agent through the JSON-RPC error, and the semantic
-		// status (403) is recorded on the span for metrics and traces.
 		return writeJSON(c, rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
@@ -269,10 +581,6 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 			},
 		})
 	case errors.As(err, &notPermitted):
-		// A denial the agent should read and act on, so it rides on HTTP 200 for
-		// the same transport reason as the consent case above; the span records
-		// it as forbidden. Written inline rather than through writeRPCError,
-		// which would reclassify the outcome as a generic client error.
 		middleware.SetOpsOutcome(c, o11y.OutcomeDeniedPolicy)
 		return writeJSON(c, rpcResponse{
 			JSONRPC: "2.0",
@@ -306,8 +614,36 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 	}
 }
 
-func isNotification(req rpcRequest) bool {
-	return len(req.ID) == 0 || string(req.ID) == "null"
+func isNotification(req rpcRequest, era protocolEra) bool {
+	if len(req.ID) == 0 {
+		return true
+	}
+	return era == protocolEraLegacy && bytes.Equal(bytes.TrimSpace(req.ID), []byte("null"))
+}
+
+func isSupportedModernMethod(method string, subscriptions bool) bool {
+	if method == appmcp.MethodSubscriptionsListen {
+		return subscriptions
+	}
+	switch method {
+	case "server/discover",
+		"tools/list",
+		"tools/call",
+		"resources/list",
+		"resources/templates/list",
+		"resources/read",
+		"prompts/list",
+		"prompts/get",
+		// tasks/* are always routable methods. A client that never declared the
+		// extension is refused by the dispatcher with -32025, not with
+		// method-not-found, so the two failures stay distinguishable.
+		appmcp.MethodTasksGet,
+		appmcp.MethodTasksUpdate,
+		appmcp.MethodTasksCancel:
+		return true
+	default:
+		return false
+	}
 }
 
 func writeRPCResult(c *fiber.Ctx, id json.RawMessage, result any) error {
@@ -323,15 +659,49 @@ func writeRawRPCResult(c *fiber.Ctx, id json.RawMessage, result json.RawMessage)
 }
 
 func writeRPCError(c *fiber.Ctx, id json.RawMessage, code int, message string) error {
+	return writeRPCErrorStatus(c, id, fiber.StatusOK, code, message, nil)
+}
+
+func writeBoundaryRPCError(c *fiber.Ctx, id json.RawMessage, era protocolEra, code int, message string) error {
+	status := fiber.StatusOK
+	if era == protocolEraModern {
+		status = fiber.StatusBadRequest
+	}
+	return writeRPCErrorStatus(c, id, status, code, message, nil)
+}
+
+func writeProtocolError(c *fiber.Ctx, id json.RawMessage, protocolErr *protocolError) error {
+	if !validModernRequestID(id) {
+		id = nil
+	}
+	var data json.RawMessage
+	if protocolErr.data != nil {
+		encoded, err := json.Marshal(protocolErr.data)
+		if err != nil {
+			return writeRPCErrorStatus(c, id, fiber.StatusInternalServerError, codeInternalError, "internal error", nil)
+		}
+		data = encoded
+	}
+	return writeRPCErrorStatus(
+		c,
+		id,
+		protocolErr.status,
+		protocolErr.code,
+		protocolErr.message,
+		data,
+	)
+}
+
+func writeRPCErrorStatus(c *fiber.Ctx, id json.RawMessage, status, code int, message string, data json.RawMessage) error {
 	outcome := o11y.OutcomeClientError
 	if code == codeInternalError {
 		outcome = o11y.OutcomeServerError
 	}
 	middleware.SetOpsOutcome(c, outcome)
-	return writeJSON(c, rpcResponse{
+	return writeJSONStatus(c, status, rpcResponse{
 		JSONRPC: "2.0",
 		ID:      normalizeID(id),
-		Error:   &rpcError{Code: code, Message: message},
+		Error:   &rpcError{Code: code, Message: message, Data: data},
 	})
 }
 
@@ -343,24 +713,18 @@ func writeJSONStatus(c *fiber.Ctx, status int, body any) error {
 	return c.Status(status).JSON(body)
 }
 
-// httpStatusForRPCError maps gateway denials onto the wire HTTP status so
-// agents and telemetry see the real outcome. Upstream JSON-RPC errors stay on 200.
-// httpStatusForRPCError is always 200: on the MCP wire a JSON-RPC error is a
-// successful exchange carrying a failed call. Clients treat a 4xx/5xx here as a
-// transport failure — they drop the connection and restart authentication
-// without reading the body — so a policy denial answered with 403 killed the
-// session instead of telling the agent it was blocked. The status the refusal
-// means (403, 429, 503) is recorded on the span, and rate-limit headers still
-// ride along on the response.
 func httpStatusForRPCError(_ *appmcp.RPCError) int {
 	return fiber.StatusOK
 }
 
-func applyRPCErrorHeaders(c *fiber.Ctx, err *appmcp.RPCError) {
+func applyRPCErrorHeaders(c *fiber.Ctx, err *appmcp.RPCError, era protocolEra) {
 	if err == nil {
 		return
 	}
 	for name, values := range err.HTTPHeaders {
+		if era == protocolEraModern && strings.EqualFold(name, "Mcp-Session-Id") {
+			continue
+		}
 		for _, value := range values {
 			c.Response().Header.Add(name, value)
 		}
@@ -408,14 +772,20 @@ func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 	if rc.Consumer.Type != consumerdomain.TypeMCP {
 		return nil, fiber.NewError(fiber.StatusNotFound, "consumer is not an MCP consumer")
 	}
-	// The built-in NeuralTrust default identity provider is not attached to the
-	// consumer's AuthIDs (the consumer has no identity provider of its own). The
-	// auth chain only resolves a default-IdP session on a path that has no
-	// oauth2 provider, so accepting it here is consistent with that scoping.
 	if !hasAuth(rc, authID) && authID != appauth.DefaultIdPAuthID() {
 		return nil, fiber.NewError(fiber.StatusForbidden, "credential not allowed for this consumer")
 	}
 	return rc, nil
+}
+
+func denyModernIfLegacyOnly(rc *appconsumer.RoutableConsumer, era protocolEra) *protocolError {
+	if era != protocolEraModern || rc == nil || rc.Consumer == nil {
+		return nil
+	}
+	if rc.Consumer.ProtocolAcceptance() != consumerdomain.ProtocolAcceptanceLegacyOnly {
+		return nil
+	}
+	return acceptanceDenied()
 }
 
 func hasAuth(rc *appconsumer.RoutableConsumer, authID ids.AuthID) bool {

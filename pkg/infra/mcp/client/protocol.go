@@ -23,8 +23,31 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 )
 
-func wrapUnreachable(url string, err error) error {
-	return fmt.Errorf("%w: %s: %w", appmcp.ErrUnreachable, url, err)
+const (
+	codeHeaderMismatch             int64 = -32020
+	codeRequiredCapability         int64 = -32021
+	codeUnsupportedProtocolVersion int64 = -32022
+)
+
+type unreachableError struct {
+	origin   string
+	category string
+	cause    error
+}
+
+func (e *unreachableError) Error() string {
+	if e.origin == "" {
+		return fmt.Sprintf("%s: %s", appmcp.ErrUnreachable, e.category)
+	}
+	return fmt.Sprintf("%s: %s: %s", appmcp.ErrUnreachable, e.category, e.origin)
+}
+
+func (e *unreachableError) Unwrap() []error {
+	return []error{appmcp.ErrUnreachable, e.cause}
+}
+
+func wrapUnreachable(origin, category string, err error) error {
+	return &unreachableError{origin: origin, category: category, cause: err}
 }
 
 func mapRPCError(err error) error {
@@ -35,6 +58,23 @@ func mapRPCError(err error) error {
 		return &appmcp.RPCError{Code: je.Code, Message: je.Message, Data: je.Data}
 	}
 	return err
+}
+
+func probeRPCError(err error) (*jsonrpc.Error, bool) {
+	if err == nil {
+		return nil, false
+	}
+	rpcErr, ok := errors.AsType[*jsonrpc.Error](err)
+	return rpcErr, ok
+}
+
+func isModernProofRPCCode(code int64) bool {
+	switch code {
+	case codeHeaderMismatch, codeRequiredCapability, codeUnsupportedProtocolVersion:
+		return true
+	default:
+		return false
+	}
 }
 
 func mapItems[T any](method string, items any) ([]T, error) {

@@ -16,15 +16,12 @@ package mcp
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"golang.org/x/sync/errgroup"
 )
@@ -102,33 +99,57 @@ func federate[T any](
 	list func(context.Context, Upstream) ([]T, error),
 	filter func(*registrydomain.Registry, []T) []T,
 ) ([]T, error) {
+	items, degraded, err := federateWithStats(c, ctx, rc, kind, list, filter)
+	if degraded {
+		markCompositionDegraded(ctx)
+	}
+	return items, err
+}
+
+// federateWithStats composes one primitive kind across every bound registry and
+// reports whether the composition was partial. A skipped registry means the
+// returned surface is smaller than the consumer's real one, which a caller that
+// diffs successive compositions must be able to tell apart from a genuine
+// removal: without it a transient upstream blip shrinks the surface, announces a
+// change, and announces another on recovery (RUN-1104 D6).
+func federateWithStats[T any](
+	c *composer,
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	kind string,
+	list func(context.Context, Upstream) ([]T, error),
+	filter func(*registrydomain.Registry, []T) []T,
+) ([]T, bool, error) {
 	registries := mcpRegistries(rc)
 	if len(registries) == 0 {
-		return nil, ErrNoMCPRegistries
+		return nil, false, ErrNoMCPRegistries
 	}
 	failOpen := rc.Consumer.FailMode() != consumerdomain.FailModeClosed
 
 	var out []T
 	reachable := 0
+	degraded := false
 	var firstConsent *ConsentRequiredError
 	for _, found := range discoverAll(c, ctx, rc, registries, kind, list) {
 		reg := found.registry
 		if found.err != nil {
 			if ctx.Err() != nil {
-				return nil, ctx.Err()
+				return nil, false, ctx.Err()
 			}
 			var consentErr *ConsentRequiredError
 			if errors.As(found.err, &consentErr) {
 				if firstConsent == nil {
 					firstConsent = consentErr
 				}
+				degraded = true
 				c.logger.Info("mcp composer: skipping upstream pending consent",
 					"registry", reg.Name, "provider", consentErr.Provider)
 				continue
 			}
 			if !failOpen {
-				return nil, fmt.Errorf("%w: registry %q: %w", ErrUpstreamUnavailable, reg.Name, found.err)
+				return nil, false, fmt.Errorf("%w: registry %q: %w", ErrUpstreamUnavailable, reg.Name, found.err)
 			}
+			degraded = true
 			c.logger.Warn("mcp composer: skipping unreachable upstream",
 				"registry", reg.Name, "error", found.err)
 			continue
@@ -138,11 +159,11 @@ func federate[T any](
 	}
 	if reachable == 0 {
 		if firstConsent != nil {
-			return nil, firstConsent
+			return nil, false, firstConsent
 		}
-		return nil, fmt.Errorf("%w: no upstream MCP server reachable", ErrUpstreamUnavailable)
+		return nil, false, fmt.Errorf("%w: no upstream MCP server reachable", ErrUpstreamUnavailable)
 	}
-	return out, nil
+	return out, degraded, nil
 }
 
 func mcpRegistries(rc *appconsumer.RoutableConsumer) []*registrydomain.Registry {
@@ -153,6 +174,20 @@ func mcpRegistries(rc *appconsumer.RoutableConsumer) []*registrydomain.Registry 
 		}
 	}
 	return out
+}
+
+// HasNonLegacyMCPRegistry reports whether the consumer binds at least one MCP
+// registry that is not pinned to the legacy protocol.
+func HasNonLegacyMCPRegistry(rc *appconsumer.RoutableConsumer) bool {
+	if rc == nil {
+		return false
+	}
+	for _, reg := range mcpRegistries(rc) {
+		if reg.MCPTarget.ProtocolMode != registrydomain.MCPProtocolModeLegacy {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *composer) discoverTools(
@@ -242,13 +277,25 @@ func cachedDiscovery[T any](c *composer, key string) ([]T, error, bool) {
 
 // rememberFailure holds on to an unreachable upstream for a few seconds so it
 // is dialled once per window rather than once per request. Consent is left out:
-// it is the user's to resolve, and resolving it should take effect at once.
+// it is the user's to resolve, and resolving it should take effect at once. So
+// is a caller that ran out of its own budget: the cache is shared by every
+// request for the registry, and a bounded re-authorization pass giving up is the
+// shortest budget any of them has (RUN-1104 D7).
 func (c *composer) rememberFailure(key string, err error) {
 	var consentErr *ConsentRequiredError
 	if errors.As(err, &consentErr) {
 		return
 	}
+	if callerScoped(err) {
+		return
+	}
 	c.discovery.Set(key, discoveryFailure{err: err, until: time.Now().Add(negativeTTL)})
+}
+
+// callerScoped reports whether the error says something about the caller rather
+// than about the upstream.
+func callerScoped(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func discoveryKey(ctx context.Context, reg *registrydomain.Registry, kind string) (string, bool) {
@@ -256,10 +303,15 @@ func discoveryKey(ctx context.Context, reg *registrydomain.Registry, kind string
 	if !perPrincipalAuth(reg) {
 		return key, true
 	}
-	p := identity.PrincipalFromContext(ctx)
-	if p == nil {
+	fingerprint := principalFingerprint(ctx)
+	if fingerprint == "" {
 		return "", false
 	}
-	sum := sha256.Sum256([]byte(p.Issuer + "|" + p.Subject))
-	return key + ":" + hex.EncodeToString(sum[:8]), true
+	// The cache key keeps the 64-bit prefix it has always used; the task handle
+	// binds the full digest.
+	return key + ":" + fingerprint[:discoveryFingerprintHexLen], true
 }
+
+// discoveryFingerprintHexLen is the hex width of the truncated principal digest
+// discovery cache keys are built from.
+const discoveryFingerprintHexLen = 16

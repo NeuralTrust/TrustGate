@@ -57,6 +57,9 @@ func (r UpdateRegistryRequest) Validate() error {
 	if r.Provider != nil && strings.TrimSpace(*r.Provider) == "" {
 		return fmt.Errorf("provider is required: %w", commonerrors.ErrValidation)
 	}
+	if err := r.MCPTarget.validateProtocolMode(); err != nil {
+		return err
+	}
 	return nil
 }
 

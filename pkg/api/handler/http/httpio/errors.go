@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -58,6 +59,8 @@ func MapDomainError(err error) (int, ErrorBody) {
 		return fiber.StatusConflict, ErrorBody{Error: "has_dependents", Message: err.Error()}
 	case errors.Is(err, commonerrors.ErrConflict):
 		return fiber.StatusConflict, ErrorBody{Error: "conflict", Message: err.Error()}
+	case errors.Is(err, registrydomain.ErrInvalidMCPTarget):
+		return fiber.StatusBadRequest, ErrorBody{Error: "invalid_mcp_target", Message: err.Error()}
 	case errors.Is(err, commonerrors.ErrValidation):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "validation_failed", Message: err.Error()}
 	case errors.Is(err, commonerrors.ErrInvalidConfig):
