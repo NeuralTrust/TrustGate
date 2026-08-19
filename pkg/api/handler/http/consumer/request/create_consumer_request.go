@@ -26,19 +26,18 @@ import (
 )
 
 type CreateConsumerRequest struct {
-	Name               string                   `json:"name"`
-	Type               string                   `json:"type,omitempty"`
-	RoutingMode        string                   `json:"routing_mode,omitempty"`
-	LBConfig           *LBConfigRequest         `json:"lb_config,omitempty"`
-	Headers            map[string]string        `json:"headers,omitempty"`
-	Active             *bool                    `json:"active,omitempty"`
-	Fallback           *FallbackRequest         `json:"fallback,omitempty"`
-	Registries         []RegistryBindingRequest `json:"registries,omitempty"`
-	Roles              []string                 `json:"roles,omitempty"`
-	ModelPolicies      []ModelPolicyRequest     `json:"model_policies,omitempty"`
-	Toolkit            []ToolkitEntryRequest    `json:"toolkit,omitempty"`
-	FailMode           string                   `json:"fail_mode,omitempty"`
-	ProtocolAcceptance string                   `json:"protocol_acceptance,omitempty"`
+	Name          string                   `json:"name"`
+	Type          string                   `json:"type,omitempty"`
+	RoutingMode   string                   `json:"routing_mode,omitempty"`
+	LBConfig      *LBConfigRequest         `json:"lb_config,omitempty"`
+	Headers       map[string]string        `json:"headers,omitempty"`
+	Active        *bool                    `json:"active,omitempty"`
+	Fallback      *FallbackRequest         `json:"fallback,omitempty"`
+	Registries    []RegistryBindingRequest `json:"registries,omitempty"`
+	Roles         []string                 `json:"roles,omitempty"`
+	ModelPolicies []ModelPolicyRequest     `json:"model_policies,omitempty"`
+	Toolkit       []ToolkitEntryRequest    `json:"toolkit,omitempty"`
+	FailMode      string                   `json:"fail_mode,omitempty"`
 }
 
 type RegistryBindingRequest struct {
@@ -243,13 +242,12 @@ func (r CreateConsumerRequest) ToMCPPolicy() (*domain.MCPPolicy, error) {
 	if err != nil {
 		return nil, err
 	}
-	if toolkit == nil && strings.TrimSpace(r.FailMode) == "" && strings.TrimSpace(r.ProtocolAcceptance) == "" {
+	if toolkit == nil && strings.TrimSpace(r.FailMode) == "" {
 		return nil, nil
 	}
 	return &domain.MCPPolicy{
-		Toolkit:            toolkit,
-		FailMode:           domain.FailMode(strings.ToLower(strings.TrimSpace(r.FailMode))),
-		ProtocolAcceptance: domain.ProtocolAcceptance(strings.ToLower(strings.TrimSpace(r.ProtocolAcceptance))),
+		Toolkit:  toolkit,
+		FailMode: domain.FailMode(strings.ToLower(strings.TrimSpace(r.FailMode))),
 	}, nil
 }
 

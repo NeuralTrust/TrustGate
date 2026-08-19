@@ -158,7 +158,7 @@ func TestCallbackDefaultIdPConsentUsesEffectiveGateway(t *testing.T) {
 	store := newMemFlowStore()
 	chainer := &fakeChainer{url: "http://localhost:8082/oMTXK0qG/mcp/connect?ticket=tk"}
 	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{def}, defaultIdP: def}
-	proxy := NewAuthProxy(finder, nil, http.DefaultClient, store, chainer, nil, nil, nil)
+	proxy := NewAuthProxy(finder, nil, http.DefaultClient, store, chainer, nil, nil)
 
 	gw := ids.New[ids.GatewayKind]()
 	state := "state-1"
@@ -173,7 +173,7 @@ func TestCallbackDefaultIdPConsentUsesEffectiveGateway(t *testing.T) {
 		GatewayID:     gw.String(),
 	}))
 
-	loc, err := proxy.Callback(context.Background(), "http://localhost:8082", state, "the-code", "", "", "")
+	loc, err := proxy.Callback(context.Background(), "http://localhost:8082", state, "the-code", "", "")
 	require.NoError(t, err)
 	require.Equal(t, chainer.url, loc, "callback must detour to the upstream-connect page")
 	require.Equal(t, 1, chainer.calls)

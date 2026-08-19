@@ -60,16 +60,6 @@ func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayI
 	if client == nil {
 		return nil, fmt.Errorf("%w: provider %q", ErrNoRegisteredClient, cfg.Provider)
 	}
-	key := clientKey(gatewayID, reg)
-	if client.Issuer == "" {
-		client, err = s.registrar.EnsureClient(ctx, key, meta, client.RedirectURI)
-		if err != nil {
-			return nil, err
-		}
-	} else if !issuersEqual(client.Issuer, meta.Issuer) {
-		logIssuerMismatch(client.Issuer, meta.Issuer, gatewayID.String(), cfg.Provider, key)
-		return nil, fmt.Errorf("%w: provider %q", ErrNoRegisteredClient, cfg.Provider)
-	}
 	return autoAuth(cfg, meta, client), nil
 }
 

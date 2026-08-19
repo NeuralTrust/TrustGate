@@ -43,20 +43,18 @@ var ErrUpstreamNotDiscoverable = errors.New(
 var ErrInvalidGrant = errors.New("oauth provider: grant is no longer valid")
 
 type UpstreamAuthServer struct {
-	Issuer                                     string   `json:"issuer"`
-	AuthorizationEndpoint                      string   `json:"authorization_endpoint"`
-	TokenEndpoint                              string   `json:"token_endpoint"`
-	RegistrationEndpoint                       string   `json:"registration_endpoint"`
-	ScopesSupported                            []string `json:"scopes_supported"`
-	Resource                                   string   `json:"resource"`
-	AuthorizationResponseIssParameterSupported bool     `json:"authorization_response_iss_parameter_supported,omitempty"`
+	Issuer                string   `json:"issuer"`
+	AuthorizationEndpoint string   `json:"authorization_endpoint"`
+	TokenEndpoint         string   `json:"token_endpoint"`
+	RegistrationEndpoint  string   `json:"registration_endpoint"`
+	ScopesSupported       []string `json:"scopes_supported"`
+	Resource              string   `json:"resource"`
 }
 
 type RegisteredClient struct {
 	ClientID     string `json:"client_id"`
 	ClientSecret string `json:"client_secret,omitempty"`
 	RedirectURI  string `json:"redirect_uri"`
-	Issuer       string `json:"issuer,omitempty"`
 }
 
 type ClientStore interface {
