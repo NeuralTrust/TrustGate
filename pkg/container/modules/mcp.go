@@ -40,6 +40,8 @@ import (
 	vaultrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/vault"
 )
 
+const mcpAppsPipelineReady = false
+
 func MCP(c *container.Container) error {
 	if err := c.Provide(mcpclient.New); err != nil {
 		return err
@@ -125,6 +127,20 @@ func MCP(c *container.Container) error {
 		logger *slog.Logger,
 	) appmcp.CredentialResolver {
 		return appmcp.NewCredentialResolver(exchanger, vault, connect, provider, logger)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(manager *cache.TTLMapManager) appmcp.AppCapabilityResolver {
+		return mcpclient.NewAppCapabilityResolver(manager.GetTTLMap(cache.MCPAppsTTLName))
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(
+		cfg *config.Config,
+		creds appmcp.CredentialResolver,
+		resolver appmcp.AppCapabilityResolver,
+	) appmcp.AppsMediator {
+		return appmcp.NewAppsMediator(cfg.Server.MCPApps.Enabled, mcpAppsPipelineReady, creds, resolver)
 	}); err != nil {
 		return err
 	}
@@ -217,9 +233,10 @@ func MCP(c *container.Container) error {
 		policy appmcp.SubscriptionPolicy,
 		targets appmcp.SubscriptionTargetResolver,
 		multiplexer *appmcp.SubscriptionMultiplexer,
+		apps appmcp.AppsMediator,
 		cfg *config.Config,
 	) *mcphttp.Handler {
-		return mcphttp.NewHandlerWithSubscriptions(
+		return mcphttp.NewHandlerWithApps(
 			gw,
 			scoper,
 			mcphttp.MRTRSupport{
@@ -238,6 +255,7 @@ func MCP(c *container.Container) error {
 				multiplexer,
 				mcphttp.NewSubscriptionsRecorder(cfg.Telemetry.OpsMetricsEnabled),
 			),
+			apps,
 			mcphttp.NewProtocolValidationRecorder(cfg.Telemetry.OpsMetricsEnabled),
 		)
 	})
