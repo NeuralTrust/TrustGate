@@ -231,7 +231,7 @@ func TestUpdater_Update_MCPTargetProtocolMode(t *testing.T) {
 				Return(nil).
 				Once()
 
-			updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil)
+			updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
 			got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 				ID: existing.ID,
 				MCPTarget: &domain.MCPTarget{
