@@ -101,6 +101,8 @@ type guardData struct {
 	FindingsCount  int            `json:"findings_count,omitempty"`
 	Findings       []GuardFinding `json:"findings,omitempty"`
 	FailedOpen     bool           `json:"failed_open,omitempty"`
+	FailedClosed   bool           `json:"failed_closed,omitempty"`
+	FailureReason  string         `json:"failure_reason,omitempty"`
 	Degraded       bool           `json:"degraded,omitempty"`
 	DegradedReason string         `json:"degraded_reason,omitempty"`
 }
