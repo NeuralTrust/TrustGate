@@ -18,8 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"time"
 
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -28,37 +26,36 @@ import (
 const (
 	clientName    = "trustgate"
 	clientVersion = "1.0"
-
-	responseHeaderTimeout = 30 * time.Second
 )
-
-var upstreamTransport = func() http.RoundTripper {
-	t, ok := http.DefaultTransport.(*http.Transport)
-	if !ok {
-		return http.DefaultTransport
-	}
-	cloned := t.Clone()
-	cloned.ResponseHeaderTimeout = responseHeaderTimeout
-	return cloned
-}()
 
 type Client struct{}
 
 func New() *Client { return &Client{} }
 
 type Session struct {
-	cs  *sdk.ClientSession
-	url string
+	cs     *sdk.ClientSession
+	origin string
 }
 
 var _ appmcp.Upstream = (*Session)(nil)
 
 func (c *Client) Connect(ctx context.Context, target appmcp.Target) (*Session, error) {
+	return c.ConnectLegacy(ctx, target)
+}
+
+func (c *Client) ConnectLegacy(ctx context.Context, target appmcp.Target) (*Session, error) {
+	origin, err := canonicalOrigin(target.URL)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid upstream endpoint: %w", appmcp.ErrUnreachable, err)
+	}
+	httpClient, err := newTargetHTTPClient(target.Headers)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid upstream HTTP configuration: %w", appmcp.ErrUnreachable, err)
+	}
+	httpClient.Transport = newLegacyDiscoverRoundTripper(httpClient.Transport)
 	transport := &sdk.StreamableClientTransport{
-		Endpoint: target.URL,
-		HTTPClient: &http.Client{
-			Transport: &headerRoundTripper{headers: target.Headers},
-		},
+		Endpoint:             target.URL,
+		HTTPClient:           httpClient,
 		DisableStandaloneSSE: true,
 	}
 	cli := sdk.NewClient(
@@ -67,20 +64,9 @@ func (c *Client) Connect(ctx context.Context, target appmcp.Target) (*Session, e
 	)
 	cs, err := cli.Connect(ctx, transport, nil)
 	if err != nil {
-		return nil, wrapUnreachable(target.URL, err)
+		return nil, wrapUnreachable(origin, "connect", err)
 	}
-	return &Session{cs: cs, url: target.URL}, nil
-}
-
-type headerRoundTripper struct {
-	headers map[string]string
-}
-
-func (t *headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	for k, v := range t.headers {
-		req.Header.Set(k, v)
-	}
-	return upstreamTransport.RoundTrip(req)
+	return &Session{cs: cs, origin: origin}, nil
 }
 
 func (s *Session) capabilities() *sdk.ServerCapabilities {
@@ -105,10 +91,12 @@ func (s *Session) ListTools(ctx context.Context) ([]appmcp.Tool, error) {
 	return mapItems[appmcp.Tool]("tools/list", items)
 }
 
-func (s *Session) CallTool(ctx context.Context, name string, arguments json.RawMessage) (json.RawMessage, error) {
-	params := &sdk.CallToolParams{Name: name}
-	if len(arguments) > 0 {
-		params.Arguments = arguments
+// CallTool runs a legacy tools/call. The legacy era has no multi round-trip
+// contract, so continuation fields are dropped instead of forwarded.
+func (s *Session) CallTool(ctx context.Context, call appmcp.ToolCall) (json.RawMessage, error) {
+	params := &sdk.CallToolParams{Name: call.Name}
+	if len(call.Arguments) > 0 {
+		params.Arguments = call.Arguments
 	}
 	res, err := s.cs.CallTool(ctx, params)
 	if err != nil {
@@ -147,7 +135,7 @@ func (s *Session) ListResourceTemplates(ctx context.Context) ([]appmcp.ResourceT
 
 func (s *Session) ReadResource(ctx context.Context, uri string) (json.RawMessage, error) {
 	if !s.SupportsResources() {
-		return nil, fmt.Errorf("%w: resources/read: %s", appmcp.ErrNotSupported, s.url)
+		return nil, fmt.Errorf("%w: resources/read: %s", appmcp.ErrNotSupported, s.origin)
 	}
 	res, err := s.cs.ReadResource(ctx, &sdk.ReadResourceParams{URI: uri})
 	if err != nil {
@@ -172,7 +160,7 @@ func (s *Session) ListPrompts(ctx context.Context) ([]appmcp.Prompt, error) {
 
 func (s *Session) GetPrompt(ctx context.Context, name string, arguments map[string]string) (json.RawMessage, error) {
 	if !s.SupportsPrompts() {
-		return nil, fmt.Errorf("%w: prompts/get: %s", appmcp.ErrNotSupported, s.url)
+		return nil, fmt.Errorf("%w: prompts/get: %s", appmcp.ErrNotSupported, s.origin)
 	}
 	res, err := s.cs.GetPrompt(ctx, &sdk.GetPromptParams{Name: name, Arguments: arguments})
 	if err != nil {

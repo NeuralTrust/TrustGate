@@ -88,6 +88,51 @@ func TestBuilder_MCPFoldsUpstreamAndLatency(t *testing.T) {
 	assert.Empty(t, evt.Security)
 }
 
+func TestBuilder_MCPFoldsProtocolEraAndVersion(t *testing.T) {
+	rt := trace.New("trace-mcp-protocol", trace.Metadata{
+		GatewayID: "gw-1",
+		Kind:      events.KindMCP,
+	})
+	_ = rt.AddSpan(mcpSpan("tools/call", &trace.MCPAttrs{
+		Method:          "tools/call",
+		Operation:       "tool",
+		ProtocolEra:     trace.MCPProtocolEraModern,
+		ProtocolVersion: "2026-07-28",
+		UpstreamStatus:  http.StatusOK,
+	}, 10*time.Millisecond))
+
+	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/mcp"}
+	resp := &infracontext.ResponseContext{StatusCode: 200}
+	start := time.UnixMilli(2_000_000)
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(10*time.Millisecond))
+
+	require.NotNil(t, evt.MCP)
+	assert.Equal(t, trace.MCPProtocolEraModern, evt.MCP.ProtocolEra)
+	assert.Equal(t, "2026-07-28", evt.MCP.ProtocolVersion)
+}
+
+func TestBuilder_MCPUnknownProtocolVersionIsUnsupported(t *testing.T) {
+	rt := trace.New("trace-mcp-unsupported", trace.Metadata{
+		GatewayID: "gw-1",
+		Kind:      events.KindMCP,
+	})
+	_ = rt.AddSpan(mcpSpan("tools/call", &trace.MCPAttrs{
+		Method:          "tools/call",
+		ProtocolEra:     trace.MCPProtocolEraModern,
+		ProtocolVersion: "2099-01-01",
+		UpstreamStatus:  http.StatusOK,
+	}, time.Millisecond))
+
+	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/mcp"}
+	resp := &infracontext.ResponseContext{StatusCode: 200}
+	start := time.UnixMilli(2_000_000)
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(time.Millisecond))
+
+	require.NotNil(t, evt.MCP)
+	assert.Equal(t, trace.MCPProtocolEraModern, evt.MCP.ProtocolEra)
+	assert.Equal(t, trace.MCPProtocolVersionUnsupported, evt.MCP.ProtocolVersion)
+}
+
 func TestBuilder_MCPFoldsPolicyChain(t *testing.T) {
 	rt := trace.New("trace-mcp-policy", trace.Metadata{
 		GatewayID:  "gw-1",

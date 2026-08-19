@@ -41,6 +41,8 @@ type memFlowStore struct {
 	clients  map[string]RegisteredGatewayClient
 	sessions map[string]SessionRecord
 	retired  []string
+	jtis     map[string]struct{}
+	jtiErr   error
 }
 
 func newMemFlowStore() *memFlowStore {
@@ -73,6 +75,25 @@ func (s *memFlowStore) RetireSession(_ context.Context, refreshToken string, _ t
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.retired = append(s.retired, refreshToken)
+	return nil
+}
+
+func (s *memFlowStore) ConsumeJTI(_ context.Context, jti string, exp time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.jtiErr != nil {
+		return s.jtiErr
+	}
+	if !exp.After(time.Now()) {
+		return errors.New("jti expired")
+	}
+	if s.jtis == nil {
+		s.jtis = map[string]struct{}{}
+	}
+	if _, ok := s.jtis[jti]; ok {
+		return ErrJTIReplay
+	}
+	s.jtis[jti] = struct{}{}
 	return nil
 }
 
@@ -142,17 +163,29 @@ func (s *memFlowStore) TakeCode(_ context.Context, code string) (*CodeGrant, err
 // fakeIdP serves AS metadata and a token endpoint, capturing the exchange form.
 func fakeIdP(t *testing.T) (*httptest.Server, *url.Values) {
 	t.Helper()
+	srv, captured, _ := fakeIdPConfigured(t, false)
+	return srv, captured
+}
+
+func fakeIdPConfigured(t *testing.T, advertiseISS bool) (*httptest.Server, *url.Values, *int) {
+	t.Helper()
 	captured := &url.Values{}
+	tokenHits := 0
 	var srv *httptest.Server
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/.well-known/oauth-authorization-server":
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			doc := map[string]any{
 				"issuer":                 srv.URL,
 				"authorization_endpoint": srv.URL + "/authorize",
 				"token_endpoint":         srv.URL + "/token",
-			})
+			}
+			if advertiseISS {
+				doc["authorization_response_iss_parameter_supported"] = true
+			}
+			_ = json.NewEncoder(w).Encode(doc)
 		case "/token":
+			tokenHits++
 			if err := r.ParseForm(); err != nil {
 				http.Error(w, "bad form", http.StatusBadRequest)
 				return
@@ -169,7 +202,7 @@ func fakeIdP(t *testing.T) (*httptest.Server, *url.Values) {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	return srv, captured
+	return srv, captured, &tokenHits
 }
 
 func newProxyUnderTest(t *testing.T, idpURL string, store FlowStore) AuthProxy {
@@ -182,7 +215,7 @@ func newProxyUnderTest(t *testing.T, idpURL string, store FlowStore) AuthProxy {
 			RequiredScopes: []string{"api://gw-client-id/mcp.access"},
 		}),
 	}}
-	return NewAuthProxy(finder, nil, http.DefaultClient, store, nil, nil, nil)
+	return NewAuthProxy(finder, nil, http.DefaultClient, store, nil, nil, nil, nil)
 }
 
 func TestBrokeredFlowEndToEnd(t *testing.T) {
@@ -224,7 +257,7 @@ func TestBrokeredFlowEndToEnd(t *testing.T) {
 	gwState := q.Get("state")
 
 	// Leg 2: IdP callback -> gateway exchanges code, mints its own.
-	clientLoc, err := proxy.Callback(ctx, "http://gw.example.com", gwState, "idp-code", "", "")
+	clientLoc, err := proxy.Callback(ctx, "http://gw.example.com", gwState, "idp-code", "", "", "")
 	if err != nil {
 		t.Fatalf("callback: %v", err)
 	}
@@ -417,7 +450,7 @@ func TestCallbackRelaysIdPDenial(t *testing.T) {
 		State:       "client-state",
 	})
 
-	loc, err := proxy.Callback(ctx, "http://gw.example.com", "gw-state", "", "access_denied", "user cancelled")
+	loc, err := proxy.Callback(ctx, "http://gw.example.com", "gw-state", "", "access_denied", "user cancelled", "")
 	if err != nil {
 		t.Fatalf("callback: %v", err)
 	}
@@ -481,7 +514,7 @@ func TestResourceScopedFacadeSelectsIdPPerTenant(t *testing.T) {
 		"/v1/mcp/tenant-b": {{GatewayID: authB.GatewayID, Auths: []*authdomain.Auth{authB}}},
 	}}
 	store := newMemFlowStore()
-	proxy := NewAuthProxy(finder, paths, http.DefaultClient, store, nil, nil, nil)
+	proxy := NewAuthProxy(finder, paths, http.DefaultClient, store, nil, nil, nil, nil)
 	ctx := context.Background()
 
 	location, err := proxy.Authorize(ctx, "http://gw.example.com", AuthorizeRequest{
@@ -508,7 +541,7 @@ func TestResourceScopedFacadeSelectsIdPPerTenant(t *testing.T) {
 	}
 
 	// Callback must exchange the code at the same IdP (pinned via AuthID).
-	if _, err := proxy.Callback(ctx, "http://gw.example.com", loc.Query().Get("state"), "idp-code", "", ""); err != nil {
+	if _, err := proxy.Callback(ctx, "http://gw.example.com", loc.Query().Get("state"), "idp-code", "", "", ""); err != nil {
 		t.Fatalf("callback: %v", err)
 	}
 	if len(*capturedA) != 0 {
@@ -536,7 +569,7 @@ func TestAuthorizeResourceFallsBackToGatewayScopedIdP(t *testing.T) {
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
 		"/cons/mcp": {{GatewayID: gatewayID, Auths: nil}},
 	}}
-	proxy := NewAuthProxy(finder, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil)
+	proxy := NewAuthProxy(finder, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil, nil)
 
 	location, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
@@ -565,7 +598,7 @@ func TestAuthorizeResourceFallsBackToGatewayScopedIdP(t *testing.T) {
 // the client instead of being rendered by the gateway. An agent that opened the
 // authorize URL is parked on its callback: an error it never receives leaves it
 // waiting forever.
-func assertClientToldOfError(t *testing.T, location, redirectURI, code string) {
+func assertClientToldOfError(t *testing.T, location, redirectURI, issuer, code string) {
 	t.Helper()
 	if !strings.HasPrefix(location, redirectURI) {
 		t.Fatalf("refusal must land on the client's redirect_uri, got %q", location)
@@ -579,6 +612,9 @@ func assertClientToldOfError(t *testing.T, location, redirectURI, code string) {
 	}
 	if u.Query().Get("error_description") == "" {
 		t.Fatal("a refusal without a description leaves the user with nothing to act on")
+	}
+	if got := u.Query().Get("iss"); got != issuer {
+		t.Fatalf("expected iss=%q, got %q", issuer, got)
 	}
 }
 
@@ -595,7 +631,7 @@ func TestAuthorizeCredentialProtectedConsumerRefusesToClient(t *testing.T) {
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
 		"/cons/mcp": {{GatewayID: gatewayID, Auths: []*authdomain.Auth{apiKey}}},
 	}}
-	proxy := NewAuthProxy(&fakeCredentialFinder{}, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil)
+	proxy := NewAuthProxy(&fakeCredentialFinder{}, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil, nil)
 
 	location, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
@@ -609,7 +645,7 @@ func TestAuthorizeCredentialProtectedConsumerRefusesToClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the client, not the gateway, owns this refusal: %v", err)
 	}
-	assertClientToldOfError(t, location, "https://client.example.com/cb", "invalid_target")
+	assertClientToldOfError(t, location, "https://client.example.com/cb", "http://gw.example.com", "invalid_target")
 	u, _ := url.Parse(location)
 	if got := u.Query().Get("state"); got != "client-state" {
 		t.Fatalf("state must survive the refusal, got %q", got)
@@ -627,7 +663,7 @@ func TestAuthorizeUnregisteredPrivateUseRedirectIsNotFollowed(t *testing.T) {
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
 		"/cons/mcp": {{GatewayID: gatewayID, Auths: nil}},
 	}}
-	proxy := NewAuthProxy(&fakeCredentialFinder{}, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil)
+	proxy := NewAuthProxy(&fakeCredentialFinder{}, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil, nil)
 
 	_, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
@@ -658,7 +694,7 @@ func TestAuthorizeResourceAmbiguousWithinGateway(t *testing.T) {
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
 		"/cons/mcp": {{GatewayID: gatewayID, Auths: nil}},
 	}}
-	proxy := NewAuthProxy(finder, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil)
+	proxy := NewAuthProxy(finder, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil, nil)
 
 	location, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
@@ -671,7 +707,7 @@ func TestAuthorizeResourceAmbiguousWithinGateway(t *testing.T) {
 	if err != nil {
 		t.Fatalf("an ambiguous target is the client's to hear about: %v", err)
 	}
-	assertClientToldOfError(t, location, "https://client.example.com/cb", "invalid_target")
+	assertClientToldOfError(t, location, "https://client.example.com/cb", "http://gw.example.com", "invalid_target")
 }
 
 func TestAuthorizeResourceNoOAuth2GivesClearError(t *testing.T) {
@@ -681,7 +717,7 @@ func TestAuthorizeResourceNoOAuth2GivesClearError(t *testing.T) {
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
 		"/cons/mcp": {{GatewayID: gatewayID, Auths: nil}},
 	}}
-	proxy := NewAuthProxy(finder, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil)
+	proxy := NewAuthProxy(finder, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil, nil)
 
 	location, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
@@ -694,7 +730,7 @@ func TestAuthorizeResourceNoOAuth2GivesClearError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a consumer without oauth2 is the client's to hear about: %v", err)
 	}
-	assertClientToldOfError(t, location, "https://client.example.com/cb", "invalid_request")
+	assertClientToldOfError(t, location, "https://client.example.com/cb", "http://gw.example.com", "invalid_request")
 }
 
 // Multiple IdPs without a resource indicator cannot be disambiguated: the
@@ -705,7 +741,7 @@ func TestAuthorizeMultiIssuerRequiresResource(t *testing.T) {
 		enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-a.example.com", ClientID: "client-a"}),
 		enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-b.example.com", ClientID: "client-b"}),
 	}}
-	proxy := NewAuthProxy(finder, &fakePathResolver{}, http.DefaultClient, newMemFlowStore(), nil, nil, nil)
+	proxy := NewAuthProxy(finder, &fakePathResolver{}, http.DefaultClient, newMemFlowStore(), nil, nil, nil, nil)
 
 	location, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
 		ResponseType:        "code",
@@ -716,7 +752,7 @@ func TestAuthorizeMultiIssuerRequiresResource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("an ambiguous issuer set is the client's to hear about: %v", err)
 	}
-	assertClientToldOfError(t, location, "https://client.example.com/cb", "invalid_target")
+	assertClientToldOfError(t, location, "https://client.example.com/cb", "http://gw.example.com", "invalid_target")
 }
 
 // Without a resource indicator, the gateway addressed by the request (resolved
@@ -734,7 +770,7 @@ func TestAuthorizeFallsBackToContextGatewayWithoutResource(t *testing.T) {
 	otherAuth := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: idpOther.URL, ClientID: "client-other"})
 
 	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{gatewayAuth, otherAuth}}
-	proxy := NewAuthProxy(finder, &fakePathResolver{}, http.DefaultClient, newMemFlowStore(), nil, nil, nil)
+	proxy := NewAuthProxy(finder, &fakePathResolver{}, http.DefaultClient, newMemFlowStore(), nil, nil, nil, nil)
 
 	ctx := appgateway.WithGateway(context.Background(), &gatewaydomain.Gateway{ID: gatewayID, Slug: "acme"})
 	location, err := proxy.Authorize(ctx, "https://acme.mcp.example.com", AuthorizeRequest{
@@ -771,7 +807,7 @@ func TestRefreshUsesResourceIndicator(t *testing.T) {
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
 		"/v1/mcp/tenant-b": {{GatewayID: authB.GatewayID, Auths: []*authdomain.Auth{authB}}},
 	}}
-	proxy := NewAuthProxy(finder, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil)
+	proxy := NewAuthProxy(finder, paths, http.DefaultClient, newMemFlowStore(), nil, nil, nil, nil)
 
 	if _, err := proxy.Exchange(context.Background(), "http://gw.example.com", TokenRequest{
 		GrantType:    "refresh_token",
@@ -906,7 +942,7 @@ func chainProxyUnderTest(t *testing.T, idpURL string, store FlowStore, chainer C
 			ClientID: "gw-client-id",
 		}),
 	}}
-	return NewAuthProxy(finder, nil, http.DefaultClient, store, chainer, nil, nil)
+	return NewAuthProxy(finder, nil, http.DefaultClient, store, chainer, nil, nil, nil)
 }
 
 func authorizeAndGetState(t *testing.T, proxy AuthProxy, resource string) string {
@@ -940,7 +976,7 @@ func TestCallbackChainsDownstreamConsent(t *testing.T) {
 	proxy := chainProxyUnderTest(t, idp.URL, store, chainer)
 
 	gwState := authorizeAndGetState(t, proxy, "http://gw.example.com/v1/mcp/linear")
-	loc, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "")
+	loc, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "", "")
 	if err != nil {
 		t.Fatalf("callback: %v", err)
 	}
@@ -969,7 +1005,7 @@ func TestCallbackSkipsChainWhenNothingToLink(t *testing.T) {
 	proxy := chainProxyUnderTest(t, idp.URL, store, chainer)
 
 	gwState := authorizeAndGetState(t, proxy, "http://gw.example.com/v1/mcp/linear")
-	loc, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "")
+	loc, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "", "")
 	if err != nil {
 		t.Fatalf("callback: %v", err)
 	}
@@ -991,7 +1027,7 @@ func TestCallbackChainsWithoutResource(t *testing.T) {
 	proxy := chainProxyUnderTest(t, idp.URL, store, chainer)
 
 	gwState := authorizeAndGetState(t, proxy, "")
-	loc, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "")
+	loc, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "", "")
 	if err != nil {
 		t.Fatalf("callback: %v", err)
 	}
@@ -1013,7 +1049,7 @@ func TestCallbackOpaqueTokenSkipsChain(t *testing.T) {
 	proxy := chainProxyUnderTest(t, idp.URL, store, chainer)
 
 	gwState := authorizeAndGetState(t, proxy, "http://gw.example.com/v1/mcp/linear")
-	loc, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "")
+	loc, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "", "")
 	if err != nil {
 		t.Fatalf("callback: %v", err)
 	}
@@ -1022,5 +1058,143 @@ func TestCallbackOpaqueTokenSkipsChain(t *testing.T) {
 	}
 	if chainer.calls != 0 {
 		t.Fatalf("chainer must not run without a subject, calls=%d", chainer.calls)
+	}
+}
+
+func TestCallbackRedirectIncludesISS(t *testing.T) {
+	t.Parallel()
+	idp, _ := fakeIdP(t)
+	store := newMemFlowStore()
+	proxy := newProxyUnderTest(t, idp.URL, store)
+	const baseURL = "http://gw.example.com"
+
+	gwState := authorizeAndGetState(t, proxy, "")
+	loc, err := proxy.Callback(context.Background(), baseURL, gwState, "idp-code", "", "", "")
+	if err != nil {
+		t.Fatalf("callback: %v", err)
+	}
+	cu, err := url.Parse(loc)
+	if err != nil {
+		t.Fatalf("parse client redirect: %v", err)
+	}
+	if cu.Query().Get("iss") != baseURL {
+		t.Fatalf("iss = %q, want %s", cu.Query().Get("iss"), baseURL)
+	}
+	if cu.Query().Get("code") == "" {
+		t.Fatal("expected gateway-minted code on redirect")
+	}
+}
+
+func TestCallbackMixUpRejectedBeforeTokenHTTP(t *testing.T) {
+	idp, _, tokenHits := fakeIdPConfigured(t, true)
+	store := newMemFlowStore()
+	proxy := newProxyUnderTest(t, idp.URL, store)
+	buf := captureDefaultSlog(t)
+
+	gwState := authorizeAndGetState(t, proxy, "")
+	_, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code-secret", "", "", "https://attacker.example")
+	var oe *OAuthError
+	if !errors.As(err, &oe) || oe.Code != "invalid_request" {
+		t.Fatalf("error = %v, want invalid_request", err)
+	}
+	if *tokenHits != 0 {
+		t.Fatalf("token HTTP was reached (%d hits); mix-up must fail before redeem", *tokenHits)
+	}
+	logged := buf.String()
+	if !strings.Contains(logged, "oauth.issuer_mismatch") {
+		t.Fatalf("expected oauth.issuer_mismatch, got %s", logged)
+	}
+	assertNoSecrets(t, logged)
+}
+
+func TestCallbackMatchingISSAccepted(t *testing.T) {
+	t.Parallel()
+	idp, _, tokenHits := fakeIdPConfigured(t, true)
+	store := newMemFlowStore()
+	proxy := newProxyUnderTest(t, idp.URL, store)
+
+	gwState := authorizeAndGetState(t, proxy, "")
+	loc, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "", idp.URL)
+	if err != nil {
+		t.Fatalf("callback: %v", err)
+	}
+	if *tokenHits != 1 {
+		t.Fatalf("token hits = %d, want 1 after matching iss", *tokenHits)
+	}
+	cu, _ := url.Parse(loc)
+	if cu.Query().Get("iss") != "http://gw.example.com" {
+		t.Fatalf("client redirect iss = %q", cu.Query().Get("iss"))
+	}
+}
+
+func TestCallbackMissingISSRejectedWhenAdvertised(t *testing.T) {
+	t.Parallel()
+	idp, _, tokenHits := fakeIdPConfigured(t, true)
+	store := newMemFlowStore()
+	proxy := newProxyUnderTest(t, idp.URL, store)
+
+	gwState := authorizeAndGetState(t, proxy, "")
+	_, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code-secret", "", "", "")
+	var oe *OAuthError
+	if !errors.As(err, &oe) || oe.Code != "invalid_request" {
+		t.Fatalf("error = %v, want invalid_request", err)
+	}
+	if *tokenHits != 0 {
+		t.Fatalf("token HTTP was reached (%d hits); missing iss must skip redeem", *tokenHits)
+	}
+}
+
+func TestCallbackGoogleOmitISSAllowedWhenNotAdvertised(t *testing.T) {
+	t.Parallel()
+	idp, captured, tokenHits := fakeIdPConfigured(t, false)
+	store := newMemFlowStore()
+	proxy := newProxyUnderTest(t, idp.URL, store)
+
+	gwState := authorizeAndGetState(t, proxy, "")
+	loc, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "", "")
+	if err != nil {
+		t.Fatalf("omit-iss callback: %v", err)
+	}
+	if *tokenHits != 1 {
+		t.Fatalf("token hits = %d, want 1 when advertised=false and iss omitted", *tokenHits)
+	}
+	if captured.Get("code") != "idp-code" {
+		t.Fatalf("IdP exchange form = %v", *captured)
+	}
+	cu, _ := url.Parse(loc)
+	if cu.Query().Get("iss") != "http://gw.example.com" {
+		t.Fatalf("northbound redirect must still include iss, got %q", cu.Query().Get("iss"))
+	}
+}
+
+func TestCallbackStaticIdPOmitISSAllowed(t *testing.T) {
+	t.Parallel()
+	tokenHits := 0
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tokenHits++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "g-access", "token_type": "Bearer", "expires_in": 3600,
+		})
+	}))
+	t.Cleanup(tokenSrv.Close)
+
+	store := newMemFlowStore()
+	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{
+		oauth2Auth(t, authdomain.OAuth2Config{
+			Issuer:       "https://accounts.google.com",
+			AuthorizeURL: "https://accounts.google.com/o/oauth2/v2/auth",
+			TokenURL:     tokenSrv.URL,
+			ClientID:     "gw-client-id",
+			ClientSecret: "gw-secret",
+		}),
+	}}
+	proxy := NewAuthProxy(finder, nil, http.DefaultClient, store, nil, nil, nil, nil)
+
+	gwState := authorizeAndGetState(t, proxy, "")
+	if _, err := proxy.Callback(context.Background(), "http://gw.example.com", gwState, "idp-code", "", "", ""); err != nil {
+		t.Fatalf("google omit-iss: %v", err)
+	}
+	if tokenHits != 1 {
+		t.Fatalf("token hits = %d, want 1", tokenHits)
 	}
 }

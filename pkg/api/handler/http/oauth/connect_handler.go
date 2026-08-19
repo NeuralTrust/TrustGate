@@ -58,6 +58,7 @@ func (h *ConnectHandler) Callback(c *fiber.Ctx) error {
 	ticketID, err := h.connect.Callback(
 		c.UserContext(), c.BaseURL(), providerParam(c),
 		c.Query("state"), c.Query("code"), c.Query("error"), c.Query("error_description"),
+		c.Query("iss"),
 	)
 	if err != nil {
 		if ticketID == "" {

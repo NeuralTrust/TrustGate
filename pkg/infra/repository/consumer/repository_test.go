@@ -38,3 +38,56 @@ func TestMapPgError_RoutingModeCheck(t *testing.T) {
 		t.Fatalf("err = %v, want ErrInvalidRoutingMode", err)
 	}
 }
+
+func TestNullableProtocolAcceptance(t *testing.T) {
+	t.Parallel()
+	if got := nullableProtocolAcceptance(""); got != nil {
+		t.Fatalf("empty = %v, want nil", got)
+	}
+	if got := nullableProtocolAcceptance(domain.ProtocolAcceptanceLegacyOnly); got != "legacy_only" {
+		t.Fatalf("legacy_only = %v, want legacy_only", got)
+	}
+}
+
+func TestMCPPolicyFromColumns_ProtocolAcceptance(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty columns yield nil policy", func(t *testing.T) {
+		t.Parallel()
+		got, err := mcpPolicyFromColumns(nil, "", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != nil {
+			t.Fatalf("got %+v, want nil", got)
+		}
+	})
+
+	t.Run("hydrates protocol_acceptance without toolkit JSON", func(t *testing.T) {
+		t.Parallel()
+		got, err := mcpPolicyFromColumns(nil, "open", "legacy_only")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got == nil || got.ProtocolAcceptance != domain.ProtocolAcceptanceLegacyOnly {
+			t.Fatalf("ProtocolAcceptance = %v, want legacy_only", got)
+		}
+		if got.FailMode != domain.FailModeOpen {
+			t.Fatalf("FailMode = %q, want open", got.FailMode)
+		}
+	})
+
+	t.Run("toolkit JSON does not host protocol_acceptance", func(t *testing.T) {
+		t.Parallel()
+		got, err := mcpPolicyFromColumns([]byte(`[{"registry_id":"00000000-0000-0000-0000-000000000001","tool":"*"}]`), "", "dual_era")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got == nil || got.ProtocolAcceptance != domain.ProtocolAcceptanceDualEra {
+			t.Fatalf("ProtocolAcceptance = %v, want dual_era", got)
+		}
+		if len(got.Toolkit) != 1 {
+			t.Fatalf("toolkit len = %d, want 1", len(got.Toolkit))
+		}
+	})
+}

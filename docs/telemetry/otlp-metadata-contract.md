@@ -74,6 +74,13 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.attempts` | `attempts[]` as JSON string (when non-empty) |
 | `trustgate.attempts.count` | `len(attempts)` (when non-empty) |
 | `trustgate.mcp.*` | `mcp.*` fields (when the request is an MCP call) |
+| `trustgate.mcp.protocol_era` | `mcp.protocol_era` — `legacy` or `modern` |
+| `trustgate.mcp.protocol_version` | `mcp.protocol_version` — known revision or `unsupported` |
+
+Success MCP events stamp bounded protocol identity after request validation. Era is
+`legacy` or `modern`. Version is one of `2026-07-28`, `2025-06-18`, `2025-03-26`,
+`2024-11-05`; any other revision maps to `unsupported`. Raw client strings are never
+exported as labels.
 
 ### Latency semantics
 
