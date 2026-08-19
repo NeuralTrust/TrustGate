@@ -65,9 +65,6 @@ func AllowlistedClientCapabilities(raw map[string]any) map[string]any {
 	return out
 }
 
-// allowlistedExtensions keeps the tasks extension and nothing else, with its
-// value forced to an empty object so a client cannot smuggle a payload
-// southbound inside the declaration.
 func allowlistedExtensions(raw any) map[string]any {
 	declared, ok := raw.(map[string]any)
 	if !ok {
