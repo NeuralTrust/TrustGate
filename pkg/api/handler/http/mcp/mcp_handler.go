@@ -83,6 +83,7 @@ type Handler struct {
 	mrtr       MRTRSupport
 	tasks      TasksSupport
 	subs       SubscriptionsSupport
+	apps       appmcp.AppsMediator
 }
 
 func NewHandler(gateway *RPCGateway, roleScoper appmcp.RoleScoper, rec ...ProtocolValidationRecorder) *Handler {
@@ -121,7 +122,20 @@ func NewHandlerWithSubscriptions(
 	subs SubscriptionsSupport,
 	rec ...ProtocolValidationRecorder,
 ) *Handler {
-	h := &Handler{gateway: gateway, roleScoper: roleScoper, mrtr: mrtr, tasks: tasks, subs: subs}
+	return NewHandlerWithApps(gateway, roleScoper, mrtr, tasks, subs, nil, rec...)
+}
+
+// NewHandlerWithApps wires all mediated protocol capabilities.
+func NewHandlerWithApps(
+	gateway *RPCGateway,
+	roleScoper appmcp.RoleScoper,
+	mrtr MRTRSupport,
+	tasks TasksSupport,
+	subs SubscriptionsSupport,
+	apps appmcp.AppsMediator,
+	rec ...ProtocolValidationRecorder,
+) *Handler {
+	h := &Handler{gateway: gateway, roleScoper: roleScoper, mrtr: mrtr, tasks: tasks, subs: subs, apps: apps}
 	if len(rec) > 0 {
 		h.protocol = rec[0]
 	}
@@ -165,6 +179,8 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 	var req rpcRequest
 	parseErr := json.Unmarshal(body, &req)
 	era := protocolEraLegacy
+	var clientCapabilities map[string]any
+	var appsCapability appmcp.MCPAppsClientCapability
 	if parseErr != nil || invalidTopLevel {
 		if protocolHeader != "" && !isSupportedProtocolVersion(protocolHeader) {
 			h.recordProtocolValidation(c, codeUnsupportedProtocolVersion, protocolEraModern)
@@ -190,6 +206,7 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 			return writeProtocolError(c, req.ID, protocolErr)
 		}
 		if era == protocolEraModern {
+			clientCapabilities = rawClientCapabilities(req.Params)
 			headers := modernHeaders(c)
 			headers.subscriptionsEnabled = h.subs.Enabled()
 			if protocolErr := validateModernRequest(req, headers); protocolErr != nil {
@@ -211,6 +228,15 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 				skipMetrics(c)
 				return writeRPCErrorStatus(c, req.ID, fiber.StatusNotFound, codeMethodNotFound, "method not found", nil)
 			}
+			if req.Method == "server/discover" {
+				var err error
+				appsCapability, err = declaredMCPAppsCapability(clientCapabilities)
+				if err != nil {
+					h.recordProtocolValidation(c, codeInvalidParams, era)
+					skipMetrics(c)
+					return writeBoundaryRPCError(c, req.ID, era, codeInvalidParams, "invalid params")
+				}
+			}
 			// A listen is refused on its params before the consumer is resolved,
 			// so a malformed negotiation costs no lookup, rate limit or plugin.
 			if req.Method == appmcp.MethodSubscriptionsListen {
@@ -227,7 +253,7 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 		if era == protocolEraModern {
 			c.SetUserContext(appmcp.WithClientCapabilities(
 				c.UserContext(),
-				h.mediatableCapabilities(declaredClientCapabilities(req.Params)),
+				h.mediatableCapabilities(appmcp.AllowlistedClientCapabilities(clientCapabilities)),
 			))
 		}
 	}
@@ -273,6 +299,10 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 			tasksEndToEnd(h.tasks, rc),
 			subscriptionsEndToEnd(h.subs, rc),
 		)
+		if h.apps != nil {
+			addAppsExtension(discovery["capabilities"].(map[string]any),
+				h.apps.Advertise(c.UserContext(), true, rc, appsCapability))
+		}
 		normalized, err := normalizeModernResult(req.Method, discovery, rc, nil)
 		if err != nil {
 			return writeRPCErrorStatus(c, req.ID, fiber.StatusInternalServerError, codeInternalError, "internal error", nil)
@@ -426,9 +456,7 @@ func mrtrRoundFromTrace(ctx context.Context) string {
 	return round
 }
 
-// declaredClientCapabilities keeps only the allowlisted kinds a modern client
-// declared in request metadata.
-func declaredClientCapabilities(params json.RawMessage) map[string]any {
+func rawClientCapabilities(params json.RawMessage) map[string]any {
 	metadata, ok := decodeObject(params)
 	if !ok {
 		return nil
@@ -441,7 +469,19 @@ func declaredClientCapabilities(params json.RawMessage) map[string]any {
 	if err := json.Unmarshal(meta[appmcp.MetaKeyClientCapabilities], &caps); err != nil {
 		return nil
 	}
-	return appmcp.AllowlistedClientCapabilities(caps)
+	return caps
+}
+
+func declaredMCPAppsCapability(capabilities map[string]any) (appmcp.MCPAppsClientCapability, error) {
+	extensions, ok := capabilities[appmcp.CapabilityKindExtensions].(map[string]any)
+	if !ok {
+		return appmcp.MCPAppsClientCapability{}, nil
+	}
+	raw, ok := extensions[appmcp.MCPAppsExtensionIdentifier]
+	if !ok {
+		return appmcp.MCPAppsClientCapability{}, nil
+	}
+	return appmcp.ParseMCPAppsClientCapability(raw)
 }
 
 // mediatableCapabilities is the single fail-closed choke point for the tasks
