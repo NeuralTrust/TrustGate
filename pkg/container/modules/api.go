@@ -182,9 +182,8 @@ func API(c *container.Container) error {
 		connect appoauth.ConnectService,
 		signer sts.TokenSigner,
 		userinfo appoauth.UserInfoClient,
-		verifier appauth.OIDCVerifier,
 	) appoauth.AuthProxy {
-		return appoauth.NewAuthProxy(credentials, paths, nil, store, connect, signer, userinfo, verifier)
+		return appoauth.NewAuthProxy(credentials, paths, nil, store, connect, signer, userinfo)
 	}); err != nil {
 		return err
 	}

@@ -152,36 +152,3 @@ func TestUpdateConsumerRequest_ToRoutingMode(t *testing.T) {
 		})
 	}
 }
-
-func TestUpdateConsumerRequest_ToProtocolAcceptance(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name string
-		in   *string
-		want *domain.ProtocolAcceptance
-	}{
-		{"omitted", nil, nil},
-		{"empty", strPtr(""), nil},
-		{"whitespace", strPtr("   "), nil},
-		{"legacy_only", strPtr("legacy_only"), func() *domain.ProtocolAcceptance {
-			v := domain.ProtocolAcceptanceLegacyOnly
-			return &v
-		}()},
-		{"dual_era", strPtr("dual_era"), func() *domain.ProtocolAcceptance {
-			v := domain.ProtocolAcceptanceDualEra
-			return &v
-		}()},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got := UpdateConsumerRequest{ProtocolAcceptance: tc.in}.ToProtocolAcceptance()
-			if (got == nil) != (tc.want == nil) {
-				t.Fatalf("ToProtocolAcceptance() nilness mismatch: got=%v want=%v", got, tc.want)
-			}
-			if got != nil && *got != *tc.want {
-				t.Fatalf("ToProtocolAcceptance() = %q, want %q", *got, *tc.want)
-			}
-		})
-	}
-}

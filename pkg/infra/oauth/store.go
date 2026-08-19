@@ -30,7 +30,6 @@ const (
 	codePrefix          = "oauth:code:"
 	gatewayClientPrefix = "oauth:gwclient:"
 	sessionPrefix       = "oauth:session:"
-	jtiPrefix           = "oauth:jti:"
 	pendingTTL          = 10 * time.Minute
 	codeTTL             = 5 * time.Minute
 	gatewayClientTTL    = 30 * 24 * time.Hour
@@ -117,21 +116,6 @@ func (s *Store) RetireSession(ctx context.Context, refreshToken string, grace ti
 	// retired token cannot push its expiry out again.
 	if err := s.rdb.ExpireLT(ctx, sessionPrefix+refreshToken, grace).Err(); err != nil {
 		return fmt.Errorf("oauth flow store: retire session: %w", err)
-	}
-	return nil
-}
-
-func (s *Store) ConsumeJTI(ctx context.Context, jti string, exp time.Time) error {
-	ttl := time.Until(exp)
-	if ttl <= 0 {
-		return fmt.Errorf("oauth flow store: jti already expired")
-	}
-	ok, err := s.rdb.SetNX(ctx, jtiPrefix+jti, "1", ttl).Result()
-	if err != nil {
-		return fmt.Errorf("oauth flow store: consume jti: %w", err)
-	}
-	if !ok {
-		return appoauth.ErrJTIReplay
 	}
 	return nil
 }

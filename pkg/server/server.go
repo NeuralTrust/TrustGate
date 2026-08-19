@@ -16,9 +16,7 @@
 package server
 
 import (
-	"context"
 	"log/slog"
-	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/server/router"
@@ -31,21 +29,11 @@ type Server interface {
 	Shutdown() error
 }
 
-// ShutdownHook releases a resource that keeps connections busy, before the
-// router itself is asked to shut down.
-type ShutdownHook func(ctx context.Context) error
-
-// shutdownHookBudget bounds the hooks as a whole. It has to stay well under the
-// orchestrator's termination grace period, because whatever the hooks do not
-// finish is followed by a router shutdown that has its own wait.
-const shutdownHookBudget = 5 * time.Second
-
 type BaseServer struct {
 	Name   string
 	Addr   string
 	Router *fiber.App
 	logger *slog.Logger
-	hooks  []ShutdownHook
 }
 
 func NewBaseServer(name, addr string, cfg config.ServerConfig, logger *slog.Logger) *BaseServer {
@@ -76,36 +64,6 @@ func NewBaseServer(name, addr string, cfg config.ServerConfig, logger *slog.Logg
 	r.Server().NoDefaultContentType = true
 
 	return &BaseServer{Name: name, Addr: addr, Router: r, logger: logger}
-}
-
-// WithShutdownHooks registers hooks run at the top of Shutdown, in order. Nil
-// hooks are dropped so a disabled feature can pass one unconditionally.
-func (s *BaseServer) WithShutdownHooks(hooks ...ShutdownHook) *BaseServer {
-	for _, hook := range hooks {
-		if hook != nil {
-			s.hooks = append(s.hooks, hook)
-		}
-	}
-	return s
-}
-
-// runShutdownHooks runs every hook under one shared budget. A hook that fails or
-// times out is logged and the next one still runs: the router shutdown that
-// follows must not be skipped.
-func (s *BaseServer) runShutdownHooks() {
-	if len(s.hooks) == 0 {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownHookBudget)
-	defer cancel()
-	for _, hook := range s.hooks {
-		if err := hook(ctx); err != nil {
-			s.logger.Warn("shutdown hook did not complete",
-				slog.String("server", s.Name),
-				slog.String("error", err.Error()),
-			)
-		}
-	}
 }
 
 func (s *BaseServer) WithRouters(routers ...router.ServerRouter) *BaseServer {

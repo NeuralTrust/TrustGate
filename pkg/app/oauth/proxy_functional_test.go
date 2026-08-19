@@ -90,7 +90,7 @@ func githubSessionProxy(t *testing.T, idpURL string, signer *infrasts.Signer, ch
 			RequiredScopes: []string{"mcp.access"},
 		}),
 	}}
-	return NewAuthProxy(finder, nil, http.DefaultClient, newMemFlowStore(), chainer, signer, httpUserInfo{http.DefaultClient}, nil)
+	return NewAuthProxy(finder, nil, http.DefaultClient, newMemFlowStore(), chainer, signer, httpUserInfo{http.DefaultClient})
 }
 
 func exchangeCodeFrom(t *testing.T, resumeURL string) string {
@@ -119,7 +119,7 @@ func TestSessionFlowGitHubOpaqueEndToEnd(t *testing.T) {
 	ctx := context.Background()
 
 	gwState := authorizeAndGetState(t, proxy, "")
-	detour, err := proxy.Callback(ctx, "http://gw.example.com", gwState, "idp-code", "", "", "")
+	detour, err := proxy.Callback(ctx, "http://gw.example.com", gwState, "idp-code", "", "")
 	if err != nil {
 		t.Fatalf("callback: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestSessionFlowDistinctSubjectsDoNotCollide(t *testing.T) {
 		idp := githubLikeIdP(t, userID)
 		proxy := githubSessionProxy(t, idp.URL, signer, &fakeChainer{url: ""})
 		gwState := authorizeAndGetState(t, proxy, "")
-		clientLoc, err := proxy.Callback(ctx, "http://gw.example.com", gwState, "idp-code", "", "", "")
+		clientLoc, err := proxy.Callback(ctx, "http://gw.example.com", gwState, "idp-code", "", "")
 		if err != nil {
 			t.Fatalf("callback: %v", err)
 		}
@@ -222,7 +222,7 @@ func TestOktaFlowNoRegressionEndToEnd(t *testing.T) {
 	ctx := context.Background()
 
 	gwState := authorizeAndGetState(t, proxy, "")
-	clientLoc, err := proxy.Callback(ctx, "http://gw.example.com", gwState, "idp-code", "", "", "")
+	clientLoc, err := proxy.Callback(ctx, "http://gw.example.com", gwState, "idp-code", "", "")
 	if err != nil {
 		t.Fatalf("callback: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestSessionFlowGitHubExplicitEndpointsNoDiscovery(t *testing.T) {
 			TokenURL:       idp.URL + "/login/oauth/access_token",
 		}),
 	}}
-	proxy := NewAuthProxy(finder, nil, http.DefaultClient, newMemFlowStore(), &fakeChainer{url: ""}, signer, httpUserInfo{http.DefaultClient}, nil)
+	proxy := NewAuthProxy(finder, nil, http.DefaultClient, newMemFlowStore(), &fakeChainer{url: ""}, signer, httpUserInfo{http.DefaultClient})
 	ctx := context.Background()
 
 	location, err := proxy.Authorize(ctx, "http://gw.example.com", AuthorizeRequest{
@@ -317,7 +317,7 @@ func TestSessionFlowGitHubExplicitEndpointsNoDiscovery(t *testing.T) {
 		t.Fatalf("authorize must redirect to the pinned endpoint, got %s", base)
 	}
 
-	clientLoc, err := proxy.Callback(ctx, "http://gw.example.com", loc.Query().Get("state"), "idp-code", "", "", "")
+	clientLoc, err := proxy.Callback(ctx, "http://gw.example.com", loc.Query().Get("state"), "idp-code", "", "")
 	if err != nil {
 		t.Fatalf("callback: %v", err)
 	}

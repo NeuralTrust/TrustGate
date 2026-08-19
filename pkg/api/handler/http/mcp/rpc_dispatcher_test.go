@@ -41,10 +41,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func toolCallNamed(name string) any {
-	return mock.MatchedBy(func(call appmcp.ToolCall) bool { return call.Name == name })
-}
-
 func TestRPCGateway_ToolsList_DefaultsToEmptySlice(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
@@ -76,7 +72,7 @@ func TestRPCGateway_ToolsCall_ForwardsRawResult(t *testing.T) {
 	raw := json.RawMessage(`{"content":[{"type":"text","text":"ok"}]}`)
 	composer := mocks.NewComposer(t)
 	composer.EXPECT().
-		CallTool(mock.Anything, mock.Anything, toolCallNamed("echo")).
+		CallTool(mock.Anything, mock.Anything, "echo", mock.Anything).
 		Return(raw, nil).Once()
 
 	g := mcphttp.NewRPCGateway(composer, noopRunner(), nil)
@@ -151,14 +147,14 @@ func TestRPCGateway_ToolsCall_PreRequestBlock_SkipsUpstream(t *testing.T) {
 	var rpcErr *appmcp.RPCError
 	require.True(t, errors.As(err, &rpcErr), "want *appmcp.RPCError, got %v", err)
 	assert.Equal(t, int64(-32001), rpcErr.Code)
-	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything)
+	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestRPCGateway_ToolsCall_PreResponseBlock_DiscardsResult(t *testing.T) {
 	t.Parallel()
 	raw := json.RawMessage(`{"content":[{"type":"text","text":"secret"}]}`)
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().CallTool(mock.Anything, mock.Anything, toolCallNamed("echo")).Return(raw, nil).Once()
+	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "echo", mock.Anything).Return(raw, nil).Once()
 
 	exec := pluginmocks.NewExecutor(t)
 	exec.EXPECT().RunStage(mock.Anything, mock.MatchedBy(func(in appplugins.StageInput) bool {
@@ -186,7 +182,7 @@ func TestRPCGateway_ToolsCall_Allow_ReturnsResultUnchanged(t *testing.T) {
 	t.Parallel()
 	raw := json.RawMessage(`{"content":[{"type":"text","text":"ok"}]}`)
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().CallTool(mock.Anything, mock.Anything, toolCallNamed("echo")).Return(raw, nil).Once()
+	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "echo", mock.Anything).Return(raw, nil).Once()
 
 	exec := pluginmocks.NewExecutor(t)
 	exec.EXPECT().RunStage(mock.Anything, mock.Anything).Return(&appplugins.StageOutcome{}, nil).Twice()
@@ -309,7 +305,7 @@ func TestHandler_ToolsCall_PreRequestBlock_RidesOn200(t *testing.T) {
 	if rpcErr["code"].(float64) != -32001 {
 		t.Fatalf("code = %v, want -32001 policy blocked", rpcErr["code"])
 	}
-	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything)
+	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestHandler_ToolsCall_RateLimitPropagatesHeaders(t *testing.T) {
@@ -348,7 +344,7 @@ func TestHandler_ToolsCall_RateLimitPropagatesHeaders(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	rpcErr := body["error"].(map[string]any)
 	require.Equal(t, float64(-32004), rpcErr["code"])
-	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything)
+	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestRPCGateway_ToolsList_GatewayPlanExceeded_ReturnsRPCError(t *testing.T) {
@@ -400,7 +396,7 @@ func TestRPCGateway_ToolsCall_GatewayPlanExceeded_ReturnsRPCErrorWithHeaders(t *
 	assert.Equal(t, []string{"60"}, rpcErr.HTTPHeaders["X-RateLimit-Limit"])
 	assert.Equal(t, []string{"0"}, rpcErr.HTTPHeaders["X-RateLimit-Remaining"])
 	assert.Equal(t, []string{ratelimitapp.ReasonBurst}, rpcErr.HTTPHeaders["X-RateLimit-Reason"])
-	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything)
+	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestRPCGateway_ResourcesRead_GatewayPlanExceeded_ReturnsRPCError(t *testing.T) {
@@ -467,7 +463,7 @@ func TestRPCGateway_ToolsCall_GatewayPlanUnavailable_ReturnsRPCError(t *testing.
 	var rpcErr *appmcp.RPCError
 	require.True(t, errors.As(err, &rpcErr), "want *appmcp.RPCError, got %v", err)
 	assert.Equal(t, appmcp.CodeUnavailable, rpcErr.Code)
-	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything)
+	composer.AssertNotCalled(t, "CallTool", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 // End to end: TrustGuard masks the tool input, and the masked arguments — not
@@ -477,9 +473,9 @@ func TestHandler_ToolsCall_MaskedArgumentsReachUpstream(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
 	var forwarded json.RawMessage
-	composer.EXPECT().CallTool(mock.Anything, mock.Anything, toolCallNamed("echo")).
-		Run(func(_ context.Context, _ *appconsumer.RoutableConsumer, call appmcp.ToolCall) {
-			forwarded = call.Arguments
+	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "echo", mock.Anything).
+		Run(func(_ context.Context, _ *appconsumer.RoutableConsumer, _ string, args json.RawMessage) {
+			forwarded = args
 		}).
 		Return(json.RawMessage(`{"content":[]}`), nil).Once()
 
@@ -506,7 +502,7 @@ func TestHandler_ToolsCall_MaskedArgumentsReachUpstream(t *testing.T) {
 func TestHandler_ToolsCall_MaskedResultReachesClient(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
-	composer.EXPECT().CallTool(mock.Anything, mock.Anything, toolCallNamed("echo")).
+	composer.EXPECT().CallTool(mock.Anything, mock.Anything, "echo", mock.Anything).
 		Return(json.RawMessage(`{"content":[{"type":"text","text":"555-1234"}]}`), nil).Once()
 
 	masked := `{"content":[{"type":"text","text":"[REDACTED]"}]}`

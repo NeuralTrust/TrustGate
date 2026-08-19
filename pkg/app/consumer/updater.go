@@ -42,11 +42,10 @@ type UpdateInput struct {
 	Fallback    *domain.Fallback
 	// Registries replaces the whole registry association set. A nil value keeps
 	// the associations the consumer already has.
-	Registries         *domain.RegistryBindings
-	ModelPolicies      *domain.ModelPolicies
-	Toolkit            *domain.Toolkit
-	FailMode           *domain.FailMode
-	ProtocolAcceptance *domain.ProtocolAcceptance
+	Registries    *domain.RegistryBindings
+	ModelPolicies *domain.ModelPolicies
+	Toolkit       *domain.Toolkit
+	FailMode      *domain.FailMode
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=consumer_updater_mock.go --case=underscore --with-expecter
@@ -197,7 +196,7 @@ func (u *updater) revalidateAuthsForTransition(
 }
 
 func applyMCPPolicyUpdate(existing *domain.Consumer, in UpdateInput) {
-	if in.Toolkit == nil && in.FailMode == nil && in.ProtocolAcceptance == nil {
+	if in.Toolkit == nil && in.FailMode == nil {
 		return
 	}
 	if existing.MCP == nil {
@@ -209,9 +208,6 @@ func applyMCPPolicyUpdate(existing *domain.Consumer, in UpdateInput) {
 	}
 	if in.FailMode != nil {
 		policy.FailMode = *in.FailMode
-	}
-	if in.ProtocolAcceptance != nil {
-		policy.ProtocolAcceptance = *in.ProtocolAcceptance
 	}
 }
 

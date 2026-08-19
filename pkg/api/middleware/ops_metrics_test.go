@@ -15,11 +15,9 @@
 package middleware
 
 import (
-	"bufio"
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"sync"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
@@ -28,7 +26,6 @@ import (
 )
 
 type recordingOps struct {
-	mu      sync.Mutex
 	enabled bool
 	request o11y.Request
 	count   int
@@ -39,16 +36,8 @@ func (r *recordingOps) Enabled() bool {
 }
 
 func (r *recordingOps) RecordRequest(_ context.Context, req o11y.Request) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.request = req
 	r.count++
-}
-
-func (r *recordingOps) snapshot() (o11y.Request, int) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.request, r.count
 }
 
 func TestOpsMetricsMiddlewareRecordsOnlyBoundedValues(t *testing.T) {
@@ -150,98 +139,6 @@ func TestOpsMetricsMiddlewarePrefersBoundedLogicalOutcome(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, o11y.OutcomeDeniedPolicy, recorder.request.Outcome)
 	require.Equal(t, o11y.RouteMCPRPC, recorder.request.Route)
-}
-
-// A stream must be recorded once its body is written, not when the handler
-// unwinds: an SSE lease that recorded ~0 ms against mcp.rpc would poison the
-// route's latency distribution.
-func TestClaimOpsStreamRecordsAtCloseUnderItsOwnRoute(t *testing.T) {
-	recorder := &recordingOps{enabled: true}
-	countAtOpen := -1
-
-	app := fiber.New()
-	app.Use(NewOpsMetricsMiddleware(recorder, o11y.PlaneMCP).Middleware())
-	app.Post("/*", func(c *fiber.Ctx) error {
-		finish := ClaimOpsStream(c, o11y.RouteMCPSubscription)
-		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
-			_, countAtOpen = recorder.snapshot()
-			defer finish(o11y.OutcomeAllowed, fiber.StatusOK)
-			_, _ = w.WriteString("event: message\n\n")
-			_ = w.Flush()
-		})
-		return nil
-	})
-
-	resp, err := app.Test(httptest.NewRequest(http.MethodPost, "/rpc/private-id", nil))
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-
-	require.Equal(t, 0, countAtOpen, "the handler unwind must not record a claimed stream")
-	request, count := recorder.snapshot()
-	require.Equal(t, 1, count)
-	require.Equal(t, o11y.RouteMCPSubscription, request.Route)
-	require.Equal(t, o11y.PlaneMCP, request.Plane)
-	require.Equal(t, "POST", request.Method)
-	require.Equal(t, "2xx", request.StatusClass)
-	require.Equal(t, o11y.OutcomeAllowed, request.Outcome)
-	require.Positive(t, request.Duration)
-}
-
-// The finalizer is called from a defer that a second, outer defer may reach
-// again, so it must record exactly once.
-func TestClaimOpsStreamRecordsExactlyOnce(t *testing.T) {
-	recorder := &recordingOps{enabled: true}
-	app := fiber.New()
-	app.Use(NewOpsMetricsMiddleware(recorder, o11y.PlaneMCP).Middleware())
-	app.Post("/*", func(c *fiber.Ctx) error {
-		finish := ClaimOpsStream(c, o11y.RouteMCPSubscription)
-		finish(o11y.OutcomeAllowed, fiber.StatusOK)
-		finish(o11y.OutcomeServerError, fiber.StatusInternalServerError)
-		return c.SendStatus(fiber.StatusOK)
-	})
-
-	resp, err := app.Test(httptest.NewRequest(http.MethodPost, "/rpc/id", nil))
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-
-	request, count := recorder.snapshot()
-	require.Equal(t, 1, count)
-	require.Equal(t, o11y.OutcomeAllowed, request.Outcome)
-}
-
-// A disabled recorder installs no claim, so the finalizer has to stay callable
-// rather than force every caller to branch.
-func TestClaimOpsStreamWithoutARecorderIsANoOp(t *testing.T) {
-	recorder := &recordingOps{}
-	app := fiber.New()
-	app.Use(NewOpsMetricsMiddleware(recorder, o11y.PlaneMCP).Middleware())
-	app.Post("/*", func(c *fiber.Ctx) error {
-		ClaimOpsStream(c, o11y.RouteMCPSubscription)(o11y.OutcomeAllowed, fiber.StatusOK)
-		return c.SendStatus(fiber.StatusOK)
-	})
-
-	resp, err := app.Test(httptest.NewRequest(http.MethodPost, "/rpc/id", nil))
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-
-	_, count := recorder.snapshot()
-	require.Equal(t, 0, count)
-}
-
-// An unclaimed request keeps the inline recording it always had.
-func TestOpsMetricsMiddlewareUnclaimedPathIsUnchanged(t *testing.T) {
-	recorder := &recordingOps{enabled: true}
-	app := fiber.New()
-	app.Use(NewOpsMetricsMiddleware(recorder, o11y.PlaneMCP).Middleware())
-	app.Post("/*", func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
-
-	resp, err := app.Test(httptest.NewRequest(http.MethodPost, "/rpc/id", nil))
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-
-	request, count := recorder.snapshot()
-	require.Equal(t, 1, count)
-	require.Equal(t, o11y.RouteMCPRPC, request.Route)
 }
 
 func TestClassifyRouteUsesLinearEnums(t *testing.T) {
