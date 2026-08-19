@@ -15,6 +15,9 @@
 package mcp
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -116,4 +119,77 @@ func requireApps(t *testing.T, valid bool) {
 	if !valid {
 		t.FailNow()
 	}
+}
+
+func TestAppsDocumentValidation(t *testing.T) {
+	textBody := "<escaped>\tcontent"
+	for _, tc := range []struct {
+		field, wire string
+		body        []byte
+		encoding    AppsDocumentEncoding
+	}{
+		{"text", textBody, []byte(textBody), AppsDocumentTextEncoding},
+		{"blob", "aaaa", []byte{105, 166, 154}, AppsDocumentBlobEncoding},
+		{"blob", "YQ==", []byte("a"), AppsDocumentBlobEncoding},
+	} {
+		raw := appsDocumentRaw(tc.field, tc.wire, `,"_meta":{"ui":{}}`)
+		original := append(json.RawMessage(nil), raw...)
+		got, err := decodeAppsDocument("ui://widget", minAppsDocumentBytes, raw)
+		requireApps(t, err == nil && got.metadata.Encoding == tc.encoding && got.metadata.DecodedSize == len(tc.body) && bytes.Equal(got.body, tc.body) && bytes.Equal(raw, original))
+		for i := range raw {
+			raw[i] = 0
+		}
+		requireApps(t, bytes.Equal(got.body, tc.body))
+	}
+	for _, malformed := range []string{`"\u000g"`, `"\ud800"`, `"\ud800\u0041"`, `"\udc00"`} {
+		_, _, err := decodeAppsJSONString([]byte(malformed), minAppsDocumentBytes)
+		requireApps(t, err != nil)
+	}
+	boundary := strings.Repeat("<", minAppsDocumentBytes)
+	for _, max := range []int{minAppsDocumentBytes, maxAppsDocumentBytes} {
+		got, err := decodeAppsDocument("ui://widget", max, appsDocumentRaw("text", boundary, ""))
+		requireApps(t, err == nil && len(got.body) == len(boundary))
+	}
+	deepMeta := strings.Repeat(`{"x":`, maxAppsJSONDepth+1) + "0" + strings.Repeat("}", maxAppsJSONDepth+1)
+	invalidTopUTF8 := json.RawMessage(bytes.Replace([]byte(`{"_meta":{"x":"bad"},"contents":[]}`), []byte("bad"), []byte{0xff}, 1))
+	invalidContentUTF8 := json.RawMessage(bytes.Replace([]byte(`{"contents":[{"uri":"ui://widget","mimeType":"text/html;profile=mcp-app","text":"x","_meta":{"x":"bad"}}]}`), []byte("bad"), []byte{0xff}, 1))
+	tooManyTokens := json.RawMessage(`{"contents":[` + strings.Repeat("0,", maxAppsJSONTokens) + `0]}`)
+	requireApps(t, validateAppsJSON(tooManyTokens) != nil)
+	cases := []struct {
+		raw    json.RawMessage
+		max    int
+		reason AppsDocumentReason
+		secret string
+	}{
+		{json.RawMessage(`null`), minAppsDocumentBytes, AppsDocumentEnvelopeReason, ""}, {json.RawMessage(`{"contents":[]}`), minAppsDocumentBytes, AppsDocumentEnvelopeReason, ""}, {json.RawMessage(`{"contents":[{},{}]}`), minAppsDocumentBytes, AppsDocumentEnvelopeReason, ""},
+		{json.RawMessage(`{"contents":[],"contents":[]}`), minAppsDocumentBytes, AppsDocumentEnvelopeReason, ""}, {json.RawMessage(`{"_meta":{"x":1,"x":2},"contents":[]}`), minAppsDocumentBytes, AppsDocumentEnvelopeReason, ""},
+		{json.RawMessage(`{"contents":[{"uri":"ui://widget","\u0075ri":"ui://widget","mimeType":"text/html;profile=mcp-app","text":"x"}]}`), minAppsDocumentBytes, AppsDocumentEnvelopeReason, ""},
+		{json.RawMessage(`{"_meta":null,"contents":[{"uri":"ui://widget","mimeType":"text/html;profile=mcp-app","text":"x"}]}`), minAppsDocumentBytes, AppsDocumentEnvelopeReason, ""},
+		{json.RawMessage(`{"contents":[{"uri":"ui://widget","mimeType":"text/html;profile=mcp-app","_meta":[],"text":"x"}]}`), minAppsDocumentBytes, AppsDocumentEnvelopeReason, ""},
+		{json.RawMessage(`{"unknown":1,"contents":[]}`), minAppsDocumentBytes, AppsDocumentEnvelopeReason, ""}, {json.RawMessage(`{"contents":[{"uri":"ui://widget","mimeType":"text/html;profile=mcp-app","name":"link","text":"x"}]}`), minAppsDocumentBytes, AppsDocumentEnvelopeReason, ""},
+		{json.RawMessage(`{"contents":[{"uri":"ui://other","mimeType":"text/html;profile=mcp-app","text":"x"}]}`), minAppsDocumentBytes, AppsDocumentEnvelopeReason, ""}, {json.RawMessage(`{"contents":[{"uri":"ui://widget","mimeType":"text/html","text":"x"}]}`), minAppsDocumentBytes, AppsDocumentEnvelopeReason, ""},
+		{json.RawMessage(`{"contents":[{"uri":"ui://widget","mimeType":"text/html;profile=mcp-app"}]}`), minAppsDocumentBytes, AppsDocumentEnvelopeReason, ""},
+		{json.RawMessage(`{"contents":[}`), minAppsDocumentBytes, AppsDocumentEnvelopeReason, ""}, {json.RawMessage(`{"_meta":` + deepMeta + `,"contents":[]}`), minAppsDocumentBytes, AppsDocumentEnvelopeReason, ""},
+		{json.RawMessage(`{"_meta":{"` + strings.Repeat("k", maxAppsJSONKeyBytes+1) + `":1},"contents":[]}`), minAppsDocumentBytes, AppsDocumentEnvelopeReason, ""},
+		{invalidTopUTF8, minAppsDocumentBytes, AppsDocumentEnvelopeReason, ""}, {invalidContentUTF8, minAppsDocumentBytes, AppsDocumentEnvelopeReason, ""}, {tooManyTokens, minAppsDocumentBytes, AppsDocumentEnvelopeReason, ""},
+		{appsDocumentRaw("text", textBody, ""), minAppsDocumentBytes - 1, AppsDocumentPolicyReason, ""}, {appsDocumentRaw("text", textBody, ""), maxAppsDocumentBytes + 1, AppsDocumentPolicyReason, ""},
+		{appsDocumentRaw("text", boundary+"x", ""), minAppsDocumentBytes, AppsDocumentSizeReason, ""}, {appsDocumentRaw("blob", base64.StdEncoding.EncodeToString([]byte(boundary+"x")), ""), minAppsDocumentBytes, AppsDocumentSizeReason, ""},
+		{appsDocumentRaw("blob", "%%%=", ""), minAppsDocumentBytes, AppsDocumentEncodingReason, "%%%="}, {appsDocumentRaw("blob", "AB==", ""), minAppsDocumentBytes, AppsDocumentEncodingReason, "AB=="}, {appsDocumentRaw("blob", "____", ""), minAppsDocumentBytes, AppsDocumentEncodingReason, "____"},
+		{appsDocumentRaw("blob", "YQ", ""), minAppsDocumentBytes, AppsDocumentEncodingReason, "YQ"}, {appsDocumentRaw("blob", "YQ==\n", ""), minAppsDocumentBytes, AppsDocumentEncodingReason, "YQ=="},
+		{appsDocumentRaw("blob", "YQ==AAAA", ""), minAppsDocumentBytes, AppsDocumentEncodingReason, "YQ=="}, {appsDocumentRaw("text", textBody, `,"blob":"YQ=="`), minAppsDocumentBytes, AppsDocumentEnvelopeReason, ""},
+		{json.RawMessage(`{"contents":[{"uri":"ui://secret.example","mimeType":"text/html;profile=mcp-app","text":"x"}]}`), minAppsDocumentBytes, AppsDocumentEnvelopeReason, "ui://secret.example"},
+	}
+	for _, tc := range cases {
+		_, err := decodeAppsDocument("ui://widget", tc.max, tc.raw)
+		var typed *AppsDocumentError
+		requireApps(t, errors.Is(err, ErrInvalidAppsDocument) && errors.As(err, &typed) && typed.Reason == tc.reason && (tc.secret == "" || !strings.Contains(err.Error(), tc.secret)))
+	}
+}
+
+func appsDocumentRaw(field, body, extra string) json.RawMessage {
+	value, err := json.Marshal(body)
+	if err != nil {
+		return nil
+	}
+	return json.RawMessage(`{"_meta":{"trace":{"ok":true}},"contents":[{"uri":"ui://widget","mimeType":"text/html;profile=mcp-app","` + field + `":` + string(value) + extra + `}]}`)
 }
