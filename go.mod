@@ -132,6 +132,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/rds/auth v1.6.36
 	github.com/redis/go-redis/v9 v9.22.0
 	go.opentelemetry.io/otel/metric v1.45.0
+	go.opentelemetry.io/otel/sdk/metric v1.45.0
 	go.opentelemetry.io/otel/trace v1.45.0
 	golang.org/x/net v0.57.0
 	golang.org/x/oauth2 v0.36.0

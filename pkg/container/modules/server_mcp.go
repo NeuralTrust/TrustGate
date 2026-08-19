@@ -15,6 +15,7 @@
 package modules
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 
@@ -83,6 +84,7 @@ type mcpServerParams struct {
 	Logger        *slog.Logger
 	Router        router.ServerRouter `name:"mcp"`
 	Subscriptions *appmcp.SubscriptionRegistry
+	Upstream      *appmcp.SubscriptionMultiplexer
 }
 
 // subscriptionDrainHook releases every live lease before the router shutdown
@@ -93,6 +95,33 @@ func subscriptionDrainHook(registry *appmcp.SubscriptionRegistry) server.Shutdow
 		return nil
 	}
 	return registry.Drain
+}
+
+func upstreamSubscriptionCloseHook(multiplexer *appmcp.SubscriptionMultiplexer) server.ShutdownHook {
+	if multiplexer == nil {
+		return nil
+	}
+	return multiplexer.Close
+}
+
+func mcpSubscriptionShutdownHook(
+	multiplexer *appmcp.SubscriptionMultiplexer,
+	registry *appmcp.SubscriptionRegistry,
+) server.ShutdownHook {
+	closeUpstream := upstreamSubscriptionCloseHook(multiplexer)
+	drainNorthbound := subscriptionDrainHook(registry)
+	if closeUpstream == nil {
+		return drainNorthbound
+	}
+	return func(ctx context.Context) error {
+		if err := closeUpstream(ctx); err != nil {
+			return err
+		}
+		if drainNorthbound == nil {
+			return nil
+		}
+		return drainNorthbound(ctx)
+	}
 }
 
 func ServerMCP(c *container.Container) error {
@@ -135,7 +164,7 @@ func ServerMCP(c *container.Container) error {
 				p.Cfg.Server,
 				p.Logger,
 				[]router.ServerRouter{p.Router},
-				subscriptionDrainHook(p.Subscriptions),
+				mcpSubscriptionShutdownHook(p.Upstream, p.Subscriptions),
 			)
 		},
 		dig.Name("mcp"),

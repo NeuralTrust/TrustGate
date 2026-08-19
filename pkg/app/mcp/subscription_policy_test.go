@@ -597,6 +597,193 @@ func TestSubscriptionPolicy_Evaluate_NonHonouredKindsAreNeverEmitted(t *testing.
 	}
 }
 
+func TestSubscriptionPolicyAuthorizeEventCompleteBinding(t *testing.T) {
+	t.Parallel()
+	const url = "https://a.example.com/mcp"
+	registry := mcpRegistry(t, "github", url)
+	authID := ids.New[ids.AuthKind]()
+	consumer := policyConsumer(t, authID, registry)
+	data := policyData(consumer, registry)
+	ctx := appconsumer.WithAuthID(context.Background(), authID)
+	requests, err := NewSubscriptionTargetResolver(
+		&stubDataFinder{data: data},
+		passthroughScoper{},
+		nil,
+	).Resolve(ctx, data.GatewayID, appconsumer.MCPPath(policyTestSlug), allSubscriptionKinds())
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("resolved requests = %d, want 1", len(requests))
+	}
+	key := multiplexerTestKey("policy-event")
+	connector := connectorForPreparedKey(key)
+
+	tests := []struct {
+		name       string
+		mutateData func(*appconsumer.Data)
+		mutateID   func(*SubscriptionIdentity)
+		mutateKey  func(*SubscriptionSourceKey)
+		kind       NotificationKind
+		wantErr    error
+		wantOK     bool
+	}{
+		{name: "unchanged", kind: NotificationToolsListChanged, wantOK: true},
+		{
+			name: "gateway",
+			mutateData: func(current *appconsumer.Data) {
+				current.GatewayID = ids.New[ids.GatewayKind]()
+			},
+			kind:    NotificationToolsListChanged,
+			wantErr: ErrSubscriptionRevoked,
+		},
+		{
+			name:     "consumer",
+			mutateID: func(identity *SubscriptionIdentity) { identity.ConsumerID = ids.New[ids.ConsumerKind]().String() },
+			kind:     NotificationToolsListChanged,
+			wantErr:  ErrSubscriptionRevoked,
+		},
+		{
+			name:     "principal",
+			mutateID: func(identity *SubscriptionIdentity) { identity.PrincipalFingerprint = "other-principal" },
+			kind:     NotificationToolsListChanged,
+			wantErr:  ErrSubscriptionRevoked,
+		},
+		{
+			name:     "auth id",
+			mutateID: func(identity *SubscriptionIdentity) { identity.AuthID = ids.New[ids.AuthKind]().String() },
+			kind:     NotificationToolsListChanged,
+			wantErr:  ErrSubscriptionRevoked,
+		},
+		{
+			name:     "registry",
+			mutateID: func(identity *SubscriptionIdentity) { identity.RegistryID = ids.New[ids.RegistryKind]().String() },
+			kind:     NotificationToolsListChanged,
+			wantErr:  ErrSubscriptionRevoked,
+		},
+		{
+			name:     "role scope",
+			mutateID: func(identity *SubscriptionIdentity) { identity.RoleScopeFingerprint = "other-role" },
+			kind:     NotificationToolsListChanged,
+			wantErr:  ErrSubscriptionRevoked,
+		},
+		{
+			name: "detached registry",
+			mutateData: func(current *appconsumer.Data) {
+				current.Consumers[0].Registries = nil
+			},
+			kind:    NotificationToolsListChanged,
+			wantErr: ErrSubscriptionRevoked,
+		},
+		{
+			name: "denied kind",
+			mutateData: func(current *appconsumer.Data) {
+				current.Consumers[0].Consumer.MCP = &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{
+					{RegistryID: registry.ID, Prompt: consumerdomain.ToolWildcard},
+				}}
+			},
+			kind:    NotificationToolsListChanged,
+			wantErr: ErrSubscriptionRevoked,
+		},
+		{
+			name: "target",
+			mutateKey: func(source *SubscriptionSourceKey) {
+				source.TargetDigest = multiplexerDigest("different-target")
+			},
+			kind:    NotificationToolsListChanged,
+			wantErr: ErrSubscriptionSourceChanged,
+		},
+		{
+			name: "credential",
+			mutateKey: func(source *SubscriptionSourceKey) {
+				source.CredentialFingerprint = multiplexerDigest("different-credential")
+			},
+			kind:    NotificationToolsListChanged,
+			wantErr: ErrSubscriptionSourceChanged,
+		},
+		{
+			name: "protocol",
+			mutateKey: func(source *SubscriptionSourceKey) {
+				source.ProtocolVersion = "different-protocol"
+			},
+			kind:    NotificationToolsListChanged,
+			wantErr: ErrSubscriptionSourceChanged,
+		},
+		{
+			name: "capability trio",
+			mutateKey: func(source *SubscriptionSourceKey) {
+				source.Capabilities = ListChangedCapabilities{Tools: true}
+			},
+			kind:    NotificationToolsListChanged,
+			wantErr: ErrSubscriptionSourceChanged,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			currentConsumer := *consumer
+			currentRegistry := *registry
+			currentData := policyData(&currentConsumer, &currentRegistry)
+			currentData.GatewayID = data.GatewayID
+			if test.mutateData != nil {
+				test.mutateData(currentData)
+			}
+			identity := requests[0].Identity
+			if test.mutateID != nil {
+				test.mutateID(&identity)
+			}
+			source := key
+			if test.mutateKey != nil {
+				test.mutateKey(&source)
+			}
+			policy := NewSubscriptionPolicyWithUpstream(
+				&stubDataFinder{data: currentData},
+				passthroughScoper{},
+				nil,
+				nil,
+				nil,
+				connector,
+			)
+			ok, err := policy.AuthorizeEvent(ctx, identity, source, test.kind)
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf("AuthorizeEvent() error = %v, want %v", err, test.wantErr)
+			}
+			if ok != test.wantOK {
+				t.Fatalf("AuthorizeEvent() ok = %v, want %v", ok, test.wantOK)
+			}
+			if connector.prepareCalls.Load() != 0 {
+				t.Fatalf("AuthorizeEvent() Prepare() calls = %d, want 0", connector.prepareCalls.Load())
+			}
+		})
+	}
+}
+
+func TestSubscriptionPolicyAuthorizeEventTransientFailureEmitsNothing(t *testing.T) {
+	t.Parallel()
+	key := multiplexerTestKey("policy-transient")
+	policy := NewSubscriptionPolicyWithUpstream(
+		&stubDataFinder{err: errors.New("database unavailable")},
+		passthroughScoper{},
+		nil,
+		nil,
+		nil,
+		connectorForPreparedKey(key),
+	)
+	ok, err := policy.AuthorizeEvent(
+		context.Background(),
+		SubscriptionIdentity{GatewayID: ids.New[ids.GatewayKind]().String()},
+		key,
+		NotificationToolsListChanged,
+	)
+	if err == nil || errors.Is(err, ErrSubscriptionRevoked) || errors.Is(err, ErrSubscriptionSourceChanged) {
+		t.Fatalf("AuthorizeEvent() error = %v, want transient failure", err)
+	}
+	if ok {
+		t.Fatal("transient authorization failure must not authorize")
+	}
+}
+
 // The digest must depend on the surface, not on the order the upstream happened
 // to serialize its payload in.
 func TestEncodeSurface_IsStableAcrossShuffledPayloadKeys(t *testing.T) {
