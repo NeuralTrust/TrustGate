@@ -2,9 +2,10 @@
 
 **Change**: `run-1104-bounded-mcp-subscriptions`
 **Linear**: [RUN-1104](https://linear.app/neuraltrust/issue/RUN-1104) — epic [RUN-1100](https://linear.app/neuraltrust/issue/RUN-1100) "TrustGate MCP 2026-07-28 dual-era"
-**Workspace**: `/Users/edu/Neuraltrust/TrustGate-run-1104`
-**Branch**: `feat/run-1104-bounded-mcp-subscriptions`
-**Base**: `feat/run-1103-dual-era-northbound-protocol-boundary` @ `805e7901`
+**Workspace**: `/Users/edu/Neuraltrust/TrustGate-run-1104-upstream`
+**Slice 1 branch**: `feat/run-1104-bounded-mcp-subscriptions` / PR #464
+**Slice 2 branch**: `feat/run-1104-upstream-subscription-multiplex`
+**Slice 2 base**: `feat/run-1104-bounded-mcp-subscriptions`
 **Depends on**: RUN-1103 (dual-era boundary), RUN-1102 (tasks — landed on this base), RUN-1108 (upstream negotiation), RUN-1109 (telemetry)
 
 ## Contract (source of truth)
@@ -130,20 +131,27 @@ nothing is subscribable, and the SDK's `allowedSubscriptions` gate would honour 
 
 **Application core (`pkg/app/mcp/`)**
 
-- `subscriptions.go` *(new)* — domain vocabulary: `NotificationKind` enum, `SubscriptionRequest` (honoured subset), `Notification` value type, isolation key
-- `subscription_hub.go` *(new)* — the fan-out: per-`(gateway, consumer, principal, registry)` subscriber registry, bounded per-subscriber buffer, slow-consumer drop/close policy, explicit goroutine lifecycle
-- `subscription_policy.go` *(new)* — periodic re-authorization: re-`compose()` on a tick, diff the surface, decide *emit* / *deny and terminate*
+- `subscriptions.go` *(new)* — domain vocabulary: `NotificationKind`, prepared source identity,
+  complete subscriber identity and handle contracts
+- `subscription_multiplexer.go` *(slice 2)* — complete-key physical-listener pool, independent
+  per-stream queues, terminate-on-overflow fan-out and explicit start/stop/join lifecycle
+- `subscription_policy.go` *(new)* — periodic and per-event re-authorization, including AuthID,
+  registry and stable source-binding checks
+- `subscription_targets.go` *(slice 2)* — resolve role-scoped registries through existing target and
+  credential paths
 - `composer.go` — `Composer` gains the subscription use case; regenerate `mocks/mcp_composer_mock.go` (`//go:generate mockery`, `:33`)
-- `protocol.go` — `SubscriptionUpstream` port (only if southbound listening is in scope)
+- `protocol.go` — dedicated `SubscriptionConnector` port; the request/response `Upstream` remains unchanged
 - `mrtr_caps.go` — extend the bounded allowlist if subscriptions are declared as a client capability
 - `errors.go` — subscription sentinels + codes; `-32003`/`-32021`/`-32025` are taken (`:40-54`), so pick fresh
 
-**Southbound (`pkg/infra/mcp/client/`)** — only if upstream listening is in scope
+**Southbound (`pkg/infra/mcp/client/`)**
 
-- `modern_subscriptions.go` *(new)* — a long-lived listen call with its own message/byte/idle bounds, separate from `exchange` and `boundedModernResponseBody`
-- `probe.go` — retain the `capabilities` object it currently discards (`:495-499`) so `listChanged`/`subscribe` are knowable
-- `negotiating_dialer.go` — `guardedUpstream` must forward the new port (and, while we are here, `TaskUpstream`)
-- `client.go` (legacy `Session`) — subscription methods return `ErrNotSupported`
+- `modern_subscriptions.go` *(slice 2)* — modern-only prepare/listen adapter with independent byte,
+  idle and reconnect classification, separate from `exchange` and `boundedModernResponseBody`
+- `modern_subscription_sse.go` *(slice 2)* — incremental bounded SSE parser and trio allowlist
+- `probe.go` — retain typed explicit `listChanged` capabilities currently discarded (`:495-499`)
+- `negotiating_dialer.go` — prepare subscriptions only after modern negotiation; legacy fails closed
+- legacy `Session` — unchanged; it never implements the connector port
 
 **Cross-cutting**
 
@@ -249,7 +257,7 @@ natural building block for "did this consumer's surface change", both for role-s
 
 ## Approaches
 
-1. **Per-request stream tied to the HTTP request lifecycle, gateway-side notifications only (recommended)**
+1. **Per-request stream tied to the HTTP request lifecycle, gateway-side notifications only (chosen for PR #464)**
    The listen handler runs the normal policy prologue, then takes a `SetBodyStreamWriter` branch. A
    single goroutine per stream — the fasthttp body-stream writer itself — owns the whole lifecycle:
    write the ack, then loop on `select { ctx.Done() | ticker | notification }`. Notifications are
@@ -271,11 +279,11 @@ natural building block for "did this consumer's surface change", both for role-s
      consumer (mitigated by the singleflight, but the tick multiplies cache reads).
    - Effort: Medium
 
-2. **Gateway-side fan-out hub with per-subscription goroutines and southbound listens**
+2. **Gateway-side fan-out hub with bounded modern southbound listens (chosen for slice 2 after refinement)**
    A hub in `pkg/app/mcp` keyed by the isolation key. Each `(registry, principal-class)` gets a
    southbound `subscriptions/listen` goroutine; the hub multiplexes upstream events to northbound
    subscribers through bounded per-subscriber channels.
-   - Pros: real-time; supports `resources/updated`; one upstream connection amortised across
+   - Pros: real-time list-changed events; one upstream connection amortised across
      subscribers; the natural end state.
    - Cons: this is where every risk in the ticket concentrates. Goroutine count becomes
      `O(streams + registries × principal-classes)` with two independent lifecycles to join. Requires
@@ -323,9 +331,10 @@ natural building block for "did this consumer's surface change", both for role-s
 | Testability | High (`app.Test` + `-race` + leak check) | Low — needs fake upstreams, timing, reconnect matrices | Low — hard to reach through Fiber | High |
 | Real-time `resources/updated` | No | Yes | Yes | No |
 
-## Recommendation
+## Slice 1 recommendation
 
-**Approach 1, structured so Approach 2 remains reachable later without a wire break.**
+**Approach 1, structured so Approach 2 remains reachable later without a wire break.** This is the
+foundation implemented by PR #464, not the final RUN-1104 scope.
 
 The reasoning is the ticket's own security framing. Every item on the QA checklist — cancellation,
 race/leak coverage, isolation, bounded memory, disabled SSE, unadvertised types — is *cheap* when a
@@ -380,9 +389,40 @@ Concretely:
    assumption that events are gateway-derived, so RUN-1104's successor can plug a southbound source in
    behind the same port without changing the wire contract or the isolation key.
 
-Reject 3 outright. Fold 4 in as slice 1 of the chain. Defer 2 to a follow-up issue, with the
-prerequisite work named: namespace resource URIs per registry, retain `server/discover` capabilities in
-the probe, and teach `guardedUpstream` to forward the optional ports.
+Reject 3 outright. Fold 4 into the northbound chain. The user subsequently chose to complete the
+ticket's full scope in a second stacked slice by implementing a constrained form of Approach 2.
+Resource URI namespacing is not a prerequisite because slice 2 explicitly excludes
+`resourceSubscriptions` and `notifications/resources/updated`.
+
+## Slice 2 decision: authorized complete-key multiplexing
+
+The second slice retains PR #464 unchanged as the flag-off fallback and adds modern southbound
+`subscriptions/listen` for the explicit tools/prompts/resources `listChanged` trio. It addresses the
+original Approach 2 risks with narrower contracts:
+
+1. **Dedicated app port.** A `SubscriptionConnector` prepares an immutable, non-secret source
+   identity and opens a listener. It does not extend the request/response `Upstream` contract and
+   cannot be implemented by legacy sessions.
+2. **Complete source key.** Pool only when canonical target/origin, credential pin and final-header
+   fingerprint, modern protocol version and exact capability bitset all match. Never pool across
+   credentials.
+3. **Independent recipient bindings.** Every northbound subscriber retains gateway, consumer,
+   principal, AuthID, registry and role-scope identity and is re-authorized before fan-out.
+4. **Narrow notification set.** Retain explicit upstream `listChanged` capability booleans and reject
+   URI updates, task notifications and unknown methods.
+5. **Three levels of bounds.** Keep PR #464 stream caps; add global/per-origin physical-listener caps,
+   one fixed queue per northbound stream, the existing max-event bound and a southbound idle timeout.
+6. **No silent loss.** A full queue terminates the slow northbound lease; it never drops, overwrites
+   or coalesces an event and never blocks the shared listener.
+7. **Identity-preserving reconnect.** Retry transient close/idle only within a finite jittered budget
+   and only after preparation returns the identical source key and capabilities. Auth or capability
+   drift terminates all attached leases to renegotiate.
+8. **Owned lifecycle.** The composition-root multiplexer owns root cancellation and join for every
+   listener. Last detach cancels and joins; server shutdown closes the multiplexer before Fiber
+   drains northbound streams.
+
+This refinement keeps Approach 2's multiplexing benefit while removing its unsafe origin-only
+sharing, legacy lifecycle and resource-URI routing assumptions.
 
 ## Resource bounds
 
@@ -396,8 +436,13 @@ as an unset `MCP_TASK_HANDLE_SECRET` disables task mediation.
 | Max concurrent streams, process-wide | `MCP_SUBSCRIPTIONS_MAX_STREAMS` | `1024` | well under Fiber's `Concurrency: 16384`; refuse past it so streams cannot starve request traffic |
 | Max streams per consumer | `MCP_SUBSCRIPTIONS_MAX_PER_CONSUMER` | `16` | one noisy tenant must not consume the global budget |
 | Max streams per principal | `MCP_SUBSCRIPTIONS_MAX_PER_PRINCIPAL` | `4` | the SDK client opens one listen **per subscribed URI** (`client.go:1380-1405`), so a small-but-not-1 cap is right |
-| Per-stream outbound buffer | `MCP_SUBSCRIPTIONS_BUFFER` | `16` events | bounds memory at `max_streams × buffer × event_size`; full buffer ⇒ drop-oldest then terminate, never block the producer |
-| Idle timeout (no event, no keepalive ack) | `MCP_SUBSCRIPTIONS_IDLE_TIMEOUT` | `5m` | shorter than the legacy session idle TTL (30 m, `cached_dialer.go:35`) so a stream never outlives its cached session |
+| Per-stream outbound queue | `MCP_SUBSCRIPTIONS_STREAM_QUEUE` | `16` events | bounds memory at `max_streams × queue × event_size`; a full queue terminates without dropping or blocking |
+| Southbound feature switch | `MCP_SUBSCRIPTIONS_UPSTREAM_ENABLED` | `false` | returns to PR #464 while northbound subscriptions remain enabled |
+| Max physical listeners | `MCP_SUBSCRIPTIONS_MAX_UPSTREAM_LISTENERS` | `256` | process-wide outbound connection and goroutine budget |
+| Max listeners per origin | `MCP_SUBSCRIPTIONS_MAX_UPSTREAM_PER_ORIGIN` | `16` | one origin cannot consume the process budget |
+| Southbound idle timeout | `MCP_SUBSCRIPTIONS_UPSTREAM_IDLE_TIMEOUT` | `60s` | reclaims a half-open modern listener through bounded reconnect |
+| Reconnect attempts | `MCP_SUBSCRIPTIONS_RECONNECT_MAX_ATTEMPTS` | `3` | prevents dead origins retaining listener slots indefinitely |
+| Reconnect backoff | `MCP_SUBSCRIPTIONS_RECONNECT_BACKOFF_MIN` / `MAX` | `250ms` / `5s` | context-cancellable jittered exponential window |
 | Max stream lifetime | `MCP_SUBSCRIPTIONS_MAX_LIFETIME` | `30m`, hard ceiling `4h` | the authorization-lease ceiling; forces periodic re-auth through a fresh open. Clamp like `MaxTaskHandleTTL` does (`task_handle.go:37`) |
 | Re-authorization interval | `MCP_SUBSCRIPTIONS_REAUTH_INTERVAL` | `30s` | also the change-detection tick; bounded below so a client cannot make it a re-composition amplifier |
 | Keepalive interval | `MCP_SUBSCRIPTIONS_KEEPALIVE` | `15s` | SSE comment frames to keep LBs and the idle timeout honest |
@@ -428,9 +473,9 @@ is probably safe, but the maximum stream lifetime cannot be documented until thi
   broken and leaks memory.
 - **Ops latency distortion.** `ops_metrics.go:43-65` measures after `c.Next()`, which returns before the
   stream writer runs, so a 30-minute stream records ~0 ms. Silently skews the MCP-plane latency SLO.
-- **Backpressure / slow consumers.** Producer must never block on a subscriber. Drop-oldest into a
-  bounded buffer, then terminate on sustained overflow. A test must prove that a consumer which never
-  reads causes bounded memory growth and eventual termination, not unbounded growth.
+- **Backpressure / slow consumers.** Producer must never block on a subscriber. The first failed
+  enqueue into a full bounded queue terminates that subscriber; no event is dropped or overwritten.
+  A test must prove that a consumer which never reads cannot affect healthy subscribers.
 - **Legacy era interaction.** Legacy sessions are cached per pin key with a 30-minute idle TTL and
   evicted lazily inside `lookup` (`cached_dialer.go:104-114,188-200`) — a legacy-era stream could be
   sitting on a session closed underneath it. Mitigation in the recommendation: subscriptions are
@@ -497,27 +542,18 @@ switch, slice 2 is the risky transport change reviewed on its own, and slices 3�
 and observability. If the epic insists on a single PR, it needs `size:exception` **and** the reviewer
 guidance that slices 2 and 4 carry all the risk.
 
-## Open questions for sdd-propose
+## Resolved decisions
 
-1. Is `resourceSubscriptions` in or out for RUN-1104? The recommendation says out (unadvertised,
-   never honoured) on the grounds that TrustGate cannot yet attribute a resource URI to one registry.
-   Confirm, since it is the only notification type with real-time value.
-2. Gateway-derived `list_changed` (recommended) or southbound relay? This is the single decision that
-   sets the change's size and risk profile.
-3. Does a stream terminate at the principal's token expiry, or only at `MCP_SUBSCRIPTIONS_MAX_LIFETIME`?
-   Token expiry is the stricter, more defensible lease — but it means reading an expiry TrustGate does
-   not currently keep on the request context.
-4. `SERVER_WRITE_TIMEOUT` behaviour under `SetBodyStreamWriter` — verify before fixing any lifetime bound.
-5. Does a live stream hold a rate-limit slot, or is it metered purely by the concurrency caps?
-6. How does `ops_metrics` classify a stream — its own `o11y.Route`, an excluded outcome, or a finalizer
-   that reports the true duration at close?
-7. New JSON-RPC codes for subscription refusals, or deliberate reuse of `-32020`/`-32602`?
-8. Should slice 1 also fix the pre-existing `guardedUpstream`/`TaskUpstream` gap, or is that a separate
-   RUN issue?
+1. `resourceSubscriptions`, `notifications/resources/updated` and task notifications remain out.
+2. PR #464 supplies the gateway-derived northbound foundation; slice 2 adds authorized southbound
+   relay for the list-changed trio.
+3. PR #464's maximum lifetime and re-authorization rules remain the outer lease bounds.
+4. A live stream is charged once at open and bounded by concurrency, queue and listener caps.
+5. Existing northbound error and streaming-metrics decisions remain unchanged in slice 2.
+6. The `TaskUpstream` wrapper gap is unrelated and MUST NOT be bundled into the subscription port.
 
-## Ready for Proposal
+## Ready for second-slice design
 
-Yes. Approach 1 (request-lifetime stream, gateway-derived `list_changed`, `resourceSubscriptions`
-unadvertised) with a chained-PR delivery is the recommendation. Question 4 should be answered
-experimentally before `sdd-design` fixes any lifetime number. Run **sdd-propose** for
-`run-1104-bounded-mcp-subscriptions`.
+Yes. Use complete-key modern listener multiplexing behind an app port, retain per-subscriber
+authorization isolation, terminate rather than drop on queue pressure, reconnect only across
+equivalent source identity, and preserve PR #464 behind the independent upstream kill switch.

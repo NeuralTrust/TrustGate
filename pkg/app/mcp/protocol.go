@@ -144,10 +144,105 @@ func stringField(payload map[string]json.RawMessage, key string) string {
 }
 
 type Target struct {
-	URL          string
-	Headers      map[string]string
-	PinKey       string
-	ProtocolMode registrydomain.MCPProtocolMode
+	URL              string
+	Headers          map[string]string
+	PinKey           string
+	RegistryTargetID string
+	ProtocolMode     registrydomain.MCPProtocolMode
+}
+
+// ListChangedCapabilities is the exact modern list-changed trio negotiated with an upstream.
+type ListChangedCapabilities struct {
+	Tools     bool
+	Prompts   bool
+	Resources bool
+}
+
+// Empty reports whether no list-changed capability was negotiated.
+func (c ListChangedCapabilities) Empty() bool {
+	return !c.Tools && !c.Prompts && !c.Resources
+}
+
+// Equal reports whether all three capability bits are identical.
+func (c ListChangedCapabilities) Equal(other ListChangedCapabilities) bool {
+	return c == other
+}
+
+// Intersect returns the capabilities present in both values.
+func (c ListChangedCapabilities) Intersect(other ListChangedCapabilities) ListChangedCapabilities {
+	return ListChangedCapabilities{
+		Tools:     c.Tools && other.Tools,
+		Prompts:   c.Prompts && other.Prompts,
+		Resources: c.Resources && other.Resources,
+	}
+}
+
+// HonouredSet converts the capability trio to the application notification set.
+func (c ListChangedCapabilities) HonouredSet() HonouredSet {
+	kinds := make([]NotificationKind, 0, 3)
+	if c.Tools {
+		kinds = append(kinds, NotificationToolsListChanged)
+	}
+	if c.Prompts {
+		kinds = append(kinds, NotificationPromptsListChanged)
+	}
+	if c.Resources {
+		kinds = append(kinds, NotificationResourcesListChanged)
+	}
+	return NewHonouredSet(kinds...)
+}
+
+// SubscriptionSourceKey is the complete comparable, non-secret physical-listener identity.
+type SubscriptionSourceKey struct {
+	TargetDigest          [32]byte
+	OriginDigest          [32]byte
+	RegistryTargetDigest  [32]byte
+	PinDigest             [32]byte
+	CredentialFingerprint [32]byte
+	ProtocolVersion       string
+	Capabilities          ListChangedCapabilities
+}
+
+// String returns a safe label without exposing source-key components.
+func (SubscriptionSourceKey) String() string {
+	return "mcp-subscription-source"
+}
+
+// PreparedSubscription is the modern source identity retained after discovery.
+type PreparedSubscription struct {
+	Key          SubscriptionSourceKey
+	Capabilities ListChangedCapabilities
+}
+
+// String returns a safe label without exposing prepared source identity.
+func (PreparedSubscription) String() string {
+	return "mcp-prepared-subscription"
+}
+
+// SubscriptionEvent is one allowed list-changed event from a modern upstream.
+type SubscriptionEvent struct {
+	Kind   NotificationKind
+	Source SubscriptionSourceKey
+}
+
+// SubscriptionSourceKeyResolver derives a complete source key without network I/O.
+type SubscriptionSourceKeyResolver interface {
+	SourceKey(target Target, capabilities ListChangedCapabilities) (SubscriptionSourceKey, error)
+}
+
+// SubscriptionConnector prepares and opens modern bounded subscription streams.
+//
+//go:generate mockery --name=SubscriptionConnector --dir=. --output=./mocks --filename=subscription_connector.go --case=underscore --with-expecter
+type SubscriptionConnector interface {
+	Prepare(ctx context.Context, target Target) (PreparedSubscription, error)
+	Open(ctx context.Context, target Target, prepared PreparedSubscription) (SubscriptionStream, error)
+}
+
+// SubscriptionStream reads one acknowledged southbound subscription.
+type SubscriptionStream interface {
+	Acknowledged() ListChangedCapabilities
+	Next(ctx context.Context) (SubscriptionEvent, error)
+	Close() error
 }
 
 type RPCError struct {

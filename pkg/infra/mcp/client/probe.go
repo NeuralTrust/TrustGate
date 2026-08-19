@@ -92,8 +92,10 @@ const (
 )
 
 type probeOutcome struct {
-	kind    probeKind
-	version string
+	kind               probeKind
+	version            string
+	capabilities       appmcp.ListChangedCapabilities
+	subscriptionListen bool
 }
 
 type strictProbe struct {
@@ -152,8 +154,10 @@ type probeAttempt struct {
 }
 
 type discoverProbeResult struct {
-	ResultType        string
-	SupportedVersions []string
+	ResultType         string
+	SupportedVersions  []string
+	Capabilities       appmcp.ListChangedCapabilities
+	SubscriptionListen bool
 }
 
 func (p *strictProbe) request(
@@ -251,6 +255,14 @@ func (p *strictProbe) classify(
 	if attempt.status == http.StatusBadRequest && attempt.hasResultMember {
 		return probeOutcome{}, "", &probeClassificationError{code: probeErrorUnexpectedBadRequestResult}
 	}
+	if attempt.status == http.StatusUnauthorized || attempt.status == http.StatusForbidden {
+		return probeOutcome{}, "", fmt.Errorf(
+			"%w: %w: server/discover returned HTTP status %d",
+			appmcp.ErrSubscriptionAuthentication,
+			appmcp.ErrUnreachable,
+			attempt.status,
+		)
+	}
 	if attempt.status != http.StatusBadRequest {
 		return probeOutcome{}, "", fmt.Errorf(
 			"%w: server/discover returned HTTP status %d",
@@ -280,7 +292,10 @@ func (p *strictProbe) classify(
 	}
 	switch rpcErr.Code {
 	case codeHeaderMismatch, codeRequiredCapability:
-		return probeOutcome{kind: probeModern, version: requestedVersion}, "", nil
+		return probeOutcome{
+			kind:    probeModern,
+			version: requestedVersion,
+		}, "", nil
 	case codeUnsupportedProtocolVersion:
 		advertised := supportedVersionsFromError(rpcErr)
 		if retryVersion := latestMutuallySupported(p.supportedVersions, advertised); retryVersion != "" {
@@ -313,13 +328,23 @@ func (p *strictProbe) classifySuccess(
 		if latestMutuallySupported([]string{requestedVersion}, attempt.result.SupportedVersions) == "" {
 			return p.downgrade(attempt.result.SupportedVersions)
 		}
-		return probeOutcome{kind: probeModern, version: requestedVersion}, "", nil
+		return probeOutcome{
+			kind:               probeModern,
+			version:            requestedVersion,
+			capabilities:       attempt.result.Capabilities,
+			subscriptionListen: attempt.result.SubscriptionListen,
+		}, "", nil
 	}
 	version := latestMutuallySupported(p.supportedVersions, attempt.result.SupportedVersions)
 	if version == "" {
 		return p.downgrade(attempt.result.SupportedVersions)
 	}
-	return probeOutcome{kind: probeModern, version: version}, "", nil
+	return probeOutcome{
+		kind:               probeModern,
+		version:            version,
+		capabilities:       attempt.result.Capabilities,
+		subscriptionListen: attempt.result.SubscriptionListen,
+	}, "", nil
 }
 
 // downgrade classifies an upstream that answered server/discover but shares no
@@ -496,5 +521,77 @@ func decodeDiscoverResult(raw json.RawMessage) (*discoverProbeResult, error) {
 	if err := json.Unmarshal(fields["capabilities"], &capabilities); err != nil || capabilities == nil {
 		return nil, errors.New("server/discover capabilities must be an object")
 	}
+	listChanged, err := decodeListChangedCapabilities(capabilities)
+	if err != nil {
+		return nil, err
+	}
+	result.Capabilities = listChanged
+	listen, err := decodeSubscriptionListen(capabilities)
+	if err != nil {
+		return nil, err
+	}
+	result.SubscriptionListen = listen
 	return &result, nil
+}
+
+func decodeSubscriptionListen(capabilities map[string]json.RawMessage) (bool, error) {
+	raw, ok := capabilities["subscriptions"]
+	if !ok {
+		return false, nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+		return false, errors.New("server/discover capabilities.subscriptions must be an object")
+	}
+	rawListen, ok := fields["listen"]
+	if !ok {
+		return false, nil
+	}
+	var enabled bool
+	if err := json.Unmarshal(rawListen, &enabled); err != nil {
+		return false, errors.New("server/discover capabilities.subscriptions.listen must be a boolean")
+	}
+	return enabled, nil
+}
+
+func decodeListChangedCapabilities(
+	capabilities map[string]json.RawMessage,
+) (appmcp.ListChangedCapabilities, error) {
+	tools, err := decodeListChangedCapability(capabilities, "tools")
+	if err != nil {
+		return appmcp.ListChangedCapabilities{}, err
+	}
+	prompts, err := decodeListChangedCapability(capabilities, "prompts")
+	if err != nil {
+		return appmcp.ListChangedCapabilities{}, err
+	}
+	resources, err := decodeListChangedCapability(capabilities, "resources")
+	if err != nil {
+		return appmcp.ListChangedCapabilities{}, err
+	}
+	return appmcp.ListChangedCapabilities{
+		Tools:     tools,
+		Prompts:   prompts,
+		Resources: resources,
+	}, nil
+}
+
+func decodeListChangedCapability(capabilities map[string]json.RawMessage, kind string) (bool, error) {
+	raw, ok := capabilities[kind]
+	if !ok {
+		return false, nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+		return false, fmt.Errorf("server/discover capabilities.%s must be an object", kind)
+	}
+	rawListChanged, ok := fields["listChanged"]
+	if !ok {
+		return false, nil
+	}
+	var enabled bool
+	if err := json.Unmarshal(rawListChanged, &enabled); err != nil {
+		return false, fmt.Errorf("server/discover capabilities.%s.listChanged must be a boolean", kind)
+	}
+	return enabled, nil
 }

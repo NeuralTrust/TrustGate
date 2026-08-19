@@ -114,6 +114,25 @@ router shutdown that follows.
 
 ### Southbound
 
+Subscription source metrics are emitted only when
+`OPS_METRICS_ENABLED=true` and use no target, origin, pool, credential, or
+subscriber identity labels:
+
+| Instrument | Labels and fixed values |
+|------------|-------------------------|
+| `mcp.upstream.subscriptions.listeners.live` | No labels. Up/down counter incremented when a physical listener supervisor starts and decremented when it joins. |
+| `mcp.upstream.subscriptions.listener.lifecycle_total` | `outcome`: `unsupported`, `open_failed`, `opened`, `reused`, `joined` |
+| `mcp.upstream.subscriptions.fanout_total` | `kind`: the three `*ListChanged` values; `outcome`: `authorized`, `denied`, `revoked`, `transient`, `rejected` |
+| `mcp.upstream.subscriptions.reconnect_total` | `outcome`: `attempted`, `succeeded`, `failed`, `exhausted`, `source_changed`, `cancelled`, `terminal` |
+| `mcp.upstream.subscriptions.queue_total` | `kind`: the three `*ListChanged` values; `outcome`: `enqueued`, `full` |
+| `mcp.upstream.subscriptions.listener.terminal_total` | `outcome`: `last_detach`, `shutdown`, `reconnect_exhausted`, `source_changed`, `authentication`, `protocol_failure`, `transport_failure` |
+
+An unsupported preparation or failed open never increments the live listener
+counter. Last detach, reconnect exhaustion, shutdown, and every other joined
+terminal path return it to zero. Queue `full` means that northbound stream was
+terminated; it does not mean an event was silently dropped from an active
+stream.
+
 `mcp.upstream.protocol.decision_total` (`{decision}`): one sample per
 negotiation outcome.
 

@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"sort"
 	"strings"
 	"testing"
@@ -29,6 +30,79 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
+
+func TestListChangedCapabilitiesUseExactTrio(t *testing.T) {
+	t.Parallel()
+	all := ListChangedCapabilities{Tools: true, Prompts: true, Resources: true}
+	partial := ListChangedCapabilities{Tools: true, Resources: true}
+	if all.Empty() {
+		t.Fatal("all capabilities reported empty")
+	}
+	if !partial.Equal(ListChangedCapabilities{Tools: true, Resources: true}) {
+		t.Fatal("equal capability trio did not compare equal")
+	}
+	if partial.Equal(all) {
+		t.Fatal("different capability trio compared equal")
+	}
+	if got := all.Intersect(partial); !got.Equal(partial) {
+		t.Fatalf("intersection = %+v, want %+v", got, partial)
+	}
+	honoured := partial.HonouredSet()
+	if !honoured.Has(NotificationToolsListChanged) ||
+		!honoured.Has(NotificationResourcesListChanged) ||
+		honoured.Has(NotificationPromptsListChanged) {
+		t.Fatalf("honoured set = %v", honoured.Kinds())
+	}
+}
+
+func TestSubscriptionIdentityFormattingDoesNotExposeComponents(t *testing.T) {
+	t.Parallel()
+	const secret = "Bearer raw-secret-token"
+	key := SubscriptionSourceKey{
+		TargetDigest:          sha256.Sum256([]byte("https://upstream.example/private")),
+		OriginDigest:          sha256.Sum256([]byte("https://upstream.example")),
+		RegistryTargetDigest:  sha256.Sum256([]byte("registry-target")),
+		PinDigest:             sha256.Sum256([]byte("pin")),
+		CredentialFingerprint: sha256.Sum256([]byte(secret)),
+		ProtocolVersion:       "2026-07-28",
+		Capabilities:          ListChangedCapabilities{Tools: true},
+	}
+	values := []string{
+		fmt.Sprint(key),
+		fmt.Sprint(PreparedSubscription{Key: key, Capabilities: key.Capabilities}),
+		fmt.Sprint(SubscriptionIdentity{
+			GatewayID:            "gateway",
+			ConsumerID:           "consumer",
+			PrincipalFingerprint: secret,
+			AuthID:               "auth",
+			RegistryID:           "registry",
+			RoleScopeFingerprint: "role",
+		}),
+	}
+	for _, value := range values {
+		if strings.Contains(value, secret) || strings.Contains(value, "upstream.example") {
+			t.Fatalf("formatted value exposes source material: %q", value)
+		}
+	}
+}
+
+func TestSubscriptionSourceKeyEqualityIncludesProtocolAndTrio(t *testing.T) {
+	t.Parallel()
+	base := SubscriptionSourceKey{
+		ProtocolVersion: "2026-07-28",
+		Capabilities:    ListChangedCapabilities{Tools: true},
+	}
+	protocolChanged := base
+	protocolChanged.ProtocolVersion = "2025-11-25"
+	if protocolChanged == base {
+		t.Fatal("protocol change did not alter source-key equality")
+	}
+	trioChanged := base
+	trioChanged.Capabilities.Prompts = true
+	if trioChanged == base {
+		t.Fatal("capability change did not alter source-key equality")
+	}
+}
 
 func TestBoundNotificationKind(t *testing.T) {
 	t.Parallel()

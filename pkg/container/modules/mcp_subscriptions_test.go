@@ -19,25 +19,117 @@ import (
 	"testing"
 	"time"
 
+	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/dig"
 )
 
 func subscriptionsConfig(enabled bool) *config.Config {
 	cfg := &config.Config{}
 	cfg.Server.MCPSubscriptions = config.MCPSubscriptionsConfig{
-		Enabled:         enabled,
-		MaxLifetime:     10 * time.Minute,
-		ReauthInterval:  time.Minute,
-		Keepalive:       15 * time.Second,
-		MaxEventBytes:   8192,
-		MaxURIs:         32,
-		MaxStreams:      1024,
-		MaxPerConsumer:  16,
-		MaxPerPrincipal: 4,
+		Enabled:              enabled,
+		MaxLifetime:          10 * time.Minute,
+		ReauthInterval:       time.Minute,
+		Keepalive:            15 * time.Second,
+		MaxEventBytes:        8192,
+		MaxURIs:              32,
+		MaxStreams:           1024,
+		MaxPerConsumer:       16,
+		MaxPerPrincipal:      4,
+		MaxUpstreamListeners: 32,
+		MaxUpstreamPerOrigin: 8,
+		StreamQueue:          8,
+		UpstreamIdleTimeout:  time.Minute,
+		ReconnectMaxAttempts: 3,
+		ReconnectBackoffMin:  time.Second,
+		ReconnectBackoffMax:  10 * time.Second,
 	}
 	return cfg
+}
+
+func TestSubscriptionUpstreamDigGraphModes(t *testing.T) {
+	tests := []struct {
+		name           string
+		northbound     bool
+		upstream       bool
+		wantNorthbound bool
+		wantUpstream   bool
+	}{
+		{name: "northbound off"},
+		{name: "northbound on upstream off", northbound: true, wantNorthbound: true},
+		{name: "both on", northbound: true, upstream: true, wantNorthbound: true, wantUpstream: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := subscriptionsConfig(test.northbound)
+			cfg.Server.MCPSubscriptions.UpstreamEnabled = test.upstream
+			c, err := container.New()
+			require.NoError(t, err)
+			require.NoError(t, c.Provide(func() *config.Config { return cfg }))
+			require.NoError(t, c.Provide(func() appconsumer.DataFinder { return nil }))
+			require.NoError(t, c.Provide(func() appmcp.RoleScoper { return nil }))
+			require.NoError(t, c.Provide(func() appmcp.Composer { return nil }))
+			require.NoError(t, c.Provide(func() *appmcp.PluginRunner { return nil }))
+			require.NoError(t, c.Provide(func() appmcp.CredentialResolver { return nil }))
+			require.NoError(t, c.Provide(provideSubscriptionRegistry))
+			require.NoError(t, c.Provide(provideSubscriptionConnector))
+			require.NoError(t, c.Provide(provideSubscriptionTargetResolver))
+			require.NoError(t, c.Provide(provideSubscriptionPolicy))
+			require.NoError(t, c.Provide(provideSubscriptionMultiplexer))
+
+			var graph struct {
+				dig.In
+				Registry    *appmcp.SubscriptionRegistry
+				Connector   appmcp.SubscriptionConnector
+				Targets     appmcp.SubscriptionTargetResolver
+				Policy      appmcp.SubscriptionPolicy
+				Multiplexer *appmcp.SubscriptionMultiplexer
+			}
+			require.NoError(t, c.Invoke(func(in struct {
+				dig.In
+				Registry    *appmcp.SubscriptionRegistry
+				Connector   appmcp.SubscriptionConnector
+				Targets     appmcp.SubscriptionTargetResolver
+				Policy      appmcp.SubscriptionPolicy
+				Multiplexer *appmcp.SubscriptionMultiplexer
+			}) {
+				graph = in
+			}))
+			require.Equal(t, test.wantNorthbound, graph.Registry != nil)
+			require.Equal(t, test.wantNorthbound, graph.Policy != nil)
+			require.Equal(t, test.wantUpstream, graph.Connector != nil)
+			require.Equal(t, test.wantUpstream, graph.Targets != nil)
+			require.Equal(t, test.wantUpstream, graph.Multiplexer != nil)
+			if graph.Multiplexer != nil {
+				require.NoError(t, graph.Multiplexer.Close(context.Background()))
+			}
+		})
+	}
+}
+
+func TestSubscriptionUpstreamDigGraphExposesOneMultiplexer(t *testing.T) {
+	cfg := subscriptionsConfig(true)
+	cfg.Server.MCPSubscriptions.UpstreamEnabled = true
+	c, err := container.New()
+	require.NoError(t, err)
+	require.NoError(t, c.Provide(func() *config.Config { return cfg }))
+	require.NoError(t, c.Provide(func() appmcp.SubscriptionPolicy {
+		return appmcp.NewSubscriptionPolicyWithUpstream(nil, nil, nil, nil, nil, provideSubscriptionConnector(cfg))
+	}))
+	require.NoError(t, c.Provide(provideSubscriptionConnector))
+	require.NoError(t, c.Provide(func() appmcp.SubscriptionTargetResolver {
+		return appmcp.NewSubscriptionTargetResolver(nil, nil, nil)
+	}))
+	require.NoError(t, c.Provide(provideSubscriptionMultiplexer))
+
+	var first, second *appmcp.SubscriptionMultiplexer
+	require.NoError(t, c.Invoke(func(m *appmcp.SubscriptionMultiplexer) { first = m }))
+	require.NoError(t, c.Invoke(func(m *appmcp.SubscriptionMultiplexer) { second = m }))
+	require.Same(t, first, second)
+	require.NoError(t, first.Close(context.Background()))
 }
 
 // The kill switch has to leave the process exactly as it was: no accountant, no
@@ -60,14 +152,14 @@ func TestProvideSubscriptionRegistryFollowsTheKillSwitch(t *testing.T) {
 			t.Parallel()
 			cfg := subscriptionsConfig(tc.enabled)
 			registry := provideSubscriptionRegistry(cfg)
-			policy := provideSubscriptionPolicy(cfg, nil, nil, nil, nil)
+			policy := provideSubscriptionPolicy(cfg, nil, nil, nil, nil, nil, nil)
 
 			require.Equal(t, tc.wantExists, registry != nil)
 			require.Equal(t, tc.wantExists, policy != nil,
 				"a disabled feature must provide a nil interface, not a typed nil")
 			require.Equal(t, tc.wantHook, subscriptionDrainHook(registry) != nil)
 
-			support := subscriptionsSupport(cfg.Server.MCPSubscriptions, registry, policy, nil)
+			support := subscriptionsSupport(cfg.Server.MCPSubscriptions, registry, policy, nil, nil, nil)
 			require.Equal(t, tc.wantOn, support.Enabled())
 		})
 	}
@@ -79,7 +171,7 @@ func TestSubscriptionsSupportNeedsBothTheRegistryAndThePolicy(t *testing.T) {
 	t.Parallel()
 	cfg := subscriptionsConfig(true)
 	registry := provideSubscriptionRegistry(cfg)
-	policy := provideSubscriptionPolicy(cfg, nil, nil, nil, nil)
+	policy := provideSubscriptionPolicy(cfg, nil, nil, nil, nil, nil, nil)
 
 	tests := []struct {
 		name         string
@@ -96,7 +188,7 @@ func TestSubscriptionsSupportNeedsBothTheRegistryAndThePolicy(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			support := subscriptionsSupport(cfg.Server.MCPSubscriptions, nil, nil, nil)
+			support := subscriptionsSupport(cfg.Server.MCPSubscriptions, nil, nil, nil, nil, nil)
 			if tc.withRegistry {
 				support.Registry = registry
 			}

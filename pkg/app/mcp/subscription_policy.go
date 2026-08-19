@@ -29,6 +29,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 const (
@@ -109,14 +110,139 @@ type SubscriptionPolicy interface {
 	Evaluate(ctx context.Context, id LeaseIdentity, prev SurfaceSnapshot) (Evaluation, error)
 }
 
+// UpstreamSubscriptionPolicy authorizes individual upstream events.
+type UpstreamSubscriptionPolicy interface {
+	SubscriptionPolicy
+	AuthorizeEvent(
+		ctx context.Context,
+		identity SubscriptionIdentity,
+		source SubscriptionSourceKey,
+		kind NotificationKind,
+	) (bool, error)
+}
+
 var _ SubscriptionPolicy = (*subscriptionPolicy)(nil)
 
 type subscriptionPolicy struct {
-	finder   appconsumer.DataFinder
-	scoper   RoleScoper
-	composer Composer
-	plugins  *PluginRunner
-	flights  snapshotFlightGroup
+	finder    appconsumer.DataFinder
+	scoper    RoleScoper
+	composer  Composer
+	plugins   *PluginRunner
+	creds     CredentialResolver
+	sourceKey SubscriptionSourceKeyResolver
+	flights   snapshotFlightGroup
+}
+
+// NewSubscriptionPolicyWithUpstream builds policy checks for watchdog and upstream events.
+func NewSubscriptionPolicyWithUpstream(
+	finder appconsumer.DataFinder,
+	scoper RoleScoper,
+	composer Composer,
+	plugins *PluginRunner,
+	creds CredentialResolver,
+	connector SubscriptionConnector,
+) UpstreamSubscriptionPolicy {
+	policy := NewSubscriptionPolicy(finder, scoper, composer, plugins).(*subscriptionPolicy)
+	policy.creds = creds
+	policy.sourceKey, _ = connector.(SubscriptionSourceKeyResolver)
+	return policy
+}
+
+// AuthorizeEvent freshly verifies every binding and source identity dimension.
+func (p *subscriptionPolicy) AuthorizeEvent(
+	ctx context.Context,
+	identity SubscriptionIdentity,
+	source SubscriptionSourceKey,
+	kind NotificationKind,
+) (bool, error) {
+	if p.sourceKey == nil {
+		return false, errors.New("mcp: upstream subscription policy is unavailable")
+	}
+	gatewayID, err := ids.Parse[ids.GatewayKind](identity.GatewayID)
+	if err != nil {
+		return false, fmt.Errorf("%w: invalid gateway binding", ErrSubscriptionRevoked)
+	}
+	data, err := p.finder.FindByGateway(ctx, gatewayID)
+	if err != nil {
+		return false, fmt.Errorf("mcp: refresh subscription consumer data: %w", err)
+	}
+	if data == nil || data.GatewayID.String() != identity.GatewayID {
+		return false, fmt.Errorf("%w: gateway binding changed", ErrSubscriptionRevoked)
+	}
+	rc, ok := data.MatchPath(identity.Path)
+	if !ok || rc == nil || rc.Consumer == nil ||
+		rc.Consumer.ID.String() != identity.ConsumerID ||
+		rc.Consumer.Type != consumerdomain.TypeMCP {
+		return false, fmt.Errorf("%w: consumer binding changed", ErrSubscriptionRevoked)
+	}
+	if currentPrincipal := principalFingerprint(ctx); currentPrincipal != identity.PrincipalFingerprint {
+		return false, fmt.Errorf("%w: principal binding changed", ErrSubscriptionRevoked)
+	}
+	currentAuthID := ""
+	if authID, ok := appconsumer.AuthIDFromContext(ctx); ok {
+		currentAuthID = authID.String()
+	}
+	if currentAuthID != identity.AuthID {
+		return false, fmt.Errorf("%w: authentication binding changed", ErrSubscriptionRevoked)
+	}
+	if currentAuthID != "" {
+		authID, parseErr := ids.Parse[ids.AuthKind](currentAuthID)
+		if parseErr != nil ||
+			(!consumerHasAuth(rc, authID) && authID != appauth.DefaultIdPAuthID()) {
+			return false, fmt.Errorf("%w: authentication binding revoked", ErrSubscriptionRevoked)
+		}
+	}
+	if rc.Consumer.ProtocolAcceptance() == consumerdomain.ProtocolAcceptanceLegacyOnly {
+		return false, fmt.Errorf("%w: consumer protocol binding changed", ErrSubscriptionRevoked)
+	}
+	scoped, err := p.scoper.Scope(ctx, rc, data)
+	if err != nil {
+		if errors.Is(err, ErrNoRoleAccess) {
+			return false, fmt.Errorf("%w: role binding revoked", ErrSubscriptionRevoked)
+		}
+		return false, fmt.Errorf("mcp: refresh subscription role scope: %w", err)
+	}
+	if scoped == nil || scoped.Consumer == nil ||
+		SurfaceConfigFingerprint(scoped) != identity.RoleScopeFingerprint {
+		return false, fmt.Errorf("%w: role scope binding changed", ErrSubscriptionRevoked)
+	}
+	registryID, err := ids.Parse[ids.RegistryKind](identity.RegistryID)
+	if err != nil {
+		return false, fmt.Errorf("%w: invalid registry binding", ErrSubscriptionRevoked)
+	}
+	registry := subscriptionRegistryByID(scoped, registryID)
+	if registry == nil || !eligibleSubscriptionRegistry(registry) {
+		return false, fmt.Errorf("%w: registry binding changed", ErrSubscriptionRevoked)
+	}
+	if !registryRequestedKinds(scoped, registry, NewHonouredSet(kind)).Has(kind) {
+		return false, fmt.Errorf("%w: notification kind is no longer authorized", ErrSubscriptionRevoked)
+	}
+	target := targetFor(ctx, scoped, registry)
+	if p.creds != nil {
+		if err := p.creds.Apply(ctx, scoped, registry, &target); err != nil {
+			return false, fmt.Errorf("mcp: refresh subscription credentials: %w", err)
+		}
+	}
+	currentKey, err := p.sourceKey.SourceKey(target, source.Capabilities)
+	if err != nil {
+		return false, fmt.Errorf("mcp: derive subscription source identity: %w", err)
+	}
+	if currentKey != source || !source.Capabilities.HonouredSet().Has(kind) {
+		return false, ErrSubscriptionSourceChanged
+	}
+	return true, nil
+}
+
+func subscriptionRegistryByID(
+	rc *appconsumer.RoutableConsumer,
+	id ids.RegistryID,
+) *registrydomain.Registry {
+	for _, registry := range rc.Registries {
+		if registry != nil && registry.ID == id {
+			return registry
+		}
+	}
+	return nil
 }
 
 // NewSubscriptionPolicy builds the re-authorization pass a bounded lease ticks on.

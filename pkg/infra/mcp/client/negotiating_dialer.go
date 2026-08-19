@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"sync"
@@ -85,6 +86,48 @@ func newNegotiatingDialer(
 		coordinator.confirmLegacy = d.confirmLegacyEra
 	}
 	return d
+}
+
+func prepareModernSubscription(
+	ctx context.Context,
+	probe protocolProbe,
+	target appmcp.Target,
+) (appmcp.ListChangedCapabilities, error) {
+	mode := target.ProtocolMode
+	if mode == "" {
+		mode = registrydomain.MCPProtocolModeAuto
+	}
+	if mode == registrydomain.MCPProtocolModeLegacy {
+		return appmcp.ListChangedCapabilities{}, appmcp.ErrSubscriptionUnsupported
+	}
+	if mode != registrydomain.MCPProtocolModeAuto && mode != registrydomain.MCPProtocolModeModern {
+		return appmcp.ListChangedCapabilities{}, fmt.Errorf(
+			"%w: invalid protocol mode",
+			appmcp.ErrSubscriptionProtocol,
+		)
+	}
+	outcome, err := probe.Probe(ctx, target)
+	if err != nil {
+		if errors.Is(err, appmcp.ErrProtocolIncompatible) {
+			return appmcp.ListChangedCapabilities{}, appmcp.ErrSubscriptionUnsupported
+		}
+		var classificationErr *probeClassificationError
+		if errors.As(err, &classificationErr) {
+			return appmcp.ListChangedCapabilities{}, fmt.Errorf(
+				"%w: %v",
+				appmcp.ErrSubscriptionProtocol,
+				err,
+			)
+		}
+		return appmcp.ListChangedCapabilities{}, fmt.Errorf("prepare subscription discovery: %w", err)
+	}
+	if outcome.kind != probeModern ||
+		outcome.version != modernProtocolVersion ||
+		!outcome.subscriptionListen ||
+		outcome.capabilities.Empty() {
+		return appmcp.ListChangedCapabilities{}, appmcp.ErrSubscriptionUnsupported
+	}
+	return outcome.capabilities, nil
 }
 
 func (d *negotiatingDialer) confirmLegacyEra(ctx context.Context, target appmcp.Target) error {
