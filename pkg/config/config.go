@@ -534,7 +534,7 @@ func getOTLPConfig() OTLPConfig {
 	return OTLPConfig{
 		Endpoint:    getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
 		Headers:     parseOTLPHeaders(getEnv("OTEL_EXPORTER_OTLP_HEADERS", "")),
-		Protocol:    getEnv("OTEL_EXPORTER_OTLP_PROTOCOL", ""),
+		Protocol:    getEnv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf"),
 		Timeout:     getOTLPTimeout(),
 		Insecure:    getEnvBool("OTEL_EXPORTER_OTLP_INSECURE", false),
 		Compression: getEnv("OTEL_EXPORTER_OTLP_COMPRESSION", ""),

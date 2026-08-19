@@ -34,10 +34,10 @@ func TestParseSettings(t *testing.T) {
 	}{
 		{
 			name: "minimal valid applies defaults",
-			raw:  map[string]interface{}{"endpoint": "collector:4317"},
+			raw:  map[string]interface{}{"endpoint": "collector:4318"},
 			assert: func(t *testing.T, s Settings) {
-				assert.Equal(t, "collector:4317", s.Endpoint)
-				assert.Equal(t, ProtocolGRPC, s.Protocol)
+				assert.Equal(t, "collector:4318", s.Endpoint)
+				assert.Equal(t, ProtocolHTTP, s.Protocol)
 				assert.Equal(t, SignalLogs, s.Signal)
 				assert.Equal(t, compressionGzip, s.Compression)
 				assert.Equal(t, defaultTimeout, s.Timeout)
@@ -119,6 +119,96 @@ func TestParseSettings(t *testing.T) {
 	}
 }
 
+func TestParseSettingsResolvesProtocolFromEndpoint(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		endpoint string
+		env      config.OTLPConfig
+		want     Protocol
+	}{
+		{
+			name:     "collector url with signal path is http",
+			endpoint: "http://collector:4318/v1/logs",
+			want:     ProtocolHTTP,
+		},
+		{
+			name:     "scheme-less endpoint with path is http",
+			endpoint: "collector:4318/v1/logs",
+			want:     ProtocolHTTP,
+		},
+		{
+			name:     "otlp http port without path is http",
+			endpoint: "http://collector:4318",
+			want:     ProtocolHTTP,
+		},
+		{
+			name:     "otlp grpc port is grpc",
+			endpoint: "collector:4317",
+			want:     ProtocolGRPC,
+		},
+		{
+			name:     "unknown port falls back to the default",
+			endpoint: "collector:9999",
+			want:     defaultProtocol,
+		},
+		{
+			name:     "env protocol wins over the endpoint",
+			endpoint: "http://collector:4318/v1/logs",
+			env:      config.OTLPConfig{Protocol: string(ProtocolGRPC)},
+			want:     ProtocolGRPC,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s, err := parseSettings(map[string]interface{}{"endpoint": tc.endpoint}, tc.env)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, s.Protocol)
+		})
+	}
+}
+
+func TestWithLogsPath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		endpoint string
+		want     string
+	}{
+		{
+			name:     "endpoint without path gets the signal path",
+			endpoint: "http://collector:4318",
+			want:     "http://collector:4318/v1/logs",
+		},
+		{
+			name:     "trailing slash is not doubled",
+			endpoint: "http://collector:4318/",
+			want:     "http://collector:4318/v1/logs",
+		},
+		{
+			name:     "existing signal path is kept",
+			endpoint: "http://collector:4318/v1/logs",
+			want:     "http://collector:4318/v1/logs",
+		},
+		{
+			name:     "custom path is kept",
+			endpoint: "https://gateway.example.com/otlp/v1/logs",
+			want:     "https://gateway.example.com/otlp/v1/logs",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, withLogsPath(tc.endpoint))
+		})
+	}
+}
+
 func TestSettingsValidate(t *testing.T) {
 	t.Parallel()
 
@@ -152,6 +242,14 @@ func TestSettingsValidate(t *testing.T) {
 			name:    "non-positive timeout",
 			raw:     map[string]interface{}{"endpoint": "collector:4317", "timeout": "-1s"},
 			wantErr: "timeout",
+		},
+		{
+			name: "grpc endpoint carrying a path",
+			raw: map[string]interface{}{
+				"endpoint": "http://collector:4317/v1/logs",
+				"protocol": string(ProtocolGRPC),
+			},
+			wantErr: "must not carry a path",
 		},
 		{
 			name:    "invalid compression",
