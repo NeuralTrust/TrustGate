@@ -81,7 +81,7 @@ func (p *providerClient) ExchangeCode(ctx context.Context, cfg *registrydomain.M
 	if cfg.Resource != "" {
 		form.Set("resource", cfg.Resource)
 	}
-	return p.tokenCall(ctx, cfg.TokenURL, form)
+	return p.tokenCall(ctx, cfg.TokenURL, form, "", "")
 }
 
 func (p *providerClient) Refresh(ctx context.Context, cfg *registrydomain.MCPAuth, refreshToken string) (*appoauth.ProviderToken, error) {
@@ -95,16 +95,45 @@ func (p *providerClient) Refresh(ctx context.Context, cfg *registrydomain.MCPAut
 	if cfg.Resource != "" {
 		form.Set("resource", cfg.Resource)
 	}
-	return p.tokenCall(ctx, cfg.TokenURL, form)
+	return p.tokenCall(ctx, cfg.TokenURL, form, "", "")
 }
 
-func (p *providerClient) tokenCall(ctx context.Context, endpoint string, form url.Values) (*appoauth.ProviderToken, error) {
+func (p *providerClient) ClientCredentials(ctx context.Context, cfg *registrydomain.MCPAuth) (*appoauth.ProviderToken, error) {
+	form := url.Values{}
+	form.Set("grant_type", "client_credentials")
+	if len(cfg.Scopes) > 0 {
+		form.Set("scope", strings.Join(cfg.Scopes, " "))
+	}
+	if cfg.Resource != "" {
+		form.Set("resource", cfg.Resource)
+	}
+	method := cfg.TokenEndpointAuthMethod
+	if method == "" {
+		method = registrydomain.TokenEndpointAuthClientSecretBasic
+	}
+	var basicUser, basicPass string
+	switch method {
+	case registrydomain.TokenEndpointAuthClientSecretBasic:
+		basicUser, basicPass = cfg.ClientID, cfg.ClientSecret
+	case registrydomain.TokenEndpointAuthClientSecretPost:
+		form.Set("client_id", cfg.ClientID)
+		form.Set("client_secret", cfg.ClientSecret)
+	default:
+		return nil, fmt.Errorf("oauth provider: unsupported token_endpoint_auth_method %q", method)
+	}
+	return p.tokenCall(ctx, cfg.TokenURL, form, basicUser, basicPass)
+}
+
+func (p *providerClient) tokenCall(ctx context.Context, endpoint string, form url.Values, basicUser, basicPass string) (*appoauth.ProviderToken, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
+	if basicUser != "" {
+		req.SetBasicAuth(basicUser, basicPass)
+	}
 	res, err := p.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("oauth provider: token call: %w", err)
@@ -117,6 +146,7 @@ func (p *providerClient) tokenCall(ctx context.Context, endpoint string, form ur
 	var doc struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
+		TokenType    string `json:"token_type"`
 		ExpiresIn    int    `json:"expires_in"`
 		Scope        string `json:"scope"`
 		Error        string `json:"error"`
@@ -131,11 +161,16 @@ func (p *providerClient) tokenCall(ctx context.Context, endpoint string, form ur
 		}
 		return nil, fmt.Errorf("oauth provider: token exchange failed (%s): %s", doc.Error, doc.ErrorDesc)
 	}
+	if doc.TokenType != "" && !strings.EqualFold(doc.TokenType, "Bearer") {
+		return nil, fmt.Errorf("oauth provider: unsupported token_type %q", doc.TokenType)
+	}
 	out := &appoauth.ProviderToken{AccessToken: doc.AccessToken, RefreshToken: doc.RefreshToken}
 	switch {
 	case doc.ExpiresIn > 0:
 		out.ExpiresAt = time.Now().Add(time.Duration(doc.ExpiresIn) * time.Second)
 	case doc.RefreshToken != "":
+		out.ExpiresAt = time.Now().Add(defaultProviderTokenTTL)
+	default:
 		out.ExpiresAt = time.Now().Add(defaultProviderTokenTTL)
 	}
 	if doc.Scope != "" {

@@ -420,6 +420,135 @@ func TestCredentialResolver_NoneAndStaticAreNoops(t *testing.T) {
 	}
 }
 
+type stubProviderClient struct {
+	token   *appoauth.ProviderToken
+	err     error
+	calls   int
+	lastCfg *registrydomain.MCPAuth
+	block   chan struct{}
+	started chan struct{}
+}
+
+func (s *stubProviderClient) AuthorizeURL(*registrydomain.MCPAuth, string, string, string) string {
+	return ""
+}
+
+func (s *stubProviderClient) ExchangeCode(context.Context, *registrydomain.MCPAuth, string, string, string) (*appoauth.ProviderToken, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (s *stubProviderClient) Refresh(context.Context, *registrydomain.MCPAuth, string) (*appoauth.ProviderToken, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (s *stubProviderClient) ClientCredentials(_ context.Context, cfg *registrydomain.MCPAuth) (*appoauth.ProviderToken, error) {
+	s.calls++
+	s.lastCfg = cfg
+	if s.started != nil {
+		close(s.started)
+		s.started = nil
+	}
+	if s.block != nil {
+		<-s.block
+	}
+	return s.token, s.err
+}
+
+func TestCredentialResolver_ClientCredentials(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	auth := &registrydomain.MCPAuth{
+		Mode:     registrydomain.MCPAuthModeClientCredentials,
+		ClientID: "cid", ClientSecret: "csec",
+		TokenURL:                "https://idp.example/token",
+		TokenEndpointAuthMethod: registrydomain.TokenEndpointAuthClientSecretBasic,
+		Resource:                "https://mcp.example.com/mcp",
+	}
+	reg := regWithAuth(gw, auth)
+
+	t.Run("injects bearer token and caches", func(t *testing.T) {
+		t.Parallel()
+		prov := &stubProviderClient{token: &appoauth.ProviderToken{
+			AccessToken: "m2m-tok", ExpiresAt: time.Now().Add(time.Hour),
+		}}
+		r := NewCredentialResolver(nil, nil, nil, prov, discardLogger())
+		target := Target{}
+		if err := r.Apply(context.Background(), mcpConsumer(gw), reg, &target); err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if target.Headers["Authorization"] != "Bearer m2m-tok" {
+			t.Fatalf("Authorization = %q", target.Headers["Authorization"])
+		}
+		target2 := Target{}
+		if err := r.Apply(context.Background(), mcpConsumer(gw), reg, &target2); err != nil {
+			t.Fatalf("Apply cached: %v", err)
+		}
+		if prov.calls != 1 {
+			t.Fatalf("provider calls = %d, want 1 (cached)", prov.calls)
+		}
+		if target2.Headers["Authorization"] != "Bearer m2m-tok" {
+			t.Fatalf("cached Authorization = %q", target2.Headers["Authorization"])
+		}
+	})
+
+	t.Run("does not require a principal", func(t *testing.T) {
+		t.Parallel()
+		prov := &stubProviderClient{token: &appoauth.ProviderToken{
+			AccessToken: "anon-ok", ExpiresAt: time.Now().Add(time.Hour),
+		}}
+		r := NewCredentialResolver(nil, nil, nil, prov, discardLogger())
+		target := Target{}
+		if err := r.Apply(context.Background(), mcpConsumer(gw), reg, &target); err != nil {
+			t.Fatalf("Apply without principal: %v", err)
+		}
+	})
+
+	t.Run("re-mints and reuses one cache slot when the registry changes", func(t *testing.T) {
+		t.Parallel()
+		prov := &stubProviderClient{token: &appoauth.ProviderToken{
+			AccessToken: "first", ExpiresAt: time.Now().Add(time.Hour),
+		}}
+		r := NewCredentialResolver(nil, nil, nil, prov, discardLogger())
+		resolver, ok := r.(*credentialResolver)
+		if !ok {
+			t.Fatalf("unexpected resolver type %T", r)
+		}
+		edited := regWithAuth(gw, auth)
+		target := Target{}
+		if err := r.Apply(context.Background(), mcpConsumer(gw), edited, &target); err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+
+		prov.token = &appoauth.ProviderToken{AccessToken: "second", ExpiresAt: time.Now().Add(time.Hour)}
+		edited.UpdatedAt = edited.UpdatedAt.Add(time.Minute)
+		target2 := Target{}
+		if err := r.Apply(context.Background(), mcpConsumer(gw), edited, &target2); err != nil {
+			t.Fatalf("Apply after edit: %v", err)
+		}
+		if target2.Headers["Authorization"] != "Bearer second" {
+			t.Fatalf("Authorization = %q, want the re-minted token", target2.Headers["Authorization"])
+		}
+		entries := 0
+		resolver.ccCache.Range(func(any, any) bool {
+			entries++
+			return true
+		})
+		if entries != 1 {
+			t.Fatalf("cache entries = %d, want 1 per registry", entries)
+		}
+	})
+
+	t.Run("surfaces provider errors", func(t *testing.T) {
+		t.Parallel()
+		prov := &stubProviderClient{err: errors.New("idp down")}
+		r := NewCredentialResolver(nil, nil, nil, prov, discardLogger())
+		target := Target{}
+		if err := r.Apply(context.Background(), mcpConsumer(gw), reg, &target); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
+
 // undecryptableVault holds a credential the current key cannot read, the way
 // the real vault reports it after SERVER_SECRET_KEY changes.
 type undecryptableVault struct{}

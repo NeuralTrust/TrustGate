@@ -53,6 +53,7 @@ type updater struct {
 	publisher   cache.EventPublisher
 	logger      *slog.Logger
 	signaler    configsyncport.SnapshotSignaler
+	catalog     MCPAuthCatalog
 }
 
 func NewUpdater(
@@ -61,6 +62,7 @@ func NewUpdater(
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
 	signaler configsyncport.SnapshotSignaler,
+	catalog MCPAuthCatalog,
 ) Updater {
 	return &updater{
 		repo:        repo,
@@ -68,6 +70,7 @@ func NewUpdater(
 		publisher:   publisher,
 		logger:      logger,
 		signaler:    signaler,
+		catalog:     catalog,
 	}
 }
 
@@ -89,7 +92,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Registry,
 		existing.Enabled = *in.Enabled
 	}
 	applyLLMTargetUpdate(existing, in)
-	applyMCPTargetUpdate(existing, in)
+	if err := applyMCPTargetUpdate(existing, in, u.catalog); err != nil {
+		return nil, err
+	}
 	existing.UpdatedAt = time.Now().UTC()
 	if !existing.IsMCP() {
 		if verr := validateProviderOptions(existing.LLMTarget); verr != nil {
@@ -110,9 +115,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Registry,
 	return existing, nil
 }
 
-func applyMCPTargetUpdate(existing *domain.Registry, in UpdateInput) {
+func applyMCPTargetUpdate(existing *domain.Registry, in UpdateInput, catalog MCPAuthCatalog) error {
 	if in.MCPTarget == nil {
-		return
+		return nil
 	}
 	incoming := in.MCPTarget
 	if prev := existing.MCPTarget; prev != nil {
@@ -128,10 +133,17 @@ func applyMCPTargetUpdate(existing *domain.Registry, in UpdateInput) {
 		if incoming.Auth == nil {
 			incoming.Auth = prev.Auth
 		}
+		if strings.TrimSpace(incoming.Code) == "" {
+			incoming.Code = prev.Code
+		}
 	}
 	incoming.Normalize()
 	incoming.ResolveSecretsFrom(existing.MCPTarget)
+	if err := CanonicalizeMCPAuthFromCatalog(incoming, catalog); err != nil {
+		return err
+	}
 	existing.MCPTarget = incoming
+	return nil
 }
 
 func applyLLMTargetUpdate(existing *domain.Registry, in UpdateInput) {
