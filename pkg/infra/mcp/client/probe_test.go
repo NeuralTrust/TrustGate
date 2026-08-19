@@ -30,6 +30,8 @@ import (
 	"time"
 
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/version"
 )
 
@@ -1205,4 +1207,118 @@ func TestStrictProbePreservesCancellationAndNetworkErrors(t *testing.T) {
 			t.Fatalf("outcome = %+v", outcome)
 		}
 	})
+}
+
+const appsPositive = `{"extensions":{"io.modelcontextprotocol/ui":{"mimeTypes":["text/html;profile=mcp-app"]}}}`
+
+func appsResponse(capabilities string) *http.Response {
+	body := fmt.Sprintf(`{"jsonrpc":"2.0","id":"%s","result":{"resultType":"complete","supportedVersions":["%s"],"capabilities":%s}}`,
+		probeRequestID, modernProtocolVersion, capabilities)
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(body))}
+}
+func testAppsResolver(transport http.RoundTripper) *AppCapabilityResolver {
+	resolver := NewAppCapabilityResolver(cache.NewTTLMap(cache.MCPAppsCacheTTL))
+	resolver.transport = transport
+	return resolver
+}
+func TestParseAppsCapability(t *testing.T) {
+	tests := map[string]error{
+		`{}`: ErrAppCapabilityUnsupported,
+		`{"io.modelcontextprotocol/ui":{"mimeTypes":["text/plain"]}}`: ErrAppCapabilityUnsupported,
+		`[]`:                                ErrAppCapabilityProtocol,
+		`{"io.modelcontextprotocol/ui":[]}`: ErrAppCapabilityProtocol,
+		`{"io.modelcontextprotocol/ui":{}}`: ErrAppCapabilityProtocol,
+		`{"io.modelcontextprotocol/ui":{"mimeTypes":"text/plain"}}`: ErrAppCapabilityProtocol,
+	}
+	for raw, want := range tests {
+		_, err := parseAppsCapability(&discoverProbeResult{ExtensionsRaw: json.RawMessage(raw)})
+		if !errors.Is(err, want) {
+			t.Fatalf("%s: error = %v, want %v", raw, err, want)
+		}
+	}
+}
+func TestAppCapabilityResolverSafetyAndCache(t *testing.T) {
+	now := time.Unix(100, 0)
+	resolver := testAppsResolver(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		var request map[string]any
+		_ = json.NewDecoder(req.Body).Decode(&request)
+		meta := request["params"].(map[string]any)["_meta"].(map[string]any)
+		if req.Header.Get("Authorization") != "Bearer one" ||
+			mustJSON(meta[metaClientCapabilities]) != appsPositive {
+			t.Fatal("credentialed Apps declaration missing")
+		}
+		return appsResponse(appsPositive), nil
+	}))
+	resolver.now = func() time.Time { return now }
+	target := appmcp.Target{URL: "https://upstream.example/mcp?tenant=a", RegistryTargetID: "registry",
+		PinKey: "identity", Headers: map[string]string{"authorization": "Bearer one", "X-Tenant": "a"}}
+	if _, err := resolver.Resolve(context.Background(), target); err != nil {
+		t.Fatal(err)
+	}
+	keyFor := func(headers map[string]string) string {
+		target.Headers = headers
+		key, _ := appCapabilityCacheKey(target)
+		return key
+	}
+	sameKey := keyFor(map[string]string{"X-Tenant": "a", "Authorization": "Bearer one"})
+	if keyFor(map[string]string{"authorization": "Bearer one", "X-Tenant": "a"}) != sameKey ||
+		keyFor(map[string]string{"Authorization": "Bearer two", "X-Tenant": "a"}) == sameKey {
+		t.Fatal("cache key is not canonical and credential-bound")
+	}
+	if resolver.result(appmcp.MCPAppsClientCapability{}, nil).expiresAt.Sub(now) != cache.MCPAppsCacheTTL ||
+		resolver.result(appmcp.MCPAppsClientCapability{}, ErrAppCapabilityUnsupported).expiresAt.Sub(now) != appCapabilityNegativeTTL {
+		t.Fatal("capability TTL mismatch")
+	}
+	for _, headers := range []map[string]string{{"Host": "bad"}, {"Bad Header": "bad"}, {"X-Test": "bad\nvalue"}} {
+		target.Headers = headers
+		if _, err := resolver.Resolve(context.Background(), target); !errors.Is(err, appmcp.ErrUnreachable) {
+			t.Fatalf("unsafe header error = %v", err)
+		}
+	}
+	target.ProtocolMode = registrydomain.MCPProtocolModeLegacy
+	if _, err := resolver.Resolve(context.Background(), target); !errors.Is(err, ErrAppCapabilityUnsupported) {
+		t.Fatalf("legacy error = %v", err)
+	}
+}
+
+func TestAppCapabilityResolverWaiterCancellation(t *testing.T) {
+	cancelled, release, joined := make(chan struct{}), make(chan struct{}), make(chan struct{}, 3)
+	var calls atomic.Int64
+	resolver := testAppsResolver(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if calls.Add(1) == 1 {
+			<-req.Context().Done()
+			close(cancelled)
+			<-release
+			return nil, req.Context().Err()
+		}
+		return appsResponse(appsPositive), nil
+	}))
+	resolver.joined = func() { joined <- struct{}{} }
+	target := appmcp.Target{URL: "https://upstream.example/mcp", RegistryTargetID: "registry"}
+	result1, result2, retry := make(chan error, 1), make(chan error, 1), make(chan error, 1)
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	go func() { _, err := resolver.Resolve(ctx1, target); result1 <- err }()
+	go func() { _, err := resolver.Resolve(ctx2, target); result2 <- err }()
+	<-joined
+	<-joined
+	cancel1()
+	if err := <-result1; !errors.Is(err, context.Canceled) {
+		t.Fatalf("first error = %v", err)
+	}
+	cancel2()
+	<-cancelled
+	go func() { _, err := resolver.Resolve(context.Background(), target); retry <- err }()
+	<-joined
+	if calls.Load() != 1 {
+		t.Fatal("retry overlapped cancelled probe")
+	}
+	close(release)
+	if err := <-result2; !errors.Is(err, context.Canceled) {
+		t.Fatalf("second error = %v", err)
+	}
+	if err := <-retry; err != nil || calls.Load() != 2 || len(resolver.flights) != 0 {
+		t.Fatalf("retry error=%v calls=%d flights=%d", err, calls.Load(), len(resolver.flights))
+	}
 }

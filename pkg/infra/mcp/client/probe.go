@@ -128,7 +128,7 @@ func (p *strictProbe) Probe(ctx context.Context, target appmcp.Target) (probeOut
 	}
 
 	requested := p.supportedVersions[0]
-	attempt, err := p.request(ctx, client, target.URL, requested)
+	attempt, err := p.request(ctx, client, target.URL, requested, nil)
 	if err != nil {
 		return probeOutcome{}, err
 	}
@@ -137,7 +137,7 @@ func (p *strictProbe) Probe(ctx context.Context, target appmcp.Target) (probeOut
 		return outcome, err
 	}
 
-	retry, err := p.request(ctx, client, target.URL, retryVersion)
+	retry, err := p.request(ctx, client, target.URL, retryVersion, nil)
 	if err != nil {
 		return probeOutcome{}, err
 	}
@@ -156,6 +156,7 @@ type probeAttempt struct {
 type discoverProbeResult struct {
 	ResultType         string
 	SupportedVersions  []string
+	ExtensionsRaw      json.RawMessage
 	Capabilities       appmcp.ListChangedCapabilities
 	SubscriptionListen bool
 }
@@ -165,12 +166,13 @@ func (p *strictProbe) request(
 	client *http.Client,
 	endpoint string,
 	protocolVersion string,
+	clientCapabilities map[string]any,
 ) (probeAttempt, error) {
 	origin, err := canonicalOrigin(endpoint)
 	if err != nil {
 		return probeAttempt{}, wrapUnreachable("", "invalid upstream origin", err)
 	}
-	body, err := p.requestBody(protocolVersion)
+	body, err := p.requestBody(protocolVersion, clientCapabilities)
 	if err != nil {
 		return probeAttempt{}, fmt.Errorf("encode server/discover probe: %w", err)
 	}
@@ -219,7 +221,10 @@ func (p *strictProbe) request(
 	return attempt, nil
 }
 
-func (p *strictProbe) requestBody(protocolVersion string) ([]byte, error) {
+func (p *strictProbe) requestBody(protocolVersion string, clientCapabilities map[string]any) ([]byte, error) {
+	if clientCapabilities == nil {
+		clientCapabilities = map[string]any{}
+	}
 	id, err := jsonrpc.MakeID(probeRequestID)
 	if err != nil {
 		return nil, err
@@ -231,7 +236,7 @@ func (p *strictProbe) requestBody(protocolVersion string) ([]byte, error) {
 				"name":    "trustgate",
 				"version": p.implementationVersion,
 			},
-			metaClientCapabilities: map[string]any{},
+			metaClientCapabilities: clientCapabilities,
 		},
 	})
 	if err != nil {
@@ -521,6 +526,7 @@ func decodeDiscoverResult(raw json.RawMessage) (*discoverProbeResult, error) {
 	if err := json.Unmarshal(fields["capabilities"], &capabilities); err != nil || capabilities == nil {
 		return nil, errors.New("server/discover capabilities must be an object")
 	}
+	result.ExtensionsRaw = capabilities["extensions"]
 	listChanged, err := decodeListChangedCapabilities(capabilities)
 	if err != nil {
 		return nil, err
