@@ -16,14 +16,10 @@ package oauth
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
-
-// ErrJTIReplay is returned when ConsumeJTI is called with a jti that is already stored.
-var ErrJTIReplay = errors.New("oauth: jti already consumed")
 
 const CallbackPath = "/oauth/callback"
 
@@ -55,9 +51,7 @@ type PendingAuthorization struct {
 	// captured at authorize time so the built-in default identity provider —
 	// which has no owning gateway of its own — can still bind the minted
 	// session to the right gateway at callback time.
-	GatewayID     string `json:"gateway_id,omitempty"`
-	Issuer        string `json:"issuer,omitempty"`
-	IssAdvertised bool   `json:"iss_advertised,omitempty"`
+	GatewayID string `json:"gateway_id,omitempty"`
 }
 
 type CodeGrant struct {
@@ -71,7 +65,6 @@ type CodeGrant struct {
 	Audiences     []string       `json:"audiences,omitempty"`
 	Scopes        []string       `json:"scopes,omitempty"`
 	SessionMode   bool           `json:"session_mode,omitempty"`
-	Claims        map[string]any `json:"claims,omitempty"`
 }
 
 type SessionRecord struct {
@@ -104,7 +97,6 @@ type FlowStore interface {
 	// either into invalid_grant — killing the whole session. It must only ever
 	// shorten the TTL, so replaying an old token cannot keep it alive.
 	RetireSession(ctx context.Context, refreshToken string, grace time.Duration) error
-	ConsumeJTI(ctx context.Context, jti string, exp time.Time) error
 }
 
 type AuthorizeRequest struct {
@@ -126,7 +118,6 @@ type TokenRequest struct {
 	CodeVerifier string
 	RefreshToken string
 	Resource     string
-	Assertion    string
 }
 
 type ConsentChainer interface {
@@ -135,6 +126,6 @@ type ConsentChainer interface {
 
 type AuthProxy interface {
 	Authorize(ctx context.Context, baseURL string, req AuthorizeRequest) (string, error)
-	Callback(ctx context.Context, baseURL, state, code, idpErr, idpErrDesc, iss string) (string, error)
+	Callback(ctx context.Context, baseURL, state, code, idpErr, idpErrDesc string) (string, error)
 	Exchange(ctx context.Context, baseURL string, req TokenRequest) (map[string]any, error)
 }

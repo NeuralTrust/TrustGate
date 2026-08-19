@@ -41,37 +41,6 @@ func TestFromRegistry_IncludesEnabled(t *testing.T) {
 	}
 }
 
-func TestFromRegistry_MaterializesProtocolMode(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name string
-		mode domain.MCPProtocolMode
-		want domain.MCPProtocolMode
-	}{
-		{name: "old target defaults to auto", want: domain.MCPProtocolModeAuto},
-		{name: "explicit mode is preserved", mode: domain.MCPProtocolModeModern, want: domain.MCPProtocolModeModern},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			reg := &domain.Registry{
-				ID:        ids.New[ids.RegistryKind](),
-				GatewayID: ids.New[ids.GatewayKind](),
-				Name:      "mcp",
-				Type:      domain.TypeMCP,
-				MCPTarget: &domain.MCPTarget{
-					URL:          "https://mcp.example.com/mcp",
-					ProtocolMode: tc.mode,
-				},
-			}
-			got := FromRegistry(reg)
-			if got.MCPTarget == nil || got.MCPTarget.ProtocolMode != string(tc.want) {
-				t.Fatalf("ProtocolMode = %q, want %q", got.MCPTarget.ProtocolMode, tc.want)
-			}
-		})
-	}
-}
-
 func TestFromAuth_MasksAzureSecretsAndReturnsIdentifiers(t *testing.T) {
 	t.Parallel()
 	got := FromAuth(&domain.TargetAuth{

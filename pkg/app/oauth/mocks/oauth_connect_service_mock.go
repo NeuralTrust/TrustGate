@@ -23,9 +23,8 @@ func (_m *ConnectService) EXPECT() *ConnectService_Expecter {
 	return &ConnectService_Expecter{mock: &_m.Mock}
 }
 
-// Callback provides a mock function with given fields: ctx, baseURL, provider, state, code, errCode, errDesc, iss
-func (_m *ConnectService) Callback(ctx context.Context, baseURL string, provider string, state string, code string, errCode string, errDesc string, iss string) (string, error) {
-	ret := _m.Called(ctx, baseURL, provider, state, code, errCode, errDesc, iss)
+func (_m *ConnectService) Callback(ctx context.Context, baseURL string, provider string, state string, code string, errCode string, errDesc string) (string, error) {
+	ret := _m.Called(ctx, baseURL, provider, state, code, errCode, errDesc)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Callback")
@@ -33,17 +32,17 @@ func (_m *ConnectService) Callback(ctx context.Context, baseURL string, provider
 
 	var r0 string
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, string, string, string, string) (string, error)); ok {
-		return rf(ctx, baseURL, provider, state, code, errCode, errDesc, iss)
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, string, string, string) (string, error)); ok {
+		return rf(ctx, baseURL, provider, state, code, errCode, errDesc)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, string, string, string, string) string); ok {
-		r0 = rf(ctx, baseURL, provider, state, code, errCode, errDesc, iss)
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, string, string, string) string); ok {
+		r0 = rf(ctx, baseURL, provider, state, code, errCode, errDesc)
 	} else {
 		r0 = ret.Get(0).(string)
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, string, string, string, string, string, string, string) error); ok {
-		r1 = rf(ctx, baseURL, provider, state, code, errCode, errDesc, iss)
+	if rf, ok := ret.Get(1).(func(context.Context, string, string, string, string, string, string) error); ok {
+		r1 = rf(ctx, baseURL, provider, state, code, errCode, errDesc)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -55,22 +54,13 @@ type ConnectService_Callback_Call struct {
 	*mock.Call
 }
 
-// Callback is a helper method to define mock.On call
-//   - ctx context.Context
-//   - baseURL string
-//   - provider string
-//   - state string
-//   - code string
-//   - errCode string
-//   - errDesc string
-//   - iss string
-func (_e *ConnectService_Expecter) Callback(ctx interface{}, baseURL interface{}, provider interface{}, state interface{}, code interface{}, errCode interface{}, errDesc interface{}, iss interface{}) *ConnectService_Callback_Call {
-	return &ConnectService_Callback_Call{Call: _e.mock.On("Callback", ctx, baseURL, provider, state, code, errCode, errDesc, iss)}
+func (_e *ConnectService_Expecter) Callback(ctx interface{}, baseURL interface{}, provider interface{}, state interface{}, code interface{}, errCode interface{}, errDesc interface{}) *ConnectService_Callback_Call {
+	return &ConnectService_Callback_Call{Call: _e.mock.On("Callback", ctx, baseURL, provider, state, code, errCode, errDesc)}
 }
 
-func (_c *ConnectService_Callback_Call) Run(run func(ctx context.Context, baseURL string, provider string, state string, code string, errCode string, errDesc string, iss string)) *ConnectService_Callback_Call {
+func (_c *ConnectService_Callback_Call) Run(run func(ctx context.Context, baseURL string, provider string, state string, code string, errCode string, errDesc string)) *ConnectService_Callback_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(string), args[4].(string), args[5].(string), args[6].(string), args[7].(string))
+		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(string), args[4].(string), args[5].(string), args[6].(string))
 	})
 	return _c
 }
@@ -80,7 +70,7 @@ func (_c *ConnectService_Callback_Call) Return(_a0 string, _a1 error) *ConnectSe
 	return _c
 }
 
-func (_c *ConnectService_Callback_Call) RunAndReturn(run func(context.Context, string, string, string, string, string, string, string) (string, error)) *ConnectService_Callback_Call {
+func (_c *ConnectService_Callback_Call) RunAndReturn(run func(context.Context, string, string, string, string, string, string) (string, error)) *ConnectService_Callback_Call {
 	_c.Call.Return(run)
 	return _c
 }

@@ -18,11 +18,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -80,151 +78,6 @@ func TestConnect_UnreachableUpstream(t *testing.T) {
 	}
 }
 
-func TestConnect_UnreachableErrorDoesNotExposeURLQuery(t *testing.T) {
-	t.Parallel()
-
-	const secret = "query-secret-sentinel"
-	_, err := mcpclient.New().Connect(
-		context.Background(),
-		appmcp.Target{URL: "http://127.0.0.1:1/private?token=" + secret},
-	)
-	if !errors.Is(err, appmcp.ErrUnreachable) {
-		t.Fatalf("error = %v, want ErrUnreachable", err)
-	}
-	if strings.Contains(err.Error(), secret) {
-		t.Fatalf("error exposed URL query: %v", err)
-	}
-}
-
-func TestConnect_RejectsInvalidEndpointAndHeadersBeforeNetwork(t *testing.T) {
-	t.Parallel()
-
-	var calls atomic.Int64
-	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		calls.Add(1)
-	}))
-	t.Cleanup(srv.Close)
-
-	tests := []struct {
-		name   string
-		target appmcp.Target
-	}{
-		{
-			name:   "userinfo",
-			target: appmcp.Target{URL: strings.Replace(srv.URL, "http://", "http://user:password@", 1)},
-		},
-		{
-			name:   "fragment",
-			target: appmcp.Target{URL: srv.URL + "/mcp#secret"},
-		},
-		{
-			name:   "empty explicit port",
-			target: appmcp.Target{URL: "http://127.0.0.1:/mcp"},
-		},
-		{
-			name: "reserved header",
-			target: appmcp.Target{
-				URL:     srv.URL,
-				Headers: map[string]string{"Content-Type": "text/plain"},
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := mcpclient.New().Connect(context.Background(), tt.target)
-			if !errors.Is(err, appmcp.ErrUnreachable) {
-				t.Fatalf("error = %v, want ErrUnreachable", err)
-			}
-		})
-	}
-	if calls.Load() != 0 {
-		t.Fatalf("upstream contacted %d times", calls.Load())
-	}
-}
-
-func TestConnectLegacy_PreservesSDKSessionStateAndLifecycle(t *testing.T) {
-	t.Parallel()
-
-	type wireRequest struct {
-		httpMethod      string
-		rpcMethod       string
-		protocolVersion string
-	}
-	var mu sync.Mutex
-	var requests []wireRequest
-	srv := newUpstream(t, func(server *sdk.Server) {
-		addEchoTool(server)
-	}, func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			var rpcMethod string
-			if r.Method == http.MethodPost {
-				body, err := io.ReadAll(r.Body)
-				if err != nil {
-					t.Errorf("read request body: %v", err)
-					return
-				}
-				if err := r.Body.Close(); err != nil {
-					t.Errorf("close request body: %v", err)
-					return
-				}
-				r.Body = io.NopCloser(strings.NewReader(string(body)))
-				var envelope struct {
-					Method string `json:"method"`
-				}
-				if err := json.Unmarshal(body, &envelope); err != nil {
-					t.Errorf("decode request body: %v", err)
-					return
-				}
-				rpcMethod = envelope.Method
-			}
-			mu.Lock()
-			requests = append(requests, wireRequest{
-				httpMethod:      r.Method,
-				rpcMethod:       rpcMethod,
-				protocolVersion: r.Header.Get("Mcp-Protocol-Version"),
-			})
-			mu.Unlock()
-			next.ServeHTTP(w, r)
-		})
-	})
-
-	sess, err := mcpclient.New().ConnectLegacy(context.Background(), appmcp.Target{URL: srv.URL})
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	if _, err := sess.ListTools(context.Background()); err != nil {
-		t.Fatalf("list tools: %v", err)
-	}
-	sess.Close(context.Background())
-
-	mu.Lock()
-	defer mu.Unlock()
-	if len(requests) != 4 {
-		t.Fatalf("wire requests = %+v, want initialize, initialized, tools/list and DELETE", requests)
-	}
-	if requests[0].rpcMethod != "initialize" {
-		t.Fatalf("first remote method = %q, want initialize", requests[0].rpcMethod)
-	}
-	for _, request := range requests {
-		if request.rpcMethod == "server/discover" {
-			t.Fatalf("wire requests = %+v, server/discover must stay local", requests)
-		}
-	}
-	if requests[1].rpcMethod != "notifications/initialized" ||
-		requests[1].protocolVersion != "2025-11-25" {
-		t.Fatalf("initialized request = %+v, want legacy protocol header", requests[1])
-	}
-	if requests[2].rpcMethod != "tools/list" ||
-		requests[2].protocolVersion != "2025-11-25" {
-		t.Fatalf("tools/list request = %+v, want legacy protocol header", requests[2])
-	}
-	if requests[3].httpMethod != http.MethodDelete ||
-		requests[3].protocolVersion != "2025-11-25" {
-		t.Fatalf("close request = %+v, want one versioned DELETE", requests[3])
-	}
-}
-
 func TestListTools_AndCallTool(t *testing.T) {
 	t.Parallel()
 	srv := newUpstream(t, addEchoTool, nil)
@@ -238,10 +91,7 @@ func TestListTools_AndCallTool(t *testing.T) {
 		t.Fatalf("tools = %+v, want [echo]", tools)
 	}
 
-	raw, err := sess.CallTool(context.Background(), appmcp.ToolCall{
-		Name:      "echo",
-		Arguments: json.RawMessage(`{"message":"hi"}`),
-	})
+	raw, err := sess.CallTool(context.Background(), "echo", json.RawMessage(`{"message":"hi"}`))
 	if err != nil {
 		t.Fatalf("call tool: %v", err)
 	}
@@ -255,7 +105,7 @@ func TestCallTool_UnknownToolIsRPCError(t *testing.T) {
 	srv := newUpstream(t, addEchoTool, nil)
 	sess := connect(t, appmcp.Target{URL: srv.URL})
 
-	_, err := sess.CallTool(context.Background(), appmcp.ToolCall{Name: "missing"})
+	_, err := sess.CallTool(context.Background(), "missing", nil)
 	if err == nil {
 		t.Fatal("expected an error for an unknown tool")
 		return
@@ -285,48 +135,6 @@ func TestHeadersInjectedOnEveryRequest(t *testing.T) {
 	}
 	if missed.Load() != 0 {
 		t.Fatalf("%d requests arrived without the configured header", missed.Load())
-	}
-}
-
-func TestHeadersRemainIsolatedAcrossLegacyConnections(t *testing.T) {
-	t.Parallel()
-
-	var missed atomic.Int64
-	newAuthorizedUpstream := func(token string) *httptest.Server {
-		return newUpstream(t, addEchoTool, func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Header.Get("Authorization") != token || r.Header.Get("X-Target") != token {
-					missed.Add(1)
-				}
-				next.ServeHTTP(w, r)
-			})
-		})
-	}
-
-	targets := []appmcp.Target{
-		{
-			URL:     newAuthorizedUpstream("Bearer alpha").URL,
-			Headers: map[string]string{"Authorization": "Bearer alpha", "X-Target": "Bearer alpha"},
-		},
-		{
-			URL:     newAuthorizedUpstream("Bearer beta").URL,
-			Headers: map[string]string{"Authorization": "Bearer beta", "X-Target": "Bearer beta"},
-		},
-	}
-
-	var wg sync.WaitGroup
-	for _, target := range targets {
-		target := target
-		wg.Go(func() {
-			sess := connect(t, target)
-			if _, err := sess.ListTools(context.Background()); err != nil {
-				t.Errorf("list tools: %v", err)
-			}
-		})
-	}
-	wg.Wait()
-	if missed.Load() != 0 {
-		t.Fatalf("%d requests used headers from another target", missed.Load())
 	}
 }
 
@@ -416,21 +224,6 @@ func TestCapabilityGating_ToolsOnlyUpstream(t *testing.T) {
 	}
 	if _, err := sess.GetPrompt(context.Background(), "x", nil); !errors.Is(err, appmcp.ErrNotSupported) {
 		t.Fatalf("get prompt error = %v, want ErrNotSupported", err)
-	}
-}
-
-func TestSessionErrorsDoNotExposeURLQuery(t *testing.T) {
-	t.Parallel()
-
-	const secret = "session-query-secret-sentinel"
-	srv := newUpstream(t, addEchoTool, nil)
-	sess := connect(t, appmcp.Target{URL: srv.URL + "?token=" + secret})
-	_, err := sess.ReadResource(context.Background(), "file:///x")
-	if !errors.Is(err, appmcp.ErrNotSupported) {
-		t.Fatalf("error = %v, want ErrNotSupported", err)
-	}
-	if strings.Contains(err.Error(), secret) {
-		t.Fatalf("session error exposed URL query: %v", err)
 	}
 }
 

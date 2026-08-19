@@ -31,12 +31,6 @@ type Config struct {
 	MTLS   *MTLSConfig   `json:"mtls,omitempty"`
 }
 
-const (
-	NorthboundModeOIDC = "oidc"
-	NorthboundModeEMA  = "ema"
-	NorthboundModeBoth = "both"
-)
-
 type OAuth2Config struct {
 	Issuer           string   `json:"issuer"`
 	Audiences        []string `json:"audiences,omitempty"`
@@ -51,26 +45,6 @@ type OAuth2Config struct {
 	SubjectClaim     string   `json:"subject_claim,omitempty"`
 	AuthorizeURL     string   `json:"authorize_url,omitempty"`
 	TokenURL         string   `json:"token_url,omitempty"`
-	NorthboundMode   string   `json:"northbound_mode,omitempty"`
-}
-
-// EffectiveNorthboundMode returns oidc when NorthboundMode is empty.
-func (c OAuth2Config) EffectiveNorthboundMode() string {
-	mode := strings.ToLower(strings.TrimSpace(c.NorthboundMode))
-	if mode == "" {
-		return NorthboundModeOIDC
-	}
-	return mode
-}
-
-// AdvertisesEMA reports whether this config should advertise jwt-bearer and the EMA extension.
-func (c OAuth2Config) AdvertisesEMA() bool {
-	switch c.EffectiveNorthboundMode() {
-	case NorthboundModeEMA, NorthboundModeBoth:
-		return true
-	default:
-		return false
-	}
 }
 
 type OIDCConfig struct {
@@ -178,34 +152,7 @@ func (c *OAuth2Config) validate() error {
 			return fmt.Errorf("%w: oauth2 requires jwks_url or introspection_url, or an http(s) issuer for OIDC discovery", ErrInvalidConfig)
 		}
 	}
-	return c.validateNorthboundMode()
-}
-
-func (c *OAuth2Config) validateNorthboundMode() error {
-	mode := strings.ToLower(strings.TrimSpace(c.NorthboundMode))
-	switch mode {
-	case "", NorthboundModeOIDC:
-		return nil
-	case NorthboundModeEMA, NorthboundModeBoth:
-		jwks := strings.TrimSpace(c.JWKSURL)
-		if jwks != "" {
-			if !isHTTPSURL(jwks) {
-				return fmt.Errorf("%w: oauth2.jwks_url must be https when northbound_mode is %q", ErrInvalidConfig, mode)
-			}
-			return nil
-		}
-		if !isHTTPSURL(c.Issuer) {
-			return fmt.Errorf("%w: oauth2 requires an https jwks_url or https issuer when northbound_mode is %q", ErrInvalidConfig, mode)
-		}
-		return nil
-	default:
-		return fmt.Errorf("%w: oauth2.northbound_mode must be oidc, ema, or both", ErrInvalidConfig)
-	}
-}
-
-func isHTTPSURL(raw string) bool {
-	u, err := url.Parse(strings.TrimSpace(raw))
-	return err == nil && u.Scheme == "https" && u.Host != ""
+	return nil
 }
 
 // validateAuthorizationEndpoints enforces the manual brokering endpoints used

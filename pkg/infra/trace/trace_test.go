@@ -16,7 +16,6 @@ package trace_test
 
 import (
 	"context"
-	"encoding/json"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -209,124 +208,6 @@ func TestFromContext_NilSafe(t *testing.T) {
 	var nilCtx context.Context
 	assert.Nil(t, trace.FromContext(nilCtx))
 	assert.Nil(t, trace.FromContext(context.Background()))
-}
-
-// A subscription label may only ever come from the fixed enumerations, so an
-// unknown kind or outcome has to be dropped rather than stamped: the values reach
-// the span from a client-supplied notification list.
-func TestSpan_SetMCPSubscriptionDropsUnboundedLabels(t *testing.T) {
-	tests := []struct {
-		name        string
-		kind        string
-		outcome     string
-		wantKind    string
-		wantOutcome string
-	}{
-		{
-			name:        "both enumerated",
-			kind:        trace.SubscriptionKindTools,
-			outcome:     trace.SubscriptionOutcomeEmitted,
-			wantKind:    trace.SubscriptionKindTools,
-			wantOutcome: trace.SubscriptionOutcomeEmitted,
-		},
-		{
-			name:        "unknown kind dropped",
-			kind:        "doc://tenant/secret",
-			outcome:     trace.SubscriptionOutcomeDeadline,
-			wantOutcome: trace.SubscriptionOutcomeDeadline,
-		},
-		{
-			name:     "unknown outcome dropped",
-			kind:     trace.SubscriptionKindPrompts,
-			outcome:  "panicked",
-			wantKind: trace.SubscriptionKindPrompts,
-		},
-		{name: "empty keeps the span clean"},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			rt := trace.New("t", trace.Metadata{})
-			span := rt.StartSpan(trace.SpanMCP, "subscriptions/listen")
-
-			span.SetMCPSubscription(tc.kind, tc.outcome)
-
-			attrs, ok := span.MCPAttrsCopy()
-			require.True(t, ok)
-			assert.Equal(t, tc.wantKind, attrs.SubscriptionKind)
-			assert.Equal(t, tc.wantOutcome, attrs.SubscriptionOutcome)
-		})
-	}
-}
-
-func TestSpan_SetMCPSubscriptionSourceAllowsOnlyFixedOutcomes(t *testing.T) {
-	allowed := []string{
-		trace.SubscriptionSourceLifecycleUnsupported,
-		trace.SubscriptionSourceLifecycleOpenFailed,
-		trace.SubscriptionSourceLifecycleOpened,
-		trace.SubscriptionSourceLifecycleReused,
-		trace.SubscriptionSourceLifecycleJoined,
-		trace.SubscriptionSourceFanOutAuthorized,
-		trace.SubscriptionSourceFanOutDenied,
-		trace.SubscriptionSourceFanOutRevoked,
-		trace.SubscriptionSourceFanOutTransient,
-		trace.SubscriptionSourceFanOutRejected,
-		trace.SubscriptionSourceReconnectAttempted,
-		trace.SubscriptionSourceReconnectSucceeded,
-		trace.SubscriptionSourceReconnectFailed,
-		trace.SubscriptionSourceReconnectExhausted,
-		trace.SubscriptionSourceReconnectSourceChanged,
-		trace.SubscriptionSourceReconnectCancelled,
-		trace.SubscriptionSourceReconnectTerminal,
-		trace.SubscriptionSourceQueueEnqueued,
-		trace.SubscriptionSourceQueueFull,
-		trace.SubscriptionSourceTerminalLastDetach,
-		trace.SubscriptionSourceTerminalShutdown,
-		trace.SubscriptionSourceTerminalReconnectExhausted,
-		trace.SubscriptionSourceTerminalSourceChanged,
-		trace.SubscriptionSourceTerminalAuthentication,
-		trace.SubscriptionSourceTerminalProtocolFailure,
-		trace.SubscriptionSourceTerminalTransportFailure,
-	}
-	for _, outcome := range allowed {
-		t.Run(outcome, func(t *testing.T) {
-			rt := trace.New("t", trace.Metadata{})
-			span := rt.StartSpan(trace.SpanMCP, "subscriptions/listen")
-			span.SetMCPSubscriptionSource(outcome)
-			attrs, ok := span.MCPAttrsCopy()
-			require.True(t, ok)
-			require.Equal(t, outcome, attrs.SubscriptionSource)
-		})
-	}
-
-	rejected := []string{
-		"https://upstream.example/tenant",
-		"target=registry-a",
-		"pool_key=abc",
-		"gateway=gw-1",
-		"consumer=consumer-1",
-		"principal=user@example.com",
-		"auth_id=auth-1",
-		"registry_id=registry-1",
-		"credential=secret",
-		"pin=fingerprint",
-		"event_id=event-1",
-		"request_id=request-1",
-		"subscription_id=subscription-1",
-		`{"payload":"tenant data"}`,
-		"doc://tenant/private",
-	}
-	for _, outcome := range rejected {
-		rt := trace.New("t", trace.Metadata{})
-		span := rt.StartSpan(trace.SpanMCP, "subscriptions/listen")
-		span.SetMCPSubscriptionSource(outcome)
-		attrs, ok := span.MCPAttrsCopy()
-		require.True(t, ok)
-		require.Empty(t, attrs.SubscriptionSource)
-		encoded, err := json.Marshal(attrs)
-		require.NoError(t, err)
-		require.NotContains(t, string(encoded), outcome)
-	}
 }
 
 func TestRequestTrace_ConcurrentSpanRecording(t *testing.T) {

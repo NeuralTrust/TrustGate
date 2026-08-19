@@ -20,7 +20,6 @@ import (
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
-	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
@@ -62,16 +61,7 @@ func (m *MCPMetricsMiddleware) Middleware() fiber.Handler {
 
 		req := m.buildRequestContext(c, gatewayID)
 
-		streamed := false
-		c.Locals(
-			infracontext.StreamMetricsFinalizerKey,
-			m.streamFinalizer(requestTrace, req, startTime, gatewayID, exporters),
-		)
-
 		defer func() {
-			if streamed {
-				return
-			}
 			if skip, _ := c.Locals(string(infracontext.MCPSkipMetricsKey)).(bool); skip {
 				return
 			}
@@ -83,43 +73,7 @@ func (m *MCPMetricsMiddleware) Middleware() fiber.Handler {
 			requestTrace.Done()
 		}()
 
-		err := c.Next()
-
-		if owned, _ := c.Locals(infracontext.StreamMetricsOwnedKey).(bool); owned {
-			streamed = true
-		}
-		return err
-	}
-}
-
-// streamFinalizer returns the StreamMetricsFinalizer an MCP stream writer calls
-// once its body is fully written. A stream writer has no RequestContext of its
-// own — the *fiber.Ctx it was opened from is already recycled — so a nil req
-// falls back to the one captured on the way in.
-func (m *MCPMetricsMiddleware) streamFinalizer(
-	requestTrace *trace.RequestTrace,
-	captured *infracontext.RequestContext,
-	startTime time.Time,
-	gatewayID string,
-	exporters []telemetrydomain.ExporterConfig,
-) infracontext.StreamMetricsFinalizer {
-	return func(req *infracontext.RequestContext, output []byte, statusCode int, headers map[string][]string) {
-		if req == nil {
-			req = captured
-		}
-		resp := &infracontext.ResponseContext{
-			GatewayID:  gatewayID,
-			RegistryID: req.RegistryID,
-			Headers:    headers,
-			Body:       output,
-			StatusCode: statusCode,
-			Streaming:  true,
-		}
-		endTime := time.Now()
-		requestTrace.OnComplete(func() {
-			m.worker.Process(requestTrace, req, resp, startTime, endTime, exporters)
-		})
-		requestTrace.Done()
+		return c.Next()
 	}
 }
 
@@ -159,20 +113,11 @@ func (m *MCPMetricsMiddleware) buildResponseContext(c *fiber.Ctx, gatewayID stri
 		headers[key] = append(headers[key], values...)
 	}
 
-	// Response().Body() on a streamed body drains the whole stream into memory
-	// and collapses chunked delivery, so an unclaimed stream is reported with no
-	// body rather than buffered.
-	streaming := c.Response().IsBodyStream()
-	var body []byte
-	if !streaming {
-		body = append([]byte(nil), c.Response().Body()...)
-	}
-
 	return &infracontext.ResponseContext{
 		GatewayID:  gatewayID,
 		Headers:    headers,
-		Body:       body,
+		Body:       append([]byte(nil), c.Response().Body()...),
 		StatusCode: c.Response().StatusCode(),
-		Streaming:  streaming,
+		Streaming:  false,
 	}
 }

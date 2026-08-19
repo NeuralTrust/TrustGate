@@ -16,7 +16,6 @@ package oauth_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -146,26 +145,5 @@ func TestStoreSessionRotation(t *testing.T) {
 	}
 	if fresh.Subject != "user-42" {
 		t.Fatalf("preserved record mismatch: %+v", fresh)
-	}
-}
-
-func TestStoreConsumeJTIReplayAndError(t *testing.T) {
-	store, mr := newSessionStore(t)
-	ctx := context.Background()
-	exp := time.Now().Add(time.Minute)
-
-	if err := store.ConsumeJTI(ctx, "jti-1", exp); err != nil {
-		t.Fatalf("first consume: %v", err)
-	}
-	if err := store.ConsumeJTI(ctx, "jti-1", exp); !errors.Is(err, appoauth.ErrJTIReplay) {
-		t.Fatalf("replay = %v, want ErrJTIReplay", err)
-	}
-	if err := store.ConsumeJTI(ctx, "expired", time.Now().Add(-time.Second)); err == nil {
-		t.Fatal("expired jti must be denied")
-	}
-
-	mr.Close()
-	if err := store.ConsumeJTI(ctx, "jti-2", exp); err == nil {
-		t.Fatal("redis error must deny")
 	}
 }

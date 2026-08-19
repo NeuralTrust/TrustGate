@@ -15,66 +15,16 @@
 package middleware
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	"github.com/gofiber/fiber/v2"
 )
 
-const (
-	opsOutcomeKey     = "trustgate.ops.outcome"
-	opsStreamClaimKey = "trustgate.ops.stream_claim"
-)
-
-// OpsStreamFinalizer records one streamed request. It is idempotent, so the
-// stream writer can call it from a defer without guarding against a second call.
-type OpsStreamFinalizer func(outcome o11y.Outcome, status int)
-
-// opsStreamClaim carries the accounting a stream writer needs after the
-// *fiber.Ctx it was opened from has been recycled.
-type opsStreamClaim struct {
-	recorder o11y.RequestRecorder
-	ctx      context.Context
-	plane    o11y.Plane
-	route    o11y.Route
-	method   string
-	start    time.Time
-	owned    bool
-	once     sync.Once
-}
-
-func (c *opsStreamClaim) finish(outcome o11y.Outcome, status int) {
-	c.once.Do(func() {
-		c.recorder.RecordRequest(c.ctx, o11y.Request{
-			Plane:       c.plane,
-			Route:       c.route,
-			Method:      c.method,
-			StatusClass: statusClass(status),
-			Outcome:     outcome,
-			Duration:    time.Since(c.start),
-		})
-	})
-}
-
-// ClaimOpsStream transfers the operational accounting of the current request to
-// the caller's body-stream writer and returns the finalizer that records it. A
-// stream's duration is its whole lifetime, which is not known when the handler
-// returns, so the middleware must not record it there. The returned finalizer is
-// a no-op when the recorder is disabled, so a caller never branches on it.
-func ClaimOpsStream(c *fiber.Ctx, route o11y.Route) OpsStreamFinalizer {
-	claim, ok := c.Locals(opsStreamClaimKey).(*opsStreamClaim)
-	if !ok || claim == nil {
-		return func(o11y.Outcome, int) {}
-	}
-	claim.owned = true
-	claim.route = route
-	return claim.finish
-}
+const opsOutcomeKey = "trustgate.ops.outcome"
 
 type OpsMetricsMiddleware struct {
 	recorder o11y.RequestRecorder
@@ -91,19 +41,7 @@ func (m *OpsMetricsMiddleware) Middleware() fiber.Handler {
 			return c.Next()
 		}
 		start := time.Now()
-		claim := &opsStreamClaim{
-			recorder: m.recorder,
-			ctx:      context.WithoutCancel(c.UserContext()),
-			plane:    m.plane,
-			method:   boundedMethod(c.Method()),
-			start:    start,
-		}
-		c.Locals(opsStreamClaimKey, claim)
-
 		err := c.Next()
-		if claim.owned {
-			return err
-		}
 		status := c.Response().StatusCode()
 		if err != nil {
 			status = fiber.StatusInternalServerError
