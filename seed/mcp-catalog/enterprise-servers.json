@@ -7188,6 +7188,32 @@
       ]
     },
     {
+      "name": "com.haloitsm/mcp",
+      "vendor": "Halo",
+      "category": "ITSM",
+      "description": "Per-instance Halo ITSM/PSA MCP endpoint (enable in Configuration > AI). Tickets, knowledge base, assets, and runbooks.",
+      "transport": "streamable-http",
+      "server_url": "https://{instance}/api/mcp",
+      "url_variables": [
+        {
+          "name": "instance",
+          "description": "Your Halo host without scheme, e.g. acme.halopsa.com or acme.haloitsm.com.",
+          "required": true
+        }
+      ],
+      "requires_auth": true,
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer <token from a Halo API Application>.",
+          "required": true,
+          "secret": true,
+          "scheme": "Bearer"
+        }
+      ],
+      "relevance": 70
+    },
+    {
       "name": "co.huggingface/mcp",
       "vendor": "Hugging Face",
       "category": "AI & ML",
@@ -10496,6 +10522,30 @@
       ]
     },
     {
+      "name": "io.n8n/mcp",
+      "vendor": "n8n",
+      "category": "Automation",
+      "description": "Instance-level n8n MCP: search, run, and build workflows exposed to MCP clients (Settings > Instance-level MCP).",
+      "transport": "streamable-http",
+      "server_url": "https://{domain}/mcp-server/http",
+      "url_variables": [
+        {
+          "name": "domain",
+          "description": "Your n8n host without path, e.g. your-instance.app.n8n.cloud or n8n.example.com.",
+          "required": true
+        }
+      ],
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true
+      },
+      "relevance": 75
+    },
+    {
       "name": "com.paddle/mcp",
       "vendor": "Paddle",
       "category": "Billing & Payments",
@@ -12323,6 +12373,30 @@
           "description": "Run a report"
         }
       ]
+    },
+    {
+      "name": "com.sectigo/mcp",
+      "vendor": "Sectigo",
+      "category": "Security & Identity",
+      "description": "Sectigo Certificate Manager (SCM) hosted MCP: issue, renew, revoke, search and report on certificates.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.{instance}.sectigo.com/mcp",
+      "url_variables": [
+        {
+          "name": "instance",
+          "description": "Your SCM environment from onboarding, e.g. enterprise, eu, or hard.",
+          "required": true
+        }
+      ],
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "grant_type": "client_credentials",
+        "token_url": "https://auth.sso.sectigo.com/auth/realms/apiclients/protocol/openid-connect/token",
+        "token_endpoint_auth_method": "client_secret_basic"
+      },
+      "relevance": 72
     },
     {
       "name": "dev.sentry/mcp",

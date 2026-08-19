@@ -18,6 +18,7 @@ import (
 	"log/slog"
 
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -42,13 +43,13 @@ func provideRegistryRepository(c *container.Container) error {
 }
 
 func provideRegistryServices(c *container.Container) error {
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger, sig snapshotSignalParams) appregistry.Creator {
-		return appregistry.NewCreator(repo, manager, logger, sig.Signaler)
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger, sig snapshotSignalParams, catalog appcatalog.MCPServerCatalog) appregistry.Creator {
+		return appregistry.NewCreator(repo, manager, logger, sig.Signaler, catalog)
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams) appregistry.Updater {
-		return appregistry.NewUpdater(repo, manager, publisher, logger, sig.Signaler)
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, catalog appcatalog.MCPServerCatalog) appregistry.Updater {
+		return appregistry.NewUpdater(repo, manager, publisher, logger, sig.Signaler, catalog)
 	}); err != nil {
 		return err
 	}

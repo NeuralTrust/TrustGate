@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -59,6 +60,16 @@ type credentialResolver struct {
 	provider  appoauth.ProviderClient
 	logger    *slog.Logger
 	refresh   singleflight.Group
+	ccFlight  singleflight.Group
+	ccCache   sync.Map // key → *ccCacheEntry
+}
+
+type ccCacheEntry struct {
+	token     string
+	expiresAt time.Time
+	// fingerprint pins the entry to the registry revision it was minted for, so
+	// editing the credential invalidates it without leaving a stale key behind.
+	fingerprint string
 }
 
 func NewCredentialResolver(
@@ -96,6 +107,8 @@ func (r *credentialResolver) Apply(ctx context.Context, rc *appconsumer.Routable
 		return r.exchange(ctx, rc, reg, cfg, target)
 	case registrydomain.MCPAuthModeForwarded:
 		return r.forwarded(ctx, rc, reg, target)
+	case registrydomain.MCPAuthModeClientCredentials:
+		return r.clientCredentials(ctx, reg, cfg, target)
 	default:
 		return fmt.Errorf("mcp: unknown downstream auth mode %q", cfg.Mode)
 	}
@@ -259,6 +272,74 @@ func (r *credentialResolver) consentRequired(ctx context.Context, rc *appconsume
 		return err
 	}
 	return &ConsentRequiredError{Provider: provider, Ticket: ticket, Path: consumerPath}
+}
+
+func (r *credentialResolver) clientCredentials(
+	ctx context.Context,
+	reg *registrydomain.Registry,
+	cfg *registrydomain.MCPAuth,
+	target *Target,
+) error {
+	if r.provider == nil {
+		return errors.New("mcp: client_credentials requires an OAuth provider client")
+	}
+	// Keyed by registry id alone so the map stays bounded by the number of MCP
+	// registries; a credential edit overwrites its entry instead of adding one.
+	key := reg.ID.String()
+	fingerprint := ccFingerprint(reg)
+	if cached, ok := r.cachedCCToken(key, fingerprint); ok {
+		setAuthorization(target, "Bearer "+cached.token)
+		return nil
+	}
+	v, err, _ := r.ccFlight.Do(key+"|"+fingerprint, func() (any, error) {
+		if cached, ok := r.cachedCCToken(key, fingerprint); ok {
+			return cached, nil
+		}
+		tok, err := r.provider.ClientCredentials(ctx, cfg)
+		if err != nil {
+			return nil, err
+		}
+		if tok.AccessToken == "" {
+			return nil, errors.New("mcp: client_credentials returned empty access token")
+		}
+		expiresAt := tok.ExpiresAt
+		if expiresAt.IsZero() {
+			expiresAt = time.Now().Add(defaultCCTokenTTL)
+		}
+		cached := &ccCacheEntry{token: tok.AccessToken, expiresAt: expiresAt, fingerprint: fingerprint}
+		r.ccCache.Store(key, cached)
+		return cached, nil
+	})
+	if err != nil {
+		return err
+	}
+	cached, ok := v.(*ccCacheEntry)
+	if !ok {
+		return errors.New("mcp credentials: unexpected singleflight result type")
+	}
+	setAuthorization(target, "Bearer "+cached.token)
+	return nil
+}
+
+const defaultCCTokenTTL = time.Hour
+
+func (r *credentialResolver) cachedCCToken(key, fingerprint string) (*ccCacheEntry, bool) {
+	v, ok := r.ccCache.Load(key)
+	if !ok {
+		return nil, false
+	}
+	cached, ok := v.(*ccCacheEntry)
+	if !ok || cached.fingerprint != fingerprint {
+		return nil, false
+	}
+	if !time.Now().Before(cached.expiresAt.Add(-vaultRefreshSkew)) {
+		return nil, false
+	}
+	return cached, true
+}
+
+func ccFingerprint(reg *registrydomain.Registry) string {
+	return reg.UpdatedAt.UTC().Format(time.RFC3339Nano)
 }
 
 func setAuthorization(target *Target, value string) {

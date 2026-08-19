@@ -59,14 +59,15 @@ type MCPAuthResponse struct {
 	Scope    string `json:"scope,omitempty"`
 	Actor    string `json:"actor,omitempty"`
 
-	Provider     string   `json:"provider,omitempty"`
-	Registration string   `json:"registration,omitempty"`
-	ClientID     string   `json:"client_id,omitempty"`
-	ClientSecret string   `json:"client_secret,omitempty"` // #nosec G117 -- masked before serialization
-	AuthorizeURL string   `json:"authorize_url,omitempty"`
-	TokenURL     string   `json:"token_url,omitempty"`
-	Scopes       []string `json:"scopes,omitempty"`
-	Resource     string   `json:"resource,omitempty"`
+	Provider                string   `json:"provider,omitempty"`
+	Registration            string   `json:"registration,omitempty"`
+	ClientID                string   `json:"client_id,omitempty"`
+	ClientSecret            string   `json:"client_secret,omitempty"` // #nosec G117 -- masked before serialization
+	AuthorizeURL            string   `json:"authorize_url,omitempty"`
+	TokenURL                string   `json:"token_url,omitempty"`
+	Scopes                  []string `json:"scopes,omitempty"`
+	Resource                string   `json:"resource,omitempty"`
+	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method,omitempty"`
 }
 
 type HealthChecksResponse struct {
@@ -175,22 +176,23 @@ func fromMCPTarget(t *domain.MCPTarget) *MCPTargetResponse {
 	}
 	if t.Auth != nil {
 		out.Auth = &MCPAuthResponse{
-			Mode:             string(t.Auth.Mode),
-			Header:           t.Auth.Header,
-			Value:            secret.Mask(t.Auth.Value),
-			ExpectedAudience: t.Auth.ExpectedAudience,
-			Pattern:          string(t.Auth.Pattern),
-			Audience:         t.Auth.Audience,
-			Scope:            t.Auth.Scope,
-			Actor:            t.Auth.Actor,
-			Provider:         t.Auth.Provider,
-			Registration:     string(t.Auth.Registration),
-			ClientID:         t.Auth.ClientID,
-			ClientSecret:     secret.Mask(t.Auth.ClientSecret),
-			AuthorizeURL:     t.Auth.AuthorizeURL,
-			TokenURL:         t.Auth.TokenURL,
-			Scopes:           t.Auth.Scopes,
-			Resource:         t.Auth.Resource,
+			Mode:                    string(t.Auth.Mode),
+			Header:                  t.Auth.Header,
+			Value:                   secret.Mask(t.Auth.Value),
+			ExpectedAudience:        t.Auth.ExpectedAudience,
+			Pattern:                 string(t.Auth.Pattern),
+			Audience:                t.Auth.Audience,
+			Scope:                   t.Auth.Scope,
+			Actor:                   t.Auth.Actor,
+			Provider:                t.Auth.Provider,
+			Registration:            string(t.Auth.Registration),
+			ClientID:                t.Auth.ClientID,
+			ClientSecret:            secret.Mask(t.Auth.ClientSecret),
+			AuthorizeURL:            t.Auth.AuthorizeURL,
+			TokenURL:                t.Auth.TokenURL,
+			Scopes:                  t.Auth.Scopes,
+			Resource:                t.Auth.Resource,
+			TokenEndpointAuthMethod: t.Auth.TokenEndpointAuthMethod,
 		}
 	}
 	return out

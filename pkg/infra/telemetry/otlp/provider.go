@@ -95,9 +95,13 @@ func newGRPCExporter(ctx context.Context, s Settings) (sdklog.Exporter, error) {
 func newHTTPExporter(ctx context.Context, s Settings) (sdklog.Exporter, error) {
 	opts := []otlploghttp.Option{otlploghttp.WithTimeout(s.Timeout)}
 	if hasScheme(s.Endpoint) {
-		opts = append(opts, otlploghttp.WithEndpointURL(s.Endpoint))
+		opts = append(opts, otlploghttp.WithEndpointURL(withLogsPath(s.Endpoint)))
 	} else {
-		opts = append(opts, otlploghttp.WithEndpoint(s.Endpoint))
+		host, path := splitEndpoint(s.Endpoint)
+		opts = append(opts, otlploghttp.WithEndpoint(host))
+		if strings.Trim(path, "/") != "" {
+			opts = append(opts, otlploghttp.WithURLPath(path))
+		}
 	}
 	if len(s.Headers) > 0 {
 		opts = append(opts, otlploghttp.WithHeaders(s.Headers))
