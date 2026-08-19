@@ -66,5 +66,14 @@ func StaticTarget(reg *registrydomain.Registry) Target {
 	if t.Auth != nil && t.Auth.Mode == registrydomain.MCPAuthModeStatic {
 		headers[t.Auth.Header] = t.Auth.Value
 	}
-	return Target{URL: t.URL, Headers: headers}
+	mode := t.ProtocolMode
+	if mode == "" {
+		mode = registrydomain.MCPProtocolModeAuto
+	}
+	return Target{
+		URL:              t.URL,
+		Headers:          headers,
+		RegistryTargetID: reg.ID.String(),
+		ProtocolMode:     mode,
+	}
 }

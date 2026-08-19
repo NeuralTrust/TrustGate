@@ -15,6 +15,7 @@
 package modules
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 
@@ -22,6 +23,7 @@ import (
 	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
 	oauthhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
@@ -78,9 +80,48 @@ type mcpRouterParams struct {
 
 type mcpServerParams struct {
 	dig.In
-	Cfg    *config.Config
-	Logger *slog.Logger
-	Router router.ServerRouter `name:"mcp"`
+	Cfg           *config.Config
+	Logger        *slog.Logger
+	Router        router.ServerRouter `name:"mcp"`
+	Subscriptions *appmcp.SubscriptionRegistry
+	Upstream      *appmcp.SubscriptionMultiplexer
+}
+
+// subscriptionDrainHook releases every live lease before the router shutdown
+// begins. It is nil while subscriptions are disabled, so no hook is registered
+// and the shutdown path is the one that shipped.
+func subscriptionDrainHook(registry *appmcp.SubscriptionRegistry) server.ShutdownHook {
+	if registry == nil {
+		return nil
+	}
+	return registry.Drain
+}
+
+func upstreamSubscriptionCloseHook(multiplexer *appmcp.SubscriptionMultiplexer) server.ShutdownHook {
+	if multiplexer == nil {
+		return nil
+	}
+	return multiplexer.Close
+}
+
+func mcpSubscriptionShutdownHook(
+	multiplexer *appmcp.SubscriptionMultiplexer,
+	registry *appmcp.SubscriptionRegistry,
+) server.ShutdownHook {
+	closeUpstream := upstreamSubscriptionCloseHook(multiplexer)
+	drainNorthbound := subscriptionDrainHook(registry)
+	if closeUpstream == nil {
+		return drainNorthbound
+	}
+	return func(ctx context.Context) error {
+		if err := closeUpstream(ctx); err != nil {
+			return err
+		}
+		if drainNorthbound == nil {
+			return nil
+		}
+		return drainNorthbound(ctx)
+	}
 }
 
 func ServerMCP(c *container.Container) error {
@@ -117,7 +158,14 @@ func ServerMCP(c *container.Container) error {
 	return c.Provide(
 		func(p mcpServerParams) server.Server {
 			addr := fmt.Sprintf(":%d", p.Cfg.Server.MCPPort)
-			return server.NewHTTPServer("mcp", addr, p.Cfg.Server, p.Logger, []router.ServerRouter{p.Router})
+			return server.NewHTTPServer(
+				"mcp",
+				addr,
+				p.Cfg.Server,
+				p.Logger,
+				[]router.ServerRouter{p.Router},
+				mcpSubscriptionShutdownHook(p.Upstream, p.Subscriptions),
+			)
 		},
 		dig.Name("mcp"),
 	)

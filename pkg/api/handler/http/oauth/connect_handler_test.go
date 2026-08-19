@@ -31,6 +31,7 @@ type stubConnectService struct {
 	page        *appoauth.ConnectPage
 	err         error
 	gotProvider string
+	gotISS      string
 }
 
 func (s *stubConnectService) CreateTicket(context.Context, ids.GatewayID, string, string) (string, error) {
@@ -58,7 +59,8 @@ func (s *stubConnectService) Start(_ context.Context, _, _, provider string) (st
 	return "https://github.com/login/oauth/authorize?x=1", nil
 }
 
-func (s *stubConnectService) Callback(context.Context, string, string, string, string, string, string) (string, error) {
+func (s *stubConnectService) Callback(_ context.Context, _, _, _, _, _, _, iss string) (string, error) {
+	s.gotISS = iss
 	return "t", nil
 }
 
@@ -154,5 +156,26 @@ func TestConnectStart_ProviderWithSlash(t *testing.T) {
 	}
 	if stub.gotProvider != "app.linear/mcp" {
 		t.Fatalf("provider = %q, want app.linear/mcp", stub.gotProvider)
+	}
+}
+
+func TestConnectCallback_ForwardsISS(t *testing.T) {
+	t.Parallel()
+	stub := &stubConnectService{page: &appoauth.ConnectPage{
+		ConsumerPath: "/v1/mcp/dev",
+		Providers:    []appoauth.ProviderStatus{{Provider: "github", Registry: "github-mcp"}},
+	}}
+	h := NewConnectHandler(stub)
+	app := fiber.New()
+	app.Get(ConnectCallbackPath, h.Callback)
+	res, err := app.Test(httptest.NewRequest("GET", "/oauth/callback/github?state=s&code=secret-code&iss=https://idp.example", nil))
+	if err != nil {
+		t.Fatalf("route test: %v", err)
+	}
+	if res.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
+	}
+	if stub.gotISS != "https://idp.example" {
+		t.Fatalf("forwarded iss = %q", stub.gotISS)
 	}
 }

@@ -108,6 +108,7 @@ func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableC
 				if pendingConsent == nil {
 					pendingConsent = consentErr
 				}
+				markCompositionDegraded(ctx)
 				c.logger.Info("mcp composer: skipping upstream pending consent",
 					"registry", reg.Name, "provider", consentErr.Provider)
 				continue
@@ -115,6 +116,7 @@ func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableC
 			if !failOpen {
 				return nil, nil, fmt.Errorf("%w: registry %q: %w", ErrUpstreamUnavailable, reg.Name, err)
 			}
+			markCompositionDegraded(ctx)
 			c.logger.Warn("mcp composer: skipping unreachable upstream",
 				"registry", reg.Name, "error", err)
 			continue

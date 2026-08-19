@@ -33,9 +33,12 @@ func NewHTTPServer(
 	cfg config.ServerConfig,
 	logger *slog.Logger,
 	routers []router.ServerRouter,
+	hooks ...ShutdownHook,
 ) Server {
 	return &httpServer{
-		BaseServer: NewBaseServer(name, addr, cfg, logger).WithRouters(routers...),
+		BaseServer: NewBaseServer(name, addr, cfg, logger).
+			WithRouters(routers...).
+			WithShutdownHooks(hooks...),
 	}
 }
 
@@ -51,6 +54,10 @@ func (s *httpServer) Shutdown() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.logger.Info(bootlog.HTTPShutdown(s.Name), slog.String("server", s.Name))
+	// Hooks release subscription accounting and cancel stream work first. A
+	// writer already blocked in fasthttp Flush may still keep Router.Shutdown
+	// waiting until the configured server write timeout.
+	s.runShutdownHooks()
 	if err := s.Router.Shutdown(); err != nil {
 		s.logger.Warn("HTTP server shutdown error",
 			slog.String("server", s.Name),

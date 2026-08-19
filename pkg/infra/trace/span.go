@@ -62,21 +62,388 @@ type PluginAttrs struct {
 	Extras     any
 }
 
+const (
+	MCPProtocolEraLegacy          = "legacy"
+	MCPProtocolEraModern          = "modern"
+	MCPProtocolVersionUnsupported = "unsupported"
+)
+
+// MCPProtocolVersions is the newest-first allowlist shared with the MCP handler.
+var MCPProtocolVersions = []string{
+	"2026-07-28",
+	"2025-06-18",
+	"2025-03-26",
+	"2024-11-05",
+}
+
+const (
+	MRTROutcomeInputRequired  = "input_required"
+	MRTROutcomeComplete       = "complete"
+	MRTROutcomeCancelled      = "cancelled"
+	MRTROutcomePolicyDenied   = "policy_denied"
+	MRTROutcomeTimeout        = "timeout"
+	MRTROutcomeRoundLimit     = "round_limit"
+	MRTROutcomeReplayRejected = "replay_rejected"
+)
+
+// MRTRRoundOverflow is the bucket every round beyond the second collapses into.
+const MRTRRoundOverflow = "3+"
+
+var mrtrOutcomes = []string{
+	MRTROutcomeInputRequired,
+	MRTROutcomeComplete,
+	MRTROutcomeCancelled,
+	MRTROutcomePolicyDenied,
+	MRTROutcomeTimeout,
+	MRTROutcomeRoundLimit,
+	MRTROutcomeReplayRejected,
+}
+
 type MCPAttrs struct {
-	Method         string
-	Operation      string
-	ServerName     string
-	RegistryID     string
-	Host           string
-	CatalogCode    string
-	Transport      string
-	Tool           string
-	UpstreamTool   string
-	Prompt         string
-	ResourceURI    string
-	Targets        int
-	UpstreamStatus int
-	RPCErrorCode   int
+	Method          string
+	Operation       string
+	ServerName      string
+	RegistryID      string
+	Host            string
+	CatalogCode     string
+	Transport       string
+	Tool            string
+	UpstreamTool    string
+	Prompt          string
+	ResourceURI     string
+	Targets         int
+	UpstreamStatus  int
+	RPCErrorCode    int
+	ProtocolEra     string
+	ProtocolVersion string
+	MRTROutcome     string
+	MRTRRound       string
+	TaskOperation   string
+	TaskOutcome     string
+
+	SubscriptionKind    string
+	SubscriptionOutcome string
+	SubscriptionSource  string
+}
+
+// Task telemetry labels. There is deliberately no task-id attribute: a handle is
+// a credential and an upstream task id is upstream-internal.
+const (
+	TaskOperationGet    = "get"
+	TaskOperationUpdate = "update"
+	TaskOperationCancel = "cancel"
+)
+
+const (
+	TaskOutcomeAccepted           = "accepted"
+	TaskOutcomeWorking            = "working"
+	TaskOutcomeInputRequired      = "input_required"
+	TaskOutcomeCompleted          = "completed"
+	TaskOutcomeCancelled          = "cancelled"
+	TaskOutcomeFailed             = "failed"
+	TaskOutcomeHandleRejected     = "handle_rejected"
+	TaskOutcomeCapabilityRequired = "capability_required"
+	TaskOutcomePolicyDenied       = "policy_denied"
+)
+
+var taskOperations = []string{TaskOperationGet, TaskOperationUpdate, TaskOperationCancel}
+
+var taskOutcomes = []string{
+	TaskOutcomeAccepted,
+	TaskOutcomeWorking,
+	TaskOutcomeInputRequired,
+	TaskOutcomeCompleted,
+	TaskOutcomeCancelled,
+	TaskOutcomeFailed,
+	TaskOutcomeHandleRejected,
+	TaskOutcomeCapabilityRequired,
+	TaskOutcomePolicyDenied,
+}
+
+// BoundTaskOperation maps a tasks/* method onto its label and drops anything
+// else, so an upstream or a client cannot widen the label set.
+func BoundTaskOperation(method string) string {
+	switch method {
+	case "tasks/get":
+		return TaskOperationGet
+	case "tasks/update":
+		return TaskOperationUpdate
+	case "tasks/cancel":
+		return TaskOperationCancel
+	default:
+		return ""
+	}
+}
+
+// BoundTaskOperationLabel keeps only the enumerated operation labels.
+func BoundTaskOperationLabel(operation string) string {
+	for _, known := range taskOperations {
+		if operation == known {
+			return operation
+		}
+	}
+	return ""
+}
+
+// BoundTaskOutcome drops any outcome outside the enumerated task set.
+func BoundTaskOutcome(outcome string) string {
+	for _, known := range taskOutcomes {
+		if outcome == known {
+			return outcome
+		}
+	}
+	return ""
+}
+
+// Subscription telemetry labels. There is deliberately no subscription-id,
+// JSON-RPC-id, or resource-URI attribute: the id is the client's own correlation
+// value and a requested URI is client content, so neither may become a label.
+const (
+	SubscriptionKindTools     = "toolsListChanged"
+	SubscriptionKindPrompts   = "promptsListChanged"
+	SubscriptionKindResources = "resourcesListChanged"
+)
+
+const (
+	SubscriptionOutcomeOpened       = "opened"
+	SubscriptionOutcomeAcked        = "acked"
+	SubscriptionOutcomeEmitted      = "emitted"
+	SubscriptionOutcomeDeadline     = "deadline"
+	SubscriptionOutcomeRevoked      = "revoked"
+	SubscriptionOutcomeRefused      = "refused"
+	SubscriptionOutcomeDegraded     = "degraded"
+	SubscriptionOutcomeShutdown     = "shutdown"
+	SubscriptionOutcomeDisconnected = "disconnected"
+	SubscriptionOutcomeOversize     = "oversize"
+)
+
+var subscriptionKinds = []string{
+	SubscriptionKindTools,
+	SubscriptionKindPrompts,
+	SubscriptionKindResources,
+}
+
+var subscriptionOutcomes = []string{
+	SubscriptionOutcomeOpened,
+	SubscriptionOutcomeAcked,
+	SubscriptionOutcomeEmitted,
+	SubscriptionOutcomeDeadline,
+	SubscriptionOutcomeRevoked,
+	SubscriptionOutcomeRefused,
+	SubscriptionOutcomeDegraded,
+	SubscriptionOutcomeShutdown,
+	SubscriptionOutcomeDisconnected,
+	SubscriptionOutcomeOversize,
+}
+
+const (
+	SubscriptionSourceLifecycleUnsupported = "unsupported"
+	SubscriptionSourceLifecycleOpenFailed  = "open_failed"
+	SubscriptionSourceLifecycleOpened      = "opened"
+	SubscriptionSourceLifecycleReused      = "reused"
+	SubscriptionSourceLifecycleJoined      = "joined"
+)
+
+const (
+	SubscriptionSourceFanOutAuthorized = "authorized"
+	SubscriptionSourceFanOutDenied     = "denied"
+	SubscriptionSourceFanOutRevoked    = "revoked"
+	SubscriptionSourceFanOutTransient  = "transient"
+	SubscriptionSourceFanOutRejected   = "rejected"
+)
+
+const (
+	SubscriptionSourceReconnectAttempted     = "attempted"
+	SubscriptionSourceReconnectSucceeded     = "succeeded"
+	SubscriptionSourceReconnectFailed        = "failed"
+	SubscriptionSourceReconnectExhausted     = "exhausted"
+	SubscriptionSourceReconnectSourceChanged = "source_changed"
+	SubscriptionSourceReconnectCancelled     = "cancelled"
+	SubscriptionSourceReconnectTerminal      = "terminal"
+)
+
+const (
+	SubscriptionSourceQueueEnqueued = "enqueued"
+	SubscriptionSourceQueueFull     = "full"
+)
+
+const (
+	SubscriptionSourceTerminalLastDetach         = "last_detach"
+	SubscriptionSourceTerminalShutdown           = "shutdown"
+	SubscriptionSourceTerminalReconnectExhausted = "reconnect_exhausted"
+	SubscriptionSourceTerminalSourceChanged      = "source_changed"
+	SubscriptionSourceTerminalAuthentication     = "authentication"
+	SubscriptionSourceTerminalProtocolFailure    = "protocol_failure"
+	SubscriptionSourceTerminalTransportFailure   = "transport_failure"
+)
+
+var subscriptionSourceLifecycleOutcomes = []string{
+	SubscriptionSourceLifecycleUnsupported,
+	SubscriptionSourceLifecycleOpenFailed,
+	SubscriptionSourceLifecycleOpened,
+	SubscriptionSourceLifecycleReused,
+	SubscriptionSourceLifecycleJoined,
+}
+
+var subscriptionSourceFanOutOutcomes = []string{
+	SubscriptionSourceFanOutAuthorized,
+	SubscriptionSourceFanOutDenied,
+	SubscriptionSourceFanOutRevoked,
+	SubscriptionSourceFanOutTransient,
+	SubscriptionSourceFanOutRejected,
+}
+
+var subscriptionSourceReconnectOutcomes = []string{
+	SubscriptionSourceReconnectAttempted,
+	SubscriptionSourceReconnectSucceeded,
+	SubscriptionSourceReconnectFailed,
+	SubscriptionSourceReconnectExhausted,
+	SubscriptionSourceReconnectSourceChanged,
+	SubscriptionSourceReconnectCancelled,
+	SubscriptionSourceReconnectTerminal,
+}
+
+var subscriptionSourceQueueOutcomes = []string{
+	SubscriptionSourceQueueEnqueued,
+	SubscriptionSourceQueueFull,
+}
+
+var subscriptionSourceTerminalOutcomes = []string{
+	SubscriptionSourceTerminalLastDetach,
+	SubscriptionSourceTerminalShutdown,
+	SubscriptionSourceTerminalReconnectExhausted,
+	SubscriptionSourceTerminalSourceChanged,
+	SubscriptionSourceTerminalAuthentication,
+	SubscriptionSourceTerminalProtocolFailure,
+	SubscriptionSourceTerminalTransportFailure,
+}
+
+// BoundSubscriptionKind drops any notification kind outside the enumerated set,
+// so a client-supplied string can never widen the label.
+func BoundSubscriptionKind(kind string) string {
+	for _, known := range subscriptionKinds {
+		if kind == known {
+			return kind
+		}
+	}
+	return ""
+}
+
+// BoundSubscriptionOutcome drops any outcome outside the enumerated lease set.
+func BoundSubscriptionOutcome(outcome string) string {
+	for _, known := range subscriptionOutcomes {
+		if outcome == known {
+			return outcome
+		}
+	}
+	return ""
+}
+
+// BoundSubscriptionSourceLifecycleOutcome drops unknown listener lifecycle outcomes.
+func BoundSubscriptionSourceLifecycleOutcome(outcome string) string {
+	return boundSubscriptionSourceOutcome(outcome, subscriptionSourceLifecycleOutcomes)
+}
+
+// BoundSubscriptionSourceFanOutOutcome drops unknown fan-out outcomes.
+func BoundSubscriptionSourceFanOutOutcome(outcome string) string {
+	return boundSubscriptionSourceOutcome(outcome, subscriptionSourceFanOutOutcomes)
+}
+
+// BoundSubscriptionSourceReconnectOutcome drops unknown reconnect outcomes.
+func BoundSubscriptionSourceReconnectOutcome(outcome string) string {
+	return boundSubscriptionSourceOutcome(outcome, subscriptionSourceReconnectOutcomes)
+}
+
+// BoundSubscriptionSourceQueueOutcome drops unknown queue outcomes.
+func BoundSubscriptionSourceQueueOutcome(outcome string) string {
+	return boundSubscriptionSourceOutcome(outcome, subscriptionSourceQueueOutcomes)
+}
+
+// BoundSubscriptionSourceTerminalOutcome drops unknown listener terminal outcomes.
+func BoundSubscriptionSourceTerminalOutcome(outcome string) string {
+	return boundSubscriptionSourceOutcome(outcome, subscriptionSourceTerminalOutcomes)
+}
+
+// BoundSubscriptionSourceOutcome drops values outside every source outcome enumeration.
+func BoundSubscriptionSourceOutcome(outcome string) string {
+	for _, outcomes := range [][]string{
+		subscriptionSourceLifecycleOutcomes,
+		subscriptionSourceFanOutOutcomes,
+		subscriptionSourceReconnectOutcomes,
+		subscriptionSourceQueueOutcomes,
+		subscriptionSourceTerminalOutcomes,
+	} {
+		if bounded := boundSubscriptionSourceOutcome(outcome, outcomes); bounded != "" {
+			return bounded
+		}
+	}
+	return ""
+}
+
+func boundSubscriptionSourceOutcome(outcome string, allowed []string) string {
+	for _, known := range allowed {
+		if outcome == known {
+			return outcome
+		}
+	}
+	return ""
+}
+
+// BoundMCPProtocolVersion maps unknown revisions to "unsupported".
+func BoundMCPProtocolVersion(version string) string {
+	if version == "" {
+		return ""
+	}
+	for _, known := range MCPProtocolVersions {
+		if version == known {
+			return version
+		}
+	}
+	return MCPProtocolVersionUnsupported
+}
+
+// BoundMCPProtocolEra keeps only legacy or modern labels.
+func BoundMCPProtocolEra(era string) string {
+	switch era {
+	case MCPProtocolEraLegacy, MCPProtocolEraModern:
+		return era
+	default:
+		return ""
+	}
+}
+
+// BoundMRTROutcome drops any outcome outside the enumerated MRTR set.
+func BoundMRTROutcome(outcome string) string {
+	for _, known := range mrtrOutcomes {
+		if outcome == known {
+			return outcome
+		}
+	}
+	return ""
+}
+
+// BoundMRTRRound buckets a continuation round into 1, 2, or 3+.
+func BoundMRTRRound(round int) string {
+	switch {
+	case round <= 0:
+		return ""
+	case round == 1:
+		return "1"
+	case round == 2:
+		return "2"
+	default:
+		return MRTRRoundOverflow
+	}
+}
+
+// BoundMRTRRoundLabel keeps only the bucketed round labels.
+func BoundMRTRRoundLabel(round string) string {
+	switch round {
+	case "1", "2", MRTRRoundOverflow:
+		return round
+	default:
+		return ""
+	}
 }
 
 type Span struct {
@@ -329,6 +696,67 @@ func (s *Span) SetMCPStatus(httpStatus, rpcErrorCode int) {
 	s.ensureMCP()
 	s.MCP.UpstreamStatus = httpStatus
 	s.MCP.RPCErrorCode = rpcErrorCode
+}
+
+// SetMCPProtocol records bounded protocol era and version on the MCP span.
+func (s *Span) SetMCPProtocol(era, version string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureMCP()
+	s.MCP.ProtocolEra = BoundMCPProtocolEra(era)
+	s.MCP.ProtocolVersion = BoundMCPProtocolVersion(version)
+}
+
+// SetMCPMRTR records bounded MRTR outcome and round labels; empty values keep
+// whatever the span already carries.
+func (s *Span) SetMCPMRTR(outcome, round string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureMCP()
+	if bounded := BoundMRTROutcome(outcome); bounded != "" {
+		s.MCP.MRTROutcome = bounded
+	}
+	if bounded := BoundMRTRRoundLabel(round); bounded != "" {
+		s.MCP.MRTRRound = bounded
+	}
+}
+
+// SetMCPTask records the mediated task operation and its outcome.
+func (s *Span) SetMCPTask(operation, outcome string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureMCP()
+	if bounded := BoundTaskOperationLabel(operation); bounded != "" {
+		s.MCP.TaskOperation = bounded
+	}
+	if bounded := BoundTaskOutcome(outcome); bounded != "" {
+		s.MCP.TaskOutcome = bounded
+	}
+}
+
+// SetMCPSubscription records the bounded notification kind and lease outcome.
+// Empty or unenumerated values keep whatever the span already carries, so a
+// stamp can never introduce an unbounded label.
+func (s *Span) SetMCPSubscription(kind, outcome string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureMCP()
+	if bounded := BoundSubscriptionKind(kind); bounded != "" {
+		s.MCP.SubscriptionKind = bounded
+	}
+	if bounded := BoundSubscriptionOutcome(outcome); bounded != "" {
+		s.MCP.SubscriptionOutcome = bounded
+	}
+}
+
+// SetMCPSubscriptionSource records a bounded physical-listener outcome.
+func (s *Span) SetMCPSubscriptionSource(outcome string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureMCP()
+	if bounded := BoundSubscriptionSourceOutcome(outcome); bounded != "" {
+		s.MCP.SubscriptionSource = bounded
+	}
 }
 
 func (s *Span) MCPAttrsCopy() (MCPAttrs, bool) {
