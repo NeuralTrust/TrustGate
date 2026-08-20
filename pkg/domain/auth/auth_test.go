@@ -225,6 +225,19 @@ func TestNewAuth_Validation(t *testing.T) {
 			wantErr:   ErrInvalidConfig,
 		},
 		{
+			name:      "oauth2 rejects hs algorithms",
+			gatewayID: gwID,
+			authName:  "k",
+			authType:  TypeOAuth2,
+			config: Config{OAuth2: &OAuth2Config{
+				Issuer:     "https://issuer",
+				Audiences:  []string{"gateway"},
+				JWKSURL:    "https://issuer/.well-known/jwks.json",
+				Algorithms: []string{"HS256"},
+			}},
+			wantErr: ErrInvalidConfig,
+		},
+		{
 			name:      "idp missing key material",
 			gatewayID: gwID,
 			authName:  "k",
@@ -285,6 +298,11 @@ func TestNewAuth_ValidPerType(t *testing.T) {
 		"oauth2 issuer-only (JWKS via OIDC discovery)": {TypeOAuth2, Config{OAuth2: &OAuth2Config{
 			Issuer:    "https://login.microsoftonline.com/tenant-id/v2.0",
 			Audiences: []string{"trustgate"},
+		}}},
+		"oauth2 with inline public keys and no jwks url": {TypeOAuth2, Config{OAuth2: &OAuth2Config{
+			Issuer:     "urn:example:idp",
+			Audiences:  []string{"gateway"},
+			PublicKeys: []string{"-----BEGIN PUBLIC KEY-----"},
 		}}},
 		"mtls": {TypeMTLS, Config{MTLS: &MTLSConfig{CACert: "-----BEGIN CERTIFICATE-----"}}},
 		"oidc": {TypeOIDC, Config{OIDC: &OIDCConfig{

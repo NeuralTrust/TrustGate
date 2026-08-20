@@ -85,6 +85,7 @@ func oauth2ConfigFromOIDC(cfg domain.OIDCConfig) *domain.OAuth2Config {
 		Issuer:         cfg.Issuer,
 		Audiences:      cfg.Audiences,
 		JWKSURL:        cfg.JWKSURL,
+		PublicKeys:     cfg.PublicKeys,
 		RequiredScopes: cfg.RequiredScopes,
 		Algorithms:     cfg.AllowedAlgorithms,
 		SubjectClaim:   cfg.SubjectClaim,
