@@ -330,6 +330,9 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 		h.recordToolCallFailure(c, req.Method, era, err)
 		return writeAppError(c, req.ID, err, era, req.Method)
 	}
+	if appsRead, ok := result.(appmcp.AppsReadResult); ok {
+		return writeVerbatimRPCResult(c, req.ID, json.RawMessage(appsRead))
+	}
 	if era == protocolEraModern {
 		caps := appmcp.ClientCapabilitiesFromContext(c.UserContext())
 		normalized, err := normalizeModernResult(req.Method, result, rc, caps)
@@ -579,6 +582,9 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error, era protocolEra,
 		notPermitted  *appmcp.ToolNotPermittedError
 		invalidParams *InvalidParamsError
 	)
+	if era == protocolEraModern && method == "resources/read" && errors.Is(err, errMalformedAppsCapability) {
+		return writeBoundaryRPCError(c, id, era, codeInvalidParams, "invalid params")
+	}
 	if era == protocolEraModern && method == "resources/read" {
 		if errors.As(err, &rpcErr) && int(rpcErr.Code) == codeResourceNotFound {
 			applyRPCErrorHeaders(c, rpcErr, era)
@@ -696,6 +702,18 @@ func writeRawRPCResult(c *fiber.Ctx, id json.RawMessage, result json.RawMessage)
 		ID      json.RawMessage `json:"id"`
 		Result  json.RawMessage `json:"result"`
 	}{JSONRPC: "2.0", ID: normalizeID(id), Result: result})
+}
+
+func writeVerbatimRPCResult(c *fiber.Ctx, id json.RawMessage, result json.RawMessage) error {
+	id = normalizeID(id)
+	body := make([]byte, 0, len(id)+len(result)+36)
+	body = append(body, `{"jsonrpc":"2.0","id":`...)
+	body = append(body, id...)
+	body = append(body, `,"result":`...)
+	body = append(body, result...)
+	body = append(body, '}')
+	c.Type("json")
+	return c.Status(fiber.StatusOK).Send(body)
 }
 
 func writeRPCError(c *fiber.Ctx, id json.RawMessage, code int, message string) error {
