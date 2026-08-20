@@ -16,6 +16,7 @@ package modules
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -29,6 +30,45 @@ import (
 
 func TestMCPAppsProductionPipelineIsNotReady(t *testing.T) {
 	require.False(t, mcpAppsPipelineReady)
+}
+
+func TestProvideAppsMetadataPolicy(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Server.MCPApps = config.MCPAppsConfig{
+		MaxCSPOriginsPerDirective: 1,
+		MaxCSPOriginsTotal:        2,
+		AllowedOriginPatterns:     []string{"https://cdn.example.com"},
+		AllowedPermissions:        []string{"camera"},
+	}
+	policy, err := provideAppsMetadataPolicy(cfg)
+	require.NoError(t, err)
+	cfg.Server.MCPApps.AllowedOriginPatterns[0] = "https://changed.example.com"
+	cfg.Server.MCPApps.AllowedPermissions[0] = "microphone"
+	require.NoError(t, appmcp.ValidateResourceAppsMetadata(map[string]any{
+		"csp":         map[string]any{"resourceDomains": []any{"https://cdn.example.com"}},
+		"permissions": map[string]any{"camera": map[string]any{}},
+	}, policy))
+
+	cfg.Server.MCPApps.MaxCSPOriginsPerDirective = 0
+	_, err = provideAppsMetadataPolicy(cfg)
+	require.ErrorIs(t, err, appmcp.ErrInvalidAppsMetadata)
+}
+
+func TestProvideAppsListPolicyRemainsDormant(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Server.MCPApps.Enabled = true
+	cfg.Server.MCPApps.MaxCSPOriginsPerDirective = 1
+	cfg.Server.MCPApps.MaxCSPOriginsTotal = 1
+	metadata, err := provideAppsMetadataPolicy(cfg)
+	require.NoError(t, err)
+	policy := provideAppsListPolicy(cfg, metadata)
+	var tool appmcp.Tool
+	require.NoError(t, json.Unmarshal([]byte(`{"name":"invalid","_meta":{"ui":"bad"}}`), &tool))
+	input := []appmcp.Tool{tool}
+	filtered, outcome := policy.FilterTools(input)
+	require.Len(t, filtered, 1)
+	require.Same(t, &input[0], &filtered[0])
+	require.Zero(t, outcome.Dropped)
 }
 
 func subscriptionsConfig(enabled bool) *config.Config {
