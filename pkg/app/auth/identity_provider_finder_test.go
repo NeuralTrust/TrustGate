@@ -16,6 +16,7 @@ package auth_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -39,22 +40,27 @@ func oauth2IdP(name, issuer string, audiences []string) *domain.Auth {
 	}
 }
 
-func oidcIdP(name, issuer string, audiences []string) *domain.Auth {
+func legacyOIDCIdP(t *testing.T, name, issuer string, audiences, publicKeys []string) *domain.Auth {
+	t.Helper()
+	legacy := map[string]any{"issuer": issuer, "audiences": audiences}
+	if len(publicKeys) > 0 {
+		legacy["public_keys"] = publicKeys
+	}
+	payload, err := json.Marshal(map[string]any{"oidc": legacy})
+	if err != nil {
+		t.Fatalf("marshal legacy oidc payload: %v", err)
+	}
+	var cfg domain.Config
+	if err := json.Unmarshal(payload, &cfg); err != nil {
+		t.Fatalf("unmarshal legacy oidc payload: %v", err)
+	}
 	return &domain.Auth{
 		ID:      ids.New[ids.AuthKind](),
 		Name:    name,
-		Type:    domain.TypeOIDC,
+		Type:    domain.NormalizeType(domain.TypeOIDC),
 		Enabled: true,
-		Config: domain.Config{
-			OIDC: &domain.OIDCConfig{Issuer: issuer, Audiences: audiences},
-		},
+		Config:  cfg,
 	}
-}
-
-func oidcIdPWithPublicKeys(name, issuer string, audiences, publicKeys []string) *domain.Auth {
-	a := oidcIdP(name, issuer, audiences)
-	a.Config.OIDC.PublicKeys = publicKeys
-	return a
 }
 
 func candidateNames(auths []*domain.Auth) []string {
@@ -167,20 +173,21 @@ func TestIdentityProviderFinder_FindCandidates(t *testing.T) {
 			wantNames: []string{"entra"},
 		},
 		{
-			name:      "oidc shaped auth is selected",
-			auths:     []*domain.Auth{oidcIdP("legacy-oidc", "https://issuer.example", []string{"client-id"})},
+			name:      "auth decoded from a legacy oidc payload is selected",
+			auths:     []*domain.Auth{legacyOIDCIdP(t, "legacy-oidc", "https://issuer.example", []string{"client-id"}, nil)},
 			hints:     appauth.TokenHints{Issuer: "https://issuer.example", Audiences: []string{"client-id"}},
 			wantNames: []string{"legacy-oidc"},
 		},
 		{
-			name:      "oidc shaped auth matches a resource uri token audience",
-			auths:     []*domain.Auth{oidcIdP("legacy-oidc", "https://issuer.example", []string{"client-id"})},
+			name:      "auth decoded from a legacy oidc payload matches a resource uri token audience",
+			auths:     []*domain.Auth{legacyOIDCIdP(t, "legacy-oidc", "https://issuer.example", []string{"client-id"}, nil)},
 			hints:     appauth.TokenHints{Issuer: "https://issuer.example", Audiences: []string{"api://client-id"}},
 			wantNames: []string{"legacy-oidc"},
 		},
 		{
-			name: "oidc shaped auth whose only key material is public keys is selected",
-			auths: []*domain.Auth{oidcIdPWithPublicKeys(
+			name: "legacy oidc auth whose only key material is public keys is selected",
+			auths: []*domain.Auth{legacyOIDCIdP(
+				t,
 				"air-gapped-oidc",
 				"https://issuer.example",
 				[]string{"client-id"},
@@ -190,9 +197,9 @@ func TestIdentityProviderFinder_FindCandidates(t *testing.T) {
 			wantNames: []string{"air-gapped-oidc"},
 		},
 		{
-			name: "oidc and oauth2 auths are both candidates in declaration order",
+			name: "legacy and native auths are both candidates in declaration order",
 			auths: []*domain.Auth{
-				oidcIdP("legacy-oidc", "https://issuer.example", []string{"client-id"}),
+				legacyOIDCIdP(t, "legacy-oidc", "https://issuer.example", []string{"client-id"}, nil),
 				oauth2IdP("unified", "https://issuer.example", []string{"client-id"}),
 			},
 			hints:     appauth.TokenHints{Issuer: "https://issuer.example", Audiences: []string{"client-id"}},
@@ -286,7 +293,7 @@ func TestIdentityProviderFinder_CancelledContextIsHonoured(t *testing.T) {
 	}
 }
 
-func TestIdentityProviderFinder_OIDCAuthIsProjectedWithoutMutatingInput(t *testing.T) {
+func TestIdentityProviderFinder_ReturnsLegacyAuthInstanceUncopied(t *testing.T) {
 	t.Parallel()
 	verifier := authmocks.NewOIDCVerifier(t)
 	verifier.EXPECT().Peek(candidateToken).Return(appauth.TokenHints{
@@ -294,100 +301,15 @@ func TestIdentityProviderFinder_OIDCAuthIsProjectedWithoutMutatingInput(t *testi
 		Audiences: []string{"client-id"},
 	}, nil).Once()
 
-	stored := &domain.Auth{
-		ID:      ids.New[ids.AuthKind](),
-		Name:    "legacy-oidc",
-		Type:    domain.TypeOIDC,
-		Enabled: true,
-		Config: domain.Config{
-			OIDC: &domain.OIDCConfig{
-				Issuer:            "https://issuer.example",
-				Audiences:         []string{"client-id"},
-				JWKSURL:           "https://issuer.example/jwks",
-				RequiredScopes:    []string{"api.read"},
-				AllowedAlgorithms: []string{"RS256"},
-				SubjectClaim:      "oid",
-			},
-		},
-	}
+	stored := legacyOIDCIdP(t, "legacy-oidc", "https://issuer.example", []string{"client-id"}, nil)
 
 	finder := appauth.NewIdentityProviderFinder(verifier)
 	got, err := finder.FindCandidates(context.Background(), []*domain.Auth{stored}, candidateToken)
 	if err != nil {
 		t.Fatalf("FindCandidates: %v", err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("FindCandidates returned %d candidates, want 1", len(got))
-	}
-	if stored.Config.OAuth2 != nil {
-		t.Fatal("FindCandidates mutated the stored auth config")
-	}
-
-	candidate := got[0]
-	if candidate.ID != stored.ID {
-		t.Fatalf("candidate id = %v, want %v", candidate.ID, stored.ID)
-	}
-	projected := candidate.Config.OAuth2
-	if projected == nil {
-		t.Fatal("candidate has no projected oauth2 config")
-	}
-	if projected.Issuer != "https://issuer.example" {
-		t.Fatalf("projected issuer = %q", projected.Issuer)
-	}
-	if projected.JWKSURL != "https://issuer.example/jwks" {
-		t.Fatalf("projected jwks url = %q", projected.JWKSURL)
-	}
-	if projected.SubjectClaim != "oid" {
-		t.Fatalf("projected subject claim = %q", projected.SubjectClaim)
-	}
-	if !equalNames(projected.Audiences, []string{"client-id"}) {
-		t.Fatalf("projected audiences = %v", projected.Audiences)
-	}
-	if !equalNames(projected.RequiredScopes, []string{"api.read"}) {
-		t.Fatalf("projected required scopes = %v", projected.RequiredScopes)
-	}
-	if !equalNames(projected.Algorithms, []string{"RS256"}) {
-		t.Fatalf("projected algorithms = %v", projected.Algorithms)
-	}
-}
-
-func TestIdentityProviderFinder_ProjectionCarriesInlinePublicKeys(t *testing.T) {
-	t.Parallel()
-	verifier := authmocks.NewOIDCVerifier(t)
-	verifier.EXPECT().Peek(candidateToken).Return(appauth.TokenHints{
-		Issuer:    "https://issuer.example",
-		Audiences: []string{"client-id"},
-	}, nil).Once()
-
-	stored := oidcIdPWithPublicKeys(
-		"air-gapped-oidc",
-		"https://issuer.example",
-		[]string{"client-id"},
-		[]string{"-----BEGIN PUBLIC KEY-----first", "-----BEGIN PUBLIC KEY-----second"},
-	)
-
-	finder := appauth.NewIdentityProviderFinder(verifier)
-	got, err := finder.FindCandidates(context.Background(), []*domain.Auth{stored}, candidateToken)
-	if err != nil {
-		t.Fatalf("FindCandidates: %v", err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("FindCandidates returned %d candidates, want 1", len(got))
-	}
-	if stored.Config.OAuth2 != nil {
-		t.Fatal("FindCandidates mutated the stored auth config")
-	}
-
-	projected := got[0].Config.OAuth2
-	if projected == nil {
-		t.Fatal("candidate has no projected oauth2 config")
-	}
-	if projected.JWKSURL != "" {
-		t.Fatalf("projected jwks url = %q, want empty", projected.JWKSURL)
-	}
-	want := []string{"-----BEGIN PUBLIC KEY-----first", "-----BEGIN PUBLIC KEY-----second"}
-	if !equalNames(projected.PublicKeys, want) {
-		t.Fatalf("projected public keys = %v, want %v", projected.PublicKeys, want)
+	if len(got) != 1 || got[0] != stored {
+		t.Fatalf("FindCandidates = %v, want the stored auth instance", got)
 	}
 }
 
