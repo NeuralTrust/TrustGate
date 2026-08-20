@@ -16,6 +16,8 @@ package middleware_test
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -36,20 +38,13 @@ import (
 
 func newAdminAuthApp(t *testing.T, secret string) (*fiber.App, jwt.Manager) {
 	t.Helper()
-	mgr := jwt.NewJwtManager(&config.ServerConfig{SecretKey: secret})
-	mw := middleware.NewAdminAuthMiddleware(slog.New(slog.NewTextHandler(io.Discard, nil)), mgr)
-
-	app := fiber.New()
-	app.Get("/protected", mw.Middleware(), func(c *fiber.Ctx) error {
-		return c.SendStatus(fiber.StatusOK)
-	})
-	return app, mgr
+	return newAdminAuthAppWithLogger(t, secret, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
 func newAdminAuthAppWithLogger(t *testing.T, secret string, logger *slog.Logger) (*fiber.App, jwt.Manager) {
 	t.Helper()
 	mgr := jwt.NewJwtManager(&config.ServerConfig{SecretKey: secret})
-	mw := middleware.NewAdminAuthMiddleware(logger, mgr)
+	mw := middleware.NewAdminAuthMiddleware(logger, mgr, nil, false)
 
 	app := fiber.New()
 	app.Get("/protected", mw.Middleware(), func(c *fiber.Ctx) error {
@@ -152,6 +147,84 @@ func TestAdminAuth_WrongSecretRejected(t *testing.T) {
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+}
+
+func TestAdminAuth_SharedSecretTokenClaimingServiceUseRejected(t *testing.T) {
+	app, _ := newAdminAuthApp(t, "secret")
+	claims := &jwt.Claims{
+		TenantID: "acme",
+		TokenUse: jwt.TokenUseAdminM2M,
+		RegisteredClaims: golangjwt.RegisteredClaims{
+			ExpiresAt: golangjwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
+		},
+	}
+	token, err := golangjwt.NewWithClaims(golangjwt.SigningMethodHS256, claims).SignedString([]byte("secret"))
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(fiber.MethodGet, "/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+	require.Equal(t, httpio.ErrorBody{
+		Error:   "unauthorized",
+		Message: "Token not valid for admin API",
+	}, decodeErrorBody(t, resp))
+}
+
+func TestAdminAuth_ServiceTokenRejectedWhenVerifierDisabled(t *testing.T) {
+	app, _ := newAdminAuthApp(t, "secret")
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	token, err := golangjwt.NewWithClaims(golangjwt.SigningMethodRS256, &jwt.ServiceClaims{
+		TokenUse:  jwt.TokenUseAdminM2M,
+		TenantID:  "acme",
+		GatewayID: "gw-1",
+		Scopes:    []string{"consumers:write"},
+		RegisteredClaims: golangjwt.RegisteredClaims{
+			ExpiresAt: golangjwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
+		},
+	}).SignedString(key)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(fiber.MethodGet, "/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+}
+
+func TestAdminAuth_PlatformTokenRequiresExplicitClaimWhenEnforced(t *testing.T) {
+	mgr := jwt.NewJwtManager(&config.ServerConfig{SecretKey: "secret"})
+	mw := middleware.NewAdminAuthMiddleware(slog.New(slog.NewTextHandler(io.Discard, nil)), mgr, nil, true)
+	app := fiber.New()
+	app.Get("/protected", mw.Middleware(), func(c *fiber.Ctx) error {
+		return c.JSON(middleware.AdminIdentityFromContext(c))
+	})
+
+	sign := func(t *testing.T, claims *jwt.Claims) string {
+		t.Helper()
+		claims.ExpiresAt = golangjwt.NewNumericDate(time.Now().Add(5 * time.Minute))
+		token, err := golangjwt.NewWithClaims(golangjwt.SigningMethodHS256, claims).SignedString([]byte("secret"))
+		require.NoError(t, err)
+		return token
+	}
+
+	t.Run("no tenant and no platform claim is rejected", func(t *testing.T) {
+		req := httptest.NewRequest(fiber.MethodGet, "/protected", nil)
+		req.Header.Set("Authorization", "Bearer "+sign(t, &jwt.Claims{UserID: "user-1"}))
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+	})
+
+	t.Run("explicit platform claim is accepted", func(t *testing.T) {
+		req := httptest.NewRequest(fiber.MethodGet, "/protected", nil)
+		req.Header.Set("Authorization", "Bearer "+sign(t, &jwt.Claims{UserID: "user-1", PlatformAdmin: true}))
+		resp, err := app.Test(req)
+		require.NoError(t, err)
+		require.Equal(t, fiber.StatusOK, resp.StatusCode)
+	})
 }
 
 func TestAdminAuth_AuthFailureLoggedAtDebug(t *testing.T) {
