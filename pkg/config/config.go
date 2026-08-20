@@ -20,12 +20,14 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	"golang.org/x/net/publicsuffix"
 )
 
 const (
@@ -39,6 +41,48 @@ const (
 	defaultServerIdleTimeout  = 120 * time.Second
 	defaultGatewayBaseDomain  = "llm.neuraltrust.ai"
 	defaultMCPBaseDomain      = "mcp.neuraltrust.ai"
+
+	defaultMCPMRTRMaxRounds            = 8
+	defaultMCPMRTRTicketTTL            = 5 * time.Minute
+	defaultMCPMRTRMaxContinuationBytes = 256 * 1024
+
+	defaultMCPTaskHandleTTL           = time.Hour
+	defaultMCPTaskPollIntervalFloorMs = 1000
+	defaultMCPTaskHandleMaxBytes      = 1024
+
+	defaultMCPAppsMaxResourceBytes       = 1024 * 1024
+	minMCPAppsMaxResourceBytes           = 64 * 1024
+	maxMCPAppsMaxResourceBytes           = 2 * 1024 * 1024
+	defaultMCPAppsCSPOriginsPerDirective = 16
+	maxMCPAppsCSPOriginsPerDirective     = 64
+	defaultMCPAppsCSPOriginsTotal        = 64
+	maxMCPAppsCSPOriginsTotal            = 64
+
+	defaultMCPSubscriptionsReauthInterval       = 30 * time.Second
+	defaultMCPSubscriptionsKeepalive            = 15 * time.Second
+	defaultMCPSubscriptionsMaxStreams           = 128
+	defaultMCPSubscriptionsMaxPerConsumer       = 16
+	defaultMCPSubscriptionsMaxPerPrincipal      = 4
+	defaultMCPSubscriptionsMaxEventBytes        = 8192
+	defaultMCPSubscriptionsMaxURIs              = 32
+	defaultMCPSubscriptionsMaxUpstreamListeners = 256
+	defaultMCPSubscriptionsMaxUpstreamPerOrigin = 16
+	defaultMCPSubscriptionsStreamQueue          = 16
+	defaultMCPSubscriptionsUpstreamIdleTimeout  = 60 * time.Second
+	defaultMCPSubscriptionsReconnectMaxAttempts = 3
+	defaultMCPSubscriptionsReconnectBackoffMin  = 250 * time.Millisecond
+	defaultMCPSubscriptionsReconnectBackoffMax  = 5 * time.Second
+
+	// mcpSubscriptionsLifetimeMargin is the write-deadline headroom a lease must
+	// leave so its terminal frame is always deliverable. It is deliberately not
+	// configurable: TrustGate promises a clean close, so it must own the number.
+	mcpSubscriptionsLifetimeMargin  = 10 * time.Second
+	mcpSubscriptionsLifetimeCeiling = 30 * time.Minute
+	// mcpSubscriptionsReauthFloor stops the re-authorization interval becoming a
+	// re-composition amplifier: nothing upstream changes faster than the
+	// five-minute discovery TTL, so a sub-second interval buys no detection.
+	mcpSubscriptionsReauthFloor    = 5 * time.Second
+	mcpSubscriptionsKeepaliveFloor = time.Second
 
 	defaultDBHost                    = "localhost"
 	defaultDBPort                    = 5432
@@ -209,9 +253,76 @@ type ServerConfig struct {
 	STSIssuer         string
 	STSSigningKey     string
 	TrustXFCCFrom     []string
-	MCPDefaultIdP     MCPDefaultIdPConfig
+	// MCPDefaultIdP is the built-in NeuralTrust identity provider used as the
+	// fallback OAuth2 login for MCP consumers that have no identity provider of
+	// their own. Empty Issuer disables it (behaviour unchanged).
+	MCPDefaultIdP    MCPDefaultIdPConfig
+	MCPMRTR          MCPMRTRConfig
+	MCPTasks         MCPTasksConfig
+	MCPApps          MCPAppsConfig
+	MCPSubscriptions MCPSubscriptionsConfig
 }
 
+// MCPMRTRConfig holds env-only HMAC ticket settings for modern tools/call MRTR.
+type MCPMRTRConfig struct {
+	TicketSecret         string // #nosec G117 -- config struct field, not a hardcoded credential
+	TicketSecretPrev     string // #nosec G117 -- config struct field, not a hardcoded credential
+	MaxRounds            int
+	TicketTTL            time.Duration
+	MaxContinuationBytes int
+}
+
+// MCPTasksConfig holds env-only settings for the io.modelcontextprotocol/tasks
+// extension. An empty HandleSecret disables task mediation entirely, which is the
+// rollback lever: the gateway then behaves exactly as it did before the feature.
+type MCPTasksConfig struct {
+	HandleSecret        string // #nosec G117 -- config struct field, not a hardcoded credential
+	HandleSecretPrev    string // #nosec G117 -- config struct field, not a hardcoded credential
+	HandleTTL           time.Duration
+	PollIntervalFloorMs int
+	HandleMaxBytes      int
+}
+
+// MCPAppsConfig defines the disabled-by-default policy bounds for MCP Apps.
+type MCPAppsConfig struct {
+	Enabled                   bool
+	MaxResourceBytes          int
+	MaxCSPOriginsPerDirective int
+	MaxCSPOriginsTotal        int
+	AllowedOriginPatterns     []string
+	AllowedPermissions        []string
+}
+
+// MCPSubscriptionsConfig holds env-only settings for bounded subscriptions/listen
+// streaming. Enabled=false is the rollback lever: the method stays unlisted, no
+// capability is advertised, and the gateway behaves exactly as it did before the
+// feature.
+type MCPSubscriptionsConfig struct {
+	Enabled              bool
+	UpstreamEnabled      bool
+	MaxLifetime          time.Duration
+	ReauthInterval       time.Duration
+	Keepalive            time.Duration
+	MaxStreams           int
+	MaxPerConsumer       int
+	MaxPerPrincipal      int
+	MaxEventBytes        int
+	MaxURIs              int
+	MaxUpstreamListeners int
+	MaxUpstreamPerOrigin int
+	StreamQueue          int
+	UpstreamIdleTimeout  time.Duration
+	ReconnectMaxAttempts int
+	ReconnectBackoffMin  time.Duration
+	ReconnectBackoffMax  time.Duration
+}
+
+// MCPDefaultIdPConfig configures the built-in NeuralTrust identity provider
+// that MCP consumers fall back to when they have no oauth2 auth of their own.
+// The gateway brokers the interactive login to this provider (the NeuralTrust
+// platform acting as an OAuth2 authorization server) and mints its own MCP
+// session token bound to the platform user, so operators do not have to stand
+// up and register an identity provider just to run a PoC.
 type MCPDefaultIdPConfig struct {
 	Issuer       string
 	AuthorizeURL string
@@ -368,9 +479,15 @@ func LoadConfig() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	mcpApps, err := getMCPAppsConfig()
+	if err != nil {
+		return nil, err
+	}
+	server := getServerConfig()
+	server.MCPApps = mcpApps
 	cfg := &Config{
 		AppEnv:              getEnv("APP_ENV", defaultAppEnv),
-		Server:              getServerConfig(),
+		Server:              server,
 		Database:            getDatabaseConfig(),
 		Redis:               getRedisConfig(),
 		Cache:               getCacheConfig(),
@@ -399,12 +516,13 @@ func LoadConfig() (*Config, error) {
 }
 
 func getServerConfig() ServerConfig {
+	writeTimeout := getEnvDuration("SERVER_WRITE_TIMEOUT", defaultServerWriteTimeout)
 	return ServerConfig{
 		AdminPort:    getEnvInt("SERVER_ADMIN_PORT", defaultServerAdminPort),
 		ProxyPort:    getEnvInt("SERVER_PROXY_PORT", defaultServerProxyPort),
 		MCPPort:      getEnvInt("SERVER_MCP_PORT", defaultServerMCPPort),
 		ReadTimeout:  getEnvDuration("SERVER_READ_TIMEOUT", defaultServerReadTimeout),
-		WriteTimeout: getEnvDuration("SERVER_WRITE_TIMEOUT", defaultServerWriteTimeout),
+		WriteTimeout: writeTimeout,
 		IdleTimeout:  getEnvDuration("SERVER_IDLE_TIMEOUT", defaultServerIdleTimeout),
 		SecretKey:    getEnv("SERVER_SECRET_KEY", ""),
 		GatewayBaseDomain: getEnv(
@@ -428,7 +546,119 @@ func getServerConfig() ServerConfig {
 			Audiences:    splitCSV(getEnv("MCP_DEFAULT_IDP_AUDIENCE", "")),
 			Scopes:       splitCSV(getEnv("MCP_DEFAULT_IDP_SCOPES", "")),
 		},
+		MCPMRTR: MCPMRTRConfig{
+			TicketSecret:         getEnv("MCP_MRTR_TICKET_SECRET", ""),
+			TicketSecretPrev:     getEnv("MCP_MRTR_TICKET_SECRET_PREV", ""),
+			MaxRounds:            defaultMCPMRTRMaxRounds,
+			TicketTTL:            defaultMCPMRTRTicketTTL,
+			MaxContinuationBytes: defaultMCPMRTRMaxContinuationBytes,
+		},
+		MCPTasks: MCPTasksConfig{
+			HandleSecret:        getEnv("MCP_TASK_HANDLE_SECRET", ""),
+			HandleSecretPrev:    getEnv("MCP_TASK_HANDLE_SECRET_PREV", ""),
+			HandleTTL:           getEnvDuration("MCP_TASK_HANDLE_TTL", defaultMCPTaskHandleTTL),
+			PollIntervalFloorMs: getEnvInt("MCP_TASK_POLL_INTERVAL_FLOOR_MS", defaultMCPTaskPollIntervalFloorMs),
+			HandleMaxBytes:      getEnvInt("MCP_TASK_HANDLE_MAX_BYTES", defaultMCPTaskHandleMaxBytes),
+		},
+		MCPSubscriptions: getMCPSubscriptionsConfig(writeTimeout),
 	}
+}
+
+func getMCPAppsConfig() (MCPAppsConfig, error) {
+	enabled, err := parseStrictBoolEnv("MCP_APPS_ENABLED", false)
+	if err != nil {
+		return MCPAppsConfig{}, err
+	}
+	limits := [...]struct {
+		key          string
+		defaultValue int
+	}{
+		{"MCP_APPS_MAX_RESOURCE_BYTES", defaultMCPAppsMaxResourceBytes},
+		{"MCP_APPS_MAX_CSP_ORIGINS_PER_DIRECTIVE", defaultMCPAppsCSPOriginsPerDirective},
+		{"MCP_APPS_MAX_CSP_ORIGINS_TOTAL", defaultMCPAppsCSPOriginsTotal},
+	}
+	values := make([]int, len(limits))
+	for i, limit := range limits {
+		values[i], err = parsePositiveIntEnv(limit.key, limit.defaultValue)
+		if err != nil {
+			return MCPAppsConfig{}, err
+		}
+	}
+	return MCPAppsConfig{
+		Enabled:                   enabled,
+		MaxResourceBytes:          values[0],
+		MaxCSPOriginsPerDirective: values[1],
+		MaxCSPOriginsTotal:        values[2],
+		AllowedOriginPatterns:     splitCSV(os.Getenv("MCP_APPS_ALLOWED_ORIGINS")),
+		AllowedPermissions:        splitCSV(os.Getenv("MCP_APPS_ALLOWED_PERMISSIONS")),
+	}, nil
+}
+
+// getMCPSubscriptionsConfig derives the lease bounds from the write timeout the
+// caller already computed, so the two can never disagree.
+func getMCPSubscriptionsConfig(writeTimeout time.Duration) MCPSubscriptionsConfig {
+	maxLifetime := getEnvDuration("MCP_SUBSCRIPTIONS_MAX_LIFETIME", 0)
+	if maxLifetime <= 0 {
+		maxLifetime = min(writeTimeout-mcpSubscriptionsLifetimeMargin, mcpSubscriptionsLifetimeCeiling)
+	}
+	return MCPSubscriptionsConfig{
+		Enabled:         getEnvBool("MCP_SUBSCRIPTIONS_ENABLED", false),
+		UpstreamEnabled: getEnvBool("MCP_SUBSCRIPTIONS_UPSTREAM_ENABLED", false),
+		MaxLifetime:     maxLifetime,
+		ReauthInterval: clampDuration(
+			getEnvDuration("MCP_SUBSCRIPTIONS_REAUTH_INTERVAL", defaultMCPSubscriptionsReauthInterval),
+			mcpSubscriptionsReauthFloor,
+			maxLifetime,
+		),
+		Keepalive: clampDuration(
+			getEnvDuration("MCP_SUBSCRIPTIONS_KEEPALIVE", defaultMCPSubscriptionsKeepalive),
+			mcpSubscriptionsKeepaliveFloor,
+			maxLifetime,
+		),
+		MaxStreams:      getEnvInt("MCP_SUBSCRIPTIONS_MAX_STREAMS", defaultMCPSubscriptionsMaxStreams),
+		MaxPerConsumer:  getEnvInt("MCP_SUBSCRIPTIONS_MAX_PER_CONSUMER", defaultMCPSubscriptionsMaxPerConsumer),
+		MaxPerPrincipal: getEnvInt("MCP_SUBSCRIPTIONS_MAX_PER_PRINCIPAL", defaultMCPSubscriptionsMaxPerPrincipal),
+		MaxEventBytes:   getEnvInt("MCP_SUBSCRIPTIONS_MAX_EVENT_BYTES", defaultMCPSubscriptionsMaxEventBytes),
+		MaxURIs:         getEnvInt("MCP_SUBSCRIPTIONS_MAX_URIS", defaultMCPSubscriptionsMaxURIs),
+		MaxUpstreamListeners: getEnvInt(
+			"MCP_SUBSCRIPTIONS_MAX_UPSTREAM_LISTENERS",
+			defaultMCPSubscriptionsMaxUpstreamListeners,
+		),
+		MaxUpstreamPerOrigin: getEnvInt(
+			"MCP_SUBSCRIPTIONS_MAX_UPSTREAM_PER_ORIGIN",
+			defaultMCPSubscriptionsMaxUpstreamPerOrigin,
+		),
+		StreamQueue: getEnvInt("MCP_SUBSCRIPTIONS_STREAM_QUEUE", defaultMCPSubscriptionsStreamQueue),
+		UpstreamIdleTimeout: getEnvDuration(
+			"MCP_SUBSCRIPTIONS_UPSTREAM_IDLE_TIMEOUT",
+			defaultMCPSubscriptionsUpstreamIdleTimeout,
+		),
+		ReconnectMaxAttempts: getEnvInt(
+			"MCP_SUBSCRIPTIONS_RECONNECT_MAX_ATTEMPTS",
+			defaultMCPSubscriptionsReconnectMaxAttempts,
+		),
+		ReconnectBackoffMin: getEnvDuration(
+			"MCP_SUBSCRIPTIONS_RECONNECT_BACKOFF_MIN",
+			defaultMCPSubscriptionsReconnectBackoffMin,
+		),
+		ReconnectBackoffMax: getEnvDuration(
+			"MCP_SUBSCRIPTIONS_RECONNECT_BACKOFF_MAX",
+			defaultMCPSubscriptionsReconnectBackoffMax,
+		),
+	}
+}
+
+// clampDuration applies the floor unconditionally and the ceiling only when it is
+// positive, so a non-positive derived lifetime falls through to Validate instead
+// of silently collapsing an interval to zero.
+func clampDuration(value, floor, ceiling time.Duration) time.Duration {
+	if value < floor {
+		value = floor
+	}
+	if ceiling > 0 && value > ceiling {
+		value = ceiling
+	}
+	return value
 }
 
 func getDatabaseConfig() DatabaseConfig {
@@ -914,6 +1144,16 @@ func (c *Config) Validate() error {
 	if err := c.MCPConnectRateLimit.Validate(); err != nil {
 		return err
 	}
+	if err := c.Server.MCPSubscriptions.Validate(c.Server.WriteTimeout); err != nil {
+		return err
+	}
+	apps := &c.Server.MCPApps
+	if apps.Enabled || apps.MaxResourceBytes != 0 || apps.MaxCSPOriginsPerDirective != 0 ||
+		apps.MaxCSPOriginsTotal != 0 || len(apps.AllowedOriginPatterns) != 0 || len(apps.AllowedPermissions) != 0 {
+		if err := apps.Validate(); err != nil {
+			return err
+		}
+	}
 	if c.isDeployed() && c.ConfigSync.DataPlaneEnabled && c.ConfigSync.TLSInsecure {
 		return fmt.Errorf("%w: CONFIG_SYNC_TLS_INSECURE must not be true in deployed environments so the config-sync channel is not sent in cleartext", errors.ErrInvalidConfig)
 	}
@@ -922,6 +1162,226 @@ func (c *Config) Validate() error {
 	}
 	if err := c.ConfigSync.Validate(); err != nil {
 		return err
+	}
+	return nil
+}
+
+// Validate checks and normalizes MCP Apps policy settings.
+func (c *MCPAppsConfig) Validate() error {
+	bounds := [...]struct {
+		key                     string
+		value, minimum, maximum int
+	}{
+		{"MCP_APPS_MAX_RESOURCE_BYTES", c.MaxResourceBytes, minMCPAppsMaxResourceBytes, maxMCPAppsMaxResourceBytes},
+		{"MCP_APPS_MAX_CSP_ORIGINS_PER_DIRECTIVE", c.MaxCSPOriginsPerDirective, 1, maxMCPAppsCSPOriginsPerDirective},
+		{"MCP_APPS_MAX_CSP_ORIGINS_TOTAL", c.MaxCSPOriginsTotal, 1, maxMCPAppsCSPOriginsTotal},
+	}
+	for _, bound := range bounds {
+		if bound.value < bound.minimum || bound.value > bound.maximum {
+			return fmt.Errorf("%w: %s must be between %d and %d", errors.ErrInvalidConfig, bound.key, bound.minimum, bound.maximum)
+		}
+	}
+	if c.MaxCSPOriginsPerDirective > c.MaxCSPOriginsTotal {
+		return fmt.Errorf("%w: MCP_APPS_MAX_CSP_ORIGINS_PER_DIRECTIVE must not exceed MCP_APPS_MAX_CSP_ORIGINS_TOTAL", errors.ErrInvalidConfig)
+	}
+	if len(c.AllowedOriginPatterns) > c.MaxCSPOriginsTotal {
+		return fmt.Errorf("%w: MCP_APPS_ALLOWED_ORIGINS exceeds MCP_APPS_MAX_CSP_ORIGINS_TOTAL", errors.ErrInvalidConfig)
+	}
+	if len(c.AllowedPermissions) > 4 {
+		return fmt.Errorf("%w: MCP_APPS_ALLOWED_PERMISSIONS must not contain more than four entries", errors.ErrInvalidConfig)
+	}
+	origins := make([]string, 0, len(c.AllowedOriginPatterns))
+	seenOrigins := make(map[string]struct{}, len(c.AllowedOriginPatterns))
+	for index, pattern := range c.AllowedOriginPatterns {
+		origin, err := normalizeMCPAppsOrigin(pattern)
+		if err != nil {
+			return fmt.Errorf("%w: MCP_APPS_ALLOWED_ORIGINS entry %d is invalid: %v", errors.ErrInvalidConfig, index+1, err)
+		}
+		if _, exists := seenOrigins[origin]; exists {
+			return fmt.Errorf("%w: MCP_APPS_ALLOWED_ORIGINS contains a duplicate origin", errors.ErrInvalidConfig)
+		}
+		seenOrigins[origin] = struct{}{}
+		origins = append(origins, origin)
+	}
+	seenPermissions := make(map[string]struct{}, len(c.AllowedPermissions))
+	for index, permission := range c.AllowedPermissions {
+		switch permission {
+		case "camera", "microphone", "geolocation", "clipboardWrite":
+		default:
+			return fmt.Errorf("%w: MCP_APPS_ALLOWED_PERMISSIONS entry %d is unsupported", errors.ErrInvalidConfig, index+1)
+		}
+		if _, exists := seenPermissions[permission]; exists {
+			return fmt.Errorf("%w: MCP_APPS_ALLOWED_PERMISSIONS contains a duplicate entry", errors.ErrInvalidConfig)
+		}
+		seenPermissions[permission] = struct{}{}
+	}
+	c.AllowedOriginPatterns = origins
+	return nil
+}
+
+func normalizeMCPAppsOrigin(pattern string) (string, error) {
+	if strings.Contains(pattern, "*") {
+		return "", fmt.Errorf("wildcards are not allowed")
+	}
+	if !strings.HasPrefix(pattern, "https://") && !strings.HasPrefix(pattern, "wss://") {
+		return "", fmt.Errorf("must be a lowercase https or wss origin")
+	}
+	if strings.ContainsAny(pattern, "?#") {
+		return "", fmt.Errorf("query and fragment are not allowed")
+	}
+	parsed, err := url.Parse(pattern)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "wss") || parsed.Host == "" {
+		return "", fmt.Errorf("must be an https or wss origin")
+	}
+	if parsed.User != nil || parsed.Path != "" || parsed.Opaque != "" {
+		return "", fmt.Errorf("credentials and paths are not allowed")
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if !validMCPAppsHostname(host) || net.ParseIP(host) != nil || numericMCPAppsHost(host) {
+		return "", fmt.Errorf("host is not allowed")
+	}
+	if mcpAppsRebindingHost(host) {
+		return "", fmt.Errorf("host is not allowed")
+	}
+	_, icann := publicsuffix.PublicSuffix(host)
+	if !icann {
+		return "", fmt.Errorf("host must use an ICANN public suffix")
+	}
+	if _, err := publicsuffix.EffectiveTLDPlusOne(host); err != nil {
+		return "", fmt.Errorf("host must have a registrable domain")
+	}
+	port := parsed.Port()
+	if port == "" && strings.Contains(parsed.Host, ":") {
+		return "", fmt.Errorf("port is malformed or is the default port")
+	}
+	if port != "" {
+		number, err := strconv.Atoi(port)
+		if err != nil || number < 1 || number > 65535 || strconv.Itoa(number) != port || number == 443 {
+			return "", fmt.Errorf("port is malformed or is the default port")
+		}
+		port = ":" + port
+	}
+	return parsed.Scheme + "://" + host + port, nil
+}
+
+func mcpAppsRebindingHost(host string) bool {
+	for _, zone := range [...]string{"nip.io", "sslip.io", "xip.io", "localtest.me", "lvh.me"} {
+		if host == zone || strings.HasSuffix(host, "."+zone) {
+			return true
+		}
+	}
+	return false
+}
+
+func numericMCPAppsHost(host string) bool {
+	parts := strings.Split(host, ".")
+	if len(parts) > 4 {
+		return false
+	}
+	for _, part := range parts {
+		digits := part
+		base := byte('9')
+		if strings.HasPrefix(part, "0x") {
+			digits = part[2:]
+			base = 'f'
+		}
+		if digits == "" {
+			return false
+		}
+		for index := range digits {
+			value := digits[index]
+			if (value < '0' || value > '9') && (base != 'f' || value < 'a' || value > 'f') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func validMCPAppsHostname(host string) bool {
+	if host == "" || len(host) > 253 || strings.HasSuffix(host, ".") {
+		return false
+	}
+	for _, label := range strings.Split(host, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for i := range label {
+			if b := label[i]; (b < 'a' || b > 'z') && (b < '0' || b > '9') && b != '-' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// Validate refuses to boot when a lease could outlive the server write deadline.
+// A flush does not reset that deadline, so a lifetime the margin cannot cover
+// would be severed mid-frame at runtime instead of failing loudly at startup.
+// The whole rule is skipped when the feature is disabled.
+func (c MCPSubscriptionsConfig) Validate(writeTimeout time.Duration) error {
+	if !c.Enabled {
+		return nil
+	}
+	if c.MaxLifetime <= 0 || c.MaxLifetime+mcpSubscriptionsLifetimeMargin > writeTimeout {
+		return fmt.Errorf(
+			"%w: MCP_SUBSCRIPTIONS_MAX_LIFETIME (%s) plus the fixed %s margin must not exceed SERVER_WRITE_TIMEOUT (%s)",
+			errors.ErrInvalidConfig,
+			c.MaxLifetime,
+			mcpSubscriptionsLifetimeMargin,
+			writeTimeout,
+		)
+	}
+	caps := []struct {
+		key   string
+		value int
+	}{
+		{key: "MCP_SUBSCRIPTIONS_MAX_STREAMS", value: c.MaxStreams},
+		{key: "MCP_SUBSCRIPTIONS_MAX_PER_CONSUMER", value: c.MaxPerConsumer},
+		{key: "MCP_SUBSCRIPTIONS_MAX_PER_PRINCIPAL", value: c.MaxPerPrincipal},
+		{key: "MCP_SUBSCRIPTIONS_MAX_EVENT_BYTES", value: c.MaxEventBytes},
+		{key: "MCP_SUBSCRIPTIONS_MAX_URIS", value: c.MaxURIs},
+	}
+	for _, entry := range caps {
+		if entry.value <= 0 {
+			return fmt.Errorf("%w: %s must be a positive integer", errors.ErrInvalidConfig, entry.key)
+		}
+	}
+	if !c.UpstreamEnabled {
+		return nil
+	}
+	upstreamCaps := []struct {
+		key   string
+		value int
+	}{
+		{key: "MCP_SUBSCRIPTIONS_MAX_UPSTREAM_LISTENERS", value: c.MaxUpstreamListeners},
+		{key: "MCP_SUBSCRIPTIONS_MAX_UPSTREAM_PER_ORIGIN", value: c.MaxUpstreamPerOrigin},
+		{key: "MCP_SUBSCRIPTIONS_STREAM_QUEUE", value: c.StreamQueue},
+	}
+	for _, entry := range upstreamCaps {
+		if entry.value <= 0 {
+			return fmt.Errorf("%w: %s must be a positive integer", errors.ErrInvalidConfig, entry.key)
+		}
+	}
+	if c.UpstreamIdleTimeout <= 0 {
+		return fmt.Errorf("%w: MCP_SUBSCRIPTIONS_UPSTREAM_IDLE_TIMEOUT must be a positive duration", errors.ErrInvalidConfig)
+	}
+	if c.ReconnectMaxAttempts < 0 {
+		return fmt.Errorf("%w: MCP_SUBSCRIPTIONS_RECONNECT_MAX_ATTEMPTS must be zero or greater", errors.ErrInvalidConfig)
+	}
+	if c.ReconnectBackoffMin <= 0 {
+		return fmt.Errorf("%w: MCP_SUBSCRIPTIONS_RECONNECT_BACKOFF_MIN must be a positive duration", errors.ErrInvalidConfig)
+	}
+	if c.ReconnectBackoffMax <= 0 {
+		return fmt.Errorf("%w: MCP_SUBSCRIPTIONS_RECONNECT_BACKOFF_MAX must be a positive duration", errors.ErrInvalidConfig)
+	}
+	if c.ReconnectBackoffMin > c.ReconnectBackoffMax {
+		return fmt.Errorf(
+			"%w: MCP_SUBSCRIPTIONS_RECONNECT_BACKOFF_MIN (%s) must not exceed MCP_SUBSCRIPTIONS_RECONNECT_BACKOFF_MAX (%s)",
+			errors.ErrInvalidConfig,
+			c.ReconnectBackoffMin,
+			c.ReconnectBackoffMax,
+		)
 	}
 	return nil
 }

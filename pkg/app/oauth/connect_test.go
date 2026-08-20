@@ -15,6 +15,7 @@
 package oauth_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -24,6 +25,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,6 +37,32 @@ import (
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
 )
+
+type pkgSyncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *pkgSyncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *pkgSyncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
+func capturePkgSlog(t *testing.T) *pkgSyncBuffer {
+	t.Helper()
+	buf := &pkgSyncBuffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return buf
+}
 
 type memConnectStore struct {
 	tickets       map[string]oauth.ConnectTicket
@@ -160,6 +188,12 @@ func discardConnectAuditor() oauth.ConnectAuditor {
 
 func connectFixture(t *testing.T, providerTokenURL string) (oauth.ConnectService, *memVaultRepo, ids.GatewayID) {
 	t.Helper()
+	svc, _, vault, gw := connectFixtureWithStore(t, providerTokenURL)
+	return svc, vault, gw
+}
+
+func connectFixtureWithStore(t *testing.T, providerTokenURL string) (oauth.ConnectService, *memConnectStore, *memVaultRepo, ids.GatewayID) {
+	t.Helper()
 	gw := ids.New[ids.GatewayKind]()
 	reg, err := registrydomain.NewMCPRegistry(gw, "github-mcp", "", &registrydomain.MCPTarget{
 		URL: "https://up.example.com/mcp",
@@ -191,7 +225,7 @@ func connectFixture(t *testing.T, providerTokenURL string) (oauth.ConnectService
 		infraoauth.NewUpstreamRegistrar(store, nil),
 		discardConnectAuditor(),
 	)
-	return svc, vault, gw
+	return svc, store, vault, gw
 }
 
 func TestConnectService_FullConsentFlow(t *testing.T) {
@@ -239,7 +273,7 @@ func TestConnectService_FullConsentFlow(t *testing.T) {
 		t.Fatal("no state in authorize URL")
 	}
 
-	backTicket, err := svc.Callback(ctx, "https://gw.example.com", "github", state, "the-code", "", "")
+	backTicket, err := svc.Callback(ctx, "https://gw.example.com", "github", state, "the-code", "", "", "")
 	if err != nil {
 		t.Fatalf("Callback: %v", err)
 	}
@@ -273,8 +307,15 @@ func TestConnectService_FullConsentFlow(t *testing.T) {
 
 func fakeSpecUpstream(t *testing.T, registrations *int, tokenForm *url.Values) *httptest.Server {
 	t.Helper()
+	srv, _ := fakeSpecUpstreamConfigured(t, registrations, tokenForm, false)
+	return srv
+}
+
+func fakeSpecUpstreamConfigured(t *testing.T, registrations *int, tokenForm *url.Values, advertiseISS bool) (*httptest.Server, *int) {
+	t.Helper()
 	mux := http.NewServeMux()
 	var srvURL string
+	tokenHits := 0
 	mux.HandleFunc("/.well-known/oauth-protected-resource/mcp", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"resource":              srvURL + "/mcp",
@@ -283,12 +324,16 @@ func fakeSpecUpstream(t *testing.T, registrations *int, tokenForm *url.Values) *
 		})
 	})
 	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		doc := map[string]any{
 			"issuer":                 srvURL,
 			"authorization_endpoint": srvURL + "/authorize",
 			"token_endpoint":         srvURL + "/token",
 			"registration_endpoint":  srvURL + "/register",
-		})
+		}
+		if advertiseISS {
+			doc["authorization_response_iss_parameter_supported"] = true
+		}
+		_ = json.NewEncoder(w).Encode(doc)
 	})
 	mux.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
 		*registrations++
@@ -301,6 +346,7 @@ func fakeSpecUpstream(t *testing.T, registrations *int, tokenForm *url.Values) *
 		_ = json.NewEncoder(w).Encode(map[string]any{"client_id": "dcr-client-1"})
 	})
 	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		tokenHits++
 		_ = r.ParseForm()
 		*tokenForm = r.Form
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -310,7 +356,7 @@ func fakeSpecUpstream(t *testing.T, registrations *int, tokenForm *url.Values) *
 	srv := httptest.NewServer(mux)
 	srvURL = srv.URL
 	t.Cleanup(srv.Close)
-	return srv
+	return srv, &tokenHits
 }
 
 func TestConnectService_AutoRegistrationFlow(t *testing.T) {
@@ -377,7 +423,7 @@ func TestConnectService_AutoRegistrationFlow(t *testing.T) {
 		t.Fatalf("scope = %q, want scopes from discovery", q.Get("scope"))
 	}
 
-	if _, err := svc.Callback(ctx, "https://gw.example.com", "linear", q.Get("state"), "the-code", "", ""); err != nil {
+	if _, err := svc.Callback(ctx, "https://gw.example.com", "linear", q.Get("state"), "the-code", "", "", ""); err != nil {
 		t.Fatalf("Callback: %v", err)
 	}
 	if tokenForm.Get("code_verifier") == "" {
@@ -464,10 +510,10 @@ func TestConnectService_StateIsSingleUse(t *testing.T) {
 	u, _ := url.Parse(location)
 	state := u.Query().Get("state")
 
-	if _, err := svc.Callback(ctx, "https://gw", "github", state, "c", "", ""); err != nil {
+	if _, err := svc.Callback(ctx, "https://gw", "github", state, "c", "", "", ""); err != nil {
 		t.Fatalf("first callback: %v", err)
 	}
-	if _, err := svc.Callback(ctx, "https://gw", "github", state, "c", "", ""); err == nil {
+	if _, err := svc.Callback(ctx, "https://gw", "github", state, "c", "", "", ""); err == nil {
 		t.Fatal("state replay succeeded, want single-use")
 	}
 }
@@ -582,7 +628,7 @@ func TestConnectService_ProviderDenialRelaysTicket(t *testing.T) {
 	u, _ := url.Parse(location)
 	state := u.Query().Get("state")
 
-	backTicket, err := svc.Callback(ctx, "https://gw", "github", state, "", "access_denied", "user said no")
+	backTicket, err := svc.Callback(ctx, "https://gw", "github", state, "", "access_denied", "user said no", "")
 	if err == nil {
 		t.Fatal("denied consent returned nil error")
 	}
@@ -592,4 +638,183 @@ func TestConnectService_ProviderDenialRelaysTicket(t *testing.T) {
 	if len(vault.creds) != 0 {
 		t.Fatal("denied consent stored a credential")
 	}
+}
+
+func autoConnectSetup(t *testing.T, advertiseISS bool) (oauth.ConnectService, *memConnectStore, ids.GatewayID, *httptest.Server, *int) {
+	t.Helper()
+	registrations := 0
+	var tokenForm url.Values
+	upstream, tokenHits := fakeSpecUpstreamConfigured(t, &registrations, &tokenForm, advertiseISS)
+
+	gw := ids.New[ids.GatewayKind]()
+	reg, err := registrydomain.NewMCPRegistry(gw, "linear-mcp", "", &registrydomain.MCPTarget{
+		URL: upstream.URL + "/mcp",
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     "linear",
+			Registration: registrydomain.RegistrationAuto,
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
+		Consumer: &consumerdomain.Consumer{
+			ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
+			Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
+		},
+		Registries: []*registrydomain.Registry{reg},
+	}})
+	store := newMemConnectStore()
+	svc := oauth.NewConnectService(
+		store,
+		&memVaultRepo{},
+		&stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil),
+		infraoauth.NewUpstreamRegistrar(store, nil),
+		discardConnectAuditor(),
+	)
+	return svc, store, gw, upstream, tokenHits
+}
+
+func TestConnectService_ParksIssuerAndAdvertised(t *testing.T) {
+	t.Parallel()
+	svc, store, gw, upstream, _ := autoConnectSetup(t, true)
+	ctx := context.Background()
+	ticket, err := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	if _, err := svc.Start(ctx, "https://gw.example.com", ticket, "linear"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if len(store.connects) != 1 {
+		t.Fatalf("parked states = %d, want 1", len(store.connects))
+	}
+	var parked oauth.ConnectState
+	for _, s := range store.connects {
+		parked = s
+	}
+	if parked.Issuer != upstream.URL {
+		t.Fatalf("parked issuer = %q, want %s", parked.Issuer, upstream.URL)
+	}
+	if !parked.IssAdvertised {
+		t.Fatal("expected IssAdvertised=true when AS advertised the iss parameter")
+	}
+}
+
+func TestConnectService_StaticAdvertisedFalse(t *testing.T) {
+	t.Parallel()
+	svc, store, _, gw := connectFixtureWithStore(t, "https://unused")
+	ctx := context.Background()
+	ticket, _ := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
+	if _, err := svc.Start(ctx, "https://gw.example.com", ticket, "github"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	var parked oauth.ConnectState
+	for _, s := range store.connects {
+		parked = s
+	}
+	if parked.IssAdvertised {
+		t.Fatal("static IdP must park advertised=false")
+	}
+	if parked.Issuer != "" {
+		t.Fatalf("static IdP parked issuer = %q, want empty", parked.Issuer)
+	}
+}
+
+func TestConnectService_MixUpRejectedBeforeTokenHTTP(t *testing.T) {
+	svc, _, gw, _, tokenHits := autoConnectSetup(t, true)
+	ctx := context.Background()
+	ticket, _ := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
+	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "linear")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	state := mustQuery(t, location, "state")
+	logs := capturePkgSlog(t)
+
+	_, err = svc.Callback(ctx, "https://gw.example.com", "linear", state, "the-code-secret", "", "", "https://attacker.example")
+	var oe *oauth.OAuthError
+	if !errors.As(err, &oe) || oe.Code != "invalid_request" {
+		t.Fatalf("error = %v, want invalid_request", err)
+	}
+	if *tokenHits != 0 {
+		t.Fatalf("token HTTP was reached (%d hits); mix-up must fail before ExchangeCode", *tokenHits)
+	}
+	logged := logs.String()
+	if !strings.Contains(logged, "oauth.issuer_mismatch") {
+		t.Fatalf("expected oauth.issuer_mismatch, got %s", logged)
+	}
+	if strings.Contains(logged, "the-code-secret") || strings.Contains(logged, "client_secret") {
+		t.Fatalf("security log leaked secrets: %s", logged)
+	}
+}
+
+func TestConnectService_MissingISSRejectedWhenAdvertised(t *testing.T) {
+	t.Parallel()
+	svc, _, gw, _, tokenHits := autoConnectSetup(t, true)
+	ctx := context.Background()
+	ticket, _ := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
+	location, _ := svc.Start(ctx, "https://gw.example.com", ticket, "linear")
+	state := mustQuery(t, location, "state")
+
+	_, err := svc.Callback(ctx, "https://gw.example.com", "linear", state, "the-code", "", "", "")
+	var oe *oauth.OAuthError
+	if !errors.As(err, &oe) || oe.Code != "invalid_request" {
+		t.Fatalf("error = %v, want invalid_request", err)
+	}
+	if *tokenHits != 0 {
+		t.Fatalf("token HTTP was reached (%d hits)", *tokenHits)
+	}
+}
+
+func TestConnectService_MatchingISSAccepted(t *testing.T) {
+	t.Parallel()
+	svc, _, gw, upstream, tokenHits := autoConnectSetup(t, true)
+	ctx := context.Background()
+	ticket, _ := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
+	location, _ := svc.Start(ctx, "https://gw.example.com", ticket, "linear")
+	state := mustQuery(t, location, "state")
+
+	if _, err := svc.Callback(ctx, "https://gw.example.com", "linear", state, "the-code", "", "", upstream.URL); err != nil {
+		t.Fatalf("callback: %v", err)
+	}
+	if *tokenHits != 1 {
+		t.Fatalf("token hits = %d, want 1", *tokenHits)
+	}
+}
+
+func TestConnectService_StaticOmitISSAllowed(t *testing.T) {
+	t.Parallel()
+	tokenHits := 0
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tokenHits++
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "gh-access", "refresh_token": "gh-refresh", "expires_in": 3600})
+	}))
+	defer provider.Close()
+	svc, _, gw := connectFixture(t, provider.URL)
+	ctx := context.Background()
+	ticket, _ := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
+	location, _ := svc.Start(ctx, "https://gw.example.com", ticket, "github")
+	state := mustQuery(t, location, "state")
+	if _, err := svc.Callback(ctx, "https://gw.example.com", "github", state, "the-code", "", "", ""); err != nil {
+		t.Fatalf("static omit-iss: %v", err)
+	}
+	if tokenHits != 1 {
+		t.Fatalf("token hits = %d, want 1", tokenHits)
+	}
+}
+
+func mustQuery(t *testing.T, raw, key string) string {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse %q: %v", raw, err)
+	}
+	v := u.Query().Get(key)
+	if v == "" {
+		t.Fatalf("missing query %s in %s", key, raw)
+	}
+	return v
 }

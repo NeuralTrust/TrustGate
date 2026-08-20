@@ -27,7 +27,10 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
-var ErrMethodNotFound = errors.New("mcp: method not found")
+var (
+	ErrMethodNotFound          = errors.New("mcp: method not found")
+	errMalformedAppsCapability = errors.New("mcp: malformed Apps capability")
+)
 
 type InvalidParamsError struct {
 	Reason string
@@ -35,18 +38,99 @@ type InvalidParamsError struct {
 
 func (e *InvalidParamsError) Error() string { return "mcp: invalid params: " + e.Reason }
 
+// DefaultMaxContinuationBytes caps the multi round-trip payload a client may
+// echo back on tools/call.
+const DefaultMaxContinuationBytes = 256 * 1024
+
 type RPCGateway struct {
-	composer appmcp.Composer
-	plugins  *appmcp.PluginRunner
-	limiter  ratelimitapp.Checker
+	composer             appmcp.Composer
+	plugins              *appmcp.PluginRunner
+	limiter              ratelimitapp.Checker
+	appsListPolicy       appmcp.AppsListPolicy
+	appsReadPolicy       appmcp.AppsReadPolicy
+	maxContinuationBytes int
 }
 
 // NewRPCGateway wires MCP dispatch; nil limiter defaults to noop.
 func NewRPCGateway(composer appmcp.Composer, plugins *appmcp.PluginRunner, limiter ratelimitapp.Checker) *RPCGateway {
+	return NewRPCGatewayWithLimits(composer, plugins, limiter, DefaultMaxContinuationBytes)
+}
+
+// NewRPCGatewayWithLimits wires MCP dispatch with an explicit continuation cap.
+func NewRPCGatewayWithLimits(
+	composer appmcp.Composer,
+	plugins *appmcp.PluginRunner,
+	limiter ratelimitapp.Checker,
+	maxContinuationBytes int,
+) *RPCGateway {
+	return NewRPCGatewayWithAppsPolicies(
+		composer,
+		plugins,
+		limiter,
+		appmcp.AppsListPolicy{},
+		appmcp.AppsReadPolicy{},
+		maxContinuationBytes,
+	)
+}
+
+// NewRPCGatewayWithAppsListPolicy wires MCP dispatch with explicit Apps list and continuation policies.
+func NewRPCGatewayWithAppsListPolicy(
+	composer appmcp.Composer,
+	plugins *appmcp.PluginRunner,
+	limiter ratelimitapp.Checker,
+	appsListPolicy appmcp.AppsListPolicy,
+	maxContinuationBytes int,
+) *RPCGateway {
+	return NewRPCGatewayWithAppsPolicies(
+		composer,
+		plugins,
+		limiter,
+		appsListPolicy,
+		appmcp.AppsReadPolicy{},
+		maxContinuationBytes,
+	)
+}
+
+// NewRPCGatewayWithAppsPolicies wires MCP dispatch with explicit Apps and continuation policies.
+func NewRPCGatewayWithAppsPolicies(
+	composer appmcp.Composer,
+	plugins *appmcp.PluginRunner,
+	limiter ratelimitapp.Checker,
+	appsListPolicy appmcp.AppsListPolicy,
+	appsReadPolicy appmcp.AppsReadPolicy,
+	maxContinuationBytes int,
+) *RPCGateway {
 	if limiter == nil {
 		limiter = ratelimitapp.NewNoopChecker()
 	}
-	return &RPCGateway{composer: composer, plugins: plugins, limiter: limiter}
+	if maxContinuationBytes <= 0 {
+		maxContinuationBytes = DefaultMaxContinuationBytes
+	}
+	return &RPCGateway{
+		composer:             composer,
+		plugins:              plugins,
+		limiter:              limiter,
+		appsListPolicy:       appsListPolicy,
+		appsReadPolicy:       appsReadPolicy,
+		maxContinuationBytes: maxContinuationBytes,
+	}
+}
+
+func validateContinuationSize(inputResponses json.RawMessage, requestState string, limit int) error {
+	if limit <= 0 {
+		limit = DefaultMaxContinuationBytes
+	}
+	if len(inputResponses)+len(requestState) > limit {
+		return &InvalidParamsError{Reason: "tools/call continuation exceeds the maximum size"}
+	}
+	if len(inputResponses) == 0 {
+		return nil
+	}
+	var shape map[string]json.RawMessage
+	if err := json.Unmarshal(inputResponses, &shape); err != nil {
+		return &InvalidParamsError{Reason: "tools/call inputResponses must be an object"}
+	}
+	return nil
 }
 
 func (g *RPCGateway) Dispatch(ctx context.Context, rc *appconsumer.RoutableConsumer, method string, params json.RawMessage) (any, error) {
@@ -54,6 +138,28 @@ func (g *RPCGateway) Dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 	result, err := g.dispatch(ctx, rc, method, params)
 	g.finishSpan(span, err)
 	return result, err
+}
+
+// OpenSubscriptionLease runs the gateway-side admission work a lease is charged
+// for. Tools subscriptions must pass the same discovery plugin verdict as an
+// ordinary tools/list before registry capacity is claimed.
+func (g *RPCGateway) OpenSubscriptionLease(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	honoured appmcp.HonouredSet,
+) error {
+	span, ctx := g.startSpan(ctx, appmcp.MethodSubscriptionsListen, nil)
+	err := g.checkRateLimit(ctx, rc)
+	if err == nil && honoured.Has(appmcp.NotificationToolsListChanged) {
+		var tools []appmcp.Tool
+		tools, err = g.composer.ListTools(ctx, rc)
+		if err == nil {
+			tools, _ = g.appsListPolicy.FilterTools(tools)
+			err = g.plugins.PreResponseToolsDiscovery(ctx, rc, tools)
+		}
+	}
+	g.finishSpan(span, err)
+	return err
 }
 
 func (g *RPCGateway) startSpan(ctx context.Context, method string, params json.RawMessage) (*trace.Span, context.Context) {
@@ -64,6 +170,7 @@ func (g *RPCGateway) startSpan(ctx context.Context, method string, params json.R
 	span := rt.StartSpan(trace.SpanMCP, method)
 	operation, tool, prompt, resourceURI := mcpRequestAttrs(method, params)
 	span.SetMCPRequest(method, operation, tool, prompt, resourceURI)
+	stampMCPProtocol(span, ctx)
 	return span, trace.NewSpanContext(ctx, span)
 }
 
@@ -130,6 +237,13 @@ func mcpRequestAttrs(method string, params json.RawMessage) (operation, tool, pr
 		}
 		_ = json.Unmarshal(params, &p)
 		return "prompt", "", p.Name, ""
+	case appmcp.MethodTasksGet, appmcp.MethodTasksUpdate, appmcp.MethodTasksCancel:
+		// The tool the task belongs to is only known once the handle is
+		// unwrapped, and the handle itself is never an attribute.
+		return "task", "", "", ""
+	case appmcp.MethodSubscriptionsListen:
+		// Neither the subscription id nor any requested URI is ever an attribute.
+		return "subscription", "", "", ""
 	default:
 		return "", "", "", ""
 	}
@@ -171,54 +285,61 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		if err != nil {
 			return nil, err
 		}
+		tools, _ = g.appsListPolicy.FilterTools(tools)
 		if tools == nil {
 			tools = []appmcp.Tool{}
 		}
-		result := map[string]any{"tools": tools}
-		raw, err := json.Marshal(result)
-		if err != nil {
+		if err := g.plugins.PreResponseToolsDiscovery(ctx, rc, tools); err != nil {
 			return nil, err
 		}
-		// A tool listing is static server metadata, so it is scanned only for
-		// threats in the tool descriptions (indirect prompt injection, code
-		// injection): a genuine block stops discovery, while a data-masking
-		// transform is ignored — the listing is never redacted or rewritten.
-		if err := g.plugins.PreResponseDiscovery(ctx, rc, raw); err != nil {
-			return nil, err
-		}
-		return result, nil
+		return map[string]any{"tools": tools}, nil
 	case "tools/call":
 		var p struct {
-			Name      string          `json:"name"`
-			Arguments json.RawMessage `json:"arguments,omitempty"`
+			Name           string          `json:"name"`
+			Arguments      json.RawMessage `json:"arguments,omitempty"`
+			InputResponses json.RawMessage `json:"inputResponses,omitempty"`
+			RequestState   string          `json:"requestState,omitempty"`
 		}
 		if err := json.Unmarshal(params, &p); err != nil || p.Name == "" {
 			return nil, &InvalidParamsError{Reason: "tools/call requires params.name"}
 		}
+		if err := validateContinuationSize(p.InputResponses, p.RequestState, g.maxContinuationBytes); err != nil {
+			return nil, err
+		}
+		// Every round runs the full policy pass: rate limits, plugins, and the
+		// composer's toolkit check. A continuation is never a shortcut past them.
 		if err := g.checkRateLimit(ctx, rc); err != nil {
 			return nil, err
 		}
-		pre, err := g.plugins.PreRequest(ctx, rc, p.Name, p.Arguments)
+		pre, err := g.plugins.PreRequest(ctx, rc, p.Name, p.Arguments, p.InputResponses)
 		if err != nil {
 			return nil, err
 		}
 		// The request stage may rewrite the tool input (data-masking) or answer
 		// the call outright. Carry both forward: reusing the original arguments
 		// would send upstream exactly what a plugin just redacted.
-		arguments := p.Arguments
+		call := appmcp.ToolCall{
+			Name:           p.Name,
+			Arguments:      p.Arguments,
+			InputResponses: p.InputResponses,
+			RequestState:   p.RequestState,
+		}
 		if pre != nil {
 			if pre.Result != nil {
 				return pre.Result, nil
 			}
 			if pre.Arguments != nil {
-				arguments = pre.Arguments
+				call.Arguments = pre.Arguments
+			}
+			if pre.InputResponses != nil {
+				call.InputResponses = pre.InputResponses
 			}
 		}
-		result, err := g.composer.CallTool(ctx, rc, p.Name, arguments)
+		result, err := g.composer.CallTool(ctx, rc, call)
 		if err != nil {
 			return nil, err
 		}
-		post, err := g.plugins.PreResponse(ctx, rc, p.Name, arguments, result)
+		post, err := g.plugins.PreResponse(ctx, rc, p.Name, call.Arguments, result)
 		if err != nil {
 			return nil, err
 		}
@@ -234,6 +355,7 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		if err != nil {
 			return nil, err
 		}
+		resources, _ = g.appsListPolicy.FilterResources(resources)
 		if resources == nil {
 			resources = []appmcp.Resource{}
 		}
@@ -257,10 +379,36 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		if err := json.Unmarshal(params, &p); err != nil || p.URI == "" {
 			return nil, &InvalidParamsError{Reason: "resources/read requires params.uri"}
 		}
+		appsRead := g.appsReadPolicy.RequiresValidation(p.URI)
+		if appsRead {
+			protocol, _ := ctx.Value(mcpProtocolContextKey{}).(mcpProtocolAttrs)
+			if protocol.era != eraLabel(protocolEraModern) &&
+				requestMetadataProtocolVersion(params).value != modernProtocolVersion {
+				return nil, appmcp.MapAppsReadError(appmcp.ErrAppsResourceRejected)
+			}
+			capability, err := declaredMCPAppsCapability(rawClientCapabilities(params))
+			if err != nil {
+				return nil, errMalformedAppsCapability
+			}
+			if err := g.appsReadPolicy.ValidateReadRequest(p.URI, capability); err != nil {
+				return nil, appmcp.MapAppsReadError(err)
+			}
+		}
 		if err := g.checkRateLimit(ctx, rc); err != nil {
 			return nil, err
 		}
-		return g.composer.ReadResource(ctx, rc, p.URI)
+		result, err := g.composer.ReadResource(ctx, rc, p.URI)
+		if err != nil {
+			return nil, err
+		}
+		if !appsRead {
+			return result, nil
+		}
+		result, err = g.appsReadPolicy.ValidateReadResult(p.URI, result)
+		if err != nil {
+			return nil, appmcp.MapAppsReadError(err)
+		}
+		return appmcp.AppsReadResult(result), nil
 	case "prompts/list":
 		if err := g.checkRateLimit(ctx, rc); err != nil {
 			return nil, err
@@ -285,6 +433,8 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 			return nil, err
 		}
 		return g.composer.GetPrompt(ctx, rc, p.Name, p.Arguments)
+	case appmcp.MethodTasksGet, appmcp.MethodTasksUpdate, appmcp.MethodTasksCancel:
+		return g.dispatchTask(ctx, rc, method, params)
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrMethodNotFound, method)
 	}

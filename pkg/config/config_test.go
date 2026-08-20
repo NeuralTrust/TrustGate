@@ -79,6 +79,100 @@ func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	if cfg.Telemetry.ExportersMetadata != "" || cfg.Telemetry.ExportersRaw != "" {
 		t.Errorf("Telemetry exporters env defaults = %q/%q, want empty", cfg.Telemetry.ExportersMetadata, cfg.Telemetry.ExportersRaw)
 	}
+	apps := cfg.Server.MCPApps
+	if apps.Enabled || apps.MaxResourceBytes != 1024*1024 ||
+		apps.MaxCSPOriginsPerDirective != 16 || apps.MaxCSPOriginsTotal != 64 ||
+		len(apps.AllowedOriginPatterns) != 0 || len(apps.AllowedPermissions) != 0 {
+		t.Errorf("MCP Apps defaults = %+v", apps)
+	}
+}
+
+func TestLoadConfig_MCPAppsPolicy(t *testing.T) {
+	minimumEnv(t)
+	t.Setenv("MCP_APPS_ENABLED", "true")
+	t.Setenv("MCP_APPS_MAX_RESOURCE_BYTES", "65536")
+	t.Setenv("MCP_APPS_MAX_CSP_ORIGINS_PER_DIRECTIVE", "8")
+	t.Setenv("MCP_APPS_MAX_CSP_ORIGINS_TOTAL", "32")
+	t.Setenv("MCP_APPS_ALLOWED_ORIGINS", "https://EXAMPLE.com,wss://events.example.com:8443")
+	t.Setenv("MCP_APPS_ALLOWED_PERMISSIONS", "camera,clipboardWrite")
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	apps := cfg.Server.MCPApps
+	if !apps.Enabled || apps.MaxResourceBytes != 65536 ||
+		strings.Join(apps.AllowedOriginPatterns, ",") != "https://example.com,wss://events.example.com:8443" ||
+		strings.Join(apps.AllowedPermissions, ",") != "camera,clipboardWrite" {
+		t.Fatalf("MCP Apps policy = %+v", apps)
+	}
+}
+
+func TestLoadConfig_RejectsInvalidMCPAppsPolicy(t *testing.T) {
+	settings := map[string][2]string{
+		"resource below minimum": {"MCP_APPS_MAX_RESOURCE_BYTES", "65535"},
+		"resource above maximum": {"MCP_APPS_MAX_RESOURCE_BYTES", "2097153"},
+		"CSP directive overflow": {"MCP_APPS_MAX_CSP_ORIGINS_PER_DIRECTIVE", "65"},
+		"CSP total overflow":     {"MCP_APPS_MAX_CSP_ORIGINS_TOTAL", "65"},
+		"unknown permission":     {"MCP_APPS_ALLOWED_PERMISSIONS", "clipboard-read"},
+		"duplicate permission":   {"MCP_APPS_ALLOWED_PERMISSIONS", "camera,camera"},
+	}
+	for name, env := range settings {
+		t.Run(name, func(t *testing.T) {
+			minimumEnv(t)
+			t.Setenv(env[0], env[1])
+			_, err := LoadConfig()
+			if err == nil || !stderrors.Is(err, errors.ErrInvalidConfig) || strings.Contains(err.Error(), env[1]) {
+				t.Fatalf("LoadConfig error = %v, want ErrInvalidConfig", err)
+			}
+		})
+	}
+	origins := []string{
+		"https://example.com/app", "https://example.com?x=1", "https://example.com#app",
+		"https://user@example.com", "https://192.0.2.1", "https://[::1]", "https://127.1",
+		"https://127.0.1", "https://0177.0.0.1", "https://127.000.000.001",
+		"https://2130706433", "https://0x7f000001", "HTTPS://example.com", "https://localhost",
+		"https://api.localhost", "https://service.localdomain", "https://service.internal",
+		"https://service.local", "https://service.corp", "https://app.github.io", "https://*.example.com",
+		"https://nip.io", "https://127.0.0.1.nip.io", "https://a.sslip.io", "https://xip.io",
+		"https://foo.localtest.me", "https://lvh.me",
+		"https://example.com:443", "https://example.com:", "https://EXAMPLE.com,https://example.com",
+	}
+	for _, origin := range origins {
+		minimumEnv(t)
+		t.Setenv("MCP_APPS_ALLOWED_ORIGINS", origin)
+		_, err := LoadConfig()
+		if err == nil || !stderrors.Is(err, errors.ErrInvalidConfig) || strings.Contains(err.Error(), origin) {
+			t.Errorf("origin %q rejection error = %v", origin, err)
+		}
+	}
+}
+
+func TestMCPAppsConfigValidateDirectBounds(t *testing.T) {
+	valid := func() MCPAppsConfig {
+		return MCPAppsConfig{MaxResourceBytes: 64 * 1024, MaxCSPOriginsPerDirective: 1, MaxCSPOriginsTotal: 1}
+	}
+	reject := func(name string, mutate func(*MCPAppsConfig)) {
+		t.Helper()
+		cfg := valid()
+		mutate(&cfg)
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("%s: Validate succeeded", name)
+		}
+	}
+	reject("zero resource", func(c *MCPAppsConfig) { c.MaxResourceBytes = 0 })
+	reject("zero config", func(c *MCPAppsConfig) { *c = MCPAppsConfig{} })
+	reject("large resource", func(c *MCPAppsConfig) { c.MaxResourceBytes = 2*1024*1024 + 1 })
+	reject("zero per directive", func(c *MCPAppsConfig) { c.MaxCSPOriginsPerDirective = 0 })
+	reject("large per directive", func(c *MCPAppsConfig) { c.MaxCSPOriginsPerDirective = 65 })
+	reject("zero total", func(c *MCPAppsConfig) { c.MaxCSPOriginsTotal = 0 })
+	reject("large total", func(c *MCPAppsConfig) { c.MaxCSPOriginsTotal = 65 })
+	reject("per exceeds total", func(c *MCPAppsConfig) { c.MaxCSPOriginsPerDirective = 2 })
+	reject("too many origins", func(c *MCPAppsConfig) {
+		c.AllowedOriginPatterns = []string{"https://a.com", "https://b.com"}
+	})
+	reject("too many permissions", func(c *MCPAppsConfig) {
+		c.AllowedPermissions = []string{"camera", "microphone", "geolocation", "clipboardWrite", "camera"}
+	})
 }
 
 func TestLoadConfig_MCPConnectRateLimitConfigured(t *testing.T) {
@@ -989,5 +1083,365 @@ func TestValidate_LocalAllowsConfigSyncTLSInsecure(t *testing.T) {
 
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("local data plane should allow CONFIG_SYNC_TLS_INSECURE: %v", err)
+	}
+}
+
+func TestGetMCPSubscriptionsConfig_Defaults(t *testing.T) {
+	t.Setenv("SERVER_WRITE_TIMEOUT", "")
+	got := getMCPSubscriptionsConfig(defaultServerWriteTimeout)
+
+	if got.Enabled {
+		t.Error("MCP_SUBSCRIPTIONS_ENABLED must default to false")
+	}
+	if want := defaultServerWriteTimeout - mcpSubscriptionsLifetimeMargin; got.MaxLifetime != want {
+		t.Errorf("MaxLifetime = %s, want derived %s", got.MaxLifetime, want)
+	}
+	if got.ReauthInterval != defaultMCPSubscriptionsReauthInterval {
+		t.Errorf("ReauthInterval = %s, want %s", got.ReauthInterval, defaultMCPSubscriptionsReauthInterval)
+	}
+	if got.Keepalive != defaultMCPSubscriptionsKeepalive {
+		t.Errorf("Keepalive = %s, want %s", got.Keepalive, defaultMCPSubscriptionsKeepalive)
+	}
+	if got.MaxStreams != 128 {
+		t.Errorf("MaxStreams = %d, want 128", got.MaxStreams)
+	}
+	if got.MaxPerConsumer != defaultMCPSubscriptionsMaxPerConsumer {
+		t.Errorf("MaxPerConsumer = %d, want %d", got.MaxPerConsumer, defaultMCPSubscriptionsMaxPerConsumer)
+	}
+	if got.MaxPerPrincipal != defaultMCPSubscriptionsMaxPerPrincipal {
+		t.Errorf("MaxPerPrincipal = %d, want %d", got.MaxPerPrincipal, defaultMCPSubscriptionsMaxPerPrincipal)
+	}
+	if got.MaxEventBytes != defaultMCPSubscriptionsMaxEventBytes {
+		t.Errorf("MaxEventBytes = %d, want %d", got.MaxEventBytes, defaultMCPSubscriptionsMaxEventBytes)
+	}
+	if got.MaxURIs != defaultMCPSubscriptionsMaxURIs {
+		t.Errorf("MaxURIs = %d, want %d", got.MaxURIs, defaultMCPSubscriptionsMaxURIs)
+	}
+	if got.UpstreamEnabled {
+		t.Error("MCP_SUBSCRIPTIONS_UPSTREAM_ENABLED must default to false")
+	}
+	if got.MaxUpstreamListeners != defaultMCPSubscriptionsMaxUpstreamListeners {
+		t.Errorf("MaxUpstreamListeners = %d, want %d", got.MaxUpstreamListeners, defaultMCPSubscriptionsMaxUpstreamListeners)
+	}
+	if got.MaxUpstreamPerOrigin != defaultMCPSubscriptionsMaxUpstreamPerOrigin {
+		t.Errorf("MaxUpstreamPerOrigin = %d, want %d", got.MaxUpstreamPerOrigin, defaultMCPSubscriptionsMaxUpstreamPerOrigin)
+	}
+	if got.StreamQueue != defaultMCPSubscriptionsStreamQueue {
+		t.Errorf("StreamQueue = %d, want %d", got.StreamQueue, defaultMCPSubscriptionsStreamQueue)
+	}
+	if got.UpstreamIdleTimeout != defaultMCPSubscriptionsUpstreamIdleTimeout {
+		t.Errorf("UpstreamIdleTimeout = %s, want %s", got.UpstreamIdleTimeout, defaultMCPSubscriptionsUpstreamIdleTimeout)
+	}
+	if got.ReconnectMaxAttempts != defaultMCPSubscriptionsReconnectMaxAttempts {
+		t.Errorf("ReconnectMaxAttempts = %d, want %d", got.ReconnectMaxAttempts, defaultMCPSubscriptionsReconnectMaxAttempts)
+	}
+	if got.ReconnectBackoffMin != defaultMCPSubscriptionsReconnectBackoffMin {
+		t.Errorf("ReconnectBackoffMin = %s, want %s", got.ReconnectBackoffMin, defaultMCPSubscriptionsReconnectBackoffMin)
+	}
+	if got.ReconnectBackoffMax != defaultMCPSubscriptionsReconnectBackoffMax {
+		t.Errorf("ReconnectBackoffMax = %s, want %s", got.ReconnectBackoffMax, defaultMCPSubscriptionsReconnectBackoffMax)
+	}
+}
+
+func TestGetMCPSubscriptionsConfig_LifetimeDerivationAndClamps(t *testing.T) {
+	tests := []struct {
+		name          string
+		writeTimeout  time.Duration
+		env           map[string]string
+		wantLifetime  time.Duration
+		wantReauth    time.Duration
+		wantKeepalive time.Duration
+	}{
+		{
+			name:          "derived from write timeout",
+			writeTimeout:  300 * time.Second,
+			wantLifetime:  290 * time.Second,
+			wantReauth:    defaultMCPSubscriptionsReauthInterval,
+			wantKeepalive: defaultMCPSubscriptionsKeepalive,
+		},
+		{
+			name:          "derived lifetime capped at the ceiling",
+			writeTimeout:  2 * time.Hour,
+			wantLifetime:  mcpSubscriptionsLifetimeCeiling,
+			wantReauth:    defaultMCPSubscriptionsReauthInterval,
+			wantKeepalive: defaultMCPSubscriptionsKeepalive,
+		},
+		{
+			name:          "explicit lifetime wins",
+			writeTimeout:  300 * time.Second,
+			env:           map[string]string{"MCP_SUBSCRIPTIONS_MAX_LIFETIME": "60s"},
+			wantLifetime:  60 * time.Second,
+			wantReauth:    defaultMCPSubscriptionsReauthInterval,
+			wantKeepalive: defaultMCPSubscriptionsKeepalive,
+		},
+		{
+			name:          "reauth interval floored at five seconds",
+			writeTimeout:  300 * time.Second,
+			env:           map[string]string{"MCP_SUBSCRIPTIONS_REAUTH_INTERVAL": "1s"},
+			wantLifetime:  290 * time.Second,
+			wantReauth:    mcpSubscriptionsReauthFloor,
+			wantKeepalive: defaultMCPSubscriptionsKeepalive,
+		},
+		{
+			name:         "intervals ceilinged at the lifetime",
+			writeTimeout: 300 * time.Second,
+			env: map[string]string{
+				"MCP_SUBSCRIPTIONS_MAX_LIFETIME":    "20s",
+				"MCP_SUBSCRIPTIONS_REAUTH_INTERVAL": "10m",
+				"MCP_SUBSCRIPTIONS_KEEPALIVE":       "10m",
+			},
+			wantLifetime:  20 * time.Second,
+			wantReauth:    20 * time.Second,
+			wantKeepalive: 20 * time.Second,
+		},
+		{
+			name:          "non-positive derived lifetime survives for Validate to refuse",
+			writeTimeout:  10 * time.Second,
+			wantLifetime:  0,
+			wantReauth:    defaultMCPSubscriptionsReauthInterval,
+			wantKeepalive: defaultMCPSubscriptionsKeepalive,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, key := range []string{
+				"MCP_SUBSCRIPTIONS_MAX_LIFETIME",
+				"MCP_SUBSCRIPTIONS_REAUTH_INTERVAL",
+				"MCP_SUBSCRIPTIONS_KEEPALIVE",
+			} {
+				t.Setenv(key, tc.env[key])
+			}
+
+			got := getMCPSubscriptionsConfig(tc.writeTimeout)
+			if got.MaxLifetime != tc.wantLifetime {
+				t.Errorf("MaxLifetime = %s, want %s", got.MaxLifetime, tc.wantLifetime)
+			}
+			if got.ReauthInterval != tc.wantReauth {
+				t.Errorf("ReauthInterval = %s, want %s", got.ReauthInterval, tc.wantReauth)
+			}
+			if got.Keepalive != tc.wantKeepalive {
+				t.Errorf("Keepalive = %s, want %s", got.Keepalive, tc.wantKeepalive)
+			}
+		})
+	}
+}
+
+func TestLoadConfig_MCPSubscriptionsDerivedDefaultBoots(t *testing.T) {
+	minimumEnv(t)
+	t.Setenv("MCP_SUBSCRIPTIONS_ENABLED", "true")
+	t.Setenv("SERVER_WRITE_TIMEOUT", "300s")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if got, want := cfg.Server.MCPSubscriptions.MaxLifetime, 290*time.Second; got != want {
+		t.Fatalf("MaxLifetime = %s, want %s", got, want)
+	}
+}
+
+func TestLoadConfig_MCPSubscriptionsRefusesLifetimeWithoutMargin(t *testing.T) {
+	tests := []struct {
+		name         string
+		writeTimeout string
+		maxLifetime  string
+	}{
+		{name: "explicit lifetime above the write timeout", writeTimeout: "60s", maxLifetime: "120s"},
+		{name: "explicit lifetime inside the margin", writeTimeout: "60s", maxLifetime: "55s"},
+		{name: "derived lifetime is non-positive", writeTimeout: "10s"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			minimumEnv(t)
+			t.Setenv("MCP_SUBSCRIPTIONS_ENABLED", "true")
+			t.Setenv("SERVER_WRITE_TIMEOUT", tc.writeTimeout)
+			t.Setenv("MCP_SUBSCRIPTIONS_MAX_LIFETIME", tc.maxLifetime)
+
+			_, err := LoadConfig()
+			if err == nil || !stderrors.Is(err, errors.ErrInvalidConfig) {
+				t.Fatalf("error %q must be ErrInvalidConfig", err)
+			}
+			for _, want := range []string{
+				"MCP_SUBSCRIPTIONS_MAX_LIFETIME",
+				"SERVER_WRITE_TIMEOUT",
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q must name %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestLoadConfig_MCPSubscriptionsDisabledSkipsValidation(t *testing.T) {
+	minimumEnv(t)
+	t.Setenv("MCP_SUBSCRIPTIONS_ENABLED", "false")
+	t.Setenv("SERVER_WRITE_TIMEOUT", "60s")
+	t.Setenv("MCP_SUBSCRIPTIONS_MAX_LIFETIME", "120s")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("a disabled feature must not gate boot: %v", err)
+	}
+	if cfg.Server.MCPSubscriptions.Enabled {
+		t.Error("Enabled = true, want false")
+	}
+}
+
+func TestValidate_MCPSubscriptionsRejectsNonPositiveCaps(t *testing.T) {
+	tests := []struct {
+		name string
+		key  string
+		mut  func(s *MCPSubscriptionsConfig)
+	}{
+		{"streams", "MCP_SUBSCRIPTIONS_MAX_STREAMS", func(s *MCPSubscriptionsConfig) { s.MaxStreams = 0 }},
+		{"per consumer", "MCP_SUBSCRIPTIONS_MAX_PER_CONSUMER", func(s *MCPSubscriptionsConfig) { s.MaxPerConsumer = 0 }},
+		{"per principal", "MCP_SUBSCRIPTIONS_MAX_PER_PRINCIPAL", func(s *MCPSubscriptionsConfig) { s.MaxPerPrincipal = -1 }},
+		{"event bytes", "MCP_SUBSCRIPTIONS_MAX_EVENT_BYTES", func(s *MCPSubscriptionsConfig) { s.MaxEventBytes = 0 }},
+		{"uris", "MCP_SUBSCRIPTIONS_MAX_URIS", func(s *MCPSubscriptionsConfig) { s.MaxURIs = 0 }},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			subscriptions := MCPSubscriptionsConfig{
+				Enabled:         true,
+				MaxLifetime:     50 * time.Second,
+				ReauthInterval:  defaultMCPSubscriptionsReauthInterval,
+				Keepalive:       defaultMCPSubscriptionsKeepalive,
+				MaxStreams:      defaultMCPSubscriptionsMaxStreams,
+				MaxPerConsumer:  defaultMCPSubscriptionsMaxPerConsumer,
+				MaxPerPrincipal: defaultMCPSubscriptionsMaxPerPrincipal,
+				MaxEventBytes:   defaultMCPSubscriptionsMaxEventBytes,
+				MaxURIs:         defaultMCPSubscriptionsMaxURIs,
+			}
+			tc.mut(&subscriptions)
+
+			err := subscriptions.Validate(defaultServerWriteTimeout)
+			if err == nil || !stderrors.Is(err, errors.ErrInvalidConfig) || !strings.Contains(err.Error(), tc.key) {
+				t.Fatalf("error %q must be ErrInvalidConfig naming %s", err, tc.key)
+			}
+		})
+	}
+}
+
+func TestValidate_MCPSubscriptionsUpstreamBounds(t *testing.T) {
+	valid := func() MCPSubscriptionsConfig {
+		return MCPSubscriptionsConfig{
+			Enabled:              true,
+			UpstreamEnabled:      true,
+			MaxLifetime:          50 * time.Second,
+			ReauthInterval:       defaultMCPSubscriptionsReauthInterval,
+			Keepalive:            defaultMCPSubscriptionsKeepalive,
+			MaxStreams:           defaultMCPSubscriptionsMaxStreams,
+			MaxPerConsumer:       defaultMCPSubscriptionsMaxPerConsumer,
+			MaxPerPrincipal:      defaultMCPSubscriptionsMaxPerPrincipal,
+			MaxEventBytes:        defaultMCPSubscriptionsMaxEventBytes,
+			MaxURIs:              defaultMCPSubscriptionsMaxURIs,
+			MaxUpstreamListeners: defaultMCPSubscriptionsMaxUpstreamListeners,
+			MaxUpstreamPerOrigin: defaultMCPSubscriptionsMaxUpstreamPerOrigin,
+			StreamQueue:          defaultMCPSubscriptionsStreamQueue,
+			UpstreamIdleTimeout:  defaultMCPSubscriptionsUpstreamIdleTimeout,
+			ReconnectMaxAttempts: defaultMCPSubscriptionsReconnectMaxAttempts,
+			ReconnectBackoffMin:  defaultMCPSubscriptionsReconnectBackoffMin,
+			ReconnectBackoffMax:  defaultMCPSubscriptionsReconnectBackoffMax,
+		}
+	}
+	tests := []struct {
+		name string
+		key  string
+		mut  func(*MCPSubscriptionsConfig)
+	}{
+		{
+			name: "listener cap",
+			key:  "MCP_SUBSCRIPTIONS_MAX_UPSTREAM_LISTENERS",
+			mut:  func(c *MCPSubscriptionsConfig) { c.MaxUpstreamListeners = 0 },
+		},
+		{
+			name: "origin cap",
+			key:  "MCP_SUBSCRIPTIONS_MAX_UPSTREAM_PER_ORIGIN",
+			mut:  func(c *MCPSubscriptionsConfig) { c.MaxUpstreamPerOrigin = -1 },
+		},
+		{
+			name: "queue capacity",
+			key:  "MCP_SUBSCRIPTIONS_STREAM_QUEUE",
+			mut:  func(c *MCPSubscriptionsConfig) { c.StreamQueue = 0 },
+		},
+		{
+			name: "idle timeout",
+			key:  "MCP_SUBSCRIPTIONS_UPSTREAM_IDLE_TIMEOUT",
+			mut:  func(c *MCPSubscriptionsConfig) { c.UpstreamIdleTimeout = 0 },
+		},
+		{
+			name: "negative reconnect attempts",
+			key:  "MCP_SUBSCRIPTIONS_RECONNECT_MAX_ATTEMPTS",
+			mut:  func(c *MCPSubscriptionsConfig) { c.ReconnectMaxAttempts = -1 },
+		},
+		{
+			name: "minimum backoff",
+			key:  "MCP_SUBSCRIPTIONS_RECONNECT_BACKOFF_MIN",
+			mut:  func(c *MCPSubscriptionsConfig) { c.ReconnectBackoffMin = 0 },
+		},
+		{
+			name: "maximum backoff",
+			key:  "MCP_SUBSCRIPTIONS_RECONNECT_BACKOFF_MAX",
+			mut:  func(c *MCPSubscriptionsConfig) { c.ReconnectBackoffMax = 0 },
+		},
+		{
+			name: "backoff ordering",
+			key:  "MCP_SUBSCRIPTIONS_RECONNECT_BACKOFF_MIN",
+			mut: func(c *MCPSubscriptionsConfig) {
+				c.ReconnectBackoffMin = 2 * time.Second
+				c.ReconnectBackoffMax = time.Second
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := valid()
+			tc.mut(&cfg)
+			err := cfg.Validate(defaultServerWriteTimeout)
+			if err == nil || !stderrors.Is(err, errors.ErrInvalidConfig) || !strings.Contains(err.Error(), tc.key) {
+				t.Fatalf("error %q must be ErrInvalidConfig naming %s", err, tc.key)
+			}
+		})
+	}
+
+	t.Run("upstream disabled bypasses upstream bounds", func(t *testing.T) {
+		cfg := valid()
+		cfg.UpstreamEnabled = false
+		cfg.MaxUpstreamListeners = 0
+		cfg.MaxUpstreamPerOrigin = 0
+		cfg.StreamQueue = 0
+		cfg.UpstreamIdleTimeout = 0
+		cfg.ReconnectMaxAttempts = -1
+		cfg.ReconnectBackoffMin = 0
+		cfg.ReconnectBackoffMax = 0
+		if err := cfg.Validate(defaultServerWriteTimeout); err != nil {
+			t.Fatalf("upstream-disabled validation must bypass upstream bounds: %v", err)
+		}
+	})
+
+	t.Run("valid upstream bounds", func(t *testing.T) {
+		if err := valid().Validate(defaultServerWriteTimeout); err != nil {
+			t.Fatalf("valid upstream configuration: %v", err)
+		}
+	})
+}
+
+// reauthBudgetCeiling mirrors the upper end of the [1s, 8s] clamp ReauthBudget
+// applies in pkg/app/mcp. It is restated here rather than imported so pkg/config
+// keeps no dependency on the app layer (RUN-1104 locked decision 3).
+const reauthBudgetCeiling = 8 * time.Second
+
+func TestMCPSubscriptionsReauthBudgetFitsInsideLifetimeMargin(t *testing.T) {
+	if reauthBudgetCeiling >= mcpSubscriptionsLifetimeMargin {
+		t.Fatalf(
+			"re-authorization budget ceiling %s must stay below the lifetime margin %s, "+
+				"otherwise a pass can still be in flight when the write deadline arrives",
+			reauthBudgetCeiling, mcpSubscriptionsLifetimeMargin,
+		)
 	}
 }

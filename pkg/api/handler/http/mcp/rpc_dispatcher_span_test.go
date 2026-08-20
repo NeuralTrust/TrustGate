@@ -36,7 +36,7 @@ func TestRPCGateway_Dispatch_RecordsToolSpan(t *testing.T) {
 	raw := json.RawMessage(`{"content":[]}`)
 	composer := mocks.NewComposer(t)
 	composer.EXPECT().
-		CallTool(mock.Anything, mock.Anything, "echo", mock.Anything).
+		CallTool(mock.Anything, mock.Anything, toolCallNamed("echo")).
 		Return(raw, nil).Once()
 
 	rt := trace.New("t-1", trace.Metadata{Kind: events.KindMCP})
@@ -83,7 +83,7 @@ func TestRPCGateway_Dispatch_RecordsPolicyBlockedHTTPStatus(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
 	composer.EXPECT().
-		CallTool(mock.Anything, mock.Anything, "echo", mock.Anything).
+		CallTool(mock.Anything, mock.Anything, toolCallNamed("echo")).
 		Return(nil, &appmcp.RPCError{
 			Code:       -32001,
 			Message:    "blocked",
@@ -111,7 +111,7 @@ func TestRPCGateway_Dispatch_RecordsConsentAsForbidden(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
 	composer.EXPECT().
-		CallTool(mock.Anything, mock.Anything, "notion-search", mock.Anything).
+		CallTool(mock.Anything, mock.Anything, toolCallNamed("notion-search")).
 		Return(nil, &appmcp.ConsentRequiredError{
 			Provider: "com.notion/mcp", Ticket: "tk", Path: "/p/mcp",
 		}).Once()
@@ -133,4 +133,3 @@ func TestRPCGateway_Dispatch_RecordsConsentAsForbidden(t *testing.T) {
 type assertErr struct{}
 
 func (assertErr) Error() string { return "boom" }
-

@@ -38,6 +38,7 @@ const (
 	CatalogModelTTLName = "catalog_model"
 	ConsumerPathTTLName = "consumer_path"
 	MCPToolsTTLName     = "mcp_tools"
+	MCPAppsTTLName      = "mcp_apps"
 )
 
 const (
@@ -52,6 +53,7 @@ const (
 	LoadBalancerCacheTTL = 5 * time.Minute
 	CatalogModelCacheTTL = 24 * time.Hour
 	MCPToolsCacheTTL     = 5 * time.Minute
+	MCPAppsCacheTTL      = 5 * time.Minute
 )
 
 type TTLMapManager struct {
