@@ -135,6 +135,12 @@ func MCP(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	if err := c.Provide(provideAppsMetadataPolicy); err != nil {
+		return err
+	}
+	if err := c.Provide(provideAppsListPolicy); err != nil {
+		return err
+	}
 	if err := c.Provide(func(
 		cfg *config.Config,
 		creds appmcp.CredentialResolver,
@@ -259,6 +265,20 @@ func MCP(c *container.Container) error {
 			mcphttp.NewProtocolValidationRecorder(cfg.Telemetry.OpsMetricsEnabled),
 		)
 	})
+}
+
+func provideAppsMetadataPolicy(cfg *config.Config) (appmcp.AppsMetadataPolicy, error) {
+	apps := cfg.Server.MCPApps
+	return appmcp.NewAppsMetadataPolicy(
+		apps.MaxCSPOriginsPerDirective,
+		apps.MaxCSPOriginsTotal,
+		apps.AllowedOriginPatterns,
+		apps.AllowedPermissions,
+	)
+}
+
+func provideAppsListPolicy(cfg *config.Config, metadata appmcp.AppsMetadataPolicy) appmcp.AppsListPolicy {
+	return appmcp.NewAppsListPolicy(cfg.Server.MCPApps.Enabled && mcpAppsPipelineReady, metadata)
 }
 
 // provideSubscriptionRegistry builds the lease accountant, or nil while the

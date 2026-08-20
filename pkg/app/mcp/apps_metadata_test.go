@@ -112,6 +112,142 @@ func TestAppsMetadataValidation(t *testing.T) {
 	selected, _ = SelectResourceAppsMetadata(nil, map[string]any{"ui": map[string]any{"domain": "app.example.com"}})
 	requireAppsError(t, ValidateResourceAppsMetadata(selected, AppsMetadataPolicy{}), AppsMetadataResourceReason, "app.example.com")
 }
+
+func TestAppsListPolicyTools(t *testing.T) {
+	metadata, err := NewAppsMetadataPolicy(1, 1, nil, nil)
+	requireApps(t, err == nil)
+	policy := NewAppsListPolicy(true, metadata)
+	cases := []struct {
+		name, raw string
+		drop      bool
+	}{
+		{"absent", `{"name":"absent","description":"keep"}`, false},
+		{"unrelated", `{"name":"unrelated","_meta":{"trace":{"id":1}}}`, false},
+		{"scalar", `{"name":"scalar","_meta":7}`, false},
+		{"canonical", `{"name":"canonical","_meta":{"ui":{"resourceUri":"ui://widget/canonical"}}}`, false},
+		{"deprecated", `{"name":"deprecated","_meta":{"ui/resourceUri":"ui://widget/deprecated"}}`, false},
+		{"conflict", `{"name":"conflict","_meta":{"ui":{"resourceUri":"ui://widget/a"},"ui/resourceUri":"ui://widget/b"}}`, true},
+		{"wrong ui", `{"name":"wrong","_meta":{"ui":[]}}`, true},
+		{"unknown ui prefix", `{"name":"unknown","_meta":{"ui/secret":true}}`, true},
+		{"invalid URI", `{"name":"uri","_meta":{"ui":{"resourceUri":"ui://localhost"}}}`, true},
+		{"duplicate key", `{"name":"duplicate","_meta":{"ui":{},"\u0075i":{}}}`, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			input := []Tool{mustAppsTool(t, tc.raw)}
+			original := input[0].payload["_meta"]
+			snapshot := append(json.RawMessage(nil), original...)
+			got, outcome := policy.FilterTools(input)
+			if tc.drop {
+				requireApps(t, got != nil && len(got) == 0 && outcome.Dropped == 1 && bytes.Equal(input[0].payload["_meta"], snapshot))
+				return
+			}
+			filtered := got[0].payload["_meta"]
+			sameRaw := len(original) == 0 || &original[0] == &filtered[0]
+			requireApps(t, len(got) == 1 && &got[0] == &input[0] && outcome.Dropped == 0 && sameRaw && bytes.Equal(filtered, snapshot))
+		})
+	}
+
+	invalid := mustAppsTool(t, `{"name":"invalid","_meta":{"ui":"bad"}}`)
+	disabledInput := []Tool{invalid}
+	disabled, outcome := (AppsListPolicy{}).FilterTools(disabledInput)
+	requireApps(t, &disabled[0] == &disabledInput[0] && outcome.Dropped == 0)
+
+	mixed := []Tool{
+		mustAppsTool(t, `{"name":"first","_meta":{"trace":1}}`),
+		invalid,
+		mustAppsTool(t, `{"name":"last","_meta":{"ui":{"resourceUri":"ui://widget/last"}}}`),
+	}
+	lastMeta := mixed[2].payload["_meta"]
+	filtered, outcome := policy.FilterTools(mixed)
+	requireApps(t, len(filtered) == 2 && filtered[0].Name == "first" && filtered[1].Name == "last" && outcome.Dropped == 1 && &lastMeta[0] == &filtered[1].payload["_meta"][0])
+	allInvalid, outcome := policy.FilterTools([]Tool{invalid, mustAppsTool(t, `{"name":"other","_meta":{"ui/x":true}}`)})
+	requireApps(t, allInvalid != nil && len(allInvalid) == 0 && outcome.Dropped == 2)
+}
+
+func TestAppsListPolicyResources(t *testing.T) {
+	metadata, err := NewAppsMetadataPolicy(2, 2, []string{"https://cdn.example.com"}, []string{"camera"})
+	requireApps(t, err == nil)
+	policy := NewAppsListPolicy(true, metadata)
+	cases := []struct {
+		name, raw string
+		drop      bool
+	}{
+		{"absent", `{"name":"absent","uri":"https://example.com"}`, false},
+		{"unrelated", `{"name":"unrelated","uri":"https://example.com","_meta":{"trace":1}}`, false},
+		{"scalar", `{"name":"scalar","uri":"https://example.com","_meta":null}`, false},
+		{"tool-only prefix", `{"name":"legacy","uri":"https://example.com","_meta":{"ui/resourceUri":"ui://widget"}}`, false},
+		{"empty ui", `{"name":"empty","uri":"ui://widget","_meta":{"ui":{}}}`, false},
+		{"valid", `{"name":"valid","uri":"ui://widget/view","_meta":{"ui":{"csp":{"resourceDomains":["https://cdn.example.com"]},"permissions":{"camera":{}}}}}`, false},
+		{"invalid URI", `{"name":"uri","uri":"https://example.com","_meta":{"ui":{}}}`, true},
+		{"invalid CSP", `{"name":"csp","uri":"ui://widget","_meta":{"ui":{"csp":{"resourceDomains":["https://other.example.com"]}}}}`, true},
+		{"invalid permission", `{"name":"permission","uri":"ui://widget","_meta":{"ui":{"permissions":{"microphone":{}}}}}`, true},
+		{"invalid ui shape", `{"name":"shape","uri":"ui://widget","_meta":{"ui":[]}}`, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			input := []Resource{mustAppsResource(t, tc.raw)}
+			original := input[0].payload["_meta"]
+			snapshot := append(json.RawMessage(nil), original...)
+			got, outcome := policy.FilterResources(input)
+			if tc.drop {
+				requireApps(t, got != nil && len(got) == 0 && outcome.Dropped == 1 && bytes.Equal(input[0].payload["_meta"], snapshot))
+				return
+			}
+			filtered := got[0].payload["_meta"]
+			sameRaw := len(original) == 0 || &original[0] == &filtered[0]
+			requireApps(t, len(got) == 1 && &got[0] == &input[0] && outcome.Dropped == 0 && sameRaw && bytes.Equal(filtered, snapshot))
+		})
+	}
+}
+
+func TestAppsListPolicyBoundsObjectMetadata(t *testing.T) {
+	metadata, err := NewAppsMetadataPolicy(1, 1, nil, nil)
+	requireApps(t, err == nil)
+	policy := NewAppsListPolicy(true, metadata)
+	badUTF8 := append(json.RawMessage(`{"x":"`), 0xff)
+	badUTF8 = append(badUTF8, []byte(`"}`)...)
+	flood := strings.Repeat("0,", maxAppsJSONTokens)
+	cases := []struct {
+		name string
+		raw  json.RawMessage
+		drop bool
+	}{
+		{"nested ui is unrelated", json.RawMessage(`{"nested":{"ui":[]}}`), false},
+		{"invalid UTF-8", badUTF8, true},
+		{"malformed", json.RawMessage(`{"x":`), true},
+		{"over depth", json.RawMessage(`{"x":` + strings.Repeat(`[`, maxAppsJSONDepth) + `0` + strings.Repeat(`]`, maxAppsJSONDepth) + `}`), true},
+		{"over tokens", json.RawMessage(`{"x":[` + flood + `0]}`), true},
+		{"marker after flood", json.RawMessage(`{"x":[` + flood + `0],"ui":{}}`), true},
+		{"over bytes", json.RawMessage(`{"x":"` + strings.Repeat("a", maxAppsListMetadataBytes) + `"}`), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tools, toolOutcome := policy.FilterTools([]Tool{{Name: "tool", payload: map[string]json.RawMessage{"_meta": tc.raw}}})
+			resources, resourceOutcome := policy.FilterResources([]Resource{{Name: "resource", URI: "ui://widget", payload: map[string]json.RawMessage{"_meta": tc.raw}}})
+			if tc.drop {
+				requireApps(t, tools != nil && len(tools) == 0 && toolOutcome.Dropped == 1 && resources != nil && len(resources) == 0 && resourceOutcome.Dropped == 1)
+			} else {
+				requireApps(t, len(tools) == 1 && toolOutcome.Dropped == 0 && len(resources) == 1 && resourceOutcome.Dropped == 0)
+			}
+		})
+	}
+}
+
+func mustAppsTool(t *testing.T, raw string) Tool {
+	t.Helper()
+	var tool Tool
+	requireApps(t, json.Unmarshal([]byte(raw), &tool) == nil)
+	return tool
+}
+
+func mustAppsResource(t *testing.T, raw string) Resource {
+	t.Helper()
+	var resource Resource
+	requireApps(t, json.Unmarshal([]byte(raw), &resource) == nil)
+	return resource
+}
+
 func requireAppsError(t *testing.T, err error, reason AppsMetadataReason, secret string) {
 	var typed *AppsMetadataError
 	requireApps(t, errors.Is(err, ErrInvalidAppsMetadata) && errors.As(err, &typed) && typed.Reason == reason && (secret == "" || !strings.Contains(err.Error(), secret)))
