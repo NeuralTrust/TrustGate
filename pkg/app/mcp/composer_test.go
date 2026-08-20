@@ -247,8 +247,12 @@ func TestComposer_ListTools_CollisionAutoPrefix(t *testing.T) {
 	regA := mcpRegistry(t, "github", "https://a.example.com/mcp")
 	regB := mcpRegistry(t, "slack", "https://b.example.com/mcp")
 	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
-		"https://a.example.com/mcp": {tools: tools("search")},
-		"https://b.example.com/mcp": {tools: tools("search")},
+		"https://a.example.com/mcp": {tools: []Tool{
+			mustAppsTool(t, `{"name":"search","_meta":{"ui":{"resourceUri":"ui://github/raw"}}}`),
+		}},
+		"https://b.example.com/mcp": {tools: []Tool{
+			mustAppsTool(t, `{"name":"search","_meta":{"ui":{"resourceUri":"ui://slack/raw"}}}`),
+		}},
 	}}
 	c := newTestComposer(dialer)
 
@@ -259,6 +263,12 @@ func TestComposer_ListTools_CollisionAutoPrefix(t *testing.T) {
 	names := toolNames(got)
 	if len(names) != 2 || names[0] != "github_search" || names[1] != "slack_search" {
 		t.Fatalf("tools = %v, want [github_search slack_search]", names)
+	}
+	if gotMeta := string(got[0].payload["_meta"]); gotMeta != `{"ui":{"resourceUri":"ui://github/raw"}}` {
+		t.Fatalf("github _meta = %s", gotMeta)
+	}
+	if gotMeta := string(got[1].payload["_meta"]); gotMeta != `{"ui":{"resourceUri":"ui://slack/raw"}}` {
+		t.Fatalf("slack _meta = %s", gotMeta)
 	}
 }
 

@@ -124,13 +124,14 @@ type UpstreamSubscriptionPolicy interface {
 var _ SubscriptionPolicy = (*subscriptionPolicy)(nil)
 
 type subscriptionPolicy struct {
-	finder    appconsumer.DataFinder
-	scoper    RoleScoper
-	composer  Composer
-	plugins   *PluginRunner
-	creds     CredentialResolver
-	sourceKey SubscriptionSourceKeyResolver
-	flights   snapshotFlightGroup
+	finder         appconsumer.DataFinder
+	scoper         RoleScoper
+	composer       Composer
+	plugins        *PluginRunner
+	appsListPolicy AppsListPolicy
+	creds          CredentialResolver
+	sourceKey      SubscriptionSourceKeyResolver
+	flights        snapshotFlightGroup
 }
 
 // NewSubscriptionPolicyWithUpstream builds policy checks for watchdog and upstream events.
@@ -142,7 +143,34 @@ func NewSubscriptionPolicyWithUpstream(
 	creds CredentialResolver,
 	connector SubscriptionConnector,
 ) UpstreamSubscriptionPolicy {
-	policy := NewSubscriptionPolicy(finder, scoper, composer, plugins).(*subscriptionPolicy)
+	return NewSubscriptionPolicyWithUpstreamAndAppsListPolicy(
+		finder,
+		scoper,
+		composer,
+		plugins,
+		AppsListPolicy{},
+		creds,
+		connector,
+	)
+}
+
+// NewSubscriptionPolicyWithUpstreamAndAppsListPolicy builds upstream checks with Apps list filtering.
+func NewSubscriptionPolicyWithUpstreamAndAppsListPolicy(
+	finder appconsumer.DataFinder,
+	scoper RoleScoper,
+	composer Composer,
+	plugins *PluginRunner,
+	appsListPolicy AppsListPolicy,
+	creds CredentialResolver,
+	connector SubscriptionConnector,
+) UpstreamSubscriptionPolicy {
+	policy := NewSubscriptionPolicyWithAppsListPolicy(
+		finder,
+		scoper,
+		composer,
+		appsListPolicy,
+		plugins,
+	).(*subscriptionPolicy)
 	policy.creds = creds
 	policy.sourceKey, _ = connector.(SubscriptionSourceKeyResolver)
 	return policy
@@ -252,16 +280,28 @@ func NewSubscriptionPolicy(
 	composer Composer,
 	plugins ...*PluginRunner,
 ) SubscriptionPolicy {
+	return NewSubscriptionPolicyWithAppsListPolicy(finder, scoper, composer, AppsListPolicy{}, plugins...)
+}
+
+// NewSubscriptionPolicyWithAppsListPolicy builds re-authorization with Apps list filtering.
+func NewSubscriptionPolicyWithAppsListPolicy(
+	finder appconsumer.DataFinder,
+	scoper RoleScoper,
+	composer Composer,
+	appsListPolicy AppsListPolicy,
+	plugins ...*PluginRunner,
+) SubscriptionPolicy {
 	var pluginRunner *PluginRunner
 	if len(plugins) > 0 {
 		pluginRunner = plugins[0]
 	}
 	return &subscriptionPolicy{
-		finder:   finder,
-		scoper:   scoper,
-		composer: composer,
-		plugins:  pluginRunner,
-		flights:  snapshotFlightGroup{calls: make(map[reauthFlightKey]*snapshotFlight)},
+		finder:         finder,
+		scoper:         scoper,
+		composer:       composer,
+		plugins:        pluginRunner,
+		appsListPolicy: appsListPolicy,
+		flights:        snapshotFlightGroup{calls: make(map[reauthFlightKey]*snapshotFlight)},
 	}
 }
 
@@ -364,6 +404,7 @@ func (p *subscriptionPolicy) digest(
 		if err != nil {
 			return "", fmt.Errorf("mcp: compose tools: %w", err)
 		}
+		tools, _ = p.appsListPolicy.FilterTools(tools)
 		if err := p.plugins.PreResponseToolsDiscovery(ctx, rc, tools); err != nil {
 			return "", fmt.Errorf("%w: tools discovery denied by policy: %w", ErrSubscriptionRevoked, err)
 		}
@@ -387,6 +428,7 @@ func (p *subscriptionPolicy) digest(
 		if err != nil {
 			return "", fmt.Errorf("mcp: compose resources: %w", err)
 		}
+		resources, _ = p.appsListPolicy.FilterResources(resources)
 		templates, err := p.composer.ListResourceTemplates(ctx, rc)
 		if err != nil {
 			return "", fmt.Errorf("mcp: compose resource templates: %w", err)
