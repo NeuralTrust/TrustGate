@@ -29,7 +29,7 @@ const HeaderAPIKeyCompat = "x-api-key"
 // APIKeyFromRequest returns the gateway api key presented by the caller, or
 // an empty string when none is present. Precedence is X-AG-API-Key, then
 // x-api-key, then Authorization: Bearer when the token carries the TrustGate
-// api-key prefix. A bearer without that prefix is left for OAuth2/OIDC.
+// api-key prefix. A bearer without that prefix is left for OAuth2.
 func APIKeyFromRequest(c *fiber.Ctx) string {
 	if key := strings.TrimSpace(c.Get(HeaderAPIKey)); key != "" {
 		return key
