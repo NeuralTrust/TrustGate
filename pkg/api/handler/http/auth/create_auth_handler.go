@@ -66,7 +66,7 @@ func (h *CreateAuthHandler) Handle(c *fiber.Ctx) error {
 	a, err := h.creator.Create(c.UserContext(), appauth.CreateInput{
 		GatewayID: gatewayID,
 		Name:      req.Name,
-		Type:      domain.Type(req.Type),
+		Type:      domain.NormalizeType(domain.Type(req.Type)),
 		Enabled:   req.IsEnabled(),
 		Config:    req.Config.ToDomain(),
 	})

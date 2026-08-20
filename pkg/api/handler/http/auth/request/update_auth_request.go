@@ -41,6 +41,9 @@ func (r UpdateAuthRequest) Validate() error {
 	if r.Type != nil && strings.TrimSpace(*r.Type) == "" {
 		return fmt.Errorf("type is required: %w", commonerrors.ErrValidation)
 	}
+	if r.Config != nil {
+		return r.Config.validate()
+	}
 	return nil
 }
 
@@ -48,7 +51,7 @@ func (r UpdateAuthRequest) ToType() *domain.Type {
 	if r.Type == nil {
 		return nil
 	}
-	t := domain.Type(*r.Type)
+	t := domain.NormalizeType(domain.Type(*r.Type))
 	return &t
 }
 

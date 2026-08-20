@@ -96,6 +96,78 @@ func TestListAuths_FilterByTypeAndEnabled(t *testing.T) {
 	assert.Equal(t, float64(0), body["total"])
 }
 
+func TestListAuths_TypeFilterAcceptsTheLegacyOIDCAlias(t *testing.T) {
+	defer Track(t, "ListAuth")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("auth-oidc-filter")})
+	name := uniqueName("oidc-filtered")
+	authID := CreateAuth(t, gwID, map[string]any{
+		"name": name,
+		"type": "oidc",
+		"config": map[string]any{
+			"oidc": map[string]any{
+				"issuer":    "https://issuer.example.com",
+				"audiences": []string{"gateway"},
+				"jwks_url":  "https://issuer.example.com/.well-known/jwks.json",
+			},
+		},
+	})
+
+	pageFor := func(t *testing.T, authType string) map[string]any {
+		t.Helper()
+		status, body := sendRequest(t, http.MethodGet,
+			fmt.Sprintf("%s/v1/gateways/%s/auths?search=%s&type=%s",
+				AdminURL, gwID, url.QueryEscape(name), authType),
+			nil, nil,
+		)
+		require.Equal(t, http.StatusOK, status, "type=%s body=%v", authType, body)
+		return body
+	}
+
+	aliased := pageFor(t, "oidc")
+	canonical := pageFor(t, "oauth2")
+
+	assert.Equal(t, float64(1), aliased["total"], "the alias must not yield an empty page: %v", aliased)
+	assert.Equal(t, canonical["total"], aliased["total"])
+	assert.Equal(t, canonical["items"], aliased["items"])
+
+	items, ok := aliased["items"].([]any)
+	require.True(t, ok, "items missing: %v", aliased)
+	require.Len(t, items, 1)
+	item, ok := items[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, authID, item["id"])
+	assert.Equal(t, "oauth2", item["type"])
+}
+
+func TestListAuths_TypeFilterFindsRowsStoredAsOIDC(t *testing.T) {
+	defer Track(t, "ListAuth")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("auth-stored-oidc")})
+	name := uniqueName("stored-oidc")
+	authID := SeedStoredOIDCAuth(t, gwID, name, "https://stored.example.com", []string{"gateway"})
+
+	for _, authType := range []string{"oidc", "oauth2"} {
+		t.Run(authType, func(t *testing.T) {
+			status, body := sendRequest(t, http.MethodGet,
+				fmt.Sprintf("%s/v1/gateways/%s/auths?search=%s&type=%s",
+					AdminURL, gwID, url.QueryEscape(name), authType),
+				nil, nil,
+			)
+			require.Equal(t, http.StatusOK, status, "body=%v", body)
+
+			items, ok := body["items"].([]any)
+			require.True(t, ok, "items missing: %v", body)
+			require.Len(t, items, 1, "a row stored as oidc must stay listable under ?type=%s", authType)
+			assert.Equal(t, float64(len(items)), body["total"],
+				"pagination total disagrees with the page")
+
+			item, ok := items[0].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, authID, item["id"])
+			assert.Equal(t, "oauth2", item["type"])
+		})
+	}
+}
+
 func TestListAuths_InvalidSort(t *testing.T) {
 	defer Track(t, "ListAuth")()
 	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("auth-badsort")})

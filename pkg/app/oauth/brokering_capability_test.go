@@ -15,7 +15,9 @@
 package oauth
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -46,19 +48,21 @@ func validateOnlyOAuth2Auth(t *testing.T, issuer string, gatewayID ids.GatewayID
 	return a
 }
 
-func legacyOIDCAuth(issuer string, gatewayID ids.GatewayID) *authdomain.Auth {
+func legacyOIDCAuth(t *testing.T, issuer string, gatewayID ids.GatewayID) *authdomain.Auth {
+	t.Helper()
+	payload := fmt.Sprintf(
+		`{"oidc":{"issuer":%q,"audiences":["trustgate"],"jwks_url":%q,"required_scopes":["mcp:use"]}}`,
+		issuer, issuer+"/jwks",
+	)
+	var cfg authdomain.Config
+	require.NoError(t, json.Unmarshal([]byte(payload), &cfg))
 	return &authdomain.Auth{
 		ID:        ids.New[ids.AuthKind](),
 		GatewayID: gatewayID,
 		Name:      "legacy-oidc",
-		Type:      authdomain.TypeOIDC,
+		Type:      authdomain.NormalizeType(authdomain.TypeOIDC),
 		Enabled:   true,
-		Config: authdomain.Config{OIDC: &authdomain.OIDCConfig{
-			Issuer:         issuer,
-			Audiences:      []string{"trustgate"},
-			JWKSURL:        issuer + "/jwks",
-			RequiredScopes: []string{"mcp:use"},
-		}},
+		Config:    cfg,
 	}
 }
 
@@ -182,7 +186,7 @@ func TestClientlessDefaultIdPIsValidateOnly(t *testing.T) {
 func TestProtectedResourceOmitsAuthorizationServerForLegacyOIDCAuth(t *testing.T) {
 	t.Parallel()
 	gatewayID := ids.New[ids.GatewayKind]()
-	idp := legacyOIDCAuth("https://idp.example.com", gatewayID)
+	idp := legacyOIDCAuth(t, "https://idp.example.com", gatewayID)
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
 		"/legacy-oidc/mcp": {{GatewayID: gatewayID, Auths: []*authdomain.Auth{idp}}},
 	}}
@@ -192,14 +196,14 @@ func TestProtectedResourceOmitsAuthorizationServerForLegacyOIDCAuth(t *testing.T
 	require.NoError(t, err)
 	require.Empty(t, meta.AuthorizationServers, "a legacy oidc auth has no pre-registered client")
 	require.Equal(t, []string{"mcp:use"}, meta.ScopesSupported,
-		"the projected oidc config still describes the resource")
-	require.Nil(t, idp.Config.OAuth2, "classification must not mutate the stored auth")
+		"a legacy oidc config still describes the resource")
+	require.False(t, idp.CanBrokerLogin())
 }
 
 func TestLegacyOIDCAuthIsNeverSelectedAsProvider(t *testing.T) {
 	t.Parallel()
 	gatewayID := ids.New[ids.GatewayKind]()
-	legacy := legacyOIDCAuth("https://legacy-idp.example.com", gatewayID)
+	legacy := legacyOIDCAuth(t, "https://legacy-idp.example.com", gatewayID)
 	broker := brokerCapableOAuth2Auth(t, authdomain.OAuth2Config{
 		Issuer:    "https://idp.example.com",
 		Audiences: []string{"trustgate"},

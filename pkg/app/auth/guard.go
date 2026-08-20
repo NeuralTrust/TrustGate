@@ -123,7 +123,7 @@ func ensureNoOAuth2Conflict(ctx context.Context, repo domain.Repository, candida
 	if candidate.Type != domain.TypeOAuth2 || !candidate.Enabled || candidate.Config.OAuth2 == nil {
 		return nil
 	}
-	existing, err := repo.FindEnabledByTypes(ctx, []domain.Type{domain.TypeOAuth2})
+	existing, err := repo.FindEnabledByTypes(ctx, domain.StoredTypes(candidate.Type))
 	if err != nil {
 		return fmt.Errorf("auth: check oauth2 conflicts: %w", err)
 	}

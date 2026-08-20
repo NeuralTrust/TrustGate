@@ -68,11 +68,10 @@ func (f *credentialFinder) OAuth2Auths(ctx context.Context) ([]*domain.Auth, err
 	}
 	out := make([]*domain.Auth, 0, len(auths)+1)
 	for _, a := range auths {
-		candidate, ok := IdentityProviderCandidate(a)
-		if !ok {
+		if a == nil || !a.Enabled || !a.Type.IsIdentityProvider() || a.Config.OAuth2 == nil {
 			continue
 		}
-		out = append(out, candidate)
+		out = append(out, a)
 	}
 	if f.defaultIdP != nil {
 		out = append(out, f.defaultIdP)

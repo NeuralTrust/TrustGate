@@ -40,7 +40,7 @@ func NewListAuthHandler(finder appauth.Finder) *ListAuthHandler {
 // @Param        gateway_id  path      string  true   "Gateway id"  format(uuid)
 // @Param        search      query     string  false  "Substring match on name (alias: name)"
 // @Param        name        query     string  false  "Alias of search"
-// @Param        type        query     string  false  "Filter by auth type (api_key, oauth2, oidc, mtls)"
+// @Param        type        query     string  false  "Filter by auth type (api_key, oauth2, mtls; oidc is a deprecated alias of oauth2)"
 // @Param        enabled     query     bool    false  "Filter by enabled flag"
 // @Param        sort        query     string  false  "Sort field (name, created_at, updated_at, type)"
 // @Param        order       query     string  false  "Sort order (asc, desc)"
@@ -70,7 +70,7 @@ func (h *ListAuthHandler) Handle(c *fiber.Ctx) error {
 	}
 	var authType domain.Type
 	if raw := c.Query("type"); raw != "" {
-		authType = domain.Type(raw)
+		authType = domain.NormalizeType(domain.Type(raw))
 		if !domain.IsValidType(authType) {
 			return httpio.WriteError(c, httpio.ErrInvalidFilter)
 		}

@@ -58,6 +58,25 @@ func IsValidType(t Type) bool {
 	return false
 }
 
+// NormalizeType maps the deprecated "oidc" type onto TypeOAuth2 and returns
+// every other type unchanged.
+func NormalizeType(t Type) Type {
+	if t == TypeOIDC {
+		return TypeOAuth2
+	}
+	return t
+}
+
+// StoredTypes returns every type value a persisted row may carry for the
+// canonical type t, so a query filtering on t matches rows written under a
+// deprecated alias as well.
+func StoredTypes(t Type) []Type {
+	if NormalizeType(t) == TypeOAuth2 {
+		return []Type{TypeOAuth2, TypeOIDC}
+	}
+	return []Type{t}
+}
+
 func (t Type) IsIdentityProvider() bool {
 	switch t {
 	case TypeOAuth2, TypeOIDC:
