@@ -23,6 +23,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -60,7 +61,7 @@ func (r *OAuth2IdentityResolver) Resolve(
 		return nil, ErrUnauthenticated
 	}
 	if len(candidates) > 1 {
-		r.warnAmbiguousCandidates(candidates)
+		r.logAmbiguousCandidates(gw.ID, candidates)
 	}
 	for _, a := range candidates {
 		verified, err := r.verifier.Verify(c.UserContext(), token, *a.Config.OAuth2)
@@ -84,7 +85,10 @@ func (r *OAuth2IdentityResolver) Resolve(
 	return nil, ErrUnauthenticated
 }
 
-func (r *OAuth2IdentityResolver) warnAmbiguousCandidates(candidates []*authdomain.Auth) {
+// logAmbiguousCandidates records overlapping identity providers at debug level:
+// the overlap is a persistent property of the gateway's configuration, so
+// warning on every request would repeat the same operator action forever.
+func (r *OAuth2IdentityResolver) logAmbiguousCandidates(gatewayID ids.GatewayID, candidates []*authdomain.Auth) {
 	logger := r.logger
 	if logger == nil {
 		logger = slog.Default()
@@ -93,5 +97,8 @@ func (r *OAuth2IdentityResolver) warnAmbiguousCandidates(candidates []*authdomai
 	for _, a := range candidates {
 		authIDs = append(authIDs, a.ID.String())
 	}
-	logger.Warn("multiple identity providers match token hints", slog.Any("auth_ids", authIDs))
+	logger.Debug("multiple identity providers match token hints",
+		slog.String("gateway_id", gatewayID.String()),
+		slog.Any("auth_ids", authIDs),
+	)
 }

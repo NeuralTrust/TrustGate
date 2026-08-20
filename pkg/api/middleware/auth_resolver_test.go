@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -100,8 +101,13 @@ func (v fakeOAuth2Verifier) Verify(_ context.Context, _ string, _ authdomain.OAu
 	return v.claims, v.err
 }
 
+type routedVerifyResult struct {
+	claims *appauth.VerifiedClaims
+	err    error
+}
+
 type jwksRoutedOAuth2Verifier struct {
-	byJWKSURL map[string]*appauth.VerifiedClaims
+	byJWKSURL map[string]routedVerifyResult
 }
 
 func (v jwksRoutedOAuth2Verifier) Verify(
@@ -109,11 +115,11 @@ func (v jwksRoutedOAuth2Verifier) Verify(
 	_ string,
 	cfg authdomain.OAuth2Config,
 ) (*appauth.VerifiedClaims, error) {
-	claims, ok := v.byJWKSURL[cfg.JWKSURL]
+	result, ok := v.byJWKSURL[cfg.JWKSURL]
 	if !ok {
 		return nil, fmt.Errorf("token was not issued for %s", cfg.JWKSURL)
 	}
-	return claims, nil
+	return result.claims, result.err
 }
 
 type fakeIDPVerifier struct {
@@ -405,36 +411,63 @@ func TestAuthMiddleware_OAuth2RoleBasedConsumerUnassignedRoleForbidden(t *testin
 	require.Equal(t, fiber.StatusForbidden, resp.StatusCode)
 }
 
-func TestAuthMiddleware_OAuth2SeveralCandidatesSecondVerifies(t *testing.T) {
+func TestAuthMiddleware_OAuth2CandidateOrder(t *testing.T) {
 	t.Parallel()
-	gw, rc := inlineConsumerWithTwoIdPs(t)
-	verifier := jwksRoutedOAuth2Verifier{byJWKSURL: map[string]*appauth.VerifiedClaims{
-		"https://issuer.example.com/second/jwks": {
-			Subject: "user-1",
-			Claims:  map[string]any{"sub": "user-1"},
-		},
-	}}
-	app, captured := newCapturingAuthTestApp(
-		t,
-		gw,
-		appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}),
-		verifier,
-		matchingIDPVerifier(),
-		nil,
+	const (
+		firstJWKS  = "https://issuer.example.com/first/jwks"
+		secondJWKS = "https://issuer.example.com/second/jwks"
 	)
+	verified := &appauth.VerifiedClaims{Subject: "user-1", Claims: map[string]any{"sub": "user-1"}}
+	tests := []struct {
+		name     string
+		results  map[string]routedVerifyResult
+		wantAuth int
+	}{
+		{
+			name: "first candidate verifies",
+			results: map[string]routedVerifyResult{
+				firstJWKS:  {claims: verified},
+				secondJWKS: {claims: verified},
+			},
+			wantAuth: 0,
+		},
+		{
+			name: "second candidate wins when the first fails to verify",
+			results: map[string]routedVerifyResult{
+				firstJWKS:  {err: errors.New("token was not issued by this provider")},
+				secondJWKS: {claims: verified},
+			},
+			wantAuth: 1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			gw, rc := inlineConsumerWithTwoIdPs(t)
+			app, captured := newCapturingAuthTestApp(
+				t,
+				gw,
+				appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}),
+				jwksRoutedOAuth2Verifier{byJWKSURL: tt.results},
+				matchingIDPVerifier(),
+				nil,
+			)
 
-	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
-	req.Host = "acme.gw.neuraltrust.ai"
-	req.Header.Set(fiber.HeaderAuthorization, "Bearer token")
-	resp, err := app.Test(req)
-	require.NoError(t, err)
-	require.Equal(t, fiber.StatusOK, resp.StatusCode)
-	require.Equal(t, rc.Auths[1].ID, captured.authCtx.AuthID)
+			req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
+			req.Host = "acme.gw.neuraltrust.ai"
+			req.Header.Set(fiber.HeaderAuthorization, "Bearer token")
+			resp, err := app.Test(req)
+			require.NoError(t, err)
+			require.Equal(t, fiber.StatusOK, resp.StatusCode)
+			require.Equal(t, rc.Auths[tt.wantAuth].ID, captured.authCtx.AuthID)
 
-	logs := captured.logs.String()
-	require.Contains(t, logs, "multiple identity providers match token hints")
-	require.Contains(t, logs, rc.Auths[0].ID.String())
-	require.Contains(t, logs, rc.Auths[1].ID.String())
+			logs := captured.logs.String()
+			require.Contains(t, logs, "multiple identity providers match token hints")
+			require.Contains(t, logs, gw.ID.String())
+			require.Contains(t, logs, rc.Auths[0].ID.String())
+			require.Contains(t, logs, rc.Auths[1].ID.String())
+		})
+	}
 }
 
 func TestAuthMiddleware_PlaygroundTokenRoleBasedKeepsConsumerRoles(t *testing.T) {
@@ -629,7 +662,7 @@ func newCapturingAuthTestApp(
 ) (*fiber.App, *capturedAuth) {
 	t.Helper()
 	captured := &capturedAuth{logs: &bytes.Buffer{}}
-	logger := slog.New(slog.NewJSONHandler(captured.logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	logger := slog.New(slog.NewJSONHandler(captured.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	authMiddleware := middleware.NewAuthMiddleware(
 		newProxyIdentityResolver(oauthVerifier, idpVerifier, logger),
 		fakeDataFinder{data: data},

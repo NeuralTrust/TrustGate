@@ -67,8 +67,8 @@ func (f *identityProviderFinder) FindCandidates(
 
 // IdentityProviderCandidate reports whether the auth is a usable identity
 // provider and, when it is, returns a view of it whose Config.OAuth2 is always
-// populated: a legacy oidc config is projected onto the oauth2 shape on a copy,
-// so callers may hold the result without mutating shared or cached auths.
+// populated. An oidc config is projected onto the oauth2 shape on a copy, so
+// callers may hold the result without mutating shared or cached auths.
 func IdentityProviderCandidate(a *domain.Auth) (*domain.Auth, bool) {
 	if a == nil || !a.Enabled || !a.Type.IsIdentityProvider() {
 		return nil, false

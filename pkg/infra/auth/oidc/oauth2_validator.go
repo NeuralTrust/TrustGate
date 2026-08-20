@@ -63,7 +63,7 @@ func (v *OAuth2TokenValidator) Validate(ctx context.Context, raw string, cfg *do
 		return nil, err
 	}
 	principal := &identity.Principal{
-		Subject:  subjectOf(verified),
+		Subject:  subjectFor(verified, cfg.SubjectClaim),
 		Method:   identity.MethodJWT,
 		Issuer:   cfg.Issuer,
 		Claims:   verified.Claims,
@@ -74,6 +74,18 @@ func (v *OAuth2TokenValidator) Validate(ctx context.Context, raw string, cfg *do
 		return nil, fmt.Errorf("%w: missing required scopes", ErrMissingRequiredScope)
 	}
 	return principal, nil
+}
+
+// subjectFor honours the configured subject claim so that the same oauth2 config
+// yields the same principal subject on the proxy plane and on this one. It falls
+// back to subjectOf when no claim is configured or the token does not carry it.
+func subjectFor(verified *appauth.VerifiedClaims, subjectClaim string) string {
+	if claim := strings.TrimSpace(subjectClaim); claim != "" {
+		if value, ok := verified.Claims[claim].(string); ok && value != "" {
+			return value
+		}
+	}
+	return subjectOf(verified)
 }
 
 // subjectOf prefers the Entra `oid` claim over `sub`: Entra subjects are

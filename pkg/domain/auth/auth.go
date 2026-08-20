@@ -67,7 +67,7 @@ func (t Type) IsIdentityProvider() bool {
 }
 
 // IdentityProviderTypes returns every auth type that carries an identity
-// provider, for callers that need to query them as one pool.
+// provider.
 func IdentityProviderTypes() []Type {
 	return []Type{TypeOAuth2, TypeOIDC}
 }
