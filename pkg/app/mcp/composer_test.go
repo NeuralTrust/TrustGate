@@ -34,6 +34,7 @@ type fakeUpstream struct {
 	resources    []Resource
 	templates    []ResourceTemplate
 	listErr      error
+	resourcesErr error
 	lastCall     string
 	lastPrompt   string
 	lastRead     string
@@ -54,6 +55,9 @@ func (f *fakeUpstream) CallTool(_ context.Context, call ToolCall) (json.RawMessa
 }
 
 func (f *fakeUpstream) ListResources(context.Context) ([]Resource, error) {
+	if f.resourcesErr != nil {
+		return nil, f.resourcesErr
+	}
 	return f.resources, f.listErr
 }
 
@@ -381,6 +385,30 @@ func TestComposer_CallTool_RoutesToOwningUpstream(t *testing.T) {
 
 	if _, err := c.CallTool(context.Background(), rc, ToolCall{Name: "missing_tool"}); !errors.Is(err, ErrToolNotFound) {
 		t.Fatalf("error = %v, want ErrToolNotFound", err)
+	}
+}
+
+func TestComposer_CallToolClassifiedRejectsInvalidAppsDeclaration(t *testing.T) {
+	t.Parallel()
+	const url = "https://a.example.com/mcp"
+	reg := mcpRegistry(t, "github", url)
+	upstream := &fakeUpstream{
+		tools: []Tool{
+			mustAppsTool(t, `{"name":"app","_meta":{"ui":{"resourceUri":"ui://widget/app"}}}`),
+			mustAppsTool(t, `{"name":"invalid","_meta":{"ui":{"visibility":["app"]}}}`),
+		},
+		result: json.RawMessage(`{"content":[]}`),
+	}
+	composer := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{url: upstream}}).(AppsCallComposer)
+	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, reg)
+
+	_, appsCall, err := composer.CallToolClassified(context.Background(), rc, ToolCall{Name: "app"})
+	if err != nil || !appsCall {
+		t.Fatalf("appsCall = %t, err = %v", appsCall, err)
+	}
+	_, _, err = composer.CallToolClassified(context.Background(), rc, ToolCall{Name: "invalid"})
+	if !errors.Is(err, ErrAppsResourceRejected) || upstream.callCount != 1 {
+		t.Fatalf("err = %v, upstream calls = %d", err, upstream.callCount)
 	}
 }
 

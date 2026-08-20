@@ -405,6 +405,14 @@ func (p *subscriptionPolicy) digest(
 			return "", fmt.Errorf("mcp: compose tools: %w", err)
 		}
 		tools, _ = p.appsListPolicy.FilterTools(tools)
+		if p.appsListPolicy.HasToolResourceReferences(tools) {
+			resources, err := p.composer.ListResources(ctx, rc)
+			if err != nil && ctx.Err() != nil {
+				return "", ctx.Err()
+			}
+			resources, _ = p.appsListPolicy.FilterResources(resources)
+			tools, _ = p.appsListPolicy.FilterToolsWithResources(tools, resources)
+		}
 		if err := p.plugins.PreResponseToolsDiscovery(ctx, rc, tools); err != nil {
 			return "", fmt.Errorf("%w: tools discovery denied by policy: %w", ErrSubscriptionRevoked, err)
 		}
@@ -433,6 +441,7 @@ func (p *subscriptionPolicy) digest(
 		if err != nil {
 			return "", fmt.Errorf("mcp: compose resource templates: %w", err)
 		}
+		templates, _ = p.appsListPolicy.FilterResourceTemplates(templates)
 		encodedResources, err := encodeSurface(resources, func(r Resource) string { return r.Name + "\x00" + r.URI })
 		if err != nil {
 			return "", err

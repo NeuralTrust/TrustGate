@@ -194,6 +194,34 @@ func TestSubscriptionPolicyDigestFiltersAppsListsBeforePlugins(t *testing.T) {
 	}
 }
 
+func TestSubscriptionPolicyDigestDropsAppsWhenResourcesFail(t *testing.T) {
+	t.Parallel()
+	const url = "https://a.example.com/mcp"
+	reg := mcpRegistry(t, "github", url)
+	plain := mustAppsTool(t, `{"name":"plain"}`)
+	composer := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{url: {
+		tools: []Tool{
+			plain,
+			mustAppsTool(t, `{"name":"app","_meta":{"ui":{"resourceUri":"ui://widget/app"}}}`),
+		},
+		resourcesErr: errors.New("resource discovery failed"),
+	}}})
+	metadata, err := NewAppsMetadataPolicy(1, 1, nil, nil)
+	if err != nil {
+		t.Fatalf("build metadata policy: %v", err)
+	}
+	recorder := &recordingDiscoveryExecutor{}
+	policy := NewSubscriptionPolicyWithAppsListPolicy(nil, nil, composer,
+		NewAppsListPolicy(true, metadata), NewPluginRunner(recorder, nil)).(*subscriptionPolicy)
+
+	digest, err := policy.digest(context.Background(),
+		routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, reg), NotificationToolsListChanged)
+	encoded, _ := encodeSurface([]Tool{plain}, func(tool Tool) string { return tool.Name })
+	if err != nil || digest != digestOf(encoded) {
+		t.Fatalf("digest = %q, err = %v", digest, err)
+	}
+}
+
 func TestSubscriptionPolicyLegacyConstructorsDisableAppsFiltering(t *testing.T) {
 	t.Parallel()
 	constructors := map[string]func(Composer, *PluginRunner) *subscriptionPolicy{
