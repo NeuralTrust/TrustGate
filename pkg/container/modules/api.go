@@ -15,6 +15,8 @@
 package modules
 
 import (
+	"log/slog"
+
 	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
 	oauthhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/oauth"
 	playgroundhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/playground"
@@ -94,7 +96,22 @@ func API(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(middleware.NewAdminAuthMiddleware); err != nil {
+	if err := c.Provide(func(cfg *config.Config) (jwt.ServiceVerifier, error) {
+		return jwt.NewServiceVerifier(cfg.AdminM2M)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(
+		logger *slog.Logger,
+		manager jwt.Manager,
+		verifier jwt.ServiceVerifier,
+		cfg *config.Config,
+	) *middleware.AdminAuthMiddleware {
+		return middleware.NewAdminAuthMiddleware(logger, manager, verifier, cfg.AdminM2M.PlatformClaimRequired)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(middleware.NewAdminAuthzMiddleware); err != nil {
 		return err
 	}
 	if err := c.Provide(middleware.NewSessionMiddleware); err != nil {

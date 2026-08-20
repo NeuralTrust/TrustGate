@@ -87,7 +87,7 @@ func TestListConnectionsHandler_UnknownScopeReturnsEmpty(t *testing.T) {
 
 func TestListConnectionsHandler_AdminAuthEnforced(t *testing.T) {
 	app := fiber.New()
-	auth := middleware.NewAdminAuthMiddleware(nil, nil)
+	auth := middleware.NewAdminAuthMiddleware(nil, nil, nil, false)
 	h := configsynchttp.NewListConnectionsHandler(fakeLister{})
 	app.Get("/v1/config-sync/connections", auth.Middleware(), h.Handle)
 
