@@ -153,7 +153,6 @@ func TestDecodeIndexesLegacyOIDCAuthAsOAuth2(t *testing.T) {
 	assert.Equal(t, authdomain.TypeOAuth2, indexed[0].Type)
 	require.NotNil(t, indexed[0].Config.OAuth2)
 	assert.Equal(t, "https://issuer.example.com/jwks", indexed[0].Config.OAuth2.JWKSURL)
-	assert.Nil(t, indexed[0].Config.OIDC)
 
 	byGateway := snap.AuthsEnabledByGatewayAndType(gatewayID, authdomain.TypeOAuth2)
 	require.Len(t, byGateway, 1)

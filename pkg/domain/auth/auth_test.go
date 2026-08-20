@@ -238,27 +238,6 @@ func TestNewAuth_Validation(t *testing.T) {
 			wantErr: ErrInvalidConfig,
 		},
 		{
-			name:      "idp missing key material",
-			gatewayID: gwID,
-			authName:  "k",
-			authType:  TypeOIDC,
-			config:    Config{OIDC: &OIDCConfig{Issuer: "https://issuer", Audiences: []string{"gateway"}}},
-			wantErr:   ErrInvalidConfig,
-		},
-		{
-			name:      "idp rejects hs algorithms",
-			gatewayID: gwID,
-			authName:  "k",
-			authType:  TypeOIDC,
-			config: Config{OIDC: &OIDCConfig{
-				Issuer:            "https://issuer",
-				Audiences:         []string{"gateway"},
-				JWKSURL:           "https://issuer/.well-known/jwks.json",
-				AllowedAlgorithms: []string{"HS256"},
-			}},
-			wantErr: ErrInvalidConfig,
-		},
-		{
 			name:      "oauth2 with extra mtls payload",
 			gatewayID: gwID,
 			authName:  "k",
@@ -305,12 +284,6 @@ func TestNewAuth_ValidPerType(t *testing.T) {
 			PublicKeys: []string{"-----BEGIN PUBLIC KEY-----"},
 		}}},
 		"mtls": {TypeMTLS, Config{MTLS: &MTLSConfig{CACert: "-----BEGIN CERTIFICATE-----"}}},
-		"oidc": {TypeOIDC, Config{OIDC: &OIDCConfig{
-			Issuer:            "https://issuer",
-			Audiences:         []string{"gateway"},
-			JWKSURL:           "https://issuer/.well-known/jwks.json",
-			AllowedAlgorithms: []string{"RS256"},
-		}}},
 	}
 	for name, tc := range cases {
 		tc := tc
@@ -329,7 +302,7 @@ func TestConfig_ScanNil(t *testing.T) {
 	if err := c.Scan(nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if c.OAuth2 != nil || c.OIDC != nil || c.MTLS != nil {
+	if c.OAuth2 != nil || c.MTLS != nil {
 		t.Fatal("expected empty config after scanning nil")
 	}
 }
@@ -381,7 +354,7 @@ func TestAuth_CanBrokerLogin(t *testing.T) {
 			auth: &Auth{Type: TypeOAuth2, Enabled: true, Config: Config{OAuth2: &validateOnly}},
 		},
 		{
-			name: "oidc type is not yet unified",
+			name: "the deprecated oidc alias never brokers on its own",
 			auth: &Auth{Type: TypeOIDC, Enabled: true, Config: Config{OAuth2: &brokerCapable}},
 		},
 		{

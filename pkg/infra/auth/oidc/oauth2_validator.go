@@ -25,18 +25,18 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 )
 
-// OAuth2TokenValidator adapts the shared OIDC verifier to the MCP-plane
+// OAuth2TokenValidator adapts the shared JWT verifier to the MCP-plane
 // JWTValidator port: it resolves key material via OIDC discovery when the
 // config has no explicit JWKS URL and yields an identity.Principal carrying
 // the raw token for downstream exchange/passthrough.
 type OAuth2TokenValidator struct {
-	verifier  appauth.OIDCVerifier
+	verifier  appauth.JWTVerifier
 	discovery *discovery
 }
 
 var _ appauth.JWTValidator = (*OAuth2TokenValidator)(nil)
 
-func NewOAuth2TokenValidator(verifier appauth.OIDCVerifier, client *http.Client) *OAuth2TokenValidator {
+func NewOAuth2TokenValidator(verifier appauth.JWTVerifier, client *http.Client) *OAuth2TokenValidator {
 	return &OAuth2TokenValidator{verifier: verifier, discovery: newDiscovery(client)}
 }
 
@@ -52,13 +52,15 @@ func (v *OAuth2TokenValidator) Validate(ctx context.Context, raw string, cfg *do
 		}
 		jwksURL = discovered
 	}
-	verified, err := v.verifier.Verify(ctx, raw, domain.OIDCConfig{
-		Issuer:            cfg.Issuer,
-		Audiences:         cfg.Audiences,
-		JWKSURL:           jwksURL,
-		PublicKeys:        cfg.PublicKeys,
-		AllowedAlgorithms: cfg.Algorithms,
-	})
+	verifyCfg := *cfg
+	verifyCfg.JWKSURL = jwksURL
+	// The subject claim is applied below, where a missing claim falls back to the
+	// Entra-aware derivation instead of failing, and scopes are enforced once the
+	// principal exists so the caller sees a principal-shaped error.
+	verifyCfg.SubjectClaim = ""
+	verifyCfg.RequiredScopes = nil
+
+	verified, err := v.verifier.Verify(ctx, raw, verifyCfg)
 	if err != nil {
 		return nil, err
 	}

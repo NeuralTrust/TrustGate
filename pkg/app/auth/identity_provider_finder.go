@@ -33,10 +33,10 @@ type IdentityProviderFinder interface {
 var _ IdentityProviderFinder = (*identityProviderFinder)(nil)
 
 type identityProviderFinder struct {
-	verifier OIDCVerifier
+	verifier JWTVerifier
 }
 
-func NewIdentityProviderFinder(verifier OIDCVerifier) IdentityProviderFinder {
+func NewIdentityProviderFinder(verifier JWTVerifier) IdentityProviderFinder {
 	return &identityProviderFinder{verifier: verifier}
 }
 

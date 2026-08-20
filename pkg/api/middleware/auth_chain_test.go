@@ -133,7 +133,7 @@ func legacyOIDCAuth(t *testing.T, issuer string) *authdomain.Auth {
 	payload := fmt.Sprintf(`{"oidc":{"issuer":%q,"audiences":["trustgate"],"jwks_url":%q}}`, issuer, issuer+"/jwks")
 	var cfg authdomain.Config
 	require.NoError(t, json.Unmarshal([]byte(payload), &cfg))
-	require.Nil(t, cfg.OIDC, "the legacy payload must decode onto the oauth2 shape")
+	require.NotNil(t, cfg.OAuth2, "the legacy payload must decode onto the oauth2 shape")
 	a, err := authdomain.NewAuth(
 		ids.New[ids.GatewayKind](), "legacy-idp", authdomain.NormalizeType(authdomain.TypeOIDC), true, cfg,
 	)
