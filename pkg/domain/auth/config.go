@@ -27,7 +27,6 @@ import (
 
 type Config struct {
 	OAuth2 *OAuth2Config `json:"oauth2,omitempty"`
-	OIDC   *OIDCConfig   `json:"oidc,omitempty"`
 	MTLS   *MTLSConfig   `json:"mtls,omitempty"`
 }
 
@@ -46,16 +45,6 @@ type OAuth2Config struct {
 	SubjectClaim     string   `json:"subject_claim,omitempty"`
 	AuthorizeURL     string   `json:"authorize_url,omitempty"`
 	TokenURL         string   `json:"token_url,omitempty"`
-}
-
-type OIDCConfig struct {
-	Issuer            string   `json:"issuer"`
-	Audiences         []string `json:"audiences"`
-	JWKSURL           string   `json:"jwks_url,omitempty"`
-	PublicKeys        []string `json:"public_keys,omitempty"`
-	RequiredScopes    []string `json:"required_scopes,omitempty"`
-	AllowedAlgorithms []string `json:"allowed_algorithms,omitempty"`
-	SubjectClaim      string   `json:"subject_claim,omitempty"`
 }
 
 type MTLSConfig struct {
@@ -107,11 +96,6 @@ func (c Config) Validate(t Type) error {
 			return fmt.Errorf("%w: exactly the oauth2 config payload must be set for type %q", ErrInvalidConfig, t)
 		}
 		return c.OAuth2.validate()
-	case TypeOIDC:
-		if c.OIDC == nil || c.populatedCount() != 1 {
-			return fmt.Errorf("%w: exactly the oidc config payload must be set for type %q", ErrInvalidConfig, t)
-		}
-		return c.OIDC.validate()
 	case TypeMTLS:
 		if c.MTLS == nil || c.populatedCount() != 1 {
 			return fmt.Errorf("%w: exactly the mtls config payload must be set for type %q", ErrInvalidConfig, t)
@@ -124,7 +108,7 @@ func (c Config) Validate(t Type) error {
 
 func (c Config) populatedCount() int {
 	count := 0
-	for _, set := range []bool{c.OAuth2 != nil, c.OIDC != nil, c.MTLS != nil} {
+	for _, set := range []bool{c.OAuth2 != nil, c.MTLS != nil} {
 		if set {
 			count++
 		}
@@ -230,24 +214,6 @@ func (c *OAuth2Config) validateAuthorizationEndpoints() error {
 	}
 	c.AuthorizeURL = authorizeURL
 	c.TokenURL = tokenURL
-	return nil
-}
-
-func (c *OIDCConfig) validate() error {
-	if strings.TrimSpace(c.Issuer) == "" {
-		return fmt.Errorf("%w: oidc.issuer is required", ErrInvalidConfig)
-	}
-	if len(trimmedNonEmpty(c.Audiences)) == 0 {
-		return fmt.Errorf("%w: oidc.audiences is required", ErrInvalidConfig)
-	}
-	if strings.TrimSpace(c.JWKSURL) == "" && len(trimmedNonEmpty(c.PublicKeys)) == 0 {
-		return fmt.Errorf("%w: oidc requires jwks_url or public_keys", ErrInvalidConfig)
-	}
-	for _, alg := range c.AllowedAlgorithms {
-		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(alg)), "HS") {
-			return fmt.Errorf("%w: oidc.allowed_algorithms must not include HMAC algorithms", ErrInvalidConfig)
-		}
-	}
 	return nil
 }
 

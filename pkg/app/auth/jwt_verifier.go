@@ -33,8 +33,8 @@ type VerifiedClaims struct {
 	Scopes  []string
 }
 
-//go:generate mockery --name=OIDCVerifier --dir=. --output=./mocks --filename=oidc_verifier_mock.go --case=underscore --with-expecter
-type OIDCVerifier interface {
+//go:generate mockery --name=JWTVerifier --dir=. --output=./mocks --filename=jwt_verifier_mock.go --case=underscore --with-expecter
+type JWTVerifier interface {
 	Peek(token string) (TokenHints, error)
-	Verify(ctx context.Context, token string, cfg domain.OIDCConfig) (*VerifiedClaims, error)
+	Verify(ctx context.Context, token string, cfg domain.OAuth2Config) (*VerifiedClaims, error)
 }

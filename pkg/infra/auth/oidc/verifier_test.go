@@ -52,12 +52,12 @@ func TestVerifier_VerifyJWKSRS256(t *testing.T) {
 		"nbf":    time.Now().Add(-time.Minute).Unix(),
 	})
 	verifier := NewVerifierWithCache(NewJWKSCache(server.Client(), time.Minute))
-	got, err := verifier.Verify(context.Background(), token, domain.OIDCConfig{
-		Issuer:            "https://issuer.example.com",
-		Audiences:         []string{"gateway"},
-		JWKSURL:           server.URL,
-		RequiredScopes:    []string{"chat"},
-		AllowedAlgorithms: []string{"RS256"},
+	got, err := verifier.Verify(context.Background(), token, domain.OAuth2Config{
+		Issuer:         "https://issuer.example.com",
+		Audiences:      []string{"gateway"},
+		JWKSURL:        server.URL,
+		RequiredScopes: []string{"chat"},
+		Algorithms:     []string{"RS256"},
 	})
 	requireNoError(t, err)
 	if got.Subject != "user-1" {
@@ -87,7 +87,7 @@ func TestVerifier_VerifySelectsMatchingKID(t *testing.T) {
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 	verifier := NewVerifierWithCache(NewJWKSCache(server.Client(), time.Minute))
-	got, err := verifier.Verify(context.Background(), token, domain.OIDCConfig{
+	got, err := verifier.Verify(context.Background(), token, domain.OAuth2Config{
 		Issuer:    "https://issuer.example.com",
 		Audiences: []string{"gateway"},
 		JWKSURL:   server.URL,
@@ -117,7 +117,7 @@ func TestVerifier_VerifyWithoutKIDTriesCompatibleKeys(t *testing.T) {
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 	verifier := NewVerifierWithCache(NewJWKSCache(server.Client(), time.Minute))
-	got, err := verifier.Verify(context.Background(), token, domain.OIDCConfig{
+	got, err := verifier.Verify(context.Background(), token, domain.OAuth2Config{
 		Issuer:    "https://issuer.example.com",
 		Audiences: []string{"gateway"},
 		JWKSURL:   server.URL,
@@ -148,7 +148,7 @@ func TestVerifier_VerifyRefreshesJWKSOnKIDMiss(t *testing.T) {
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 	verifier := NewVerifierWithCache(NewJWKSCache(server.Client(), time.Minute))
-	_, err := verifier.Verify(context.Background(), token, domain.OIDCConfig{
+	_, err := verifier.Verify(context.Background(), token, domain.OAuth2Config{
 		Issuer:    "https://issuer.example.com",
 		Audiences: []string{"gateway"},
 		JWKSURL:   server.URL,
@@ -180,7 +180,7 @@ func TestVerifier_VerifyRefreshesJWKSOnSignatureFailure(t *testing.T) {
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 	verifier := NewVerifierWithCache(NewJWKSCache(server.Client(), time.Minute))
-	_, err := verifier.Verify(context.Background(), token, domain.OIDCConfig{
+	_, err := verifier.Verify(context.Background(), token, domain.OAuth2Config{
 		Issuer:    "https://issuer.example.com",
 		Audiences: []string{"gateway"},
 		JWKSURL:   server.URL,
@@ -201,11 +201,11 @@ func TestVerifier_VerifyRejectsInvalidIssuer(t *testing.T) {
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 	verifier := NewVerifierWithCache(NewJWKSCache(nil, time.Minute))
-	_, err := verifier.Verify(context.Background(), token, domain.OIDCConfig{
-		Issuer:            "https://issuer.example.com",
-		Audiences:         []string{"gateway"},
-		PublicKeys:        []string{publicKeyPEM(t, &key.PublicKey)},
-		AllowedAlgorithms: []string{"RS256"},
+	_, err := verifier.Verify(context.Background(), token, domain.OAuth2Config{
+		Issuer:     "https://issuer.example.com",
+		Audiences:  []string{"gateway"},
+		PublicKeys: []string{publicKeyPEM(t, &key.PublicKey)},
+		Algorithms: []string{"RS256"},
 	})
 	if !errors.Is(err, ErrInvalidToken) {
 		t.Fatalf("err = %v, want ErrInvalidToken", err)
