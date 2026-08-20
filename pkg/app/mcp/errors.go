@@ -35,6 +35,7 @@ var (
 	ErrTaskHandleRejected     = fmt.Errorf("mcp: task rejected")
 	ErrTaskCapabilityRequired = fmt.Errorf("mcp: task capability required")
 	ErrTaskHandleTooLarge     = fmt.Errorf("mcp: task handle too large")
+	ErrAppsResourceRejected   = errors.New(AppsResourceRejectedMessage)
 
 	ErrSubscriptionRefused            = fmt.Errorf("%s", SubscriptionRefusedMessage)
 	ErrSubscriptionRevoked            = fmt.Errorf("mcp: subscription revoked")
@@ -71,6 +72,8 @@ const (
 	// CodeTaskHandleTooLarge is an internal failure: a handle TrustGate itself
 	// minted does not fit the configured bound.
 	CodeTaskHandleTooLarge int64 = -32603
+	// CodeAppsResourceRejected is plain invalid-params for every Apps refusal.
+	CodeAppsResourceRejected int64 = -32602
 	// CodeSubscriptionRefused answers every capacity refusal. Which cap was hit
 	// — global, per-consumer or per-principal — must not be inferable, so the
 	// code is distinct from the task codes but carries no discriminating data.
@@ -86,6 +89,9 @@ const SubscriptionRefusedMessage = "mcp: subscription refused"
 // Tamper, expiry, a detached registry, a toolkit change, a purged upstream task,
 // and a credential failure must be indistinguishable on the wire.
 const TaskHandleRejectedMessage = "mcp: task rejected"
+
+// AppsResourceRejectedMessage is the single message for every Apps read refusal.
+const AppsResourceRejectedMessage = "mcp: Apps resource rejected"
 
 // taskCapabilityRequiredData names the extension a client has to declare.
 const taskCapabilityRequiredData = `{"requiredCapabilities":["` + MetaKeyTasksExtension + `"]}`
@@ -122,6 +128,11 @@ func TaskHandleTooLargeRPCError() *RPCError {
 	return &RPCError{Code: CodeTaskHandleTooLarge, Message: ErrTaskHandleTooLarge.Error()}
 }
 
+// AppsResourceRejectedRPCError is the bounded JSON-RPC error for Apps reads.
+func AppsResourceRejectedRPCError() *RPCError {
+	return &RPCError{Code: CodeAppsResourceRejected, Message: AppsResourceRejectedMessage}
+}
+
 // SubscriptionRefusedRPCError is the single JSON-RPC error every subscription
 // capacity refusal answers with: one constant message and never any data.
 func SubscriptionRefusedRPCError() *RPCError {
@@ -142,6 +153,16 @@ func MapTaskError(err error) error {
 	}
 	if errors.Is(err, ErrTaskHandleRejected) {
 		return TaskHandleRejectedRPCError()
+	}
+	return err
+}
+
+// MapAppsReadError converts every Apps read rejection into one JSON-RPC error.
+func MapAppsReadError(err error) error {
+	if errors.Is(err, ErrAppsResourceRejected) ||
+		errors.Is(err, ErrInvalidAppsDocument) ||
+		errors.Is(err, ErrInvalidAppsMetadata) {
+		return AppsResourceRejectedRPCError()
 	}
 	return err
 }
