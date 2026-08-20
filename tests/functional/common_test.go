@@ -282,6 +282,21 @@ func SeedStoredOIDCAuth(t *testing.T, gatewayID, name, issuer string, audiences 
 	})
 	require.NoError(t, err)
 
+	// The unification migration narrowed auths_type_check, so the insert has to
+	// step around it. The row that survives reproduces a database restored from
+	// a pre-migration backup or left behind by a rolled-back migration, which is
+	// the state the read paths still have to tolerate. The constraint comes back
+	// NOT VALID so it keeps rejecting new legacy writes without re-checking the
+	// row this helper just planted.
+	_, err = conn.Exec(ctx, `ALTER TABLE auths DROP CONSTRAINT IF EXISTS auths_type_check`)
+	require.NoError(t, err, "relax the auth type constraint")
+	defer func() {
+		_, restoreErr := conn.Exec(ctx, `
+			ALTER TABLE auths
+			ADD CONSTRAINT auths_type_check CHECK (type IN ('api_key','oauth2','mtls')) NOT VALID`)
+		require.NoError(t, restoreErr, "restore the auth type constraint")
+	}()
+
 	id := uuid.NewString()
 	_, err = conn.Exec(ctx, `
 		INSERT INTO auths (id, gateway_id, name, type, enabled, config, created_at, updated_at)

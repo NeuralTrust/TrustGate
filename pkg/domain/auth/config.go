@@ -277,6 +277,22 @@ func (c *OAuth2Config) ConflictsWith(other *OAuth2Config) bool {
 	return false
 }
 
+// SharedAudience returns the audience both configurations accept, or an empty
+// string when either accepts any audience.
+func (c *OAuth2Config) SharedAudience(other *OAuth2Config) string {
+	if c == nil || other == nil {
+		return ""
+	}
+	for _, a := range c.Audiences {
+		for _, b := range other.Audiences {
+			if normalizeAudience(a) == normalizeAudience(b) {
+				return a
+			}
+		}
+	}
+	return ""
+}
+
 // normalizeAudience treats an "api://" resource URI and its bare identifier
 // as the same audience (Entra v1 vs v2 aud claim forms).
 func normalizeAudience(aud string) string {
