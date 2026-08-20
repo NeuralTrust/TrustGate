@@ -70,6 +70,18 @@ func (denyingDiscoveryExecutor) RunStage(
 	return nil, &appplugins.PluginError{StatusCode: 403, Message: "blocked"}
 }
 
+type recordingDiscoveryExecutor struct {
+	body []byte
+}
+
+func (e *recordingDiscoveryExecutor) RunStage(
+	_ context.Context,
+	input appplugins.StageInput,
+) (*appplugins.StageOutcome, error) {
+	e.body = append([]byte(nil), input.Response.Body...)
+	return &appplugins.StageOutcome{}, nil
+}
+
 type gatedPolicyFinder struct {
 	data    *appconsumer.Data
 	started chan struct{}
@@ -126,6 +138,93 @@ func policyIdentity(
 		AuthID:    authID,
 		Path:      appconsumer.MCPPath(policyTestSlug),
 		Honoured:  NewHonouredSet(honoured...),
+	}
+}
+
+func TestSubscriptionPolicyDigestFiltersAppsListsBeforePlugins(t *testing.T) {
+	t.Parallel()
+	const url = "https://a.example.com/mcp"
+	reg := mcpRegistry(t, "github", url)
+	validTool := mustAppsTool(t, `{"name":"app","_meta":{"ui":{"resourceUri":"ui://widget/app"}}}`)
+	plainTool := mustAppsTool(t, `{"name":"plain","_meta":{"trace":1}}`)
+	validResource := mustAppsResource(t, `{"name":"app","uri":"ui://widget/app","_meta":{"ui":{}}}`)
+	plainResource := mustAppsResource(t, `{"name":"plain","uri":"https://example.com","_meta":{"trace":1}}`)
+	templates := []ResourceTemplate{{Name: "template", URITemplate: "doc://{id}"}}
+	composer := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
+		url: {
+			tools: []Tool{mustAppsTool(t, `{"name":"invalid","_meta":{"ui":"bad"}}`), validTool, plainTool},
+			resources: []Resource{
+				mustAppsResource(t, `{"name":"invalid","uri":"https://example.com","_meta":{"ui":{}}}`), validResource, plainResource,
+			},
+			templates: templates,
+		},
+	}})
+	metadata, err := NewAppsMetadataPolicy(2, 2, nil, nil)
+	if err != nil {
+		t.Fatalf("build metadata policy: %v", err)
+	}
+	recorder := &recordingDiscoveryExecutor{}
+	policy := NewSubscriptionPolicyWithAppsListPolicy(nil, nil, composer,
+		NewAppsListPolicy(true, metadata), NewPluginRunner(recorder, nil)).(*subscriptionPolicy)
+	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, reg)
+
+	toolsDigest, err := policy.digest(context.Background(), rc, NotificationToolsListChanged)
+	if err != nil {
+		t.Fatalf("digest tools: %v", err)
+	}
+	filteredTools := []Tool{validTool, plainTool}
+	encodedTools, _ := encodeSurface(filteredTools, func(tool Tool) string { return tool.Name })
+	pluginBody, _ := json.Marshal(map[string]any{"tools": filteredTools})
+	if toolsDigest != digestOf(encodedTools) || string(recorder.body) != string(pluginBody) {
+		t.Fatalf("tools digest/plugin input retained invalid Apps metadata: digest=%q body=%s", toolsDigest, recorder.body)
+	}
+
+	resourcesDigest, err := policy.digest(context.Background(), rc, NotificationResourcesListChanged)
+	if err != nil {
+		t.Fatalf("digest resources: %v", err)
+	}
+	encodedResources, _ := encodeSurface([]Resource{validResource, plainResource}, func(resource Resource) string {
+		return resource.Name + "\x00" + resource.URI
+	})
+	encodedTemplates, _ := encodeSurface(templates, func(template ResourceTemplate) string {
+		return template.Name + "\x00" + template.URITemplate
+	})
+	if resourcesDigest != digestOf(encodedResources, encodedTemplates) {
+		t.Fatalf("resources digest retained invalid Apps metadata: %q", resourcesDigest)
+	}
+}
+
+func TestSubscriptionPolicyLegacyConstructorsDisableAppsFiltering(t *testing.T) {
+	t.Parallel()
+	constructors := map[string]func(Composer, *PluginRunner) *subscriptionPolicy{
+		"default": func(c Composer, p *PluginRunner) *subscriptionPolicy {
+			return NewSubscriptionPolicy(nil, nil, c, p).(*subscriptionPolicy)
+		},
+		"upstream": func(c Composer, p *PluginRunner) *subscriptionPolicy {
+			return NewSubscriptionPolicyWithUpstream(nil, nil, c, p, nil, nil).(*subscriptionPolicy)
+		},
+	}
+	for name, construct := range constructors {
+		t.Run(name, func(t *testing.T) {
+			const url = "https://a.example.com/mcp"
+			reg := mcpRegistry(t, "github", url)
+			invalid := mustAppsTool(t, `{"name":"legacy","_meta":{"ui":"bad"}}`)
+			composer := newTestComposer(&fakeDialer{upstreams: map[string]*fakeUpstream{
+				url: {tools: []Tool{invalid}},
+			}})
+			recorder := &recordingDiscoveryExecutor{}
+			policy := construct(composer, NewPluginRunner(recorder, nil))
+			digest, err := policy.digest(context.Background(),
+				routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, reg), NotificationToolsListChanged)
+			if err != nil {
+				t.Fatalf("digest tools: %v", err)
+			}
+			encoded, _ := encodeSurface([]Tool{invalid}, func(tool Tool) string { return tool.Name })
+			body, _ := json.Marshal(map[string]any{"tools": []Tool{invalid}})
+			if digest != digestOf(encoded) || string(recorder.body) != string(body) {
+				t.Fatalf("legacy constructor filtered Apps metadata: digest=%q body=%s", digest, recorder.body)
+			}
+		})
 	}
 }
 

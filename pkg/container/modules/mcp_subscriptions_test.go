@@ -21,9 +21,14 @@ import (
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	consumermocks "github.com/NeuralTrust/TrustGate/pkg/app/consumer/mocks"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
+	mcpmocks "github.com/NeuralTrust/TrustGate/pkg/app/mcp/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/dig"
 )
@@ -69,6 +74,48 @@ func TestProvideAppsListPolicyRemainsDormant(t *testing.T) {
 	require.Len(t, filtered, 1)
 	require.Same(t, &input[0], &filtered[0])
 	require.Zero(t, outcome.Dropped)
+}
+
+func TestProvideSubscriptionPolicyInjectsAppsPolicyInBothModes(t *testing.T) {
+	metadata, err := appmcp.NewAppsMetadataPolicy(1, 1, nil, nil)
+	require.NoError(t, err)
+	appsPolicy := appmcp.NewAppsListPolicy(true, metadata)
+	for _, upstream := range []bool{false, true} {
+		t.Run(map[bool]string{false: "northbound", true: "upstream"}[upstream], func(t *testing.T) {
+			cfg := subscriptionsConfig(true)
+			cfg.Server.MCPSubscriptions.UpstreamEnabled = upstream
+			authID := ids.New[ids.AuthKind]()
+			consumer := &consumerdomain.Consumer{
+				ID: ids.New[ids.ConsumerKind](), Type: consumerdomain.TypeMCP, Slug: "apps", Active: true,
+				AuthIDs: []ids.AuthID{authID},
+			}
+			data := appconsumer.NewData(ids.New[ids.GatewayKind](), []appconsumer.RoutableConsumer{{Consumer: consumer}})
+			rc, ok := data.MatchPath(appconsumer.MCPPath("apps"))
+			require.True(t, ok)
+			finder := consumermocks.NewDataFinder(t)
+			finder.EXPECT().FindByGateway(mock.Anything, data.GatewayID).Return(data, nil).Twice()
+			scoper := mcpmocks.NewRoleScoper(t)
+			scoper.EXPECT().Scope(mock.Anything, mock.Anything, data).Return(rc, nil).Twice()
+			composer := mcpmocks.NewComposer(t)
+			var first, second appmcp.Tool
+			require.NoError(t, json.Unmarshal([]byte(`{"name":"first","_meta":{"ui":"bad"}}`), &first))
+			require.NoError(t, json.Unmarshal([]byte(`{"name":"second","_meta":{"ui/x":true}}`), &second))
+			composer.EXPECT().ListTools(mock.Anything, rc).Return([]appmcp.Tool{first}, nil).Once()
+			composer.EXPECT().ListTools(mock.Anything, rc).Return([]appmcp.Tool{second}, nil).Once()
+			policy := provideSubscriptionPolicy(cfg, finder, scoper, composer, nil, appsPolicy, nil, nil)
+			identity := appmcp.LeaseIdentity{
+				Key:       appmcp.IsolationKey{RoleScope: appmcp.SurfaceConfigFingerprint(rc)},
+				GatewayID: data.GatewayID, AuthID: authID, Path: appconsumer.MCPPath("apps"),
+				Honoured: appmcp.NewHonouredSet(appmcp.NotificationToolsListChanged),
+			}
+			baseline, err := policy.Evaluate(context.Background(), identity, appmcp.SurfaceSnapshot{})
+			require.NoError(t, err)
+			evaluation, err := policy.Evaluate(context.Background(), identity, baseline.Snapshot)
+			require.NoError(t, err)
+			require.Empty(t, evaluation.Changed)
+			require.Equal(t, baseline.Snapshot, evaluation.Snapshot)
+		})
+	}
 }
 
 func subscriptionsConfig(enabled bool) *config.Config {
@@ -117,6 +164,7 @@ func TestSubscriptionUpstreamDigGraphModes(t *testing.T) {
 			require.NoError(t, c.Provide(func() appmcp.RoleScoper { return nil }))
 			require.NoError(t, c.Provide(func() appmcp.Composer { return nil }))
 			require.NoError(t, c.Provide(func() *appmcp.PluginRunner { return nil }))
+			require.NoError(t, c.Provide(func() appmcp.AppsListPolicy { return appmcp.AppsListPolicy{} }))
 			require.NoError(t, c.Provide(func() appmcp.CredentialResolver { return nil }))
 			require.NoError(t, c.Provide(provideSubscriptionRegistry))
 			require.NoError(t, c.Provide(provideSubscriptionConnector))
@@ -196,7 +244,7 @@ func TestProvideSubscriptionRegistryFollowsTheKillSwitch(t *testing.T) {
 			t.Parallel()
 			cfg := subscriptionsConfig(tc.enabled)
 			registry := provideSubscriptionRegistry(cfg)
-			policy := provideSubscriptionPolicy(cfg, nil, nil, nil, nil, nil, nil)
+			policy := provideSubscriptionPolicy(cfg, nil, nil, nil, nil, appmcp.AppsListPolicy{}, nil, nil)
 
 			require.Equal(t, tc.wantExists, registry != nil)
 			require.Equal(t, tc.wantExists, policy != nil,
@@ -215,7 +263,7 @@ func TestSubscriptionsSupportNeedsBothTheRegistryAndThePolicy(t *testing.T) {
 	t.Parallel()
 	cfg := subscriptionsConfig(true)
 	registry := provideSubscriptionRegistry(cfg)
-	policy := provideSubscriptionPolicy(cfg, nil, nil, nil, nil, nil, nil)
+	policy := provideSubscriptionPolicy(cfg, nil, nil, nil, nil, appmcp.AppsListPolicy{}, nil, nil)
 
 	tests := []struct {
 		name         string

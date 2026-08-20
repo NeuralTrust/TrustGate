@@ -201,12 +201,14 @@ func MCP(c *container.Container) error {
 		composer appmcp.Composer,
 		plugins *appmcp.PluginRunner,
 		limiter ratelimitapp.Checker,
+		appsListPolicy appmcp.AppsListPolicy,
 		cfg *config.Config,
 	) *mcphttp.RPCGateway {
-		return mcphttp.NewRPCGatewayWithLimits(
+		return mcphttp.NewRPCGatewayWithAppsListPolicy(
 			composer,
 			plugins,
 			limiter,
+			appsListPolicy,
 			cfg.Server.MCPMRTR.MaxContinuationBytes,
 		)
 	}); err != nil {
@@ -305,6 +307,7 @@ func provideSubscriptionPolicy(
 	scoper appmcp.RoleScoper,
 	composer appmcp.Composer,
 	plugins *appmcp.PluginRunner,
+	appsListPolicy appmcp.AppsListPolicy,
 	creds appmcp.CredentialResolver,
 	connector appmcp.SubscriptionConnector,
 ) appmcp.SubscriptionPolicy {
@@ -312,16 +315,23 @@ func provideSubscriptionPolicy(
 		return nil
 	}
 	if cfg.Server.MCPSubscriptions.UpstreamEnabled {
-		return appmcp.NewSubscriptionPolicyWithUpstream(
+		return appmcp.NewSubscriptionPolicyWithUpstreamAndAppsListPolicy(
 			consumers,
 			scoper,
 			composer,
 			plugins,
+			appsListPolicy,
 			creds,
 			connector,
 		)
 	}
-	return appmcp.NewSubscriptionPolicy(consumers, scoper, composer, plugins)
+	return appmcp.NewSubscriptionPolicyWithAppsListPolicy(
+		consumers,
+		scoper,
+		composer,
+		appsListPolicy,
+		plugins,
+	)
 }
 
 func provideSubscriptionConnector(cfg *config.Config) appmcp.SubscriptionConnector {
