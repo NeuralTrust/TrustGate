@@ -36,11 +36,11 @@ type IdentityProviderFinder interface {
 var _ IdentityProviderFinder = (*identityProviderFinder)(nil)
 
 type identityProviderFinder struct {
-	verifier OIDCVerifier
+	verifier JWTVerifier
 }
 
 // NewIdentityProviderFinder creates a provider finder using the supplied token parser.
-func NewIdentityProviderFinder(verifier OIDCVerifier) IdentityProviderFinder {
+func NewIdentityProviderFinder(verifier JWTVerifier) IdentityProviderFinder {
 	return &identityProviderFinder{verifier: verifier}
 }
 

@@ -27,15 +27,14 @@ import (
 
 const verifierToken = "header.payload.signature"
 
-func TestOAuth2Verifier_ForwardsProjectedConfig(t *testing.T) {
+func TestOAuth2Verifier_ForwardsConfigUnchanged(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
 		cfg  domain.OAuth2Config
-		want domain.OIDCConfig
 	}{
 		{
-			name: "subject claim reaches the verifier",
+			name: "a jwks url config keeps its scopes, algorithms and subject claim",
 			cfg: domain.OAuth2Config{
 				Issuer:         "https://issuer.example.com",
 				Audiences:      []string{"gateway"},
@@ -44,23 +43,10 @@ func TestOAuth2Verifier_ForwardsProjectedConfig(t *testing.T) {
 				Algorithms:     []string{"RS256"},
 				SubjectClaim:   "oid",
 			},
-			want: domain.OIDCConfig{
-				Issuer:            "https://issuer.example.com",
-				Audiences:         []string{"gateway"},
-				JWKSURL:           "https://issuer.example.com/jwks",
-				RequiredScopes:    []string{"chat"},
-				AllowedAlgorithms: []string{"RS256"},
-				SubjectClaim:      "oid",
-			},
 		},
 		{
 			name: "inline public keys reach the verifier without a jwks url",
 			cfg: domain.OAuth2Config{
-				Issuer:     "urn:example:idp",
-				Audiences:  []string{"gateway"},
-				PublicKeys: []string{"-----BEGIN PUBLIC KEY-----"},
-			},
-			want: domain.OIDCConfig{
 				Issuer:     "urn:example:idp",
 				Audiences:  []string{"gateway"},
 				PublicKeys: []string{"-----BEGIN PUBLIC KEY-----"},
@@ -74,12 +60,6 @@ func TestOAuth2Verifier_ForwardsProjectedConfig(t *testing.T) {
 				JWKSURL:    "https://issuer.example.com/jwks",
 				PublicKeys: []string{"-----BEGIN PUBLIC KEY-----"},
 			},
-			want: domain.OIDCConfig{
-				Issuer:     "https://issuer.example.com",
-				Audiences:  []string{"gateway"},
-				JWKSURL:    "https://issuer.example.com/jwks",
-				PublicKeys: []string{"-----BEGIN PUBLIC KEY-----"},
-			},
 		},
 	}
 	for _, tt := range tests {
@@ -87,9 +67,9 @@ func TestOAuth2Verifier_ForwardsProjectedConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			claims := &appauth.VerifiedClaims{Subject: "user-1"}
-			jwtVerifier := authmocks.NewOIDCVerifier(t)
+			jwtVerifier := authmocks.NewJWTVerifier(t)
 			jwtVerifier.EXPECT().
-				Verify(mock.Anything, verifierToken, tt.want).
+				Verify(mock.Anything, verifierToken, tt.cfg).
 				Return(claims, nil).
 				Once()
 
@@ -132,7 +112,7 @@ func TestOAuth2Verifier_RejectsConfigsWithoutUsableKeyMaterial(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			jwtVerifier := authmocks.NewOIDCVerifier(t)
+			jwtVerifier := authmocks.NewJWTVerifier(t)
 
 			got, err := appauth.NewOAuth2Verifier(jwtVerifier).Verify(
 				context.Background(),
