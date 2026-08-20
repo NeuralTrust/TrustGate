@@ -27,7 +27,10 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
-var ErrMethodNotFound = errors.New("mcp: method not found")
+var (
+	ErrMethodNotFound          = errors.New("mcp: method not found")
+	errMalformedAppsCapability = errors.New("mcp: malformed Apps capability")
+)
 
 type InvalidParamsError struct {
 	Reason string
@@ -44,6 +47,7 @@ type RPCGateway struct {
 	plugins              *appmcp.PluginRunner
 	limiter              ratelimitapp.Checker
 	appsListPolicy       appmcp.AppsListPolicy
+	appsReadPolicy       appmcp.AppsReadPolicy
 	maxContinuationBytes int
 }
 
@@ -59,11 +63,12 @@ func NewRPCGatewayWithLimits(
 	limiter ratelimitapp.Checker,
 	maxContinuationBytes int,
 ) *RPCGateway {
-	return NewRPCGatewayWithAppsListPolicy(
+	return NewRPCGatewayWithAppsPolicies(
 		composer,
 		plugins,
 		limiter,
 		appmcp.AppsListPolicy{},
+		appmcp.AppsReadPolicy{},
 		maxContinuationBytes,
 	)
 }
@@ -74,6 +79,25 @@ func NewRPCGatewayWithAppsListPolicy(
 	plugins *appmcp.PluginRunner,
 	limiter ratelimitapp.Checker,
 	appsListPolicy appmcp.AppsListPolicy,
+	maxContinuationBytes int,
+) *RPCGateway {
+	return NewRPCGatewayWithAppsPolicies(
+		composer,
+		plugins,
+		limiter,
+		appsListPolicy,
+		appmcp.AppsReadPolicy{},
+		maxContinuationBytes,
+	)
+}
+
+// NewRPCGatewayWithAppsPolicies wires MCP dispatch with explicit Apps and continuation policies.
+func NewRPCGatewayWithAppsPolicies(
+	composer appmcp.Composer,
+	plugins *appmcp.PluginRunner,
+	limiter ratelimitapp.Checker,
+	appsListPolicy appmcp.AppsListPolicy,
+	appsReadPolicy appmcp.AppsReadPolicy,
 	maxContinuationBytes int,
 ) *RPCGateway {
 	if limiter == nil {
@@ -87,6 +111,7 @@ func NewRPCGatewayWithAppsListPolicy(
 		plugins:              plugins,
 		limiter:              limiter,
 		appsListPolicy:       appsListPolicy,
+		appsReadPolicy:       appsReadPolicy,
 		maxContinuationBytes: maxContinuationBytes,
 	}
 }
@@ -354,10 +379,36 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		if err := json.Unmarshal(params, &p); err != nil || p.URI == "" {
 			return nil, &InvalidParamsError{Reason: "resources/read requires params.uri"}
 		}
+		appsRead := g.appsReadPolicy.RequiresValidation(p.URI)
+		if appsRead {
+			protocol, _ := ctx.Value(mcpProtocolContextKey{}).(mcpProtocolAttrs)
+			if protocol.era != eraLabel(protocolEraModern) &&
+				requestMetadataProtocolVersion(params).value != modernProtocolVersion {
+				return nil, appmcp.MapAppsReadError(appmcp.ErrAppsResourceRejected)
+			}
+			capability, err := declaredMCPAppsCapability(rawClientCapabilities(params))
+			if err != nil {
+				return nil, errMalformedAppsCapability
+			}
+			if err := g.appsReadPolicy.ValidateReadRequest(p.URI, capability); err != nil {
+				return nil, appmcp.MapAppsReadError(err)
+			}
+		}
 		if err := g.checkRateLimit(ctx, rc); err != nil {
 			return nil, err
 		}
-		return g.composer.ReadResource(ctx, rc, p.URI)
+		result, err := g.composer.ReadResource(ctx, rc, p.URI)
+		if err != nil {
+			return nil, err
+		}
+		if !appsRead {
+			return result, nil
+		}
+		result, err = g.appsReadPolicy.ValidateReadResult(p.URI, result)
+		if err != nil {
+			return nil, appmcp.MapAppsReadError(err)
+		}
+		return appmcp.AppsReadResult(result), nil
 	case "prompts/list":
 		if err := g.checkRateLimit(ctx, rc); err != nil {
 			return nil, err

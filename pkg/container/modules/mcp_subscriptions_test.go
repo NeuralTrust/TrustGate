@@ -76,6 +76,24 @@ func TestProvideAppsListPolicyRemainsDormant(t *testing.T) {
 	require.Zero(t, outcome.Dropped)
 }
 
+func TestProvideAppsReadPolicyIsIndependentFromPipelineReadiness(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Server.MCPApps.Enabled = true
+	cfg.Server.MCPApps.MaxResourceBytes = 64*1024 - 1
+	metadata, err := appmcp.NewAppsMetadataPolicy(1, 1, nil, nil)
+	require.NoError(t, err)
+	policy := provideAppsReadPolicy(cfg, metadata)
+	require.False(t, mcpAppsPipelineReady)
+	require.True(t, policy.RequiresValidation("ui://widget"))
+	require.NoError(t, policy.ValidateReadRequest("ui://widget", appmcp.MCPAppsClientCapability{
+		MIMETypes: []string{appmcp.MCPAppsHTMLMIMEType},
+	}))
+	_, err = policy.ValidateReadResult("ui://widget", json.RawMessage(
+		`{"contents":[{"uri":"ui://widget","mimeType":"text/html;profile=mcp-app","text":"<!doctype html><html><head></head><body></body></html>"}]}`,
+	))
+	require.ErrorIs(t, err, appmcp.ErrInvalidAppsDocument)
+}
+
 func TestProvideSubscriptionPolicyInjectsAppsPolicyInBothModes(t *testing.T) {
 	metadata, err := appmcp.NewAppsMetadataPolicy(1, 1, nil, nil)
 	require.NoError(t, err)

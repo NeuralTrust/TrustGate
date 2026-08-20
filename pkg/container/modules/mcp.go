@@ -141,6 +141,9 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(provideAppsListPolicy); err != nil {
 		return err
 	}
+	if err := c.Provide(provideAppsReadPolicy); err != nil {
+		return err
+	}
 	if err := c.Provide(func(
 		cfg *config.Config,
 		creds appmcp.CredentialResolver,
@@ -202,13 +205,15 @@ func MCP(c *container.Container) error {
 		plugins *appmcp.PluginRunner,
 		limiter ratelimitapp.Checker,
 		appsListPolicy appmcp.AppsListPolicy,
+		appsReadPolicy appmcp.AppsReadPolicy,
 		cfg *config.Config,
 	) *mcphttp.RPCGateway {
-		return mcphttp.NewRPCGatewayWithAppsListPolicy(
+		return mcphttp.NewRPCGatewayWithAppsPolicies(
 			composer,
 			plugins,
 			limiter,
 			appsListPolicy,
+			appsReadPolicy,
 			cfg.Server.MCPMRTR.MaxContinuationBytes,
 		)
 	}); err != nil {
@@ -281,6 +286,11 @@ func provideAppsMetadataPolicy(cfg *config.Config) (appmcp.AppsMetadataPolicy, e
 
 func provideAppsListPolicy(cfg *config.Config, metadata appmcp.AppsMetadataPolicy) appmcp.AppsListPolicy {
 	return appmcp.NewAppsListPolicy(cfg.Server.MCPApps.Enabled && mcpAppsPipelineReady, metadata)
+}
+
+func provideAppsReadPolicy(cfg *config.Config, metadata appmcp.AppsMetadataPolicy) appmcp.AppsReadPolicy {
+	apps := cfg.Server.MCPApps
+	return appmcp.NewAppsReadPolicy(apps.Enabled, apps.MaxResourceBytes, metadata)
 }
 
 // provideSubscriptionRegistry builds the lease accountant, or nil while the
