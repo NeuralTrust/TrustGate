@@ -146,8 +146,6 @@ definitions:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.MTLSConfigResponse'
       oauth2:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.OAuth2ConfigResponse'
-      oidc:
-        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.OIDCConfigResponse'
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.ListAuthResponse:
     properties:
@@ -216,31 +214,6 @@ definitions:
       token_url:
         type: string
       userinfo_url:
-        type: string
-    type: object
-  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.OIDCConfigResponse:
-    properties:
-      allowed_algorithms:
-        items:
-          type: string
-        type: array
-      audiences:
-        items:
-          type: string
-        type: array
-      issuer:
-        type: string
-      jwks_url:
-        type: string
-      public_keys:
-        items:
-          type: string
-        type: array
-      required_scopes:
-        items:
-          type: string
-        type: array
-      subject_claim:
         type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_catalog_response.ModelResponse:
@@ -2736,7 +2709,8 @@ paths:
         in: query
         name: name
         type: string
-      - description: Filter by auth type (api_key, oauth2, oidc, mtls)
+      - description: Filter by auth type (api_key, oauth2, mtls; oidc is a deprecated
+          alias of oauth2)
         in: query
         name: type
         type: string
