@@ -52,6 +52,9 @@ type OAuth2ConfigRequest struct {
 	TokenURL         string   `json:"token_url,omitempty"`
 }
 
+// OIDCConfigRequest is the deprecated alias of OAuth2ConfigRequest. It is
+// accepted on create and update and mapped onto the oauth2 payload; responses
+// always carry the oauth2 shape.
 type OIDCConfigRequest struct {
 	Issuer            string   `json:"issuer"`
 	Audiences         []string `json:"audiences"`

@@ -318,7 +318,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filter by auth type (api_key, oauth2, oidc, mtls)",
+                        "description": "Filter by auth type (api_key, oauth2, mtls; oidc is a deprecated alias of oauth2)",
                         "name": "type",
                         "in": "query"
                     },
@@ -3951,9 +3951,6 @@ const docTemplate = `{
                 },
                 "oauth2": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.OAuth2ConfigResponse"
-                },
-                "oidc": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.OIDCConfigResponse"
                 }
             }
         },
@@ -4058,44 +4055,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "userinfo_url": {
-                    "type": "string"
-                }
-            }
-        },
-        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.OIDCConfigResponse": {
-            "type": "object",
-            "properties": {
-                "allowed_algorithms": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "audiences": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "issuer": {
-                    "type": "string"
-                },
-                "jwks_url": {
-                    "type": "string"
-                },
-                "public_keys": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "required_scopes": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "subject_claim": {
                     "type": "string"
                 }
             }
