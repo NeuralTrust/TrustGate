@@ -17,7 +17,9 @@ package middleware_test
 import (
 	"context"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http/httptest"
@@ -128,14 +130,14 @@ func brokerCapableOAuth2Auth(t *testing.T, issuer string) *authdomain.Auth {
 
 func legacyOIDCAuth(t *testing.T, issuer string) *authdomain.Auth {
 	t.Helper()
-	a, err := authdomain.NewAuth(ids.New[ids.GatewayKind](), "legacy-idp", authdomain.TypeOIDC, true,
-		authdomain.Config{OIDC: &authdomain.OIDCConfig{
-			Issuer:    issuer,
-			Audiences: []string{"trustgate"},
-			JWKSURL:   issuer + "/jwks",
-		}})
+	payload := fmt.Sprintf(`{"oidc":{"issuer":%q,"audiences":["trustgate"],"jwks_url":%q}}`, issuer, issuer+"/jwks")
+	var cfg authdomain.Config
+	require.NoError(t, json.Unmarshal([]byte(payload), &cfg))
+	require.Nil(t, cfg.OIDC, "the legacy payload must decode onto the oauth2 shape")
+	a, err := authdomain.NewAuth(
+		ids.New[ids.GatewayKind](), "legacy-idp", authdomain.NormalizeType(authdomain.TypeOIDC), true, cfg,
+	)
 	require.NoError(t, err)
-	require.Nil(t, a.Config.OAuth2, "fixture must carry the legacy config shape")
 	return a
 }
 
@@ -819,7 +821,6 @@ func TestChain_LegacyOIDCAuth_AuthenticatesBearerJWT(t *testing.T) {
 	require.Equal(t, legacy.ID, id.AuthID)
 	require.Equal(t, legacy.GatewayID, id.GatewayID)
 	require.Equal(t, 1, jwtVal.calls)
-	require.Nil(t, legacy.Config.OAuth2, "the pool must project onto a copy, not the stored auth")
 }
 
 func TestChain_TokenlessRequest_ChallengeMatchesBrokeringCapability(t *testing.T) {
