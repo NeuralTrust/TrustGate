@@ -271,7 +271,7 @@ func isAuthorizedForConsumer(rc *appconsumer.RoutableConsumer, authCtx *appauth.
 	case "", domainconsumer.RoutingModeInline:
 		return isInlineAuthMethod(authCtx.Method) && consumerHasAuth(rc, authCtx.AuthID)
 	case domainconsumer.RoutingModeRoleBased:
-		return authCtx.Method == appauth.MethodOIDC && consumerHasRole(rc, authCtx.RoleIDs)
+		return consumerHasRole(rc, authCtx.RoleIDs)
 	default:
 		return false
 	}

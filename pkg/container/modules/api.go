@@ -148,9 +148,6 @@ func API(c *container.Container) error {
 	if err := c.Provide(resolver.NewOAuth2IdentityResolver); err != nil {
 		return err
 	}
-	if err := c.Provide(resolver.NewOIDCIdentityResolver); err != nil {
-		return err
-	}
 	if err := c.Provide(resolver.NewIdentityResolver); err != nil {
 		return err
 	}
