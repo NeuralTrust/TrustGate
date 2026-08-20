@@ -275,9 +275,9 @@ func TestAPIKeyConnectHandlerPost_LimiterOutageShortCircuits(t *testing.T) {
 	app := fiber.New()
 	app.Post("/:slug/connect", func(c *fiber.Ctx) error {
 		err := handler.Post(c)
-		allowed, ok := c.Locals(middleware.OAuthChallengeAllowedLocal).(bool)
-		if !ok || allowed {
-			t.Fatalf("challenge local = (%v, %t), want false", allowed, ok)
+		mode, ok := c.Locals(middleware.OAuthChallengeModeLocal).(middleware.OAuthChallengeMode)
+		if !ok || mode != middleware.OAuthChallengeSilent {
+			t.Fatalf("challenge local = (%v, %t), want silent", mode, ok)
 		}
 		return err
 	})

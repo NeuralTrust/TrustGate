@@ -357,3 +357,46 @@ func TestConfig_ValueRoundTrip(t *testing.T) {
 		t.Fatalf("round trip mismatch: %+v", got)
 	}
 }
+
+func TestAuth_CanBrokerLogin(t *testing.T) {
+	t.Parallel()
+	brokerCapable := OAuth2Config{ClientID: "gw-client", Issuer: "https://idp.example.com"}
+	validateOnly := OAuth2Config{Issuer: "https://idp.example.com"}
+	tests := []struct {
+		name string
+		auth *Auth
+		want bool
+	}{
+		{
+			name: "enabled oauth2 with a pre-registered client",
+			auth: &Auth{Type: TypeOAuth2, Enabled: true, Config: Config{OAuth2: &brokerCapable}},
+			want: true,
+		},
+		{
+			name: "disabled oauth2",
+			auth: &Auth{Type: TypeOAuth2, Config: Config{OAuth2: &brokerCapable}},
+		},
+		{
+			name: "validate-only oauth2",
+			auth: &Auth{Type: TypeOAuth2, Enabled: true, Config: Config{OAuth2: &validateOnly}},
+		},
+		{
+			name: "oidc type is not yet unified",
+			auth: &Auth{Type: TypeOIDC, Enabled: true, Config: Config{OAuth2: &brokerCapable}},
+		},
+		{
+			name: "oauth2 without payload",
+			auth: &Auth{Type: TypeOAuth2, Enabled: true},
+		},
+		{name: "nil auth"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.auth.CanBrokerLogin(); got != tt.want {
+				t.Fatalf("CanBrokerLogin() = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}

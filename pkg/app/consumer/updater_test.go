@@ -362,7 +362,7 @@ func TestUpdater_Update_SwitchToInlineClearsRoles(t *testing.T) {
 	}
 }
 
-func TestUpdater_Update_RejectsIdPAuthOnSwitchToMCP(t *testing.T) {
+func TestUpdater_Update_AcceptsValidateOnlyIdPAuthOnSwitchToMCP(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
 	beID := ids.New[ids.RegistryKind]()
@@ -372,22 +372,31 @@ func TestUpdater_Update_RejectsIdPAuthOnSwitchToMCP(t *testing.T) {
 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().
+		Update(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
+			return c.Type == domain.TypeMCP
+		}), mock.Anything).
+		Return(nil).
+		Once()
 
 	authRepo := authmocks.NewRepository(t)
 	authRepo.EXPECT().FindByIDs(mock.Anything, gwID, existing.AuthIDs).
 		Return([]*authdomain.Auth{{ID: authID, GatewayID: gwID, Type: authdomain.TypeOIDC}}, nil).Once()
 
 	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
 	updater := appconsumer.NewUpdater(repo, registrymocks.NewRepository(t), authRepo, newCacheManager(), publisher, newTestLogger(), nil)
-	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
+	if _, err := updater.Update(context.Background(), appconsumer.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
 		Type:      ptr(domain.TypeMCP),
-	})
-	if !errors.Is(err, commonerrors.ErrConflict) {
-		t.Fatalf("err = %v, want ErrConflict (oidc cannot broker for an MCP consumer)", err)
+	}); err != nil {
+		t.Fatalf("Update error: %v", err)
 	}
-	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestUpdater_Update_RejectsNonIdPAuthOnSwitchToRoleBased(t *testing.T) {

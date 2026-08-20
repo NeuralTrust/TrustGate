@@ -66,6 +66,12 @@ func (t Type) IsIdentityProvider() bool {
 	return false
 }
 
+// IdentityProviderTypes returns every auth type that carries an identity
+// provider, for callers that need to query them as one pool.
+func IdentityProviderTypes() []Type {
+	return []Type{TypeOAuth2, TypeOIDC}
+}
+
 type Auth struct {
 	ID        ids.AuthID    `json:"id"`
 	GatewayID ids.GatewayID `json:"gateway_id"`
@@ -118,6 +124,14 @@ func NewAPIKeyAuth(gatewayID ids.GatewayID, name string, enabled bool) (*Auth, e
 	a.KeyHash = HashAPIKey(rawKey)
 	a.KeyPrefix, a.KeySuffix = APIKeyPreview(rawKey)
 	return a, nil
+}
+
+// CanBrokerLogin reports whether this auth can drive an interactive login on
+// behalf of a client that holds no token yet. It never gates token validation:
+// an auth that cannot broker a login is still a fully usable credential for a
+// client that already holds one.
+func (a *Auth) CanBrokerLogin() bool {
+	return a != nil && a.Enabled && a.Type == TypeOAuth2 && a.Config.OAuth2.CanBrokerLogin()
 }
 
 func GenerateAPIKey() (string, error) {
