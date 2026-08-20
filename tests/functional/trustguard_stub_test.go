@@ -183,8 +183,8 @@ func (s *trustGuardStub) handleToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *trustGuardStub) handleGuard(w http.ResponseWriter, r *http.Request) {
-	atomic.AddInt64(&s.guardHits, 1)
 	if got := r.Header.Get("Authorization"); got != "Bearer "+trustGuardFunctionalAccessToken {
+		atomic.AddInt64(&s.guardHits, 1)
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -196,6 +196,10 @@ func (s *trustGuardStub) handleGuard(w http.ResponseWriter, r *http.Request) {
 	s.lastGuardReq = req
 	s.lastGuardAuth = r.Header.Get("Authorization")
 	s.mu.Unlock()
+
+	// Counted only once the capture is visible, so a test that waits on
+	// GuardHits can read lastGuard without racing the handler.
+	atomic.AddInt64(&s.guardHits, 1)
 
 	text := trustGuardInspectText(req.Payload)
 	if strings.Contains(strings.ToLower(text), trustGuardErrorWord) {
