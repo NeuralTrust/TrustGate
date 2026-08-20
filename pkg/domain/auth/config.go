@@ -35,6 +35,7 @@ type OAuth2Config struct {
 	Issuer           string   `json:"issuer"`
 	Audiences        []string `json:"audiences,omitempty"`
 	JWKSURL          string   `json:"jwks_url,omitempty"`
+	PublicKeys       []string `json:"public_keys,omitempty"`
 	IntrospectionURL string   `json:"introspection_url,omitempty"`
 	ClientID         string   `json:"client_id,omitempty"`
 	ClientSecret     string   `json:"client_secret,omitempty"`
@@ -144,15 +145,27 @@ func (c *OAuth2Config) validate() error {
 	if err := c.validateAuthorizationEndpoints(); err != nil {
 		return err
 	}
-	if !c.SessionMode && strings.TrimSpace(c.JWKSURL) == "" && strings.TrimSpace(c.IntrospectionURL) == "" {
+	for _, alg := range c.Algorithms {
+		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(alg)), "HS") {
+			return fmt.Errorf("%w: oauth2.allowed_algorithms must not include HMAC algorithms", ErrInvalidConfig)
+		}
+	}
+	if !c.SessionMode &&
+		strings.TrimSpace(c.JWKSURL) == "" &&
+		strings.TrimSpace(c.IntrospectionURL) == "" &&
+		len(trimmedNonEmpty(c.PublicKeys)) == 0 {
 		// Without an explicit endpoint the JWKS is resolved via OIDC
 		// discovery, which needs the issuer to be a resolvable http(s) URL.
 		u, err := url.Parse(strings.TrimSpace(c.Issuer))
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			return fmt.Errorf("%w: oauth2 requires jwks_url or introspection_url, or an http(s) issuer for OIDC discovery", ErrInvalidConfig)
+			return fmt.Errorf("%w: oauth2 requires jwks_url, introspection_url or public_keys, or an http(s) issuer for OIDC discovery", ErrInvalidConfig)
 		}
 	}
 	return nil
+}
+
+func (c *OAuth2Config) HasInlineKeys() bool {
+	return c != nil && len(trimmedNonEmpty(c.PublicKeys)) > 0
 }
 
 // validateAuthorizationEndpoints enforces the manual brokering endpoints used

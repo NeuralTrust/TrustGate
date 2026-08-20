@@ -286,6 +286,7 @@ export interface OAuth2Config {
   issuer: string;
   audiences?: string[];
   jwks_url?: string;
+  public_keys?: string[];
   introspection_url?: string;
   client_id?: string;
   client_secret?: string;

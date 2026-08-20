@@ -18,8 +18,10 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -127,6 +129,61 @@ func TestOAuth2TokenValidator_DiscoversJWKSWhenURLNotConfigured(t *testing.T) {
 
 	if _, err := v.Validate(context.Background(), stub.sign(t, stub.baseClaims()), cfg); err != nil {
 		t.Fatalf("validate via discovery: %v", err)
+	}
+}
+
+func TestOAuth2TokenValidator_BlankPublicKeysStillDiscoverJWKS(t *testing.T) {
+	stub := newOIDCStub(t)
+	cfg := stub.config()
+	cfg.JWKSURL = ""
+	cfg.PublicKeys = []string{"", "   ", "\n\t"}
+
+	if _, err := newValidator().Validate(context.Background(), stub.sign(t, stub.baseClaims()), cfg); err != nil {
+		t.Fatalf("blank public keys must not suppress discovery: %v", err)
+	}
+}
+
+func publicKeyPEMOf(t *testing.T, key *rsa.PrivateKey) string {
+	t.Helper()
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("marshal public key: %v", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
+}
+
+func TestOAuth2TokenValidator_InlinePublicKeysSkipDiscovery(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	const issuer = "https://airgapped.example.invalid"
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"iss": issuer,
+		"sub": "user-1",
+		"aud": "trustgate",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	})
+	token.Header["kid"] = "kid-1"
+	raw, err := token.SignedString(key)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+
+	principal, err := newValidator().Validate(context.Background(), raw, &authdomain.OAuth2Config{
+		Issuer:     issuer,
+		Audiences:  []string{"trustgate"},
+		PublicKeys: []string{publicKeyPEMOf(t, key)},
+	})
+	if err != nil {
+		t.Fatalf("inline public keys must verify without a reachable discovery endpoint: %v", err)
+	}
+	if principal.Subject != "user-1" {
+		t.Fatalf("subject = %q", principal.Subject)
+	}
+	if principal.RawToken != raw {
+		t.Fatal("raw token must be retained for downstream exchange")
 	}
 }
 

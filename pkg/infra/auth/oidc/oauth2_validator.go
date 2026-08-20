@@ -45,7 +45,7 @@ func (v *OAuth2TokenValidator) Validate(ctx context.Context, raw string, cfg *do
 		return nil, fmt.Errorf("%w: no oauth2 config", ErrInvalidToken)
 	}
 	jwksURL := strings.TrimSpace(cfg.JWKSURL)
-	if jwksURL == "" {
+	if jwksURL == "" && !cfg.HasInlineKeys() {
 		discovered, err := v.discovery.jwksURI(ctx, cfg.Issuer)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrInvalidToken, err)
@@ -56,6 +56,7 @@ func (v *OAuth2TokenValidator) Validate(ctx context.Context, raw string, cfg *do
 		Issuer:            cfg.Issuer,
 		Audiences:         cfg.Audiences,
 		JWKSURL:           jwksURL,
+		PublicKeys:        cfg.PublicKeys,
 		AllowedAlgorithms: cfg.Algorithms,
 	})
 	if err != nil {
