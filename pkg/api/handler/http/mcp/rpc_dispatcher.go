@@ -43,6 +43,7 @@ type RPCGateway struct {
 	composer             appmcp.Composer
 	plugins              *appmcp.PluginRunner
 	limiter              ratelimitapp.Checker
+	appsListPolicy       appmcp.AppsListPolicy
 	maxContinuationBytes int
 }
 
@@ -58,6 +59,23 @@ func NewRPCGatewayWithLimits(
 	limiter ratelimitapp.Checker,
 	maxContinuationBytes int,
 ) *RPCGateway {
+	return NewRPCGatewayWithAppsListPolicy(
+		composer,
+		plugins,
+		limiter,
+		appmcp.AppsListPolicy{},
+		maxContinuationBytes,
+	)
+}
+
+// NewRPCGatewayWithAppsListPolicy wires MCP dispatch with explicit Apps list and continuation policies.
+func NewRPCGatewayWithAppsListPolicy(
+	composer appmcp.Composer,
+	plugins *appmcp.PluginRunner,
+	limiter ratelimitapp.Checker,
+	appsListPolicy appmcp.AppsListPolicy,
+	maxContinuationBytes int,
+) *RPCGateway {
 	if limiter == nil {
 		limiter = ratelimitapp.NewNoopChecker()
 	}
@@ -68,6 +86,7 @@ func NewRPCGatewayWithLimits(
 		composer:             composer,
 		plugins:              plugins,
 		limiter:              limiter,
+		appsListPolicy:       appsListPolicy,
 		maxContinuationBytes: maxContinuationBytes,
 	}
 }
@@ -110,6 +129,7 @@ func (g *RPCGateway) OpenSubscriptionLease(
 		var tools []appmcp.Tool
 		tools, err = g.composer.ListTools(ctx, rc)
 		if err == nil {
+			tools, _ = g.appsListPolicy.FilterTools(tools)
 			err = g.plugins.PreResponseToolsDiscovery(ctx, rc, tools)
 		}
 	}
@@ -240,14 +260,14 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		if err != nil {
 			return nil, err
 		}
+		tools, _ = g.appsListPolicy.FilterTools(tools)
 		if tools == nil {
 			tools = []appmcp.Tool{}
 		}
-		result := map[string]any{"tools": tools}
 		if err := g.plugins.PreResponseToolsDiscovery(ctx, rc, tools); err != nil {
 			return nil, err
 		}
-		return result, nil
+		return map[string]any{"tools": tools}, nil
 	case "tools/call":
 		var p struct {
 			Name           string          `json:"name"`
@@ -310,6 +330,7 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		if err != nil {
 			return nil, err
 		}
+		resources, _ = g.appsListPolicy.FilterResources(resources)
 		if resources == nil {
 			resources = []appmcp.Resource{}
 		}

@@ -61,6 +61,131 @@ func TestRPCGateway_ToolsList_DefaultsToEmptySlice(t *testing.T) {
 	}
 }
 
+func mustRPCJSON[T any](t *testing.T, raw string) T {
+	t.Helper()
+	var value T
+	require.NoError(t, json.Unmarshal([]byte(raw), &value))
+	return value
+}
+
+func enabledAppsListPolicy(t *testing.T) appmcp.AppsListPolicy {
+	t.Helper()
+	metadata, err := appmcp.NewAppsMetadataPolicy(2, 2, nil, nil)
+	require.NoError(t, err)
+	return appmcp.NewAppsListPolicy(true, metadata)
+}
+
+func TestRPCGateway_AppsPolicyFiltersListings(t *testing.T) {
+	t.Parallel()
+	policy := enabledAppsListPolicy(t)
+	t.Run("tools before discovery plugin", func(t *testing.T) {
+		composer := mocks.NewComposer(t)
+		composer.EXPECT().ListTools(mock.Anything, mock.Anything).Return([]appmcp.Tool{
+			mustRPCJSON[appmcp.Tool](t, `{"name":"invalid","_meta":{"ui":"bad"}}`),
+			mustRPCJSON[appmcp.Tool](t, `{"name":"app","description":"keep","_meta":{"ui":{"resourceUri":"ui://widget/app"}}}`),
+			mustRPCJSON[appmcp.Tool](t, `{"name":"plain","_meta":{"trace":1}}`),
+		}, nil).Once()
+		exec := pluginmocks.NewExecutor(t)
+		var discovered []byte
+		exec.EXPECT().RunStage(mock.Anything, mock.Anything).
+			Run(func(_ context.Context, in appplugins.StageInput) {
+				discovered = append([]byte(nil), in.Response.Body...)
+			}).Return(&appplugins.StageOutcome{}, nil).Once()
+		g := mcphttp.NewRPCGatewayWithAppsListPolicy(
+			composer, appmcp.NewPluginRunner(exec, discardLogger()), nil, policy, mcphttp.DefaultMaxContinuationBytes,
+		)
+		result, err := g.Dispatch(context.Background(), mcpRoutableConsumer(), "tools/list", nil)
+		require.NoError(t, err)
+		want := `{"tools":[{"name":"app","description":"keep","_meta":{"ui":{"resourceUri":"ui://widget/app"}}},{"name":"plain","_meta":{"trace":1}}]}`
+		body, err := json.Marshal(result)
+		require.NoError(t, err)
+		assert.JSONEq(t, want, string(body))
+		assert.JSONEq(t, want, string(discovered))
+	})
+	t.Run("resources without plugin", func(t *testing.T) {
+		composer := mocks.NewComposer(t)
+		composer.EXPECT().ListResources(mock.Anything, mock.Anything).Return([]appmcp.Resource{
+			mustRPCJSON[appmcp.Resource](t, `{"name":"invalid","uri":"https://example.com","_meta":{"ui":{}}}`),
+			mustRPCJSON[appmcp.Resource](t, `{"name":"app","uri":"ui://widget/app","_meta":{"ui":{}}}`),
+			mustRPCJSON[appmcp.Resource](t, `{"name":"plain","uri":"https://example.com","_meta":{"trace":1}}`),
+		}, nil).Once()
+		exec := pluginmocks.NewExecutor(t)
+		g := mcphttp.NewRPCGatewayWithAppsListPolicy(
+			composer, appmcp.NewPluginRunner(exec, discardLogger()), nil, policy, mcphttp.DefaultMaxContinuationBytes,
+		)
+		result, err := g.Dispatch(context.Background(), mcpRoutableConsumer(), "resources/list", nil)
+		require.NoError(t, err)
+		body, err := json.Marshal(result)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"resources":[{"name":"app","uri":"ui://widget/app","_meta":{"ui":{}}},{"name":"plain","uri":"https://example.com","_meta":{"trace":1}}]}`, string(body))
+		exec.AssertNotCalled(t, "RunStage", mock.Anything, mock.Anything)
+	})
+}
+
+func TestRPCGateway_AppsPolicyKeepsAllInvalidListNonNull(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().ListTools(mock.Anything, mock.Anything).Return([]appmcp.Tool{
+		mustRPCJSON[appmcp.Tool](t, `{"name":"one","_meta":{"ui":"bad"}}`),
+		mustRPCJSON[appmcp.Tool](t, `{"name":"two","_meta":{"ui/x":true}}`),
+	}, nil).Once()
+	g := mcphttp.NewRPCGatewayWithAppsListPolicy(
+		composer, noopRunner(), nil, enabledAppsListPolicy(t), mcphttp.DefaultMaxContinuationBytes,
+	)
+	result, err := g.Dispatch(context.Background(), mcpRoutableConsumer(), "tools/list", nil)
+	require.NoError(t, err)
+	body, err := json.Marshal(result)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"tools":[]}`, string(body))
+}
+
+func TestRPCGateway_LegacyConstructorsDisableAppsPolicy(t *testing.T) {
+	t.Parallel()
+	constructors := map[string]func(appmcp.Composer) *mcphttp.RPCGateway{
+		"default": func(composer appmcp.Composer) *mcphttp.RPCGateway {
+			return mcphttp.NewRPCGateway(composer, noopRunner(), nil)
+		},
+		"limits": func(composer appmcp.Composer) *mcphttp.RPCGateway {
+			return mcphttp.NewRPCGatewayWithLimits(composer, noopRunner(), nil, 1024)
+		},
+	}
+	for name, construct := range constructors {
+		t.Run(name, func(t *testing.T) {
+			composer := mocks.NewComposer(t)
+			composer.EXPECT().ListTools(mock.Anything, mock.Anything).Return([]appmcp.Tool{
+				mustRPCJSON[appmcp.Tool](t, `{"name":"legacy","_meta":{"ui":"bad"}}`),
+			}, nil).Once()
+			result, err := construct(composer).Dispatch(context.Background(), mcpRoutableConsumer(), "tools/list", nil)
+			require.NoError(t, err)
+			body, err := json.Marshal(result)
+			require.NoError(t, err)
+			assert.JSONEq(t, `{"tools":[{"name":"legacy","_meta":{"ui":"bad"}}]}`, string(body))
+		})
+	}
+}
+
+func TestRPCGateway_AppsPolicyFiltersSubscriptionAdmission(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().ListTools(mock.Anything, mock.Anything).Return([]appmcp.Tool{
+		mustRPCJSON[appmcp.Tool](t, `{"name":"invalid","_meta":{"ui":"bad"}}`),
+		mustRPCJSON[appmcp.Tool](t, `{"name":"visible","_meta":{"ui":{"resourceUri":"ui://widget/visible"}}}`),
+	}, nil).Once()
+	exec := pluginmocks.NewExecutor(t)
+	exec.EXPECT().RunStage(mock.Anything, mock.MatchedBy(func(in appplugins.StageInput) bool {
+		return in.Response != nil && string(in.Response.Body) == `{"tools":[{"_meta":{"ui":{"resourceUri":"ui://widget/visible"}},"name":"visible"}]}`
+	})).Return(&appplugins.StageOutcome{}, nil).Once()
+	g := mcphttp.NewRPCGatewayWithAppsListPolicy(
+		composer, appmcp.NewPluginRunner(exec, discardLogger()), nil, enabledAppsListPolicy(t), mcphttp.DefaultMaxContinuationBytes,
+	)
+	err := g.OpenSubscriptionLease(
+		context.Background(),
+		mcpRoutableConsumer(),
+		appmcp.NewHonouredSet(appmcp.NotificationToolsListChanged),
+	)
+	require.NoError(t, err)
+}
+
 func TestRPCGateway_ToolsCall_RequiresName(t *testing.T) {
 	t.Parallel()
 	g := mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil)
