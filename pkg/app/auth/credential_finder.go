@@ -38,7 +38,7 @@ type CredentialFinder interface {
 var _ CredentialFinder = (*credentialFinder)(nil)
 
 const (
-	oauth2CacheKey           = "enabled:oauth2"
+	identityProviderCacheKey = "enabled:identity_providers"
 	oauth2GatewayCachePrefix = "enabled:oauth2:gw:"
 	mtlsCacheKey             = "enabled:mtls"
 )
@@ -59,21 +59,28 @@ func NewCredentialFinder(repo domain.Repository, manager *cache.TTLMapManager, l
 	}
 }
 
-// OAuth2Auths returns every enabled oauth2 auth, plus the built-in NeuralTrust
-// identity provider when configured. The default is appended to a copy of the
-// cached slice so the synthetic entry is never written into the cache and the
-// cached slice is never aliased by callers.
+// OAuth2Auths returns every enabled identity-provider auth as an oauth2
+// candidate, plus the built-in NeuralTrust identity provider when configured.
+// Legacy oidc rows are projected onto the oauth2 shape, so every entry carries a
+// non-nil Config.OAuth2. Both the projections and the synthetic default live on
+// a fresh slice, so neither is ever written into the cache and the cached slice
+// is never aliased by callers.
 func (f *credentialFinder) OAuth2Auths(ctx context.Context) ([]*domain.Auth, error) {
-	auths, err := f.findByType(ctx, oauth2CacheKey, domain.TypeOAuth2)
+	auths, err := f.findByTypes(ctx, identityProviderCacheKey, domain.IdentityProviderTypes())
 	if err != nil {
 		return nil, err
 	}
-	if f.defaultIdP == nil {
-		return auths, nil
-	}
 	out := make([]*domain.Auth, 0, len(auths)+1)
-	out = append(out, auths...)
-	out = append(out, f.defaultIdP)
+	for _, a := range auths {
+		candidate, ok := IdentityProviderCandidate(a)
+		if !ok {
+			continue
+		}
+		out = append(out, candidate)
+	}
+	if f.defaultIdP != nil {
+		out = append(out, f.defaultIdP)
+	}
 	return out, nil
 }
 
@@ -108,10 +115,10 @@ func (f *credentialFinder) OAuth2AuthsForGateway(ctx context.Context, gatewayID 
 }
 
 func (f *credentialFinder) MTLSAuths(ctx context.Context) ([]*domain.Auth, error) {
-	return f.findByType(ctx, mtlsCacheKey, domain.TypeMTLS)
+	return f.findByTypes(ctx, mtlsCacheKey, []domain.Type{domain.TypeMTLS})
 }
 
-func (f *credentialFinder) findByType(ctx context.Context, key string, t domain.Type) ([]*domain.Auth, error) {
+func (f *credentialFinder) findByTypes(ctx context.Context, key string, types []domain.Type) ([]*domain.Auth, error) {
 	if cached, ok := f.cache.Get(key); ok {
 		if auths, ok := cached.([]*domain.Auth); ok {
 			return auths, nil
@@ -119,7 +126,7 @@ func (f *credentialFinder) findByType(ctx context.Context, key string, t domain.
 		f.logger.Warn("credential cache entry failed type assertion; falling back to database")
 		f.cache.Delete(key)
 	}
-	auths, err := f.repo.FindEnabledByTypes(ctx, []domain.Type{t})
+	auths, err := f.repo.FindEnabledByTypes(ctx, types)
 	if err != nil {
 		return nil, err
 	}

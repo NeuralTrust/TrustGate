@@ -136,11 +136,8 @@ func (c *OAuth2Config) validate() error {
 		}
 		c.RequiredScopes[i] = scope
 	}
-	if userInfoURL := strings.TrimSpace(c.UserInfoURL); userInfoURL != "" {
-		u, err := url.Parse(userInfoURL)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			return fmt.Errorf("%w: oauth2.userinfo_url must be an http(s) URL", ErrInvalidConfig)
-		}
+	if userInfoURL := strings.TrimSpace(c.UserInfoURL); userInfoURL != "" && !isHTTPURL(userInfoURL) {
+		return fmt.Errorf("%w: oauth2.userinfo_url must be an http(s) URL", ErrInvalidConfig)
 	}
 	if err := c.validateAuthorizationEndpoints(); err != nil {
 		return err
@@ -156,8 +153,7 @@ func (c *OAuth2Config) validate() error {
 		len(trimmedNonEmpty(c.PublicKeys)) == 0 {
 		// Without an explicit endpoint the JWKS is resolved via OIDC
 		// discovery, which needs the issuer to be a resolvable http(s) URL.
-		u, err := url.Parse(strings.TrimSpace(c.Issuer))
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		if !isHTTPURL(c.Issuer) {
 			return fmt.Errorf("%w: oauth2 requires jwks_url, introspection_url or public_keys, or an http(s) issuer for OIDC discovery", ErrInvalidConfig)
 		}
 	}
@@ -166,6 +162,25 @@ func (c *OAuth2Config) validate() error {
 
 func (c *OAuth2Config) HasInlineKeys() bool {
 	return c != nil && len(trimmedNonEmpty(c.PublicKeys)) > 0
+}
+
+// CanBrokerLogin reports whether this config carries everything the gateway
+// needs to run the authorization-code flow against the identity provider: a
+// pre-registered client plus a way to reach the authorization and token
+// endpoints, either explicitly or through discovery on an http(s) issuer.
+func (c *OAuth2Config) CanBrokerLogin() bool {
+	if c == nil || strings.TrimSpace(c.ClientID) == "" {
+		return false
+	}
+	if strings.TrimSpace(c.AuthorizeURL) != "" && strings.TrimSpace(c.TokenURL) != "" {
+		return true
+	}
+	return isHTTPURL(c.Issuer)
+}
+
+func isHTTPURL(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
 // validateAuthorizationEndpoints enforces the manual brokering endpoints used
@@ -185,8 +200,7 @@ func (c *OAuth2Config) validateAuthorizationEndpoints() error {
 		return fmt.Errorf("%w: oauth2.authorize_url/token_url require oauth2.client_id (interactive brokering needs a pre-registered client)", ErrInvalidConfig)
 	}
 	for _, ep := range []struct{ name, value string }{{"authorize_url", authorizeURL}, {"token_url", tokenURL}} {
-		u, err := url.Parse(ep.value)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		if !isHTTPURL(ep.value) {
 			return fmt.Errorf("%w: oauth2.%s must be an http(s) URL", ErrInvalidConfig, ep.name)
 		}
 	}

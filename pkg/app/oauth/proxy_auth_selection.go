@@ -34,6 +34,11 @@ func (p *authProxy) authForResource(ctx context.Context, resource string) (*auth
 		return m.auth, nil
 	}
 	if m.matched {
+		if m.validateOnly {
+			return nil, oauthErr("invalid_request",
+				"the identity provider of this MCP server has no pre-registered client_id, so this gateway cannot broker "+
+					"an interactive login: present an access token obtained directly from that identity provider")
+		}
 		// The consumer authenticates with a credential of its own, so a session
 		// brokered here would be refused by the auth chain. Advertising a login
 		// would only walk the user through a flow that cannot reach it.
@@ -113,6 +118,7 @@ type resourceMatch struct {
 	// protected reports whether the consumer carries an enabled credential of
 	// its own, which rules out any identity-provider fallback.
 	protected bool
+	validateOnly bool
 }
 
 // resourceAuth resolves the RFC 8707 resource indicator to the OAuth2 auth
@@ -136,31 +142,38 @@ func (p *authProxy) resourceAuth(ctx context.Context, resource string) resourceM
 	if len(matches) == 0 {
 		return resourceMatch{}
 	}
-	providers, protected := pathOAuth2Auths(matches)
-	out := resourceMatch{gatewayID: matches[0].GatewayID, matched: true, protected: protected}
+	providers, protected, validateOnly := pathOAuth2Auths(matches)
+	out := resourceMatch{
+		gatewayID:    matches[0].GatewayID,
+		matched:      true,
+		protected:    protected,
+		validateOnly: len(providers) == 0 && len(validateOnly) > 0,
+	}
 	if len(providers) > 0 {
 		out.auth = providers[0]
 	}
 	return out
 }
 
-// pathOAuth2Auths returns the usable OAuth2 providers attached to the matched
-// paths, and whether those paths carry an enabled credential of their own.
-func pathOAuth2Auths(matches []appconsumer.PathMatch) ([]*authdomain.Auth, bool) {
-	var providers []*authdomain.Auth
-	protected := false
+func pathOAuth2Auths(matches []appconsumer.PathMatch) (providers []*authdomain.Auth, protected bool, validateOnly []*authdomain.Auth) {
 	for _, m := range matches {
 		for _, a := range m.Auths {
 			if !a.Enabled {
 				continue
 			}
 			protected = true
-			if a.Type == authdomain.TypeOAuth2 && a.Config.OAuth2 != nil {
-				providers = append(providers, a)
+			candidate, ok := appauth.IdentityProviderCandidate(a)
+			if !ok {
+				continue
 			}
+			if candidate.CanBrokerLogin() {
+				providers = append(providers, candidate)
+				continue
+			}
+			validateOnly = append(validateOnly, candidate)
 		}
 	}
-	return providers, protected
+	return providers, protected, validateOnly
 }
 
 func (p *authProxy) pendingAuth(ctx context.Context, pending *PendingAuthorization) (*authdomain.Auth, error) {
@@ -244,16 +257,18 @@ func (p *authProxy) singleOAuth2AuthForGateway(ctx context.Context, gatewayID id
 	return pickSingleOAuth2(auths)
 }
 
-// pickSingleOAuth2 selects the single oauth2 identity provider from the given
-// set. The built-in NeuralTrust default is treated as a fallback: it never
-// causes ambiguity and is only returned when no operator-configured provider
-// exists.
+// pickSingleOAuth2 treats the built-in NeuralTrust default as a fallback: it
+// never causes ambiguity and is only returned when no operator-configured
+// provider can broker a login.
 func pickSingleOAuth2(auths []*authdomain.Auth) (*authdomain.Auth, error) {
 	real := make([]*authdomain.Auth, 0, len(auths))
 	var def *authdomain.Auth
 	for _, a := range auths {
 		if appauth.IsDefaultIdP(a) {
 			def = a
+			continue
+		}
+		if !a.CanBrokerLogin() {
 			continue
 		}
 		real = append(real, a)

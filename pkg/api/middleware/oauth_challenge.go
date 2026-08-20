@@ -22,7 +22,29 @@ import (
 )
 
 const protectedResourceMetadataPath = "/.well-known/oauth-protected-resource"
-const OAuthChallengeAllowedLocal = "trustgate.oauth.challenge.allowed"
+
+// OAuthChallengeModeLocal is the request-local key under which the auth chain
+// records how a 401 on this path should be challenged.
+const OAuthChallengeModeLocal = "trustgate.oauth.challenge.mode"
+
+// OAuthChallengeMode selects the WWW-Authenticate header emitted on a 401.
+type OAuthChallengeMode int
+
+const (
+	// OAuthChallengeAdvertise points the client at the protected-resource
+	// metadata so it can start an interactive login. It is the zero value, so a
+	// request whose mode was never recorded keeps advertising.
+	OAuthChallengeAdvertise OAuthChallengeMode = iota
+	// OAuthChallengeDiagnostic explains why no login is on offer without
+	// advertising one, for a resource guarded by a validate-only provider.
+	OAuthChallengeDiagnostic
+	// OAuthChallengeSilent emits no challenge at all, for a resource that
+	// authenticates with a credential of its own.
+	OAuthChallengeSilent
+)
+
+const missingBrokerClientDescription = "the identity provider configured for this resource has no pre-registered client_id, " +
+	"so this gateway cannot broker an interactive login; present an access token obtained directly from that identity provider"
 
 type OAuthChallengeMiddleware struct{}
 
@@ -33,16 +55,31 @@ func NewOAuthChallengeMiddleware() *OAuthChallengeMiddleware {
 func (m *OAuthChallengeMiddleware) Middleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		err := c.Next()
-		if isUnauthorized(c, err) && oauthChallengeAllowed(c) {
+		if !isUnauthorized(c, err) {
+			return err
+		}
+		switch oauthChallengeMode(c) {
+		case OAuthChallengeAdvertise:
 			c.Set(fiber.HeaderWWWAuthenticate, bearerChallenge(c))
+		case OAuthChallengeDiagnostic:
+			c.Set(fiber.HeaderWWWAuthenticate, diagnosticChallenge())
+		case OAuthChallengeSilent:
+			return err
 		}
 		return err
 	}
 }
 
-func oauthChallengeAllowed(c *fiber.Ctx) bool {
-	allowed, known := c.Locals(OAuthChallengeAllowedLocal).(bool)
-	return !known || allowed
+func oauthChallengeMode(c *fiber.Ctx) OAuthChallengeMode {
+	mode, known := c.Locals(OAuthChallengeModeLocal).(OAuthChallengeMode)
+	if !known {
+		return OAuthChallengeAdvertise
+	}
+	return mode
+}
+
+func diagnosticChallenge() string {
+	return `Bearer error="invalid_request", error_description="` + missingBrokerClientDescription + `"`
 }
 
 func bearerChallenge(c *fiber.Ctx) string {

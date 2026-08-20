@@ -299,3 +299,58 @@ func TestOAuth2Config_Validate_ManualAuthorizationEndpoints(t *testing.T) {
 		})
 	}
 }
+
+func TestOAuth2Config_CanBrokerLogin(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		config *OAuth2Config
+		want   bool
+	}{
+		{
+			name: "client id with explicit endpoints",
+			config: &OAuth2Config{
+				ClientID:     "gw-client",
+				Issuer:       "urn:example:idp",
+				AuthorizeURL: "https://idp.example.com/authorize",
+				TokenURL:     "https://idp.example.com/token",
+			},
+			want: true,
+		},
+		{
+			name:   "client id with discoverable http issuer",
+			config: &OAuth2Config{ClientID: "gw-client", Issuer: "https://idp.example.com"},
+			want:   true,
+		},
+		{
+			name:   "client id with non http issuer and no endpoints",
+			config: &OAuth2Config{ClientID: "gw-client", Issuer: "urn:example:idp"},
+		},
+		{
+			name:   "blank client id with http issuer",
+			config: &OAuth2Config{Issuer: "https://idp.example.com"},
+		},
+		{
+			name:   "whitespace client id is blank",
+			config: &OAuth2Config{ClientID: "   ", Issuer: "https://idp.example.com"},
+		},
+		{
+			name:   "issuer without host is not discoverable",
+			config: &OAuth2Config{ClientID: "gw-client", Issuer: "https://"},
+		},
+		{
+			name:   "only one endpoint falls back to the issuer",
+			config: &OAuth2Config{ClientID: "gw-client", Issuer: "urn:example:idp", TokenURL: "https://idp.example.com/token"},
+		},
+		{name: "nil config"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.config.CanBrokerLogin(); got != tt.want {
+				t.Fatalf("CanBrokerLogin() = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}

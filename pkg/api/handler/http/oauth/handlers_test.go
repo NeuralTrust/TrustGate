@@ -111,16 +111,20 @@ func newTestApp(auths ...*authdomain.Auth) *fiber.App {
 }
 
 func oauth2Auth(issuer, clientID string) *authdomain.Auth {
-	return &authdomain.Auth{Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
-		Issuer:   issuer,
-		JWKSURL:  issuer + "/jwks",
-		ClientID: clientID,
-	}}}
+	return &authdomain.Auth{
+		Type:    authdomain.TypeOAuth2,
+		Enabled: true,
+		Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
+			Issuer:   issuer,
+			JWKSURL:  issuer + "/jwks",
+			ClientID: clientID,
+		}},
+	}
 }
 
 func TestProtectedResourceHandlerRootAndPathScoped(t *testing.T) {
 	t.Parallel()
-	app := newTestApp(oauth2Auth("https://idp.example.com", ""))
+	app := newTestApp(oauth2Auth("https://idp.example.com", "mcp-public-client"))
 
 	for path, wantResource := range map[string]string{
 		"/.well-known/oauth-protected-resource":            "http://gw.example.com",

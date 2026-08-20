@@ -214,12 +214,15 @@ func oidcConfig() domain.Config {
 	}}
 }
 
-func TestUpdater_Update_RejectsTypeChangeBreakingMCPConsumer(t *testing.T) {
+func TestUpdater_Update_AllowsIdPTypeChangeWithMCPConsumer(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	gwID := ids.New[ids.GatewayKind]()
 	existing := existingOAuth2Auth(gwID)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
+		return a.Type == domain.TypeOIDC
+	})).Return(nil).Once()
 
 	consumerRepo := consumermocks.NewRepository(t)
 	consumerRepo.EXPECT().ListByAuthID(mock.Anything, existing.ID).Return([]*consumerdomain.Consumer{{
@@ -230,16 +233,48 @@ func TestUpdater_Update_RejectsTypeChangeBreakingMCPConsumer(t *testing.T) {
 	}}, nil).Once()
 
 	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
+	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil)
+	if _, err := updater.Update(context.Background(), appauth.UpdateInput{
+		ID:        existing.ID,
+		GatewayID: gwID,
+		Type:      ptr(domain.TypeOIDC),
+		Config:    ptr(oidcConfig()),
+	}); err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+}
+
+func TestUpdater_Update_RejectsTypeChangeBreakingRoleBasedConsumer(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	gwID := ids.New[ids.GatewayKind]()
+	existing := existingOAuth2Auth(gwID)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+
+	consumerRepo := consumermocks.NewRepository(t)
+	consumerRepo.EXPECT().ListByAuthID(mock.Anything, existing.ID).Return([]*consumerdomain.Consumer{{
+		ID:          ids.New[ids.ConsumerKind](),
+		Slug:        "role-cons",
+		Type:        consumerdomain.TypeLLM,
+		RoutingMode: consumerdomain.RoutingModeRoleBased,
+	}}, nil).Once()
+
+	publisher := cachemocks.NewEventPublisher(t)
 
 	updater := appauth.NewUpdater(repo, consumerRepo, newCacheManager(), publisher, newTestLogger(), nil)
 	_, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
-		Type:      ptr(domain.TypeOIDC),
-		Config:    ptr(oidcConfig()),
+		Type:      ptr(domain.TypeAPIKey),
+		Config:    ptr(domain.Config{}),
 	})
 	if !errors.Is(err, commonerrors.ErrConflict) {
-		t.Fatalf("err = %v, want ErrConflict (oidc breaks the MCP consumer referencing this auth)", err)
+		t.Fatalf("err = %v, want ErrConflict (api_key breaks the role_based consumer referencing this auth)", err)
 	}
 	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }

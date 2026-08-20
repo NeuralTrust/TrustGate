@@ -36,8 +36,11 @@ flowchart LR
 
 ### Auth (consumer → TrustGate)
 
-Preference for interactive agents is **OAuth2** (gateway brokers login;
-plain OIDC attach is rejected for MCP consumers). For smoke tests, an
+Preference for interactive agents is a **brokering-capable OAuth2** auth — one
+with a `client_id` pre-registered at the identity provider, which lets the
+gateway broker the login. A validate-only OAuth2 auth (issuer + audiences +
+`jwks_url`, no `client_id`) attaches fine to an MCP consumer and verifies a
+token the agent already holds; it simply advertises no login. For smoke tests, an
 **API key** attached to the MCP consumer is enough — send it as
 `X-AG-API-Key` (same header as the Proxy plane). Bearer tokens are also
 accepted when OAuth/JWT auth is configured.
