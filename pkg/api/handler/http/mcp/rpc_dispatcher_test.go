@@ -48,6 +48,15 @@ func toolCallNamed(name string) any {
 	return mock.MatchedBy(func(call appmcp.ToolCall) bool { return call.Name == name })
 }
 
+type recordingApps struct {
+	operation, outcome string
+	count              int64
+}
+
+func (r *recordingApps) Record(_ context.Context, operation, outcome string, count int64) {
+	r.operation, r.outcome, r.count = operation, outcome, count
+}
+
 func TestRPCGateway_ToolsList_DefaultsToEmptySlice(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
@@ -88,6 +97,9 @@ func TestRPCGateway_AppsPolicyFiltersListings(t *testing.T) {
 			mustRPCJSON[appmcp.Tool](t, `{"name":"app","description":"keep","_meta":{"ui":{"resourceUri":"ui://widget/app"}}}`),
 			mustRPCJSON[appmcp.Tool](t, `{"name":"plain","_meta":{"trace":1}}`),
 		}, nil).Once()
+		composer.EXPECT().ListResources(mock.Anything, mock.Anything).Return([]appmcp.Resource{
+			mustRPCJSON[appmcp.Resource](t, `{"name":"app","uri":"ui://widget/app","_meta":{"ui":{}}}`),
+		}, nil).Once()
 		exec := pluginmocks.NewExecutor(t)
 		var discovered []byte
 		exec.EXPECT().RunStage(mock.Anything, mock.Anything).
@@ -122,6 +134,21 @@ func TestRPCGateway_AppsPolicyFiltersListings(t *testing.T) {
 		require.NoError(t, err)
 		assert.JSONEq(t, `{"resources":[{"name":"app","uri":"ui://widget/app","_meta":{"ui":{}}},{"name":"plain","uri":"https://example.com","_meta":{"trace":1}}]}`, string(body))
 		exec.AssertNotCalled(t, "RunStage", mock.Anything, mock.Anything)
+	})
+	t.Run("resource failure drops Apps tools", func(t *testing.T) {
+		composer := mocks.NewComposer(t)
+		composer.EXPECT().ListTools(mock.Anything, mock.Anything).Return([]appmcp.Tool{
+			mustRPCJSON[appmcp.Tool](t, `{"name":"app","_meta":{"ui":{"resourceUri":"ui://widget/app"}}}`),
+			mustRPCJSON[appmcp.Tool](t, `{"name":"plain"}`),
+		}, nil).Once()
+		composer.EXPECT().ListResources(mock.Anything, mock.Anything).Return(nil, errors.New("failed")).Once()
+		g := mcphttp.NewRPCGatewayWithAppsListPolicy(
+			composer, noopRunner(), nil, policy, mcphttp.DefaultMaxContinuationBytes,
+		)
+		result, err := g.Dispatch(context.Background(), mcpRoutableConsumer(), "tools/list", nil)
+		require.NoError(t, err)
+		body, _ := json.Marshal(result)
+		assert.JSONEq(t, `{"tools":[{"name":"plain"}]}`, string(body))
 	})
 }
 
@@ -174,6 +201,9 @@ func TestRPCGateway_AppsPolicyFiltersSubscriptionAdmission(t *testing.T) {
 		mustRPCJSON[appmcp.Tool](t, `{"name":"invalid","_meta":{"ui":"bad"}}`),
 		mustRPCJSON[appmcp.Tool](t, `{"name":"visible","_meta":{"ui":{"resourceUri":"ui://widget/visible"}}}`),
 	}, nil).Once()
+	composer.EXPECT().ListResources(mock.Anything, mock.Anything).Return([]appmcp.Resource{
+		mustRPCJSON[appmcp.Resource](t, `{"name":"visible","uri":"ui://widget/visible","_meta":{"ui":{}}}`),
+	}, nil).Once()
 	exec := pluginmocks.NewExecutor(t)
 	exec.EXPECT().RunStage(mock.Anything, mock.MatchedBy(func(in appplugins.StageInput) bool {
 		return in.Response != nil && string(in.Response.Body) == `{"tools":[{"_meta":{"ui":{"resourceUri":"ui://widget/visible"}},"name":"visible"}]}`
@@ -216,6 +246,43 @@ func TestRPCGateway_ToolsCall_ForwardsRawResult(t *testing.T) {
 	if !ok || string(got) != string(raw) {
 		t.Fatalf("result = %#v, want verbatim raw payload", res)
 	}
+}
+
+func TestRPCGateway_AppsCallRejectsPluginCorruption(t *testing.T) {
+	raw := json.RawMessage(`{"content":[{"type":"text","text":"ok"}],"_meta":{"opaque":"kept"}}`)
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().CallTool(mock.Anything, mock.Anything, toolCallNamed("app")).Return(raw, nil).Once()
+	exec := pluginmocks.NewExecutor(t)
+	exec.EXPECT().RunStage(mock.Anything, mock.Anything).Return(&appplugins.StageOutcome{}, nil).Once()
+	exec.EXPECT().RunStage(mock.Anything, mock.Anything).Return(&appplugins.StageOutcome{ShortCircuit: true, StatusCode: http.StatusOK, Body: json.RawMessage(`{"content":{},"_meta":{"ui":{"resourceUri":"ui://widget/app"}}}`)}, nil).Once()
+	metadata, err := appmcp.NewAppsMetadataPolicy(1, 1, nil, nil)
+	require.NoError(t, err)
+	recorded := &recordingApps{}
+	gateway := mcphttp.NewRPCGatewayWithAppsPolicies(composer, appmcp.NewPluginRunner(exec, discardLogger()), nil, appmcp.NewAppsListPolicy(true, metadata), appmcp.NewAppsReadPolicy(true, 64*1024, metadata), mcphttp.DefaultMaxContinuationBytes, recorded)
+	_, err = gateway.Dispatch(context.Background(), mcpRoutableConsumer(), "tools/call", json.RawMessage(`{"name":"app"}`))
+	var rpcErr *appmcp.RPCError
+	require.ErrorAs(t, err, &rpcErr)
+	require.Equal(t, appmcp.CodeAppsResourceRejected, rpcErr.Code)
+	require.Equal(t, &recordingApps{operation: "call", outcome: "rejected", count: 1}, recorded)
+}
+
+func TestRPCGateway_AppsCallRejectsMalformedPreRequestResult(t *testing.T) {
+	composer := mocks.NewComposer(t)
+	exec := pluginmocks.NewExecutor(t)
+	exec.EXPECT().RunStage(mock.Anything, mock.Anything).Return(&appplugins.StageOutcome{
+		ShortCircuit: true, StatusCode: http.StatusOK,
+		Body: json.RawMessage(`{"content":{},"_meta":{"ui":{"resourceUri":"ui://widget/app"}}}`),
+	}, nil).Once()
+	metadata, err := appmcp.NewAppsMetadataPolicy(1, 1, nil, nil)
+	require.NoError(t, err)
+	gateway := mcphttp.NewRPCGatewayWithAppsPolicies(composer, appmcp.NewPluginRunner(exec, discardLogger()), nil,
+		appmcp.NewAppsListPolicy(true, metadata), appmcp.NewAppsReadPolicy(true, 64*1024, metadata),
+		mcphttp.DefaultMaxContinuationBytes)
+
+	_, err = gateway.Dispatch(context.Background(), mcpRoutableConsumer(), "tools/call", json.RawMessage(`{"name":"app"}`))
+	var rpcErr *appmcp.RPCError
+	require.ErrorAs(t, err, &rpcErr)
+	require.Equal(t, appmcp.CodeAppsResourceRejected, rpcErr.Code)
 }
 
 func TestRPCGateway_ResourcesRead_RequiresURI(t *testing.T) {
@@ -308,6 +375,33 @@ func TestRPCGateway_AppsReadPolicy(t *testing.T) {
 			require.Empty(t, rpcErr.Data)
 		})
 	}
+}
+
+func TestRPCGateway_AppsReadRejectsUnboundBeforeRead(t *testing.T) {
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().ListResources(mock.Anything, mock.Anything).Return(nil, nil).Once()
+	limiter := ratelimitmocks.NewChecker(t)
+	limiter.EXPECT().Check(mock.Anything, mock.Anything).Return(nil).Once()
+	metadata, err := appmcp.NewAppsMetadataPolicy(1, 1, nil, nil)
+	require.NoError(t, err)
+	gateway := mcphttp.NewRPCGatewayWithAppsPolicies(composer, noopRunner(), limiter,
+		appmcp.NewAppsListPolicy(true, metadata), appmcp.NewAppsReadPolicy(true, 64*1024, metadata),
+		mcphttp.DefaultMaxContinuationBytes)
+	params, err := json.Marshal(map[string]any{
+		"uri": "ui://widget",
+		"_meta": map[string]any{
+			"io.modelcontextprotocol/protocolVersion": "2026-07-28",
+			appmcp.MetaKeyClientCapabilities: map[string]any{"extensions": map[string]any{
+				appmcp.MCPAppsExtensionIdentifier: map[string]any{"mimeTypes": []any{appmcp.MCPAppsHTMLMIMEType}},
+			}},
+		},
+	})
+	require.NoError(t, err)
+	_, err = gateway.Dispatch(context.Background(), mcpRoutableConsumer(), "resources/read", params)
+	var rpcErr *appmcp.RPCError
+	require.ErrorAs(t, err, &rpcErr)
+	require.Equal(t, appmcp.CodeAppsResourceRejected, rpcErr.Code)
+	require.Empty(t, rpcErr.Data)
 }
 
 func TestRPCGateway_DisabledAppsReadPassesThrough(t *testing.T) {

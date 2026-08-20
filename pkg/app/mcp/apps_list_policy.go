@@ -49,6 +49,11 @@ func NewAppsListPolicy(enabled bool, metadata AppsMetadataPolicy) AppsListPolicy
 	return AppsListPolicy{enabled: enabled, metadata: metadata}
 }
 
+// Enabled reports whether Apps list enforcement is active.
+func (p AppsListPolicy) Enabled() bool {
+	return p.enabled
+}
+
 // FilterTools removes tools with invalid marked Apps metadata.
 func (p AppsListPolicy) FilterTools(tools []Tool) ([]Tool, AppsListOutcome) {
 	return filterAppsList(p.enabled, tools, validToolAppsMetadata)
@@ -57,6 +62,67 @@ func (p AppsListPolicy) FilterTools(tools []Tool) ([]Tool, AppsListOutcome) {
 // FilterResources removes resources with invalid marked Apps metadata.
 func (p AppsListPolicy) FilterResources(resources []Resource) ([]Resource, AppsListOutcome) {
 	return filterAppsList(p.enabled, resources, p.validResource)
+}
+
+// FilterResourceTemplates removes templates carrying Apps-only metadata markers.
+func (p AppsListPolicy) FilterResourceTemplates(templates []ResourceTemplate) ([]ResourceTemplate, AppsListOutcome) {
+	return filterAppsList(p.enabled, templates, func(template ResourceTemplate) bool {
+		_, marked := markedAppsMetadata(template.payload["_meta"], appsMetadataMarker)
+		return !marked
+	})
+}
+
+// FilterToolsWithResources removes Apps tools whose validated resource is absent from the same upstream surface.
+func (p AppsListPolicy) FilterToolsWithResources(tools []Tool, resources []Resource) ([]Tool, AppsListOutcome) {
+	if !p.enabled {
+		return tools, AppsListOutcome{}
+	}
+	validResources := make(map[string]bool, len(resources))
+	for _, resource := range resources {
+		if p.validResource(resource) {
+			validResources[resource.source+"\x00"+resource.URI] = true
+		}
+	}
+	return filterAppsList(true, tools, func(tool Tool) bool {
+		metadata, marked, err := toolAppsMetadata(tool)
+		return !marked || err == nil && metadata.ResourceURI != "" &&
+			validResources[tool.source+"\x00"+metadata.ResourceURI]
+	})
+}
+
+// HasToolResourceReferences reports whether validated tools require resource binding.
+func (p AppsListPolicy) HasToolResourceReferences(tools []Tool) bool {
+	if !p.enabled {
+		return false
+	}
+	for _, tool := range tools {
+		metadata, marked, err := toolAppsMetadata(tool)
+		if marked && err == nil && metadata.ResourceURI != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidateReadBinding rejects unbound or cross-upstream ambiguous Apps reads.
+func (p AppsListPolicy) ValidateReadBinding(uri string, resources []Resource) error {
+	if !p.enabled {
+		return nil
+	}
+	found, source := false, ""
+	for _, resource := range resources {
+		if resource.URI != uri || !p.validResource(resource) {
+			continue
+		}
+		if found && source != resource.source {
+			return ErrAppsResourceRejected
+		}
+		found, source = true, resource.source
+	}
+	if !found {
+		return ErrAppsResourceRejected
+	}
+	return nil
 }
 
 func filterAppsList[T any](enabled bool, values []T, valid func(T) bool) ([]T, AppsListOutcome) {
@@ -85,23 +151,27 @@ func filterAppsList[T any](enabled bool, values []T, valid func(T) bool) ([]T, A
 }
 
 func validToolAppsMetadata(tool Tool) bool {
-	meta, marked := markedAppsMetadata(tool.payload["_meta"], func(key string) bool {
-		return key == "ui" || strings.HasPrefix(key, "ui/")
-	})
+	metadata, marked, err := toolAppsMetadata(tool)
 	if !marked {
 		return true
 	}
-	if meta == nil {
-		return false
+	return err == nil && metadata.ResourceURI != ""
+}
+
+func toolAppsMetadata(tool Tool) (ToolAppsMetadata, bool, error) {
+	meta, marked := markedAppsMetadata(tool.payload["_meta"], appsMetadataMarker)
+	if !marked {
+		return ToolAppsMetadata{}, false, nil
 	}
-	_, err := ParseToolAppsMetadata(meta)
-	return err == nil
+	if meta == nil {
+		return ToolAppsMetadata{}, true, ErrInvalidAppsMetadata
+	}
+	parsed, err := ParseToolAppsMetadata(meta)
+	return parsed, true, err
 }
 
 func (p AppsListPolicy) validResource(resource Resource) bool {
-	meta, marked := markedAppsMetadata(resource.payload["_meta"], func(key string) bool {
-		return key == "ui"
-	})
+	meta, marked := markedAppsMetadata(resource.payload["_meta"], appsMetadataMarker)
 	if !marked {
 		return true
 	}
@@ -112,6 +182,10 @@ func (p AppsListPolicy) validResource(resource Resource) bool {
 		return false
 	}
 	return ValidateResourceAppsMetadata(meta["ui"], p.metadata) == nil
+}
+
+func appsMetadataMarker(key string) bool {
+	return key == "ui" || strings.HasPrefix(key, "ui/")
 }
 
 func markedAppsMetadata(raw json.RawMessage, marker func(string) bool) (map[string]any, bool) {

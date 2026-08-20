@@ -40,7 +40,7 @@ import (
 	vaultrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/vault"
 )
 
-const mcpAppsPipelineReady = false
+const mcpAppsPipelineReady = true
 
 func MCP(c *container.Container) error {
 	if err := c.Provide(mcpclient.New); err != nil {
@@ -215,6 +215,7 @@ func MCP(c *container.Container) error {
 			appsListPolicy,
 			appsReadPolicy,
 			cfg.Server.MCPMRTR.MaxContinuationBytes,
+			mcphttp.NewAppsRecorder(cfg.Telemetry.OpsMetricsEnabled),
 		)
 	}); err != nil {
 		return err
@@ -290,7 +291,7 @@ func provideAppsListPolicy(cfg *config.Config, metadata appmcp.AppsMetadataPolic
 
 func provideAppsReadPolicy(cfg *config.Config, metadata appmcp.AppsMetadataPolicy) appmcp.AppsReadPolicy {
 	apps := cfg.Server.MCPApps
-	return appmcp.NewAppsReadPolicy(apps.Enabled, apps.MaxResourceBytes, metadata)
+	return appmcp.NewAppsReadPolicy(apps.Enabled && mcpAppsPipelineReady, apps.MaxResourceBytes, metadata)
 }
 
 // provideSubscriptionRegistry builds the lease accountant, or nil while the

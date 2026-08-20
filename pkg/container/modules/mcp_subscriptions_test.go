@@ -33,8 +33,8 @@ import (
 	"go.uber.org/dig"
 )
 
-func TestMCPAppsProductionPipelineIsNotReady(t *testing.T) {
-	require.False(t, mcpAppsPipelineReady)
+func TestMCPAppsProductionPipelineIsReady(t *testing.T) {
+	require.True(t, mcpAppsPipelineReady)
 }
 
 func TestProvideAppsMetadataPolicy(t *testing.T) {
@@ -59,7 +59,7 @@ func TestProvideAppsMetadataPolicy(t *testing.T) {
 	require.ErrorIs(t, err, appmcp.ErrInvalidAppsMetadata)
 }
 
-func TestProvideAppsListPolicyRemainsDormant(t *testing.T) {
+func TestProvideAppsListPolicyFollowsFeatureFlag(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Server.MCPApps.Enabled = true
 	cfg.Server.MCPApps.MaxCSPOriginsPerDirective = 1
@@ -71,19 +71,25 @@ func TestProvideAppsListPolicyRemainsDormant(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(`{"name":"invalid","_meta":{"ui":"bad"}}`), &tool))
 	input := []appmcp.Tool{tool}
 	filtered, outcome := policy.FilterTools(input)
+	require.Empty(t, filtered)
+	require.Equal(t, 1, outcome.Dropped)
+
+	cfg.Server.MCPApps.Enabled = false
+	disabled := provideAppsListPolicy(cfg, metadata)
+	filtered, outcome = disabled.FilterTools(input)
 	require.Len(t, filtered, 1)
 	require.Same(t, &input[0], &filtered[0])
 	require.Zero(t, outcome.Dropped)
 }
 
-func TestProvideAppsReadPolicyIsIndependentFromPipelineReadiness(t *testing.T) {
+func TestProvideAppsReadPolicyFollowsFeatureFlag(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Server.MCPApps.Enabled = true
 	cfg.Server.MCPApps.MaxResourceBytes = 64*1024 - 1
 	metadata, err := appmcp.NewAppsMetadataPolicy(1, 1, nil, nil)
 	require.NoError(t, err)
 	policy := provideAppsReadPolicy(cfg, metadata)
-	require.False(t, mcpAppsPipelineReady)
+	require.True(t, mcpAppsPipelineReady)
 	require.True(t, policy.RequiresValidation("ui://widget"))
 	require.NoError(t, policy.ValidateReadRequest("ui://widget", appmcp.MCPAppsClientCapability{
 		MIMETypes: []string{appmcp.MCPAppsHTMLMIMEType},
@@ -92,6 +98,8 @@ func TestProvideAppsReadPolicyIsIndependentFromPipelineReadiness(t *testing.T) {
 		`{"contents":[{"uri":"ui://widget","mimeType":"text/html;profile=mcp-app","text":"<!doctype html><html><head></head><body></body></html>"}]}`,
 	))
 	require.ErrorIs(t, err, appmcp.ErrInvalidAppsDocument)
+	cfg.Server.MCPApps.Enabled = false
+	require.False(t, provideAppsReadPolicy(cfg, metadata).RequiresValidation("ui://widget"))
 }
 
 func TestProvideSubscriptionPolicyInjectsAppsPolicyInBothModes(t *testing.T) {
