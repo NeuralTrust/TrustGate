@@ -280,7 +280,7 @@ export interface Consumer {
   updated_at: string;
 }
 
-export type AuthType = "api_key" | "oauth2" | "oidc" | "mtls";
+export type AuthType = "api_key" | "oauth2" | "mtls";
 
 export interface OAuth2Config {
   issuer: string;
@@ -299,16 +299,6 @@ export interface OAuth2Config {
   token_url?: string;
 }
 
-export interface OidcConfig {
-  issuer: string;
-  audiences?: string[];
-  jwks_url?: string;
-  public_keys?: string[];
-  required_scopes?: string[];
-  allowed_algorithms?: string[];
-  subject_claim?: string;
-}
-
 export interface MtlsConfig {
   ca_cert: string;
   allowed_common_names?: string[];
@@ -318,13 +308,12 @@ export interface MtlsConfig {
 
 export interface AuthConfig {
   oauth2?: OAuth2Config;
-  oidc?: OidcConfig;
   mtls?: MtlsConfig;
 }
 
 // Auth types that can drive role-based (identity-provider) consumer routing.
 export function isIdentityProviderAuth(type: AuthType): boolean {
-  return type === "oauth2" || type === "oidc";
+  return type === "oauth2";
 }
 
 export interface Auth {
