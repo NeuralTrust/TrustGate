@@ -23,23 +23,17 @@ import (
 
 const protectedResourceMetadataPath = "/.well-known/oauth-protected-resource"
 
-// OAuthChallengeModeLocal is the request-local key under which the auth chain
-// records how a 401 on this path should be challenged.
+// OAuthChallengeModeLocal is the request-local key for OAuthChallengeMode.
 const OAuthChallengeModeLocal = "trustgate.oauth.challenge.mode"
 
-// OAuthChallengeMode selects the WWW-Authenticate header emitted on a 401.
+// OAuthChallengeMode selects how a 401 response is challenged.
 type OAuthChallengeMode int
 
 const (
-	// OAuthChallengeAdvertise points the client at the protected-resource
-	// metadata so it can start an interactive login. It is the zero value, so a
-	// request whose mode was never recorded keeps advertising.
+	// OAuthChallengeAdvertise is the zero value, so a request whose mode was
+	// never recorded keeps advertising protected-resource metadata.
 	OAuthChallengeAdvertise OAuthChallengeMode = iota
-	// OAuthChallengeDiagnostic explains why no login is on offer without
-	// advertising one, for a resource guarded by a validate-only provider.
 	OAuthChallengeDiagnostic
-	// OAuthChallengeSilent emits no challenge at all, for a resource that
-	// authenticates with a credential of its own.
 	OAuthChallengeSilent
 )
 

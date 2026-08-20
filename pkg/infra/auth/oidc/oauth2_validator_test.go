@@ -28,6 +28,7 @@ import (
 	"testing"
 	"time"
 
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/oidc"
 	"github.com/golang-jwt/jwt/v5"
@@ -283,6 +284,58 @@ func TestOAuth2TokenValidator_RejectsUnsignedToken(t *testing.T) {
 
 	if _, err := v.Validate(context.Background(), raw, stub.config()); err == nil {
 		t.Fatal("expected alg=none rejection")
+	}
+}
+
+func TestOAuth2TokenValidator_SubjectClaimAgreesWithProxyPlane(t *testing.T) {
+	stub := newOIDCStub(t)
+	claims := stub.baseClaims()
+	claims["oid"] = "object-id-42"
+	claims["email"] = "user@example.com"
+	token := stub.sign(t, claims)
+	cfg := stub.config()
+	cfg.SubjectClaim = "email"
+
+	principal, err := newValidator().Validate(context.Background(), token, cfg)
+	if err != nil {
+		t.Fatalf("validate on the mcp plane: %v", err)
+	}
+	verified, err := appauth.NewOAuth2Verifier(oidc.NewVerifier()).Verify(context.Background(), token, *cfg)
+	if err != nil {
+		t.Fatalf("verify on the proxy plane: %v", err)
+	}
+	if principal.Subject != verified.Subject {
+		t.Fatalf("subject differs across planes: mcp = %q, proxy = %q", principal.Subject, verified.Subject)
+	}
+	if principal.Subject != "user@example.com" {
+		t.Fatalf("subject = %q, want the configured subject_claim", principal.Subject)
+	}
+}
+
+func TestOAuth2TokenValidator_SubjectClaimFallsBackToOID(t *testing.T) {
+	tests := []struct {
+		name         string
+		subjectClaim string
+	}{
+		{name: "no subject claim configured", subjectClaim: ""},
+		{name: "configured claim absent from the token", subjectClaim: "employee_id"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stub := newOIDCStub(t)
+			claims := stub.baseClaims()
+			claims["oid"] = "object-id-42"
+			cfg := stub.config()
+			cfg.SubjectClaim = tt.subjectClaim
+
+			principal, err := newValidator().Validate(context.Background(), stub.sign(t, claims), cfg)
+			if err != nil {
+				t.Fatalf("validate: %v", err)
+			}
+			if principal.Subject != "object-id-42" {
+				t.Fatalf("subject = %q, want the oid fallback", principal.Subject)
+			}
+		})
 	}
 }
 

@@ -85,7 +85,7 @@ func (p *authProxy) gatewayScopedAuth(ctx context.Context, gatewayID ids.Gateway
 		// also serves other identity providers (a consumer that needs a specific
 		// one still pins it by attaching that oauth2 auth). Without a default there
 		// is no safe way to pick one, so the ambiguity stays a hard error.
-		if def := p.credentials.DefaultOAuth2ForGateway(gatewayID); def != nil {
+		if def := p.brokerCapableDefault(gatewayID); def != nil {
 			return def, nil
 		}
 		return nil, oauthErr("invalid_target",
@@ -96,7 +96,7 @@ func (p *authProxy) gatewayScopedAuth(ctx context.Context, gatewayID ids.Gateway
 		// this gateway. This is the zero-configuration default that lets an MCP
 		// consumer broker interactive logins without the operator standing up
 		// their own IdP.
-		if def := p.credentials.DefaultOAuth2ForGateway(gatewayID); def != nil {
+		if def := p.brokerCapableDefault(gatewayID); def != nil {
 			return def, nil
 		}
 		return nil, oauthErr("invalid_request",
@@ -105,8 +105,18 @@ func (p *authProxy) gatewayScopedAuth(ctx context.Context, gatewayID ids.Gateway
 	return a, err
 }
 
-// resourceMatch is the outcome of resolving an RFC 8707 resource indicator to
-// the consumer it addresses.
+// brokerCapableDefault returns the built-in identity provider bound to the
+// gateway, or nil when it is unconfigured or cannot broker a login. It gates
+// selection and advertisement only; the default stays in the validation
+// candidate pool either way.
+func (p *authProxy) brokerCapableDefault(gatewayID ids.GatewayID) *authdomain.Auth {
+	def := p.credentials.DefaultOAuth2ForGateway(gatewayID)
+	if def == nil || !def.CanBrokerLogin() {
+		return nil
+	}
+	return def
+}
+
 type resourceMatch struct {
 	// auth is the OAuth2 provider attached to the consumer, if any.
 	auth *authdomain.Auth
@@ -118,13 +128,14 @@ type resourceMatch struct {
 	// protected reports whether the consumer carries an enabled credential of
 	// its own, which rules out any identity-provider fallback.
 	protected bool
+	// validateOnly reports that every identity provider on the consumer can only
+	// validate a token the client already holds, so no login can be brokered.
 	validateOnly bool
 }
 
-// resourceAuth resolves the RFC 8707 resource indicator to the OAuth2 auth
-// attached to the addressed consumer. When the consumer is found but exposes no
-// usable OAuth2 auth, it still reports the consumer's gateway so the caller can
-// scope the identity-provider fallback to that tenant.
+// resourceAuth reports the consumer's gateway even when that consumer exposes no
+// usable OAuth2 auth, so the caller can scope the identity-provider fallback to
+// that tenant rather than the whole platform.
 func (p *authProxy) resourceAuth(ctx context.Context, resource string) resourceMatch {
 	if p.paths == nil || resource == "" {
 		return resourceMatch{}
@@ -259,13 +270,18 @@ func (p *authProxy) singleOAuth2AuthForGateway(ctx context.Context, gatewayID id
 
 // pickSingleOAuth2 treats the built-in NeuralTrust default as a fallback: it
 // never causes ambiguity and is only returned when no operator-configured
-// provider can broker a login.
+// provider can broker a login. The default is held to the same brokering
+// capability as tenant providers, so a platform IdP configured without a
+// client_id stays a validation-only credential instead of being offered as a
+// login that cannot complete.
 func pickSingleOAuth2(auths []*authdomain.Auth) (*authdomain.Auth, error) {
 	real := make([]*authdomain.Auth, 0, len(auths))
 	var def *authdomain.Auth
 	for _, a := range auths {
 		if appauth.IsDefaultIdP(a) {
-			def = a
+			if a.CanBrokerLogin() {
+				def = a
+			}
 			continue
 		}
 		if !a.CanBrokerLogin() {

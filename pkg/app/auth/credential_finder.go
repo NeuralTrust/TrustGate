@@ -28,10 +28,10 @@ type CredentialFinder interface {
 	OAuth2Auths(ctx context.Context) ([]*domain.Auth, error)
 	OAuth2AuthsForGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*domain.Auth, error)
 	MTLSAuths(ctx context.Context) ([]*domain.Auth, error)
-	// DefaultOAuth2ForGateway returns the built-in NeuralTrust identity
-	// provider scoped to the given gateway (a copy carrying that GatewayID), or
-	// nil when the default IdP is not configured. It is used as the fallback
-	// when an MCP consumer has no oauth2 identity provider of its own.
+	// DefaultOAuth2ForGateway returns the built-in NeuralTrust identity provider
+	// scoped to the given gateway (a copy carrying that GatewayID), or nil when
+	// the default IdP is not configured. It is the fallback for an MCP consumer
+	// that has no oauth2 identity provider of its own.
 	DefaultOAuth2ForGateway(gatewayID ids.GatewayID) *domain.Auth
 }
 
@@ -59,12 +59,8 @@ func NewCredentialFinder(repo domain.Repository, manager *cache.TTLMapManager, l
 	}
 }
 
-// OAuth2Auths returns every enabled identity-provider auth as an oauth2
-// candidate, plus the built-in NeuralTrust identity provider when configured.
-// Legacy oidc rows are projected onto the oauth2 shape, so every entry carries a
-// non-nil Config.OAuth2. Both the projections and the synthetic default live on
-// a fresh slice, so neither is ever written into the cache and the cached slice
-// is never aliased by callers.
+// OAuth2Auths returns enabled identity-provider auths for token validation.
+// The returned slice is always fresh, so the cached slice is never aliased or written to by callers.
 func (f *credentialFinder) OAuth2Auths(ctx context.Context) ([]*domain.Auth, error) {
 	auths, err := f.findByTypes(ctx, identityProviderCacheKey, domain.IdentityProviderTypes())
 	if err != nil {
@@ -84,10 +80,6 @@ func (f *credentialFinder) OAuth2Auths(ctx context.Context) ([]*domain.Auth, err
 	return out, nil
 }
 
-// DefaultOAuth2ForGateway returns the built-in NeuralTrust identity provider
-// bound to the given gateway, or nil when it is not configured. The default is
-// platform-wide, so its owning gateway is resolved per request from the
-// addressed MCP consumer.
 func (f *credentialFinder) DefaultOAuth2ForGateway(gatewayID ids.GatewayID) *domain.Auth {
 	if f.defaultIdP == nil {
 		return nil
@@ -97,6 +89,9 @@ func (f *credentialFinder) DefaultOAuth2ForGateway(gatewayID ids.GatewayID) *dom
 	return &clone
 }
 
+// OAuth2AuthsForGateway is deliberately narrower than OAuth2Auths: its callers
+// broker logins and need a client registration, so validate-only identity
+// providers (a legacy oidc row has no client_id) are excluded on purpose.
 func (f *credentialFinder) OAuth2AuthsForGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*domain.Auth, error) {
 	key := oauth2GatewayCachePrefix + gatewayID.String()
 	if cached, ok := f.cache.Get(key); ok {

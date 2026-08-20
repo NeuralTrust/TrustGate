@@ -15,14 +15,22 @@
 package oauth
 
 import (
+	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	authrepomocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -114,15 +122,61 @@ func TestAuthorizeRejectsValidateOnlyResourceWithoutCallingTheIdP(t *testing.T) 
 	require.Zero(t, idpCalls, "selection must fail before any upstream IdP call")
 }
 
+func realCredentialFinder(t *testing.T, defaultIdP *authdomain.Auth, stored ...*authdomain.Auth) appauth.CredentialFinder {
+	t.Helper()
+	repo := authrepomocks.NewRepository(t)
+	repo.EXPECT().FindEnabledByTypes(mock.Anything, mock.Anything).Return(stored, nil).Maybe()
+	return appauth.NewCredentialFinder(
+		repo,
+		cache.NewTTLMapManager(time.Hour),
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		defaultIdP,
+	)
+}
+
 func TestOAuth2AuthsAreNotCapabilityGated(t *testing.T) {
 	t.Parallel()
 	validateOnly := validateOnlyOAuth2Auth(t, "https://idp.example.com", ids.New[ids.GatewayKind]())
-	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{validateOnly}}
+	finder := realCredentialFinder(t, nil, validateOnly)
 
 	auths, err := finder.OAuth2Auths(t.Context())
 	require.NoError(t, err)
 	require.Len(t, auths, 1)
+	require.Equal(t, validateOnly.ID, auths[0].ID)
 	require.False(t, auths[0].CanBrokerLogin())
+}
+
+func TestClientlessDefaultIdPIsValidateOnly(t *testing.T) {
+	t.Parallel()
+	def := appauth.BuildDefaultIdP(appauth.DefaultIdPConfig{
+		Issuer: "https://app.neuraltrust.ai/api/mcp/oauth",
+	})
+	require.NotNil(t, def)
+	require.False(t, def.CanBrokerLogin(), "no client_id means no brokered login")
+
+	_, err := pickSingleOAuth2([]*authdomain.Auth{def})
+	require.ErrorIs(t, err, ErrNoAuthorizationServer, "the default must not win selection")
+
+	p := &authProxy{credentials: &fakeCredentialFinder{defaultIdP: def}}
+	_, err = p.gatewayScopedAuth(t.Context(), ids.New[ids.GatewayKind]())
+	var oauthError *OAuthError
+	require.True(t, errors.As(err, &oauthError))
+	require.Equal(t, "invalid_request", oauthError.Code)
+
+	svc := NewMetadataService(&fakeCredentialFinder{
+		oauth2:     []*authdomain.Auth{def},
+		defaultIdP: def,
+	}, nil, nil, newMemFlowStore())
+	meta, err := svc.ProtectedResource(t.Context(), "https://gw.example.com", "https://gw.example.com/mcp")
+	require.NoError(t, err)
+	require.Empty(t, meta.AuthorizationServers)
+	_, err = svc.AuthorizationServer(t.Context(), "https://gw.example.com")
+	require.ErrorIs(t, err, ErrNoAuthorizationServer)
+
+	auths, err := realCredentialFinder(t, def).OAuth2Auths(t.Context())
+	require.NoError(t, err)
+	require.Len(t, auths, 1)
+	require.True(t, appauth.IsDefaultIdP(auths[0]), "the default stays in the validation pool")
 }
 
 func TestProtectedResourceOmitsAuthorizationServerForLegacyOIDCAuth(t *testing.T) {

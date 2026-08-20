@@ -62,6 +62,13 @@ func TestValidateAuthType(t *testing.T) {
 			authType:     authdomain.TypeAPIKey,
 			wantConflict: true,
 		},
+		{
+			name:         "role_based rejects mtls",
+			consumer:     TypeLLM,
+			mode:         RoutingModeRoleBased,
+			authType:     authdomain.TypeMTLS,
+			wantConflict: true,
+		},
 	}
 	for _, tt := range tests {
 		tt := tt
