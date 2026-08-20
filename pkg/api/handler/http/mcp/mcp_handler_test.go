@@ -82,6 +82,11 @@ func newAppWithRunner(t *testing.T, composer appmcp.Composer, plugins *appmcp.Pl
 
 func newAppWithRunnerAndLimiter(t *testing.T, composer appmcp.Composer, plugins *appmcp.PluginRunner, limiter ratelimitapp.Checker, consumerType consumerdomain.Type, authorized bool) *fiber.App {
 	t.Helper()
+	return newAppWithGateway(t, mcphttp.NewRPCGateway(composer, plugins, limiter), consumerType, authorized)
+}
+
+func newAppWithGateway(t *testing.T, gateway *mcphttp.RPCGateway, consumerType consumerdomain.Type, authorized bool) *fiber.App {
+	t.Helper()
 	authID := ids.New[ids.AuthKind]()
 	gwID := ids.New[ids.GatewayKind]()
 	cons := &consumerdomain.Consumer{
@@ -104,7 +109,7 @@ func newAppWithRunnerAndLimiter(t *testing.T, composer appmcp.Composer, plugins 
 		c.SetUserContext(ctx)
 		return c.Next()
 	})
-	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(composer, plugins, limiter), appmcp.NewRoleScoper(approle.NewOIDCResolver()))
+	handler := mcphttp.NewHandler(gateway, appmcp.NewRoleScoper(approle.NewOIDCResolver()))
 	app.Post(mcpPath, handler.Handle)
 	app.Get(mcpPath, handler.MethodNotAllowed)
 	app.Delete(mcpPath, handler.MethodNotAllowed)

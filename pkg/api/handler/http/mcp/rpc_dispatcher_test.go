@@ -16,10 +16,13 @@ package mcp_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -223,6 +226,193 @@ func TestRPCGateway_ResourcesRead_RequiresURI(t *testing.T) {
 	if !errors.As(err, &invalid) {
 		t.Fatalf("error = %v, want mcphttp.InvalidParamsError", err)
 	}
+}
+
+func TestRPCGateway_AppsReadPolicy(t *testing.T) {
+	t.Parallel()
+	const uri = "ui://widget"
+	html := "<!doctype html><html><head></head><body>ok</body></html>"
+	supported := map[string]any{"mimeTypes": []any{appmcp.MCPAppsHTMLMIMEType}}
+	validText := appsReadDocument(uri, "text", html, `,"_meta":{"ui":{"prefersBorder":true}}`)
+	validBlob := appsReadDocument(uri, "blob", base64.StdEncoding.EncodeToString([]byte(html)), "")
+	tests := []struct {
+		name, uri     string
+		raw           json.RawMessage
+		capability    any
+		upstreamErr   error
+		composerCalls int
+		wantSuccess   bool
+	}{
+		{name: "valid text preserves bytes", uri: uri, raw: validText, capability: supported, composerCalls: 1, wantSuccess: true},
+		{name: "valid blob preserves bytes", uri: uri, raw: validBlob, capability: supported, composerCalls: 1, wantSuccess: true},
+		{name: "oversized", uri: uri, raw: appsReadDocument(uri, "text", strings.Repeat("x", 64*1024+1), ""), capability: supported, composerCalls: 1},
+		{name: "invalid MIME", uri: uri, raw: json.RawMessage(strings.Replace(string(validText), appmcp.MCPAppsHTMLMIMEType, "text/html", 1)), capability: supported, composerCalls: 1},
+		{name: "returned URI mismatch", uri: uri, raw: appsReadDocument("ui://other", "text", html, ""), capability: supported, composerCalls: 1},
+		{name: "invalid HTML", uri: uri, raw: appsReadDocument(uri, "text", "<html></html>", ""), capability: supported, composerCalls: 1},
+		{name: "invalid metadata", uri: uri, raw: appsReadDocument(uri, "text", html, `,"_meta":{"ui":{"domain":"https://escape.example"}}`), capability: supported, composerCalls: 1},
+		{name: "missing capability before I/O", uri: uri, raw: validText},
+		{name: "unsupported capability before I/O", uri: uri, raw: validText, capability: map[string]any{"mimeTypes": []any{"text/html"}}},
+		{name: "invalid Apps URI before I/O", uri: "ui://localhost", raw: validText, capability: supported},
+		{name: "non Apps unchanged", uri: "file://plain", raw: json.RawMessage(" \n {\"raw\":true}\t"), composerCalls: 1, wantSuccess: true},
+		{name: "not found unchanged", uri: uri, capability: supported, upstreamErr: appmcp.ErrResourceNotFound, composerCalls: 1},
+		{name: "upstream failure unchanged", uri: uri, capability: supported, upstreamErr: appmcp.ErrUpstreamUnavailable, composerCalls: 1},
+	}
+	metadata, err := appmcp.NewAppsMetadataPolicy(1, 1, nil, nil)
+	require.NoError(t, err)
+	policy := appmcp.NewAppsReadPolicy(true, 64*1024, metadata)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			composer := mocks.NewComposer(t)
+			limiter := ratelimitmocks.NewChecker(t)
+			if test.composerCalls == 1 {
+				composer.EXPECT().ReadResource(mock.Anything, mock.Anything, test.uri).Return(test.raw, test.upstreamErr).Once()
+				limiter.EXPECT().Check(mock.Anything, mock.Anything).Return(nil).Once()
+			}
+			gateway := mcphttp.NewRPCGatewayWithAppsPolicies(
+				composer, noopRunner(), limiter, appmcp.AppsListPolicy{}, policy, mcphttp.DefaultMaxContinuationBytes,
+			)
+			request := map[string]any{"uri": test.uri}
+			metadata := map[string]any{}
+			if strings.HasPrefix(test.uri, "ui://") {
+				metadata["io.modelcontextprotocol/protocolVersion"] = "2026-07-28"
+				request["_meta"] = metadata
+			}
+			if test.capability != nil {
+				metadata[appmcp.MetaKeyClientCapabilities] = map[string]any{
+					"extensions": map[string]any{appmcp.MCPAppsExtensionIdentifier: test.capability},
+				}
+			}
+			params, err := json.Marshal(request)
+			require.NoError(t, err)
+			result, dispatchErr := gateway.Dispatch(context.Background(), mcpRoutableConsumer(), "resources/read", params)
+			if test.upstreamErr != nil {
+				require.ErrorIs(t, dispatchErr, test.upstreamErr)
+				return
+			}
+			if test.wantSuccess {
+				require.NoError(t, dispatchErr)
+				switch got := result.(type) {
+				case appmcp.AppsReadResult:
+					require.Equal(t, string(test.raw), string(got))
+				case json.RawMessage:
+					require.Equal(t, string(test.raw), string(got))
+				default:
+					t.Fatalf("result = %T, want raw Apps result", result)
+				}
+				return
+			}
+			var rpcErr *appmcp.RPCError
+			require.ErrorAs(t, dispatchErr, &rpcErr)
+			require.Equal(t, appmcp.CodeAppsResourceRejected, rpcErr.Code)
+			require.Equal(t, appmcp.AppsResourceRejectedMessage, rpcErr.Message)
+			require.Empty(t, rpcErr.Data)
+		})
+	}
+}
+
+func TestRPCGateway_DisabledAppsReadPassesThrough(t *testing.T) {
+	t.Parallel()
+	constructors := map[string]func(appmcp.Composer) *mcphttp.RPCGateway{
+		"default": func(c appmcp.Composer) *mcphttp.RPCGateway { return mcphttp.NewRPCGateway(c, noopRunner(), nil) },
+		"limits": func(c appmcp.Composer) *mcphttp.RPCGateway {
+			return mcphttp.NewRPCGatewayWithLimits(c, noopRunner(), nil, 1024)
+		},
+		"list policy": func(c appmcp.Composer) *mcphttp.RPCGateway {
+			return mcphttp.NewRPCGatewayWithAppsListPolicy(c, noopRunner(), nil, appmcp.AppsListPolicy{}, 1024)
+		},
+	}
+	for name, construct := range constructors {
+		t.Run(name, func(t *testing.T) {
+			raw := json.RawMessage(" not-json ")
+			composer := mocks.NewComposer(t)
+			composer.EXPECT().ReadResource(mock.Anything, mock.Anything, "ui://widget").Return(raw, nil).Once()
+			result, err := construct(composer).Dispatch(context.Background(), mcpRoutableConsumer(), "resources/read", json.RawMessage(`{"uri":"ui://widget","_meta":{"io.modelcontextprotocol/clientCapabilities":{"extensions":{"io.modelcontextprotocol/ui":{"mimeTypes":"bad"}}}}}`))
+			require.NoError(t, err)
+			require.Equal(t, string(raw), string(result.(json.RawMessage)))
+		})
+	}
+}
+
+func TestHandler_AppsReadWirePolicy(t *testing.T) {
+	t.Parallel()
+	valid := appsReadDocument("ui://widget", "text", "<!doctype html><html><head></head><body>ok</body></html>", "")
+	tests := []struct {
+		name, uri, body, message, wantBody string
+		modern                             bool
+		raw                                json.RawMessage
+		status, code                       int
+	}{
+		{"modern valid preserves bytes", "ui://widget", `{"jsonrpc":"2.0","id":31,"method":"resources/read","params":{"uri":"ui://widget","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{"extensions":{"io.modelcontextprotocol/ui":{"mimeTypes":["text/html;profile=mcp-app"]}}}}}}`, "", `{"jsonrpc":"2.0","id":31,"result":` + string(valid) + `}`, true, valid, http.StatusOK, 0},
+		{"modern malformed capability", "ui://widget", `{"jsonrpc":"2.0","id":32,"method":"resources/read","params":{"uri":"ui://widget","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{"extensions":{"io.modelcontextprotocol/ui":{"mimeTypes":"bad"}}}}}}`, "invalid params", "", true, nil, http.StatusBadRequest, int(appmcp.CodeAppsResourceRejected)},
+		{"legacy ui rejected", "ui://widget", `{"jsonrpc":"2.0","id":33,"method":"resources/read","params":{"uri":"ui://widget"}}`, appmcp.AppsResourceRejectedMessage, "", false, nil, http.StatusOK, int(appmcp.CodeAppsResourceRejected)},
+		{"legacy ui capability rejected", "ui://widget", `{"jsonrpc":"2.0","id":35,"method":"resources/read","params":{"uri":"ui://widget","_meta":{"io.modelcontextprotocol/clientCapabilities":{"extensions":{"io.modelcontextprotocol/ui":{"mimeTypes":["text/html;profile=mcp-app"]}}}}}}`, appmcp.AppsResourceRejectedMessage, "", false, nil, http.StatusOK, int(appmcp.CodeAppsResourceRejected)},
+		{"legacy non ui unchanged", "file://plain", `{"jsonrpc":"2.0","id":34,"method":"resources/read","params":{"uri":"file://plain"}}`, "", `{"jsonrpc":"2.0","id":34,"result":{"raw":true}}`, false, json.RawMessage(` {"raw":true} `), http.StatusOK, 0},
+		{"modern non ui ignores malformed capability", "file://plain", `{"jsonrpc":"2.0","id":36,"method":"resources/read","params":{"uri":"file://plain","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{"extensions":{"io.modelcontextprotocol/ui":{"mimeTypes":"bad"}}}}}}`, "", "normalized", true, json.RawMessage(` {"raw":true} `), http.StatusOK, 0},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			composer := mocks.NewComposer(t)
+			if test.raw != nil {
+				composer.EXPECT().ReadResource(mock.Anything, mock.Anything, test.uri).Return(test.raw, nil).Once()
+			}
+			app := newAppWithGateway(t, newAppsReadGateway(t, composer, true), consumerdomain.TypeMCP, true)
+			request := httptest.NewRequest(http.MethodPost, mcpPath, strings.NewReader(test.body))
+			request.Header.Set("Content-Type", "application/json")
+			if test.modern {
+				request.Header = modernHeadersWithName("resources/read", test.uri)
+			}
+			response, err := app.Test(request, -1)
+			require.NoError(t, err)
+			defer response.Body.Close()
+			if test.message != "" {
+				requireWireRPCError(t, response, test.status, test.code, test.message)
+				return
+			}
+			body, err := io.ReadAll(response.Body)
+			require.NoError(t, err)
+			require.Equal(t, test.status, response.StatusCode)
+			if test.wantBody == "normalized" {
+				var payload struct {
+					Result map[string]any `json:"result"`
+				}
+				require.NoError(t, json.Unmarshal(body, &payload))
+				require.Equal(t, true, payload.Result["raw"])
+				return
+			}
+			require.Equal(t, test.wantBody, string(body))
+		})
+	}
+}
+
+func appsReadDocument(uri, field, body, extra string) json.RawMessage {
+	return json.RawMessage(" \n" + `{"_meta":{"trace":true},"contents":[{"uri":"` + uri +
+		`","mimeType":"` + appmcp.MCPAppsHTMLMIMEType + `","` + field + `":` + strconv.Quote(body) + extra + `}]}` + "\t")
+}
+
+func newAppsReadGateway(t *testing.T, composer appmcp.Composer, enabled bool) *mcphttp.RPCGateway {
+	t.Helper()
+	metadata, err := appmcp.NewAppsMetadataPolicy(1, 1, nil, nil)
+	require.NoError(t, err)
+	return mcphttp.NewRPCGatewayWithAppsPolicies(
+		composer, noopRunner(), nil, appmcp.AppsListPolicy{},
+		appmcp.NewAppsReadPolicy(enabled, 64*1024, metadata), mcphttp.DefaultMaxContinuationBytes,
+	)
+}
+
+func requireWireRPCError(t *testing.T, response *http.Response, status, code int, message string) {
+	t.Helper()
+	var body struct {
+		Error struct {
+			Code    int             `json:"code"`
+			Message string          `json:"message"`
+			Data    json.RawMessage `json:"data"`
+		} `json:"error"`
+	}
+	require.Equal(t, status, response.StatusCode)
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+	require.Equal(t, code, body.Error.Code)
+	require.Equal(t, message, body.Error.Message)
+	require.Empty(t, body.Error.Data)
 }
 
 func TestRPCGateway_UnknownMethod(t *testing.T) {
