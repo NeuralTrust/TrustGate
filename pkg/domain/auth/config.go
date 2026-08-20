@@ -65,6 +65,30 @@ type MTLSConfig struct {
 	AllowedFingerprints []string `json:"allowed_fingerprints,omitempty"`
 }
 
+// UnmarshalJSON accepts the deprecated "oidc" payload as an alias of "oauth2".
+// Both shapes share their JSON keys, so the legacy payload is decoded straight
+// into OAuth2Config.
+func (c *Config) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		OAuth2 *OAuth2Config   `json:"oauth2"`
+		OIDC   json.RawMessage `json:"oidc"`
+		MTLS   *MTLSConfig     `json:"mtls"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return fmt.Errorf("auth config: unmarshal: %w", err)
+	}
+	*c = Config{OAuth2: aux.OAuth2, MTLS: aux.MTLS}
+	if c.OAuth2 != nil || len(aux.OIDC) == 0 || string(aux.OIDC) == "null" {
+		return nil
+	}
+	legacy := &OAuth2Config{}
+	if err := json.Unmarshal(aux.OIDC, legacy); err != nil {
+		return fmt.Errorf("auth config: unmarshal oidc payload: %w", err)
+	}
+	c.OAuth2 = legacy
+	return nil
+}
+
 func (c *Config) ResolveSecretsFrom(prev Config) {
 	if c.OAuth2 != nil && prev.OAuth2 != nil {
 		c.OAuth2.ClientSecret = secret.Resolve(c.OAuth2.ClientSecret, prev.OAuth2.ClientSecret)

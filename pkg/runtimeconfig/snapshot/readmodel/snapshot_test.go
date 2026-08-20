@@ -95,9 +95,9 @@ func TestAuthByAPIKeyHashOnlyEnabledKeys(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	enabledKey := authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gw, Type: authdomain.TypeAPIKey, Enabled: true, KeyHash: "hash-enabled", CreatedAt: baseTime}
 	disabledKey := authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gw, Type: authdomain.TypeAPIKey, Enabled: false, KeyHash: "hash-disabled", CreatedAt: baseTime}
-	oidc := authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gw, Type: authdomain.TypeOIDC, Enabled: true, CreatedAt: baseTime}
+	idp := authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gw, Type: authdomain.TypeOAuth2, Enabled: true, CreatedAt: baseTime}
 
-	snap := readmodel.Build(readmodel.Data{Auths: []authdomain.Auth{enabledKey, disabledKey, oidc}})
+	snap := readmodel.Build(readmodel.Data{Auths: []authdomain.Auth{enabledKey, disabledKey, idp}})
 
 	got, ok := snap.AuthByAPIKeyHash("hash-enabled")
 	require.True(t, ok)
@@ -110,18 +110,18 @@ func TestAuthByAPIKeyHashOnlyEnabledKeys(t *testing.T) {
 func TestAuthEnabledOrderings(t *testing.T) {
 	t.Parallel()
 	gw := ids.New[ids.GatewayKind]()
-	older := authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gw, Type: authdomain.TypeOIDC, Enabled: true, CreatedAt: baseTime}
-	newer := authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gw, Type: authdomain.TypeOIDC, Enabled: true, CreatedAt: baseTime.Add(time.Hour)}
-	disabled := authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gw, Type: authdomain.TypeOIDC, Enabled: false, CreatedAt: baseTime.Add(2 * time.Hour)}
+	older := authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gw, Type: authdomain.TypeOAuth2, Enabled: true, CreatedAt: baseTime}
+	newer := authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gw, Type: authdomain.TypeOAuth2, Enabled: true, CreatedAt: baseTime.Add(time.Hour)}
+	disabled := authdomain.Auth{ID: ids.New[ids.AuthKind](), GatewayID: gw, Type: authdomain.TypeOAuth2, Enabled: false, CreatedAt: baseTime.Add(2 * time.Hour)}
 
 	snap := readmodel.Build(readmodel.Data{Auths: []authdomain.Auth{newer, older, disabled}})
 
-	byTypes := snap.AuthsEnabledByTypes([]authdomain.Type{authdomain.TypeOIDC})
+	byTypes := snap.AuthsEnabledByTypes([]authdomain.Type{authdomain.TypeOAuth2})
 	require.Len(t, byTypes, 2, "disabled auths excluded")
 	assert.Equal(t, older.ID, byTypes[0].ID, "FindEnabledByTypes is created_at ASC")
 	assert.Equal(t, newer.ID, byTypes[1].ID)
 
-	byGateway := snap.AuthsEnabledByGatewayAndType(gw, authdomain.TypeOIDC)
+	byGateway := snap.AuthsEnabledByGatewayAndType(gw, authdomain.TypeOAuth2)
 	require.Len(t, byGateway, 2)
 	assert.Equal(t, newer.ID, byGateway[0].ID, "ListEnabledByGatewayAndType is created_at DESC")
 	assert.Equal(t, older.ID, byGateway[1].ID)

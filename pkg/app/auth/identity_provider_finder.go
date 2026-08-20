@@ -54,46 +54,14 @@ func (f *identityProviderFinder) FindCandidates(
 	}
 	candidates := make([]*domain.Auth, 0, len(auths))
 	for _, a := range auths {
-		candidate, ok := IdentityProviderCandidate(a)
-		if !ok {
+		if a == nil || !a.Enabled || !a.Type.IsIdentityProvider() || a.Config.OAuth2 == nil {
 			continue
 		}
-		if oauth2ConfigMatchesHints(*candidate.Config.OAuth2, hints) {
-			candidates = append(candidates, candidate)
+		if oauth2ConfigMatchesHints(*a.Config.OAuth2, hints) {
+			candidates = append(candidates, a)
 		}
 	}
 	return candidates, nil
-}
-
-// IdentityProviderCandidate reports whether the auth is a usable identity
-// provider and, when it is, returns a view of it whose Config.OAuth2 is always
-// populated. An oidc config is projected onto the oauth2 shape on a copy, so
-// callers may hold the result without mutating shared or cached auths.
-func IdentityProviderCandidate(a *domain.Auth) (*domain.Auth, bool) {
-	if a == nil || !a.Enabled || !a.Type.IsIdentityProvider() {
-		return nil, false
-	}
-	if a.Config.OAuth2 != nil {
-		return a, true
-	}
-	if a.Config.OIDC == nil {
-		return nil, false
-	}
-	projected := *a
-	projected.Config.OAuth2 = oauth2ConfigFromOIDC(*a.Config.OIDC)
-	return &projected, true
-}
-
-func oauth2ConfigFromOIDC(cfg domain.OIDCConfig) *domain.OAuth2Config {
-	return &domain.OAuth2Config{
-		Issuer:         cfg.Issuer,
-		Audiences:      cfg.Audiences,
-		JWKSURL:        cfg.JWKSURL,
-		PublicKeys:     cfg.PublicKeys,
-		RequiredScopes: cfg.RequiredScopes,
-		Algorithms:     cfg.AllowedAlgorithms,
-		SubjectClaim:   cfg.SubjectClaim,
-	}
 }
 
 func oauth2ConfigMatchesHints(cfg domain.OAuth2Config, hints TokenHints) bool {
