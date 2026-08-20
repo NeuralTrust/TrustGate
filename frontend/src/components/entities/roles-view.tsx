@@ -65,7 +65,7 @@ export function RolesView() {
   return (
     <div>
       <PageHeader
-        description="Roles power role-based routing. A role maps OIDC/OAuth2 identity claims to a set of registries and model policies."
+        description="Roles power role-based routing. A role maps OAuth2 identity claims to a set of registries and model policies."
         action={
           <Button
             variant="primary"
