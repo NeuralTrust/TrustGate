@@ -62,6 +62,20 @@ func (e *entitlementsUnavailableError) Error() string {
 	return "trustguard: rate limit entitlements unavailable"
 }
 
+// authRejectedError is returned when TrustGuard deliberately refuses the
+// evaluate call (403, or 401 after token refresh). Must not fail-open: the
+// guard is reachable and the plugin is misconfigured or unauthorized.
+type authRejectedError struct {
+	status int
+}
+
+func (e *authRejectedError) Error() string {
+	if e == nil {
+		return "trustguard: unauthorized"
+	}
+	return fmt.Sprintf("trustguard: unauthorized status %d", e.status)
+}
+
 type client struct {
 	http *http.Client
 }
@@ -102,6 +116,9 @@ func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body
 	}
 	if res.StatusCode == http.StatusUnauthorized {
 		return nil, errUnauthorized
+	}
+	if res.StatusCode == http.StatusForbidden {
+		return nil, &authRejectedError{status: http.StatusForbidden}
 	}
 	if res.StatusCode == http.StatusTooManyRequests {
 		return nil, &rateLimitedError{

@@ -33,31 +33,43 @@ func TestParseConfig(t *testing.T) {
 		settings    map[string]any
 		wantErr     bool
 		wantInspect string
+		wantOnError string
 	}{
 		{
 			name:        "valid minimal config defaults inspect",
 			settings:    map[string]any{"collector_id": testCollectorID},
 			wantInspect: inspectRequestResponse,
+			wantOnError: onErrorFailOpen,
 		},
 		{
 			name:        "inspect request accepted",
 			settings:    map[string]any{"inspect": inspectRequest, "collector_id": testCollectorID},
 			wantInspect: inspectRequest,
+			wantOnError: onErrorFailOpen,
 		},
 		{
 			name:        "catalog direction alias maps to inspect",
 			settings:    map[string]any{"direction": inspectRequest, "collector_id": testCollectorID},
 			wantInspect: inspectRequest,
+			wantOnError: onErrorFailOpen,
 		},
 		{
 			name:        "inspect response accepted",
 			settings:    map[string]any{"inspect": inspectResponse, "collector_id": testCollectorID},
 			wantInspect: inspectResponse,
+			wantOnError: onErrorFailOpen,
 		},
 		{
 			name:        "inspect request_response accepted",
 			settings:    map[string]any{"inspect": inspectRequestResponse, "collector_id": testCollectorID},
 			wantInspect: inspectRequestResponse,
+			wantOnError: onErrorFailOpen,
+		},
+		{
+			name:        "on_error fail_closed accepted",
+			settings:    map[string]any{"collector_id": testCollectorID, "on_error": onErrorFailClosed},
+			wantInspect: inspectRequestResponse,
+			wantOnError: onErrorFailClosed,
 		},
 		{
 			name:     "invalid inspect",
@@ -65,9 +77,15 @@ func TestParseConfig(t *testing.T) {
 			wantErr:  true,
 		},
 		{
+			name:     "invalid on_error",
+			settings: map[string]any{"collector_id": testCollectorID, "on_error": "panic"},
+			wantErr:  true,
+		},
+		{
 			name:        "legacy base_url in settings ignored",
 			settings:    map[string]any{"base_url": "http://guard.local", "collector_id": testCollectorID},
 			wantInspect: inspectRequestResponse,
+			wantOnError: onErrorFailOpen,
 		},
 		{
 			name:     "missing collector_id rejected",
@@ -89,6 +107,7 @@ func TestParseConfig(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantInspect, cfg.Inspect)
+			assert.Equal(t, tt.wantOnError, cfg.OnError)
 		})
 	}
 }
