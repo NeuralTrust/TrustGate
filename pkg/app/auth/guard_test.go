@@ -17,6 +17,7 @@ package auth_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
@@ -78,6 +79,11 @@ func TestCreator_RejectsDuplicateIssuerAudience(t *testing.T) {
 	err := createOAuth2(t, repo, publisher, gatewayID, "api://abc")
 	if !errors.Is(err, domain.ErrDuplicateOAuth2) {
 		t.Fatalf("err = %v, want ErrDuplicateOAuth2", err)
+	}
+	for _, want := range []string{"https://idp.example.com", "api://abc"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %q, want it to name %q", err, want)
+		}
 	}
 	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
