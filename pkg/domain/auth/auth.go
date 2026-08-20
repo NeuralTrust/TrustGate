@@ -42,17 +42,22 @@ type Type string
 const (
 	TypeAPIKey Type = "api_key"
 	TypeOAuth2 Type = "oauth2"
-	TypeOIDC   Type = "oidc"
 	TypeMTLS   Type = "mtls"
+
+	// TypeOIDC is the deprecated wire and storage alias of TypeOAuth2. It is
+	// never a valid type for a new auth: NormalizeType maps it away on the way
+	// in, and StoredTypes expands to it on the way out so rows written before
+	// the unification stay reachable.
+	TypeOIDC Type = "oidc"
 )
 
 func Types() []Type {
-	return []Type{TypeAPIKey, TypeOAuth2, TypeOIDC, TypeMTLS}
+	return []Type{TypeAPIKey, TypeOAuth2, TypeMTLS}
 }
 
 func IsValidType(t Type) bool {
 	switch t {
-	case TypeAPIKey, TypeOAuth2, TypeOIDC, TypeMTLS:
+	case TypeAPIKey, TypeOAuth2, TypeMTLS:
 		return true
 	}
 	return false

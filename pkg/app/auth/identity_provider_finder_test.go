@@ -232,7 +232,7 @@ func TestIdentityProviderFinder_FindCandidates(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			verifier := authmocks.NewOIDCVerifier(t)
+			verifier := authmocks.NewJWTVerifier(t)
 			verifier.EXPECT().Peek(candidateToken).Return(tt.hints, nil).Once()
 
 			finder := appauth.NewIdentityProviderFinder(verifier)
@@ -255,7 +255,7 @@ func disable(a *domain.Auth) *domain.Auth {
 func TestIdentityProviderFinder_PeekFailurePropagates(t *testing.T) {
 	t.Parallel()
 	errPeek := errors.New("token is not a parseable jwt")
-	verifier := authmocks.NewOIDCVerifier(t)
+	verifier := authmocks.NewJWTVerifier(t)
 	verifier.EXPECT().Peek(candidateToken).Return(appauth.TokenHints{}, errPeek).Once()
 
 	finder := appauth.NewIdentityProviderFinder(verifier)
@@ -274,7 +274,7 @@ func TestIdentityProviderFinder_PeekFailurePropagates(t *testing.T) {
 
 func TestIdentityProviderFinder_CancelledContextIsHonoured(t *testing.T) {
 	t.Parallel()
-	verifier := authmocks.NewOIDCVerifier(t)
+	verifier := authmocks.NewJWTVerifier(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -295,7 +295,7 @@ func TestIdentityProviderFinder_CancelledContextIsHonoured(t *testing.T) {
 
 func TestIdentityProviderFinder_ReturnsLegacyAuthInstanceUncopied(t *testing.T) {
 	t.Parallel()
-	verifier := authmocks.NewOIDCVerifier(t)
+	verifier := authmocks.NewJWTVerifier(t)
 	verifier.EXPECT().Peek(candidateToken).Return(appauth.TokenHints{
 		Issuer:    "https://issuer.example",
 		Audiences: []string{"client-id"},
@@ -315,7 +315,7 @@ func TestIdentityProviderFinder_ReturnsLegacyAuthInstanceUncopied(t *testing.T) 
 
 func TestIdentityProviderFinder_ReturnsStoredAuthWhenOAuth2ConfigPresent(t *testing.T) {
 	t.Parallel()
-	verifier := authmocks.NewOIDCVerifier(t)
+	verifier := authmocks.NewJWTVerifier(t)
 	verifier.EXPECT().Peek(candidateToken).Return(appauth.TokenHints{
 		Issuer:    "https://issuer.example",
 		Audiences: []string{"client-id"},

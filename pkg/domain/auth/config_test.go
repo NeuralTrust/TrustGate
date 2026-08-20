@@ -520,9 +520,6 @@ func TestConfig_UnmarshalJSON(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unmarshal(%s): %v", tt.payload, err)
 			}
-			if got.OIDC != nil {
-				t.Fatalf("Unmarshal(%s) left a legacy payload behind: %+v", tt.payload, got.OIDC)
-			}
 			if !reflect.DeepEqual(got.OAuth2, tt.wantOAuth2) {
 				t.Fatalf("Unmarshal(%s) oauth2 = %+v, want %+v", tt.payload, got.OAuth2, tt.wantOAuth2)
 			}
