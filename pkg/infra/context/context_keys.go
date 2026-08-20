@@ -30,6 +30,9 @@ const (
 	UserIDContextKey ContextKey = "user_id"
 	// UserEmailContextKey holds the user email decoded from an admin JWT.
 	UserEmailContextKey ContextKey = "user_email"
+	// AdminIdentityContextKey holds the typed caller identity resolved by the
+	// admin auth middleware (human, service or platform).
+	AdminIdentityContextKey ContextKey = "admin_identity"
 	// MCPSkipMetricsKey is set by the MCP handler to tell the MCP metrics
 	// middleware not to publish an event for the current request (e.g. ping,
 	// notifications, or pre-dispatch failures).
