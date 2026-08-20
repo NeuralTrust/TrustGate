@@ -62,6 +62,7 @@ type adminRouterParams struct {
 	Transport      *middleware.Transport `name:"admin"`
 	OpsMetrics     *o11y.Provider
 	AdminAuth      *middleware.AdminAuthMiddleware
+	AdminAuthz     *middleware.AdminAuthzMiddleware
 	HealthHandler  *apihandler.HealthHandler
 	VersionHandler *apihandler.VersionHandler
 
@@ -139,6 +140,7 @@ func ServerAdmin(c *container.Container) error {
 				MiddlewareTransport:    p.Transport,
 				OpsMetrics:             middleware.NewOpsMetricsMiddleware(p.OpsMetrics, o11y.PlaneAdmin),
 				AdminAuth:              p.AdminAuth,
+				AdminAuthz:             p.AdminAuthz,
 				HealthHandler:          p.HealthHandler,
 				VersionHandler:         p.VersionHandler,
 				CreateGateway:          p.CreateGateway,
