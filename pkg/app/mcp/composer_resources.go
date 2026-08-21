@@ -32,6 +32,10 @@ func (c *composer) ListResources(ctx context.Context, rc *appconsumer.RoutableCo
 			return up.ListResources(ctx)
 		},
 		func(reg *registrydomain.Registry, resources []Resource) []Resource {
+			resources = append([]Resource(nil), resources...)
+			for i := range resources {
+				resources[i].source = reg.ID.String()
+			}
 			if toolkit == nil {
 				return resources
 			}

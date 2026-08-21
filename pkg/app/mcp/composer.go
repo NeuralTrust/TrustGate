@@ -50,6 +50,11 @@ type Composer interface {
 	CancelTask(ctx context.Context, rc *appconsumer.RoutableConsumer, handle string) (json.RawMessage, error)
 }
 
+// AppsCallComposer classifies an Apps call during normal tool routing.
+type AppsCallComposer interface {
+	CallToolClassified(ctx context.Context, rc *appconsumer.RoutableConsumer, call ToolCall) (json.RawMessage, bool, error)
+}
+
 var _ Composer = (*composer)(nil)
 
 type composer struct {
@@ -118,48 +123,76 @@ func (c *composer) ListTools(ctx context.Context, rc *appconsumer.RoutableConsum
 	for _, b := range comp.bindings {
 		t := b.tool
 		t.Name = b.exposed
+		t.source = b.registry.ID.String()
 		out = append(out, t)
 	}
 	return out, nil
 }
 
 func (c *composer) CallTool(ctx context.Context, rc *appconsumer.RoutableConsumer, call ToolCall) (json.RawMessage, error) {
+	result, _, err := c.callTool(ctx, rc, call, false)
+	return result, err
+}
+
+func (c *composer) CallToolClassified(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	call ToolCall,
+) (json.RawMessage, bool, error) {
+	return c.callTool(ctx, rc, call, true)
+}
+
+func (c *composer) callTool(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	call ToolCall,
+	classifyApps bool,
+) (json.RawMessage, bool, error) {
 	comp, err := c.compose(ctx, rc)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	for _, b := range comp.bindings {
 		if b.exposed != call.Name {
 			continue
 		}
+		appsCall := false
+		if classifyApps {
+			metadata, marked, metadataErr := toolAppsMetadata(b.tool)
+			if marked && (metadataErr != nil || metadata.ResourceURI == "") {
+				return nil, false, ErrAppsResourceRejected
+			}
+			appsCall = marked
+		}
 		south, producingRound, err := c.bindContinuation(ctx, rc, b, call)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		target, err := c.target(ctx, rc, b.registry)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		stop := annotateUpstream(ctx, b.registry, b.tool.Name)
 		defer stop()
 		up, err := c.dialer.Connect(ctx, target)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		defer up.Close(ctx)
 		result, err := up.CallTool(ctx, south)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
-		return c.wrapContinuation(ctx, rc, b, call, producingRound, result)
+		result, err = c.wrapContinuation(ctx, rc, b, call, producingRound, result)
+		return result, appsCall, err
 	}
 	if _, forbidden := comp.denied[call.Name]; forbidden {
-		return nil, &ToolNotPermittedError{Tool: call.Name}
+		return nil, false, &ToolNotPermittedError{Tool: call.Name}
 	}
 	if comp.consent != nil {
-		return nil, comp.consent
+		return nil, false, comp.consent
 	}
-	return nil, fmt.Errorf("%w: %s", ErrToolNotFound, call.Name)
+	return nil, false, fmt.Errorf("%w: %s", ErrToolNotFound, call.Name)
 }
 
 func (c *composer) bindContinuation(

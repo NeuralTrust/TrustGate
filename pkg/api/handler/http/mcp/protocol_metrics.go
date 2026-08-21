@@ -47,6 +47,50 @@ type otelProtocolValidationRecorder struct {
 	counter metric.Int64Counter
 }
 
+// AppsRecorder records bounded Apps enforcement outcomes.
+type AppsRecorder interface {
+	Record(ctx context.Context, operation, outcome string, count int64)
+}
+
+type otelAppsRecorder struct {
+	counter metric.Int64Counter
+}
+
+// NewAppsRecorder returns metadata-only Apps enforcement telemetry.
+func NewAppsRecorder(enabled bool) AppsRecorder {
+	if !enabled {
+		return nil
+	}
+	counter, err := otel.Meter("trustgate/mcp_northbound").Int64Counter(
+		"mcp.northbound.apps.outcome_total",
+		metric.WithUnit("{outcome}"),
+	)
+	if err != nil {
+		return nil
+	}
+	return &otelAppsRecorder{counter: counter}
+}
+
+func (r *otelAppsRecorder) Record(ctx context.Context, operation, outcome string, count int64) {
+	if r == nil || r.counter == nil || count < 1 {
+		return
+	}
+	switch operation {
+	case "tools_list", "resources_list", "templates_list", "read", "call":
+	default:
+		return
+	}
+	switch outcome {
+	case "dropped", "rejected":
+	default:
+		return
+	}
+	r.counter.Add(ctx, count, metric.WithAttributes(
+		attribute.String("operation", operation),
+		attribute.String("outcome", outcome),
+	))
+}
+
 // NewProtocolValidationRecorder returns a no-op nil recorder unless ops metrics are enabled.
 func NewProtocolValidationRecorder(enabled bool) ProtocolValidationRecorder {
 	if !enabled {
