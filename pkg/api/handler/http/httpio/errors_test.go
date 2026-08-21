@@ -34,6 +34,7 @@ func TestMapDomainError(t *testing.T) {
 	}{
 		{name: "nil error → 200 empty", err: nil, wantStatus: fiber.StatusOK, wantCode: ""},
 		{name: "invalid uuid → 400", err: ErrInvalidUUIDParam, wantStatus: fiber.StatusBadRequest, wantCode: "invalid_uuid"},
+		{name: "invalid query → 400", err: ErrInvalidQuery, wantStatus: fiber.StatusBadRequest, wantCode: "invalid_query"},
 		{name: "invalid page → 422", err: ErrInvalidPage, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "invalid_pagination"},
 		{name: "invalid size → 422", err: ErrInvalidSize, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "invalid_pagination"},
 		{name: "invalid sort → 422", err: ErrInvalidSort, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "invalid_sort"},
@@ -45,6 +46,7 @@ func TestMapDomainError(t *testing.T) {
 		{name: "conflict → 409", err: commonerrors.ErrConflict, wantStatus: fiber.StatusConflict, wantCode: "conflict"},
 		{name: "validation → 422", err: commonerrors.ErrValidation, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "validation_failed"},
 		{name: "invalid config → 422", err: commonerrors.ErrInvalidConfig, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "invalid_config"},
+		{name: "result too large → 422", err: commonerrors.ErrResultTooLarge, wantStatus: fiber.StatusUnprocessableEntity, wantCode: "result_too_large"},
 		{name: "unknown → 500", err: errors.New("boom"), wantStatus: fiber.StatusInternalServerError, wantCode: "internal_error"},
 	}
 

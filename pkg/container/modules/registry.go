@@ -61,6 +61,9 @@ func provideRegistryServices(c *container.Container) error {
 	if err := c.Provide(appregistry.NewFinder); err != nil {
 		return err
 	}
+	if err := c.Provide(appregistry.NewGroupedFinder); err != nil {
+		return err
+	}
 	if err := c.Provide(appregistry.NewConnectionTester); err != nil {
 		return err
 	}
