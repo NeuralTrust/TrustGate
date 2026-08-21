@@ -991,3 +991,54 @@ func TestValidate_LocalAllowsConfigSyncTLSInsecure(t *testing.T) {
 		t.Fatalf("local data plane should allow CONFIG_SYNC_TLS_INSECURE: %v", err)
 	}
 }
+
+func TestParseAdminM2MPublicKeys(t *testing.T) {
+	const pemKey = "-----BEGIN PUBLIC KEY-----\nMIIB\n-----END PUBLIC KEY-----"
+	b64 := base64.StdEncoding.EncodeToString([]byte(pemKey))
+
+	tests := []struct {
+		name string
+		raw  string
+		want []AdminM2MPublicKey
+	}{
+		{
+			name: "bare base64 key needs no kid",
+			raw:  b64,
+			want: []AdminM2MPublicKey{{PEM: b64}},
+		},
+		{
+			name: "bare pem with escaped newlines",
+			raw:  strings.ReplaceAll(pemKey, "\n", `\n`),
+			want: []AdminM2MPublicKey{{PEM: pemKey}},
+		},
+		{
+			name: "json array keeps kids for rotation",
+			raw:  `[{"kid":"a","pem":"` + b64 + `"},{"kid":"b","pem":"` + b64 + `"}]`,
+			want: []AdminM2MPublicKey{{KID: "a", PEM: b64}, {KID: "b", PEM: b64}},
+		},
+		{
+			name: "empty disables service tokens",
+			raw:  "   ",
+			want: nil,
+		},
+		{
+			name: "malformed json disables service tokens",
+			raw:  `[{"kid":`,
+			want: nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseAdminM2MPublicKeys(tc.raw)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %d keys, want %d", len(got), len(tc.want))
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Errorf("key %d = %+v, want %+v", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
