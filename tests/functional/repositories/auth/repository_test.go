@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sort"
 	"testing"
 	"time"
 
@@ -23,6 +24,12 @@ import (
 )
 
 func setupRepo(t *testing.T) (*repo.Repository, *gatewayrepo.Repository) {
+	t.Helper()
+	auths, gateways, _ := setupRepoWithPool(t)
+	return auths, gateways
+}
+
+func setupRepoWithPool(t *testing.T) (*repo.Repository, *gatewayrepo.Repository, *pgxpool.Pool) {
 	t.Helper()
 	dsn := os.Getenv("PG_TEST_URL")
 	if dsn == "" {
@@ -58,7 +65,7 @@ func setupRepo(t *testing.T) (*repo.Repository, *gatewayrepo.Repository) {
 	})
 
 	appender := outboxrepo.NewRepository(conn)
-	return repo.NewRepository(conn, appender), gatewayrepo.NewRepository(conn, appender)
+	return repo.NewRepository(conn, appender), gatewayrepo.NewRepository(conn, appender), pool
 }
 
 func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) ids.GatewayID {
@@ -84,14 +91,53 @@ func validAuth(t *testing.T, gwID ids.GatewayID, name string) *domain.Auth {
 
 func validIDPAuth(t *testing.T, gwID ids.GatewayID, name string, enabled bool) *domain.Auth {
 	t.Helper()
-	a, err := domain.NewAuth(gwID, name, domain.TypeOIDC, enabled, domain.Config{OIDC: &domain.OIDCConfig{
-		Issuer:            "https://issuer.example.com",
-		Audiences:         []string{"gateway"},
-		JWKSURL:           "https://issuer.example.com/.well-known/jwks.json",
-		AllowedAlgorithms: []string{"RS256"},
+	a, err := domain.NewAuth(gwID, name, domain.TypeOAuth2, enabled, domain.Config{OAuth2: &domain.OAuth2Config{
+		Issuer:     "https://issuer.example.com",
+		Audiences:  []string{"gateway"},
+		JWKSURL:    "https://issuer.example.com/.well-known/jwks.json",
+		Algorithms: []string{"RS256"},
 	}})
 	if err != nil {
 		t.Fatalf("auth domain.NewAuth: %v", err)
+	}
+	return a
+}
+
+// saveLegacyOIDCAuth plants a row in the shape the unification migration
+// replaced: type "oidc" with the payload under the oidc key. The domain can no
+// longer build one, so a native row is saved and then rewritten in place. The
+// constraint comes back NOT VALID to keep rejecting new legacy writes while
+// leaving this row, which is what a restore or a rolled-back migration leaves
+// behind.
+func saveLegacyOIDCAuth(
+	t *testing.T,
+	r *repo.Repository,
+	pool *pgxpool.Pool,
+	gwID ids.GatewayID,
+	name string,
+) *domain.Auth {
+	t.Helper()
+	ctx := context.Background()
+	a := validIDPAuth(t, gwID, name, true)
+	if err := r.Save(ctx, a); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `ALTER TABLE auths DROP CONSTRAINT IF EXISTS auths_type_check`); err != nil {
+		t.Fatalf("relax the auth type constraint: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE auths
+		SET type = 'oidc',
+		    config = jsonb_build_object('oidc', config -> 'oauth2')
+		WHERE id = $1`, a.ID,
+	); err != nil {
+		t.Fatalf("rewrite the row into the legacy shape: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		ALTER TABLE auths
+		ADD CONSTRAINT auths_type_check CHECK (type IN ('api_key','oauth2','mtls')) NOT VALID`,
+	); err != nil {
+		t.Fatalf("restore the auth type constraint: %v", err)
 	}
 	return a
 }
@@ -173,12 +219,37 @@ func TestRepository_ListEnabledByGatewayAndType(t *testing.T) {
 		}
 	}
 
-	got, err := r.ListEnabledByGatewayAndType(ctx, gwID, domain.TypeOIDC)
+	got, err := r.ListEnabledByGatewayAndType(ctx, gwID, domain.TypeOAuth2)
 	if err != nil {
 		t.Fatalf("ListEnabledByGatewayAndType: %v", err)
 	}
 	if len(got) != 1 || got[0].ID != enabled.ID {
 		t.Fatalf("got %+v, want only enabled idp", got)
+	}
+}
+
+func TestRepository_LegacyOIDCRowReadsBackAsOAuth2(t *testing.T) {
+	r, gw, pool := setupRepoWithPool(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "agw-legacy-oidc")
+
+	stored := saveLegacyOIDCAuth(t, r, pool, gwID, "legacy-idp")
+
+	got, err := r.FindByID(ctx, stored.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.Type != domain.TypeOAuth2 {
+		t.Fatalf("type = %q, want %q", got.Type, domain.TypeOAuth2)
+	}
+	if got.Config.OAuth2 == nil {
+		t.Fatal("config.oauth2 is nil, want the legacy payload normalized onto it")
+	}
+	if got.Config.OAuth2.JWKSURL != stored.Config.OAuth2.JWKSURL {
+		t.Fatalf("jwks url = %q, want %q", got.Config.OAuth2.JWKSURL, stored.Config.OAuth2.JWKSURL)
+	}
+	if len(got.Config.OAuth2.Algorithms) != 1 || got.Config.OAuth2.Algorithms[0] != "RS256" {
+		t.Fatalf("allowed algorithms = %v", got.Config.OAuth2.Algorithms)
 	}
 }
 
@@ -331,5 +402,55 @@ func TestRepository_List_FilterByGatewayAndName(t *testing.T) {
 	}
 	if total != 1 || len(items) != 1 || items[0].Name != "other-key" {
 		t.Fatalf("List(name) returned %+v", items)
+	}
+}
+
+func TestRepository_List_TypeFilterMatchesEveryStoredRepresentation(t *testing.T) {
+	r, gw, pool := setupRepoWithPool(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "agw-stored-types")
+
+	legacy := saveLegacyOIDCAuth(t, r, pool, gwID, "legacy-idp")
+	for _, a := range []*domain.Auth{validIDPAuth(t, gwID, "native-idp", true), validAuth(t, gwID, "api-key")} {
+		if err := r.Save(ctx, a); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+	}
+
+	var storedType string
+	if err := pool.QueryRow(ctx, `SELECT type FROM auths WHERE id = $1`, legacy.ID).Scan(&storedType); err != nil {
+		t.Fatalf("read stored type: %v", err)
+	}
+	if storedType != string(domain.TypeOIDC) {
+		t.Fatalf("stored type = %q, want %q; the fixture is not a pre-migration row",
+			storedType, domain.TypeOIDC)
+	}
+
+	for _, filterType := range []domain.Type{domain.TypeOAuth2, domain.TypeOIDC} {
+		t.Run(string(filterType), func(t *testing.T) {
+			items, total, err := r.List(ctx, domain.ListFilter{
+				GatewayID: gwID,
+				Type:      filterType,
+				Page:      listing.Page{Number: 1, Size: 10},
+			})
+			if err != nil {
+				t.Fatalf("List: %v", err)
+			}
+			if total != len(items) {
+				t.Fatalf("total = %d but page holds %d items", total, len(items))
+			}
+			names := make([]string, 0, len(items))
+			for _, a := range items {
+				names = append(names, a.Name)
+				if a.Type != domain.TypeOAuth2 {
+					t.Fatalf("item %q has type %q, want it normalized to %q",
+						a.Name, a.Type, domain.TypeOAuth2)
+				}
+			}
+			sort.Strings(names)
+			if len(names) != 2 || names[0] != "legacy-idp" || names[1] != "native-idp" {
+				t.Fatalf("page = %v, want both the legacy and the native identity provider", names)
+			}
+		})
 	}
 }

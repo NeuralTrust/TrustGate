@@ -173,15 +173,14 @@ func pathOAuth2Auths(matches []appconsumer.PathMatch) (providers []*authdomain.A
 				continue
 			}
 			protected = true
-			candidate, ok := appauth.IdentityProviderCandidate(a)
-			if !ok {
+			if !a.Type.IsIdentityProvider() || a.Config.OAuth2 == nil {
 				continue
 			}
-			if candidate.CanBrokerLogin() {
-				providers = append(providers, candidate)
+			if a.CanBrokerLogin() {
+				providers = append(providers, a)
 				continue
 			}
-			validateOnly = append(validateOnly, candidate)
+			validateOnly = append(validateOnly, a)
 		}
 	}
 	return providers, protected, validateOnly

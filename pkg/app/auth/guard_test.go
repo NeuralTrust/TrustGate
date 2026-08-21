@@ -17,6 +17,7 @@ package auth_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
@@ -71,13 +72,18 @@ func TestCreator_RejectsDuplicateIssuerAudience(t *testing.T) {
 	t.Parallel()
 	gatewayID := ids.New[ids.GatewayKind]()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).
+	repo.EXPECT().FindEnabledByTypes(mock.Anything, domain.StoredTypes(domain.TypeOAuth2)).
 		Return([]*domain.Auth{enabledOAuth2(t, gatewayID, "https://idp.example.com", "api://abc")}, nil).Once()
 
 	publisher := cachemocks.NewEventPublisher(t)
 	err := createOAuth2(t, repo, publisher, gatewayID, "api://abc")
 	if !errors.Is(err, domain.ErrDuplicateOAuth2) {
 		t.Fatalf("err = %v, want ErrDuplicateOAuth2", err)
+	}
+	for _, want := range []string{"https://idp.example.com", "api://abc"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %q, want it to name %q", err, want)
+		}
 	}
 	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
@@ -86,7 +92,7 @@ func TestCreator_RejectsAudienceEquivalence(t *testing.T) {
 	t.Parallel()
 	gatewayID := ids.New[ids.GatewayKind]()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).
+	repo.EXPECT().FindEnabledByTypes(mock.Anything, domain.StoredTypes(domain.TypeOAuth2)).
 		Return([]*domain.Auth{enabledOAuth2(t, gatewayID, "https://idp.example.com", "api://abc")}, nil).Once()
 
 	publisher := cachemocks.NewEventPublisher(t)
@@ -101,7 +107,7 @@ func TestCreator_AllowsSameIssuerAudienceOnAnotherGateway(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	other := enabledOAuth2(t, ids.New[ids.GatewayKind](), "https://idp.example.com", "api://abc")
-	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).
+	repo.EXPECT().FindEnabledByTypes(mock.Anything, domain.StoredTypes(domain.TypeOAuth2)).
 		Return([]*domain.Auth{other}, nil).Once()
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
 
@@ -132,7 +138,7 @@ func TestCreator_RejectsWildcardAudienceOverlap(t *testing.T) {
 		}},
 	}
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).
+	repo.EXPECT().FindEnabledByTypes(mock.Anything, domain.StoredTypes(domain.TypeOAuth2)).
 		Return([]*domain.Auth{legacyNoAudiences}, nil).Once()
 
 	publisher := cachemocks.NewEventPublisher(t)
@@ -147,7 +153,7 @@ func TestCreator_AllowsSameIssuerDistinctAudience(t *testing.T) {
 	t.Parallel()
 	gatewayID := ids.New[ids.GatewayKind]()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).
+	repo.EXPECT().FindEnabledByTypes(mock.Anything, domain.StoredTypes(domain.TypeOAuth2)).
 		Return([]*domain.Auth{enabledOAuth2(t, gatewayID, "https://idp.example.com", "api://tenant-a")}, nil).Once()
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
 
@@ -171,7 +177,7 @@ func TestUpdater_RejectsEnablingConflictingAuth(t *testing.T) {
 	other := enabledOAuth2(t, gatewayID, "https://idp.example.com", "abc")
 
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).
+	repo.EXPECT().FindEnabledByTypes(mock.Anything, domain.StoredTypes(domain.TypeOAuth2)).
 		Return([]*domain.Auth{other}, nil).Once()
 
 	publisher := cachemocks.NewEventPublisher(t)
@@ -193,7 +199,7 @@ func TestUpdater_AllowsUpdatingSameEntry(t *testing.T) {
 	existing := enabledOAuth2(t, ids.New[ids.GatewayKind](), "https://idp.example.com", "api://abc")
 
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).
+	repo.EXPECT().FindEnabledByTypes(mock.Anything, domain.StoredTypes(domain.TypeOAuth2)).
 		Return([]*domain.Auth{existing}, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Once()
 
