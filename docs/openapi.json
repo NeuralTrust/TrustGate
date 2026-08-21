@@ -2681,7 +2681,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns a paginated list of registries in a gateway.",
+                "description": "Returns one of two mutually exclusive variants: flat (items/page/size/total) when view and type are omitted, or grouped (view/groups/total_groups/total_instances) with view=grouped&type=LLM. Grouped requests require at most 200 total registries and must omit name, page, and size.",
                 "tags": [
                     "registries"
                 ],
@@ -2698,7 +2698,7 @@
                         }
                     },
                     {
-                        "description": "Filter by name (substring match)",
+                        "description": "Flat view only: filter by name (substring match)",
                         "name": "name",
                         "in": "query",
                         "schema": {
@@ -2706,7 +2706,7 @@
                         }
                     },
                     {
-                        "description": "Page number (1-based)",
+                        "description": "Flat view only: page number (1-based)",
                         "name": "page",
                         "in": "query",
                         "schema": {
@@ -2714,21 +2714,43 @@
                         }
                     },
                     {
-                        "description": "Page size",
+                        "description": "Flat view only: page size (maximum 200)",
                         "name": "size",
                         "in": "query",
                         "schema": {
                             "type": "integer"
                         }
+                    },
+                    {
+                        "description": "Response view",
+                        "name": "view",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "enum": [
+                                "grouped"
+                            ]
+                        }
+                    },
+                    {
+                        "description": "Grouped view only: required registry type; omit for flat view",
+                        "name": "type",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "enum": [
+                                "LLM"
+                            ]
+                        }
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "Mutually exclusive variants: flat (items/page/size/total) or grouped (view/groups/total_groups/total_instances)",
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.ListRegistryResponse"
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.ListRegistryViewResponse"
                                 }
                             }
                         }
@@ -2745,6 +2767,16 @@
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -6389,9 +6421,15 @@
                     }
                 }
             },
-            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.ListRegistryResponse": {
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.ListRegistryViewResponse": {
                 "type": "object",
                 "properties": {
+                    "groups": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryProviderGroupResponse"
+                        }
+                    },
                     "items": {
                         "type": "array",
                         "items": {
@@ -6406,6 +6444,15 @@
                     },
                     "total": {
                         "type": "integer"
+                    },
+                    "total_groups": {
+                        "type": "integer"
+                    },
+                    "total_instances": {
+                        "type": "integer"
+                    },
+                    "view": {
+                        "type": "string"
                     }
                 }
             },
@@ -6486,6 +6533,26 @@
                         "type": "string"
                     },
                     "url": {
+                        "type": "string"
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryProviderGroupResponse": {
+                "type": "object",
+                "properties": {
+                    "instance_count": {
+                        "type": "integer"
+                    },
+                    "instances": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryResponse"
+                        }
+                    },
+                    "provider": {
+                        "type": "string"
+                    },
+                    "type": {
                         "type": "string"
                     }
                 }

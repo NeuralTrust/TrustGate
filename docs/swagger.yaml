@@ -1262,8 +1262,12 @@ definitions:
       threshold:
         type: integer
     type: object
-  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.ListRegistryResponse:
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.ListRegistryViewResponse:
     properties:
+      groups:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryProviderGroupResponse'
+        type: array
       items:
         items:
           $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryResponse'
@@ -1274,6 +1278,12 @@ definitions:
         type: integer
       total:
         type: integer
+      total_groups:
+        type: integer
+      total_instances:
+        type: integer
+      view:
+        type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.MCPAuthResponse:
     properties:
@@ -1327,6 +1337,19 @@ definitions:
       transport:
         type: string
       url:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryProviderGroupResponse:
+    properties:
+      instance_count:
+        type: integer
+      instances:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryResponse'
+        type: array
+      provider:
+        type: string
+      type:
         type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryResponse:
@@ -3771,7 +3794,10 @@ paths:
       - policies
   /v1/gateways/{gateway_id}/registries:
     get:
-      description: Returns a paginated list of registries in a gateway.
+      description: 'Returns one of two mutually exclusive variants: flat (items/page/size/total)
+        when view and type are omitted, or grouped (view/groups/total_groups/total_instances)
+        with view=grouped&type=LLM. Grouped requests require at most 200 total registries
+        and must omit name, page, and size.'
       parameters:
       - description: Gateway id
         format: uuid
@@ -3779,31 +3805,48 @@ paths:
         name: gateway_id
         required: true
         type: string
-      - description: Filter by name (substring match)
+      - description: 'Flat view only: filter by name (substring match)'
         in: query
         name: name
         type: string
-      - description: Page number (1-based)
+      - description: 'Flat view only: page number (1-based)'
         in: query
         name: page
         type: integer
-      - description: Page size
+      - description: 'Flat view only: page size (maximum 200)'
         in: query
         name: size
         type: integer
+      - description: Response view
+        enum:
+        - grouped
+        in: query
+        name: view
+        type: string
+      - description: 'Grouped view only: required registry type; omit for flat view'
+        enum:
+        - LLM
+        in: query
+        name: type
+        type: string
       produces:
       - application/json
       responses:
         "200":
-          description: OK
+          description: 'Mutually exclusive variants: flat (items/page/size/total)
+            or grouped (view/groups/total_groups/total_instances)'
           schema:
-            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.ListRegistryResponse'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.ListRegistryViewResponse'
         "400":
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
         "401":
           description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "422":
+          description: Unprocessable Entity
           schema:
             $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
       security:
