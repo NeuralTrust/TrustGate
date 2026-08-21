@@ -36,6 +36,10 @@ const (
 	ProviderCerebras         = provider.Cerebras
 	ProviderOpenRouter       = provider.OpenRouter
 	ProviderCohere           = provider.Cohere
+	ProviderPerplexity       = provider.Perplexity
+	ProviderFireworks        = provider.Fireworks
+	ProviderDatabricks       = provider.Databricks
+	ProviderOracle           = provider.Oracle
 )
 
 type Config struct {
