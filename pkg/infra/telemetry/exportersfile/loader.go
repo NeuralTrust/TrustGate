@@ -74,10 +74,10 @@ func LoadDefaults(path, metadataYAML, rawYAML string) ([]telemetrydomain.Exporte
 
 func ParseGroups(metadataYAML, rawYAML string) ([]telemetrydomain.ExporterConfig, error) {
 	var groups exporterGroups
-	if err := unmarshalList(metadataYAML, &groups.Metadata, "TELEMETRY_EXPORTERS_METADATA"); err != nil {
+	if err := unmarshalList(metadataYAML, &groups.Metadata, "TELEMETRY_EXPORTERS_METADATA", metricsschema.Metadata); err != nil {
 		return nil, err
 	}
-	if err := unmarshalList(rawYAML, &groups.Raw, "TELEMETRY_EXPORTERS_RAW"); err != nil {
+	if err := unmarshalList(rawYAML, &groups.Raw, "TELEMETRY_EXPORTERS_RAW", metricsschema.Raw); err != nil {
 		return nil, err
 	}
 	return fromGroups(groups)
@@ -91,7 +91,7 @@ func parseDocument(data []byte, source string) ([]telemetrydomain.ExporterConfig
 	return fromGroups(spec.Exporters)
 }
 
-func unmarshalList(raw string, dest *[]exporterEntry, source string) error {
+func unmarshalList(raw string, dest *[]exporterEntry, source string, class metricsschema.DataClass) error {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil
@@ -102,7 +102,7 @@ func unmarshalList(raw string, dest *[]exporterEntry, source string) error {
 		}
 		return nil
 	}
-	entries, err := parseTypeTokens(raw)
+	entries, err := parseTypeTokens(raw, class)
 	if err != nil {
 		return fmt.Errorf("parsing %s: %w", source, err)
 	}
@@ -118,7 +118,7 @@ func looksLikeExporterDocument(raw string) bool {
 	return strings.Contains(raw, ":")
 }
 
-func parseTypeTokens(raw string) ([]exporterEntry, error) {
+func parseTypeTokens(raw string, class metricsschema.DataClass) ([]exporterEntry, error) {
 	parts := strings.Split(raw, ",")
 	out := make([]exporterEntry, 0, len(parts))
 	for _, part := range parts {
@@ -126,9 +126,16 @@ func parseTypeTokens(raw string) ([]exporterEntry, error) {
 		if typ == "" {
 			return nil, fmt.Errorf("empty exporter type")
 		}
-		out = append(out, exporterEntry{Name: typ, Type: typ})
+		out = append(out, exporterEntry{Name: tokenExporterName(class, typ), Type: typ})
 	}
 	return out, nil
+}
+
+func tokenExporterName(class metricsschema.DataClass, typ string) string {
+	if class == "" {
+		return typ
+	}
+	return string(class) + "-" + typ
 }
 
 func canonicalExporterType(s string) string {
