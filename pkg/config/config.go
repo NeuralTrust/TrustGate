@@ -16,6 +16,7 @@ package config
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -133,6 +134,10 @@ const (
 	defaultConfigSyncOutboxMaxRows        int64 = 10000
 
 	configSyncKeyBytes = 32
+
+	defaultAdminM2MAudience           = "trustgate-admin"
+	defaultAdminM2MMaxTokenTTL        = 15 * time.Minute
+	defaultAdminPlatformClaimRequired = false
 )
 
 type Config struct {
@@ -158,6 +163,40 @@ type Config struct {
 	ConfigSync          ConfigSyncConfig
 	RateLimit           RateLimitConfig
 	MCPConnectRateLimit MCPConnectRateLimitConfig
+	AdminM2M            AdminM2MConfig
+}
+
+// AdminM2MPublicKey is one verification key advertised by the credential
+// issuer. Two keys may be configured at once so the issuer can rotate without
+// downtime: tokens carry the `kid` that selects the key. A single key may be
+// configured without a KID, in which case it verifies every token.
+type AdminM2MPublicKey struct {
+	KID string `json:"kid"`
+	PEM string `json:"pem"`
+}
+
+// AdminM2MConfig verifies machine-to-machine admin tokens minted by the
+// NeuralTrust control plane. The signing key is asymmetric and lives outside
+// TrustGate, so a compromised gateway cannot forge admin credentials, and the
+// key is deliberately unrelated to ServerConfig.SecretKey (which also derives
+// the vault cipher).
+type AdminM2MConfig struct {
+	Issuer     string
+	Audience   string
+	PublicKeys []AdminM2MPublicKey
+	// MaxTokenTTL rejects service tokens whose own exp-iat span exceeds the
+	// agreed ceiling, so revocation at the issuer cannot be outlived by a
+	// long-dated token.
+	MaxTokenTTL time.Duration
+	// PlatformClaimRequired turns a missing tenant claim from an implicit
+	// platform-admin grant into a rejection unless `platform_admin` is set.
+	// Off by default so TrustGate can ship before the issuer stamps the claim.
+	PlatformClaimRequired bool
+}
+
+// Enabled reports whether service tokens can be verified at all.
+func (c AdminM2MConfig) Enabled() bool {
+	return c.Issuer != "" && c.Audience != "" && len(c.PublicKeys) > 0
 }
 
 const (
@@ -391,6 +430,7 @@ func LoadConfig() (*Config, error) {
 		ConfigSync:          getConfigSyncConfig(),
 		RateLimit:           getRateLimitConfig(),
 		MCPConnectRateLimit: mcpConnectRateLimit,
+		AdminM2M:            getAdminM2MConfig(),
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -714,6 +754,51 @@ func getRateLimitConfig() RateLimitConfig {
 	return RateLimitConfig{
 		Enabled: getEnvBool("RATE_LIMIT_ENABLED", defaultRateLimitEnabled),
 	}
+}
+
+func getAdminM2MConfig() AdminM2MConfig {
+	return AdminM2MConfig{
+		Issuer:                getEnv("ADMIN_M2M_ISSUER", ""),
+		Audience:              getEnv("ADMIN_M2M_AUDIENCE", defaultAdminM2MAudience),
+		PublicKeys:            parseAdminM2MPublicKeys(getEnv("ADMIN_M2M_PUBLIC_KEYS", "")),
+		MaxTokenTTL:           getEnvDuration("ADMIN_M2M_MAX_TOKEN_TTL", defaultAdminM2MMaxTokenTTL),
+		PlatformClaimRequired: getEnvBool("ADMIN_PLATFORM_CLAIM_REQUIRED", defaultAdminPlatformClaimRequired),
+	}
+}
+
+// parseAdminM2MPublicKeys reads either a bare public key (PEM or its base64
+// form, which keeps the whole value on one line) or a JSON array of {kid, pem}
+// entries for rotation. Env values commonly carry PEM newlines escaped as "\n",
+// so those are restored before the key is parsed. Malformed input yields no
+// keys, which disables service tokens rather than silently trusting a partial
+// key set.
+func parseAdminM2MPublicKeys(raw string) []AdminM2MPublicKey {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if !strings.HasPrefix(raw, "[") {
+		return []AdminM2MPublicKey{{PEM: strings.ReplaceAll(raw, `\n`, "\n")}}
+	}
+	var entries []AdminM2MPublicKey
+	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
+		slog.Warn("invalid ADMIN_M2M_PUBLIC_KEYS, service tokens disabled", slog.String("error", err.Error()))
+		return nil
+	}
+	out := make([]AdminM2MPublicKey, 0, len(entries))
+	for _, entry := range entries {
+		kid := strings.TrimSpace(entry.KID)
+		pem := strings.ReplaceAll(strings.TrimSpace(entry.PEM), `\n`, "\n")
+		if kid == "" || pem == "" {
+			slog.Warn("skipping ADMIN_M2M_PUBLIC_KEYS entry without kid or pem")
+			continue
+		}
+		out = append(out, AdminM2MPublicKey{KID: kid, PEM: pem})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func getMCPConnectRateLimitConfig() (MCPConnectRateLimitConfig, error) {
