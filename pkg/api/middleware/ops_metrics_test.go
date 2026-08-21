@@ -26,9 +26,11 @@ import (
 )
 
 type recordingOps struct {
-	enabled bool
-	request o11y.Request
-	count   int
+	enabled   bool
+	request   o11y.Request
+	count     int
+	spanNames []string
+	finished  []o11y.SpanOutcome
 }
 
 func (r *recordingOps) Enabled() bool {
@@ -38,6 +40,19 @@ func (r *recordingOps) Enabled() bool {
 func (r *recordingOps) RecordRequest(_ context.Context, req o11y.Request) {
 	r.request = req
 	r.count++
+}
+
+func (r *recordingOps) StartRequestSpan(ctx context.Context, name string) (context.Context, o11y.RequestSpan) {
+	r.spanNames = append(r.spanNames, name)
+	return ctx, recordingSpan{ops: r}
+}
+
+type recordingSpan struct {
+	ops *recordingOps
+}
+
+func (s recordingSpan) Finish(out o11y.SpanOutcome) {
+	s.ops.finished = append(s.ops.finished, out)
 }
 
 func TestOpsMetricsMiddlewareRecordsOnlyBoundedValues(t *testing.T) {
@@ -70,6 +85,46 @@ func TestOpsMetricsMiddlewareDisabledIsPassthrough(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, 0, recorder.count)
+	require.Empty(t, recorder.spanNames)
+}
+
+// A span name is a series in every trace backend, so it has to be as bounded as
+// a metric attribute: consumer paths and ids must never reach it.
+func TestOpsMetricsMiddlewareSpanNameStaysBounded(t *testing.T) {
+	recorder := &recordingOps{enabled: true}
+	app := fiber.New()
+	app.Use(NewOpsMetricsMiddleware(recorder, o11y.PlaneAdmin).Middleware())
+	app.Get("/v1/gateways/:id", func(c *fiber.Ctx) error {
+		return c.SendStatus(fiber.StatusOK)
+	})
+
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/v1/gateways/customer-id?token=secret", nil))
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, []string{"GET admin.gateways"}, recorder.spanNames)
+	require.Len(t, recorder.finished, 1)
+	require.NotContains(t, recorder.spanNames[0], "customer-id")
+	require.NotContains(t, recorder.spanNames[0], "secret")
+	require.Equal(t, o11y.RouteAdminGateways, recorder.finished[0].Route)
+	require.Equal(t, "2xx", recorder.finished[0].StatusClass)
+}
+
+func TestOpsMetricsMiddlewareSpanCarriesProductTraceID(t *testing.T) {
+	const traceID = "11111111-2222-3333-4444-555555555555"
+	recorder := &recordingOps{enabled: true}
+	app := fiber.New()
+	app.Use(NewOpsMetricsMiddleware(recorder, o11y.PlaneProxy).Middleware())
+	app.Post("/*", func(c *fiber.Ctx) error {
+		c.Set(HeaderTraceID, traceID)
+		return c.SendStatus(fiber.StatusInternalServerError)
+	})
+
+	resp, err := app.Test(httptest.NewRequest(http.MethodPost, "/forward", nil))
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Len(t, recorder.finished, 1)
+	require.Equal(t, traceID, recorder.finished[0].TraceID)
+	require.Equal(t, o11y.OutcomeServerError, recorder.finished[0].Outcome)
 }
 
 func TestOpsMetricsMiddlewareConnectRouteIsBounded(t *testing.T) {
