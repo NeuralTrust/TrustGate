@@ -48,6 +48,7 @@ type RPCGateway struct {
 	limiter              ratelimitapp.Checker
 	appsListPolicy       appmcp.AppsListPolicy
 	appsReadPolicy       appmcp.AppsReadPolicy
+	appsRecorder         AppsRecorder
 	maxContinuationBytes int
 }
 
@@ -99,6 +100,7 @@ func NewRPCGatewayWithAppsPolicies(
 	appsListPolicy appmcp.AppsListPolicy,
 	appsReadPolicy appmcp.AppsReadPolicy,
 	maxContinuationBytes int,
+	recorders ...AppsRecorder,
 ) *RPCGateway {
 	if limiter == nil {
 		limiter = ratelimitapp.NewNoopChecker()
@@ -106,12 +108,17 @@ func NewRPCGatewayWithAppsPolicies(
 	if maxContinuationBytes <= 0 {
 		maxContinuationBytes = DefaultMaxContinuationBytes
 	}
+	var appsRecorder AppsRecorder
+	if len(recorders) > 0 {
+		appsRecorder = recorders[0]
+	}
 	return &RPCGateway{
 		composer:             composer,
 		plugins:              plugins,
 		limiter:              limiter,
 		appsListPolicy:       appsListPolicy,
 		appsReadPolicy:       appsReadPolicy,
+		appsRecorder:         appsRecorder,
 		maxContinuationBytes: maxContinuationBytes,
 	}
 }
@@ -154,7 +161,9 @@ func (g *RPCGateway) OpenSubscriptionLease(
 		var tools []appmcp.Tool
 		tools, err = g.composer.ListTools(ctx, rc)
 		if err == nil {
-			tools, _ = g.appsListPolicy.FilterTools(tools)
+			tools, err = g.filterAppsTools(ctx, rc, tools)
+		}
+		if err == nil {
 			err = g.plugins.PreResponseToolsDiscovery(ctx, rc, tools)
 		}
 	}
@@ -285,7 +294,12 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		if err != nil {
 			return nil, err
 		}
-		tools, _ = g.appsListPolicy.FilterTools(tools)
+		before := len(tools)
+		tools, err = g.filterAppsTools(ctx, rc, tools)
+		if err != nil {
+			return nil, err
+		}
+		g.recordApps(ctx, "tools_list", "dropped", before-len(tools))
 		if tools == nil {
 			tools = []appmcp.Tool{}
 		}
@@ -326,6 +340,9 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		}
 		if pre != nil {
 			if pre.Result != nil {
+				if _, err := g.appsReadPolicy.ValidateCallResult(pre.Result); err != nil {
+					return nil, g.mapAppsRejection(ctx, "call", err)
+				}
 				return pre.Result, nil
 			}
 			if pre.Arguments != nil {
@@ -335,9 +352,9 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 				call.InputResponses = pre.InputResponses
 			}
 		}
-		result, err := g.composer.CallTool(ctx, rc, call)
+		result, appsCall, err := g.callTool(ctx, rc, call)
 		if err != nil {
-			return nil, err
+			return nil, g.mapAppsRejection(ctx, "call", err)
 		}
 		post, err := g.plugins.PreResponse(ctx, rc, p.Name, call.Arguments, result)
 		if err != nil {
@@ -345,6 +362,9 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		}
 		if post != nil && post.Result != nil {
 			result = post.Result
+		}
+		if _, err := g.appsReadPolicy.ValidateCallResult(result, appsCall); err != nil {
+			return nil, g.mapAppsRejection(ctx, "call", err)
 		}
 		return result, nil
 	case "resources/list":
@@ -355,7 +375,9 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		if err != nil {
 			return nil, err
 		}
+		before := len(resources)
 		resources, _ = g.appsListPolicy.FilterResources(resources)
+		g.recordApps(ctx, "resources_list", "dropped", before-len(resources))
 		if resources == nil {
 			resources = []appmcp.Resource{}
 		}
@@ -368,6 +390,9 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		if err != nil {
 			return nil, err
 		}
+		before := len(templates)
+		templates, _ = g.appsListPolicy.FilterResourceTemplates(templates)
+		g.recordApps(ctx, "templates_list", "dropped", before-len(templates))
 		if templates == nil {
 			templates = []appmcp.ResourceTemplate{}
 		}
@@ -384,18 +409,32 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 			protocol, _ := ctx.Value(mcpProtocolContextKey{}).(mcpProtocolAttrs)
 			if protocol.era != eraLabel(protocolEraModern) &&
 				requestMetadataProtocolVersion(params).value != modernProtocolVersion {
-				return nil, appmcp.MapAppsReadError(appmcp.ErrAppsResourceRejected)
+				return nil, g.mapAppsRejection(ctx, "read", appmcp.ErrAppsResourceRejected)
 			}
 			capability, err := declaredMCPAppsCapability(rawClientCapabilities(params))
 			if err != nil {
+				g.recordApps(ctx, "read", "rejected", 1)
 				return nil, errMalformedAppsCapability
 			}
 			if err := g.appsReadPolicy.ValidateReadRequest(p.URI, capability); err != nil {
-				return nil, appmcp.MapAppsReadError(err)
+				return nil, g.mapAppsRejection(ctx, "read", err)
 			}
 		}
 		if err := g.checkRateLimit(ctx, rc); err != nil {
 			return nil, err
+		}
+		if appsRead && g.appsListPolicy.Enabled() {
+			resources, err := g.composer.ListResources(ctx, rc)
+			if err != nil {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				return nil, g.mapAppsRejection(ctx, "read", appmcp.ErrAppsResourceRejected)
+			}
+			resources, _ = g.appsListPolicy.FilterResources(resources)
+			if err := g.appsListPolicy.ValidateReadBinding(p.URI, resources); err != nil {
+				return nil, g.mapAppsRejection(ctx, "read", err)
+			}
 		}
 		result, err := g.composer.ReadResource(ctx, rc, p.URI)
 		if err != nil {
@@ -406,7 +445,7 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		}
 		result, err = g.appsReadPolicy.ValidateReadResult(p.URI, result)
 		if err != nil {
-			return nil, appmcp.MapAppsReadError(err)
+			return nil, g.mapAppsRejection(ctx, "read", err)
 		}
 		return appmcp.AppsReadResult(result), nil
 	case "prompts/list":
@@ -437,5 +476,52 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		return g.dispatchTask(ctx, rc, method, params)
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrMethodNotFound, method)
+	}
+}
+
+func (g *RPCGateway) filterAppsTools(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	tools []appmcp.Tool,
+) ([]appmcp.Tool, error) {
+	tools, _ = g.appsListPolicy.FilterTools(tools)
+	if !g.appsListPolicy.HasToolResourceReferences(tools) {
+		return tools, nil
+	}
+	resources, err := g.composer.ListResources(ctx, rc)
+	if err != nil && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	resources, _ = g.appsListPolicy.FilterResources(resources)
+	tools, _ = g.appsListPolicy.FilterToolsWithResources(tools, resources)
+	return tools, nil
+}
+
+func (g *RPCGateway) callTool(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	call appmcp.ToolCall,
+) (json.RawMessage, bool, error) {
+	if g.appsListPolicy.Enabled() {
+		if composer, ok := g.composer.(appmcp.AppsCallComposer); ok {
+			return composer.CallToolClassified(ctx, rc, call)
+		}
+	}
+	result, err := g.composer.CallTool(ctx, rc, call)
+	return result, false, err
+}
+
+func (g *RPCGateway) mapAppsRejection(ctx context.Context, operation string, err error) error {
+	if errors.Is(err, appmcp.ErrAppsResourceRejected) ||
+		errors.Is(err, appmcp.ErrInvalidAppsDocument) ||
+		errors.Is(err, appmcp.ErrInvalidAppsMetadata) {
+		g.recordApps(ctx, operation, "rejected", 1)
+	}
+	return appmcp.MapAppsReadError(err)
+}
+
+func (g *RPCGateway) recordApps(ctx context.Context, operation, outcome string, count int) {
+	if g.appsRecorder != nil && count > 0 {
+		g.appsRecorder.Record(ctx, operation, outcome, int64(count))
 	}
 }

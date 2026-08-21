@@ -126,6 +126,7 @@ func TestAppsListPolicyTools(t *testing.T) {
 		{"scalar", `{"name":"scalar","_meta":7}`, false},
 		{"canonical", `{"name":"canonical","_meta":{"ui":{"resourceUri":"ui://widget/canonical"}}}`, false},
 		{"deprecated", `{"name":"deprecated","_meta":{"ui/resourceUri":"ui://widget/deprecated"}}`, false},
+		{"missing URI", `{"name":"missing","_meta":{"ui":{"visibility":["app"]}}}`, true},
 		{"conflict", `{"name":"conflict","_meta":{"ui":{"resourceUri":"ui://widget/a"},"ui/resourceUri":"ui://widget/b"}}`, true},
 		{"wrong ui", `{"name":"wrong","_meta":{"ui":[]}}`, true},
 		{"unknown ui prefix", `{"name":"unknown","_meta":{"ui/secret":true}}`, true},
@@ -163,6 +164,21 @@ func TestAppsListPolicyTools(t *testing.T) {
 	requireApps(t, len(filtered) == 2 && filtered[0].Name == "first" && filtered[1].Name == "last" && outcome.Dropped == 1 && &lastMeta[0] == &filtered[1].payload["_meta"][0])
 	allInvalid, outcome := policy.FilterTools([]Tool{invalid, mustAppsTool(t, `{"name":"other","_meta":{"ui/x":true}}`)})
 	requireApps(t, allInvalid != nil && len(allInvalid) == 0 && outcome.Dropped == 2)
+
+	referenced := mustAppsTool(t, `{"name":"alias","_meta":{"ui":{"resourceUri":"ui://widget/ref"}}}`)
+	resource := mustAppsResource(t, `{"name":"ref","uri":"ui://widget/ref","_meta":{"ui":{}}}`)
+	referenced.source, resource.source = "same", "same"
+	bound, outcome := policy.FilterToolsWithResources([]Tool{referenced}, []Resource{resource})
+	requireApps(t, len(bound) == 1 && bound[0].Name == "alias" && outcome.Dropped == 0)
+	resource.source = "other"
+	bound, outcome = policy.FilterToolsWithResources([]Tool{referenced}, []Resource{resource})
+	requireApps(t, len(bound) == 0 && outcome.Dropped == 1)
+	resource.source = "one"
+	duplicate := resource
+	duplicate.source = "two"
+	requireApps(t, policy.ValidateReadBinding(resource.URI, []Resource{resource}) == nil)
+	requireApps(t, errors.Is(policy.ValidateReadBinding(resource.URI, []Resource{resource, duplicate}), ErrAppsResourceRejected))
+	requireApps(t, errors.Is(policy.ValidateReadBinding(resource.URI, nil), ErrAppsResourceRejected))
 }
 
 func TestAppsListPolicyResources(t *testing.T) {
@@ -176,7 +192,7 @@ func TestAppsListPolicyResources(t *testing.T) {
 		{"absent", `{"name":"absent","uri":"https://example.com"}`, false},
 		{"unrelated", `{"name":"unrelated","uri":"https://example.com","_meta":{"trace":1}}`, false},
 		{"scalar", `{"name":"scalar","uri":"https://example.com","_meta":null}`, false},
-		{"tool-only prefix", `{"name":"legacy","uri":"https://example.com","_meta":{"ui/resourceUri":"ui://widget"}}`, false},
+		{"tool-only prefix", `{"name":"legacy","uri":"https://example.com","_meta":{"ui/resourceUri":"ui://widget"}}`, true},
 		{"empty ui", `{"name":"empty","uri":"ui://widget","_meta":{"ui":{}}}`, false},
 		{"valid", `{"name":"valid","uri":"ui://widget/view","_meta":{"ui":{"csp":{"resourceDomains":["https://cdn.example.com"]},"permissions":{"camera":{}}}}}`, false},
 		{"invalid URI", `{"name":"uri","uri":"https://example.com","_meta":{"ui":{}}}`, true},
@@ -199,6 +215,14 @@ func TestAppsListPolicyResources(t *testing.T) {
 			requireApps(t, len(got) == 1 && &got[0] == &input[0] && outcome.Dropped == 0 && sameRaw && bytes.Equal(filtered, snapshot))
 		})
 	}
+
+	templates := []ResourceTemplate{
+		mustAppsTemplate(t, `{"name":"plain","uriTemplate":"doc://{id}","_meta":{"trace":1}}`),
+		mustAppsTemplate(t, `{"name":"marked","uriTemplate":"ui://widget/{id}","_meta":{"ui":{}}}`),
+		mustAppsTemplate(t, `{"name":"deprecated","uriTemplate":"ui://widget/{id}","_meta":{"ui/resourceUri":"ui://widget"}}`),
+	}
+	filtered, outcome := policy.FilterResourceTemplates(templates)
+	requireApps(t, len(filtered) == 1 && filtered[0].Name == "plain" && outcome.Dropped == 2)
 }
 
 func TestAppsListPolicyBoundsObjectMetadata(t *testing.T) {
@@ -246,6 +270,34 @@ func mustAppsResource(t *testing.T, raw string) Resource {
 	var resource Resource
 	requireApps(t, json.Unmarshal([]byte(raw), &resource) == nil)
 	return resource
+}
+
+func mustAppsTemplate(t *testing.T, raw string) ResourceTemplate {
+	t.Helper()
+	var template ResourceTemplate
+	requireApps(t, json.Unmarshal([]byte(raw), &template) == nil)
+	return template
+}
+
+func TestAppsCallResultValidationPreservesBytes(t *testing.T) {
+	policy := NewAppsReadPolicy(true, minAppsDocumentBytes, AppsMetadataPolicy{})
+	valid := json.RawMessage(" \n" + `{"content":[{"type":"text","text":"ok"}],"structuredContent":{"x":1},"_meta":{"secret":"opaque"}}`)
+	got, err := policy.ValidateCallResult(valid, true)
+	requireApps(t, err == nil && bytes.Equal(got, valid))
+	for _, raw := range []json.RawMessage{
+		json.RawMessage(`{"content":{}}`),
+		json.RawMessage(`{"content":[{"text":"missing type"}]}`),
+		json.RawMessage(`{"content":[],"structuredContent":[]}`),
+		json.RawMessage(`{"content":[],"_meta":null}`),
+		json.RawMessage(`{"content":[],"isError":"false"}`),
+	} {
+		_, err := policy.ValidateCallResult(raw, true)
+		requireApps(t, errors.Is(err, ErrAppsResourceRejected) && !strings.Contains(err.Error(), "opaque"))
+	}
+	_, err = policy.ValidateCallResult(json.RawMessage(`{"content":{},"_meta":{"ui":{"resourceUri":"ui://widget/app"}}}`))
+	if !errors.Is(err, ErrAppsResourceRejected) {
+		t.Fatalf("self-marked malformed result error = %v", err)
+	}
 }
 
 func requireAppsError(t *testing.T, err error, reason AppsMetadataReason, secret string) {

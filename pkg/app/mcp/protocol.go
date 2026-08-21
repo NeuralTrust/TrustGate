@@ -28,6 +28,7 @@ type Tool struct {
 	Name string
 
 	payload map[string]json.RawMessage
+	source  string
 }
 
 func (t Tool) MarshalJSON() ([]byte, error) {
@@ -69,6 +70,7 @@ type Resource struct {
 	URI  string
 
 	payload map[string]json.RawMessage
+	source  string
 }
 
 func (r Resource) MarshalJSON() ([]byte, error) {

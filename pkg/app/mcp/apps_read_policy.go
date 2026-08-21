@@ -71,3 +71,66 @@ func (p AppsReadPolicy) ValidateReadResult(uri string, raw json.RawMessage) (jso
 	}
 	return raw, nil
 }
+
+// ValidateCallResult validates a classified or self-marked Apps tool result.
+func (p AppsReadPolicy) ValidateCallResult(raw json.RawMessage, classified ...bool) (json.RawMessage, error) {
+	if !p.enabled {
+		return raw, nil
+	}
+	appsCall := len(classified) > 0 && classified[0]
+	if appsCall && (len(raw) == 0 || len(raw) > p.maxBytes) {
+		return nil, ErrAppsResourceRejected
+	}
+	if !appsCall {
+		var envelope struct {
+			Meta json.RawMessage `json:"_meta"`
+		}
+		if json.Unmarshal(raw, &envelope) != nil {
+			return raw, nil
+		}
+		meta, marked := markedAppsMetadata(envelope.Meta, appsMetadataMarker)
+		if !marked {
+			return raw, nil
+		}
+		if meta == nil {
+			return nil, ErrAppsResourceRejected
+		}
+		if _, err := ParseToolAppsMetadata(meta); err != nil {
+			return nil, ErrAppsResourceRejected
+		}
+	}
+	var result struct {
+		Content []struct {
+			Type string `json:"type"`
+		} `json:"content"`
+		StructuredContent json.RawMessage `json:"structuredContent"`
+		Meta              json.RawMessage `json:"_meta"`
+		IsError           json.RawMessage `json:"isError"`
+	}
+	if json.Unmarshal(raw, &result) != nil {
+		return nil, ErrAppsResourceRejected
+	}
+	if len(raw) == 0 || len(raw) > p.maxBytes || validateAppsJSON(raw) != nil || result.Content == nil {
+		return nil, ErrAppsResourceRejected
+	}
+	for _, block := range result.Content {
+		if block.Type == "" {
+			return nil, ErrAppsResourceRejected
+		}
+	}
+	for _, value := range []json.RawMessage{result.StructuredContent, result.Meta} {
+		if len(value) > 0 {
+			var object map[string]json.RawMessage
+			if json.Unmarshal(value, &object) != nil || object == nil {
+				return nil, ErrAppsResourceRejected
+			}
+		}
+	}
+	if len(result.IsError) > 0 {
+		var isError bool
+		if json.Unmarshal(result.IsError, &isError) != nil {
+			return nil, ErrAppsResourceRejected
+		}
+	}
+	return raw, nil
+}
