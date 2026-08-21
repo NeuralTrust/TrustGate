@@ -136,7 +136,7 @@ const (
 	configSyncKeyBytes = 32
 
 	defaultAdminM2MAudience           = "trustgate-admin"
-	defaultAdminM2MMaxTokenTTL        = 15 * time.Minute
+	defaultAdminM2MMaxTokenTTL        = 24 * time.Hour
 	defaultAdminPlatformClaimRequired = false
 )
 
@@ -185,8 +185,9 @@ type AdminM2MConfig struct {
 	Audience   string
 	PublicKeys []AdminM2MPublicKey
 	// MaxTokenTTL rejects service tokens whose own exp-iat span exceeds the
-	// agreed ceiling, so revocation at the issuer cannot be outlived by a
-	// long-dated token.
+	// agreed ceiling. Verification is offline, so this span is also how long a
+	// revoked credential's last token stays usable: lower it to shorten that
+	// window.
 	MaxTokenTTL time.Duration
 	// PlatformClaimRequired turns a missing tenant claim from an implicit
 	// platform-admin grant into a rejection unless `platform_admin` is set.
