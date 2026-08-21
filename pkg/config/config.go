@@ -561,7 +561,7 @@ func getTelemetryConfig() TelemetryConfig {
 	return TelemetryConfig{
 		Enabled:             getEnvBool("TELEMETRY_ENABLED", defaultTelemetryEnabled),
 		KafkaTopic:          getEnv("TELEMETRY_KAFKA_TOPIC", defaultTelemetryKafkaTopic),
-		ExportersFile:       getEnv("TELEMETRY_EXPORTERS_FILE", defaultTelemetryExportersFile),
+		ExportersFile:       getEnvAllowEmpty("TELEMETRY_EXPORTERS_FILE", defaultTelemetryExportersFile),
 		ExportersMetadata:   getEnv("TELEMETRY_EXPORTERS_METADATA", ""),
 		ExportersRaw:        getEnv("TELEMETRY_EXPORTERS_RAW", ""),
 		EnableRequestTraces: getEnvBool("TELEMETRY_ENABLE_REQUEST_TRACES", defaultTelemetryEnableRequestTraces),
@@ -1081,6 +1081,14 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func getEnvAllowEmpty(key, defaultValue string) string {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return defaultValue
+	}
+	return value
 }
 
 func getEnvInt(key string, defaultValue int) int {
