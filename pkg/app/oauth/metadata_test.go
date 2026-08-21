@@ -67,14 +67,26 @@ func oauth2Auth(t *testing.T, cfg authdomain.OAuth2Config) *authdomain.Auth {
 	if c.JWKSURL == "" {
 		c.JWKSURL = c.Issuer + "/jwks"
 	}
-	return &authdomain.Auth{Config: authdomain.Config{OAuth2: &c}}
+	return &authdomain.Auth{
+		Type:    authdomain.TypeOAuth2,
+		Enabled: true,
+		Config:  authdomain.Config{OAuth2: &c},
+	}
+}
+
+func brokerCapableOAuth2Auth(t *testing.T, cfg authdomain.OAuth2Config) *authdomain.Auth {
+	t.Helper()
+	if cfg.ClientID == "" {
+		cfg.ClientID = "mcp-public-client"
+	}
+	return oauth2Auth(t, cfg)
 }
 
 func TestProtectedResourceMetadata(t *testing.T) {
 	t.Parallel()
 	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{
-		oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-a.example.com", RequiredScopes: []string{"mcp:use", "openid"}}),
-		oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-b.example.com", RequiredScopes: []string{"mcp:use"}}),
+		brokerCapableOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-a.example.com", RequiredScopes: []string{"mcp:use", "openid"}}),
+		brokerCapableOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-b.example.com", RequiredScopes: []string{"mcp:use"}}),
 	}}
 	svc := NewMetadataService(finder, nil, nil, newMemFlowStore())
 
@@ -132,7 +144,7 @@ func TestProtectedResourceMetadataScopedByResource(t *testing.T) {
 // client following the metadata would run a login it can never use.
 func TestProtectedResourceMetadataSkipsCredentialProtectedConsumer(t *testing.T) {
 	t.Parallel()
-	idp := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp.example.com", RequiredScopes: []string{"mcp:use"}})
+	idp := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp.example.com", ClientID: "mcp-public-client", RequiredScopes: []string{"mcp:use"}})
 	gatewayID := ids.New[ids.GatewayKind]()
 	apiKey, err := authdomain.NewAPIKeyAuth(gatewayID, "key", true)
 	if err != nil {
@@ -177,7 +189,7 @@ func TestProtectedResourceMetadataWithoutIdP(t *testing.T) {
 func TestAuthorizationServerMetadataIsGatewayFacade(t *testing.T) {
 	t.Parallel()
 	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{
-		oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp.example.com", RequiredScopes: []string{"mcp.access"}}),
+		brokerCapableOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp.example.com", RequiredScopes: []string{"mcp.access"}}),
 	}}
 	svc := NewMetadataService(finder, nil, nil, newMemFlowStore())
 
@@ -211,8 +223,8 @@ func TestAuthorizationServerMetadataErrors(t *testing.T) {
 	// endpoints are IdP-independent and the resource indicator selects the
 	// IdP per request.
 	svc = NewMetadataService(&fakeCredentialFinder{oauth2: []*authdomain.Auth{
-		oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-a.example.com"}),
-		oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-b.example.com"}),
+		brokerCapableOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-a.example.com"}),
+		brokerCapableOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-b.example.com"}),
 	}}, nil, nil, newMemFlowStore())
 	doc, err := svc.AuthorizationServer(context.Background(), "https://gw.example.com")
 	if err != nil {

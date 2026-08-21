@@ -33,7 +33,6 @@ import type { Auth, AuthType } from "@/lib/types";
 const AUTH_TYPES: { value: AuthType; label: string }[] = [
   { value: "api_key", label: "API key" },
   { value: "oauth2", label: "OAuth2" },
-  { value: "oidc", label: "OIDC" },
   { value: "mtls", label: "mTLS" },
 ];
 
@@ -272,20 +271,17 @@ function AuthFormDialog({
   const isEdit = auth !== null;
 
   const o2 = auth?.config.oauth2;
-  const oidc = auth?.config.oidc;
 
   const [name, setName] = useState(auth?.name ?? "");
   const [type, setType] = useState<AuthType>(auth?.type ?? "api_key");
   const [enabled, setEnabled] = useState(auth?.enabled ?? true);
 
-  const [issuer, setIssuer] = useState(o2?.issuer ?? oidc?.issuer ?? "");
-  const [audiences, setAudiences] = useState((o2?.audiences ?? oidc?.audiences ?? []).join(", "));
-  const [scopes, setScopes] = useState((o2?.required_scopes ?? oidc?.required_scopes ?? []).join(", "));
-  const [algorithms, setAlgorithms] = useState(
-    (o2?.allowed_algorithms ?? oidc?.allowed_algorithms ?? []).join(", "),
-  );
-  const [subjectClaim, setSubjectClaim] = useState(o2?.subject_claim ?? oidc?.subject_claim ?? "");
-  const [jwksUrl, setJwksUrl] = useState(o2?.jwks_url ?? oidc?.jwks_url ?? "");
+  const [issuer, setIssuer] = useState(o2?.issuer ?? "");
+  const [audiences, setAudiences] = useState((o2?.audiences ?? []).join(", "));
+  const [scopes, setScopes] = useState((o2?.required_scopes ?? []).join(", "));
+  const [algorithms, setAlgorithms] = useState((o2?.allowed_algorithms ?? []).join(", "));
+  const [subjectClaim, setSubjectClaim] = useState(o2?.subject_claim ?? "");
+  const [jwksUrl, setJwksUrl] = useState(o2?.jwks_url ?? "");
 
   const [introspectionUrl, setIntrospectionUrl] = useState(o2?.introspection_url ?? "");
   const [sessionMode, setSessionMode] = useState(o2?.session_mode ?? false);
@@ -295,7 +291,7 @@ function AuthFormDialog({
   const [clientId, setClientId] = useState(o2?.client_id ?? "");
   const [clientSecret, setClientSecret] = useState("");
 
-  const [publicKeys, setPublicKeys] = useState((oidc?.public_keys ?? []).join("\n\n"));
+  const [publicKeys, setPublicKeys] = useState((o2?.public_keys ?? []).join("\n\n"));
 
   const [caCert, setCaCert] = useState(auth?.config.mtls?.ca_cert ?? "");
   const [commonNames, setCommonNames] = useState((auth?.config.mtls?.allowed_common_names ?? []).join(", "));
@@ -320,6 +316,7 @@ function AuthFormDialog({
         issuer,
         audiences: splitList(audiences),
         jwks_url: jwksUrl || undefined,
+        public_keys: splitPems(publicKeys),
         introspection_url: introspectionUrl || undefined,
         userinfo_url: userinfoUrl || undefined,
         authorize_url: authorizeUrl || undefined,
@@ -332,18 +329,6 @@ function AuthFormDialog({
       };
       if (clientSecret) oauth2.client_secret = clientSecret;
       body.config = { oauth2 };
-    } else if (type === "oidc") {
-      body.config = {
-        oidc: {
-          issuer,
-          audiences: splitList(audiences),
-          jwks_url: jwksUrl || undefined,
-          public_keys: splitPems(publicKeys),
-          required_scopes: splitList(scopes),
-          allowed_algorithms: splitList(algorithms),
-          subject_claim: subjectClaim || undefined,
-        },
-      };
     } else {
       body.config = {
         mtls: {
@@ -415,13 +400,23 @@ function AuthFormDialog({
                   <Input value={issuer} onChange={(e) => setIssuer(e.target.value)} placeholder="https://issuer.example.com" />
                 </Field>
                 <Grid2>
-                  <Field label="JWKS URL" hint="or introspection">
+                  <Field label="JWKS URL" hint="or introspection, or public keys">
                     <Input value={jwksUrl} onChange={(e) => setJwksUrl(e.target.value)} />
                   </Field>
                   <Field label="Introspection URL" hint="or JWKS">
                     <Input value={introspectionUrl} onChange={(e) => setIntrospectionUrl(e.target.value)} />
                   </Field>
                 </Grid2>
+                <Field label="Public keys (PEM)" hint="one or more, or use JWKS">
+                  <textarea
+                    value={publicKeys}
+                    onChange={(e) => setPublicKeys(e.target.value)}
+                    rows={5}
+                    spellCheck={false}
+                    className="w-full bg-surface-2 border border-border rounded-(--radius) px-3 py-2 text-[12px] font-mono text-fg placeholder:text-faint outline-none focus:border-accent/70 focus:ring-2 focus:ring-accent/20"
+                    placeholder="-----BEGIN PUBLIC KEY-----"
+                  />
+                </Field>
                 <Grid2>
                   <Field label="Audiences" hint="comma-separated">
                     <Input value={audiences} onChange={(e) => setAudiences(e.target.value)} />
@@ -471,46 +466,6 @@ function AuthFormDialog({
                     </Grid2>
                   </>
                 )}
-              </Section>
-            </>
-          )}
-
-          {type === "oidc" && (
-            <>
-              <Divider />
-              <Section title="OIDC">
-                <Field label="Issuer">
-                  <Input value={issuer} onChange={(e) => setIssuer(e.target.value)} placeholder="https://issuer.example.com" />
-                </Field>
-                <Grid2>
-                  <Field label="Audiences" hint="comma-separated">
-                    <Input value={audiences} onChange={(e) => setAudiences(e.target.value)} />
-                  </Field>
-                  <Field label="Required scopes" hint="comma-separated">
-                    <Input value={scopes} onChange={(e) => setScopes(e.target.value)} />
-                  </Field>
-                </Grid2>
-                <Field label="JWKS URL" hint="or provide public keys below">
-                  <Input value={jwksUrl} onChange={(e) => setJwksUrl(e.target.value)} />
-                </Field>
-                <Field label="Public keys (PEM)" hint="one or more, or use JWKS">
-                  <textarea
-                    value={publicKeys}
-                    onChange={(e) => setPublicKeys(e.target.value)}
-                    rows={5}
-                    spellCheck={false}
-                    className="w-full bg-surface-2 border border-border rounded-(--radius) px-3 py-2 text-[12px] font-mono text-fg placeholder:text-faint outline-none focus:border-accent/70 focus:ring-2 focus:ring-accent/20"
-                    placeholder="-----BEGIN PUBLIC KEY-----"
-                  />
-                </Field>
-                <Grid2>
-                  <Field label="Allowed algorithms" hint="comma-separated, no HMAC">
-                    <Input value={algorithms} onChange={(e) => setAlgorithms(e.target.value)} placeholder="RS256, ES256" />
-                  </Field>
-                  <Field label="Subject claim" hint="optional">
-                    <Input value={subjectClaim} onChange={(e) => setSubjectClaim(e.target.value)} placeholder="sub" />
-                  </Field>
-                </Grid2>
               </Section>
             </>
           )}

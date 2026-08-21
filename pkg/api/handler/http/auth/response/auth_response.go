@@ -39,7 +39,6 @@ type AuthResponse struct {
 
 type ConfigResponse struct {
 	OAuth2 *OAuth2ConfigResponse `json:"oauth2,omitempty"`
-	OIDC   *OIDCConfigResponse   `json:"oidc,omitempty"`
 	MTLS   *MTLSConfigResponse   `json:"mtls,omitempty"`
 }
 
@@ -47,6 +46,7 @@ type OAuth2ConfigResponse struct {
 	Issuer           string   `json:"issuer"`
 	Audiences        []string `json:"audiences,omitempty"`
 	JWKSURL          string   `json:"jwks_url,omitempty"`
+	PublicKeys       []string `json:"public_keys,omitempty"`
 	IntrospectionURL string   `json:"introspection_url,omitempty"`
 	ClientID         string   `json:"client_id,omitempty"`
 	ClientSecret     string   `json:"client_secret,omitempty"`
@@ -57,16 +57,6 @@ type OAuth2ConfigResponse struct {
 	SubjectClaim     string   `json:"subject_claim,omitempty"`
 	AuthorizeURL     string   `json:"authorize_url,omitempty"`
 	TokenURL         string   `json:"token_url,omitempty"`
-}
-
-type OIDCConfigResponse struct {
-	Issuer            string   `json:"issuer"`
-	Audiences         []string `json:"audiences"`
-	JWKSURL           string   `json:"jwks_url,omitempty"`
-	PublicKeys        []string `json:"public_keys,omitempty"`
-	RequiredScopes    []string `json:"required_scopes,omitempty"`
-	AllowedAlgorithms []string `json:"allowed_algorithms,omitempty"`
-	SubjectClaim      string   `json:"subject_claim,omitempty"`
 }
 
 type MTLSConfigResponse struct {
@@ -104,6 +94,7 @@ func fromConfig(c domain.Config) ConfigResponse {
 			Issuer:           c.OAuth2.Issuer,
 			Audiences:        c.OAuth2.Audiences,
 			JWKSURL:          c.OAuth2.JWKSURL,
+			PublicKeys:       c.OAuth2.PublicKeys,
 			IntrospectionURL: c.OAuth2.IntrospectionURL,
 			ClientID:         c.OAuth2.ClientID,
 			ClientSecret:     secret.Mask(c.OAuth2.ClientSecret),
@@ -114,17 +105,6 @@ func fromConfig(c domain.Config) ConfigResponse {
 			SubjectClaim:     c.OAuth2.SubjectClaim,
 			AuthorizeURL:     c.OAuth2.AuthorizeURL,
 			TokenURL:         c.OAuth2.TokenURL,
-		}
-	}
-	if c.OIDC != nil {
-		out.OIDC = &OIDCConfigResponse{
-			Issuer:            c.OIDC.Issuer,
-			Audiences:         c.OIDC.Audiences,
-			JWKSURL:           c.OIDC.JWKSURL,
-			PublicKeys:        c.OIDC.PublicKeys,
-			RequiredScopes:    c.OIDC.RequiredScopes,
-			AllowedAlgorithms: c.OIDC.AllowedAlgorithms,
-			SubjectClaim:      c.OIDC.SubjectClaim,
 		}
 	}
 	if c.MTLS != nil {

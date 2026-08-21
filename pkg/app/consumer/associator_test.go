@@ -523,7 +523,7 @@ func TestAssociator_AttachAuth_RoleBasedRejectsSecondAuth(t *testing.T) {
 	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
-func TestAssociator_AttachAuth_MCPRejectsIdP(t *testing.T) {
+func TestAssociator_AttachAuth_MCPAcceptsValidateOnlyIdP(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
 	consumerID := ids.New[ids.ConsumerKind]()
@@ -532,18 +532,22 @@ func TestAssociator_AttachAuth_MCPRejectsIdP(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, consumerID).
 		Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, Type: domain.TypeMCP}, nil).Once()
+	repo.EXPECT().AttachAuth(mock.Anything, consumerID, authID).Return(nil).Once()
 
 	authRepo := authmocks.NewRepository(t)
 	authRepo.EXPECT().FindByID(mock.Anything, authID).
 		Return(&authdomain.Auth{ID: authID, GatewayID: gwID, Type: authdomain.TypeOIDC}, nil).Once()
 
 	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: gwID.String()}).
+		Return(nil).
+		Once()
+
 	a := newAssociator(repo, backendmocks.NewRepository(t), authRepo, policymocks.NewRepository(t), publisher)
-	err := a.AttachAuth(context.Background(), gwID, consumerID, authID)
-	if !errors.Is(err, commonerrors.ErrConflict) {
-		t.Fatalf("err = %v, want ErrConflict (oidc cannot broker for an MCP consumer)", err)
+	if err := a.AttachAuth(context.Background(), gwID, consumerID, authID); err != nil {
+		t.Fatalf("AttachAuth error: %v", err)
 	}
-	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
 func TestAssociator_AttachAuth_MCPAcceptsOAuth2(t *testing.T) {

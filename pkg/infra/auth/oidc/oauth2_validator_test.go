@@ -18,14 +18,17 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/oidc"
 	"github.com/golang-jwt/jwt/v5"
@@ -130,6 +133,61 @@ func TestOAuth2TokenValidator_DiscoversJWKSWhenURLNotConfigured(t *testing.T) {
 	}
 }
 
+func TestOAuth2TokenValidator_BlankPublicKeysStillDiscoverJWKS(t *testing.T) {
+	stub := newOIDCStub(t)
+	cfg := stub.config()
+	cfg.JWKSURL = ""
+	cfg.PublicKeys = []string{"", "   ", "\n\t"}
+
+	if _, err := newValidator().Validate(context.Background(), stub.sign(t, stub.baseClaims()), cfg); err != nil {
+		t.Fatalf("blank public keys must not suppress discovery: %v", err)
+	}
+}
+
+func publicKeyPEMOf(t *testing.T, key *rsa.PrivateKey) string {
+	t.Helper()
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("marshal public key: %v", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
+}
+
+func TestOAuth2TokenValidator_InlinePublicKeysSkipDiscovery(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	const issuer = "https://airgapped.example.invalid"
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"iss": issuer,
+		"sub": "user-1",
+		"aud": "trustgate",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	})
+	token.Header["kid"] = "kid-1"
+	raw, err := token.SignedString(key)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+
+	principal, err := newValidator().Validate(context.Background(), raw, &authdomain.OAuth2Config{
+		Issuer:     issuer,
+		Audiences:  []string{"trustgate"},
+		PublicKeys: []string{publicKeyPEMOf(t, key)},
+	})
+	if err != nil {
+		t.Fatalf("inline public keys must verify without a reachable discovery endpoint: %v", err)
+	}
+	if principal.Subject != "user-1" {
+		t.Fatalf("subject = %q", principal.Subject)
+	}
+	if principal.RawToken != raw {
+		t.Fatal("raw token must be retained for downstream exchange")
+	}
+}
+
 func TestOAuth2TokenValidator_RejectsWrongIssuer(t *testing.T) {
 	stub := newOIDCStub(t)
 	v := newValidator()
@@ -226,6 +284,58 @@ func TestOAuth2TokenValidator_RejectsUnsignedToken(t *testing.T) {
 
 	if _, err := v.Validate(context.Background(), raw, stub.config()); err == nil {
 		t.Fatal("expected alg=none rejection")
+	}
+}
+
+func TestOAuth2TokenValidator_SubjectClaimAgreesWithProxyPlane(t *testing.T) {
+	stub := newOIDCStub(t)
+	claims := stub.baseClaims()
+	claims["oid"] = "object-id-42"
+	claims["email"] = "user@example.com"
+	token := stub.sign(t, claims)
+	cfg := stub.config()
+	cfg.SubjectClaim = "email"
+
+	principal, err := newValidator().Validate(context.Background(), token, cfg)
+	if err != nil {
+		t.Fatalf("validate on the mcp plane: %v", err)
+	}
+	verified, err := appauth.NewOAuth2Verifier(oidc.NewVerifier()).Verify(context.Background(), token, *cfg)
+	if err != nil {
+		t.Fatalf("verify on the proxy plane: %v", err)
+	}
+	if principal.Subject != verified.Subject {
+		t.Fatalf("subject differs across planes: mcp = %q, proxy = %q", principal.Subject, verified.Subject)
+	}
+	if principal.Subject != "user@example.com" {
+		t.Fatalf("subject = %q, want the configured subject_claim", principal.Subject)
+	}
+}
+
+func TestOAuth2TokenValidator_SubjectClaimFallsBackToOID(t *testing.T) {
+	tests := []struct {
+		name         string
+		subjectClaim string
+	}{
+		{name: "no subject claim configured", subjectClaim: ""},
+		{name: "configured claim absent from the token", subjectClaim: "employee_id"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stub := newOIDCStub(t)
+			claims := stub.baseClaims()
+			claims["oid"] = "object-id-42"
+			cfg := stub.config()
+			cfg.SubjectClaim = tt.subjectClaim
+
+			principal, err := newValidator().Validate(context.Background(), stub.sign(t, claims), cfg)
+			if err != nil {
+				t.Fatalf("validate: %v", err)
+			}
+			if principal.Subject != "object-id-42" {
+				t.Fatalf("subject = %q, want the oid fallback", principal.Subject)
+			}
+		})
 	}
 }
 

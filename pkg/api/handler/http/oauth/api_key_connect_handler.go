@@ -55,7 +55,7 @@ func NewAPIKeyConnectHandler(
 
 func (h *APIKeyConnectHandler) Get(c *fiber.Ctx) error {
 	setAPIKeyConnectResponsePolicies(c)
-	c.Locals(middleware.OAuthChallengeAllowedLocal, false)
+	c.Locals(middleware.OAuthChallengeModeLocal, middleware.OAuthChallengeSilent)
 
 	gateway, err := h.gateways.Resolve(c)
 	if err != nil {
@@ -84,7 +84,7 @@ func (h *APIKeyConnectHandler) Get(c *fiber.Ctx) error {
 
 func (h *APIKeyConnectHandler) Post(c *fiber.Ctx) error {
 	setAPIKeyConnectResponsePolicies(c)
-	c.Locals(middleware.OAuthChallengeAllowedLocal, false)
+	c.Locals(middleware.OAuthChallengeModeLocal, middleware.OAuthChallengeSilent)
 
 	source := h.resolveSource(
 		c.Context().RemoteAddr().String(),

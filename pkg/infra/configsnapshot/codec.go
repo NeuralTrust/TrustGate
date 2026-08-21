@@ -188,6 +188,7 @@ func fromProto(msg *snapshotpb.Snapshot) (readmodel.Data, error) {
 		if err := json.Unmarshal(m.GetJson(), &a); err != nil {
 			return readmodel.Data{}, fmt.Errorf("configsnapshot: unmarshal auth: %w", err)
 		}
+		a.Type = authdomain.NormalizeType(a.Type)
 		a.KeyHash = m.GetKeyHash()
 		data.Auths = append(data.Auths, a)
 	}

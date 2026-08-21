@@ -16,6 +16,8 @@ package resolver
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -45,4 +47,27 @@ func hasAttachedAuthType(rc *appconsumer.RoutableConsumer, authType authdomain.T
 		}
 	}
 	return false
+}
+
+func hasEnabledIdentityProvider(rc *appconsumer.RoutableConsumer) bool {
+	if rc == nil || rc.Consumer == nil {
+		return false
+	}
+	for _, a := range rc.Auths {
+		if a != nil && a.Enabled && a.Type.IsIdentityProvider() {
+			return true
+		}
+	}
+	return false
+}
+
+func bearerToken(header string) (string, error) {
+	if strings.TrimSpace(header) == "" {
+		return "", ErrUnauthenticated
+	}
+	parts := strings.Fields(header)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return "", fmt.Errorf("%w: malformed bearer authorization header", appauth.ErrInvalidAuthRequest)
+	}
+	return parts[1], nil
 }

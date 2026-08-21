@@ -28,7 +28,7 @@ import (
 )
 
 func realOAuth2(t *testing.T, issuer string) *authdomain.Auth {
-	return oauth2Auth(t, authdomain.OAuth2Config{Issuer: issuer})
+	return brokerCapableOAuth2Auth(t, authdomain.OAuth2Config{Issuer: issuer})
 }
 
 func TestPickSingleOAuth2_DefaultIsFallbackOnly(t *testing.T) {
