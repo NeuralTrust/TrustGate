@@ -19,7 +19,7 @@ import (
 	"log/slog"
 	"time"
 
-	telemetrydomain 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
@@ -108,6 +108,10 @@ func viewForClass(evt *events.Event, class metricsschema.DataClass) *events.Even
 	return &v
 }
 
+func exporterIdentity(cfg telemetrydomain.ExporterConfig) string {
+	return cfg.Name + "\x00" + string(cfg.Class)
+}
+
 func (p *Pipeline) resolveTargets(explicit []telemetrydomain.ExporterConfig) []Exporter {
 	if p.cache == nil {
 		return nil
@@ -117,23 +121,27 @@ func (p *Pipeline) resolveTargets(explicit []telemetrydomain.ExporterConfig) []E
 		overrides[e.Name] = e
 	}
 	merged := make([]telemetrydomain.ExporterConfig, 0, len(p.defaultConfigs)+len(explicit))
-	seen := make(map[string]struct{}, len(p.defaultConfigs)+len(explicit))
+	seenIdentity := make(map[string]struct{}, len(p.defaultConfigs)+len(explicit))
+	seenName := make(map[string]struct{}, len(p.defaultConfigs)+len(explicit))
 	for _, d := range p.defaultConfigs {
-		if _, dup := seen[d.Name]; dup {
+		identity := exporterIdentity(d)
+		if _, dup := seenIdentity[identity]; dup {
 			continue
 		}
-		seen[d.Name] = struct{}{}
+		seenIdentity[identity] = struct{}{}
+		seenName[d.Name] = struct{}{}
 		if override, ok := overrides[d.Name]; ok {
 			merged = append(merged, override)
+			delete(overrides, d.Name)
 			continue
 		}
 		merged = append(merged, d)
 	}
 	for _, e := range explicit {
-		if _, dup := seen[e.Name]; dup {
+		if _, dup := seenName[e.Name]; dup {
 			continue
 		}
-		seen[e.Name] = struct{}{}
+		seenName[e.Name] = struct{}{}
 		merged = append(merged, overrides[e.Name])
 	}
 	if len(merged) == 0 {
