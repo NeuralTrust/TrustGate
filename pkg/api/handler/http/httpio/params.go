@@ -35,6 +35,7 @@ var ErrInvalidPage = errors.New("invalid page parameter")
 var ErrInvalidSize = errors.New("invalid size parameter")
 var ErrInvalidSort = errors.New("invalid sort parameter")
 var ErrInvalidFilter = errors.New("invalid filter parameter")
+var ErrInvalidQuery = errors.New("invalid query parameters")
 
 func ParseUUIDParam[K ids.Kind](c *fiber.Ctx, name string) (ids.ID[K], error) {
 	raw := c.Params(name)
