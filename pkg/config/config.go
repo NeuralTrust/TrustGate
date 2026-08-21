@@ -168,7 +168,8 @@ type Config struct {
 
 // AdminM2MPublicKey is one verification key advertised by the credential
 // issuer. Two keys may be configured at once so the issuer can rotate without
-// downtime: tokens carry the `kid` that selects the key.
+// downtime: tokens carry the `kid` that selects the key. A single key may be
+// configured without a KID, in which case it verifies every token.
 type AdminM2MPublicKey struct {
 	KID string `json:"kid"`
 	PEM string `json:"pem"`
@@ -765,14 +766,19 @@ func getAdminM2MConfig() AdminM2MConfig {
 	}
 }
 
-// parseAdminM2MPublicKeys reads a JSON array of {kid, pem} entries. Env values
-// commonly carry PEM newlines escaped as "\n", so those are restored before the
-// key is parsed. Malformed input yields no keys, which disables service tokens
-// rather than silently trusting a partial key set.
+// parseAdminM2MPublicKeys reads either a bare public key (PEM or its base64
+// form, which keeps the whole value on one line) or a JSON array of {kid, pem}
+// entries for rotation. Env values commonly carry PEM newlines escaped as "\n",
+// so those are restored before the key is parsed. Malformed input yields no
+// keys, which disables service tokens rather than silently trusting a partial
+// key set.
 func parseAdminM2MPublicKeys(raw string) []AdminM2MPublicKey {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil
+	}
+	if !strings.HasPrefix(raw, "[") {
+		return []AdminM2MPublicKey{{PEM: strings.ReplaceAll(raw, `\n`, "\n")}}
 	}
 	var entries []AdminM2MPublicKey
 	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
