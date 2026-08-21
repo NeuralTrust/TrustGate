@@ -14,8 +14,42 @@
 
 package request
 
+import (
+	"fmt"
+
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+)
+
+const GroupedView = "grouped"
+
 type ListRegistryRequest struct {
-	Name string
-	Page int
-	Size int
+	Name        string
+	Page        int
+	Size        int
+	View        string
+	Type        string
+	TypePresent bool
+	NamePresent bool
+	PagePresent bool
+	SizePresent bool
+}
+
+func (r ListRegistryRequest) Validate() error {
+	switch r.View {
+	case "":
+		if r.TypePresent {
+			return fmt.Errorf("type is only supported when view is %q", GroupedView)
+		}
+		return nil
+	case GroupedView:
+		if r.Type != string(domain.TypeLLM) {
+			return fmt.Errorf("type must be %q when view is %q", domain.TypeLLM, GroupedView)
+		}
+		if r.NamePresent || r.PagePresent || r.SizePresent {
+			return fmt.Errorf("name, page, and size are not supported when view is %q", GroupedView)
+		}
+		return nil
+	default:
+		return fmt.Errorf("view must be empty or %q", GroupedView)
+	}
 }
