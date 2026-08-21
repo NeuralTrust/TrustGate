@@ -110,6 +110,20 @@ func TestNewDefaultExporters(t *testing.T) {
 				assert.Equal(t, []string{"env-otlp", "env-raw"}, []string{configs[0].Name, configs[1].Name})
 			},
 		},
+		{
+			name:        "missing file uses otlp tokens for both classes",
+			write:       false,
+			metadataEnv: "otlp",
+			rawEnv:      "otlp",
+			setup: func(factory *mocks.ExporterFactory) {
+				factory.EXPECT().Validate(mock.Anything).Return(nil)
+			},
+			assert: func(t *testing.T, configs []telemetrydomain.ExporterConfig, err error) {
+				require.NoError(t, err)
+				require.Len(t, configs, 2)
+				assert.Equal(t, []string{"metadata-otlp", "raw-otlp"}, []string{configs[0].Name, configs[1].Name})
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -130,4 +144,16 @@ func TestNewDefaultExporters(t *testing.T) {
 			tt.assert(t, configs, err)
 		})
 	}
+}
+
+func TestNewDefaultExporters_EmptyPathUsesOtlpTokens(t *testing.T) {
+	t.Parallel()
+	factory := mocks.NewExporterFactory(t)
+	factory.EXPECT().Validate(mock.Anything).Return(nil)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	configs, err := newDefaultExporters(logger, factory, "", "otlp", "otlp")
+	require.NoError(t, err)
+	require.Len(t, configs, 2)
+	assert.Equal(t, []string{"metadata-otlp", "raw-otlp"}, []string{configs[0].Name, configs[1].Name})
 }

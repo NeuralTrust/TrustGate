@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	stderrors "errors"
 	"log/slog"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -147,6 +148,25 @@ func TestGetTelemetryConfig_ExportersEnv(t *testing.T) {
 	}
 	if cfg.ExportersRaw != `[{"name":"raw-otlp","type":"otlp"}]` {
 		t.Errorf("ExportersRaw = %q", cfg.ExportersRaw)
+	}
+}
+
+func TestGetTelemetryConfig_EmptyExportersFileDisablesDefault(t *testing.T) {
+	t.Setenv("TELEMETRY_EXPORTERS_FILE", "")
+	cfg := getTelemetryConfig()
+	if cfg.ExportersFile != "" {
+		t.Errorf("ExportersFile = %q, want empty so env tokens are used", cfg.ExportersFile)
+	}
+}
+
+func TestGetTelemetryConfig_UnsetExportersFileUsesDefault(t *testing.T) {
+	t.Setenv("TELEMETRY_EXPORTERS_FILE", defaultTelemetryExportersFile)
+	if err := os.Unsetenv("TELEMETRY_EXPORTERS_FILE"); err != nil {
+		t.Fatalf("unset TELEMETRY_EXPORTERS_FILE: %v", err)
+	}
+	cfg := getTelemetryConfig()
+	if cfg.ExportersFile != defaultTelemetryExportersFile {
+		t.Errorf("ExportersFile = %q, want %q", cfg.ExportersFile, defaultTelemetryExportersFile)
 	}
 }
 
