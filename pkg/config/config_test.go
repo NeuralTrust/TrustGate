@@ -992,6 +992,21 @@ func TestValidate_LocalAllowsConfigSyncTLSInsecure(t *testing.T) {
 	}
 }
 
+func TestGetAdminM2MConfig_TokenTTLCeiling(t *testing.T) {
+	t.Run("defaults to 24h", func(t *testing.T) {
+		if got := getAdminM2MConfig().MaxTokenTTL; got != 24*time.Hour {
+			t.Errorf("MaxTokenTTL default = %v, want 24h", got)
+		}
+	})
+
+	t.Run("shortens the revocation window when set", func(t *testing.T) {
+		t.Setenv("ADMIN_M2M_MAX_TOKEN_TTL", "5m")
+		if got := getAdminM2MConfig().MaxTokenTTL; got != 5*time.Minute {
+			t.Errorf("MaxTokenTTL = %v, want 5m", got)
+		}
+	})
+}
+
 func TestParseAdminM2MPublicKeys(t *testing.T) {
 	const pemKey = "-----BEGIN PUBLIC KEY-----\nMIIB\n-----END PUBLIC KEY-----"
 	b64 := base64.StdEncoding.EncodeToString([]byte(pemKey))
