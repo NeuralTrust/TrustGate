@@ -18,7 +18,9 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
+	"strings"
 	"testing"
 	"time"
 
@@ -239,6 +241,65 @@ func TestServiceVerifier_AcceptsBothKeysDuringRotation(t *testing.T) {
 
 	_, err = verifier.Verify(signed)
 	require.NoError(t, err)
+}
+
+func TestServiceVerifier_AcceptsSingleLinePublicKeys(t *testing.T) {
+	t.Parallel()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	rawPEM := publicKeyPEM(t, key)
+
+	tests := []struct {
+		name string
+		pem  string
+	}{
+		{name: "base64", pem: base64.StdEncoding.EncodeToString([]byte(rawPEM))},
+		{name: "escaped newlines", pem: strings.ReplaceAll(rawPEM, "\n", "\\n")},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			verifier, err := jwt.NewServiceVerifier(config.AdminM2MConfig{
+				Issuer:      testIssuer,
+				Audience:    testAudience,
+				MaxTokenTTL: 15 * time.Minute,
+				PublicKeys:  []config.AdminM2MPublicKey{{KID: testKID, PEM: tc.pem}},
+			})
+			require.NoError(t, err)
+
+			_, err = verifier.Verify(signRS256(t, key, validClaims()))
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestServiceVerifier_KeylessEntryVerifiesAnyKid(t *testing.T) {
+	t.Parallel()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	verifier, err := jwt.NewServiceVerifier(config.AdminM2MConfig{
+		Issuer:      testIssuer,
+		Audience:    testAudience,
+		MaxTokenTTL: 15 * time.Minute,
+		PublicKeys:  []config.AdminM2MPublicKey{{PEM: publicKeyPEM(t, key)}},
+	})
+	require.NoError(t, err)
+
+	_, err = verifier.Verify(signRS256(t, key, validClaims()))
+	require.NoError(t, err)
+
+	unlabelled := golangjwt.NewWithClaims(golangjwt.SigningMethodRS256, validClaims())
+	signed, err := unlabelled.SignedString(key)
+	require.NoError(t, err)
+	_, err = verifier.Verify(signed)
+	require.NoError(t, err)
+
+	other, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	_, err = verifier.Verify(signRS256(t, other, validClaims()))
+	require.ErrorIs(t, err, jwt.ErrInvalidServiceToken)
 }
 
 func TestServiceVerifier_DisabledWithoutKeys(t *testing.T) {

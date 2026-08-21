@@ -16,6 +16,7 @@ package jwt
 
 import (
 	"crypto/rsa"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -63,13 +64,28 @@ type serviceVerifier struct {
 	keys        map[string]*rsa.PublicKey
 }
 
+// normalizePublicKeyPEM accepts raw PEM, `\n`-escaped PEM, or base64-encoded
+// PEM. Base64 is what a config store can hold on a single line without quoting
+// or escaping games, and matches how the control plane provisions its half.
+func normalizePublicKeyPEM(raw string) []byte {
+	trimmed := strings.TrimSpace(raw)
+	if !strings.Contains(trimmed, "-----BEGIN") {
+		decoded, err := base64.StdEncoding.DecodeString(trimmed)
+		if err != nil {
+			return []byte(trimmed)
+		}
+		return decoded
+	}
+	return []byte(strings.ReplaceAll(trimmed, "\\n", "\n"))
+}
+
 // NewServiceVerifier builds the verifier from the configured public keys. A key
 // that cannot be parsed fails boot instead of silently shrinking the trusted key
 // set, which would surface later as unexplained rejections mid-rotation.
 func NewServiceVerifier(cfg config.AdminM2MConfig) (ServiceVerifier, error) {
 	keys := make(map[string]*rsa.PublicKey, len(cfg.PublicKeys))
 	for _, entry := range cfg.PublicKeys {
-		key, err := jwt.ParseRSAPublicKeyFromPEM([]byte(entry.PEM))
+		key, err := jwt.ParseRSAPublicKeyFromPEM(normalizePublicKeyPEM(entry.PEM))
 		if err != nil {
 			return nil, fmt.Errorf("parse admin m2m public key %q: %w", entry.KID, err)
 		}
@@ -119,14 +135,21 @@ func (v *serviceVerifier) Verify(tokenString string) (*ServiceClaims, error) {
 
 func (v *serviceVerifier) keyForToken(token *jwt.Token) (interface{}, error) {
 	kid, _ := token.Header["kid"].(string)
+	if kid != "" {
+		if key, ok := v.keys[kid]; ok {
+			return key, nil
+		}
+	}
+	// A key configured without a kid is the only trusted key, so there is
+	// nothing to select between and the header hint is irrelevant. Rotation is
+	// what makes kids necessary, and that path configures them explicitly.
+	if key, ok := v.keys[""]; ok {
+		return key, nil
+	}
 	if kid == "" {
 		return nil, errors.New("token header is missing kid")
 	}
-	key, ok := v.keys[kid]
-	if !ok {
-		return nil, fmt.Errorf("unknown kid %q", kid)
-	}
-	return key, nil
+	return nil, fmt.Errorf("unknown kid %q", kid)
 }
 
 func (v *serviceVerifier) validateClaims(claims *ServiceClaims) error {
