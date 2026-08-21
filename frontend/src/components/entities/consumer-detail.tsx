@@ -610,7 +610,7 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
       {mode === "role_based" && (
         <div className="rounded-(--radius) border border-border bg-surface-2/30 p-3.5 text-[12px] text-muted">
           Routing is governed by the roles bound in the <span className="text-fg">Bindings</span> tab.
-          A role-based consumer needs a single OIDC or OAuth2 auth and at least one role; each role
+          A role-based consumer needs a single OAuth2 auth and at least one role; each role
           carries its own registries and model policies.
         </div>
       )}

@@ -36,7 +36,7 @@ type verificationKey struct {
 	value any
 }
 
-func NewVerifier() appauth.OIDCVerifier {
+func NewVerifier() appauth.JWTVerifier {
 	return &Verifier{
 		cache: NewJWKSCache(nil, 5*time.Minute),
 		now:   time.Now,
@@ -63,7 +63,7 @@ func (v *Verifier) Peek(token string) (appauth.TokenHints, error) {
 	}, nil
 }
 
-func (v *Verifier) Verify(ctx context.Context, token string, cfg domain.OIDCConfig) (*appauth.VerifiedClaims, error) {
+func (v *Verifier) Verify(ctx context.Context, token string, cfg domain.OAuth2Config) (*appauth.VerifiedClaims, error) {
 	headerToken, _, err := jwt.NewParser().ParseUnverified(token, jwt.MapClaims{})
 	if err != nil {
 		return nil, fmt.Errorf("%w: parse token", ErrInvalidToken)
@@ -72,7 +72,7 @@ func (v *Verifier) Verify(ctx context.Context, token string, cfg domain.OIDCConf
 		return nil, fmt.Errorf("%w: signing method", ErrInvalidToken)
 	}
 	alg := headerToken.Method.Alg()
-	if err := validateAlgorithm(alg, cfg.AllowedAlgorithms); err != nil {
+	if err := validateAlgorithm(alg, cfg.Algorithms); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidToken, err)
 	}
 	kid := stringHeader(headerToken, "kid")
@@ -115,14 +115,14 @@ func (v *Verifier) Verify(ctx context.Context, token string, cfg domain.OIDCConf
 
 func (v *Verifier) verifyWithCandidates(
 	token string,
-	cfg domain.OIDCConfig,
+	cfg domain.OAuth2Config,
 	candidates []verificationKey,
 ) (*appauth.VerifiedClaims, bool, error) {
 	signatureFailure := false
 	for _, candidate := range candidates {
 		claims := jwt.MapClaims{}
 		parsed, err := jwt.ParseWithClaims(token, claims, func(t *jwt.Token) (any, error) {
-			if err := validateAlgorithm(t.Method.Alg(), cfg.AllowedAlgorithms); err != nil {
+			if err := validateAlgorithm(t.Method.Alg(), cfg.Algorithms); err != nil {
 				return nil, err
 			}
 			return candidate.value, nil
@@ -163,7 +163,7 @@ func (v *Verifier) keyCandidates(
 	ctx context.Context,
 	kid string,
 	alg string,
-	cfg domain.OIDCConfig,
+	cfg domain.OAuth2Config,
 	refreshJWKS bool,
 ) ([]verificationKey, error) {
 	keys := make([]verificationKey, 0, len(cfg.PublicKeys)+1)
@@ -213,7 +213,7 @@ func (v *Verifier) keyCandidates(
 	return keys, nil
 }
 
-func (v *Verifier) validateClaims(claims jwt.MapClaims, cfg domain.OIDCConfig) error {
+func (v *Verifier) validateClaims(claims jwt.MapClaims, cfg domain.OAuth2Config) error {
 	issuer, err := claims.GetIssuer()
 	if err != nil || issuer != cfg.Issuer {
 		return fmt.Errorf("%w: issuer", ErrInvalidToken)

@@ -132,7 +132,7 @@ func (v fakeIDPVerifier) Peek(_ string) (appauth.TokenHints, error) {
 	return v.hints, nil
 }
 
-func (v fakeIDPVerifier) Verify(_ context.Context, _ string, _ authdomain.OIDCConfig) (*appauth.VerifiedClaims, error) {
+func (v fakeIDPVerifier) Verify(_ context.Context, _ string, _ authdomain.OAuth2Config) (*appauth.VerifiedClaims, error) {
 	if v.err != nil {
 		return nil, v.err
 	}
@@ -590,7 +590,7 @@ func newAuthTestApp(
 	gw *gatewaydomain.Gateway,
 	data *appconsumer.Data,
 	oauthVerifier appauth.OAuth2Verifier,
-	idpVerifier appauth.OIDCVerifier,
+	idpVerifier appauth.JWTVerifier,
 	roleResolver middlewareRoleResolver,
 ) *fiber.App {
 	t.Helper()
@@ -603,7 +603,7 @@ type middlewareRoleResolver interface {
 
 func newProxyIdentityResolver(
 	oauthVerifier appauth.OAuth2Verifier,
-	idpVerifier appauth.OIDCVerifier,
+	idpVerifier appauth.JWTVerifier,
 	logger *slog.Logger,
 ) resolver.IdentityResolver {
 	playground := resolver.NewPlaygroundIdentityResolver(
@@ -621,7 +621,7 @@ func newAuthTestAppWithResolver(
 	gatewayResolver resolver.GatewayResolver,
 	data *appconsumer.Data,
 	oauthVerifier appauth.OAuth2Verifier,
-	idpVerifier appauth.OIDCVerifier,
+	idpVerifier appauth.JWTVerifier,
 	roleResolver middlewareRoleResolver,
 ) *fiber.App {
 	t.Helper()
@@ -657,7 +657,7 @@ func newCapturingAuthTestApp(
 	gw *gatewaydomain.Gateway,
 	data *appconsumer.Data,
 	oauthVerifier appauth.OAuth2Verifier,
-	idpVerifier appauth.OIDCVerifier,
+	idpVerifier appauth.JWTVerifier,
 	roleResolver middlewareRoleResolver,
 ) (*fiber.App, *capturedAuth) {
 	t.Helper()

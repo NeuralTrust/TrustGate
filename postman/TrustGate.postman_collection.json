@@ -1982,7 +1982,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('oidc auth created', () => pm.response.code === 201);",
+                  "pm.test('oauth2 auth created', () => pm.response.code === 201);",
                   "if (pm.response.code === 201) {",
                   "  pm.environment.set('auth_id', pm.response.json().id);",
                   "}"
@@ -2001,7 +2001,7 @@
             "description": "Validates OIDC-issued JWTs; claims are matched against role oidc_mapping rules. `oidc` is a deprecated alias of `oauth2`.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"idp-{{$guid}}\",\n  \"type\": \"oidc\",\n  \"enabled\": true,\n  \"config\": {\n    \"oidc\": {\n      \"issuer\": \"{{idp_issuer}}\",\n      \"audiences\": [\n        \"trustgate\"\n      ],\n      \"jwks_url\": \"{{idp_jwks_url}}\",\n      \"subject_claim\": \"sub\"\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"idp-{{$guid}}\",\n  \"type\": \"oauth2\",\n  \"enabled\": true,\n  \"config\": {\n    \"oauth2\": {\n      \"issuer\": \"{{idp_issuer}}\",\n      \"audiences\": [\n        \"trustgate\"\n      ],\n      \"jwks_url\": \"{{idp_jwks_url}}\",\n      \"subject_claim\": \"sub\"\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
@@ -3352,7 +3352,7 @@
       ]
     },
     {
-      "name": "E2E Role-Based Flow (OIDC)",
+      "name": "E2E Role-Based Flow (IdP)",
       "description": "End-to-end role-based provisioning: OpenAI registry, role with oidc_mapping and model_policies, OIDC auth credential, role_based consumer, then a proxy call authenticated with a Bearer JWT. Set `openai_api_key`, `idp_issuer`, `idp_jwks_url` and `idp_bearer_token` (JWT whose claims match the role oidc_mapping) before running.",
       "item": [
         {
@@ -3563,7 +3563,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('oidc auth created', () => pm.response.code === 201);",
+                  "pm.test('oauth2 auth created', () => pm.response.code === 201);",
                   "if (pm.response.code === 201) {",
                   "  pm.environment.set('auth_id', pm.response.json().id);",
                   "}"
@@ -3582,7 +3582,7 @@
             "description": "Validates OIDC-issued JWTs; claims are matched against role oidc_mapping rules. `oidc` is a deprecated alias of `oauth2`.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"idp-{{$guid}}\",\n  \"type\": \"oidc\",\n  \"enabled\": true,\n  \"config\": {\n    \"oidc\": {\n      \"issuer\": \"{{idp_issuer}}\",\n      \"audiences\": [\n        \"trustgate\"\n      ],\n      \"jwks_url\": \"{{idp_jwks_url}}\",\n      \"subject_claim\": \"sub\"\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"idp-{{$guid}}\",\n  \"type\": \"oauth2\",\n  \"enabled\": true,\n  \"config\": {\n    \"oauth2\": {\n      \"issuer\": \"{{idp_issuer}}\",\n      \"audiences\": [\n        \"trustgate\"\n      ],\n      \"jwks_url\": \"{{idp_jwks_url}}\",\n      \"subject_claim\": \"sub\"\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
@@ -3765,8 +3765,8 @@
       ]
     },
     {
-      "name": "E2E Role-Based Flow (Entra ID / OIDC)",
-      "description": "End-to-end role-based provisioning authenticated with Microsoft Entra ID. Same shape as 'E2E Role-Based Flow (OIDC)', but the auth is an `oidc` credential wired to Entra (issuer https://login.microsoftonline.com/<tenant>/v2.0 + the tenant JWKS). Role-based consumers REQUIRE an identity-provider auth: `oauth2` (or its deprecated `oidc` alias) is accepted, `api_key` and `mtls` are rejected (Forbidden) for `role_based`. Roles are resolved by matching the Entra token claims against the role `oidc_mapping`.\n\nA validate-only identity provider (issuer + audiences + `jwks_url`, no `client_id`) is all the role-based LLM proxy needs: the `client_secret` is NOT used, because the gateway only validates the JWT via JWKS, it does not call Entra. Adding a `client_id` makes the same auth brokering-capable, which is what the MCP plane needs to drive an interactive login.\n\nSet before running: `entra_tenant_id`, `entra_client_id`, `openai_api_key`, `entra_app_role` (an App Role value you exposed and assigned in Entra) and `entra_bearer_token` (an Entra-issued JWT carrying that role in its `roles` claim).\n\nEntra prerequisites: App Registration manifest `requestedAccessTokenVersion: 2` (so tokens carry the /v2.0 issuer) and an App Role (appRoles[].value) assigned to the user/service principal so the access token includes a `roles` claim. If you prefer group claims, change the role `oidc_mapping` path to `groups` and use the group object IDs.",
+      "name": "E2E Role-Based Flow (Entra ID)",
+      "description": "End-to-end role-based provisioning authenticated with Microsoft Entra ID. Same shape as 'E2E Role-Based Flow (IdP)', but the auth is an `oidc` credential wired to Entra (issuer https://login.microsoftonline.com/<tenant>/v2.0 + the tenant JWKS). Role-based consumers REQUIRE an identity-provider auth: `oauth2` (or its deprecated `oidc` alias) is accepted, `api_key` and `mtls` are rejected (Forbidden) for `role_based`. Roles are resolved by matching the Entra token claims against the role `oidc_mapping`.\n\nA validate-only identity provider (issuer + audiences + `jwks_url`, no `client_id`) is all the role-based LLM proxy needs: the `client_secret` is NOT used, because the gateway only validates the JWT via JWKS, it does not call Entra. Adding a `client_id` makes the same auth brokering-capable, which is what the MCP plane needs to drive an interactive login.\n\nSet before running: `entra_tenant_id`, `entra_client_id`, `openai_api_key`, `entra_app_role` (an App Role value you exposed and assigned in Entra) and `entra_bearer_token` (an Entra-issued JWT carrying that role in its `roles` claim).\n\nEntra prerequisites: App Registration manifest `requestedAccessTokenVersion: 2` (so tokens carry the /v2.0 issuer) and an App Role (appRoles[].value) assigned to the user/service principal so the access token includes a `roles` claim. If you prefer group claims, change the role `oidc_mapping` path to `groups` and use the group object IDs.",
       "item": [
         {
           "name": "0. Get Entra token (M2M)",
@@ -4045,7 +4045,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('oidc auth created', () => pm.response.code === 201);",
+                  "pm.test('oauth2 auth created', () => pm.response.code === 201);",
                   "if (pm.response.code === 201) {",
                   "  pm.environment.set('auth_id', pm.response.json().id);",
                   "}"
@@ -4064,7 +4064,7 @@
             "description": "Role-based consumers MUST use an identity-provider auth — `oauth2` (or its deprecated `oidc` alias); `api_key`/`mtls` are rejected (Forbidden) for role_based. No `client_secret` here: the gateway only validates the Entra JWT via JWKS, it never calls Entra. `audiences` must equal the token `aud` (api://{client_id} or the bare client_id GUID - verify by decoding the token at jwt.ms). `subject_claim` `oid` is Entra's stable per-tenant user id (use `sub` if you prefer the pairwise per-app id).",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"entra-idp-{{$guid}}\",\n  \"type\": \"oidc\",\n  \"enabled\": true,\n  \"config\": {\n    \"oidc\": {\n      \"issuer\": \"https://login.microsoftonline.com/{{entra_tenant_id}}/v2.0\",\n      \"audiences\": [\n        \"{{entra_client_id}}\",\n        \"api://{{entra_client_id}}\"\n      ],\n      \"jwks_url\": \"https://login.microsoftonline.com/{{entra_tenant_id}}/discovery/v2.0/keys\",\n      \"subject_claim\": \"oid\"\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"entra-idp-{{$guid}}\",\n  \"type\": \"oauth2\",\n  \"enabled\": true,\n  \"config\": {\n    \"oauth2\": {\n      \"issuer\": \"https://login.microsoftonline.com/{{entra_tenant_id}}/v2.0\",\n      \"audiences\": [\n        \"{{entra_client_id}}\",\n        \"api://{{entra_client_id}}\"\n      ],\n      \"jwks_url\": \"https://login.microsoftonline.com/{{entra_tenant_id}}/discovery/v2.0/keys\",\n      \"subject_claim\": \"oid\"\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
@@ -4248,7 +4248,7 @@
     },
     {
       "name": "E2E Role-Based Flow (Okta / IDP)",
-      "description": "End-to-end role-based provisioning authenticated with Okta. Same shape as 'E2E Role-Based Flow (Entra ID / OIDC)', but the identity-provider auth is wired to an Okta authorization server (issuer https://{okta_domain}/oauth2/{okta_auth_server_id} + that server's JWKS). Role-based consumers REQUIRE an identity-provider auth: `oauth2` (or its deprecated `oidc` alias) is accepted, `api_key` and `mtls` are rejected (Forbidden) for `role_based`. Roles are resolved by matching the Okta token claims against the role `oidc_mapping`.\n\nSet before running: `okta_domain` (e.g. dev-12345.okta.com, no scheme), `okta_auth_server_id` (e.g. `default`), `okta_client_id`, `okta_client_secret`, `okta_scope` (a scope granted to the app, e.g. `mcp.access`), `okta_audience` (the authorization server audience, e.g. `api://default`), `okta_claim` (claim path the role matches, default `scp` for the M2M client_credentials flow), `okta_group` (the value to match in that claim) and `openai_api_key`.\n\nWhere do roles come from? Okta has no Entra-style App Roles. For a user token (device-code / auth-code) map the `groups` claim (add a Groups claim on the authorization server). For a machine-to-machine token (client_credentials, used here) there is no user, so add a custom claim on the authorization server that emits the role/group value into the access token (set `okta_claim` to that claim name), or set `okta_claim` to `scp` and `okta_group` to a granted scope to match on scopes instead. The gateway only validates the JWT via JWKS; `okta_client_secret` is never used by the gateway.",
+      "description": "End-to-end role-based provisioning authenticated with Okta. Same shape as 'E2E Role-Based Flow (Entra ID)', but the identity-provider auth is wired to an Okta authorization server (issuer https://{okta_domain}/oauth2/{okta_auth_server_id} + that server's JWKS). Role-based consumers REQUIRE an identity-provider auth: `oauth2` (or its deprecated `oidc` alias) is accepted, `api_key` and `mtls` are rejected (Forbidden) for `role_based`. Roles are resolved by matching the Okta token claims against the role `oidc_mapping`.\n\nSet before running: `okta_domain` (e.g. dev-12345.okta.com, no scheme), `okta_auth_server_id` (e.g. `default`), `okta_client_id`, `okta_client_secret`, `okta_scope` (a scope granted to the app, e.g. `mcp.access`), `okta_audience` (the authorization server audience, e.g. `api://default`), `okta_claim` (claim path the role matches, default `scp` for the M2M client_credentials flow), `okta_group` (the value to match in that claim) and `openai_api_key`.\n\nWhere do roles come from? Okta has no Entra-style App Roles. For a user token (device-code / auth-code) map the `groups` claim (add a Groups claim on the authorization server). For a machine-to-machine token (client_credentials, used here) there is no user, so add a custom claim on the authorization server that emits the role/group value into the access token (set `okta_claim` to that claim name), or set `okta_claim` to `scp` and `okta_group` to a granted scope to match on scopes instead. The gateway only validates the JWT via JWKS; `okta_client_secret` is never used by the gateway.",
       "item": [
         {
           "name": "0. Get Okta token (M2M)",
@@ -4526,7 +4526,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('oidc auth created', () => pm.response.code === 201);",
+                  "pm.test('oauth2 auth created', () => pm.response.code === 201);",
                   "if (pm.response.code === 201) {",
                   "  pm.environment.set('auth_id', pm.response.json().id);",
                   "}"
@@ -4545,7 +4545,7 @@
             "description": "Role-based consumers MUST use an identity-provider auth — `oauth2` (or its deprecated `oidc` alias); `api_key`/`mtls` are rejected (Forbidden) for role_based. No `client_secret` here: the gateway only validates the Okta JWT via JWKS, it never calls Okta. `issuer` and `jwks_url` come from the authorization server's /.well-known/openid-configuration. `audiences` must equal the token `aud` (the authorization server audience, default api://default; verify by decoding the token). `subject_claim` `sub` is the Okta subject (the client_id for M2M, the user id for user tokens).",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"okta-idp-{{$guid}}\",\n  \"type\": \"oidc\",\n  \"enabled\": true,\n  \"config\": {\n    \"oidc\": {\n      \"issuer\": \"https://{{okta_domain}}/oauth2/{{okta_auth_server_id}}\",\n      \"audiences\": [\n        \"{{okta_audience}}\"\n      ],\n      \"jwks_url\": \"https://{{okta_domain}}/oauth2/{{okta_auth_server_id}}/v1/keys\",\n      \"subject_claim\": \"sub\"\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"okta-idp-{{$guid}}\",\n  \"type\": \"oauth2\",\n  \"enabled\": true,\n  \"config\": {\n    \"oauth2\": {\n      \"issuer\": \"https://{{okta_domain}}/oauth2/{{okta_auth_server_id}}\",\n      \"audiences\": [\n        \"{{okta_audience}}\"\n      ],\n      \"jwks_url\": \"https://{{okta_domain}}/oauth2/{{okta_auth_server_id}}/v1/keys\",\n      \"subject_claim\": \"sub\"\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",

@@ -52,6 +52,9 @@ type OAuth2ConfigRequest struct {
 	TokenURL         string   `json:"token_url,omitempty"`
 }
 
+// OIDCConfigRequest is the deprecated alias of OAuth2ConfigRequest. It is
+// accepted on create and update and mapped onto the oauth2 payload; responses
+// always carry the oauth2 shape.
 type OIDCConfigRequest struct {
 	Issuer            string   `json:"issuer"`
 	Audiences         []string `json:"audiences"`
@@ -79,7 +82,7 @@ func (r CreateAuthRequest) Validate() error {
 	if strings.TrimSpace(r.Type) == "" {
 		return fmt.Errorf("type is required: %w", commonerrors.ErrValidation)
 	}
-	return nil
+	return r.Config.validate()
 }
 
 func (r CreateAuthRequest) IsEnabled() bool {
@@ -87,6 +90,19 @@ func (r CreateAuthRequest) IsEnabled() bool {
 		return true
 	}
 	return *r.Enabled
+}
+
+func (c ConfigRequest) validate() error {
+	populated := 0
+	for _, set := range []bool{c.OAuth2 != nil, c.OIDC != nil, c.MTLS != nil} {
+		if set {
+			populated++
+		}
+	}
+	if populated > 1 {
+		return fmt.Errorf("%w: exactly one config payload must be set", domain.ErrInvalidConfig)
+	}
+	return nil
 }
 
 func (c ConfigRequest) ToDomain() domain.Config {
@@ -109,15 +125,15 @@ func (c ConfigRequest) ToDomain() domain.Config {
 			TokenURL:         c.OAuth2.TokenURL,
 		}
 	}
-	if c.OIDC != nil {
-		out.OIDC = &domain.OIDCConfig{
-			Issuer:            c.OIDC.Issuer,
-			Audiences:         c.OIDC.Audiences,
-			JWKSURL:           c.OIDC.JWKSURL,
-			PublicKeys:        c.OIDC.PublicKeys,
-			RequiredScopes:    c.OIDC.RequiredScopes,
-			AllowedAlgorithms: c.OIDC.AllowedAlgorithms,
-			SubjectClaim:      c.OIDC.SubjectClaim,
+	if c.OIDC != nil && out.OAuth2 == nil {
+		out.OAuth2 = &domain.OAuth2Config{
+			Issuer:         c.OIDC.Issuer,
+			Audiences:      c.OIDC.Audiences,
+			JWKSURL:        c.OIDC.JWKSURL,
+			PublicKeys:     c.OIDC.PublicKeys,
+			RequiredScopes: c.OIDC.RequiredScopes,
+			Algorithms:     c.OIDC.AllowedAlgorithms,
+			SubjectClaim:   c.OIDC.SubjectClaim,
 		}
 	}
 	if c.MTLS != nil {

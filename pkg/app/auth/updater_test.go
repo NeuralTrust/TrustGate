@@ -97,7 +97,7 @@ func TestUpdater_Update_Partial_PreservesTypeAndConfig(t *testing.T) {
 	gwID := ids.New[ids.GatewayKind]()
 	existing := existingOAuth2Auth(gwID)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).Return(nil, nil).Once()
+	repo.EXPECT().FindEnabledByTypes(mock.Anything, domain.StoredTypes(domain.TypeOAuth2)).Return(nil, nil).Once()
 	repo.EXPECT().
 		Update(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
 			return a.Name == "renamed" && a.Type == domain.TypeOAuth2 &&
@@ -135,7 +135,7 @@ func TestUpdater_Update_PreservesSecretWhenMasked(t *testing.T) {
 	gwID := ids.New[ids.GatewayKind]()
 	existing := existingOAuth2Auth(gwID)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).Return(nil, nil).Once()
+	repo.EXPECT().FindEnabledByTypes(mock.Anything, domain.StoredTypes(domain.TypeOAuth2)).Return(nil, nil).Once()
 	repo.EXPECT().
 		Update(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
 			return a.Config.OAuth2 != nil && a.Config.OAuth2.ClientSecret == "real-secret"
@@ -206,22 +206,16 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 	publisher.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 }
 
-func oidcConfig() domain.Config {
-	return domain.Config{OIDC: &domain.OIDCConfig{
-		Issuer:    "https://idp.example.com",
-		Audiences: []string{"api://gateway"},
-		JWKSURL:   "https://idp.example.com/jwks",
-	}}
-}
-
 func TestUpdater_Update_AllowsIdPTypeChangeWithMCPConsumer(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	gwID := ids.New[ids.GatewayKind]()
-	existing := existingOAuth2Auth(gwID)
+	existing := existingAuth(gwID)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().FindEnabledByTypes(mock.Anything, domain.StoredTypes(domain.TypeOAuth2)).
+		Return(nil, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
-		return a.Type == domain.TypeOIDC
+		return a.Type == domain.TypeOAuth2
 	})).Return(nil).Once()
 
 	consumerRepo := consumermocks.NewRepository(t)
@@ -242,8 +236,8 @@ func TestUpdater_Update_AllowsIdPTypeChangeWithMCPConsumer(t *testing.T) {
 	if _, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
-		Type:      ptr(domain.TypeOIDC),
-		Config:    ptr(oidcConfig()),
+		Type:      ptr(domain.TypeOAuth2),
+		Config:    ptr(oauth2Config("idp-secret")),
 	}); err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
@@ -283,10 +277,12 @@ func TestUpdater_Update_AllowsTypeChangeWithoutReferences(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	gwID := ids.New[ids.GatewayKind]()
-	existing := existingOAuth2Auth(gwID)
+	existing := existingAuth(gwID)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().FindEnabledByTypes(mock.Anything, domain.StoredTypes(domain.TypeOAuth2)).
+		Return(nil, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
-		return a.Type == domain.TypeOIDC
+		return a.Type == domain.TypeOAuth2
 	})).Return(nil).Once()
 
 	consumerRepo := consumermocks.NewRepository(t)
@@ -302,8 +298,8 @@ func TestUpdater_Update_AllowsTypeChangeWithoutReferences(t *testing.T) {
 	if _, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
-		Type:      ptr(domain.TypeOIDC),
-		Config:    ptr(oidcConfig()),
+		Type:      ptr(domain.TypeOAuth2),
+		Config:    ptr(oauth2Config("idp-secret")),
 	}); err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
