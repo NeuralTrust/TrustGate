@@ -4,7 +4,9 @@
 
 <img src="assets/trustgate-hero.png" alt="TrustGate" width="100%"/>
 
-*The high-performance data-plane gateway for LLM and agent traffic — built from scratch in Go*
+**A security-first LLM and AI Agent gateway built in Go.**
+
+Route, govern, and observe all LLM and MCP traffic through a single control point.
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/NeuralTrust/TrustGate.svg)](https://pkg.go.dev/github.com/NeuralTrust/TrustGate)
 [![Go Report Card](https://goreportcard.com/badge/github.com/NeuralTrust/TrustGate)](https://goreportcard.com/report/github.com/NeuralTrust/TrustGate)
@@ -15,7 +17,8 @@
 [![Release](https://github.com/NeuralTrust/TrustGate/actions/workflows/release.yml/badge.svg)](https://github.com/NeuralTrust/TrustGate/actions/workflows/release.yml)
 
 [Documentation](https://docs.neuraltrust.ai) &nbsp;|&nbsp;
-[Quick Start](#-quick-start) &nbsp;|&nbsp;
+[Quick Start](#-60-second-quick-start) &nbsp;|&nbsp;
+[Examples](examples/) &nbsp;|&nbsp;
 [Architecture](#%EF%B8%8F-architecture) &nbsp;|&nbsp;
 [Community](https://join.slack.com/t/neuraltrustcommunity/shared_invite/zt-2xl47cag6-_HFNpltIULnA3wh4R6AqBg)
 
@@ -23,210 +26,90 @@
 
 ---
 
-## ✨ Features
+## Why TrustGate?
 
-- 🚀 **High Performance** — Built in Go on top of [Fiber](https://gofiber.io), tuned for low latency and high concurrency.
-- 🌍 **Multi-Provider** — First-class adapters for OpenAI, Anthropic, Azure OpenAI, AWS Bedrock, Google Gemini, Vertex AI, Groq, Mistral and DeepSeek.
-- 🧭 **Smart Routing & Load Balancing** — Round-robin, weighted round-robin and IP-hash strategies with health checks and fallback targets.
-- 🔌 **Plugin System** — Policy stages with built-in plugins: rate limiting, token rate limiting, request size guard, semantic cache and CORS.
-- 🧠 **Semantic Cache** — Embedding-based response caching to cut cost and latency on repeated prompts.
-- 🔒 **Security & Multi-Tenancy** — Per-gateway consumers, API-key auth, and policies scoped globally or per consumer.
-- 📊 **Observability** — Built-in metrics, request telemetry streamed to Kafka by default, with an opt-in per-gateway [OpenTelemetry](https://opentelemetry.io) (OTLP) exporter.
-- ⚙️ **Two Independent Planes** — Admin and Proxy run as separate processes so you can scale them independently.
-- ☁️ **Cloud Agnostic** — Single static binary, Docker image and Kubernetes manifests. Deploy anywhere.
+TrustGate is purpose-built for teams that need **enterprise-grade governance** over their LLM and agent traffic — not just routing and observability.
 
-## 🚀 Quick Start
+| | TrustGate | LiteLLM | Portkey | Helicone |
+|---|:---:|:---:|:---:|:---:|
+| **Security & Governance** | Per-consumer auth, policy stages, rate limiting | Basic API key proxy | API key management | Logging-focused |
+| **MCP Aggregation Plane** | Native MCP gateway for AI agents (Cursor, Claude, etc.) | — | — | — |
+| **Multi-Provider Routing** | 9+ providers, weighted load balancing, fallback | Multi-provider | Multi-provider | Proxy layer |
+| **Deployment** | Single Go binary, no runtime deps | Python + Redis | SaaS / self-host | SaaS / self-host |
 
-### One-line install
+**TrustGate differentiators:**
 
-Clones the repo, seeds `.env`, brings up the full stack in Docker and — when Go
-is installed — compiles the `trustgate` binary and installs it on your `PATH`:
+1. **Security-first architecture** — API-key auth, per-consumer policies, plugin stages (rate limit, token rate limit, request size, semantic cache) that run before traffic hits providers.
+2. **MCP aggregation plane** — A dedicated `:8082` plane that aggregates upstream MCP servers, so AI agents connect to one gateway instead of many tools. See the [MCP testing guide](docs/mcp/testing-guide.md).
+3. **Single static binary** — No Python, no Node, no runtime dependencies. Deploy anywhere: Docker, Kubernetes, bare metal.
+
+---
+
+## 60-Second Quick Start
+
+### Option A: One-line install (recommended)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/NeuralTrust/TrustGate/main/scripts/install.sh | bash
 ```
 
-Requires `git`, `docker` and Docker Compose (plus Go to build the CLI). Re-running
-updates the checkout and never overwrites your `.env`. Useful overrides:
+This clones the repo, seeds `.env`, and starts the full stack. When Go is installed, it also builds the `trustgate` CLI.
 
-- `AG_REF=develop` — install a different branch/tag/commit
-- `AG_DIR=/path/to/dir` — where to clone
-- `AG_BIN_DIR=~/.local/bin` — where to install the `trustgate` CLI
-- `AG_INSTALL_CLI=0` — skip building the CLI · `AG_NO_START=1` — skip `docker compose up`
-
-### Using Docker Compose
+### Option B: Docker Compose
 
 ```bash
-# Clone the repository
-git clone https://github.com/NeuralTrust/TrustGate.git
-cd TrustGate
-
-# Copy the env template and adjust as needed
+git clone https://github.com/NeuralTrust/TrustGate.git && cd TrustGate
 cp .env.example .env
-
-# One command to bring up everything (Postgres, Redis, Kafka, Zookeeper) + admin, proxy & mcp
 make up
-
-# Tail the logs / tear everything down
-make logs
-make down
 ```
 
-Then hit the health probes:
+### Verify it's running
 
 ```bash
-curl localhost:8080/healthz       # admin (canonical; /health is an alias)
-curl localhost:8081/healthz       # proxy
-curl localhost:8082/healthz       # mcp
-curl localhost:8080/__/version    # build info (version, commit, build date)
+curl localhost:8080/healthz   # Admin plane
+curl localhost:8081/healthz   # Proxy plane
+curl localhost:8082/healthz   # MCP plane
 ```
 
-To configure MCP registries/consumers and smoke-test JSON-RPC (`tools/list`,
-`tools/call`) or point Cursor at the MCP plane, follow
-[`docs/mcp/testing-guide.md`](docs/mcp/testing-guide.md).
+### Your first chat completion
 
-> The image is pinned to `linux/amd64` because `confluent-kafka-go` only bundles
-> an amd64 `librdkafka`; on Apple Silicon the build runs under emulation out of the box.
-
-### Local Development
-
-Run the infra in Docker and the binary on your machine so you can attach a debugger:
+Once running, make a request through the proxy (full setup in [examples/curl-first-request/](examples/curl-first-request/)):
 
 ```bash
-# 1. Boot the local dev infra (Postgres, Redis, Kafka, Zookeeper)
-make compose-up
-
-# 2a. Run admin + proxy together in a single process (simplest, single-node)
-make run-all        # applies migrations, starts admin on :8080 and proxy on :8081
-
-# 2b. ...or run each plane in its own terminal (closer to production)
-make run-admin      # terminal 1 — applies migrations, starts admin on :8080
-make run-proxy      # terminal 2 — applies migrations, starts proxy on :8081
-make run-mcp        # terminal 3 — (optional) starts the MCP server on :8082
-
-# 3. Stop the infra (add -v to wipe volumes)
-make compose-down
-```
-
-### Using Kubernetes
-
-Manifests live under [`k8s/`](k8s).
-
-```bash
-kubectl apply -k k8s/
-```
-
-### Run Tests
-
-```bash
-make test            # unit tests
-make test-race       # unit tests with the race detector
-make test-cover      # unit tests with coverage profile
-make test-functional # functional tests against a real admin server
-```
-
-## 🧪 Your first request
-
-The **Admin** plane (`:8080`) configures gateways, providers and consumers; the
-**Proxy** plane (`:8081`) serves OpenAI-compatible traffic. The proxy resolves
-the gateway from the `X-AG-Gateway-Slug` header and the consumer from its
-`X-AG-API-Key`. End-to-end, from zero to a forwarded completion:
-
-```bash
-make up   # admin :8080, proxy :8081 + Postgres/Redis/Kafka
-
-ADMIN="http://localhost:8080"
-PROXY="http://localhost:8081"
-TOKEN="$ADMIN_TOKEN"   # admin JWT, see "Admin token" below
-
-# 1. Create a gateway (slug becomes its host/subdomain)
-GW=$(curl -s -X POST "$ADMIN/v1/gateways" \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"My Gateway","slug":"demo"}')
-GW_ID=$(echo "$GW" | jq -r .id); GW_SLUG=$(echo "$GW" | jq -r .slug)
-
-# 2. Register an upstream LLM provider (OpenAI here)
-REG=$(curl -s -X POST "$ADMIN/v1/gateways/$GW_ID/registries" \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"openai-primary","provider":"openai",
-       "auth":{"type":"api_key","api_key":{"api_key":"'"$OPENAI_API_KEY"'"}}}')
-REG_ID=$(echo "$REG" | jq -r .id)
-
-# 3. Create a consumer bound to that registry
-CON=$(curl -s -X POST "$ADMIN/v1/gateways/$GW_ID/consumers" \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"my-app","registries":[{"id":"'"$REG_ID"'"}]}')
-CON_ID=$(echo "$CON" | jq -r .id); CON_SLUG=$(echo "$CON" | jq -r .slug)
-
-# 4. Mint a consumer API key (returned in cleartext once)
-AUTH=$(curl -s -X POST "$ADMIN/v1/gateways/$GW_ID/auths" \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"my-app-key","type":"api_key"}')
-AUTH_ID=$(echo "$AUTH" | jq -r .id); API_KEY=$(echo "$AUTH" | jq -r .api_key)
-
-# 5. Attach the key to the consumer
-curl -s -X POST "$ADMIN/v1/gateways/$GW_ID/consumers/$CON_ID/auths/$AUTH_ID" \
-  -H "Authorization: Bearer $TOKEN"
-
-# 6. Call the proxy (OpenAI-compatible)
-curl -s -X POST "$PROXY/$CON_SLUG/v1/chat/completions" \
-  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
+# Assumes you've created a gateway, registry, and consumer (see examples/)
+curl -X POST "http://localhost:8081/my-app/v1/chat/completions" \
+  -H "X-AG-Gateway-Slug: demo" \
+  -H "X-AG-API-Key: $CONSUMER_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
-From an application, point any OpenAI SDK at the proxy — no client changes beyond
-the base URL and two headers:
+Or use any OpenAI SDK — see [examples/openai-sdk/](examples/openai-sdk/).
 
-```python
-from openai import OpenAI
+---
 
-client = OpenAI(
-    base_url="http://localhost:8081/my-app",  # /{consumer_slug}
-    api_key="unused",                          # the provider key lives in the gateway
-    default_headers={
-        "X-AG-Gateway-Slug": "demo",
-        "X-AG-API-Key": "<consumer api key>",
-    },
-)
+## Features
 
-resp = client.chat.completions.create(
-    model="gpt-4o-mini",
-    messages=[{"role": "user", "content": "Hello!"}],
-)
-print(resp.choices[0].message.content)
-```
+- **High Performance** — Built in Go on [Fiber](https://gofiber.io), tuned for low latency and high concurrency.
+- **Multi-Provider** — OpenAI, Anthropic, Azure OpenAI, AWS Bedrock, Google Gemini, Vertex AI, Groq, Mistral, DeepSeek.
+- **Smart Routing** — Round-robin, weighted, IP-hash strategies with health checks and fallback targets.
+- **Plugin System** — Rate limiting, token rate limiting, request size guard, semantic cache, CORS.
+- **Semantic Cache** — Embedding-based response caching for repeated prompts.
+- **Multi-Tenancy** — Per-gateway consumers, API-key auth, scoped policies.
+- **Observability** — Built-in metrics, OpenTelemetry (OTLP) export. See [Telemetry Configuration](#observability).
+- **Independent Planes** — Admin (`:8080`), Proxy (`:8081`), MCP (`:8082`) scale separately.
 
-Other entrypoints follow the same `/{consumer_slug}/...` shape: `/v1/messages`
-(Anthropic format) and `/v1/responses` (OpenAI Responses format).
+---
 
-### Admin token
+## Architecture
 
-The Admin API expects a JWT (HS256) signed with `SERVER_SECRET_KEY` from your
-`.env`. Mint a short-lived one for local use:
+TrustGate ships a **single binary** that boots one HTTP server per plane:
 
 ```bash
-export SERVER_SECRET_KEY="$(grep ^SERVER_SECRET_KEY .env | cut -d= -f2-)"
-export ADMIN_TOKEN=$(python3 - <<'PY'
-import jwt, os, time
-secret = os.environ["SERVER_SECRET_KEY"]
-print(jwt.encode({"sub": "admin", "iat": int(time.time()), "exp": int(time.time()) + 3600}, secret, algorithm="HS256"))
-PY
-)
-```
-
-## 🏗️ Architecture
-
-TrustGate ships a **single binary** that boots **one** HTTP server, selected by `argv[1]`
-(default: `proxy`). In production each pod runs one container with the appropriate argument,
-so the **Admin**, **Proxy** and **MCP** planes scale independently.
-
-```bash
-./trustgate              # → proxy (default)
-./trustgate proxy        # → proxy
-./trustgate admin        # → admin
-./trustgate mcp          # → mcp (Model Context Protocol server)
-./trustgate run          # → admin + proxy together in one process (single-node)
+./trustgate              # proxy (default)
+./trustgate admin        # admin
+./trustgate mcp          # MCP server
+./trustgate run          # admin + proxy together (single-node)
 ```
 
 ```mermaid
@@ -274,242 +157,232 @@ flowchart LR
     PROXY -->|telemetry| KFK
 ```
 
-### Request lifecycle
-
-1. A client calls the **Proxy** with a consumer API key.
-2. The gateway resolves the consumer, gateway config and applicable **policies**.
-3. Policy **stages** run their **plugins** (rate limit, token rate limit, request size, semantic cache, CORS).
-4. The **load balancer** picks a healthy upstream target (round-robin / weighted / IP-hash) with fallback.
-5. The request is forwarded to the selected **provider adapter** (OpenAI, Anthropic, Bedrock, …), streaming when supported.
-6. The response is returned, the semantic cache is populated, and **telemetry** is emitted to Kafka.
-
-### Planes
-
 | Plane | Port | Responsibilities |
 |-------|------|------------------|
-| **Admin** | `8080` | Gateway, registry, consumer, auth, policy and catalog management. Applies DB migrations. |
-| **Proxy** | `8081` | Request routing, load balancing, policy & plugin execution, provider forwarding, telemetry. |
-| **MCP** | `8082` | Model Context Protocol server: exposes registered MCP targets and tools to agents. See the [MCP testing guide](docs/mcp/testing-guide.md). |
+| **Admin** | `8080` | Gateway, registry, consumer, auth, policy management. DB migrations. |
+| **Proxy** | `8081` | Request routing, load balancing, plugin execution, provider forwarding. |
+| **MCP** | `8082` | Model Context Protocol server for AI agents. See [MCP Guide](docs/mcp/testing-guide.md). |
 
-## 🔌 Plugins
+---
 
-Plugins run inside ordered **policy stages** and can execute sequentially or in parallel.
+## MCP Plane for AI Agents
 
-| Plugin | Description |
-|--------|-------------|
-| `ratelimit` | Per-consumer / per-gateway request rate limiting. |
-| `tokenratelimit` | Token-based rate limiting for LLM cost control. |
-| `requestsize` | Rejects requests above a configured body size. |
-| `semanticcache` | Embedding-based response caching for repeated prompts. |
-| `cors` | Cross-origin resource sharing for browser clients. |
+TrustGate's MCP plane (`:8082`) lets AI agents like **Cursor** and **Claude** connect to multiple MCP tool servers through a single gateway. Configure once, use everywhere.
 
-## 🌍 Providers
+```json
+// Cursor mcp.json example
+{
+  "mcpServers": {
+    "trustgate": {
+      "url": "http://localhost:8082/agent-client/mcp",
+      "headers": {
+        "X-AG-API-Key": "<consumer api key>"
+      }
+    }
+  }
+}
+```
 
-| Provider | Provider | Provider | Provider |
+See [examples/mcp-cursor/](examples/mcp-cursor/) for setup instructions and [docs/mcp/testing-guide.md](docs/mcp/testing-guide.md) for the full guide.
+
+---
+
+## Providers
+
+| | | | |
 |----------|----------|----------|----------|
 | OpenAI | Anthropic | Azure OpenAI | AWS Bedrock |
 | Google Gemini | Vertex AI | Groq | Mistral |
 | DeepSeek | | | |
 
-## ⚙️ Configuration
+---
 
-All configuration is read from **environment variables**. In development, copy `.env.example`
-to `.env` and `godotenv` loads it automatically. Production deployments inject env vars directly
-(Helm values, ECS task definitions, k8s ConfigMap + Secret).
+## Plugins
+
+Plugins run in ordered **policy stages** (sequential or parallel):
+
+| Plugin | Description |
+|--------|-------------|
+| `ratelimit` | Per-consumer/gateway request rate limiting |
+| `tokenratelimit` | Token-based rate limiting for cost control |
+| `requestsize` | Reject requests above a body size |
+| `semanticcache` | Embedding-based response caching |
+| `cors` | Cross-origin resource sharing |
+
+---
+
+## Configuration
+
+All config is via **environment variables**. Copy `.env.example` to `.env` for development.
 
 ```bash
-# Server (HTTP listeners)
+# Core ports
 SERVER_ADMIN_PORT=8080
 SERVER_PROXY_PORT=8081
 SERVER_MCP_PORT=8082
 
-# Host suffixes returned in the gateway response ({slug}.<base-domain>)
-GATEWAY_BASE_DOMAIN=llm.neuraltrust.ai  # proxy plane host
-MCP_BASE_DOMAIN=mcp.neuraltrust.ai      # mcp plane host
-
-# Database (Postgres via pgx/pgxpool)
+# Infrastructure
 DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=trustgate
-
-# Redis & Kafka
 REDIS_HOST=localhost
 KAFKA_BROKERS=localhost:9092
-
-# Telemetry & Metrics
-TELEMETRY_ENABLED=true
-TELEMETRY_KAFKA_TOPIC=trustgate.requests
-METRICS_ENABLED=true
-
-# OTLP exporter defaults (opt-in per gateway; per-gateway settings override these)
-OTEL_EXPORTER_OTLP_ENDPOINT=collector:4317
-OTEL_EXPORTER_OTLP_PROTOCOL=grpc
 ```
 
-See [`.env.example`](.env.example) for the full set with safe defaults.
+See [`.env.example`](.env.example) for all options.
 
-### PostgreSQL authentication
-`POSTGRES_LOGIN=default` (the default) authenticates the primary PostgreSQL pool with `DB_PASSWORD`. `POSTGRES_LOGIN=aws` uses the AWS SDK v2 default credential chain, including IRSA, and its resolved region. `DB_HOST` must be the native RDS or Aurora endpoint, and `DB_SSL_MODE` must be `require`, `verify-ca`, or `verify-full`. A fresh IAM token is created before each physical connection; tokens are not retained in the pool configuration, and authentication failures never fall back to `DB_PASSWORD`.
+---
 
-### Telemetry exporters (OTLP)
+## Observability
 
-Every completed request is turned into a sanitized business event and fanned out
-to one or more exporters. Default exporters are declared in a YAML file (see
-[Default telemetry exporters](#default-telemetry-exporters) below); the
-recommended metadata default is **`otlp`**, which ships the event to an external
-[OpenTelemetry Collector](https://opentelemetry.io/docs/collector/) as a single
-OTLP **log record** per request. The record's `event.name` follows
-`trustgate.<version>.<verb>` (`resource.version.verb`) — e.g. `trustgate.3.metadata`
-for the metadata class and `trustgate.3.raw` for the raw class of the same trace; the
-Collector fans out to any vendor backend. A gateway can add or override exporters via its
-`telemetry.exporters`, which merge with the defaults. Kafka is being retired and
-is no longer a hardcoded default.
-
-The exported log record is documented field-by-field in
-[`docs/telemetry/otlp-metadata-contract.md`](docs/telemetry/otlp-metadata-contract.md),
-with per-sink example records under [`docs/telemetry/examples/`](docs/telemetry/examples).
-
-Add it to a gateway's `telemetry.exporters`:
+TrustGate emits request telemetry to [OpenTelemetry](https://opentelemetry.io) collectors. Configure per-gateway OTLP exporters:
 
 ```json
 {
   "telemetry": {
-    "exporters": [
-      {
-        "name": "otlp",
-        "settings": {
-          "endpoint": "collector:4317",
-          "protocol": "grpc",
-          "headers": { "authorization": "Bearer <token>" },
-          "compression": "gzip",
-          "timeout": "10s",
-          "insecure": false
-        }
+    "exporters": [{
+      "name": "otlp",
+      "settings": {
+        "endpoint": "collector:4317",
+        "protocol": "grpc"
       }
-    ]
+    }]
   }
 }
 ```
 
-**`otlp` settings**
+Full telemetry configuration, including default exporters and the OTLP contract, is documented in:
+- [`docs/telemetry/otlp-metadata-contract.md`](docs/telemetry/otlp-metadata-contract.md)
+- [`config/telemetry.example.yaml`](config/telemetry.example.yaml)
 
-| Key | Type | Default | Notes |
-|-----|------|---------|-------|
-| `endpoint` | string | — (required unless env fallback) | `host:port` or full URL of the Collector |
-| `protocol` | string | `grpc` | `grpc` (`:4317`) or `http/protobuf` (`:4318`) |
-| `signal` | string | `logs` | `logs`; `traces` is reserved and rejected |
-| `headers` | map | `{}` | auth/tenant headers |
-| `insecure` | bool | `false` | plaintext, no TLS (cannot combine with `tls`) |
-| `tls` | object | — | `{ ca_file, cert_file, key_file, skip_verify }` |
-| `timeout` | duration | `10s` | export + graceful-shutdown bound; must be `> 0` |
-| `compression` | string | `gzip` | `gzip` or `none` |
-| `max_body_bytes` | int | `4096` | request/response body truncation cap |
+---
 
-Any key absent from a gateway's settings falls back to the process-level
-`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`,
-`OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_TIMEOUT`,
-`OTEL_EXPORTER_OTLP_INSECURE`, and `OTEL_EXPORTER_OTLP_COMPRESSION` env vars
-(per-gateway settings win). `OTEL_EXPORTER_OTLP_TIMEOUT` accepts an integer of
-milliseconds per the OpenTelemetry spec (e.g. `10000`); a Go duration string
-(e.g. `10s`) is also accepted. Settings are validated structurally on gateway create/update with
-no network I/O; export is non-blocking (bounded queue, drop-on-full) so a slow
-or unreachable Collector never affects request latency.
-
-### Default telemetry exporters
-
-The metrics pipeline's **default** exporters (applied to every gateway unless a
-gateway declares its own) are loaded at boot from a declarative YAML file,
-selected by `TELEMETRY_EXPORTERS_FILE` (default `config/telemetry.yaml`).
-If that file is missing, the same entries can be declared as YAML or JSON lists
-in `TELEMETRY_EXPORTERS_METADATA` and `TELEMETRY_EXPORTERS_RAW`, or as type
-tokens (`otlp`, `postgres`; `otel` is an alias of `otlp`). A present file
-wins over the env lists. Invalid config aborts boot; if neither source declares
-exporters, a warning is logged and the pipeline starts with no defaults.
-Exporters are grouped by data class, and the class is intrinsic to the `type`:
-**metadata** exporters (e.g. `otlp`) ship sanitized request metadata to an
-external backend, while **raw** exporters (only `postgres`) persist sensitive
-payloads inside your own boundary.
-
-At publish time each event is **projected by class**: a `postgres` exporter
-receives only the request/response bodies, and every other exporter receives
-sanitized metadata with the bodies stripped. The class is fixed by the exporter
-type, so a metadata exporter can never receive raw payloads and `postgres` can
-never receive metadata — the split is structural, not a config flag.
-
-```yaml
-exporters:
-  metadata:           # every type EXCEPT postgres
-    - name: otlp      # instance identity (used for dedupe against per-gateway config)
-      type: otlp      # template selector; defaults to name when omitted
-      settings: { endpoint: "otel-collector:4317", protocol: grpc, signal: logs }
-  raw:                # postgres only
-    - name: postgres
-      type: postgres
-      settings: { dsn: "postgres://user:pass@localhost:5432/telemetry" }
-```
-
-Behaviour:
-
-- **`postgres` under `metadata`, or any other type under `raw` → boot aborts.**
-- **Routing is by data class:** raw payloads go only to `postgres`; every other exporter gets metadata with bodies stripped.
-- **Invalid or unknown declared exporter → boot aborts (fail-fast).**
-- **File present → file wins.** Missing file falls back to `TELEMETRY_EXPORTERS_METADATA` / `TELEMETRY_EXPORTERS_RAW`. If both sources are empty → warning, no defaults.
-- There is no hardcoded default exporter; Kafka runs as a default only if declared.
-
-Copy [`config/telemetry.example.yaml`](config/telemetry.example.yaml) to
-`config/telemetry.yaml` to get started.
-
-### Migrations
-
-Migrations are **in-code Go files** under `pkg/infra/database/migrations/`. Each file is named
-`<unix_timestamp>_<snake_name>.go` and registers itself via `database.RegisterMigration` in its
-`init()`. The `pgx`-backed runner commits each migration's DDL plus its `migration_version` row in
-a single transaction, applying any pending migrations automatically on boot.
-
-## 📚 API Docs
-
-The Admin API is fully annotated and ships Swagger 2.0 and OpenAPI 3 specs:
+## Local Development
 
 ```bash
-make swagger   # generate docs/swagger.{json,yaml} + docs.go
-make openapi   # convert to docs/openapi.json (OpenAPI 3)
-make docs      # regenerate everything
+# Boot infra in Docker, run planes locally (for debugging)
+make compose-up
+make run-admin      # terminal 1
+make run-proxy      # terminal 2
+make run-mcp        # terminal 3 (optional)
+
+# Tests
+make test           # unit tests
+make test-race      # with race detector
+make test-functional # against real server
 ```
 
-Specs live under [`docs/`](docs) (`swagger.json`, `swagger.yaml`, `openapi.json`).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development guide.
 
-## 🗂️ Repository layout
+---
+
+<details>
+<summary><strong>Advanced: Full Admin API Setup</strong></summary>
+
+The **Admin** plane (`:8080`) configures gateways, providers, and consumers. The **Proxy** (`:8081`) serves OpenAI-compatible traffic. End-to-end setup:
+
+```bash
+make up   # admin :8080, proxy :8081 + Postgres/Redis/Kafka
+
+ADMIN="http://localhost:8080"
+PROXY="http://localhost:8081"
+TOKEN="$ADMIN_TOKEN"   # see "Admin token" below
+
+# 1. Create a gateway
+GW=$(curl -s -X POST "$ADMIN/v1/gateways" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"My Gateway","slug":"demo"}')
+GW_ID=$(echo "$GW" | jq -r .id); GW_SLUG=$(echo "$GW" | jq -r .slug)
+
+# 2. Register an upstream LLM provider
+REG=$(curl -s -X POST "$ADMIN/v1/gateways/$GW_ID/registries" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"openai-primary","provider":"openai",
+       "auth":{"type":"api_key","api_key":{"api_key":"'"$OPENAI_API_KEY"'"}}}')
+REG_ID=$(echo "$REG" | jq -r .id)
+
+# 3. Create a consumer bound to that registry
+CON=$(curl -s -X POST "$ADMIN/v1/gateways/$GW_ID/consumers" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"my-app","registries":[{"id":"'"$REG_ID"'"}]}')
+CON_ID=$(echo "$CON" | jq -r .id); CON_SLUG=$(echo "$CON" | jq -r .slug)
+
+# 4. Mint a consumer API key
+AUTH=$(curl -s -X POST "$ADMIN/v1/gateways/$GW_ID/auths" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"my-app-key","type":"api_key"}')
+AUTH_ID=$(echo "$AUTH" | jq -r .id); API_KEY=$(echo "$AUTH" | jq -r .api_key)
+
+# 5. Attach the key to the consumer
+curl -s -X POST "$ADMIN/v1/gateways/$GW_ID/consumers/$CON_ID/auths/$AUTH_ID" \
+  -H "Authorization: Bearer $TOKEN"
+
+# 6. Call the proxy
+curl -s -X POST "$PROXY/$CON_SLUG/v1/chat/completions" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Hello!"}]}'
+```
+
+### Admin token
+
+The Admin API expects a JWT (HS256) signed with `SERVER_SECRET_KEY`:
+
+```bash
+export SERVER_SECRET_KEY="$(grep ^SERVER_SECRET_KEY .env | cut -d= -f2-)"
+export ADMIN_TOKEN=$(python3 - <<'PY'
+import jwt, os, time
+secret = os.environ["SERVER_SECRET_KEY"]
+print(jwt.encode({"sub": "admin", "iat": int(time.time()), "exp": int(time.time()) + 3600}, secret, algorithm="HS256"))
+PY
+)
+```
+
+</details>
+
+---
+
+## Repository Layout
 
 ```
 cmd/trustgate/         # entry point (single binary: proxy | admin | mcp | run)
-pkg/version/           # ldflag-fed build info
-pkg/config/            # env-only config loader (.env via godotenv in dev)
-pkg/domain/            # domain entities, value objects and port interfaces
+pkg/domain/            # domain entities and port interfaces
 pkg/app/               # application services (use cases)
 pkg/infra/providers/   # provider adapters (openai, anthropic, bedrock, …)
-pkg/infra/plugins/     # policy plugins (ratelimit, semanticcache, …)
-pkg/infra/loadbalancer/# routing strategies + health checks
-pkg/infra/database/    # pgxpool + in-code Go migrations registry
-pkg/infra/telemetry/   # Kafka (default) + OTLP exporters
-pkg/api/handler/http/  # per-route HTTP handlers
-pkg/server/            # Server interface + admin / proxy routers
-pkg/container/         # dig DI container + one module per context
+pkg/infra/plugins/     # policy plugins
+pkg/server/            # Server interface + routers
+examples/              # runnable examples for common use cases
+docs/                  # API specs, telemetry docs, MCP guide
 ```
 
-## 🤝 Contributing
+---
 
-We love contributions! To get started:
+## API Documentation
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feat/my-feature`)
-3. Run `make lint && make test` before committing
-4. Push to your branch and open a Pull Request
+The Admin API ships Swagger 2.0 and OpenAPI 3 specs:
 
-## 📜 License
+```bash
+make swagger   # generate docs/swagger.{json,yaml}
+make openapi   # convert to docs/openapi.json
+```
 
-TrustGate is licensed under the Apache License 2.0 — see the [LICENSE](LICENSE) file for details.
+---
 
-## 📫 Community & Support
+## Contributing
+
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+**Good first issues:** Check [`.github/GOOD_FIRST_ISSUES.md`](.github/GOOD_FIRST_ISSUES.md) for curated starter tasks.
+
+**Examples:** Help us add more examples in [`examples/`](examples/).
+
+---
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE).
+
+---
+
+## Community & Support
 
 - [Documentation](https://docs.neuraltrust.ai)
 - [Slack Community](https://join.slack.com/t/neuraltrustcommunity/shared_invite/zt-2xl47cag6-_HFNpltIULnA3wh4R6AqBg)
@@ -518,5 +391,5 @@ TrustGate is licensed under the Apache License 2.0 — see the [LICENSE](LICENSE
 - [Blog](https://neuraltrust.ai/en/resources/blog)
 
 <div align="center">
-Made with ❤️ by <a href="https://neuraltrust.ai">NeuralTrust</a>
+Made with care by <a href="https://neuraltrust.ai">NeuralTrust</a>
 </div>
