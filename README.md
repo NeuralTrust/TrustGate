@@ -24,6 +24,19 @@ Route, govern, and observe all LLM and MCP traffic through a single control poin
 
 </div>
 
+<!-- Try it now - visible above the fold -->
+<table><tr><td>
+<strong>Try it in 60 seconds:</strong>
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NeuralTrust/TrustGate/main/scripts/install.sh | bash
+```
+
+Starts Admin (`:8080`), Proxy (`:8081`), and MCP (`:8082`) planes via Docker. See [full quickstart](#-60-second-quick-start) for manual setup.
+</td></tr></table>
+
+<p align="center"><img src="assets/request-flow.svg" alt="TrustGate request flow" width="700"/></p>
+
 ---
 
 ## Why TrustGate?
@@ -391,5 +404,8 @@ Apache License 2.0 — see [LICENSE](LICENSE).
 - [Blog](https://neuraltrust.ai/en/resources/blog)
 
 <div align="center">
+
+If TrustGate helps your team, a ⭐ helps others find it.
+
 Made with care by <a href="https://neuraltrust.ai">NeuralTrust</a>
 </div>
