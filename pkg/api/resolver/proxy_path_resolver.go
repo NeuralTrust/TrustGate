@@ -34,6 +34,7 @@ const (
 	RouteEmbeddings      = "/v1/embeddings"
 	RouteRerank          = "/v1/rerank"
 	RouteFiles           = "/v1/files"
+	RouteModels          = "/v1/models"
 )
 
 const pathSeparator = "/"
@@ -47,6 +48,7 @@ const (
 	CapabilityEmbeddings ProxyCapability = "embeddings"
 	CapabilityRerank     ProxyCapability = "rerank"
 	CapabilityFiles      ProxyCapability = "files"
+	CapabilityModels     ProxyCapability = "models"
 )
 
 // ProxyRoute is the result of parsing a proxy request path of the form
@@ -99,8 +101,32 @@ func formatForRoute(rest string) (adapter.Format, ProxyCapability, error) {
 	if providers.IsFilesPath(rest) {
 		return adapter.FormatOpenAIFiles, CapabilityFiles, nil
 	}
+	if isModelsPath(rest) {
+		return adapter.FormatOpenAI, CapabilityModels, nil
+	}
 	if strings.HasPrefix(rest, adapter.GeminiModelsRoutePrefix) && adapter.GeminiModelFromPath(rest) != "" {
 		return adapter.FormatGemini, CapabilityChat, nil
 	}
 	return "", "", ErrUnknownProxyPath
+}
+
+func isModelsPath(rest string) bool {
+	if rest == RouteModels {
+		return true
+	}
+	if !strings.HasPrefix(rest, RouteModels+pathSeparator) {
+		return false
+	}
+	id := strings.TrimPrefix(rest, RouteModels+pathSeparator)
+	return id != "" && !strings.Contains(id, pathSeparator)
+}
+
+func ModelsIDFromRest(rest string) string {
+	if rest == RouteModels {
+		return ""
+	}
+	if !isModelsPath(rest) {
+		return ""
+	}
+	return strings.TrimPrefix(rest, RouteModels+pathSeparator)
 }

@@ -15,6 +15,7 @@
 package proxy_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -633,5 +634,117 @@ func TestHandle_RejectionStampsStatusReasonOnTrace(t *testing.T) {
 	}
 	if got := rt.StatusReason(); got != "model_not_allowed" {
 		t.Fatalf("trace status reason = %q, want model_not_allowed", got)
+	}
+}
+
+type stubModelsLister struct {
+	list *appproxy.ModelsList
+	card *appproxy.ModelCard
+	err  error
+}
+
+func (s stubModelsLister) List(_ context.Context, _ appproxy.ListModelsInput) (*appproxy.ModelsList, error) {
+	return s.list, s.err
+}
+
+func (s stubModelsLister) Get(_ context.Context, _ appproxy.ListModelsInput, _ string) (*appproxy.ModelCard, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.card, nil
+}
+
+func TestHandle_ModelsList(t *testing.T) {
+	fwd := proxymocks.NewForwarder(t)
+	lister := stubModelsLister{
+		list: &appproxy.ModelsList{
+			Object: "list",
+			Data:   []appproxy.ModelCard{{ID: "gpt-4o-mini", Object: "model", OwnedBy: "openai"}},
+		},
+	}
+	app := fiber.New()
+	app.Use(authStub(ids.New[ids.GatewayKind](), consumerSlug))
+	handler := proxyhttp.NewForwardedHandler(fwd).WithModels(lister)
+	app.All("/*", handler.Handle)
+
+	req := httptest.NewRequest(http.MethodGet, "/"+consumerSlug+"/v1/models", nil)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var body appproxy.ModelsList
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Object != "list" || len(body.Data) != 1 || body.Data[0].ID != "gpt-4o-mini" {
+		t.Fatalf("body = %+v", body)
+	}
+}
+
+func TestHandle_ModelsGet(t *testing.T) {
+	fwd := proxymocks.NewForwarder(t)
+	lister := stubModelsLister{
+		card: &appproxy.ModelCard{ID: "gpt-4o-mini", Object: "model", OwnedBy: "openai"},
+	}
+	app := fiber.New()
+	app.Use(authStub(ids.New[ids.GatewayKind](), consumerSlug))
+	handler := proxyhttp.NewForwardedHandler(fwd).WithModels(lister)
+	app.All("/*", handler.Handle)
+
+	req := httptest.NewRequest(http.MethodGet, "/"+consumerSlug+"/v1/models/gpt-4o-mini", nil)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var body appproxy.ModelCard
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.ID != "gpt-4o-mini" || body.OwnedBy != "openai" {
+		t.Fatalf("body = %+v", body)
+	}
+}
+
+func TestHandle_ModelsGetNotFound(t *testing.T) {
+	fwd := proxymocks.NewForwarder(t)
+	lister := stubModelsLister{err: appproxy.ErrModelNotFound}
+	app := fiber.New()
+	app.Use(authStub(ids.New[ids.GatewayKind](), consumerSlug))
+	handler := proxyhttp.NewForwardedHandler(fwd).WithModels(lister)
+	app.All("/*", handler.Handle)
+
+	req := httptest.NewRequest(http.MethodGet, "/"+consumerSlug+"/v1/models/missing", nil)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+	if eb := decodeError(t, resp.Body); eb.Error != "not_found" {
+		t.Fatalf("error = %q, want not_found", eb.Error)
+	}
+}
+
+func TestHandle_ModelsRejectsNonGET(t *testing.T) {
+	fwd := proxymocks.NewForwarder(t)
+	app := fiber.New()
+	app.Use(authStub(ids.New[ids.GatewayKind](), consumerSlug))
+	handler := proxyhttp.NewForwardedHandler(fwd).WithModels(stubModelsLister{})
+	app.All("/*", handler.Handle)
+
+	req := httptest.NewRequest(http.MethodPost, "/"+consumerSlug+"/v1/models", strings.NewReader(`{}`))
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
 	}
 }

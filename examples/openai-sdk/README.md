@@ -52,3 +52,4 @@ The same consumer slug works for all OpenAI-compatible endpoints:
 - `/v1/chat/completions` — Chat completions
 - `/v1/messages` — Anthropic Messages format
 - `/v1/responses` — OpenAI Responses format
+- `/v1/models` — SDK `client.models.list()` / `client.models.retrieve(id)` (gateway-owned discovery of models this consumer can call)
