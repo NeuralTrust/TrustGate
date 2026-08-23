@@ -21,6 +21,8 @@ type filesCall struct {
 	path        string
 	query       string
 	contentType string
+	apiKey      string
+	version     string
 	body        []byte
 }
 
@@ -34,6 +36,8 @@ func newFilesUpstream(t *testing.T) (*fakeUpstream, *filesCall) {
 		last.path = r.URL.Path
 		last.query = r.URL.RawQuery
 		last.contentType = r.Header.Get("Content-Type")
+		last.apiKey = r.Header.Get("x-api-key")
+		last.version = r.Header.Get("anthropic-version")
 		last.body = append([]byte(nil), u.LastBody()...)
 
 		tail := filesAPITail(r.URL.Path)
@@ -176,17 +180,52 @@ func TestMistralProvider_Files(t *testing.T) {
 	assert.Contains(t, last.contentType, "multipart/form-data")
 }
 
+func anthropicFilesBackendPayload(name, baseURL string) map[string]any {
+	return map[string]any{
+		"name":             name,
+		"provider":         "anthropic",
+		"weight":           1,
+		"provider_options": map[string]any{"base_url": baseURL},
+		"auth": map[string]any{
+			"type":    "api_key",
+			"api_key": map[string]any{"api_key": "sk-ant-test"},
+		},
+	}
+}
+
+func TestAnthropicProvider_Files(t *testing.T) {
+	defer Track(t, "FilesProvider")()
+
+	up, last := newFilesUpstream(t)
+	apiKey, path := setupFilesRoute(t, anthropicFilesBackendPayload(uniqueName("ant-files"), up.URL()+"/v1"))
+
+	ct, upload := multipartFilesBody(t, "notes.txt", "anthropic file", "user_data")
+	status, headers, body := proxyRequest(t, http.MethodPost, apiKey, path, map[string]string{"Content-Type": ct}, upload)
+	assert.Equal(t, http.StatusOK, status, "body: %s", body)
+	assert.Equal(t, "anthropic", headers.Get("X-Selected-Provider"))
+	assert.Equal(t, "/v1/files", last.path)
+	assert.Equal(t, http.MethodPost, last.method)
+	assert.Equal(t, "sk-ant-test", last.apiKey)
+	assert.Equal(t, "2023-06-01", last.version)
+	assert.Contains(t, last.contentType, "multipart/form-data")
+
+	status, _, body = proxyRequest(t, http.MethodGet, apiKey, path, nil, nil)
+	assert.Equal(t, http.StatusOK, status, "body: %s", body)
+	assert.Equal(t, "/v1/files", last.path)
+	assert.Equal(t, http.MethodGet, last.method)
+}
+
 func TestFiles_FiltersIncapableProviderFromPool(t *testing.T) {
 	defer Track(t, "FilesProvider")()
 
 	capable, last := newFilesUpstream(t)
 	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("files-mix-gw")})
 	openaiID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("oai-files"), capable.URL()+"/v1"))
-	anthropicID := CreateRegistry(t, gatewayID, anthropicBackendPayload(uniqueName("ant-chat")))
+	groqID := CreateRegistry(t, gatewayID, groqBackendPayload(uniqueName("groq-chat")))
 	compatID := CreateRegistry(t, gatewayID, openaiCompatibleBackendPayload(uniqueName("compat-chat"), capable.URL()+"/v1"))
 	coID := CreateConsumer(t, gatewayID, map[string]any{"name": uniqueName("files-mix")})
 	AttachRegistry(t, gatewayID, coID, openaiID)
-	AttachRegistry(t, gatewayID, coID, anthropicID)
+	AttachRegistry(t, gatewayID, coID, groqID)
 	AttachRegistry(t, gatewayID, coID, compatID)
 	apiKey := createAndAttachAPIKey(t, gatewayID, coID)
 	path := "/" + ConsumerSlug(t, coID) + "/v1/files"
@@ -204,14 +243,14 @@ func TestFiles_PinnedIncapableProviderIsTerminal(t *testing.T) {
 	capable, _ := newFilesUpstream(t)
 	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("files-pin-gw")})
 	openaiID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("oai-files"), capable.URL()+"/v1"))
-	anthropicID := CreateRegistry(t, gatewayID, anthropicBackendPayload(uniqueName("ant-chat")))
+	groqID := CreateRegistry(t, gatewayID, groqBackendPayload(uniqueName("groq-chat")))
 	coID := CreateConsumer(t, gatewayID, map[string]any{"name": uniqueName("files-pin")})
 	AttachRegistry(t, gatewayID, coID, openaiID)
-	AttachRegistry(t, gatewayID, coID, anthropicID)
+	AttachRegistry(t, gatewayID, coID, groqID)
 	apiKey := createAndAttachAPIKey(t, gatewayID, coID)
 	path := "/" + ConsumerSlug(t, coID) + "/v1/files"
 
-	status, _, body := proxyPost(t, apiKey, path, map[string]any{"model": "@anthropic/claude-4"})
+	status, _, body := proxyPost(t, apiKey, path, map[string]any{"model": "@groq/llama-3.1-8b-instant"})
 	assert.Equal(t, http.StatusBadRequest, status, "body: %s", body)
 	assert.Equal(t, 0, capable.Hits(), "pinned incapable provider must not fail over")
 	assert.Contains(t, string(body), "does not support this capability")

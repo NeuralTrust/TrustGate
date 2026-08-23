@@ -781,8 +781,8 @@ func TestForward_EmbeddingsPinnedIncapableIsTerminal(t *testing.T) {
 func TestForward_FilesFiltersIncapableProviders(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	openai := backendFor(gatewayID, "openai")
-	anthropic := backendFor(gatewayID, "anthropic")
-	rc := routableConsumerWith(gatewayID, openai, anthropic)
+	groq := backendFor(gatewayID, "groq")
+	rc := routableConsumerWith(gatewayID, openai, groq)
 
 	invoker := proxymocks.NewProviderInvoker(t)
 	invoker.EXPECT().
@@ -813,15 +813,15 @@ func TestForward_FilesFiltersIncapableProviders(t *testing.T) {
 func TestForward_FilesPinnedIncapableIsTerminal(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	openai := backendFor(gatewayID, "openai")
-	anthropic := backendFor(gatewayID, "anthropic")
-	rc := routableConsumerWith(gatewayID, openai, anthropic)
+	groq := backendFor(gatewayID, "groq")
+	rc := routableConsumerWith(gatewayID, openai, groq)
 
 	fwd := newTestForwarder(t, proxymocks.NewProviderInvoker(t))
 	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
 		Request: &infracontext.RequestContext{
-			Body:            []byte(`{"model":"@anthropic/claude-4"}`),
+			Body:            []byte(`{"model":"@groq/llama-3.1-8b-instant"}`),
 			ProxyCapability: "files",
 		},
 	})

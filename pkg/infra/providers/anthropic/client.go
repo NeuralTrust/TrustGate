@@ -21,6 +21,8 @@ import (
 	"io"
 	"iter"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
@@ -28,7 +30,13 @@ import (
 
 const (
 	messagesURL      = "https://api.anthropic.com/v1/messages"
+	filesBaseURL     = "https://api.anthropic.com/v1"
 	anthropicVersion = "2023-06-01"
+)
+
+var (
+	_ providers.Client      = (*client)(nil)
+	_ providers.FilesClient = (*client)(nil)
 )
 
 type client struct {
@@ -77,6 +85,37 @@ func (c *client) rawPost(ctx context.Context, apiKey string, reqBody []byte) ([]
 	}
 
 	return body.Bytes(), nil
+}
+
+func (c *client) Files(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.FilesRequest,
+) (*providers.FilesResult, error) {
+	if config.Credentials.ApiKey == "" {
+		return nil, fmt.Errorf("API key is required")
+	}
+	endpoint, err := filesURL(config.Options, req.Path, req.Query)
+	if err != nil {
+		return nil, err
+	}
+	httpClient := c.pool.Get(providers.ProviderAnthropic, providers.DefaultHTTPTimeout)
+	return providers.DoFilesHTTP(ctx, httpClient, req.Method, endpoint, req.ContentType, req.Body, func(httpReq *http.Request) {
+		httpReq.Header.Set("x-api-key", config.Credentials.ApiKey)
+		httpReq.Header.Set("anthropic-version", anthropicVersion)
+	})
+}
+
+func filesURL(options map[string]any, path string, query url.Values) (string, error) {
+	opts, err := providers.DecodeAnthropicOptions(options)
+	if err != nil {
+		return "", err
+	}
+	base := filesBaseURL
+	if opts.BaseURL != "" {
+		base = strings.TrimRight(opts.BaseURL, "/")
+	}
+	return providers.JoinOpenAIFilesURL(base, path, query), nil
 }
 
 func (c *client) CompletionsStream(
