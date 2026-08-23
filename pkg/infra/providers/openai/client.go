@@ -26,6 +26,7 @@ const (
 	completionsURL = "https://api.openai.com/v1/chat/completions"
 	responsesURL   = "https://api.openai.com/v1/responses"
 	embeddingsURL  = "https://api.openai.com/v1/embeddings"
+	filesBaseURL   = "https://api.openai.com/v1"
 
 	completionsPath = "/chat/completions"
 	responsesPath   = "/responses"
@@ -35,6 +36,7 @@ const (
 var (
 	_ providers.Client           = (*client)(nil)
 	_ providers.EmbeddingsClient = (*client)(nil)
+	_ providers.FilesClient      = (*client)(nil)
 )
 
 type client struct {
@@ -82,6 +84,30 @@ func (c *client) Embeddings(
 		return nil, err
 	}
 	return c.chat.Completions(ctx, endpointURL, config, reqBody, nil)
+}
+
+func (c *client) Files(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.FilesRequest,
+) (*providers.FilesResult, error) {
+	base, err := c.resolveFilesBaseURL(config)
+	if err != nil {
+		return nil, err
+	}
+	return c.chat.Files(ctx, providers.JoinOpenAIFilesURL(base, req.Path, req.Query), config, req)
+}
+
+func (c *client) resolveFilesBaseURL(config *providers.Config) (string, error) {
+	opts, err := providers.DecodeOpenAIOptions(config.Options)
+	if err != nil {
+		return "", err
+	}
+	base := strings.TrimRight(opts.BaseURL, "/")
+	if base != "" {
+		return base, nil
+	}
+	return filesBaseURL, nil
 }
 
 func (c *client) resolveEmbeddingsURL(config *providers.Config) (string, error) {

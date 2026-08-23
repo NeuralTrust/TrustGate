@@ -53,6 +53,24 @@ func TestNewOpenRouterClient(t *testing.T) {
 	assert.NotNil(t, NewOpenRouterClient())
 }
 
+func TestFilesURL(t *testing.T) {
+	assert.Equal(t, "https://openrouter.ai/api/v1/files", providers.JoinOpenAIFilesURL(filesBaseURL, "/v1/files", nil))
+	q := map[string][]string{"provider": {"openai"}}
+	assert.Equal(t,
+		"https://openrouter.ai/api/v1/files?provider=openai",
+		providers.JoinOpenAIFilesURL(filesBaseURL, "/v1/files", q),
+	)
+}
+
+func TestFiles_MissingAPIKey(t *testing.T) {
+	_, err := NewOpenRouterClient().(providers.FilesClient).Files(context.Background(), &providers.Config{}, providers.FilesRequest{
+		Method: http.MethodGet,
+		Path:   "/v1/files",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "API key is required")
+}
+
 func TestCompletions_MissingAPIKey(t *testing.T) {
 	_, err := NewOpenRouterClient().Completions(context.Background(), &providers.Config{}, []byte(`{}`))
 	require.Error(t, err)

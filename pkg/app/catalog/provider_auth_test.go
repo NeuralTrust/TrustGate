@@ -192,3 +192,25 @@ func TestProviderCapabilities_EmbeddingsProviders(t *testing.T) {
 		t.Fatal("anthropic must not advertise embeddings")
 	}
 }
+
+func TestProviderCapabilities_FilesProviders(t *testing.T) {
+	t.Parallel()
+	for _, code := range []string{
+		providers.ProviderOpenAI,
+		providers.ProviderAzure,
+		providers.ProviderOpenRouter,
+		providers.ProviderXAI,
+		providers.ProviderMistral,
+	} {
+		caps := ProviderCapabilities(code)
+		if !caps["files"] {
+			t.Fatalf("%s capabilities missing files: %v", code, caps)
+		}
+	}
+	if ProviderCapabilities(providers.ProviderAnthropic)["files"] {
+		t.Fatal("anthropic must not advertise files")
+	}
+	if ProviderCapabilities(providers.ProviderOpenAICompatible)["files"] {
+		t.Fatal("openai_compatible must not advertise files")
+	}
+}
