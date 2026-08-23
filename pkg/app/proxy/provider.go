@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
@@ -41,10 +42,12 @@ const (
 	responsesTurnIDPrefix = "resp_"
 	fieldPreviousResponse = "previous_response_id"
 
-	capabilityChat       = "chat"
-	capabilityEmbeddings = "embeddings"
-	capabilityRerank     = "rerank"
-	capabilityFiles      = "files"
+	capabilityChat               = "chat"
+	capabilityEmbeddings         = "embeddings"
+	capabilityRerank             = "rerank"
+	capabilityFiles              = "files"
+	capabilityAudioSpeech        = "audio_speech"
+	capabilityAudioTranscription = "audio_transcription"
 )
 
 var ErrInvalidRequestPayload = errors.New("invalid request payload")
@@ -125,6 +128,7 @@ type preparedInvocation struct {
 	crossFormat  bool
 	capability   string
 	files        providers.FilesRequest
+	audio        providers.AudioRequest
 }
 
 func (p *providerInvoker) Invoke(
@@ -139,6 +143,9 @@ func (p *providerInvoker) Invoke(
 
 	if prep.capability == capabilityFiles {
 		return p.invokeFiles(ctx, bk, prep)
+	}
+	if isAudioCapability(prep.capability) {
+		return p.invokeAudio(ctx, bk, prep)
 	}
 
 	respBody, err := p.invokeUpstream(ctx, prep)
@@ -197,6 +204,12 @@ func (p *providerInvoker) InvokeStream(
 	prep, err := p.prepare(bk, req)
 	if err != nil {
 		return nil, err
+	}
+	if prep.capability == capabilityFiles {
+		return p.invokeFiles(ctx, bk, prep)
+	}
+	if isAudioCapability(prep.capability) {
+		return p.invokeAudio(ctx, bk, prep)
 	}
 
 	body := prep.body
@@ -261,6 +274,9 @@ func (p *providerInvoker) prepare(
 			capability:   capability,
 			files:        filesRequestFromContext(req),
 		}, nil
+	}
+	if isAudioCapability(capability) {
+		return p.prepareAudio(bk, req, client, sourceFormat, targetFormat, capability)
 	}
 
 	crossFormat := !adapter.ShouldPassthroughSameWireFormat(sourceFormat, targetFormat)
@@ -334,6 +350,10 @@ func capabilityFromRequest(req *infracontext.RequestContext) string {
 		return capabilityRerank
 	case capabilityFiles:
 		return capabilityFiles
+	case capabilityAudioSpeech:
+		return capabilityAudioSpeech
+	case capabilityAudioTranscription:
+		return capabilityAudioTranscription
 	default:
 		return capabilityChat
 	}
@@ -385,6 +405,140 @@ func filesProviderConfig(bk *registry.Registry) *providers.Config {
 	return &providers.Config{
 		Options:     adapter.OpenAIProviderOptionsForTarget(bk.Provider(), adapter.FormatOpenAIFiles, bk.ProviderOptions()),
 		Credentials: providers.CredentialsFromTargetAuth(bk.Auth()),
+	}
+}
+
+func (p *providerInvoker) prepareAudio(
+	bk *registry.Registry,
+	req *infracontext.RequestContext,
+	client providers.Client,
+	sourceFormat, targetFormat adapter.Format,
+	capability string,
+) (*preparedInvocation, error) {
+	body := req.Body
+	contentType := req.HeaderValue(headerContentType)
+	var sentModel string
+	if providers.IsAudioMultipart(contentType) {
+		sentModel = audioMultipartSentModel(contentType, body, req.DefaultModel)
+		if err := adapter.CheckAllowedModel(sentModel, req.AllowedModels); err != nil {
+			return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, err.Error())
+		}
+	} else {
+		normalized, _, verr := adapter.EnforceModel(body, req.AllowedModels, req.DefaultModel)
+		if verr != nil {
+			if errors.Is(verr, adapter.ErrModelNotAllowed) {
+				return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, verr.Error())
+			}
+			if len(req.AllowedModels) > 0 {
+				return nil, fmt.Errorf("%w: model enforcement could not parse request body: %s", ErrModelNotAllowed, verr.Error())
+			}
+			p.logger.Warn("model enforcement failed, proceeding without override",
+				slog.String("error", verr.Error()))
+		} else {
+			body = normalized
+		}
+		sentModel = resolveSentModel(body, req)
+	}
+	audio := audioRequestFromContext(req)
+	audio.Body = body
+	if audio.ContentType == "" {
+		audio.ContentType = contentTypeJSON
+	}
+	return &preparedInvocation{
+		client: client,
+		cfg: &providers.Config{
+			Options:       adapter.OpenAIProviderOptionsForTarget(bk.Provider(), adapter.FormatOpenAIAudio, bk.ProviderOptions()),
+			Credentials:   providers.CredentialsFromTargetAuth(bk.Auth()),
+			Model:         sentModel,
+			DefaultModel:  req.DefaultModel,
+			AllowedModels: req.AllowedModels,
+		},
+		body:         body,
+		sentModel:    sentModel,
+		sourceFormat: sourceFormat,
+		targetFormat: targetFormat,
+		capability:   capability,
+		audio:        audio,
+	}, nil
+}
+
+func audioRequestFromContext(req *infracontext.RequestContext) providers.AudioRequest {
+	return providers.AudioRequest{
+		Method:      req.Method,
+		Path:        providers.RestAfterConsumerSlug(req.Path),
+		Query:       req.Query,
+		ContentType: req.HeaderValue(headerContentType),
+		Body:        req.Body,
+	}
+}
+
+func audioMultipartSentModel(contentType string, body []byte, defaultModel string) string {
+	model := providers.ExtractAudioModel(contentType, body)
+	if intent, err := routingdomain.ParseModelRef(model); err == nil {
+		switch {
+		case intent.IsQualified(), intent.IsShortModel():
+			model = intent.Model
+		case intent.IsAuto(), intent.IsPool():
+			model = ""
+		}
+	}
+	if model == "" {
+		return defaultModel
+	}
+	return model
+}
+
+func (p *providerInvoker) invokeAudio(
+	ctx context.Context,
+	bk *registry.Registry,
+	prep *preparedInvocation,
+) (*ProviderResponse, error) {
+	if err := providers.ValidateAudioMethod(prep.audio.Method, prep.audio.Path); err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidRequestPayload, err.Error())
+	}
+	result, err := invokeAudioClient(ctx, prep)
+	if err != nil {
+		if be, ok := registry.IsBackendError(err); ok {
+			return &ProviderResponse{
+				StatusCode: be.StatusCode,
+				Headers:    withSelectionHeaders(be.PassthroughHeaders(), bk, prep.sentModel),
+				Body:       be.Body,
+			}, nil
+		}
+		return nil, fmt.Errorf("provider audio: %w", err)
+	}
+	contentType := result.ContentType
+	if contentType == "" {
+		contentType = contentTypeJSON
+	}
+	return &ProviderResponse{
+		StatusCode: http.StatusOK,
+		Headers: withSelectionHeaders(
+			map[string][]string{headerContentType: {contentType}},
+			bk,
+			prep.sentModel,
+		),
+		Body:      result.Body,
+		SentModel: prep.sentModel,
+	}, nil
+}
+
+func invokeAudioClient(ctx context.Context, prep *preparedInvocation) (*providers.AudioResult, error) {
+	switch prep.capability {
+	case capabilityAudioSpeech:
+		client, ok := prep.client.(providers.AudioSpeechClient)
+		if !ok {
+			return nil, fmt.Errorf("%w: %s", ErrCapabilityNotSupported, capabilityAudioSpeech)
+		}
+		return client.AudioSpeech(ctx, prep.cfg, prep.audio)
+	case capabilityAudioTranscription:
+		client, ok := prep.client.(providers.AudioTranscriptionClient)
+		if !ok {
+			return nil, fmt.Errorf("%w: %s", ErrCapabilityNotSupported, capabilityAudioTranscription)
+		}
+		return client.AudioTranscription(ctx, prep.cfg, prep.audio)
+	default:
+		return nil, fmt.Errorf("%w: %s", ErrCapabilityNotSupported, prep.capability)
 	}
 }
 

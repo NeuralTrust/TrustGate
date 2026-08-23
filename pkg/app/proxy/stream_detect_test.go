@@ -59,6 +59,16 @@ func TestDetectStream(t *testing.T) {
 			&infracontext.RequestContext{Path: "/v1/models/x:streamGenerateContent", Body: []byte(`{"stream":false}`)},
 			true,
 		},
+		{
+			"audio speech ignores stream flag",
+			&infracontext.RequestContext{ProxyCapability: "audio_speech", Body: []byte(`{"model":"tts-1","stream":true}`)},
+			false,
+		},
+		{
+			"audio transcription ignores stream flag",
+			&infracontext.RequestContext{ProxyCapability: "audio_transcription", Body: []byte(`{"model":"whisper-1","stream":true}`)},
+			false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

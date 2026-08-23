@@ -15,10 +15,12 @@
 package providers
 
 const (
-	CapabilityChat       = "chat"
-	CapabilityEmbeddings = "embeddings"
-	CapabilityRerank     = "rerank"
-	CapabilityFiles      = "files"
+	CapabilityChat               = "chat"
+	CapabilityEmbeddings         = "embeddings"
+	CapabilityRerank             = "rerank"
+	CapabilityFiles              = "files"
+	CapabilityAudioSpeech        = "audio_speech"
+	CapabilityAudioTranscription = "audio_transcription"
 )
 
 func SupportsCapability(provider, capability string) bool {
@@ -42,6 +44,13 @@ func SupportsCapability(provider, capability string) bool {
 		default:
 			return false
 		}
+	case CapabilityAudioSpeech, CapabilityAudioTranscription:
+		switch provider {
+		case ProviderOpenAI, ProviderOpenAICompatible, ProviderAzure, ProviderOpenRouter, ProviderGroq, ProviderMistral:
+			return true
+		default:
+			return false
+		}
 	default:
 		return false
 	}
@@ -58,6 +67,12 @@ func ProviderCapabilities(provider string) map[string]bool {
 	if SupportsCapability(provider, CapabilityFiles) {
 		caps[CapabilityFiles] = true
 	}
+	if SupportsCapability(provider, CapabilityAudioSpeech) {
+		caps[CapabilityAudioSpeech] = true
+	}
+	if SupportsCapability(provider, CapabilityAudioTranscription) {
+		caps[CapabilityAudioTranscription] = true
+	}
 	return caps
 }
 
@@ -73,6 +88,12 @@ func ClientSupportsCapability(client Client, capability string) bool {
 		return ok
 	case CapabilityFiles:
 		_, ok := client.(FilesClient)
+		return ok
+	case CapabilityAudioSpeech:
+		_, ok := client.(AudioSpeechClient)
+		return ok
+	case CapabilityAudioTranscription:
+		_, ok := client.(AudioTranscriptionClient)
 		return ok
 	default:
 		return false

@@ -39,6 +39,8 @@ func TestResolveProxyPath(t *testing.T) {
 		{"/X84Yhsy8/v1/files", "X84Yhsy8", adapter.FormatOpenAIFiles, CapabilityFiles},
 		{"/X84Yhsy8/v1/files/file-1", "X84Yhsy8", adapter.FormatOpenAIFiles, CapabilityFiles},
 		{"/X84Yhsy8/v1/files/file-1/content", "X84Yhsy8", adapter.FormatOpenAIFiles, CapabilityFiles},
+		{"/X84Yhsy8/v1/audio/speech", "X84Yhsy8", adapter.FormatOpenAIAudio, CapabilityAudioSpeech},
+		{"/X84Yhsy8/v1/audio/transcriptions", "X84Yhsy8", adapter.FormatOpenAIAudio, CapabilityAudioTranscription},
 		{"/X84Yhsy8/v1/models", "X84Yhsy8", adapter.FormatOpenAI, CapabilityModels},
 		{"/X84Yhsy8/v1/models/", "X84Yhsy8", adapter.FormatOpenAI, CapabilityModels},
 		{"/X84Yhsy8/v1/models/gpt-4o-mini", "X84Yhsy8", adapter.FormatOpenAI, CapabilityModels},
@@ -73,6 +75,9 @@ func TestResolveProxyPath_UnknownRoutes(t *testing.T) {
 		"/X84Yhsy8/v1beta/models/",
 		"/X84Yhsy8/v1beta/models/:generateContent",
 		"/X84Yhsy8/v1/files/file-1/other",
+		"/X84Yhsy8/v1/audio/translations",
+		"/X84Yhsy8/v1/audio/speech/extra",
+		"/X84Yhsy8/v1/audio",
 		"/X84Yhsy8/v1/models/gpt-4/extra",
 		"/v1/chat/completions",
 	} {

@@ -34,9 +34,11 @@ const (
 )
 
 var (
-	_ providers.Client           = (*client)(nil)
-	_ providers.EmbeddingsClient = (*client)(nil)
-	_ providers.FilesClient      = (*client)(nil)
+	_ providers.Client                   = (*client)(nil)
+	_ providers.EmbeddingsClient         = (*client)(nil)
+	_ providers.FilesClient              = (*client)(nil)
+	_ providers.AudioSpeechClient        = (*client)(nil)
+	_ providers.AudioTranscriptionClient = (*client)(nil)
 )
 
 type client struct {
@@ -96,6 +98,34 @@ func (c *client) Files(
 		return nil, err
 	}
 	return c.chat.Files(ctx, providers.JoinOpenAIFilesURL(base, req.Path, req.Query), config, req)
+}
+
+func (c *client) AudioSpeech(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.AudioRequest,
+) (*providers.AudioResult, error) {
+	return c.audio(ctx, config, req)
+}
+
+func (c *client) AudioTranscription(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.AudioRequest,
+) (*providers.AudioResult, error) {
+	return c.audio(ctx, config, req)
+}
+
+func (c *client) audio(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.AudioRequest,
+) (*providers.AudioResult, error) {
+	base, err := c.resolveFilesBaseURL(config)
+	if err != nil {
+		return nil, err
+	}
+	return c.chat.Audio(ctx, providers.JoinOpenAIAudioURL(base, req.Path, req.Query), config, req, nil)
 }
 
 func (c *client) resolveFilesBaseURL(config *providers.Config) (string, error) {

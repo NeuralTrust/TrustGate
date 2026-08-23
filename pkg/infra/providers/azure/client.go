@@ -43,9 +43,11 @@ type client struct {
 }
 
 var (
-	_ providers.Client           = (*client)(nil)
-	_ providers.EmbeddingsClient = (*client)(nil)
-	_ providers.FilesClient      = (*client)(nil)
+	_ providers.Client                   = (*client)(nil)
+	_ providers.EmbeddingsClient         = (*client)(nil)
+	_ providers.FilesClient              = (*client)(nil)
+	_ providers.AudioSpeechClient        = (*client)(nil)
+	_ providers.AudioTranscriptionClient = (*client)(nil)
 )
 
 func NewAzureClient() providers.Client {
@@ -113,6 +115,71 @@ func (c *client) Embeddings(
 	}
 
 	return c.rawPost(ctx, c.buildEmbeddingsURL(config, model), auth, reqBody)
+}
+
+func (c *client) AudioSpeech(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.AudioRequest,
+) (*providers.AudioResult, error) {
+	return c.audio(ctx, config, req)
+}
+
+func (c *client) AudioTranscription(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.AudioRequest,
+) (*providers.AudioResult, error) {
+	return c.audio(ctx, config, req)
+}
+
+func (c *client) audio(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.AudioRequest,
+) (*providers.AudioResult, error) {
+	if config.Credentials.Azure == nil {
+		return nil, fmt.Errorf("azure configuration is required")
+	}
+	if config.Credentials.Azure.Endpoint == "" {
+		return nil, fmt.Errorf("azure endpoint is required")
+	}
+
+	model := azureAudioModel(config, req)
+	if model == "" {
+		return nil, fmt.Errorf("model (deployment ID) is required")
+	}
+
+	auth, err := c.resolveAuth(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+
+	httpClient := c.pool.Get(providers.ProviderAzure, providers.DefaultHTTPTimeout)
+	contentType := req.ContentType
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	return providers.AudioResultFromFiles(providers.DoFilesHTTP(
+		ctx,
+		httpClient,
+		req.Method,
+		c.buildAudioURL(config, model, req.Path),
+		contentType,
+		req.Body,
+		auth.apply,
+	))
+}
+
+func azureAudioModel(config *providers.Config, req providers.AudioRequest) string {
+	if config != nil && config.Model != "" {
+		return config.Model
+	}
+	return providers.ExtractAudioModel(req.ContentType, req.Body)
+}
+
+func (c *client) buildAudioURL(config *providers.Config, model, gatewayPath string) string {
+	return c.buildDeploymentURL(config, model, providers.AzureAudioOperation(gatewayPath))
 }
 
 func (c *client) Files(
