@@ -42,6 +42,10 @@ func TestResolveProxyPath(t *testing.T) {
 		{"/X84Yhsy8/v1/audio/speech", "X84Yhsy8", adapter.FormatOpenAIAudio, CapabilityAudioSpeech},
 		{"/X84Yhsy8/v1/audio/transcriptions", "X84Yhsy8", adapter.FormatOpenAIAudio, CapabilityAudioTranscription},
 		{"/X84Yhsy8/v1/models", "X84Yhsy8", adapter.FormatOpenAI, CapabilityModels},
+		{"/X84Yhsy8/v1/images/generations", "X84Yhsy8", adapter.FormatOpenAIImages, CapabilityImages},
+		{"/X84Yhsy8/v1/images/generations/", "X84Yhsy8", adapter.FormatOpenAIImages, CapabilityImages},
+		{"/X84Yhsy8/v1/images/edits", "X84Yhsy8", adapter.FormatOpenAIImages, CapabilityImages},
+		{"/X84Yhsy8/v1/images/variations", "X84Yhsy8", adapter.FormatOpenAIImages, CapabilityImages},
 		{"/X84Yhsy8/v1/models/", "X84Yhsy8", adapter.FormatOpenAI, CapabilityModels},
 		{"/X84Yhsy8/v1/models/gpt-4o-mini", "X84Yhsy8", adapter.FormatOpenAI, CapabilityModels},
 		{"/X84Yhsy8/v1/models/amazon.titan-embed-text-v2:0", "X84Yhsy8", adapter.FormatOpenAI, CapabilityModels},
@@ -79,6 +83,10 @@ func TestResolveProxyPath_UnknownRoutes(t *testing.T) {
 		"/X84Yhsy8/v1/audio/speech/extra",
 		"/X84Yhsy8/v1/audio",
 		"/X84Yhsy8/v1/models/gpt-4/extra",
+		"/X84Yhsy8/v1/images",
+		"/X84Yhsy8/v1/images/generations/extra",
+		"/X84Yhsy8/v1/images/edits/extra",
+		"/X84Yhsy8/v1/images/variations/extra",
 		"/v1/chat/completions",
 	} {
 		if _, err := ResolveProxyPath(path); !errors.Is(err, ErrUnknownProxyPath) {

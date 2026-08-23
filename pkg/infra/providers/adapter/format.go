@@ -40,6 +40,7 @@ const (
 	FormatCohere            Format = "cohere"
 	FormatOpenAIEmbeddings  Format = "openai_embeddings"
 	FormatOpenAIFiles       Format = "openai_files"
+	FormatOpenAIImages      Format = "openai_images"
 	FormatOpenAIAudio       Format = "openai_audio"
 	FormatCohereEmbed       Format = "cohere_embed"
 	FormatCohereRerank      Format = "cohere_rerank"
@@ -123,7 +124,8 @@ func SupportedSourceFormat(f Format) bool {
 	switch f {
 	case FormatOpenAI, FormatOpenAIResponses, FormatAnthropic, FormatGemini,
 		FormatAzure, FormatGroq, FormatVertex, FormatMistral, FormatDeepSeek, FormatXAI, FormatOpenRouter,
-		FormatCohere, FormatOpenAIEmbeddings, FormatOpenAIFiles, FormatOpenAIAudio, FormatCohereEmbed, FormatCohereRerank,
+		FormatCohere, FormatOpenAIEmbeddings, FormatOpenAIFiles, FormatOpenAIImages, FormatOpenAIAudio,
+		FormatCohereEmbed, FormatCohereRerank,
 		FormatVertexEmbed, FormatBedrockTitanEmbed:
 		return true
 	default:
@@ -225,6 +227,8 @@ func ResolveTargetFormatForCapability(
 		return FormatCohereRerank
 	case "files":
 		return FormatOpenAIFiles
+	case "images":
+		return FormatOpenAIImages
 	case "audio_speech", "audio_transcription":
 		return FormatOpenAIAudio
 	default:

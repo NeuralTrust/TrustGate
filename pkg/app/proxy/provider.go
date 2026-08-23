@@ -46,6 +46,7 @@ const (
 	capabilityEmbeddings         = "embeddings"
 	capabilityRerank             = "rerank"
 	capabilityFiles              = "files"
+	capabilityImages             = "images"
 	capabilityAudioSpeech        = "audio_speech"
 	capabilityAudioTranscription = "audio_transcription"
 )
@@ -128,6 +129,7 @@ type preparedInvocation struct {
 	crossFormat  bool
 	capability   string
 	files        providers.FilesRequest
+	images       providers.ImagesRequest
 	audio        providers.AudioRequest
 }
 
@@ -143,6 +145,9 @@ func (p *providerInvoker) Invoke(
 
 	if prep.capability == capabilityFiles {
 		return p.invokeFiles(ctx, bk, prep)
+	}
+	if prep.capability == capabilityImages {
+		return p.invokeImages(ctx, bk, prep)
 	}
 	if isAudioCapability(prep.capability) {
 		return p.invokeAudio(ctx, bk, prep)
@@ -275,6 +280,9 @@ func (p *providerInvoker) prepare(
 			files:        filesRequestFromContext(req),
 		}, nil
 	}
+	if capability == capabilityImages {
+		return p.prepareImages(bk, req, client, sourceFormat, targetFormat)
+	}
 	if isAudioCapability(capability) {
 		return p.prepareAudio(bk, req, client, sourceFormat, targetFormat, capability)
 	}
@@ -350,6 +358,8 @@ func capabilityFromRequest(req *infracontext.RequestContext) string {
 		return capabilityRerank
 	case capabilityFiles:
 		return capabilityFiles
+	case capabilityImages:
+		return capabilityImages
 	case capabilityAudioSpeech:
 		return capabilityAudioSpeech
 	case capabilityAudioTranscription:
@@ -552,6 +562,85 @@ func filesRequestFromContext(req *infracontext.RequestContext) providers.FilesRe
 	}
 }
 
+func (p *providerInvoker) prepareImages(
+	bk *registry.Registry,
+	req *infracontext.RequestContext,
+	client providers.Client,
+	sourceFormat, targetFormat adapter.Format,
+) (*preparedInvocation, error) {
+	body := req.Body
+	contentType := req.HeaderValue(headerContentType)
+	var sentModel string
+	if providers.IsImagesMultipart(contentType) {
+		sentModel = imagesMultipartSentModel(contentType, body, req.DefaultModel)
+		if err := adapter.CheckAllowedModel(sentModel, req.AllowedModels); err != nil {
+			return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, err.Error())
+		}
+	} else {
+		normalized, _, verr := adapter.EnforceModel(body, req.AllowedModels, req.DefaultModel)
+		if verr != nil {
+			if errors.Is(verr, adapter.ErrModelNotAllowed) {
+				return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, verr.Error())
+			}
+			if len(req.AllowedModels) > 0 {
+				return nil, fmt.Errorf("%w: model enforcement could not parse request body: %s", ErrModelNotAllowed, verr.Error())
+			}
+			p.logger.Warn("model enforcement failed, proceeding without override",
+				slog.String("error", verr.Error()))
+		} else {
+			body = normalized
+		}
+		sentModel = resolveSentModel(body, req)
+	}
+	images := imagesRequestFromContext(req)
+	images.Body = body
+	if images.ContentType == "" {
+		images.ContentType = contentTypeJSON
+	}
+	return &preparedInvocation{
+		client: client,
+		cfg: &providers.Config{
+			Options:       adapter.OpenAIProviderOptionsForTarget(bk.Provider(), adapter.FormatOpenAIImages, bk.ProviderOptions()),
+			Credentials:   providers.CredentialsFromTargetAuth(bk.Auth()),
+			Model:         sentModel,
+			DefaultModel:  req.DefaultModel,
+			AllowedModels: req.AllowedModels,
+		},
+		body:         body,
+		sentModel:    sentModel,
+		sourceFormat: sourceFormat,
+		targetFormat: targetFormat,
+		capability:   capabilityImages,
+		images:       images,
+	}, nil
+}
+
+func imagesRequestFromContext(req *infracontext.RequestContext) providers.ImagesRequest {
+	return providers.ImagesRequest{
+		Method:      req.Method,
+		Path:        providers.RestAfterConsumerSlug(req.Path),
+		Query:       req.Query,
+		ContentType: req.HeaderValue(headerContentType),
+		Body:        req.Body,
+	}
+}
+
+func imagesMultipartSentModel(contentType string, body []byte, defaultModel string) string {
+	model := providers.ExtractImagesModel(contentType, body)
+	if intent, err := routingdomain.ParseModelRef(model); err == nil {
+		switch {
+		case intent.IsQualified(), intent.IsShortModel():
+			model = intent.Model
+		case intent.IsAuto(), intent.IsPool():
+			model = ""
+		}
+	}
+	if model == "" {
+		return defaultModel
+	}
+	return model
+}
+
 func (p *providerInvoker) invokeFiles(
 	ctx context.Context,
 	bk *registry.Registry,
@@ -587,6 +676,45 @@ func (p *providerInvoker) invokeFiles(
 			prep.sentModel,
 		),
 		Body: result.Body,
+	}, nil
+}
+
+func (p *providerInvoker) invokeImages(
+	ctx context.Context,
+	bk *registry.Registry,
+	prep *preparedInvocation,
+) (*ProviderResponse, error) {
+	imagesClient, ok := prep.client.(providers.ImagesClient)
+	if !ok {
+		return nil, fmt.Errorf("%w: images", ErrCapabilityNotSupported)
+	}
+	if err := providers.ValidateImagesMethod(prep.images.Method, prep.images.Path); err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidRequestPayload, err.Error())
+	}
+	result, err := imagesClient.Images(ctx, prep.cfg, prep.images)
+	if err != nil {
+		if be, ok := registry.IsBackendError(err); ok {
+			return &ProviderResponse{
+				StatusCode: be.StatusCode,
+				Headers:    withSelectionHeaders(be.PassthroughHeaders(), bk, prep.sentModel),
+				Body:       be.Body,
+			}, nil
+		}
+		return nil, fmt.Errorf("provider images: %w", err)
+	}
+	contentType := result.ContentType
+	if contentType == "" {
+		contentType = contentTypeJSON
+	}
+	return &ProviderResponse{
+		StatusCode: http.StatusOK,
+		Headers: withSelectionHeaders(
+			map[string][]string{headerContentType: {contentType}},
+			bk,
+			prep.sentModel,
+		),
+		Body:      result.Body,
+		SentModel: prep.sentModel,
 	}, nil
 }
 

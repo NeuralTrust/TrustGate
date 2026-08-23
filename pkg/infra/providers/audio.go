@@ -15,14 +15,11 @@
 package providers
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"mime"
-	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strings"
@@ -198,42 +195,6 @@ func extractJSONStringField(body []byte, name string) string {
 		return ""
 	}
 	return out
-}
-
-func extractMultipartField(contentType string, body []byte, name string) string {
-	_, params, err := mime.ParseMediaType(contentType)
-	if err != nil {
-		return ""
-	}
-	boundary := params["boundary"]
-	if boundary == "" {
-		return ""
-	}
-	reader := multipart.NewReader(bytes.NewReader(body), boundary)
-	for {
-		part, err := reader.NextPart()
-		if err != nil {
-			return ""
-		}
-		if part.FormName() != name {
-			_, _ = io.Copy(io.Discard, part)
-			_ = part.Close()
-			continue
-		}
-		value, err := io.ReadAll(part)
-		_ = part.Close()
-		if err != nil {
-			return ""
-		}
-		return strings.TrimSpace(string(value))
-	}
-}
-
-func appendQuery(endpoint string, query url.Values) string {
-	if enc := query.Encode(); enc != "" {
-		return endpoint + "?" + enc
-	}
-	return endpoint
 }
 
 func isAudioMediaType(contentType string) bool {

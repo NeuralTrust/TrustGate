@@ -82,7 +82,8 @@ func capabilityRequiresProviderSupport(req *infracontext.RequestContext) string 
 		return ""
 	}
 	switch req.ProxyCapability {
-	case capabilityEmbeddings, capabilityRerank, capabilityFiles, capabilityAudioSpeech, capabilityAudioTranscription:
+	case capabilityEmbeddings, capabilityRerank, capabilityFiles, capabilityImages,
+		capabilityAudioSpeech, capabilityAudioTranscription:
 		return req.ProxyCapability
 	default:
 		return ""
@@ -142,6 +143,9 @@ func modelRefFromRequest(req *infracontext.RequestContext) (string, error) {
 	}
 	ref, hasModelID, err := adapter.ExtractModelField(req.Body)
 	if err != nil {
+		if req.ProxyCapability == capabilityImages && providers.IsImagesMultipart(req.HeaderValue(headerContentType)) {
+			return providers.ExtractImagesModel(req.HeaderValue(headerContentType), req.Body), nil
+		}
 		if isAudioCapability(req.ProxyCapability) && providers.IsAudioMultipart(req.HeaderValue(headerContentType)) {
 			return providers.ExtractAudioModel(req.HeaderValue(headerContentType), req.Body), nil
 		}

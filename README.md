@@ -121,7 +121,19 @@ curl -s -X POST "$PROXY/$CON_SLUG/v1/audio/transcriptions" \
   -F model=whisper-1 \
   -F file="@speech.mp3"
 
-# 11. Model discovery (OpenAI-compatible, gateway-owned)
+# 11. Images (OpenAI, Azure OpenAI, openai_compatible, OpenRouter)
+curl -s -X POST "$PROXY/$CON_SLUG/v1/images/generations" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"dall-e-3","prompt":"A minimal TrustGate logo","n":1,"size":"1024x1024"}'
+curl -s -X POST "$PROXY/$CON_SLUG/v1/images/edits" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
+  -F model=dall-e-2 -F prompt="make it blue" -F image=@logo.png
+curl -s -X POST "$PROXY/$CON_SLUG/v1/images/variations" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
+  -F model=dall-e-2 -F image=@logo.png
+
+# 12. Model discovery (OpenAI-compatible, gateway-owned)
 curl -s "$PROXY/$CON_SLUG/v1/models" \
   -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY"
 curl -s "$PROXY/$CON_SLUG/v1/models/gpt-4o-mini" \
@@ -129,6 +141,8 @@ curl -s "$PROXY/$CON_SLUG/v1/models/gpt-4o-mini" \
 ```
 
 OpenAI-shaped clients call `POST /{consumer}/v1/audio/speech` (TTS, raw audio bytes) and `POST /{consumer}/v1/audio/transcriptions` (STT, multipart file). OpenAI, Azure OpenAI, `openai_compatible`, OpenRouter, Groq, and Mistral registries that expose those APIs are forwarded as-is (Azure uses `{endpoint}/openai/deployments/{model}/audio/{speech|transcriptions}?api-version=…`). Mistral speech JSON `{audio_data}` is unwrapped to raw bytes so the gateway response stays OpenAI-shaped. `/v1/audio/translations` is not served yet. Providers without the matching audio capability are filtered out of the pool.
+
+OpenAI-shaped clients call `POST /{consumer}/v1/images/generations` (JSON), plus multipart `POST /{consumer}/v1/images/edits` and `POST /{consumer}/v1/images/variations`. OpenAI, Azure, and `openai_compatible` registries forward the payload to the matching upstream images URL (Azure uses `{endpoint}/openai/deployments/{model}/images/{generations|edits|variations}?api-version=…`). OpenRouter registries map generations to `POST /api/v1/images` and keep edits/variations on `/api/v1/images/edits` and `/api/v1/images/variations`. Providers without an Images API are filtered out of the pool; pinning an incapable provider is a terminal 400.
 
 `GET /{consumer}/v1/models` returns the union of native model ids the consumer can actually call (registries ∩ allowlists/policies ∩ provider capabilities). It is not an upstream `/v1/models` passthrough and not the full admin catalog.
 
