@@ -40,6 +40,8 @@ func TestResolveProxyPath(t *testing.T) {
 		{"/X84Yhsy8/v1/files/file-1", "X84Yhsy8", adapter.FormatOpenAIFiles, CapabilityFiles},
 		{"/X84Yhsy8/v1/files/file-1/content", "X84Yhsy8", adapter.FormatOpenAIFiles, CapabilityFiles},
 		{"/X84Yhsy8/v1/models", "X84Yhsy8", adapter.FormatOpenAI, CapabilityModels},
+		{"/X84Yhsy8/v1/images/generations", "X84Yhsy8", adapter.FormatOpenAIImages, CapabilityImages},
+		{"/X84Yhsy8/v1/images/generations/", "X84Yhsy8", adapter.FormatOpenAIImages, CapabilityImages},
 		{"/X84Yhsy8/v1/models/", "X84Yhsy8", adapter.FormatOpenAI, CapabilityModels},
 		{"/X84Yhsy8/v1/models/gpt-4o-mini", "X84Yhsy8", adapter.FormatOpenAI, CapabilityModels},
 		{"/X84Yhsy8/v1/models/amazon.titan-embed-text-v2:0", "X84Yhsy8", adapter.FormatOpenAI, CapabilityModels},
@@ -74,6 +76,10 @@ func TestResolveProxyPath_UnknownRoutes(t *testing.T) {
 		"/X84Yhsy8/v1beta/models/:generateContent",
 		"/X84Yhsy8/v1/files/file-1/other",
 		"/X84Yhsy8/v1/models/gpt-4/extra",
+		"/X84Yhsy8/v1/images",
+		"/X84Yhsy8/v1/images/edits",
+		"/X84Yhsy8/v1/images/variations",
+		"/X84Yhsy8/v1/images/generations/extra",
 		"/v1/chat/completions",
 	} {
 		if _, err := ResolveProxyPath(path); !errors.Is(err, ErrUnknownProxyPath) {

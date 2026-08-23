@@ -92,6 +92,28 @@ func TestProviderLocator_FilesClients(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestProviderLocator_ImagesClients(t *testing.T) {
+	locator := NewProviderLocator()
+	for _, provider := range []string{
+		ProviderOpenAI,
+		ProviderAzure,
+		ProviderOpenAICompatible,
+		ProviderOpenRouter,
+	} {
+		t.Run(provider, func(t *testing.T) {
+			got, err := locator.Get(provider)
+			require.NoError(t, err)
+			_, ok := got.(providers.ImagesClient)
+			assert.True(t, ok)
+		})
+	}
+
+	client, err := locator.Get(ProviderGroq)
+	require.NoError(t, err)
+	_, ok := client.(providers.ImagesClient)
+	assert.False(t, ok)
+}
+
 func TestProviderLocator_GetUnknown(t *testing.T) {
 	_, err := NewProviderLocator().Get("does-not-exist")
 	require.Error(t, err)

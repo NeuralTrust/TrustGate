@@ -97,6 +97,62 @@ func TestBuildFilesURL(t *testing.T) {
 	assert.Contains(t, got, "purpose=fine-tune")
 }
 
+func TestBuildImagesURL(t *testing.T) {
+	c := &client{}
+	cfg := &providers.Config{Credentials: providers.Credentials{Azure: &providers.Azure{
+		Endpoint:   "https://x.openai.azure.com",
+		ApiVersion: "2025-01-01",
+	}}}
+	assert.Equal(t,
+		"https://x.openai.azure.com/openai/deployments/dall-e-3/images/generations?api-version=2025-01-01",
+		c.buildImagesURL(cfg, "dall-e-3"),
+	)
+}
+
+func TestImages_MissingAzureConfig(t *testing.T) {
+	c := NewAzureClient().(providers.ImagesClient)
+	_, err := c.Images(context.Background(), &providers.Config{}, providers.ImagesRequest{
+		Method: http.MethodPost,
+		Path:   "/v1/images/generations",
+		Body:   []byte(`{"model":"dall-e-3","prompt":"a cat"}`),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "azure configuration is required")
+}
+
+func TestImages_RoundTrip(t *testing.T) {
+	var gotPath, gotAPIKey, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAPIKey = r.Header.Get("api-key")
+		gotMethod = r.Method
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"created":1,"data":[{"url":"https://img"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewAzureClient().(providers.ImagesClient)
+	result, err := c.Images(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{
+			ApiKey: "az-key",
+			Azure: &providers.Azure{
+				Endpoint: srv.URL,
+				AuthMode: providers.AzureAuthModeAPIKey,
+			},
+		},
+	}, providers.ImagesRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/images/generations",
+		ContentType: "application/json",
+		Body:        []byte(`{"model":"dall-e-3","prompt":"a cat"}`),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/openai/deployments/dall-e-3/images/generations", gotPath)
+	assert.Equal(t, "az-key", gotAPIKey)
+	assert.Equal(t, http.MethodPost, gotMethod)
+	assert.JSONEq(t, `{"created":1,"data":[{"url":"https://img"}]}`, string(result.Body))
+}
+
 func TestFiles_MissingAzureConfig(t *testing.T) {
 	c := NewAzureClient().(providers.FilesClient)
 	_, err := c.Files(context.Background(), &providers.Config{}, providers.FilesRequest{

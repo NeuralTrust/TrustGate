@@ -53,3 +53,4 @@ The same consumer slug works for all OpenAI-compatible endpoints:
 - `/v1/messages` — Anthropic Messages format
 - `/v1/responses` — OpenAI Responses format
 - `/v1/models` — SDK `client.models.list()` / `client.models.retrieve(id)` (gateway-owned discovery of models this consumer can call)
+- `/v1/images/generations` — SDK `client.images.generate()` (OpenAI, Azure, openai_compatible, OpenRouter)

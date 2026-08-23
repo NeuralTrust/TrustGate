@@ -53,6 +53,56 @@ func TestEmbeddingsURL(t *testing.T) {
 	)
 }
 
+func TestImages_MissingBaseURL(t *testing.T) {
+	c := NewClient().(providers.ImagesClient)
+	_, err := c.Images(
+		context.Background(),
+		&providers.Config{Credentials: providers.Credentials{ApiKey: "sk-test"}},
+		providers.ImagesRequest{
+			Method: http.MethodPost,
+			Path:   "/v1/images/generations",
+			Body:   []byte(`{"model":"dall-e-3","prompt":"a cat"}`),
+		},
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "base_url is required")
+}
+
+func TestImages_RoundTrip(t *testing.T) {
+	var gotAuth, gotPath, gotHeader string
+	var gotBody map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotPath = r.URL.Path
+		gotHeader = r.Header.Get("X-Custom-Header")
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotBody))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"created":1,"data":[{"b64_json":"abc"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewClient().(providers.ImagesClient)
+	result, err := c.Images(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{ApiKey: "sk-test"},
+		Options: map[string]any{
+			"base_url": srv.URL + "/v1",
+			"headers":  map[string]any{"X-Custom-Header": "yes"},
+		},
+	}, providers.ImagesRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/images/generations",
+		ContentType: "application/json",
+		Body:        []byte(`{"model":"dall-e-3","prompt":"a cat"}`),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Bearer sk-test", gotAuth)
+	assert.Equal(t, "/v1/images/generations", gotPath)
+	assert.Equal(t, "yes", gotHeader)
+	assert.Equal(t, "dall-e-3", gotBody["model"])
+	assert.JSONEq(t, `{"created":1,"data":[{"b64_json":"abc"}]}`, string(result.Body))
+}
+
 func TestEmbeddings_MissingBaseURL(t *testing.T) {
 	c := NewClient().(providers.EmbeddingsClient)
 	_, err := c.Embeddings(

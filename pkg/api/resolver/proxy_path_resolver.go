@@ -49,6 +49,7 @@ const (
 	CapabilityRerank     ProxyCapability = "rerank"
 	CapabilityFiles      ProxyCapability = "files"
 	CapabilityModels     ProxyCapability = "models"
+	CapabilityImages     ProxyCapability = "images"
 )
 
 // ProxyRoute is the result of parsing a proxy request path of the form
@@ -100,6 +101,9 @@ func formatForRoute(rest string) (adapter.Format, ProxyCapability, error) {
 	}
 	if providers.IsFilesPath(rest) {
 		return adapter.FormatOpenAIFiles, CapabilityFiles, nil
+	}
+	if providers.IsImagesPath(rest) {
+		return adapter.FormatOpenAIImages, CapabilityImages, nil
 	}
 	if isModelsPath(rest) {
 		return adapter.FormatOpenAI, CapabilityModels, nil

@@ -62,6 +62,20 @@ func TestFilesURL(t *testing.T) {
 	)
 }
 
+func TestImagesURL(t *testing.T) {
+	assert.Equal(t, "https://openrouter.ai/api/v1/images", providers.JoinOpenRouterImagesURL(filesBaseURL, "/v1/images/generations", nil))
+}
+
+func TestImages_MissingAPIKey(t *testing.T) {
+	_, err := NewOpenRouterClient().(providers.ImagesClient).Images(context.Background(), &providers.Config{}, providers.ImagesRequest{
+		Method: http.MethodPost,
+		Path:   "/v1/images/generations",
+		Body:   []byte(`{"model":"openai/dall-e-3","prompt":"a cat"}`),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "API key is required")
+}
+
 func TestFiles_MissingAPIKey(t *testing.T) {
 	_, err := NewOpenRouterClient().(providers.FilesClient).Files(context.Background(), &providers.Config{}, providers.FilesRequest{
 		Method: http.MethodGet,
