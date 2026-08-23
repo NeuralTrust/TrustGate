@@ -167,7 +167,7 @@ func TestImages_EmptyCapablePoolIs503(t *testing.T) {
 
 	apiKey, path := setupImagesRoute(t, groqBackendPayload(uniqueName("groq-only")))
 
-	status, _, body := proxyPost(t, apiKey, path, imagesGenerationsRequest("dall-e-3"))
+	status, _, body := proxyPost(t, apiKey, path, map[string]any{"prompt": "a cat"})
 	assert.Equal(t, http.StatusServiceUnavailable, status, "body: %s", body)
 	assert.Contains(t, string(body), "no_backend_available")
 }
