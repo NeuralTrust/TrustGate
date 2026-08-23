@@ -25,22 +25,24 @@ import (
 type Format string
 
 const (
-	FormatOpenAI          Format = "openai"
-	FormatOpenAIResponses Format = "openai_responses"
-	FormatAnthropic       Format = "anthropic"
-	FormatGemini          Format = "google"
-	FormatBedrock         Format = "bedrock"
-	FormatAzure           Format = "azure" // wire-compatible with OpenAI
-	FormatGroq            Format = "groq"  // wire-compatible with OpenAI Chat Completions
-	FormatVertex          Format = "vertex"
-	FormatMistral         Format = "mistral"
-	FormatDeepSeek         Format = "deepseek"   // wire-compatible with OpenAI Chat Completions
-	FormatXAI              Format = "xai"        // wire-compatible with OpenAI Chat Completions
-	FormatOpenRouter       Format = "openrouter" // wire-compatible with OpenAI Chat Completions
-	FormatCohere           Format = "cohere"
-	FormatOpenAIEmbeddings Format = "openai_embeddings"
-	FormatCohereEmbed      Format = "cohere_embed"
-	FormatCohereRerank     Format = "cohere_rerank"
+	FormatOpenAI            Format = "openai"
+	FormatOpenAIResponses   Format = "openai_responses"
+	FormatAnthropic         Format = "anthropic"
+	FormatGemini            Format = "google"
+	FormatBedrock           Format = "bedrock"
+	FormatAzure             Format = "azure" // wire-compatible with OpenAI
+	FormatGroq              Format = "groq"  // wire-compatible with OpenAI Chat Completions
+	FormatVertex            Format = "vertex"
+	FormatMistral           Format = "mistral"
+	FormatDeepSeek          Format = "deepseek"   // wire-compatible with OpenAI Chat Completions
+	FormatXAI               Format = "xai"        // wire-compatible with OpenAI Chat Completions
+	FormatOpenRouter        Format = "openrouter" // wire-compatible with OpenAI Chat Completions
+	FormatCohere            Format = "cohere"
+	FormatOpenAIEmbeddings  Format = "openai_embeddings"
+	FormatCohereEmbed       Format = "cohere_embed"
+	FormatCohereRerank      Format = "cohere_rerank"
+	FormatVertexEmbed       Format = "vertex_embed"
+	FormatBedrockTitanEmbed Format = "bedrock_titan_embed"
 )
 
 // GeminiModelsRoutePrefix is the fixed Gemini route segment that carries the
@@ -119,7 +121,8 @@ func SupportedSourceFormat(f Format) bool {
 	switch f {
 	case FormatOpenAI, FormatOpenAIResponses, FormatAnthropic, FormatGemini,
 		FormatAzure, FormatGroq, FormatVertex, FormatMistral, FormatDeepSeek, FormatXAI, FormatOpenRouter,
-		FormatCohere, FormatOpenAIEmbeddings, FormatCohereEmbed, FormatCohereRerank:
+		FormatCohere, FormatOpenAIEmbeddings, FormatCohereEmbed, FormatCohereRerank,
+		FormatVertexEmbed, FormatBedrockTitanEmbed:
 		return true
 	default:
 		return false
@@ -206,10 +209,16 @@ func ResolveTargetFormatForCapability(
 ) Format {
 	switch capability {
 	case "embeddings":
-		if providerName == provider.Cohere {
+		switch providerName {
+		case provider.Cohere:
 			return FormatCohereEmbed
+		case provider.Vertex:
+			return FormatVertexEmbed
+		case provider.Bedrock:
+			return FormatBedrockTitanEmbed
+		default:
+			return FormatOpenAIEmbeddings
 		}
-		return FormatOpenAIEmbeddings
 	case "rerank":
 		return FormatCohereRerank
 	default:

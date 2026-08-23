@@ -23,6 +23,7 @@ import (
 	"iter"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,6 +46,11 @@ import (
 
 const credentialsExpiryWindow = 5 * time.Minute
 
+var (
+	_ providers.Client           = (*client)(nil)
+	_ providers.EmbeddingsClient = (*client)(nil)
+)
+
 // Bedrock reports the token counts of a buffered answer in these headers, for
 // every family, whether or not the body repeats them.
 const (
@@ -52,10 +58,13 @@ const (
 	outputCountHeader = "X-Amzn-Bedrock-Output-Token-Count"
 )
 
+type invokeModelFn func(ctx context.Context, model string, body []byte) ([]byte, error)
+
 type client struct {
 	clientPool    *sync.Map
 	buildMu       sync.Mutex
 	bedrockClient bedrockClient.Client
+	invoke        invokeModelFn
 }
 
 func NewBedrockClient() providers.Client {
@@ -97,6 +106,121 @@ func (c *client) Completions(
 	}
 
 	return withHeaderTokenCounts(resp.Body, rawResponseHeaders(resp.ResultMetadata)), nil
+}
+
+func (c *client) Embeddings(
+	ctx context.Context,
+	cfg *providers.Config,
+	reqBody []byte,
+) ([]byte, error) {
+	model := c.resolveModel(reqBody, cfg)
+	if model == "" {
+		return nil, fmt.Errorf("model is required")
+	}
+	if !isTitanEmbedModel(model) {
+		return nil, fmt.Errorf("bedrock embeddings support Titan embed models only, got %q", model)
+	}
+
+	texts, err := titanEmbedTexts(reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	var (
+		vectors [][]float64
+		tokens  int
+	)
+	for _, text := range texts {
+		invokeBody, err := json.Marshal(titanEmbedInvoke{InputText: text})
+		if err != nil {
+			return nil, err
+		}
+		raw, err := c.invokeModel(ctx, cfg, model, invokeBody)
+		if err != nil {
+			return nil, err
+		}
+		var native titanEmbedNative
+		if err := json.Unmarshal(raw, &native); err != nil {
+			return nil, fmt.Errorf("decoding titan embed response: %w", err)
+		}
+		vectors = append(vectors, native.Embedding)
+		tokens += native.InputTextTokenCount
+	}
+
+	if len(vectors) == 1 {
+		return json.Marshal(titanEmbedNative{
+			Embedding:           vectors[0],
+			InputTextTokenCount: tokens,
+		})
+	}
+	return json.Marshal(titanEmbedMerged{
+		Embeddings:          vectors,
+		InputTextTokenCount: tokens,
+	})
+}
+
+type titanEmbedInvoke struct {
+	InputText string `json:"inputText"`
+}
+
+type titanEmbedNative struct {
+	Embedding           []float64 `json:"embedding"`
+	InputTextTokenCount int       `json:"inputTextTokenCount"`
+}
+
+type titanEmbedMerged struct {
+	Embeddings          [][]float64 `json:"embeddings"`
+	InputTextTokenCount int         `json:"inputTextTokenCount"`
+}
+
+func titanEmbedTexts(body []byte) ([]string, error) {
+	var req struct {
+		InputText  string   `json:"inputText"`
+		InputTexts []string `json:"inputTexts"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return nil, fmt.Errorf("invalid titan embed request: %w", err)
+	}
+	if len(req.InputTexts) > 0 {
+		return req.InputTexts, nil
+	}
+	if req.InputText != "" {
+		return []string{req.InputText}, nil
+	}
+	return nil, fmt.Errorf("titan embed request requires inputText")
+}
+
+func isTitanEmbedModel(model string) bool {
+	return strings.Contains(strings.ToLower(model), "titan-embed")
+}
+
+func (c *client) invokeModel(
+	ctx context.Context,
+	cfg *providers.Config,
+	model string,
+	body []byte,
+) ([]byte, error) {
+	if c.invoke != nil {
+		return c.invoke(ctx, model, body)
+	}
+
+	bedrockCl, err := c.getOrCreateClient(ctx, cfg.Credentials)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Bedrock client: %w", err)
+	}
+
+	resp, err := bedrockCl.InvokeModel(ctx, &bedrockruntime.InvokeModelInput{
+		ModelId:     aws.String(model),
+		ContentType: aws.String("application/json"),
+		Body:        body,
+	})
+	if err != nil {
+		if backendErr := newBedrockBackendError(err); backendErr != nil {
+			return nil, backendErr
+		}
+		return nil, fmt.Errorf("failed to invoke model: %w", err)
+	}
+	return resp.Body, nil
 }
 
 // withRawResponse keeps the HTTP response reachable from the output metadata,
