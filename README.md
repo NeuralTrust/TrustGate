@@ -107,7 +107,15 @@ curl -s -X POST "$PROXY/$CON_SLUG/v1/files" \
   -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
   -F purpose=assistants \
   -F file="@notes.txt"
+
+# 9. Model discovery (OpenAI-compatible, gateway-owned)
+curl -s "$PROXY/$CON_SLUG/v1/models" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY"
+curl -s "$PROXY/$CON_SLUG/v1/models/gpt-4o-mini" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY"
 ```
+
+`GET /{consumer}/v1/models` returns the union of native model ids the consumer can actually call (registries ∩ allowlists/policies ∩ provider capabilities). It is not an upstream `/v1/models` passthrough and not the full admin catalog.
 
 Or use any OpenAI SDK — see [examples/openai-sdk/](examples/openai-sdk/).
 

@@ -39,6 +39,10 @@ func TestResolveProxyPath(t *testing.T) {
 		{"/X84Yhsy8/v1/files", "X84Yhsy8", adapter.FormatOpenAIFiles, CapabilityFiles},
 		{"/X84Yhsy8/v1/files/file-1", "X84Yhsy8", adapter.FormatOpenAIFiles, CapabilityFiles},
 		{"/X84Yhsy8/v1/files/file-1/content", "X84Yhsy8", adapter.FormatOpenAIFiles, CapabilityFiles},
+		{"/X84Yhsy8/v1/models", "X84Yhsy8", adapter.FormatOpenAI, CapabilityModels},
+		{"/X84Yhsy8/v1/models/", "X84Yhsy8", adapter.FormatOpenAI, CapabilityModels},
+		{"/X84Yhsy8/v1/models/gpt-4o-mini", "X84Yhsy8", adapter.FormatOpenAI, CapabilityModels},
+		{"/X84Yhsy8/v1/models/amazon.titan-embed-text-v2:0", "X84Yhsy8", adapter.FormatOpenAI, CapabilityModels},
 		{"/X84Yhsy8/v1beta/models/gemini-pro:generateContent", "X84Yhsy8", adapter.FormatGemini, CapabilityChat},
 		{"/X84Yhsy8/v1beta/models/gemini-pro:streamGenerateContent", "X84Yhsy8", adapter.FormatGemini, CapabilityChat},
 	}
@@ -69,10 +73,26 @@ func TestResolveProxyPath_UnknownRoutes(t *testing.T) {
 		"/X84Yhsy8/v1beta/models/",
 		"/X84Yhsy8/v1beta/models/:generateContent",
 		"/X84Yhsy8/v1/files/file-1/other",
+		"/X84Yhsy8/v1/models/gpt-4/extra",
 		"/v1/chat/completions",
 	} {
 		if _, err := ResolveProxyPath(path); !errors.Is(err, ErrUnknownProxyPath) {
 			t.Fatalf("ResolveProxyPath(%q) err = %v, want ErrUnknownProxyPath", path, err)
+		}
+	}
+}
+
+func TestModelsIDFromRest(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		"/v1/models":           "",
+		"/v1/models/gpt-4o":    "gpt-4o",
+		"/v1/models/foo/bar":   "",
+		"/v1/chat/completions": "",
+	}
+	for rest, want := range cases {
+		if got := ModelsIDFromRest(rest); got != want {
+			t.Fatalf("ModelsIDFromRest(%q) = %q, want %q", rest, got, want)
 		}
 	}
 }
