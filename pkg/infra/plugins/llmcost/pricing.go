@@ -19,21 +19,50 @@ import (
 	"math"
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
-// CustomPrice is a per-token USD overlay rate for a model slug or pattern.
 type CustomPrice struct {
-	Input  float64 `mapstructure:"input"`
-	Output float64 `mapstructure:"output"`
+	Input  float64 `mapstructure:"input" json:"input"`
+	Output float64 `mapstructure:"output" json:"output"`
 }
 
-// PriceFor resolves per-token input and output USD prices for the first
-// matching model. A custom overlay is consulted before the builtin resolver.
+type RegistryRates struct {
+	Discount  float64
+	Overrides map[string]CustomPrice
+}
+
+func RatesFromDomain(p *domain.Pricing) *RegistryRates {
+	if p.IsZero() {
+		return nil
+	}
+	rates := &RegistryRates{Discount: p.Discount}
+	if len(p.Overrides) == 0 {
+		return rates
+	}
+	rates.Overrides = make(map[string]CustomPrice, len(p.Overrides))
+	for slug, rate := range p.Overrides {
+		rates.Overrides[slug] = CustomPrice{Input: rate.Input, Output: rate.Output}
+	}
+	return rates
+}
+
 func PriceFor(ctx context.Context, resolver appcatalog.PricingResolver, custom map[string]CustomPrice, provider string, models ...string) (float64, float64, bool) {
+	return Resolve(ctx, resolver, custom, nil, provider, models...)
+}
+
+func Resolve(ctx context.Context, resolver appcatalog.PricingResolver, custom map[string]CustomPrice, registry *RegistryRates, provider string, models ...string) (float64, float64, bool) {
 	candidates := appcatalog.SlugCandidates(models...)
 	for _, slug := range candidates {
 		if cp, ok := BestMatch(custom, slug); ok {
 			return cp.Input, cp.Output, true
+		}
+	}
+	if registry != nil {
+		for _, slug := range candidates {
+			if cp, ok := BestMatch(registry.Overrides, slug); ok {
+				return cp.Input, cp.Output, true
+			}
 		}
 	}
 	if resolver == nil || provider == "" {
@@ -41,9 +70,16 @@ func PriceFor(ctx context.Context, resolver appcatalog.PricingResolver, custom m
 	}
 	for _, slug := range candidates {
 		price := resolver.Resolve(ctx, provider, slug)
-		if price.Found {
-			return price.InputPrice, price.OutputPrice, true
+		if !price.Found {
+			continue
 		}
+		in, out := price.InputPrice, price.OutputPrice
+		if registry != nil && registry.Discount > 0 {
+			factor := 1 - registry.Discount
+			in *= factor
+			out *= factor
+		}
+		return in, out, true
 	}
 	return 0, 0, false
 }
