@@ -83,18 +83,6 @@ func multipartImagesBody(t *testing.T, fields map[string]string, filename, conte
 	return w.FormDataContentType(), buf.Bytes()
 }
 
-func groqBackendPayload(name string) map[string]any {
-	return map[string]any{
-		"name":     name,
-		"provider": "groq",
-		"weight":   1,
-		"auth": map[string]any{
-			"type":    "api_key",
-			"api_key": map[string]any{"api_key": "gsk-test"},
-		},
-	}
-}
-
 func TestOpenAIProvider_ImagesGenerations(t *testing.T) {
 	defer Track(t, "ImagesProvider")()
 
