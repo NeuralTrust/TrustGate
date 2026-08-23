@@ -39,8 +39,9 @@ import (
 )
 
 var (
-	ErrNoBackendAvailable = errors.New("no backend available")
-	ErrNoBackendsInPool   = errors.New("consumer has no registries in pool")
+	ErrNoBackendAvailable     = errors.New("no backend available")
+	ErrNoBackendsInPool       = errors.New("consumer has no registries in pool")
+	ErrCapabilityNotSupported = errors.New("provider does not support this capability")
 )
 
 type ForwardInput struct {

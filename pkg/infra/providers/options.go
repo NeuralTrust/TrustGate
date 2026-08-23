@@ -119,6 +119,26 @@ type CohereOptions struct {
 	BaseURL string `mapstructure:"base_url"`
 }
 
+type MistralOptions struct {
+	BaseURL string `mapstructure:"base_url"`
+}
+
+func DecodeMistralOptions(options map[string]any) (MistralOptions, error) {
+	var opts MistralOptions
+	if len(options) > 0 {
+		if err := mapstructure.Decode(options, &opts); err != nil {
+			return MistralOptions{}, fmt.Errorf("mistral: invalid provider_options: %w", err)
+		}
+	}
+	opts.BaseURL = strings.TrimSpace(opts.BaseURL)
+	if opts.BaseURL != "" {
+		if err := validateHTTPBaseURL(opts.BaseURL); err != nil {
+			return MistralOptions{}, fmt.Errorf("mistral: %w", err)
+		}
+	}
+	return opts, nil
+}
+
 func DecodeCohereOptions(options map[string]any) (CohereOptions, error) {
 	var opts CohereOptions
 	if len(options) > 0 {

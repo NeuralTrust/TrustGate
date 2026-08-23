@@ -379,7 +379,8 @@ func mapProxyError(err error) (int, httpio.ErrorBody) {
 		return fiber.StatusServiceUnavailable, httpio.ErrorBody{Error: errCodeNoBackendAvailable, Message: err.Error()}
 	case errors.Is(err, ratelimitapp.ErrUnavailable):
 		return fiber.StatusServiceUnavailable, httpio.ErrorBody{Error: errCodeRateLimitUnavailable, Message: err.Error()}
-	case errors.Is(err, appproxy.ErrInvalidRequestPayload):
+	case errors.Is(err, appproxy.ErrInvalidRequestPayload),
+		errors.Is(err, appproxy.ErrCapabilityNotSupported):
 		return fiber.StatusBadRequest, httpio.ErrorBody{Error: errCodeInvalidRequest, Message: err.Error()}
 	case errors.Is(err, routingdomain.ErrInvalidModelRef),
 		errors.Is(err, routingdomain.ErrUnknownPoolAlias):

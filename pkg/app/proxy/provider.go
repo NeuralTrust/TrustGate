@@ -366,7 +366,7 @@ func (p *providerInvoker) invokeUpstream(ctx context.Context, prep *preparedInvo
 	case capabilityEmbeddings:
 		embedder, ok := prep.client.(providers.EmbeddingsClient)
 		if !ok {
-			return nil, fmt.Errorf("provider does not support embeddings")
+			return nil, fmt.Errorf("%w: embeddings", ErrCapabilityNotSupported)
 		}
 		respBody, err := embedder.Embeddings(ctx, prep.cfg, prep.body)
 		if err != nil {
@@ -376,7 +376,7 @@ func (p *providerInvoker) invokeUpstream(ctx context.Context, prep *preparedInvo
 	case capabilityRerank:
 		reranker, ok := prep.client.(providers.RerankClient)
 		if !ok {
-			return nil, fmt.Errorf("provider does not support rerank")
+			return nil, fmt.Errorf("%w: rerank", ErrCapabilityNotSupported)
 		}
 		respBody, err := reranker.Rerank(ctx, prep.cfg, prep.body)
 		if err != nil {
