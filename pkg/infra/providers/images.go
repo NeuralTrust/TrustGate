@@ -15,14 +15,23 @@
 package providers
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strings"
 )
 
-const RouteImagesGenerations = "/v1/images/generations"
+const (
+	RouteImagesGenerations = "/v1/images/generations"
+	RouteImagesEdits       = "/v1/images/edits"
+	RouteImagesVariations  = "/v1/images/variations"
+)
 
 type ImagesRequest struct {
 	Method      string
@@ -42,7 +51,12 @@ type ImagesClient interface {
 }
 
 func IsImagesPath(path string) bool {
-	return path == RouteImagesGenerations
+	switch path {
+	case RouteImagesGenerations, RouteImagesEdits, RouteImagesVariations:
+		return true
+	default:
+		return false
+	}
 }
 
 func ValidateImagesMethod(method, path string) error {
@@ -62,15 +76,82 @@ func JoinOpenAIImagesURL(baseURL, gatewayPath string, query url.Values) string {
 }
 
 func JoinOpenRouterImagesURL(baseURL, gatewayPath string, query url.Values) string {
-	base := strings.TrimRight(baseURL, "/")
-	path := "/images"
-	if gatewayPath != "" && gatewayPath != RouteImagesGenerations {
-		suffix := strings.TrimPrefix(gatewayPath, "/v1")
-		if strings.HasPrefix(suffix, "/images/") {
-			path = "/images"
-		}
+	return appendQuery(strings.TrimRight(baseURL, "/")+OpenRouterImagesPath(gatewayPath), query)
+}
+
+func OpenRouterImagesPath(gatewayPath string) string {
+	switch gatewayPath {
+	case RouteImagesEdits:
+		return "/images/edits"
+	case RouteImagesVariations:
+		return "/images/variations"
+	default:
+		return "/images"
 	}
-	return appendQuery(base+path, query)
+}
+
+func AzureImagesOperation(gatewayPath string) string {
+	switch gatewayPath {
+	case RouteImagesEdits:
+		return "images/edits"
+	case RouteImagesVariations:
+		return "images/variations"
+	default:
+		return "images/generations"
+	}
+}
+
+func IsImagesMultipart(contentType string) bool {
+	if contentType == "" {
+		return false
+	}
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return strings.HasPrefix(strings.ToLower(contentType), "multipart/")
+	}
+	return strings.HasPrefix(mediaType, "multipart/")
+}
+
+func ExtractImagesModel(contentType string, body []byte) string {
+	if IsImagesMultipart(contentType) {
+		return extractMultipartField(contentType, body, "model")
+	}
+	var probe struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return ""
+	}
+	return probe.Model
+}
+
+func extractMultipartField(contentType string, body []byte, name string) string {
+	_, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return ""
+	}
+	boundary := params["boundary"]
+	if boundary == "" {
+		return ""
+	}
+	reader := multipart.NewReader(bytes.NewReader(body), boundary)
+	for {
+		part, err := reader.NextPart()
+		if err != nil {
+			return ""
+		}
+		if part.FormName() != name {
+			_, _ = io.Copy(io.Discard, part)
+			_ = part.Close()
+			continue
+		}
+		value, err := io.ReadAll(part)
+		_ = part.Close()
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(string(value))
+	}
 }
 
 func appendQuery(endpoint string, query url.Values) string {

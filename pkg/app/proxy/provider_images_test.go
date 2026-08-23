@@ -141,3 +141,62 @@ func TestProviderInvoke_ImagesModelNotAllowed(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, appproxy.ErrModelNotAllowed)
 }
+
+func TestProviderInvoke_ImagesEditsMultipartPassthrough(t *testing.T) {
+	var gotReq providers.ImagesRequest
+	var gotModel string
+	client := &imagesTestClient{
+		imagesFn: func(_ context.Context, cfg *providers.Config, req providers.ImagesRequest) (*providers.ImagesResult, error) {
+			gotReq = req
+			gotModel = cfg.Model
+			return &providers.ImagesResult{
+				Body:        []byte(`{"created":1,"data":[{"b64_json":"abc"}]}`),
+				ContentType: "application/json",
+			}, nil
+		},
+	}
+
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+	body := []byte("--abc\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ndall-e-2\r\n--abc\r\nContent-Disposition: form-data; name=\"prompt\"\r\n\r\nmake it blue\r\n--abc--\r\n")
+	req := &infracontext.RequestContext{
+		Method:          http.MethodPost,
+		Path:            "/acme/v1/images/edits",
+		Body:            body,
+		Headers:         map[string][]string{"Content-Type": {"multipart/form-data; boundary=abc"}},
+		SourceFormat:    string(adapter.FormatOpenAIImages),
+		ProxyCapability: "images",
+		AllowedModels:   []string{"dall-e-2"},
+	}
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), req)
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.MethodPost, gotReq.Method)
+	assert.Equal(t, "/v1/images/edits", gotReq.Path)
+	assert.Equal(t, "multipart/form-data; boundary=abc", gotReq.ContentType)
+	assert.Equal(t, body, gotReq.Body)
+	assert.Equal(t, "dall-e-2", gotModel)
+	assert.Equal(t, "dall-e-2", resp.SentModel)
+}
+
+func TestProviderInvoke_ImagesMultipartModelNotAllowed(t *testing.T) {
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(&imagesTestClient{}, nil).Once()
+
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+	_, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), &infracontext.RequestContext{
+		Method:          http.MethodPost,
+		Path:            "/acme/v1/images/edits",
+		Body:            []byte("--abc\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ndall-e-2\r\n--abc--\r\n"),
+		Headers:         map[string][]string{"Content-Type": {"multipart/form-data; boundary=abc"}},
+		SourceFormat:    string(adapter.FormatOpenAIImages),
+		ProxyCapability: "images",
+		AllowedModels:   []string{"dall-e-3"},
+	})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, appproxy.ErrModelNotAllowed)
+}
