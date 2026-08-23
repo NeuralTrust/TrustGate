@@ -830,6 +830,82 @@ func TestForward_FilesPinnedIncapableIsTerminal(t *testing.T) {
 	}
 }
 
+func TestForward_ImagesFiltersIncapableProviders(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	openai := backendFor(gatewayID, "openai")
+	groq := backendFor(gatewayID, "groq")
+	rc := routableConsumerWith(gatewayID, openai, groq)
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.MatchedBy(func(bk *registrydomain.Registry) bool {
+			return bk.ID == openai.ID
+		}), mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte(`{"data":[]}`)}, nil).
+		Once()
+
+	fwd := newTestForwarder(t, invoker)
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request: &infracontext.RequestContext{
+			Method:          "POST",
+			Path:            "/acme/v1/images/generations",
+			Body:            []byte(`{"model":"dall-e-3","prompt":"a cat"}`),
+			ProxyCapability: "images",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if res.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", res.StatusCode)
+	}
+}
+
+func TestForward_ImagesPinnedIncapableIsTerminal(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	openai := backendFor(gatewayID, "openai")
+	groq := backendFor(gatewayID, "groq")
+	rc := routableConsumerWith(gatewayID, openai, groq)
+
+	fwd := newTestForwarder(t, proxymocks.NewProviderInvoker(t))
+	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request: &infracontext.RequestContext{
+			Body:            []byte(`{"model":"@groq/llama-3.1-8b-instant","prompt":"a cat"}`),
+			ProxyCapability: "images",
+		},
+	})
+	if !errors.Is(err, appproxy.ErrCapabilityNotSupported) {
+		t.Fatalf("expected ErrCapabilityNotSupported, got %v", err)
+	}
+}
+
+func TestForward_ImagesPinnedIncapableMultipartIsTerminal(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	openai := backendFor(gatewayID, "openai")
+	groq := backendFor(gatewayID, "groq")
+	rc := routableConsumerWith(gatewayID, openai, groq)
+
+	fwd := newTestForwarder(t, proxymocks.NewProviderInvoker(t))
+	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request: &infracontext.RequestContext{
+			Method:          "POST",
+			Path:            "/acme/v1/images/edits",
+			Body:            []byte("--abc\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n@groq/llama-3.1-8b-instant\r\n--abc--\r\n"),
+			Headers:         map[string][]string{"Content-Type": {"multipart/form-data; boundary=abc"}},
+			ProxyCapability: "images",
+		},
+	})
+	if !errors.Is(err, appproxy.ErrCapabilityNotSupported) {
+		t.Fatalf("expected ErrCapabilityNotSupported, got %v", err)
+	}
+}
+
 func TestForward_EmbeddingsEmptyCapablePoolIs503(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	anthropic := backendFor(gatewayID, "anthropic")

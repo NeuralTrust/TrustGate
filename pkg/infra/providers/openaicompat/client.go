@@ -37,6 +37,7 @@ const (
 var (
 	_ providers.Client           = (*client)(nil)
 	_ providers.EmbeddingsClient = (*client)(nil)
+	_ providers.ImagesClient     = (*client)(nil)
 )
 
 type client struct {
@@ -86,6 +87,18 @@ func (c *client) Embeddings(
 		return nil, err
 	}
 	return c.chat.Completions(ctx, embeddingsURL(opts), config, reqBody, opts.Headers)
+}
+
+func (c *client) Images(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.ImagesRequest,
+) (*providers.ImagesResult, error) {
+	opts, err := providers.DecodeOpenAICompatibleOptions(config.Options)
+	if err != nil {
+		return nil, err
+	}
+	return c.chat.Images(ctx, providers.JoinOpenAIImagesURL(opts.BaseURL, req.Path, req.Query), config, req, opts.Headers)
 }
 
 func completionsURL(opts providers.OpenAICompatibleOptions) string {

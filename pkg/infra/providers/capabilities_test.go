@@ -56,6 +56,10 @@ func TestSupportsCapability_MatchesLocatorClients(t *testing.T) {
 				providers.ClientSupportsCapability(client, providers.CapabilityFiles),
 				providers.SupportsCapability(provider, providers.CapabilityFiles),
 			)
+			assert.Equal(t,
+				providers.ClientSupportsCapability(client, providers.CapabilityImages),
+				providers.SupportsCapability(provider, providers.CapabilityImages),
+			)
 		})
 	}
 }
@@ -96,4 +100,10 @@ func TestProviderCapabilities(t *testing.T) {
 	assert.True(t, providers.ProviderCapabilities(providers.ProviderOpenRouter)[providers.CapabilityFiles])
 	assert.True(t, providers.ProviderCapabilities(providers.ProviderXAI)[providers.CapabilityFiles])
 	assert.False(t, providers.ProviderCapabilities(providers.ProviderOpenAICompatible)[providers.CapabilityFiles])
+	assert.True(t, providers.ProviderCapabilities(providers.ProviderOpenAI)[providers.CapabilityImages])
+	assert.True(t, providers.ProviderCapabilities(providers.ProviderAzure)[providers.CapabilityImages])
+	assert.True(t, providers.ProviderCapabilities(providers.ProviderOpenAICompatible)[providers.CapabilityImages])
+	assert.True(t, providers.ProviderCapabilities(providers.ProviderOpenRouter)[providers.CapabilityImages])
+	assert.False(t, providers.ProviderCapabilities(providers.ProviderGroq)[providers.CapabilityImages])
+	assert.False(t, providers.ProviderCapabilities(providers.ProviderAnthropic)[providers.CapabilityImages])
 }

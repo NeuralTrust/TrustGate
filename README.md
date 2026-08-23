@@ -113,7 +113,21 @@ curl -s "$PROXY/$CON_SLUG/v1/models" \
   -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY"
 curl -s "$PROXY/$CON_SLUG/v1/models/gpt-4o-mini" \
   -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY"
+
+# 10. Images (OpenAI, Azure OpenAI, openai_compatible, OpenRouter)
+curl -s -X POST "$PROXY/$CON_SLUG/v1/images/generations" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"dall-e-3","prompt":"A minimal TrustGate logo","n":1,"size":"1024x1024"}'
+curl -s -X POST "$PROXY/$CON_SLUG/v1/images/edits" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
+  -F model=dall-e-2 -F prompt="make it blue" -F image=@logo.png
+curl -s -X POST "$PROXY/$CON_SLUG/v1/images/variations" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
+  -F model=dall-e-2 -F image=@logo.png
 ```
+
+OpenAI-shaped clients call `POST /{consumer}/v1/images/generations` (JSON), plus multipart `POST /{consumer}/v1/images/edits` and `POST /{consumer}/v1/images/variations`. OpenAI, Azure, and `openai_compatible` registries forward the payload to the matching upstream images URL (Azure uses `{endpoint}/openai/deployments/{model}/images/{generations|edits|variations}?api-version=…`). OpenRouter registries map generations to `POST /api/v1/images` and keep edits/variations on `/api/v1/images/edits` and `/api/v1/images/variations`. Providers without an Images API are filtered out of the pool; pinning an incapable provider is a terminal 400.
 
 `GET /{consumer}/v1/models` returns the union of native model ids the consumer can actually call (registries ∩ allowlists/policies ∩ provider capabilities). It is not an upstream `/v1/models` passthrough and not the full admin catalog.
 
