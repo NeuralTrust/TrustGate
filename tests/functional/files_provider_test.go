@@ -99,30 +99,6 @@ func multipartFilesBody(t *testing.T, filename, contents, purpose string) (strin
 	return w.FormDataContentType(), buf.Bytes()
 }
 
-func proxyRequest(t *testing.T, apiKey, method, path, contentType string, body []byte) (int, http.Header, []byte) {
-	t.Helper()
-	var reader io.Reader
-	if len(body) > 0 {
-		reader = bytes.NewReader(body)
-	}
-	req, err := http.NewRequest(method, ProxyURL+path, reader)
-	require.NoError(t, err)
-	host, ok := proxyHosts.Load(apiKey)
-	require.True(t, ok, "proxy host missing for api key")
-	req.Host = host.(string)
-	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
-	}
-	req.Header.Set(proxyAPIKeyHeader, apiKey)
-
-	resp, err := http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-	raw, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	return resp.StatusCode, resp.Header, raw
-}
-
 func TestOpenAIProvider_Files(t *testing.T) {
 	defer Track(t, "FilesProvider")()
 
@@ -130,7 +106,7 @@ func TestOpenAIProvider_Files(t *testing.T) {
 	apiKey, path := setupFilesRoute(t, openaiBackendPayload(uniqueName("oai-files"), up.URL()+"/v1"))
 
 	ct, body := multipartFilesBody(t, "notes.txt", "hello files", "assistants")
-	status, headers, resp := proxyRequest(t, apiKey, http.MethodPost, path, ct, body)
+	status, headers, resp := proxyRequest(t, http.MethodPost, apiKey, path, map[string]string{"Content-Type": ct}, body)
 	assert.Equal(t, http.StatusOK, status, "body: %s", resp)
 	assert.Equal(t, "openai", headers.Get("X-Selected-Provider"))
 	assert.Equal(t, http.MethodPost, last.method)
@@ -139,23 +115,23 @@ func TestOpenAIProvider_Files(t *testing.T) {
 	assert.Contains(t, string(last.body), "hello files")
 	assert.JSONEq(t, `{"id":"file-1","object":"file","filename":"notes.txt","purpose":"assistants"}`, string(resp))
 
-	status, _, resp = proxyRequest(t, apiKey, http.MethodGet, path+"?purpose=assistants", "", nil)
+	status, _, resp = proxyRequest(t, http.MethodGet, apiKey, path+"?purpose=assistants", nil, nil)
 	assert.Equal(t, http.StatusOK, status, "body: %s", resp)
 	assert.Equal(t, "/v1/files", last.path)
 	assert.Contains(t, last.query, "purpose=assistants")
 	assert.JSONEq(t, `{"object":"list","data":[{"id":"file-1","object":"file"}]}`, string(resp))
 
-	status, _, resp = proxyRequest(t, apiKey, http.MethodGet, path+"/file-1", "", nil)
+	status, _, resp = proxyRequest(t, http.MethodGet, apiKey, path+"/file-1", nil, nil)
 	assert.Equal(t, http.StatusOK, status, "body: %s", resp)
 	assert.Equal(t, "/v1/files/file-1", last.path)
 
-	status, headers, resp = proxyRequest(t, apiKey, http.MethodGet, path+"/file-1/content", "", nil)
+	status, headers, resp = proxyRequest(t, http.MethodGet, apiKey, path+"/file-1/content", nil, nil)
 	assert.Equal(t, http.StatusOK, status, "body: %s", resp)
 	assert.Equal(t, "/v1/files/file-1/content", last.path)
 	assert.Equal(t, "file-bytes", string(resp))
 	assert.Contains(t, headers.Get("Content-Type"), "application/octet-stream")
 
-	status, _, resp = proxyRequest(t, apiKey, http.MethodDelete, path+"/file-1", "", nil)
+	status, _, resp = proxyRequest(t, http.MethodDelete, apiKey, path+"/file-1", nil, nil)
 	assert.Equal(t, http.StatusOK, status, "body: %s", resp)
 	assert.Equal(t, http.MethodDelete, last.method)
 	assert.Equal(t, "/v1/files/file-1", last.path)
@@ -169,17 +145,17 @@ func TestAzureProvider_Files(t *testing.T) {
 	up, last := newFilesUpstream(t)
 	apiKey, path := setupFilesRoute(t, azureBackendPayload(uniqueName("az-files"), up.URL()))
 
-	status, headers, body := proxyRequest(t, apiKey, http.MethodGet, path, "", nil)
+	status, headers, body := proxyRequest(t, http.MethodGet, apiKey, path, nil, nil)
 	assert.Equal(t, http.StatusOK, status, "body: %s", body)
 	assert.Equal(t, "azure", headers.Get("X-Selected-Provider"))
 	assert.Equal(t, "/openai/files", last.path)
 	assert.Contains(t, last.query, "api-version=")
 
-	status, _, body = proxyRequest(t, apiKey, http.MethodGet, path+"/file-1", "", nil)
+	status, _, body = proxyRequest(t, http.MethodGet, apiKey, path+"/file-1", nil, nil)
 	assert.Equal(t, http.StatusOK, status, "body: %s", body)
 	assert.Equal(t, "/openai/files/file-1", last.path)
 
-	status, _, body = proxyRequest(t, apiKey, http.MethodDelete, path+"/file-1", "", nil)
+	status, _, body = proxyRequest(t, http.MethodDelete, apiKey, path+"/file-1", nil, nil)
 	assert.Equal(t, http.StatusOK, status, "body: %s", body)
 	assert.Equal(t, http.MethodDelete, last.method)
 	assert.Equal(t, "/openai/files/file-1", last.path)
@@ -193,7 +169,7 @@ func TestMistralProvider_Files(t *testing.T) {
 	apiKey, path := setupFilesRoute(t, mistralBackendPayload(uniqueName("mistral-files"), up.URL()+"/v1"))
 
 	ct, upload := multipartFilesBody(t, "notes.txt", "mistral file", "ocr")
-	status, headers, body := proxyRequest(t, apiKey, http.MethodPost, path, ct, upload)
+	status, headers, body := proxyRequest(t, http.MethodPost, apiKey, path, map[string]string{"Content-Type": ct}, upload)
 	assert.Equal(t, http.StatusOK, status, "body: %s", body)
 	assert.Equal(t, "mistral", headers.Get("X-Selected-Provider"))
 	assert.Equal(t, "/v1/files", last.path)
@@ -215,7 +191,7 @@ func TestFiles_FiltersIncapableProviderFromPool(t *testing.T) {
 	apiKey := createAndAttachAPIKey(t, gatewayID, coID)
 	path := "/" + ConsumerSlug(t, coID) + "/v1/files"
 
-	status, headers, body := proxyRequest(t, apiKey, http.MethodGet, path, "", nil)
+	status, headers, body := proxyRequest(t, http.MethodGet, apiKey, path, nil, nil)
 	assert.Equal(t, http.StatusOK, status, "body: %s", body)
 	assert.Equal(t, "openai", headers.Get("X-Selected-Provider"))
 	assert.Equal(t, "/v1/files", last.path)
@@ -247,7 +223,7 @@ func TestFiles_UnknownSubpathIs404(t *testing.T) {
 	up, _ := newFilesUpstream(t)
 	apiKey, path := setupFilesRoute(t, openaiBackendPayload(uniqueName("oai-files"), up.URL()+"/v1"))
 
-	status, _, body := proxyRequest(t, apiKey, http.MethodGet, path+"/file-1/other", "", nil)
+	status, _, body := proxyRequest(t, http.MethodGet, apiKey, path+"/file-1/other", nil, nil)
 	assert.Equal(t, http.StatusNotFound, status, "body: %s", body)
 	assert.Equal(t, 0, up.Hits())
 }
@@ -258,7 +234,7 @@ func TestFiles_InvalidMethodIs400(t *testing.T) {
 	up, _ := newFilesUpstream(t)
 	apiKey, path := setupFilesRoute(t, openaiBackendPayload(uniqueName("oai-files"), up.URL()+"/v1"))
 
-	status, _, body := proxyRequest(t, apiKey, http.MethodDelete, path, "", nil)
+	status, _, body := proxyRequest(t, http.MethodDelete, apiKey, path, nil, nil)
 	assert.Equal(t, http.StatusBadRequest, status, "body: %s", body)
 	assert.Equal(t, 0, up.Hits())
 }
