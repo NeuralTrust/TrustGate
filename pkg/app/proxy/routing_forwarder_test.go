@@ -778,6 +778,58 @@ func TestForward_EmbeddingsPinnedIncapableIsTerminal(t *testing.T) {
 	}
 }
 
+func TestForward_FilesFiltersIncapableProviders(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	openai := backendFor(gatewayID, "openai")
+	anthropic := backendFor(gatewayID, "anthropic")
+	rc := routableConsumerWith(gatewayID, openai, anthropic)
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.MatchedBy(func(bk *registrydomain.Registry) bool {
+			return bk.ID == openai.ID
+		}), mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte(`{"object":"list","data":[]}`)}, nil).
+		Once()
+
+	fwd := newTestForwarder(t, invoker)
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request: &infracontext.RequestContext{
+			Method:          "GET",
+			Path:            "/acme/v1/files",
+			ProxyCapability: "files",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if res.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", res.StatusCode)
+	}
+}
+
+func TestForward_FilesPinnedIncapableIsTerminal(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	openai := backendFor(gatewayID, "openai")
+	anthropic := backendFor(gatewayID, "anthropic")
+	rc := routableConsumerWith(gatewayID, openai, anthropic)
+
+	fwd := newTestForwarder(t, proxymocks.NewProviderInvoker(t))
+	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request: &infracontext.RequestContext{
+			Body:            []byte(`{"model":"@anthropic/claude-4"}`),
+			ProxyCapability: "files",
+		},
+	})
+	if !errors.Is(err, appproxy.ErrCapabilityNotSupported) {
+		t.Fatalf("expected ErrCapabilityNotSupported, got %v", err)
+	}
+}
+
 func TestForward_EmbeddingsEmptyCapablePoolIs503(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	anthropic := backendFor(gatewayID, "anthropic")

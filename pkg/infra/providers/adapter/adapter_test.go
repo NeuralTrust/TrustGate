@@ -342,6 +342,10 @@ func TestResolveTargetFormatForCapability_NonChatCapabilitiesIgnoreRoute(t *test
 		ResolveTargetFormatForCapability("bedrock", "embeddings", FormatOpenAIEmbeddings, nil))
 	assert.Equal(t, FormatCohereRerank,
 		ResolveTargetFormatForCapability("cohere", "rerank", FormatOpenAIResponses, nil))
+	assert.Equal(t, FormatOpenAIFiles,
+		ResolveTargetFormatForCapability("openai", "files", FormatOpenAIResponses, nil))
+	assert.Equal(t, FormatOpenAIFiles,
+		ResolveTargetFormatForCapability("azure", "files", FormatOpenAI, nil))
 }
 
 // ---------------------------------------------------------------------------

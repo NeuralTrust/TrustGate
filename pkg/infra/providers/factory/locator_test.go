@@ -69,6 +69,29 @@ func TestProviderLocator_EmbeddingsClients(t *testing.T) {
 	}
 }
 
+func TestProviderLocator_FilesClients(t *testing.T) {
+	locator := NewProviderLocator()
+	for _, provider := range []string{
+		ProviderOpenAI,
+		ProviderAzure,
+		ProviderOpenRouter,
+		ProviderXAI,
+		ProviderMistral,
+	} {
+		t.Run(provider, func(t *testing.T) {
+			client, err := locator.Get(provider)
+			require.NoError(t, err)
+			_, ok := client.(providers.FilesClient)
+			assert.True(t, ok)
+		})
+	}
+
+	client, err := locator.Get(ProviderOpenAICompatible)
+	require.NoError(t, err)
+	_, ok := client.(providers.FilesClient)
+	assert.False(t, ok)
+}
+
 func TestProviderLocator_GetUnknown(t *testing.T) {
 	_, err := NewProviderLocator().Get("does-not-exist")
 	require.Error(t, err)

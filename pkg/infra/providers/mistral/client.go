@@ -21,6 +21,7 @@ import (
 	"io"
 	"iter"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -30,12 +31,14 @@ import (
 const (
 	chatCompletionsURL = "https://api.mistral.ai/v1/chat/completions"
 	embeddingsURL      = "https://api.mistral.ai/v1/embeddings"
+	filesBaseURL       = "https://api.mistral.ai/v1"
 	embeddingsPath     = "/embeddings"
 )
 
 var (
 	_ providers.Client           = (*client)(nil)
 	_ providers.EmbeddingsClient = (*client)(nil)
+	_ providers.FilesClient      = (*client)(nil)
 )
 
 type client struct {
@@ -76,6 +79,36 @@ func (c *client) Embeddings(
 		return nil, err
 	}
 	return c.rawPost(ctx, url, config.Credentials.ApiKey, reqBody)
+}
+
+func (c *client) Files(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.FilesRequest,
+) (*providers.FilesResult, error) {
+	if config.Credentials.ApiKey == "" {
+		return nil, fmt.Errorf("API key is required")
+	}
+	endpoint, err := filesURL(config.Options, req.Path, req.Query)
+	if err != nil {
+		return nil, err
+	}
+	httpClient := c.pool.Get(providers.ProviderMistral, providers.DefaultHTTPTimeout)
+	return providers.DoFilesHTTP(ctx, httpClient, req.Method, endpoint, req.ContentType, req.Body, func(httpReq *http.Request) {
+		httpReq.Header.Set("Authorization", "Bearer "+config.Credentials.ApiKey)
+	})
+}
+
+func filesURL(options map[string]any, path string, query url.Values) (string, error) {
+	opts, err := providers.DecodeMistralOptions(options)
+	if err != nil {
+		return "", err
+	}
+	base := filesBaseURL
+	if opts.BaseURL != "" {
+		base = strings.TrimRight(opts.BaseURL, "/")
+	}
+	return providers.JoinOpenAIFilesURL(base, path, query), nil
 }
 
 func embedURL(options map[string]any) (string, error) {
