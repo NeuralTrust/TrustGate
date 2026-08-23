@@ -24,10 +24,10 @@ import (
 func TestResolveProxyPath(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		path             string
-		wantSlug         string
-		wantFormat       adapter.Format
-		wantCapability   ProxyCapability
+		path           string
+		wantSlug       string
+		wantFormat     adapter.Format
+		wantCapability ProxyCapability
 	}{
 		{"/X84Yhsy8/v1/chat/completions", "X84Yhsy8", adapter.FormatOpenAI, CapabilityChat},
 		{"/X84Yhsy8/v1/chat/completions/", "X84Yhsy8", adapter.FormatOpenAI, CapabilityChat},
@@ -36,6 +36,9 @@ func TestResolveProxyPath(t *testing.T) {
 		{"/X84Yhsy8/v2/chat", "X84Yhsy8", adapter.FormatCohere, CapabilityChat},
 		{"/X84Yhsy8/v1/embeddings", "X84Yhsy8", adapter.FormatOpenAIEmbeddings, CapabilityEmbeddings},
 		{"/X84Yhsy8/v1/rerank", "X84Yhsy8", adapter.FormatCohereRerank, CapabilityRerank},
+		{"/X84Yhsy8/v1/files", "X84Yhsy8", adapter.FormatOpenAIFiles, CapabilityFiles},
+		{"/X84Yhsy8/v1/files/file-1", "X84Yhsy8", adapter.FormatOpenAIFiles, CapabilityFiles},
+		{"/X84Yhsy8/v1/files/file-1/content", "X84Yhsy8", adapter.FormatOpenAIFiles, CapabilityFiles},
 		{"/X84Yhsy8/v1beta/models/gemini-pro:generateContent", "X84Yhsy8", adapter.FormatGemini, CapabilityChat},
 		{"/X84Yhsy8/v1beta/models/gemini-pro:streamGenerateContent", "X84Yhsy8", adapter.FormatGemini, CapabilityChat},
 	}
@@ -65,6 +68,7 @@ func TestResolveProxyPath_UnknownRoutes(t *testing.T) {
 		"/X84Yhsy8/v2/chat/completions",
 		"/X84Yhsy8/v1beta/models/",
 		"/X84Yhsy8/v1beta/models/:generateContent",
+		"/X84Yhsy8/v1/files/file-1/other",
 		"/v1/chat/completions",
 	} {
 		if _, err := ResolveProxyPath(path); !errors.Is(err, ErrUnknownProxyPath) {
@@ -76,12 +80,12 @@ func TestResolveProxyPath_UnknownRoutes(t *testing.T) {
 func TestGeminiModelFromPath(t *testing.T) {
 	t.Parallel()
 	cases := map[string]string{
-		"/v1beta/models/gemini-pro:generateContent":               "gemini-pro",
+		"/v1beta/models/gemini-pro:generateContent":             "gemini-pro",
 		"/v1beta/models/gemini-1.5-flash:streamGenerateContent": "gemini-1.5-flash",
-		"/v1beta/models/gemini-pro":                               "gemini-pro",
+		"/v1beta/models/gemini-pro":                             "gemini-pro",
 		"/slug/v1beta/models/gemini-pro:generateContent":        "gemini-pro",
-		"/v1beta/models/:generateContent":                         "",
-		"/v1/chat/completions":                                    "",
+		"/v1beta/models/:generateContent":                       "",
+		"/v1/chat/completions":                                  "",
 	}
 	for rest, want := range cases {
 		if got := adapter.GeminiModelFromPath(rest); got != want {

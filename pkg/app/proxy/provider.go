@@ -44,6 +44,7 @@ const (
 	capabilityChat       = "chat"
 	capabilityEmbeddings = "embeddings"
 	capabilityRerank     = "rerank"
+	capabilityFiles      = "files"
 )
 
 var ErrInvalidRequestPayload = errors.New("invalid request payload")
@@ -123,6 +124,7 @@ type preparedInvocation struct {
 	targetFormat adapter.Format
 	crossFormat  bool
 	capability   string
+	files        providers.FilesRequest
 }
 
 func (p *providerInvoker) Invoke(
@@ -133,6 +135,10 @@ func (p *providerInvoker) Invoke(
 	prep, err := p.prepare(bk, req)
 	if err != nil {
 		return nil, err
+	}
+
+	if prep.capability == capabilityFiles {
+		return p.invokeFiles(ctx, bk, prep)
 	}
 
 	respBody, err := p.invokeUpstream(ctx, prep)
@@ -245,6 +251,18 @@ func (p *providerInvoker) prepare(
 	req.SourceFormat = string(sourceFormat)
 	req.TargetFormat = string(targetFormat)
 
+	if capability == capabilityFiles {
+		return &preparedInvocation{
+			client:       client,
+			cfg:          filesProviderConfig(bk),
+			body:         req.Body,
+			sourceFormat: sourceFormat,
+			targetFormat: targetFormat,
+			capability:   capability,
+			files:        filesRequestFromContext(req),
+		}, nil
+	}
+
 	crossFormat := !adapter.ShouldPassthroughSameWireFormat(sourceFormat, targetFormat)
 
 	body := req.Body
@@ -314,6 +332,8 @@ func capabilityFromRequest(req *infracontext.RequestContext) string {
 		return capabilityEmbeddings
 	case capabilityRerank:
 		return capabilityRerank
+	case capabilityFiles:
+		return capabilityFiles
 	default:
 		return capabilityChat
 	}
@@ -359,6 +379,61 @@ func (p *providerInvoker) adaptResponseBody(body []byte, prep *preparedInvocatio
 	default:
 		return p.registry.AdaptResponse(body, prep.sourceFormat, prep.targetFormat)
 	}
+}
+
+func filesProviderConfig(bk *registry.Registry) *providers.Config {
+	return &providers.Config{
+		Options:     adapter.OpenAIProviderOptionsForTarget(bk.Provider(), adapter.FormatOpenAIFiles, bk.ProviderOptions()),
+		Credentials: providers.CredentialsFromTargetAuth(bk.Auth()),
+	}
+}
+
+func filesRequestFromContext(req *infracontext.RequestContext) providers.FilesRequest {
+	return providers.FilesRequest{
+		Method:      req.Method,
+		Path:        providers.RestAfterConsumerSlug(req.Path),
+		Query:       req.Query,
+		ContentType: req.HeaderValue(headerContentType),
+		Body:        req.Body,
+	}
+}
+
+func (p *providerInvoker) invokeFiles(
+	ctx context.Context,
+	bk *registry.Registry,
+	prep *preparedInvocation,
+) (*ProviderResponse, error) {
+	filesClient, ok := prep.client.(providers.FilesClient)
+	if !ok {
+		return nil, fmt.Errorf("%w: files", ErrCapabilityNotSupported)
+	}
+	if err := providers.ValidateFilesMethod(prep.files.Method, prep.files.Path); err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidRequestPayload, err.Error())
+	}
+	result, err := filesClient.Files(ctx, prep.cfg, prep.files)
+	if err != nil {
+		if be, ok := registry.IsBackendError(err); ok {
+			return &ProviderResponse{
+				StatusCode: be.StatusCode,
+				Headers:    withSelectionHeaders(be.PassthroughHeaders(), bk, prep.sentModel),
+				Body:       be.Body,
+			}, nil
+		}
+		return nil, fmt.Errorf("provider files: %w", err)
+	}
+	contentType := result.ContentType
+	if contentType == "" {
+		contentType = contentTypeJSON
+	}
+	return &ProviderResponse{
+		StatusCode: http.StatusOK,
+		Headers: withSelectionHeaders(
+			map[string][]string{headerContentType: {contentType}},
+			bk,
+			prep.sentModel,
+		),
+		Body: result.Body,
+	}, nil
 }
 
 func (p *providerInvoker) invokeUpstream(ctx context.Context, prep *preparedInvocation) ([]byte, error) {
