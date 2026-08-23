@@ -69,6 +69,65 @@ func TestResolveURL(t *testing.T) {
 	})
 }
 
+func TestResolveEmbeddingsURL(t *testing.T) {
+	c := &client{}
+
+	cases := []struct {
+		name    string
+		options map[string]any
+		want    string
+	}{
+		{name: "default host", options: nil, want: embeddingsURL},
+		{name: "base_url", options: map[string]any{"base_url": "http://127.0.0.1:9999"}, want: "http://127.0.0.1:9999/embeddings"},
+		{name: "base_url trailing slash", options: map[string]any{"base_url": "https://host/v1/"}, want: "https://host/v1/embeddings"},
+		{name: "responses api does not change embeddings path", options: map[string]any{"api": "responses", "base_url": "https://host/v1"}, want: "https://host/v1/embeddings"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := c.resolveEmbeddingsURL(&providers.Config{Options: tt.options})
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestEmbeddings_MissingAPIKey(t *testing.T) {
+	c := NewOpenaiClient().(providers.EmbeddingsClient)
+	_, err := c.Embeddings(context.Background(), &providers.Config{}, []byte(`{"model":"text-embedding-3-small","input":"hi"}`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "API key is required")
+}
+
+func TestEmbeddings_RoundTrip(t *testing.T) {
+	var gotAuth, gotPath string
+	var gotBody map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotPath = r.URL.Path
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotBody))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"index":0,"embedding":[0.1,0.2]}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewOpenaiClient().(providers.EmbeddingsClient)
+	resp, err := c.Embeddings(
+		context.Background(),
+		&providers.Config{
+			Credentials: providers.Credentials{ApiKey: "sk-test"},
+			Options:     map[string]any{"base_url": srv.URL + "/v1"},
+		},
+		[]byte(`{"model":"text-embedding-3-small","input":"hi"}`),
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, "Bearer sk-test", gotAuth)
+	assert.Equal(t, "/v1/embeddings", gotPath)
+	assert.Equal(t, "text-embedding-3-small", gotBody["model"])
+	assert.JSONEq(t, `{"object":"list","data":[{"index":0,"embedding":[0.1,0.2]}]}`, string(resp))
+}
+
 func TestChatCompletions_MissingAPIKey(t *testing.T) {
 	chat := NewChatCompletionsClient(providers.ProviderOpenAI, nil)
 	_, err := chat.Completions(context.Background(), "http://example.invalid", &providers.Config{}, []byte(`{}`), nil)

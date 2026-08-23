@@ -123,6 +123,19 @@ func (s *CandidateSet) HasRegistry(id ids.RegistryID) bool {
 	return ok
 }
 
+func (s *CandidateSet) Filter(keep func(Candidate) bool) *CandidateSet {
+	out := NewCandidateSet()
+	if s == nil || keep == nil {
+		return out
+	}
+	for _, c := range s.candidates {
+		if keep(c) {
+			out.Add(c)
+		}
+	}
+	return out
+}
+
 func (s *CandidateSet) Registries() []*registrydomain.Registry {
 	if s == nil {
 		return nil

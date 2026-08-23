@@ -36,6 +36,49 @@ func TestCompletions_MissingAPIKey(t *testing.T) {
 	assert.Contains(t, err.Error(), "API key is required")
 }
 
+func TestEmbedURL(t *testing.T) {
+	got, err := embedURL(nil)
+	require.NoError(t, err)
+	assert.Equal(t, embeddingsURL, got)
+
+	got, err = embedURL(map[string]any{"base_url": "https://host/v1/"})
+	require.NoError(t, err)
+	assert.Equal(t, "https://host/v1/embeddings", got)
+
+	_, err = embedURL(map[string]any{"base_url": "host/v1"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "base_url")
+}
+
+func TestEmbeddings_MissingAPIKey(t *testing.T) {
+	c := NewMistralClient().(providers.EmbeddingsClient)
+	_, err := c.Embeddings(context.Background(), &providers.Config{}, []byte(`{}`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "API key is required")
+}
+
+func TestEmbeddings_RoundTrip(t *testing.T) {
+	var gotAuth, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"index":0,"embedding":[0.1,0.2]}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewMistralClient().(providers.EmbeddingsClient)
+	resp, err := c.Embeddings(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{ApiKey: "mistral-key"},
+		Options:     map[string]any{"base_url": srv.URL + "/v1"},
+	}, []byte(`{"model":"mistral-embed","input":["hi"]}`))
+	require.NoError(t, err)
+
+	assert.Equal(t, "Bearer mistral-key", gotAuth)
+	assert.Equal(t, "/v1/embeddings", gotPath)
+	assert.JSONEq(t, `{"object":"list","data":[{"index":0,"embedding":[0.1,0.2]}]}`, string(resp))
+}
+
 func TestRawPost_RoundTrip(t *testing.T) {
 	var gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

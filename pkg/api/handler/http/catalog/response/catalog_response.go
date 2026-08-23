@@ -27,6 +27,7 @@ type ProviderResponse struct {
 	WireFormat            string                           `json:"wire_format"`
 	Source                string                           `json:"source"`
 	Metadata              map[string]any                   `json:"metadata,omitempty"`
+	Capabilities          map[string]bool                  `json:"capabilities,omitempty"`
 	AuthTypes             []appcatalog.AuthTypeOption      `json:"auth_types"`
 	ProviderOptionsSchema []appcatalog.ProviderOptionField `json:"provider_options_schema"`
 }
@@ -55,14 +56,14 @@ type ModelResponse struct {
 
 func FromProvider(p domain.Provider) ProviderResponse {
 	return ProviderResponse{
-		ID:          p.ID,
-		Code:        p.Code,
-		DisplayName: p.DisplayName,
-		WireFormat:  p.WireFormat,
-		Source:      p.Source,
-		Metadata:    p.Metadata,
-		AuthTypes:   appcatalog.ProviderAuthOptions(p.Code),
-
+		ID:                    p.ID,
+		Code:                  p.Code,
+		DisplayName:           p.DisplayName,
+		WireFormat:            p.WireFormat,
+		Source:                p.Source,
+		Metadata:              p.Metadata,
+		Capabilities:          appcatalog.ProviderCapabilities(p.Code),
+		AuthTypes:             appcatalog.ProviderAuthOptions(p.Code),
 		ProviderOptionsSchema: appcatalog.ProviderOptions(p.Code),
 	}
 }
