@@ -31,4 +31,5 @@ var (
 	ErrInvalidRegistry        = fmt.Errorf("registry: invalid backend: %w", commonerrors.ErrValidation)
 	ErrInvalidHealthChecks    = fmt.Errorf("registry: invalid health checks: %w", commonerrors.ErrValidation)
 	ErrInvalidMCPTarget       = fmt.Errorf("registry: invalid mcp target: %w", commonerrors.ErrValidation)
+	ErrInvalidPricing         = fmt.Errorf("registry: invalid pricing: %w", commonerrors.ErrValidation)
 )

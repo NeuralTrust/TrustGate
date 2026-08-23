@@ -38,6 +38,34 @@ func TestUpdateRegistryRequest_ToHealthChecks_NilField(t *testing.T) {
 	}
 }
 
+func TestPricingRequest_ToDomain(t *testing.T) {
+	t.Parallel()
+	var p *PricingRequest
+	if got := p.ToDomain(); got != nil {
+		t.Fatalf("expected nil from nil receiver, got %+v", got)
+	}
+	got := (&PricingRequest{
+		Discount:  0.2,
+		Overrides: map[string]PriceOverrideRequest{"gpt-4o": {Input: 0.0000015, Output: 0.000006}},
+	}).ToDomain()
+	if got == nil || got.Discount != 0.2 || got.Overrides["gpt-4o"].Input != 0.0000015 {
+		t.Fatalf("ToDomain mismatch: %+v", got)
+	}
+}
+
+func TestCreateRegistryRequest_Validate_RejectsBadDiscount(t *testing.T) {
+	t.Parallel()
+	r := CreateRegistryRequest{
+		Name:     "openai",
+		Provider: "openai",
+		Auth:     &TargetAuthRequest{Type: "api_key", APIKey: &APIKeyAuthRequest{APIKey: "sk-1"}},
+		Pricing:  &PricingRequest{Discount: 1.5},
+	}
+	if err := r.Validate(); err == nil {
+		t.Fatal("expected validation error for discount > 1")
+	}
+}
+
 func TestHealthChecksRequest_ToDomain_NilReceiver(t *testing.T) {
 	t.Parallel()
 	var h *HealthChecksRequest

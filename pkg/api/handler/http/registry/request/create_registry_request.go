@@ -31,7 +31,18 @@ type CreateRegistryRequest struct {
 	Description     string               `json:"description,omitempty"`
 	Auth            *TargetAuthRequest   `json:"auth,omitempty"`
 	HealthChecks    *HealthChecksRequest `json:"health_checks,omitempty"`
+	Pricing         *PricingRequest      `json:"pricing,omitempty"`
 	MCPTarget       *MCPTargetRequest    `json:"mcp_target,omitempty"`
+}
+
+type PricingRequest struct {
+	Discount  float64                         `json:"discount,omitempty"`
+	Overrides map[string]PriceOverrideRequest `json:"overrides,omitempty"`
+}
+
+type PriceOverrideRequest struct {
+	Input  float64 `json:"input"`
+	Output float64 `json:"output"`
 }
 
 type MCPTargetRequest struct {
@@ -156,6 +167,9 @@ func (r CreateRegistryRequest) Validate() error {
 	if err := r.Auth.ToDomain().Validate(); err != nil {
 		return err
 	}
+	if err := r.Pricing.ToDomain().Validate(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -167,7 +181,7 @@ func (r CreateRegistryRequest) ToType() domain.Type {
 }
 
 func (r CreateRegistryRequest) ToLLMTarget() *domain.LLMTarget {
-	if r.ToType() != domain.TypeLLM && r.Provider == "" && len(r.ProviderOptions) == 0 && r.Auth == nil && r.HealthChecks == nil {
+	if r.ToType() != domain.TypeLLM && r.Provider == "" && len(r.ProviderOptions) == 0 && r.Auth == nil && r.HealthChecks == nil && r.Pricing == nil {
 		return nil
 	}
 	return &domain.LLMTarget{
@@ -175,7 +189,25 @@ func (r CreateRegistryRequest) ToLLMTarget() *domain.LLMTarget {
 		ProviderOptions: r.ProviderOptions,
 		Auth:            r.Auth.ToDomain(),
 		HealthChecks:    r.HealthChecks.ToDomain(),
+		Pricing:         r.Pricing.ToDomain(),
 	}
+}
+
+func (p *PricingRequest) ToDomain() *domain.Pricing {
+	if p == nil {
+		return nil
+	}
+	out := &domain.Pricing{Discount: p.Discount}
+	if len(p.Overrides) > 0 {
+		out.Overrides = make(map[string]domain.PriceOverride, len(p.Overrides))
+		for slug, rate := range p.Overrides {
+			out.Overrides[slug] = domain.PriceOverride{Input: rate.Input, Output: rate.Output}
+		}
+	}
+	if out.IsZero() {
+		return nil
+	}
+	return out
 }
 
 func (r CreateRegistryRequest) ToMCPTarget() *domain.MCPTarget {
