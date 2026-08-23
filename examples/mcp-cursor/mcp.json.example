@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "trustgate": {
+      "url": "http://localhost:8082/agent-client/mcp",
+      "headers": {
+        "X-AG-API-Key": "<your consumer API key>"
+      }
+    }
+  }
+}
