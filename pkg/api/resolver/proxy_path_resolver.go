@@ -44,12 +44,14 @@ var ErrUnknownProxyPath = errors.New("no fixed proxy route matches the request p
 type ProxyCapability string
 
 const (
-	CapabilityChat       ProxyCapability = "chat"
-	CapabilityEmbeddings ProxyCapability = "embeddings"
-	CapabilityRerank     ProxyCapability = "rerank"
-	CapabilityFiles      ProxyCapability = "files"
-	CapabilityModels     ProxyCapability = "models"
-	CapabilityImages     ProxyCapability = "images"
+	CapabilityChat               ProxyCapability = "chat"
+	CapabilityEmbeddings         ProxyCapability = "embeddings"
+	CapabilityRerank             ProxyCapability = "rerank"
+	CapabilityFiles              ProxyCapability = "files"
+	CapabilityModels             ProxyCapability = "models"
+	CapabilityImages             ProxyCapability = "images"
+	CapabilityAudioSpeech        ProxyCapability = "audio_speech"
+	CapabilityAudioTranscription ProxyCapability = "audio_transcription"
 )
 
 // ProxyRoute is the result of parsing a proxy request path of the form
@@ -104,6 +106,12 @@ func formatForRoute(rest string) (adapter.Format, ProxyCapability, error) {
 	}
 	if providers.IsImagesPath(rest) {
 		return adapter.FormatOpenAIImages, CapabilityImages, nil
+	}
+	if providers.IsAudioSpeechPath(rest) {
+		return adapter.FormatOpenAIAudio, CapabilityAudioSpeech, nil
+	}
+	if providers.IsAudioTranscriptionPath(rest) {
+		return adapter.FormatOpenAIAudio, CapabilityAudioTranscription, nil
 	}
 	if isModelsPath(rest) {
 		return adapter.FormatOpenAI, CapabilityModels, nil

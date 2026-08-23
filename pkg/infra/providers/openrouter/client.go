@@ -17,6 +17,7 @@ package openrouter
 import (
 	"context"
 	"iter"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
@@ -28,8 +29,10 @@ const (
 )
 
 var (
-	_ providers.FilesClient  = (*client)(nil)
-	_ providers.ImagesClient = (*client)(nil)
+	_ providers.FilesClient              = (*client)(nil)
+	_ providers.ImagesClient             = (*client)(nil)
+	_ providers.AudioSpeechClient        = (*client)(nil)
+	_ providers.AudioTranscriptionClient = (*client)(nil)
 )
 
 type client struct {
@@ -73,4 +76,47 @@ func (c *client) Images(
 	req providers.ImagesRequest,
 ) (*providers.ImagesResult, error) {
 	return c.chat.Images(ctx, providers.JoinOpenRouterImagesURL(filesBaseURL, req.Path, req.Query), config, req, nil)
+}
+
+func (c *client) AudioSpeech(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.AudioRequest,
+) (*providers.AudioResult, error) {
+	return c.audio(ctx, config, req)
+}
+
+func (c *client) AudioTranscription(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.AudioRequest,
+) (*providers.AudioResult, error) {
+	return c.audio(ctx, config, req)
+}
+
+func (c *client) audio(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.AudioRequest,
+) (*providers.AudioResult, error) {
+	base, err := resolveOpenRouterAudioBaseURL(config)
+	if err != nil {
+		return nil, err
+	}
+	return c.chat.Audio(ctx, providers.JoinOpenAIAudioURL(base, req.Path, req.Query), config, req, nil)
+}
+
+func resolveOpenRouterAudioBaseURL(config *providers.Config) (string, error) {
+	var options map[string]any
+	if config != nil {
+		options = config.Options
+	}
+	opts, err := providers.DecodeOpenRouterOptions(options)
+	if err != nil {
+		return "", err
+	}
+	if opts.BaseURL != "" {
+		return strings.TrimRight(opts.BaseURL, "/"), nil
+	}
+	return filesBaseURL, nil
 }

@@ -906,6 +906,59 @@ func TestForward_ImagesPinnedIncapableMultipartIsTerminal(t *testing.T) {
 	}
 }
 
+func TestForward_AudioSpeechFiltersIncapableProviders(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	openai := backendFor(gatewayID, "openai")
+	anthropic := backendFor(gatewayID, "anthropic")
+	rc := routableConsumerWith(gatewayID, openai, anthropic)
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.MatchedBy(func(bk *registrydomain.Registry) bool {
+			return bk.ID == openai.ID
+		}), mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("audio-bytes")}, nil).
+		Once()
+
+	fwd := newTestForwarder(t, invoker)
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request: &infracontext.RequestContext{
+			Method:          "POST",
+			Path:            "/acme/v1/audio/speech",
+			Body:            []byte(`{"model":"tts-1","input":"hi","voice":"alloy"}`),
+			ProxyCapability: "audio_speech",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if res.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", res.StatusCode)
+	}
+}
+
+func TestForward_AudioTranscriptionPinnedIncapableIsTerminal(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	openai := backendFor(gatewayID, "openai")
+	anthropic := backendFor(gatewayID, "anthropic")
+	rc := routableConsumerWith(gatewayID, openai, anthropic)
+
+	fwd := newTestForwarder(t, proxymocks.NewProviderInvoker(t))
+	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request: &infracontext.RequestContext{
+			Body:            []byte(`{"model":"@anthropic/claude-4"}`),
+			ProxyCapability: "audio_transcription",
+		},
+	})
+	if !errors.Is(err, appproxy.ErrCapabilityNotSupported) {
+		t.Fatalf("expected ErrCapabilityNotSupported, got %v", err)
+	}
+}
+
 func TestForward_EmbeddingsEmptyCapablePoolIs503(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	anthropic := backendFor(gatewayID, "anthropic")
@@ -918,6 +971,27 @@ func TestForward_EmbeddingsEmptyCapablePoolIs503(t *testing.T) {
 		Request: &infracontext.RequestContext{
 			Body:            []byte(`{"input":"hi"}`),
 			ProxyCapability: "embeddings",
+		},
+	})
+	if !errors.Is(err, appproxy.ErrNoBackendsInPool) {
+		t.Fatalf("expected ErrNoBackendsInPool, got %v", err)
+	}
+}
+
+func TestForward_AudioSpeechEmptyCapablePoolIs503(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	anthropic := backendFor(gatewayID, "anthropic")
+	rc := routableConsumerWith(gatewayID, anthropic)
+
+	fwd := newTestForwarder(t, proxymocks.NewProviderInvoker(t))
+	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request: &infracontext.RequestContext{
+			Method:          "POST",
+			Path:            "/acme/v1/audio/speech",
+			Body:            []byte(`{"model":"tts-1","input":"hi","voice":"alloy"}`),
+			ProxyCapability: "audio_speech",
 		},
 	})
 	if !errors.Is(err, appproxy.ErrNoBackendsInPool) {

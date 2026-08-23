@@ -60,6 +60,14 @@ func TestSupportsCapability_MatchesLocatorClients(t *testing.T) {
 				providers.ClientSupportsCapability(client, providers.CapabilityImages),
 				providers.SupportsCapability(provider, providers.CapabilityImages),
 			)
+			assert.Equal(t,
+				providers.ClientSupportsCapability(client, providers.CapabilityAudioSpeech),
+				providers.SupportsCapability(provider, providers.CapabilityAudioSpeech),
+			)
+			assert.Equal(t,
+				providers.ClientSupportsCapability(client, providers.CapabilityAudioTranscription),
+				providers.SupportsCapability(provider, providers.CapabilityAudioTranscription),
+			)
 		})
 	}
 }
@@ -106,4 +114,20 @@ func TestProviderCapabilities(t *testing.T) {
 	assert.True(t, providers.ProviderCapabilities(providers.ProviderOpenRouter)[providers.CapabilityImages])
 	assert.False(t, providers.ProviderCapabilities(providers.ProviderGroq)[providers.CapabilityImages])
 	assert.False(t, providers.ProviderCapabilities(providers.ProviderAnthropic)[providers.CapabilityImages])
+
+	for _, provider := range []string{
+		providers.ProviderOpenAI,
+		providers.ProviderOpenAICompatible,
+		providers.ProviderAzure,
+		providers.ProviderOpenRouter,
+		providers.ProviderGroq,
+		providers.ProviderMistral,
+	} {
+		caps := providers.ProviderCapabilities(provider)
+		assert.True(t, caps[providers.CapabilityAudioSpeech], provider)
+		assert.True(t, caps[providers.CapabilityAudioTranscription], provider)
+	}
+	assert.False(t, providers.ProviderCapabilities(providers.ProviderAnthropic)[providers.CapabilityAudioSpeech])
+	assert.False(t, providers.ProviderCapabilities(providers.ProviderXAI)[providers.CapabilityAudioTranscription])
+	assert.False(t, providers.ProviderCapabilities(providers.ProviderCohere)[providers.CapabilityAudioSpeech])
 }

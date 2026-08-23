@@ -131,3 +131,19 @@ func TestEnforceModel(t *testing.T) {
 		}
 	})
 }
+
+func TestCheckAllowedModel(t *testing.T) {
+	t.Parallel()
+	if err := CheckAllowedModel("whisper-1", nil); err != nil {
+		t.Fatalf("empty allow-list: %v", err)
+	}
+	if err := CheckAllowedModel("whisper-1", []string{"whisper-1"}); err != nil {
+		t.Fatalf("allowed: %v", err)
+	}
+	if err := CheckAllowedModel("tts-1", []string{"whisper-1"}); !errors.Is(err, ErrModelNotAllowed) {
+		t.Fatalf("disallowed: %v", err)
+	}
+	if err := CheckAllowedModel("", []string{"whisper-1"}); !errors.Is(err, ErrModelNotAllowed) {
+		t.Fatalf("missing: %v", err)
+	}
+}

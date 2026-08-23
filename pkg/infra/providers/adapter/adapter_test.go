@@ -350,6 +350,10 @@ func TestResolveTargetFormatForCapability_NonChatCapabilitiesIgnoreRoute(t *test
 		ResolveTargetFormatForCapability("openai", "images", FormatOpenAIResponses, nil))
 	assert.Equal(t, FormatOpenAIImages,
 		ResolveTargetFormatForCapability("azure", "images", FormatOpenAI, nil))
+	assert.Equal(t, FormatOpenAIAudio,
+		ResolveTargetFormatForCapability("openai", "audio_speech", FormatOpenAIResponses, nil))
+	assert.Equal(t, FormatOpenAIAudio,
+		ResolveTargetFormatForCapability("mistral", "audio_transcription", FormatOpenAI, nil))
 }
 
 // ---------------------------------------------------------------------------

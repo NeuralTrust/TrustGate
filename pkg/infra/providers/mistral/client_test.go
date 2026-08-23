@@ -16,6 +16,7 @@ package mistral
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -98,6 +99,68 @@ func TestFiles_RoundTrip(t *testing.T) {
 	assert.Equal(t, "/v1/files/file-1", gotPath)
 	assert.Equal(t, http.MethodDelete, gotMethod)
 	assert.JSONEq(t, `{"id":"file-1","object":"file","deleted":true}`, string(result.Body))
+}
+
+func TestAudioSpeech_UnwrapsJSONAudio(t *testing.T) {
+	var gotPath, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"audio_data":"d2F2LWJ5dGVz"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewMistralClient().(providers.AudioSpeechClient)
+	result, err := c.AudioSpeech(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{ApiKey: "mistral-key"},
+		Options:     map[string]any{"base_url": srv.URL + "/v1"},
+	}, providers.AudioRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/audio/speech",
+		ContentType: "application/json",
+		Body:        []byte(`{"model":"voxtral-mini-tts-2603","input":"hi","voice":"alloy","response_format":"wav"}`),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/v1/audio/speech", gotPath)
+	assert.Contains(t, gotBody, `"voice_id":"alloy"`)
+	assert.Equal(t, []byte("wav-bytes"), result.Body)
+	assert.Equal(t, "audio/wav", result.ContentType)
+}
+
+func TestAudioTranscription_RoundTrip(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"text":"hello"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewMistralClient().(providers.AudioTranscriptionClient)
+	result, err := c.AudioTranscription(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{ApiKey: "mistral-key"},
+		Options:     map[string]any{"base_url": srv.URL + "/v1"},
+	}, providers.AudioRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/audio/transcriptions",
+		ContentType: "multipart/form-data; boundary=abc",
+		Body:        []byte("file-bytes"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/v1/audio/transcriptions", gotPath)
+	assert.JSONEq(t, `{"text":"hello"}`, string(result.Body))
+}
+
+func TestAudioURL(t *testing.T) {
+	got, err := audioURL(nil, "/v1/audio/speech", nil)
+	require.NoError(t, err)
+	assert.Equal(t, filesBaseURL+"/audio/speech", got)
+
+	got, err = audioURL(map[string]any{"base_url": "https://host/v1/"}, "/v1/audio/transcriptions", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "https://host/v1/audio/transcriptions", got)
 }
 
 func TestEmbeddings_MissingAPIKey(t *testing.T) {

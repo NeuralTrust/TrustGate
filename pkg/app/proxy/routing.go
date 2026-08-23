@@ -66,7 +66,7 @@ func (f *forwarder) resolveRouting(in ForwardInput) (routingdomain.Intent, *rout
 		candidates = filterCandidatesByCapability(candidates, needed)
 	}
 	if candidates.Len() == 0 {
-		if needed != "" && (intent.IsQualified() || intent.IsShortModel()) {
+		if needed != "" && intent.IsQualified() {
 			err := fmt.Errorf("%w: %s", ErrCapabilityNotSupported, needed)
 			f.logRejectedIntent(in.Consumer, ref, err)
 			return intent, nil, err
@@ -82,11 +82,16 @@ func capabilityRequiresProviderSupport(req *infracontext.RequestContext) string 
 		return ""
 	}
 	switch req.ProxyCapability {
-	case capabilityEmbeddings, capabilityRerank, capabilityFiles, capabilityImages:
+	case capabilityEmbeddings, capabilityRerank, capabilityFiles, capabilityImages,
+		capabilityAudioSpeech, capabilityAudioTranscription:
 		return req.ProxyCapability
 	default:
 		return ""
 	}
+}
+
+func isAudioCapability(capability string) bool {
+	return capability == capabilityAudioSpeech || capability == capabilityAudioTranscription
 }
 
 func filterCandidatesByCapability(candidates *routingdomain.CandidateSet, capability string) *routingdomain.CandidateSet {
@@ -140,6 +145,9 @@ func modelRefFromRequest(req *infracontext.RequestContext) (string, error) {
 	if err != nil {
 		if req.ProxyCapability == capabilityImages && providers.IsImagesMultipart(req.HeaderValue(headerContentType)) {
 			return providers.ExtractImagesModel(req.HeaderValue(headerContentType), req.Body), nil
+		}
+		if isAudioCapability(req.ProxyCapability) && providers.IsAudioMultipart(req.HeaderValue(headerContentType)) {
+			return providers.ExtractAudioModel(req.HeaderValue(headerContentType), req.Body), nil
 		}
 		return "", nil
 	}
