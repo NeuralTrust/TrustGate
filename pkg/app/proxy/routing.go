@@ -82,7 +82,7 @@ func capabilityRequiresProviderSupport(req *infracontext.RequestContext) string 
 		return ""
 	}
 	switch req.ProxyCapability {
-	case capabilityEmbeddings, capabilityRerank, capabilityFiles:
+	case capabilityEmbeddings, capabilityRerank, capabilityFiles, capabilityImages:
 		return req.ProxyCapability
 	default:
 		return ""

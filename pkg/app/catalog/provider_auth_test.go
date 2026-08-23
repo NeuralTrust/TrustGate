@@ -214,3 +214,24 @@ func TestProviderCapabilities_FilesProviders(t *testing.T) {
 		t.Fatal("openai_compatible must not advertise files")
 	}
 }
+
+func TestProviderCapabilities_ImagesProviders(t *testing.T) {
+	t.Parallel()
+	for _, code := range []string{
+		providers.ProviderOpenAI,
+		providers.ProviderAzure,
+		providers.ProviderOpenAICompatible,
+		providers.ProviderOpenRouter,
+	} {
+		caps := ProviderCapabilities(code)
+		if !caps["images"] {
+			t.Fatalf("%s capabilities missing images: %v", code, caps)
+		}
+	}
+	if ProviderCapabilities(providers.ProviderAnthropic)["images"] {
+		t.Fatal("anthropic must not advertise images")
+	}
+	if ProviderCapabilities(providers.ProviderGroq)["images"] {
+		t.Fatal("groq must not advertise images")
+	}
+}
