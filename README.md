@@ -108,13 +108,20 @@ curl -s -X POST "$PROXY/$CON_SLUG/v1/files" \
   -F purpose=assistants \
   -F file="@notes.txt"
 
-# 9. Model discovery (OpenAI-compatible, gateway-owned)
-curl -s "$PROXY/$CON_SLUG/v1/models" \
-  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY"
-curl -s "$PROXY/$CON_SLUG/v1/models/gpt-4o-mini" \
-  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY"
+# 9. Audio speech (TTS) — raw audio bytes
+curl -s -X POST "$PROXY/$CON_SLUG/v1/audio/speech" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"tts-1","input":"Hello from TrustGate","voice":"alloy"}' \
+  --output speech.mp3
 
-# 10. Images (OpenAI, Azure OpenAI, openai_compatible, OpenRouter)
+# 10. Audio transcriptions (STT)
+curl -s -X POST "$PROXY/$CON_SLUG/v1/audio/transcriptions" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
+  -F model=whisper-1 \
+  -F file="@speech.mp3"
+
+# 11. Images (OpenAI, Azure OpenAI, openai_compatible, OpenRouter)
 curl -s -X POST "$PROXY/$CON_SLUG/v1/images/generations" \
   -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
@@ -125,7 +132,15 @@ curl -s -X POST "$PROXY/$CON_SLUG/v1/images/edits" \
 curl -s -X POST "$PROXY/$CON_SLUG/v1/images/variations" \
   -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
   -F model=dall-e-2 -F image=@logo.png
+
+# 12. Model discovery (OpenAI-compatible, gateway-owned)
+curl -s "$PROXY/$CON_SLUG/v1/models" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY"
+curl -s "$PROXY/$CON_SLUG/v1/models/gpt-4o-mini" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY"
 ```
+
+OpenAI-shaped clients call `POST /{consumer}/v1/audio/speech` (TTS, raw audio bytes) and `POST /{consumer}/v1/audio/transcriptions` (STT, multipart file). OpenAI, Azure OpenAI, `openai_compatible`, OpenRouter, Groq, and Mistral registries that expose those APIs are forwarded as-is (Azure uses `{endpoint}/openai/deployments/{model}/audio/{speech|transcriptions}?api-version=…`). Mistral speech JSON `{audio_data}` is unwrapped to raw bytes so the gateway response stays OpenAI-shaped. `/v1/audio/translations` is not served yet. Providers without the matching audio capability are filtered out of the pool.
 
 OpenAI-shaped clients call `POST /{consumer}/v1/images/generations` (JSON), plus multipart `POST /{consumer}/v1/images/edits` and `POST /{consumer}/v1/images/variations`. OpenAI, Azure, and `openai_compatible` registries forward the payload to the matching upstream images URL (Azure uses `{endpoint}/openai/deployments/{model}/images/{generations|edits|variations}?api-version=…`). OpenRouter registries map generations to `POST /api/v1/images` and keep edits/variations on `/api/v1/images/edits` and `/api/v1/images/variations`. Providers without an Images API are filtered out of the pool; pinning an incapable provider is a terminal 400.
 

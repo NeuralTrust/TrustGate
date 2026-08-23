@@ -114,6 +114,34 @@ func TestProviderLocator_ImagesClients(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestProviderLocator_AudioClients(t *testing.T) {
+	locator := NewProviderLocator()
+	for _, provider := range []string{
+		ProviderOpenAI,
+		ProviderOpenAICompatible,
+		ProviderAzure,
+		ProviderOpenRouter,
+		ProviderGroq,
+		ProviderMistral,
+	} {
+		t.Run(provider, func(t *testing.T) {
+			client, err := locator.Get(provider)
+			require.NoError(t, err)
+			_, speech := client.(providers.AudioSpeechClient)
+			_, transcription := client.(providers.AudioTranscriptionClient)
+			assert.True(t, speech)
+			assert.True(t, transcription)
+		})
+	}
+
+	client, err := locator.Get(ProviderAnthropic)
+	require.NoError(t, err)
+	_, speech := client.(providers.AudioSpeechClient)
+	_, transcription := client.(providers.AudioTranscriptionClient)
+	assert.False(t, speech)
+	assert.False(t, transcription)
+}
+
 func TestProviderLocator_GetUnknown(t *testing.T) {
 	_, err := NewProviderLocator().Get("does-not-exist")
 	require.Error(t, err)

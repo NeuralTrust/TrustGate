@@ -233,3 +233,26 @@ func TestProviderCapabilities_ImagesProviders(t *testing.T) {
 		t.Fatal("groq must not advertise images")
 	}
 }
+
+func TestProviderCapabilities_AudioProviders(t *testing.T) {
+	t.Parallel()
+	for _, code := range []string{
+		providers.ProviderOpenAI,
+		providers.ProviderOpenAICompatible,
+		providers.ProviderAzure,
+		providers.ProviderOpenRouter,
+		providers.ProviderGroq,
+		providers.ProviderMistral,
+	} {
+		caps := ProviderCapabilities(code)
+		if !caps["audio_speech"] || !caps["audio_transcription"] {
+			t.Fatalf("%s capabilities missing audio: %v", code, caps)
+		}
+	}
+	if ProviderCapabilities(providers.ProviderAnthropic)["audio_speech"] {
+		t.Fatal("anthropic must not advertise audio_speech")
+	}
+	if ProviderCapabilities(providers.ProviderXAI)["audio_transcription"] {
+		t.Fatal("xai must not advertise audio_transcription")
+	}
+}

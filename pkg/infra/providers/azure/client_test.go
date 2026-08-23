@@ -266,6 +266,81 @@ func TestFiles_RoundTrip(t *testing.T) {
 	assert.JSONEq(t, `{"object":"list","data":[]}`, string(result.Body))
 }
 
+func TestAudioSpeech_RoundTrip(t *testing.T) {
+	var gotPath, gotAPIKey, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAPIKey = r.Header.Get("api-key")
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "audio/mpeg")
+		_, _ = w.Write([]byte("mp3-bytes"))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewAzureClient().(providers.AudioSpeechClient)
+	result, err := c.AudioSpeech(context.Background(), &providers.Config{
+		Model: "tts-1",
+		Credentials: providers.Credentials{
+			ApiKey: "az-key",
+			Azure: &providers.Azure{
+				Endpoint: srv.URL,
+				AuthMode: providers.AzureAuthModeAPIKey,
+			},
+		},
+	}, providers.AudioRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/audio/speech",
+		ContentType: "application/json",
+		Body:        []byte(`{"model":"tts-1","input":"hi","voice":"alloy"}`),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/openai/deployments/tts-1/audio/speech", gotPath)
+	assert.Equal(t, "az-key", gotAPIKey)
+	assert.Contains(t, gotQuery, "api-version=2024-10-21")
+	assert.Equal(t, []byte("mp3-bytes"), result.Body)
+	assert.Equal(t, "audio/mpeg", result.ContentType)
+}
+
+func TestAudioTranscription_RoundTrip(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"text":"hello"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewAzureClient().(providers.AudioTranscriptionClient)
+	result, err := c.AudioTranscription(context.Background(), &providers.Config{
+		Model: "whisper-1",
+		Credentials: providers.Credentials{
+			ApiKey: "az-key",
+			Azure: &providers.Azure{
+				Endpoint: srv.URL,
+				AuthMode: providers.AzureAuthModeAPIKey,
+			},
+		},
+	}, providers.AudioRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/audio/transcriptions",
+		ContentType: "multipart/form-data; boundary=abc",
+		Body:        []byte("file-bytes"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/openai/deployments/whisper-1/audio/transcriptions", gotPath)
+	assert.JSONEq(t, `{"text":"hello"}`, string(result.Body))
+}
+
+func TestAudioSpeech_MissingAzureConfig(t *testing.T) {
+	c := NewAzureClient().(providers.AudioSpeechClient)
+	_, err := c.AudioSpeech(context.Background(), &providers.Config{}, providers.AudioRequest{
+		Method: http.MethodPost,
+		Path:   "/v1/audio/speech",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "azure configuration is required")
+}
+
 func TestEmbeddings_MissingAzureConfig(t *testing.T) {
 	c := NewAzureClient().(providers.EmbeddingsClient)
 	_, err := c.Embeddings(context.Background(), &providers.Config{}, []byte(`{"model":"dep"}`))
