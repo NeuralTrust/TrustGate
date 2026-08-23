@@ -17,6 +17,7 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -177,6 +178,76 @@ func TestFiles_ContentRoundTrip(t *testing.T) {
 	assert.Equal(t, "/v1/files/file-1/content", gotPath)
 	assert.Equal(t, []byte("pdf-bytes"), result.Body)
 	assert.Equal(t, "application/octet-stream", result.ContentType)
+}
+
+func TestImages_MissingAPIKey(t *testing.T) {
+	c := NewOpenaiClient().(providers.ImagesClient)
+	_, err := c.Images(context.Background(), &providers.Config{}, providers.ImagesRequest{
+		Method: http.MethodPost,
+		Path:   "/v1/images/generations",
+		Body:   []byte(`{"model":"dall-e-3","prompt":"a cat"}`),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "API key is required")
+}
+
+func TestImages_RoundTrip(t *testing.T) {
+	var gotAuth, gotMethod, gotPath, gotCT string
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotCT = r.Header.Get("Content-Type")
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"created":1,"data":[{"url":"https://img"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewOpenaiClient().(providers.ImagesClient)
+	result, err := c.Images(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{ApiKey: "sk-test"},
+		Options:     map[string]any{"base_url": srv.URL + "/v1"},
+	}, providers.ImagesRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/images/generations",
+		ContentType: "application/json",
+		Body:        []byte(`{"model":"dall-e-3","prompt":"a cat"}`),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Bearer sk-test", gotAuth)
+	assert.Equal(t, http.MethodPost, gotMethod)
+	assert.Equal(t, "/v1/images/generations", gotPath)
+	assert.Equal(t, "application/json", gotCT)
+	assert.JSONEq(t, `{"model":"dall-e-3","prompt":"a cat"}`, string(gotBody))
+	assert.JSONEq(t, `{"created":1,"data":[{"url":"https://img"}]}`, string(result.Body))
+}
+
+func TestImages_EditsRoundTrip(t *testing.T) {
+	var gotPath, gotCT string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotCT = r.Header.Get("Content-Type")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"created":1,"data":[{"b64_json":"abc"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewOpenaiClient().(providers.ImagesClient)
+	result, err := c.Images(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{ApiKey: "sk-test"},
+		Options:     map[string]any{"base_url": srv.URL + "/v1"},
+	}, providers.ImagesRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/images/edits",
+		ContentType: "multipart/form-data; boundary=abc",
+		Body:        []byte("--abc\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ndall-e-2\r\n--abc--\r\n"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/v1/images/edits", gotPath)
+	assert.Equal(t, "multipart/form-data; boundary=abc", gotCT)
+	assert.JSONEq(t, `{"created":1,"data":[{"b64_json":"abc"}]}`, string(result.Body))
 }
 
 func TestEmbeddings_MissingAPIKey(t *testing.T) {
