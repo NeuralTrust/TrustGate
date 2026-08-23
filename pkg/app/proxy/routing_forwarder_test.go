@@ -726,3 +726,73 @@ func TestForward_InvalidModelRef(t *testing.T) {
 		t.Fatalf("expected ErrInvalidModelRef, got %v", err)
 	}
 }
+
+func TestForward_EmbeddingsFiltersIncapableProviders(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	openai := backendFor(gatewayID, "openai")
+	anthropic := backendFor(gatewayID, "anthropic")
+	rc := routableConsumerWith(gatewayID, openai, anthropic)
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.MatchedBy(func(bk *registrydomain.Registry) bool {
+			return bk.ID == openai.ID
+		}), mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte(`{"data":[]}`)}, nil).
+		Once()
+
+	fwd := newTestForwarder(t, invoker)
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request: &infracontext.RequestContext{
+			Body:            []byte(`{"model":"text-embedding-3-small","input":"hi"}`),
+			ProxyCapability: "embeddings",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if res.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", res.StatusCode)
+	}
+}
+
+func TestForward_EmbeddingsPinnedIncapableIsTerminal(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	openai := backendFor(gatewayID, "openai")
+	anthropic := backendFor(gatewayID, "anthropic")
+	rc := routableConsumerWith(gatewayID, openai, anthropic)
+
+	fwd := newTestForwarder(t, proxymocks.NewProviderInvoker(t))
+	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request: &infracontext.RequestContext{
+			Body:            []byte(`{"model":"@anthropic/claude-4","input":"hi"}`),
+			ProxyCapability: "embeddings",
+		},
+	})
+	if !errors.Is(err, appproxy.ErrCapabilityNotSupported) {
+		t.Fatalf("expected ErrCapabilityNotSupported, got %v", err)
+	}
+}
+
+func TestForward_EmbeddingsEmptyCapablePoolIs503(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	anthropic := backendFor(gatewayID, "anthropic")
+	rc := routableConsumerWith(gatewayID, anthropic)
+
+	fwd := newTestForwarder(t, proxymocks.NewProviderInvoker(t))
+	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request: &infracontext.RequestContext{
+			Body:            []byte(`{"input":"hi"}`),
+			ProxyCapability: "embeddings",
+		},
+	})
+	if !errors.Is(err, appproxy.ErrNoBackendsInPool) {
+		t.Fatalf("expected ErrNoBackendsInPool, got %v", err)
+	}
+}

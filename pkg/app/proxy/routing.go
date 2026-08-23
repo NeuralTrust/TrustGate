@@ -29,6 +29,7 @@ import (
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -47,7 +48,8 @@ func (f *forwarder) resolveRouting(in ForwardInput) (routingdomain.Intent, *rout
 		return intent, nil, err
 	}
 	in.Request.RequestedModel = ref
-	if intent.IsZero() && !isRoleBased(in.Consumer) {
+	needed := capabilityRequiresProviderSupport(in.Request)
+	if intent.IsZero() && !isRoleBased(in.Consumer) && needed == "" {
 		return intent, nil, nil
 	}
 	candidates, err := f.resolver.Resolve(approuting.ResolveInput{
@@ -60,11 +62,40 @@ func (f *forwarder) resolveRouting(in ForwardInput) (routingdomain.Intent, *rout
 		f.logRejectedIntent(in.Consumer, ref, err)
 		return intent, nil, err
 	}
+	if needed != "" {
+		candidates = filterCandidatesByCapability(candidates, needed)
+	}
 	if candidates.Len() == 0 {
+		if needed != "" && (intent.IsQualified() || intent.IsShortModel()) {
+			err := fmt.Errorf("%w: %s", ErrCapabilityNotSupported, needed)
+			f.logRejectedIntent(in.Consumer, ref, err)
+			return intent, nil, err
+		}
 		f.logRejectedIntent(in.Consumer, ref, ErrNoBackendsInPool)
 		return intent, nil, ErrNoBackendsInPool
 	}
 	return intent, candidates, nil
+}
+
+func capabilityRequiresProviderSupport(req *infracontext.RequestContext) string {
+	if req == nil {
+		return ""
+	}
+	switch req.ProxyCapability {
+	case capabilityEmbeddings, capabilityRerank:
+		return req.ProxyCapability
+	default:
+		return ""
+	}
+}
+
+func filterCandidatesByCapability(candidates *routingdomain.CandidateSet, capability string) *routingdomain.CandidateSet {
+	return candidates.Filter(func(c routingdomain.Candidate) bool {
+		if c.Registry == nil {
+			return false
+		}
+		return providers.SupportsCapability(c.Registry.Provider(), capability)
+	})
 }
 
 func (f *forwarder) logRejectedIntent(rc *appconsumer.RoutableConsumer, ref string, err error) {

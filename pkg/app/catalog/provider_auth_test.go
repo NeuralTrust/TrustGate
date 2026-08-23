@@ -171,3 +171,21 @@ func fieldDefault(fields []AuthField, key string) (any, bool) {
 	}
 	return nil, false
 }
+
+func TestProviderCapabilities_EmbeddingsProviders(t *testing.T) {
+	t.Parallel()
+	for _, code := range []string{
+		providers.ProviderOpenAI,
+		providers.ProviderOpenAICompatible,
+		providers.ProviderAzure,
+		providers.ProviderCohere,
+	} {
+		caps := ProviderCapabilities(code)
+		if !caps["embeddings"] {
+			t.Fatalf("%s capabilities missing embeddings: %v", code, caps)
+		}
+	}
+	if ProviderCapabilities(providers.ProviderAnthropic)["embeddings"] {
+		t.Fatal("anthropic must not advertise embeddings")
+	}
+}

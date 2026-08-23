@@ -13,11 +13,11 @@
 // limitations under the License.
 
 // Package openaicompat implements a provider client for arbitrary
-// OpenAI-compatible Chat Completions endpoints (Together, Fireworks, vLLM,
-// Ollama, self-hosted gateways, ...). Unlike the openai package it has no
-// default host: callers must supply provider_options.base_url. Only the OpenAI
-// Chat Completions API (/chat/completions) is supported. Extra request headers
-// can be supplied via provider_options.headers.
+// OpenAI-compatible endpoints (Together, Fireworks, vLLM, Ollama, self-hosted
+// gateways, ...). Unlike the openai package it has no default host: callers
+// must supply provider_options.base_url. Chat Completions (/chat/completions)
+// and Embeddings (/embeddings) are supported. Extra request headers can be
+// supplied via provider_options.headers.
 package openaicompat
 
 import (
@@ -29,7 +29,15 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
 )
 
-const completionsPath = "/chat/completions"
+const (
+	completionsPath = "/chat/completions"
+	embeddingsPath  = "/embeddings"
+)
+
+var (
+	_ providers.Client           = (*client)(nil)
+	_ providers.EmbeddingsClient = (*client)(nil)
+)
 
 type client struct {
 	chat *openai.ChatCompletionsClient
@@ -68,6 +76,22 @@ func (c *client) CompletionsStream(
 	return c.chat.CompletionsStream(ctx, completionsURL(opts), config, reqBody, opts.Headers)
 }
 
+func (c *client) Embeddings(
+	ctx context.Context,
+	config *providers.Config,
+	reqBody []byte,
+) ([]byte, error) {
+	opts, err := providers.DecodeOpenAICompatibleOptions(config.Options)
+	if err != nil {
+		return nil, err
+	}
+	return c.chat.Completions(ctx, embeddingsURL(opts), config, reqBody, opts.Headers)
+}
+
 func completionsURL(opts providers.OpenAICompatibleOptions) string {
 	return strings.TrimRight(opts.BaseURL, "/") + completionsPath
+}
+
+func embeddingsURL(opts providers.OpenAICompatibleOptions) string {
+	return strings.TrimRight(opts.BaseURL, "/") + embeddingsPath
 }
