@@ -66,7 +66,7 @@ func (f *forwarder) resolveRouting(in ForwardInput) (routingdomain.Intent, *rout
 		candidates = filterCandidatesByCapability(candidates, needed)
 	}
 	if candidates.Len() == 0 {
-		if needed != "" && (intent.IsQualified() || intent.IsShortModel()) {
+		if needed != "" && intent.IsQualified() {
 			err := fmt.Errorf("%w: %s", ErrCapabilityNotSupported, needed)
 			f.logRejectedIntent(in.Consumer, ref, err)
 			return intent, nil, err
