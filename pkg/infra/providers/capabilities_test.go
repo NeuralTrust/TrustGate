@@ -62,6 +62,10 @@ func TestProviderCapabilities(t *testing.T) {
 	assert.True(t, openai[providers.CapabilityEmbeddings])
 	assert.False(t, openai[providers.CapabilityRerank])
 
+	mistral := providers.ProviderCapabilities(providers.ProviderMistral)
+	assert.True(t, mistral[providers.CapabilityEmbeddings])
+	assert.False(t, mistral[providers.CapabilityRerank])
+
 	cohere := providers.ProviderCapabilities(providers.ProviderCohere)
 	assert.True(t, cohere[providers.CapabilityEmbeddings])
 	assert.True(t, cohere[providers.CapabilityRerank])

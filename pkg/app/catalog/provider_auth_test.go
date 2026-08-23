@@ -179,6 +179,7 @@ func TestProviderCapabilities_EmbeddingsProviders(t *testing.T) {
 		providers.ProviderOpenAICompatible,
 		providers.ProviderAzure,
 		providers.ProviderCohere,
+		providers.ProviderMistral,
 	} {
 		caps := ProviderCapabilities(code)
 		if !caps["embeddings"] {

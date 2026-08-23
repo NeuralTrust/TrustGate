@@ -115,6 +115,34 @@ func TestAzureProvider_Embeddings(t *testing.T) {
 	assert.Equal(t, 1, up.Hits())
 }
 
+func mistralBackendPayload(name, baseURL string) map[string]any {
+	return map[string]any{
+		"name":             name,
+		"provider":         "mistral",
+		"weight":           1,
+		"provider_options": map[string]any{"base_url": baseURL},
+		"auth": map[string]any{
+			"type":    "api_key",
+			"api_key": map[string]any{"api_key": "mistral-test"},
+		},
+	}
+}
+
+func TestMistralProvider_Embeddings(t *testing.T) {
+	defer Track(t, "EmbeddingsProvider")()
+
+	up := newEmbeddingsUpstream(t)
+	apiKey, path := setupEmbeddingsRoute(t, mistralBackendPayload(uniqueName("mistral-emb"), up.URL()+"/v1"))
+
+	status, headers, body := proxyPost(t, apiKey, path, embeddingsRequest("mistral-embed"))
+
+	assert.Equal(t, http.StatusOK, status, "body: %s", body)
+	assert.Equal(t, "mistral", headers.Get("X-Selected-Provider"))
+	assert.Equal(t, "/v1/embeddings", up.LastPath())
+	assertOpenAIEmbeddingsResponse(t, body)
+	assert.Equal(t, 1, up.Hits())
+}
+
 func TestOpenAICompatibleProvider_Embeddings(t *testing.T) {
 	defer Track(t, "EmbeddingsProvider")()
 

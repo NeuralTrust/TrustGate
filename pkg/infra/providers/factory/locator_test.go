@@ -56,6 +56,7 @@ func TestProviderLocator_EmbeddingsClients(t *testing.T) {
 		ProviderOpenAICompatible,
 		ProviderAzure,
 		ProviderCohere,
+		ProviderMistral,
 	} {
 		t.Run(provider, func(t *testing.T) {
 			client, err := locator.Get(provider)

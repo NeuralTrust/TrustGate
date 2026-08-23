@@ -21,6 +21,7 @@ import (
 	"io"
 	"iter"
 	"net/http"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
@@ -28,6 +29,13 @@ import (
 
 const (
 	chatCompletionsURL = "https://api.mistral.ai/v1/chat/completions"
+	embeddingsURL      = "https://api.mistral.ai/v1/embeddings"
+	embeddingsPath     = "/embeddings"
+)
+
+var (
+	_ providers.Client           = (*client)(nil)
+	_ providers.EmbeddingsClient = (*client)(nil)
 )
 
 type client struct {
@@ -52,6 +60,33 @@ func (c *client) Completions(
 		return nil, fmt.Errorf("API key is required")
 	}
 	return c.rawPost(ctx, chatCompletionsURL, config.Credentials.ApiKey, reqBody)
+}
+
+// Embeddings sends reqBody to Mistral's embeddings API (POST /v1/embeddings).
+func (c *client) Embeddings(
+	ctx context.Context,
+	config *providers.Config,
+	reqBody []byte,
+) ([]byte, error) {
+	if config.Credentials.ApiKey == "" {
+		return nil, fmt.Errorf("API key is required")
+	}
+	url, err := embedURL(config.Options)
+	if err != nil {
+		return nil, err
+	}
+	return c.rawPost(ctx, url, config.Credentials.ApiKey, reqBody)
+}
+
+func embedURL(options map[string]any) (string, error) {
+	opts, err := providers.DecodeMistralOptions(options)
+	if err != nil {
+		return "", err
+	}
+	if opts.BaseURL != "" {
+		return strings.TrimRight(opts.BaseURL, "/") + embeddingsPath, nil
+	}
+	return embeddingsURL, nil
 }
 
 func (c *client) CompletionsStream(
@@ -99,7 +134,7 @@ func (c *client) rawPost(
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 
-	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is compile-time constant
+	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is compile-time default or admin-configured base_url
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}
