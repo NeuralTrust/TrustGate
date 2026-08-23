@@ -76,10 +76,16 @@ var hopByHopHeaders = map[string]struct{}{
 
 type ForwardedHandler struct {
 	forwarder appproxy.Forwarder
+	models    appproxy.ModelsLister
 }
 
 func NewForwardedHandler(forwarder appproxy.Forwarder) *ForwardedHandler {
 	return &ForwardedHandler{forwarder: forwarder}
+}
+
+func (h *ForwardedHandler) WithModels(lister appproxy.ModelsLister) *ForwardedHandler {
+	h.models = lister
+	return h
 }
 
 // Handle godoc
@@ -112,6 +118,10 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	stampConsumerTrace(c, consumer)
+
+	if route.Capability == apiresolver.CapabilityModels {
+		return h.handleModels(c, route, consumer, authCtx)
+	}
 
 	data, _ := appconsumer.DataFromContext(c.UserContext())
 	reqCtx := buildRequestContext(c, gatewayID, route)
@@ -246,6 +256,39 @@ func resolveConsumer(
 	return gatewayID, rc, authCtx, nil
 }
 
+func (h *ForwardedHandler) handleModels(
+	c *fiber.Ctx,
+	route apiresolver.ProxyRoute,
+	consumer *appconsumer.RoutableConsumer,
+	authCtx *appauth.AuthContext,
+) error {
+	if h.models == nil {
+		return writeProxyError(c, appproxy.ErrNoBackendAvailable)
+	}
+	if c.Method() != fiber.MethodGet {
+		return writeProxyError(c, appproxy.ErrInvalidRequestPayload)
+	}
+	data, _ := appconsumer.DataFromContext(c.UserContext())
+	in := appproxy.ListModelsInput{
+		Consumer: consumer,
+		Data:     data,
+		RoleIDs:  authCtx.RoleIDs,
+	}
+	id := apiresolver.ModelsIDFromRest(route.Rest)
+	if id == "" {
+		list, err := h.models.List(c.UserContext(), in)
+		if err != nil {
+			return writeProxyError(c, err)
+		}
+		return c.Status(fiber.StatusOK).JSON(list)
+	}
+	card, err := h.models.Get(c.UserContext(), in, id)
+	if err != nil {
+		return writeProxyError(c, err)
+	}
+	return c.Status(fiber.StatusOK).JSON(card)
+}
+
 func stampConsumerTrace(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) {
 	if rc == nil || rc.Consumer == nil {
 		return
@@ -374,6 +417,8 @@ func mapProxyError(err error) (int, httpio.ErrorBody) {
 	case errors.Is(err, errPathNotFound),
 		errors.Is(err, commonerrors.ErrNotFound):
 		return fiber.StatusNotFound, httpio.ErrorBody{Error: errCodeNotFound}
+	case errors.Is(err, appproxy.ErrModelNotFound):
+		return fiber.StatusNotFound, httpio.ErrorBody{Error: errCodeNotFound, Message: err.Error()}
 	case errors.Is(err, appproxy.ErrNoBackendAvailable),
 		errors.Is(err, appproxy.ErrNoBackendsInPool):
 		return fiber.StatusServiceUnavailable, httpio.ErrorBody{Error: errCodeNoBackendAvailable, Message: err.Error()}
