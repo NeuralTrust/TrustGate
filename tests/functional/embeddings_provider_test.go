@@ -179,6 +179,55 @@ func TestEmbeddings_FiltersIncapableProviderFromPool(t *testing.T) {
 	assertOpenAIEmbeddingsResponse(t, body)
 }
 
+func vertexBackendPayload(name, baseURL string) map[string]any {
+	return map[string]any{
+		"name":     name,
+		"provider": "vertex",
+		"weight":   1,
+		"provider_options": map[string]any{
+			"project":  "test-proj",
+			"location": "us-central1",
+			"base_url": baseURL,
+		},
+		"auth": map[string]any{
+			"type":    "api_key",
+			"api_key": map[string]any{"api_key": "vertex-token"},
+		},
+	}
+}
+
+func newVertexEmbeddingsUpstream(t *testing.T) *fakeUpstream {
+	t.Helper()
+	u := &fakeUpstream{}
+	u.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u.record(r)
+		w.Header().Set("Content-Type", "application/json")
+		if !strings.Contains(r.URL.Path, "embedContent") && !strings.Contains(r.URL.Path, "batchEmbedContents") {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprintf(w, `{"error":{"message":"unexpected path %s"}}`, r.URL.Path)
+			return
+		}
+		_, _ = io.WriteString(w, `{"embedding":{"values":[0.1,0.2,0.3]}}`)
+	}))
+	t.Cleanup(u.server.Close)
+	return u
+}
+
+func TestVertexProvider_Embeddings(t *testing.T) {
+	defer Track(t, "EmbeddingsProvider")()
+
+	up := newVertexEmbeddingsUpstream(t)
+	apiKey, path := setupEmbeddingsRoute(t, vertexBackendPayload(uniqueName("vertex-emb"), up.URL()))
+
+	status, headers, body := proxyPost(t, apiKey, path, embeddingsRequest("text-embedding-004"))
+
+	assert.Equal(t, http.StatusOK, status, "body: %s", body)
+	assert.Equal(t, "vertex", headers.Get("X-Selected-Provider"))
+	assert.Contains(t, up.LastPath(), "text-embedding-004:embedContent")
+	assertOpenAIEmbeddingsResponse(t, body)
+	assert.Equal(t, 1, up.Hits())
+}
+
 func TestEmbeddings_PinnedIncapableProviderIsTerminal(t *testing.T) {
 	defer Track(t, "EmbeddingsProvider")()
 
