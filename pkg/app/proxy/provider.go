@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
@@ -415,20 +416,29 @@ func (p *providerInvoker) prepareImages(
 	sourceFormat, targetFormat adapter.Format,
 ) (*preparedInvocation, error) {
 	body := req.Body
-	normalized, _, verr := adapter.EnforceModel(body, req.AllowedModels, req.DefaultModel)
-	if verr != nil {
-		if errors.Is(verr, adapter.ErrModelNotAllowed) {
-			return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, verr.Error())
+	contentType := req.HeaderValue(headerContentType)
+	var sentModel string
+	if providers.IsImagesMultipart(contentType) {
+		sentModel = imagesMultipartSentModel(contentType, body, req.DefaultModel)
+		if err := adapter.CheckAllowedModel(sentModel, req.AllowedModels); err != nil {
+			return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, err.Error())
 		}
-		if len(req.AllowedModels) > 0 {
-			return nil, fmt.Errorf("%w: model enforcement could not parse request body: %s", ErrModelNotAllowed, verr.Error())
-		}
-		p.logger.Warn("model enforcement failed, proceeding without override",
-			slog.String("error", verr.Error()))
 	} else {
-		body = normalized
+		normalized, _, verr := adapter.EnforceModel(body, req.AllowedModels, req.DefaultModel)
+		if verr != nil {
+			if errors.Is(verr, adapter.ErrModelNotAllowed) {
+				return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, verr.Error())
+			}
+			if len(req.AllowedModels) > 0 {
+				return nil, fmt.Errorf("%w: model enforcement could not parse request body: %s", ErrModelNotAllowed, verr.Error())
+			}
+			p.logger.Warn("model enforcement failed, proceeding without override",
+				slog.String("error", verr.Error()))
+		} else {
+			body = normalized
+		}
+		sentModel = resolveSentModel(body, req)
 	}
-	sentModel := resolveSentModel(body, req)
 	images := imagesRequestFromContext(req)
 	images.Body = body
 	if images.ContentType == "" {
@@ -460,6 +470,22 @@ func imagesRequestFromContext(req *infracontext.RequestContext) providers.Images
 		ContentType: req.HeaderValue(headerContentType),
 		Body:        req.Body,
 	}
+}
+
+func imagesMultipartSentModel(contentType string, body []byte, defaultModel string) string {
+	model := providers.ExtractImagesModel(contentType, body)
+	if intent, err := routingdomain.ParseModelRef(model); err == nil {
+		switch {
+		case intent.IsQualified(), intent.IsShortModel():
+			model = intent.Model
+		case intent.IsAuto(), intent.IsPool():
+			model = ""
+		}
+	}
+	if model == "" {
+		return defaultModel
+	}
+	return model
 }
 
 func (p *providerInvoker) invokeFiles(

@@ -128,8 +128,8 @@ func (c *client) Images(
 		return nil, fmt.Errorf("azure endpoint is required")
 	}
 
-	model, err := adapter.ExtractModel(req.Body)
-	if err != nil || model == "" {
+	model := azureImagesModel(config, req)
+	if model == "" {
 		return nil, fmt.Errorf("model (deployment ID) is required")
 	}
 
@@ -147,7 +147,7 @@ func (c *client) Images(
 		ctx,
 		httpClient,
 		req.Method,
-		c.buildImagesURL(config, model),
+		c.buildImagesURL(config, model, req.Path),
 		contentType,
 		req.Body,
 		auth.apply,
@@ -317,8 +317,15 @@ func (c *client) buildEmbeddingsURL(config *providers.Config, model string) stri
 	return c.buildDeploymentURL(config, model, "embeddings")
 }
 
-func (c *client) buildImagesURL(config *providers.Config, model string) string {
-	return c.buildDeploymentURL(config, model, "images/generations")
+func azureImagesModel(config *providers.Config, req providers.ImagesRequest) string {
+	if config != nil && config.Model != "" {
+		return config.Model
+	}
+	return providers.ExtractImagesModel(req.ContentType, req.Body)
+}
+
+func (c *client) buildImagesURL(config *providers.Config, model, gatewayPath string) string {
+	return c.buildDeploymentURL(config, model, providers.AzureImagesOperation(gatewayPath))
 }
 
 func (c *client) buildFilesURL(config *providers.Config, req providers.FilesRequest) string {

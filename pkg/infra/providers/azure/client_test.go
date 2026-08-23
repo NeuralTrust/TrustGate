@@ -105,7 +105,15 @@ func TestBuildImagesURL(t *testing.T) {
 	}}}
 	assert.Equal(t,
 		"https://x.openai.azure.com/openai/deployments/dall-e-3/images/generations?api-version=2025-01-01",
-		c.buildImagesURL(cfg, "dall-e-3"),
+		c.buildImagesURL(cfg, "dall-e-3", "/v1/images/generations"),
+	)
+	assert.Equal(t,
+		"https://x.openai.azure.com/openai/deployments/dall-e-2/images/edits?api-version=2025-01-01",
+		c.buildImagesURL(cfg, "dall-e-2", "/v1/images/edits"),
+	)
+	assert.Equal(t,
+		"https://x.openai.azure.com/openai/deployments/dall-e-2/images/variations?api-version=2025-01-01",
+		c.buildImagesURL(cfg, "dall-e-2", "/v1/images/variations"),
 	)
 }
 
@@ -151,6 +159,66 @@ func TestImages_RoundTrip(t *testing.T) {
 	assert.Equal(t, "az-key", gotAPIKey)
 	assert.Equal(t, http.MethodPost, gotMethod)
 	assert.JSONEq(t, `{"created":1,"data":[{"url":"https://img"}]}`, string(result.Body))
+}
+
+func TestImages_EditsUsesMultipartModelAndPath(t *testing.T) {
+	var gotPath, gotCT string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotCT = r.Header.Get("Content-Type")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"created":1,"data":[{"b64_json":"abc"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewAzureClient().(providers.ImagesClient)
+	result, err := c.Images(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{
+			ApiKey: "az-key",
+			Azure: &providers.Azure{
+				Endpoint: srv.URL,
+				AuthMode: providers.AzureAuthModeAPIKey,
+			},
+		},
+	}, providers.ImagesRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/images/edits",
+		ContentType: "multipart/form-data; boundary=abc",
+		Body:        []byte("--abc\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ndall-e-2\r\n--abc--\r\n"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/openai/deployments/dall-e-2/images/edits", gotPath)
+	assert.Equal(t, "multipart/form-data; boundary=abc", gotCT)
+	assert.JSONEq(t, `{"created":1,"data":[{"b64_json":"abc"}]}`, string(result.Body))
+}
+
+func TestImages_UsesConfigModelWhenMultipartOmitsModel(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"created":1,"data":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewAzureClient().(providers.ImagesClient)
+	_, err := c.Images(context.Background(), &providers.Config{
+		Model: "dall-e-2",
+		Credentials: providers.Credentials{
+			ApiKey: "az-key",
+			Azure: &providers.Azure{
+				Endpoint: srv.URL,
+				AuthMode: providers.AzureAuthModeAPIKey,
+			},
+		},
+	}, providers.ImagesRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/images/variations",
+		ContentType: "multipart/form-data; boundary=abc",
+		Body:        []byte("--abc\r\nContent-Disposition: form-data; name=\"image\"; filename=\"cat.png\"\r\n\r\npng\r\n--abc--\r\n"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/openai/deployments/dall-e-2/images/variations", gotPath)
 }
 
 func TestFiles_MissingAzureConfig(t *testing.T) {

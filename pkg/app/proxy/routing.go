@@ -138,6 +138,9 @@ func modelRefFromRequest(req *infracontext.RequestContext) (string, error) {
 	}
 	ref, hasModelID, err := adapter.ExtractModelField(req.Body)
 	if err != nil {
+		if req.ProxyCapability == capabilityImages && providers.IsImagesMultipart(req.HeaderValue(headerContentType)) {
+			return providers.ExtractImagesModel(req.HeaderValue(headerContentType), req.Body), nil
+		}
 		return "", nil
 	}
 	if hasModelID {

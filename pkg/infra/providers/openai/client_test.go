@@ -224,6 +224,32 @@ func TestImages_RoundTrip(t *testing.T) {
 	assert.JSONEq(t, `{"created":1,"data":[{"url":"https://img"}]}`, string(result.Body))
 }
 
+func TestImages_EditsRoundTrip(t *testing.T) {
+	var gotPath, gotCT string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotCT = r.Header.Get("Content-Type")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"created":1,"data":[{"b64_json":"abc"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewOpenaiClient().(providers.ImagesClient)
+	result, err := c.Images(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{ApiKey: "sk-test"},
+		Options:     map[string]any{"base_url": srv.URL + "/v1"},
+	}, providers.ImagesRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/images/edits",
+		ContentType: "multipart/form-data; boundary=abc",
+		Body:        []byte("--abc\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ndall-e-2\r\n--abc--\r\n"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/v1/images/edits", gotPath)
+	assert.Equal(t, "multipart/form-data; boundary=abc", gotCT)
+	assert.JSONEq(t, `{"created":1,"data":[{"b64_json":"abc"}]}`, string(result.Body))
+}
+
 func TestEmbeddings_MissingAPIKey(t *testing.T) {
 	c := NewOpenaiClient().(providers.EmbeddingsClient)
 	_, err := c.Embeddings(context.Background(), &providers.Config{}, []byte(`{"model":"text-embedding-3-small","input":"hi"}`))

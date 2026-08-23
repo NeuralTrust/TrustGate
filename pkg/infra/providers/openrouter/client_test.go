@@ -64,6 +64,8 @@ func TestFilesURL(t *testing.T) {
 
 func TestImagesURL(t *testing.T) {
 	assert.Equal(t, "https://openrouter.ai/api/v1/images", providers.JoinOpenRouterImagesURL(filesBaseURL, "/v1/images/generations", nil))
+	assert.Equal(t, "https://openrouter.ai/api/v1/images/edits", providers.JoinOpenRouterImagesURL(filesBaseURL, "/v1/images/edits", nil))
+	assert.Equal(t, "https://openrouter.ai/api/v1/images/variations", providers.JoinOpenRouterImagesURL(filesBaseURL, "/v1/images/variations", nil))
 }
 
 func TestImages_MissingAPIKey(t *testing.T) {
