@@ -901,3 +901,24 @@ func TestForward_EmbeddingsEmptyCapablePoolIs503(t *testing.T) {
 		t.Fatalf("expected ErrNoBackendsInPool, got %v", err)
 	}
 }
+
+func TestForward_AudioSpeechEmptyCapablePoolIs503(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	anthropic := backendFor(gatewayID, "anthropic")
+	rc := routableConsumerWith(gatewayID, anthropic)
+
+	fwd := newTestForwarder(t, proxymocks.NewProviderInvoker(t))
+	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request: &infracontext.RequestContext{
+			Method:          "POST",
+			Path:            "/acme/v1/audio/speech",
+			Body:            []byte(`{"model":"tts-1","input":"hi","voice":"alloy"}`),
+			ProxyCapability: "audio_speech",
+		},
+	})
+	if !errors.Is(err, appproxy.ErrNoBackendsInPool) {
+		t.Fatalf("expected ErrNoBackendsInPool, got %v", err)
+	}
+}
