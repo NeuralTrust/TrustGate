@@ -18,6 +18,7 @@ Route, govern, and observe all LLM and MCP traffic through a single control poin
 
 [Documentation](https://docs.neuraltrust.ai) &nbsp;|&nbsp;
 [Quick Start](#-60-second-quick-start) &nbsp;|&nbsp;
+[Demo](#demo) &nbsp;|&nbsp;
 [Examples](examples/) &nbsp;|&nbsp;
 [Architecture](#%EF%B8%8F-architecture) &nbsp;|&nbsp;
 [Community](https://join.slack.com/t/neuraltrustcommunity/shared_invite/zt-2xl47cag6-_HFNpltIULnA3wh4R6AqBg)
@@ -46,6 +47,8 @@ TrustGate is purpose-built for teams that need **enterprise-grade governance** o
 ---
 
 ## 60-Second Quick Start
+
+> ★ **Star if this saved you a weekend** — it helps other teams find a security-first Go gateway.
 
 ### Option A: One-line install (recommended)
 
@@ -85,6 +88,30 @@ curl -X POST "http://localhost:8081/my-app/v1/chat/completions" \
 ```
 
 Or use any OpenAI SDK — see [examples/openai-sdk/](examples/openai-sdk/).
+
+### Demo
+
+Terminal walkthrough of `make up` → health checks → chat completion (asciinema-ready script under [`docs/demo/`](docs/demo/)):
+
+```bash
+./docs/demo/record-quickstart.sh
+```
+
+**GIF placeholder:** drop a recording at `assets/demo-quickstart.gif` (see [docs/demo/README.md](docs/demo/README.md)), then embed it here:
+
+```markdown
+![TrustGate quickstart demo](assets/demo-quickstart.gif)
+```
+
+<details>
+<summary>Record with asciinema</summary>
+
+```bash
+asciinema rec docs/demo/quickstart.cast -c './docs/demo/record-quickstart.sh'
+# optional GIF: agg docs/demo/quickstart.cast assets/demo-quickstart.gif
+```
+
+</details>
 
 ---
 
