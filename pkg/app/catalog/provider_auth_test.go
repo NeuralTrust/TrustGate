@@ -201,14 +201,12 @@ func TestProviderCapabilities_FilesProviders(t *testing.T) {
 		providers.ProviderOpenRouter,
 		providers.ProviderXAI,
 		providers.ProviderMistral,
+		providers.ProviderAnthropic,
 	} {
 		caps := ProviderCapabilities(code)
 		if !caps["files"] {
 			t.Fatalf("%s capabilities missing files: %v", code, caps)
 		}
-	}
-	if ProviderCapabilities(providers.ProviderAnthropic)["files"] {
-		t.Fatal("anthropic must not advertise files")
 	}
 	if ProviderCapabilities(providers.ProviderOpenAICompatible)["files"] {
 		t.Fatal("openai_compatible must not advertise files")

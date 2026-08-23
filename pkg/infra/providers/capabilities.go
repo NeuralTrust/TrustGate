@@ -37,7 +37,7 @@ func SupportsCapability(provider, capability string) bool {
 		return provider == ProviderCohere
 	case CapabilityFiles:
 		switch provider {
-		case ProviderOpenAI, ProviderAzure, ProviderOpenRouter, ProviderXAI, ProviderMistral:
+		case ProviderOpenAI, ProviderAzure, ProviderOpenRouter, ProviderXAI, ProviderMistral, ProviderAnthropic:
 			return true
 		default:
 			return false
