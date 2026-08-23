@@ -18,6 +18,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 type Attachment struct {
@@ -31,6 +33,7 @@ type RequestContext struct {
 	ConsumerID         string
 	ConsumerType       string
 	RegistryID         string
+	RegistryPricing    *domain.Pricing
 	Headers            map[string][]string
 	Method             string
 	Path               string

@@ -38,6 +38,7 @@ import {
 import type {
   CatalogAuthField,
   Registry,
+  RegistryPricing,
   Provider,
   ProviderOptionField,
   ProbeStage,
@@ -365,6 +366,68 @@ function buildProviderOptions(
   return out;
 }
 
+type PricingOverrideRow = {
+  model: string;
+  input: string;
+  output: string;
+};
+
+function initialOverrideRows(pricing: RegistryPricing | null | undefined): PricingOverrideRow[] {
+  const overrides = pricing?.overrides ?? {};
+  const rows = Object.entries(overrides).map(([model, rate]) => ({
+    model,
+    input: rate.input != null ? String(rate.input) : "",
+    output: rate.output != null ? String(rate.output) : "",
+  }));
+  return rows.length > 0 ? rows : [{ model: "", input: "", output: "" }];
+}
+
+function buildPricingPayload(
+  discountPct: string,
+  rows: PricingOverrideRow[],
+): RegistryPricing | undefined | "invalid" {
+  const trimmedDiscount = discountPct.trim();
+  let discount: number | undefined;
+  if (trimmedDiscount !== "") {
+    const pct = Number(trimmedDiscount);
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+      return "invalid";
+    }
+    discount = pct / 100;
+  }
+
+  const overrides: Record<string, { input: number; output: number }> = {};
+  for (const row of rows) {
+    const model = row.model.trim();
+    const inputRaw = row.input.trim();
+    const outputRaw = row.output.trim();
+    if (!model && !inputRaw && !outputRaw) {
+      continue;
+    }
+    if (!model) {
+      return "invalid";
+    }
+    const input = Number(inputRaw);
+    const output = Number(outputRaw);
+    if (!Number.isFinite(input) || !Number.isFinite(output) || input < 0 || output < 0) {
+      return "invalid";
+    }
+    overrides[model] = { input, output };
+  }
+
+  if (discount == null && Object.keys(overrides).length === 0) {
+    return undefined;
+  }
+  const pricing: RegistryPricing = {};
+  if (discount != null && discount > 0) {
+    pricing.discount = discount;
+  }
+  if (Object.keys(overrides).length > 0) {
+    pricing.overrides = overrides;
+  }
+  return Object.keys(pricing).length > 0 ? pricing : undefined;
+}
+
 const STAGE_LABELS: Record<ProbeStage, string> = {
   connectivity: "Reaching the provider",
   authentication: "Authenticating",
@@ -452,6 +515,12 @@ function RegistryFormDialog({
   );
   const [optionMaps, setOptionMaps] = useState<OptionMapValues>(() =>
     initialOptionMaps(optionFields, registry?.provider_options),
+  );
+  const [discountPct, setDiscountPct] = useState(() =>
+    registry?.pricing?.discount != null ? String(registry.pricing.discount * 100) : "",
+  );
+  const [overrideRows, setOverrideRows] = useState<PricingOverrideRow[]>(() =>
+    initialOverrideRows(registry?.pricing),
   );
   const [submitting, setSubmitting] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -561,6 +630,16 @@ function RegistryFormDialog({
       return;
     }
 
+    const pricing = buildPricingPayload(discountPct, overrideRows);
+    if (pricing === "invalid") {
+      toast({
+        variant: "error",
+        title: "Invalid pricing",
+        description: "Discount must be 0–100 and override rates must be non-negative USD per token.",
+      });
+      return;
+    }
+
     const body: Record<string, unknown> = {
       name,
       provider,
@@ -573,6 +652,9 @@ function RegistryFormDialog({
         optionMaps,
         registry?.provider_options,
       );
+    }
+    if (pricing !== undefined) {
+      body.pricing = pricing;
     }
 
     setSubmitting(true);
@@ -699,6 +781,74 @@ function RegistryFormDialog({
               onChange={(value) => setFieldValue(field.key, value)}
             />
           ))}
+
+          <div className="flex flex-col gap-2">
+            <Label hint="optional">Contract pricing</Label>
+            <p className="text-[13px] text-muted">
+              USD per token. Absolute overrides win; otherwise the discount is applied to
+              models.dev list prices. Accurate monthly cost estimates depend on matching the
+              contract.
+            </p>
+            <Field label="List discount" hint="percent off list">
+              <Input
+                value={discountPct}
+                onChange={(e) => setDiscountPct(e.target.value)}
+                placeholder="20"
+                inputMode="decimal"
+              />
+            </Field>
+            {overrideRows.map((row, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <Input
+                  value={row.model}
+                  onChange={(e) =>
+                    setOverrideRows((prev) =>
+                      prev.map((r, idx) => (idx === i ? { ...r, model: e.target.value } : r)),
+                    )
+                  }
+                  placeholder="gpt-4o or gpt-4o-mini*"
+                />
+                <Input
+                  value={row.input}
+                  onChange={(e) =>
+                    setOverrideRows((prev) =>
+                      prev.map((r, idx) => (idx === i ? { ...r, input: e.target.value } : r)),
+                    )
+                  }
+                  placeholder="input $/token"
+                  inputMode="decimal"
+                />
+                <Input
+                  value={row.output}
+                  onChange={(e) =>
+                    setOverrideRows((prev) =>
+                      prev.map((r, idx) => (idx === i ? { ...r, output: e.target.value } : r)),
+                    )
+                  }
+                  placeholder="output $/token"
+                  inputMode="decimal"
+                />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setOverrideRows((prev) => prev.filter((_, idx) => idx !== i))}
+                  aria-label="Remove price override"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+            <div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setOverrideRows((prev) => [...prev, { model: "", input: "", output: "" }])}
+              >
+                <Plus className="h-4 w-4" />
+                Add model override
+              </Button>
+            </div>
+          </div>
 
           {testResult && (
             <TestConnectionCard result={testResult.result} scope={testResult.scope} />

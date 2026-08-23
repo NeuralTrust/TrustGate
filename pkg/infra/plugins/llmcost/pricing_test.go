@@ -20,6 +20,7 @@ import (
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	catalogmocks "github.com/NeuralTrust/TrustGate/pkg/app/catalog/mocks"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -139,4 +140,91 @@ func TestPriceFor_CustomWinsOverBuiltin(t *testing.T) {
 func TestPriceFor_NoResolverNoCustom(t *testing.T) {
 	_, _, found := PriceFor(context.Background(), nil, nil, "openai", "gpt-4o-mini")
 	assert.False(t, found)
+}
+
+func TestResolve_RegistryPrecedence(t *testing.T) {
+	t.Parallel()
+	resolver := catalogmocks.NewPricingResolver(t)
+	resolver.EXPECT().
+		Resolve(mock.Anything, "openai", mock.Anything).
+		Return(appcatalog.Pricing{Found: true, InputPrice: 0.000002, OutputPrice: 0.000008}).
+		Maybe()
+
+	tests := []struct {
+		name      string
+		custom    map[string]CustomPrice
+		registry  *RegistryRates
+		model     string
+		wantIn    float64
+		wantOut   float64
+		wantFound bool
+	}{
+		{
+			name:      "policy custom wins over registry override",
+			custom:    map[string]CustomPrice{"gpt-4o": {Input: 0.1, Output: 0.2}},
+			registry:  &RegistryRates{Discount: 0.2, Overrides: map[string]CustomPrice{"gpt-4o": {Input: 0.0000015, Output: 0.000006}}},
+			model:     "gpt-4o",
+			wantIn:    0.1,
+			wantOut:   0.2,
+			wantFound: true,
+		},
+		{
+			name:      "absolute override wins over discount",
+			registry:  &RegistryRates{Discount: 0.2, Overrides: map[string]CustomPrice{"gpt-4o": {Input: 0.0000015, Output: 0.000006}}},
+			model:     "gpt-4o",
+			wantIn:    0.0000015,
+			wantOut:   0.000006,
+			wantFound: true,
+		},
+		{
+			name:      "discount applies to catalog when no override",
+			registry:  &RegistryRates{Discount: 0.2},
+			model:     "gpt-4o-mini",
+			wantIn:    0.000002 * 0.8,
+			wantOut:   0.000008 * 0.8,
+			wantFound: true,
+		},
+		{
+			name:      "exact override beats glob",
+			registry:  &RegistryRates{Overrides: map[string]CustomPrice{"gpt-4o-*": {Input: 9, Output: 9}, "gpt-4o-mini": {Input: 0.0000001, Output: 0.0000004}}},
+			model:     "gpt-4o-mini",
+			wantIn:    0.0000001,
+			wantOut:   0.0000004,
+			wantFound: true,
+		},
+		{
+			name:      "unmatched model falls through to catalog",
+			registry:  &RegistryRates{Overrides: map[string]CustomPrice{"claude-*": {Input: 1, Output: 1}}},
+			model:     "gpt-4o-mini",
+			wantIn:    0.000002,
+			wantOut:   0.000008,
+			wantFound: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			in, out, found := Resolve(context.Background(), resolver, tt.custom, tt.registry, "openai", tt.model)
+			assert.Equal(t, tt.wantFound, found)
+			if tt.wantFound {
+				assert.InDelta(t, tt.wantIn, in, 1e-12)
+				assert.InDelta(t, tt.wantOut, out, 1e-12)
+			}
+		})
+	}
+}
+
+func TestRatesFromDomain(t *testing.T) {
+	t.Parallel()
+	assert.Nil(t, RatesFromDomain(nil))
+	assert.Nil(t, RatesFromDomain(&domain.Pricing{}))
+
+	got := RatesFromDomain(&domain.Pricing{
+		Discount: 0.2,
+		Overrides: map[string]domain.PriceOverride{
+			"gpt-4o": {Input: 0.0000015, Output: 0.000006},
+		},
+	})
+	require.NotNil(t, got)
+	assert.InDelta(t, 0.2, got.Discount, 1e-12)
+	assert.InDelta(t, 0.0000015, got.Overrides["gpt-4o"].Input, 1e-12)
 }

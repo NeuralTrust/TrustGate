@@ -120,6 +120,13 @@ func (b *Registry) HealthChecks() *HealthChecks {
 	return b.LLMTarget.HealthChecks
 }
 
+func (b *Registry) Pricing() *Pricing {
+	if b.LLMTarget == nil {
+		return nil
+	}
+	return b.LLMTarget.Pricing
+}
+
 type RehydrateParams struct {
 	ID          ids.RegistryID
 	GatewayID   ids.GatewayID

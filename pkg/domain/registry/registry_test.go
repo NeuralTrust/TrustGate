@@ -77,6 +77,11 @@ func TestBackend_Validate_Rejects(t *testing.T) {
 			mutate:  func(b *Registry) { b.LLMTarget.Auth = &TargetAuth{Type: AuthTypeAPIKey} },
 			wantErr: ErrInvalidRegistry,
 		},
+		{
+			name:    "invalid pricing discount",
+			mutate:  func(b *Registry) { b.LLMTarget.Pricing = &Pricing{Discount: 1.5} },
+			wantErr: ErrInvalidPricing,
+		},
 	}
 
 	for _, tc := range tests {

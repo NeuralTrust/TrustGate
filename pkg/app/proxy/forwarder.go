@@ -473,6 +473,7 @@ func (f *forwarder) retarget(dto *forwardRequestDTO, bk *domain.Registry) {
 func stampTarget(req *infracontext.RequestContext, bk *domain.Registry) {
 	req.RegistryID = bk.ID.String()
 	req.Provider = bk.Provider()
+	req.RegistryPricing = bk.Pricing()
 }
 
 func failureReason(resp *ProviderResponse, err error) error {

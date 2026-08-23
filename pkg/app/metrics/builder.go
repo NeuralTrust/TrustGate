@@ -24,6 +24,7 @@ import (
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/llmcost"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
@@ -66,7 +67,7 @@ func (b *Builder) Build(
 		Kind:          events.KindLLM,
 		TraceID:       traceID,
 		GatewayID:     meta.GatewayID,
-		TenantID:        meta.TenantID,
+		TenantID:      meta.TenantID,
 		Timestamp:     startTime.UTC().Format(time.RFC3339),
 		OccurredOn:    startTime.UnixMilli(),
 		EndTimestamp:  endTime.UnixMilli(),
@@ -101,7 +102,7 @@ func (b *Builder) Build(
 	b.fillRequest(evt, req, served)
 	b.fillResponse(evt, resp, served, totalMs)
 	b.fillStatus(evt, resp, served, requestTrace)
-	b.fillUsageAndCost(ctx, evt, served)
+	b.fillUsageAndCost(ctx, evt, served, req)
 
 	return evt
 }
@@ -391,7 +392,7 @@ func (b *Builder) fillStatus(
 	}
 }
 
-func (b *Builder) fillUsageAndCost(ctx context.Context, evt *events.Event, served *trace.LLMAttrs) {
+func (b *Builder) fillUsageAndCost(ctx context.Context, evt *events.Event, served *trace.LLMAttrs, req *infracontext.RequestContext) {
 	if served == nil || served.Usage == nil {
 		return
 	}
@@ -406,24 +407,29 @@ func (b *Builder) fillUsageAndCost(ctx context.Context, evt *events.Event, serve
 	evt.Request.PromptTokens = u.InputTokens
 	evt.Response.CompletionTokens = u.OutputTokens
 
-	if b.pricing == nil || served.Provider == "" {
+	if served.Provider == "" {
 		return
 	}
-	var price appcatalog.Pricing
-	for _, slug := range pricingSlugs(evt, served) {
-		price = b.pricing.Resolve(ctx, served.Provider, slug)
-		if price.Found {
-			break
+	slugs := pricingSlugs(evt, served)
+	var overlay *llmcost.RegistryRates
+	if req != nil {
+		overlay = llmcost.RatesFromDomain(req.RegistryPricing)
+	}
+	inputRate, outputRate, found := llmcost.Resolve(ctx, b.pricing, nil, overlay, served.Provider, slugs...)
+	if !found {
+		return
+	}
+	if b.pricing != nil {
+		for _, slug := range slugs {
+			price := b.pricing.Resolve(ctx, served.Provider, slug)
+			if price.Found && price.ModelLabel != "" {
+				evt.Request.ModelLabel = price.ModelLabel
+				break
+			}
 		}
 	}
-	if !price.Found {
-		return
-	}
-	if price.ModelLabel != "" {
-		evt.Request.ModelLabel = price.ModelLabel
-	}
-	promptUsd := float64(u.InputTokens) * price.InputPrice
-	completionUsd := float64(u.OutputTokens) * price.OutputPrice
+	promptUsd := float64(u.InputTokens) * inputRate
+	completionUsd := float64(u.OutputTokens) * outputRate
 	evt.Cost = &events.Cost{
 		PromptUsd:     events.DecimalFloat(promptUsd),
 		CompletionUsd: events.DecimalFloat(completionUsd),
