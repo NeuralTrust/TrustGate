@@ -180,6 +180,8 @@ func TestProviderCapabilities_EmbeddingsProviders(t *testing.T) {
 		providers.ProviderAzure,
 		providers.ProviderCohere,
 		providers.ProviderMistral,
+		providers.ProviderVertex,
+		providers.ProviderBedrock,
 	} {
 		caps := ProviderCapabilities(code)
 		if !caps["embeddings"] {

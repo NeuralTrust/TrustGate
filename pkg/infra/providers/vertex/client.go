@@ -17,6 +17,7 @@ package vertex
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"iter"
@@ -29,12 +30,19 @@ import (
 )
 
 const (
-	defaultAction = "generateContent"
-	streamAction  = "streamGenerateContent"
+	defaultAction    = "generateContent"
+	streamAction     = "streamGenerateContent"
+	embedAction      = "embedContent"
+	batchEmbedAction = "batchEmbedContents"
 
 	optKeyAction = "action"
 
 	globalLocation = "global"
+)
+
+var (
+	_ providers.Client           = (*client)(nil)
+	_ providers.EmbeddingsClient = (*client)(nil)
 )
 
 type client struct {
@@ -118,6 +126,71 @@ func (c *client) CompletionsStream(
 	}
 
 	return providers.StreamResponse(ctx, resp.Body), nil
+}
+
+func (c *client) Embeddings(
+	ctx context.Context,
+	config *providers.Config,
+	reqBody []byte,
+) ([]byte, error) {
+	url, err := c.buildEmbeddingsURL(config, reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	token, err := c.bearerToken(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := c.newHTTPRequest(ctx, url, token, reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("vertex embeddings request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if registry.IsHTTPError(resp.StatusCode) {
+		return nil, readBackendError(resp)
+	}
+
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(resp.Body); err != nil {
+		return nil, fmt.Errorf("reading vertex embeddings response: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+func (c *client) buildEmbeddingsURL(config *providers.Config, reqBody []byte) (string, error) {
+	opts, err := providers.DecodeVertexOptions(config.Options)
+	if err != nil {
+		return "", err
+	}
+
+	model, err := resolveModel(reqBody, config)
+	if err != nil {
+		return "", err
+	}
+
+	action := embeddingsAction(reqBody)
+	if opts.BaseURL != "" {
+		return strings.TrimRight(opts.BaseURL, "/") + "/" + model + ":" + action, nil
+	}
+	return buildVertexURL(opts, model, action), nil
+}
+
+func embeddingsAction(reqBody []byte) string {
+	var probe struct {
+		Requests json.RawMessage `json:"requests"`
+	}
+	if json.Unmarshal(reqBody, &probe) == nil && len(probe.Requests) > 0 {
+		return batchEmbedAction
+	}
+	return embedAction
 }
 
 func (c *client) bearerToken(ctx context.Context, config *providers.Config) (string, error) {
