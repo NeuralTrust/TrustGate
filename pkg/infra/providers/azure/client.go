@@ -46,6 +46,7 @@ var (
 	_ providers.Client                   = (*client)(nil)
 	_ providers.EmbeddingsClient         = (*client)(nil)
 	_ providers.FilesClient              = (*client)(nil)
+	_ providers.ImagesClient             = (*client)(nil)
 	_ providers.AudioSpeechClient        = (*client)(nil)
 	_ providers.AudioTranscriptionClient = (*client)(nil)
 )
@@ -115,6 +116,44 @@ func (c *client) Embeddings(
 	}
 
 	return c.rawPost(ctx, c.buildEmbeddingsURL(config, model), auth, reqBody)
+}
+
+func (c *client) Images(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.ImagesRequest,
+) (*providers.ImagesResult, error) {
+	if config.Credentials.Azure == nil {
+		return nil, fmt.Errorf("azure configuration is required")
+	}
+	if config.Credentials.Azure.Endpoint == "" {
+		return nil, fmt.Errorf("azure endpoint is required")
+	}
+
+	model := azureImagesModel(config, req)
+	if model == "" {
+		return nil, fmt.Errorf("model (deployment ID) is required")
+	}
+
+	auth, err := c.resolveAuth(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+
+	httpClient := c.pool.Get(providers.ProviderAzure, providers.DefaultHTTPTimeout)
+	contentType := req.ContentType
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	return providers.ImagesResultFromFiles(providers.DoFilesHTTP(
+		ctx,
+		httpClient,
+		req.Method,
+		c.buildImagesURL(config, model, req.Path),
+		contentType,
+		req.Body,
+		auth.apply,
+	))
 }
 
 func (c *client) AudioSpeech(
@@ -343,6 +382,17 @@ func (c *client) buildURL(config *providers.Config, model string) string {
 
 func (c *client) buildEmbeddingsURL(config *providers.Config, model string) string {
 	return c.buildDeploymentURL(config, model, "embeddings")
+}
+
+func azureImagesModel(config *providers.Config, req providers.ImagesRequest) string {
+	if config != nil && config.Model != "" {
+		return config.Model
+	}
+	return providers.ExtractImagesModel(req.ContentType, req.Body)
+}
+
+func (c *client) buildImagesURL(config *providers.Config, model, gatewayPath string) string {
+	return c.buildDeploymentURL(config, model, providers.AzureImagesOperation(gatewayPath))
 }
 
 func (c *client) buildFilesURL(config *providers.Config, req providers.FilesRequest) string {

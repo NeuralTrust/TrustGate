@@ -57,6 +57,10 @@ func TestSupportsCapability_MatchesLocatorClients(t *testing.T) {
 				providers.SupportsCapability(provider, providers.CapabilityFiles),
 			)
 			assert.Equal(t,
+				providers.ClientSupportsCapability(client, providers.CapabilityImages),
+				providers.SupportsCapability(provider, providers.CapabilityImages),
+			)
+			assert.Equal(t,
 				providers.ClientSupportsCapability(client, providers.CapabilityAudioSpeech),
 				providers.SupportsCapability(provider, providers.CapabilityAudioSpeech),
 			)
@@ -104,6 +108,12 @@ func TestProviderCapabilities(t *testing.T) {
 	assert.True(t, providers.ProviderCapabilities(providers.ProviderOpenRouter)[providers.CapabilityFiles])
 	assert.True(t, providers.ProviderCapabilities(providers.ProviderXAI)[providers.CapabilityFiles])
 	assert.False(t, providers.ProviderCapabilities(providers.ProviderOpenAICompatible)[providers.CapabilityFiles])
+	assert.True(t, providers.ProviderCapabilities(providers.ProviderOpenAI)[providers.CapabilityImages])
+	assert.True(t, providers.ProviderCapabilities(providers.ProviderAzure)[providers.CapabilityImages])
+	assert.True(t, providers.ProviderCapabilities(providers.ProviderOpenAICompatible)[providers.CapabilityImages])
+	assert.True(t, providers.ProviderCapabilities(providers.ProviderOpenRouter)[providers.CapabilityImages])
+	assert.False(t, providers.ProviderCapabilities(providers.ProviderGroq)[providers.CapabilityImages])
+	assert.False(t, providers.ProviderCapabilities(providers.ProviderAnthropic)[providers.CapabilityImages])
 
 	for _, provider := range []string{
 		providers.ProviderOpenAI,

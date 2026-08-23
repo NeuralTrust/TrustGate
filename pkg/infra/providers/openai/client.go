@@ -37,6 +37,7 @@ var (
 	_ providers.Client                   = (*client)(nil)
 	_ providers.EmbeddingsClient         = (*client)(nil)
 	_ providers.FilesClient              = (*client)(nil)
+	_ providers.ImagesClient             = (*client)(nil)
 	_ providers.AudioSpeechClient        = (*client)(nil)
 	_ providers.AudioTranscriptionClient = (*client)(nil)
 )
@@ -98,6 +99,18 @@ func (c *client) Files(
 		return nil, err
 	}
 	return c.chat.Files(ctx, providers.JoinOpenAIFilesURL(base, req.Path, req.Query), config, req)
+}
+
+func (c *client) Images(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.ImagesRequest,
+) (*providers.ImagesResult, error) {
+	base, err := c.resolveFilesBaseURL(config)
+	if err != nil {
+		return nil, err
+	}
+	return c.chat.Images(ctx, providers.JoinOpenAIImagesURL(base, req.Path, req.Query), config, req, nil)
 }
 
 func (c *client) AudioSpeech(

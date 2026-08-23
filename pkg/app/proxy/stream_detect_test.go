@@ -60,6 +60,11 @@ func TestDetectStream(t *testing.T) {
 			true,
 		},
 		{
+			"images ignores stream flag",
+			&infracontext.RequestContext{ProxyCapability: "images", Body: []byte(`{"model":"dall-e-3","stream":true}`)},
+			false,
+		},
+		{
 			"audio speech ignores stream flag",
 			&infracontext.RequestContext{ProxyCapability: "audio_speech", Body: []byte(`{"model":"tts-1","stream":true}`)},
 			false,

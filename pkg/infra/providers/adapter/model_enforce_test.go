@@ -100,6 +100,22 @@ func TestEnforceModel(t *testing.T) {
 		}
 	})
 
+	t.Run("CheckAllowedModel rejects empty and disallowed models", func(t *testing.T) {
+		t.Parallel()
+		if err := CheckAllowedModel("gpt-4o", nil); err != nil {
+			t.Fatalf("empty allow-list: %v", err)
+		}
+		if err := CheckAllowedModel("gpt-4o", []string{"gpt-4o"}); err != nil {
+			t.Fatalf("allowed: %v", err)
+		}
+		if err := CheckAllowedModel("", []string{"gpt-4o"}); !errors.Is(err, ErrModelNotAllowed) {
+			t.Fatalf("empty model: %v", err)
+		}
+		if err := CheckAllowedModel("claude-3", []string{"gpt-4o"}); !errors.Is(err, ErrModelNotAllowed) {
+			t.Fatalf("disallowed: %v", err)
+		}
+	})
+
 	t.Run("missing model without default passes through", func(t *testing.T) {
 		t.Parallel()
 		body := []byte(`{"messages":[]}`)

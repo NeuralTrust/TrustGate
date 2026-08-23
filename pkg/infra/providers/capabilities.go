@@ -19,6 +19,7 @@ const (
 	CapabilityEmbeddings         = "embeddings"
 	CapabilityRerank             = "rerank"
 	CapabilityFiles              = "files"
+	CapabilityImages             = "images"
 	CapabilityAudioSpeech        = "audio_speech"
 	CapabilityAudioTranscription = "audio_transcription"
 )
@@ -40,6 +41,13 @@ func SupportsCapability(provider, capability string) bool {
 	case CapabilityFiles:
 		switch provider {
 		case ProviderOpenAI, ProviderAzure, ProviderOpenRouter, ProviderXAI, ProviderMistral, ProviderAnthropic:
+			return true
+		default:
+			return false
+		}
+	case CapabilityImages:
+		switch provider {
+		case ProviderOpenAI, ProviderAzure, ProviderOpenAICompatible, ProviderOpenRouter:
 			return true
 		default:
 			return false
@@ -67,6 +75,9 @@ func ProviderCapabilities(provider string) map[string]bool {
 	if SupportsCapability(provider, CapabilityFiles) {
 		caps[CapabilityFiles] = true
 	}
+	if SupportsCapability(provider, CapabilityImages) {
+		caps[CapabilityImages] = true
+	}
 	if SupportsCapability(provider, CapabilityAudioSpeech) {
 		caps[CapabilityAudioSpeech] = true
 	}
@@ -88,6 +99,9 @@ func ClientSupportsCapability(client Client, capability string) bool {
 		return ok
 	case CapabilityFiles:
 		_, ok := client.(FilesClient)
+		return ok
+	case CapabilityImages:
+		_, ok := client.(ImagesClient)
 		return ok
 	case CapabilityAudioSpeech:
 		_, ok := client.(AudioSpeechClient)

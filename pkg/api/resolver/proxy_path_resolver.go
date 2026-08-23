@@ -49,6 +49,7 @@ const (
 	CapabilityRerank             ProxyCapability = "rerank"
 	CapabilityFiles              ProxyCapability = "files"
 	CapabilityModels             ProxyCapability = "models"
+	CapabilityImages             ProxyCapability = "images"
 	CapabilityAudioSpeech        ProxyCapability = "audio_speech"
 	CapabilityAudioTranscription ProxyCapability = "audio_transcription"
 )
@@ -102,6 +103,9 @@ func formatForRoute(rest string) (adapter.Format, ProxyCapability, error) {
 	}
 	if providers.IsFilesPath(rest) {
 		return adapter.FormatOpenAIFiles, CapabilityFiles, nil
+	}
+	if providers.IsImagesPath(rest) {
+		return adapter.FormatOpenAIImages, CapabilityImages, nil
 	}
 	if providers.IsAudioSpeechPath(rest) {
 		return adapter.FormatOpenAIAudio, CapabilityAudioSpeech, nil
