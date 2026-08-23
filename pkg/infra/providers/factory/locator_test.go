@@ -57,6 +57,8 @@ func TestProviderLocator_EmbeddingsClients(t *testing.T) {
 		ProviderAzure,
 		ProviderCohere,
 		ProviderMistral,
+		ProviderVertex,
+		ProviderBedrock,
 	} {
 		t.Run(provider, func(t *testing.T) {
 			client, err := locator.Get(provider)

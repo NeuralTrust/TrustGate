@@ -87,6 +87,7 @@ type VertexOptions struct {
 	Project  string `mapstructure:"project"`
 	Location string `mapstructure:"location"`
 	Version  string `mapstructure:"version"`
+	BaseURL  string `mapstructure:"base_url"`
 }
 
 func DecodeVertexOptions(options map[string]any) (VertexOptions, error) {
@@ -110,6 +111,13 @@ func DecodeVertexOptions(options map[string]any) (VertexOptions, error) {
 	}
 	if opts.Version == "" {
 		opts.Version = vertexDefaultAPIVersion
+	}
+
+	opts.BaseURL = strings.TrimSpace(opts.BaseURL)
+	if opts.BaseURL != "" {
+		if err := validateHTTPBaseURL(opts.BaseURL); err != nil {
+			return VertexOptions{}, fmt.Errorf("vertex: %w", err)
+		}
 	}
 
 	return opts, nil

@@ -73,4 +73,12 @@ func TestProviderCapabilities(t *testing.T) {
 	anthropic := providers.ProviderCapabilities(providers.ProviderAnthropic)
 	assert.True(t, anthropic[providers.CapabilityChat])
 	assert.False(t, anthropic[providers.CapabilityEmbeddings])
+
+	vertex := providers.ProviderCapabilities(providers.ProviderVertex)
+	assert.True(t, vertex[providers.CapabilityEmbeddings])
+	assert.False(t, vertex[providers.CapabilityRerank])
+
+	bedrock := providers.ProviderCapabilities(providers.ProviderBedrock)
+	assert.True(t, bedrock[providers.CapabilityEmbeddings])
+	assert.False(t, bedrock[providers.CapabilityRerank])
 }
