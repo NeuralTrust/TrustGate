@@ -18,6 +18,7 @@ const (
 	CapabilityChat       = "chat"
 	CapabilityEmbeddings = "embeddings"
 	CapabilityRerank     = "rerank"
+	CapabilityFiles      = "files"
 )
 
 func SupportsCapability(provider, capability string) bool {
@@ -34,6 +35,13 @@ func SupportsCapability(provider, capability string) bool {
 		}
 	case CapabilityRerank:
 		return provider == ProviderCohere
+	case CapabilityFiles:
+		switch provider {
+		case ProviderOpenAI, ProviderAzure, ProviderOpenRouter, ProviderXAI, ProviderMistral:
+			return true
+		default:
+			return false
+		}
 	default:
 		return false
 	}
@@ -47,6 +55,9 @@ func ProviderCapabilities(provider string) map[string]bool {
 	if SupportsCapability(provider, CapabilityRerank) {
 		caps[CapabilityRerank] = true
 	}
+	if SupportsCapability(provider, CapabilityFiles) {
+		caps[CapabilityFiles] = true
+	}
 	return caps
 }
 
@@ -59,6 +70,9 @@ func ClientSupportsCapability(client Client, capability string) bool {
 		return ok
 	case CapabilityRerank:
 		_, ok := client.(RerankClient)
+		return ok
+	case CapabilityFiles:
+		_, ok := client.(FilesClient)
 		return ok
 	default:
 		return false

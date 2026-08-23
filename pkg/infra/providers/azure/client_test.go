@@ -82,6 +82,66 @@ func TestBuildEmbeddingsURL(t *testing.T) {
 	)
 }
 
+func TestBuildFilesURL(t *testing.T) {
+	c := &client{}
+	cfg := &providers.Config{Credentials: providers.Credentials{Azure: &providers.Azure{
+		Endpoint:   "https://x.openai.azure.com",
+		ApiVersion: "2025-01-01",
+	}}}
+	got := c.buildFilesURL(cfg, providers.FilesRequest{
+		Path:  "/v1/files",
+		Query: map[string][]string{"purpose": {"fine-tune"}},
+	})
+	assert.Contains(t, got, "https://x.openai.azure.com/openai/files?")
+	assert.Contains(t, got, "api-version=2025-01-01")
+	assert.Contains(t, got, "purpose=fine-tune")
+}
+
+func TestFiles_MissingAzureConfig(t *testing.T) {
+	c := NewAzureClient().(providers.FilesClient)
+	_, err := c.Files(context.Background(), &providers.Config{}, providers.FilesRequest{
+		Method: http.MethodGet,
+		Path:   "/v1/files",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "azure configuration is required")
+}
+
+func TestFiles_RoundTrip(t *testing.T) {
+	var gotPath, gotAPIKey, gotMethod, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAPIKey = r.Header.Get("api-key")
+		gotMethod = r.Method
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewAzureClient().(providers.FilesClient)
+	result, err := c.Files(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{
+			ApiKey: "az-key",
+			Azure: &providers.Azure{
+				Endpoint: srv.URL,
+				AuthMode: providers.AzureAuthModeAPIKey,
+			},
+		},
+	}, providers.FilesRequest{
+		Method: http.MethodGet,
+		Path:   "/v1/files",
+		Query:  map[string][]string{"purpose": {"assistants"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/openai/files", gotPath)
+	assert.Equal(t, "az-key", gotAPIKey)
+	assert.Equal(t, http.MethodGet, gotMethod)
+	assert.Contains(t, gotQuery, "api-version=2024-10-21")
+	assert.Contains(t, gotQuery, "purpose=assistants")
+	assert.JSONEq(t, `{"object":"list","data":[]}`, string(result.Body))
+}
+
 func TestEmbeddings_MissingAzureConfig(t *testing.T) {
 	c := NewAzureClient().(providers.EmbeddingsClient)
 	_, err := c.Embeddings(context.Background(), &providers.Config{}, []byte(`{"model":"dep"}`))

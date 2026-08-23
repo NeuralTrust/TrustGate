@@ -99,6 +99,16 @@ curl -s -X POST "$PROXY/$CON_SLUG/v1/embeddings" \
   -d '{"model":"embed-english-v3.0","input":["Hello from TrustGate"]}'
 ```
 
+OpenAI-shaped clients call `/{consumer}/v1/files` for upload, list, retrieve, delete, and content download. OpenAI, Azure, OpenRouter, xAI, and Mistral registries that expose a Files API are forwarded as-is (Azure uses `{endpoint}/openai/files?api-version=…`). Providers without a Files store are filtered out of the pool:
+
+```bash
+# 8. Files (OpenAI, Azure OpenAI, OpenRouter, xAI, Mistral)
+curl -s -X POST "$PROXY/$CON_SLUG/v1/files" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
+  -F purpose=assistants \
+  -F file="@notes.txt"
+```
+
 Or use any OpenAI SDK — see [examples/openai-sdk/](examples/openai-sdk/).
 
 ---

@@ -39,6 +39,7 @@ const (
 	FormatOpenRouter        Format = "openrouter" // wire-compatible with OpenAI Chat Completions
 	FormatCohere            Format = "cohere"
 	FormatOpenAIEmbeddings  Format = "openai_embeddings"
+	FormatOpenAIFiles       Format = "openai_files"
 	FormatCohereEmbed       Format = "cohere_embed"
 	FormatCohereRerank      Format = "cohere_rerank"
 	FormatVertexEmbed       Format = "vertex_embed"
@@ -121,7 +122,7 @@ func SupportedSourceFormat(f Format) bool {
 	switch f {
 	case FormatOpenAI, FormatOpenAIResponses, FormatAnthropic, FormatGemini,
 		FormatAzure, FormatGroq, FormatVertex, FormatMistral, FormatDeepSeek, FormatXAI, FormatOpenRouter,
-		FormatCohere, FormatOpenAIEmbeddings, FormatCohereEmbed, FormatCohereRerank,
+		FormatCohere, FormatOpenAIEmbeddings, FormatOpenAIFiles, FormatCohereEmbed, FormatCohereRerank,
 		FormatVertexEmbed, FormatBedrockTitanEmbed:
 		return true
 	default:
@@ -221,6 +222,8 @@ func ResolveTargetFormatForCapability(
 		}
 	case "rerank":
 		return FormatCohereRerank
+	case "files":
+		return FormatOpenAIFiles
 	default:
 		return resolveChatTargetFormat(providerName, sourceFormat, providerOptions)
 	}

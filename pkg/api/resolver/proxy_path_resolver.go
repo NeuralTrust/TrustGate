@@ -18,6 +18,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -32,6 +33,7 @@ const (
 	RouteCohereChat      = "/v2/chat"
 	RouteEmbeddings      = "/v1/embeddings"
 	RouteRerank          = "/v1/rerank"
+	RouteFiles           = "/v1/files"
 )
 
 const pathSeparator = "/"
@@ -44,6 +46,7 @@ const (
 	CapabilityChat       ProxyCapability = "chat"
 	CapabilityEmbeddings ProxyCapability = "embeddings"
 	CapabilityRerank     ProxyCapability = "rerank"
+	CapabilityFiles      ProxyCapability = "files"
 )
 
 // ProxyRoute is the result of parsing a proxy request path of the form
@@ -92,6 +95,9 @@ func formatForRoute(rest string) (adapter.Format, ProxyCapability, error) {
 		return adapter.FormatOpenAIEmbeddings, CapabilityEmbeddings, nil
 	case RouteRerank:
 		return adapter.FormatCohereRerank, CapabilityRerank, nil
+	}
+	if providers.IsFilesPath(rest) {
+		return adapter.FormatOpenAIFiles, CapabilityFiles, nil
 	}
 	if strings.HasPrefix(rest, adapter.GeminiModelsRoutePrefix) && adapter.GeminiModelFromPath(rest) != "" {
 		return adapter.FormatGemini, CapabilityChat, nil

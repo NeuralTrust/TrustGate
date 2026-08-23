@@ -54,6 +54,21 @@ func (c *ChatCompletionsClient) Completions(
 	return c.post(ctx, endpointURL, config.Credentials.ApiKey, reqBody, customHeaders)
 }
 
+func (c *ChatCompletionsClient) Files(
+	ctx context.Context,
+	endpointURL string,
+	config *providers.Config,
+	req providers.FilesRequest,
+) (*providers.FilesResult, error) {
+	if config.Credentials.ApiKey == "" {
+		return nil, fmt.Errorf("API key is required when no Authorization header is set")
+	}
+	httpClient := c.Pool.Get(c.ProviderKey, providers.DefaultHTTPTimeout)
+	return providers.DoFilesHTTP(ctx, httpClient, req.Method, endpointURL, req.ContentType, req.Body, func(httpReq *http.Request) {
+		setBearerAuth(httpReq, config.Credentials.ApiKey)
+	})
+}
+
 func (c *ChatCompletionsClient) CompletionsStream(
 	ctx context.Context,
 	endpointURL string,

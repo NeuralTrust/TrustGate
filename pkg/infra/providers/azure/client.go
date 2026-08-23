@@ -45,6 +45,7 @@ type client struct {
 var (
 	_ providers.Client           = (*client)(nil)
 	_ providers.EmbeddingsClient = (*client)(nil)
+	_ providers.FilesClient      = (*client)(nil)
 )
 
 func NewAzureClient() providers.Client {
@@ -112,6 +113,35 @@ func (c *client) Embeddings(
 	}
 
 	return c.rawPost(ctx, c.buildEmbeddingsURL(config, model), auth, reqBody)
+}
+
+func (c *client) Files(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.FilesRequest,
+) (*providers.FilesResult, error) {
+	if config.Credentials.Azure == nil {
+		return nil, fmt.Errorf("azure configuration is required")
+	}
+	if config.Credentials.Azure.Endpoint == "" {
+		return nil, fmt.Errorf("azure endpoint is required")
+	}
+
+	auth, err := c.resolveAuth(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+
+	httpClient := c.pool.Get(providers.ProviderAzure, providers.DefaultHTTPTimeout)
+	return providers.DoFilesHTTP(
+		ctx,
+		httpClient,
+		req.Method,
+		c.buildFilesURL(config, req),
+		req.ContentType,
+		req.Body,
+		auth.apply,
+	)
 }
 
 func (c *client) rawPost(ctx context.Context, url string, auth authHeader, reqBody []byte) ([]byte, error) {
@@ -246,6 +276,19 @@ func (c *client) buildURL(config *providers.Config, model string) string {
 
 func (c *client) buildEmbeddingsURL(config *providers.Config, model string) string {
 	return c.buildDeploymentURL(config, model, "embeddings")
+}
+
+func (c *client) buildFilesURL(config *providers.Config, req providers.FilesRequest) string {
+	apiVersion := defaultAPIVersion
+	if config.Credentials.Azure.ApiVersion != "" {
+		apiVersion = config.Credentials.Azure.ApiVersion
+	}
+	return providers.JoinAzureFilesURL(
+		azureRESTEndpoint(config.Credentials.Azure.Endpoint),
+		req.Path,
+		apiVersion,
+		req.Query,
+	)
 }
 
 func (c *client) buildDeploymentURL(config *providers.Config, model, operation string) string {

@@ -91,6 +91,94 @@ func TestResolveEmbeddingsURL(t *testing.T) {
 	}
 }
 
+func TestResolveFilesBaseURL(t *testing.T) {
+	c := &client{}
+
+	cases := []struct {
+		name    string
+		options map[string]any
+		want    string
+	}{
+		{name: "default host", options: nil, want: filesBaseURL},
+		{name: "base_url", options: map[string]any{"base_url": "http://127.0.0.1:9999"}, want: "http://127.0.0.1:9999"},
+		{name: "base_url trailing slash", options: map[string]any{"base_url": "https://host/v1/"}, want: "https://host/v1"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := c.resolveFilesBaseURL(&providers.Config{Options: tt.options})
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestFiles_MissingAPIKey(t *testing.T) {
+	c := NewOpenaiClient().(providers.FilesClient)
+	_, err := c.Files(context.Background(), &providers.Config{}, providers.FilesRequest{
+		Method: http.MethodGet,
+		Path:   "/v1/files",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "API key is required")
+}
+
+func TestFiles_RoundTrip(t *testing.T) {
+	var gotAuth, gotMethod, gotPath, gotQuery, gotCT string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		gotCT = r.Header.Get("Content-Type")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"file-1","object":"file"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewOpenaiClient().(providers.FilesClient)
+	result, err := c.Files(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{ApiKey: "sk-test"},
+		Options:     map[string]any{"base_url": srv.URL + "/v1"},
+	}, providers.FilesRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/files",
+		Query:       nil,
+		ContentType: "multipart/form-data; boundary=abc",
+		Body:        []byte("file-bytes"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Bearer sk-test", gotAuth)
+	assert.Equal(t, http.MethodPost, gotMethod)
+	assert.Equal(t, "/v1/files", gotPath)
+	assert.Empty(t, gotQuery)
+	assert.Equal(t, "multipart/form-data; boundary=abc", gotCT)
+	assert.JSONEq(t, `{"id":"file-1","object":"file"}`, string(result.Body))
+	assert.Equal(t, "application/json", result.ContentType)
+}
+
+func TestFiles_ContentRoundTrip(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write([]byte("pdf-bytes"))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewOpenaiClient().(providers.FilesClient)
+	result, err := c.Files(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{ApiKey: "sk-test"},
+		Options:     map[string]any{"base_url": srv.URL + "/v1"},
+	}, providers.FilesRequest{
+		Method: http.MethodGet,
+		Path:   "/v1/files/file-1/content",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/v1/files/file-1/content", gotPath)
+	assert.Equal(t, []byte("pdf-bytes"), result.Body)
+	assert.Equal(t, "application/octet-stream", result.ContentType)
+}
+
 func TestEmbeddings_MissingAPIKey(t *testing.T) {
 	c := NewOpenaiClient().(providers.EmbeddingsClient)
 	_, err := c.Embeddings(context.Background(), &providers.Config{}, []byte(`{"model":"text-embedding-3-small","input":"hi"}`))
