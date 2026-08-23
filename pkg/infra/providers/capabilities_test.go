@@ -80,7 +80,7 @@ func TestProviderCapabilities(t *testing.T) {
 	anthropic := providers.ProviderCapabilities(providers.ProviderAnthropic)
 	assert.True(t, anthropic[providers.CapabilityChat])
 	assert.False(t, anthropic[providers.CapabilityEmbeddings])
-	assert.False(t, anthropic[providers.CapabilityFiles])
+	assert.True(t, anthropic[providers.CapabilityFiles])
 
 	vertex := providers.ProviderCapabilities(providers.ProviderVertex)
 	assert.True(t, vertex[providers.CapabilityEmbeddings])
