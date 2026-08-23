@@ -60,7 +60,7 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.usage.total_tokens` | `usage.total_tokens` |
 | `trustgate.usage.cached_input_tokens` | `usage.cached_input_tokens` (when > 0) |
 | `trustgate.usage.reasoning_output_tokens` | `usage.reasoning_output_tokens` (when > 0) |
-| `trustgate.cost.total_usd` | `cost.total_usd` (when cost present) |
+| `trustgate.cost.total_usd` | `cost.total_usd` (when cost present; registry pricing + catalog) |
 | `trustgate.cost.prompt_usd` | `cost.prompt_usd` (when cost present) |
 | `trustgate.cost.completion_usd` | `cost.completion_usd` (when cost present) |
 | `trustgate.cost.currency` | `cost.currency` (when cost present) |

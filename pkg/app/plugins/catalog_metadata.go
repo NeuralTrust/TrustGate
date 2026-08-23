@@ -234,7 +234,7 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "custom_pricing",
 					Label:       "Custom Pricing",
 					Type:        FieldTypeMap,
-					Description: "Per-token USD rates keyed by model slug or wildcard pattern, consulted before the builtin table. Used for dollar budgets.",
+					Description: "Per-token USD rates keyed by model slug or wildcard pattern, consulted before registry pricing and the models.dev catalog. Used for dollar budgets.",
 					Value: &Field{
 						Key:   "price",
 						Label: "Price",

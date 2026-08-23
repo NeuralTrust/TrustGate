@@ -1,0 +1,62 @@
+# Registry pricing and cost estimates
+
+TrustGate prices each request in **USD per token**, the same unit stored in the
+models.dev catalog (`llmcost.CustomPrice`). There is no monthly aggregator in
+the gateway. Downstream rollups that sum `cost.total_usd` (or
+`trustgate.cost.total_usd`) over a period are only as accurate as the rates
+used on each event.
+
+## Registry `pricing`
+
+Configure contract rates on an LLM registry (admin API field `pricing`, also
+nested on `llm_target` in snapshots):
+
+```json
+{
+  "pricing": {
+    "discount": 0.2,
+    "overrides": {
+      "gpt-4o": { "input": 0.0000015, "output": 0.000006 },
+      "gpt-4o-mini*": { "input": 0.0000001, "output": 0.0000004 }
+    }
+  }
+}
+```
+
+- `overrides`: absolute USD **per token**. Keys are exact slugs or `*` globs.
+  The most specific match wins (`BestMatch`: exact > most literal characters).
+- `discount`: optional fraction off the models.dev list price (`0.2` = 20% off).
+  Applied only when no override matches that model.
+
+`discount` is **not** a multiplier. A comment that used `0.8` for “20% off”
+is the inverse of this contract.
+
+## Precedence
+
+For a given request, input/output rates resolve as:
+
+1. LLM Budget `custom_pricing` on the policy (explicit per-policy overlay)
+2. Registry absolute override (exact slug, then best glob)
+3. Registry `discount` × models.dev catalog price
+4. models.dev catalog as-is
+5. Unpriced (no `cost` on the event; dollar budgets accrue zero)
+
+The same function (`llmcost.Resolve`) is used for:
+
+- per-request metrics `cost.prompt_usd` / `cost.completion_usd` / `cost.total_usd`
+- LLM Budget dollar mode (and cost-cap evaluation)
+
+Two registries can publish different rates for the same model slug. The
+**served** registry (stamped on the request after routing) is the one that
+applies.
+
+## Monthly estimates
+
+TrustGate does not compute a monthly invoice. To estimate period spend:
+
+`sum(usage.tokens × resolved_per_token_rate)` over the window, which is the
+same as summing `cost.total_usd` on telemetry events.
+
+Those estimates match the customer invoice only when registry `pricing`
+matches the contract (enterprise list discount and/or committed per-model
+rates). List prices from models.dev diverge from reserved/committed deals.

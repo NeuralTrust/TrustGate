@@ -266,6 +266,7 @@ TrustGate emits request telemetry to [OpenTelemetry](https://opentelemetry.io) c
 
 Full telemetry configuration, including default exporters and the OTLP contract, is documented in:
 - [`docs/telemetry/otlp-metadata-contract.md`](docs/telemetry/otlp-metadata-contract.md)
+- [`docs/pricing.md`](docs/pricing.md) — per-request `cost.total_usd` resolution (catalog, registry overrides, LLM Budget)
 - [`config/telemetry.example.yaml`](config/telemetry.example.yaml)
 
 ---

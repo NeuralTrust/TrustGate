@@ -37,6 +37,8 @@ type UpdateInput struct {
 	Description     *string
 	Auth            *domain.TargetAuth
 	HealthChecks    *domain.HealthChecks
+	Pricing         *domain.Pricing
+	SetPricing      bool
 	MCPTarget       *domain.MCPTarget
 }
 
@@ -147,7 +149,7 @@ func applyMCPTargetUpdate(existing *domain.Registry, in UpdateInput, catalog MCP
 }
 
 func applyLLMTargetUpdate(existing *domain.Registry, in UpdateInput) {
-	if in.Provider == nil && in.ProviderOptions == nil && in.Auth == nil && in.HealthChecks == nil {
+	if in.Provider == nil && in.ProviderOptions == nil && in.Auth == nil && in.HealthChecks == nil && !in.SetPricing {
 		return
 	}
 	if existing.LLMTarget == nil {
@@ -166,5 +168,8 @@ func applyLLMTargetUpdate(existing *domain.Registry, in UpdateInput) {
 	}
 	if in.HealthChecks != nil {
 		target.HealthChecks = in.HealthChecks
+	}
+	if in.SetPricing {
+		target.Pricing = in.Pricing
 	}
 }
