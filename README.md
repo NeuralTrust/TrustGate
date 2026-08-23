@@ -173,6 +173,21 @@ curl -s -X POST "$PROXY/$CON_SLUG/v1/chat/completions" \
   -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Hello!"}]}'
+
+# 7. Embeddings (OpenAI, Azure OpenAI, openai_compatible, Cohere)
+curl -s -X POST "$PROXY/$CON_SLUG/v1/embeddings" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"text-embedding-3-small","input":["Hello from TrustGate"]}'
+```
+
+OpenAI-shaped clients always call `POST /{consumer}/v1/embeddings`. OpenAI, Azure, and `openai_compatible` registries forward that payload to the upstream embeddings URL. A Cohere registry accepts the same OpenAI-shaped request and adapts it to Cohere `/v2/embed`:
+
+```bash
+curl -s -X POST "$PROXY/$CON_SLUG/v1/embeddings" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"embed-english-v3.0","input":["Hello from TrustGate"]}'
 ```
 
 From an application, point any OpenAI SDK at the proxy — no client changes beyond

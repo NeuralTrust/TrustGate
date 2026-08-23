@@ -70,6 +70,52 @@ func TestBuildURL(t *testing.T) {
 	})
 }
 
+func TestBuildEmbeddingsURL(t *testing.T) {
+	c := &client{}
+	cfg := &providers.Config{Credentials: providers.Credentials{Azure: &providers.Azure{
+		Endpoint:   "https://x.openai.azure.com",
+		ApiVersion: "2025-01-01",
+	}}}
+	assert.Equal(t,
+		"https://x.openai.azure.com/openai/deployments/text-embedding-3-small/embeddings?api-version=2025-01-01",
+		c.buildEmbeddingsURL(cfg, "text-embedding-3-small"),
+	)
+}
+
+func TestEmbeddings_MissingAzureConfig(t *testing.T) {
+	c := NewAzureClient().(providers.EmbeddingsClient)
+	_, err := c.Embeddings(context.Background(), &providers.Config{}, []byte(`{"model":"dep"}`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "azure configuration is required")
+}
+
+func TestEmbeddings_RoundTrip(t *testing.T) {
+	var gotPath, gotAPIKey string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAPIKey = r.Header.Get("api-key")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"index":0,"embedding":[0.4]}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewAzureClient().(providers.EmbeddingsClient)
+	resp, err := c.Embeddings(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{
+			ApiKey: "az-key",
+			Azure: &providers.Azure{
+				Endpoint: srv.URL,
+				AuthMode: providers.AzureAuthModeAPIKey,
+			},
+		},
+	}, []byte(`{"model":"text-embedding-3-small","input":"hi"}`))
+	require.NoError(t, err)
+
+	assert.Equal(t, "/openai/deployments/text-embedding-3-small/embeddings", gotPath)
+	assert.Equal(t, "az-key", gotAPIKey)
+	assert.JSONEq(t, `{"object":"list","data":[{"index":0,"embedding":[0.4]}]}`, string(resp))
+}
+
 func TestAuthHeaderApply(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, "http://x", nil)
 

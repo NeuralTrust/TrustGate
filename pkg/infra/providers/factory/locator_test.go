@@ -17,6 +17,7 @@ package factory
 import (
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -44,6 +45,23 @@ func TestProviderLocator_Get(t *testing.T) {
 			client, err := locator.Get(provider)
 			require.NoError(t, err)
 			assert.NotNil(t, client)
+		})
+	}
+}
+
+func TestProviderLocator_EmbeddingsClients(t *testing.T) {
+	locator := NewProviderLocator()
+	for _, provider := range []string{
+		ProviderOpenAI,
+		ProviderOpenAICompatible,
+		ProviderAzure,
+		ProviderCohere,
+	} {
+		t.Run(provider, func(t *testing.T) {
+			client, err := locator.Get(provider)
+			require.NoError(t, err)
+			_, ok := client.(providers.EmbeddingsClient)
+			assert.True(t, ok)
 		})
 	}
 }

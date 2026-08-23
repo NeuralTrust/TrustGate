@@ -545,6 +545,25 @@ func TestHandle_InvalidRequestPayload(t *testing.T) {
 	}
 }
 
+func TestHandle_CapabilityNotSupported(t *testing.T) {
+	app, fwd := newTestApp(t)
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.Anything).
+		Return(nil, appproxy.ErrCapabilityNotSupported).
+		Once()
+
+	resp, err := app.Test(newProxyRequest())
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	if eb := decodeError(t, resp.Body); eb.Error != "invalid_request" {
+		t.Fatalf("error = %q, want invalid_request", eb.Error)
+	}
+}
+
 func TestHandle_NoBackendAvailable(t *testing.T) {
 	app, fwd := newTestApp(t)
 	fwd.EXPECT().

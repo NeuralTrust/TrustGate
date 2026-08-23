@@ -163,6 +163,7 @@ function ProviderTable({
       <THead>
         <TH>Name</TH>
         <TH>Type</TH>
+        <TH>Capabilities</TH>
         <TH>Status</TH>
       </THead>
       <TBody>
@@ -181,6 +182,13 @@ function ProviderTable({
               </TD>
               <TD>
                 <Badge>{builtIn ? "Built-in" : "Custom"}</Badge>
+              </TD>
+              <TD>
+                <div className="flex flex-wrap gap-1">
+                  {p.capabilities?.chat ? <Badge>Chat</Badge> : null}
+                  {p.capabilities?.embeddings ? <Badge>Embeddings</Badge> : null}
+                  {p.capabilities?.rerank ? <Badge>Rerank</Badge> : null}
+                </div>
               </TD>
               <TD>
                 {active ? <Badge tone="success">Active</Badge> : <Badge>Inactive</Badge>}

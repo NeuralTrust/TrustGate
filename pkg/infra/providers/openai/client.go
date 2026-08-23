@@ -25,9 +25,16 @@ import (
 const (
 	completionsURL = "https://api.openai.com/v1/chat/completions"
 	responsesURL   = "https://api.openai.com/v1/responses"
+	embeddingsURL  = "https://api.openai.com/v1/embeddings"
 
 	completionsPath = "/chat/completions"
 	responsesPath   = "/responses"
+	embeddingsPath  = "/embeddings"
+)
+
+var (
+	_ providers.Client           = (*client)(nil)
+	_ providers.EmbeddingsClient = (*client)(nil)
 )
 
 type client struct {
@@ -63,6 +70,30 @@ func (c *client) CompletionsStream(
 		return nil, err
 	}
 	return c.chat.CompletionsStream(ctx, endpointURL, config, reqBody, nil)
+}
+
+func (c *client) Embeddings(
+	ctx context.Context,
+	config *providers.Config,
+	reqBody []byte,
+) ([]byte, error) {
+	endpointURL, err := c.resolveEmbeddingsURL(config)
+	if err != nil {
+		return nil, err
+	}
+	return c.chat.Completions(ctx, endpointURL, config, reqBody, nil)
+}
+
+func (c *client) resolveEmbeddingsURL(config *providers.Config) (string, error) {
+	opts, err := providers.DecodeOpenAIOptions(config.Options)
+	if err != nil {
+		return "", err
+	}
+	base := strings.TrimRight(opts.BaseURL, "/")
+	if base != "" {
+		return base + embeddingsPath, nil
+	}
+	return embeddingsURL, nil
 }
 
 func (c *client) resolveURL(config *providers.Config) (string, error) {

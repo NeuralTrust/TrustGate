@@ -42,6 +42,11 @@ type client struct {
 	tokenSource azureTokenSource
 }
 
+var (
+	_ providers.Client           = (*client)(nil)
+	_ providers.EmbeddingsClient = (*client)(nil)
+)
+
 func NewAzureClient() providers.Client {
 	return &client{
 		pool:        providers.NewHTTPClientPool(),
@@ -82,6 +87,31 @@ func (c *client) Completions(
 	url := c.buildURL(config, model)
 
 	return c.rawPost(ctx, url, auth, reqBody)
+}
+
+func (c *client) Embeddings(
+	ctx context.Context,
+	config *providers.Config,
+	reqBody []byte,
+) ([]byte, error) {
+	if config.Credentials.Azure == nil {
+		return nil, fmt.Errorf("azure configuration is required")
+	}
+	if config.Credentials.Azure.Endpoint == "" {
+		return nil, fmt.Errorf("azure endpoint is required")
+	}
+
+	model, err := adapter.ExtractModel(reqBody)
+	if err != nil || model == "" {
+		return nil, fmt.Errorf("model (deployment ID) is required")
+	}
+
+	auth, err := c.resolveAuth(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.rawPost(ctx, c.buildEmbeddingsURL(config, model), auth, reqBody)
 }
 
 func (c *client) rawPost(ctx context.Context, url string, auth authHeader, reqBody []byte) ([]byte, error) {
@@ -211,15 +241,21 @@ func azureAuthMode(az *providers.Azure) providers.AzureAuthMode {
 }
 
 func (c *client) buildURL(config *providers.Config, model string) string {
-	originalEndpoint := config.Credentials.Azure.Endpoint
-	endpoint := azureRESTEndpoint(originalEndpoint)
+	return c.buildDeploymentURL(config, model, "chat/completions")
+}
+
+func (c *client) buildEmbeddingsURL(config *providers.Config, model string) string {
+	return c.buildDeploymentURL(config, model, "embeddings")
+}
+
+func (c *client) buildDeploymentURL(config *providers.Config, model, operation string) string {
+	endpoint := azureRESTEndpoint(config.Credentials.Azure.Endpoint)
 	apiVersion := defaultAPIVersion
 	if config.Credentials.Azure.ApiVersion != "" {
 		apiVersion = config.Credentials.Azure.ApiVersion
 	}
-	finalURL := fmt.Sprintf("%s/openai/deployments/%s/chat/completions?api-version=%s",
-		endpoint, model, apiVersion)
-	return finalURL
+	return fmt.Sprintf("%s/openai/deployments/%s/%s?api-version=%s",
+		endpoint, model, operation, apiVersion)
 }
 
 func azureRESTEndpoint(endpoint string) string {

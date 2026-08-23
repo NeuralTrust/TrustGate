@@ -486,6 +486,7 @@ export interface Provider {
   wire_format?: string;
   source?: string;
   metadata?: Record<string, unknown>;
+  capabilities?: Record<string, boolean>;
   auth_types?: CatalogAuthTypeOption[];
   provider_options_schema?: ProviderOptionField[];
 }
