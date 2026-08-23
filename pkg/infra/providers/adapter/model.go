@@ -98,6 +98,19 @@ func ExtractModel(body []byte) (string, error) {
 	return probe.Model, nil
 }
 
+func CheckAllowedModel(model string, allowedModels []string) error {
+	if len(allowedModels) == 0 {
+		return nil
+	}
+	if model == "" {
+		return fmt.Errorf("%w: request has no model and binding has no default", ErrModelNotAllowed)
+	}
+	if !isAllowed(model, allowedModels) {
+		return fmt.Errorf("%w: %q", ErrModelNotAllowed, model)
+	}
+	return nil
+}
+
 func isAllowed(model string, allowed []string) bool {
 	for _, m := range allowed {
 		if m == model {

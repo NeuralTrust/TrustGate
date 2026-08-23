@@ -151,6 +151,46 @@ func DecodeAnthropicOptions(options map[string]any) (AnthropicOptions, error) {
 	return opts, nil
 }
 
+type GroqOptions struct {
+	BaseURL string `mapstructure:"base_url"`
+}
+
+type OpenRouterOptions struct {
+	BaseURL string `mapstructure:"base_url"`
+}
+
+func DecodeGroqOptions(options map[string]any) (GroqOptions, error) {
+	var opts GroqOptions
+	if len(options) > 0 {
+		if err := mapstructure.Decode(options, &opts); err != nil {
+			return GroqOptions{}, fmt.Errorf("groq: invalid provider_options: %w", err)
+		}
+	}
+	opts.BaseURL = strings.TrimSpace(opts.BaseURL)
+	if opts.BaseURL != "" {
+		if err := validateHTTPBaseURL(opts.BaseURL); err != nil {
+			return GroqOptions{}, fmt.Errorf("groq: %w", err)
+		}
+	}
+	return opts, nil
+}
+
+func DecodeOpenRouterOptions(options map[string]any) (OpenRouterOptions, error) {
+	var opts OpenRouterOptions
+	if len(options) > 0 {
+		if err := mapstructure.Decode(options, &opts); err != nil {
+			return OpenRouterOptions{}, fmt.Errorf("openrouter: invalid provider_options: %w", err)
+		}
+	}
+	opts.BaseURL = strings.TrimSpace(opts.BaseURL)
+	if opts.BaseURL != "" {
+		if err := validateHTTPBaseURL(opts.BaseURL); err != nil {
+			return OpenRouterOptions{}, fmt.Errorf("openrouter: %w", err)
+		}
+	}
+	return opts, nil
+}
+
 func DecodeMistralOptions(options map[string]any) (MistralOptions, error) {
 	var opts MistralOptions
 	if len(options) > 0 {

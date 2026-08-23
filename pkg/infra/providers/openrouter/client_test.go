@@ -71,6 +71,56 @@ func TestFiles_MissingAPIKey(t *testing.T) {
 	assert.Contains(t, err.Error(), "API key is required")
 }
 
+func TestAudioSpeech_RoundTrip(t *testing.T) {
+	var gotAuth, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "audio/mpeg")
+		_, _ = w.Write([]byte("mp3-bytes"))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewOpenRouterClient().(providers.AudioSpeechClient)
+	result, err := c.AudioSpeech(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{ApiKey: "or-key"},
+		Options:     map[string]any{"base_url": srv.URL + "/api/v1"},
+	}, providers.AudioRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/audio/speech",
+		ContentType: "application/json",
+		Body:        []byte(`{"model":"openai/gpt-4o-mini-tts","input":"hi","voice":"alloy"}`),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Bearer or-key", gotAuth)
+	assert.Equal(t, "/api/v1/audio/speech", gotPath)
+	assert.Equal(t, []byte("mp3-bytes"), result.Body)
+}
+
+func TestAudioTranscription_RoundTrip(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"text":"hello"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewOpenRouterClient().(providers.AudioTranscriptionClient)
+	result, err := c.AudioTranscription(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{ApiKey: "or-key"},
+		Options:     map[string]any{"base_url": srv.URL + "/api/v1"},
+	}, providers.AudioRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/audio/transcriptions",
+		ContentType: "multipart/form-data; boundary=abc",
+		Body:        []byte("file-bytes"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/api/v1/audio/transcriptions", gotPath)
+	assert.JSONEq(t, `{"text":"hello"}`, string(result.Body))
+}
+
 func TestCompletions_MissingAPIKey(t *testing.T) {
 	_, err := NewOpenRouterClient().Completions(context.Background(), &providers.Config{}, []byte(`{}`))
 	require.Error(t, err)

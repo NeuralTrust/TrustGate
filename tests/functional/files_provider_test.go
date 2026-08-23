@@ -215,6 +215,18 @@ func TestAnthropicProvider_Files(t *testing.T) {
 	assert.Equal(t, http.MethodGet, last.method)
 }
 
+func groqBackendPayload(name string) map[string]any {
+	return map[string]any{
+		"name":     name,
+		"provider": "groq",
+		"weight":   1,
+		"auth": map[string]any{
+			"type":    "api_key",
+			"api_key": map[string]any{"api_key": "gsk-test"},
+		},
+	}
+}
+
 func TestFiles_FiltersIncapableProviderFromPool(t *testing.T) {
 	defer Track(t, "FilesProvider")()
 

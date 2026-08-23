@@ -108,12 +108,27 @@ curl -s -X POST "$PROXY/$CON_SLUG/v1/files" \
   -F purpose=assistants \
   -F file="@notes.txt"
 
-# 9. Model discovery (OpenAI-compatible, gateway-owned)
+# 9. Audio speech (TTS) — raw audio bytes
+curl -s -X POST "$PROXY/$CON_SLUG/v1/audio/speech" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"tts-1","input":"Hello from TrustGate","voice":"alloy"}' \
+  --output speech.mp3
+
+# 10. Audio transcriptions (STT)
+curl -s -X POST "$PROXY/$CON_SLUG/v1/audio/transcriptions" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
+  -F model=whisper-1 \
+  -F file="@speech.mp3"
+
+# 11. Model discovery (OpenAI-compatible, gateway-owned)
 curl -s "$PROXY/$CON_SLUG/v1/models" \
   -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY"
 curl -s "$PROXY/$CON_SLUG/v1/models/gpt-4o-mini" \
   -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY"
 ```
+
+OpenAI-shaped clients call `POST /{consumer}/v1/audio/speech` (TTS, raw audio bytes) and `POST /{consumer}/v1/audio/transcriptions` (STT, multipart file). OpenAI, Azure OpenAI, `openai_compatible`, OpenRouter, Groq, and Mistral registries that expose those APIs are forwarded as-is (Azure uses `{endpoint}/openai/deployments/{model}/audio/{speech|transcriptions}?api-version=…`). Mistral speech JSON `{audio_data}` is unwrapped to raw bytes so the gateway response stays OpenAI-shaped. `/v1/audio/translations` is not served yet. Providers without the matching audio capability are filtered out of the pool.
 
 `GET /{consumer}/v1/models` returns the union of native model ids the consumer can actually call (registries ∩ allowlists/policies ∩ provider capabilities). It is not an upstream `/v1/models` passthrough and not the full admin catalog.
 

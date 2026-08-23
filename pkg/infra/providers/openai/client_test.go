@@ -17,6 +17,7 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -177,6 +178,76 @@ func TestFiles_ContentRoundTrip(t *testing.T) {
 	assert.Equal(t, "/v1/files/file-1/content", gotPath)
 	assert.Equal(t, []byte("pdf-bytes"), result.Body)
 	assert.Equal(t, "application/octet-stream", result.ContentType)
+}
+
+func TestAudioSpeech_RoundTrip(t *testing.T) {
+	var gotAuth, gotMethod, gotPath, gotCT string
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotCT = r.Header.Get("Content-Type")
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "audio/mpeg")
+		_, _ = w.Write([]byte("mp3-bytes"))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewOpenaiClient().(providers.AudioSpeechClient)
+	result, err := c.AudioSpeech(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{ApiKey: "sk-test"},
+		Options:     map[string]any{"base_url": srv.URL + "/v1"},
+	}, providers.AudioRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/audio/speech",
+		ContentType: "application/json",
+		Body:        []byte(`{"model":"tts-1","input":"hi","voice":"alloy"}`),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Bearer sk-test", gotAuth)
+	assert.Equal(t, http.MethodPost, gotMethod)
+	assert.Equal(t, "/v1/audio/speech", gotPath)
+	assert.Equal(t, "application/json", gotCT)
+	assert.JSONEq(t, `{"model":"tts-1","input":"hi","voice":"alloy"}`, string(gotBody))
+	assert.Equal(t, []byte("mp3-bytes"), result.Body)
+	assert.Equal(t, "audio/mpeg", result.ContentType)
+}
+
+func TestAudioTranscription_RoundTrip(t *testing.T) {
+	var gotPath, gotCT string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotCT = r.Header.Get("Content-Type")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"text":"hello"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewOpenaiClient().(providers.AudioTranscriptionClient)
+	result, err := c.AudioTranscription(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{ApiKey: "sk-test"},
+		Options:     map[string]any{"base_url": srv.URL + "/v1"},
+	}, providers.AudioRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/audio/transcriptions",
+		ContentType: "multipart/form-data; boundary=abc",
+		Body:        []byte("file-bytes"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/v1/audio/transcriptions", gotPath)
+	assert.Equal(t, "multipart/form-data; boundary=abc", gotCT)
+	assert.JSONEq(t, `{"text":"hello"}`, string(result.Body))
+}
+
+func TestAudioSpeech_MissingAPIKey(t *testing.T) {
+	c := NewOpenaiClient().(providers.AudioSpeechClient)
+	_, err := c.AudioSpeech(context.Background(), &providers.Config{}, providers.AudioRequest{
+		Method: http.MethodPost,
+		Path:   "/v1/audio/speech",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "API key is required")
 }
 
 func TestEmbeddings_MissingAPIKey(t *testing.T) {

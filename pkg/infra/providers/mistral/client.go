@@ -36,9 +36,11 @@ const (
 )
 
 var (
-	_ providers.Client           = (*client)(nil)
-	_ providers.EmbeddingsClient = (*client)(nil)
-	_ providers.FilesClient      = (*client)(nil)
+	_ providers.Client                   = (*client)(nil)
+	_ providers.EmbeddingsClient         = (*client)(nil)
+	_ providers.FilesClient              = (*client)(nil)
+	_ providers.AudioSpeechClient        = (*client)(nil)
+	_ providers.AudioTranscriptionClient = (*client)(nil)
 )
 
 type client struct {
@@ -97,6 +99,62 @@ func (c *client) Files(
 	return providers.DoFilesHTTP(ctx, httpClient, req.Method, endpoint, req.ContentType, req.Body, func(httpReq *http.Request) {
 		httpReq.Header.Set("Authorization", "Bearer "+config.Credentials.ApiKey)
 	})
+}
+
+func (c *client) AudioSpeech(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.AudioRequest,
+) (*providers.AudioResult, error) {
+	req.Body = providers.MapSpeechVoiceToVoiceID(req.Body)
+	result, err := c.audio(ctx, config, req)
+	return providers.UnwrapJSONSpeechAudio(result, err, req.Body)
+}
+
+func (c *client) AudioTranscription(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.AudioRequest,
+) (*providers.AudioResult, error) {
+	return c.audio(ctx, config, req)
+}
+
+func (c *client) audio(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.AudioRequest,
+) (*providers.AudioResult, error) {
+	if config.Credentials.ApiKey == "" {
+		return nil, fmt.Errorf("API key is required")
+	}
+	endpoint, err := audioURL(config.Options, req.Path, req.Query)
+	if err != nil {
+		return nil, err
+	}
+	httpClient := c.pool.Get(providers.ProviderMistral, providers.DefaultHTTPTimeout)
+	return providers.AudioResultFromFiles(providers.DoFilesHTTP(
+		ctx,
+		httpClient,
+		req.Method,
+		endpoint,
+		req.ContentType,
+		req.Body,
+		func(httpReq *http.Request) {
+			httpReq.Header.Set("Authorization", "Bearer "+config.Credentials.ApiKey)
+		},
+	))
+}
+
+func audioURL(options map[string]any, path string, query url.Values) (string, error) {
+	opts, err := providers.DecodeMistralOptions(options)
+	if err != nil {
+		return "", err
+	}
+	base := filesBaseURL
+	if opts.BaseURL != "" {
+		base = strings.TrimRight(opts.BaseURL, "/")
+	}
+	return providers.JoinOpenAIAudioURL(base, path, query), nil
 }
 
 func filesURL(options map[string]any, path string, query url.Values) (string, error) {

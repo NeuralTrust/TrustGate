@@ -15,8 +15,9 @@
 // Package openaicompat implements a provider client for arbitrary
 // OpenAI-compatible endpoints (Together, Fireworks, vLLM, Ollama, self-hosted
 // gateways, ...). Unlike the openai package it has no default host: callers
-// must supply provider_options.base_url. Chat Completions (/chat/completions)
-// and Embeddings (/embeddings) are supported. Extra request headers can be
+// must supply provider_options.base_url. Chat Completions (/chat/completions),
+// Embeddings (/embeddings), and Audio (/audio/speech, /audio/transcriptions)
+// are supported. Extra request headers can be
 // supplied via provider_options.headers.
 package openaicompat
 
@@ -35,8 +36,10 @@ const (
 )
 
 var (
-	_ providers.Client           = (*client)(nil)
-	_ providers.EmbeddingsClient = (*client)(nil)
+	_ providers.Client                   = (*client)(nil)
+	_ providers.EmbeddingsClient         = (*client)(nil)
+	_ providers.AudioSpeechClient        = (*client)(nil)
+	_ providers.AudioTranscriptionClient = (*client)(nil)
 )
 
 type client struct {
@@ -94,4 +97,32 @@ func completionsURL(opts providers.OpenAICompatibleOptions) string {
 
 func embeddingsURL(opts providers.OpenAICompatibleOptions) string {
 	return strings.TrimRight(opts.BaseURL, "/") + embeddingsPath
+}
+
+func (c *client) AudioSpeech(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.AudioRequest,
+) (*providers.AudioResult, error) {
+	return c.audio(ctx, config, req)
+}
+
+func (c *client) AudioTranscription(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.AudioRequest,
+) (*providers.AudioResult, error) {
+	return c.audio(ctx, config, req)
+}
+
+func (c *client) audio(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.AudioRequest,
+) (*providers.AudioResult, error) {
+	opts, err := providers.DecodeOpenAICompatibleOptions(config.Options)
+	if err != nil {
+		return nil, err
+	}
+	return c.chat.Audio(ctx, providers.JoinOpenAIAudioURL(opts.BaseURL, req.Path, req.Query), config, req, opts.Headers)
 }

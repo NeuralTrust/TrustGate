@@ -41,6 +41,10 @@ func DetectStream(req *infracontext.RequestContext) bool {
 	if req == nil {
 		return false
 	}
+	switch req.ProxyCapability {
+	case capabilityFiles, capabilityAudioSpeech, capabilityAudioTranscription:
+		return false
+	}
 	if strings.Contains(req.Path, geminiStreamAction) {
 		return true
 	}
