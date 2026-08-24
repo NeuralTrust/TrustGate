@@ -56,6 +56,7 @@ type ConnectStore interface {
 type ProviderStatus struct {
 	Provider       string
 	Registry       string
+	Code           string
 	Linked         bool
 	AccountRef     string
 	ExpiresAt      time.Time

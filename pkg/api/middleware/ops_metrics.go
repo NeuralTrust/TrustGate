@@ -44,7 +44,7 @@ func (m *OpsMetricsMiddleware) Middleware() fiber.Handler {
 		// path, so it can name the span before the handler runs.
 		route := classifyRoute(m.plane, c.Path())
 		method := boundedMethod(c.Method())
-		ctx, span := m.recorder.StartRequestSpan(c.UserContext(), method+" "+string(route))
+		ctx, span := m.recorder.StartRequestSpan(c.UserContext(), method+" "+string(route), route)
 		c.SetUserContext(ctx)
 
 		start := time.Now()

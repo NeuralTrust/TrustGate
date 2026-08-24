@@ -42,7 +42,7 @@ namespace: agentgateway
 images:
 - name: agentgateway
   newName: europe-west1-docker.pkg.dev/neuraltrust-app-dev/nt-docker/agentgateway
-  newTag: 5a9cd303ab581648e6095348f2cd287feb01f115
+  newTag: e9bc87dd524df5d78f9a8d4b0d3d6ac149ec9741
 configMapGenerator:
 - behavior: create
   envs:

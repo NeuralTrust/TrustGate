@@ -80,6 +80,7 @@ const (
 	defaultOpsMetricsEnabled            = false
 	defaultOpsTracesEnabled             = false
 	defaultOpsTracesSamplingRatio       = 1.0
+	defaultOpsTracesProbeSamplingRatio  = 0.01
 
 	defaultMetricsEnabled       = true
 	defaultMetricsQueueSize     = 1000
@@ -323,7 +324,11 @@ type TelemetryConfig struct {
 	OpsMetricsEnabled      bool
 	OpsTracesEnabled       bool
 	OpsTracesSamplingRatio float64
-	OTLP                   OTLPConfig
+	// OpsTracesProbeSamplingRatio governs health and readiness routes only.
+	// Unlike OpsTracesSamplingRatio, 0 is a meaningful value here: it drops
+	// probe spans entirely while leaving request traces untouched.
+	OpsTracesProbeSamplingRatio float64
+	OTLP                        OTLPConfig
 }
 
 // OTLPConfig holds the process-level OTEL_EXPORTER_OTLP_* settings. Endpoint
@@ -579,6 +584,9 @@ func getTelemetryConfig() TelemetryConfig {
 		OpsTracesEnabled:    getEnvBool("OPS_TRACES_ENABLED", defaultOpsTracesEnabled),
 		OpsTracesSamplingRatio: getEnvFloat(
 			"OPS_TRACES_SAMPLING_RATIO", defaultOpsTracesSamplingRatio,
+		),
+		OpsTracesProbeSamplingRatio: getEnvFloat(
+			"OPS_TRACES_PROBE_SAMPLING_RATIO", defaultOpsTracesProbeSamplingRatio,
 		),
 		OTLP: getOTLPConfig(),
 	}
