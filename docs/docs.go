@@ -318,7 +318,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filter by auth type (api_key, oauth2, oidc, mtls)",
+                        "description": "Filter by auth type (api_key, oauth2, mtls; oidc is a deprecated alias of oauth2)",
                         "name": "type",
                         "in": "query"
                     },
@@ -3703,6 +3703,12 @@ const docTemplate = `{
                 "jwks_url": {
                     "type": "string"
                 },
+                "public_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "required_scopes": {
                     "type": "array",
                     "items": {
@@ -3826,9 +3832,6 @@ const docTemplate = `{
                 },
                 "oauth2": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.OAuth2ConfigResponse"
-                },
-                "oidc": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.OIDCConfigResponse"
                 }
             }
         },
@@ -3911,6 +3914,12 @@ const docTemplate = `{
                 "jwks_url": {
                     "type": "string"
                 },
+                "public_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "required_scopes": {
                     "type": "array",
                     "items": {
@@ -3927,44 +3936,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "userinfo_url": {
-                    "type": "string"
-                }
-            }
-        },
-        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.OIDCConfigResponse": {
-            "type": "object",
-            "properties": {
-                "allowed_algorithms": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "audiences": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "issuer": {
-                    "type": "string"
-                },
-                "jwks_url": {
-                    "type": "string"
-                },
-                "public_keys": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "required_scopes": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "subject_claim": {
                     "type": "string"
                 }
             }
@@ -5226,6 +5197,9 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "token_endpoint_auth_method": {
+                    "type": "string"
+                },
                 "token_url": {
                     "type": "string"
                 },
@@ -5568,6 +5542,9 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "token_endpoint_auth_method": {
+                    "type": "string"
                 },
                 "token_url": {
                     "type": "string"
@@ -6244,12 +6221,16 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "authorize_url": {
-                    "description": "AuthorizeURL / TokenURL are required for manual registration\n(Registration == \"manual\"), where the operator supplies a pre-registered\nclient_id/secret; they also serve as a discovery fallback otherwise.",
+                    "description": "AuthorizeURL / TokenURL are required for manual registration\n(Registration == \"manual\"), where the operator supplies a pre-registered\nclient_id/secret; they also serve as a discovery fallback otherwise.\nTokenURL is also required for GrantType \"client_credentials\".",
                     "type": "string"
                 },
                 "dcr": {
                     "description": "DCR reports whether the server supports OAuth Dynamic Client Registration\n(RFC 7591). A nil pointer means it could not be determined (e.g. a\ntenant-templated host that must be probed per-instance).",
                     "type": "boolean"
+                },
+                "grant_type": {
+                    "description": "GrantType selects the OAuth grant. Empty / omitted means authorization\ncode (forwarded). \"client_credentials\" is machine-to-machine.",
+                    "type": "string"
                 },
                 "pkce": {
                     "description": "PKCE reports whether the authorization server supports PKCE (S256). A nil\npointer means it could not be determined.",
@@ -6275,6 +6256,10 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "token_endpoint_auth_method": {
+                    "description": "TokenEndpointAuthMethod is used with client_credentials:\nclient_secret_basic (default) or client_secret_post.",
+                    "type": "string"
                 },
                 "token_url": {
                     "type": "string"

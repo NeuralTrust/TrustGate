@@ -26,6 +26,7 @@ import (
 	approle "github.com/NeuralTrust/TrustGate/pkg/app/role"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
@@ -91,7 +92,7 @@ func (m *AuthMiddleware) Middleware() fiber.Handler {
 		authCtx.GatewayID = gw.ID
 		authCtx.GatewaySlug = gw.Slug
 		authCtx.ConsumerID = rc.Consumer.ID
-		if authCtx.Method == appauth.MethodOIDC {
+		if rc.Consumer.RoutingMode == consumerdomain.RoutingModeRoleBased && authCtx.Method != appauth.MethodPlayground {
 			if m.roleResolver == nil {
 				return internalError(c, "failed to resolve idp roles")
 			}
@@ -133,7 +134,7 @@ func (m *AuthMiddleware) debug(c *fiber.Ctx) *slog.Logger {
 }
 
 func writeAuthError(c *fiber.Ctx, err error) error {
-	if errors.Is(err, appauth.ErrInvalidAuthRequest) || errors.Is(err, appauth.ErrAmbiguousOIDCConfig) {
+	if errors.Is(err, appauth.ErrInvalidAuthRequest) {
 		return invalidAuthRequest(c, err)
 	}
 	if errors.Is(err, commonerrors.ErrInvalidConfig) || errors.Is(err, commonerrors.ErrValidation) {
@@ -147,7 +148,6 @@ func writeAuthError(c *fiber.Ctx, err error) error {
 
 func isAuthMappableError(err error) bool {
 	return errors.Is(err, appauth.ErrInvalidAuthRequest) ||
-		errors.Is(err, appauth.ErrAmbiguousOIDCConfig) ||
 		errors.Is(err, commonerrors.ErrInvalidConfig) ||
 		errors.Is(err, commonerrors.ErrValidation) ||
 		errors.Is(err, resolver.ErrForbidden) ||

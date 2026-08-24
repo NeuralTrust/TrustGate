@@ -4,6 +4,7 @@ package functional_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,8 +12,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -255,6 +258,52 @@ func CreateAuth(t *testing.T, gatewayID string, payload map[string]any) string {
 	id, ok := body["id"].(string)
 	require.True(t, ok, "create auth response missing id: %v", body)
 	require.NotEmpty(t, id)
+	return id
+}
+
+// SeedStoredOIDCAuth writes an auth row whose type column literally holds
+// "oidc", which the admin API can no longer produce. It returns the new id.
+func SeedStoredOIDCAuth(t *testing.T, gatewayID, name, issuer string, audiences []string) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	conn, err := pgx.Connect(ctx, fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
+		dbUser, dbPassword, dbHost, dbPort, dbName))
+	require.NoError(t, err, "connect to the functional database")
+	defer func() { _ = conn.Close(ctx) }()
+
+	config, err := json.Marshal(map[string]any{
+		"oidc": map[string]any{
+			"issuer":    issuer,
+			"audiences": audiences,
+			"jwks_url":  issuer + "/.well-known/jwks.json",
+		},
+	})
+	require.NoError(t, err)
+
+	// The unification migration narrowed auths_type_check, so the insert has to
+	// step around it. The row that survives reproduces a database restored from
+	// a pre-migration backup or left behind by a rolled-back migration, which is
+	// the state the read paths still have to tolerate. The constraint comes back
+	// NOT VALID so it keeps rejecting new legacy writes without re-checking the
+	// row this helper just planted.
+	_, err = conn.Exec(ctx, `ALTER TABLE auths DROP CONSTRAINT IF EXISTS auths_type_check`)
+	require.NoError(t, err, "relax the auth type constraint")
+	defer func() {
+		_, restoreErr := conn.Exec(ctx, `
+			ALTER TABLE auths
+			ADD CONSTRAINT auths_type_check CHECK (type IN ('api_key','oauth2','mtls')) NOT VALID`)
+		require.NoError(t, restoreErr, "restore the auth type constraint")
+	}()
+
+	id := uuid.NewString()
+	_, err = conn.Exec(ctx, `
+		INSERT INTO auths (id, gateway_id, name, type, enabled, config, created_at, updated_at)
+		VALUES ($1, $2, $3, 'oidc', TRUE, $4, now(), now())`,
+		id, gatewayID, name, config,
+	)
+	require.NoError(t, err, "insert legacy auth row")
 	return id
 }
 

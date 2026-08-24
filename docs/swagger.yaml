@@ -59,6 +59,10 @@ definitions:
         type: string
       jwks_url:
         type: string
+      public_keys:
+        items:
+          type: string
+        type: array
       required_scopes:
         items:
           type: string
@@ -142,8 +146,6 @@ definitions:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.MTLSConfigResponse'
       oauth2:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.OAuth2ConfigResponse'
-      oidc:
-        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.OIDCConfigResponse'
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.ListAuthResponse:
     properties:
@@ -197,6 +199,10 @@ definitions:
         type: string
       jwks_url:
         type: string
+      public_keys:
+        items:
+          type: string
+        type: array
       required_scopes:
         items:
           type: string
@@ -208,31 +214,6 @@ definitions:
       token_url:
         type: string
       userinfo_url:
-        type: string
-    type: object
-  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_auth_response.OIDCConfigResponse:
-    properties:
-      allowed_algorithms:
-        items:
-          type: string
-        type: array
-      audiences:
-        items:
-          type: string
-        type: array
-      issuer:
-        type: string
-      jwks_url:
-        type: string
-      public_keys:
-        items:
-          type: string
-        type: array
-      required_scopes:
-        items:
-          type: string
-        type: array
-      subject_claim:
         type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_catalog_response.ModelResponse:
@@ -1089,6 +1070,8 @@ definitions:
         items:
           type: string
         type: array
+      token_endpoint_auth_method:
+        type: string
       token_url:
         type: string
       value:
@@ -1318,6 +1301,8 @@ definitions:
         items:
           type: string
         type: array
+      token_endpoint_auth_method:
+        type: string
       token_url:
         type: string
       value:
@@ -1777,6 +1762,7 @@ definitions:
           AuthorizeURL / TokenURL are required for manual registration
           (Registration == "manual"), where the operator supplies a pre-registered
           client_id/secret; they also serve as a discovery fallback otherwise.
+          TokenURL is also required for GrantType "client_credentials".
         type: string
       dcr:
         description: |-
@@ -1784,6 +1770,11 @@ definitions:
           (RFC 7591). A nil pointer means it could not be determined (e.g. a
           tenant-templated host that must be probed per-instance).
         type: boolean
+      grant_type:
+        description: |-
+          GrantType selects the OAuth grant. Empty / omitted means authorization
+          code (forwarded). "client_credentials" is machine-to-machine.
+        type: string
       pkce:
         description: |-
           PKCE reports whether the authorization server supports PKCE (S256). A nil
@@ -1810,6 +1801,11 @@ definitions:
         items:
           type: string
         type: array
+      token_endpoint_auth_method:
+        description: |-
+          TokenEndpointAuthMethod is used with client_credentials:
+          client_secret_basic (default) or client_secret_post.
+        type: string
       token_url:
         type: string
     type: object
@@ -2572,7 +2568,8 @@ paths:
         in: query
         name: name
         type: string
-      - description: Filter by auth type (api_key, oauth2, oidc, mtls)
+      - description: Filter by auth type (api_key, oauth2, mtls; oidc is a deprecated
+          alias of oauth2)
         in: query
         name: type
         type: string

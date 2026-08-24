@@ -34,6 +34,11 @@ func (p *authProxy) authForResource(ctx context.Context, resource string) (*auth
 		return m.auth, nil
 	}
 	if m.matched {
+		if m.validateOnly {
+			return nil, oauthErr("invalid_request",
+				"the identity provider of this MCP server has no pre-registered client_id, so this gateway cannot broker "+
+					"an interactive login: present an access token obtained directly from that identity provider")
+		}
 		// The consumer authenticates with a credential of its own, so a session
 		// brokered here would be refused by the auth chain. Advertising a login
 		// would only walk the user through a flow that cannot reach it.
@@ -80,7 +85,7 @@ func (p *authProxy) gatewayScopedAuth(ctx context.Context, gatewayID ids.Gateway
 		// also serves other identity providers (a consumer that needs a specific
 		// one still pins it by attaching that oauth2 auth). Without a default there
 		// is no safe way to pick one, so the ambiguity stays a hard error.
-		if def := p.credentials.DefaultOAuth2ForGateway(gatewayID); def != nil {
+		if def := p.brokerCapableDefault(gatewayID); def != nil {
 			return def, nil
 		}
 		return nil, oauthErr("invalid_target",
@@ -91,7 +96,7 @@ func (p *authProxy) gatewayScopedAuth(ctx context.Context, gatewayID ids.Gateway
 		// this gateway. This is the zero-configuration default that lets an MCP
 		// consumer broker interactive logins without the operator standing up
 		// their own IdP.
-		if def := p.credentials.DefaultOAuth2ForGateway(gatewayID); def != nil {
+		if def := p.brokerCapableDefault(gatewayID); def != nil {
 			return def, nil
 		}
 		return nil, oauthErr("invalid_request",
@@ -100,8 +105,18 @@ func (p *authProxy) gatewayScopedAuth(ctx context.Context, gatewayID ids.Gateway
 	return a, err
 }
 
-// resourceMatch is the outcome of resolving an RFC 8707 resource indicator to
-// the consumer it addresses.
+// brokerCapableDefault returns the built-in identity provider bound to the
+// gateway, or nil when it is unconfigured or cannot broker a login. It gates
+// selection and advertisement only; the default stays in the validation
+// candidate pool either way.
+func (p *authProxy) brokerCapableDefault(gatewayID ids.GatewayID) *authdomain.Auth {
+	def := p.credentials.DefaultOAuth2ForGateway(gatewayID)
+	if def == nil || !def.CanBrokerLogin() {
+		return nil
+	}
+	return def
+}
+
 type resourceMatch struct {
 	// auth is the OAuth2 provider attached to the consumer, if any.
 	auth *authdomain.Auth
@@ -113,12 +128,14 @@ type resourceMatch struct {
 	// protected reports whether the consumer carries an enabled credential of
 	// its own, which rules out any identity-provider fallback.
 	protected bool
+	// validateOnly reports that every identity provider on the consumer can only
+	// validate a token the client already holds, so no login can be brokered.
+	validateOnly bool
 }
 
-// resourceAuth resolves the RFC 8707 resource indicator to the OAuth2 auth
-// attached to the addressed consumer. When the consumer is found but exposes no
-// usable OAuth2 auth, it still reports the consumer's gateway so the caller can
-// scope the identity-provider fallback to that tenant.
+// resourceAuth reports the consumer's gateway even when that consumer exposes no
+// usable OAuth2 auth, so the caller can scope the identity-provider fallback to
+// that tenant rather than the whole platform.
 func (p *authProxy) resourceAuth(ctx context.Context, resource string) resourceMatch {
 	if p.paths == nil || resource == "" {
 		return resourceMatch{}
@@ -136,31 +153,37 @@ func (p *authProxy) resourceAuth(ctx context.Context, resource string) resourceM
 	if len(matches) == 0 {
 		return resourceMatch{}
 	}
-	providers, protected := pathOAuth2Auths(matches)
-	out := resourceMatch{gatewayID: matches[0].GatewayID, matched: true, protected: protected}
+	providers, protected, validateOnly := pathOAuth2Auths(matches)
+	out := resourceMatch{
+		gatewayID:    matches[0].GatewayID,
+		matched:      true,
+		protected:    protected,
+		validateOnly: len(providers) == 0 && len(validateOnly) > 0,
+	}
 	if len(providers) > 0 {
 		out.auth = providers[0]
 	}
 	return out
 }
 
-// pathOAuth2Auths returns the usable OAuth2 providers attached to the matched
-// paths, and whether those paths carry an enabled credential of their own.
-func pathOAuth2Auths(matches []appconsumer.PathMatch) ([]*authdomain.Auth, bool) {
-	var providers []*authdomain.Auth
-	protected := false
+func pathOAuth2Auths(matches []appconsumer.PathMatch) (providers []*authdomain.Auth, protected bool, validateOnly []*authdomain.Auth) {
 	for _, m := range matches {
 		for _, a := range m.Auths {
 			if !a.Enabled {
 				continue
 			}
 			protected = true
-			if a.Type == authdomain.TypeOAuth2 && a.Config.OAuth2 != nil {
-				providers = append(providers, a)
+			if !a.Type.IsIdentityProvider() || a.Config.OAuth2 == nil {
+				continue
 			}
+			if a.CanBrokerLogin() {
+				providers = append(providers, a)
+				continue
+			}
+			validateOnly = append(validateOnly, a)
 		}
 	}
-	return providers, protected
+	return providers, protected, validateOnly
 }
 
 func (p *authProxy) pendingAuth(ctx context.Context, pending *PendingAuthorization) (*authdomain.Auth, error) {
@@ -244,16 +267,23 @@ func (p *authProxy) singleOAuth2AuthForGateway(ctx context.Context, gatewayID id
 	return pickSingleOAuth2(auths)
 }
 
-// pickSingleOAuth2 selects the single oauth2 identity provider from the given
-// set. The built-in NeuralTrust default is treated as a fallback: it never
-// causes ambiguity and is only returned when no operator-configured provider
-// exists.
+// pickSingleOAuth2 treats the built-in NeuralTrust default as a fallback: it
+// never causes ambiguity and is only returned when no operator-configured
+// provider can broker a login. The default is held to the same brokering
+// capability as tenant providers, so a platform IdP configured without a
+// client_id stays a validation-only credential instead of being offered as a
+// login that cannot complete.
 func pickSingleOAuth2(auths []*authdomain.Auth) (*authdomain.Auth, error) {
 	real := make([]*authdomain.Auth, 0, len(auths))
 	var def *authdomain.Auth
 	for _, a := range auths {
 		if appauth.IsDefaultIdP(a) {
-			def = a
+			if a.CanBrokerLogin() {
+				def = a
+			}
+			continue
+		}
+		if !a.CanBrokerLogin() {
 			continue
 		}
 		real = append(real, a)

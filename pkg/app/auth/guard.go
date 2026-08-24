@@ -123,7 +123,7 @@ func ensureNoOAuth2Conflict(ctx context.Context, repo domain.Repository, candida
 	if candidate.Type != domain.TypeOAuth2 || !candidate.Enabled || candidate.Config.OAuth2 == nil {
 		return nil
 	}
-	existing, err := repo.FindEnabledByTypes(ctx, []domain.Type{domain.TypeOAuth2})
+	existing, err := repo.FindEnabledByTypes(ctx, domain.StoredTypes(candidate.Type))
 	if err != nil {
 		return fmt.Errorf("auth: check oauth2 conflicts: %w", err)
 	}
@@ -132,8 +132,12 @@ func ensureNoOAuth2Conflict(ctx context.Context, repo domain.Repository, candida
 			continue
 		}
 		if candidate.Config.OAuth2.ConflictsWith(a.Config.OAuth2) {
-			return fmt.Errorf("%w: conflicts with %q (%s); scope it with a distinct audience or disable the other entry",
-				domain.ErrDuplicateOAuth2, a.Name, a.ID)
+			return fmt.Errorf("%w: issuer %q and audience %q are already served by %q (%s); scope it with a distinct audience or disable the other entry",
+				domain.ErrDuplicateOAuth2,
+				a.Config.OAuth2.Issuer,
+				candidate.Config.OAuth2.SharedAudience(a.Config.OAuth2),
+				a.Name,
+				a.ID)
 		}
 	}
 	return nil

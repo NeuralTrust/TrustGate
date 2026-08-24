@@ -17,21 +17,30 @@ package middleware_test
 import (
 	"context"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"log/slog"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	apiresolver "github.com/NeuralTrust/TrustGate/pkg/api/resolver"
+	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	authrepomocks "github.com/NeuralTrust/TrustGate/pkg/domain/auth/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	authsession "github.com/NeuralTrust/TrustGate/pkg/infra/auth/session"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	infrasts "github.com/NeuralTrust/TrustGate/pkg/infra/identity/sts"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -106,6 +115,28 @@ func oauth2Auth(t *testing.T, issuer string, jwks bool) *authdomain.Auth {
 		cfg.IntrospectionURL = "https://idp.example.com/introspect"
 	}
 	a, err := authdomain.NewAuth(ids.New[ids.GatewayKind](), "idp", authdomain.TypeOAuth2, true, authdomain.Config{OAuth2: cfg})
+	require.NoError(t, err)
+	return a
+}
+
+func brokerCapableOAuth2Auth(t *testing.T, issuer string) *authdomain.Auth {
+	t.Helper()
+	a := oauth2Auth(t, issuer, true)
+	a.Config.OAuth2.ClientID = "trustgate-client"
+	a.Config.OAuth2.AuthorizeURL = issuer + "/authorize"
+	a.Config.OAuth2.TokenURL = issuer + "/token"
+	return a
+}
+
+func legacyOIDCAuth(t *testing.T, issuer string) *authdomain.Auth {
+	t.Helper()
+	payload := fmt.Sprintf(`{"oidc":{"issuer":%q,"audiences":["trustgate"],"jwks_url":%q}}`, issuer, issuer+"/jwks")
+	var cfg authdomain.Config
+	require.NoError(t, json.Unmarshal([]byte(payload), &cfg))
+	require.NotNil(t, cfg.OAuth2, "the legacy payload must decode onto the oauth2 shape")
+	a, err := authdomain.NewAuth(
+		ids.New[ids.GatewayKind](), "legacy-idp", authdomain.NormalizeType(authdomain.TypeOIDC), true, cfg,
+	)
 	require.NoError(t, err)
 	return a
 }
@@ -252,33 +283,37 @@ func pathMatchWith(auths ...*authdomain.Auth) appconsumer.PathMatch {
 	return m
 }
 
-func resolveChallengeEligibility(
+func resolveChallengeMode(
 	t *testing.T,
 	resolver middleware.IdentityResolver,
 ) (any, error) {
 	t.Helper()
 
 	var (
-		eligibility any
-		resolveErr  error
+		mode       any
+		resolveErr error
 	)
 	app := fiber.New()
 	app.Post("/runtime/mcp", func(c *fiber.Ctx) error {
 		_, resolveErr = resolver.Resolve(c)
-		eligibility = c.Locals(middleware.OAuthChallengeAllowedLocal)
+		mode = c.Locals(middleware.OAuthChallengeModeLocal)
 		return c.SendStatus(fiber.StatusOK)
 	})
 	_, err := app.Test(httptest.NewRequest(fiber.MethodPost, "/runtime/mcp", nil))
 	require.NoError(t, err)
-	return eligibility, resolveErr
+	return mode, resolveErr
 }
 
-func TestChain_PathFirst_SetsChallengeEligibility(t *testing.T) {
+func TestChain_PathFirst_SetsChallengeMode(t *testing.T) {
 	t.Parallel()
 
-	enabledOAuth := oauth2Auth(t, "https://idp.example.com", true)
+	brokerCapable := brokerCapableOAuth2Auth(t, "https://idp.example.com")
+	validateOnly := oauth2Auth(t, "https://idp.example.com", true)
+	legacyOIDC := legacyOIDCAuth(t, "https://legacy-idp.example.com")
 	disabledOAuth := oauth2Auth(t, "https://disabled.example.com", true)
 	disabledOAuth.Enabled = false
+	disabledOIDC := legacyOIDCAuth(t, "https://disabled-legacy.example.com")
+	disabledOIDC.Enabled = false
 	apiKey, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "key", true)
 	require.NoError(t, err)
 	disabledAPIKey, err := authdomain.NewAPIKeyAuth(ids.New[ids.GatewayKind](), "disabled-key", false)
@@ -291,38 +326,71 @@ func TestChain_PathFirst_SetsChallengeEligibility(t *testing.T) {
 		want       any
 	}{
 		{
-			name:  "enabled OAuth2",
-			paths: fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(enabledOAuth)}},
-			want:  true,
+			name:  "broker-capable OAuth2 advertises",
+			paths: fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(brokerCapable)}},
+			want:  middleware.OAuthChallengeAdvertise,
+		},
+		{
+			name:  "validate-only OAuth2 emits the diagnostic",
+			paths: fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(validateOnly)}},
+			want:  middleware.OAuthChallengeDiagnostic,
+		},
+		{
+			name:       "validate-only OAuth2 still blocks the default IdP",
+			paths:      fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(validateOnly)}},
+			defaultIdP: true,
+			want:       middleware.OAuthChallengeDiagnostic,
+		},
+		{
+			name:  "legacy oidc emits the diagnostic",
+			paths: fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(legacyOIDC)}},
+			want:  middleware.OAuthChallengeDiagnostic,
+		},
+		{
+			name:       "legacy oidc still blocks the default IdP",
+			paths:      fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(legacyOIDC)}},
+			defaultIdP: true,
+			want:       middleware.OAuthChallengeDiagnostic,
+		},
+		{
+			name:  "broker-capable wins over a validate-only sibling",
+			paths: fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(validateOnly, brokerCapable)}},
+			want:  middleware.OAuthChallengeAdvertise,
 		},
 		{
 			name:       "usable default IdP",
 			paths:      fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith()}},
 			defaultIdP: true,
-			want:       true,
+			want:       middleware.OAuthChallengeAdvertise,
 		},
 		{
 			name:  "API key only",
 			paths: fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(apiKey)}},
-			want:  false,
+			want:  middleware.OAuthChallengeSilent,
 		},
 		{
 			name:       "API key blocks default IdP",
 			paths:      fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(apiKey)}},
 			defaultIdP: true,
-			want:       false,
+			want:       middleware.OAuthChallengeSilent,
 		},
 		{
 			name:       "disabled API key does not block default IdP",
 			paths:      fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(disabledAPIKey)}},
 			defaultIdP: true,
-			want:       true,
+			want:       middleware.OAuthChallengeAdvertise,
 		},
 		{
 			name:       "disabled OAuth2 blocks default IdP",
 			paths:      fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(disabledOAuth)}},
 			defaultIdP: true,
-			want:       false,
+			want:       middleware.OAuthChallengeSilent,
+		},
+		{
+			name:       "disabled legacy oidc blocks default IdP like a disabled oauth2",
+			paths:      fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(disabledOIDC)}},
+			defaultIdP: true,
+			want:       middleware.OAuthChallengeSilent,
 		},
 		{name: "unknown path", paths: fakePathResolver{}},
 		{name: "lookup failure", paths: fakePathResolver{err: lookupErr}},
@@ -345,7 +413,7 @@ func TestChain_PathFirst_SetsChallengeEligibility(t *testing.T) {
 				nil,
 				tt.defaultIdP,
 			)
-			got, resolveErr := resolveChallengeEligibility(t, resolver)
+			got, resolveErr := resolveChallengeMode(t, resolver)
 			require.ErrorIs(t, resolveErr, apiresolver.ErrUnauthenticated)
 			require.Equal(t, tt.want, got)
 		})
@@ -654,4 +722,164 @@ func TestChain_SessionToken_EmptySubjectRejected(t *testing.T) {
 
 	_, err := resolveChain(t, resolver, map[string]string{"Authorization": "Bearer " + token})
 	require.ErrorIs(t, err, apiresolver.ErrUnauthenticated)
+}
+
+func TestChain_ValidateOnlyAuth_StillAuthenticates(t *testing.T) {
+	t.Parallel()
+
+	validateOnly := oauth2Auth(t, "https://idp.example.com", true)
+	require.False(t, validateOnly.CanBrokerLogin(), "fixture must be validate-only")
+
+	t.Run("resolveJWT", func(t *testing.T) {
+		t.Parallel()
+		jwtVal := &fakeTokenValidator{principal: &identity.Principal{Subject: "u1", Method: identity.MethodJWT}}
+		resolver := middleware.NewChainIdentityResolver(
+			fakeAPIKeyFinder{},
+			fakeCredentialFinder{oauth2: []*authdomain.Auth{validateOnly}},
+			fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(validateOnly)}},
+			jwtVal, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil, false,
+		)
+
+		id, err := resolveChain(t, resolver, map[string]string{
+			"Authorization": "Bearer " + unsignedJWT(t, "https://idp.example.com"),
+		})
+		require.NoError(t, err)
+		require.Equal(t, validateOnly.ID, id.AuthID)
+		require.Equal(t, 1, jwtVal.calls)
+	})
+
+	t.Run("resolveOpaque", func(t *testing.T) {
+		t.Parallel()
+		opaqueAuth := oauth2Auth(t, "https://idp.example.com", false)
+		require.False(t, opaqueAuth.CanBrokerLogin())
+		intro := &fakeTokenValidator{principal: &identity.Principal{Subject: "svc", Method: identity.MethodIntrospection}}
+		resolver := middleware.NewChainIdentityResolver(
+			fakeAPIKeyFinder{},
+			fakeCredentialFinder{oauth2: []*authdomain.Auth{opaqueAuth}},
+			fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(opaqueAuth)}},
+			&fakeTokenValidator{}, intro, &fakeMTLSValidator{}, nil, nil, nil, false,
+		)
+
+		id, err := resolveChain(t, resolver, map[string]string{"Authorization": "Bearer opaque-reference-token"})
+		require.NoError(t, err)
+		require.Equal(t, identity.MethodIntrospection, id.Principal.Method)
+		require.Equal(t, 1, intro.calls)
+	})
+
+	t.Run("resolveSession", func(t *testing.T) {
+		t.Parallel()
+		verifier, signer := sessionVerifier(t)
+		resolver := middleware.NewChainIdentityResolver(
+			fakeAPIKeyFinder{},
+			fakeCredentialFinder{oauth2: []*authdomain.Auth{validateOnly}},
+			fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(validateOnly)}},
+			&fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, verifier, nil, false,
+		)
+
+		token := mintSession(t, signer, jwt.MapClaims{
+			"sub":       "user-123",
+			"aud":       validateOnly.Config.OAuth2.Audiences,
+			"authid":    validateOnly.ID.String(),
+			"token_use": "mcp_session",
+		})
+
+		id, err := resolveChain(t, resolver, map[string]string{"Authorization": "Bearer " + token})
+		require.NoError(t, err)
+		require.Equal(t, validateOnly.ID, id.AuthID)
+	})
+}
+
+func TestChain_LegacyOIDCAuth_AuthenticatesBearerJWT(t *testing.T) {
+	t.Parallel()
+
+	legacy := legacyOIDCAuth(t, "https://idp.example.com")
+	repo := authrepomocks.NewRepository(t)
+	repo.EXPECT().FindEnabledByTypes(mock.Anything, mock.Anything).RunAndReturn(
+		func(_ context.Context, types []authdomain.Type) ([]*authdomain.Auth, error) {
+			for _, queried := range types {
+				if queried == legacy.Type {
+					return []*authdomain.Auth{legacy}, nil
+				}
+			}
+			return nil, nil
+		})
+	credentials := appauth.NewCredentialFinder(
+		repo, cache.NewTTLMapManager(time.Hour), slog.New(slog.NewTextHandler(io.Discard, nil)), nil,
+	)
+	jwtVal := &fakeTokenValidator{principal: &identity.Principal{Subject: "u1", Method: identity.MethodJWT}}
+	resolver := middleware.NewChainIdentityResolver(
+		fakeAPIKeyFinder{},
+		credentials,
+		fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(legacy)}},
+		jwtVal, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil, false,
+	)
+
+	id, err := resolveChain(t, resolver, map[string]string{
+		"Authorization": "Bearer " + unsignedJWT(t, "https://idp.example.com"),
+	})
+	require.NoError(t, err)
+	require.Equal(t, legacy.ID, id.AuthID)
+	require.Equal(t, legacy.GatewayID, id.GatewayID)
+	require.Equal(t, 1, jwtVal.calls)
+}
+
+func TestChain_TokenlessRequest_ChallengeMatchesBrokeringCapability(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		auth             *authdomain.Auth
+		wantResourceMeta bool
+		wantDiagnostic   bool
+	}{
+		{
+			name:             "broker-capable consumer advertises the login",
+			auth:             brokerCapableOAuth2Auth(t, "https://idp.example.com"),
+			wantResourceMeta: true,
+		},
+		{
+			name:           "validate-only consumer explains the missing client",
+			auth:           oauth2Auth(t, "https://idp.example.com", true),
+			wantDiagnostic: true,
+		},
+		{
+			name:           "legacy oidc consumer explains the missing client",
+			auth:           legacyOIDCAuth(t, "https://legacy-idp.example.com"),
+			wantDiagnostic: true,
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			chain := middleware.NewChainIdentityResolver(
+				fakeAPIKeyFinder{},
+				fakeCredentialFinder{oauth2: []*authdomain.Auth{tt.auth}},
+				fakePathResolver{matches: []appconsumer.PathMatch{pathMatchWith(tt.auth)}},
+				&fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil, nil, false,
+			)
+			app := fiber.New()
+			app.Use(middleware.NewOAuthChallengeMiddleware().Middleware())
+			app.Post("/runtime/mcp", func(c *fiber.Ctx) error {
+				if _, err := chain.Resolve(c); err != nil {
+					return fiber.NewError(fiber.StatusUnauthorized, "unauthenticated")
+				}
+				return c.SendStatus(fiber.StatusOK)
+			})
+
+			res, err := app.Test(httptest.NewRequest(fiber.MethodPost, "/runtime/mcp", nil))
+			require.NoError(t, err)
+			require.Equal(t, fiber.StatusUnauthorized, res.StatusCode)
+
+			challenge := res.Header.Get(fiber.HeaderWWWAuthenticate)
+			require.Equal(t, tt.wantResourceMeta, strings.Contains(challenge, "resource_metadata="),
+				"resource_metadata pointer in %q", challenge)
+			require.Equal(t, tt.wantDiagnostic, strings.Contains(challenge, `error="invalid_request"`),
+				"diagnostic in %q", challenge)
+			if tt.wantDiagnostic {
+				require.Contains(t, challenge, "client_id")
+			}
+		})
+	}
 }
