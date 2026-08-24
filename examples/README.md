@@ -18,6 +18,7 @@ This starts Admin (`:8080`), Proxy (`:8081`), and MCP (`:8082`) planes.
 | Example | Description |
 |---------|-------------|
 | [curl-first-request/](curl-first-request/) | Shell script: set up a gateway + consumer and make your first chat completion |
+| [proxy-v1-smoke/](proxy-v1-smoke/) | Shell script: smoke-test models / embeddings / files / audio / images against a consumer you already created |
 | [openai-sdk/](openai-sdk/) | Python: use the OpenAI SDK through TrustGate |
 | [mcp-cursor/](mcp-cursor/) | Configure Cursor IDE to use TrustGate's MCP plane |
 
