@@ -107,6 +107,8 @@ func NewRegistry() *Registry {
 	r.Register(FormatOpenAIEmbeddings, &OpenAIEmbeddingsAdapter{})
 	r.Register(FormatCohereEmbed, &CohereEmbedAdapter{})
 	r.Register(FormatCohereRerank, &CohereRerankAdapter{})
+	r.Register(FormatVertexEmbed, &VertexEmbedAdapter{})
+	r.Register(FormatBedrockTitanEmbed, &BedrockTitanEmbedAdapter{})
 	return r
 }
 

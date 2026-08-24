@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -29,6 +30,7 @@ import (
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
@@ -47,7 +49,8 @@ func (f *forwarder) resolveRouting(in ForwardInput) (routingdomain.Intent, *rout
 		return intent, nil, err
 	}
 	in.Request.RequestedModel = ref
-	if intent.IsZero() && !isRoleBased(in.Consumer) {
+	needed := capabilityRequiresProviderSupport(in.Request)
+	if intent.IsZero() && !isRoleBased(in.Consumer) && needed == "" {
 		return intent, nil, nil
 	}
 	candidates, err := f.resolver.Resolve(approuting.ResolveInput{
@@ -60,11 +63,74 @@ func (f *forwarder) resolveRouting(in ForwardInput) (routingdomain.Intent, *rout
 		f.logRejectedIntent(in.Consumer, ref, err)
 		return intent, nil, err
 	}
+	if needed != "" {
+		candidates = filterCandidatesByCapability(candidates, needed)
+	}
+	if needed == capabilityFiles {
+		candidates = filterCandidatesByFilesID(candidates, in.Request)
+	}
 	if candidates.Len() == 0 {
+		if needed != "" && intent.IsQualified() {
+			err := fmt.Errorf("%w: %s", ErrCapabilityNotSupported, needed)
+			f.logRejectedIntent(in.Consumer, ref, err)
+			return intent, nil, err
+		}
 		f.logRejectedIntent(in.Consumer, ref, ErrNoBackendsInPool)
 		return intent, nil, ErrNoBackendsInPool
 	}
 	return intent, candidates, nil
+}
+
+func capabilityRequiresProviderSupport(req *infracontext.RequestContext) string {
+	if req == nil {
+		return ""
+	}
+	switch req.ProxyCapability {
+	case capabilityEmbeddings, capabilityRerank, capabilityFiles, capabilityImages,
+		capabilityAudioSpeech, capabilityAudioTranscription:
+		return req.ProxyCapability
+	default:
+		return ""
+	}
+}
+
+func isAudioCapability(capability string) bool {
+	return capability == capabilityAudioSpeech || capability == capabilityAudioTranscription
+}
+
+func filterCandidatesByCapability(candidates *routingdomain.CandidateSet, capability string) *routingdomain.CandidateSet {
+	return candidates.Filter(func(c routingdomain.Candidate) bool {
+		if c.Registry == nil {
+			return false
+		}
+		return providers.SupportsCapability(c.Registry.Provider(), capability)
+	})
+}
+
+func filterCandidatesByFilesID(candidates *routingdomain.CandidateSet, req *infracontext.RequestContext) *routingdomain.CandidateSet {
+	if req == nil {
+		return candidates
+	}
+	fileID := providers.FilesIDFromPath(req.Path)
+	if fileID == "" {
+		return candidates
+	}
+	return candidates.Filter(func(c routingdomain.Candidate) bool {
+		if c.Registry == nil {
+			return false
+		}
+		return providers.ProviderMatchesFilesID(c.Registry.Provider(), fileID)
+	})
+}
+
+func filesIDNotFound(req *infracontext.RequestContext, resp *ProviderResponse) bool {
+	if req == nil || resp == nil || req.ProxyCapability != capabilityFiles {
+		return false
+	}
+	if providers.FilesIDFromPath(req.Path) == "" {
+		return false
+	}
+	return resp.StatusCode == http.StatusNotFound
 }
 
 func (f *forwarder) logRejectedIntent(rc *appconsumer.RoutableConsumer, ref string, err error) {
@@ -107,6 +173,12 @@ func modelRefFromRequest(req *infracontext.RequestContext) (string, error) {
 	}
 	ref, hasModelID, err := adapter.ExtractModelField(req.Body)
 	if err != nil {
+		if req.ProxyCapability == capabilityImages && providers.IsImagesMultipart(req.HeaderValue(headerContentType)) {
+			return providers.ExtractImagesModel(req.HeaderValue(headerContentType), req.Body), nil
+		}
+		if isAudioCapability(req.ProxyCapability) && providers.IsAudioMultipart(req.HeaderValue(headerContentType)) {
+			return providers.ExtractAudioModel(req.HeaderValue(headerContentType), req.Body), nil
+		}
 		return "", nil
 	}
 	if hasModelID {

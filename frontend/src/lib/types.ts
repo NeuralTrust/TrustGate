@@ -146,6 +146,16 @@ export interface McpToolsResponse {
   tools: McpTool[];
 }
 
+export interface PriceOverride {
+  input: number;
+  output: number;
+}
+
+export interface RegistryPricing {
+  discount?: number;
+  overrides?: Record<string, PriceOverride>;
+}
+
 export interface Registry {
   id: string;
   gateway_id: string;
@@ -157,6 +167,7 @@ export interface Registry {
   enabled?: boolean;
   auth?: TargetAuth | null;
   health_checks?: HealthChecks | null;
+  pricing?: RegistryPricing | null;
   mcp_target?: MCPTarget | null;
   created_at: string;
   updated_at: string;
@@ -486,6 +497,7 @@ export interface Provider {
   wire_format?: string;
   source?: string;
   metadata?: Record<string, unknown>;
+  capabilities?: Record<string, boolean>;
   auth_types?: CatalogAuthTypeOption[];
   provider_options_schema?: ProviderOptionField[];
 }

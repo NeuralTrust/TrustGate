@@ -65,6 +65,14 @@ func (r *routerOpsRecorder) RecordRequest(_ context.Context, request o11y.Reques
 	r.count++
 }
 
+func (r *routerOpsRecorder) StartRequestSpan(ctx context.Context, _ string) (context.Context, o11y.RequestSpan) {
+	return ctx, routerOpsSpan{}
+}
+
+type routerOpsSpan struct{}
+
+func (routerOpsSpan) Finish(o11y.SpanOutcome) {}
+
 func TestMCPRouterDispatch(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	gateway := &gatewaydomain.Gateway{ID: gatewayID, Slug: "tenant"}

@@ -39,8 +39,9 @@ import (
 )
 
 var (
-	ErrNoBackendAvailable = errors.New("no backend available")
-	ErrNoBackendsInPool   = errors.New("consumer has no registries in pool")
+	ErrNoBackendAvailable     = errors.New("no backend available")
+	ErrNoBackendsInPool       = errors.New("consumer has no registries in pool")
+	ErrCapabilityNotSupported = errors.New("provider does not support this capability")
 )
 
 type ForwardInput struct {
@@ -233,6 +234,11 @@ func (f *forwarder) invokeWithFailover(
 			case OutcomeTerminal:
 				if resp == nil {
 					return nil, err
+				}
+				if !route.pinned && filesIDNotFound(dto.request, resp) {
+					last = failoverState{resp: resp}
+					lastKind = failureNone
+					break
 				}
 				reportSuccess(lb, bk)
 				return f.finalizeBody(ctx, dto, resp), nil
@@ -472,6 +478,7 @@ func (f *forwarder) retarget(dto *forwardRequestDTO, bk *domain.Registry) {
 func stampTarget(req *infracontext.RequestContext, bk *domain.Registry) {
 	req.RegistryID = bk.ID.String()
 	req.Provider = bk.Provider()
+	req.RegistryPricing = bk.Pricing()
 }
 
 func failureReason(resp *ProviderResponse, err error) error {

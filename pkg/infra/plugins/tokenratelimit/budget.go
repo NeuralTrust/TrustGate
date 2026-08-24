@@ -372,7 +372,11 @@ func (p *Plugin) accrueDollars(
 
 	usage, servedModel := p.extractUsageAndModel(req, resp)
 
-	inputRate, outputRate, found := llmcost.PriceFor(ctx, p.pricing, cfg.CustomPricing, provider, model, servedModel, requested)
+	var overlay *llmcost.RegistryRates
+	if req != nil {
+		overlay = llmcost.RatesFromDomain(req.RegistryPricing)
+	}
+	inputRate, outputRate, found := llmcost.Resolve(ctx, p.pricing, cfg.CustomPricing, overlay, provider, model, servedModel, requested)
 	if !found {
 		slog.Warn("token_rate_limiter: unpriced model in dollar budget, accruing zero",
 			slog.String("provider", provider),

@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
@@ -41,9 +42,13 @@ const (
 	responsesTurnIDPrefix = "resp_"
 	fieldPreviousResponse = "previous_response_id"
 
-	capabilityChat       = "chat"
-	capabilityEmbeddings = "embeddings"
-	capabilityRerank     = "rerank"
+	capabilityChat               = "chat"
+	capabilityEmbeddings         = "embeddings"
+	capabilityRerank             = "rerank"
+	capabilityFiles              = "files"
+	capabilityImages             = "images"
+	capabilityAudioSpeech        = "audio_speech"
+	capabilityAudioTranscription = "audio_transcription"
 )
 
 var ErrInvalidRequestPayload = errors.New("invalid request payload")
@@ -123,6 +128,9 @@ type preparedInvocation struct {
 	targetFormat adapter.Format
 	crossFormat  bool
 	capability   string
+	files        providers.FilesRequest
+	images       providers.ImagesRequest
+	audio        providers.AudioRequest
 }
 
 func (p *providerInvoker) Invoke(
@@ -133,6 +141,16 @@ func (p *providerInvoker) Invoke(
 	prep, err := p.prepare(bk, req)
 	if err != nil {
 		return nil, err
+	}
+
+	if prep.capability == capabilityFiles {
+		return p.invokeFiles(ctx, bk, prep)
+	}
+	if prep.capability == capabilityImages {
+		return p.invokeImages(ctx, bk, prep)
+	}
+	if isAudioCapability(prep.capability) {
+		return p.invokeAudio(ctx, bk, prep)
 	}
 
 	respBody, err := p.invokeUpstream(ctx, prep)
@@ -192,6 +210,12 @@ func (p *providerInvoker) InvokeStream(
 	if err != nil {
 		return nil, err
 	}
+	if prep.capability == capabilityFiles {
+		return p.invokeFiles(ctx, bk, prep)
+	}
+	if isAudioCapability(prep.capability) {
+		return p.invokeAudio(ctx, bk, prep)
+	}
 
 	body := prep.body
 	// Registries speaking the OpenAI-style API need an explicit "stream": true even
@@ -244,6 +268,24 @@ func (p *providerInvoker) prepare(
 	req.Provider = bk.Provider()
 	req.SourceFormat = string(sourceFormat)
 	req.TargetFormat = string(targetFormat)
+
+	if capability == capabilityFiles {
+		return &preparedInvocation{
+			client:       client,
+			cfg:          filesProviderConfig(bk),
+			body:         req.Body,
+			sourceFormat: sourceFormat,
+			targetFormat: targetFormat,
+			capability:   capability,
+			files:        filesRequestFromContext(req),
+		}, nil
+	}
+	if capability == capabilityImages {
+		return p.prepareImages(bk, req, client, sourceFormat, targetFormat)
+	}
+	if isAudioCapability(capability) {
+		return p.prepareAudio(bk, req, client, sourceFormat, targetFormat, capability)
+	}
 
 	crossFormat := !adapter.ShouldPassthroughSameWireFormat(sourceFormat, targetFormat)
 
@@ -314,6 +356,14 @@ func capabilityFromRequest(req *infracontext.RequestContext) string {
 		return capabilityEmbeddings
 	case capabilityRerank:
 		return capabilityRerank
+	case capabilityFiles:
+		return capabilityFiles
+	case capabilityImages:
+		return capabilityImages
+	case capabilityAudioSpeech:
+		return capabilityAudioSpeech
+	case capabilityAudioTranscription:
+		return capabilityAudioTranscription
 	default:
 		return capabilityChat
 	}
@@ -361,12 +411,319 @@ func (p *providerInvoker) adaptResponseBody(body []byte, prep *preparedInvocatio
 	}
 }
 
+func filesProviderConfig(bk *registry.Registry) *providers.Config {
+	return &providers.Config{
+		Options:     adapter.OpenAIProviderOptionsForTarget(bk.Provider(), adapter.FormatOpenAIFiles, bk.ProviderOptions()),
+		Credentials: providers.CredentialsFromTargetAuth(bk.Auth()),
+	}
+}
+
+func (p *providerInvoker) prepareAudio(
+	bk *registry.Registry,
+	req *infracontext.RequestContext,
+	client providers.Client,
+	sourceFormat, targetFormat adapter.Format,
+	capability string,
+) (*preparedInvocation, error) {
+	body := req.Body
+	contentType := req.HeaderValue(headerContentType)
+	var sentModel string
+	if providers.IsAudioMultipart(contentType) {
+		sentModel = audioMultipartSentModel(contentType, body, req.DefaultModel)
+		if err := adapter.CheckAllowedModel(sentModel, req.AllowedModels); err != nil {
+			return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, err.Error())
+		}
+	} else {
+		normalized, _, verr := adapter.EnforceModel(body, req.AllowedModels, req.DefaultModel)
+		if verr != nil {
+			if errors.Is(verr, adapter.ErrModelNotAllowed) {
+				return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, verr.Error())
+			}
+			if len(req.AllowedModels) > 0 {
+				return nil, fmt.Errorf("%w: model enforcement could not parse request body: %s", ErrModelNotAllowed, verr.Error())
+			}
+			p.logger.Warn("model enforcement failed, proceeding without override",
+				slog.String("error", verr.Error()))
+		} else {
+			body = normalized
+		}
+		sentModel = resolveSentModel(body, req)
+	}
+	audio := audioRequestFromContext(req)
+	audio.Body = body
+	if audio.ContentType == "" {
+		audio.ContentType = contentTypeJSON
+	}
+	return &preparedInvocation{
+		client: client,
+		cfg: &providers.Config{
+			Options:       adapter.OpenAIProviderOptionsForTarget(bk.Provider(), adapter.FormatOpenAIAudio, bk.ProviderOptions()),
+			Credentials:   providers.CredentialsFromTargetAuth(bk.Auth()),
+			Model:         sentModel,
+			DefaultModel:  req.DefaultModel,
+			AllowedModels: req.AllowedModels,
+		},
+		body:         body,
+		sentModel:    sentModel,
+		sourceFormat: sourceFormat,
+		targetFormat: targetFormat,
+		capability:   capability,
+		audio:        audio,
+	}, nil
+}
+
+func audioRequestFromContext(req *infracontext.RequestContext) providers.AudioRequest {
+	return providers.AudioRequest{
+		Method:      req.Method,
+		Path:        providers.RestAfterConsumerSlug(req.Path),
+		Query:       req.Query,
+		ContentType: req.HeaderValue(headerContentType),
+		Body:        req.Body,
+	}
+}
+
+func audioMultipartSentModel(contentType string, body []byte, defaultModel string) string {
+	model := providers.ExtractAudioModel(contentType, body)
+	if intent, err := routingdomain.ParseModelRef(model); err == nil {
+		switch {
+		case intent.IsQualified(), intent.IsShortModel():
+			model = intent.Model
+		case intent.IsAuto(), intent.IsPool():
+			model = ""
+		}
+	}
+	if model == "" {
+		return defaultModel
+	}
+	return model
+}
+
+func (p *providerInvoker) invokeAudio(
+	ctx context.Context,
+	bk *registry.Registry,
+	prep *preparedInvocation,
+) (*ProviderResponse, error) {
+	if err := providers.ValidateAudioMethod(prep.audio.Method, prep.audio.Path); err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidRequestPayload, err.Error())
+	}
+	result, err := invokeAudioClient(ctx, prep)
+	if err != nil {
+		if be, ok := registry.IsBackendError(err); ok {
+			return &ProviderResponse{
+				StatusCode: be.StatusCode,
+				Headers:    withSelectionHeaders(be.PassthroughHeaders(), bk, prep.sentModel),
+				Body:       be.Body,
+			}, nil
+		}
+		return nil, fmt.Errorf("provider audio: %w", err)
+	}
+	contentType := result.ContentType
+	if contentType == "" {
+		contentType = contentTypeJSON
+	}
+	return &ProviderResponse{
+		StatusCode: http.StatusOK,
+		Headers: withSelectionHeaders(
+			map[string][]string{headerContentType: {contentType}},
+			bk,
+			prep.sentModel,
+		),
+		Body:      result.Body,
+		SentModel: prep.sentModel,
+	}, nil
+}
+
+func invokeAudioClient(ctx context.Context, prep *preparedInvocation) (*providers.AudioResult, error) {
+	switch prep.capability {
+	case capabilityAudioSpeech:
+		client, ok := prep.client.(providers.AudioSpeechClient)
+		if !ok {
+			return nil, fmt.Errorf("%w: %s", ErrCapabilityNotSupported, capabilityAudioSpeech)
+		}
+		return client.AudioSpeech(ctx, prep.cfg, prep.audio)
+	case capabilityAudioTranscription:
+		client, ok := prep.client.(providers.AudioTranscriptionClient)
+		if !ok {
+			return nil, fmt.Errorf("%w: %s", ErrCapabilityNotSupported, capabilityAudioTranscription)
+		}
+		return client.AudioTranscription(ctx, prep.cfg, prep.audio)
+	default:
+		return nil, fmt.Errorf("%w: %s", ErrCapabilityNotSupported, prep.capability)
+	}
+}
+
+func filesRequestFromContext(req *infracontext.RequestContext) providers.FilesRequest {
+	return providers.FilesRequest{
+		Method:      req.Method,
+		Path:        providers.RestAfterConsumerSlug(req.Path),
+		Query:       req.Query,
+		ContentType: req.HeaderValue(headerContentType),
+		Body:        req.Body,
+	}
+}
+
+func (p *providerInvoker) prepareImages(
+	bk *registry.Registry,
+	req *infracontext.RequestContext,
+	client providers.Client,
+	sourceFormat, targetFormat adapter.Format,
+) (*preparedInvocation, error) {
+	body := req.Body
+	contentType := req.HeaderValue(headerContentType)
+	var sentModel string
+	if providers.IsImagesMultipart(contentType) {
+		sentModel = imagesMultipartSentModel(contentType, body, req.DefaultModel)
+		if err := adapter.CheckAllowedModel(sentModel, req.AllowedModels); err != nil {
+			return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, err.Error())
+		}
+	} else {
+		normalized, _, verr := adapter.EnforceModel(body, req.AllowedModels, req.DefaultModel)
+		if verr != nil {
+			if errors.Is(verr, adapter.ErrModelNotAllowed) {
+				return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, verr.Error())
+			}
+			if len(req.AllowedModels) > 0 {
+				return nil, fmt.Errorf("%w: model enforcement could not parse request body: %s", ErrModelNotAllowed, verr.Error())
+			}
+			p.logger.Warn("model enforcement failed, proceeding without override",
+				slog.String("error", verr.Error()))
+		} else {
+			body = normalized
+		}
+		sentModel = resolveSentModel(body, req)
+	}
+	images := imagesRequestFromContext(req)
+	images.Body = body
+	if images.ContentType == "" {
+		images.ContentType = contentTypeJSON
+	}
+	return &preparedInvocation{
+		client: client,
+		cfg: &providers.Config{
+			Options:       adapter.OpenAIProviderOptionsForTarget(bk.Provider(), adapter.FormatOpenAIImages, bk.ProviderOptions()),
+			Credentials:   providers.CredentialsFromTargetAuth(bk.Auth()),
+			Model:         sentModel,
+			DefaultModel:  req.DefaultModel,
+			AllowedModels: req.AllowedModels,
+		},
+		body:         body,
+		sentModel:    sentModel,
+		sourceFormat: sourceFormat,
+		targetFormat: targetFormat,
+		capability:   capabilityImages,
+		images:       images,
+	}, nil
+}
+
+func imagesRequestFromContext(req *infracontext.RequestContext) providers.ImagesRequest {
+	return providers.ImagesRequest{
+		Method:      req.Method,
+		Path:        providers.RestAfterConsumerSlug(req.Path),
+		Query:       req.Query,
+		ContentType: req.HeaderValue(headerContentType),
+		Body:        req.Body,
+	}
+}
+
+func imagesMultipartSentModel(contentType string, body []byte, defaultModel string) string {
+	model := providers.ExtractImagesModel(contentType, body)
+	if intent, err := routingdomain.ParseModelRef(model); err == nil {
+		switch {
+		case intent.IsQualified(), intent.IsShortModel():
+			model = intent.Model
+		case intent.IsAuto(), intent.IsPool():
+			model = ""
+		}
+	}
+	if model == "" {
+		return defaultModel
+	}
+	return model
+}
+
+func (p *providerInvoker) invokeFiles(
+	ctx context.Context,
+	bk *registry.Registry,
+	prep *preparedInvocation,
+) (*ProviderResponse, error) {
+	filesClient, ok := prep.client.(providers.FilesClient)
+	if !ok {
+		return nil, fmt.Errorf("%w: files", ErrCapabilityNotSupported)
+	}
+	if err := providers.ValidateFilesMethod(prep.files.Method, prep.files.Path); err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidRequestPayload, err.Error())
+	}
+	result, err := filesClient.Files(ctx, prep.cfg, prep.files)
+	if err != nil {
+		if be, ok := registry.IsBackendError(err); ok {
+			return &ProviderResponse{
+				StatusCode: be.StatusCode,
+				Headers:    withSelectionHeaders(be.PassthroughHeaders(), bk, prep.sentModel),
+				Body:       be.Body,
+			}, nil
+		}
+		return nil, fmt.Errorf("provider files: %w", err)
+	}
+	contentType := result.ContentType
+	if contentType == "" {
+		contentType = contentTypeJSON
+	}
+	return &ProviderResponse{
+		StatusCode: http.StatusOK,
+		Headers: withSelectionHeaders(
+			map[string][]string{headerContentType: {contentType}},
+			bk,
+			prep.sentModel,
+		),
+		Body: result.Body,
+	}, nil
+}
+
+func (p *providerInvoker) invokeImages(
+	ctx context.Context,
+	bk *registry.Registry,
+	prep *preparedInvocation,
+) (*ProviderResponse, error) {
+	imagesClient, ok := prep.client.(providers.ImagesClient)
+	if !ok {
+		return nil, fmt.Errorf("%w: images", ErrCapabilityNotSupported)
+	}
+	if err := providers.ValidateImagesMethod(prep.images.Method, prep.images.Path); err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidRequestPayload, err.Error())
+	}
+	result, err := imagesClient.Images(ctx, prep.cfg, prep.images)
+	if err != nil {
+		if be, ok := registry.IsBackendError(err); ok {
+			return &ProviderResponse{
+				StatusCode: be.StatusCode,
+				Headers:    withSelectionHeaders(be.PassthroughHeaders(), bk, prep.sentModel),
+				Body:       be.Body,
+			}, nil
+		}
+		return nil, fmt.Errorf("provider images: %w", err)
+	}
+	contentType := result.ContentType
+	if contentType == "" {
+		contentType = contentTypeJSON
+	}
+	return &ProviderResponse{
+		StatusCode: http.StatusOK,
+		Headers: withSelectionHeaders(
+			map[string][]string{headerContentType: {contentType}},
+			bk,
+			prep.sentModel,
+		),
+		Body:      result.Body,
+		SentModel: prep.sentModel,
+	}, nil
+}
+
 func (p *providerInvoker) invokeUpstream(ctx context.Context, prep *preparedInvocation) ([]byte, error) {
 	switch prep.capability {
 	case capabilityEmbeddings:
 		embedder, ok := prep.client.(providers.EmbeddingsClient)
 		if !ok {
-			return nil, fmt.Errorf("provider does not support embeddings")
+			return nil, fmt.Errorf("%w: embeddings", ErrCapabilityNotSupported)
 		}
 		respBody, err := embedder.Embeddings(ctx, prep.cfg, prep.body)
 		if err != nil {
@@ -376,7 +733,7 @@ func (p *providerInvoker) invokeUpstream(ctx context.Context, prep *preparedInvo
 	case capabilityRerank:
 		reranker, ok := prep.client.(providers.RerankClient)
 		if !ok {
-			return nil, fmt.Errorf("provider does not support rerank")
+			return nil, fmt.Errorf("%w: rerank", ErrCapabilityNotSupported)
 		}
 		respBody, err := reranker.Rerank(ctx, prep.cfg, prep.body)
 		if err != nil {
