@@ -374,6 +374,40 @@ func TestFiles_RetrieveRoutesByFileIDFamily(t *testing.T) {
 	assert.Equal(t, 7, openaiUp.Hits())
 }
 
+func newFilesNotFoundUpstream(t *testing.T) *fakeUpstream {
+	t.Helper()
+	u := &fakeUpstream{}
+	u.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u.record(r)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"error":{"message":"No such File object"}}`)
+	}))
+	t.Cleanup(u.server.Close)
+	return u
+}
+
+func TestFiles_RetrieveFanOutOn404WithinFamily(t *testing.T) {
+	defer Track(t, "FilesProvider")()
+
+	miss := newFilesNotFoundUpstream(t)
+	hit, last := newFilesFamilyUpstream(t, "openai")
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("files-fanout-gw")})
+	missID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("oai-miss"), miss.URL()+"/v1"))
+	hitID := CreateRegistry(t, gatewayID, mistralBackendPayload(uniqueName("mistral-hit"), hit.URL()+"/v1"))
+	coID := CreateConsumer(t, gatewayID, map[string]any{"name": uniqueName("files-fanout")})
+	AttachRegistry(t, gatewayID, coID, missID)
+	AttachRegistry(t, gatewayID, coID, hitID)
+	apiKey := createAndAttachAPIKey(t, gatewayID, coID)
+	path := "/" + ConsumerSlug(t, coID) + "/v1/files/file-HZeYkGtNsAzNTWQmMHbM27"
+
+	status, headers, body := proxyRequest(t, http.MethodGet, apiKey, path, nil, nil)
+	assert.Equal(t, http.StatusOK, status, "body: %s", body)
+	assert.Equal(t, "mistral", headers.Get("X-Selected-Provider"))
+	assert.Equal(t, "/v1/files/file-HZeYkGtNsAzNTWQmMHbM27", last.path)
+	assert.Greater(t, hit.Hits(), 0)
+}
+
 func TestFiles_OpenAIIDWithOnlyAnthropicIs503(t *testing.T) {
 	defer Track(t, "FilesProvider")()
 

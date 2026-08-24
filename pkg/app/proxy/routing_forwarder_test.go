@@ -951,6 +951,106 @@ func TestForward_FilesOpenAIIDWithOnlyAnthropicIs503(t *testing.T) {
 	}
 }
 
+func TestForward_FilesRetrieveFanOutOn404WithinFamily(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	openai := backendFor(gatewayID, "openai")
+	mistral := backendFor(gatewayID, "mistral")
+	rc := routableConsumerWith(gatewayID, openai, mistral)
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.MatchedBy(func(bk *registrydomain.Registry) bool {
+			return bk.ID == openai.ID
+		}), mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 404, Body: []byte(`{"error":"missing"}`)}, nil).
+		Once()
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.MatchedBy(func(bk *registrydomain.Registry) bool {
+			return bk.ID == mistral.ID
+		}), mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte(`{"id":"file-HZeYkGtNsAzNTWQmMHbM27"}`)}, nil).
+		Once()
+
+	fwd := newTestForwarder(t, invoker)
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request: &infracontext.RequestContext{
+			Method:          "GET",
+			Path:            "/acme/v1/files/file-HZeYkGtNsAzNTWQmMHbM27",
+			ProxyCapability: "files",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if res.StatusCode != 200 {
+		t.Fatalf("expected 200 after files 404 fan-out, got %d", res.StatusCode)
+	}
+}
+
+func TestForward_FilesRetrieveAllMissRelays404(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	openai := backendFor(gatewayID, "openai")
+	mistral := backendFor(gatewayID, "mistral")
+	rc := routableConsumerWith(gatewayID, openai, mistral)
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 404, Body: []byte(`{"error":"missing"}`)}, nil).
+		Times(2)
+
+	fwd := newTestForwarder(t, invoker)
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request: &infracontext.RequestContext{
+			Method:          "GET",
+			Path:            "/acme/v1/files/file-HZeYkGtNsAzNTWQmMHbM27",
+			ProxyCapability: "files",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if res.StatusCode != 404 {
+		t.Fatalf("expected last 404, got %d", res.StatusCode)
+	}
+}
+
+func TestForward_FilesRetrieve400DoesNotFanOut(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	openai := backendFor(gatewayID, "openai")
+	mistral := backendFor(gatewayID, "mistral")
+	rc := routableConsumerWith(gatewayID, openai, mistral)
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.MatchedBy(func(bk *registrydomain.Registry) bool {
+			return bk.ID == openai.ID
+		}), mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 400, Body: []byte(`{"error":"bad request"}`)}, nil).
+		Once()
+
+	fwd := newTestForwarder(t, invoker)
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request: &infracontext.RequestContext{
+			Method:          "GET",
+			Path:            "/acme/v1/files/file-HZeYkGtNsAzNTWQmMHbM27",
+			ProxyCapability: "files",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if res.StatusCode != 400 {
+		t.Fatalf("expected terminal 400, got %d", res.StatusCode)
+	}
+}
+
 func TestForward_ImagesFiltersIncapableProviders(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	openai := backendFor(gatewayID, "openai")

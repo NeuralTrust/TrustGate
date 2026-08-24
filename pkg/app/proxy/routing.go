@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -120,6 +121,16 @@ func filterCandidatesByFilesID(candidates *routingdomain.CandidateSet, req *infr
 		}
 		return providers.ProviderMatchesFilesID(c.Registry.Provider(), fileID)
 	})
+}
+
+func filesIDNotFound(req *infracontext.RequestContext, resp *ProviderResponse) bool {
+	if req == nil || resp == nil || req.ProxyCapability != capabilityFiles {
+		return false
+	}
+	if providers.FilesIDFromPath(req.Path) == "" {
+		return false
+	}
+	return resp.StatusCode == http.StatusNotFound
 }
 
 func (f *forwarder) logRejectedIntent(rc *appconsumer.RoutableConsumer, ref string, err error) {
