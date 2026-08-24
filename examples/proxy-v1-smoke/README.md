@@ -38,6 +38,8 @@ Names: `models`, `chat`, `embeddings`, `files`, `audio`, `images`, `rerank`, `ne
 
 `negatives` checks the audio contract: GET `/v1/audio/speech` → 400, POST `/v1/audio/translations` → 404.
 
+Images **variations** only run when `IMAGE_EDIT_MODEL=dall-e-2`. Current OpenAI image models (`gpt-image-1`, `chatgpt-image-latest`) do not serve that endpoint.
+
 ## Model overrides
 
 | Variable | Default |
@@ -46,7 +48,7 @@ Names: `models`, `chat`, `embeddings`, `files`, `audio`, `images`, `rerank`, `ne
 | `EMBED_MODEL` | `text-embedding-3-small` |
 | `TTS_MODEL` / `TTS_VOICE` | `tts-1` / `alloy` |
 | `STT_MODEL` | `whisper-1` |
-| `IMAGE_MODEL` / `IMAGE_SIZE` | `dall-e-2` / `256x256` |
-| `IMAGE_EDIT_MODEL` | `dall-e-2` |
-| `FILE_PURPOSE` | `assistants` (Anthropic: `user_data`) |
+| `IMAGE_MODEL` / `IMAGE_SIZE` | first image model in `GET /v1/models` (`gpt-image-1`, `chatgpt-image-latest`, `dall-e-3`, `dall-e-2`) / `1024x1024` |
+| `IMAGE_EDIT_MODEL` | same as `IMAGE_MODEL` |
+| `FILE_PURPOSE` | `user_data` (OpenAI forbids downloading `assistants` / `user_data` content; that 400 is a skip) |
 | `RERANK_MODEL` | `rerank-english-v3.0` |
