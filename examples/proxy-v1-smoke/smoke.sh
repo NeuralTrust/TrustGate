@@ -226,8 +226,10 @@ catalog_image_model() {
   python3 - "$catalog" <<'PY'
 import json, sys
 preferred = (
-    "gpt-image-1",
+    "gpt-image-2",
     "chatgpt-image-latest",
+    "gpt-image-1.5",
+    "gpt-image-1",
     "gpt-image-1-mini",
     "dall-e-3",
     "dall-e-2",
@@ -254,7 +256,7 @@ resolve_image_models() {
       request GET "/v1/models" "$TMP/models.json" "$TMP/models-for-images.hdr" >/dev/null
     fi
     IMAGE_MODEL="$(catalog_image_model "$TMP/models.json")"
-    IMAGE_MODEL="${IMAGE_MODEL:-gpt-image-1}"
+    IMAGE_MODEL="${IMAGE_MODEL:-gpt-image-2}"
   fi
   if [[ -z "$IMAGE_EDIT_MODEL" ]]; then
     IMAGE_EDIT_MODEL="$IMAGE_MODEL"
