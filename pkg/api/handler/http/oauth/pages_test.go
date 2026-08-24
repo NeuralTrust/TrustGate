@@ -79,7 +79,7 @@ func TestAPIKeyConnectPage_RendersSecureForm(t *testing.T) {
 	if !strings.Contains(body, `method="post"`) {
 		t.Fatalf("API-key form must submit with POST, body:\n%s", body)
 	}
-	if !strings.Contains(body, `<input id="api-key" name="api_key" type="password" autocomplete="off" required>`) {
+	if !strings.Contains(body, `id="api-key" name="api_key" type="password" autocomplete="off" required`) {
 		t.Fatalf("missing secure API-key field attributes, body:\n%s", body)
 	}
 	if strings.Contains(body, "value=") {
@@ -145,6 +145,36 @@ func TestDeepLinkPage_RendersCustomScheme(t *testing.T) {
 	}
 	if !strings.Contains(body, "Open Cursor") {
 		t.Fatal("known scheme must render the product name")
+	}
+}
+
+func TestConnectPage_UsesAppDesignTokens(t *testing.T) {
+	t.Parallel()
+	body := renderToString(t, func(c *fiber.Ctx) error {
+		return renderConnectPage(c, &appoauth.ConnectPage{
+			ConsumerPath: "/v1/mcp/dev",
+			Providers: []appoauth.ProviderStatus{
+				{Provider: "linear", Registry: "linear-mcp", Linked: true},
+				{Provider: "github", Registry: "github-mcp"},
+			},
+			ResumeURL: "cursor://anysphere.cursor-mcp/oauth/callback?code=abc",
+		}, "tk", "", nil)
+	})
+	for _, want := range []string{
+		`family=Inter`,
+		`font-family:var(--font-sans)`,
+		`--bg-canvas:#03020f`,
+		`--brand:#9053ff`,
+		`--badge-green:#00fe18`,
+		`font-size:1.125rem;line-height:1.75rem`,
+		`class="btn secondary"`,
+		`class="btn primary"`,
+		`class="badge green"`,
+		`width="40" height="40"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("connect page must use app DS token %q", want)
+		}
 	}
 }
 

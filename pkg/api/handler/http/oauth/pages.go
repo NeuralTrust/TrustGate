@@ -26,105 +26,145 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
+const pageFonts = `<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,400;0,14..32,500;0,14..32,600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">`
+
 const pageCSS = `
 :root{
-  --bg:#03020f;--surface:#1a1a28;--elevated:#11101d;--border:#272730;
-  --border-strong:#3f3f46;--fg:#fcfcfc;--muted:#999999;--faint:#888888;
-  --accent:#9053ff;--accent-hover:#a370ff;--accent-active:#653ab3;
-  --success:#00fe18;--danger:#ff5b67;--danger-soft:#350d1a;
-  --radius:8px;--radius-lg:12px;
+  --bg-canvas:#03020f;--bg-default:#03020f;--bg-muted:#1a1a28;--bg-surface-hover:#11101d;
+  --fg-default:#fcfcfc;--fg-secondary:#c4c2ca;--fg-muted:#999;--fg-disabled:#888;
+  --fg-on-brand:#fff;--fg-danger:#ff5b67;--fg-brand:#9053ff;
+  --stroke:#272730;--brand:#9053ff;--brand-hover:#a370ff;--brand-active:#653ab3;--brand-focus:#bf9bff;
+  --badge-green:#00fe18;--badge-red:#ff3948;--danger-solid:#ff3948;--danger-hover:#ff5b67;
+  --danger-active:#b32832;--danger-subtle:#350d1a;
+  --radius-sm:6px;--radius-md:8px;--radius-full:9999px;
+  --font-sans:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --shadow-brand:0 1px 2px 0 rgb(14 18 27 / .24);
+  --shadow-overlay:0 16px 32px -8px rgb(0 0 0 / .55);
+  --duration-fast:100ms;
 }
-*{box-sizing:border-box;border-color:var(--border)}
+*{box-sizing:border-box}
 html{color-scheme:dark}
 body{
   margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
-  background:var(--bg);color:var(--fg);
-  font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  background:var(--bg-canvas);color:var(--fg-default);font-family:var(--font-sans);
   -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
 }
 .card{
-  width:100%;max-width:560px;margin:40px 16px;padding:32px;
-  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);
-  box-shadow:0 16px 32px -8px rgba(0,0,0,.55);
+  width:100%;max-width:560px;margin:40px 16px;padding:24px;
+  background:var(--bg-muted);border:1px solid var(--stroke);border-radius:var(--radius-md);
+  box-shadow:var(--shadow-overlay);
 }
 .brand{display:flex;align-items:center;gap:10px;margin-bottom:24px}
 .brand .mark{
-  width:28px;height:28px;border-radius:8px;flex:none;overflow:hidden;
+  width:28px;height:28px;border-radius:var(--radius-md);flex:none;overflow:hidden;
   display:flex;align-items:center;justify-content:center;
 }
 .brand .mark svg{width:100%;height:100%;display:block}
-.brand .name{font-weight:600;font-size:14px;letter-spacing:.01em}
-.brand .product{color:var(--faint);font-size:14px}
-h1{font-size:18px;font-weight:600;margin:0 0 6px;letter-spacing:-.02em}
-p.sub{color:var(--muted);margin:0 0 24px;font-size:14px;line-height:1.45}
+.brand .name{font-size:.875rem;line-height:1rem;font-weight:600;color:var(--fg-default)}
+.brand .product{font-size:.875rem;line-height:1rem;color:var(--fg-disabled)}
+h1{font-size:1.125rem;line-height:1.75rem;font-weight:600;margin:0 0 8px}
+p.sub{color:var(--fg-muted);margin:0 0 24px;font-size:.875rem;line-height:1.25rem;font-weight:400}
 code{
-  font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12px;
-  background:var(--elevated);border:1px solid var(--border);border-radius:6px;padding:1px 6px;
+  font-family:var(--font-mono);font-size:.75rem;line-height:1rem;font-weight:400;
+  background:var(--bg-surface-hover);border:1px solid var(--stroke);border-radius:var(--radius-sm);padding:1px 6px;
+  color:var(--fg-secondary);
 }
 .flash{
-  background:var(--danger-soft);color:var(--danger);border:1px solid rgba(255,91,103,.35);
-  border-radius:var(--radius);padding:10px 14px;font-size:13px;margin-bottom:16px;
+  display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:12px 16px;
+  background:var(--danger-subtle);color:var(--fg-danger);border:1px solid rgb(255 91 103 / .2);
+  border-radius:var(--radius-md);font-size:.875rem;line-height:1rem;
 }
-.list{display:flex;flex-direction:column;gap:10px}
+.flash svg{flex:none}
+.list{display:flex;flex-direction:column;gap:8px}
 .row{
-  display:flex;align-items:center;justify-content:space-between;gap:14px;
-  padding:14px 16px;background:var(--elevated);border:1px solid var(--border);border-radius:var(--radius);
+  display:flex;align-items:center;justify-content:space-between;gap:16px;
+  padding:12px 16px;background:var(--bg-surface-hover);border:1px solid var(--stroke);border-radius:var(--radius-md);
 }
 .identity{display:flex;align-items:center;gap:12px;min-width:0}
 .logo{
-  width:48px;height:48px;border-radius:var(--radius);flex:none;
-  display:flex;align-items:center;justify-content:center;background:var(--border);
+  width:60px;height:60px;border-radius:var(--radius-md);flex:none;
+  display:flex;align-items:center;justify-content:center;background:var(--stroke);
 }
-.logo img{width:32px;height:32px;object-fit:contain;display:block}
+.logo img{width:40px;height:40px;object-fit:contain;display:block}
 .meta{min-width:0}
-.name{font-weight:500;font-size:14px;letter-spacing:-.02em;color:var(--fg)}
-.reg{color:var(--muted);font-size:12px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.status{
-  display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;
-  border-radius:999px;font-size:12px;font-weight:500;color:#00b211;background:rgba(0,178,17,.16);
+.name{font-size:.875rem;line-height:1.25rem;font-weight:500;letter-spacing:-.072px;color:var(--fg-default)}
+.reg{
+  color:var(--fg-muted);font-size:.875rem;line-height:1.25rem;margin-top:4px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
-.status .dot{width:6px;height:6px;border-radius:99px;background:currentColor;flex:none}
-.status.expired{color:var(--danger);background:rgba(255,91,103,.16)}
+.badge{
+  display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border-radius:var(--radius-full);
+  font-size:.75rem;line-height:1rem;font-weight:400;white-space:nowrap;
+}
+.badge svg{flex:none}
+.badge.green{color:var(--badge-green);background:rgb(0 254 24 / .2)}
+.badge.red{color:var(--badge-red);background:rgb(255 57 72 / .2)}
 .actions{display:flex;align-items:center;gap:8px;flex:none}
 a.btn,button.btn{
-  display:inline-flex;align-items:center;justify-content:center;height:32px;padding:0 12px;
-  border-radius:var(--radius);font-size:14px;font-weight:500;font-family:inherit;
+  box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  height:32px;padding:0 12px;border-radius:var(--radius-md);
+  font-family:inherit;font-size:.875rem;line-height:1rem;font-weight:500;
   text-decoration:none;cursor:pointer;border:1px solid transparent;
-  background:var(--accent);color:#fff;transition:background .1s ease,border-color .1s ease;
+  transition:background var(--duration-fast),border-color var(--duration-fast),color var(--duration-fast),box-shadow var(--duration-fast);
 }
-a.btn:hover,button.btn:hover{background:var(--accent-hover)}
-a.btn:active,button.btn:active{background:var(--accent-active)}
-button.revoke{background:transparent;color:var(--danger);border-color:var(--border)}
-button.revoke:hover{background:var(--danger-soft)}
-a.btn.continue{background:#00b211;color:#03020f}
-a.btn.continue:hover{background:#00fe18}
+a.btn:focus-visible,button.btn:focus-visible{outline:none}
+a.btn.primary,button.btn.primary{
+  background:var(--brand);color:var(--fg-on-brand);box-shadow:var(--shadow-brand);
+}
+a.btn.primary:hover,button.btn.primary:hover{background:var(--brand-hover)}
+a.btn.primary:active,button.btn.primary:active{background:var(--brand-active);box-shadow:none}
+a.btn.primary:focus-visible,button.btn.primary:focus-visible{box-shadow:inset 0 0 0 1px var(--brand-focus)}
+a.btn.secondary,button.btn.secondary{
+  background:var(--bg-default);color:var(--fg-default);border-color:var(--stroke);
+}
+a.btn.secondary:hover,button.btn.secondary:hover{background:var(--bg-surface-hover)}
+a.btn.secondary:active,button.btn.secondary:active{background:var(--bg-muted)}
+a.btn.secondary:focus-visible,button.btn.secondary:focus-visible{border-color:var(--brand)}
+button.btn.ghost-danger{
+  background:transparent;color:var(--danger-solid);text-decoration:underline;text-underline-offset:2px;
+}
+button.btn.ghost-danger:hover{color:var(--danger-hover)}
+button.btn.ghost-danger:active{color:var(--danger-active)}
 .resume{
-  margin-top:20px;padding:14px 16px;border:1px solid var(--border);border-radius:var(--radius);
-  background:var(--elevated);display:flex;align-items:center;justify-content:space-between;gap:12px;
+  margin-top:16px;padding:12px 16px;border:1px solid var(--stroke);border-radius:var(--radius-md);
+  background:var(--bg-surface-hover);display:flex;align-items:center;justify-content:space-between;gap:12px;
 }
-.empty{color:var(--muted);font-size:14px;padding:8px 0}
+.empty{color:var(--fg-muted);font-size:.875rem;line-height:1.25rem;padding:8px 0}
 .center{text-align:center}
 .center .brand{justify-content:center}
-.center h1{margin-top:18px}
-.center p.sub{margin-bottom:28px}
-.center p.sub strong{color:var(--fg);font-weight:600}
-.center p.sub em{font-style:normal;color:var(--fg)}
+.center h1{margin-top:16px}
+.center p.sub{margin-bottom:24px}
+.center p.sub strong{color:var(--fg-default);font-weight:600}
+.center p.sub em{font-style:normal;color:var(--fg-default)}
 .check{
-  width:48px;height:48px;border-radius:99px;margin:26px auto 0;
+  width:48px;height:48px;border-radius:var(--radius-full);margin:24px auto 0;
   display:flex;align-items:center;justify-content:center;
-  color:#00b211;background:rgba(0,178,17,.12);border:1px solid rgba(0,178,17,.28);
+  color:var(--badge-green);background:rgb(0 254 24 / .2);
 }
-.hint{color:var(--faint);font-size:12px;margin-top:18px;line-height:1.5}
-.hint a{color:var(--muted);text-decoration:underline;text-underline-offset:2px}
-.hint a:hover{color:var(--fg)}
-.field{display:flex;flex-direction:column;gap:8px}
-.field label{font-size:13px;font-weight:500}
-.field input{
-  width:100%;height:40px;border:1px solid var(--border);border-radius:var(--radius);
-  background:var(--elevated);color:var(--fg);font:inherit;padding:0 12px;
+.hint{color:var(--fg-disabled);font-size:.75rem;line-height:1rem;margin-top:16px}
+.hint a{color:var(--fg-muted);text-decoration:underline;text-underline-offset:2px}
+.hint a:hover{color:var(--fg-default)}
+.input{
+  position:relative;display:flex;align-items:center;height:46px;padding:0 16px;
+  background:var(--bg-default);border:1px solid var(--stroke);border-radius:var(--radius-md);
 }
-.field input:focus{outline:none;border-color:var(--accent)}
-.connect-form{display:flex;flex-direction:column;gap:20px}
+.input:hover{background:var(--bg-surface-hover)}
+.input:focus-within{border-color:var(--brand)}
+.input input{
+  width:100%;height:100%;border:0;background:transparent;color:var(--fg-default);
+  font-family:inherit;font-size:.875rem;line-height:1rem;font-weight:500;padding:20px 0 6px;outline:none;
+}
+.input input::placeholder{color:transparent}
+.input label{
+  position:absolute;left:16px;top:6px;font-size:10px;line-height:14px;color:var(--fg-muted);pointer-events:none;
+  transition:top var(--duration-fast),transform var(--duration-fast),font-size var(--duration-fast),line-height var(--duration-fast);
+}
+.input input:placeholder-shown:not(:focus){padding:0}
+.input input:placeholder-shown:not(:focus)+label{
+  top:50%;transform:translateY(-50%);font-size:.875rem;line-height:18px;
+}
+.connect-form{display:flex;flex-direction:column;gap:16px}
 .connect-form .btn{align-self:flex-start}
 `
 
@@ -132,52 +172,57 @@ const brandMark = `<svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org
 
 const brandHeader = `<div class="brand"><div class="mark">` + brandMark + `</div><div class="name">NeuralTrust</div><div class="product">/ TrustGate</div></div>`
 
+const badgeCheck = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>`
+
 var connectPageTmpl = template.Must(template.New("connect").Parse(`<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en" class="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+` + pageFonts + `
 <title>Connect accounts - NeuralTrust TrustGate</title><style>` + pageCSS + `</style></head>
 <body><div class="card">` + brandHeader + `
 <h1>Connect your accounts</h1>
 <p class="sub">Virtual MCP <code>{{.ConsumerPath}}</code> needs access to these services on your behalf. Tokens are stored encrypted in the gateway vault and are never exposed to the agent.</p>
-{{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
+{{if .Flash}}<div class="flash" role="status"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg><div>{{.Flash}}</div></div>{{end}}
 {{if not .Providers}}<p class="empty">No third-party providers are configured for this virtual MCP.</p>{{end}}
 <div class="list">{{range .Providers}}<div class="row">
   <div class="identity">
-    <div class="logo"><img src="{{.LogoURL}}" alt="" width="32" height="32" onerror="this.onerror=null;this.src='/oauth/brands/mcp.svg'"></div>
+    <div class="logo"><img src="{{.LogoURL}}" alt="" width="40" height="40" onerror="this.onerror=null;this.src='/oauth/brands/mcp.svg'"></div>
     <div class="meta"><div class="name">{{.DisplayName}}</div><div class="reg">{{.Subtitle}}</div></div>
   </div>
   <div class="actions">{{if .NeedsReconnect}}
-    <span class="status expired"><span class="dot"></span>Expired</span>
-    <a class="btn" href="/oauth/connect/{{.Provider}}?ticket={{$.Ticket}}">Reconnect</a>
+    <span class="badge red">Expired</span>
+    <a class="btn secondary" href="/oauth/connect/{{.Provider}}?ticket={{$.Ticket}}">Reconnect</a>
   {{else if .Linked}}
-    <span class="status"><span class="dot"></span>Connected</span>
-    <form method="post" action="/oauth/disconnect/{{.Provider}}?ticket={{$.Ticket}}"><button class="btn revoke">Revoke</button></form>
+    <span class="badge green">` + badgeCheck + `Connected</span>
+    <form method="post" action="/oauth/disconnect/{{.Provider}}?ticket={{$.Ticket}}"><button class="btn ghost-danger" type="submit">Revoke</button></form>
   {{else}}
-    <a class="btn" href="/oauth/connect/{{.Provider}}?ticket={{$.Ticket}}">Connect</a>
+    <a class="btn secondary" href="/oauth/connect/{{.Provider}}?ticket={{$.Ticket}}">Connect</a>
   {{end}}</div>
 </div>{{end}}</div>
 {{if .ResumeURL}}<div class="resume">
   <div><div class="name">Done connecting?</div><div class="reg">Return to your application to finish signing in.</div></div>
-  <a class="btn continue" href="{{.ResumeURL}}">Continue</a>
+  <a class="btn primary" href="{{.ResumeURL}}">Continue</a>
 </div>{{end}}
 </div></body></html>`))
 
 var apiKeyConnectPageTmpl = template.Must(template.New("api-key-connect").Parse(`<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en" class="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+` + pageFonts + `
 <title>Connect API key - NeuralTrust TrustGate</title><style>` + pageCSS + `</style></head>
 <body><div class="card">` + brandHeader + `
 <h1>Connect with an API key</h1>
 <p class="sub">Enter the API key for this virtual MCP. The key is used only to authorize this connection.</p>
 <form class="connect-form" method="post" action="{{.FormAction}}">
-  <div class="field">
+  <div class="input">
+    <input id="api-key" name="api_key" type="password" autocomplete="off" required placeholder=" ">
     <label for="api-key">API key</label>
-    <input id="api-key" name="api_key" type="password" autocomplete="off" required>
   </div>
-  <button class="btn" type="submit">Continue</button>
+  <button class="btn primary" type="submit">Continue</button>
 </form>
 </div></body></html>`))
 
 var deepLinkPageTmpl = template.Must(template.New("deeplink").Parse(`<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en" class="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+` + pageFonts + `
 <title>Authentication complete - NeuralTrust TrustGate</title><style>` + pageCSS + `
 .card{display:none}
 .card.show{display:block;animation:fade-in .25s ease}
@@ -187,7 +232,7 @@ var deepLinkPageTmpl = template.Must(template.New("deeplink").Parse(`<!doctype h
 <div class="check"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>
 <h1>Authentication complete</h1>
 <p class="sub">Still here? Choose <em>Open {{.AppName}}</em> in your browser&rsquo;s dialog, or use the button below, then close this tab.</p>
-<a class="btn" id="open" href="{{.Location}}">Open {{.AppName}}</a>
+<a class="btn primary" id="open" href="{{.Location}}">Open {{.AppName}}</a>
 <p class="hint">Nothing happens? <a href="#" id="copy">Copy the link</a> and open it manually.</p>
 <script>
   var target = {{.Location}};
