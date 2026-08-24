@@ -94,6 +94,7 @@ func (r *mcpRouter) BuildRoutes(app *fiber.App) error {
 
 	app.Get(oauthhttp.JWKSPath, r.jwksHandler.Handle)
 
+	app.Get(oauthhttp.BrandAssetPath, oauthhttp.ServeBrandAsset)
 	app.Get(oauthhttp.ConnectStartPath, r.connectHandler.Start)
 	app.Get(oauthhttp.ConnectCallbackPath, r.connectHandler.Callback)
 	app.Post(oauthhttp.DisconnectPath, r.connectHandler.Disconnect)
