@@ -11,8 +11,14 @@ import { PageHeader, ConfirmDialog, useDisclosure } from "@/components/ui/page";
 import { Button } from "@/components/ui/button";
 import { Table, THead, TBody, TH, TR, TD } from "@/components/ui/table";
 import { Tabs, TabsList, TabTrigger, TabContent } from "@/components/ui/tabs";
+import { FilterSelect } from "@/components/ui/list-controls";
 import { Badge, EmptyState, PageLoader } from "@/components/ui/misc";
 import { cn } from "@/lib/cn";
+import {
+  PROVIDER_CAPABILITIES,
+  providerSupportsCapability,
+  visibleProviderCapabilities,
+} from "@/lib/capabilities";
 import { McpRegistriesView } from "./mcp-registries-view";
 import {
   Dialog,
@@ -149,6 +155,11 @@ function ProviderTable({
   registryByProvider: Map<string, Registry>;
   onOpen: (p: Provider) => void;
 }) {
+  const [capability, setCapability] = useState("");
+  const visible = capability
+    ? providers.filter((provider) => providerSupportsCapability(provider.capabilities, capability))
+    : providers;
+
   if (providers.length === 0) {
     return (
       <EmptyState
@@ -160,45 +171,75 @@ function ProviderTable({
   }
 
   return (
-    <Table>
-      <THead>
-        <TH>Name</TH>
-        <TH>Type</TH>
-        <TH>Capabilities</TH>
-        <TH>Status</TH>
-      </THead>
-      <TBody>
-        {providers.map((p) => {
-          const active = registryByProvider.has(p.code);
-          const builtIn = (p.source ?? "seed") === "seed";
-          return (
-            <TR key={p.id} onClick={() => onOpen(p)}>
-              <TD>
-                <div className="flex items-center gap-3">
-                  <span className="flex h-8 w-8 items-center justify-center rounded-(--radius) border border-border bg-surface-2 text-muted">
-                    <Server className="h-4 w-4" />
-                  </span>
-                  <span className="font-medium text-fg">{p.display_name}</span>
-                </div>
-              </TD>
-              <TD>
-                <Badge>{builtIn ? "Built-in" : "Custom"}</Badge>
-              </TD>
-              <TD>
-                <div className="flex flex-wrap gap-1">
-                  {p.capabilities?.chat ? <Badge>Chat</Badge> : null}
-                  {p.capabilities?.embeddings ? <Badge>Embeddings</Badge> : null}
-                  {p.capabilities?.rerank ? <Badge>Rerank</Badge> : null}
-                </div>
-              </TD>
-              <TD>
-                {active ? <Badge tone="success">Active</Badge> : <Badge>Inactive</Badge>}
-              </TD>
-            </TR>
-          );
-        })}
-      </TBody>
-    </Table>
+    <>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <FilterSelect label="Capability" value={capability} onChange={setCapability}>
+          <option value="">Any capability</option>
+          {PROVIDER_CAPABILITIES.map((entry) => (
+            <option key={entry.key} value={entry.key}>
+              {entry.label}
+            </option>
+          ))}
+        </FilterSelect>
+        {capability ? (
+          <Button variant="ghost" size="sm" onClick={() => setCapability("")}>
+            Clear
+          </Button>
+        ) : null}
+      </div>
+      {visible.length === 0 ? (
+        <EmptyState
+          icon={<Server className="h-5 w-5" />}
+          title="No providers match"
+          description="Nothing here for the current capability filter."
+          action={
+            <Button variant="ghost" onClick={() => setCapability("")}>
+              Clear filters
+            </Button>
+          }
+        />
+      ) : (
+        <Table>
+          <THead>
+            <TH>Name</TH>
+            <TH>Type</TH>
+            <TH>Capabilities</TH>
+            <TH>Status</TH>
+          </THead>
+          <TBody>
+            {visible.map((p) => {
+              const active = registryByProvider.has(p.code);
+              const builtIn = (p.source ?? "seed") === "seed";
+              return (
+                <TR key={p.id} onClick={() => onOpen(p)}>
+                  <TD>
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-8 w-8 items-center justify-center rounded-(--radius) border border-border bg-surface-2 text-muted">
+                        <Server className="h-4 w-4" />
+                      </span>
+                      <span className="font-medium text-fg">{p.display_name}</span>
+                    </div>
+                  </TD>
+                  <TD>
+                    <Badge>{builtIn ? "Built-in" : "Custom"}</Badge>
+                  </TD>
+                  <TD>
+                    <div className="flex flex-wrap gap-1">
+                      {visibleProviderCapabilities(p.capabilities).map((entry) => (
+                        <Badge key={entry.key}>{entry.label}</Badge>
+                      ))}
+                    </div>
+                  </TD>
+                  <TD>
+                    {active ? <Badge tone="success">Active</Badge> : <Badge>Inactive</Badge>}
+                  </TD>
+                </TR>
+              );
+            })}
+          </TBody>
+        </Table>
+      )}
+    </>
   );
 }
 
