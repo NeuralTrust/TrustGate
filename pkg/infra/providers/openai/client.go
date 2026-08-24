@@ -25,9 +25,21 @@ import (
 const (
 	completionsURL = "https://api.openai.com/v1/chat/completions"
 	responsesURL   = "https://api.openai.com/v1/responses"
+	embeddingsURL  = "https://api.openai.com/v1/embeddings"
+	filesBaseURL   = "https://api.openai.com/v1"
 
 	completionsPath = "/chat/completions"
 	responsesPath   = "/responses"
+	embeddingsPath  = "/embeddings"
+)
+
+var (
+	_ providers.Client                   = (*client)(nil)
+	_ providers.EmbeddingsClient         = (*client)(nil)
+	_ providers.FilesClient              = (*client)(nil)
+	_ providers.ImagesClient             = (*client)(nil)
+	_ providers.AudioSpeechClient        = (*client)(nil)
+	_ providers.AudioTranscriptionClient = (*client)(nil)
 )
 
 type client struct {
@@ -63,6 +75,94 @@ func (c *client) CompletionsStream(
 		return nil, err
 	}
 	return c.chat.CompletionsStream(ctx, endpointURL, config, reqBody, nil)
+}
+
+func (c *client) Embeddings(
+	ctx context.Context,
+	config *providers.Config,
+	reqBody []byte,
+) ([]byte, error) {
+	endpointURL, err := c.resolveEmbeddingsURL(config)
+	if err != nil {
+		return nil, err
+	}
+	return c.chat.Completions(ctx, endpointURL, config, reqBody, nil)
+}
+
+func (c *client) Files(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.FilesRequest,
+) (*providers.FilesResult, error) {
+	base, err := c.resolveFilesBaseURL(config)
+	if err != nil {
+		return nil, err
+	}
+	return c.chat.Files(ctx, providers.JoinOpenAIFilesURL(base, req.Path, req.Query), config, req)
+}
+
+func (c *client) Images(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.ImagesRequest,
+) (*providers.ImagesResult, error) {
+	base, err := c.resolveFilesBaseURL(config)
+	if err != nil {
+		return nil, err
+	}
+	return c.chat.Images(ctx, providers.JoinOpenAIImagesURL(base, req.Path, req.Query), config, req, nil)
+}
+
+func (c *client) AudioSpeech(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.AudioRequest,
+) (*providers.AudioResult, error) {
+	return c.audio(ctx, config, req)
+}
+
+func (c *client) AudioTranscription(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.AudioRequest,
+) (*providers.AudioResult, error) {
+	return c.audio(ctx, config, req)
+}
+
+func (c *client) audio(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.AudioRequest,
+) (*providers.AudioResult, error) {
+	base, err := c.resolveFilesBaseURL(config)
+	if err != nil {
+		return nil, err
+	}
+	return c.chat.Audio(ctx, providers.JoinOpenAIAudioURL(base, req.Path, req.Query), config, req, nil)
+}
+
+func (c *client) resolveFilesBaseURL(config *providers.Config) (string, error) {
+	opts, err := providers.DecodeOpenAIOptions(config.Options)
+	if err != nil {
+		return "", err
+	}
+	base := strings.TrimRight(opts.BaseURL, "/")
+	if base != "" {
+		return base, nil
+	}
+	return filesBaseURL, nil
+}
+
+func (c *client) resolveEmbeddingsURL(config *providers.Config) (string, error) {
+	opts, err := providers.DecodeOpenAIOptions(config.Options)
+	if err != nil {
+		return "", err
+	}
+	base := strings.TrimRight(opts.BaseURL, "/")
+	if base != "" {
+		return base + embeddingsPath, nil
+	}
+	return embeddingsURL, nil
 }
 
 func (c *client) resolveURL(config *providers.Config) (string, error) {

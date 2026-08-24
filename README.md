@@ -82,7 +82,69 @@ curl -X POST "http://localhost:8081/my-app/v1/chat/completions" \
   -H "X-AG-API-Key: $CONSUMER_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Hello!"}]}'
+
+# 7. Embeddings (OpenAI, Azure OpenAI, Mistral, Vertex, Bedrock Titan, openai_compatible, Cohere)
+curl -s -X POST "$PROXY/$CON_SLUG/v1/embeddings" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"text-embedding-3-small","input":["Hello from TrustGate"]}'
 ```
+
+OpenAI-shaped clients always call `POST /{consumer}/v1/embeddings`. OpenAI, Azure, Mistral, and custom `openai_compatible` registries forward that payload to the upstream embeddings URL. Vertex uses Gemini `:embedContent` / `:batchEmbedContents`, and Bedrock Titan embed uses `InvokeModel` with `{inputText}`. A Cohere registry accepts the same OpenAI-shaped request and adapts it to Cohere `/v2/embed`:
+
+```bash
+curl -s -X POST "$PROXY/$CON_SLUG/v1/embeddings" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"embed-english-v3.0","input":["Hello from TrustGate"]}'
+```
+
+OpenAI-shaped clients call `/{consumer}/v1/files` for upload, list, retrieve, delete, and content download. OpenAI, Azure, OpenRouter, xAI, Mistral, and Anthropic registries that expose a Files API are forwarded as-is (Azure uses `{endpoint}/openai/files?api-version=…`; Anthropic uses `https://api.anthropic.com/v1/files` with `x-api-key` and `anthropic-version`). Providers without a Files store are filtered out of the pool. Retrieve, content, and delete then pin by file-id prefix: `file_` stays on Anthropic; any other files-capable provider is treated as OpenAI-compatible (`file-`). A 404 from one store is retried on the remaining backends in that family so a file uploaded to OpenAI is still found if the next request would otherwise land on Mistral. List and upload still load-balance across files-capable registries:
+
+```bash
+# 8. Files (OpenAI, Azure OpenAI, OpenRouter, xAI, Mistral, Anthropic)
+curl -s -X POST "$PROXY/$CON_SLUG/v1/files" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
+  -F purpose=assistants \
+  -F file="@notes.txt"
+
+# 9. Audio speech (TTS) — raw audio bytes
+curl -s -X POST "$PROXY/$CON_SLUG/v1/audio/speech" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"tts-1","input":"Hello from TrustGate","voice":"alloy"}' \
+  --output speech.mp3
+
+# 10. Audio transcriptions (STT)
+curl -s -X POST "$PROXY/$CON_SLUG/v1/audio/transcriptions" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
+  -F model=whisper-1 \
+  -F file="@speech.mp3"
+
+# 11. Images (OpenAI, Azure OpenAI, openai_compatible, OpenRouter)
+curl -s -X POST "$PROXY/$CON_SLUG/v1/images/generations" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"dall-e-3","prompt":"A minimal TrustGate logo","n":1,"size":"1024x1024"}'
+curl -s -X POST "$PROXY/$CON_SLUG/v1/images/edits" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
+  -F model=dall-e-2 -F prompt="make it blue" -F image=@logo.png
+curl -s -X POST "$PROXY/$CON_SLUG/v1/images/variations" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
+  -F model=dall-e-2 -F image=@logo.png
+
+# 12. Model discovery (OpenAI-compatible, gateway-owned)
+curl -s "$PROXY/$CON_SLUG/v1/models" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY"
+curl -s "$PROXY/$CON_SLUG/v1/models/gpt-4o-mini" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY"
+```
+
+OpenAI-shaped clients call `POST /{consumer}/v1/audio/speech` (TTS, raw audio bytes) and `POST /{consumer}/v1/audio/transcriptions` (STT, multipart file). OpenAI, Azure OpenAI, `openai_compatible`, OpenRouter, Groq, and Mistral registries that expose those APIs are forwarded as-is (Azure uses `{endpoint}/openai/deployments/{model}/audio/{speech|transcriptions}?api-version=…`). Mistral speech JSON `{audio_data}` is unwrapped to raw bytes so the gateway response stays OpenAI-shaped. `/v1/audio/translations` is not served yet. Providers without the matching audio capability are filtered out of the pool.
+
+OpenAI-shaped clients call `POST /{consumer}/v1/images/generations` (JSON), plus multipart `POST /{consumer}/v1/images/edits` and `POST /{consumer}/v1/images/variations`. OpenAI, Azure, and `openai_compatible` registries forward the payload to the matching upstream images URL (Azure uses `{endpoint}/openai/deployments/{model}/images/{generations|edits|variations}?api-version=…`). OpenRouter registries map generations to `POST /api/v1/images` and keep edits/variations on `/api/v1/images/edits` and `/api/v1/images/variations`. Providers without an Images API are filtered out of the pool; pinning an incapable provider is a terminal 400.
+
+`GET /{consumer}/v1/models` returns the union of native model ids the consumer can actually call (registries ∩ allowlists/policies ∩ provider capabilities). It is not an upstream `/v1/models` passthrough and not the full admin catalog.
 
 Or use any OpenAI SDK — see [examples/openai-sdk/](examples/openai-sdk/).
 
@@ -251,6 +313,7 @@ TrustGate emits request telemetry to [OpenTelemetry](https://opentelemetry.io) c
 
 Full telemetry configuration, including default exporters and the OTLP contract, is documented in:
 - [`docs/telemetry/otlp-metadata-contract.md`](docs/telemetry/otlp-metadata-contract.md)
+- [`docs/pricing.md`](docs/pricing.md) — per-request `cost.total_usd` resolution (catalog, registry overrides, LLM Budget)
 - [`config/telemetry.example.yaml`](config/telemetry.example.yaml)
 
 ---

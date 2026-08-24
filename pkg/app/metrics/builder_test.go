@@ -20,6 +20,7 @@ import (
 	"time"
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
@@ -368,6 +369,71 @@ func TestBuilder_CostUsesServedModelForPoolRouting(t *testing.T) {
 
 	require.NotNil(t, evt.Cost)
 	assert.InDelta(t, 11*0.00000015, float64(evt.Cost.PromptUsd), 1e-12)
+}
+
+func TestBuilder_CostUsesRegistryOverride(t *testing.T) {
+	rt := trace.New("trace-reg-override", trace.Metadata{GatewayID: "gw-1"})
+	_ = rt.AddSpan(llmSpan("openai",
+		&trace.LLMAttrs{
+			Provider: "openai",
+			Model:    "gpt-4o",
+			Attempt:  1,
+			Outcome:  "success",
+			Usage:    &adapter.CanonicalUsage{InputTokens: 10, OutputTokens: 20, TotalTokens: 30},
+		}, 200, 300*time.Millisecond, ""))
+
+	req := &infracontext.RequestContext{
+		GatewayID:    "gw-1",
+		Body:         []byte(openAIRequestBody),
+		SourceFormat: string(adapter.FormatOpenAI),
+		RegistryPricing: &domain.Pricing{
+			Discount: 0.2,
+			Overrides: map[string]domain.PriceOverride{
+				"gpt-4o": {Input: 0.0000015, Output: 0.000006},
+			},
+		},
+	}
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"id":"x","choices":[]}`)}
+
+	evt := newBuilder(appcatalog.Pricing{
+		Found:       true,
+		InputPrice:  0.0000025,
+		OutputPrice: 0.00001,
+	}).Build(context.Background(), rt, req, resp, time.UnixMilli(1), time.UnixMilli(2))
+
+	require.NotNil(t, evt.Cost)
+	assert.InDelta(t, 10*0.0000015, float64(evt.Cost.PromptUsd), 1e-12)
+	assert.InDelta(t, 20*0.000006, float64(evt.Cost.CompletionUsd), 1e-12)
+}
+
+func TestBuilder_CostAppliesRegistryDiscount(t *testing.T) {
+	rt := trace.New("trace-reg-discount", trace.Metadata{GatewayID: "gw-1"})
+	_ = rt.AddSpan(llmSpan("openai",
+		&trace.LLMAttrs{
+			Provider: "openai",
+			Model:    "gpt-4o-mini",
+			Attempt:  1,
+			Outcome:  "success",
+			Usage:    &adapter.CanonicalUsage{InputTokens: 10, OutputTokens: 20, TotalTokens: 30},
+		}, 200, 300*time.Millisecond, ""))
+
+	req := &infracontext.RequestContext{
+		GatewayID:       "gw-1",
+		Body:            []byte(openAIRequestBody),
+		SourceFormat:    string(adapter.FormatOpenAI),
+		RegistryPricing: &domain.Pricing{Discount: 0.2},
+	}
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"id":"x","choices":[]}`)}
+
+	evt := newBuilder(appcatalog.Pricing{
+		Found:       true,
+		InputPrice:  0.0000025,
+		OutputPrice: 0.00001,
+	}).Build(context.Background(), rt, req, resp, time.UnixMilli(1), time.UnixMilli(2))
+
+	require.NotNil(t, evt.Cost)
+	assert.InDelta(t, 10*0.0000025*0.8, float64(evt.Cost.PromptUsd), 1e-12)
+	assert.InDelta(t, 20*0.00001*0.8, float64(evt.Cost.CompletionUsd), 1e-12)
 }
 
 func TestBuilder_TimeoutHasNilBody(t *testing.T) {

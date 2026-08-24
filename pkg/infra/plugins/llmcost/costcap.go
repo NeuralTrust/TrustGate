@@ -130,11 +130,11 @@ func exceedsCeiling(price, ceiling float64) bool {
 }
 
 // Decide evaluates a model against its cost cap, resolving its price first.
-func Decide(ctx context.Context, resolver appcatalog.PricingResolver, custom map[string]CustomPrice, cc *CapConfig, provider string, models ...string) Decision {
+func Decide(ctx context.Context, resolver appcatalog.PricingResolver, custom map[string]CustomPrice, registry *RegistryRates, cc *CapConfig, provider string, models ...string) Decision {
 	model := firstNonEmpty(models...)
 	ceiling := EvaluateCeiling(cc, models...)
 
-	inPerToken, outPerToken, found := PriceFor(ctx, resolver, custom, provider, models...)
+	inPerToken, outPerToken, found := Resolve(ctx, resolver, custom, registry, provider, models...)
 	if !found {
 		d := Decision{
 			Unknown:   true,

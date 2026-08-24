@@ -50,6 +50,9 @@ type healthParams struct {
 }
 
 func API(c *container.Container) error {
+	if err := c.Provide(o11y.NewSDK); err != nil {
+		return err
+	}
 	if err := c.Provide(o11y.NewProvider); err != nil {
 		return err
 	}

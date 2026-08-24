@@ -33,6 +33,7 @@ type RegistryResponse struct {
 	Description     string                `json:"description,omitempty"`
 	Auth            *TargetAuthResponse   `json:"auth,omitempty"`
 	HealthChecks    *HealthChecksResponse `json:"health_checks,omitempty"`
+	Pricing         *PricingResponse      `json:"pricing,omitempty"`
 	MCPTarget       *MCPTargetResponse    `json:"mcp_target,omitempty"`
 	CreatedAt       time.Time             `json:"created_at"`
 	UpdatedAt       time.Time             `json:"updated_at"`
@@ -75,6 +76,16 @@ type HealthChecksResponse struct {
 	Headers   map[string]string `json:"headers,omitempty"`
 	Threshold int               `json:"threshold"`
 	Interval  int               `json:"interval"`
+}
+
+type PricingResponse struct {
+	Discount  float64                          `json:"discount,omitempty"`
+	Overrides map[string]PriceOverrideResponse `json:"overrides,omitempty"`
+}
+
+type PriceOverrideResponse struct {
+	Input  float64 `json:"input"`
+	Output float64 `json:"output"`
 }
 
 type TargetAuthResponse struct {
@@ -152,10 +163,26 @@ func FromRegistry(b *domain.Registry) RegistryResponse {
 		Description:     b.Description,
 		Auth:            FromAuth(b.Auth()),
 		HealthChecks:    health,
+		Pricing:         fromPricing(b.Pricing()),
 		MCPTarget:       fromMCPTarget(b.MCPTarget),
 		CreatedAt:       b.CreatedAt,
 		UpdatedAt:       b.UpdatedAt,
 	}
+}
+
+func fromPricing(p *domain.Pricing) *PricingResponse {
+	if p.IsZero() {
+		return nil
+	}
+	out := &PricingResponse{Discount: p.Discount}
+	if len(p.Overrides) == 0 {
+		return out
+	}
+	out.Overrides = make(map[string]PriceOverrideResponse, len(p.Overrides))
+	for slug, rate := range p.Overrides {
+		out.Overrides[slug] = PriceOverrideResponse{Input: rate.Input, Output: rate.Output}
+	}
+	return out
 }
 
 func fromMCPTarget(t *domain.MCPTarget) *MCPTargetResponse {

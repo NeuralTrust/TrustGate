@@ -22,7 +22,12 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
 )
 
-const chatCompletionsURL = "https://api.x.ai/v1/chat/completions"
+const (
+	chatCompletionsURL = "https://api.x.ai/v1/chat/completions"
+	filesBaseURL       = "https://api.x.ai/v1"
+)
+
+var _ providers.FilesClient = (*client)(nil)
 
 type client struct {
 	chat *openai.ChatCompletionsClient
@@ -48,4 +53,12 @@ func (c *client) CompletionsStream(
 	reqBody []byte,
 ) (iter.Seq2[[]byte, error], error) {
 	return c.chat.CompletionsStream(ctx, chatCompletionsURL, config, reqBody, nil)
+}
+
+func (c *client) Files(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.FilesRequest,
+) (*providers.FilesResult, error) {
+	return c.chat.Files(ctx, providers.JoinOpenAIFilesURL(filesBaseURL, req.Path, req.Query), config, req)
 }

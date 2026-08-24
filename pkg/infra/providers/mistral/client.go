@@ -21,6 +21,8 @@ import (
 	"io"
 	"iter"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
@@ -28,6 +30,17 @@ import (
 
 const (
 	chatCompletionsURL = "https://api.mistral.ai/v1/chat/completions"
+	embeddingsURL      = "https://api.mistral.ai/v1/embeddings"
+	filesBaseURL       = "https://api.mistral.ai/v1"
+	embeddingsPath     = "/embeddings"
+)
+
+var (
+	_ providers.Client                   = (*client)(nil)
+	_ providers.EmbeddingsClient         = (*client)(nil)
+	_ providers.FilesClient              = (*client)(nil)
+	_ providers.AudioSpeechClient        = (*client)(nil)
+	_ providers.AudioTranscriptionClient = (*client)(nil)
 )
 
 type client struct {
@@ -52,6 +65,119 @@ func (c *client) Completions(
 		return nil, fmt.Errorf("API key is required")
 	}
 	return c.rawPost(ctx, chatCompletionsURL, config.Credentials.ApiKey, reqBody)
+}
+
+// Embeddings sends reqBody to Mistral's embeddings API (POST /v1/embeddings).
+func (c *client) Embeddings(
+	ctx context.Context,
+	config *providers.Config,
+	reqBody []byte,
+) ([]byte, error) {
+	if config.Credentials.ApiKey == "" {
+		return nil, fmt.Errorf("API key is required")
+	}
+	url, err := embedURL(config.Options)
+	if err != nil {
+		return nil, err
+	}
+	return c.rawPost(ctx, url, config.Credentials.ApiKey, reqBody)
+}
+
+func (c *client) Files(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.FilesRequest,
+) (*providers.FilesResult, error) {
+	if config.Credentials.ApiKey == "" {
+		return nil, fmt.Errorf("API key is required")
+	}
+	endpoint, err := filesURL(config.Options, req.Path, req.Query)
+	if err != nil {
+		return nil, err
+	}
+	httpClient := c.pool.Get(providers.ProviderMistral, providers.DefaultHTTPTimeout)
+	return providers.DoFilesHTTP(ctx, httpClient, req.Method, endpoint, req.ContentType, req.Body, func(httpReq *http.Request) {
+		httpReq.Header.Set("Authorization", "Bearer "+config.Credentials.ApiKey)
+	})
+}
+
+func (c *client) AudioSpeech(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.AudioRequest,
+) (*providers.AudioResult, error) {
+	req.Body = providers.MapSpeechVoiceToVoiceID(req.Body)
+	result, err := c.audio(ctx, config, req)
+	return providers.UnwrapJSONSpeechAudio(result, err, req.Body)
+}
+
+func (c *client) AudioTranscription(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.AudioRequest,
+) (*providers.AudioResult, error) {
+	return c.audio(ctx, config, req)
+}
+
+func (c *client) audio(
+	ctx context.Context,
+	config *providers.Config,
+	req providers.AudioRequest,
+) (*providers.AudioResult, error) {
+	if config.Credentials.ApiKey == "" {
+		return nil, fmt.Errorf("API key is required")
+	}
+	endpoint, err := audioURL(config.Options, req.Path, req.Query)
+	if err != nil {
+		return nil, err
+	}
+	httpClient := c.pool.Get(providers.ProviderMistral, providers.DefaultHTTPTimeout)
+	return providers.AudioResultFromFiles(providers.DoFilesHTTP(
+		ctx,
+		httpClient,
+		req.Method,
+		endpoint,
+		req.ContentType,
+		req.Body,
+		func(httpReq *http.Request) {
+			httpReq.Header.Set("Authorization", "Bearer "+config.Credentials.ApiKey)
+		},
+	))
+}
+
+func audioURL(options map[string]any, path string, query url.Values) (string, error) {
+	opts, err := providers.DecodeMistralOptions(options)
+	if err != nil {
+		return "", err
+	}
+	base := filesBaseURL
+	if opts.BaseURL != "" {
+		base = strings.TrimRight(opts.BaseURL, "/")
+	}
+	return providers.JoinOpenAIAudioURL(base, path, query), nil
+}
+
+func filesURL(options map[string]any, path string, query url.Values) (string, error) {
+	opts, err := providers.DecodeMistralOptions(options)
+	if err != nil {
+		return "", err
+	}
+	base := filesBaseURL
+	if opts.BaseURL != "" {
+		base = strings.TrimRight(opts.BaseURL, "/")
+	}
+	return providers.JoinOpenAIFilesURL(base, path, query), nil
+}
+
+func embedURL(options map[string]any) (string, error) {
+	opts, err := providers.DecodeMistralOptions(options)
+	if err != nil {
+		return "", err
+	}
+	if opts.BaseURL != "" {
+		return strings.TrimRight(opts.BaseURL, "/") + embeddingsPath, nil
+	}
+	return embeddingsURL, nil
 }
 
 func (c *client) CompletionsStream(
@@ -99,7 +225,7 @@ func (c *client) rawPost(
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 
-	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is compile-time constant
+	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is compile-time default or admin-configured base_url
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}
