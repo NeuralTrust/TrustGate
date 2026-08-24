@@ -26,11 +26,12 @@ import (
 )
 
 type recordingOps struct {
-	enabled   bool
-	request   o11y.Request
-	count     int
-	spanNames []string
-	finished  []o11y.SpanOutcome
+	enabled    bool
+	request    o11y.Request
+	count      int
+	spanNames  []string
+	spanRoutes []o11y.Route
+	finished   []o11y.SpanOutcome
 }
 
 func (r *recordingOps) Enabled() bool {
@@ -42,8 +43,11 @@ func (r *recordingOps) RecordRequest(_ context.Context, req o11y.Request) {
 	r.count++
 }
 
-func (r *recordingOps) StartRequestSpan(ctx context.Context, name string) (context.Context, o11y.RequestSpan) {
+func (r *recordingOps) StartRequestSpan(
+	ctx context.Context, name string, route o11y.Route,
+) (context.Context, o11y.RequestSpan) {
 	r.spanNames = append(r.spanNames, name)
+	r.spanRoutes = append(r.spanRoutes, route)
 	return ctx, recordingSpan{ops: r}
 }
 
@@ -107,6 +111,35 @@ func TestOpsMetricsMiddlewareSpanNameStaysBounded(t *testing.T) {
 	require.NotContains(t, recorder.spanNames[0], "secret")
 	require.Equal(t, o11y.RouteAdminGateways, recorder.finished[0].Route)
 	require.Equal(t, "2xx", recorder.finished[0].StatusClass)
+}
+
+// The route has to reach span start, not just Finish, because it decides whether
+// the span is sampled at all. Probe traffic sampled like request traffic is what
+// buries real traces.
+func TestOpsMetricsMiddlewarePassesRouteToSpanStart(t *testing.T) {
+	tests := []struct {
+		name  string
+		plane o11y.Plane
+		path  string
+		want  o11y.Route
+	}{
+		{name: "liveness probe", plane: o11y.PlaneProxy, path: "/health", want: o11y.RouteHealth},
+		{name: "readiness probe", plane: o11y.PlaneAdmin, path: "/readyz", want: o11y.RouteHealth},
+		{name: "forwarded request", plane: o11y.PlaneProxy, path: "/forward", want: o11y.RouteProxyForward},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := &recordingOps{enabled: true}
+			app := fiber.New()
+			app.Use(NewOpsMetricsMiddleware(recorder, tc.plane).Middleware())
+			app.Get("/*", func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
+
+			resp, err := app.Test(httptest.NewRequest(http.MethodGet, tc.path, nil))
+			require.NoError(t, err)
+			require.NoError(t, resp.Body.Close())
+			require.Equal(t, []o11y.Route{tc.want}, recorder.spanRoutes)
+		})
+	}
 }
 
 func TestOpsMetricsMiddlewareSpanCarriesProductTraceID(t *testing.T) {
