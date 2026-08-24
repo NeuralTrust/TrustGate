@@ -2,6 +2,8 @@
 
 Hits the consumer proxy paths added in this cycle: **models**, **embeddings**, **files**, **audio** (speech + transcriptions), and **images** (generations / edits / variations). Chat and rerank are included as extras.
 
+Runs on macOS `/bin/bash` 3.2 and on Linux bash 4+. Needs `curl` and `python3`.
+
 The script does **not** create a gateway, registry, or consumer. Create those in the console, attach at least one capable registry, copy the consumer slug and API key, then run this.
 
 ## Prerequisites

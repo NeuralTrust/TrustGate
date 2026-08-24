@@ -89,39 +89,50 @@ mkdir -p "$OUT_DIR"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-auth_args() {
-  local -a h
-  h=(-H "X-AG-API-Key: ${CONSUMER_API_KEY}")
-  if [[ -n "$GATEWAY_SLUG" ]]; then
-    h+=(-H "X-AG-Gateway-Slug: ${GATEWAY_SLUG}")
-  fi
-  printf '%s\n' "${h[@]}"
-}
-
-# Prints: STATUS BODY_FILE HEADER_FILE
-# Body is written to $1, headers to $2.
 request() {
   local method="$1" path="$2" bodyfile="$3" headerfile="$4"
   shift 4
-  local mapfile_args
-  mapfile -t mapfile_args < <(auth_args)
-  curl -sS -D "$headerfile" -o "$bodyfile" -w "%{http_code}" \
-    -X "$method" "${BASE}${path}" \
-    "${mapfile_args[@]}" \
-    "$@"
+  if [[ -n "$GATEWAY_SLUG" ]]; then
+    curl -sS -D "$headerfile" -o "$bodyfile" -w "%{http_code}" \
+      -X "$method" "${BASE}${path}" \
+      -H "X-AG-API-Key: ${CONSUMER_API_KEY}" \
+      -H "X-AG-Gateway-Slug: ${GATEWAY_SLUG}" \
+      "$@"
+  else
+    curl -sS -D "$headerfile" -o "$bodyfile" -w "%{http_code}" \
+      -X "$method" "${BASE}${path}" \
+      -H "X-AG-API-Key: ${CONSUMER_API_KEY}" \
+      "$@"
+  fi
 }
 
 header_val() {
   local file="$1" name="$2"
-  awk -v n="$(echo "$name" | tr '[:upper:]' '[:lower:]')" '
+  if [[ ! -f "$file" ]]; then
+    return 0
+  fi
+  awk -v n="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')" '
     BEGIN { FS=": " }
-    { k=tolower($1) }
-    k==n { sub("\r$", "", $2); print $2; exit }
+    {
+      k = $1
+      gsub("\r", "", k)
+      if (tolower(k) == n) {
+        val = $0
+        sub(/^[^:]*:[[:space:]]*/, "", val)
+        gsub("\r", "", val)
+        print val
+        exit
+      }
+    }
   ' "$file"
 }
 
 snippet() {
   local file="$1"
+  if [[ ! -f "$file" ]]; then
+    echo "(no body)"
+    return 0
+  fi
   python3 - "$file" <<'PY'
 import json, sys
 path = sys.argv[1]
