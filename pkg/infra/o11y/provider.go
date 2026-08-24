@@ -52,6 +52,11 @@ const (
 	RouteOther           Route = "other"
 )
 
+// routeAttributeKey carries the bounded Route on a span. It is stamped at span
+// start as well as at Finish because the sampler reads it, and ShouldSample runs
+// before the handler.
+const routeAttributeKey = attribute.Key("http.route")
+
 // Outcome is a bounded request result.
 type Outcome string
 
@@ -95,7 +100,7 @@ type RequestSpan interface {
 type RequestRecorder interface {
 	Enabled() bool
 	RecordRequest(context.Context, Request)
-	StartRequestSpan(ctx context.Context, name string) (context.Context, RequestSpan)
+	StartRequestSpan(ctx context.Context, name string, route Route) (context.Context, RequestSpan)
 }
 
 // Provider owns the operational OTel instruments.
@@ -147,11 +152,17 @@ func (p *Provider) Enabled() bool {
 
 // StartRequestSpan starts the server span for a request. The returned context
 // carries the span, so downstream instrumentation can nest under it.
-func (p *Provider) StartRequestSpan(ctx context.Context, name string) (context.Context, RequestSpan) {
+//
+// The route is passed in rather than derived at Finish because it feeds the
+// sampling decision, which is made here.
+func (p *Provider) StartRequestSpan(ctx context.Context, name string, route Route) (context.Context, RequestSpan) {
 	if p == nil || p.tracer == nil {
 		return ctx, noopSpan{}
 	}
-	ctx, span := p.tracer.Start(ctx, name, trace.WithSpanKind(trace.SpanKindServer))
+	ctx, span := p.tracer.Start(ctx, name,
+		trace.WithSpanKind(trace.SpanKindServer),
+		trace.WithAttributes(routeAttributeKey.String(string(route))),
+	)
 	return ctx, otelSpan{span: span}
 }
 
@@ -186,7 +197,7 @@ type otelSpan struct {
 func (s otelSpan) Finish(out SpanOutcome) {
 	attrs := []attribute.KeyValue{
 		attribute.String("http.request.method", out.Method),
-		attribute.String("http.route", string(out.Route)),
+		routeAttributeKey.String(string(out.Route)),
 		attribute.String("http.response.status_class", out.StatusClass),
 		attribute.String("plane", string(out.Plane)),
 		attribute.String("outcome", string(out.Outcome)),

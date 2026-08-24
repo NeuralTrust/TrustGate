@@ -28,6 +28,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -53,6 +54,10 @@ const (
 	// fallbackSamplingRatio applies when the configured ratio is out of range.
 	// Sampling nothing is spelled OPS_TRACES_ENABLED=false, not ratio 0.
 	fallbackSamplingRatio = 1.0
+
+	// fallbackProbeSamplingRatio applies when the configured probe ratio is out of
+	// range. It must stay in step with defaultOpsTracesProbeSamplingRatio.
+	fallbackProbeSamplingRatio = 0.01
 )
 
 // SDK owns the OpenTelemetry SDK providers behind operational telemetry: bounded
@@ -85,9 +90,19 @@ func NewSDK(cfg *config.Config, logger *slog.Logger) (*SDK, error) {
 		}
 		sdk.traces = provider
 		otel.SetTracerProvider(provider)
+		// Without this the global propagator stays the SDK's no-op composite, and
+		// outbound instrumentation would open client spans while injecting no
+		// headers at all — a connected-looking gateway with a disconnected trace.
+		//
+		// TraceContext alone, not the composite with Baggage: nothing here reads or
+		// writes baggage, and it would be needless surface on a public edge. Note
+		// this only installs the *writer*. Extraction is a middleware decision and
+		// TrustGate deliberately does not extract (see requestSampler below).
+		otel.SetTextMapPropagator(propagation.TraceContext{})
 		logger.Info("operational traces enabled",
 			slog.String("service", ServiceName),
-			slog.Float64("samplingRatio", samplingRatio(tel.OpsTracesSamplingRatio)))
+			slog.Float64("samplingRatio", samplingRatio(tel.OpsTracesSamplingRatio)),
+			slog.Float64("probeSamplingRatio", probeSamplingRatio(tel.OpsTracesProbeSamplingRatio)))
 	}
 
 	if tel.OpsMetricsEnabled {
@@ -151,12 +166,62 @@ func newTracerProvider(cfg *config.Config) (*sdktrace.TracerProvider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("operational traces exporter: %w", err)
 	}
-	ratio := samplingRatio(cfg.Telemetry.OpsTracesSamplingRatio)
 	return sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exporter),
 		sdktrace.WithResource(newResource(cfg)),
-		sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(ratio))),
+		sdktrace.WithSampler(requestSampler(
+			samplingRatio(cfg.Telemetry.OpsTracesSamplingRatio),
+			probeSamplingRatio(cfg.Telemetry.OpsTracesProbeSamplingRatio),
+		)),
 	), nil
+}
+
+// requestSampler builds the sampling policy: probe routes at their own ratio,
+// every other route at the configured one, and child spans inheriting whatever
+// their parent decided.
+//
+// ParentBased is left bare deliberately. It honours a remote parent that says
+// sampled=0, which lets an upstream caller silence this service's traces — the
+// AUT-576 failure mode that TrustGuard had to fix with WithRemoteParentNotSampled.
+// It cannot happen here because TrustGate never extracts inbound trace context:
+// it is the internet-facing edge, so it mints its own trace and only injects
+// downstream (pkg/api/middleware/trace_id.go records why caller-supplied trace
+// identity is refused). Adding inbound extraction means adding that guard here.
+func requestSampler(ratio, probeRatio float64) sdktrace.Sampler {
+	return sdktrace.ParentBased(routeSampler{
+		other: sdktrace.TraceIDRatioBased(ratio),
+		probe: sdktrace.TraceIDRatioBased(probeRatio),
+	})
+}
+
+// routeSampler splits the root decision by route so probes get their own budget.
+//
+// It reads start-time attributes because ShouldSample runs before the handler.
+// The bounded attributes a server span carries are otherwise only known at
+// Finish, which is far too late to influence sampling.
+type routeSampler struct {
+	other sdktrace.Sampler
+	probe sdktrace.Sampler
+}
+
+func (s routeSampler) ShouldSample(p sdktrace.SamplingParameters) sdktrace.SamplingResult {
+	if isProbeRoute(p.Attributes) {
+		return s.probe.ShouldSample(p)
+	}
+	return s.other.ShouldSample(p)
+}
+
+func (s routeSampler) Description() string {
+	return fmt.Sprintf("RouteSampler{probe:%s,other:%s}", s.probe.Description(), s.other.Description())
+}
+
+func isProbeRoute(attrs []attribute.KeyValue) bool {
+	for _, attr := range attrs {
+		if attr.Key == routeAttributeKey {
+			return attr.Value.AsString() == string(RouteHealth)
+		}
+	}
+	return false
 }
 
 func newMeterProvider(cfg *config.Config) (*sdkmetric.MeterProvider, error) {
@@ -224,6 +289,24 @@ func samplingRatio(configured float64) float64 {
 	switch {
 	case configured <= 0, configured > 1:
 		return fallbackSamplingRatio
+	default:
+		return configured
+	}
+}
+
+// probeSamplingRatio clamps the probe ratio. It differs from samplingRatio in
+// accepting 0, because dropping probe spans outright is the whole point of a
+// separate knob, whereas a 0 on the main ratio is a typo that would blind the
+// service.
+//
+// Out of range falls back to the default, not to the main ratio. The likely typo
+// here is a percentage — "10" meaning 10% — and every overlay runs the main ratio
+// at 1.0, so deferring to it would answer a typo by restoring the full probe
+// flood this knob exists to stop. The effective value is logged at boot.
+func probeSamplingRatio(configured float64) float64 {
+	switch {
+	case configured < 0, configured > 1:
+		return fallbackProbeSamplingRatio
 	default:
 		return configured
 	}

@@ -28,10 +28,7 @@ import (
 
 func recordingProvider(t *testing.T) (*Provider, *tracetest.SpanRecorder) {
 	t.Helper()
-	recorder := tracetest.NewSpanRecorder()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
-	t.Cleanup(func() { require.NoError(t, tp.Shutdown(context.Background())) })
-	return &Provider{tracer: tp.Tracer("test")}, recorder
+	return sampledProvider(t, sdktrace.AlwaysSample())
 }
 
 func TestProviderEnabledFollowsEitherSignal(t *testing.T) {
@@ -45,7 +42,7 @@ func TestProviderEnabledFollowsEitherSignal(t *testing.T) {
 func TestStartRequestSpanRecordsBoundedAttributes(t *testing.T) {
 	provider, recorder := recordingProvider(t)
 
-	_, span := provider.StartRequestSpan(context.Background(), "POST proxy.forward")
+	_, span := provider.StartRequestSpan(context.Background(), "POST proxy.forward", RouteProxyForward)
 	span.Finish(SpanOutcome{
 		Request: Request{
 			Plane:       PlaneProxy,
@@ -81,7 +78,7 @@ func TestStartRequestSpanRecordsBoundedAttributes(t *testing.T) {
 func TestStartRequestSpanMarksServerErrors(t *testing.T) {
 	provider, recorder := recordingProvider(t)
 
-	_, span := provider.StartRequestSpan(context.Background(), "GET proxy.forward")
+	_, span := provider.StartRequestSpan(context.Background(), "GET proxy.forward", RouteProxyForward)
 	span.Finish(SpanOutcome{Request: Request{Outcome: OutcomeServerError}})
 
 	ended := recorder.Ended()
@@ -93,7 +90,7 @@ func TestStartRequestSpanWithoutTracerIsNoop(t *testing.T) {
 	provider := &Provider{metricsEnabled: true}
 	ctx := context.Background()
 
-	got, span := provider.StartRequestSpan(ctx, "GET health")
+	got, span := provider.StartRequestSpan(ctx, "GET health", RouteHealth)
 	require.Equal(t, ctx, got)
 	span.Finish(SpanOutcome{})
 }

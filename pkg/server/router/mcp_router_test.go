@@ -65,7 +65,9 @@ func (r *routerOpsRecorder) RecordRequest(_ context.Context, request o11y.Reques
 	r.count++
 }
 
-func (r *routerOpsRecorder) StartRequestSpan(ctx context.Context, _ string) (context.Context, o11y.RequestSpan) {
+func (r *routerOpsRecorder) StartRequestSpan(
+	ctx context.Context, _ string, _ o11y.Route,
+) (context.Context, o11y.RequestSpan) {
 	return ctx, routerOpsSpan{}
 }
 
