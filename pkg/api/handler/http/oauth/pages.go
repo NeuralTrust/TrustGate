@@ -20,31 +20,32 @@ import (
 	"net/url"
 	"strings"
 
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	domaincatalog "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/gofiber/fiber/v2"
 )
 
 const pageCSS = `
 :root{
-  --bg:#08080a;--surface:#0e0e11;--elevated:#18181d;--border:#232329;
-  --border-strong:#2e2e36;--fg:#ededf0;--muted:#8a8a94;--faint:#5c5c66;
-  --accent:#7c7cff;--accent-hover:#8f8fff;--success:#4ade80;--danger:#f87171;
-  --danger-soft:#2a1416;--radius:9px;--radius-lg:13px;
+  --bg:#03020f;--surface:#1a1a28;--elevated:#11101d;--border:#272730;
+  --border-strong:#3f3f46;--fg:#fcfcfc;--muted:#999999;--faint:#888888;
+  --accent:#9053ff;--accent-hover:#a370ff;--accent-active:#653ab3;
+  --success:#00fe18;--danger:#ff5b67;--danger-soft:#350d1a;
+  --radius:8px;--radius-lg:12px;
 }
 *{box-sizing:border-box;border-color:var(--border)}
 html{color-scheme:dark}
 body{
   margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
   background:var(--bg);color:var(--fg);
-  background-image:radial-gradient(circle at 1px 1px,rgba(255,255,255,.04) 1px,transparent 0);
-  background-size:28px 28px;
   font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
-  -webkit-font-smoothing:antialiased;
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
 }
 .card{
   width:100%;max-width:560px;margin:40px 16px;padding:32px;
   background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);
-  box-shadow:0 16px 48px rgba(0,0,0,.45);
+  box-shadow:0 16px 32px -8px rgba(0,0,0,.55);
 }
 .brand{display:flex;align-items:center;gap:10px;margin-bottom:24px}
 .brand .mark{
@@ -54,37 +55,54 @@ body{
 .brand .mark svg{width:100%;height:100%;display:block}
 .brand .name{font-weight:600;font-size:14px;letter-spacing:.01em}
 .brand .product{color:var(--faint);font-size:14px}
-h1{font-size:19px;font-weight:600;margin:0 0 6px}
-p.sub{color:var(--muted);margin:0 0 24px;font-size:13.5px;line-height:1.55}
+h1{font-size:18px;font-weight:600;margin:0 0 6px;letter-spacing:-.02em}
+p.sub{color:var(--muted);margin:0 0 24px;font-size:14px;line-height:1.45}
 code{
-  font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12.5px;
-  background:var(--elevated);border:1px solid var(--border);border-radius:5px;padding:1px 6px;
+  font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12px;
+  background:var(--elevated);border:1px solid var(--border);border-radius:6px;padding:1px 6px;
 }
 .flash{
-  background:var(--danger-soft);color:var(--danger);border:1px solid #4a2226;
+  background:var(--danger-soft);color:var(--danger);border:1px solid rgba(255,91,103,.35);
   border-radius:var(--radius);padding:10px 14px;font-size:13px;margin-bottom:16px;
 }
-.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 0;border-top:1px solid var(--border)}
-.row:last-of-type{border-bottom:1px solid var(--border)}
-.name{font-weight:600;font-size:14px;text-transform:capitalize}
-.reg{color:var(--faint);font-size:12px;margin-top:2px}
-.status{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--success)}
-.status .dot{width:7px;height:7px;border-radius:99px;background:var(--success);flex:none}
-.status.expired{color:var(--danger)}
-.status.expired .dot{background:var(--danger)}
-.actions{display:flex;align-items:center;gap:10px;flex:none}
+.list{display:flex;flex-direction:column;gap:10px}
+.row{
+  display:flex;align-items:center;justify-content:space-between;gap:14px;
+  padding:14px 16px;background:var(--elevated);border:1px solid var(--border);border-radius:var(--radius);
+}
+.identity{display:flex;align-items:center;gap:12px;min-width:0}
+.logo{
+  width:48px;height:48px;border-radius:var(--radius);flex:none;
+  display:flex;align-items:center;justify-content:center;background:var(--border);
+}
+.logo img{width:32px;height:32px;object-fit:contain;display:block}
+.meta{min-width:0}
+.name{font-weight:500;font-size:14px;letter-spacing:-.02em;color:var(--fg)}
+.reg{color:var(--muted);font-size:12px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.status{
+  display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;
+  border-radius:999px;font-size:12px;font-weight:500;color:#00b211;background:rgba(0,178,17,.16);
+}
+.status .dot{width:6px;height:6px;border-radius:99px;background:currentColor;flex:none}
+.status.expired{color:var(--danger);background:rgba(255,91,103,.16)}
+.actions{display:flex;align-items:center;gap:8px;flex:none}
 a.btn,button.btn{
-  display:inline-block;border-radius:var(--radius);padding:8px 18px;font-size:13.5px;font-weight:600;
-  font-family:inherit;text-decoration:none;cursor:pointer;border:1px solid transparent;
-  background:var(--accent);color:#fff;transition:background .12s ease;
+  display:inline-flex;align-items:center;justify-content:center;height:32px;padding:0 12px;
+  border-radius:var(--radius);font-size:14px;font-weight:500;font-family:inherit;
+  text-decoration:none;cursor:pointer;border:1px solid transparent;
+  background:var(--accent);color:#fff;transition:background .1s ease,border-color .1s ease;
 }
 a.btn:hover,button.btn:hover{background:var(--accent-hover)}
-button.revoke{background:transparent;color:var(--danger);border-color:var(--border-strong)}
+a.btn:active,button.btn:active{background:var(--accent-active)}
+button.revoke{background:transparent;color:var(--danger);border-color:var(--border)}
 button.revoke:hover{background:var(--danger-soft)}
-a.btn.continue{background:var(--success);color:#08240f}
-a.btn.continue:hover{background:#6ee7a0}
-.resume{margin-top:24px;padding-top:20px;border-top:1px solid var(--border-strong);display:flex;align-items:center;justify-content:space-between;gap:12px}
-.empty{color:var(--muted);font-size:13.5px;padding:20px 0}
+a.btn.continue{background:#00b211;color:#03020f}
+a.btn.continue:hover{background:#00fe18}
+.resume{
+  margin-top:20px;padding:14px 16px;border:1px solid var(--border);border-radius:var(--radius);
+  background:var(--elevated);display:flex;align-items:center;justify-content:space-between;gap:12px;
+}
+.empty{color:var(--muted);font-size:14px;padding:8px 0}
 .center{text-align:center}
 .center .brand{justify-content:center}
 .center h1{margin-top:18px}
@@ -94,18 +112,18 @@ a.btn.continue:hover{background:#6ee7a0}
 .check{
   width:48px;height:48px;border-radius:99px;margin:26px auto 0;
   display:flex;align-items:center;justify-content:center;
-  color:var(--success);background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.25);
+  color:#00b211;background:rgba(0,178,17,.12);border:1px solid rgba(0,178,17,.28);
 }
-.hint{color:var(--faint);font-size:12.5px;margin-top:18px;line-height:1.5}
+.hint{color:var(--faint);font-size:12px;margin-top:18px;line-height:1.5}
 .hint a{color:var(--muted);text-decoration:underline;text-underline-offset:2px}
 .hint a:hover{color:var(--fg)}
 .field{display:flex;flex-direction:column;gap:8px}
-.field label{font-size:13px;font-weight:600}
+.field label{font-size:13px;font-weight:500}
 .field input{
-  width:100%;border:1px solid var(--border-strong);border-radius:var(--radius);
-  background:var(--elevated);color:var(--fg);font:inherit;padding:10px 12px;
+  width:100%;height:40px;border:1px solid var(--border);border-radius:var(--radius);
+  background:var(--elevated);color:var(--fg);font:inherit;padding:0 12px;
 }
-.field input:focus{outline:2px solid var(--accent);outline-offset:2px}
+.field input:focus{outline:none;border-color:var(--accent)}
 .connect-form{display:flex;flex-direction:column;gap:20px}
 .connect-form .btn{align-self:flex-start}
 `
@@ -122,8 +140,11 @@ var connectPageTmpl = template.Must(template.New("connect").Parse(`<!doctype htm
 <p class="sub">Virtual MCP <code>{{.ConsumerPath}}</code> needs access to these services on your behalf. Tokens are stored encrypted in the gateway vault and are never exposed to the agent.</p>
 {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
 {{if not .Providers}}<p class="empty">No third-party providers are configured for this virtual MCP.</p>{{end}}
-{{range .Providers}}<div class="row">
-  <div><div class="name">{{.Registry}}</div><div class="reg">{{.Provider}}</div></div>
+<div class="list">{{range .Providers}}<div class="row">
+  <div class="identity">
+    <div class="logo"><img src="{{.LogoURL}}" alt="" width="32" height="32" onerror="this.onerror=null;this.src='/oauth/brands/mcp.svg'"></div>
+    <div class="meta"><div class="name">{{.DisplayName}}</div><div class="reg">{{.Subtitle}}</div></div>
+  </div>
   <div class="actions">{{if .NeedsReconnect}}
     <span class="status expired"><span class="dot"></span>Expired</span>
     <a class="btn" href="/oauth/connect/{{.Provider}}?ticket={{$.Ticket}}">Reconnect</a>
@@ -133,7 +154,7 @@ var connectPageTmpl = template.Must(template.New("connect").Parse(`<!doctype htm
   {{else}}
     <a class="btn" href="/oauth/connect/{{.Provider}}?ticket={{$.Ticket}}">Connect</a>
   {{end}}</div>
-</div>{{end}}
+</div>{{end}}</div>
 {{if .ResumeURL}}<div class="resume">
   <div><div class="name">Done connecting?</div><div class="reg">Return to your application to finish signing in.</div></div>
   <a class="btn continue" href="{{.ResumeURL}}">Continue</a>
@@ -183,22 +204,79 @@ var deepLinkPageTmpl = template.Must(template.New("deeplink").Parse(`<!doctype h
 </script>
 </div></body></html>`))
 
+type providerView struct {
+	Provider       string
+	DisplayName    string
+	Subtitle       string
+	LogoURL        template.URL
+	Linked         bool
+	NeedsReconnect bool
+}
+
 type connectPageView struct {
 	ConsumerPath string
 	Flash        string
 	Ticket       string
-	Providers    []appoauth.ProviderStatus
+	Providers    []providerView
 	ResumeURL    template.URL
 }
 
-func renderConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, flash string) error {
+func renderConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, flash string, catalog appcatalog.MCPServerCatalog) error {
 	return renderHTML(c, connectPageTmpl, connectPageView{
 		ConsumerPath: page.ConsumerPath,
 		Flash:        flash,
 		Ticket:       ticket,
-		Providers:    page.Providers,
+		Providers:    decorateProviders(catalog, page.Providers),
 		ResumeURL:    template.URL(page.ResumeURL), // #nosec G203 -- gateway-built from the registered redirect_uri, never user input
 	})
+}
+
+func decorateProviders(catalog appcatalog.MCPServerCatalog, providers []appoauth.ProviderStatus) []providerView {
+	out := make([]providerView, 0, len(providers))
+	for _, p := range providers {
+		out = append(out, decorateProvider(catalog, p))
+	}
+	return out
+}
+
+func decorateProvider(catalog appcatalog.MCPServerCatalog, p appoauth.ProviderStatus) providerView {
+	display := strings.TrimSpace(p.Registry)
+	if display == "" {
+		display = p.Provider
+	}
+	vendor := ""
+	if catalog != nil {
+		if server, ok := lookupCatalogServer(catalog, p.Code, p.Provider); ok {
+			if server.DisplayName != "" {
+				display = server.DisplayName
+			}
+			vendor = server.Vendor
+		}
+	}
+	subtitle := p.Registry
+	if subtitle == "" || subtitle == display {
+		subtitle = p.Provider
+	}
+	return providerView{
+		Provider:       p.Provider,
+		DisplayName:    display,
+		Subtitle:       subtitle,
+		LogoURL:        template.URL(appcatalog.BrandIconURL(vendor, display, p.Provider, p.Registry, p.Code)), // #nosec G203 -- path is chosen from the bundled brand map
+		Linked:         p.Linked,
+		NeedsReconnect: p.NeedsReconnect,
+	}
+}
+
+func lookupCatalogServer(catalog appcatalog.MCPServerCatalog, keys ...string) (domaincatalog.MCPServer, bool) {
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		if server, ok := catalog.GetByCode(key); ok {
+			return server, true
+		}
+	}
+	return domaincatalog.MCPServer{}, false
 }
 
 type apiKeyConnectPageView struct {

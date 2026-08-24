@@ -77,7 +77,7 @@ func TestConnectPage_RouteMatchesNestedConsumerPaths(t *testing.T) {
 	h := NewConnectHandler(&stubConnectService{page: &appoauth.ConnectPage{
 		ConsumerPath: "/v1/mcp/dev",
 		Providers:    []appoauth.ProviderStatus{{Provider: "github", Registry: "github-mcp"}},
-	}})
+	}}, nil)
 	app := fiber.New()
 	app.Get("/+/connect", h.Page)
 
@@ -96,7 +96,7 @@ func TestConnectPage_RouteMatchesNestedConsumerPaths(t *testing.T) {
 
 func TestConnectPage_MissingTicketIs401(t *testing.T) {
 	t.Parallel()
-	h := NewConnectHandler(&stubConnectService{})
+	h := NewConnectHandler(&stubConnectService{}, nil)
 	app := fiber.New()
 	app.Get("/+/connect", h.Page)
 	res, err := app.Test(httptest.NewRequest("GET", "/v1/mcp/dev/connect", nil))
@@ -110,7 +110,7 @@ func TestConnectPage_MissingTicketIs401(t *testing.T) {
 
 func TestConnectPage_ExpiredTicketIs401(t *testing.T) {
 	t.Parallel()
-	h := NewConnectHandler(&stubConnectService{err: appoauth.ErrTicketNotFound})
+	h := NewConnectHandler(&stubConnectService{err: appoauth.ErrTicketNotFound}, nil)
 	app := fiber.New()
 	app.Get("/+/connect", h.Page)
 	res, err := app.Test(httptest.NewRequest("GET", "/x/connect?ticket=stale", nil))
@@ -124,7 +124,7 @@ func TestConnectPage_ExpiredTicketIs401(t *testing.T) {
 
 func TestConnectStart_RedirectsToProvider(t *testing.T) {
 	t.Parallel()
-	h := NewConnectHandler(&stubConnectService{})
+	h := NewConnectHandler(&stubConnectService{}, nil)
 	app := fiber.New()
 	app.Get(ConnectStartPath, h.Start)
 	res, err := app.Test(httptest.NewRequest("GET", "/oauth/connect/github?ticket=abc", nil))
@@ -142,7 +142,7 @@ func TestConnectStart_RedirectsToProvider(t *testing.T) {
 func TestConnectStart_ProviderWithSlash(t *testing.T) {
 	t.Parallel()
 	stub := &stubConnectService{}
-	h := NewConnectHandler(stub)
+	h := NewConnectHandler(stub, nil)
 	app := fiber.New()
 	app.Get(ConnectStartPath, h.Start)
 	res, err := app.Test(httptest.NewRequest("GET", "/oauth/connect/app.linear/mcp?ticket=abc", nil))
