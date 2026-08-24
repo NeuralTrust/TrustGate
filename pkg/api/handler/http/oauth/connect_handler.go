@@ -18,6 +18,7 @@ import (
 	"errors"
 	"strings"
 
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/gofiber/fiber/v2"
 )
@@ -28,14 +29,16 @@ const (
 	ConnectStartPath    = "/oauth/connect/*"
 	ConnectCallbackPath = "/oauth/callback/*"
 	DisconnectPath      = "/oauth/disconnect/*"
+	BrandAssetPath      = "/oauth/brands/*"
 )
 
 type ConnectHandler struct {
 	connect appoauth.ConnectService
+	catalog appcatalog.MCPServerCatalog
 }
 
-func NewConnectHandler(connect appoauth.ConnectService) *ConnectHandler {
-	return &ConnectHandler{connect: connect}
+func NewConnectHandler(connect appoauth.ConnectService, catalog appcatalog.MCPServerCatalog) *ConnectHandler {
+	return &ConnectHandler{connect: connect, catalog: catalog}
 }
 
 func (h *ConnectHandler) Page(c *fiber.Ctx) error {
@@ -85,7 +88,7 @@ func (h *ConnectHandler) showPage(c *fiber.Ctx, ticket, flash string) error {
 	if err != nil {
 		return h.pageError(c, err)
 	}
-	return renderConnectPage(c, page, ticket, flash)
+	return renderConnectPage(c, page, ticket, flash, h.catalog)
 }
 
 func (h *ConnectHandler) pageError(c *fiber.Ctx, err error) error {
