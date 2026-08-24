@@ -35,10 +35,10 @@ EMBED_MODEL="${EMBED_MODEL:-text-embedding-3-small}"
 TTS_MODEL="${TTS_MODEL:-tts-1}"
 TTS_VOICE="${TTS_VOICE:-alloy}"
 STT_MODEL="${STT_MODEL:-whisper-1}"
-IMAGE_MODEL="${IMAGE_MODEL:-dall-e-2}"
-IMAGE_EDIT_MODEL="${IMAGE_EDIT_MODEL:-dall-e-2}"
-IMAGE_SIZE="${IMAGE_SIZE:-256x256}"
-FILE_PURPOSE="${FILE_PURPOSE:-assistants}"
+IMAGE_MODEL="${IMAGE_MODEL:-}"
+IMAGE_EDIT_MODEL="${IMAGE_EDIT_MODEL:-}"
+IMAGE_SIZE="${IMAGE_SIZE:-1024x1024}"
+FILE_PURPOSE="${FILE_PURPOSE:-user_data}"
 RERANK_MODEL="${RERANK_MODEL:-rerank-english-v3.0}"
 
 RED='\033[0;31m'
@@ -218,6 +218,49 @@ with wave.open(path, "w") as w:
 PY
 }
 
+catalog_image_model() {
+  local catalog="$1"
+  if [[ ! -f "$catalog" ]]; then
+    return 0
+  fi
+  python3 - "$catalog" <<'PY'
+import json, sys
+preferred = (
+    "gpt-image-1",
+    "chatgpt-image-latest",
+    "gpt-image-1-mini",
+    "dall-e-3",
+    "dall-e-2",
+)
+try:
+    rows = json.load(open(sys.argv[1])).get("data") or []
+except Exception:
+    raise SystemExit
+ids = [row.get("id") for row in rows if isinstance(row, dict) and row.get("id")]
+for name in preferred:
+    if name in ids:
+        print(name)
+        raise SystemExit
+for name in ids:
+    if "image" in name or name.startswith("dall-e"):
+        print(name)
+        raise SystemExit
+PY
+}
+
+resolve_image_models() {
+  if [[ -z "$IMAGE_MODEL" ]]; then
+    if [[ ! -f "$TMP/models.json" ]]; then
+      request GET "/v1/models" "$TMP/models.json" "$TMP/models-for-images.hdr" >/dev/null
+    fi
+    IMAGE_MODEL="$(catalog_image_model "$TMP/models.json")"
+    IMAGE_MODEL="${IMAGE_MODEL:-gpt-image-1}"
+  fi
+  if [[ -z "$IMAGE_EDIT_MODEL" ]]; then
+    IMAGE_EDIT_MODEL="$IMAGE_MODEL"
+  fi
+}
+
 write_png() {
   python3 - "$1" <<'PY'
 import struct, zlib, sys
@@ -342,7 +385,11 @@ PY
     body="$TMP/file-content.bin"
     hdr="$TMP/file-content.hdr"
     status="$(request GET "/v1/files/${FILE_ID}/content" "$body" "$hdr")"
-    expect_ok "files.content" "$status" "$body" "$hdr"
+    if [[ "$status" == "400" ]] && grep -q 'Not allowed to download files of purpose' "$body" 2>/dev/null; then
+      warn "files.content  HTTP 400  (provider forbids downloading purpose=${FILE_PURPOSE})  $(snippet "$body")"
+    else
+      expect_ok "files.content" "$status" "$body" "$hdr"
+    fi
     info "DELETE /v1/files/${FILE_ID}"
     body="$TMP/file-del.json"
     hdr="$TMP/file-del.hdr"
@@ -399,6 +446,7 @@ fi
 # --- images ---
 PNG="${OUT_DIR}/logo.png"
 if want images; then
+  resolve_image_models
   write_png "$PNG"
   info "POST /v1/images/generations  model=${IMAGE_MODEL}"
   body="$TMP/img.json"
@@ -422,15 +470,19 @@ if want images; then
   expect_ok "images.edits" "$status" "$body" "$hdr"
   echo "    $(snippet "$body")"
 
-  info "POST /v1/images/variations  model=${IMAGE_EDIT_MODEL}"
-  body="$TMP/img-var.json"
-  hdr="$TMP/img-var.hdr"
-  status="$(request POST "/v1/images/variations" "$body" "$hdr" \
-    -F "model=${IMAGE_EDIT_MODEL}" \
-    -F "image=@${PNG};type=image/png"
-  )"
-  expect_ok "images.variations" "$status" "$body" "$hdr"
-  echo "    $(snippet "$body")"
+  if [[ "$IMAGE_EDIT_MODEL" == "dall-e-2" ]]; then
+    info "POST /v1/images/variations  model=${IMAGE_EDIT_MODEL}"
+    body="$TMP/img-var.json"
+    hdr="$TMP/img-var.hdr"
+    status="$(request POST "/v1/images/variations" "$body" "$hdr" \
+      -F "model=${IMAGE_EDIT_MODEL}" \
+      -F "image=@${PNG};type=image/png"
+    )"
+    expect_ok "images.variations" "$status" "$body" "$hdr"
+    echo "    $(snippet "$body")"
+  else
+    warn "images.variations  skipped (OpenAI only serves variations on dall-e-2; using ${IMAGE_EDIT_MODEL})"
+  fi
   echo ""
 fi
 
