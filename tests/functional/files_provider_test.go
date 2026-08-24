@@ -80,6 +80,89 @@ func filesAPITail(path string) string {
 	return path[idx:]
 }
 
+func filesIDFromAPITail(tail string) string {
+	rest := strings.TrimPrefix(tail, "/files/")
+	if rest == tail || rest == "" {
+		return ""
+	}
+	id, extra, found := strings.Cut(rest, "/")
+	if id == "" {
+		return ""
+	}
+	if found && extra != "content" {
+		return ""
+	}
+	return id
+}
+
+func filesIDFamilyName(id string) string {
+	switch {
+	case strings.HasPrefix(id, "file_"):
+		return "anthropic"
+	case strings.HasPrefix(id, "file-"):
+		return "openai"
+	default:
+		return ""
+	}
+}
+
+func newFilesFamilyUpstream(t *testing.T, acceptFamily string) (*fakeUpstream, *filesCall) {
+	t.Helper()
+	last := &filesCall{}
+	u := &fakeUpstream{}
+	u.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u.record(r)
+		last.method = r.Method
+		last.path = r.URL.Path
+		last.query = r.URL.RawQuery
+		last.contentType = r.Header.Get("Content-Type")
+		last.apiKey = r.Header.Get("x-api-key")
+		last.version = r.Header.Get("anthropic-version")
+		last.body = append([]byte(nil), u.LastBody()...)
+
+		tail := filesAPITail(r.URL.Path)
+		if tail == "" {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprintf(w, `{"error":{"message":"unexpected path %s"}}`, r.URL.Path)
+			return
+		}
+		id := filesIDFromAPITail(tail)
+		if id != "" && filesIDFamilyName(id) != acceptFamily {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			if acceptFamily == "anthropic" {
+				_, _ = io.WriteString(w, `{"type":"error","error":{"type":"invalid_request_error","message":"File id must have `+"`file_`"+` prefix."}}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"error":{"message":"unknown file"}}`)
+			return
+		}
+
+		switch {
+		case r.Method == http.MethodPost && tail == "/files":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"file-1","object":"file","filename":"notes.txt","purpose":"assistants"}`)
+		case r.Method == http.MethodGet && tail == "/files":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"file-1","object":"file"}]}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(tail, "/content"):
+			w.Header().Set("Content-Type", "application/octet-stream")
+			_, _ = io.WriteString(w, "file-bytes")
+		case r.Method == http.MethodGet && id != "":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"id":%q,"object":"file"}`, id)
+		case r.Method == http.MethodDelete && id != "":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"id":%q,"object":"file","deleted":true}`, id)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprintf(w, `{"error":{"message":"unexpected %s %s"}}`, r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(u.server.Close)
+	return u, last
+}
+
 func setupFilesRoute(t *testing.T, payload map[string]any) (string, string) {
 	t.Helper()
 	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("files-gw")})
@@ -247,6 +330,94 @@ func TestFiles_FiltersIncapableProviderFromPool(t *testing.T) {
 	assert.Equal(t, "openai", headers.Get("X-Selected-Provider"))
 	assert.Equal(t, "/v1/files", last.path)
 	assert.Equal(t, 1, capable.Hits())
+}
+
+func TestFiles_RetrieveRoutesByFileIDFamily(t *testing.T) {
+	defer Track(t, "FilesProvider")()
+
+	openaiUp, openaiLast := newFilesFamilyUpstream(t, "openai")
+	anthropicUp, anthropicLast := newFilesFamilyUpstream(t, "anthropic")
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("files-id-gw")})
+	openaiID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("oai-files"), openaiUp.URL()+"/v1"))
+	anthropicID := CreateRegistry(t, gatewayID, anthropicFilesBackendPayload(uniqueName("ant-files"), anthropicUp.URL()+"/v1"))
+	coID := CreateConsumer(t, gatewayID, map[string]any{"name": uniqueName("files-id")})
+	AttachRegistry(t, gatewayID, coID, openaiID)
+	AttachRegistry(t, gatewayID, coID, anthropicID)
+	apiKey := createAndAttachAPIKey(t, gatewayID, coID)
+	path := "/" + ConsumerSlug(t, coID) + "/v1/files"
+	openaiFileID := "file-HZeYkGtNsAzNTWQmMHbM27"
+	anthropicFileID := "file_011CNha8iCJcU1wXNR6q4V8w"
+
+	for range 5 {
+		status, headers, body := proxyRequest(t, http.MethodGet, apiKey, path+"/"+openaiFileID, nil, nil)
+		assert.Equal(t, http.StatusOK, status, "body: %s", body)
+		assert.Equal(t, "openai", headers.Get("X-Selected-Provider"))
+		assert.Equal(t, "/v1/files/"+openaiFileID, openaiLast.path)
+	}
+	assert.Equal(t, 0, anthropicUp.Hits(), "openai file id must not reach anthropic")
+
+	status, headers, body := proxyRequest(t, http.MethodGet, apiKey, path+"/"+openaiFileID+"/content", nil, nil)
+	assert.Equal(t, http.StatusOK, status, "body: %s", body)
+	assert.Equal(t, "openai", headers.Get("X-Selected-Provider"))
+	assert.Equal(t, "/v1/files/"+openaiFileID+"/content", openaiLast.path)
+	assert.Equal(t, "file-bytes", string(body))
+
+	status, headers, body = proxyRequest(t, http.MethodDelete, apiKey, path+"/"+openaiFileID, nil, nil)
+	assert.Equal(t, http.StatusOK, status, "body: %s", body)
+	assert.Equal(t, "openai", headers.Get("X-Selected-Provider"))
+	assert.Equal(t, http.MethodDelete, openaiLast.method)
+
+	status, headers, body = proxyRequest(t, http.MethodGet, apiKey, path+"/"+anthropicFileID, nil, nil)
+	assert.Equal(t, http.StatusOK, status, "body: %s", body)
+	assert.Equal(t, "anthropic", headers.Get("X-Selected-Provider"))
+	assert.Equal(t, "/v1/files/"+anthropicFileID, anthropicLast.path)
+	assert.Equal(t, 7, openaiUp.Hits())
+}
+
+func newFilesNotFoundUpstream(t *testing.T) *fakeUpstream {
+	t.Helper()
+	u := &fakeUpstream{}
+	u.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u.record(r)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"error":{"message":"No such File object"}}`)
+	}))
+	t.Cleanup(u.server.Close)
+	return u
+}
+
+func TestFiles_RetrieveFanOutOn404WithinFamily(t *testing.T) {
+	defer Track(t, "FilesProvider")()
+
+	miss := newFilesNotFoundUpstream(t)
+	hit, last := newFilesFamilyUpstream(t, "openai")
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("files-fanout-gw")})
+	missID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("oai-miss"), miss.URL()+"/v1"))
+	hitID := CreateRegistry(t, gatewayID, mistralBackendPayload(uniqueName("mistral-hit"), hit.URL()+"/v1"))
+	coID := CreateConsumer(t, gatewayID, map[string]any{"name": uniqueName("files-fanout")})
+	AttachRegistry(t, gatewayID, coID, missID)
+	AttachRegistry(t, gatewayID, coID, hitID)
+	apiKey := createAndAttachAPIKey(t, gatewayID, coID)
+	path := "/" + ConsumerSlug(t, coID) + "/v1/files/file-HZeYkGtNsAzNTWQmMHbM27"
+
+	status, headers, body := proxyRequest(t, http.MethodGet, apiKey, path, nil, nil)
+	assert.Equal(t, http.StatusOK, status, "body: %s", body)
+	assert.Equal(t, "mistral", headers.Get("X-Selected-Provider"))
+	assert.Equal(t, "/v1/files/file-HZeYkGtNsAzNTWQmMHbM27", last.path)
+	assert.Greater(t, hit.Hits(), 0)
+}
+
+func TestFiles_OpenAIIDWithOnlyAnthropicIs503(t *testing.T) {
+	defer Track(t, "FilesProvider")()
+
+	up, _ := newFilesFamilyUpstream(t, "anthropic")
+	apiKey, path := setupFilesRoute(t, anthropicFilesBackendPayload(uniqueName("ant-only"), up.URL()+"/v1"))
+
+	status, _, body := proxyRequest(t, http.MethodGet, apiKey, path+"/file-HZeYkGtNsAzNTWQmMHbM27", nil, nil)
+	assert.Equal(t, http.StatusServiceUnavailable, status, "body: %s", body)
+	assert.Contains(t, string(body), "no_backend_available")
+	assert.Equal(t, 0, up.Hits())
 }
 
 func TestFiles_PinnedIncapableProviderIsTerminal(t *testing.T) {

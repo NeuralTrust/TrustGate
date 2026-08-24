@@ -235,6 +235,11 @@ func (f *forwarder) invokeWithFailover(
 				if resp == nil {
 					return nil, err
 				}
+				if !route.pinned && filesIDNotFound(dto.request, resp) {
+					last = failoverState{resp: resp}
+					lastKind = failureNone
+					break
+				}
 				reportSuccess(lb, bk)
 				return f.finalizeBody(ctx, dto, resp), nil
 			case OutcomeRetryable:

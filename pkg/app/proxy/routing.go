@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -65,6 +66,9 @@ func (f *forwarder) resolveRouting(in ForwardInput) (routingdomain.Intent, *rout
 	if needed != "" {
 		candidates = filterCandidatesByCapability(candidates, needed)
 	}
+	if needed == capabilityFiles {
+		candidates = filterCandidatesByFilesID(candidates, in.Request)
+	}
 	if candidates.Len() == 0 {
 		if needed != "" && intent.IsQualified() {
 			err := fmt.Errorf("%w: %s", ErrCapabilityNotSupported, needed)
@@ -101,6 +105,32 @@ func filterCandidatesByCapability(candidates *routingdomain.CandidateSet, capabi
 		}
 		return providers.SupportsCapability(c.Registry.Provider(), capability)
 	})
+}
+
+func filterCandidatesByFilesID(candidates *routingdomain.CandidateSet, req *infracontext.RequestContext) *routingdomain.CandidateSet {
+	if req == nil {
+		return candidates
+	}
+	fileID := providers.FilesIDFromPath(req.Path)
+	if fileID == "" {
+		return candidates
+	}
+	return candidates.Filter(func(c routingdomain.Candidate) bool {
+		if c.Registry == nil {
+			return false
+		}
+		return providers.ProviderMatchesFilesID(c.Registry.Provider(), fileID)
+	})
+}
+
+func filesIDNotFound(req *infracontext.RequestContext, resp *ProviderResponse) bool {
+	if req == nil || resp == nil || req.ProxyCapability != capabilityFiles {
+		return false
+	}
+	if providers.FilesIDFromPath(req.Path) == "" {
+		return false
+	}
+	return resp.StatusCode == http.StatusNotFound
 }
 
 func (f *forwarder) logRejectedIntent(rc *appconsumer.RoutableConsumer, ref string, err error) {
