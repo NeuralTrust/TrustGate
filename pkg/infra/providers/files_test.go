@@ -62,19 +62,39 @@ func TestProviderMatchesFilesID(t *testing.T) {
 	openaiID := "file-HZeYkGtNsAzNTWQmMHbM27"
 	anthropicID := "file_011CNha8iCJcU1wXNR6q4V8w"
 
-	assert.True(t, providers.ProviderMatchesFilesID(providers.ProviderOpenAI, openaiID))
-	assert.True(t, providers.ProviderMatchesFilesID(providers.ProviderAzure, openaiID))
-	assert.True(t, providers.ProviderMatchesFilesID(providers.ProviderOpenRouter, openaiID))
-	assert.True(t, providers.ProviderMatchesFilesID(providers.ProviderXAI, openaiID))
-	assert.True(t, providers.ProviderMatchesFilesID(providers.ProviderMistral, openaiID))
-	assert.False(t, providers.ProviderMatchesFilesID(providers.ProviderAnthropic, openaiID))
-
-	assert.True(t, providers.ProviderMatchesFilesID(providers.ProviderAnthropic, anthropicID))
-	assert.False(t, providers.ProviderMatchesFilesID(providers.ProviderOpenAI, anthropicID))
-	assert.False(t, providers.ProviderMatchesFilesID(providers.ProviderMistral, anthropicID))
-
 	assert.True(t, providers.ProviderMatchesFilesID(providers.ProviderAnthropic, ""))
 	assert.True(t, providers.ProviderMatchesFilesID(providers.ProviderOpenAI, "opaque-id"))
+
+	for _, provider := range []string{
+		providers.ProviderOpenAI,
+		providers.ProviderOpenAICompatible,
+		providers.ProviderGoogle,
+		providers.ProviderVertex,
+		providers.ProviderAnthropic,
+		providers.ProviderBedrock,
+		providers.ProviderAzure,
+		providers.ProviderMistral,
+		providers.ProviderGroq,
+		providers.ProviderDeepSeek,
+		providers.ProviderXAI,
+		providers.ProviderCerebras,
+		providers.ProviderOpenRouter,
+		providers.ProviderCohere,
+	} {
+		hasFiles := providers.SupportsCapability(provider, providers.CapabilityFiles)
+		if !hasFiles {
+			assert.False(t, providers.ProviderMatchesFilesID(provider, openaiID), provider)
+			assert.False(t, providers.ProviderMatchesFilesID(provider, anthropicID), provider)
+			continue
+		}
+		if provider == providers.ProviderAnthropic {
+			assert.True(t, providers.ProviderMatchesFilesID(provider, anthropicID), provider)
+			assert.False(t, providers.ProviderMatchesFilesID(provider, openaiID), provider)
+			continue
+		}
+		assert.True(t, providers.ProviderMatchesFilesID(provider, openaiID), provider)
+		assert.False(t, providers.ProviderMatchesFilesID(provider, anthropicID), provider)
+	}
 }
 
 func TestValidateFilesMethod(t *testing.T) {
