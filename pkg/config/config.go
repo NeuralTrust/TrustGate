@@ -78,6 +78,8 @@ const (
 	defaultTelemetryEnablePluginTraces  = true
 	defaultTelemetryExportersFile       = "config/telemetry.yaml"
 	defaultOpsMetricsEnabled            = false
+	defaultOpsTracesEnabled             = false
+	defaultOpsTracesSamplingRatio       = 1.0
 
 	defaultMetricsEnabled       = true
 	defaultMetricsQueueSize     = 1000
@@ -311,24 +313,31 @@ type KafkaConfig struct {
 }
 
 type TelemetryConfig struct {
-	Enabled             bool
-	KafkaTopic          string
-	ExportersFile       string
-	ExportersMetadata   string
-	ExportersRaw        string
-	EnableRequestTraces bool
-	EnablePluginTraces  bool
-	OpsMetricsEnabled   bool
-	OTLP                OTLPConfig
+	Enabled                bool
+	KafkaTopic             string
+	ExportersFile          string
+	ExportersMetadata      string
+	ExportersRaw           string
+	EnableRequestTraces    bool
+	EnablePluginTraces     bool
+	OpsMetricsEnabled      bool
+	OpsTracesEnabled       bool
+	OpsTracesSamplingRatio float64
+	OTLP                   OTLPConfig
 }
 
+// OTLPConfig holds the process-level OTEL_EXPORTER_OTLP_* settings. Endpoint
+// carries the product-event log path (/v1/logs), so the operational signals get
+// their own endpoints rather than deriving one from it.
 type OTLPConfig struct {
-	Endpoint    string
-	Headers     map[string]string
-	Protocol    string
-	Timeout     time.Duration
-	Insecure    bool
-	Compression string
+	Endpoint        string
+	TracesEndpoint  string
+	MetricsEndpoint string
+	Headers         map[string]string
+	Protocol        string
+	Timeout         time.Duration
+	Insecure        bool
+	Compression     string
 }
 
 type MetricsConfig struct {
@@ -567,18 +576,24 @@ func getTelemetryConfig() TelemetryConfig {
 		EnableRequestTraces: getEnvBool("TELEMETRY_ENABLE_REQUEST_TRACES", defaultTelemetryEnableRequestTraces),
 		EnablePluginTraces:  getEnvBool("TELEMETRY_ENABLE_PLUGIN_TRACES", defaultTelemetryEnablePluginTraces),
 		OpsMetricsEnabled:   getEnvBool("OPS_METRICS_ENABLED", defaultOpsMetricsEnabled),
-		OTLP:                getOTLPConfig(),
+		OpsTracesEnabled:    getEnvBool("OPS_TRACES_ENABLED", defaultOpsTracesEnabled),
+		OpsTracesSamplingRatio: getEnvFloat(
+			"OPS_TRACES_SAMPLING_RATIO", defaultOpsTracesSamplingRatio,
+		),
+		OTLP: getOTLPConfig(),
 	}
 }
 
 func getOTLPConfig() OTLPConfig {
 	return OTLPConfig{
-		Endpoint:    getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
-		Headers:     parseOTLPHeaders(getEnv("OTEL_EXPORTER_OTLP_HEADERS", "")),
-		Protocol:    getEnv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf"),
-		Timeout:     getOTLPTimeout(),
-		Insecure:    getEnvBool("OTEL_EXPORTER_OTLP_INSECURE", false),
-		Compression: getEnv("OTEL_EXPORTER_OTLP_COMPRESSION", ""),
+		Endpoint:        getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+		TracesEndpoint:  getEnv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", ""),
+		MetricsEndpoint: getEnv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", ""),
+		Headers:         parseOTLPHeaders(getEnv("OTEL_EXPORTER_OTLP_HEADERS", "")),
+		Protocol:        getEnv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf"),
+		Timeout:         getOTLPTimeout(),
+		Insecure:        getEnvBool("OTEL_EXPORTER_OTLP_INSECURE", false),
+		Compression:     getEnv("OTEL_EXPORTER_OTLP_COMPRESSION", ""),
 	}
 }
 
@@ -1127,6 +1142,20 @@ func getEnvInt64(key string, defaultValue int64) int64 {
 	parsed, err := strconv.ParseInt(value, 10, 64)
 	if err != nil || parsed < 0 {
 		slog.Warn("invalid int64 environment variable, falling back to default",
+			slog.String("key", key), slog.String("value", sanitizeLogValue(value)))
+		return defaultValue
+	}
+	return parsed
+}
+
+func getEnvFloat(key string, defaultValue float64) float64 {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+	if err != nil {
+		slog.Warn("invalid float environment variable, falling back to default",
 			slog.String("key", key), slog.String("value", sanitizeLogValue(value)))
 		return defaultValue
 	}
