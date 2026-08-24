@@ -99,7 +99,7 @@ curl -s -X POST "$PROXY/$CON_SLUG/v1/embeddings" \
   -d '{"model":"embed-english-v3.0","input":["Hello from TrustGate"]}'
 ```
 
-OpenAI-shaped clients call `/{consumer}/v1/files` for upload, list, retrieve, delete, and content download. OpenAI, Azure, OpenRouter, xAI, Mistral, and Anthropic registries that expose a Files API are forwarded as-is (Azure uses `{endpoint}/openai/files?api-version=…`; Anthropic uses `https://api.anthropic.com/v1/files` with `x-api-key` and `anthropic-version`). Providers without a Files store are filtered out of the pool. Retrieve, content, and delete then pin the remaining pool by file-id family: `file-` (hyphen) stays on OpenAI-compatible stores; `file_` (underscore) stays on Anthropic. List and upload still load-balance across files-capable registries:
+OpenAI-shaped clients call `/{consumer}/v1/files` for upload, list, retrieve, delete, and content download. OpenAI, Azure, OpenRouter, xAI, Mistral, and Anthropic registries that expose a Files API are forwarded as-is (Azure uses `{endpoint}/openai/files?api-version=…`; Anthropic uses `https://api.anthropic.com/v1/files` with `x-api-key` and `anthropic-version`). Providers without a Files store are filtered out of the pool. Retrieve, content, and delete then pin by file-id prefix: `file_` stays on Anthropic; any other files-capable provider is treated as OpenAI-compatible (`file-`). List and upload still load-balance across files-capable registries:
 
 ```bash
 # 8. Files (OpenAI, Azure OpenAI, OpenRouter, xAI, Mistral, Anthropic)

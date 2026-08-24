@@ -110,14 +110,13 @@ func ClassifyFilesID(id string) FilesIDFamily {
 }
 
 func filesIDFamilyForProvider(provider string) FilesIDFamily {
-	switch provider {
-	case ProviderAnthropic:
-		return FilesIDFamilyAnthropic
-	case ProviderOpenAI, ProviderAzure, ProviderOpenRouter, ProviderXAI, ProviderMistral:
-		return FilesIDFamilyOpenAI
-	default:
+	if !SupportsCapability(provider, CapabilityFiles) {
 		return FilesIDFamilyUnknown
 	}
+	if provider == ProviderAnthropic {
+		return FilesIDFamilyAnthropic
+	}
+	return FilesIDFamilyOpenAI
 }
 
 func ProviderMatchesFilesID(provider, fileID string) bool {
