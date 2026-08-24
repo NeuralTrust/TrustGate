@@ -38,6 +38,45 @@ func TestIsFilesPath(t *testing.T) {
 	assert.False(t, providers.IsFilesPath("/v1/embeddings"))
 }
 
+func TestFilesIDFromPath(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "", providers.FilesIDFromPath("/v1/files"))
+	assert.Equal(t, "file-HZeYkGtNsAzNTWQmMHbM27", providers.FilesIDFromPath("/v1/files/file-HZeYkGtNsAzNTWQmMHbM27"))
+	assert.Equal(t, "file-HZeYkGtNsAzNTWQmMHbM27", providers.FilesIDFromPath("/v1/files/file-HZeYkGtNsAzNTWQmMHbM27/content"))
+	assert.Equal(t, "file-HZeYkGtNsAzNTWQmMHbM27", providers.FilesIDFromPath("/acme/v1/files/file-HZeYkGtNsAzNTWQmMHbM27"))
+	assert.Equal(t, "file_011CNha8iCJcU1wXNR6q4V8w", providers.FilesIDFromPath("/acme/v1/files/file_011CNha8iCJcU1wXNR6q4V8w/content"))
+	assert.Equal(t, "file-abc", providers.FilesIDFromPath("/v1/files/file-abc"))
+	assert.Equal(t, "", providers.FilesIDFromPath("/v1/embeddings"))
+}
+
+func TestClassifyFilesID(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, providers.FilesIDFamilyUnknown, providers.ClassifyFilesID(""))
+	assert.Equal(t, providers.FilesIDFamilyUnknown, providers.ClassifyFilesID("abc"))
+	assert.Equal(t, providers.FilesIDFamilyOpenAI, providers.ClassifyFilesID("file-HZeYkGtNsAzNTWQmMHbM27"))
+	assert.Equal(t, providers.FilesIDFamilyAnthropic, providers.ClassifyFilesID("file_011CNha8iCJcU1wXNR6q4V8w"))
+}
+
+func TestProviderMatchesFilesID(t *testing.T) {
+	t.Parallel()
+	openaiID := "file-HZeYkGtNsAzNTWQmMHbM27"
+	anthropicID := "file_011CNha8iCJcU1wXNR6q4V8w"
+
+	assert.True(t, providers.ProviderMatchesFilesID(providers.ProviderOpenAI, openaiID))
+	assert.True(t, providers.ProviderMatchesFilesID(providers.ProviderAzure, openaiID))
+	assert.True(t, providers.ProviderMatchesFilesID(providers.ProviderOpenRouter, openaiID))
+	assert.True(t, providers.ProviderMatchesFilesID(providers.ProviderXAI, openaiID))
+	assert.True(t, providers.ProviderMatchesFilesID(providers.ProviderMistral, openaiID))
+	assert.False(t, providers.ProviderMatchesFilesID(providers.ProviderAnthropic, openaiID))
+
+	assert.True(t, providers.ProviderMatchesFilesID(providers.ProviderAnthropic, anthropicID))
+	assert.False(t, providers.ProviderMatchesFilesID(providers.ProviderOpenAI, anthropicID))
+	assert.False(t, providers.ProviderMatchesFilesID(providers.ProviderMistral, anthropicID))
+
+	assert.True(t, providers.ProviderMatchesFilesID(providers.ProviderAnthropic, ""))
+	assert.True(t, providers.ProviderMatchesFilesID(providers.ProviderOpenAI, "opaque-id"))
+}
+
 func TestValidateFilesMethod(t *testing.T) {
 	t.Parallel()
 	require.NoError(t, providers.ValidateFilesMethod("POST", "/v1/files"))

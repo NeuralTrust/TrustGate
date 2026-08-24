@@ -43,6 +43,14 @@ type FilesClient interface {
 	Files(ctx context.Context, config *Config, req FilesRequest) (*FilesResult, error)
 }
 
+type FilesIDFamily string
+
+const (
+	FilesIDFamilyUnknown   FilesIDFamily = ""
+	FilesIDFamilyOpenAI    FilesIDFamily = "openai"
+	FilesIDFamilyAnthropic FilesIDFamily = "anthropic"
+)
+
 func IsFilesPath(path string) bool {
 	if path == "/v1/files" {
 		return true
@@ -62,6 +70,66 @@ func IsFilesPath(path string) bool {
 		return true
 	}
 	return extra == "content"
+}
+
+func filesRestPath(path string) string {
+	if IsFilesPath(path) {
+		return path
+	}
+	rest := RestAfterConsumerSlug(path)
+	if IsFilesPath(rest) {
+		return rest
+	}
+	return ""
+}
+
+func FilesIDFromPath(path string) string {
+	rest := filesRestPath(path)
+	if rest == "" || rest == "/v1/files" {
+		return ""
+	}
+	tail := strings.TrimPrefix(rest, "/v1/files/")
+	id, _, _ := strings.Cut(tail, "/")
+	if decoded, err := url.PathUnescape(id); err == nil {
+		return decoded
+	}
+	return id
+}
+
+func ClassifyFilesID(id string) FilesIDFamily {
+	switch {
+	case id == "":
+		return FilesIDFamilyUnknown
+	case strings.HasPrefix(id, "file_"):
+		return FilesIDFamilyAnthropic
+	case strings.HasPrefix(id, "file-"):
+		return FilesIDFamilyOpenAI
+	default:
+		return FilesIDFamilyUnknown
+	}
+}
+
+func filesIDFamilyForProvider(provider string) FilesIDFamily {
+	switch provider {
+	case ProviderAnthropic:
+		return FilesIDFamilyAnthropic
+	case ProviderOpenAI, ProviderAzure, ProviderOpenRouter, ProviderXAI, ProviderMistral:
+		return FilesIDFamilyOpenAI
+	default:
+		return FilesIDFamilyUnknown
+	}
+}
+
+func ProviderMatchesFilesID(provider, fileID string) bool {
+	family := ClassifyFilesID(fileID)
+	switch family {
+	case FilesIDFamilyUnknown:
+		return true
+	case FilesIDFamilyOpenAI, FilesIDFamilyAnthropic:
+		return filesIDFamilyForProvider(provider) == family
+	default:
+		return false
+	}
 }
 
 func ValidateFilesMethod(method, path string) error {
