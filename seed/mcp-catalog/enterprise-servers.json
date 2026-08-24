@@ -8886,6 +8886,94 @@
       ]
     },
     {
+      "name": "com.microsoft/azure-devops",
+      "vendor": "Azure DevOps",
+      "category": "Developer Tools",
+      "description": "Azure DevOps remote MCP: projects, repos, PRs, work items, pipelines, wiki, and test plans (Entra OAuth; org must be Entra-backed).",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.dev.azure.com/{organization}",
+      "url_variables": [
+        {
+          "name": "organization",
+          "description": "Azure DevOps organization name (e.g. contoso), not the full URL.",
+          "required": true
+        }
+      ],
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize",
+        "token_url": "https://login.microsoftonline.com/organizations/oauth2/v2.0/token",
+        "scopes": [
+          "499b84ac-1321-427f-aa17-267ca6975798/.default"
+        ],
+        "resource": "https://mcp.dev.azure.com/"
+      },
+      "relevance": 85,
+      "tools": [
+        {
+          "name": "core_list_projects",
+          "description": "List projects in the organization"
+        },
+        {
+          "name": "core_list_project_teams",
+          "description": "List teams in a project"
+        },
+        {
+          "name": "repo_repository",
+          "description": "List or get Git repositories"
+        },
+        {
+          "name": "repo_pull_request",
+          "description": "List or get pull requests and changes"
+        },
+        {
+          "name": "repo_branch",
+          "description": "List or get branches"
+        },
+        {
+          "name": "search_code",
+          "description": "Full-text code search"
+        },
+        {
+          "name": "wit_work_item",
+          "description": "Get, list, or query work items"
+        },
+        {
+          "name": "search_workitem",
+          "description": "Full-text work item search"
+        },
+        {
+          "name": "pipelines_build",
+          "description": "List builds and get status or changes"
+        },
+        {
+          "name": "pipelines_run",
+          "description": "List or get pipeline runs"
+        },
+        {
+          "name": "wiki",
+          "description": "List wikis and get page content"
+        },
+        {
+          "name": "search_wiki",
+          "description": "Full-text wiki search"
+        },
+        {
+          "name": "testplan",
+          "description": "List test plans, suites, and cases"
+        },
+        {
+          "name": "work",
+          "description": "List iterations and team capacity"
+        }
+      ]
+    },
+    {
       "name": "com.microsoft/learn",
       "vendor": "Microsoft",
       "category": "Productivity & Docs",
