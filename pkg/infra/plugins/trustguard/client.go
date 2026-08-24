@@ -24,6 +24,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 )
 
 const (
@@ -31,6 +33,11 @@ const (
 	traceIDHeader          = "X-Trace-ID"
 	playgroundOriginHeader = "X-AG-Playground"
 	maxResponseBytes       = 1 << 20
+
+	// peerService must match TrustGuard's own service.name, and evaluateSpanName
+	// stays a bounded label rather than the request target.
+	peerService      = "trustguard"
+	evaluateSpanName = "trustguard.evaluate"
 )
 
 var errUnauthorized = errors.New("trustguard: unauthorized")
@@ -81,7 +88,10 @@ type client struct {
 }
 
 func newClient(timeout time.Duration) *client {
-	return &client{http: &http.Client{Timeout: timeout}}
+	return &client{http: &http.Client{
+		Timeout:   timeout,
+		Transport: o11y.InternalTransport(peerService, evaluateSpanName),
+	}}
 }
 
 func (c *client) Guard(ctx context.Context, baseURL, token, traceID string, body GuardRequest, playground bool) (*GuardResponse, error) {
