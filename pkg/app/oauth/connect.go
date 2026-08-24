@@ -121,6 +121,9 @@ func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPag
 			continue
 		}
 		status := ProviderStatus{Provider: cfg.Provider, Registry: reg.Name}
+		if reg.MCPTarget != nil {
+			status.Code = reg.MCPTarget.Code
+		}
 		cred, err := s.vault.Find(ctx, gatewayID, ticket.PrincipalSub, cfg.Provider)
 		switch {
 		case err == nil:
