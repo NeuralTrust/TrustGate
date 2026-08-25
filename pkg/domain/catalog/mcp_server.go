@@ -33,6 +33,7 @@ type MCPServer struct {
 	// client self-registers (registration "auto") where the user simply logs in
 	// at runtime.
 	RequiresConfig bool `json:"requires_config"`
+	PlatformClient bool `json:"platform_client,omitempty"`
 	// Relevance ranks how broadly relevant a server is for enterprises
 	// (higher = more relevant). Used to sort the catalog; 0 means unranked.
 	Relevance    int              `json:"relevance"`
