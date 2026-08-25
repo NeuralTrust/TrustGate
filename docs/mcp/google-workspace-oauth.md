@@ -143,22 +143,30 @@ OAuth consent screen):
 1. **Google Auth Platform → Clients → Create client**.
 2. Application type: **Web application**.
 3. Name: e.g. `TrustGate MCP`.
-4. **Authorized redirect URIs** — add TrustGate’s OAuth callback:
+4. **Authorized redirect URIs** — MCP **connect** callbacks are per provider:
 
    ```text
-   https://<TRUSTGATE_PUBLIC_HOST>/oauth/callback
+   https://<OAUTH_PUBLIC_HOST>/oauth/callback/<provider>
    ```
 
-   Local / dev examples (adjust host/port to your gateway public base):
+   Examples (provider codes match the MCP catalog `code`):
 
    ```text
-   http://localhost:8080/oauth/callback
-   https://gateway.dev.example.com/oauth/callback
+   https://gateway-mcp.dev.neuraltrust.ai/oauth/callback/com.google.workspace/calendar
+   https://gateway-mcp.dev.neuraltrust.ai/oauth/callback/com.google.workspace/gmail
    ```
 
-   The path is `CallbackPath` in TrustGate (`/oauth/callback`). Google requires
-   an **exact** match (scheme, host, port, path). Add one URI per environment
-   and custom domain.
+   Local / BYO (no `MCP_OAUTH_PUBLIC_BASE_URL`) uses the gateway request host:
+
+   ```text
+   http://localhost:8082/oauth/callback/com.google.workspace/calendar
+   https://gw-xxxxx.mcp.example.com/oauth/callback/com.google.workspace/gmail
+   ```
+
+   Path shape is `{base}/oauth/callback/{provider}` from `connectCallbackURL`
+   (not the inbound IdP path `/oauth/callback`). Google requires an **exact**
+   match (scheme, host, port, full path). With a fixed platform base you
+   allowlist one host and one URI per Google MCP product.
 
 5. Create → copy **Client ID** and **Client secret**.
 
@@ -198,18 +206,29 @@ Google OAuth client the same way Claude injects Anthropic’s.
    - Audience **External** for multi-tenant cloud.
    - All scopes for every Google Workspace MCP product you will productize.
 4. Create **one** Web OAuth client.
-5. Allowlist **every** production (and staging) redirect URI:
+5. Point TrustGate cloud at a **fixed** connect callback origin and allowlist
+   that host once:
 
-   ```text
-   https://<cloud-gateway-host>/oauth/callback
-   https://<staging-gateway-host>/oauth/callback
+   ```bash
+   # TrustGate MCP plane env (dev example; prod uses gateway-mcp.neuraltrust.ai)
+   MCP_OAUTH_PUBLIC_BASE_URL=https://gateway-mcp.dev.neuraltrust.ai
    ```
 
-   For self-hosted customers you either:
+   Use an existing MCP-plane hostname (e.g. `gateway-mcp.*` already on the
+   HTTPRoute). Wildcard routes accept slashy provider codes.
 
-   - do **not** use the shared client (keep BYO), or
-   - maintain a growing allowlist of customer gateway hosts (usually
-     impractical).
+   Google OAuth client redirect URIs (one per product, per env):
+
+   ```text
+   https://gateway-mcp.dev.neuraltrust.ai/oauth/callback/com.google.workspace/calendar
+   https://gateway-mcp.dev.neuraltrust.ai/oauth/callback/com.google.workspace/gmail
+   https://gateway-mcp.neuraltrust.ai/oauth/callback/com.google.workspace/calendar
+   https://gateway-mcp.neuraltrust.ai/oauth/callback/com.google.workspace/gmail
+   ```
+
+   Self-hosted / BYO: leave `MCP_OAUTH_PUBLIC_BASE_URL` empty so `redirect_uri`
+   uses the request gateway host, and allowlist that customer’s URI (or keep a
+   customer-owned Google OAuth client).
 
 6. Store client ID + secret in platform secrets (never in git or the MCP catalog
    JSON).
@@ -278,7 +297,8 @@ production.
 
 - [ ] GCP project created; Gmail/Calendar (+ MCP) APIs enabled
 - [ ] Consent screen branded; scopes match catalog (and write tools)
-- [ ] Web client created; all `/oauth/callback` URIs allowlisted
+- [ ] Web client created; per-provider `/oauth/callback/{provider}` URIs allowlisted
+- [ ] `MCP_OAUTH_PUBLIC_BASE_URL` set on cloud MCP plane; DNS points at that plane
 - [ ] Client ID/secret in platform secret store
 - [ ] Connect path injects credentials; UI fields hidden when configured
 - [ ] Dogfood with test users
@@ -293,7 +313,9 @@ production.
 | Area | Location |
 |------|----------|
 | MCP catalog seed | `seed/mcp-catalog/enterprise-servers.json` |
-| Gateway OAuth callback path | `pkg/app/oauth/proxy_types.go` → `CallbackPath` (`/oauth/callback`) |
+| Connect OAuth callback path | `pkg/app/oauth/connect.go` → `connectCallbackURL` (`/oauth/callback/{provider}`) |
+| Fixed connect callback origin | `MCP_OAUTH_PUBLIC_BASE_URL` → `ServerConfig.MCPOAuthPublicBaseURL` |
+| Inbound IdP callback (separate) | `pkg/app/oauth/proxy_types.go` → `CallbackPath` (`/oauth/callback`) |
 | Forwarded MCP credentials | `pkg/app/mcp/credentials.go` |
 | Registry UI (manual client fields) | App `McpServerConfigPanel` / `mcpCatalog.ts` |
 | Local MCP plane testing | `docs/mcp/testing-guide.md` |
