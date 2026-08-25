@@ -158,6 +158,10 @@ a separate mechanism and are not covered by this attribute.
 deliberately not promoted to OTLP keys: they are derivable, and the permanent
 attribute surface is kept minimal.
 
+The sink-1 example carries no `trustgate.savings.*` block: its record is a
+request that named `gpt-4o` explicitly, and naming a model bypasses the load
+balancer entirely, so smart routing never runs for it.
+
 ## Raw stream
 
 The raw data class carries the request/response bodies plus join keys. It is routed to any

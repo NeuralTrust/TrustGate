@@ -59,12 +59,6 @@ func (c *SmartRoutingConfig) Validate() error {
 	return nil
 }
 
-// HighestTier returns the tier with the greatest MinScore: the one a maximal
-// complexity score selects, and therefore the ceiling smart routing is measured
-// against when reporting what a request saved. Validate rejects duplicate
-// MinScores, so the maximum is unique. It reports false when no tier is
-// configured. Note that "highest" orders by threshold, not by price: nothing
-// forces the top tier to be the most expensive model.
 func (c *SmartRoutingConfig) HighestTier() (SmartRoutingTier, bool) {
 	if c == nil || len(c.Tiers) == 0 {
 		return SmartRoutingTier{}, false

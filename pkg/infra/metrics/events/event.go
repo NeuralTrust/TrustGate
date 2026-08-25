@@ -125,18 +125,6 @@ type Cost struct {
 	Currency      string       `json:"currency"`
 }
 
-// Savings is what smart routing avoided spending on this request: the same token
-// counts priced at the highest configured tier, minus what they actually cost.
-// It is present only when the tier table itself chose the route — the strategy
-// silently falls back to round-robin when it cannot score a request, and
-// crediting that pick with savings would attribute a decision smart routing
-// never made. An unpriceable baseline likewise emits nothing rather than a zero,
-// which would be indistinguishable from "the top tier was already served".
-//
-// The figure is a modelled counterfactual, not a measurement: it reprices the
-// served model's tokens, and a premium model would tokenize differently and
-// stop at a different completion length. Cost-cap downgrades are a separate
-// mechanism and are deliberately not covered here.
 type Savings struct {
 	BaselineModel         string       `json:"baseline_model"`
 	BaselineRegistryID    string       `json:"baseline_registry_id,omitempty"`

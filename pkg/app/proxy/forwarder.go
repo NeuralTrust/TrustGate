@@ -70,6 +70,7 @@ type forwardRequestDTO struct {
 	plan        *appplugins.StagePlan
 	baseHeaders map[string][]string
 	baseline    *trace.RouteBaseline
+	tierRouted  bool
 }
 
 //go:generate mockery --name=Forwarder --dir=. --output=./mocks --filename=forwarder_mock.go --case=underscore --with-expecter
@@ -203,6 +204,7 @@ func (f *forwarder) invokeWithFailover(
 		bk := current.Registry
 		f.retarget(dto, bk)
 		f.stampRoutingPolicy(dto, rc, current)
+		dto.tierRouted = takeTierRouted(dto.request)
 		for r := 0; r < attemptsPerBackend; r++ {
 			if budget.exhausted() {
 				return f.relayLast(ctx, dto, last)
@@ -369,9 +371,9 @@ func (f *forwarder) recordSpan(
 			Outcome:        outcome.String(),
 			Baseline:       dto.baseline,
 			ServedPricing:  bk.Pricing(),
+			TierApplied:    dto.tierRouted,
 		},
 	}
-	applyRoutingDecision(span.LLM, dto.request)
 	if resp != nil {
 		span.SetStatusCode(resp.StatusCode)
 		span.ObserveUsage(resp.Usage)
@@ -472,20 +474,13 @@ func (f *forwarder) invokeOnce(
 	return f.invoker.Invoke(ctx, bk, req)
 }
 
-// applyRoutingDecision moves the strategy's decision onto this attempt's span
-// and clears it. Clearing is the point: a fallback-chain hop never consults the
-// strategy, so a decision left behind would be misread as having chosen a route
-// the strategy never saw.
-func applyRoutingDecision(attrs *trace.LLMAttrs, req *infracontext.RequestContext) {
-	if req == nil {
-		return
+func takeTierRouted(req *infracontext.RequestContext) bool {
+	if req == nil || req.RoutingDecision == nil {
+		return false
 	}
-	if decision := req.RoutingDecision; decision != nil {
-		attrs.RoutingAlgorithm = decision.Algorithm
-		attrs.TierApplied = decision.TierApplied
-		attrs.ComplexityScore = decision.Score
-	}
+	tierRouted := req.RoutingDecision.TierApplied
 	req.RoutingDecision = nil
+	return tierRouted
 }
 
 func (f *forwarder) retarget(dto *forwardRequestDTO, bk *domain.Registry) {

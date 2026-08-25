@@ -28,14 +28,8 @@ type Attachment struct {
 	Data        []byte
 }
 
-// RoutingDecision records what a load-balancer strategy did for the attempt
-// currently being routed. Only smart routing populates it today: it is the only
-// strategy whose choice is not evident from the route alone, because it silently
-// falls back to round-robin whenever it cannot score the request.
 type RoutingDecision struct {
-	Algorithm   string
 	TierApplied bool
-	Score       float64
 }
 
 type RequestContext struct {
@@ -63,11 +57,7 @@ type RequestContext struct {
 	AllowedModels      []string
 	DefaultModel       string
 	RequestedModel     string
-	// RoutingDecision is how the load-balancer strategy resolved the route it is
-	// about to return. The strategy writes it; the forwarder consumes and clears
-	// it when it records the attempt's span, so a decision can never be
-	// attributed to a later hop that the strategy did not choose.
-	RoutingDecision *RoutingDecision
+	RoutingDecision    *RoutingDecision
 	// MCP marks a native MCP tools/call payload so protocol-aware plugins
 	// inspect it via the MCP text path instead of the LLM canonical decoders.
 	MCP bool

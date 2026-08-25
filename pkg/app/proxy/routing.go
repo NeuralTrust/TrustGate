@@ -42,10 +42,7 @@ type routedBackend struct {
 	excluded     map[routingdomain.RouteKey]struct{}
 	fromFallback bool
 	pinned       bool
-	// baseline is the highest configured smart-routing tier, resolved once here
-	// because the metrics builder cannot reach the tier table. Nil for every
-	// other algorithm and for the paths that never consult a balancer.
-	baseline *trace.RouteBaseline
+	baseline     *trace.RouteBaseline
 }
 
 func (f *forwarder) resolveRouting(in ForwardInput) (routingdomain.Intent, *routingdomain.CandidateSet, error) {
@@ -276,7 +273,7 @@ func (f *forwarder) routeBackend(
 	}
 	excluded := nonCandidateRoutes(lb, rc, candidates)
 	route, err := lb.NextRoute(ctx, req, excluded)
-	baseline := smartRoutingBaseline(lb)
+	baseline := smartRoutingBaseline(lb, excluded)
 	if err != nil {
 		if fallback := firstAvailableFallback(rc, excluded); fallback != nil {
 			return routedBackend{
@@ -292,12 +289,10 @@ func (f *forwarder) routeBackend(
 	return routedBackend{lb: lb, route: *route, excluded: excluded, baseline: baseline}, nil
 }
 
-// smartRoutingBaseline resolves the highest configured tier to the route it maps
-// to, so a completed request can be priced against the ceiling it would have hit
-// had the scorer returned 1.0. It mirrors SmartRouting.routeForScore's matching
-// rule; a tier that matches no route in the pool yields no baseline, because
-// pricing a target the balancer could never have picked would be fiction.
-func smartRoutingBaseline(lb *loadbalancer.LoadBalancer) *trace.RouteBaseline {
+func smartRoutingBaseline(
+	lb *loadbalancer.LoadBalancer,
+	excluded map[routingdomain.RouteKey]struct{},
+) *trace.RouteBaseline {
 	if lb == nil || lb.Algorithm() != algorithm.SmartRouting {
 		return nil
 	}
@@ -313,16 +308,10 @@ func smartRoutingBaseline(lb *loadbalancer.LoadBalancer) *trace.RouteBaseline {
 		if model != "" && route.Model != model {
 			continue
 		}
-		// A tier may leave the model to the registry's policy, so fall back the
-		// way the route itself resolves: pinned model, then route model, then
-		// the consumer's default for that registry.
-		slug := model
-		if slug == "" {
-			slug = route.Model
+		if _, skip := excluded[route.Key()]; skip {
+			continue
 		}
-		if slug == "" {
-			slug = route.Default
-		}
+		slug := baselineSlug(model, route)
 		if slug == "" {
 			return nil
 		}
@@ -330,11 +319,20 @@ func smartRoutingBaseline(lb *loadbalancer.LoadBalancer) *trace.RouteBaseline {
 			RegistryID: route.Registry.ID.String(),
 			Provider:   route.Registry.Provider(),
 			Model:      slug,
-			MinScore:   tier.MinScore,
 			Pricing:    route.Registry.Pricing(),
 		}
 	}
 	return nil
+}
+
+func baselineSlug(tierModel string, route routingdomain.Route) string {
+	if tierModel != "" {
+		return tierModel
+	}
+	if route.Model != "" {
+		return route.Model
+	}
+	return route.Default
 }
 
 func (f *forwarder) routeLoadBalancer(

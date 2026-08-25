@@ -228,16 +228,13 @@ func TestSmartRouting_RecordsRoutingDecision(t *testing.T) {
 		routes      []routingdomain.Route
 		scorer      *fakeScorer
 		req         *infracontext.RequestContext
-		exclude     map[routingdomain.RouteKey]struct{}
 		wantApplied bool
-		wantScore   float64
 	}{
 		{
 			name:        "tier decision",
 			routes:      makeRoutes("a", "b", "c"),
 			scorer:      &fakeScorer{score: 0.9, configured: true},
 			wantApplied: true,
-			wantScore:   0.9,
 		},
 		{
 			name:   "scorer unconfigured",
@@ -280,7 +277,7 @@ func TestSmartRouting_RecordsRoutingDecision(t *testing.T) {
 			}
 			s := NewSmartRouting(tc.routes, cfg, tc.scorer, nil)
 
-			if got := s.Next(context.Background(), req, tc.exclude); got == nil {
+			if got := s.Next(context.Background(), req, nil); got == nil {
 				t.Fatal("expected a route")
 			}
 
@@ -288,20 +285,14 @@ func TestSmartRouting_RecordsRoutingDecision(t *testing.T) {
 			if decision == nil {
 				t.Fatal("expected a routing decision to be recorded")
 			}
-			if decision.Algorithm != "smart-routing" {
-				t.Fatalf("algorithm = %q, want smart-routing", decision.Algorithm)
-			}
 			if decision.TierApplied != tc.wantApplied {
 				t.Fatalf("tier applied = %v, want %v", decision.TierApplied, tc.wantApplied)
-			}
-			if decision.Score != tc.wantScore {
-				t.Fatalf("score = %g, want %g", decision.Score, tc.wantScore)
 			}
 		})
 	}
 }
 
-func TestSmartRouting_RecordsNothingWithoutRequest(t *testing.T) {
+func TestSmartRouting_NilRequestRoutesWithoutPanicking(t *testing.T) {
 	t.Parallel()
 	routes := makeRoutes("a", "b")
 	s := NewSmartRouting(routes, tiersFor(routes, 0.0, 0.5), &fakeScorer{configured: true}, nil)

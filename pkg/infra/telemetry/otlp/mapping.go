@@ -64,7 +64,7 @@ const (
 	attrStatusIsTimeout      = "trustgate.status.is_timeout"
 	attrTraceID              = "trustgate.trace_id"
 	attrGatewayID            = "trustgate.gateway_id"
-	attrTenantID               = "trustgate.tenant_id"
+	attrTenantID             = "trustgate.tenant_id"
 	attrConsumerID           = "trustgate.consumer.id"
 	attrConsumerName         = "trustgate.consumer.name"
 	attrSessionID            = "trustgate.session_id"
@@ -92,8 +92,6 @@ const (
 	attrResponseBody         = "trustgate.response.body"
 )
 
-// Kept in its own block so the savings keys, whose names are longer than every
-// key above, do not force gofmt to realign the entire attribute table.
 const (
 	attrSavingsBaselineTotalUsd = "trustgate.savings.baseline_total_usd"
 	attrSavingsSavedUsd         = "trustgate.savings.saved_usd"

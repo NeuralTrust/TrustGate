@@ -28,10 +28,10 @@ func TestSavings_MarshalJSON_UsesDecimalNotation(t *testing.T) {
 	savings := events.Savings{
 		BaselineModel:         "gpt-5",
 		BaselineRegistryID:    "reg-1",
-		BaselinePromptUsd:     events.DecimalFloat(2.4e-5),
-		BaselineCompletionUsd: events.DecimalFloat(1.44e-4),
-		BaselineTotalUsd:      events.DecimalFloat(1.68e-4),
-		SavedUsd:              events.DecimalFloat(1.512e-4),
+		BaselinePromptUsd:     events.DecimalFloat(2.4e-7),
+		BaselineCompletionUsd: events.DecimalFloat(1.44e-6),
+		BaselineTotalUsd:      events.DecimalFloat(1.68e-6),
+		SavedUsd:              events.DecimalFloat(1.512e-6),
 		Currency:              "USD",
 	}
 
@@ -44,10 +44,10 @@ func TestSavings_MarshalJSON_UsesDecimalNotation(t *testing.T) {
 	assert.JSONEq(t, `{
 		"baseline_model": "gpt-5",
 		"baseline_registry_id": "reg-1",
-		"baseline_prompt_usd": 0.000024,
-		"baseline_completion_usd": 0.000144,
-		"baseline_total_usd": 0.000168,
-		"saved_usd": 0.0001512,
+		"baseline_prompt_usd": 0.00000024,
+		"baseline_completion_usd": 0.00000144,
+		"baseline_total_usd": 0.00000168,
+		"saved_usd": 0.000001512,
 		"currency": "USD"
 	}`, s)
 }
