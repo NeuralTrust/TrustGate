@@ -71,9 +71,7 @@ func (s *SmartRouting) Next(
 		return nil
 	}
 	if len(candidates) == 1 {
-		// The single survivor is forced, not chosen: no score is taken, so this
-		// is not a tier decision.
-		s.record(req, false, 0)
+		s.record(req, false)
 		return pick(candidates[0])
 	}
 	if s.config == nil || s.scorer == nil || !s.scorer.Configured() || req == nil {
@@ -91,7 +89,7 @@ func (s *SmartRouting) Next(
 	if target == nil {
 		return s.fallbackNext(ctx, req, exclude, "no candidate matched complexity score")
 	}
-	s.record(req, true, score)
+	s.record(req, true)
 	if s.logger != nil {
 		s.logger.Debug("smart routing selected route",
 			slog.String("registry_id", target.Registry.ID.String()),
@@ -102,18 +100,11 @@ func (s *SmartRouting) Next(
 	return target
 }
 
-// record stamps how this pick was made on the request so the forwarder can tell
-// a genuine tier decision from the round-robin fail-open, which is otherwise
-// indistinguishable once the route is returned.
-func (s *SmartRouting) record(req *infracontext.RequestContext, tierApplied bool, score float64) {
+func (s *SmartRouting) record(req *infracontext.RequestContext, tierApplied bool) {
 	if req == nil {
 		return
 	}
-	req.RoutingDecision = &infracontext.RoutingDecision{
-		Algorithm:   algorithm.SmartRouting,
-		TierApplied: tierApplied,
-		Score:       score,
-	}
+	req.RoutingDecision = &infracontext.RoutingDecision{TierApplied: tierApplied}
 }
 
 func (s *SmartRouting) routeForScore(score float64, candidates []routingdomain.Route) *routingdomain.Route {
@@ -140,7 +131,7 @@ func (s *SmartRouting) fallbackNext(
 	exclude map[routingdomain.RouteKey]struct{},
 	reason string,
 ) *routingdomain.Route {
-	s.record(req, false, 0)
+	s.record(req, false)
 	if s.logger != nil {
 		s.warnOnce.Do(func() {
 			s.logger.Warn("smart routing falling back to round-robin", slog.String("reason", reason))

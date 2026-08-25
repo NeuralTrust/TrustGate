@@ -21,7 +21,6 @@ import (
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
@@ -575,26 +574,20 @@ func TestBuilder_SkipsNoOpPluginSpan(t *testing.T) {
 	assert.Equal(t, "allowed", evt.PolicyChain[0].Decision)
 }
 
-// savingsTrace builds a request trace for a smart-routed request served by
-// gpt-4o-mini whose highest configured tier is gpt-4o, so the counterfactual has
-// a different model to price against.
 func savingsTrace(mutate func(*trace.LLMAttrs)) *trace.RequestTrace {
 	attrs := &trace.LLMAttrs{
-		Provider:         "openai",
-		SentModel:        "gpt-4o-mini",
-		Model:            "gpt-4o-mini",
-		RequestedModel:   "auto",
-		FinishReason:     "stop",
-		Attempt:          1,
-		Outcome:          "success",
-		RoutingAlgorithm: algorithm.SmartRouting,
-		TierApplied:      true,
-		ComplexityScore:  0.12,
+		Provider:       "openai",
+		SentModel:      "gpt-4o-mini",
+		Model:          "gpt-4o-mini",
+		RequestedModel: "auto",
+		FinishReason:   "stop",
+		Attempt:        1,
+		Outcome:        "success",
+		TierApplied:    true,
 		Baseline: &trace.RouteBaseline{
 			RegistryID: "reg-high",
 			Provider:   "openai",
 			Model:      "gpt-4o",
-			MinScore:   0.8,
 		},
 		Usage: &adapter.CanonicalUsage{InputTokens: 10, OutputTokens: 20, TotalTokens: 30},
 	}
@@ -712,7 +705,7 @@ func TestBuilder_SavingsAbsentWhenActualUnpriced(t *testing.T) {
 func TestBuilder_SavingsAppliesBaselineRegistryOverlay(t *testing.T) {
 	b := newBuilderWithPricing(savingsPricing())
 	rt := savingsTrace(func(a *trace.LLMAttrs) {
-		a.Baseline.Pricing = &domain.Pricing{Discount: 0.5}
+		a.Baseline.Pricing = &domain.Pricing{Discount: 0.25}
 	})
 
 	evt := b.Build(context.Background(), rt, savingsRequest(), savingsResponse(),
@@ -720,7 +713,7 @@ func TestBuilder_SavingsAppliesBaselineRegistryOverlay(t *testing.T) {
 
 	require.NotNil(t, evt.Cost)
 	require.NotNil(t, evt.Savings)
-	assert.InDelta(t, 0.5*(10*0.0000025+20*0.00001), float64(evt.Savings.BaselineTotalUsd), 1e-12)
+	assert.InDelta(t, 0.75*(10*0.0000025+20*0.00001), float64(evt.Savings.BaselineTotalUsd), 1e-12)
 	assert.InDelta(t, 10*0.00000015, float64(evt.Cost.PromptUsd), 1e-12)
 }
 

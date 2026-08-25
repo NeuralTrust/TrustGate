@@ -31,6 +31,7 @@ import (
 	ratelimitmocks "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit/mocks"
 	approuting "github.com/NeuralTrust/TrustGate/pkg/app/routing"
 	appsession "github.com/NeuralTrust/TrustGate/pkg/app/session"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
 	domainconsumer "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -762,4 +763,136 @@ func TestForward_NilConsumer(t *testing.T) {
 	if !errors.Is(err, appproxy.ErrNoBackendsInPool) {
 		t.Fatalf("err = %v, want ErrNoBackendsInPool", err)
 	}
+}
+
+type fixedScorer struct{ score float64 }
+
+func (f fixedScorer) Score(_ context.Context, _, _, _ string) (float64, error) { return f.score, nil }
+
+func (fixedScorer) Configured() bool { return true }
+
+func smartRoutedConsumer(gatewayID ids.GatewayID, low, high *registrydomain.Registry) *appconsumer.RoutableConsumer {
+	rc := routableConsumerWith(gatewayID, low, high)
+	rc.Consumer.LBConfig = &domainconsumer.LBConfig{
+		Enabled:   true,
+		Algorithm: loadbalancer.AlgorithmSmartRouting,
+		Members: []domainconsumer.LBPoolMember{
+			{RegistryID: low.ID, Model: "model-low"},
+			{RegistryID: high.ID, Model: "model-high"},
+		},
+		SmartRouting: &registrydomain.SmartRoutingConfig{
+			Tiers: []registrydomain.SmartRoutingTier{
+				{MinScore: 0, RegistryID: low.ID, Model: "model-low"},
+				{MinScore: 0.5, RegistryID: high.ID, Model: "model-high"},
+			},
+		},
+	}
+	return rc
+}
+
+func newSmartRoutedForwarder(
+	t *testing.T,
+	invoker appproxy.ProviderInvoker,
+	score float64,
+	maxRetries int,
+) appproxy.Forwarder {
+	t.Helper()
+	mgr := cache.NewTTLMapManager(time.Minute)
+	cfg := &config.Config{}
+	cfg.Provider.MaxRetries = maxRetries
+	return appproxy.NewForwarder(
+		loadbalancer.NewBaseFactory(nil, nil, fixedScorer{score: score}, newTestLogger()),
+		newPermissiveCache(t), mgr, invoker, nil, nil, approuting.NewResolver(), nil, cfg, newTestLogger(),
+	)
+}
+
+func servedLLMAttrs(t *testing.T, rt *trace.RequestTrace) trace.LLMAttrs {
+	t.Helper()
+	var served *trace.LLMAttrs
+	for _, span := range rt.Spans() {
+		if span.Type != trace.SpanLLM {
+			continue
+		}
+		if attrs, ok := span.LLMAttrsCopy(); ok {
+			copied := attrs
+			served = &copied
+		}
+	}
+	require.NotNil(t, served, "expected at least one LLM span")
+	return *served
+}
+
+// The metrics builder reads the last LLM span, so a retry that does not
+// re-consult the balancer must still report the tier decision that picked
+// the route.
+func TestForward_SameBackendRetryKeepsTierDecision(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	low := backendFor(gatewayID, "openai")
+	high := backendFor(gatewayID, "anthropic")
+	rc := smartRoutedConsumer(gatewayID, low, high)
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 503, Body: []byte("down")}, nil).
+		Once()
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil).
+		Once()
+
+	rt := trace.New("trace-retry", trace.Metadata{GatewayID: gatewayID.String()})
+	rt.SetGating(true, true)
+	ctx := trace.NewContext(context.Background(), rt)
+
+	res, err := newSmartRoutedForwarder(t, invoker, 0.9, 1).Forward(ctx, appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   &infracontext.RequestContext{Body: []byte(`{"prompt":"hi"}`)},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 200, res.StatusCode)
+
+	served := servedLLMAttrs(t, rt)
+	assert.True(t, served.TierApplied, "the retry span must keep the tier decision")
+	require.NotNil(t, served.Baseline)
+	assert.Equal(t, "model-high", served.Baseline.Model)
+}
+
+// A fallback-chain hop never consults the strategy, so it must not inherit the
+// tier decision made for the pool route it replaced.
+func TestForward_FallbackChainHopDropsTierDecision(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	low := backendFor(gatewayID, "openai")
+	high := backendFor(gatewayID, "anthropic")
+	chainBk := backendFor(gatewayID, "bedrock")
+	rc := smartRoutedConsumer(gatewayID, low, high)
+	rc.Consumer.Fallback = enabledFallback(chainBk.ID)
+	rc.FallbackBackends = []*registrydomain.Registry{chainBk}
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 503, Body: []byte("down")}, nil).
+		Times(2)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("recovered")}, nil).
+		Once()
+
+	rt := trace.New("trace-chain", trace.Metadata{GatewayID: gatewayID.String()})
+	rt.SetGating(true, true)
+	ctx := trace.NewContext(context.Background(), rt)
+
+	res, err := newSmartRoutedForwarder(t, invoker, 0.9, 0).Forward(ctx, appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   &infracontext.RequestContext{Body: []byte(`{"prompt":"hi"}`)},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 200, res.StatusCode)
+
+	served := servedLLMAttrs(t, rt)
+	assert.True(t, served.Fallback, "expected the chain hop to be the served attempt")
+	assert.False(t, served.TierApplied, "a chain hop must not inherit a tier decision")
 }

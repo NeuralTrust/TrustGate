@@ -436,11 +436,6 @@ func (b *Builder) fillUsageAndCost(ctx context.Context, evt *events.Event, serve
 	}
 }
 
-// servedRates is the pricing overlay of the registry that actually served the
-// request. It prefers the span because RequestContext.RegistryPricing only
-// survives the streaming path: the buffered path reaches the builder through the
-// metrics middleware's own request context, which never carries pricing, so
-// reading only that silently drops registry discounts and overrides.
 func servedRates(served *trace.LLMAttrs, req *infracontext.RequestContext) *llmcost.RegistryRates {
 	if served != nil && served.ServedPricing != nil {
 		return llmcost.RatesFromDomain(served.ServedPricing)
@@ -451,10 +446,6 @@ func servedRates(served *trace.LLMAttrs, req *infracontext.RequestContext) *llmc
 	return nil
 }
 
-// fillSavings prices the same usage against the highest configured smart-routing
-// tier and records the difference. Both legs go through llmcost.Resolve so their
-// precedence rules are identical; the baseline is priced with its own registry's
-// overlay, which is not necessarily the served one.
 func (b *Builder) fillSavings(ctx context.Context, evt *events.Event, served *trace.LLMAttrs) {
 	if served == nil || served.Usage == nil || evt.Cost == nil {
 		return

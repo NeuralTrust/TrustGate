@@ -115,18 +115,10 @@ func (lb *LoadBalancer) Routes() []routingdomain.Route {
 	return lb.routes
 }
 
-// Algorithm reports the strategy this pool was built with. Callers read it off
-// the balancer rather than off the consumer, because a balancer is memoized per
-// pool and an aliased pool resolves its settings the same way the implicit one
-// does.
 func (lb *LoadBalancer) Algorithm() string {
 	return lb.algorithm
 }
 
-// SmartRouting is the tier table this pool was built with, nil for every other
-// algorithm. It is the config the live strategy is actually deciding on, so
-// reading it here cannot drift from a consumer record edited since the balancer
-// was memoized.
 func (lb *LoadBalancer) SmartRouting() *registry.SmartRoutingConfig {
 	return lb.smart
 }
