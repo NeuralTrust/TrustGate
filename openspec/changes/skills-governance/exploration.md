@@ -105,16 +105,32 @@ disk contract rather than replace it. Two channels, in priority order:
   ```
 
   "Loading a skill" for an LLM just means getting the `SKILL.md` markdown into its
-  context; a `load_skill` tool result achieves that identically to a disk read. At
-  session boot the loop calls `list_skills` (names + descriptions only, pre-filtered
-  by the consumer/role allowlist) and injects that metadata into the system prompt;
-  the model then pulls full bodies on demand via `load_skill` and reads linked files
-  as `skill://` resources. This reproduces the standard's progressive-disclosure
-  behavior in a few lines of bootstrap code, needs no filesystem (a better fit for
-  ephemeral/serverless agents), and every load passes through plugins and telemetry.
-  A custom loop *may* instead sync to a temp directory via channel 1 (the only option
-  if it uses no MCP at all), but it would still have to implement the metadata
-  preload itself, so the MCP path is usually less code.
+  context; a `load_skill` tool result achieves that identically to a disk read. Note
+  the invocation pattern mirrors native disk skills exactly — this is the standard's
+  progressive disclosure, not a gateway artifact:
+
+  | | Native disk skills | Gateway-served skills |
+  |---|---|---|
+  | Metadata in system prompt | harness preloads it when scanning directories | bootstrap calls `list_skills` once, or zero calls via `initialize.instructions` (below) |
+  | Full `SKILL.md` body | file-read tool call when the model deems it relevant | `load_skill` tool call when the model deems it relevant |
+  | Linked files | further file reads on demand | `skill://` resource reads on demand |
+
+  Metadata preload does not require the model to act: either the loop calls
+  `list_skills` deterministically at session boot (one programmatic MCP request,
+  pre-filtered by the consumer/role allowlist) and injects the result into the system
+  prompt, or — cheaper — the gateway embeds the allowed skills' names/descriptions in
+  the `instructions` field of the MCP `initialize` response, which most harnesses
+  (including closed ones like Cursor and Claude Code) append to the system prompt
+  automatically. The `instructions` route needs zero client code and narrows the
+  closed-harness limitation: even without disk sync, such runtimes would see the
+  skill index and could fetch bodies via `load_skill`. The model only ever *chooses*
+  to invoke `load_skill`, exactly as it chooses to read a `SKILL.md` from disk.
+
+  This path needs no filesystem (a better fit for ephemeral/serverless agents), and
+  every load passes through plugins and telemetry. A custom loop *may* instead sync
+  to a temp directory via channel 1 (the only option if it uses no MCP at all), but
+  it would still have to implement the metadata preload itself, so the MCP path is
+  usually less code.
 
 Rule of thumb: closed runtimes that scan disk → HTTP sync; loops you control → MCP.
 

@@ -52,16 +52,18 @@ are materialized from, not a new discovery mechanism the agent must learn.
   session).
 - **MCP channel (primary for custom agents, additive for closed runtimes)** — the
   consumer endpoint also exposes `list_skills` (names + descriptions only),
-  `load_skill` (full `SKILL.md`), and `skill://{code}/{path}` resources. A custom
-  loop that already connects to the gateway for tools calls `list_skills` at session
-  boot and injects the metadata into its system prompt; the model then invokes
-  `load_skill` on demand — the standard's progressive-disclosure behavior in a few
-  lines of bootstrap, with no filesystem (well suited to ephemeral/serverless
-  agents). Explicit limitation for closed harnesses (Cursor, Claude Code): they do
-  **not** preload MCP-served skill metadata the way they do for on-disk skills, so
-  for them this channel only covers mid-session on-demand fetching, not native
-  discovery. Rule of thumb: closed runtimes that scan disk → HTTP sync; loops you
-  control → MCP.
+  `load_skill` (full `SKILL.md`), and `skill://{code}/{path}` resources. Metadata
+  preload never depends on the model: either the loop calls `list_skills` once at
+  session boot (deterministic bootstrap code), or the gateway embeds the allowed
+  skills' names/descriptions in the `initialize.instructions` field, which most
+  harnesses — including closed ones — append to the system prompt automatically.
+  The model only invokes `load_skill` when it deems a skill relevant, mirroring how
+  native disk skills load the body via a file-read tool call (the standard's
+  progressive disclosure). No filesystem needed (well suited to ephemeral/serverless
+  agents). Remaining limitation for closed harnesses (Cursor, Claude Code): without
+  disk sync they rely on honoring `initialize.instructions` for discovery; disk sync
+  stays the primary channel for them. Rule of thumb: closed runtimes that scan disk
+  → HTTP sync; loops you control → MCP.
 - Every fetch on either channel is attributable (principal, skill, version, hash)
   through the existing telemetry/metrics plane; plugins (rate limiting, trustguard)
   run on skill reads like any other MCP call.
