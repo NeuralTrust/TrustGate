@@ -128,6 +128,26 @@ Functional tests modeled on `tests/functional/mcp_*.go` covering
 ingest → approve → pin → allowlist → serve, including the negative paths (pending
 version not served, toolkit-excluded skill invisible, hash stability).
 
+### Compatibility guarantees (standards-based, nothing breaks)
+
+- **Artifact fidelity:** skills are stored and served byte-identical (hash-verified) in
+  the agentskills.io format — no proprietary frontmatter, wrapper, or rewriting.
+  A skill governed through the gateway remains portable to any other distribution.
+- **Disk channel feeds native discovery:** the sync writes ordinary files into the
+  directories Cursor/Claude Code already scan. If the sync never runs, the agent
+  starts exactly as today (minus those skills); there is no failure mode that breaks
+  a session.
+- **MCP channel uses only core protocol primitives:** tools, resources, and
+  `initialize.instructions` are all in the MCP spec. Clients that ignore
+  `instructions` degrade gracefully (no skill index, no error).
+- **Closed by default:** skill tools/resources appear in a consumer's surface only
+  when its toolkit gains `skill` entries. Existing consumers observe zero change in
+  `tools/list` until an admin opts in — the same semantics the toolkit already
+  applies to tools/prompts/resources.
+- **No new client requirements:** consumer auth (API key/OAuth/mTLS), roles, plugins,
+  and telemetry are reused as-is; agents need support nothing beyond what they
+  already use to reach the gateway.
+
 ## Risks
 
 | Risk | Likelihood | Mitigation |
