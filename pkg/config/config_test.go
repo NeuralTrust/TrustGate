@@ -80,6 +80,51 @@ func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	if cfg.Telemetry.ExportersMetadata != "" || cfg.Telemetry.ExportersRaw != "" {
 		t.Errorf("Telemetry exporters env defaults = %q/%q, want empty", cfg.Telemetry.ExportersMetadata, cfg.Telemetry.ExportersRaw)
 	}
+	if cfg.Server.MCPOAuthPublicBaseURL != "" {
+		t.Errorf("MCPOAuthPublicBaseURL default = %q, want empty", cfg.Server.MCPOAuthPublicBaseURL)
+	}
+}
+
+func TestLoadConfig_MCPOAuthPublicBaseURL(t *testing.T) {
+	minimumEnv(t)
+	t.Setenv("MCP_OAUTH_PUBLIC_BASE_URL", "https://oauth.mcp.example.com/")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Server.MCPOAuthPublicBaseURL != "https://oauth.mcp.example.com" {
+		t.Fatalf("MCPOAuthPublicBaseURL = %q, want normalized origin", cfg.Server.MCPOAuthPublicBaseURL)
+	}
+}
+
+func TestLoadConfig_MCPOAuthPublicBaseURLRejectsPath(t *testing.T) {
+	minimumEnv(t)
+	t.Setenv("MCP_OAUTH_PUBLIC_BASE_URL", "https://oauth.mcp.example.com/oauth")
+
+	_, err := LoadConfig()
+	if err == nil {
+		t.Fatal("LoadConfig: want error for path in public base URL")
+	}
+	if !stderrors.Is(err, errors.ErrInvalidConfig) {
+		t.Fatalf("error = %v, want ErrInvalidConfig", err)
+	}
+	if !strings.Contains(err.Error(), "MCP_OAUTH_PUBLIC_BASE_URL") {
+		t.Fatalf("error = %v, want MCP_OAUTH_PUBLIC_BASE_URL mention", err)
+	}
+}
+
+func TestLoadConfig_MCPOAuthPublicBaseURLRejectsNonHTTP(t *testing.T) {
+	minimumEnv(t)
+	t.Setenv("MCP_OAUTH_PUBLIC_BASE_URL", "ftp://oauth.mcp.example.com")
+
+	_, err := LoadConfig()
+	if err == nil {
+		t.Fatal("LoadConfig: want error for non-http scheme")
+	}
+	if !stderrors.Is(err, errors.ErrInvalidConfig) {
+		t.Fatalf("error = %v, want ErrInvalidConfig", err)
+	}
 }
 
 func TestLoadConfig_MCPConnectRateLimitConfigured(t *testing.T) {
