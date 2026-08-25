@@ -21,6 +21,7 @@ import (
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
@@ -572,4 +573,189 @@ func TestBuilder_SkipsNoOpPluginSpan(t *testing.T) {
 	require.Len(t, evt.PolicyChain, 1)
 	assert.Equal(t, "pre_request", evt.PolicyChain[0].Stage)
 	assert.Equal(t, "allowed", evt.PolicyChain[0].Decision)
+}
+
+// savingsTrace builds a request trace for a smart-routed request served by
+// gpt-4o-mini whose highest configured tier is gpt-4o, so the counterfactual has
+// a different model to price against.
+func savingsTrace(mutate func(*trace.LLMAttrs)) *trace.RequestTrace {
+	attrs := &trace.LLMAttrs{
+		Provider:         "openai",
+		SentModel:        "gpt-4o-mini",
+		Model:            "gpt-4o-mini",
+		RequestedModel:   "auto",
+		FinishReason:     "stop",
+		Attempt:          1,
+		Outcome:          "success",
+		RoutingAlgorithm: algorithm.SmartRouting,
+		TierApplied:      true,
+		ComplexityScore:  0.12,
+		Baseline: &trace.RouteBaseline{
+			RegistryID: "reg-high",
+			Provider:   "openai",
+			Model:      "gpt-4o",
+			MinScore:   0.8,
+		},
+		Usage: &adapter.CanonicalUsage{InputTokens: 10, OutputTokens: 20, TotalTokens: 30},
+	}
+	if mutate != nil {
+		mutate(attrs)
+	}
+	rt := trace.New("trace-savings", trace.Metadata{GatewayID: "gw-1"})
+	_ = rt.AddSpan(llmSpan("openai", attrs, 200, 300*time.Millisecond, ""))
+	return rt
+}
+
+func savingsRequest() *infracontext.RequestContext {
+	return &infracontext.RequestContext{
+		GatewayID:      "gw-1",
+		RequestedModel: "auto",
+		Body:           []byte(openAIRequestBody),
+		SourceFormat:   string(adapter.FormatOpenAI),
+	}
+}
+
+func savingsResponse() *infracontext.ResponseContext {
+	return &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"id":"x","choices":[]}`)}
+}
+
+func savingsPricing() map[string]appcatalog.Pricing {
+	return map[string]appcatalog.Pricing{
+		"openai:gpt-4o-mini": {Found: true, InputPrice: 0.00000015, OutputPrice: 0.0000006},
+		"openai:gpt-4o":      {Found: true, InputPrice: 0.0000025, OutputPrice: 0.00001},
+	}
+}
+
+func TestBuilder_SavingsUsesHighestTierBaseline(t *testing.T) {
+	b := newBuilderWithPricing(savingsPricing())
+
+	evt := b.Build(context.Background(), savingsTrace(nil), savingsRequest(), savingsResponse(),
+		time.UnixMilli(1), time.UnixMilli(2))
+
+	require.NotNil(t, evt.Cost)
+	require.NotNil(t, evt.Savings)
+	assert.Equal(t, "gpt-4o", evt.Savings.BaselineModel)
+	assert.Equal(t, "reg-high", evt.Savings.BaselineRegistryID)
+	assert.Equal(t, "USD", evt.Savings.Currency)
+	assert.InDelta(t, 10*0.0000025, float64(evt.Savings.BaselinePromptUsd), 1e-12)
+	assert.InDelta(t, 20*0.00001, float64(evt.Savings.BaselineCompletionUsd), 1e-12)
+	assert.InDelta(t, 10*0.0000025+20*0.00001, float64(evt.Savings.BaselineTotalUsd), 1e-12)
+	assert.InDelta(t,
+		float64(evt.Savings.BaselineTotalUsd)-float64(evt.Cost.TotalUsd),
+		float64(evt.Savings.SavedUsd), 1e-12)
+	assert.Greater(t, float64(evt.Savings.SavedUsd), 0.0)
+}
+
+func TestBuilder_SavingsIsZeroWhenServedIsHighestTier(t *testing.T) {
+	b := newBuilderWithPricing(savingsPricing())
+	rt := savingsTrace(func(a *trace.LLMAttrs) { a.Baseline.Model = "gpt-4o-mini" })
+
+	evt := b.Build(context.Background(), rt, savingsRequest(), savingsResponse(),
+		time.UnixMilli(1), time.UnixMilli(2))
+
+	require.NotNil(t, evt.Savings)
+	assert.InDelta(t, 0, float64(evt.Savings.SavedUsd), 1e-12)
+}
+
+// A fail-open round-robin pick is not a tier decision, so it must not be
+// credited with savings the tier table never produced.
+func TestBuilder_SavingsAbsentWhenTierNotApplied(t *testing.T) {
+	b := newBuilderWithPricing(savingsPricing())
+	rt := savingsTrace(func(a *trace.LLMAttrs) { a.TierApplied = false })
+
+	evt := b.Build(context.Background(), rt, savingsRequest(), savingsResponse(),
+		time.UnixMilli(1), time.UnixMilli(2))
+
+	require.NotNil(t, evt.Cost)
+	assert.Nil(t, evt.Savings)
+}
+
+func TestBuilder_SavingsAbsentWithoutBaseline(t *testing.T) {
+	b := newBuilderWithPricing(savingsPricing())
+	rt := savingsTrace(func(a *trace.LLMAttrs) { a.Baseline = nil })
+
+	evt := b.Build(context.Background(), rt, savingsRequest(), savingsResponse(),
+		time.UnixMilli(1), time.UnixMilli(2))
+
+	require.NotNil(t, evt.Cost)
+	assert.Nil(t, evt.Savings)
+}
+
+// An unpriceable baseline omits savings rather than reporting zero, which would
+// be indistinguishable from "the top tier was already served".
+func TestBuilder_SavingsAbsentWhenBaselineUnpriced(t *testing.T) {
+	b := newBuilderWithPricing(map[string]appcatalog.Pricing{
+		"openai:gpt-4o-mini": {Found: true, InputPrice: 0.00000015, OutputPrice: 0.0000006},
+	})
+
+	evt := b.Build(context.Background(), savingsTrace(nil), savingsRequest(), savingsResponse(),
+		time.UnixMilli(1), time.UnixMilli(2))
+
+	require.NotNil(t, evt.Cost)
+	assert.Nil(t, evt.Savings)
+}
+
+func TestBuilder_SavingsAbsentWhenActualUnpriced(t *testing.T) {
+	b := newBuilderWithPricing(map[string]appcatalog.Pricing{
+		"openai:gpt-4o": {Found: true, InputPrice: 0.0000025, OutputPrice: 0.00001},
+	})
+
+	evt := b.Build(context.Background(), savingsTrace(nil), savingsRequest(), savingsResponse(),
+		time.UnixMilli(1), time.UnixMilli(2))
+
+	assert.Nil(t, evt.Cost)
+	assert.Nil(t, evt.Savings)
+}
+
+// The baseline is priced with its own registry's overlay: the tier may live on a
+// different registry than the one that served the request.
+func TestBuilder_SavingsAppliesBaselineRegistryOverlay(t *testing.T) {
+	b := newBuilderWithPricing(savingsPricing())
+	rt := savingsTrace(func(a *trace.LLMAttrs) {
+		a.Baseline.Pricing = &domain.Pricing{Discount: 0.5}
+	})
+
+	evt := b.Build(context.Background(), rt, savingsRequest(), savingsResponse(),
+		time.UnixMilli(1), time.UnixMilli(2))
+
+	require.NotNil(t, evt.Cost)
+	require.NotNil(t, evt.Savings)
+	assert.InDelta(t, 0.5*(10*0.0000025+20*0.00001), float64(evt.Savings.BaselineTotalUsd), 1e-12)
+	assert.InDelta(t, 10*0.00000015, float64(evt.Cost.PromptUsd), 1e-12)
+}
+
+// Cached and reasoning tokens are sub-counts with no rate of their own, so both
+// legs must multiply the same full input/output counts or the delta is not a
+// like-for-like comparison.
+func TestBuilder_SavingsUsesSameTokenCountsAsCost(t *testing.T) {
+	b := newBuilderWithPricing(savingsPricing())
+	rt := savingsTrace(func(a *trace.LLMAttrs) {
+		a.Usage.CachedInputTokens = 8
+		a.Usage.ReasoningOutputTokens = 15
+	})
+
+	evt := b.Build(context.Background(), rt, savingsRequest(), savingsResponse(),
+		time.UnixMilli(1), time.UnixMilli(2))
+
+	require.NotNil(t, evt.Savings)
+	assert.InDelta(t, 10*0.0000025, float64(evt.Savings.BaselinePromptUsd), 1e-12)
+	assert.InDelta(t, 20*0.00001, float64(evt.Savings.BaselineCompletionUsd), 1e-12)
+}
+
+// The buffered path reaches the builder with a request context the metrics
+// middleware built, which carries no pricing. Reading the overlay off the span
+// is what keeps registry discounts applied to non-streamed requests.
+func TestBuilder_CostUsesServedPricingFromSpan(t *testing.T) {
+	b := newBuilderWithPricing(savingsPricing())
+	rt := savingsTrace(func(a *trace.LLMAttrs) {
+		a.ServedPricing = &domain.Pricing{Discount: 0.2}
+	})
+	req := savingsRequest()
+	require.Nil(t, req.RegistryPricing)
+
+	evt := b.Build(context.Background(), rt, req, savingsResponse(), time.UnixMilli(1), time.UnixMilli(2))
+
+	require.NotNil(t, evt.Cost)
+	assert.InDelta(t, 0.8*10*0.00000015, float64(evt.Cost.PromptUsd), 1e-12)
+	assert.InDelta(t, 0.8*20*0.0000006, float64(evt.Cost.CompletionUsd), 1e-12)
 }

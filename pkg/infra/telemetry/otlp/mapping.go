@@ -92,6 +92,15 @@ const (
 	attrResponseBody         = "trustgate.response.body"
 )
 
+// Kept in its own block so the savings keys, whose names are longer than every
+// key above, do not force gofmt to realign the entire attribute table.
+const (
+	attrSavingsBaselineTotalUsd = "trustgate.savings.baseline_total_usd"
+	attrSavingsSavedUsd         = "trustgate.savings.saved_usd"
+	attrSavingsBaselineModel    = "trustgate.savings.baseline_model"
+	attrSavingsCurrency         = "trustgate.savings.currency"
+)
+
 // eventToRecord is the single, semconv-pinned (semconv/v1.41.0) mapping from a
 // sanitized business Event to an OTLP log record. Standard fields use GenAI/HTTP
 // semantic conventions; gateway-specific fields use the trustgate.* namespace.
@@ -190,6 +199,14 @@ func eventToRecord(evt *events.Event) otellog.Record {
 			attribute.Float64(attrCostCompletionUsd, float64(evt.Cost.CompletionUsd)),
 		)
 		appendStr(attrCostCurrency, evt.Cost.Currency)
+	}
+	if evt.Savings != nil {
+		attrs = append(attrs,
+			attribute.Float64(attrSavingsBaselineTotalUsd, float64(evt.Savings.BaselineTotalUsd)),
+			attribute.Float64(attrSavingsSavedUsd, float64(evt.Savings.SavedUsd)),
+		)
+		appendStr(attrSavingsBaselineModel, evt.Savings.BaselineModel)
+		appendStr(attrSavingsCurrency, evt.Savings.Currency)
 	}
 	attrs = append(attrs,
 		attribute.Int64(attrLatencyTotalMs, evt.Latency.TotalMs),

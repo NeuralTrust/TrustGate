@@ -3,7 +3,11 @@
 package functional_test
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -111,4 +115,160 @@ func TestSmartRoutingE2E_FallsBackToRoundRobinOnScoreError(t *testing.T) {
 	assert.Greater(t, low.Hits(), 0, "fallback round-robin must reach the low upstream")
 	assert.Greater(t, high.Hits(), 0, "fallback round-robin must reach the high upstream")
 	assert.Equal(t, total, low.Hits()+high.Hits(), "every request must reach exactly one upstream")
+}
+
+// newSplitUsageUpstream answers with a chat completion whose usage block splits
+// prompt and completion tokens. The shared newUsageUpstream always reports zero
+// completion tokens, which would leave the output leg of both cost and savings
+// at zero and make the comparison vacuous.
+func newSplitUsageUpstream(t *testing.T, marker string, promptTokens, completionTokens int) *fakeUpstream {
+	t.Helper()
+	u := &fakeUpstream{}
+	u.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u.record(r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w,
+			`{"id":"chatcmpl-test","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":%q},"finish_reason":"stop"}],"usage":{"prompt_tokens":%d,"completion_tokens":%d,"total_tokens":%d}}`,
+			marker, promptTokens, completionTokens, promptTokens+completionTokens,
+		)
+	}))
+	t.Cleanup(u.server.Close)
+	return u
+}
+
+// pricedBackendPayload declares an explicit per-token override so cost resolves
+// from the registry alone, without depending on the models.dev catalog being
+// synced in the test environment.
+func pricedBackendPayload(name, baseURL, model string, input, output float64) map[string]any {
+	payload := openaiBackendPayload(name, baseURL)
+	payload["pricing"] = map[string]any{
+		"overrides": map[string]any{
+			model: map[string]any{"input": input, "output": output},
+		},
+	}
+	return payload
+}
+
+// setupSmartRouteSavings mirrors setupSmartRoute but prices both registries and
+// exposes the playground identifiers, so a test can read the emitted event back
+// and assert on its savings block.
+func setupSmartRouteSavings(
+	t *testing.T,
+	low, high *fakeUpstream,
+	lowModel, highModel string,
+) (gatewaySlug, consumerSlug, path string) {
+	t.Helper()
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("smart-sav-gw")})
+	host, ok := gatewayHosts.Load(gatewayID)
+	require.True(t, ok, "gateway host missing for %s", gatewayID)
+	gatewaySlug = strings.TrimSuffix(host.(string), "."+gatewayBaseDomain())
+	require.NotEmpty(t, gatewaySlug)
+
+	lowID := CreateRegistry(t, gatewayID,
+		pricedBackendPayload(uniqueName("be-low"), low.URL(), lowModel, 0.000001, 0.000002))
+	highID := CreateRegistry(t, gatewayID,
+		pricedBackendPayload(uniqueName("be-high"), high.URL(), highModel, 0.00001, 0.00002))
+
+	coID := CreateConsumer(t, gatewayID, map[string]any{
+		"name": uniqueName("smart-sav-cons"),
+		"registries": []map[string]any{
+			{"id": lowID, "model_policies": map[string]any{"allowed": []string{lowModel}, "default": lowModel}},
+			{"id": highID, "model_policies": map[string]any{"allowed": []string{highModel}, "default": highModel}},
+		},
+		"lb_config": map[string]any{
+			"enabled":   true,
+			"algorithm": "smart-routing",
+			"members": []map[string]any{
+				{"registry_id": lowID},
+				{"registry_id": highID},
+			},
+			"smart_routing": map[string]any{
+				"tiers": []map[string]any{
+					{"min_score": 0.0, "registry_id": lowID},
+					{"min_score": 0.5, "registry_id": highID},
+				},
+			},
+		},
+	})
+	return gatewaySlug, ConsumerSlug(t, coID), chatCompletionsPath(t, coID)
+}
+
+type savingsTraceEvent struct {
+	Cost *struct {
+		TotalUsd float64 `json:"total_usd"`
+	} `json:"cost"`
+	Savings *struct {
+		BaselineModel    string  `json:"baseline_model"`
+		BaselineTotalUsd float64 `json:"baseline_total_usd"`
+		SavedUsd         float64 `json:"saved_usd"`
+		Currency         string  `json:"currency"`
+	} `json:"savings"`
+}
+
+func smartRoutingTraceFor(t *testing.T, gatewaySlug, consumerSlug, path, content string) savingsTraceEvent {
+	t.Helper()
+	token := mintPlaygroundToken(t, consumerSlug)
+	status, headers, body := playgroundPost(t, gatewaySlug, token, path, smartChatRequest(content))
+	require.Equal(t, http.StatusOK, status, "body: %s", body)
+
+	traceID := headers.Get(traceIDHeader)
+	require.NotEmpty(t, traceID)
+
+	var evt savingsTraceEvent
+	raw := pollPlaygroundTrace(t, traceID)
+	require.NoError(t, json.Unmarshal(raw, &evt), "trace body: %s", raw)
+	return evt
+}
+
+func TestSmartRoutingE2E_RecordsSavings(t *testing.T) {
+	defer Track(t, "SmartRoutingSavingsE2E")()
+
+	const (
+		lowModel  = "model-low-tier"
+		highModel = "model-high-tier"
+		promptTok = 10
+		outputTok = 20
+	)
+	// The high tier is priced 10x the low tier on both legs.
+	baseline := promptTok*0.00001 + outputTok*0.00002
+
+	t.Run("a low-tier pick records what the top tier would have cost", func(t *testing.T) {
+		low := newSplitUsageUpstream(t, "served-by-low", promptTok, outputTok)
+		high := newSplitUsageUpstream(t, "served-by-high", promptTok, outputTok)
+		gatewaySlug, consumerSlug, path := setupSmartRouteSavings(t, low, high, lowModel, highModel)
+
+		evt := smartRoutingTraceFor(t, gatewaySlug, consumerSlug, path, smartRouteLowContent)
+
+		require.NotNil(t, evt.Cost)
+		require.NotNil(t, evt.Savings, "a tier decision must record savings")
+		assert.Equal(t, highModel, evt.Savings.BaselineModel)
+		assert.Equal(t, "USD", evt.Savings.Currency)
+		assert.InDelta(t, baseline, evt.Savings.BaselineTotalUsd, 1e-12)
+		assert.InDelta(t, baseline-evt.Cost.TotalUsd, evt.Savings.SavedUsd, 1e-12)
+		assert.Greater(t, evt.Savings.SavedUsd, 0.0)
+	})
+
+	t.Run("a top-tier pick records zero savings, not an absent block", func(t *testing.T) {
+		low := newSplitUsageUpstream(t, "served-by-low", promptTok, outputTok)
+		high := newSplitUsageUpstream(t, "served-by-high", promptTok, outputTok)
+		gatewaySlug, consumerSlug, path := setupSmartRouteSavings(t, low, high, lowModel, highModel)
+
+		evt := smartRoutingTraceFor(t, gatewaySlug, consumerSlug, path, smartRouteHighContent)
+
+		require.NotNil(t, evt.Savings)
+		assert.InDelta(t, 0, evt.Savings.SavedUsd, 1e-12)
+	})
+
+	// The single most important assertion here: a fail-open round-robin pick is
+	// not a tier decision, so it must not be credited with savings.
+	t.Run("a scorer error falls back and records no savings", func(t *testing.T) {
+		low := newSplitUsageUpstream(t, "served-by-low", promptTok, outputTok)
+		high := newSplitUsageUpstream(t, "served-by-high", promptTok, outputTok)
+		gatewaySlug, consumerSlug, path := setupSmartRouteSavings(t, low, high, lowModel, highModel)
+
+		evt := smartRoutingTraceFor(t, gatewaySlug, consumerSlug, path, smartRouteErrorContent)
+
+		require.NotNil(t, evt.Cost, "a fail-open request is still costed")
+		assert.Nil(t, evt.Savings, "a round-robin fail-open must not report savings")
+	})
 }

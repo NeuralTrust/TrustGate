@@ -53,6 +53,8 @@ type LoadBalancer struct {
 	poolSize   int
 	routes     []routingdomain.Route
 	backendIDs []string
+	algorithm  string
+	smart      *registry.SmartRoutingConfig
 	successCh  chan *registry.Registry
 	factory    Factory
 	done       chan struct{}
@@ -99,6 +101,8 @@ func NewLoadBalancer(
 		poolSize:   len(pool.Routes),
 		routes:     pool.Routes,
 		backendIDs: backendIDs,
+		algorithm:  pool.Algorithm,
+		smart:      pool.SmartRoutingConfig,
 		successCh:  make(chan *registry.Registry, 1000),
 		factory:    factory,
 		done:       make(chan struct{}),
@@ -109,6 +113,22 @@ func NewLoadBalancer(
 
 func (lb *LoadBalancer) Routes() []routingdomain.Route {
 	return lb.routes
+}
+
+// Algorithm reports the strategy this pool was built with. Callers read it off
+// the balancer rather than off the consumer, because a balancer is memoized per
+// pool and an aliased pool resolves its settings the same way the implicit one
+// does.
+func (lb *LoadBalancer) Algorithm() string {
+	return lb.algorithm
+}
+
+// SmartRouting is the tier table this pool was built with, nil for every other
+// algorithm. It is the config the live strategy is actually deciding on, so
+// reading it here cannot drift from a consumer record edited since the balancer
+// was memoized.
+func (lb *LoadBalancer) SmartRouting() *registry.SmartRoutingConfig {
+	return lb.smart
 }
 
 func healthKey(backendID string) string {

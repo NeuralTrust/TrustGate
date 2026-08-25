@@ -103,6 +103,7 @@ func (b *Builder) Build(
 	b.fillResponse(evt, resp, served, totalMs)
 	b.fillStatus(evt, resp, served, requestTrace)
 	b.fillUsageAndCost(ctx, evt, served, req)
+	b.fillSavings(ctx, evt, served)
 
 	return evt
 }
@@ -411,10 +412,7 @@ func (b *Builder) fillUsageAndCost(ctx context.Context, evt *events.Event, serve
 		return
 	}
 	slugs := pricingSlugs(evt, served)
-	var overlay *llmcost.RegistryRates
-	if req != nil {
-		overlay = llmcost.RatesFromDomain(req.RegistryPricing)
-	}
+	overlay := servedRates(served, req)
 	inputRate, outputRate, found := llmcost.Resolve(ctx, b.pricing, nil, overlay, served.Provider, slugs...)
 	if !found {
 		return
@@ -435,6 +433,57 @@ func (b *Builder) fillUsageAndCost(ctx context.Context, evt *events.Event, serve
 		CompletionUsd: events.DecimalFloat(completionUsd),
 		TotalUsd:      events.DecimalFloat(promptUsd + completionUsd),
 		Currency:      costCurrencyUSD,
+	}
+}
+
+// servedRates is the pricing overlay of the registry that actually served the
+// request. It prefers the span because RequestContext.RegistryPricing only
+// survives the streaming path: the buffered path reaches the builder through the
+// metrics middleware's own request context, which never carries pricing, so
+// reading only that silently drops registry discounts and overrides.
+func servedRates(served *trace.LLMAttrs, req *infracontext.RequestContext) *llmcost.RegistryRates {
+	if served != nil && served.ServedPricing != nil {
+		return llmcost.RatesFromDomain(served.ServedPricing)
+	}
+	if req != nil {
+		return llmcost.RatesFromDomain(req.RegistryPricing)
+	}
+	return nil
+}
+
+// fillSavings prices the same usage against the highest configured smart-routing
+// tier and records the difference. Both legs go through llmcost.Resolve so their
+// precedence rules are identical; the baseline is priced with its own registry's
+// overlay, which is not necessarily the served one.
+func (b *Builder) fillSavings(ctx context.Context, evt *events.Event, served *trace.LLMAttrs) {
+	if served == nil || served.Usage == nil || evt.Cost == nil {
+		return
+	}
+	if !served.TierApplied || served.Baseline == nil {
+		return
+	}
+	base := served.Baseline
+	if base.Provider == "" || base.Model == "" {
+		return
+	}
+	inputRate, outputRate, found := llmcost.Resolve(
+		ctx, b.pricing, nil, llmcost.RatesFromDomain(base.Pricing), base.Provider, base.Model,
+	)
+	if !found {
+		return
+	}
+	u := served.Usage
+	promptUsd := float64(u.InputTokens) * inputRate
+	completionUsd := float64(u.OutputTokens) * outputRate
+	totalUsd := promptUsd + completionUsd
+	evt.Savings = &events.Savings{
+		BaselineModel:         base.Model,
+		BaselineRegistryID:    base.RegistryID,
+		BaselinePromptUsd:     events.DecimalFloat(promptUsd),
+		BaselineCompletionUsd: events.DecimalFloat(completionUsd),
+		BaselineTotalUsd:      events.DecimalFloat(totalUsd),
+		SavedUsd:              events.DecimalFloat(totalUsd - float64(evt.Cost.TotalUsd)),
+		Currency:              costCurrencyUSD,
 	}
 }
 

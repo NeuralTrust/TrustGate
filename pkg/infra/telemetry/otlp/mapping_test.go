@@ -40,7 +40,7 @@ func fullEvent() *events.Event {
 		SchemaVersion: events.SchemaVersion,
 		TraceID:       "trace-123",
 		GatewayID:     "gw-1",
-		TenantID:        "team-1",
+		TenantID:      "team-1",
 		OccurredOn:    1_700_000_000_000,
 		Consumer:      events.Consumer{ID: "c-1", Name: "alice"},
 		SessionID:     "sess-1",
@@ -67,7 +67,16 @@ func fullEvent() *events.Event {
 			CachedInputTokens:     2,
 			ReasoningOutputTokens: 1,
 		},
-		Cost:    &events.Cost{PromptUsd: events.DecimalFloat(0.002), CompletionUsd: events.DecimalFloat(0.008), TotalUsd: events.DecimalFloat(0.01), Currency: "USD"},
+		Cost: &events.Cost{PromptUsd: events.DecimalFloat(0.002), CompletionUsd: events.DecimalFloat(0.008), TotalUsd: events.DecimalFloat(0.01), Currency: "USD"},
+		Savings: &events.Savings{
+			BaselineModel:         "gpt-5",
+			BaselineRegistryID:    "reg-high",
+			BaselinePromptUsd:     events.DecimalFloat(0.006),
+			BaselineCompletionUsd: events.DecimalFloat(0.024),
+			BaselineTotalUsd:      events.DecimalFloat(0.03),
+			SavedUsd:              events.DecimalFloat(0.02),
+			Currency:              "USD",
+		},
 		Latency: events.Latency{TotalMs: 120, ProviderMs: 100, PoliciesMs: 14, GatewayMs: 6},
 		Attempts: []events.Attempt{
 			{Provider: "openai", Attempt: 1, StatusCode: 200},
@@ -106,6 +115,10 @@ func TestEventToRecord_StandardAndProprietaryCoexist(t *testing.T) {
 	assert.Equal(t, "alice", attrs["trustgate.consumer.name"].AsString())
 	assert.InDelta(t, 0.01, attrs["trustgate.cost.total_usd"].AsFloat64(), 1e-9)
 	assert.Equal(t, "USD", attrs["trustgate.cost.currency"].AsString())
+	assert.InDelta(t, 0.03, attrs["trustgate.savings.baseline_total_usd"].AsFloat64(), 1e-9)
+	assert.InDelta(t, 0.02, attrs["trustgate.savings.saved_usd"].AsFloat64(), 1e-9)
+	assert.Equal(t, "gpt-5", attrs["trustgate.savings.baseline_model"].AsString())
+	assert.Equal(t, "USD", attrs["trustgate.savings.currency"].AsString())
 	assert.Equal(t, int64(15), attrs["trustgate.usage.total_tokens"].AsInt64())
 	assert.Equal(t, int64(120), attrs["trustgate.latency.total_ms"].AsInt64())
 	assert.Equal(t, int64(100), attrs["trustgate.latency.provider_ms"].AsInt64())
@@ -214,4 +227,21 @@ func TestEventToRecord_Nil(t *testing.T) {
 	t.Parallel()
 	rec := eventToRecord(nil)
 	assert.Equal(t, "", rec.EventName())
+}
+
+// Savings is absent on every request smart routing did not decide, so the keys
+// must not appear at all rather than reporting a zero saving.
+func TestEventToRecord_OmitsSavingsWhenAbsent(t *testing.T) {
+	t.Parallel()
+	evt := fullEvent()
+	evt.Savings = nil
+
+	attrs := attrsOf(eventToRecord(evt))
+
+	_, hasSaved := attrs["trustgate.savings.saved_usd"]
+	assert.False(t, hasSaved)
+	_, hasBaseline := attrs["trustgate.savings.baseline_total_usd"]
+	assert.False(t, hasBaseline)
+	_, hasModel := attrs["trustgate.savings.baseline_model"]
+	assert.False(t, hasModel)
 }
