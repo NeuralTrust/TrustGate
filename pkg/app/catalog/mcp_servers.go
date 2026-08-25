@@ -19,14 +19,15 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	mcpcatalog "github.com/NeuralTrust/TrustGate/seed/mcp-catalog"
 )
 
 type MCPServerCatalog interface {
 	ListMCPServers() []domain.MCPServer
-	// GetByCode returns the curated entry for code, or false when unknown.
 	GetByCode(code string) (domain.MCPServer, bool)
+	SharedOAuthCredentials(code string) (clientID, clientSecret string, ok bool)
 }
 
 var _ MCPServerCatalog = (*mcpServerCatalog)(nil)
@@ -34,21 +35,20 @@ var _ MCPServerCatalog = (*mcpServerCatalog)(nil)
 type mcpServerCatalog struct {
 	servers []domain.MCPServer
 	byCode  map[string]domain.MCPServer
+	shared  mcpoauth.Provider
 }
 
-// NewMCPServerCatalog loads the curated catalog of remote MCP servers embedded
-// at build time. The embedded JSON is a validated build asset, so a parse
-// failure is a programming error and surfaces at startup.
-func NewMCPServerCatalog() (MCPServerCatalog, error) {
+func NewMCPServerCatalog(shared mcpoauth.Provider) (MCPServerCatalog, error) {
 	servers, err := loadCuratedMCPServers()
 	if err != nil {
 		return nil, fmt.Errorf("loading curated mcp catalog: %w", err)
 	}
+	applyPlatformOAuth(servers, shared)
 	byCode := make(map[string]domain.MCPServer, len(servers))
 	for _, s := range servers {
 		byCode[s.Code] = s
 	}
-	return &mcpServerCatalog{servers: servers, byCode: byCode}, nil
+	return &mcpServerCatalog{servers: servers, byCode: byCode, shared: shared}, nil
 }
 
 func (c *mcpServerCatalog) ListMCPServers() []domain.MCPServer {
@@ -60,6 +60,14 @@ func (c *mcpServerCatalog) ListMCPServers() []domain.MCPServer {
 func (c *mcpServerCatalog) GetByCode(code string) (domain.MCPServer, bool) {
 	s, ok := c.byCode[code]
 	return s, ok
+}
+
+func (c *mcpServerCatalog) SharedOAuthCredentials(code string) (string, string, bool) {
+	if c.shared == nil {
+		return "", "", false
+	}
+	creds, ok := c.shared.CredentialsFor(code)
+	return creds.ClientID, creds.ClientSecret, ok
 }
 
 const curatedSource = "curated"
@@ -197,4 +205,31 @@ func requiresConfig(s rawServer) bool {
 	default:
 		return true
 	}
+}
+
+func applyPlatformOAuth(servers []domain.MCPServer, shared mcpoauth.Provider) {
+	if shared == nil {
+		return
+	}
+	for i := range servers {
+		if _, ok := shared.CredentialsFor(servers[i].Code); !ok {
+			continue
+		}
+		servers[i].PlatformClient = true
+		if !needsNonOAuthConfig(servers[i]) {
+			servers[i].RequiresConfig = false
+		}
+	}
+}
+
+func needsNonOAuthConfig(s domain.MCPServer) bool {
+	for _, v := range s.URLVariables {
+		if v.Required {
+			return true
+		}
+	}
+	if s.AuthHint == authHintStatic {
+		return true
+	}
+	return s.OAuth != nil && s.OAuth.GrantType == grantTypeClientCredentials
 }

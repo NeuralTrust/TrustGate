@@ -25,6 +25,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
+	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
@@ -107,8 +108,9 @@ func MCP(c *container.Container) error {
 		provider appoauth.ProviderClient,
 		registrar appoauth.UpstreamRegistrar,
 		auditor appoauth.ConnectAuditor,
+		shared mcpoauth.Provider,
 	) appoauth.ConnectService {
-		return appoauth.NewConnectService(store, vault, consumers, provider, registrar, auditor)
+		return appoauth.NewConnectService(store, vault, consumers, provider, registrar, auditor, shared)
 	}); err != nil {
 		return err
 	}

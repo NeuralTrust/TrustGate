@@ -244,7 +244,7 @@ func TestServeBrandAsset_ReturnsLogo(t *testing.T) {
 
 func mustMCPCatalog(t *testing.T) appcatalog.MCPServerCatalog {
 	t.Helper()
-	catalog, err := appcatalog.NewMCPServerCatalog()
+	catalog, err := appcatalog.NewMCPServerCatalog(nil)
 	if err != nil {
 		t.Fatalf("catalog: %v", err)
 	}
