@@ -145,8 +145,8 @@ version not served, toolkit-excluded skill invisible, hash stability).
   `tools/list` until an admin opts in — the same semantics the toolkit already
   applies to tools/prompts/resources.
 - **No new client requirements:** consumer auth (API key/OAuth/mTLS), roles, plugins,
-  and telemetry are reused as-is; agents need support nothing beyond what they
-  already use to reach the gateway.
+  and telemetry are reused as-is; agents need nothing beyond what they already use
+  to reach the gateway.
 
 ## Risks
 
