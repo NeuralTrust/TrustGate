@@ -50,15 +50,18 @@ are materialized from, not a new discovery mechanism the agent must learn.
   gateway. Revocations and pin changes propagate on the next sync (run it at session
   start — the same moment agents rescan skills — to keep the staleness window to one
   session).
-- **MCP channel (additive)** — the consumer endpoint also exposes `list_skills`
-  (names + descriptions only), `load_skill` (full `SKILL.md`), and
-  `skill://{code}/{path}` resources. Explicit limitation: agent harnesses do **not**
-  preload MCP-served skill metadata into the system prompt the way they do for
-  on-disk skills — the model must choose to call the tool. This channel therefore
-  targets custom agents built on SDKs (where the developer controls the loop and can
-  preload `list_skills` output themselves) and mid-session on-demand fetching, not a
-  replacement for native disk discovery. The tool result is ordinary markdown, which
-  the model consumes as context either way.
+- **MCP channel (primary for custom agents, additive for closed runtimes)** — the
+  consumer endpoint also exposes `list_skills` (names + descriptions only),
+  `load_skill` (full `SKILL.md`), and `skill://{code}/{path}` resources. A custom
+  loop that already connects to the gateway for tools calls `list_skills` at session
+  boot and injects the metadata into its system prompt; the model then invokes
+  `load_skill` on demand — the standard's progressive-disclosure behavior in a few
+  lines of bootstrap, with no filesystem (well suited to ephemeral/serverless
+  agents). Explicit limitation for closed harnesses (Cursor, Claude Code): they do
+  **not** preload MCP-served skill metadata the way they do for on-disk skills, so
+  for them this channel only covers mid-session on-demand fetching, not native
+  discovery. Rule of thumb: closed runtimes that scan disk → HTTP sync; loops you
+  control → MCP.
 - Every fetch on either channel is attributable (principal, skill, version, hash)
   through the existing telemetry/metrics plane; plugins (rate limiting, trustguard)
   run on skill reads like any other MCP call.

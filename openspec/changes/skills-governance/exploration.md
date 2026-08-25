@@ -72,15 +72,35 @@ disk contract rather than replace it. Two channels, in priority order:
    agent then finds ordinary `SKILL.md` files and never talks to the gateway. Hashes
    make sync idempotent and tamper-evident; revocation propagates on the next sync,
    so running it at session start bounds staleness to one session.
-2. **MCP channel (additive — runtime fetching, not native discovery):** expose
+2. **MCP channel (additive for closed runtimes, primary for custom agents):** expose
    approved skills on the existing consumer endpoint as MCP resources
    (`skill://{code}/SKILL.md`, `skill://{code}/{path}`) plus two virtual gateway tools
    (`list_skills`, `load_skill`), with the same auth, toolkit filtering, plugins, and
-   telemetry. The tool result is plain markdown the model consumes as context, but the
-   harness will not auto-preload MCP-served skill metadata the way it does for disk
-   skills — the model must decide to call the tool. Useful for SDK-built custom agents
-   (where the developer controls the loop and can preload `list_skills` themselves)
-   and for on-demand mid-session loading; not a substitute for channel 1.
+   telemetry. The tool result is plain markdown the model consumes as context, but a
+   closed harness (Cursor, Claude Code) will not auto-preload MCP-served skill
+   metadata the way it does for disk skills — the model must decide to call the tool.
+   That limitation disappears when the developer controls the loop; see the recipe
+   below.
+
+**Integration recipe per agent type:**
+
+- **Closed disk-scanning runtimes (Cursor, Claude Code):** channel 1. The sync step
+  writes plain `SKILL.md` folders where the runtime already looks; the agent never
+  talks to the gateway.
+- **Frameworks that implement the agentskills.io standard (e.g. Claude Agent SDK):**
+  also channel 1 — point the SDK's skill directory at the sync target.
+- **Fully custom loops:** channel 2, over the same MCP connection the agent already
+  holds for tools. At session boot the loop calls `list_skills` (names + descriptions
+  only, pre-filtered by the consumer/role allowlist) and injects that metadata into
+  the system prompt; `load_skill` is already advertised in `tools/list`, so the model
+  pulls the full `SKILL.md` on demand and reads linked files as `skill://` resources.
+  This reproduces the standard's progressive-disclosure behavior in a few lines of
+  bootstrap code, needs no filesystem (a better fit for ephemeral/serverless agents),
+  and every load passes through plugins and telemetry. A custom loop *may* instead
+  sync to a temp directory via channel 1, but it would still have to implement the
+  metadata preload itself, so the MCP path is usually less code.
+
+Rule of thumb: closed runtimes that scan disk → HTTP sync; loops you control → MCP.
 
 **Q3 — What is the approval workflow?** Keep it minimal and reuse existing shapes:
 skill versions are immutable and start `pending`; an admin transitions them to
