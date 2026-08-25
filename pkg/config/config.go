@@ -260,6 +260,7 @@ type ServerConfig struct {
 	STSSigningKey         string
 	TrustXFCCFrom         []string
 	MCPDefaultIdP         MCPDefaultIdPConfig
+	GoogleWorkspaceMCP    GoogleWorkspaceMCPConfig
 }
 
 type MCPDefaultIdPConfig struct {
@@ -271,6 +272,11 @@ type MCPDefaultIdPConfig struct {
 	ClientSecret string // #nosec G117 -- config struct field, not a hardcoded credential
 	Audiences    []string
 	Scopes       []string
+}
+
+type GoogleWorkspaceMCPConfig struct {
+	ClientID     string
+	ClientSecret string // #nosec G117 -- config struct field, not a hardcoded credential
 }
 
 type DatabaseConfig struct {
@@ -490,6 +496,10 @@ func getServerConfig() ServerConfig {
 			ClientSecret: getEnv("MCP_DEFAULT_IDP_CLIENT_SECRET", ""),
 			Audiences:    splitCSV(getEnv("MCP_DEFAULT_IDP_AUDIENCE", "")),
 			Scopes:       splitCSV(getEnv("MCP_DEFAULT_IDP_SCOPES", "")),
+		},
+		GoogleWorkspaceMCP: GoogleWorkspaceMCPConfig{
+			ClientID:     getEnv("GOOGLE_WORKSPACE_MCP_CLIENT_ID", ""),
+			ClientSecret: getEnv("GOOGLE_WORKSPACE_MCP_CLIENT_SECRET", ""),
 		},
 	}
 }

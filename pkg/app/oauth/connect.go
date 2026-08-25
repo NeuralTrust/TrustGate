@@ -22,6 +22,7 @@ import (
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
@@ -30,12 +31,13 @@ import (
 var _ ConnectService = (*connectService)(nil)
 
 type connectService struct {
-	store     ConnectStore
-	vault     vaultdomain.Repository
-	consumers appconsumer.DataFinder
-	provider  ProviderClient
-	registrar UpstreamRegistrar
-	auditor   ConnectAuditor
+	store       ConnectStore
+	vault       vaultdomain.Repository
+	consumers   appconsumer.DataFinder
+	provider    ProviderClient
+	registrar   UpstreamRegistrar
+	auditor     ConnectAuditor
+	sharedOAuth mcpoauth.Provider
 }
 
 func NewConnectService(
@@ -45,14 +47,16 @@ func NewConnectService(
 	provider ProviderClient,
 	registrar UpstreamRegistrar,
 	auditor ConnectAuditor,
+	sharedOAuth mcpoauth.Provider,
 ) ConnectService {
 	return &connectService{
-		store:     store,
-		vault:     vault,
-		consumers: consumers,
-		provider:  provider,
-		registrar: registrar,
-		auditor:   auditor,
+		store:       store,
+		vault:       vault,
+		consumers:   consumers,
+		provider:    provider,
+		registrar:   registrar,
+		auditor:     auditor,
+		sharedOAuth: sharedOAuth,
 	}
 }
 
