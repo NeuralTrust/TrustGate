@@ -28,6 +28,7 @@ import (
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	"github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -190,8 +191,133 @@ func connectFixture(t *testing.T, providerTokenURL string) (oauth.ConnectService
 		infraoauth.NewProviderClient(nil),
 		infraoauth.NewUpstreamRegistrar(store, nil),
 		discardConnectAuditor(),
+		nil,
 	)
 	return svc, vault, gw
+}
+
+func TestConnectService_SharedGoogleWorkspaceClient(t *testing.T) {
+	t.Parallel()
+	var gotForm url.Values
+	tokenURL := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		gotForm = r.Form
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "google-access", "expires_in": 3600})
+	}))
+	defer tokenURL.Close()
+
+	gw := ids.New[ids.GatewayKind]()
+	reg, err := registrydomain.NewMCPRegistry(gw, "gmail-mcp", "", &registrydomain.MCPTarget{
+		Code: "com.google.workspace/gmail",
+		URL:  "https://gmailmcp.googleapis.com/mcp/v1",
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     "com.google.workspace/gmail",
+			Registration: registrydomain.RegistrationManual,
+			ClientID:     "stale-client",
+			ClientSecret: "stale-secret",
+			AuthorizeURL: "https://accounts.google.com/o/oauth2/v2/auth",
+			TokenURL:     tokenURL.URL,
+			Scopes:       []string{"https://www.googleapis.com/auth/gmail.readonly"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	reg.MCPTarget.Auth.ClientID = ""
+	reg.MCPTarget.Auth.ClientSecret = ""
+	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
+		Consumer: &consumerdomain.Consumer{
+			ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
+			Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
+		},
+		Registries: []*registrydomain.Registry{reg},
+	}})
+	store := newMemConnectStore()
+	svc := oauth.NewConnectService(
+		store,
+		&memVaultRepo{},
+		&stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil),
+		infraoauth.NewUpstreamRegistrar(store, nil),
+		discardConnectAuditor(),
+		mcpoauth.NewGoogleWorkspace("nt-client", "nt-secret"),
+	)
+	ctx := context.Background()
+	ticket, err := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "com.google.workspace/gmail")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	u, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("parse authorize url: %v", err)
+	}
+	if u.Query().Get("client_id") != "nt-client" {
+		t.Fatalf("client_id = %q, want platform client", u.Query().Get("client_id"))
+	}
+	if _, err := svc.Callback(ctx, "https://gw.example.com", "com.google.workspace/gmail", u.Query().Get("state"), "the-code", "", ""); err != nil {
+		t.Fatalf("Callback: %v", err)
+	}
+	if gotForm.Get("client_id") != "nt-client" || gotForm.Get("client_secret") != "nt-secret" {
+		t.Fatalf("token form = %v", gotForm)
+	}
+
+	refreshCfg, err := svc.RefreshAuth(ctx, gw, reg)
+	if err != nil {
+		t.Fatalf("RefreshAuth: %v", err)
+	}
+	if refreshCfg.ClientID != "nt-client" || refreshCfg.ClientSecret != "nt-secret" {
+		t.Fatalf("refresh cfg = %+v", refreshCfg)
+	}
+}
+
+func TestConnectService_SharedGoogleWorkspacePreservesBYO(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	reg, err := registrydomain.NewMCPRegistry(gw, "gmail-mcp", "", &registrydomain.MCPTarget{
+		Code: "com.google.workspace/gmail",
+		URL:  "https://gmailmcp.googleapis.com/mcp/v1",
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     "com.google.workspace/gmail",
+			Registration: registrydomain.RegistrationManual,
+			ClientID:     "customer-client",
+			ClientSecret: "customer-secret",
+			AuthorizeURL: "https://accounts.google.com/o/oauth2/v2/auth",
+			TokenURL:     "https://oauth2.googleapis.com/token",
+			Scopes:       []string{"https://www.googleapis.com/auth/gmail.readonly"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
+		Consumer: &consumerdomain.Consumer{
+			ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
+			Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
+		},
+		Registries: []*registrydomain.Registry{reg},
+	}})
+	svc := oauth.NewConnectService(
+		newMemConnectStore(),
+		&memVaultRepo{},
+		&stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil),
+		infraoauth.NewUpstreamRegistrar(newMemConnectStore(), nil),
+		discardConnectAuditor(),
+		mcpoauth.NewGoogleWorkspace("nt-client", "nt-secret"),
+	)
+	refreshCfg, err := svc.RefreshAuth(context.Background(), gw, reg)
+	if err != nil {
+		t.Fatalf("RefreshAuth: %v", err)
+	}
+	if refreshCfg.ClientID != "customer-client" || refreshCfg.ClientSecret != "customer-secret" {
+		t.Fatalf("BYO credentials overwritten: %+v", refreshCfg)
+	}
 }
 
 func TestConnectService_FullConsentFlow(t *testing.T) {
@@ -348,6 +474,7 @@ func TestConnectService_AutoRegistrationFlow(t *testing.T) {
 		infraoauth.NewProviderClient(nil),
 		registrar,
 		discardConnectAuditor(),
+		nil,
 	)
 	ctx := context.Background()
 
@@ -443,6 +570,7 @@ func TestConnectService_AutoRegistrationUpstreamNotDiscoverable(t *testing.T) {
 		infraoauth.NewProviderClient(nil),
 		infraoauth.NewUpstreamRegistrar(store, nil),
 		discardConnectAuditor(),
+		nil,
 	)
 	ctx := context.Background()
 	ticket, _ := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")

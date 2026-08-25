@@ -53,8 +53,8 @@ type it:
 |------|----------------------------|-----------|
 | Claude built-in / first-party Calendar connect | **Anthropic** (pre-registered) | Sign in + consent only |
 | Claude **custom** connector ([Google docs](https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server)) | **You** | Paste client ID + secret |
-| TrustGate today | **You** (BYO) | Paste client ID + secret |
-| TrustGate Claude-like (not shipped yet) | **NeuralTrust** shared app | Sign in + consent only |
+| TrustGate without shared-client env | **You** (BYO) | Paste client ID + secret |
+| TrustGate with `GOOGLE_WORKSPACE_MCP_CLIENT_ID` + `_SECRET` | **NeuralTrust** shared app | Sign in + consent only |
 
 TrustGate cannot reuse Claude’s client: OAuth clients are bound to a specific
 application name, redirect URI allowlist, and Google Cloud project.
@@ -237,35 +237,43 @@ Google OAuth client the same way Claude injects Anthropic’s.
 6. Store client ID + secret in platform secrets (never in git or the MCP catalog
    JSON).
 
-### 5.2 Product / engineering work (not done by catalog alone)
+### 5.2 Product behaviour (shipped)
 
-Catalog `registration: "manual"` only describes Google’s constraint. Claude-like
-UX needs TrustGate (and/or the App) to:
+Catalog `registration: "manual"` still describes Google’s constraint (no DCR).
+Claude-like UX is **inject + hide fields**, not DCR.
 
-1. Hold platform secrets, e.g. conceptually:
+1. Platform env (never in git or `enterprise-servers.json`):
 
    ```text
    GOOGLE_WORKSPACE_MCP_CLIENT_ID=...
    GOOGLE_WORKSPACE_MCP_CLIENT_SECRET=...
    ```
 
-2. When creating a registry for known catalog names
-   (`com.google.workspace/gmail`, `com.google.workspace/calendar`, …),
-   **inject** those credentials server-side into `forwarded` auth
-   (`client_id` / `client_secret`).
-3. **Hide** Client ID / Client Secret fields in `McpServerConfigPanel` for those
-   entries (or when a shared client is configured).
-4. Keep BYO path for:
-   - self-hosted / air-gapped,
-   - customers who must own the Google OAuth app for compliance,
-   - environments where the shared redirect URI is not registered.
+   Both must be non-empty. Client ID is non-secret (`overlays/*/config.env`);
+   secret lives in the agentgateway `.env` blob.
+
+2. On create/update of `com.google.workspace/gmail` and
+   `com.google.workspace/calendar`, TrustGate injects those credentials into
+   `forwarded` auth when the request did not send a different `client_id`.
+   OAuth start/refresh re-reads the platform secret so rotation does not
+   require rewriting stored registries.
+
+3. `GET /v1/mcp-servers-catalog` then reports `requires_config: false` and
+   `platform_client: true` for those two entries. The App Connect button skips
+   the config panel (same as DCR auto). TrustGate’s Registry UI hides Client
+   ID / Secret.
+
+4. BYO remains when:
+   - the env vars are unset (self-hosted default),
+   - the operator pastes their own `client_id` (not overwritten),
+   - the shared redirect URI is not registered for that host.
 
 Suggested product split:
 
 | Deployment | Default |
 |------------|---------|
-| NeuralTrust cloud | Shared TrustGate Google OAuth app |
-| Self-hosted / enterprise BYO IdP requirements | Customer-provided client |
+| NeuralTrust cloud | Shared TrustGate Google OAuth app (`GOOGLE_WORKSPACE_MCP_*` set) |
+| Self-hosted / enterprise BYO IdP requirements | Customer-provided client (env unset) |
 
 ### 5.3 Google verification (required for real customers)
 
@@ -303,8 +311,8 @@ production.
 - [ ] Consent screen branded; scopes match catalog (and write tools)
 - [ ] Web client created; per-provider `/oauth/callback/{provider}` URIs allowlisted
 - [ ] `MCP_OAUTH_PUBLIC_BASE_URL` set on cloud MCP plane; DNS points at that plane
-- [ ] Client ID/secret in platform secret store
-- [ ] Connect path injects credentials; UI fields hidden when configured
+- [ ] Client ID/secret in platform secret store (`GOOGLE_WORKSPACE_MCP_*`)
+- [x] Connect path injects credentials; UI fields hidden when configured
 - [ ] Dogfood with test users
 - [ ] Start Google OAuth verification before GA
 - [ ] Document BYO fallback for self-hosted
@@ -321,7 +329,10 @@ production.
 | Fixed connect callback origin | `MCP_OAUTH_PUBLIC_BASE_URL` → `ServerConfig.MCPOAuthPublicBaseURL` |
 | Inbound IdP callback (separate) | `pkg/app/oauth/proxy_types.go` → `CallbackPath` (`/oauth/callback`) |
 | Forwarded MCP credentials | `pkg/app/mcp/credentials.go` |
-| Registry UI (manual client fields) | App `McpServerConfigPanel` / `mcpCatalog.ts` |
+| Shared Google OAuth client | `GOOGLE_WORKSPACE_MCP_CLIENT_ID` / `_SECRET` → `pkg/app/mcpoauth` |
+| Registry inject on create/update | `pkg/app/registry/mcp_catalog_auth.go` |
+| Catalog `requires_config` / `platform_client` overlay | `pkg/app/catalog/mcp_servers.go` |
+| Registry UI (manual client fields) | App `McpServerConfigPanel` / `mcpCatalog.ts`; TrustGate `mcp-registries-view.tsx` |
 | Local MCP plane testing | `docs/mcp/testing-guide.md` |
 | Google Calendar MCP setup | https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server |
 
@@ -338,8 +349,9 @@ Anthropic already registered Claude with Google. Users authorize Anthropic’s
 app; they never see the client credentials.
 
 **How do we do the same?**  
-Register TrustGate once (§5), inject credentials in the connect path, hide the
-form fields, and complete Google verification for production users.
+Set `GOOGLE_WORKSPACE_MCP_CLIENT_ID` and `GOOGLE_WORKSPACE_MCP_CLIENT_SECRET`
+(§5), allowlist the connect callback URIs, and complete Google verification
+for production users. Leave the env unset for self-hosted BYO.
 
 **Can we put the client secret in `enterprise-servers.json`?**  
 No. Secrets belong in platform config / secret manager, not the public catalog.
