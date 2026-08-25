@@ -64,7 +64,7 @@ const (
 	attrStatusIsTimeout      = "trustgate.status.is_timeout"
 	attrTraceID              = "trustgate.trace_id"
 	attrGatewayID            = "trustgate.gateway_id"
-	attrTenantID               = "trustgate.tenant_id"
+	attrTenantID             = "trustgate.tenant_id"
 	attrConsumerID           = "trustgate.consumer.id"
 	attrConsumerName         = "trustgate.consumer.name"
 	attrSessionID            = "trustgate.session_id"

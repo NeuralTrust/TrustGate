@@ -721,8 +721,10 @@ func TestBuilder_SavingsUsesSameTokenCountsAsCost(t *testing.T) {
 		time.UnixMilli(1), time.UnixMilli(2))
 
 	require.NotNil(t, evt.Cost.SavingsUsd)
+	assert.InDelta(t, 10*0.00000015+20*0.0000006, float64(evt.Cost.TotalUsd), 1e-12,
+		"the served leg prices the full counts, not net of cache")
 	assert.InDelta(t,
-		(10*0.0000025+20*0.00001)-float64(evt.Cost.TotalUsd),
+		(10*0.0000025+20*0.00001)-(10*0.00000015+20*0.0000006),
 		float64(*evt.Cost.SavingsUsd), 1e-12)
 }
 
