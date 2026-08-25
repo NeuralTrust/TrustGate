@@ -23,6 +23,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/api/resolver"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
@@ -231,7 +232,13 @@ func API(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(oauthhttp.NewConnectHandler); err != nil {
+	if err := c.Provide(func(
+		connect appoauth.ConnectService,
+		catalog appcatalog.MCPServerCatalog,
+		cfg *config.Config,
+	) *oauthhttp.ConnectHandler {
+		return oauthhttp.NewConnectHandler(connect, catalog, cfg.Server.MCPOAuthPublicBaseURL)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(provideAPIKeyConnectHandler); err != nil {
