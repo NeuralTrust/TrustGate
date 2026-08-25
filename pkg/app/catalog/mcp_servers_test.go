@@ -17,6 +17,7 @@ package catalog
 import (
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/stretchr/testify/require"
 )
@@ -24,7 +25,7 @@ import (
 func TestNewMCPServerCatalog_LoadsCuratedList(t *testing.T) {
 	t.Parallel()
 
-	cat, err := NewMCPServerCatalog()
+	cat, err := NewMCPServerCatalog(nil)
 	require.NoError(t, err)
 
 	servers := cat.ListMCPServers()
@@ -48,7 +49,7 @@ func TestNewMCPServerCatalog_LoadsCuratedList(t *testing.T) {
 func TestListMCPServers_SortedByRelevanceDesc(t *testing.T) {
 	t.Parallel()
 
-	cat, err := NewMCPServerCatalog()
+	cat, err := NewMCPServerCatalog(nil)
 	require.NoError(t, err)
 	servers := cat.ListMCPServers()
 	require.NotEmpty(t, servers)
@@ -227,7 +228,7 @@ func TestRequiresConfig_Classification(t *testing.T) {
 
 func TestNewMCPServerCatalog_IncludesSectigoN8nHalo(t *testing.T) {
 	t.Parallel()
-	cat, err := NewMCPServerCatalog()
+	cat, err := NewMCPServerCatalog(nil)
 	require.NoError(t, err)
 
 	sectigo, ok := cat.GetByCode("com.sectigo/mcp")
@@ -252,4 +253,40 @@ func TestNewMCPServerCatalog_IncludesSectigoN8nHalo(t *testing.T) {
 	require.Equal(t, authHintStatic, halo.AuthHint)
 	require.True(t, halo.RequiresConfig)
 	require.NotEmpty(t, halo.AuthHeaders)
+}
+
+func TestNewMCPServerCatalog_GoogleWorkspacePlatformClient(t *testing.T) {
+	t.Parallel()
+
+	without, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+	gmail, ok := without.GetByCode("com.google.workspace/gmail")
+	require.True(t, ok)
+	require.True(t, gmail.RequiresConfig)
+	require.False(t, gmail.PlatformClient)
+	calendar, ok := without.GetByCode("com.google.workspace/calendar")
+	require.True(t, ok)
+	require.True(t, calendar.RequiresConfig)
+	require.False(t, calendar.PlatformClient)
+
+	with, err := NewMCPServerCatalog(mcpoauth.NewGoogleWorkspace("nt-client", "nt-secret"))
+	require.NoError(t, err)
+	gmail, ok = with.GetByCode("com.google.workspace/gmail")
+	require.True(t, ok)
+	require.False(t, gmail.RequiresConfig)
+	require.True(t, gmail.PlatformClient)
+	calendar, ok = with.GetByCode("com.google.workspace/calendar")
+	require.True(t, ok)
+	require.False(t, calendar.RequiresConfig)
+	require.True(t, calendar.PlatformClient)
+
+	linear, ok := with.GetByCode("app.linear/mcp")
+	require.True(t, ok)
+	require.False(t, linear.PlatformClient)
+	id, secret, ok := with.SharedOAuthCredentials("com.google.workspace/gmail")
+	require.True(t, ok)
+	require.Equal(t, "nt-client", id)
+	require.Equal(t, "nt-secret", secret)
+	_, _, ok = with.SharedOAuthCredentials("app.linear/mcp")
+	require.False(t, ok)
 }
