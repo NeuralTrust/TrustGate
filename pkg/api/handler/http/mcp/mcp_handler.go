@@ -39,15 +39,29 @@ import (
 )
 
 const (
-	serverName            = "trustgate"
-	serverVersion         = "1.0"
-	latestProtocolVersion = "2025-06-18"
+	serverName              = "trustgate"
+	serverVersion           = "1.0"
+	latestProtocolVersion   = "2025-06-18"
+	modernProtocolVersion   = "2026-07-28"
+	discoverCacheTTLMs      = 3_600_000
+	modernServerInfoMetaKey = "io.modelcontextprotocol/serverInfo"
 )
 
 var supportedProtocolVersions = map[string]bool{
 	"2024-11-05": true,
 	"2025-03-26": true,
 	"2025-06-18": true,
+}
+
+// advertisedProtocolVersions is the ordered list returned by server/discover.
+// Modern Claude clients probe with 2026-07-28 first; the gateway is already
+// stateless per request, so that revision is safe to advertise alongside the
+// legacy initialize handshake versions.
+var advertisedProtocolVersions = []string{
+	modernProtocolVersion,
+	latestProtocolVersion,
+	"2025-03-26",
+	"2024-11-05",
 }
 
 const (
@@ -135,6 +149,9 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 	case "initialize":
 		h.recordInitialize(c)
 		return h.handleInitialize(c, req, rc)
+	case "server/discover":
+		h.recordServerDiscovery(c)
+		return writeRPCResult(c, req.ID, serverDiscoveryResult(rc))
 	case "ping":
 		skipMetrics(c)
 		return writeRPCResult(c, req.ID, struct{}{})
