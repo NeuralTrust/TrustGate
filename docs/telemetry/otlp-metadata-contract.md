@@ -64,6 +64,10 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.cost.prompt_usd` | `cost.prompt_usd` (when cost present) |
 | `trustgate.cost.completion_usd` | `cost.completion_usd` (when cost present) |
 | `trustgate.cost.currency` | `cost.currency` (when cost present) |
+| `trustgate.savings.baseline_total_usd` | `savings.baseline_total_usd` (when smart routing's tier table chose the route) |
+| `trustgate.savings.saved_usd` | `savings.saved_usd` (same condition) |
+| `trustgate.savings.baseline_model` | `savings.baseline_model` (same condition) |
+| `trustgate.savings.currency` | `savings.currency` (same condition) |
 | `trustgate.latency.total_ms` | `latency.total_ms` |
 | `trustgate.latency.provider_ms` | `latency.provider_ms` |
 | `trustgate.latency.policies_ms` | `latency.policies_ms` |
@@ -114,6 +118,45 @@ SELECT
   )) AS policies_async_ms
 FROM trustgate_events
 ```
+
+### Savings semantics
+
+`trustgate.savings.*` reports what smart routing avoided spending: the request's
+own token counts repriced at the **highest configured tier**, minus what the
+request actually cost.
+
+```
+baseline_total_usd = prompt_tokens * top_tier_input_rate + completion_tokens * top_tier_output_rate
+saved_usd          = baseline_total_usd - cost.total_usd
+```
+
+"Highest tier" is the tier with the greatest `min_score` — the one a maximal
+complexity score selects. It orders by threshold, not by price: a misconfigured
+ladder that puts an expensive model at a low threshold yields a **negative**
+`saved_usd`, which is left unclamped so the misconfiguration stays visible.
+
+The attributes are emitted only when the tier table itself chose the route. Smart
+routing silently falls back to round-robin whenever the scorer is unconfigured,
+the score is unavailable, or no tier matches — those requests emit nothing rather
+than crediting a decision smart routing never made. A baseline whose model has no
+resolvable price likewise emits nothing, because a zero would be
+indistinguishable from "the top tier was already served". A request that *was*
+served by the top tier emits the attributes with `saved_usd` exactly `0`.
+
+Both legs are priced through the same resolution ladder (plugin custom pricing →
+registry overrides → catalog rates × `1 - discount`), with the baseline using its
+own registry's overlay, which is not necessarily the served registry's.
+
+The figure is a **modelled counterfactual, not a measurement**. It reprices the
+served model's tokens, but a premium model tokenizes differently and stops at a
+different completion length; cached-input and reasoning-output tokens are billed
+at the plain rate on both legs because no rate exists for them. Treat it as an
+estimate, and label it as one wherever it is shown. Cost-cap model downgrades are
+a separate mechanism and are not covered by this attribute.
+
+`baseline_prompt_usd` and `baseline_completion_usd` exist on the event but are
+deliberately not promoted to OTLP keys: they are derivable, and the permanent
+attribute surface is kept minimal.
 
 ## Raw stream
 

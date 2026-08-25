@@ -45,6 +45,7 @@ type Event struct {
 	Response Response `json:"response"`
 	Usage    *Usage   `json:"usage,omitempty"`
 	Cost     *Cost    `json:"cost,omitempty"`
+	Savings  *Savings `json:"savings,omitempty"`
 	Latency  Latency  `json:"latency"`
 
 	Attempts    []Attempt     `json:"attempts,omitempty"`
@@ -122,6 +123,28 @@ type Cost struct {
 	CompletionUsd DecimalFloat `json:"completion_usd"`
 	TotalUsd      DecimalFloat `json:"total_usd"`
 	Currency      string       `json:"currency"`
+}
+
+// Savings is what smart routing avoided spending on this request: the same token
+// counts priced at the highest configured tier, minus what they actually cost.
+// It is present only when the tier table itself chose the route — the strategy
+// silently falls back to round-robin when it cannot score a request, and
+// crediting that pick with savings would attribute a decision smart routing
+// never made. An unpriceable baseline likewise emits nothing rather than a zero,
+// which would be indistinguishable from "the top tier was already served".
+//
+// The figure is a modelled counterfactual, not a measurement: it reprices the
+// served model's tokens, and a premium model would tokenize differently and
+// stop at a different completion length. Cost-cap downgrades are a separate
+// mechanism and are deliberately not covered here.
+type Savings struct {
+	BaselineModel         string       `json:"baseline_model"`
+	BaselineRegistryID    string       `json:"baseline_registry_id,omitempty"`
+	BaselinePromptUsd     DecimalFloat `json:"baseline_prompt_usd"`
+	BaselineCompletionUsd DecimalFloat `json:"baseline_completion_usd"`
+	BaselineTotalUsd      DecimalFloat `json:"baseline_total_usd"`
+	SavedUsd              DecimalFloat `json:"saved_usd"`
+	Currency              string       `json:"currency"`
 }
 
 // Latency splits the request wall clock into the three stages that can be acted

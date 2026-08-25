@@ -60,3 +60,40 @@ same as summing `cost.total_usd` on telemetry events.
 Those estimates match the customer invoice only when registry `pricing`
 matches the contract (enterprise list discount and/or committed per-model
 rates). List prices from models.dev diverge from reserved/committed deals.
+
+## Smart-routing savings
+
+When a consumer's pool uses the `smart-routing` algorithm and the tier table
+chose the route, the event also carries `savings`: the same token counts
+repriced at the **highest configured tier**, minus the actual cost.
+
+```
+baseline_total_usd = prompt_tokens * top_tier_input_rate + completion_tokens * top_tier_output_rate
+saved_usd          = baseline_total_usd - cost.total_usd
+```
+
+The baseline resolves through the same `llmcost.Resolve` ladder as the actual
+cost, using the **baseline tier's own registry** overlay — which is not
+necessarily the served registry's, since a tier can point anywhere in the pool.
+One consequence of the ladder: `discount` applies only to catalog-resolved
+prices, while explicit `overrides` return before it. If one leg is priced by an
+override and the other by a discounted catalog rate, the two follow different
+rules.
+
+"Highest tier" means the greatest `min_score`, not the highest price. Nothing
+validates that the top tier is the most expensive model, so a ladder that puts a
+premium model at a low threshold produces a negative `saved_usd`. That is left
+unclamped: it surfaces the misconfiguration instead of hiding it.
+
+Nothing is recorded when smart routing fell back to round-robin (unconfigured
+scorer, unavailable score, no matching tier, single surviving candidate), when
+no balancer ran at all (a request naming a model, or a role-based consumer), or
+when the baseline model has no resolvable price. An absent `savings` is not the
+same as a zero one; a request already served by the top tier records
+`saved_usd = 0`.
+
+This is a **modelled counterfactual, not a measurement**: it assumes the premium
+model would have consumed the same tokens, and it prices cached-input and
+reasoning-output tokens at the plain rate on both legs because no separate rate
+exists for them. It will not reconcile against a provider invoice, and it does
+not cover cost-cap model downgrades, which are a different mechanism.

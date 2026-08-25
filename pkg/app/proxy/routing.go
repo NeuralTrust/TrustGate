@@ -28,10 +28,12 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
 type routedBackend struct {
@@ -40,6 +42,10 @@ type routedBackend struct {
 	excluded     map[routingdomain.RouteKey]struct{}
 	fromFallback bool
 	pinned       bool
+	// baseline is the highest configured smart-routing tier, resolved once here
+	// because the metrics builder cannot reach the tier table. Nil for every
+	// other algorithm and for the paths that never consult a balancer.
+	baseline *trace.RouteBaseline
 }
 
 func (f *forwarder) resolveRouting(in ForwardInput) (routingdomain.Intent, *routingdomain.CandidateSet, error) {
@@ -270,6 +276,7 @@ func (f *forwarder) routeBackend(
 	}
 	excluded := nonCandidateRoutes(lb, rc, candidates)
 	route, err := lb.NextRoute(ctx, req, excluded)
+	baseline := smartRoutingBaseline(lb)
 	if err != nil {
 		if fallback := firstAvailableFallback(rc, excluded); fallback != nil {
 			return routedBackend{
@@ -277,11 +284,57 @@ func (f *forwarder) routeBackend(
 				route:        routingdomain.RouteForRegistry(fallback),
 				excluded:     excluded,
 				fromFallback: true,
+				baseline:     baseline,
 			}, nil
 		}
 		return routedBackend{}, fmt.Errorf("%w: %s", ErrNoBackendAvailable, err.Error())
 	}
-	return routedBackend{lb: lb, route: *route, excluded: excluded}, nil
+	return routedBackend{lb: lb, route: *route, excluded: excluded, baseline: baseline}, nil
+}
+
+// smartRoutingBaseline resolves the highest configured tier to the route it maps
+// to, so a completed request can be priced against the ceiling it would have hit
+// had the scorer returned 1.0. It mirrors SmartRouting.routeForScore's matching
+// rule; a tier that matches no route in the pool yields no baseline, because
+// pricing a target the balancer could never have picked would be fiction.
+func smartRoutingBaseline(lb *loadbalancer.LoadBalancer) *trace.RouteBaseline {
+	if lb == nil || lb.Algorithm() != algorithm.SmartRouting {
+		return nil
+	}
+	tier, ok := lb.SmartRouting().HighestTier()
+	if !ok {
+		return nil
+	}
+	model := tier.RouteModel()
+	for _, route := range lb.Routes() {
+		if route.Registry == nil || route.Registry.ID != tier.RegistryID {
+			continue
+		}
+		if model != "" && route.Model != model {
+			continue
+		}
+		// A tier may leave the model to the registry's policy, so fall back the
+		// way the route itself resolves: pinned model, then route model, then
+		// the consumer's default for that registry.
+		slug := model
+		if slug == "" {
+			slug = route.Model
+		}
+		if slug == "" {
+			slug = route.Default
+		}
+		if slug == "" {
+			return nil
+		}
+		return &trace.RouteBaseline{
+			RegistryID: route.Registry.ID.String(),
+			Provider:   route.Registry.Provider(),
+			Model:      slug,
+			MinScore:   tier.MinScore,
+			Pricing:    route.Registry.Pricing(),
+		}
+	}
+	return nil
 }
 
 func (f *forwarder) routeLoadBalancer(

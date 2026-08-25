@@ -29,7 +29,7 @@ func fullEvent() events.Event {
 		Kind:          events.KindLLM,
 		TraceID:       "trace-1",
 		GatewayID:     "gw-1",
-		TenantID:        "team-1",
+		TenantID:      "team-1",
 		Timestamp:     "2026-07-06T00:00:00Z",
 		OccurredOn:    1751760000,
 		EndTimestamp:  1751760001,
@@ -55,6 +55,7 @@ func fullEvent() events.Event {
 		},
 		Usage:       &events.Usage{PromptTokens: 10, CompletionTokens: 20, TotalTokens: 30},
 		Cost:        &events.Cost{Currency: "USD"},
+		Savings:     &events.Savings{BaselineModel: "gpt-5", SavedUsd: 0.0004, Currency: "USD"},
 		Latency:     events.Latency{TotalMs: 120},
 		Attempts:    []events.Attempt{{Attempt: 1, Provider: "openai"}},
 		PolicyChain: []events.PolicyEntry{{Name: "guard", Decision: "allow"}},
@@ -80,6 +81,7 @@ func TestEvent_MetadataView_ExcludesBodies(t *testing.T) {
 	assert.Equal(t, evt.Status, meta.Status)
 	assert.Equal(t, evt.Usage, meta.Usage)
 	assert.Equal(t, evt.Cost, meta.Cost)
+	assert.Equal(t, evt.Savings, meta.Savings)
 	assert.Equal(t, evt.Attempts, meta.Attempts)
 	assert.Equal(t, evt.PolicyChain, meta.PolicyChain)
 	assert.Equal(t, evt.MCP, meta.MCP)
@@ -110,6 +112,7 @@ func TestEvent_SensibleView_OnlyBodiesAndCorrelationKeys(t *testing.T) {
 	assert.Equal(t, events.Status{}, sensible.Status)
 	assert.Nil(t, sensible.Usage)
 	assert.Nil(t, sensible.Cost)
+	assert.Nil(t, sensible.Savings)
 	assert.Nil(t, sensible.Attempts)
 	assert.Nil(t, sensible.PolicyChain)
 	assert.Nil(t, sensible.MCP)

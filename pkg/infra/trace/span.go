@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/logredact"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/google/uuid"
@@ -31,6 +32,18 @@ const (
 	SpanA2A    SpanType = "a2a"
 	SpanPlugin SpanType = "plugin"
 )
+
+// RouteBaseline is the highest configured smart-routing tier, flattened at
+// route selection into everything needed to price it later. The metrics builder
+// sees neither the consumer nor its load-balancer config, so the counterfactual
+// target has to travel on the span instead of being re-derived downstream.
+type RouteBaseline struct {
+	RegistryID string
+	Provider   string
+	Model      string
+	MinScore   float64
+	Pricing    *registrydomain.Pricing
+}
 
 type LLMAttrs struct {
 	RegistryID string
@@ -51,6 +64,25 @@ type LLMAttrs struct {
 	Route          string
 	Outcome        string
 	Usage          *adapter.CanonicalUsage
+	// RoutingAlgorithm is the load-balancer algorithm that produced this
+	// attempt's route, empty when no balancer ran (pinned model intent,
+	// role-based consumer, or a hop taken from the fallback chain).
+	RoutingAlgorithm string
+	// TierApplied reports that the smart-routing tier table chose this route,
+	// as opposed to the round-robin fail-open the strategy silently takes when
+	// the scorer is unconfigured, the score is unavailable, or no tier matches.
+	// Savings only mean anything when it is true.
+	TierApplied bool
+	// ComplexityScore is the [0,1] score the tier decision was made on. Zero and
+	// meaningless when TierApplied is false.
+	ComplexityScore float64
+	// Baseline is the highest configured tier, carried so the metrics builder
+	// can price the counterfactual. Nil when smart routing did not decide.
+	Baseline *RouteBaseline
+	// ServedPricing is the served registry's pricing overlay. It rides the span
+	// because RequestContext.RegistryPricing only reaches the builder on the
+	// streaming path: the buffered path builds its own request context.
+	ServedPricing *registrydomain.Pricing
 }
 
 type PluginAttrs struct {
