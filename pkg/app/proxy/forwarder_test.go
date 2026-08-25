@@ -771,6 +771,12 @@ func (f fixedScorer) Score(_ context.Context, _, _, _ string) (float64, error) {
 
 func (fixedScorer) Configured() bool { return true }
 
+func pricedBackendFor(gatewayID ids.GatewayID, provider string, discount float64) *registrydomain.Registry {
+	bk := backendFor(gatewayID, provider)
+	bk.LLMTarget.Pricing = &registrydomain.Pricing{Discount: discount}
+	return bk
+}
+
 func smartRoutedConsumer(gatewayID ids.GatewayID, low, high *registrydomain.Registry) *appconsumer.RoutableConsumer {
 	rc := routableConsumerWith(gatewayID, low, high)
 	rc.Consumer.LBConfig = &domainconsumer.LBConfig{
@@ -857,6 +863,42 @@ func TestForward_SameBackendRetryKeepsTierDecision(t *testing.T) {
 	assert.True(t, served.TierApplied, "the retry span must keep the tier decision")
 	require.NotNil(t, served.Baseline)
 	assert.Equal(t, "model-high", served.Baseline.Model)
+}
+
+// The served registry's pricing overlay only reaches the metrics builder on the
+// buffered path if the forwarder stamps it here: the metrics middleware builds
+// its own request context, which carries no pricing.
+func TestForward_StampsServedAndBaselinePricingOnSpan(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	low := pricedBackendFor(gatewayID, "openai", 0.2)
+	high := pricedBackendFor(gatewayID, "anthropic", 0.4)
+	rc := smartRoutedConsumer(gatewayID, low, high)
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil).
+		Once()
+
+	rt := trace.New("trace-pricing", trace.Metadata{GatewayID: gatewayID.String()})
+	rt.SetGating(true, true)
+	ctx := trace.NewContext(context.Background(), rt)
+
+	res, err := newSmartRoutedForwarder(t, invoker, 0.1, 0).Forward(ctx, appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   &infracontext.RequestContext{Body: []byte(`{"prompt":"hi"}`)},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 200, res.StatusCode)
+
+	served := servedLLMAttrs(t, rt)
+	require.NotNil(t, served.ServedPricing, "the served registry's overlay must ride the span")
+	assert.InDelta(t, 0.2, served.ServedPricing.Discount, 1e-12)
+	require.NotNil(t, served.Baseline)
+	require.NotNil(t, served.Baseline.Pricing,
+		"the baseline is priced with its own registry's overlay, not the served one")
+	assert.InDelta(t, 0.4, served.Baseline.Pricing.Discount, 1e-12)
 }
 
 // A fallback-chain hop never consults the strategy, so it must not inherit the

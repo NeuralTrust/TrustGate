@@ -281,7 +281,6 @@ func (f *forwarder) routeBackend(
 				route:        routingdomain.RouteForRegistry(fallback),
 				excluded:     excluded,
 				fromFallback: true,
-				baseline:     baseline,
 			}, nil
 		}
 		return routedBackend{}, fmt.Errorf("%w: %s", ErrNoBackendAvailable, err.Error())
@@ -311,7 +310,10 @@ func smartRoutingBaseline(
 		if _, skip := excluded[route.Key()]; skip {
 			continue
 		}
-		slug := baselineSlug(model, route)
+		slug := route.Model
+		if slug == "" {
+			slug = route.Default
+		}
 		if slug == "" {
 			return nil
 		}
@@ -322,16 +324,6 @@ func smartRoutingBaseline(
 		}
 	}
 	return nil
-}
-
-func baselineSlug(tierModel string, route routingdomain.Route) string {
-	if tierModel != "" {
-		return tierModel
-	}
-	if route.Model != "" {
-		return route.Model
-	}
-	return route.Default
 }
 
 func (f *forwarder) routeLoadBalancer(

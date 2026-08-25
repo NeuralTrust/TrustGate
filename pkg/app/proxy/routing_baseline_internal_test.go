@@ -139,7 +139,7 @@ func TestSmartRoutingBaseline(t *testing.T) {
 	})
 
 	t.Run("no baseline for other algorithms", func(t *testing.T) {
-		lb := baselineBalancer(t, algorithm.RoundRobin, pinnedRoutes, nil)
+		lb := baselineBalancer(t, algorithm.RoundRobin, pinnedRoutes, tiers("claude-opus"))
 
 		assert.Nil(t, smartRoutingBaseline(lb, nil))
 	})

@@ -143,9 +143,11 @@ indistinguishable from "the top tier was already served". A request that *was*
 served by the top tier emits `savings_usd` exactly `0`. Absent and zero are
 therefore different answers, which is why the field is nullable.
 
-Both legs are priced through the same resolution ladder (plugin custom pricing →
-registry overrides → catalog rates × `1 - discount`), with the baseline using its
-own registry's overlay, which is not necessarily the served registry's.
+Both legs are priced through the same resolution ladder — registry overrides,
+then catalog rates × `1 - discount` — with the baseline using its own registry's
+overlay, which is not necessarily the served registry's. Plugin-level custom
+pricing is deliberately not consulted for either leg, so the event's cost and
+savings always describe registry and catalog rates.
 
 The figure is a **modelled counterfactual, not a measurement**. It reprices the
 served model's tokens, but a premium model tokenizes differently and stops at a

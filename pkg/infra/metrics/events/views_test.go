@@ -22,8 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var savingsUsd = events.DecimalFloat(0.0004)
-
 func fullEvent() events.Event {
 	respBody := "response output body"
 	return events.Event{
@@ -56,7 +54,7 @@ func fullEvent() events.Event {
 			Headers:    map[string][]string{"Content-Type": {"application/json"}},
 		},
 		Usage:       &events.Usage{PromptTokens: 10, CompletionTokens: 20, TotalTokens: 30},
-		Cost:        &events.Cost{Currency: "USD", SavingsUsd: &savingsUsd},
+		Cost:        &events.Cost{Currency: "USD"},
 		Latency:     events.Latency{TotalMs: 120},
 		Attempts:    []events.Attempt{{Attempt: 1, Provider: "openai"}},
 		PolicyChain: []events.PolicyEntry{{Name: "guard", Decision: "allow"}},
