@@ -134,6 +134,47 @@ disk contract rather than replace it. Two channels, in priority order:
 
 Rule of thumb: closed runtimes that scan disk → HTTP sync; loops you control → MCP.
 
+**Sync strategies (channel 1).** Two axes: what triggers the sync, and how it
+materializes files safely.
+
+*Triggers, in recommended order:*
+
+1. **Agent session-start hook (default):** Cursor and Claude Code support session
+   hooks (Cursor can even distribute team hooks centrally, with `failClosed`). Sync
+   runs exactly when the agent is about to rescan skills, bounding staleness and
+   revocation lag to one session; strict mode can block session start on sync
+   failure.
+2. **Ephemeral-environment boot:** devcontainer `postCreateCommand`, cloud-agent
+   install/start scripts, or a Dockerfile layer — for pods/CI where the filesystem
+   starts empty, sync is just provisioning.
+3. **Gateway-push via Git (inverted flow):** a job commits/PRs approved skills into
+   target repos' `.cursor/skills/`; distribution becomes a normal `git pull`. Zero
+   client tooling, git-versioned history, and the update PR is itself a visible
+   review point. Trade-offs: revocation lag equals merge+pull cadence, and a
+   consumer→repo mapping must be maintained.
+4. **Background cron/daemon** on long-lived laptops (staleness bounded to the
+   interval; complements the hook as a safety net).
+5. **MDM/dotfiles** for user-scoped skills (`~/.claude/skills/`) on managed machines.
+
+*Materialization (what keeps the sync safe):*
+
+- **Declarative reconciliation:** the manifest is the desired state — diff hashes,
+  download changes, delete entries absent from the manifest. Idempotent by
+  construction.
+- **Bounded ownership:** the sync manages only a designated subtree (e.g.
+  `.cursor/skills/managed/`) plus a lockfile recording what it wrote (codes,
+  versions, hashes). Deleting revoked skills can never touch the developer's
+  personal skills, and hash drift in the lockfile flags local tampering for
+  re-download.
+- **Atomic writes:** download to a temp dir, verify hashes against the manifest,
+  rename into place — the agent never observes a half-written skill.
+- **Scope separation:** distinct consumers for project-scoped (repo directory) and
+  user-scoped (`~/`) skills, mirroring the agents' own scoping model.
+
+The reference implementation can be a ~30-line curl+jq script or a
+`trustgate skills sync` subcommand; Phase 1 commits only to documenting the
+reference flow, not to maintaining a client.
+
 **Q3 — What is the approval workflow?** Keep it minimal and reuse existing shapes:
 skill versions are immutable and start `pending`; an admin transitions them to
 `approved` (or `rejected`); only `approved` versions are servable; the gateway-level
