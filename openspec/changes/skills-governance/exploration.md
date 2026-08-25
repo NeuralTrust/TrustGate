@@ -90,15 +90,31 @@ disk contract rather than replace it. Two channels, in priority order:
 - **Frameworks that implement the agentskills.io standard (e.g. Claude Agent SDK):**
   also channel 1 — point the SDK's skill directory at the sync target.
 - **Fully custom loops:** channel 2, over the same MCP connection the agent already
-  holds for tools. At session boot the loop calls `list_skills` (names + descriptions
-  only, pre-filtered by the consumer/role allowlist) and injects that metadata into
-  the system prompt; `load_skill` is already advertised in `tools/list`, so the model
-  pulls the full `SKILL.md` on demand and reads linked files as `skill://` resources.
-  This reproduces the standard's progressive-disclosure behavior in a few lines of
-  bootstrap code, needs no filesystem (a better fit for ephemeral/serverless agents),
-  and every load passes through plugins and telemetry. A custom loop *may* instead
-  sync to a temp directory via channel 1, but it would still have to implement the
-  metadata preload itself, so the MCP path is usually less code.
+  holds for tools. Concretely: an MCP consumer already presents itself to the agent
+  as one virtual MCP server at `POST /{consumer_slug}/mcp`, whose `tools/list` is the
+  toolkit-filtered union of the upstream registries. The proposal appends two
+  gateway-answered entries to that same list — no upstream involved, no new endpoint,
+  auth, or client:
+
+  ```
+  tools/list today:        tools/list with skills:
+    asana_create_task        asana_create_task
+    github_search_issues     github_search_issues
+                             list_skills   (gateway-served)
+                             load_skill    (gateway-served)
+  ```
+
+  "Loading a skill" for an LLM just means getting the `SKILL.md` markdown into its
+  context; a `load_skill` tool result achieves that identically to a disk read. At
+  session boot the loop calls `list_skills` (names + descriptions only, pre-filtered
+  by the consumer/role allowlist) and injects that metadata into the system prompt;
+  the model then pulls full bodies on demand via `load_skill` and reads linked files
+  as `skill://` resources. This reproduces the standard's progressive-disclosure
+  behavior in a few lines of bootstrap code, needs no filesystem (a better fit for
+  ephemeral/serverless agents), and every load passes through plugins and telemetry.
+  A custom loop *may* instead sync to a temp directory via channel 1 (the only option
+  if it uses no MCP at all), but it would still have to implement the metadata
+  preload itself, so the MCP path is usually less code.
 
 Rule of thumb: closed runtimes that scan disk → HTTP sync; loops you control → MCP.
 
