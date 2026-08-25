@@ -179,7 +179,10 @@ OAuth consent screen):
 3. Complete the browser consent for the Google account that owns the mailbox /
    calendar.
 4. Tokens are stored in TrustGate’s credential vault; later tool calls use
-   `forwarded` auth with that user’s access token.
+   `forwarded` auth with that user’s access token. TrustGate requests Google
+   **offline** access (`access_type=offline` + `prompt=consent` on
+   `accounts.google.com`) so the vault stores a **refresh_token**. Without it,
+   the access token dies in ~1 hour and tools force reconnect.
 
 ### 4.6 Common failures
 
@@ -189,6 +192,7 @@ OAuth consent screen):
 | Access blocked / app not verified | External app + user not in Test users |
 | Tools fail with insufficient scope | Consent screen missing write scopes (e.g. Calendar `calendar.events`) |
 | API not enabled | Forgot `calendarmcp.googleapis.com` / Calendar API (or Gmail equivalents) |
+| Works once, fails ~1h later / “reconnect” | Grant has no `refresh_token` (pre-offline build, or user must **Reconnect** once after deploy so Google re-issues offline access) |
 
 ---
 
