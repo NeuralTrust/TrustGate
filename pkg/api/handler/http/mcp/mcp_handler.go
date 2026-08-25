@@ -150,7 +150,7 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 		h.recordInitialize(c)
 		return h.handleInitialize(c, req, rc)
 	case "server/discover":
-		h.recordServerDiscovery(c)
+		recordServerDiscovery(c)
 		return writeRPCResult(c, req.ID, serverDiscoveryResult(rc))
 	case "ping":
 		skipMetrics(c)
