@@ -35,19 +35,33 @@ the full investigation.
 
 ### Agent / developer (data plane, `:8082`, existing consumer auth)
 
-- **MCP channel** — the consumer endpoint the agent already uses for tools now also
-  advertises governed skills: `list_skills` (names + descriptions only),
-  `load_skill` (full `SKILL.md`), and `skill://{code}/{path}` resources for linked
-  files. Matches the skills progressive-disclosure model; works for any MCP client
-  with zero installation.
-- **HTTP sync channel** — for disk-discovery runtimes (Cursor, Claude Code):
-  `GET /{consumer_slug}/skills` returns a manifest (codes, versions, hashes, file
-  lists) and per-file/archive downloads, behind the same `MCPAuthMiddleware`. A thin
-  sync step (CI, devcontainer boot) materializes the approved set into
-  `.cursor/skills/` / `.claude/skills/` idempotently, verifying hashes.
-- Every fetch is attributable (principal, skill, version, hash) through the existing
-  telemetry/metrics plane; plugins (rate limiting, trustguard) run on skill reads like
-  any other MCP call.
+Agents load skills by scanning local directories for `SKILL.md` files at startup; the
+gateway does not change that contract. TrustGate is the governed *source* those files
+are materialized from, not a new discovery mechanism the agent must learn.
+
+- **HTTP sync channel (primary)** — for disk-discovery runtimes (Cursor, Claude Code):
+  `GET /{consumer_slug}/skills` returns a manifest (codes, pinned versions, content
+  hashes, file lists) and per-file/archive downloads, behind the same
+  `MCPAuthMiddleware`. A thin sync step — a curl script, devcontainer `postCreate`,
+  a CI step for cloud agents, or dotfiles/MDM on managed laptops — diffs hashes
+  against local state, writes the approved skill folders verbatim into
+  `.cursor/skills/` / `.claude/skills/`, and deletes revoked ones. The agent then
+  discovers plain `SKILL.md` files exactly as it does today; it never talks to the
+  gateway. Revocations and pin changes propagate on the next sync (run it at session
+  start — the same moment agents rescan skills — to keep the staleness window to one
+  session).
+- **MCP channel (additive)** — the consumer endpoint also exposes `list_skills`
+  (names + descriptions only), `load_skill` (full `SKILL.md`), and
+  `skill://{code}/{path}` resources. Explicit limitation: agent harnesses do **not**
+  preload MCP-served skill metadata into the system prompt the way they do for
+  on-disk skills — the model must choose to call the tool. This channel therefore
+  targets custom agents built on SDKs (where the developer controls the loop and can
+  preload `list_skills` output themselves) and mid-session on-demand fetching, not a
+  replacement for native disk discovery. The tool result is ordinary markdown, which
+  the model consumes as context either way.
+- Every fetch on either channel is attributable (principal, skill, version, hash)
+  through the existing telemetry/metrics plane; plugins (rate limiting, trustguard)
+  run on skill reads like any other MCP call.
 
 ## Viability
 

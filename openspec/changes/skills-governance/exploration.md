@@ -57,22 +57,30 @@ immutable version rows with a content hash give the strongest governance story
 the serving path. Size is bounded by construction (skills are text-first; enforce a
 per-version size cap, reject binaries above it).
 
-**Q2 — How do agents consume governed skills?** Two complementary channels:
+**Q2 — How do agents consume governed skills?** The hard constraint: today's agent
+harnesses discover skills by scanning local directories for `SKILL.md` files at
+startup and preloading their name/description into the system prompt. No mainstream
+harness pulls skills from a remote endpoint natively. So the gateway must feed that
+disk contract rather than replace it. Two channels, in priority order:
 
-1. **MCP channel (no new protocol):** expose approved skills on the existing consumer
-   endpoint as MCP resources (`skill://{code}/SKILL.md`, `skill://{code}/{path}`) plus
-   two virtual gateway tools (`list_skills`, `load_skill`). Any MCP-capable agent gets
-   governed skills through the connection it already has, with the same auth, toolkit
-   filtering, plugins, and telemetry. Maps 1:1 to the skills progressive-disclosure
-   model (list = names/descriptions; load = full body; linked files = per-resource
-   reads).
-2. **HTTP sync channel (for disk-based discovery):** Cursor/Claude Code discover skills
-   from local directories at startup. A read-only endpoint on the MCP plane
-   (`GET /{consumer_slug}/skills` manifest + per-file/archive download, same
-   `MCPAuthMiddleware`) lets a thin sync step (CI, devcontainer boot, or a
-   `trustgate skills sync` helper) materialize the approved set into
-   `.cursor/skills/`/`.claude/skills/`. The manifest carries content hashes so sync is
-   idempotent and tamper-evident.
+1. **HTTP sync channel (primary — feeds the disk contract):** a read-only endpoint on
+   the MCP plane (`GET /{consumer_slug}/skills` manifest with codes, pinned versions,
+   content hashes, and file lists + per-file/archive download, same
+   `MCPAuthMiddleware`) lets a thin sync step (curl script, devcontainer `postCreate`,
+   CI step for cloud agents, dotfiles/MDM on laptops) materialize the approved set
+   verbatim into `.cursor/skills/`/`.claude/skills/` and delete revoked entries. The
+   agent then finds ordinary `SKILL.md` files and never talks to the gateway. Hashes
+   make sync idempotent and tamper-evident; revocation propagates on the next sync,
+   so running it at session start bounds staleness to one session.
+2. **MCP channel (additive — runtime fetching, not native discovery):** expose
+   approved skills on the existing consumer endpoint as MCP resources
+   (`skill://{code}/SKILL.md`, `skill://{code}/{path}`) plus two virtual gateway tools
+   (`list_skills`, `load_skill`), with the same auth, toolkit filtering, plugins, and
+   telemetry. The tool result is plain markdown the model consumes as context, but the
+   harness will not auto-preload MCP-served skill metadata the way it does for disk
+   skills — the model must decide to call the tool. Useful for SDK-built custom agents
+   (where the developer controls the loop and can preload `list_skills` themselves)
+   and for on-demand mid-session loading; not a substitute for channel 1.
 
 **Q3 — What is the approval workflow?** Keep it minimal and reuse existing shapes:
 skill versions are immutable and start `pending`; an admin transitions them to
