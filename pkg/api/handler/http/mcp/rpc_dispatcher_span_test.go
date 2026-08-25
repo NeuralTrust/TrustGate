@@ -107,6 +107,21 @@ func TestRPCGateway_Dispatch_RecordsPolicyBlockedHTTPStatus(t *testing.T) {
 // say what the refusal means: an upstream the user has not connected is an
 // authorization gap, not a broken gateway. Recording it as 502 hid real
 // upstream failures among routine consent prompts.
+func TestRPCGateway_Dispatch_RecordsUnknownMethodAsNotFound(t *testing.T) {
+	t.Parallel()
+	g := mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil)
+	rt := trace.New("t-method", trace.Metadata{Kind: events.KindMCP})
+	ctx := trace.NewContext(context.Background(), rt)
+
+	_, err := g.Dispatch(ctx, &appconsumer.RoutableConsumer{}, "tools/subscribe", nil)
+	require.ErrorIs(t, err, mcphttp.ErrMethodNotFound)
+
+	attrs, ok := rt.Spans()[0].MCPAttrsCopy()
+	require.True(t, ok)
+	assert.Equal(t, http.StatusNotFound, attrs.UpstreamStatus)
+	assert.Equal(t, -32601, attrs.RPCErrorCode)
+}
+
 func TestRPCGateway_Dispatch_RecordsConsentAsForbidden(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
@@ -133,4 +148,3 @@ func TestRPCGateway_Dispatch_RecordsConsentAsForbidden(t *testing.T) {
 type assertErr struct{}
 
 func (assertErr) Error() string { return "boom" }
-
