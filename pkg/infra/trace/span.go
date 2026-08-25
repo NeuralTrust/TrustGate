@@ -34,10 +34,9 @@ const (
 )
 
 type RouteBaseline struct {
-	RegistryID string
-	Provider   string
-	Model      string
-	Pricing    *registrydomain.Pricing
+	Provider string
+	Model    string
+	Pricing  *registrydomain.Pricing
 }
 
 type LLMAttrs struct {

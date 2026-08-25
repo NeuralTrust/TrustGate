@@ -464,18 +464,9 @@ func (b *Builder) fillSavings(ctx context.Context, evt *events.Event, served *tr
 		return
 	}
 	u := served.Usage
-	promptUsd := float64(u.InputTokens) * inputRate
-	completionUsd := float64(u.OutputTokens) * outputRate
-	totalUsd := promptUsd + completionUsd
-	evt.Savings = &events.Savings{
-		BaselineModel:         base.Model,
-		BaselineRegistryID:    base.RegistryID,
-		BaselinePromptUsd:     events.DecimalFloat(promptUsd),
-		BaselineCompletionUsd: events.DecimalFloat(completionUsd),
-		BaselineTotalUsd:      events.DecimalFloat(totalUsd),
-		SavedUsd:              events.DecimalFloat(totalUsd - float64(evt.Cost.TotalUsd)),
-		Currency:              costCurrencyUSD,
-	}
+	baselineUsd := float64(u.InputTokens)*inputRate + float64(u.OutputTokens)*outputRate
+	savings := events.DecimalFloat(baselineUsd - float64(evt.Cost.TotalUsd))
+	evt.Cost.SavingsUsd = &savings
 }
 
 func pricingSlugs(evt *events.Event, served *trace.LLMAttrs) []string {

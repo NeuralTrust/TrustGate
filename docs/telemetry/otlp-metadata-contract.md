@@ -64,10 +64,7 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.cost.prompt_usd` | `cost.prompt_usd` (when cost present) |
 | `trustgate.cost.completion_usd` | `cost.completion_usd` (when cost present) |
 | `trustgate.cost.currency` | `cost.currency` (when cost present) |
-| `trustgate.savings.baseline_total_usd` | `savings.baseline_total_usd` (when smart routing's tier table chose the route) |
-| `trustgate.savings.saved_usd` | `savings.saved_usd` (same condition) |
-| `trustgate.savings.baseline_model` | `savings.baseline_model` (same condition) |
-| `trustgate.savings.currency` | `savings.currency` (same condition) |
+| `trustgate.cost.savings_usd` | `cost.savings_usd` (when smart routing's tier table chose the route) |
 | `trustgate.latency.total_ms` | `latency.total_ms` |
 | `trustgate.latency.provider_ms` | `latency.provider_ms` |
 | `trustgate.latency.policies_ms` | `latency.policies_ms` |
@@ -121,27 +118,30 @@ FROM trustgate_events
 
 ### Savings semantics
 
-`trustgate.savings.*` reports what smart routing avoided spending: the request's
-own token counts repriced at the **highest configured tier**, minus what the
-request actually cost.
+`trustgate.cost.savings_usd` is what smart routing avoided spending on this
+request: the request's own token counts repriced at the **highest configured
+tier**, minus what the request actually cost. It rides inside the cost group
+rather than a group of its own, so a single column carries it.
 
 ```
-baseline_total_usd = prompt_tokens * top_tier_input_rate + completion_tokens * top_tier_output_rate
-saved_usd          = baseline_total_usd - cost.total_usd
+savings_usd = (prompt_tokens * top_tier_input_rate + completion_tokens * top_tier_output_rate) - cost.total_usd
 ```
+
+The baseline total is not emitted separately — it is `cost.total_usd + cost.savings_usd`.
 
 "Highest tier" is the tier with the greatest `min_score` — the one a maximal
 complexity score selects. It orders by threshold, not by price: a misconfigured
 ladder that puts an expensive model at a low threshold yields a **negative**
-`saved_usd`, which is left unclamped so the misconfiguration stays visible.
+`savings_usd`, which is left unclamped so the misconfiguration stays visible.
 
-The attributes are emitted only when the tier table itself chose the route. Smart
+The attribute is emitted only when the tier table itself chose the route. Smart
 routing silently falls back to round-robin whenever the scorer is unconfigured,
 the score is unavailable, or no tier matches — those requests emit nothing rather
 than crediting a decision smart routing never made. A baseline whose model has no
 resolvable price likewise emits nothing, because a zero would be
 indistinguishable from "the top tier was already served". A request that *was*
-served by the top tier emits the attributes with `saved_usd` exactly `0`.
+served by the top tier emits `savings_usd` exactly `0`. Absent and zero are
+therefore different answers, which is why the field is nullable.
 
 Both legs are priced through the same resolution ladder (plugin custom pricing →
 registry overrides → catalog rates × `1 - discount`), with the baseline using its
@@ -154,11 +154,7 @@ at the plain rate on both legs because no rate exists for them. Treat it as an
 estimate, and label it as one wherever it is shown. Cost-cap model downgrades are
 a separate mechanism and are not covered by this attribute.
 
-`baseline_prompt_usd` and `baseline_completion_usd` exist on the event but are
-deliberately not promoted to OTLP keys: they are derivable, and the permanent
-attribute surface is kept minimal.
-
-The sink-1 example carries no `trustgate.savings.*` block: its record is a
+The sink-1 example carries no `trustgate.cost.savings_usd`: its record is a
 request that named `gpt-4o` explicitly, and naming a model bypasses the load
 balancer entirely, so smart routing never runs for it.
 

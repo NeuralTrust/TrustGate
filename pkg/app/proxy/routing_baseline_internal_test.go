@@ -89,7 +89,6 @@ func TestSmartRoutingBaseline(t *testing.T) {
 		base := smartRoutingBaseline(lb, nil)
 
 		require.NotNil(t, base)
-		assert.Equal(t, premium.ID.String(), base.RegistryID)
 		assert.Equal(t, "anthropic", base.Provider)
 		assert.Equal(t, "claude-opus", base.Model)
 		require.NotNil(t, base.Pricing)

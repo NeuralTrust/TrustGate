@@ -64,13 +64,16 @@ rates). List prices from models.dev diverge from reserved/committed deals.
 ## Smart-routing savings
 
 When a consumer's pool uses the `smart-routing` algorithm and the tier table
-chose the route, the event also carries `savings`: the same token counts
-repriced at the **highest configured tier**, minus the actual cost.
+chose the route, the event's `cost` object also carries `savings_usd`: the same
+token counts repriced at the **highest configured tier**, minus the actual cost.
 
 ```
-baseline_total_usd = prompt_tokens * top_tier_input_rate + completion_tokens * top_tier_output_rate
-saved_usd          = baseline_total_usd - cost.total_usd
+savings_usd = (prompt_tokens * top_tier_input_rate + completion_tokens * top_tier_output_rate) - cost.total_usd
 ```
+
+It lives inside `cost` rather than in a block of its own, so it is one more
+number on the record that already carries the spend. The counterfactual total is
+`cost.total_usd + cost.savings_usd`.
 
 The baseline resolves through the same `llmcost.Resolve` ladder as the actual
 cost, using the **baseline tier's own registry** overlay — which is not
@@ -82,15 +85,15 @@ rules.
 
 "Highest tier" means the greatest `min_score`, not the highest price. Nothing
 validates that the top tier is the most expensive model, so a ladder that puts a
-premium model at a low threshold produces a negative `saved_usd`. That is left
+premium model at a low threshold produces a negative `savings_usd`. That is left
 unclamped: it surfaces the misconfiguration instead of hiding it.
 
-Nothing is recorded when smart routing fell back to round-robin (unconfigured
-scorer, unavailable score, no matching tier, single surviving candidate), when
-no balancer ran at all (a request naming a model, or a role-based consumer), or
-when the baseline model has no resolvable price. An absent `savings` is not the
-same as a zero one; a request already served by the top tier records
-`saved_usd = 0`.
+The field is absent — not zero — when smart routing fell back to round-robin
+(unconfigured scorer, unavailable score, no matching tier, single surviving
+candidate), when no balancer ran at all (a request naming a model, or a
+role-based consumer), when the top tier was not a candidate for this request, or
+when the baseline model has no resolvable price. A request already served by the
+top tier records `savings_usd = 0`.
 
 This is a **modelled counterfactual, not a measurement**: it assumes the premium
 model would have consumed the same tokens, and it prices cached-input and

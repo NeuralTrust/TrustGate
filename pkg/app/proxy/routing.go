@@ -316,10 +316,9 @@ func smartRoutingBaseline(
 			return nil
 		}
 		return &trace.RouteBaseline{
-			RegistryID: route.Registry.ID.String(),
-			Provider:   route.Registry.Provider(),
-			Model:      slug,
-			Pricing:    route.Registry.Pricing(),
+			Provider: route.Registry.Provider(),
+			Model:    slug,
+			Pricing:  route.Registry.Pricing(),
 		}
 	}
 	return nil

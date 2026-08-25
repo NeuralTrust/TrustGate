@@ -64,7 +64,7 @@ const (
 	attrStatusIsTimeout      = "trustgate.status.is_timeout"
 	attrTraceID              = "trustgate.trace_id"
 	attrGatewayID            = "trustgate.gateway_id"
-	attrTenantID             = "trustgate.tenant_id"
+	attrTenantID               = "trustgate.tenant_id"
 	attrConsumerID           = "trustgate.consumer.id"
 	attrConsumerName         = "trustgate.consumer.name"
 	attrSessionID            = "trustgate.session_id"
@@ -79,6 +79,7 @@ const (
 	attrCostPromptUsd        = "trustgate.cost.prompt_usd"
 	attrCostCompletionUsd    = "trustgate.cost.completion_usd"
 	attrCostCurrency         = "trustgate.cost.currency"
+	attrCostSavingsUsd       = "trustgate.cost.savings_usd"
 	attrLatencyTotalMs       = "trustgate.latency.total_ms"
 	attrLatencyProviderMs    = "trustgate.latency.provider_ms"
 	attrLatencyPoliciesMs    = "trustgate.latency.policies_ms"
@@ -90,13 +91,6 @@ const (
 	attrAttemptsCount        = "trustgate.attempts.count"
 	attrRequestBody          = "trustgate.request.body"
 	attrResponseBody         = "trustgate.response.body"
-)
-
-const (
-	attrSavingsBaselineTotalUsd = "trustgate.savings.baseline_total_usd"
-	attrSavingsSavedUsd         = "trustgate.savings.saved_usd"
-	attrSavingsBaselineModel    = "trustgate.savings.baseline_model"
-	attrSavingsCurrency         = "trustgate.savings.currency"
 )
 
 // eventToRecord is the single, semconv-pinned (semconv/v1.41.0) mapping from a
@@ -197,14 +191,9 @@ func eventToRecord(evt *events.Event) otellog.Record {
 			attribute.Float64(attrCostCompletionUsd, float64(evt.Cost.CompletionUsd)),
 		)
 		appendStr(attrCostCurrency, evt.Cost.Currency)
-	}
-	if evt.Savings != nil {
-		attrs = append(attrs,
-			attribute.Float64(attrSavingsBaselineTotalUsd, float64(evt.Savings.BaselineTotalUsd)),
-			attribute.Float64(attrSavingsSavedUsd, float64(evt.Savings.SavedUsd)),
-		)
-		appendStr(attrSavingsBaselineModel, evt.Savings.BaselineModel)
-		appendStr(attrSavingsCurrency, evt.Savings.Currency)
+		if evt.Cost.SavingsUsd != nil {
+			attrs = append(attrs, attribute.Float64(attrCostSavingsUsd, float64(*evt.Cost.SavingsUsd)))
+		}
 	}
 	attrs = append(attrs,
 		attribute.Int64(attrLatencyTotalMs, evt.Latency.TotalMs),
