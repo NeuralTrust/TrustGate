@@ -80,6 +80,7 @@ Relevant env (see `.env.example`):
 | `SERVER_MCP_PORT` | `8082` |
 | `MCP_BASE_DOMAIN` | MCP host suffix (`{slug}.<domain>`) |
 | `GATEWAY_BASE_DOMAIN` | Proxy host suffix (separate from MCP) |
+| `MCP_OAUTH_PUBLIC_BASE_URL` | Optional fixed origin for upstream connect `redirect_uri` (cloud shared OAuth apps) |
 | `STS_SIGNING_KEY` | RSA PEM for MCP session / JWKS (required in prod; ephemeral OK in local non-prod) |
 
 Mint an Admin token the same way as the README “Admin token” section

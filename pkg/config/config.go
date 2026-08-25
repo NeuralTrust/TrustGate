@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -249,10 +250,16 @@ type ServerConfig struct {
 	SecretKey         string
 	GatewayBaseDomain string
 	MCPBaseDomain     string
-	STSIssuer         string
-	STSSigningKey     string
-	TrustXFCCFrom     []string
-	MCPDefaultIdP     MCPDefaultIdPConfig
+	// MCPOAuthPublicBaseURL is an optional fixed origin used as the OAuth
+	// redirect_uri base for upstream MCP connect (authorize + code exchange +
+	// DCR). Empty keeps the request Host (per-gateway subdomain). Set in cloud
+	// so a single Google/Entra app can allowlist one host across tenants.
+	// Example: https://oauth.mcp.neuraltrust.ai
+	MCPOAuthPublicBaseURL string
+	STSIssuer             string
+	STSSigningKey         string
+	TrustXFCCFrom         []string
+	MCPDefaultIdP         MCPDefaultIdPConfig
 }
 
 type MCPDefaultIdPConfig struct {
@@ -470,9 +477,10 @@ func getServerConfig() ServerConfig {
 			"MCP_BASE_DOMAIN",
 			defaultMCPBaseDomain,
 		),
-		STSIssuer:     getEnv("STS_ISSUER", "trustgate"),
-		STSSigningKey: getEnv("STS_SIGNING_KEY", ""),
-		TrustXFCCFrom: splitCSV(getEnv("TRUST_XFCC_FROM", "")),
+		MCPOAuthPublicBaseURL: strings.TrimSpace(getEnv("MCP_OAUTH_PUBLIC_BASE_URL", "")),
+		STSIssuer:             getEnv("STS_ISSUER", "trustgate"),
+		STSSigningKey:         getEnv("STS_SIGNING_KEY", ""),
+		TrustXFCCFrom:         splitCSV(getEnv("TRUST_XFCC_FROM", "")),
 		MCPDefaultIdP: MCPDefaultIdPConfig{
 			Issuer:       getEnv("MCP_DEFAULT_IDP_ISSUER", ""),
 			AuthorizeURL: getEnv("MCP_DEFAULT_IDP_AUTHORIZE_URL", ""),
@@ -967,6 +975,9 @@ func (c *Config) Validate() error {
 	if strings.Trim(strings.ToLower(strings.TrimSpace(c.Server.GatewayBaseDomain)), ".") == "" {
 		return fmt.Errorf("%w: GATEWAY_BASE_DOMAIN is required", errors.ErrInvalidConfig)
 	}
+	if err := validateMCPOAuthPublicBaseURL(&c.Server.MCPOAuthPublicBaseURL); err != nil {
+		return err
+	}
 	if !c.ConfigSync.DataPlaneEnabled {
 		if c.Database.Host == "" {
 			return fmt.Errorf("%w: DB_HOST is required", errors.ErrInvalidConfig)
@@ -1097,6 +1108,35 @@ func isDeployedEnv(appEnv string) bool {
 	default:
 		return false
 	}
+}
+
+// validateMCPOAuthPublicBaseURL normalizes an optional absolute http(s) origin
+// used as the MCP connect OAuth redirect base. Path, query, and fragment are
+// rejected so redirect_uri is always {base}/oauth/callback/{provider}.
+func validateMCPOAuthPublicBaseURL(raw *string) error {
+	v := strings.TrimSpace(*raw)
+	if v == "" {
+		*raw = ""
+		return nil
+	}
+	u, err := url.Parse(v)
+	if err != nil {
+		return fmt.Errorf("%w: MCP_OAUTH_PUBLIC_BASE_URL is not a valid URL", errors.ErrInvalidConfig)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("%w: MCP_OAUTH_PUBLIC_BASE_URL must use http or https", errors.ErrInvalidConfig)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("%w: MCP_OAUTH_PUBLIC_BASE_URL must include a host", errors.ErrInvalidConfig)
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("%w: MCP_OAUTH_PUBLIC_BASE_URL must be an origin only (no userinfo, query, or fragment)", errors.ErrInvalidConfig)
+	}
+	if path := strings.Trim(u.Path, "/"); path != "" {
+		return fmt.Errorf("%w: MCP_OAUTH_PUBLIC_BASE_URL must not include a path (got %q)", errors.ErrInvalidConfig, u.Path)
+	}
+	*raw = strings.TrimRight(u.Scheme+"://"+u.Host, "/")
+	return nil
 }
 
 func getEnv(key, defaultValue string) string {
