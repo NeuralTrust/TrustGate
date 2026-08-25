@@ -584,12 +584,8 @@ func savingsTrace(mutate func(*trace.LLMAttrs)) *trace.RequestTrace {
 		Attempt:        1,
 		Outcome:        "success",
 		TierApplied:    true,
-		Baseline: &trace.RouteBaseline{
-			RegistryID: "reg-high",
-			Provider:   "openai",
-			Model:      "gpt-4o",
-		},
-		Usage: &adapter.CanonicalUsage{InputTokens: 10, OutputTokens: 20, TotalTokens: 30},
+		Baseline:       &trace.RouteBaseline{Provider: "openai", Model: "gpt-4o"},
+		Usage:          &adapter.CanonicalUsage{InputTokens: 10, OutputTokens: 20, TotalTokens: 30},
 	}
 	if mutate != nil {
 		mutate(attrs)
@@ -626,17 +622,10 @@ func TestBuilder_SavingsUsesHighestTierBaseline(t *testing.T) {
 		time.UnixMilli(1), time.UnixMilli(2))
 
 	require.NotNil(t, evt.Cost)
-	require.NotNil(t, evt.Savings)
-	assert.Equal(t, "gpt-4o", evt.Savings.BaselineModel)
-	assert.Equal(t, "reg-high", evt.Savings.BaselineRegistryID)
-	assert.Equal(t, "USD", evt.Savings.Currency)
-	assert.InDelta(t, 10*0.0000025, float64(evt.Savings.BaselinePromptUsd), 1e-12)
-	assert.InDelta(t, 20*0.00001, float64(evt.Savings.BaselineCompletionUsd), 1e-12)
-	assert.InDelta(t, 10*0.0000025+20*0.00001, float64(evt.Savings.BaselineTotalUsd), 1e-12)
-	assert.InDelta(t,
-		float64(evt.Savings.BaselineTotalUsd)-float64(evt.Cost.TotalUsd),
-		float64(evt.Savings.SavedUsd), 1e-12)
-	assert.Greater(t, float64(evt.Savings.SavedUsd), 0.0)
+	require.NotNil(t, evt.Cost.SavingsUsd)
+	baseline := 10*0.0000025 + 20*0.00001
+	assert.InDelta(t, 10*0.00000015+20*0.0000006, float64(evt.Cost.TotalUsd), 1e-12)
+	assert.InDelta(t, baseline-(10*0.00000015+20*0.0000006), float64(*evt.Cost.SavingsUsd), 1e-12)
 }
 
 func TestBuilder_SavingsIsZeroWhenServedIsHighestTier(t *testing.T) {
@@ -646,8 +635,8 @@ func TestBuilder_SavingsIsZeroWhenServedIsHighestTier(t *testing.T) {
 	evt := b.Build(context.Background(), rt, savingsRequest(), savingsResponse(),
 		time.UnixMilli(1), time.UnixMilli(2))
 
-	require.NotNil(t, evt.Savings)
-	assert.InDelta(t, 0, float64(evt.Savings.SavedUsd), 1e-12)
+	require.NotNil(t, evt.Cost.SavingsUsd)
+	assert.InDelta(t, 0, float64(*evt.Cost.SavingsUsd), 1e-12)
 }
 
 // A fail-open round-robin pick is not a tier decision, so it must not be
@@ -660,7 +649,7 @@ func TestBuilder_SavingsAbsentWhenTierNotApplied(t *testing.T) {
 		time.UnixMilli(1), time.UnixMilli(2))
 
 	require.NotNil(t, evt.Cost)
-	assert.Nil(t, evt.Savings)
+	assert.Nil(t, evt.Cost.SavingsUsd)
 }
 
 func TestBuilder_SavingsAbsentWithoutBaseline(t *testing.T) {
@@ -671,7 +660,7 @@ func TestBuilder_SavingsAbsentWithoutBaseline(t *testing.T) {
 		time.UnixMilli(1), time.UnixMilli(2))
 
 	require.NotNil(t, evt.Cost)
-	assert.Nil(t, evt.Savings)
+	assert.Nil(t, evt.Cost.SavingsUsd)
 }
 
 // An unpriceable baseline omits savings rather than reporting zero, which would
@@ -685,7 +674,7 @@ func TestBuilder_SavingsAbsentWhenBaselineUnpriced(t *testing.T) {
 		time.UnixMilli(1), time.UnixMilli(2))
 
 	require.NotNil(t, evt.Cost)
-	assert.Nil(t, evt.Savings)
+	assert.Nil(t, evt.Cost.SavingsUsd)
 }
 
 func TestBuilder_SavingsAbsentWhenActualUnpriced(t *testing.T) {
@@ -697,7 +686,6 @@ func TestBuilder_SavingsAbsentWhenActualUnpriced(t *testing.T) {
 		time.UnixMilli(1), time.UnixMilli(2))
 
 	assert.Nil(t, evt.Cost)
-	assert.Nil(t, evt.Savings)
 }
 
 // The baseline is priced with its own registry's overlay: the tier may live on a
@@ -712,8 +700,10 @@ func TestBuilder_SavingsAppliesBaselineRegistryOverlay(t *testing.T) {
 		time.UnixMilli(1), time.UnixMilli(2))
 
 	require.NotNil(t, evt.Cost)
-	require.NotNil(t, evt.Savings)
-	assert.InDelta(t, 0.75*(10*0.0000025+20*0.00001), float64(evt.Savings.BaselineTotalUsd), 1e-12)
+	require.NotNil(t, evt.Cost.SavingsUsd)
+	assert.InDelta(t,
+		0.75*(10*0.0000025+20*0.00001)-float64(evt.Cost.TotalUsd),
+		float64(*evt.Cost.SavingsUsd), 1e-12)
 	assert.InDelta(t, 10*0.00000015, float64(evt.Cost.PromptUsd), 1e-12)
 }
 
@@ -730,9 +720,10 @@ func TestBuilder_SavingsUsesSameTokenCountsAsCost(t *testing.T) {
 	evt := b.Build(context.Background(), rt, savingsRequest(), savingsResponse(),
 		time.UnixMilli(1), time.UnixMilli(2))
 
-	require.NotNil(t, evt.Savings)
-	assert.InDelta(t, 10*0.0000025, float64(evt.Savings.BaselinePromptUsd), 1e-12)
-	assert.InDelta(t, 20*0.00001, float64(evt.Savings.BaselineCompletionUsd), 1e-12)
+	require.NotNil(t, evt.Cost.SavingsUsd)
+	assert.InDelta(t,
+		(10*0.0000025+20*0.00001)-float64(evt.Cost.TotalUsd),
+		float64(*evt.Cost.SavingsUsd), 1e-12)
 }
 
 // The buffered path reaches the builder with a request context the metrics

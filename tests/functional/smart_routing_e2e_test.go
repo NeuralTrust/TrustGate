@@ -195,14 +195,11 @@ func setupSmartRouteSavings(
 
 type savingsTraceEvent struct {
 	Cost *struct {
-		TotalUsd float64 `json:"total_usd"`
+		PromptUsd     float64  `json:"prompt_usd"`
+		CompletionUsd float64  `json:"completion_usd"`
+		TotalUsd      float64  `json:"total_usd"`
+		SavingsUsd    *float64 `json:"savings_usd"`
 	} `json:"cost"`
-	Savings *struct {
-		BaselineModel    string  `json:"baseline_model"`
-		BaselineTotalUsd float64 `json:"baseline_total_usd"`
-		SavedUsd         float64 `json:"saved_usd"`
-		Currency         string  `json:"currency"`
-	} `json:"savings"`
 }
 
 func smartRoutingTraceFor(t *testing.T, gatewaySlug, consumerSlug, path, content string) savingsTraceEvent {
@@ -230,6 +227,7 @@ func TestSmartRoutingE2E_RecordsSavings(t *testing.T) {
 		outputTok = 20
 	)
 	// The high tier is priced 10x the low tier on both legs.
+	lowCost := promptTok*0.000001 + outputTok*0.000002
 	baseline := promptTok*0.00001 + outputTok*0.00002
 
 	t.Run("a low-tier pick records what the top tier would have cost", func(t *testing.T) {
@@ -240,12 +238,10 @@ func TestSmartRoutingE2E_RecordsSavings(t *testing.T) {
 		evt := smartRoutingTraceFor(t, gatewaySlug, consumerSlug, path, smartRouteLowContent)
 
 		require.NotNil(t, evt.Cost)
-		require.NotNil(t, evt.Savings, "a tier decision must record savings")
-		assert.Equal(t, highModel, evt.Savings.BaselineModel)
-		assert.Equal(t, "USD", evt.Savings.Currency)
-		assert.InDelta(t, baseline, evt.Savings.BaselineTotalUsd, 1e-12)
-		assert.InDelta(t, baseline-evt.Cost.TotalUsd, evt.Savings.SavedUsd, 1e-12)
-		assert.Greater(t, evt.Savings.SavedUsd, 0.0)
+		require.NotNil(t, evt.Cost.SavingsUsd, "a tier decision must record savings")
+		assert.InDelta(t, lowCost, evt.Cost.TotalUsd, 1e-12,
+			"the low tier's own rates must price the served leg")
+		assert.InDelta(t, baseline-lowCost, *evt.Cost.SavingsUsd, 1e-12)
 	})
 
 	t.Run("a top-tier pick records zero savings, not an absent block", func(t *testing.T) {
@@ -255,8 +251,10 @@ func TestSmartRoutingE2E_RecordsSavings(t *testing.T) {
 
 		evt := smartRoutingTraceFor(t, gatewaySlug, consumerSlug, path, smartRouteHighContent)
 
-		require.NotNil(t, evt.Savings)
-		assert.InDelta(t, 0, evt.Savings.SavedUsd, 1e-12)
+		require.NotNil(t, evt.Cost)
+		require.NotNil(t, evt.Cost.SavingsUsd)
+		assert.InDelta(t, baseline, evt.Cost.TotalUsd, 1e-12)
+		assert.InDelta(t, 0, *evt.Cost.SavingsUsd, 1e-12)
 	})
 
 	// The single most important assertion here: a fail-open round-robin pick is
@@ -269,6 +267,6 @@ func TestSmartRoutingE2E_RecordsSavings(t *testing.T) {
 		evt := smartRoutingTraceFor(t, gatewaySlug, consumerSlug, path, smartRouteErrorContent)
 
 		require.NotNil(t, evt.Cost, "a fail-open request is still costed")
-		assert.Nil(t, evt.Savings, "a round-robin fail-open must not report savings")
+		assert.Nil(t, evt.Cost.SavingsUsd, "a round-robin fail-open must not report savings")
 	})
 }

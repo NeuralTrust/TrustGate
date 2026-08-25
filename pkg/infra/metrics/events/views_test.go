@@ -22,6 +22,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var savingsUsd = events.DecimalFloat(0.0004)
+
 func fullEvent() events.Event {
 	respBody := "response output body"
 	return events.Event{
@@ -54,8 +56,7 @@ func fullEvent() events.Event {
 			Headers:    map[string][]string{"Content-Type": {"application/json"}},
 		},
 		Usage:       &events.Usage{PromptTokens: 10, CompletionTokens: 20, TotalTokens: 30},
-		Cost:        &events.Cost{Currency: "USD"},
-		Savings:     &events.Savings{BaselineModel: "gpt-5", SavedUsd: 0.0004, Currency: "USD"},
+		Cost:        &events.Cost{Currency: "USD", SavingsUsd: &savingsUsd},
 		Latency:     events.Latency{TotalMs: 120},
 		Attempts:    []events.Attempt{{Attempt: 1, Provider: "openai"}},
 		PolicyChain: []events.PolicyEntry{{Name: "guard", Decision: "allow"}},
@@ -81,7 +82,6 @@ func TestEvent_MetadataView_ExcludesBodies(t *testing.T) {
 	assert.Equal(t, evt.Status, meta.Status)
 	assert.Equal(t, evt.Usage, meta.Usage)
 	assert.Equal(t, evt.Cost, meta.Cost)
-	assert.Equal(t, evt.Savings, meta.Savings)
 	assert.Equal(t, evt.Attempts, meta.Attempts)
 	assert.Equal(t, evt.PolicyChain, meta.PolicyChain)
 	assert.Equal(t, evt.MCP, meta.MCP)
@@ -112,7 +112,6 @@ func TestEvent_SensibleView_OnlyBodiesAndCorrelationKeys(t *testing.T) {
 	assert.Equal(t, events.Status{}, sensible.Status)
 	assert.Nil(t, sensible.Usage)
 	assert.Nil(t, sensible.Cost)
-	assert.Nil(t, sensible.Savings)
 	assert.Nil(t, sensible.Attempts)
 	assert.Nil(t, sensible.PolicyChain)
 	assert.Nil(t, sensible.MCP)
