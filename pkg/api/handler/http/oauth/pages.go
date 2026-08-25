@@ -50,6 +50,8 @@ body{
   background:var(--bg-canvas);color:var(--fg-default);font-family:var(--font-sans);
   -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
 }
+body.store{display:block;align-items:stretch}
+.shell{width:100%;max-width:1100px;margin:0 auto;padding:32px 24px 40px}
 .card{
   width:100%;max-width:560px;margin:40px 16px;padding:24px;
   background:var(--bg-muted);border:1px solid var(--stroke);border-radius:var(--radius-md);
@@ -76,23 +78,35 @@ code{
   border-radius:var(--radius-md);font-size:.875rem;line-height:1rem;
 }
 .flash svg{flex:none}
-.list{display:flex;flex-direction:column;gap:8px}
-.row{
-  display:flex;align-items:center;justify-content:space-between;gap:16px;
-  padding:12px 16px;background:var(--bg-surface-hover);border:1px solid var(--stroke);border-radius:var(--radius-md);
+.toolbar{display:flex;align-items:center;gap:12px;margin:0 0 16px;flex-wrap:wrap}
+.toolbar .input{flex:1;min-width:220px;max-width:360px}
+.count{font-size:.75rem;line-height:1rem;color:var(--fg-muted);margin-left:auto}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.tile{display:flex;flex-direction:column;min-width:0}
+.tile-body{
+  flex:1;display:flex;flex-direction:column;gap:12px;min-height:194px;padding:12px;
+  background:var(--bg-surface-hover);border:1px solid var(--stroke);
+  border-radius:var(--radius-md) var(--radius-md) 0 0;margin-bottom:-1px;
+  transition:background var(--duration-fast);
 }
-.identity{display:flex;align-items:center;gap:12px;min-width:0}
+.tile-foot{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;
+  background:var(--bg-surface-hover);border:1px solid var(--stroke);
+  border-radius:0 0 var(--radius-md) var(--radius-md);
+  transition:background var(--duration-fast);
+}
+.tile:hover .tile-body,.tile:hover .tile-foot{background:var(--bg-muted)}
 .logo{
   width:60px;height:60px;border-radius:var(--radius-md);flex:none;
   display:flex;align-items:center;justify-content:center;background:var(--stroke);
 }
 .logo img{width:40px;height:40px;object-fit:contain;display:block}
-.meta{min-width:0}
-.name{font-size:.875rem;line-height:1.25rem;font-weight:500;letter-spacing:-.072px;color:var(--fg-default)}
-.reg{
-  color:var(--fg-muted);font-size:.875rem;line-height:1.25rem;margin-top:4px;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+.name{font-size:.875rem;line-height:1.25rem;font-weight:500;letter-spacing:-.072px;color:var(--fg-default);margin:0}
+.desc{
+  margin:0;color:var(--fg-muted);font-size:.875rem;line-height:1.25rem;
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;
 }
+.reg{color:var(--fg-muted);font-size:.875rem;line-height:1.25rem}
 .badge{
   display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border-radius:var(--radius-full);
   font-size:.75rem;line-height:1rem;font-weight:400;white-space:nowrap;
@@ -100,7 +114,6 @@ code{
 .badge svg{flex:none}
 .badge.green{color:var(--badge-green);background:rgb(0 254 24 / .2)}
 .badge.red{color:var(--badge-red);background:rgb(255 57 72 / .2)}
-.actions{display:flex;align-items:center;gap:8px;flex:none}
 a.btn,button.btn{
   box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:8px;
   height:32px;padding:0 12px;border-radius:var(--radius-md);
@@ -127,8 +140,10 @@ button.btn.ghost-danger{
 button.btn.ghost-danger:hover{color:var(--danger-hover)}
 button.btn.ghost-danger:active{color:var(--danger-active)}
 .resume{
-  margin-top:16px;padding:12px 16px;border:1px solid var(--stroke);border-radius:var(--radius-md);
-  background:var(--bg-surface-hover);display:flex;align-items:center;justify-content:space-between;gap:12px;
+  margin-top:20px;padding:12px 16px;border:1px solid var(--stroke);border-radius:var(--radius-md);
+  background:var(--bg-muted);box-shadow:var(--shadow-overlay);
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  position:sticky;bottom:16px;
 }
 .empty{color:var(--fg-muted);font-size:.875rem;line-height:1.25rem;padding:8px 0}
 .center{text-align:center}
@@ -178,30 +193,62 @@ var connectPageTmpl = template.Must(template.New("connect").Parse(`<!doctype htm
 <html lang="en" class="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 ` + pageFonts + `
 <title>Connect accounts - NeuralTrust TrustGate</title><style>` + pageCSS + `</style></head>
-<body><div class="card">` + brandHeader + `
+<body class="store"><div class="shell">` + brandHeader + `
 <h1>Connect your accounts</h1>
-<p class="sub">Virtual MCP <code>{{.ConsumerPath}}</code> needs access to these services on your behalf. Tokens are stored encrypted in the gateway vault and are never exposed to the agent.</p>
+<p class="sub">Choose which MCP servers virtual MCP <code>{{.ConsumerPath}}</code> may use. Connect only the ones you need — tokens are stored encrypted in the gateway vault and are never exposed to the agent.</p>
 {{if .Flash}}<div class="flash" role="status"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg><div>{{.Flash}}</div></div>{{end}}
-{{if not .Providers}}<p class="empty">No third-party providers are configured for this virtual MCP.</p>{{end}}
-<div class="list">{{range .Providers}}<div class="row">
-  <div class="identity">
-    <div class="logo"><img src="{{.LogoURL}}" alt="" width="40" height="40" onerror="this.onerror=null;this.src='/oauth/brands/mcp.svg'"></div>
-    <div class="meta"><div class="name">{{.DisplayName}}</div><div class="reg">{{.Subtitle}}</div></div>
+{{if .Providers}}<div class="toolbar">
+  <div class="input">
+    <input id="filter" type="search" placeholder=" " autocomplete="off">
+    <label for="filter">Search MCP servers</label>
   </div>
-  <div class="actions">{{if .NeedsReconnect}}
+  <div class="count"><span id="shown">{{len .Providers}}</span> of {{len .Providers}}</div>
+</div>{{end}}
+{{if not .Providers}}<p class="empty">No third-party providers are configured for this virtual MCP.</p>{{end}}
+<p class="empty" id="no-match" hidden>No matching MCP servers.</p>
+<div class="grid">{{range .Providers}}<article class="tile" data-filter="{{.DisplayName}} {{.Subtitle}} {{.Provider}}">
+  <div class="tile-body">
+    <div class="logo"><img src="{{.LogoURL}}" alt="" width="40" height="40" onerror="this.onerror=null;this.src='/oauth/brands/mcp.svg'"></div>
+    <div>
+      <p class="name">{{.DisplayName}}</p>
+      <p class="desc">{{.Description}}</p>
+    </div>
+  </div>
+  <div class="tile-foot">{{if .NeedsReconnect}}
     <span class="badge red">Expired</span>
     <a class="btn secondary" href="/oauth/connect/{{.Provider}}?ticket={{$.Ticket}}">Reconnect</a>
   {{else if .Linked}}
     <span class="badge green">` + badgeCheck + `Connected</span>
     <form method="post" action="/oauth/disconnect/{{.Provider}}?ticket={{$.Ticket}}"><button class="btn ghost-danger" type="submit">Revoke</button></form>
   {{else}}
+    <span></span>
     <a class="btn secondary" href="/oauth/connect/{{.Provider}}?ticket={{$.Ticket}}">Connect</a>
   {{end}}</div>
-</div>{{end}}</div>
+</article>{{end}}</div>
 {{if .ResumeURL}}<div class="resume">
   <div><div class="name">Done connecting?</div><div class="reg">Return to your application to finish signing in.</div></div>
   <a class="btn primary" href="{{.ResumeURL}}">Continue</a>
 </div>{{end}}
+<script>
+(function () {
+  var input = document.getElementById('filter');
+  if (!input) return;
+  var tiles = document.querySelectorAll('.tile');
+  var shown = document.getElementById('shown');
+  var empty = document.getElementById('no-match');
+  input.addEventListener('input', function () {
+    var q = input.value.toLowerCase().trim();
+    var n = 0;
+    tiles.forEach(function (tile) {
+      var hit = !q || (tile.getAttribute('data-filter') || '').toLowerCase().indexOf(q) !== -1;
+      tile.hidden = !hit;
+      if (hit) n++;
+    });
+    if (shown) shown.textContent = String(n);
+    if (empty) empty.hidden = n !== 0;
+  });
+})();
+</script>
 </div></body></html>`))
 
 var apiKeyConnectPageTmpl = template.Must(template.New("api-key-connect").Parse(`<!doctype html>
@@ -253,6 +300,7 @@ type providerView struct {
 	Provider       string
 	DisplayName    string
 	Subtitle       string
+	Description    string
 	LogoURL        template.URL
 	Linked         bool
 	NeedsReconnect bool
@@ -290,22 +338,28 @@ func decorateProvider(catalog appcatalog.MCPServerCatalog, p appoauth.ProviderSt
 		display = p.Provider
 	}
 	vendor := ""
+	desc := ""
 	if catalog != nil {
 		if server, ok := lookupCatalogServer(catalog, p.Code, p.Provider); ok {
 			if server.DisplayName != "" {
 				display = server.DisplayName
 			}
 			vendor = server.Vendor
+			desc = strings.TrimSpace(server.Description)
 		}
 	}
 	subtitle := p.Registry
 	if subtitle == "" || subtitle == display {
 		subtitle = p.Provider
 	}
+	if desc == "" {
+		desc = subtitle
+	}
 	return providerView{
 		Provider:       p.Provider,
 		DisplayName:    display,
 		Subtitle:       subtitle,
+		Description:    desc,
 		LogoURL:        template.URL(appcatalog.BrandIconURL(vendor, display, p.Provider, p.Registry, p.Code)), // #nosec G203 -- path is chosen from the bundled brand map
 		Linked:         p.Linked,
 		NeedsReconnect: p.NeedsReconnect,
