@@ -44,6 +44,29 @@ func NewProviderClient(client *http.Client) appoauth.ProviderClient {
 }
 
 func (p *providerClient) AuthorizeURL(cfg *registrydomain.MCPAuth, redirectURI, state, challenge string) string {
+	base, err := url.Parse(cfg.AuthorizeURL)
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		// Fall back to string join for non-absolute catalog URLs.
+		return authorizeURLJoin(cfg.AuthorizeURL, authorizeQuery(cfg, redirectURI, state, challenge, false))
+	}
+	q := base.Query()
+	for k, vs := range authorizeQuery(cfg, redirectURI, state, challenge, isGoogleHost(base.Hostname())) {
+		// Standard OAuth params always win; Google offline defaults only fill gaps
+		// so a catalog authorize_url can override access_type/prompt.
+		if k == "access_type" || k == "prompt" {
+			if q.Get(k) != "" {
+				continue
+			}
+		}
+		for _, v := range vs {
+			q.Set(k, v)
+		}
+	}
+	base.RawQuery = q.Encode()
+	return base.String()
+}
+
+func authorizeQuery(cfg *registrydomain.MCPAuth, redirectURI, state, challenge string, google bool) url.Values {
 	q := url.Values{}
 	q.Set("response_type", "code")
 	q.Set("client_id", cfg.ClientID)
@@ -59,11 +82,39 @@ func (p *providerClient) AuthorizeURL(cfg *registrydomain.MCPAuth, redirectURI, 
 	if cfg.Resource != "" {
 		q.Set("resource", cfg.Resource)
 	}
+	// Google only issues a refresh_token with access_type=offline. prompt=consent
+	// forces a fresh grant so reconnect after a dead vault row still gets one
+	// (Google otherwise reuses the prior approval and omits refresh_token).
+	if google {
+		q.Set("access_type", "offline")
+		q.Set("prompt", "consent")
+	}
+	return q
+}
+
+func authorizeURLJoin(base string, q url.Values) string {
 	sep := "?"
-	if strings.Contains(cfg.AuthorizeURL, "?") {
+	if strings.Contains(base, "?") {
 		sep = "&"
 	}
-	return cfg.AuthorizeURL + sep + q.Encode()
+	return base + sep + q.Encode()
+}
+
+// isGoogleHost reports whether the authorize host is Google's accounts endpoint
+// (Workspace MCP, Gmail, Calendar, etc.).
+func isGoogleHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	return host == "accounts.google.com" || strings.HasSuffix(host, ".accounts.google.com")
+}
+
+// isGoogleAuthorizeURL reports whether the authorize endpoint is Google's
+// accounts host. Kept for tests and call sites that only have the full URL.
+func isGoogleAuthorizeURL(authorizeURL string) bool {
+	u, err := url.Parse(authorizeURL)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return isGoogleHost(u.Hostname())
 }
 
 func (p *providerClient) ExchangeCode(ctx context.Context, cfg *registrydomain.MCPAuth, code, redirectURI, verifier string) (*appoauth.ProviderToken, error) {
