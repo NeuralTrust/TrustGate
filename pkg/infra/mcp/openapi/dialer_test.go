@@ -1,0 +1,138 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package openapi
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
+	"testing"
+
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
+	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
+	"github.com/stretchr/testify/require"
+)
+
+type compilerFunc func(context.Context, appopenapi.Source) (*appopenapi.Document, error)
+
+func (f compilerFunc) Compile(ctx context.Context, source appopenapi.Source) (*appopenapi.Document, error) {
+	return f(ctx, source)
+}
+
+func TestOpenAPIUpstreamListsAndCallsTools(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/pets/42", r.URL.Path)
+		require.Equal(t, "full", r.URL.Query().Get("view"))
+		require.Equal(t, "Bearer token", r.Header.Get("Authorization"))
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.JSONEq(t, `{"name":"Milo"}`, string(body))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":42,"name":"Milo"}`))
+	}))
+	defer server.Close()
+
+	var compiles atomic.Int32
+	compiler := compilerFunc(func(context.Context, appopenapi.Source) (*appopenapi.Document, error) {
+		compiles.Add(1)
+		return &appopenapi.Document{
+			BaseURL: server.URL + "/v1",
+			Operations: []appopenapi.Operation{{
+				Name:        "updatePet",
+				Description: "Update a pet",
+				Method:      http.MethodPost,
+				Path:        "/pets/{id}",
+				InputSchema: json.RawMessage(`{
+					"type":"object",
+					"properties":{"id":{"type":"integer"},"view":{"type":"string"},"name":{"type":"string"}},
+					"required":["id","name"]
+				}`),
+				Parameters: []appopenapi.Parameter{
+					{Name: "id", In: "path", Required: true},
+					{Name: "view", In: "query"},
+				},
+				BodyFields: []string{"name"},
+			}},
+		}, nil
+	})
+	dialer := NewDialerWithClient(nil, compiler, server.Client())
+	target := appmcp.Target{
+		Headers:  map[string]string{"Authorization": "Bearer token"},
+		Revision: "registry:1",
+		OpenAPI:  &appopenapi.Source{SpecURL: "https://spec.example/openapi.json"},
+	}
+
+	upstream, err := dialer.Connect(context.Background(), target)
+	require.NoError(t, err)
+	tools, err := upstream.ListTools(context.Background())
+	require.NoError(t, err)
+	require.Len(t, tools, 1)
+	toolJSON, err := json.Marshal(tools[0])
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"name":"updatePet",
+		"description":"Update a pet",
+		"inputSchema":{
+			"type":"object",
+			"properties":{"id":{"type":"integer"},"view":{"type":"string"},"name":{"type":"string"}},
+			"required":["id","name"]
+		}
+	}`, string(toolJSON))
+
+	result, err := upstream.CallTool(
+		context.Background(),
+		"updatePet",
+		json.RawMessage(`{"id":42,"view":"full","name":"Milo"}`),
+	)
+	require.NoError(t, err)
+	require.Contains(t, string(result), `"structuredContent":{"id":42,"name":"Milo"}`)
+	require.Equal(t, int32(1), calls.Load())
+
+	_, err = dialer.Connect(context.Background(), target)
+	require.NoError(t, err)
+	require.Equal(t, int32(1), compiles.Load())
+}
+
+func TestOpenAPIUpstreamRejectsInvalidArguments(t *testing.T) {
+	t.Parallel()
+	compiler := compilerFunc(func(context.Context, appopenapi.Source) (*appopenapi.Document, error) {
+		return &appopenapi.Document{
+			BaseURL: "https://api.example.com",
+			Operations: []appopenapi.Operation{{
+				Name:        "getPet",
+				Method:      http.MethodGet,
+				Path:        "/pets/{id}",
+				InputSchema: json.RawMessage(`{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}`),
+			}},
+		}, nil
+	})
+	dialer := NewDialerWithClient(nil, compiler, http.DefaultClient)
+	upstream, err := dialer.Connect(context.Background(), appmcp.Target{
+		OpenAPI: &appopenapi.Source{SpecURL: "https://spec.example/openapi.json"},
+	})
+	require.NoError(t, err)
+
+	_, err = upstream.CallTool(context.Background(), "getPet", json.RawMessage(`{}`))
+	var rpcErr *appmcp.RPCError
+	require.ErrorAs(t, err, &rpcErr)
+	require.Equal(t, int64(-32602), rpcErr.Code)
+}

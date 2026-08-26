@@ -19,6 +19,7 @@ import (
 
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -43,13 +44,13 @@ func provideRegistryRepository(c *container.Container) error {
 }
 
 func provideRegistryServices(c *container.Container) error {
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger, sig snapshotSignalParams, catalog appcatalog.MCPServerCatalog) appregistry.Creator {
-		return appregistry.NewCreator(repo, manager, logger, sig.Signaler, catalog)
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger, sig snapshotSignalParams, catalog appcatalog.MCPServerCatalog, compiler appopenapi.Compiler) appregistry.Creator {
+		return appregistry.NewCreator(repo, manager, logger, sig.Signaler, catalog, compiler)
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, catalog appcatalog.MCPServerCatalog) appregistry.Updater {
-		return appregistry.NewUpdater(repo, manager, publisher, logger, sig.Signaler, catalog)
+	if err := c.Provide(func(repo domain.Repository, manager *cache.TTLMapManager, publisher cache.EventPublisher, logger *slog.Logger, sig snapshotSignalParams, catalog appcatalog.MCPServerCatalog, compiler appopenapi.Compiler) appregistry.Updater {
+		return appregistry.NewUpdater(repo, manager, publisher, logger, sig.Signaler, catalog, compiler)
 	}); err != nil {
 		return err
 	}
@@ -65,6 +66,9 @@ func provideRegistryServices(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(appregistry.NewConnectionTester); err != nil {
+		return err
+	}
+	if err := c.Provide(appregistry.NewOpenAPIValidator); err != nil {
 		return err
 	}
 	if err := c.Provide(registryhttp.NewCreateRegistryHandler); err != nil {
@@ -83,6 +87,9 @@ func provideRegistryServices(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(registryhttp.NewTestConnectionHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(registryhttp.NewValidateOpenAPIHandler); err != nil {
 		return err
 	}
 	return nil

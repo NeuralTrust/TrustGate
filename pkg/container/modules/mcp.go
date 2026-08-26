@@ -27,6 +27,7 @@ import (
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
@@ -34,17 +35,23 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	infrasts "github.com/NeuralTrust/TrustGate/pkg/infra/identity/sts"
 	mcpclient "github.com/NeuralTrust/TrustGate/pkg/infra/mcp/client"
+	mcpopenapi "github.com/NeuralTrust/TrustGate/pkg/infra/mcp/openapi"
 	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
+	infraopenapi "github.com/NeuralTrust/TrustGate/pkg/infra/openapi"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/ratelimit"
 	vaultrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/vault"
 )
 
 func MCP(c *container.Container) error {
+	if err := c.Provide(infraopenapi.NewCompiler); err != nil {
+		return err
+	}
 	if err := c.Provide(mcpclient.New); err != nil {
 		return err
 	}
-	if err := c.Provide(func(client *mcpclient.Client, logger *slog.Logger) appmcp.Dialer {
-		return mcpclient.NewCachedDialer(client, logger)
+	if err := c.Provide(func(client *mcpclient.Client, logger *slog.Logger, compiler appopenapi.Compiler) appmcp.Dialer {
+		remote := mcpclient.NewCachedDialer(client, logger)
+		return mcpopenapi.NewDialer(remote, compiler)
 	}); err != nil {
 		return err
 	}
