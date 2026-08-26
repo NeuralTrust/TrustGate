@@ -33,6 +33,17 @@ type MCPTransport string
 
 const MCPTransportStreamableHTTP MCPTransport = "streamable-http"
 
+type MCPSource string
+
+const (
+	MCPSourceRemote  MCPSource = "mcp"
+	MCPSourceOpenAPI MCPSource = "openapi"
+)
+
+type OpenAPITarget struct {
+	SpecURL string `json:"spec_url"`
+}
+
 type MCPAuthMode string
 
 const (
@@ -98,17 +109,22 @@ type MCPTarget struct {
 	// connected, mirroring how an LLM registry stores its provider code. Empty
 	// for custom servers added by raw URL.
 	Code      string            `json:"code,omitempty"`
-	URL       string            `json:"url"`
+	Source    MCPSource         `json:"source,omitempty"`
+	URL       string            `json:"url,omitempty"`
 	Transport MCPTransport      `json:"transport,omitempty"`
 	Headers   map[string]string `json:"headers,omitempty"`
 	Auth      *MCPAuth          `json:"auth,omitempty"`
+	OpenAPI   *OpenAPITarget    `json:"openapi,omitempty"`
 }
 
 func (t *MCPTarget) Normalize() {
 	if t == nil {
 		return
 	}
-	if t.Transport == "" {
+	if t.Source == "" {
+		t.Source = MCPSourceRemote
+	}
+	if t.Source == MCPSourceRemote && t.Transport == "" {
 		t.Transport = MCPTransportStreamableHTTP
 	}
 	if t.Auth == nil {
@@ -120,19 +136,47 @@ func (t *MCPTarget) Validate() error {
 	if t == nil {
 		return fmt.Errorf("%w: mcp_target is required", ErrInvalidMCPTarget)
 	}
-	if strings.TrimSpace(t.URL) == "" {
-		return fmt.Errorf("%w: url is required", ErrInvalidMCPTarget)
+	source := t.Source
+	if source == "" {
+		source = MCPSourceRemote
 	}
-	u, err := url.Parse(t.URL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return fmt.Errorf("%w: url must be a valid http(s) URL", ErrInvalidMCPTarget)
-	}
-	if t.Transport != "" && t.Transport != MCPTransportStreamableHTTP {
-		return fmt.Errorf("%w: unsupported transport %q", ErrInvalidMCPTarget, t.Transport)
+	switch source {
+	case MCPSourceRemote:
+		if strings.TrimSpace(t.URL) == "" {
+			return fmt.Errorf("%w: url is required", ErrInvalidMCPTarget)
+		}
+		if !isHTTPURL(t.URL) {
+			return fmt.Errorf("%w: url must be a valid http(s) URL", ErrInvalidMCPTarget)
+		}
+		if t.Transport != "" && t.Transport != MCPTransportStreamableHTTP {
+			return fmt.Errorf("%w: unsupported transport %q", ErrInvalidMCPTarget, t.Transport)
+		}
+		if t.OpenAPI != nil {
+			return fmt.Errorf("%w: openapi is only valid for openapi sources", ErrInvalidMCPTarget)
+		}
+	case MCPSourceOpenAPI:
+		if t.OpenAPI == nil || !isHTTPURL(t.OpenAPI.SpecURL) {
+			return fmt.Errorf("%w: openapi.spec_url must be a valid http(s) URL", ErrInvalidMCPTarget)
+		}
+		if t.URL != "" && !isHTTPURL(t.URL) {
+			return fmt.Errorf("%w: url must be a valid http(s) URL", ErrInvalidMCPTarget)
+		}
+		if t.Transport != "" {
+			return fmt.Errorf("%w: transport is not valid for openapi sources", ErrInvalidMCPTarget)
+		}
+	default:
+		return fmt.Errorf("%w: unsupported source %q", ErrInvalidMCPTarget, t.Source)
 	}
 	if t.Auth != nil {
 		if err := t.Auth.Validate(); err != nil {
 			return err
+		}
+		if source == MCPSourceOpenAPI &&
+			t.Auth.Mode != "" &&
+			t.Auth.Mode != MCPAuthModeNone &&
+			t.Auth.Mode != MCPAuthModeStatic &&
+			t.Auth.Mode != MCPAuthModeClientCredentials {
+			return fmt.Errorf("%w: auth mode %q is not supported for openapi sources", ErrInvalidMCPTarget, t.Auth.Mode)
 		}
 	}
 	return nil

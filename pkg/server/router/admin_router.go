@@ -76,6 +76,7 @@ type AdminRouterDeps struct {
 	UpdateRegistry         *registryhttp.UpdateRegistryHandler
 	DeleteRegistry         *registryhttp.DeleteRegistryHandler
 	TestRegistryConnection *registryhttp.TestConnectionHandler
+	ValidateOpenAPI        *registryhttp.ValidateOpenAPIHandler
 	ListRegistryTools      *registryhttp.ListRegistryToolsHandler
 
 	CreatePolicy    *policyhttp.CreatePolicyHandler
@@ -160,6 +161,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	registries := gw.Group("/:gateway_id/registries", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceRegistries))
 	registries.Post("", r.deps.CreateRegistry.Handle)
 	registries.Post("/test-connection", r.deps.TestRegistryConnection.Handle)
+	registries.Post("/validate-openapi", r.deps.ValidateOpenAPI.Handle)
 	registries.Get("", r.deps.ListRegistry.Handle)
 	registries.Get("/:id", r.deps.GetRegistry.Handle)
 	registries.Get("/:id/tools", r.deps.ListRegistryTools.Handle)
