@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
@@ -73,6 +74,14 @@ func provideRuntimeBase(c *container.Container) error {
 	}
 	if err := c.Provide(func() context.Context {
 		return context.Background()
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(cfg *config.Config) mcpoauth.Provider {
+		return mcpoauth.NewGoogleWorkspace(
+			cfg.Server.GoogleWorkspaceMCP.ClientID,
+			cfg.Server.GoogleWorkspaceMCP.ClientSecret,
+		)
 	}); err != nil {
 		return err
 	}

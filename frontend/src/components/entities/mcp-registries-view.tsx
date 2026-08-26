@@ -415,7 +415,12 @@ function AddMcpDialog({
         }
       }
     }
-    if (server.auth_hint === "oauth" && server.oauth?.registration === "manual" && !clientId.trim()) {
+    if (
+      server.auth_hint === "oauth" &&
+      server.oauth?.registration === "manual" &&
+      !server.platform_client &&
+      !clientId.trim()
+    ) {
       toast({ variant: "error", title: "Client ID is required" });
       return null;
     }
@@ -445,10 +450,13 @@ function AddMcpDialog({
     }
   }
 
-  const isOAuthAuto =
-    server?.auth_hint === "oauth" && server.oauth?.registration !== "manual";
+  const isOAuthRuntime =
+    server?.auth_hint === "oauth" &&
+    (server.oauth?.registration !== "manual" || Boolean(server.platform_client));
   const isOAuthManual =
-    server?.auth_hint === "oauth" && server.oauth?.registration === "manual";
+    server?.auth_hint === "oauth" &&
+    server.oauth?.registration === "manual" &&
+    !server.platform_client;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -685,7 +693,7 @@ function AddMcpDialog({
                     </Field>
                   ))}
 
-                {isOAuthAuto && (
+                {isOAuthRuntime && (
                   <p className="text-[13px] text-muted">
                     This server uses OAuth. No credentials are stored here — each user
                     authenticates in the browser at runtime.

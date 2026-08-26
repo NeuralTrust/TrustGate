@@ -18,6 +18,7 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | Bodies (raw class) | Emitted as `trustgate.request.body` / `trustgate.response.body` when an `otlp` exporter is declared under `exporters.raw[]` |
 | Policy chain | `policy_chain[]` on the Event is JSON-encoded in `trustgate.policy_chain` (evidence never included) |
 | `is_flagged` | Emitted as `trustgate.is_flagged` (bool) |
+| Retention | `trustgate.retention.expires_at` on **both** classes, or on neither. Absent means the gateway has no stamped plan retention — the sink applies its own fallback |
 
 ## HTTP semconv
 
@@ -75,6 +76,8 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.attempts` | `attempts[]` as JSON string (when non-empty) |
 | `trustgate.attempts.count` | `len(attempts)` (when non-empty) |
 | `trustgate.mcp.*` | `mcp.*` fields (when the request is an MCP call) |
+| `trustgate.retention.expires_at` | `retention.expires_at` (epoch millis, int64; only when the gateway carries a stamped plan retention) |
+| `trustgate.retention.plan` | `retention.plan` (the plan label the window came from; omitted when empty) |
 
 ### Latency semantics
 
@@ -172,8 +175,29 @@ exporter declared under `exporters.raw[]`:
 | Join keys | `trace_id`, `gateway_id`, `tenant_id`, `occurred_on` |
 
 The raw OTLP record emits `trustgate.schema_version`, `trustgate.trace_id`,
-`trustgate.gateway_id`, `trustgate.tenant_id`, `trustgate.request.body`, and
-`trustgate.response.body` — no metadata attributes, no policy chain.
+`trustgate.gateway_id`, `trustgate.tenant_id`, `trustgate.request.body`,
+`trustgate.response.body`, and the retention pair — no other metadata attributes, no
+policy chain. Raw bodies land in their own table, which needs its own expiry to key a
+TTL on, so retention is deliberately not treated as metadata-only.
+
+### Retention
+
+`retention.expires_at` is `occurred_on + retention_days` of the plan stamped on the
+gateway (`entitlements.retention_days`, set by the control plane). It is derived from
+`occurred_on` rather than from wall-clock time at export, so a record's expiry can never
+disagree with its own timestamp.
+
+Two properties downstream storage can rely on:
+
+- **Absent, never zero.** A gateway with no stamp emits no retention attribute at all. A
+  `0` would read as "expired at the epoch", so the attribute is dropped instead and the
+  sink's fallback decides.
+- **`0` means unlimited**, the same sentinel `quota_per_month` and `max_instances` use.
+  It is resolved to a concrete window (`UnlimitedRetentionWindow`, 10 years) before the
+  expiry is computed, because a TTL needs a real date to compare against. That resolution
+  happens in the gateway, not in the sink, so every exporter agrees on it — and it is
+  bounded rather than far-future because ClickHouse `DateTime` is uint32 seconds and tops
+  out in 2106. `TrustGuard` pins the same value.
 
 ## Severity
 

@@ -74,6 +74,7 @@ func (b *Builder) Build(
 		Consumer:      events.Consumer{ID: meta.ConsumerID, Name: meta.ConsumerName},
 		SessionID:     meta.SessionID,
 		IP:            meta.IP,
+		Retention:     retention(meta, startTime),
 	}
 
 	if meta.Kind == events.KindMCP {
@@ -106,6 +107,20 @@ func (b *Builder) Build(
 	b.fillSavings(ctx, evt, served)
 
 	return evt
+}
+
+// retention measures the expiry from startTime, the same instant recorded as the
+// event's occurredOn, so a trace's expiry and its timestamp can never disagree.
+// Returns nil when the gateway carries no stamp — an absent expiry is a signal the
+// sink can act on, a zero one is a trace that expired at the epoch.
+func retention(meta trace.Metadata, startTime time.Time) *events.Retention {
+	if meta.RetentionWindow <= 0 {
+		return nil
+	}
+	return &events.Retention{
+		Plan:      meta.RetentionPlan,
+		ExpiresAt: startTime.Add(meta.RetentionWindow).UnixMilli(),
+	}
 }
 
 func (b *Builder) foldLLMSpans(requestTrace *trace.RequestTrace) (*trace.LLMAttrs, []events.Attempt) {

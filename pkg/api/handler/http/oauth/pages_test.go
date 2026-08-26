@@ -170,6 +170,9 @@ func TestConnectPage_UsesAppDesignTokens(t *testing.T) {
 		`class="btn secondary"`,
 		`class="btn primary"`,
 		`class="badge green"`,
+		`class="grid"`,
+		`class="tile"`,
+		`id="filter"`,
 		`width="40" height="40"`,
 	} {
 		if !strings.Contains(body, want) {
@@ -196,8 +199,14 @@ func TestConnectPage_RendersCatalogLogo(t *testing.T) {
 	if !strings.Contains(body, "Linear") {
 		t.Fatalf("catalog display name must render, body:\n%s", body)
 	}
+	if !strings.Contains(body, "Issues, projects, cycles, and teams in Linear.") {
+		t.Fatalf("catalog description must render on the store tile, body:\n%s", body)
+	}
 	if !strings.Contains(body, `class="logo"`) {
-		t.Fatal("provider row must use the branded logo tile")
+		t.Fatal("provider tile must use the branded logo")
+	}
+	if !strings.Contains(body, `class="tile"`) {
+		t.Fatal("providers must render as store tiles")
 	}
 }
 
@@ -244,7 +253,7 @@ func TestServeBrandAsset_ReturnsLogo(t *testing.T) {
 
 func mustMCPCatalog(t *testing.T) appcatalog.MCPServerCatalog {
 	t.Helper()
-	catalog, err := appcatalog.NewMCPServerCatalog()
+	catalog, err := appcatalog.NewMCPServerCatalog(nil)
 	if err != nil {
 		t.Fatalf("catalog: %v", err)
 	}

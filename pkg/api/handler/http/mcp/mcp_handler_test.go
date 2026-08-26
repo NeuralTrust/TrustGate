@@ -323,6 +323,49 @@ func TestHandler_Initialize_VersionTracksTheToolSurface(t *testing.T) {
 	}
 }
 
+func TestHandler_ServerDiscover_ReturnsModernResult(t *testing.T) {
+	t.Parallel()
+	app := newApp(t, mocks.NewComposer(t), consumerdomain.TypeMCP, true)
+	status, body := rpcCall(t, app, `{
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "server/discover",
+		"params": {
+			"_meta": {
+				"io.modelcontextprotocol/protocolVersion": "2026-07-28",
+				"io.modelcontextprotocol/clientInfo": {"name": "Anthropic/ClaudeAI", "version": "1.0.0"},
+				"io.modelcontextprotocol/clientCapabilities": {
+					"extensions": {
+						"io.modelcontextprotocol/ui": {
+							"mimeTypes": ["text/html;profile=mcp-app"]
+						}
+					}
+				}
+			}
+		}
+	}`)
+	if status != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if _, ok := body["error"]; ok {
+		t.Fatalf("unexpected JSON-RPC error: %v", body["error"])
+	}
+	result := body["result"].(map[string]any)
+	if result["resultType"] != "complete" {
+		t.Fatalf("resultType = %v, want complete", result["resultType"])
+	}
+	versions, _ := result["supportedVersions"].([]any)
+	if len(versions) == 0 || versions[0] != "2026-07-28" {
+		t.Fatalf("supportedVersions = %v, want 2026-07-28 first", versions)
+	}
+	capabilities := result["capabilities"].(map[string]any)
+	for _, kind := range []string{"tools", "prompts", "resources"} {
+		if _, ok := capabilities[kind]; !ok {
+			t.Fatalf("capabilities missing %s: %v", kind, capabilities)
+		}
+	}
+}
+
 func TestHandler_UnknownMethod_MapsToMethodNotFound(t *testing.T) {
 	t.Parallel()
 	app := newApp(t, mocks.NewComposer(t), consumerdomain.TypeMCP, true)

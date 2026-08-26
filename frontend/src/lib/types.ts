@@ -559,6 +559,7 @@ export interface MCPServer {
   auth_hint: MCPAuthHint;
   requires_auth: boolean;
   requires_config: boolean;
+  platform_client?: boolean;
   relevance?: number;
   scopes?: string[];
   url_variables?: MCPURLVariable[];

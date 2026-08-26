@@ -88,6 +88,10 @@ func (m *MCPMetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string
 	if gw != nil {
 		meta.TenantID = gw.TenantID()
 	}
+	if window, ok := gw.RetentionWindow(); ok {
+		meta.RetentionWindow = window
+		meta.RetentionPlan = gw.Entitlements.Tier
+	}
 	return meta
 }
 

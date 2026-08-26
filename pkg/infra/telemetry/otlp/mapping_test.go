@@ -231,3 +231,57 @@ func TestEventToRecord_OmitsSavingsWhenAbsent(t *testing.T) {
 	_, hasCost := attrs["trustgate.cost.total_usd"]
 	assert.True(t, hasCost)
 }
+
+func TestEventToRecord_EmitsRetentionExpiry(t *testing.T) {
+	evt := fullEvent()
+	evt.Retention = &events.Retention{Plan: "standard", ExpiresAt: 1_702_592_000_000}
+
+	attrs := attrsOf(eventToRecord(evt))
+
+	assert.Equal(t, int64(1_702_592_000_000), attrs["trustgate.retention.expires_at"].AsInt64())
+	assert.Equal(t, "standard", attrs["trustgate.retention.plan"].AsString())
+}
+
+// The raw stream lands in its own table, which needs the same expiry to key a TTL on.
+func TestRawEventToRecord_EmitsRetentionExpiry(t *testing.T) {
+	evt := fullEvent()
+	evt.Retention = &events.Retention{Plan: "free", ExpiresAt: 1_700_604_800_000}
+
+	attrs := attrsOf(rawEventToRecord(evt))
+
+	assert.Equal(t, int64(1_700_604_800_000), attrs["trustgate.retention.expires_at"].AsInt64())
+	assert.Equal(t, "free", attrs["trustgate.retention.plan"].AsString())
+}
+
+// An unstamped gateway must emit nothing rather than an expiry nobody set: the
+// sink's own fallback is the correct authority, and a zero would read as expired.
+func TestEventToRecord_OmitsRetentionWhenUnstamped(t *testing.T) {
+	for name, retention := range map[string]*events.Retention{
+		"absent":      nil,
+		"zero expiry": {Plan: "free", ExpiresAt: 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			evt := fullEvent()
+			evt.Retention = retention
+
+			for class, attrs := range map[string]map[string]attribute.Value{
+				"metadata": attrsOf(eventToRecord(evt)),
+				"raw":      attrsOf(rawEventToRecord(evt)),
+			} {
+				_, hasExpiry := attrs["trustgate.retention.expires_at"]
+				assert.False(t, hasExpiry, "%s class must not carry an expiry", class)
+				_, hasPlan := attrs["trustgate.retention.plan"]
+				assert.False(t, hasPlan, "%s class must not carry a plan", class)
+			}
+		})
+	}
+}
+
+// SensibleView whitelists fields by hand, so retention has to be named there or the
+// raw stream silently loses it.
+func TestSensibleView_CarriesRetention(t *testing.T) {
+	evt := fullEvent()
+	evt.Retention = &events.Retention{Plan: "enterprise", ExpiresAt: 1_731_536_000_000}
+
+	assert.Equal(t, evt.Retention, evt.SensibleView().Retention)
+}
