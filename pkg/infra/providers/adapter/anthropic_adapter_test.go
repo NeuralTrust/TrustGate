@@ -187,8 +187,8 @@ func TestAnthropic_DecodeResponse_ToolUse_RealPayload(t *testing.T) {
 	assert.Equal(t, 1116, cr.Usage.TotalTokens)
 
 	// Usage — cache/billing pass-through
-	assert.Equal(t, 0, cr.Usage.CacheCreationInputTokens)
-	assert.Equal(t, 0, cr.Usage.CacheReadInputTokens)
+	assert.Equal(t, 0, cr.Usage.CacheWriteInputTokens)
+	assert.Equal(t, 0, cr.Usage.CachedInputTokens)
 	assert.Equal(t, "standard", cr.Usage.ServiceTier)
 
 	// Roundtrip: canonical → Anthropic → canonical
@@ -205,8 +205,8 @@ func TestAnthropic_DecodeResponse_ToolUse_RealPayload(t *testing.T) {
 	assert.Equal(t, cr.ToolCalls[0].ID, cr2.ToolCalls[0].ID)
 	assert.Equal(t, cr.ToolCalls[0].Name, cr2.ToolCalls[0].Name)
 	assert.Equal(t, cr.Usage.ServiceTier, cr2.Usage.ServiceTier)
-	assert.Equal(t, cr.Usage.CacheCreationInputTokens, cr2.Usage.CacheCreationInputTokens)
-	assert.Equal(t, cr.Usage.CacheReadInputTokens, cr2.Usage.CacheReadInputTokens)
+	assert.Equal(t, cr.Usage.CacheWriteInputTokens, cr2.Usage.CacheWriteInputTokens)
+	assert.Equal(t, cr.Usage.CachedInputTokens, cr2.Usage.CachedInputTokens)
 
 	// Cross-format: canonical → OpenAI
 	openaiAdapter := &OpenAIAdapter{}
@@ -266,11 +266,11 @@ func TestAnthropicSSE_CacheFieldRoundTrip_MessageDelta(t *testing.T) {
 	chunk := &CanonicalStreamChunk{
 		FinishReason: "stop",
 		Usage: &CanonicalUsage{
-			InputTokens:              1,
-			OutputTokens:             1,
-			TotalTokens:              2,
-			CacheCreationInputTokens: 4,
-			CacheReadInputTokens:     9,
+			InputTokens:           14,
+			OutputTokens:          1,
+			TotalTokens:           15,
+			CacheWriteInputTokens: 4,
+			CachedInputTokens:     9,
 		},
 	}
 
@@ -293,8 +293,8 @@ func TestAnthropicSSE_CacheFieldRoundTrip_MessageDelta(t *testing.T) {
 	}
 	require.NotNil(t, decoded, "message_delta event must round-trip")
 	require.NotNil(t, decoded.Usage)
-	assert.Equal(t, 4, decoded.Usage.CacheCreationInputTokens)
-	assert.Equal(t, 9, decoded.Usage.CacheReadInputTokens)
+	assert.Equal(t, 4, decoded.Usage.CacheWriteInputTokens)
+	assert.Equal(t, 9, decoded.Usage.CachedInputTokens)
 }
 
 func TestAnthropicSSE_CacheFieldRoundTrip_MessageStart(t *testing.T) {
@@ -304,11 +304,11 @@ func TestAnthropicSSE_CacheFieldRoundTrip_MessageStart(t *testing.T) {
 		Model: "claude-3-sonnet",
 		Role:  "assistant",
 		Usage: &CanonicalUsage{
-			InputTokens:              1,
-			OutputTokens:             1,
-			TotalTokens:              2,
-			CacheCreationInputTokens: 4,
-			CacheReadInputTokens:     9,
+			InputTokens:           14,
+			OutputTokens:          1,
+			TotalTokens:           15,
+			CacheWriteInputTokens: 4,
+			CachedInputTokens:     9,
 		},
 	}
 
@@ -331,8 +331,8 @@ func TestAnthropicSSE_CacheFieldRoundTrip_MessageStart(t *testing.T) {
 	}
 	require.NotNil(t, decoded, "message_start event must round-trip")
 	require.NotNil(t, decoded.Usage)
-	assert.Equal(t, 4, decoded.Usage.CacheCreationInputTokens)
-	assert.Equal(t, 9, decoded.Usage.CacheReadInputTokens)
+	assert.Equal(t, 4, decoded.Usage.CacheWriteInputTokens)
+	assert.Equal(t, 9, decoded.Usage.CachedInputTokens)
 }
 
 func TestCanonical_Anthropic_SystemArrayAndToolResultBlocks(t *testing.T) {
@@ -464,4 +464,79 @@ func TestAnthropicEncodeRequest_MaxTokensDefault(t *testing.T) {
 			assert.Equal(t, tt.want, out.MaxTokens)
 		})
 	}
+}
+
+// Anthropic's input_tokens is the uncached remainder: the real prompt is
+// input_tokens + cache_read_input_tokens + cache_creation_input_tokens. Cost
+// prices InputTokens, so the adapter folds the cache buckets in and keeps them
+// as subsets. The numbers below are the worked example from Anthropic's
+// prompt-caching documentation.
+func TestAnthropicUsage_FoldsDisjointCacheCountsIntoTheParent(t *testing.T) {
+	body := []byte(`{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-4-5",` +
+		`"content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn",` +
+		`"usage":{"input_tokens":2048,"output_tokens":64,` +
+		`"cache_read_input_tokens":1800,"cache_creation_input_tokens":248,` +
+		`"cache_creation":{"ephemeral_5m_input_tokens":148,"ephemeral_1h_input_tokens":100}}}`)
+
+	cr, err := (&AnthropicAdapter{}).DecodeResponse(body)
+	require.NoError(t, err)
+	require.NotNil(t, cr.Usage)
+	u := cr.Usage
+
+	assert.Equal(t, 2048+1800+248, u.InputTokens, "the whole prompt, not the uncached remainder")
+	assert.Equal(t, 64, u.OutputTokens)
+	assert.Equal(t, u.InputTokens+u.OutputTokens, u.TotalTokens)
+	assert.Equal(t, 1800, u.CachedInputTokens)
+	assert.Equal(t, 248, u.CacheWriteInputTokens)
+	assert.Equal(t, 100, u.CacheWrite1hInputTokens, "the 1h share bills at 2x, not 1.25x")
+
+	assert.Equal(t, 2048, u.PlainInputTokens(), "what is left once both cache buckets are removed")
+	assert.LessOrEqual(t, u.CachedInputTokens+u.CacheWriteInputTokens, u.InputTokens)
+	assert.LessOrEqual(t, u.CacheWrite1hInputTokens, u.CacheWriteInputTokens)
+}
+
+// A prompt served entirely from cache reports input_tokens 0. Before the fold
+// that made newCanonicalUsage return nil and the request lost its usage
+// entirely; the cache counts now keep it alive.
+func TestAnthropicUsage_FullyCachedPromptStillReportsUsage(t *testing.T) {
+	body := []byte(`{"id":"msg_2","type":"message","role":"assistant","model":"claude-sonnet-4-5",` +
+		`"content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn",` +
+		`"usage":{"input_tokens":0,"output_tokens":12,"cache_read_input_tokens":40000}}`)
+
+	cr, err := (&AnthropicAdapter{}).DecodeResponse(body)
+	require.NoError(t, err)
+	require.NotNil(t, cr.Usage, "a fully cached prompt must not vanish from billing")
+	assert.Equal(t, 40000, cr.Usage.InputTokens)
+	assert.Equal(t, 40000, cr.Usage.CachedInputTokens)
+	assert.Equal(t, 0, cr.Usage.PlainInputTokens())
+}
+
+// Encoding back to Anthropic must undo the fold, or a passthrough client sees an
+// input_tokens that double-counts its own cache buckets.
+func TestAnthropicUsage_EncodeRestoresTheDisjointWireShape(t *testing.T) {
+	body := []byte(`{"id":"msg_3","type":"message","role":"assistant","model":"claude-sonnet-4-5",` +
+		`"content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn",` +
+		`"usage":{"input_tokens":2048,"output_tokens":64,` +
+		`"cache_read_input_tokens":1800,"cache_creation_input_tokens":248}}`)
+	a := &AnthropicAdapter{}
+	cr, err := a.DecodeResponse(body)
+	require.NoError(t, err)
+
+	out, err := a.EncodeResponse(cr)
+	require.NoError(t, err)
+
+	var got struct {
+		Usage struct {
+			InputTokens              int `json:"input_tokens"`
+			OutputTokens             int `json:"output_tokens"`
+			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+			CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+		} `json:"usage"`
+	}
+	require.NoError(t, json.Unmarshal(out, &got))
+
+	assert.Equal(t, 2048, got.Usage.InputTokens, "the wire carries the uncached remainder again")
+	assert.Equal(t, 1800, got.Usage.CacheReadInputTokens)
+	assert.Equal(t, 248, got.Usage.CacheCreationInputTokens)
+	assert.Equal(t, 64, got.Usage.OutputTokens)
 }

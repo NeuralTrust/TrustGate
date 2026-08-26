@@ -121,20 +121,44 @@ type CanonicalReasoning struct {
 }
 
 // CanonicalUsage holds token counts in a provider-neutral split: Input / Output / Total.
-// The three buckets are the canonical view; sub-counts are optional refinements
-// of InputTokens / OutputTokens (NOT subtracted from the totals). The
-// nil-on-absence and total-synthesis contracts live in newCanonicalUsage.
+// InputTokens and OutputTokens are the whole prompt and the whole completion as
+// the provider bills them, whatever rate each token falls under. Every other
+// count names a sub-population of one of those two that bills at a different
+// rate, and is always a strict subset of its parent: providers that report a
+// count beside its parent rather than inside it are folded in by their adapter,
+// so one pricing expression is correct everywhere. CachedInputTokens and
+// CacheWriteInputTokens are also disjoint from each other. The nil-on-absence
+// and total-synthesis contracts live in newCanonicalUsage.
 type CanonicalUsage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
 	TotalTokens  int `json:"total_tokens"`
-	// Provider-specific cache/billing fields (pass-through).
-	CacheCreationInputTokens int    `json:"cache_creation_input_tokens,omitempty"`
-	CacheReadInputTokens     int    `json:"cache_read_input_tokens,omitempty"`
-	ServiceTier              string `json:"service_tier,omitempty"`
-	CachedInputTokens        int    `json:"cached_input_tokens,omitempty"`     // sub-count of InputTokens
-	ReasoningOutputTokens    int    `json:"reasoning_output_tokens,omitempty"` // sub-count of OutputTokens
-	ToolUseInputTokens       int    `json:"tool_use_input_tokens,omitempty"`   // sub-count of InputTokens
+
+	CachedInputTokens     int `json:"cached_input_tokens,omitempty"`
+	CacheWriteInputTokens int `json:"cache_write_input_tokens,omitempty"`
+	ToolUseInputTokens    int `json:"tool_use_input_tokens,omitempty"`
+	ReasoningOutputTokens int `json:"reasoning_output_tokens,omitempty"`
+
+	// CacheWrite1hInputTokens is the share of CacheWriteInputTokens written with
+	// Anthropic's one-hour TTL, which bills at 2x input where the five-minute
+	// default bills at 1.25x. Carried because the wire reports it; not yet priced
+	// separately, since the catalog publishes a single cache-write rate.
+	CacheWrite1hInputTokens int `json:"cache_write_1h_input_tokens,omitempty"`
+
+	ServiceTier string `json:"service_tier,omitempty"`
+}
+
+// PlainInputTokens is the share of the prompt that bills at the plain input
+// rate, once the sub-populations with their own rates are removed.
+func (u *CanonicalUsage) PlainInputTokens() int {
+	if u == nil {
+		return 0
+	}
+	plain := u.InputTokens - u.CachedInputTokens - u.CacheWriteInputTokens
+	if plain < 0 {
+		return u.InputTokens
+	}
+	return plain
 }
 
 // newCanonicalUsage returns the canonical usage view, or nil when no tokens are
