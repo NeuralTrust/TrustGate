@@ -285,6 +285,10 @@ definitions:
         items:
           $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_catalog.AuthTypeOption'
         type: array
+      capabilities:
+        additionalProperties:
+          type: boolean
+        type: object
       code:
         type: string
       display_name:
@@ -1033,6 +1037,8 @@ definitions:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.MCPTargetRequest'
       name:
         type: string
+      pricing:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PricingRequest'
       provider:
         type: string
       provider_options:
@@ -1089,6 +1095,8 @@ definitions:
         items:
           type: string
         type: array
+      token_endpoint_auth_method:
+        type: string
       token_url:
         type: string
       value:
@@ -1105,10 +1113,35 @@ definitions:
         additionalProperties:
           type: string
         type: object
+      openapi:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.OpenAPITargetRequest'
+      source:
+        type: string
       transport:
         type: string
       url:
         type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.OpenAPITargetRequest:
+    properties:
+      spec_url:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PriceOverrideRequest:
+    properties:
+      input:
+        type: number
+      output:
+        type: number
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PricingRequest:
+    properties:
+      discount:
+        type: number
+      overrides:
+        additionalProperties:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PriceOverrideRequest'
+        type: object
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.TargetAuthRequest:
     properties:
@@ -1189,6 +1222,8 @@ definitions:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.MCPTargetRequest'
       name:
         type: string
+      pricing:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PricingRequest'
       provider:
         type: string
       provider_options:
@@ -1318,6 +1353,8 @@ definitions:
         items:
           type: string
         type: array
+      token_endpoint_auth_method:
+        type: string
       token_url:
         type: string
       value:
@@ -1334,10 +1371,35 @@ definitions:
         additionalProperties:
           type: string
         type: object
+      openapi:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.OpenAPITargetResponse'
+      source:
+        type: string
       transport:
         type: string
       url:
         type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.OpenAPITargetResponse:
+    properties:
+      spec_url:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PriceOverrideResponse:
+    properties:
+      input:
+        type: number
+      output:
+        type: number
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PricingResponse:
+    properties:
+      discount:
+        type: number
+      overrides:
+        additionalProperties:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PriceOverrideResponse'
+        type: object
     type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryProviderGroupResponse:
     properties:
@@ -1372,6 +1434,8 @@ definitions:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.MCPTargetResponse'
       name:
         type: string
+      pricing:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PricingResponse'
       provider:
         type: string
       provider_options:
@@ -1625,6 +1689,13 @@ definitions:
       name:
         type: string
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_app_openapi.Warning:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_app_plugins.Catalog:
     properties:
       groups:
@@ -1777,6 +1848,7 @@ definitions:
           AuthorizeURL / TokenURL are required for manual registration
           (Registration == "manual"), where the operator supplies a pre-registered
           client_id/secret; they also serve as a discovery fallback otherwise.
+          TokenURL is also required for GrantType "client_credentials".
         type: string
       dcr:
         description: |-
@@ -1784,6 +1856,11 @@ definitions:
           (RFC 7591). A nil pointer means it could not be determined (e.g. a
           tenant-templated host that must be probed per-instance).
         type: boolean
+      grant_type:
+        description: |-
+          GrantType selects the OAuth grant. Empty / omitted means authorization
+          code (forwarded). "client_credentials" is machine-to-machine.
+        type: string
       pkce:
         description: |-
           PKCE reports whether the authorization server supports PKCE (S256). A nil
@@ -1810,6 +1887,11 @@ definitions:
         items:
           type: string
         type: array
+      token_endpoint_auth_method:
+        description: |-
+          TokenEndpointAuthMethod is used with client_credentials:
+          client_secret_basic (default) or client_secret_post.
+        type: string
       token_url:
         type: string
     type: object
@@ -1835,6 +1917,8 @@ definitions:
         type: object
       oauth:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPOAuth'
+      platform_client:
+        type: boolean
       relevance:
         description: |-
           Relevance ranks how broadly relevant a server is for enterprises
@@ -1937,6 +2021,8 @@ definitions:
       max_instances:
         type: integer
       quota_per_month:
+        type: integer
+      retention_days:
         type: integer
       tier:
         type: string
@@ -2060,6 +2146,8 @@ definitions:
         type: string
       prompt_usd:
         type: number
+      savings_usd:
+        type: number
       total_usd:
         type: number
     type: object
@@ -2097,6 +2185,8 @@ definitions:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Request'
       response:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Response'
+      retention:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Retention'
       schema_version:
         type: integer
       security:
@@ -2238,6 +2328,13 @@ definitions:
       streaming:
         type: boolean
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Retention:
+    properties:
+      expires_at:
+        type: integer
+      plan:
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Status:
     properties:
       code:
@@ -2298,6 +2395,65 @@ definitions:
         items:
           $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_mcp.Tool'
         type: array
+    type: object
+  pkg_api_handler_http_registry.ValidateOpenAPIRequest:
+    properties:
+      base_url:
+        type: string
+      spec_url:
+        type: string
+    type: object
+  pkg_api_handler_http_registry.ValidateOpenAPIResponse:
+    properties:
+      base_url:
+        type: string
+      message:
+        type: string
+      ok:
+        type: boolean
+      openapi_version:
+        type: string
+      stage:
+        type: string
+      title:
+        type: string
+      tool_count:
+        type: integer
+      tools:
+        items:
+          $ref: '#/definitions/pkg_api_handler_http_registry.ValidateOpenAPIToolResponse'
+        type: array
+      warnings:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_openapi.Warning'
+        type: array
+    type: object
+  pkg_api_handler_http_registry.ValidateOpenAPIToolResponse:
+    properties:
+      description:
+        type: string
+      method:
+        type: string
+      name:
+        type: string
+      path:
+        type: string
+    type: object
+  pkg_api_handler_http_tenant.RestampEntitlementsRequest:
+    properties:
+      entitlements:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Entitlements'
+    type: object
+  pkg_api_handler_http_tenant.RestampEntitlementsResponse:
+    properties:
+      max_instances:
+        type: integer
+      over_cap:
+        type: boolean
+      stamped:
+        type: integer
+      tenant_id:
+        type: string
     type: object
 info:
   contact:
@@ -4127,6 +4283,46 @@ paths:
       summary: Test a backend connection
       tags:
       - registries
+  /v1/gateways/{gateway_id}/registries/validate-openapi:
+    post:
+      consumes:
+      - application/json
+      description: Fetches and compiles an OpenAPI 3 document into an MCP tool preview
+        without creating a registry. Always returns 200 for validation outcomes; inspect
+        ok and stage.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: OpenAPI source
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/pkg_api_handler_http_registry.ValidateOpenAPIRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/pkg_api_handler_http_registry.ValidateOpenAPIResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Validate an OpenAPI document
+      tags:
+      - registries
   /v1/gateways/{gateway_id}/roles:
     get:
       description: Returns a paginated list of roles in a gateway.
@@ -4714,6 +4910,52 @@ paths:
       summary: List provider catalog
       tags:
       - catalog
+  /v1/tenants/{tenant_id}/entitlements:
+    put:
+      consumes:
+      - application/json
+      description: 'Applies one entitlements stamp to every gateway of the tenant,
+        for the control plane to call after a plan change. Platform JWT only (no tenant
+        claim); a tenant JWT receives 422. Only the entitlements block is written
+        — slug, metadata and telemetry are left untouched, so a re-stamp can never
+        revert an edit made in the runtime. A downgrade is applied even when the tenant
+        already has more gateways than the new MaxInstances: the response reports
+        over_cap so the caller can warn, but the stamp is not refused, since refusing
+        would strand every gateway of the tenant on the old plan. Idempotent.'
+      parameters:
+      - description: Tenant id
+        in: path
+        name: tenant_id
+        required: true
+        type: string
+      - description: Entitlements stamp
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/pkg_api_handler_http_tenant.RestampEntitlementsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/pkg_api_handler_http_tenant.RestampEntitlementsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "422":
+          description: Unprocessable Entity
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Re-stamp plan entitlements across a tenant
+      tags:
+      - tenants
 securityDefinitions:
   BearerAuth:
     in: header
