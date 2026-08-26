@@ -40,11 +40,17 @@ type RegistryResponse struct {
 }
 
 type MCPTargetResponse struct {
-	Code      string            `json:"code,omitempty"`
-	URL       string            `json:"url"`
-	Transport string            `json:"transport,omitempty"`
-	Headers   map[string]string `json:"headers,omitempty"`
-	Auth      *MCPAuthResponse  `json:"auth,omitempty"`
+	Code      string                 `json:"code,omitempty"`
+	Source    string                 `json:"source,omitempty"`
+	URL       string                 `json:"url,omitempty"`
+	Transport string                 `json:"transport,omitempty"`
+	Headers   map[string]string      `json:"headers,omitempty"`
+	Auth      *MCPAuthResponse       `json:"auth,omitempty"`
+	OpenAPI   *OpenAPITargetResponse `json:"openapi,omitempty"`
+}
+
+type OpenAPITargetResponse struct {
+	SpecURL string `json:"spec_url"`
 }
 
 type MCPAuthResponse struct {
@@ -191,9 +197,13 @@ func fromMCPTarget(t *domain.MCPTarget) *MCPTargetResponse {
 	}
 	out := &MCPTargetResponse{
 		Code:      t.Code,
+		Source:    string(t.Source),
 		URL:       t.URL,
 		Transport: string(t.Transport),
 		Headers:   t.Headers,
+	}
+	if t.OpenAPI != nil {
+		out.OpenAPI = &OpenAPITargetResponse{SpecURL: t.OpenAPI.SpecURL}
 	}
 	if t.Auth != nil {
 		out.Auth = &MCPAuthResponse{

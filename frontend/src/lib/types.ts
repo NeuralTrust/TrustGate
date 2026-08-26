@@ -128,10 +128,14 @@ export interface MCPAuth {
 export interface MCPTarget {
   /** Catalog server code this connection was created from (empty for custom servers). */
   code?: string;
-  url: string;
+  source?: "mcp" | "openapi";
+  url?: string;
   transport?: string;
   headers?: Record<string, string>;
   auth?: MCPAuth | null;
+  openapi?: {
+    spec_url: string;
+  };
 }
 
 // A tool as the upstream MCP server advertised it: `name` plus whatever else it
@@ -144,6 +148,23 @@ export interface McpTool {
 
 export interface McpToolsResponse {
   tools: McpTool[];
+}
+
+export interface OpenAPIValidationResult {
+  ok: boolean;
+  stage: "fetch" | "parse" | "compile";
+  openapi_version?: string;
+  title?: string;
+  base_url?: string;
+  tool_count: number;
+  tools: Array<{
+    name: string;
+    description?: string;
+    method: string;
+    path: string;
+  }>;
+  warnings: Array<{ code: string; message: string }>;
+  message?: string;
 }
 
 export interface PriceOverride {
