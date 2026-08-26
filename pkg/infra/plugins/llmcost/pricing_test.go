@@ -350,3 +350,44 @@ func TestResolve_CatalogCacheRatesReachTheCost(t *testing.T) {
 	assert.Greater(t, naive/prompt, 9.0,
 		"charging the whole prompt at the input rate would be ~10x this, which is what a dropped cache rate does")
 }
+
+// Anthropic bills a one-hour-TTL cache write above its five-minute default, and
+// no catalog publishes a rate for it. So the 1h share is priced from its own
+// override when one exists and from the five-minute rate otherwise — never from
+// an inferred multiple, which would be an Anthropic fact applied to everyone.
+func TestRates_CostUSD_PricesTheOneHourCacheWriteShare(t *testing.T) {
+	t.Parallel()
+	base := 3.00 / 1e6
+	write5m := 3.75 / 1e6
+	write1h := 6.00 / 1e6
+
+	// 6903 written, of which 2000 with the long TTL.
+	u := &adapter.CanonicalUsage{
+		InputTokens: 6916, OutputTokens: 0,
+		CacheWriteInputTokens: 6903, CacheWrite1hInputTokens: 2000,
+	}
+
+	t.Run("without an override the long TTL bills at the 5m rate", func(t *testing.T) {
+		r := ratesFor(base, 0, nil, &write5m, nil)
+		assert.InDelta(t, write5m, r.CacheWrite1h, 1e-18)
+		prompt, _ := r.CostUSD(u)
+		assert.InDelta(t, 13*base+6903*write5m, prompt, 1e-15)
+	})
+
+	t.Run("an explicit 1h rate prices only that share", func(t *testing.T) {
+		r := ratesFor(base, 0, nil, &write5m, &write1h)
+		prompt, _ := r.CostUSD(u)
+		want := 13*base + (6903-2000)*write5m + 2000*write1h
+		assert.InDelta(t, want, prompt, 1e-15)
+		assert.Greater(t, want, 13*base+6903*write5m, "the long TTL costs more, not less")
+	})
+
+	t.Run("a 1h share larger than the write bucket is clamped", func(t *testing.T) {
+		r := ratesFor(base, 0, nil, &write5m, &write1h)
+		bad := &adapter.CanonicalUsage{
+			InputTokens: 100, CacheWriteInputTokens: 10, CacheWrite1hInputTokens: 999,
+		}
+		prompt, _ := r.CostUSD(bad)
+		assert.InDelta(t, 90*base+10*write1h, prompt, 1e-15)
+	})
+}

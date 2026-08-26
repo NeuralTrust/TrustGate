@@ -74,6 +74,7 @@ const (
 	attrModelLabel           = "trustgate.model_label"
 	attrUsageTotalTokens     = "trustgate.usage.total_tokens"
 	attrUsageCachedInput     = "trustgate.usage.cached_input_tokens"
+	attrUsageCacheWrite      = "trustgate.usage.cache_write_input_tokens"
 	attrUsageReasoningOutput = "trustgate.usage.reasoning_output_tokens"
 	attrCostTotalUsd         = "trustgate.cost.total_usd"
 	attrCostPromptUsd        = "trustgate.cost.prompt_usd"
@@ -138,6 +139,9 @@ func eventToRecord(evt *events.Event) otellog.Record {
 		)
 		if evt.Usage.CachedInputTokens > 0 {
 			attrs = append(attrs, attribute.Int(attrUsageCachedInput, evt.Usage.CachedInputTokens))
+		}
+		if evt.Usage.CacheWriteInputTokens > 0 {
+			attrs = append(attrs, attribute.Int(attrUsageCacheWrite, evt.Usage.CacheWriteInputTokens))
 		}
 		if evt.Usage.ReasoningOutputTokens > 0 {
 			attrs = append(attrs, attribute.Int(attrUsageReasoningOutput, evt.Usage.ReasoningOutputTokens))
