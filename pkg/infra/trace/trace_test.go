@@ -155,7 +155,7 @@ func TestLLMUsage_NilWithoutLLMSpan(t *testing.T) {
 	assert.Nil(t, rt.LLMUsage(), "MCP-only request has no token usage")
 }
 
-func TestSpan_ObserveUsageLatestWins(t *testing.T) {
+func TestSpan_ObserveUsageAccumulatesAndIgnoresNil(t *testing.T) {
 	rt := trace.New("t", trace.Metadata{})
 	span := rt.StartSpan(trace.SpanLLM, "anthropic")
 	span.ObserveUsage(&adapter.CanonicalUsage{OutputTokens: 1, TotalTokens: 1})
@@ -224,4 +224,50 @@ func TestRequestTrace_ConcurrentSpanRecording(t *testing.T) {
 	}
 	wg.Wait()
 	assert.Len(t, rt.Spans(), 50)
+}
+
+// Streaming providers report usage across several events and do not all repeat
+// every field. The span has to accumulate, because whichever event happens to
+// arrive last would otherwise define the whole request.
+func TestObserveUsage_MergesAcrossEventsInsteadOfOverwriting(t *testing.T) {
+	rt := trace.New("t-merge", trace.Metadata{})
+	span := rt.StartSpan(trace.SpanLLM, "anthropic")
+
+	// message_start: the whole prompt, both cache buckets, the TTL split.
+	span.ObserveUsage(&adapter.CanonicalUsage{
+		InputTokens: 6732, OutputTokens: 1, TotalTokens: 6733,
+		CacheWriteInputTokens: 6723, CacheWrite1hInputTokens: 6723,
+	})
+	// message_delta: the completion, and no TTL split.
+	span.ObserveUsage(&adapter.CanonicalUsage{
+		InputTokens: 6732, OutputTokens: 5, TotalTokens: 6737,
+		CacheWriteInputTokens: 6723,
+	})
+
+	got := span.Usage()
+	require.NotNil(t, got)
+	assert.Equal(t, 6732, got.InputTokens)
+	assert.Equal(t, 5, got.OutputTokens, "the completion advances")
+	assert.Equal(t, 6723, got.CacheWriteInputTokens)
+	assert.Equal(t, 6723, got.CacheWrite1hInputTokens,
+		"the premium share must survive the event that omits it")
+}
+
+// The documented Anthropic delta carries only output_tokens, which would zero the
+// prompt under an overwrite.
+func TestObserveUsage_OutputOnlyEventCannotZeroThePrompt(t *testing.T) {
+	rt := trace.New("t-zero", trace.Metadata{})
+	span := rt.StartSpan(trace.SpanLLM, "anthropic")
+
+	span.ObserveUsage(&adapter.CanonicalUsage{
+		InputTokens: 8416, OutputTokens: 1, TotalTokens: 8417, CachedInputTokens: 8403,
+	})
+	span.ObserveUsage(&adapter.CanonicalUsage{OutputTokens: 15})
+
+	got := span.Usage()
+	require.NotNil(t, got)
+	assert.Equal(t, 8416, got.InputTokens, "a prompt billed at zero is the failure this prevents")
+	assert.Equal(t, 8403, got.CachedInputTokens)
+	assert.Equal(t, 15, got.OutputTokens)
+	assert.Equal(t, 8431, got.TotalTokens)
 }
