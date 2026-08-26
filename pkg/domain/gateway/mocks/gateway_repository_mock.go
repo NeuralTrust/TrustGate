@@ -370,6 +370,66 @@ func (_c *Repository_List_Call) RunAndReturn(run func(context.Context, gateway.L
 	return _c
 }
 
+// RestampEntitlementsByTenantID provides a mock function with given fields: ctx, tenantID, e
+func (_m *Repository) RestampEntitlementsByTenantID(ctx context.Context, tenantID string, e gateway.Entitlements) ([]gateway.RestampedGateway, error) {
+	ret := _m.Called(ctx, tenantID, e)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RestampEntitlementsByTenantID")
+	}
+
+	var r0 []gateway.RestampedGateway
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, gateway.Entitlements) ([]gateway.RestampedGateway, error)); ok {
+		return rf(ctx, tenantID, e)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string, gateway.Entitlements) []gateway.RestampedGateway); ok {
+		r0 = rf(ctx, tenantID, e)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]gateway.RestampedGateway)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string, gateway.Entitlements) error); ok {
+		r1 = rf(ctx, tenantID, e)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Repository_RestampEntitlementsByTenantID_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RestampEntitlementsByTenantID'
+type Repository_RestampEntitlementsByTenantID_Call struct {
+	*mock.Call
+}
+
+// RestampEntitlementsByTenantID is a helper method to define mock.On call
+//   - ctx context.Context
+//   - tenantID string
+//   - e gateway.Entitlements
+func (_e *Repository_Expecter) RestampEntitlementsByTenantID(ctx interface{}, tenantID interface{}, e interface{}) *Repository_RestampEntitlementsByTenantID_Call {
+	return &Repository_RestampEntitlementsByTenantID_Call{Call: _e.mock.On("RestampEntitlementsByTenantID", ctx, tenantID, e)}
+}
+
+func (_c *Repository_RestampEntitlementsByTenantID_Call) Run(run func(ctx context.Context, tenantID string, e gateway.Entitlements)) *Repository_RestampEntitlementsByTenantID_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string), args[2].(gateway.Entitlements))
+	})
+	return _c
+}
+
+func (_c *Repository_RestampEntitlementsByTenantID_Call) Return(_a0 []gateway.RestampedGateway, _a1 error) *Repository_RestampEntitlementsByTenantID_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Repository_RestampEntitlementsByTenantID_Call) RunAndReturn(run func(context.Context, string, gateway.Entitlements) ([]gateway.RestampedGateway, error)) *Repository_RestampEntitlementsByTenantID_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Save provides a mock function with given fields: ctx, g
 func (_m *Repository) Save(ctx context.Context, g *gateway.Gateway) error {
 	ret := _m.Called(ctx, g)

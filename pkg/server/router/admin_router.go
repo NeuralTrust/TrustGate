@@ -25,6 +25,7 @@ import (
 	policyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy"
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
 	rolehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/role"
+	tenanthttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/tenant"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/gofiber/fiber/v2"
 	fiberSwagger "github.com/gofiber/swagger"
@@ -35,11 +36,13 @@ const (
 	HealthPath = "/healthz"
 	// HealthPathAlias is registered for load balancers that probe /health
 	// (e.g. platform ALB defaults). Same handler as HealthPath.
-	HealthPathAlias       = "/health"
-	ReadyPath             = "/readyz"
-	VersionPath           = "/__/version"
-	DocsPath              = "/docs/*"
-	GatewaysPath          = "/v1/gateways"
+	HealthPathAlias = "/health"
+	ReadyPath       = "/readyz"
+	VersionPath     = "/__/version"
+	DocsPath        = "/docs/*"
+	GatewaysPath    = "/v1/gateways"
+	// TenantsPath carries admin operations that span every gateway of a tenant.
+	TenantsPath           = "/v1/tenants"
 	ProvidersCatalog      = "/v1/providers-catalog"
 	ModelsCatalogPath     = "/v1/models-catalog"
 	PoliciesCatalogPath   = "/v1/policies-catalog"
@@ -64,6 +67,8 @@ type AdminRouterDeps struct {
 	ListGateway   *gatewayhttp.ListGatewayHandler
 	UpdateGateway *gatewayhttp.UpdateGatewayHandler
 	DeleteGateway *gatewayhttp.DeleteGatewayHandler
+
+	RestampTenantEntitlements *tenanthttp.RestampEntitlementsHandler
 
 	CreateRegistry         *registryhttp.CreateRegistryHandler
 	GetRegistry            *registryhttp.GetRegistryHandler
@@ -134,6 +139,11 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	// `docs` package. Public on purpose so the contract is browsable without
 	// an admin token; the documented endpoints stay behind AdminAuth below.
 	app.Get(DocsPath, fiberSwagger.HandlerDefault)
+
+	if r.deps.RestampTenantEntitlements != nil {
+		tenants := app.Group(TenantsPath, r.deps.AdminAuth.Middleware())
+		tenants.Put("/:tenant_id/entitlements", r.deps.RestampTenantEntitlements.Handle)
+	}
 
 	gw := app.Group(GatewaysPath, r.deps.AdminAuth.Middleware())
 

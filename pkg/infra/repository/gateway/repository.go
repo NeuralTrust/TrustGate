@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strings"
 
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
@@ -175,6 +176,56 @@ func (r *Repository) Update(ctx context.Context, g *domain.Gateway) error {
 		}
 		return nil
 	})
+}
+
+// RestampEntitlementsByTenantID rewrites only the entitlements column, leaving slug,
+// metadata, telemetry and the rest alone: this runs on a plan change, where the
+// caller knows the plan and nothing else about each gateway.
+//
+// One statement rather than a read-modify-write per gateway, and no instance-cap
+// check — see the interface comment for why a downgrade must not be blocked here.
+func (r *Repository) RestampEntitlementsByTenantID(
+	ctx context.Context,
+	tenantID string,
+	e domain.Entitlements,
+) ([]domain.RestampedGateway, error) {
+	if strings.TrimSpace(tenantID) == "" {
+		return nil, fmt.Errorf("gateway repository: tenant id is required: %w", commonerrors.ErrValidation)
+	}
+	entitlementsBytes, err := marshalJSON(e)
+	if err != nil {
+		return nil, fmt.Errorf("gateway repository: marshal entitlements: %w", err)
+	}
+	const query = `
+		UPDATE gateways
+		   SET entitlements = $2,
+		       updated_at   = NOW()
+		 WHERE metadata->>'tenant_id' = $1
+		RETURNING id, slug`
+	var stamped []domain.RestampedGateway
+	err = r.withMarkedTx(ctx, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, query, tenantID, entitlementsBytes)
+		if err != nil {
+			return mapPgError(err)
+		}
+		defer rows.Close()
+		stamped = stamped[:0]
+		for rows.Next() {
+			var touched domain.RestampedGateway
+			if err := rows.Scan(&touched.ID, &touched.Slug); err != nil {
+				return mapPgError(err)
+			}
+			stamped = append(stamped, touched)
+		}
+		if err := rows.Err(); err != nil {
+			return mapPgError(err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return stamped, nil
 }
 
 // UpdateWithTenantCap serializes the count-then-update behind the same tenant advisory lock as SaveWithTenantCap.
