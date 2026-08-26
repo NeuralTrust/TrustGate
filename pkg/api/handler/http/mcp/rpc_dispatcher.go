@@ -97,6 +97,8 @@ func (g *RPCGateway) finishSpan(span *trace.Span, err error) {
 	case errors.Is(err, appmcp.ErrToolNotFound), errors.Is(err, appmcp.ErrPromptNotFound),
 		errors.Is(err, appmcp.ErrResourceNotFound):
 		span.SetMCPStatus(http.StatusNotFound, 0)
+	case errors.Is(err, ErrMethodNotFound):
+		span.SetMCPStatus(http.StatusNotFound, codeMethodNotFound)
 	default:
 		span.SetMCPStatus(http.StatusBadGateway, 0)
 	}
@@ -106,6 +108,8 @@ func (g *RPCGateway) finishSpan(span *trace.Span, err error) {
 // tool/prompt/resource identifiers from the JSON-RPC method and params.
 func mcpRequestAttrs(method string, params json.RawMessage) (operation, tool, prompt, resourceURI string) {
 	switch method {
+	case "server/discover":
+		return "discovery", "", "", ""
 	case "tools/list":
 		return "discovery", "", "", ""
 	case "tools/call":
