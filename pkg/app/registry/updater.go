@@ -137,6 +137,7 @@ func applyMCPTargetUpdate(
 	}
 	incoming := in.MCPTarget
 	if prev := existing.MCPTarget; prev != nil {
+		sourceChanged := incoming.Source != "" && normalizedMCPSource(incoming.Source) != normalizedMCPSource(prev.Source)
 		if incoming.Source == "" {
 			incoming.Source = prev.Source
 		}
@@ -155,7 +156,7 @@ func applyMCPTargetUpdate(
 		if strings.TrimSpace(incoming.Code) == "" {
 			incoming.Code = prev.Code
 		}
-		if incoming.OpenAPI == nil {
+		if incoming.OpenAPI == nil && !sourceChanged {
 			incoming.OpenAPI = prev.OpenAPI
 		}
 	}
@@ -169,6 +170,13 @@ func applyMCPTargetUpdate(
 	}
 	existing.MCPTarget = incoming
 	return nil
+}
+
+func normalizedMCPSource(source domain.MCPSource) domain.MCPSource {
+	if source == "" {
+		return domain.MCPSourceRemote
+	}
+	return source
 }
 
 func applyLLMTargetUpdate(existing *domain.Registry, in UpdateInput) {

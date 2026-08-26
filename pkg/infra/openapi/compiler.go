@@ -16,12 +16,14 @@ package openapi
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"sort"
@@ -38,6 +40,25 @@ const (
 )
 
 var invalidToolName = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
+
+var blockedNetworkPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.0.2.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("198.51.100.0/24"),
+	netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("2001:db8::/32"),
+}
+
+type unsupportedOperationError struct {
+	reason string
+}
+
+func (e *unsupportedOperationError) Error() string {
+	return e.reason
+}
 
 type Compiler struct {
 	client *http.Client
@@ -148,10 +169,19 @@ func compileOperations(doc *openapi3.T) ([]appopenapi.Operation, []appopenapi.Wa
 			}
 			taken[name]++
 			if taken[name] > 1 {
-				name = fmt.Sprintf("%s_%d", name, taken[name])
+				suffix := fmt.Sprintf("_%d", taken[name])
+				name = strings.TrimRight(name[:min(len(name), maxToolName-len(suffix))], "_") + suffix
 			}
 			compiled, err := compileOperation(name, strings.ToUpper(method), path, item.Parameters, op)
 			if err != nil {
+				var unsupported *unsupportedOperationError
+				if errors.As(err, &unsupported) {
+					warnings = append(warnings, appopenapi.Warning{
+						Code:    "unsupported_operation",
+						Message: fmt.Sprintf("%s %s was skipped: %s", strings.ToUpper(method), path, unsupported.reason),
+					})
+					continue
+				}
 				return nil, nil, fmt.Errorf("%s %s: %w", strings.ToUpper(method), path, err)
 			}
 			operations = append(operations, compiled)
@@ -172,13 +202,17 @@ func compileOperation(
 	parameters := mergeParameters(pathParams, op.Parameters)
 	compiledParams := make([]appopenapi.Parameter, 0, len(parameters))
 	for _, ref := range parameters {
-		if ref == nil || ref.Value == nil || ref.Value.Schema == nil || ref.Value.Schema.Value == nil {
+		if ref == nil || ref.Value == nil {
 			continue
 		}
 		param := ref.Value
-		schema, err := schemaMap(param.Schema)
-		if err != nil {
-			return appopenapi.Operation{}, fmt.Errorf("parameter %q: %w", param.Name, err)
+		schema := map[string]any{}
+		if param.Schema != nil && param.Schema.Value != nil {
+			var err error
+			schema, err = schemaMap(param.Schema)
+			if err != nil {
+				return appopenapi.Operation{}, fmt.Errorf("parameter %q: %w", param.Name, err)
+			}
 		}
 		if param.Description != "" {
 			schema["description"] = param.Description
@@ -191,11 +225,15 @@ func compileOperation(
 		if param.Explode != nil {
 			explode = *param.Explode
 		}
+		style, err := parameterStyle(param.In, param.Style)
+		if err != nil {
+			return appopenapi.Operation{}, &unsupportedOperationError{reason: fmt.Sprintf("parameter %q: %v", param.Name, err)}
+		}
 		compiledParams = append(compiledParams, appopenapi.Parameter{
 			Name:     param.Name,
 			In:       param.In,
 			Required: param.Required,
-			Style:    param.Style,
+			Style:    style,
 			Explode:  explode,
 		})
 	}
@@ -203,13 +241,21 @@ func compileOperation(
 	if err != nil {
 		return appopenapi.Operation{}, err
 	}
-	input := map[string]any{"type": "object", "properties": properties}
+	input := map[string]any{
+		"type":                 "object",
+		"properties":           properties,
+		"additionalProperties": false,
+	}
 	if len(required) > 0 {
 		input["required"] = uniqueStrings(required)
 	}
 	raw, err := json.Marshal(input)
 	if err != nil {
 		return appopenapi.Operation{}, fmt.Errorf("marshal input schema: %w", err)
+	}
+	outputSchema, err := compileOutputSchema(op.Responses)
+	if err != nil {
+		return appopenapi.Operation{}, err
 	}
 	description := strings.TrimSpace(strings.Join([]string{op.Summary, op.Description}, "\n\n"))
 	if description == "" {
@@ -221,10 +267,63 @@ func compileOperation(
 		Method:       method,
 		Path:         path,
 		InputSchema:  raw,
+		OutputSchema: outputSchema,
 		Parameters:   compiledParams,
 		BodyFields:   bodyFields,
 		BodyArgument: bodyArgument,
 	}, nil
+}
+
+func parameterStyle(location, style string) (string, error) {
+	if style == "" {
+		switch location {
+		case "query", "cookie":
+			style = "form"
+		case "path", "header":
+			style = "simple"
+		}
+	}
+	supported := map[string]map[string]struct{}{
+		"query":  {"form": {}, "spaceDelimited": {}, "pipeDelimited": {}, "deepObject": {}},
+		"path":   {"simple": {}},
+		"header": {"simple": {}},
+		"cookie": {"form": {}},
+	}
+	styles, ok := supported[location]
+	if !ok {
+		return "", fmt.Errorf("unsupported parameter location %q", location)
+	}
+	if _, ok := styles[style]; !ok {
+		return "", fmt.Errorf("unsupported %s style %q", location, style)
+	}
+	return style, nil
+}
+
+func compileOutputSchema(responses *openapi3.Responses) (json.RawMessage, error) {
+	if responses == nil {
+		return nil, nil
+	}
+	keys := responses.Keys()
+	sort.Strings(keys)
+	for _, status := range keys {
+		if !strings.HasPrefix(status, "2") {
+			continue
+		}
+		response := responses.Value(status)
+		if response == nil || response.Value == nil {
+			continue
+		}
+		media := response.Value.Content.Get("application/json")
+		if media == nil || media.Schema == nil || media.Schema.Value == nil {
+			continue
+		}
+		schema, err := schemaMap(media.Schema)
+		if err != nil {
+			return nil, fmt.Errorf("response %s: %w", status, err)
+		}
+		return json.Marshal(schema)
+	}
+	return nil, nil
 }
 
 func compileRequestBody(
@@ -237,7 +336,7 @@ func compileRequestBody(
 	}
 	media := ref.Value.Content.Get("application/json")
 	if media == nil || media.Schema == nil || media.Schema.Value == nil {
-		return nil, "", errors.New("only application/json request bodies are supported")
+		return nil, "", &unsupportedOperationError{reason: "only application/json request bodies are supported"}
 	}
 	bodySchema, err := schemaMap(media.Schema)
 	if err != nil {
@@ -245,25 +344,38 @@ func compileRequestBody(
 	}
 	bodyProperties, ok := bodySchema["properties"].(map[string]any)
 	if ok && len(bodyProperties) > 0 {
+		for field := range bodyProperties {
+			if _, collision := properties[field]; collision {
+				return compileNestedBody(ref, bodySchema, properties, required)
+			}
+		}
 		fields := make([]string, 0, len(bodyProperties))
 		for field, schema := range bodyProperties {
-			if _, collision := properties[field]; collision {
-				return nil, "", fmt.Errorf("request body field %q conflicts with an HTTP parameter", field)
-			}
 			properties[field] = schema
 			fields = append(fields, field)
 		}
 		sort.Strings(fields)
-		for _, field := range stringSlice(bodySchema["required"]) {
-			*required = append(*required, field)
-		}
+		*required = append(*required, stringSlice(bodySchema["required"])...)
 		return fields, "", nil
 	}
-	properties["body"] = bodySchema
-	if ref.Value.Required {
-		*required = append(*required, "body")
+	return compileNestedBody(ref, bodySchema, properties, required)
+}
+
+func compileNestedBody(
+	ref *openapi3.RequestBodyRef,
+	bodySchema map[string]any,
+	properties map[string]any,
+	required *[]string,
+) ([]string, string, error) {
+	argument := "body"
+	if _, collision := properties[argument]; collision {
+		argument = "requestBody"
 	}
-	return nil, "body", nil
+	properties[argument] = bodySchema
+	if ref.Value.Required {
+		*required = append(*required, argument)
+	}
+	return nil, argument, nil
 }
 
 func mergeParameters(pathParams, operationParams openapi3.Parameters) openapi3.Parameters {
@@ -313,7 +425,9 @@ func operationName(method, path, operationID string) (string, bool) {
 		name = strings.ToLower(method) + "_operation"
 	}
 	if len(name) > maxToolName {
-		name = name[:maxToolName]
+		sum := sha256.Sum256([]byte(name))
+		suffix := fmt.Sprintf("_%x", sum[:4])
+		name = strings.TrimRight(name[:maxToolName-len(suffix)], "_") + suffix
 	}
 	return name, synthetic
 }
@@ -376,8 +490,21 @@ func NewSafeHTTPClient(timeout time.Duration) *http.Client {
 }
 
 func unsafeIP(ip net.IP) bool {
-	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast()
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+		return true
+	}
+	address, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return true
+	}
+	address = address.Unmap()
+	for _, prefix := range blockedNetworkPrefixes {
+		if prefix.Contains(address) {
+			return true
+		}
+	}
+	return false
 }
 
 func compileError(stage appopenapi.Stage, err error) error {

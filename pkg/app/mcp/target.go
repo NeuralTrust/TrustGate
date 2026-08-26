@@ -36,7 +36,6 @@ func (c *composer) target(ctx context.Context, rc *appconsumer.RoutableConsumer,
 
 func targetFor(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry) Target {
 	t := StaticTarget(reg)
-	t.Revision = reg.ID.String() + ":" + reg.UpdatedAt.UTC().Format("20060102150405.000")
 	if rc != nil && rc.Consumer != nil {
 		t.PinKey = fmt.Sprintf("%s:%s:%s", rc.Consumer.GatewayID, rc.Consumer.ID, reg.ID)
 		if perPrincipalAuth(reg) {
@@ -68,7 +67,11 @@ func StaticTarget(reg *registrydomain.Registry) Target {
 	if t.Auth != nil && t.Auth.Mode == registrydomain.MCPAuthModeStatic {
 		headers[t.Auth.Header] = t.Auth.Value
 	}
-	target := Target{URL: t.URL, Headers: headers}
+	target := Target{
+		URL:      t.URL,
+		Headers:  headers,
+		Revision: reg.ID.String() + ":" + reg.UpdatedAt.UTC().Format("20060102150405.000"),
+	}
 	if t.Source == registrydomain.MCPSourceOpenAPI && t.OpenAPI != nil {
 		target.OpenAPI = &appopenapi.Source{SpecURL: t.OpenAPI.SpecURL, BaseURL: t.URL}
 	}

@@ -27,6 +27,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/logger"
+	infraopenapi "github.com/NeuralTrust/TrustGate/pkg/infra/openapi"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 )
 
@@ -63,6 +64,9 @@ func provideOutbox(c *container.Container) error {
 
 func provideRuntimeBase(c *container.Container) error {
 	if err := c.Provide(config.LoadConfig); err != nil {
+		return err
+	}
+	if err := c.Provide(infraopenapi.NewCompiler); err != nil {
 		return err
 	}
 	if err := c.Provide(func(cfg *config.Config) *slog.Logger {
