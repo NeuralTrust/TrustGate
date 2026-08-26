@@ -20,11 +20,67 @@ import (
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 )
 
 type CustomPrice struct {
 	Input  float64 `mapstructure:"input" json:"input"`
 	Output float64 `mapstructure:"output" json:"output"`
+	// CacheRead and CacheWrite are pointers so an override that names only input
+	// and output keeps charging cached tokens at its own input rate, instead of
+	// silently making them free.
+	CacheRead  *float64 `mapstructure:"cache_read" json:"cache_read,omitempty"`
+	CacheWrite *float64 `mapstructure:"cache_write" json:"cache_write,omitempty"`
+}
+
+// Rates are the per-token rates a prompt and completion are billed at. Cached
+// and cache-written prompt tokens are sub-populations of the prompt that bill at
+// their own rate; the rest bills at Input.
+type Rates struct {
+	Input      float64
+	Output     float64
+	CacheRead  float64
+	CacheWrite float64
+}
+
+// orInput reads an unset cache rate as the plain input rate. The catalog does
+// the same coalescing when it loads a model, but a Pricing can reach here from
+// any resolver, and a zero rate would silently make cached tokens free — which
+// is the failure mode worth being paranoid about in a billing path.
+func orInput(rate, input float64) float64 {
+	if rate <= 0 {
+		return input
+	}
+	return rate
+}
+
+func ratesFor(input, output float64, cacheRead, cacheWrite *float64) Rates {
+	r := Rates{Input: input, Output: output, CacheRead: input, CacheWrite: input}
+	if cacheRead != nil {
+		r.CacheRead = *cacheRead
+	}
+	if cacheWrite != nil {
+		r.CacheWrite = *cacheWrite
+	}
+	return r
+}
+
+// CostUSD prices a canonical usage view. It is correct for every provider
+// because the adapters guarantee InputTokens is the whole prompt and every cache
+// count is a strict subset of it.
+func (r Rates) CostUSD(u *adapter.CanonicalUsage) (promptUSD, completionUSD float64) {
+	if u == nil {
+		return 0, 0
+	}
+	cached, written := u.CachedInputTokens, u.CacheWriteInputTokens
+	plain := u.PlainInputTokens()
+	if plain == u.InputTokens {
+		cached, written = 0, 0
+	}
+	promptUSD = float64(plain)*r.Input +
+		float64(cached)*r.CacheRead +
+		float64(written)*r.CacheWrite
+	return promptUSD, float64(u.OutputTokens) * r.Output
 }
 
 type RegistryRates struct {
@@ -42,46 +98,56 @@ func RatesFromDomain(p *domain.Pricing) *RegistryRates {
 	}
 	rates.Overrides = make(map[string]CustomPrice, len(p.Overrides))
 	for slug, rate := range p.Overrides {
-		rates.Overrides[slug] = CustomPrice{Input: rate.Input, Output: rate.Output}
+		rates.Overrides[slug] = CustomPrice{
+			Input: rate.Input, Output: rate.Output,
+			CacheRead: rate.CacheRead, CacheWrite: rate.CacheWrite,
+		}
 	}
 	return rates
 }
 
-func PriceFor(ctx context.Context, resolver appcatalog.PricingResolver, custom map[string]CustomPrice, provider string, models ...string) (float64, float64, bool) {
+func PriceFor(ctx context.Context, resolver appcatalog.PricingResolver, custom map[string]CustomPrice, provider string, models ...string) (Rates, bool) {
 	return Resolve(ctx, resolver, custom, nil, provider, models...)
 }
 
-func Resolve(ctx context.Context, resolver appcatalog.PricingResolver, custom map[string]CustomPrice, registry *RegistryRates, provider string, models ...string) (float64, float64, bool) {
+func Resolve(ctx context.Context, resolver appcatalog.PricingResolver, custom map[string]CustomPrice, registry *RegistryRates, provider string, models ...string) (Rates, bool) {
 	candidates := appcatalog.SlugCandidates(models...)
 	for _, slug := range candidates {
 		if cp, ok := BestMatch(custom, slug); ok {
-			return cp.Input, cp.Output, true
+			return ratesFor(cp.Input, cp.Output, cp.CacheRead, cp.CacheWrite), true
 		}
 	}
 	if registry != nil {
 		for _, slug := range candidates {
 			if cp, ok := BestMatch(registry.Overrides, slug); ok {
-				return cp.Input, cp.Output, true
+				return ratesFor(cp.Input, cp.Output, cp.CacheRead, cp.CacheWrite), true
 			}
 		}
 	}
 	if resolver == nil || provider == "" {
-		return 0, 0, false
+		return Rates{}, false
 	}
 	for _, slug := range candidates {
 		price := resolver.Resolve(ctx, provider, slug)
 		if !price.Found {
 			continue
 		}
-		in, out := price.InputPrice, price.OutputPrice
+		r := Rates{
+			Input:      price.InputPrice,
+			Output:     price.OutputPrice,
+			CacheRead:  orInput(price.CacheReadPrice, price.InputPrice),
+			CacheWrite: orInput(price.CacheWritePrice, price.InputPrice),
+		}
 		if registry != nil && registry.Discount > 0 {
 			factor := 1 - registry.Discount
-			in *= factor
-			out *= factor
+			r.Input *= factor
+			r.Output *= factor
+			r.CacheRead *= factor
+			r.CacheWrite *= factor
 		}
-		return in, out, true
+		return r, true
 	}
-	return 0, 0, false
+	return Rates{}, false
 }
 
 // Per1k converts a per-token rate to a per-1000-token rate.

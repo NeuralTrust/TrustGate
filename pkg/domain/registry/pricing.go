@@ -20,8 +20,10 @@ import (
 )
 
 type PriceOverride struct {
-	Input  float64 `json:"input"`
-	Output float64 `json:"output"`
+	Input      float64  `json:"input"`
+	Output     float64  `json:"output"`
+	CacheRead  *float64 `json:"cache_read,omitempty"`
+	CacheWrite *float64 `json:"cache_write,omitempty"`
 }
 
 type Pricing struct {
@@ -49,6 +51,12 @@ func (p *Pricing) Validate() error {
 		}
 		if rate.Input < 0 || rate.Output < 0 {
 			return fmt.Errorf("%w: pricing.overrides[%q] rates must be >= 0", ErrInvalidPricing, key)
+		}
+		if rate.CacheRead != nil && *rate.CacheRead < 0 {
+			return fmt.Errorf("%w: pricing.overrides[%q].cache_read must be >= 0", ErrInvalidPricing, key)
+		}
+		if rate.CacheWrite != nil && *rate.CacheWrite < 0 {
+			return fmt.Errorf("%w: pricing.overrides[%q].cache_write must be >= 0", ErrInvalidPricing, key)
 		}
 	}
 	return nil
