@@ -104,7 +104,13 @@ export interface HealthChecks {
 
 export type RegistryType = "LLM" | "MCP";
 
-export type MCPAuthMode = "none" | "static" | "passthrough" | "exchange" | "forwarded";
+export type MCPAuthMode =
+  | "none"
+  | "static"
+  | "passthrough"
+  | "exchange"
+  | "forwarded"
+  | "client_credentials";
 
 export interface MCPAuth {
   mode: MCPAuthMode;
@@ -123,6 +129,7 @@ export interface MCPAuth {
   token_url?: string;
   scopes?: string[];
   resource?: string;
+  token_endpoint_auth_method?: "client_secret_basic" | "client_secret_post";
 }
 
 export interface MCPTarget {
