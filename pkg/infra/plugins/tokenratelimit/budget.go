@@ -116,11 +116,10 @@ func billableInputTokens(cfg *config, usage *adapter.CanonicalUsage) int {
 	if usage == nil {
 		return 0
 	}
-	in := usage.InputTokens
 	if cfg.CountCacheReads {
-		in += usage.CacheReadInputTokens
+		return usage.InputTokens
 	}
-	return in
+	return usage.InputTokens - usage.CachedInputTokens
 }
 
 func primaryWindowIndex(windows []budgetWindow) int {
@@ -144,17 +143,17 @@ func countedTokens(cfg *config, usage *adapter.CanonicalUsage) int {
 	if usage == nil {
 		return 0
 	}
-	cacheReads := 0
-	if cfg.CountCacheReads {
-		cacheReads = usage.CacheReadInputTokens
+	discount := 0
+	if !cfg.CountCacheReads {
+		discount = usage.CachedInputTokens
 	}
 	switch cfg.Counting {
 	case countingInput:
-		return usage.InputTokens + cacheReads
+		return usage.InputTokens - discount
 	case countingOutput:
 		return usage.OutputTokens
 	default:
-		return usage.TotalTokens + cacheReads
+		return usage.TotalTokens - discount
 	}
 }
 
