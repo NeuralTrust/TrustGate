@@ -316,3 +316,37 @@ func TestResolve_OverrideWithoutCacheRatesKeepsItsOwnInputRate(t *testing.T) {
 	assert.InDelta(t, cheap, rates2.CacheRead, 1e-15, "an explicit cache rate is honoured")
 	assert.InDelta(t, 0.000005, rates2.CacheWrite, 1e-15, "the unset one still falls back")
 }
+
+// The catalog path is what a request uses when no registry override exists, and
+// it is the path the earlier verification never exercised. A rate the catalog
+// delivers must survive all the way into the priced figure.
+func TestResolve_CatalogCacheRatesReachTheCost(t *testing.T) {
+	t.Parallel()
+	resolver := catalogmocks.NewPricingResolver(t)
+	resolver.EXPECT().
+		Resolve(mock.Anything, "anthropic", mock.Anything).
+		Return(appcatalog.Pricing{
+			Found:           true,
+			InputPrice:      3.00 / 1e6,
+			OutputPrice:     15.00 / 1e6,
+			CacheReadPrice:  0.30 / 1e6,
+			CacheWritePrice: 3.75 / 1e6,
+		}).Maybe()
+
+	rates, found := Resolve(context.Background(), resolver, nil, nil, "anthropic", "claude-sonnet-4-5")
+	require.True(t, found)
+	assert.InDelta(t, 0.30/1e6, rates.CacheRead, 1e-15, "the catalog rate must not collapse to input")
+	assert.InDelta(t, 3.75/1e6, rates.CacheWrite, 1e-15)
+
+	// The shape the real API returned: 13 fresh tokens, 6903 served from cache.
+	u := &adapter.CanonicalUsage{InputTokens: 6916, OutputTokens: 5, CachedInputTokens: 6903}
+	prompt, completion := rates.CostUSD(u)
+
+	want := 13*(3.00/1e6) + 6903*(0.30/1e6)
+	assert.InDelta(t, want, prompt, 1e-15)
+	assert.InDelta(t, 5*(15.00/1e6), completion, 1e-15)
+
+	naive := float64(u.InputTokens) * (3.00 / 1e6)
+	assert.Greater(t, naive/prompt, 9.0,
+		"charging the whole prompt at the input rate would be ~10x this, which is what a dropped cache rate does")
+}
