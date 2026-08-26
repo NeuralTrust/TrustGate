@@ -28,6 +28,7 @@ import (
 	policyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy"
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
 	rolehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/role"
+	tenanthttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/tenant"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
@@ -66,11 +67,12 @@ type adminRouterParams struct {
 	HealthHandler  *apihandler.HealthHandler
 	VersionHandler *apihandler.VersionHandler
 
-	CreateGateway *gatewayhttp.CreateGatewayHandler
-	GetGateway    *gatewayhttp.GetGatewayHandler
-	ListGateway   *gatewayhttp.ListGatewayHandler
-	UpdateGateway *gatewayhttp.UpdateGatewayHandler
-	DeleteGateway *gatewayhttp.DeleteGatewayHandler
+	CreateGateway             *gatewayhttp.CreateGatewayHandler
+	GetGateway                *gatewayhttp.GetGatewayHandler
+	ListGateway               *gatewayhttp.ListGatewayHandler
+	UpdateGateway             *gatewayhttp.UpdateGatewayHandler
+	RestampTenantEntitlements *tenanthttp.RestampEntitlementsHandler
+	DeleteGateway             *gatewayhttp.DeleteGatewayHandler
 
 	CreateRegistry         *registryhttp.CreateRegistryHandler
 	GetRegistry            *registryhttp.GetRegistryHandler
@@ -137,48 +139,49 @@ func ServerAdmin(c *container.Container) error {
 	if err := c.Provide(
 		func(p adminRouterParams) router.ServerRouter {
 			return router.NewAdminRouter(router.AdminRouterDeps{
-				MiddlewareTransport:    p.Transport,
-				OpsMetrics:             middleware.NewOpsMetricsMiddleware(p.OpsMetrics, o11y.PlaneAdmin),
-				AdminAuth:              p.AdminAuth,
-				AdminAuthz:             p.AdminAuthz,
-				HealthHandler:          p.HealthHandler,
-				VersionHandler:         p.VersionHandler,
-				CreateGateway:          p.CreateGateway,
-				GetGateway:             p.GetGateway,
-				ListGateway:            p.ListGateway,
-				UpdateGateway:          p.UpdateGateway,
-				DeleteGateway:          p.DeleteGateway,
-				CreateRegistry:         p.CreateRegistry,
-				GetRegistry:            p.GetRegistry,
-				ListRegistry:           p.ListRegistry,
-				UpdateRegistry:         p.UpdateRegistry,
-				DeleteRegistry:         p.DeleteRegistry,
-				TestRegistryConnection: p.TestRegistryConnection,
-				ListRegistryTools:      p.ListRegistryTools,
-				CreatePolicy:           p.CreatePolicy,
-				GetPolicy:              p.GetPolicy,
-				ListPolicy:             p.ListPolicy,
-				UpdatePolicy:           p.UpdatePolicy,
-				DeletePolicy:           p.DeletePolicy,
-				GlobalPolicy:           p.GlobalPolicy,
-				DuplicatePolicy:        p.DuplicatePolicy,
-				CreateConsumer:         p.CreateConsumer,
-				GetConsumer:            p.GetConsumer,
-				ListConsumer:           p.ListConsumer,
-				UpdateConsumer:         p.UpdateConsumer,
-				DeleteConsumer:         p.DeleteConsumer,
-				ConsumerAssociation:    p.ConsumerAssociation,
-				CreateRole:             p.CreateRole,
-				GetRole:                p.GetRole,
-				ListRole:               p.ListRole,
-				UpdateRole:             p.UpdateRole,
-				DeleteRole:             p.DeleteRole,
-				RoleAssociation:        p.RoleAssociation,
-				CreateAuth:             p.CreateAuth,
-				GetAuth:                p.GetAuth,
-				ListAuth:               p.ListAuth,
-				UpdateAuth:             p.UpdateAuth,
-				DeleteAuth:             p.DeleteAuth,
+				MiddlewareTransport:       p.Transport,
+				OpsMetrics:                middleware.NewOpsMetricsMiddleware(p.OpsMetrics, o11y.PlaneAdmin),
+				AdminAuth:                 p.AdminAuth,
+				AdminAuthz:                p.AdminAuthz,
+				HealthHandler:             p.HealthHandler,
+				VersionHandler:            p.VersionHandler,
+				CreateGateway:             p.CreateGateway,
+				GetGateway:                p.GetGateway,
+				ListGateway:               p.ListGateway,
+				UpdateGateway:             p.UpdateGateway,
+				RestampTenantEntitlements: p.RestampTenantEntitlements,
+				DeleteGateway:             p.DeleteGateway,
+				CreateRegistry:            p.CreateRegistry,
+				GetRegistry:               p.GetRegistry,
+				ListRegistry:              p.ListRegistry,
+				UpdateRegistry:            p.UpdateRegistry,
+				DeleteRegistry:            p.DeleteRegistry,
+				TestRegistryConnection:    p.TestRegistryConnection,
+				ListRegistryTools:         p.ListRegistryTools,
+				CreatePolicy:              p.CreatePolicy,
+				GetPolicy:                 p.GetPolicy,
+				ListPolicy:                p.ListPolicy,
+				UpdatePolicy:              p.UpdatePolicy,
+				DeletePolicy:              p.DeletePolicy,
+				GlobalPolicy:              p.GlobalPolicy,
+				DuplicatePolicy:           p.DuplicatePolicy,
+				CreateConsumer:            p.CreateConsumer,
+				GetConsumer:               p.GetConsumer,
+				ListConsumer:              p.ListConsumer,
+				UpdateConsumer:            p.UpdateConsumer,
+				DeleteConsumer:            p.DeleteConsumer,
+				ConsumerAssociation:       p.ConsumerAssociation,
+				CreateRole:                p.CreateRole,
+				GetRole:                   p.GetRole,
+				ListRole:                  p.ListRole,
+				UpdateRole:                p.UpdateRole,
+				DeleteRole:                p.DeleteRole,
+				RoleAssociation:           p.RoleAssociation,
+				CreateAuth:                p.CreateAuth,
+				GetAuth:                   p.GetAuth,
+				ListAuth:                  p.ListAuth,
+				UpdateAuth:                p.UpdateAuth,
+				DeleteAuth:                p.DeleteAuth,
 
 				ListProvidersCatalog:  p.ListProvidersCatalog,
 				ListModelsCatalog:     p.ListModelsCatalog,
