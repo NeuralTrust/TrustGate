@@ -17,12 +17,14 @@ package openapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
+	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,7 +36,10 @@ func TestCompilerCompilesOperationsIntoTools(t *testing.T) {
 		_, _ = w.Write([]byte(`{
 			"openapi": "3.0.3",
 			"info": {"title": "Pet API", "version": "1.0"},
-			"servers": [{"url": "` + baseURL + `/v1"}],
+			"servers": [{
+				"url": "` + baseURL + `/{version}",
+				"variables": {"version": {"default": "v1"}}
+			}],
 			"paths": {
 				"/pets/{petId}": {
 					"get": {
@@ -128,4 +133,24 @@ func TestUnsafeIPRejectsPrivateAndReservedNetworks(t *testing.T) {
 	if unsafeIP(net.ParseIP("8.8.8.8")) {
 		t.Fatal("unsafeIP(public address) = true")
 	}
+}
+
+func TestValidatePublicURLRejectsReservedDestination(t *testing.T) {
+	t.Parallel()
+	err := validatePublicURL(context.Background(), "http://100.64.0.1/api")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "private or reserved")
+}
+
+func TestCompileOperationsRejectsExcessiveToolsets(t *testing.T) {
+	t.Parallel()
+	paths := openapi3.NewPathsWithCapacity(maxCompiledOperations + 1)
+	for index := 0; index <= maxCompiledOperations; index++ {
+		paths.Set(fmt.Sprintf("/items/%d", index), &openapi3.PathItem{
+			Get: &openapi3.Operation{OperationID: fmt.Sprintf("getItem%d", index)},
+		})
+	}
+	_, _, err := compileOperations(&openapi3.T{Paths: paths})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "maximum supported")
 }

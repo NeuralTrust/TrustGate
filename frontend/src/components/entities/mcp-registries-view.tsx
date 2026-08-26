@@ -39,6 +39,7 @@ const CUSTOM_AUTH_MODES: { value: MCPAuthMode; label: string }[] = [
   { value: "forwarded", label: "OAuth (forwarded)" },
   { value: "passthrough", label: "Passthrough" },
   { value: "exchange", label: "Token exchange" },
+  { value: "client_credentials", label: "Client credentials" },
 ];
 
 const EXCHANGE_PATTERNS: { value: ExchangePattern; label: string }[] = [
@@ -305,6 +306,12 @@ function AddMcpDialog({
   const [fwdTokenUrl, setFwdTokenUrl] = useState("");
   const [fwdScopes, setFwdScopes] = useState("");
   const [fwdResource, setFwdResource] = useState("");
+  const [ccClientId, setCcClientId] = useState("");
+  const [ccClientSecret, setCcClientSecret] = useState("");
+  const [ccTokenUrl, setCcTokenUrl] = useState("");
+  const [ccAuthMethod, setCcAuthMethod] = useState<
+    "client_secret_basic" | "client_secret_post"
+  >("client_secret_basic");
   const [submitting, setSubmitting] = useState(false);
 
   const server = useMemo(
@@ -422,6 +429,19 @@ function AddMcpDialog({
           },
         };
       }
+      case "client_credentials":
+        if (!ccClientId.trim() || !ccClientSecret.trim() || !/^https?:\/\//i.test(ccTokenUrl.trim())) {
+          return { error: "Client credentials needs a client ID, secret, and valid token URL" };
+        }
+        return {
+          auth: {
+            mode: "client_credentials",
+            client_id: ccClientId.trim(),
+            client_secret: ccClientSecret.trim(),
+            token_url: ccTokenUrl.trim(),
+            token_endpoint_auth_method: ccAuthMethod,
+          },
+        };
       default: {
         const _exhaustive: never = customAuthMode;
         return _exhaustive;
@@ -647,7 +667,10 @@ function AddMcpDialog({
                 >
                   {CUSTOM_AUTH_MODES.filter(
                     (mode) =>
-                      customSource === "mcp" || mode.value === "none" || mode.value === "static",
+                      customSource === "mcp" ||
+                      mode.value === "none" ||
+                      mode.value === "static" ||
+                      mode.value === "client_credentials",
                   ).map((m) => (
                     <option key={m.value} value={m.value}>
                       {m.label}
@@ -674,6 +697,41 @@ function AddMcpDialog({
                     />
                   </Field>
                 </div>
+              )}
+
+              {customAuthMode === "client_credentials" && (
+                <>
+                  <Field label="Client ID" hint="required">
+                    <Input value={ccClientId} onChange={(e) => setCcClientId(e.target.value)} />
+                  </Field>
+                  <Field label="Client secret" hint="required">
+                    <Input
+                      type="password"
+                      value={ccClientSecret}
+                      onChange={(e) => setCcClientSecret(e.target.value)}
+                    />
+                  </Field>
+                  <Field label="Token URL" hint="required">
+                    <Input
+                      value={ccTokenUrl}
+                      onChange={(e) => setCcTokenUrl(e.target.value)}
+                      placeholder="https://idp.example.com/oauth/token"
+                    />
+                  </Field>
+                  <Field label="Token endpoint auth method">
+                    <Select
+                      value={ccAuthMethod}
+                      onChange={(e) =>
+                        setCcAuthMethod(
+                          e.target.value as "client_secret_basic" | "client_secret_post",
+                        )
+                      }
+                    >
+                      <option value="client_secret_basic">Client secret basic</option>
+                      <option value="client_secret_post">Client secret post</option>
+                    </Select>
+                  </Field>
+                </>
               )}
 
               {customAuthMode === "passthrough" && (

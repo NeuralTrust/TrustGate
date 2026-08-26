@@ -35,8 +35,9 @@ import (
 )
 
 const (
-	maxSpecBytes = 5 << 20
-	maxToolName  = 64
+	maxSpecBytes          = 5 << 20
+	maxToolName           = 64
+	maxCompiledOperations = 500
 )
 
 var invalidToolName = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
@@ -61,11 +62,15 @@ func (e *unsupportedOperationError) Error() string {
 }
 
 type Compiler struct {
-	client *http.Client
+	client               *http.Client
+	validateDestinations bool
 }
 
 func NewCompiler() appopenapi.Compiler {
-	return &Compiler{client: NewSafeHTTPClient(10 * time.Second)}
+	return &Compiler{
+		client:               NewSafeHTTPClient(10 * time.Second),
+		validateDestinations: true,
+	}
 }
 
 // NewCompilerWithClient returns a compiler using the supplied HTTP client.
@@ -95,6 +100,11 @@ func (c *Compiler) Compile(ctx context.Context, source appopenapi.Source) (*appo
 	baseURL, err := resolveBaseURL(source.BaseURL, doc.Servers, location)
 	if err != nil {
 		return nil, compileError(appopenapi.StageCompile, err)
+	}
+	if c.validateDestinations {
+		if err := validatePublicURL(ctx, baseURL); err != nil {
+			return nil, compileError(appopenapi.StageCompile, fmt.Errorf("base_url: %w", err))
+		}
 	}
 	operations, warnings, err := compileOperations(doc)
 	if err != nil {
@@ -148,6 +158,17 @@ func (c *Compiler) fetch(ctx context.Context, rawURL string) ([]byte, error) {
 
 func compileOperations(doc *openapi3.T) ([]appopenapi.Operation, []appopenapi.Warning, error) {
 	paths := doc.Paths.InMatchingOrder()
+	operationCount := 0
+	for _, path := range paths {
+		operationCount += len(doc.Paths.Value(path).Operations())
+	}
+	if operationCount > maxCompiledOperations {
+		return nil, nil, fmt.Errorf(
+			"the document declares %d operations; the maximum supported is %d",
+			operationCount,
+			maxCompiledOperations,
+		)
+	}
 	var operations []appopenapi.Operation
 	var warnings []appopenapi.Warning
 	taken := make(map[string]int)
@@ -435,7 +456,14 @@ func operationName(method, path, operationID string) (string, bool) {
 func resolveBaseURL(override string, servers openapi3.Servers, location *url.URL) (string, error) {
 	raw := strings.TrimSpace(override)
 	if raw == "" && len(servers) > 0 && servers[0] != nil {
-		raw = strings.TrimSpace(servers[0].URL)
+		server := servers[0]
+		raw = strings.TrimSpace(server.URL)
+		for name, variable := range server.Variables {
+			if variable == nil {
+				continue
+			}
+			raw = strings.ReplaceAll(raw, "{"+name+"}", variable.Default)
+		}
 	}
 	if raw == "" {
 		return "", errors.New("base_url is required when the document has no servers entry")
@@ -451,6 +479,26 @@ func resolveBaseURL(override string, servers openapi3.Servers, location *url.URL
 		return "", errors.New("base_url must be a valid http(s) URL")
 	}
 	return strings.TrimRight(parsed.String(), "/"), nil
+}
+
+func validatePublicURL(ctx context.Context, rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Hostname() == "" {
+		return errors.New("invalid URL")
+	}
+	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, parsed.Hostname())
+	if err != nil {
+		return fmt.Errorf("resolve host: %w", err)
+	}
+	if len(addresses) == 0 {
+		return errors.New("host has no addresses")
+	}
+	for _, address := range addresses {
+		if unsafeIP(address.IP) {
+			return fmt.Errorf("host resolves to private or reserved address %s", address.IP)
+		}
+	}
+	return nil
 }
 
 // NewSafeHTTPClient returns an HTTP client that rejects private and reserved destinations.
