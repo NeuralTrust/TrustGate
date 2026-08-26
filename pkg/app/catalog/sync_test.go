@@ -282,3 +282,75 @@ func TestSyncer_Sync_InvalidatesPricingCache(t *testing.T) {
 		t.Fatalf("InvalidateCache calls = %d, want 1", pricing.invalidations)
 	}
 }
+
+// models.dev publishes cache_read and cache_write per model, and the resolver
+// reads an empty rate as "bills at the plain input rate". So a rate the sync
+// drops does not fail loudly — it silently charges cached tokens at up to ten
+// times what the provider charges. This is the assertion that catches that.
+func TestSyncer_Sync_CarriesCacheRatesThrough(t *testing.T) {
+	t.Parallel()
+	const payload = `{
+		"anthropic": {
+			"id": "anthropic",
+			"name": "Anthropic",
+			"models": {
+				"claude-sonnet-4-5": {"id":"claude-sonnet-4-5","name":"Sonnet",
+					"limit":{"context":200000,"output":64000},
+					"cost":{"input":3,"output":15,"cache_read":0.3,"cache_write":3.75}}
+			}
+		},
+		"openai": {
+			"id": "openai",
+			"name": "OpenAI",
+			"models": {
+				"gpt-4o": {"id":"gpt-4o","name":"GPT-4o","limit":{"context":128000,"output":16384},
+					"cost":{"input":2.5,"output":10,"cache_read":1.25}}
+			}
+		}
+	}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, payload)
+	}))
+	defer srv.Close()
+
+	repo := newFakeRepo()
+	s := NewSyncer(repo, modelsdev.NewClient(srv.URL),
+		slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+	if err := s.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync error: %v", err)
+	}
+
+	got := map[string]domain.Model{}
+	for _, m := range repo.upsertedModels {
+		got[m.Slug] = m
+	}
+
+	sonnet, ok := got["claude-sonnet-4-5"]
+	if !ok {
+		t.Fatal("claude-sonnet-4-5 was not upserted")
+	}
+	if sonnet.CacheReadPrice == "" || sonnet.CacheWritePrice == "" {
+		t.Fatalf("cache rates dropped in sync: read=%q write=%q",
+			sonnet.CacheReadPrice, sonnet.CacheWritePrice)
+	}
+	// models.dev quotes per million; the catalog stores per token.
+	if want := "0.0000003"; sonnet.CacheReadPrice != want {
+		t.Fatalf("cache_read = %q, want %q", sonnet.CacheReadPrice, want)
+	}
+	if want := "0.00000375"; sonnet.CacheWritePrice != want {
+		t.Fatalf("cache_write = %q, want %q", sonnet.CacheWritePrice, want)
+	}
+
+	// A model that publishes cache_read but no cache_write keeps the write rate
+	// empty, which the resolver reads as the plain input rate.
+	gpt, ok := got["gpt-4o"]
+	if !ok {
+		t.Fatal("gpt-4o was not upserted")
+	}
+	if want := "0.00000125"; gpt.CacheReadPrice != want {
+		t.Fatalf("gpt-4o cache_read = %q, want %q", gpt.CacheReadPrice, want)
+	}
+	if gpt.CacheWritePrice != "" {
+		t.Fatalf("gpt-4o cache_write = %q, want empty (unpublished)", gpt.CacheWritePrice)
+	}
+}
