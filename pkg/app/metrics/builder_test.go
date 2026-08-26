@@ -22,6 +22,7 @@ import (
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"github.com/stretchr/testify/assert"
@@ -744,4 +745,55 @@ func TestBuilder_CostUsesServedPricingFromSpan(t *testing.T) {
 	require.NotNil(t, evt.Cost)
 	assert.InDelta(t, 0.8*10*0.00000015, float64(evt.Cost.PromptUsd), 1e-12)
 	assert.InDelta(t, 0.8*20*0.0000006, float64(evt.Cost.CompletionUsd), 1e-12)
+}
+
+func TestBuilder_StampsRetentionExpiryFromTheEventTimestamp(t *testing.T) {
+	rt := trace.New("trace-retention", trace.Metadata{
+		GatewayID:       "gw-1",
+		RetentionWindow: 30 * 24 * time.Hour,
+		RetentionPlan:   "standard",
+	})
+
+	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/v1/chat/completions"}
+	resp := &infracontext.ResponseContext{StatusCode: 200}
+
+	start := time.UnixMilli(1_000_000)
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(time.Millisecond))
+
+	require.NotNil(t, evt.Retention)
+	assert.Equal(t, "standard", evt.Retention.Plan)
+	// Measured from occurredOn, not from wall-clock now: the two must agree or the
+	// TTL and the row's timestamp drift apart.
+	assert.Equal(t, evt.OccurredOn+(30*24*time.Hour).Milliseconds(), evt.Retention.ExpiresAt)
+}
+
+func TestBuilder_OmitsRetentionWhenTheGatewayCarriesNoStamp(t *testing.T) {
+	rt := trace.New("trace-no-retention", trace.Metadata{GatewayID: "gw-1"})
+
+	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/v1/chat/completions"}
+	resp := &infracontext.ResponseContext{StatusCode: 200}
+
+	start := time.UnixMilli(1_000_000)
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(time.Millisecond))
+
+	assert.Nil(t, evt.Retention)
+}
+
+func TestBuilder_StampsRetentionOnMCPTracesToo(t *testing.T) {
+	rt := trace.New("trace-mcp-retention", trace.Metadata{
+		GatewayID:       "gw-1",
+		Kind:            events.KindMCP,
+		RetentionWindow: 7 * 24 * time.Hour,
+		RetentionPlan:   "free",
+	})
+
+	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/mcp"}
+	resp := &infracontext.ResponseContext{StatusCode: 200}
+
+	start := time.UnixMilli(1_000_000)
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(time.Millisecond))
+
+	require.NotNil(t, evt.Retention)
+	assert.Equal(t, "free", evt.Retention.Plan)
+	assert.Equal(t, evt.OccurredOn+(7*24*time.Hour).Milliseconds(), evt.Retention.ExpiresAt)
 }
