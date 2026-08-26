@@ -64,7 +64,7 @@ const (
 	attrStatusIsTimeout      = "trustgate.status.is_timeout"
 	attrTraceID              = "trustgate.trace_id"
 	attrGatewayID            = "trustgate.gateway_id"
-	attrTenantID               = "trustgate.tenant_id"
+	attrTenantID             = "trustgate.tenant_id"
 	attrConsumerID           = "trustgate.consumer.id"
 	attrConsumerName         = "trustgate.consumer.name"
 	attrSessionID            = "trustgate.session_id"
@@ -79,6 +79,7 @@ const (
 	attrCostPromptUsd        = "trustgate.cost.prompt_usd"
 	attrCostCompletionUsd    = "trustgate.cost.completion_usd"
 	attrCostCurrency         = "trustgate.cost.currency"
+	attrCostSavingsUsd       = "trustgate.cost.savings_usd"
 	attrLatencyTotalMs       = "trustgate.latency.total_ms"
 	attrLatencyProviderMs    = "trustgate.latency.provider_ms"
 	attrLatencyPoliciesMs    = "trustgate.latency.policies_ms"
@@ -192,6 +193,9 @@ func eventToRecord(evt *events.Event) otellog.Record {
 			attribute.Float64(attrCostCompletionUsd, float64(evt.Cost.CompletionUsd)),
 		)
 		appendStr(attrCostCurrency, evt.Cost.Currency)
+		if evt.Cost.SavingsUsd != nil {
+			attrs = append(attrs, attribute.Float64(attrCostSavingsUsd, float64(*evt.Cost.SavingsUsd)))
+		}
 	}
 	attrs = append(attrs,
 		attribute.Int64(attrLatencyTotalMs, evt.Latency.TotalMs),

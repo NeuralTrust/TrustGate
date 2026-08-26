@@ -104,6 +104,7 @@ func (b *Builder) Build(
 	b.fillResponse(evt, resp, served, totalMs)
 	b.fillStatus(evt, resp, served, requestTrace)
 	b.fillUsageAndCost(ctx, evt, served, req)
+	b.fillSavings(ctx, evt, served)
 
 	return evt
 }
@@ -426,10 +427,7 @@ func (b *Builder) fillUsageAndCost(ctx context.Context, evt *events.Event, serve
 		return
 	}
 	slugs := pricingSlugs(evt, served)
-	var overlay *llmcost.RegistryRates
-	if req != nil {
-		overlay = llmcost.RatesFromDomain(req.RegistryPricing)
-	}
+	overlay := servedRates(served, req)
 	inputRate, outputRate, found := llmcost.Resolve(ctx, b.pricing, nil, overlay, served.Provider, slugs...)
 	if !found {
 		return
@@ -451,6 +449,39 @@ func (b *Builder) fillUsageAndCost(ctx context.Context, evt *events.Event, serve
 		TotalUsd:      events.DecimalFloat(promptUsd + completionUsd),
 		Currency:      costCurrencyUSD,
 	}
+}
+
+func servedRates(served *trace.LLMAttrs, req *infracontext.RequestContext) *llmcost.RegistryRates {
+	if served != nil && served.ServedPricing != nil {
+		return llmcost.RatesFromDomain(served.ServedPricing)
+	}
+	if req != nil {
+		return llmcost.RatesFromDomain(req.RegistryPricing)
+	}
+	return nil
+}
+
+func (b *Builder) fillSavings(ctx context.Context, evt *events.Event, served *trace.LLMAttrs) {
+	if served == nil || served.Usage == nil || evt.Cost == nil {
+		return
+	}
+	if !served.TierApplied || served.Baseline == nil {
+		return
+	}
+	base := served.Baseline
+	if base.Provider == "" || base.Model == "" {
+		return
+	}
+	inputRate, outputRate, found := llmcost.Resolve(
+		ctx, b.pricing, nil, llmcost.RatesFromDomain(base.Pricing), base.Provider, base.Model,
+	)
+	if !found {
+		return
+	}
+	u := served.Usage
+	baselineUsd := float64(u.InputTokens)*inputRate + float64(u.OutputTokens)*outputRate
+	savings := events.DecimalFloat(baselineUsd - float64(evt.Cost.TotalUsd))
+	evt.Cost.SavingsUsd = &savings
 }
 
 func pricingSlugs(evt *events.Event, served *trace.LLMAttrs) []string {

@@ -128,10 +128,11 @@ type Usage struct {
 }
 
 type Cost struct {
-	PromptUsd     DecimalFloat `json:"prompt_usd"`
-	CompletionUsd DecimalFloat `json:"completion_usd"`
-	TotalUsd      DecimalFloat `json:"total_usd"`
-	Currency      string       `json:"currency"`
+	PromptUsd     DecimalFloat  `json:"prompt_usd"`
+	CompletionUsd DecimalFloat  `json:"completion_usd"`
+	TotalUsd      DecimalFloat  `json:"total_usd"`
+	SavingsUsd    *DecimalFloat `json:"savings_usd,omitempty"`
+	Currency      string        `json:"currency"`
 }
 
 // Latency splits the request wall clock into the three stages that can be acted

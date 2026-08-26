@@ -28,10 +28,12 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/algorithm"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
 type routedBackend struct {
@@ -40,6 +42,7 @@ type routedBackend struct {
 	excluded     map[routingdomain.RouteKey]struct{}
 	fromFallback bool
 	pinned       bool
+	baseline     *trace.RouteBaseline
 }
 
 func (f *forwarder) resolveRouting(in ForwardInput) (routingdomain.Intent, *routingdomain.CandidateSet, error) {
@@ -270,6 +273,7 @@ func (f *forwarder) routeBackend(
 	}
 	excluded := nonCandidateRoutes(lb, rc, candidates)
 	route, err := lb.NextRoute(ctx, req, excluded)
+	baseline := smartRoutingBaseline(lb, excluded)
 	if err != nil {
 		if fallback := firstAvailableFallback(rc, excluded); fallback != nil {
 			return routedBackend{
@@ -281,7 +285,45 @@ func (f *forwarder) routeBackend(
 		}
 		return routedBackend{}, fmt.Errorf("%w: %s", ErrNoBackendAvailable, err.Error())
 	}
-	return routedBackend{lb: lb, route: *route, excluded: excluded}, nil
+	return routedBackend{lb: lb, route: *route, excluded: excluded, baseline: baseline}, nil
+}
+
+func smartRoutingBaseline(
+	lb *loadbalancer.LoadBalancer,
+	excluded map[routingdomain.RouteKey]struct{},
+) *trace.RouteBaseline {
+	if lb == nil || lb.Algorithm() != algorithm.SmartRouting {
+		return nil
+	}
+	tier, ok := lb.SmartRouting().HighestTier()
+	if !ok {
+		return nil
+	}
+	model := tier.RouteModel()
+	for _, route := range lb.Routes() {
+		if route.Registry == nil || route.Registry.ID != tier.RegistryID {
+			continue
+		}
+		if model != "" && route.Model != model {
+			continue
+		}
+		if _, skip := excluded[route.Key()]; skip {
+			continue
+		}
+		slug := route.Model
+		if slug == "" {
+			slug = route.Default
+		}
+		if slug == "" {
+			return nil
+		}
+		return &trace.RouteBaseline{
+			Provider: route.Registry.Provider(),
+			Model:    slug,
+			Pricing:  route.Registry.Pricing(),
+		}
+	}
+	return nil
 }
 
 func (f *forwarder) routeLoadBalancer(
