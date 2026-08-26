@@ -38,6 +38,7 @@ type Operation struct {
 	Method       string
 	Path         string
 	InputSchema  json.RawMessage
+	OutputSchema json.RawMessage
 	Parameters   []Parameter
 	BodyFields   []string
 	BodyArgument string

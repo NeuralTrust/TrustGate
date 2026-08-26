@@ -17,6 +17,7 @@ package openapi
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -43,7 +44,10 @@ func TestCompilerCompilesOperationsIntoTools(t *testing.T) {
 							{"name": "petId", "in": "path", "required": true, "schema": {"type": "integer"}},
 							{"name": "include", "in": "query", "schema": {"type": "array", "items": {"type": "string"}}}
 						],
-						"responses": {"200": {"description": "ok"}}
+						"responses": {"200": {
+							"description": "ok",
+							"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Pet"}}}
+						}}
 					}
 				},
 				"/pets": {
@@ -51,16 +55,17 @@ func TestCompilerCompilesOperationsIntoTools(t *testing.T) {
 						"operationId": "createPet",
 						"requestBody": {
 							"required": true,
-							"content": {"application/json": {"schema": {
-								"type": "object",
-								"required": ["name"],
-								"properties": {"name": {"type": "string"}, "age": {"type": "integer"}}
-							}}}
+							"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Pet"}}}
 						},
 						"responses": {"201": {"description": "created"}}
 					}
 				}
-			}
+			},
+			"components": {"schemas": {"Pet": {
+				"type": "object",
+				"required": ["name"],
+				"properties": {"name": {"type": "string"}, "age": {"type": "integer"}}
+			}}}
 		}`))
 	}))
 	defer server.Close()
@@ -82,6 +87,7 @@ func TestCompilerCompilesOperationsIntoTools(t *testing.T) {
 	require.Equal(t, "GET", getPet.Method)
 	require.Equal(t, "/pets/{petId}", getPet.Path)
 	require.Equal(t, "path", getPet.Parameters[0].In)
+	require.NotEmpty(t, getPet.OutputSchema)
 
 	var schema map[string]any
 	require.NoError(t, json.Unmarshal(operations["createPet"].InputSchema, &schema))
@@ -103,4 +109,23 @@ func TestCompilerReportsFetchAndParseStages(t *testing.T) {
 	var compileErr *appopenapi.CompileError
 	require.ErrorAs(t, err, &compileErr)
 	require.Equal(t, appopenapi.StageFetch, compileErr.Stage)
+}
+
+func TestUnsafeIPRejectsPrivateAndReservedNetworks(t *testing.T) {
+	t.Parallel()
+	for _, value := range []string{
+		"127.0.0.1",
+		"10.0.0.1",
+		"169.254.169.254",
+		"100.64.0.1",
+		"192.0.2.1",
+		"2001:db8::1",
+	} {
+		if !unsafeIP(net.ParseIP(value)) {
+			t.Fatalf("unsafeIP(%q) = false", value)
+		}
+	}
+	if unsafeIP(net.ParseIP("8.8.8.8")) {
+		t.Fatal("unsafeIP(public address) = true")
+	}
 }
