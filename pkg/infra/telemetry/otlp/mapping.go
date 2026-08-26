@@ -88,6 +88,8 @@ const (
 	attrPolicyChain          = "trustgate.policy_chain"
 	attrAttempts             = "trustgate.attempts"
 	attrAttemptsCount        = "trustgate.attempts.count"
+	attrRetentionExpiresAt   = "trustgate.retention.expires_at"
+	attrRetentionPlan        = "trustgate.retention.plan"
 	attrRequestBody          = "trustgate.request.body"
 	attrResponseBody         = "trustgate.response.body"
 )
@@ -213,6 +215,8 @@ func eventToRecord(evt *events.Event) otellog.Record {
 		attrs = append(attrs, attribute.Int(attrAttemptsCount, len(evt.Attempts)))
 	}
 
+	attrs = appendRetention(attrs, evt)
+
 	rec.AddAttributes(attrs...)
 	return rec
 }
@@ -229,7 +233,7 @@ func rawEventToRecord(evt *events.Event) otellog.Record {
 	}
 	rec.SetObservedTimestamp(time.Now())
 
-	attrs := make([]attribute.KeyValue, 0, 6)
+	attrs := make([]attribute.KeyValue, 0, 8)
 	appendStr := func(key, value string) {
 		if value != "" {
 			attrs = append(attrs, attribute.String(key, value))
@@ -244,9 +248,24 @@ func rawEventToRecord(evt *events.Event) otellog.Record {
 	if evt.Response.Body != nil {
 		appendStr(attrResponseBody, *evt.Response.Body)
 	}
+	attrs = appendRetention(attrs, evt)
 
 	rec.AddAttributes(attrs...)
 	return rec
+}
+
+// appendRetention adds the plan-derived expiry the storage layer keys its TTL on.
+// Nothing is added when the gateway carries no stamp, so the sink falls back to its
+// own policy rather than inheriting an expiry nobody set.
+func appendRetention(attrs []attribute.KeyValue, evt *events.Event) []attribute.KeyValue {
+	if evt.Retention == nil || evt.Retention.ExpiresAt <= 0 {
+		return attrs
+	}
+	attrs = append(attrs, attribute.Int64(attrRetentionExpiresAt, evt.Retention.ExpiresAt))
+	if evt.Retention.Plan != "" {
+		attrs = append(attrs, attribute.String(attrRetentionPlan, evt.Retention.Plan))
+	}
+	return attrs
 }
 
 func severityForStatus(code int) otellog.Severity {

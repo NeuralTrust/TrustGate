@@ -32,6 +32,8 @@ type Event struct {
 	OccurredOn   int64  `json:"occurred_on"`
 	EndTimestamp int64  `json:"end_timestamp"`
 
+	Retention *Retention `json:"retention,omitempty"`
+
 	Consumer  Consumer `json:"consumer"`
 	SessionID string   `json:"session_id,omitempty"`
 	TurnID    string   `json:"turn_id,omitempty"`
@@ -51,6 +53,14 @@ type Event struct {
 	PolicyChain []PolicyEntry `json:"policy_chain,omitempty"`
 
 	MCP *MCP `json:"mcp,omitempty"`
+}
+
+// Retention is when this trace stops being the storage layer's problem, derived
+// from the plan stamped on the gateway. Absent when the gateway carries no stamp:
+// the sink then applies its own fallback instead of being handed a guess.
+type Retention struct {
+	Plan      string `json:"plan,omitempty"`
+	ExpiresAt int64  `json:"expires_at"`
 }
 
 type MCP struct {

@@ -54,6 +54,16 @@ func (g *Gateway) TenantID() string {
 	return g.Metadata[MetadataTenantIDKey]
 }
 
+// RetentionWindow is the stamped trace-retention window for this gateway, and
+// whether one was stamped at all. Nil-safe like TenantID: the metrics middleware
+// runs on requests where the gateway never resolved.
+func (g *Gateway) RetentionWindow() (time.Duration, bool) {
+	if g == nil {
+		return 0, false
+	}
+	return g.Entitlements.ResolveRetention()
+}
+
 func isReservedMetadataKey(key string) bool {
 	return key == MetadataTenantIDKey || key == MetadataLegacyTeamIDKey
 }

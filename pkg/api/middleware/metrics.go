@@ -131,6 +131,10 @@ func (m *MetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string, g
 		Method:    c.Method(),
 		IP:        c.IP(),
 	}
+	if window, ok := gw.RetentionWindow(); ok {
+		meta.RetentionWindow = window
+		meta.RetentionPlan = gw.Entitlements.Tier
+	}
 	if sessionID, ok := c.Locals(string(infracontext.SessionContextKey)).(string); ok {
 		meta.SessionID = sessionID
 	}
