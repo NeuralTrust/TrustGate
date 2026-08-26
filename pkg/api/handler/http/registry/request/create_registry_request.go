@@ -41,8 +41,10 @@ type PricingRequest struct {
 }
 
 type PriceOverrideRequest struct {
-	Input  float64 `json:"input"`
-	Output float64 `json:"output"`
+	Input      float64  `json:"input"`
+	Output     float64  `json:"output"`
+	CacheRead  *float64 `json:"cache_read,omitempty"`
+	CacheWrite *float64 `json:"cache_write,omitempty"`
 }
 
 type MCPTargetRequest struct {
@@ -207,7 +209,10 @@ func (p *PricingRequest) ToDomain() *domain.Pricing {
 	if len(p.Overrides) > 0 {
 		out.Overrides = make(map[string]domain.PriceOverride, len(p.Overrides))
 		for slug, rate := range p.Overrides {
-			out.Overrides[slug] = domain.PriceOverride{Input: rate.Input, Output: rate.Output}
+			out.Overrides[slug] = domain.PriceOverride{
+				Input: rate.Input, Output: rate.Output,
+				CacheRead: rate.CacheRead, CacheWrite: rate.CacheWrite,
+			}
 		}
 	}
 	if out.IsZero() {

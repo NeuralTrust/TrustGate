@@ -428,7 +428,7 @@ func (b *Builder) fillUsageAndCost(ctx context.Context, evt *events.Event, serve
 	}
 	slugs := pricingSlugs(evt, served)
 	overlay := servedRates(served, req)
-	inputRate, outputRate, found := llmcost.Resolve(ctx, b.pricing, nil, overlay, served.Provider, slugs...)
+	rates, found := llmcost.Resolve(ctx, b.pricing, nil, overlay, served.Provider, slugs...)
 	if !found {
 		return
 	}
@@ -441,8 +441,7 @@ func (b *Builder) fillUsageAndCost(ctx context.Context, evt *events.Event, serve
 			}
 		}
 	}
-	promptUsd := float64(u.InputTokens) * inputRate
-	completionUsd := float64(u.OutputTokens) * outputRate
+	promptUsd, completionUsd := rates.CostUSD(u)
 	evt.Cost = &events.Cost{
 		PromptUsd:     events.DecimalFloat(promptUsd),
 		CompletionUsd: events.DecimalFloat(completionUsd),
@@ -472,14 +471,14 @@ func (b *Builder) fillSavings(ctx context.Context, evt *events.Event, served *tr
 	if base.Provider == "" || base.Model == "" {
 		return
 	}
-	inputRate, outputRate, found := llmcost.Resolve(
+	rates, found := llmcost.Resolve(
 		ctx, b.pricing, nil, llmcost.RatesFromDomain(base.Pricing), base.Provider, base.Model,
 	)
 	if !found {
 		return
 	}
 	u := served.Usage
-	baselineUsd := float64(u.InputTokens)*inputRate + float64(u.OutputTokens)*outputRate
+	baselineUsd := float64(u.InputTokens)*rates.Input + float64(u.OutputTokens)*rates.Output
 	savings := events.DecimalFloat(baselineUsd - float64(evt.Cost.TotalUsd))
 	evt.Cost.SavingsUsd = &savings
 }

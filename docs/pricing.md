@@ -61,6 +61,39 @@ Those estimates match the customer invoice only when registry `pricing`
 matches the contract (enterprise list discount and/or committed per-model
 rates). List prices from models.dev diverge from reserved/committed deals.
 
+## Cache tokens
+
+Prompt tokens served from, or written to, a provider's cache bill at their own
+rate. The catalog carries `cache_read_price` and `cache_write_price` alongside
+the input and output rates, synced from models.dev, and a registry
+`pricing.overrides` entry may set `cache_read` / `cache_write` to a negotiated
+rate.
+
+```
+prompt_usd = (prompt - cached - cache_written) * input
+           + cached        * cache_read
+           + cache_written * cache_write
+```
+
+`InputTokens` is the **whole prompt**, and the cache counts are subsets of it.
+Providers that report their cache counts beside the prompt rather than inside it
+— Anthropic does, where `input_tokens` is only the uncached remainder — are
+normalised by their adapter, so this one expression is correct everywhere.
+
+**An unset cache rate bills at the plain input rate**, which is what the gateway
+charged for those tokens before cache rates existed. That applies to a model
+models.dev publishes no cache rate for, and to a registry override that names
+only `input` and `output`. Reading unset as zero would silently make most of a
+cached prompt free, which is the worse way to be wrong. An explicit
+`"cache_read": 0` is honoured as a real "free under my contract".
+
+Rates differ sharply by provider, so they are never derived from a ratio: on
+current list prices Anthropic reads at 0.1x input, OpenAI's `gpt-4o` at 0.5x,
+`gpt-5` at 0.1x, xAI Grok at 0.25x. Anthropic's one-hour cache TTL bills at 2x
+input against 1.25x for the five-minute default; the share written with the long
+TTL is carried on the usage view but is priced at the single published
+cache-write rate until the catalog distinguishes them.
+
 ## Smart-routing savings
 
 When a consumer's pool uses the `smart-routing` algorithm and the tier table

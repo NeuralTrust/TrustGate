@@ -21,6 +21,7 @@ import (
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	catalogmocks "github.com/NeuralTrust/TrustGate/pkg/app/catalog/mocks"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -102,11 +103,11 @@ func TestPriceFor_CustomOverlay(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			in, out, found := PriceFor(context.Background(), nil, tt.pricing, "openai", tt.model)
+			rates, found := PriceFor(context.Background(), nil, tt.pricing, "openai", tt.model)
 			assert.Equal(t, tt.wantFound, found)
 			if tt.wantFound {
-				assert.InDelta(t, tt.wantIn, in, 1e-12)
-				assert.InDelta(t, tt.wantOut, out, 1e-12)
+				assert.InDelta(t, tt.wantIn, rates.Input, 1e-12)
+				assert.InDelta(t, tt.wantOut, rates.Output, 1e-12)
 			}
 		})
 	}
@@ -121,24 +122,24 @@ func TestPriceFor_BuiltinFallback(t *testing.T) {
 		Resolve(mock.Anything, "openai", "gpt-4o-mini").
 		Return(appcatalog.Pricing{Found: true, InputPrice: 0.3, OutputPrice: 0.4}).Once()
 
-	in, out, found := PriceFor(context.Background(), resolver, nil, "openai", "gpt-4o-mini-2024-07-18")
+	rates, found := PriceFor(context.Background(), resolver, nil, "openai", "gpt-4o-mini-2024-07-18")
 	require.True(t, found)
-	assert.InDelta(t, 0.3, in, 1e-12)
-	assert.InDelta(t, 0.4, out, 1e-12)
+	assert.InDelta(t, 0.3, rates.Input, 1e-12)
+	assert.InDelta(t, 0.4, rates.Output, 1e-12)
 }
 
 func TestPriceFor_CustomWinsOverBuiltin(t *testing.T) {
 	resolver := catalogmocks.NewPricingResolver(t)
 
 	custom := map[string]CustomPrice{"gpt-4o-mini": {Input: 0.1, Output: 0.2}}
-	in, out, found := PriceFor(context.Background(), resolver, custom, "openai", "gpt-4o-mini")
+	rates, found := PriceFor(context.Background(), resolver, custom, "openai", "gpt-4o-mini")
 	require.True(t, found)
-	assert.InDelta(t, 0.1, in, 1e-12)
-	assert.InDelta(t, 0.2, out, 1e-12)
+	assert.InDelta(t, 0.1, rates.Input, 1e-12)
+	assert.InDelta(t, 0.2, rates.Output, 1e-12)
 }
 
 func TestPriceFor_NoResolverNoCustom(t *testing.T) {
-	_, _, found := PriceFor(context.Background(), nil, nil, "openai", "gpt-4o-mini")
+	_, found := PriceFor(context.Background(), nil, nil, "openai", "gpt-4o-mini")
 	assert.False(t, found)
 }
 
@@ -203,11 +204,11 @@ func TestResolve_RegistryPrecedence(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			in, out, found := Resolve(context.Background(), resolver, tt.custom, tt.registry, "openai", tt.model)
+			rates, found := Resolve(context.Background(), resolver, tt.custom, tt.registry, "openai", tt.model)
 			assert.Equal(t, tt.wantFound, found)
 			if tt.wantFound {
-				assert.InDelta(t, tt.wantIn, in, 1e-12)
-				assert.InDelta(t, tt.wantOut, out, 1e-12)
+				assert.InDelta(t, tt.wantIn, rates.Input, 1e-12)
+				assert.InDelta(t, tt.wantOut, rates.Output, 1e-12)
 			}
 		})
 	}
@@ -227,4 +228,91 @@ func TestRatesFromDomain(t *testing.T) {
 	require.NotNil(t, got)
 	assert.InDelta(t, 0.2, got.Discount, 1e-12)
 	assert.InDelta(t, 0.0000015, got.Overrides["gpt-4o"].Input, 1e-12)
+}
+
+// One expression has to be correct for every provider: the adapters guarantee
+// InputTokens is the whole prompt and each cache count is a strict subset of it.
+func TestRates_CostUSD_PricesEachPromptBucketAtItsOwnRate(t *testing.T) {
+	t.Parallel()
+	// Anthropic sonnet list rates, per token.
+	r := Rates{Input: 3.00 / 1e6, Output: 15.00 / 1e6, CacheRead: 0.30 / 1e6, CacheWrite: 3.75 / 1e6}
+
+	tests := []struct {
+		name       string
+		usage      *adapter.CanonicalUsage
+		wantPrompt float64
+	}{
+		{
+			name:       "cache read: the cached share bills at a tenth",
+			usage:      &adapter.CanonicalUsage{InputTokens: 8416, OutputTokens: 4, CachedInputTokens: 8403},
+			wantPrompt: 13*(3.00/1e6) + 8403*(0.30/1e6),
+		},
+		{
+			name:       "cache write: the written share bills at a premium",
+			usage:      &adapter.CanonicalUsage{InputTokens: 8416, OutputTokens: 4, CacheWriteInputTokens: 8403},
+			wantPrompt: 13*(3.00/1e6) + 8403*(3.75/1e6),
+		},
+		{
+			name: "both buckets at once, disjoint from each other",
+			usage: &adapter.CanonicalUsage{
+				InputTokens: 1000, OutputTokens: 10,
+				CachedInputTokens: 600, CacheWriteInputTokens: 300,
+			},
+			wantPrompt: 100*(3.00/1e6) + 600*(0.30/1e6) + 300*(3.75/1e6),
+		},
+		{
+			name:       "no cache at all is the plain rate",
+			usage:      &adapter.CanonicalUsage{InputTokens: 500, OutputTokens: 10},
+			wantPrompt: 500 * (3.00 / 1e6),
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			prompt, completion := r.CostUSD(tt.usage)
+			assert.InDelta(t, tt.wantPrompt, prompt, 1e-15)
+			assert.InDelta(t, float64(tt.usage.OutputTokens)*r.Output, completion, 1e-15)
+		})
+	}
+}
+
+// An unpublished cache rate must bill at the plain input rate, which is what the
+// gateway charged before cache rates existed. Zero would silently make most of a
+// cached prompt free.
+func TestResolve_UnsetCacheRateFallsBackToInput(t *testing.T) {
+	t.Parallel()
+	resolver := catalogmocks.NewPricingResolver(t)
+	resolver.EXPECT().
+		Resolve(mock.Anything, "openai", mock.Anything).
+		Return(appcatalog.Pricing{Found: true, InputPrice: 0.000002, OutputPrice: 0.000008}).
+		Maybe()
+
+	rates, found := Resolve(context.Background(), resolver, nil, nil, "openai", "gpt-4o-mini")
+	require.True(t, found)
+	assert.InDelta(t, 0.000002, rates.CacheRead, 1e-15, "unset cache read bills as plain input")
+	assert.InDelta(t, 0.000002, rates.CacheWrite, 1e-15, "unset cache write bills as plain input")
+
+	u := &adapter.CanonicalUsage{InputTokens: 1000, OutputTokens: 0, CachedInputTokens: 900}
+	prompt, _ := rates.CostUSD(u)
+	assert.InDelta(t, 1000*0.000002, prompt, 1e-15,
+		"a model with no published cache rate costs exactly what it did before")
+}
+
+// An override that names only input and output must not make cached tokens free.
+func TestResolve_OverrideWithoutCacheRatesKeepsItsOwnInputRate(t *testing.T) {
+	t.Parallel()
+	custom := map[string]CustomPrice{"gpt-4o-mini": {Input: 0.000005, Output: 0.00002}}
+
+	rates, found := Resolve(context.Background(), nil, custom, nil, "openai", "gpt-4o-mini")
+	require.True(t, found)
+	assert.InDelta(t, 0.000005, rates.CacheRead, 1e-15)
+	assert.InDelta(t, 0.000005, rates.CacheWrite, 1e-15)
+
+	cheap := 0.0000005
+	custom2 := map[string]CustomPrice{"gpt-4o-mini": {Input: 0.000005, Output: 0.00002, CacheRead: &cheap}}
+	rates2, found2 := Resolve(context.Background(), nil, custom2, nil, "openai", "gpt-4o-mini")
+	require.True(t, found2)
+	assert.InDelta(t, cheap, rates2.CacheRead, 1e-15, "an explicit cache rate is honoured")
+	assert.InDelta(t, 0.000005, rates2.CacheWrite, 1e-15, "the unset one still falls back")
 }
