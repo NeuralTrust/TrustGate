@@ -35,12 +35,14 @@ func attrsOf(rec otellog.Record) map[string]attribute.Value {
 	return m
 }
 
+var savingsUsd = events.DecimalFloat(0.02)
+
 func fullEvent() *events.Event {
 	return &events.Event{
 		SchemaVersion: events.SchemaVersion,
 		TraceID:       "trace-123",
 		GatewayID:     "gw-1",
-		TenantID:        "team-1",
+		TenantID:      "team-1",
 		OccurredOn:    1_700_000_000_000,
 		Consumer:      events.Consumer{ID: "c-1", Name: "alice"},
 		SessionID:     "sess-1",
@@ -67,7 +69,7 @@ func fullEvent() *events.Event {
 			CachedInputTokens:     2,
 			ReasoningOutputTokens: 1,
 		},
-		Cost:    &events.Cost{PromptUsd: events.DecimalFloat(0.002), CompletionUsd: events.DecimalFloat(0.008), TotalUsd: events.DecimalFloat(0.01), Currency: "USD"},
+		Cost:    &events.Cost{PromptUsd: events.DecimalFloat(0.002), CompletionUsd: events.DecimalFloat(0.008), TotalUsd: events.DecimalFloat(0.01), SavingsUsd: &savingsUsd, Currency: "USD"},
 		Latency: events.Latency{TotalMs: 120, ProviderMs: 100, PoliciesMs: 14, GatewayMs: 6},
 		Attempts: []events.Attempt{
 			{Provider: "openai", Attempt: 1, StatusCode: 200},
@@ -106,6 +108,7 @@ func TestEventToRecord_StandardAndProprietaryCoexist(t *testing.T) {
 	assert.Equal(t, "alice", attrs["trustgate.consumer.name"].AsString())
 	assert.InDelta(t, 0.01, attrs["trustgate.cost.total_usd"].AsFloat64(), 1e-9)
 	assert.Equal(t, "USD", attrs["trustgate.cost.currency"].AsString())
+	assert.InDelta(t, 0.02, attrs["trustgate.cost.savings_usd"].AsFloat64(), 1e-9)
 	assert.Equal(t, int64(15), attrs["trustgate.usage.total_tokens"].AsInt64())
 	assert.Equal(t, int64(120), attrs["trustgate.latency.total_ms"].AsInt64())
 	assert.Equal(t, int64(100), attrs["trustgate.latency.provider_ms"].AsInt64())
@@ -214,6 +217,19 @@ func TestEventToRecord_Nil(t *testing.T) {
 	t.Parallel()
 	rec := eventToRecord(nil)
 	assert.Equal(t, "", rec.EventName())
+}
+
+func TestEventToRecord_OmitsSavingsWhenAbsent(t *testing.T) {
+	t.Parallel()
+	evt := fullEvent()
+	evt.Cost.SavingsUsd = nil
+
+	attrs := attrsOf(eventToRecord(evt))
+
+	_, hasSavings := attrs["trustgate.cost.savings_usd"]
+	assert.False(t, hasSavings)
+	_, hasCost := attrs["trustgate.cost.total_usd"]
+	assert.True(t, hasCost)
 }
 
 func TestEventToRecord_EmitsRetentionExpiry(t *testing.T) {

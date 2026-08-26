@@ -59,6 +59,19 @@ func (c *SmartRoutingConfig) Validate() error {
 	return nil
 }
 
+func (c *SmartRoutingConfig) HighestTier() (SmartRoutingTier, bool) {
+	if c == nil || len(c.Tiers) == 0 {
+		return SmartRoutingTier{}, false
+	}
+	best := c.Tiers[0]
+	for _, tier := range c.Tiers[1:] {
+		if tier.MinScore > best.MinScore {
+			best = tier
+		}
+	}
+	return best, true
+}
+
 // TierForScore returns the tier mapped to the given complexity score: the one
 // with the greatest MinScore that is not above the score. It reports false when
 // no tier applies (e.g. the score is below every threshold).

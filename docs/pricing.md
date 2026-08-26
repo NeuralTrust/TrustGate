@@ -60,3 +60,33 @@ same as summing `cost.total_usd` on telemetry events.
 Those estimates match the customer invoice only when registry `pricing`
 matches the contract (enterprise list discount and/or committed per-model
 rates). List prices from models.dev diverge from reserved/committed deals.
+
+## Smart-routing savings
+
+When a consumer's pool uses the `smart-routing` algorithm and the tier table
+chose the route, the event's `cost` object also carries `savings_usd`: the same
+token counts repriced at the **highest configured tier**, minus the actual cost.
+It lives inside `cost` rather than in a block of its own, so the counterfactual
+total is `cost.total_usd + cost.savings_usd`.
+
+The full emission rules — when the field is absent rather than zero, and why —
+live in [the OTLP metadata contract](./telemetry/otlp-metadata-contract.md#savings-semantics).
+What matters for pricing:
+
+- The baseline resolves through the same `llmcost.Resolve` ladder as the actual
+  cost, but with the **baseline tier's own registry** overlay, which is not
+  necessarily the served registry's — a tier can point anywhere in the pool.
+- `discount` applies only to catalog-resolved prices, while explicit `overrides`
+  return before it. If one leg is priced by an override and the other by a
+  discounted catalog rate, the two follow different rules.
+- "Highest tier" means the greatest `min_score`, not the highest price. Nothing
+  validates that the top tier is the most expensive model, so a ladder that puts
+  a premium model at a low threshold produces a negative `savings_usd`. That is
+  left unclamped: it surfaces the misconfiguration instead of hiding it.
+- Cached-input and reasoning-output tokens are priced at the plain rate on both
+  legs, because no separate rate exists for them anywhere in the model.
+
+It is a modelled counterfactual, not a measurement: it assumes the premium model
+would have consumed the same tokens. It will not reconcile against a provider
+invoice, and it does not cover cost-cap model downgrades, which are a different
+mechanism.
