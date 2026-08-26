@@ -16,6 +16,7 @@ package llmcost
 
 import (
 	"context"
+	"log/slog"
 	"math"
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
@@ -31,16 +32,21 @@ type CustomPrice struct {
 	// silently making them free.
 	CacheRead  *float64 `mapstructure:"cache_read" json:"cache_read,omitempty"`
 	CacheWrite *float64 `mapstructure:"cache_write" json:"cache_write,omitempty"`
+	// CacheWrite1h prices the share written with a one-hour TTL, which Anthropic
+	// bills above its five-minute default. No catalog publishes a rate for it, so
+	// it defaults to CacheWrite and only an explicit override makes it exact.
+	CacheWrite1h *float64 `mapstructure:"cache_write_1h" json:"cache_write_1h,omitempty"`
 }
 
 // Rates are the per-token rates a prompt and completion are billed at. Cached
 // and cache-written prompt tokens are sub-populations of the prompt that bill at
 // their own rate; the rest bills at Input.
 type Rates struct {
-	Input      float64
-	Output     float64
-	CacheRead  float64
-	CacheWrite float64
+	Input        float64
+	Output       float64
+	CacheRead    float64
+	CacheWrite   float64
+	CacheWrite1h float64
 }
 
 // orInput reads an unset cache rate as the plain input rate. The catalog does
@@ -54,13 +60,17 @@ func orInput(rate, input float64) float64 {
 	return rate
 }
 
-func ratesFor(input, output float64, cacheRead, cacheWrite *float64) Rates {
+func ratesFor(input, output float64, cacheRead, cacheWrite, cacheWrite1h *float64) Rates {
 	r := Rates{Input: input, Output: output, CacheRead: input, CacheWrite: input}
 	if cacheRead != nil {
 		r.CacheRead = *cacheRead
 	}
 	if cacheWrite != nil {
 		r.CacheWrite = *cacheWrite
+	}
+	r.CacheWrite1h = r.CacheWrite
+	if cacheWrite1h != nil {
+		r.CacheWrite1h = *cacheWrite1h
 	}
 	return r
 }
@@ -74,12 +84,22 @@ func (r Rates) CostUSD(u *adapter.CanonicalUsage) (promptUSD, completionUSD floa
 	}
 	cached, written := u.CachedInputTokens, u.CacheWriteInputTokens
 	plain := u.PlainInputTokens()
-	if plain == u.InputTokens {
+	if plain == u.InputTokens && cached+written > 0 {
+		slog.Warn("llmcost: usage sub-counts exceed the prompt they claim to be part of; "+
+			"billing the whole prompt at the input rate",
+			slog.Int("input_tokens", u.InputTokens),
+			slog.Int("cached_input_tokens", cached),
+			slog.Int("cache_write_input_tokens", written))
 		cached, written = 0, 0
+	}
+	written1h := u.CacheWrite1hInputTokens
+	if written1h > written {
+		written1h = written
 	}
 	promptUSD = float64(plain)*r.Input +
 		float64(cached)*r.CacheRead +
-		float64(written)*r.CacheWrite
+		float64(written-written1h)*r.CacheWrite +
+		float64(written1h)*r.CacheWrite1h
 	return promptUSD, float64(u.OutputTokens) * r.Output
 }
 
@@ -101,6 +121,7 @@ func RatesFromDomain(p *domain.Pricing) *RegistryRates {
 		rates.Overrides[slug] = CustomPrice{
 			Input: rate.Input, Output: rate.Output,
 			CacheRead: rate.CacheRead, CacheWrite: rate.CacheWrite,
+			CacheWrite1h: rate.CacheWrite1h,
 		}
 	}
 	return rates
@@ -114,13 +135,13 @@ func Resolve(ctx context.Context, resolver appcatalog.PricingResolver, custom ma
 	candidates := appcatalog.SlugCandidates(models...)
 	for _, slug := range candidates {
 		if cp, ok := BestMatch(custom, slug); ok {
-			return ratesFor(cp.Input, cp.Output, cp.CacheRead, cp.CacheWrite), true
+			return ratesFor(cp.Input, cp.Output, cp.CacheRead, cp.CacheWrite, cp.CacheWrite1h), true
 		}
 	}
 	if registry != nil {
 		for _, slug := range candidates {
 			if cp, ok := BestMatch(registry.Overrides, slug); ok {
-				return ratesFor(cp.Input, cp.Output, cp.CacheRead, cp.CacheWrite), true
+				return ratesFor(cp.Input, cp.Output, cp.CacheRead, cp.CacheWrite, cp.CacheWrite1h), true
 			}
 		}
 	}
@@ -138,12 +159,14 @@ func Resolve(ctx context.Context, resolver appcatalog.PricingResolver, custom ma
 			CacheRead:  orInput(price.CacheReadPrice, price.InputPrice),
 			CacheWrite: orInput(price.CacheWritePrice, price.InputPrice),
 		}
+		r.CacheWrite1h = r.CacheWrite
 		if registry != nil && registry.Discount > 0 {
 			factor := 1 - registry.Discount
 			r.Input *= factor
 			r.Output *= factor
 			r.CacheRead *= factor
 			r.CacheWrite *= factor
+			r.CacheWrite1h *= factor
 		}
 		return r, true
 	}

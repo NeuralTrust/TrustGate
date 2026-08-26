@@ -540,3 +540,55 @@ func TestAnthropicUsage_EncodeRestoresTheDisjointWireShape(t *testing.T) {
 	assert.Equal(t, 248, got.Usage.CacheCreationInputTokens)
 	assert.Equal(t, 64, got.Usage.OutputTokens)
 }
+
+// Anthropic streams the prompt and both cache buckets on message_start and the
+// completion on message_delta, and its documented delta shape carries only
+// output_tokens. Overwriting on the later event would erase the whole prompt.
+func TestAnthropicStreaming_LaterEventCannotEraseThePrompt(t *testing.T) {
+	a := &AnthropicAdapter{}
+	start := []byte(`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant",` +
+		`"model":"claude-sonnet-4-6","content":[],"usage":{"input_tokens":13,` +
+		`"cache_read_input_tokens":8403,"cache_creation_input_tokens":0,"output_tokens":1}}}`)
+	delta := []byte(`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":15}}`)
+
+	first, err := a.DecodeStreamChunk(start)
+	require.NoError(t, err)
+	require.NotNil(t, first.Usage)
+	assert.Equal(t, 8416, first.Usage.InputTokens, "13 fresh + 8403 cached, folded")
+
+	last, err := a.DecodeStreamChunk(delta)
+	require.NoError(t, err)
+	require.NotNil(t, last.Usage)
+	assert.Equal(t, 0, last.Usage.InputTokens, "the delta genuinely carries no prompt")
+
+	merged := MergeUsage(first.Usage, last.Usage)
+	require.NotNil(t, merged)
+	assert.Equal(t, 8416, merged.InputTokens, "the prompt survives an event that omits it")
+	assert.Equal(t, 8403, merged.CachedInputTokens, "and so does the cache bucket that discounts it")
+	assert.Equal(t, 15, merged.OutputTokens, "while the completion advances")
+	assert.Equal(t, 8431, merged.TotalTokens)
+}
+
+func TestMergeUsage_KeepsTheLargerOfEveryCount(t *testing.T) {
+	prev := &CanonicalUsage{
+		InputTokens: 100, OutputTokens: 1, TotalTokens: 101,
+		CachedInputTokens: 60, CacheWriteInputTokens: 20,
+		CacheWrite1hInputTokens: 5, ToolUseInputTokens: 3,
+		ReasoningOutputTokens: 0, ServiceTier: "standard",
+	}
+	next := &CanonicalUsage{OutputTokens: 40, ReasoningOutputTokens: 25}
+
+	got := MergeUsage(prev, next)
+	assert.Equal(t, 100, got.InputTokens)
+	assert.Equal(t, 40, got.OutputTokens)
+	assert.Equal(t, 140, got.TotalTokens, "total is raised to at least in+out")
+	assert.Equal(t, 60, got.CachedInputTokens)
+	assert.Equal(t, 20, got.CacheWriteInputTokens)
+	assert.Equal(t, 5, got.CacheWrite1hInputTokens)
+	assert.Equal(t, 3, got.ToolUseInputTokens)
+	assert.Equal(t, 25, got.ReasoningOutputTokens)
+	assert.Equal(t, "standard", got.ServiceTier)
+
+	assert.Same(t, prev, MergeUsage(prev, nil))
+	assert.Same(t, next, MergeUsage(nil, next))
+}

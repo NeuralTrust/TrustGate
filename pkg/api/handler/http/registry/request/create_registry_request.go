@@ -41,10 +41,11 @@ type PricingRequest struct {
 }
 
 type PriceOverrideRequest struct {
-	Input      float64  `json:"input"`
-	Output     float64  `json:"output"`
-	CacheRead  *float64 `json:"cache_read,omitempty"`
-	CacheWrite *float64 `json:"cache_write,omitempty"`
+	Input        float64  `json:"input"`
+	Output       float64  `json:"output"`
+	CacheRead    *float64 `json:"cache_read,omitempty"`
+	CacheWrite   *float64 `json:"cache_write,omitempty"`
+	CacheWrite1h *float64 `json:"cache_write_1h,omitempty"`
 }
 
 type MCPTargetRequest struct {
@@ -212,6 +213,7 @@ func (p *PricingRequest) ToDomain() *domain.Pricing {
 			out.Overrides[slug] = domain.PriceOverride{
 				Input: rate.Input, Output: rate.Output,
 				CacheRead: rate.CacheRead, CacheWrite: rate.CacheWrite,
+				CacheWrite1h: rate.CacheWrite1h,
 			}
 		}
 	}

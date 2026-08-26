@@ -89,10 +89,25 @@ cached prompt free, which is the worse way to be wrong. An explicit
 
 Rates differ sharply by provider, so they are never derived from a ratio: on
 current list prices Anthropic reads at 0.1x input, OpenAI's `gpt-4o` at 0.5x,
-`gpt-5` at 0.1x, xAI Grok at 0.25x. Anthropic's one-hour cache TTL bills at 2x
-input against 1.25x for the five-minute default; the share written with the long
-TTL is carried on the usage view but is priced at the single published
-cache-write rate until the catalog distinguishes them.
+`gpt-5` at 0.1x, xAI Grok at 0.25x.
+
+Anthropic's one-hour cache TTL bills above its five-minute default, and no
+catalog publishes a rate for it. The one-hour share is reported separately on the
+usage view and priced from `cache_write_1h` when an override sets it, falling
+back to the five-minute rate otherwise. Set it explicitly on any registry whose
+traffic uses the long TTL — without it those writes are under-billed, and the
+multiplier is deliberately not inferred, because it is an Anthropic fact rather
+than a universal one.
+
+Streaming providers report usage in pieces: Anthropic sends the prompt and both
+cache buckets on the first event and the completion on the last. Usage is merged
+field-wise across events, keeping the larger of each count, so an event that
+omits a field cannot erase it.
+
+If the sub-counts ever exceed the prompt they claim to be part of — which is what
+a provider silently changing its wire shape looks like — the whole prompt is
+billed at the plain input rate and a warning is logged. That is the safe
+direction for money, and it is no longer silent.
 
 ## Smart-routing savings
 

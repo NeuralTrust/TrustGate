@@ -791,7 +791,8 @@ func (p *providerInvoker) streamObserver(ctx context.Context, req *infracontext.
 			if req.Metadata == nil {
 				req.Metadata = map[string]interface{}{}
 			}
-			req.Metadata[adapter.MetadataUsageKey] = chunk.Usage
+			prev, _ := req.Metadata[adapter.MetadataUsageKey].(*adapter.CanonicalUsage)
+			req.Metadata[adapter.MetadataUsageKey] = adapter.MergeUsage(prev, chunk.Usage)
 		}
 		if requestTrace != nil {
 			requestTrace.ObserveLLMUsage(chunk.Usage)

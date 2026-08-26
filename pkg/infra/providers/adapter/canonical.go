@@ -161,6 +161,44 @@ func (u *CanonicalUsage) PlainInputTokens() int {
 	return plain
 }
 
+// MergeUsage folds a later usage report into an earlier one, keeping the larger
+// of every count. Providers stream usage in pieces and do not all repeat every
+// field: Anthropic reports the prompt and both cache buckets on message_start
+// and the completion on message_delta, so a later event that omits a field must
+// not erase what an earlier one established. Token counts within a request only
+// ever grow, which is what makes the larger value the right one to keep.
+func MergeUsage(prev, next *CanonicalUsage) *CanonicalUsage {
+	if prev == nil {
+		return next
+	}
+	if next == nil {
+		return prev
+	}
+	out := *prev
+	out.InputTokens = maxTokens(prev.InputTokens, next.InputTokens)
+	out.OutputTokens = maxTokens(prev.OutputTokens, next.OutputTokens)
+	out.TotalTokens = maxTokens(prev.TotalTokens, next.TotalTokens)
+	out.CachedInputTokens = maxTokens(prev.CachedInputTokens, next.CachedInputTokens)
+	out.CacheWriteInputTokens = maxTokens(prev.CacheWriteInputTokens, next.CacheWriteInputTokens)
+	out.CacheWrite1hInputTokens = maxTokens(prev.CacheWrite1hInputTokens, next.CacheWrite1hInputTokens)
+	out.ToolUseInputTokens = maxTokens(prev.ToolUseInputTokens, next.ToolUseInputTokens)
+	out.ReasoningOutputTokens = maxTokens(prev.ReasoningOutputTokens, next.ReasoningOutputTokens)
+	if next.ServiceTier != "" {
+		out.ServiceTier = next.ServiceTier
+	}
+	if sum := out.InputTokens + out.OutputTokens; out.TotalTokens < sum {
+		out.TotalTokens = sum
+	}
+	return &out
+}
+
+func maxTokens(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 // newCanonicalUsage returns the canonical usage view, or nil when no tokens are
 // reported. When the provider does not emit a total, it is synthesized as in+out.
 //

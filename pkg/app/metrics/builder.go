@@ -414,11 +414,14 @@ func (b *Builder) fillUsageAndCost(ctx context.Context, evt *events.Event, serve
 	}
 	u := served.Usage
 	evt.Usage = &events.Usage{
-		PromptTokens:          u.InputTokens,
-		CompletionTokens:      u.OutputTokens,
-		TotalTokens:           u.TotalTokens,
-		CachedInputTokens:     u.CachedInputTokens,
-		ReasoningOutputTokens: u.ReasoningOutputTokens,
+		PromptTokens:            u.InputTokens,
+		CompletionTokens:        u.OutputTokens,
+		TotalTokens:             u.TotalTokens,
+		CachedInputTokens:       u.CachedInputTokens,
+		CacheWriteInputTokens:   u.CacheWriteInputTokens,
+		CacheWrite1hInputTokens: u.CacheWrite1hInputTokens,
+		ToolUseInputTokens:      u.ToolUseInputTokens,
+		ReasoningOutputTokens:   u.ReasoningOutputTokens,
 	}
 	evt.Request.PromptTokens = u.InputTokens
 	evt.Response.CompletionTokens = u.OutputTokens
