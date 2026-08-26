@@ -80,6 +80,7 @@ type adminRouterParams struct {
 	UpdateRegistry         *registryhttp.UpdateRegistryHandler
 	DeleteRegistry         *registryhttp.DeleteRegistryHandler
 	TestRegistryConnection *registryhttp.TestConnectionHandler
+	ValidateOpenAPI        *registryhttp.ValidateOpenAPIHandler
 	ListRegistryTools      *registryhttp.ListRegistryToolsHandler
 
 	CreatePolicy    *policyhttp.CreatePolicyHandler
@@ -157,6 +158,7 @@ func ServerAdmin(c *container.Container) error {
 				UpdateRegistry:            p.UpdateRegistry,
 				DeleteRegistry:            p.DeleteRegistry,
 				TestRegistryConnection:    p.TestRegistryConnection,
+				ValidateOpenAPI:           p.ValidateOpenAPI,
 				ListRegistryTools:         p.ListRegistryTools,
 				CreatePolicy:              p.CreatePolicy,
 				GetPolicy:                 p.GetPolicy,

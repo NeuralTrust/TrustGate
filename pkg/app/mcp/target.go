@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
@@ -66,5 +67,13 @@ func StaticTarget(reg *registrydomain.Registry) Target {
 	if t.Auth != nil && t.Auth.Mode == registrydomain.MCPAuthModeStatic {
 		headers[t.Auth.Header] = t.Auth.Value
 	}
-	return Target{URL: t.URL, Headers: headers}
+	target := Target{
+		URL:      t.URL,
+		Headers:  headers,
+		Revision: reg.ID.String() + ":" + reg.UpdatedAt.UTC().Format("20060102150405.000"),
+	}
+	if t.Source == registrydomain.MCPSourceOpenAPI && t.OpenAPI != nil {
+		target.OpenAPI = &appopenapi.Source{SpecURL: t.OpenAPI.SpecURL, BaseURL: t.URL}
+	}
+	return target
 }

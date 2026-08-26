@@ -46,11 +46,17 @@ type PriceOverrideRequest struct {
 }
 
 type MCPTargetRequest struct {
-	Code      string            `json:"code,omitempty"`
-	URL       string            `json:"url"`
-	Transport string            `json:"transport,omitempty"`
-	Headers   map[string]string `json:"headers,omitempty"`
-	Auth      *MCPAuthRequest   `json:"auth,omitempty"`
+	Code      string                `json:"code,omitempty"`
+	Source    string                `json:"source,omitempty"`
+	URL       string                `json:"url,omitempty"`
+	Transport string                `json:"transport,omitempty"`
+	Headers   map[string]string     `json:"headers,omitempty"`
+	Auth      *MCPAuthRequest       `json:"auth,omitempty"`
+	OpenAPI   *OpenAPITargetRequest `json:"openapi,omitempty"`
+}
+
+type OpenAPITargetRequest struct {
+	SpecURL string `json:"spec_url"`
 }
 
 type MCPAuthRequest struct {
@@ -220,9 +226,13 @@ func (t *MCPTargetRequest) ToDomain() *domain.MCPTarget {
 	}
 	out := &domain.MCPTarget{
 		Code:      t.Code,
+		Source:    domain.MCPSource(t.Source),
 		URL:       t.URL,
 		Transport: domain.MCPTransport(t.Transport),
 		Headers:   t.Headers,
+	}
+	if t.OpenAPI != nil {
+		out.OpenAPI = &domain.OpenAPITarget{SpecURL: t.OpenAPI.SpecURL}
 	}
 	if t.Auth != nil {
 		out.Auth = &domain.MCPAuth{

@@ -20,6 +20,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+
+	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 )
 
 type Tool struct {
@@ -142,9 +144,11 @@ func stringField(payload map[string]json.RawMessage, key string) string {
 }
 
 type Target struct {
-	URL     string
-	Headers map[string]string
-	PinKey  string
+	URL      string
+	Headers  map[string]string
+	PinKey   string
+	Revision string
+	OpenAPI  *appopenapi.Source
 }
 
 type RPCError struct {
