@@ -541,32 +541,64 @@ func TestAnthropicUsage_EncodeRestoresTheDisjointWireShape(t *testing.T) {
 	assert.Equal(t, 64, got.Usage.OutputTokens)
 }
 
-// Anthropic streams the prompt and both cache buckets on message_start and the
-// completion on message_delta, and its documented delta shape carries only
-// output_tokens. Overwriting on the later event would erase the whole prompt.
-func TestAnthropicStreaming_LaterEventCannotEraseThePrompt(t *testing.T) {
+// Captured from the live API. message_delta repeats input_tokens and both cache
+// totals, but it does NOT repeat the cache_creation object that splits the write
+// into its 5m and 1h shares — and the 1h share bills at a premium. Overwriting on
+// the later event therefore loses the premium and under-bills the write.
+func TestAnthropicStreaming_MergeKeepsTheOneHourShareTheDeltaOmits(t *testing.T) {
 	a := &AnthropicAdapter{}
-	start := []byte(`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant",` +
-		`"model":"claude-sonnet-4-6","content":[],"usage":{"input_tokens":13,` +
-		`"cache_read_input_tokens":8403,"cache_creation_input_tokens":0,"output_tokens":1}}}`)
-	delta := []byte(`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":15}}`)
+	start := []byte(`{"type":"message_start","message":{"id":"msg_1","type":"message",` +
+		`"role":"assistant","model":"claude-sonnet-4-6","content":[],` +
+		`"usage":{"input_tokens":9,"cache_creation_input_tokens":6723,` +
+		`"cache_read_input_tokens":0,` +
+		`"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":6723},` +
+		`"output_tokens":1,"service_tier":"standard"}}}`)
+	delta := []byte(`{"type":"message_delta","delta":{"stop_reason":"end_turn"},` +
+		`"usage":{"input_tokens":9,"cache_creation_input_tokens":6723,` +
+		`"cache_read_input_tokens":0,"output_tokens":5}}`)
 
 	first, err := a.DecodeStreamChunk(start)
 	require.NoError(t, err)
 	require.NotNil(t, first.Usage)
-	assert.Equal(t, 8416, first.Usage.InputTokens, "13 fresh + 8403 cached, folded")
+	assert.Equal(t, 6732, first.Usage.InputTokens, "9 fresh + 6723 written, folded")
+	assert.Equal(t, 6723, first.Usage.CacheWrite1hInputTokens)
 
 	last, err := a.DecodeStreamChunk(delta)
 	require.NoError(t, err)
 	require.NotNil(t, last.Usage)
-	assert.Equal(t, 0, last.Usage.InputTokens, "the delta genuinely carries no prompt")
+	assert.Equal(t, 6723, last.Usage.CacheWriteInputTokens, "the delta does repeat the write total")
+	assert.Equal(t, 0, last.Usage.CacheWrite1hInputTokens, "but not the TTL split")
 
 	merged := MergeUsage(first.Usage, last.Usage)
 	require.NotNil(t, merged)
-	assert.Equal(t, 8416, merged.InputTokens, "the prompt survives an event that omits it")
-	assert.Equal(t, 8403, merged.CachedInputTokens, "and so does the cache bucket that discounts it")
-	assert.Equal(t, 15, merged.OutputTokens, "while the completion advances")
-	assert.Equal(t, 8431, merged.TotalTokens)
+	assert.Equal(t, 6732, merged.InputTokens)
+	assert.Equal(t, 6723, merged.CacheWriteInputTokens)
+	assert.Equal(t, 6723, merged.CacheWrite1hInputTokens,
+		"the premium share survives an event that does not repeat it")
+	assert.Equal(t, 5, merged.OutputTokens)
+}
+
+// Anthropic's own published streaming example shows a delta carrying only
+// output_tokens. The live API is more generous, but the merge has to hold for
+// either shape, because which one arrives is not ours to control.
+func TestAnthropicStreaming_MergeSurvivesAnOutputOnlyDelta(t *testing.T) {
+	a := &AnthropicAdapter{}
+	start := []byte(`{"type":"message_start","message":{"id":"msg_2","type":"message",` +
+		`"role":"assistant","model":"claude-sonnet-4-6","content":[],` +
+		`"usage":{"input_tokens":13,"cache_read_input_tokens":8403,"output_tokens":1}}}`)
+	delta := []byte(`{"type":"message_delta","delta":{"stop_reason":"end_turn"},` +
+		`"usage":{"output_tokens":15}}`)
+
+	first, err := a.DecodeStreamChunk(start)
+	require.NoError(t, err)
+	last, err := a.DecodeStreamChunk(delta)
+	require.NoError(t, err)
+
+	merged := MergeUsage(first.Usage, last.Usage)
+	require.NotNil(t, merged)
+	assert.Equal(t, 8416, merged.InputTokens, "the whole prompt survives")
+	assert.Equal(t, 8403, merged.CachedInputTokens, "and the discount that applies to it")
+	assert.Equal(t, 15, merged.OutputTokens)
 }
 
 func TestMergeUsage_KeepsTheLargerOfEveryCount(t *testing.T) {
