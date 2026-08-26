@@ -21,11 +21,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
+	"runtime"
 	"sync/atomic"
 	"testing"
 
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
+	infraopenapi "github.com/NeuralTrust/TrustGate/pkg/infra/openapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -127,6 +131,61 @@ func TestOpenAPIUpstreamListsAndCallsTools(t *testing.T) {
 	_, err = dialer.Connect(context.Background(), target)
 	require.NoError(t, err)
 	require.Equal(t, int32(1), compiles.Load())
+}
+
+func TestOpenAPIUpstreamCallsTrustGateAdminHealthz(t *testing.T) {
+	t.Parallel()
+	spec := readTrustGateAdminOpenAPI(t)
+	var healthCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/openapi.json":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(spec)
+		case r.Method == http.MethodGet && r.URL.Path == "/healthz":
+			healthCalls.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	dialer := NewDialerWithClient(nil, infraopenapi.NewCompilerWithClient(server.Client()), server.Client())
+	upstream, err := dialer.Connect(context.Background(), appmcp.Target{
+		Revision: "trustgate-admin:1",
+		OpenAPI: &appopenapi.Source{
+			SpecURL: server.URL + "/openapi.json",
+			BaseURL: server.URL,
+		},
+	})
+	require.NoError(t, err)
+	require.False(t, upstream.SupportsPrompts())
+	require.False(t, upstream.SupportsResources())
+
+	tools, err := upstream.ListTools(context.Background())
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(tools), 50)
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		names = append(names, tool.Name)
+	}
+	require.Contains(t, names, "get_healthz")
+
+	result, err := upstream.CallTool(context.Background(), "get_healthz", json.RawMessage(`{}`))
+	require.NoError(t, err)
+	require.Contains(t, string(result), `"status":"ok"`)
+	require.Equal(t, int32(1), healthCalls.Load())
+}
+
+func readTrustGateAdminOpenAPI(t *testing.T) []byte {
+	t.Helper()
+	_, thisFile, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "..", "docs", "openapi.json"))
+	require.NoError(t, err)
+	return data
 }
 
 func TestOpenAPIUpstreamRejectsInvalidArguments(t *testing.T) {

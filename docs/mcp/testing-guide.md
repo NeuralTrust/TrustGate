@@ -14,7 +14,7 @@ MCP **to** TrustGate; TrustGate dials upstream MCP servers **as a client**
 flowchart LR
   Agent["Agent_Cursor_Claude"] -->|"JSON-RPC MCP"| MCPPlane["TrustGate_MCP_:8082"]
   Admin["Admin_:8080"] -.->|config| MCPPlane
-  MCPPlane -->|"composer + go-sdk"| Upstream["Upstream_MCP_servers"]
+  MCPPlane -->|"composer + go-sdk"| Upstream["Upstream_MCP_or_OpenAPI_REST"]
   MCPPlane -->|"optional plugin"| Guard["TrustGuard_tool_guard"]
 ```
 
@@ -28,8 +28,12 @@ flowchart LR
 ### Admin objects
 
 1. **Gateway** — owns registries, consumers, auth, roles, policies.
-2. **Registry** (`type: mcp`) — `mcp_target.url` (+ optional auth:
-   `none` / `static` / `passthrough` / `exchange` / `forwarded`).
+2. **Registry** (`type: mcp`) — either a remote MCP URL
+   (`mcp_target.source` omitted/`mcp`) or an OpenAPI document
+   (`source: openapi` + `mcp_target.openapi.spec_url`). Auth for MCP URLs:
+   `none` / `static` / `passthrough` / `exchange` / `forwarded` /
+   `client_credentials`. OpenAPI sources: `none` / `static` /
+   `client_credentials`.
 3. **Consumer** (`type: mcp`) — binds registries; optional `toolkit`,
    `fail_mode` (`open` \| `closed`), or `routing_mode: role_based` with
    `mcp_policies` on roles.
@@ -142,6 +146,53 @@ REG_ID=$(echo "$REG" | jq -r .id)
 Transport defaults to `streamable-http`. Omit `mcp_target.auth` (or set
 `"mode":"none"`) for an open local upstream.
 
+**Option C — OpenAPI document (REST → MCP tools)**
+
+Same registry `type: mcp`. Set `mcp_target.source` to `openapi` and point
+`mcp_target.openapi.spec_url` at an OpenAPI 3 document TrustGate can fetch.
+Optional `mcp_target.url` is the API base URL (overrides `servers[0]`; Admin
+persists the resolved base there). Validate first:
+
+```bash
+curl -s -X POST "$ADMIN/v1/gateways/$GW_ID/registries/validate-openapi" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "spec_url": "http://127.0.0.1:8080/openapi.json",
+    "base_url": "http://127.0.0.1:8080"
+  }' | jq '{ok, stage, tool_count, title, warnings}'
+```
+
+Then create the registry (auth `none` / `static` / `client_credentials` only):
+
+```bash
+REG=$(curl -s -X POST "$ADMIN/v1/gateways/$GW_ID/registries" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "name": "admin-openapi",
+    "type": "mcp",
+    "weight": 1,
+    "mcp_target": {
+      "source": "openapi",
+      "url": "http://127.0.0.1:8080",
+      "openapi": {
+        "spec_url": "http://127.0.0.1:8080/openapi.json"
+      },
+      "auth": {
+        "mode": "static",
+        "header": "Authorization",
+        "value": "Bearer '"$TOKEN"'"
+      }
+    }
+  }')
+REG_ID=$(echo "$REG" | jq -r .id)
+```
+
+The Admin spec in this repo (`docs/openapi.json`) is a good compile target: serve it
+over HTTP, set `base_url` to Admin, and expect tools such as `get_healthz` and
+gateway/registry CRUD. Operations without `operationId` get synthetic names.
+OpenAPI registries expose **tools only** (empty prompts/resources). See
+https://docs.neuraltrust.ai/trustgate/mcp/openapi.
+
 ### 3.3 MCP consumer + API key
 
 An empty / omitted `toolkit` on an **inline** MCP consumer grants **full
@@ -222,8 +273,8 @@ GET on the MCP path returns **405** (POST only for JSON-RPC).
 ### Admin UI path
 
 Same objects via the frontend: gateway → **MCP** registries (“Add MCP
-server” from catalog or custom URL) → consumer type MCP → attach auth →
-call the MCP URL above.
+server” from catalog, custom MCP URL, or **OpenAPI document**) → consumer
+type MCP → attach auth → call the MCP URL above.
 
 ## 4. Real agent client (Cursor / Claude)
 
@@ -274,6 +325,7 @@ make test-functional
 | Reject unauthenticated | Omit `X-AG-API-Key` → HTTP 401 | `TestMCPServer_RejectsUnauthenticatedRequests` |
 | initialize / ping / notification | §3.4 | `TestMCPServer_InitializePingAndNotification` |
 | tools list/call (full access) | Empty toolkit, call a tool | `TestMCPServer_ToolsListAndCallWithFullAccess` |
+| OpenAPI → tools | Option C: compile Admin `docs/openapi.json`, call `get_healthz` | `TestCompilerCompilesTrustGateAdminOpenAPI`, `TestOpenAPIUpstreamCallsTrustGateAdminHealthz` |
 | Toolkit filter + aliases | Toolkit entry with `expose_as`; call alias; raw name fails | `TestMCPServer_ToolkitFiltersAndAliasesTools` |
 | Prompts / resources | `prompts/*`, `resources/*` with toolkit globs | `TestMCPServer_PromptsAndResources` |
 | Fail closed / open | Bind a dead upstream URL | `TestMCPServer_FailModeClosedRejectsWhenUpstreamIsDown`, `TestMCPServer_FailModeOpenSkipsDeadUpstream` |
