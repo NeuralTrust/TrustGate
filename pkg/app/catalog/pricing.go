@@ -19,6 +19,7 @@ import (
 	"errors"
 	"log/slog"
 	"strconv"
+	"strings"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
@@ -28,10 +29,12 @@ import (
 )
 
 type Pricing struct {
-	ModelLabel  string
-	InputPrice  float64
-	OutputPrice float64
-	Found       bool
+	ModelLabel      string
+	InputPrice      float64
+	OutputPrice     float64
+	CacheReadPrice  float64
+	CacheWritePrice float64
+	Found           bool
 }
 
 //go:generate mockery --name=PricingResolver --dir=. --output=./mocks --filename=pricing_resolver_mock.go --case=underscore --with-expecter
@@ -110,12 +113,26 @@ func (r *pricingResolver) load(ctx context.Context, providerCode, slug string) P
 	if model.InputPrice == "" && model.OutputPrice == "" {
 		return Pricing{}
 	}
+	input := parsePrice(model.InputPrice)
 	return Pricing{
-		ModelLabel:  model.DisplayName,
-		InputPrice:  parsePrice(model.InputPrice),
-		OutputPrice: parsePrice(model.OutputPrice),
-		Found:       true,
+		ModelLabel:      model.DisplayName,
+		InputPrice:      input,
+		OutputPrice:     parsePrice(model.OutputPrice),
+		CacheReadPrice:  coalescePrice(model.CacheReadPrice, input),
+		CacheWritePrice: coalescePrice(model.CacheWritePrice, input),
+		Found:           true,
 	}
+}
+
+// coalescePrice reads an unpublished cache rate as "bills at the plain input
+// rate", which is what the gateway charged for those tokens before cache rates
+// existed. Falling back to zero would silently make most of a cached prompt
+// free, which is the worse way to be wrong about money.
+func coalescePrice(raw string, fallback float64) float64 {
+	if strings.TrimSpace(raw) == "" {
+		return fallback
+	}
+	return parsePrice(raw)
 }
 
 func parsePrice(raw string) float64 {
