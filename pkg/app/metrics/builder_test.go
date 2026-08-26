@@ -711,6 +711,46 @@ func TestBuilder_SavingsAppliesBaselineRegistryOverlay(t *testing.T) {
 // Cached and reasoning tokens are sub-counts with no rate of their own, so both
 // legs must multiply the same full input/output counts or the delta is not a
 // like-for-like comparison.
+// The baseline deliberately prices the whole prompt at the plain input rate while
+// the served leg honours the cache rates. A route that was never taken had no
+// warm cache to read from, so the counterfactual cannot inherit the served
+// request's cache discount. This asymmetry is the largest single lever on the
+// reported figure — on a mostly-cached prompt it is the difference between a ~10x
+// and a ~1x saving — so it is pinned here rather than left to be "tidied up" by a
+// later reader who notices the two legs disagree.
+func TestBuilder_SavingsBaselineDoesNotInheritTheServedCacheDiscount(t *testing.T) {
+	pricing := savingsPricing()
+	cheap := pricing["openai:gpt-4o-mini"]
+	cheap.CacheReadPrice = 0.000000015
+	pricing["openai:gpt-4o-mini"] = cheap
+	top := pricing["openai:gpt-4o"]
+	top.CacheReadPrice = 0.00000025
+	pricing["openai:gpt-4o"] = top
+
+	b := newBuilderWithPricing(pricing)
+	rt := savingsTrace(func(a *trace.LLMAttrs) { a.Usage.CachedInputTokens = 8 })
+
+	evt := b.Build(context.Background(), rt, savingsRequest(), savingsResponse(),
+		time.UnixMilli(1), time.UnixMilli(2))
+
+	require.NotNil(t, evt.Cost)
+	require.NotNil(t, evt.Cost.SavingsUsd)
+
+	served := 2*0.00000015 + 8*0.000000015 + 20*0.0000006
+	assert.InDelta(t, served, float64(evt.Cost.TotalUsd), 1e-15,
+		"the served leg must bill its cached share at the cache read rate")
+
+	baseline := 10*0.0000025 + 20*0.00001
+	assert.InDelta(t, baseline-served, float64(*evt.Cost.SavingsUsd), 1e-15,
+		"the baseline must price all 10 prompt tokens at the plain input rate")
+
+	warm := (2*0.0000025 + 8*0.00000025 + 20*0.00001) - served
+	assert.InDelta(t, 8*(0.0000025-0.00000025), float64(*evt.Cost.SavingsUsd)-warm, 1e-15,
+		"the gap to a cache-aware baseline is exactly the cached share repriced "+
+			"from the plain input rate down to the cache read rate; how far that "+
+			"moves the total depends on the prompt-to-completion mix")
+}
+
 func TestBuilder_SavingsUsesSameTokenCountsAsCost(t *testing.T) {
 	b := newBuilderWithPricing(savingsPricing())
 	rt := savingsTrace(func(a *trace.LLMAttrs) {

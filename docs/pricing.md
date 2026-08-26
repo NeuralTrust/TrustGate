@@ -131,8 +131,17 @@ What matters for pricing:
   validates that the top tier is the most expensive model, so a ladder that puts
   a premium model at a low threshold produces a negative `savings_usd`. That is
   left unclamped: it surfaces the misconfiguration instead of hiding it.
-- Cached-input and reasoning-output tokens are priced at the plain rate on both
-  legs, because no separate rate exists for them anywhere in the model.
+- The baseline prices the whole prompt at the plain input rate, including the
+  share the served request billed as a cache read or write. This is deliberate:
+  the baseline is a route that was never taken, so it had no warm cache to read
+  from. Pricing the counterfactual as if it inherited the served route's cache
+  would credit it a discount it could not have earned.
+- That assumption biases the figure **upward**, and how far depends on the
+  token mix. On a prompt-dominated request that is mostly a cache hit it is worth
+  roughly 10x the reported saving; on an output-dominated one it barely moves.
+  The gap is exactly the cached share repriced from the plain input rate down to
+  the baseline's cache read rate. It is the honest reading of a cold
+  counterfactual, not a conservative one, and it should be read as such.
 
 It is a modelled counterfactual, not a measurement: it assumes the premium model
 would have consumed the same tokens. It will not reconcile against a provider
