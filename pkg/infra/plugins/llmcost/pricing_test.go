@@ -390,4 +390,37 @@ func TestRates_CostUSD_PricesTheOneHourCacheWriteShare(t *testing.T) {
 		prompt, _ := r.CostUSD(bad)
 		assert.InDelta(t, 90*base+10*write1h, prompt, 1e-15)
 	})
+
+	// Sub-counts that exceed the prompt they claim to be part of mean an adapter
+	// folded a disjoint wire count wrongly. PlainInputTokens then reports the whole
+	// prompt, so the cache shares have to be dropped rather than added on top of
+	// it: charging both would bill the cached tokens twice. This is the safety net
+	// for every adapter that has not been live-verified yet, so it is pinned.
+	t.Run("sub-counts larger than the prompt bill the prompt once, not twice", func(t *testing.T) {
+		read := 0.30 / 1e6
+		r := ratesFor(base, 0, &read, &write5m, nil)
+		impossible := &adapter.CanonicalUsage{
+			InputTokens: 100, CachedInputTokens: 90, CacheWriteInputTokens: 80,
+		}
+
+		prompt, _ := r.CostUSD(impossible)
+
+		assert.InDelta(t, 100*base, prompt, 1e-15,
+			"the whole prompt at the plain rate, with the cache shares dropped")
+		assert.Less(t, prompt, 100*base+90*read+80*write5m,
+			"adding the sub-counts on top of the full prompt would double-bill them")
+	})
+
+	t.Run("sub-counts that fit are still priced at their own rates", func(t *testing.T) {
+		read := 0.30 / 1e6
+		r := ratesFor(base, 0, &read, &write5m, nil)
+		ok := &adapter.CanonicalUsage{
+			InputTokens: 100, CachedInputTokens: 60, CacheWriteInputTokens: 20,
+		}
+
+		prompt, _ := r.CostUSD(ok)
+
+		assert.InDelta(t, 20*base+60*read+20*write5m, prompt, 1e-15,
+			"the clamp must not fire on a legitimate breakdown")
+	})
 }
