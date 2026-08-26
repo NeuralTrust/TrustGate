@@ -21,6 +21,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
@@ -100,6 +103,51 @@ func TestCompilerCompilesOperationsIntoTools(t *testing.T) {
 	require.Contains(t, properties, "name")
 	require.Contains(t, properties, "age")
 	require.ElementsMatch(t, []any{"name"}, schema["required"])
+}
+
+func TestCompilerCompilesTrustGateAdminOpenAPI(t *testing.T) {
+	t.Parallel()
+	spec := readTrustGateAdminOpenAPI(t)
+	var requested string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requested = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(spec)
+	}))
+	defer server.Close()
+
+	document, err := NewCompilerWithClient(server.Client()).Compile(context.Background(), appopenapi.Source{
+		SpecURL: server.URL + "/openapi.json",
+		BaseURL: server.URL,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "/openapi.json", requested)
+	require.Equal(t, "3.0.0", document.Version)
+	require.Equal(t, "TrustGate Admin API", document.Title)
+	require.Equal(t, server.URL, document.BaseURL)
+	require.GreaterOrEqual(t, len(document.Operations), 50)
+	require.LessOrEqual(t, len(document.Operations), maxCompiledOperations)
+
+	byRoute := make(map[string]appopenapi.Operation, len(document.Operations))
+	for _, operation := range document.Operations {
+		byRoute[operation.Method+" "+operation.Path] = operation
+	}
+	require.Contains(t, byRoute, "GET /healthz")
+	require.Contains(t, byRoute, "POST /v1/gateways")
+	require.Contains(t, byRoute, "POST /v1/gateways/{gateway_id}/registries/validate-openapi")
+	require.NotEmpty(t, byRoute["GET /healthz"].Name)
+	require.NotEmpty(t, byRoute["GET /healthz"].OutputSchema)
+}
+
+func readTrustGateAdminOpenAPI(t *testing.T) []byte {
+	t.Helper()
+	_, thisFile, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "docs", "openapi.json"))
+	require.NoError(t, err)
+	require.Greater(t, len(data), 1024)
+	require.LessOrEqual(t, len(data), maxSpecBytes)
+	return data
 }
 
 func TestCompilerReportsFetchAndParseStages(t *testing.T) {
