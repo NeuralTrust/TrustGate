@@ -57,11 +57,17 @@ immutable version rows with a content hash give the strongest governance story
 the serving path. Size is bounded by construction (skills are text-first; enforce a
 per-version size cap, reject binaries above it).
 
-**Q2 — How do agents consume governed skills?** The hard constraint: today's agent
-harnesses discover skills by scanning local directories for `SKILL.md` files at
-startup and preloading their name/description into the system prompt. No mainstream
-harness pulls skills from a remote endpoint natively. So the gateway must feed that
-disk contract rather than replace it. Two channels, in priority order:
+**Q2 — How do agents consume governed skills?** The deployed base: agent harnesses
+discover skills by scanning local directories for `SKILL.md` files at startup and
+preloading their name/description into the system prompt. That disk contract must be
+fed, not replaced. But remote consumption is no longer hypothetical: **SEP-2640
+("Skills over MCP", extension `io.modelcontextprotocol/skills`)** standardizes serving
+skills over MCP, shipped as part of the 2026-07-28 MCP spec revision, and adoption has
+started — ChatGPT's MCP-server plugin flow imports skills per SEP-2640 (broadly
+available since Aug 2026), fast-agent supports the `skills/list`/`skills/get` flow
+with digest verification, GitHub's MCP server and official SDKs (TypeScript, PHP) have
+implementations, and Anthropic has prototyped host support in Claude Code. See the
+dedicated SEP-2640 section below. Two channels, in priority order:
 
 1. **HTTP sync channel (primary — feeds the disk contract):** a read-only endpoint on
    the MCP plane (`GET /{consumer_slug}/skills` manifest with codes, pinned versions,
@@ -72,15 +78,20 @@ disk contract rather than replace it. Two channels, in priority order:
    agent then finds ordinary `SKILL.md` files and never talks to the gateway. Hashes
    make sync idempotent and tamper-evident; revocation propagates on the next sync,
    so running it at session start bounds staleness to one session.
-2. **MCP channel (additive for closed runtimes, primary for custom agents):** expose
-   approved skills on the existing consumer endpoint as MCP resources
-   (`skill://{code}/SKILL.md`, `skill://{code}/{path}`) plus two virtual gateway tools
-   (`list_skills`, `load_skill`), with the same auth, toolkit filtering, plugins, and
-   telemetry. The tool result is plain markdown the model consumes as context, but a
-   closed harness (Cursor, Claude Code) will not auto-preload MCP-served skill
-   metadata the way it does for disk skills — the model must decide to call the tool.
-   That limitation disappears when the developer controls the loop; see the recipe
-   below.
+2. **MCP channel — implement SEP-2640, not ad-hoc tools:** the consumer's virtual MCP
+   server declares the `io.modelcontextprotocol/skills` capability and serves the
+   standard binding: `skills/list` / `skills/get` for discovery (entries carry the
+   verbatim frontmatter plus a `{uri, digest}` resource manifest), every skill file
+   addressable as a `skill://{code}/{path}` resource via plain `resources/read`, and
+   optional archive form for atomic multi-file delivery — all behind the same auth,
+   toolkit filtering, plugins, and telemetry. SEP-conformant hosts (ChatGPT import
+   today; Claude Code prototyped) merge MCP-served skills into their native skill
+   registry, which shrinks the closed-harness gap over time. For harnesses that
+   predate the extension, the gateway can keep a thin `load_skill` helper tool as a
+   compatibility fallback — to such clients, SEP skills are just ordinary resources
+   anyway (the extension adds no new protocol requirements for them). The SEP also
+   blesses the server-`instructions` pointer we relied on: a server MAY direct the
+   agent to skill URIs from `initialize.instructions` with no discovery machinery.
 
 **Integration recipe per agent type:**
 
@@ -89,42 +100,45 @@ disk contract rather than replace it. Two channels, in priority order:
   talks to the gateway.
 - **Frameworks that implement the agentskills.io standard (e.g. Claude Agent SDK):**
   also channel 1 — point the SDK's skill directory at the sync target.
+- **SEP-2640-conformant hosts (ChatGPT import today, more coming):** channel 2 with
+  zero custom code — the host sees the `io.modelcontextprotocol/skills` capability on
+  the consumer's virtual MCP server, calls `skills/list`, and merges the entries into
+  its native skill registry alongside filesystem skills.
 - **Fully custom loops:** channel 2, over the same MCP connection the agent already
   holds for tools. Concretely: an MCP consumer already presents itself to the agent
   as one virtual MCP server at `POST /{consumer_slug}/mcp`, whose `tools/list` is the
-  toolkit-filtered union of the upstream registries. The proposal appends two
-  gateway-answered entries to that same list — no upstream involved, no new endpoint,
-  auth, or client:
+  toolkit-filtered union of the upstream registries. The gateway additionally answers
+  the SEP-2640 surface itself — no upstream involved, no new endpoint, auth, or
+  client:
 
   ```
-  tools/list today:        tools/list with skills:
-    asana_create_task        asana_create_task
-    github_search_issues     github_search_issues
-                             list_skills   (gateway-served)
-                             load_skill    (gateway-served)
+  today:                        with skills (SEP-2640):
+    initialize                    initialize  → capabilities.extensions
+    tools/list → upstream tools                 ["io.modelcontextprotocol/skills"]
+    tools/call                    skills/list → governed skill entries (gateway-served)
+    resources/*  → upstream       skills/get  → one entry + {uri, digest} manifest
+                                  resources/read skill://{code}/… (gateway-served)
   ```
 
   "Loading a skill" for an LLM just means getting the `SKILL.md` markdown into its
-  context; a `load_skill` tool result achieves that identically to a disk read. Note
-  the invocation pattern mirrors native disk skills exactly — this is the standard's
+  context; a `resources/read` result achieves that identically to a disk read. The
+  invocation pattern mirrors native disk skills exactly — this is the standard's
   progressive disclosure, not a gateway artifact:
 
-  | | Native disk skills | Gateway-served skills |
+  | | Native disk skills | Gateway-served skills (SEP-2640) |
   |---|---|---|
-  | Metadata in system prompt | harness preloads it when scanning directories | bootstrap calls `list_skills` once, or zero calls via `initialize.instructions` (below) |
-  | Full `SKILL.md` body | file-read tool call when the model deems it relevant | `load_skill` tool call when the model deems it relevant |
-  | Linked files | further file reads on demand | `skill://` resource reads on demand |
+  | Metadata in system prompt | harness preloads it when scanning directories | bootstrap calls `skills/list` once, or zero calls via `initialize.instructions` (spec'd pointer) |
+  | Full `SKILL.md` body | file-read tool call when the model deems it relevant | `resources/read skill://…/SKILL.md` (or a `load_skill` helper tool) when relevant |
+  | Linked files | further file reads on demand | sibling `skill://` resource reads on demand |
 
   Metadata preload does not require the model to act: either the loop calls
-  `list_skills` deterministically at session boot (one programmatic MCP request,
-  pre-filtered by the consumer/role allowlist) and injects the result into the system
-  prompt, or — cheaper — the gateway embeds the allowed skills' names/descriptions in
-  the `instructions` field of the MCP `initialize` response, which most harnesses
-  (including closed ones like Cursor and Claude Code) append to the system prompt
-  automatically. The `instructions` route needs zero client code and narrows the
-  closed-harness limitation: even without disk sync, such runtimes would see the
-  skill index and could fetch bodies via `load_skill`. The model only ever *chooses*
-  to invoke `load_skill`, exactly as it chooses to read a `SKILL.md` from disk.
+  `skills/list` deterministically at session boot (one programmatic MCP request,
+  pre-filtered by the consumer/role allowlist; official SDKs ship `list_skills` /
+  `read_skill_uri` wrappers) and injects the result into the system prompt, or —
+  cheaper — the gateway points at skill URIs from `initialize.instructions`, which
+  SEP-2640 explicitly defines as a discovery mechanism and most harnesses append to
+  the system prompt automatically. The model only ever *chooses* to read a skill,
+  exactly as it chooses to read a `SKILL.md` from disk.
 
   This path needs no filesystem (a better fit for ephemeral/serverless agents), and
   every load passes through plugins and telemetry. A custom loop *may* instead sync
@@ -132,7 +146,8 @@ disk contract rather than replace it. Two channels, in priority order:
   it would still have to implement the metadata preload itself, so the MCP path is
   usually less code.
 
-Rule of thumb: closed runtimes that scan disk → HTTP sync; loops you control → MCP.
+Rule of thumb: closed runtimes that scan disk → HTTP sync; SEP-2640 hosts and loops
+you control → MCP.
 
 **Sync strategies (channel 1).** Two axes: what triggers the sync, and how it
 materializes files safely.
@@ -175,14 +190,80 @@ The reference implementation can be a ~30-line curl+jq script or a
 `trustgate skills sync` subcommand; Phase 1 commits only to documenting the
 reference flow, not to maintaining a client.
 
+### Skills over MCP — SEP-2640, the standard binding for channel 2
+
+**What it is.** [SEP-2640 "Skills Extension"](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640)
+(Extensions Track, developed by the MCP Skills Over MCP Working Group, extension id
+`io.modelcontextprotocol/skills`) defines how Agent Skills are served over MCP. The
+skill *format* stays delegated to agentskills.io; the SEP is a pure transport binding.
+A v1 shipped with the 2026-07-28 MCP spec revision; earlier drafts used a
+`skill://index.json` well-known resource, superseded by protocol methods. Current
+surface:
+
+- **Capability:** servers declare `capabilities.extensions["io.modelcontextprotocol/skills"]`
+  at `initialize`.
+- **Discovery:** paginated `skills/list` (entries mirror the `SKILL.md` frontmatter
+  verbatim and carry a complete `{uri, digest}` resource manifest) and `skills/get`
+  (one entry by URI — works for skills that are served but deliberately unlisted).
+  Enumeration is optional: a URI is always directly readable, and hosts must not
+  treat an empty listing as proof of absence.
+- **Reading:** every skill file is an ordinary MCP resource,
+  `skill://<skill-path>/<file-path>` (final path segment must equal the frontmatter
+  `name`; `SKILL.md` explicit in the URI), read via standard `resources/read`.
+  Optional `.tar.gz`/`.zip` archive form delivers a multi-file skill atomically.
+- **Integrity:** SHA-256 digests in the manifest; clients like fast-agent verify
+  every downloaded file against its declared digest before writing local copies.
+  Digest rotation under a stable name is the defined trigger for revoking a
+  persisted approval ("content-bound approval").
+- **Instructions pointer:** a server may direct agents to skill URIs from
+  `initialize.instructions` — spec'd, no discovery machinery needed.
+- **Security posture:** skill content is untrusted model input; hosts must never
+  auto-execute anything a skill declares (hooks, scripts) without explicit opt-in;
+  provenance should be shown per server.
+
+**Adoption (as of Aug 2026).** OpenAI's ChatGPT plugin flow imports skills from MCP
+servers per SEP-2640 (announced broadly available 2026-08-04); fast-agent implements
+the `skills/list`/`skills/get` flow as an integrity-checked installer; GitHub's MCP
+server, the official TypeScript and PHP SDKs, and host prototypes for gemini-cli,
+goose, and codex exist; Anthropic has prototyped Claude Code host support internally.
+Status caveat: the SEP is still formally in the Extensions Track review process and
+the July revision broke early index.json adopters — churn is real, so the binding
+should live in one adapter layer.
+
+**Why this matters for TrustGate specifically:**
+
+1. **Phase 2 becomes "implement SEP-2640", not "invent tools".** The Composer's
+   virtual skills provider should answer `skills/list`/`skills/get` and serve
+   `skill://` resources; a `load_skill` helper tool remains only as a fallback for
+   pre-SEP, tool-only harnesses.
+2. **Instant client ecosystem.** A conformant TrustGate consumer endpoint is
+   immediately consumable by ChatGPT's importer, fast-agent, and every host that
+   adopts the extension — no TrustGate-specific client code.
+3. **The digest model matches ours.** SEP manifests carry per-file SHA-256 digests;
+   our immutable hashed versions map straight onto them, and "content-bound
+   approval" is exactly our pin semantics seen from the client side.
+4. **A spec'd slot for governance metadata.** The Working Group reserved the
+   `io.modelcontextprotocol.skills/` `_meta` prefix as a neutral attachment point
+   where *relaying gateways* can stamp provenance or verification metadata (e.g. a
+   scan verdict keyed to the digest) as skills pass through — the gateway role is
+   explicitly anticipated by the spec discussion, including proposals for signed
+   scan attestations keyed by skill digest.
+5. **Governance is deliberately out of the SEP's scope.** The spec settles transport
+   and integrity but explicitly leaves approval, allowlisting, and verification to
+   the ecosystem — which is precisely the layer TrustGate provides (toolkit
+   filtering, roles, review workflow, plugins, audit).
+
 **Q3 — What is the approval workflow?** Keep it minimal and reuse existing shapes:
 skill versions are immutable and start `pending`; an admin transitions them to
 `approved` (or `rejected`); only `approved` versions are servable; the gateway-level
 enablement (the registry analog) **pins one approved version**. Updating = ingest new
 version → review → repoint the pin. Rollback = repoint to the previous approved
 version. Content scanning (prompt-injection / malicious-script heuristics) fits the
-existing plugin architecture as a `pre_response`-style check on `load_skill`/resource
-reads, or as an ingestion-time check — NeuralTrust's trustguard is the obvious engine.
+existing plugin architecture as a `pre_response`-style check on skill
+`resources/read`/`skills/*` calls, or as an ingestion-time check — NeuralTrust's
+trustguard is the obvious engine. SEP-2640's reserved
+`io.modelcontextprotocol.skills/` `_meta` prefix gives the scan verdict a
+standards-blessed place to travel with the skill entry, keyed to its digest.
 
 **Q4 — New top-level domain or overload `Registry`?** New domain. `Registry` models a
 *connection to an upstream*; a skill is *content we host*. Overloading `MCPTarget` with

@@ -50,20 +50,19 @@ are materialized from, not a new discovery mechanism the agent must learn.
   gateway. Revocations and pin changes propagate on the next sync (run it at session
   start — the same moment agents rescan skills — to keep the staleness window to one
   session).
-- **MCP channel (primary for custom agents, additive for closed runtimes)** — the
-  consumer endpoint also exposes `list_skills` (names + descriptions only),
-  `load_skill` (full `SKILL.md`), and `skill://{code}/{path}` resources. Metadata
-  preload never depends on the model: either the loop calls `list_skills` once at
-  session boot (deterministic bootstrap code), or the gateway embeds the allowed
-  skills' names/descriptions in the `initialize.instructions` field, which most
-  harnesses — including closed ones — append to the system prompt automatically.
-  The model only invokes `load_skill` when it deems a skill relevant, mirroring how
-  native disk skills load the body via a file-read tool call (the standard's
-  progressive disclosure). No filesystem needed (well suited to ephemeral/serverless
-  agents). Remaining limitation for closed harnesses (Cursor, Claude Code): without
-  disk sync they rely on honoring `initialize.instructions` for discovery; disk sync
-  stays the primary channel for them. Rule of thumb: closed runtimes that scan disk
-  → HTTP sync; loops you control → MCP.
+- **MCP channel (standard binding: SEP-2640 "Skills over MCP")** — the consumer's
+  virtual MCP server declares the `io.modelcontextprotocol/skills` extension and
+  serves the spec'd surface: `skills/list` / `skills/get` for discovery (frontmatter
+  verbatim + `{uri, digest}` resource manifests), every skill file readable as a
+  `skill://{code}/{path}` resource via standard `resources/read`, optional archive
+  form, and `initialize.instructions` pointers (all spec'd). SEP-conformant hosts —
+  ChatGPT's MCP skill import is live, Claude Code host support is prototyped — merge
+  gateway-served skills into their native registry with zero custom code; custom
+  loops call `skills/list` once at boot (SDK wrappers exist) and read bodies on
+  demand, mirroring native progressive disclosure. A thin `load_skill` helper tool
+  remains only as a fallback for pre-SEP, tool-only harnesses. No filesystem needed
+  (well suited to ephemeral/serverless agents). Rule of thumb: closed runtimes that
+  scan disk → HTTP sync; SEP-2640 hosts and loops you control → MCP.
 - Every fetch on either channel is attributable (principal, skill, version, hash)
   through the existing telemetry/metrics plane; plugins (rate limiting, trustguard)
   run on skill reads like any other MCP call.
@@ -88,9 +87,14 @@ Risks).
   via upload and Git-import, admin CRUD under `/v1/gateways/:gw/skills`, per-gateway
   enable+pin, toolkit `skill` entry kind, authenticated
   `GET /{consumer_slug}/skills` manifest + file download on the MCP plane.
-- **Phase 2 — MCP-native exposure:** virtual skills provider in the Composer
-  (`list_skills` / `load_skill` tools, `skill://` resources), toolkit-filtered,
-  plugin-wrapped, telemetered.
+- **Phase 2 — MCP-native exposure per SEP-2640:** virtual skills provider in the
+  Composer implementing the `io.modelcontextprotocol/skills` extension —
+  capability declaration, `skills/list`/`skills/get` with digest manifests,
+  `skill://` resources over `resources/read`, `initialize.instructions` pointers —
+  toolkit-filtered, plugin-wrapped, telemetered; plus a `load_skill` helper tool as
+  fallback for pre-SEP harnesses. The SEP binding is isolated in one adapter layer
+  (the extension is still Extensions Track and has already had one breaking
+  revision).
 - **Phase 3 — curated catalog + scanning:** `seed/skills-catalog/` embedded seed with
   `GET /v1/skills-catalog` (mirroring `seed/mcp-catalog/`), trustguard-based content
   scan at ingestion and/or on read, adoption metrics.
@@ -137,9 +141,11 @@ version not served, toolkit-excluded skill invisible, hash stability).
   directories Cursor/Claude Code already scan. If the sync never runs, the agent
   starts exactly as today (minus those skills); there is no failure mode that breaks
   a session.
-- **MCP channel uses only core protocol primitives:** tools, resources, and
-  `initialize.instructions` are all in the MCP spec. Clients that ignore
-  `instructions` degrade gracefully (no skill index, no error).
+- **MCP channel follows the official extension (SEP-2640):** `skills/list`,
+  `skills/get`, `skill://` resources, and `initialize.instructions` pointers are the
+  spec'd Skills-over-MCP binding. Clients without the extension see skills as
+  ordinary resources (the SEP adds no protocol requirements for them) and degrade
+  gracefully.
 - **Closed by default:** skill tools/resources appear in a consumer's surface only
   when its toolkit gains `skill` entries. Existing consumers observe zero change in
   `tools/list` until an admin opts in — the same semantics the toolkit already
@@ -152,8 +158,9 @@ version not served, toolkit-excluded skill invisible, hash stability).
 
 | Risk | Likelihood | Mitigation |
 |------|------------|------------|
-| Agents ignore the MCP channel (disk-based discovery dominates) | Med | Phase 1 ships the HTTP sync manifest first; MCP channel is additive |
-| Skill scripts execute outside gateway enforcement | High (inherent) | Review + scan + immutable hashes; document the boundary explicitly |
+| Closed harnesses lag on SEP-2640 host support (disk discovery still dominates) | Med | Phase 1 ships the HTTP sync manifest first; MCP channel is additive and gains hosts over time (ChatGPT import already live) |
+| SEP-2640 churn (Extensions Track; July revision already broke index.json adopters) | Med | Isolate the binding in one adapter layer; digests and `skill://` scheme are the stable core |
+| Skill scripts execute outside gateway enforcement | High (inherent) | Review + scan + immutable hashes; SEP itself mandates no implicit execution by hosts; document the boundary explicitly |
 | Content storage growth (assets-heavy skills) | Low | Text-first size cap per version; reject oversized/binary payloads |
 | Agent Skills spec evolves (new frontmatter fields) | Med | Store the folder verbatim; validate only `name`/`description`; hash the bytes |
 | Review workflow too heavy for small teams | Med | Single-transition state machine; auto-approve policy flag per gateway can come later |
@@ -182,7 +189,10 @@ existing MCP/LLM behavior changes.
 - [ ] A consumer without a `skill` toolkit entry sees no skills on either channel.
 - [ ] `GET /{consumer_slug}/skills` manifest hashes match served bytes; sync is
       idempotent.
-- [ ] `list_skills` returns names/descriptions only; `load_skill` and `skill://`
-      resources return full content, with plugins and telemetry applied.
+- [ ] The consumer endpoint declares `io.modelcontextprotocol/skills`; `skills/list`
+      returns allowlisted entries with digest manifests; `skill://` resources return
+      full content via `resources/read` — with plugins and telemetry applied. A
+      SEP-2640 client (e.g. fast-agent) can install a governed skill end-to-end with
+      digest verification passing.
 - [ ] Role-based consumers get the union of role skill allowlists (RoleScoper parity).
 - [ ] `-race`-clean unit + functional tests pass.
