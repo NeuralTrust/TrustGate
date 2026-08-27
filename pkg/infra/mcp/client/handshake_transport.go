@@ -42,6 +42,7 @@ type handshakeRoundTripper struct {
 	headers                 map[string]string
 	transport               http.RoundTripper
 	legacyFallback          bool
+	protocolVersion         string
 	discoverLegacyCandidate atomic.Bool
 	initializeBadRequest    atomic.Bool
 	unauthorizedResponses   atomic.Uint64
@@ -53,8 +54,19 @@ func (t *handshakeRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 	}
 
 	method, id, ok := handshakeRequest(req)
-	if t.legacyFallback && ok && method == methodServerDiscover {
-		return rejectDiscover(req, id)
+	if t.legacyFallback && ok {
+		switch method {
+		case methodServerDiscover:
+			return rejectDiscover(req, id)
+		case methodInitialize:
+			if t.protocolVersion != "" {
+				offered, err := withProtocolVersion(req, t.protocolVersion)
+				if err != nil {
+					return nil, err
+				}
+				req = offered
+			}
+		}
 	}
 
 	resp, err := t.transport.RoundTrip(req)
@@ -163,6 +175,72 @@ func handshakeRequest(req *http.Request) (string, json.RawMessage, bool) {
 		return "", nil, false
 	}
 	return envelope.Method, envelope.ID, true
+}
+
+// withProtocolVersion returns a copy of an initialize request offering the
+// given protocol revision. The revision is rewritten on the wire because the
+// SDK keeps the equivalent client option unexported, so the version it offers
+// on its legacy path cannot be chosen by a caller.
+func withProtocolVersion(req *http.Request, version string) (*http.Request, error) {
+	if req.GetBody == nil {
+		return nil, errors.New("intercepted MCP initialize request has no replayable body")
+	}
+	body, err := req.GetBody()
+	if err != nil {
+		return nil, err
+	}
+	data, readErr := io.ReadAll(io.LimitReader(body, maxHandshakeBody+1))
+	closeErr := body.Close()
+	switch {
+	case readErr != nil:
+		return nil, readErr
+	case closeErr != nil:
+		return nil, closeErr
+	case len(data) > maxHandshakeBody:
+		return nil, errors.New("intercepted MCP initialize request body is too large")
+	}
+
+	rewritten, err := rewriteProtocolVersion(data, version)
+	if err != nil {
+		return nil, err
+	}
+	if req.Body != nil {
+		if err := req.Body.Close(); err != nil {
+			return nil, err
+		}
+	}
+
+	offered := req.Clone(req.Context())
+	offered.Body = io.NopCloser(bytes.NewReader(rewritten))
+	offered.ContentLength = int64(len(rewritten))
+	offered.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(rewritten)), nil
+	}
+	return offered, nil
+}
+
+func rewriteProtocolVersion(data []byte, version string) ([]byte, error) {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return nil, err
+	}
+	params := map[string]json.RawMessage{}
+	if raw, ok := envelope["params"]; ok {
+		if err := json.Unmarshal(raw, &params); err != nil {
+			return nil, err
+		}
+	}
+	encoded, err := json.Marshal(version)
+	if err != nil {
+		return nil, err
+	}
+	params["protocolVersion"] = encoded
+	rawParams, err := json.Marshal(params)
+	if err != nil {
+		return nil, err
+	}
+	envelope["params"] = rawParams
+	return json.Marshal(envelope)
 }
 
 func rejectDiscover(req *http.Request, id json.RawMessage) (*http.Response, error) {
