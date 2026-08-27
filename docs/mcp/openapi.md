@@ -174,9 +174,7 @@ TrustGate-OpenAPI/1.0`). It must reach that URL.
   documentation/benchmark ranges, and **literal** private IP hosts.
 - **Cluster DNS:** names such as `agentgateway-admin.dev.neuraltrust.ai` often
   resolve to RFC1918 or CGNAT (`100.64/10`). Those destinations are allowed
-  for FQDNs so in-cluster Admin/TrustGuard specs work. If Validate OpenAPI
-  fails at `fetch` with “private or reserved addresses”, the running gateway
-  is still on the older always-block policy — upgrade, then retry.
+  for FQDNs so in-cluster Admin/TrustGuard specs work.
 - Redirects: max 3, same host only.
 - Relative `servers[0].url` (for example `"/"`) resolves against the spec
   URL host. Leave **API base URL** empty in that case.
