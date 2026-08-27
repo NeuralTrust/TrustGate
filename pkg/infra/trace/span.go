@@ -192,7 +192,7 @@ func (s *Span) ObserveUsage(u *adapter.CanonicalUsage) {
 	if s.LLM == nil {
 		s.LLM = &LLMAttrs{}
 	}
-	s.LLM.Usage = u
+	s.LLM.Usage = adapter.MergeUsage(s.LLM.Usage, u)
 }
 
 func (s *Span) Usage() *adapter.CanonicalUsage {

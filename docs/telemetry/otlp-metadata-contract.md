@@ -128,6 +128,10 @@ rather than a group of its own, so a single column carries it.
 
 ```
 savings_usd = (prompt_tokens * top_tier_input_rate + completion_tokens * top_tier_output_rate) - cost.total_usd
+
+# prompt_tokens is the whole prompt, cache reads and writes included. The two
+# legs are asymmetric by design: the served leg prices its cached share at the
+# cache rates, the baseline leg does not. See below.
 ```
 
 The baseline total is not emitted separately — it is `cost.total_usd + cost.savings_usd`.
@@ -154,9 +158,21 @@ savings always describe registry and catalog rates.
 
 The figure is a **modelled counterfactual, not a measurement**. It reprices the
 served model's tokens, but a premium model tokenizes differently and stops at a
-different completion length; cached-input and reasoning-output tokens are billed
-at the plain rate on both legs because no rate exists for them. Treat it as an
-estimate, and label it as one wherever it is shown. Cost-cap model downgrades are
+different completion length.
+
+The two legs price cached tokens differently, and this is the assumption that
+moves the number most. The served leg bills its cached share at the cache read
+and write rates; the baseline leg prices the entire prompt at the plain input
+rate. A route that was never taken has no warm cache to read from, so charging
+the counterfactual a cache discount would credit it a saving it could not have
+earned. The figure is therefore biased **upward** by an assumption that is
+defensible but not neutral. The size of that bias is exactly the cached share
+repriced from the plain input rate down to the baseline's cache read rate, so it
+depends on the token mix: on a prompt-dominated request that is mostly a cache
+hit it is worth roughly an order of magnitude, and on an output-dominated request
+it is marginal. Reasoning-output tokens remain priced at the plain output rate
+on both legs. Treat the whole figure as an estimate, and label it as one wherever
+it is shown. Cost-cap model downgrades are
 a separate mechanism and are not covered by this attribute.
 
 The sink-1 example carries no `trustgate.cost.savings_usd`: its record is a

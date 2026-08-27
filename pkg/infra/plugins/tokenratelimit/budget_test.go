@@ -152,7 +152,7 @@ func TestCounterMax(t *testing.T) {
 }
 
 func TestCountedTokens(t *testing.T) {
-	usage := &adapter.CanonicalUsage{InputTokens: 500, OutputTokens: 300, TotalTokens: 800, CacheReadInputTokens: 100}
+	usage := &adapter.CanonicalUsage{InputTokens: 600, OutputTokens: 300, TotalTokens: 900, CachedInputTokens: 100}
 	tests := []struct {
 		name            string
 		counting        string

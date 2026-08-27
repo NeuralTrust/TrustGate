@@ -76,9 +76,9 @@ type MCP struct {
 	Prompt            string `json:"prompt,omitempty"`
 	ResourceURI       string `json:"resource_uri,omitempty"`
 	Targets           int    `json:"targets,omitempty"`
-	UpstreamStatus    int   `json:"upstream_status,omitempty"`
-	UpstreamLatencyMs int64 `json:"upstream_latency_ms,omitempty"`
-	RPCErrorCode      int   `json:"rpc_error_code,omitempty"`
+	UpstreamStatus    int    `json:"upstream_status,omitempty"`
+	UpstreamLatencyMs int64  `json:"upstream_latency_ms,omitempty"`
+	RPCErrorCode      int    `json:"rpc_error_code,omitempty"`
 }
 
 type Consumer struct {
@@ -120,11 +120,14 @@ type Response struct {
 }
 
 type Usage struct {
-	PromptTokens          int `json:"prompt_tokens"`
-	CompletionTokens      int `json:"completion_tokens"`
-	TotalTokens           int `json:"total_tokens"`
-	CachedInputTokens     int `json:"cached_input_tokens,omitempty"`
-	ReasoningOutputTokens int `json:"reasoning_output_tokens,omitempty"`
+	PromptTokens            int `json:"prompt_tokens"`
+	CompletionTokens        int `json:"completion_tokens"`
+	TotalTokens             int `json:"total_tokens"`
+	CachedInputTokens       int `json:"cached_input_tokens,omitempty"`
+	CacheWriteInputTokens   int `json:"cache_write_input_tokens,omitempty"`
+	CacheWrite1hInputTokens int `json:"cache_write_1h_input_tokens,omitempty"`
+	ToolUseInputTokens      int `json:"tool_use_input_tokens,omitempty"`
+	ReasoningOutputTokens   int `json:"reasoning_output_tokens,omitempty"`
 }
 
 type Cost struct {
