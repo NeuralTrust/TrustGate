@@ -179,6 +179,45 @@ func TestCoerceClaim(t *testing.T) {
 	}
 }
 
+func TestEmailFromToken(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		token map[string]any
+		want  string
+	}{
+		{
+			name:  "neuraltrust access token email",
+			token: map[string]any{"access_token": unsignedJWT(t, map[string]any{"sub": "user-1", "email": "ada@neuraltrust.ai"})},
+			want:  "ada@neuraltrust.ai",
+		},
+		{
+			name:  "id_token wins over access token",
+			token: map[string]any{"id_token": unsignedJWT(t, map[string]any{"email": "from-id@example.com"}), "access_token": unsignedJWT(t, map[string]any{"email": "from-access@example.com"})},
+			want:  "from-id@example.com",
+		},
+		{
+			name:  "opaque access token",
+			token: map[string]any{"access_token": "gho_opaque"},
+			want:  "",
+		},
+		{
+			name:  "subject uuid is not an email",
+			token: map[string]any{"access_token": unsignedJWT(t, map[string]any{"sub": "fff9c76a-52e8-416f-8b6a-489000000001"})},
+			want:  "",
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := emailFromToken(tt.token); got != tt.want {
+				t.Fatalf("emailFromToken() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func sessionAuth(t *testing.T, idpURL string) *authdomain.Auth {
 	t.Helper()
 	return oauth2Auth(t, authdomain.OAuth2Config{
@@ -221,6 +260,7 @@ func TestExchangeCodeSessionModeMintsSessionToken(t *testing.T) {
 		RedirectURI:   "cursor://anysphere.cursor-mcp/oauth/callback",
 		CodeChallenge: s256("client-verifier"),
 		Subject:       "user-42",
+		Email:         "ada@example.com",
 		AuthID:        "auth-1",
 		GatewayID:     "gw-1",
 		Audiences:     []string{"api://gw"},
@@ -268,6 +308,9 @@ func TestExchangeCodeSessionModeMintsSessionToken(t *testing.T) {
 	if claims["sub"] != "user-42" || claims["token_use"] != "mcp_session" || claims["authid"] != "auth-1" {
 		t.Fatalf("unexpected minted claims: %v", claims)
 	}
+	if claims["email"] != "ada@example.com" {
+		t.Fatalf("session token must carry the IdP email, got %v", claims["email"])
+	}
 	if claims["iss"] != signer.Issuer() {
 		t.Fatalf("expected issuer %q, got %v", signer.Issuer(), claims["iss"])
 	}
@@ -277,7 +320,7 @@ func TestExchangeCodeSessionModeMintsSessionToken(t *testing.T) {
 		t.Fatal("SaveSession must persist a record")
 		return
 	}
-	if rec.Subject != "user-42" || strings.Join(rec.Scopes, " ") != "mcp.access openid" {
+	if rec.Subject != "user-42" || rec.Email != "ada@example.com" || strings.Join(rec.Scopes, " ") != "mcp.access openid" {
 		t.Fatalf("session record mismatch: %+v", rec)
 	}
 }
@@ -293,6 +336,7 @@ func TestRefreshSessionReMintsAndRotates(t *testing.T) {
 	const oldRefresh = "gwrt_old-refresh"
 	if err := store.SaveSession(ctx, oldRefresh, SessionRecord{
 		Subject:   "user-42",
+		Email:     "ada@example.com",
 		Scopes:    []string{"mcp.access", "openid"},
 		GatewayID: "gw-1",
 		AuthID:    "auth-1",
@@ -324,8 +368,8 @@ func TestRefreshSessionReMintsAndRotates(t *testing.T) {
 		t.Fatal("rotated session must be persisted")
 		return
 	}
-	if rotated.Subject != "user-42" || strings.Join(rotated.Scopes, " ") != "mcp.access openid" {
-		t.Fatalf("rotated record must preserve subject/scopes, got %+v", rotated)
+	if rotated.Subject != "user-42" || rotated.Email != "ada@example.com" || strings.Join(rotated.Scopes, " ") != "mcp.access openid" {
+		t.Fatalf("rotated record must preserve subject/scopes/email, got %+v", rotated)
 	}
 
 	// Rotation must leave the old token usable for a short grace window: MCP
@@ -367,6 +411,9 @@ func TestRefreshSessionReMintsAndRotates(t *testing.T) {
 	}
 	if claims["sub"] != "user-42" || claims["token_use"] != "mcp_session" || claims["authid"] != "auth-1" {
 		t.Fatalf("unexpected re-minted claims: %v", claims)
+	}
+	if claims["email"] != "ada@example.com" {
+		t.Fatalf("refresh must re-stamp the stored email, got %v", claims["email"])
 	}
 }
 
