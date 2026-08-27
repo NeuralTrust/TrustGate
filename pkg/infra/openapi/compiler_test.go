@@ -164,30 +164,58 @@ func TestCompilerReportsFetchAndParseStages(t *testing.T) {
 	require.Equal(t, appopenapi.StageFetch, compileErr.Stage)
 }
 
-func TestUnsafeIPRejectsPrivateAndReservedNetworks(t *testing.T) {
+func TestCompilerSetsOpenAPIUserAgent(t *testing.T) {
 	t.Parallel()
-	for _, value := range []string{
-		"127.0.0.1",
-		"10.0.0.1",
-		"169.254.169.254",
-		"100.64.0.1",
-		"192.0.2.1",
-		"2001:db8::1",
-	} {
-		if !unsafeIP(net.ParseIP(value)) {
-			t.Fatalf("unsafeIP(%q) = false", value)
-		}
+	var userAgent string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		userAgent = r.Header.Get("User-Agent")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"openapi": "3.0.0",
+			"info": {"title": "UA", "version": "1"},
+			"paths": {"/ok": {"get": {"responses": {"200": {"description": "ok"}}}}}
+		}`))
+	}))
+	defer server.Close()
+
+	_, err := NewCompilerWithClient(server.Client()).Compile(context.Background(), appopenapi.Source{
+		SpecURL: server.URL,
+		BaseURL: server.URL,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "TrustGate-OpenAPI/1.0", userAgent)
+}
+
+func TestBlockedDestinationAllowsPrivateAddressesForFQDNs(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		host    string
+		ip      string
+		blocked bool
+	}{
+		{host: "agentgateway-admin.dev.neuraltrust.ai", ip: "10.0.0.1", blocked: false},
+		{host: "agentgateway-admin.dev.neuraltrust.ai", ip: "100.64.0.1", blocked: false},
+		{host: "agentgateway-admin.dev.neuraltrust.ai", ip: "192.168.1.8", blocked: false},
+		{host: "agentgateway-admin.dev.neuraltrust.ai", ip: "8.8.8.8", blocked: false},
+		{host: "agentgateway-admin.dev.neuraltrust.ai", ip: "127.0.0.1", blocked: true},
+		{host: "agentgateway-admin.dev.neuraltrust.ai", ip: "169.254.169.254", blocked: true},
+		{host: "agentgateway-admin.dev.neuraltrust.ai", ip: "192.0.2.1", blocked: true},
+		{host: "10.0.0.1", ip: "10.0.0.1", blocked: true},
+		{host: "100.64.0.1", ip: "100.64.0.1", blocked: true},
+		{host: "8.8.8.8", ip: "8.8.8.8", blocked: false},
 	}
-	if unsafeIP(net.ParseIP("8.8.8.8")) {
-		t.Fatal("unsafeIP(public address) = true")
+	for _, tc := range cases {
+		if got := blockedDestination(tc.host, net.ParseIP(tc.ip)); got != tc.blocked {
+			t.Fatalf("blockedDestination(%q, %s) = %v, want %v", tc.host, tc.ip, got, tc.blocked)
+		}
 	}
 }
 
-func TestValidatePublicURLRejectsReservedDestination(t *testing.T) {
+func TestValidatePublicURLRejectsLiteralReservedDestination(t *testing.T) {
 	t.Parallel()
-	err := validatePublicURL(context.Background(), "http://100.64.0.1/api")
+	err := validatePublicURL(context.Background(), "http://169.254.169.254/api")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "private or reserved")
+	require.Contains(t, err.Error(), "blocked address")
 }
 
 func TestCompileOperationsRejectsExcessiveToolsets(t *testing.T) {
