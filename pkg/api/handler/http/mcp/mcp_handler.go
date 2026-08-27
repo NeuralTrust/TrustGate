@@ -45,7 +45,7 @@ const (
 	serverVersion           = "1.0"
 	latestProtocolVersion   = "2025-06-18"
 	modernProtocolVersion   = "2026-07-28"
-	discoverCacheTTLMs      = 3_600_000
+	discoverCacheTTLMs      = 0
 	modernServerInfoMetaKey = "io.modelcontextprotocol/serverInfo"
 )
 

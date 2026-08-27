@@ -25,8 +25,9 @@ func serverDiscoveryResult(rc *appconsumer.RoutableConsumer) map[string]any {
 		"resultType":        "complete",
 		"supportedVersions": append([]string(nil), advertisedProtocolVersions...),
 		"capabilities":      configuredCapabilities(rc),
-		"ttlMs":             discoverCacheTTLMs,
-		"cacheScope":        "private",
+		// Reconnect is the only refresh signal until the stateless gateway can emit list_changed.
+		"ttlMs":      discoverCacheTTLMs,
+		"cacheScope": "private",
 		"_meta": map[string]any{
 			modernServerInfoMetaKey: map[string]any{
 				"name":    serverName,
