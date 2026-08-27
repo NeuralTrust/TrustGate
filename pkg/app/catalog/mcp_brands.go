@@ -110,6 +110,7 @@ var vendorBrandIcons = map[string]string{
 	"gmail":                         "mcp/gmail.svg",
 	"gooddata":                      "mcp/gooddata.ico",
 	"googlecalendar":                "mcp/googlecalendar.svg",
+	"googledrive":                   "mcp/googledrive.svg",
 	"googlecloudandroidmanagement":  "google_cloud.svg",
 	"googlecloudbigtable":           "google_cloud.svg",
 	"googlecloudcomposer":           "google_cloud.svg",

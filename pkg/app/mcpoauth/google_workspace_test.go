@@ -35,7 +35,7 @@ func TestNewGoogleWorkspace_CredentialsForKnownCodes(t *testing.T) {
 	t.Parallel()
 
 	p := NewGoogleWorkspace("nt-client", "nt-secret")
-	for _, code := range []string{GmailCode, CalendarCode, "  " + GmailCode + "  "} {
+	for _, code := range []string{GmailCode, CalendarCode, DriveCode, "  " + GmailCode + "  "} {
 		got, ok := p.CredentialsFor(code)
 		require.True(t, ok, code)
 		require.Equal(t, "nt-client", got.ClientID)
