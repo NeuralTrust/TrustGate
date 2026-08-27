@@ -589,6 +589,22 @@ function AddMcpDialog({
                   <option value="openapi">OpenAPI document</option>
                 </Select>
               </Field>
+              {customSource === "openapi" && (
+                <p className="text-[12px] text-muted">
+                  OpenAPI 3.x JSON. Auth is a static header or OAuth client
+                  credentials (not per-user login). List endpoints expose page
+                  or cursor as tool arguments; the gateway does not walk every
+                  page.{" "}
+                  <a
+                    className="underline"
+                    href="https://docs.neuraltrust.ai/trustgate/mcp/openapi"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Known limits
+                  </a>
+                </p>
+              )}
               {customSource === "mcp" ? (
                 <Field label="URL" hint="required">
                   <Input
