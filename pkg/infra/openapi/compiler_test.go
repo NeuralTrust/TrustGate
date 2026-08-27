@@ -218,6 +218,75 @@ func TestValidatePublicURLRejectsLiteralReservedDestination(t *testing.T) {
 	require.Contains(t, err.Error(), "blocked address")
 }
 
+func TestCompileOperationsFoldsMissingOperationIDsIntoOneWarning(t *testing.T) {
+	t.Parallel()
+	paths := openapi3.NewPathsWithCapacity(3)
+	for _, path := range []string{"/v1/providers-catalog", "/v1/models-catalog", "/healthz"} {
+		paths.Set(path, &openapi3.PathItem{Get: &openapi3.Operation{}})
+	}
+
+	operations, warnings, err := compileOperations(&openapi3.T{Paths: paths})
+	require.NoError(t, err)
+	require.Len(t, operations, 3)
+	require.Len(t, warnings, 1)
+	require.Equal(t, "synthetic_tool_name", warnings[0].Code)
+	require.Contains(t, warnings[0].Message, "3 operations without operationId")
+
+	names := make([]string, 0, len(operations))
+	for _, operation := range operations {
+		names = append(names, operation.Name)
+	}
+	require.Contains(t, names, "get_v1_providers_catalog")
+	require.Contains(t, names, "get_healthz")
+}
+
+func TestCompileOperationsCapsSkippedOperationList(t *testing.T) {
+	t.Parallel()
+	total := maxListedSkips + 3
+	paths := openapi3.NewPathsWithCapacity(total)
+	for index := 0; index < total; index++ {
+		paths.Set(fmt.Sprintf("/upload/%d", index), &openapi3.PathItem{
+			Post: &openapi3.Operation{
+				OperationID: fmt.Sprintf("upload%d", index),
+				RequestBody: &openapi3.RequestBodyRef{Value: openapi3.NewRequestBody().WithContent(
+					openapi3.NewContentWithFormDataSchema(openapi3.NewObjectSchema()),
+				)},
+			},
+		})
+	}
+
+	operations, warnings, err := compileOperations(&openapi3.T{Paths: paths})
+	require.NoError(t, err)
+	require.Empty(t, operations)
+	require.Len(t, warnings, 1)
+	require.Equal(t, "unsupported_operation", warnings[0].Code)
+	require.Contains(t, warnings[0].Message, fmt.Sprintf("%d operations skipped", total))
+	require.Contains(t, warnings[0].Message, "and 3 more")
+}
+
+func TestCompilerSummarizesTrustGateAdminWarnings(t *testing.T) {
+	t.Parallel()
+	spec := readTrustGateAdminOpenAPI(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(spec)
+	}))
+	defer server.Close()
+
+	document, err := NewCompilerWithClient(server.Client()).Compile(context.Background(), appopenapi.Source{
+		SpecURL: server.URL + "/openapi.json",
+		BaseURL: server.URL,
+	})
+	require.NoError(t, err)
+	counts := make(map[string]int)
+	for _, warning := range document.Warnings {
+		counts[warning.Code]++
+	}
+	require.LessOrEqual(t, counts["synthetic_tool_name"], 1)
+	require.LessOrEqual(t, counts["unsupported_operation"], 1)
+	require.Less(t, len(document.Warnings), 5)
+}
+
 func TestCompileOperationsRejectsExcessiveToolsets(t *testing.T) {
 	t.Parallel()
 	paths := openapi3.NewPathsWithCapacity(maxCompiledOperations + 1)
