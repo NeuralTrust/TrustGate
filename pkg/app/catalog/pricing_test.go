@@ -18,6 +18,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"math"
 	"testing"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
@@ -169,4 +170,28 @@ func TestParsePrice(t *testing.T) {
 	assert.InDelta(t, 0.0000025, parsePrice("0.0000025"), 1e-12)
 	assert.Equal(t, 0.0, parsePrice(""))
 	assert.Equal(t, 0.0, parsePrice("not-a-number"))
+}
+
+func TestParsePrice_RejectsNonFiniteValues(t *testing.T) {
+	for _, raw := range []string{"NaN", "nan", "Inf", "inf", "+Inf", "-Inf", "Infinity", "-Infinity"} {
+		t.Run(raw, func(t *testing.T) {
+			got := parsePrice(raw)
+			require.False(t, math.IsNaN(got), "a NaN rate prices every request against it as NaN")
+			require.False(t, math.IsInf(got, 0), "an infinite rate does the same")
+			assert.Equal(t, 0.0, got, "discarded exactly like an unparseable value")
+		})
+	}
+}
+
+// strconv.ParseFloat reports an error for an out-of-range literal but still
+// returns +Inf, so the error check alone is not what keeps this one out.
+func TestParsePrice_OverflowIsAlsoDiscarded(t *testing.T) {
+	assert.Equal(t, 0.0, parsePrice("1e999"))
+}
+
+func TestCoalescePrice_InheritsTheNonFiniteGuard(t *testing.T) {
+	assert.Equal(t, 0.0, coalescePrice("NaN", 0.5),
+		"a non-finite override must not reach the cache rates either")
+	assert.InDelta(t, 0.5, coalescePrice("", 0.5), 1e-12)
+	assert.InDelta(t, 0.25, coalescePrice("0.25", 0.5), 1e-12)
 }
