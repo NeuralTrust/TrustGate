@@ -40,6 +40,9 @@ const (
 	ReadyPath       = "/readyz"
 	VersionPath     = "/__/version"
 	DocsPath        = "/docs/*"
+	// OpenAPIPath serves the OpenAPI 3 document. Swagger UI publishes Swagger
+	// 2.0, which OpenAPI 3 consumers cannot parse.
+	OpenAPIPath = "/docs/openapi.json"
 	GatewaysPath    = "/v1/gateways"
 	// TenantsPath carries admin operations that span every gateway of a tenant.
 	TenantsPath           = "/v1/tenants"
@@ -139,6 +142,9 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	// Interactive API docs (Swagger UI + spec) served from the generated
 	// `docs` package. Public on purpose so the contract is browsable without
 	// an admin token; the documented endpoints stay behind AdminAuth below.
+	// The OpenAPI 3 route is registered first so the Swagger UI wildcard does
+	// not swallow it.
+	app.Get(OpenAPIPath, apihandler.NewOpenAPIHandler().Handle)
 	app.Get(DocsPath, fiberSwagger.HandlerDefault)
 
 	if r.deps.RestampTenantEntitlements != nil {
