@@ -134,7 +134,8 @@ func Decide(ctx context.Context, resolver appcatalog.PricingResolver, custom map
 	model := firstNonEmpty(models...)
 	ceiling := EvaluateCeiling(cc, models...)
 
-	inPerToken, outPerToken, found := Resolve(ctx, resolver, custom, registry, provider, models...)
+	rates, found := Resolve(ctx, resolver, custom, registry, provider, models...)
+	inPerToken, outPerToken := rates.Input, rates.Output
 	if !found {
 		d := Decision{
 			Unknown:   true,

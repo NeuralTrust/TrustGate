@@ -74,6 +74,7 @@ func (b *Builder) Build(
 		Consumer:      events.Consumer{ID: meta.ConsumerID, Name: meta.ConsumerName},
 		SessionID:     meta.SessionID,
 		IP:            meta.IP,
+		Retention:     retention(meta, startTime),
 	}
 
 	if meta.Kind == events.KindMCP {
@@ -103,8 +104,23 @@ func (b *Builder) Build(
 	b.fillResponse(evt, resp, served, totalMs)
 	b.fillStatus(evt, resp, served, requestTrace)
 	b.fillUsageAndCost(ctx, evt, served, req)
+	b.fillSavings(ctx, evt, served)
 
 	return evt
+}
+
+// retention measures the expiry from startTime, the same instant recorded as the
+// event's occurredOn, so a trace's expiry and its timestamp can never disagree.
+// Returns nil when the gateway carries no stamp — an absent expiry is a signal the
+// sink can act on, a zero one is a trace that expired at the epoch.
+func retention(meta trace.Metadata, startTime time.Time) *events.Retention {
+	if meta.RetentionWindow <= 0 {
+		return nil
+	}
+	return &events.Retention{
+		Plan:      meta.RetentionPlan,
+		ExpiresAt: startTime.Add(meta.RetentionWindow).UnixMilli(),
+	}
 }
 
 func (b *Builder) foldLLMSpans(requestTrace *trace.RequestTrace) (*trace.LLMAttrs, []events.Attempt) {
@@ -398,11 +414,14 @@ func (b *Builder) fillUsageAndCost(ctx context.Context, evt *events.Event, serve
 	}
 	u := served.Usage
 	evt.Usage = &events.Usage{
-		PromptTokens:          u.InputTokens,
-		CompletionTokens:      u.OutputTokens,
-		TotalTokens:           u.TotalTokens,
-		CachedInputTokens:     u.CachedInputTokens,
-		ReasoningOutputTokens: u.ReasoningOutputTokens,
+		PromptTokens:            u.InputTokens,
+		CompletionTokens:        u.OutputTokens,
+		TotalTokens:             u.TotalTokens,
+		CachedInputTokens:       u.CachedInputTokens,
+		CacheWriteInputTokens:   u.CacheWriteInputTokens,
+		CacheWrite1hInputTokens: u.CacheWrite1hInputTokens,
+		ToolUseInputTokens:      u.ToolUseInputTokens,
+		ReasoningOutputTokens:   u.ReasoningOutputTokens,
 	}
 	evt.Request.PromptTokens = u.InputTokens
 	evt.Response.CompletionTokens = u.OutputTokens
@@ -411,11 +430,8 @@ func (b *Builder) fillUsageAndCost(ctx context.Context, evt *events.Event, serve
 		return
 	}
 	slugs := pricingSlugs(evt, served)
-	var overlay *llmcost.RegistryRates
-	if req != nil {
-		overlay = llmcost.RatesFromDomain(req.RegistryPricing)
-	}
-	inputRate, outputRate, found := llmcost.Resolve(ctx, b.pricing, nil, overlay, served.Provider, slugs...)
+	overlay := servedRates(served, req)
+	rates, found := llmcost.Resolve(ctx, b.pricing, nil, overlay, served.Provider, slugs...)
 	if !found {
 		return
 	}
@@ -428,14 +444,46 @@ func (b *Builder) fillUsageAndCost(ctx context.Context, evt *events.Event, serve
 			}
 		}
 	}
-	promptUsd := float64(u.InputTokens) * inputRate
-	completionUsd := float64(u.OutputTokens) * outputRate
+	promptUsd, completionUsd := rates.CostUSD(u)
 	evt.Cost = &events.Cost{
 		PromptUsd:     events.DecimalFloat(promptUsd),
 		CompletionUsd: events.DecimalFloat(completionUsd),
 		TotalUsd:      events.DecimalFloat(promptUsd + completionUsd),
 		Currency:      costCurrencyUSD,
 	}
+}
+
+func servedRates(served *trace.LLMAttrs, req *infracontext.RequestContext) *llmcost.RegistryRates {
+	if served != nil && served.ServedPricing != nil {
+		return llmcost.RatesFromDomain(served.ServedPricing)
+	}
+	if req != nil {
+		return llmcost.RatesFromDomain(req.RegistryPricing)
+	}
+	return nil
+}
+
+func (b *Builder) fillSavings(ctx context.Context, evt *events.Event, served *trace.LLMAttrs) {
+	if served == nil || served.Usage == nil || evt.Cost == nil {
+		return
+	}
+	if !served.TierApplied || served.Baseline == nil {
+		return
+	}
+	base := served.Baseline
+	if base.Provider == "" || base.Model == "" {
+		return
+	}
+	rates, found := llmcost.Resolve(
+		ctx, b.pricing, nil, llmcost.RatesFromDomain(base.Pricing), base.Provider, base.Model,
+	)
+	if !found {
+		return
+	}
+	u := served.Usage
+	baselineUsd := float64(u.InputTokens)*rates.Input + float64(u.OutputTokens)*rates.Output
+	savings := events.DecimalFloat(baselineUsd - float64(evt.Cost.TotalUsd))
+	evt.Cost.SavingsUsd = &savings
 }
 
 func pricingSlugs(evt *events.Event, served *trace.LLMAttrs) []string {

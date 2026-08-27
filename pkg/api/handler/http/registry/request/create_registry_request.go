@@ -41,16 +41,25 @@ type PricingRequest struct {
 }
 
 type PriceOverrideRequest struct {
-	Input  float64 `json:"input"`
-	Output float64 `json:"output"`
+	Input        float64  `json:"input"`
+	Output       float64  `json:"output"`
+	CacheRead    *float64 `json:"cache_read,omitempty"`
+	CacheWrite   *float64 `json:"cache_write,omitempty"`
+	CacheWrite1h *float64 `json:"cache_write_1h,omitempty"`
 }
 
 type MCPTargetRequest struct {
-	Code      string            `json:"code,omitempty"`
-	URL       string            `json:"url"`
-	Transport string            `json:"transport,omitempty"`
-	Headers   map[string]string `json:"headers,omitempty"`
-	Auth      *MCPAuthRequest   `json:"auth,omitempty"`
+	Code      string                `json:"code,omitempty"`
+	Source    string                `json:"source,omitempty"`
+	URL       string                `json:"url,omitempty"`
+	Transport string                `json:"transport,omitempty"`
+	Headers   map[string]string     `json:"headers,omitempty"`
+	Auth      *MCPAuthRequest       `json:"auth,omitempty"`
+	OpenAPI   *OpenAPITargetRequest `json:"openapi,omitempty"`
+}
+
+type OpenAPITargetRequest struct {
+	SpecURL string `json:"spec_url"`
 }
 
 type MCPAuthRequest struct {
@@ -201,7 +210,11 @@ func (p *PricingRequest) ToDomain() *domain.Pricing {
 	if len(p.Overrides) > 0 {
 		out.Overrides = make(map[string]domain.PriceOverride, len(p.Overrides))
 		for slug, rate := range p.Overrides {
-			out.Overrides[slug] = domain.PriceOverride{Input: rate.Input, Output: rate.Output}
+			out.Overrides[slug] = domain.PriceOverride{
+				Input: rate.Input, Output: rate.Output,
+				CacheRead: rate.CacheRead, CacheWrite: rate.CacheWrite,
+				CacheWrite1h: rate.CacheWrite1h,
+			}
 		}
 	}
 	if out.IsZero() {
@@ -220,9 +233,13 @@ func (t *MCPTargetRequest) ToDomain() *domain.MCPTarget {
 	}
 	out := &domain.MCPTarget{
 		Code:      t.Code,
+		Source:    domain.MCPSource(t.Source),
 		URL:       t.URL,
 		Transport: domain.MCPTransport(t.Transport),
 		Headers:   t.Headers,
+	}
+	if t.OpenAPI != nil {
+		out.OpenAPI = &domain.OpenAPITarget{SpecURL: t.OpenAPI.SpecURL}
 	}
 	if t.Auth != nil {
 		out.Auth = &domain.MCPAuth{

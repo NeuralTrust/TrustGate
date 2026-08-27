@@ -83,6 +83,16 @@ func (r *gatewayRepository) UpdateWithTenantCap(_ context.Context, _ *domain.Gat
 	return configsync.ErrReadOnly
 }
 
+// A dbless data plane is fed by config-sync, so entitlements arrive with the
+// snapshot rather than being stamped here.
+func (r *gatewayRepository) RestampEntitlementsByTenantID(
+	_ context.Context,
+	_ string,
+	_ domain.Entitlements,
+) ([]domain.RestampedGateway, error) {
+	return nil, configsync.ErrReadOnly
+}
+
 func (r *gatewayRepository) Delete(_ context.Context, _ ids.GatewayID) error {
 	return configsync.ErrReadOnly
 }

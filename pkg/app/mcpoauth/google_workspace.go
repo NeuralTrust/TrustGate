@@ -19,6 +19,7 @@ import "strings"
 const (
 	GmailCode    = "com.google.workspace/gmail"
 	CalendarCode = "com.google.workspace/calendar"
+	DriveCode    = "com.google.workspace/drive"
 )
 
 type Credentials struct {
@@ -46,7 +47,7 @@ type googleWorkspace struct {
 
 func (g googleWorkspace) CredentialsFor(code string) (Credentials, bool) {
 	switch strings.TrimSpace(code) {
-	case GmailCode, CalendarCode:
+	case GmailCode, CalendarCode, DriveCode:
 		return Credentials{ClientID: g.clientID, ClientSecret: g.clientSecret}, true
 	default:
 		return Credentials{}, false

@@ -15,9 +15,11 @@
 package client_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -76,6 +78,220 @@ func TestConnect_UnreachableUpstream(t *testing.T) {
 	if !errors.Is(err, appmcp.ErrUnreachable) {
 		t.Fatalf("error = %v, want ErrUnreachable", err)
 	}
+}
+
+func TestConnect_RetriesLegacyAfterInitializeBadRequest(t *testing.T) {
+	t.Parallel()
+	var discoverRequests atomic.Int64
+	var initializeRequests atomic.Int64
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		method, id := readRequestEnvelope(t, req)
+		switch method {
+		case "server/discover":
+			discoverRequests.Add(1)
+			w.WriteHeader(http.StatusBadRequest)
+		case "initialize":
+			attempt := initializeRequests.Add(1)
+			if attempt == 1 {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Mcp-Session-Id", "legacy-session")
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":` + string(id) + `,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"legacy","version":"1"}}}`))
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			http.Error(w, "unexpected method", http.StatusBadRequest)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	sess, err := mcpclient.New().Connect(context.Background(), appmcp.Target{URL: srv.URL})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(func() { sess.Close(context.Background()) })
+
+	if got := discoverRequests.Load(); got != 1 {
+		t.Fatalf("server/discover requests = %d, want 1; fallback probe must stay local", got)
+	}
+	if got := initializeRequests.Load(); got != 2 {
+		t.Fatalf("initialize requests = %d, want 2", got)
+	}
+}
+
+func TestConnect_DoesNotRetryAuthFailures(t *testing.T) {
+	t.Parallel()
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		status := status
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			t.Parallel()
+			var requests atomic.Int64
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				requests.Add(1)
+				w.WriteHeader(status)
+			}))
+			t.Cleanup(srv.Close)
+
+			_, err := mcpclient.New().Connect(context.Background(), appmcp.Target{URL: srv.URL})
+			if !errors.Is(err, appmcp.ErrUnreachable) {
+				t.Fatalf("error = %v, want ErrUnreachable", err)
+			}
+			if got := requests.Load(); got != 2 {
+				t.Fatalf("requests = %d, want 2 from the SDK's normal discover and initialize flow", got)
+			}
+		})
+	}
+}
+
+func TestConnect_DoesNotRetryAfterContextCancellation(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	var discoverRequests atomic.Int64
+	var initializeRequests atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch readRequestMethod(t, req) {
+		case "server/discover":
+			discoverRequests.Add(1)
+			w.WriteHeader(http.StatusBadRequest)
+		case "initialize":
+			initializeRequests.Add(1)
+			cancel()
+			w.WriteHeader(http.StatusBadRequest)
+		default:
+			http.Error(w, "unexpected method", http.StatusBadRequest)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := mcpclient.New().Connect(ctx, appmcp.Target{URL: srv.URL})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context.Canceled", err)
+	}
+	if got := discoverRequests.Load(); got != 1 {
+		t.Fatalf("server/discover requests = %d, want 1", got)
+	}
+	if got := initializeRequests.Load(); got != 1 {
+		t.Fatalf("initialize requests = %d, want 1 without a legacy retry", got)
+	}
+}
+
+func TestConnect_DoesNotDowngradeAfterModernDiscoverError(t *testing.T) {
+	t.Parallel()
+	var initializeRequests atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		method, id := readRequestEnvelope(t, req)
+		switch method {
+		case "server/discover":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":` + string(id) + `,"error":{"code":-32020,"message":"header mismatch"}}`))
+		case "initialize":
+			initializeRequests.Add(1)
+			w.WriteHeader(http.StatusBadRequest)
+		default:
+			http.Error(w, "unexpected method", http.StatusBadRequest)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := mcpclient.New().Connect(context.Background(), appmcp.Target{URL: srv.URL})
+	if !errors.Is(err, appmcp.ErrUnreachable) {
+		t.Fatalf("error = %v, want ErrUnreachable", err)
+	}
+	if got := initializeRequests.Load(); got != 1 {
+		t.Fatalf("initialize requests = %d, want 1 without a legacy retry", got)
+	}
+}
+
+func TestConnect_DoesNotForwardCredentialsAcrossRedirects(t *testing.T) {
+	t.Parallel()
+	var redirectedRequests atomic.Int64
+	redirectTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		redirectedRequests.Add(1)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(redirectTarget.Close)
+
+	redirectSource := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		http.Redirect(w, req, redirectTarget.URL, http.StatusFound)
+	}))
+	t.Cleanup(redirectSource.Close)
+
+	_, err := mcpclient.New().Connect(context.Background(), appmcp.Target{
+		URL:     redirectSource.URL,
+		Headers: map[string]string{"Authorization": "Bearer secret"},
+	})
+	if !errors.Is(err, appmcp.ErrUnreachable) {
+		t.Fatalf("error = %v, want ErrUnreachable", err)
+	}
+	if got := redirectedRequests.Load(); got != 0 {
+		t.Fatalf("redirect target requests = %d, want 0", got)
+	}
+}
+
+func TestConnect_ModernUpstreamUsesNormalDiscoverOnly(t *testing.T) {
+	t.Parallel()
+	var discoverRequests atomic.Int64
+	var initializeRequests atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		method, id := readRequestEnvelope(t, req)
+		switch method {
+		case "server/discover":
+			discoverRequests.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":` + string(id) + `,"result":{"supportedVersions":["2026-07-28"],"capabilities":{"tools":{}}}}`))
+		case "initialize":
+			initializeRequests.Add(1)
+			w.WriteHeader(http.StatusBadRequest)
+		default:
+			http.Error(w, "unexpected method", http.StatusBadRequest)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	sess, err := mcpclient.New().Connect(context.Background(), appmcp.Target{URL: srv.URL})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(func() { sess.Close(context.Background()) })
+	if got := discoverRequests.Load(); got != 1 {
+		t.Fatalf("server/discover requests = %d, want 1", got)
+	}
+	if got := initializeRequests.Load(); got != 0 {
+		t.Fatalf("initialize requests = %d, want 0 for a modern upstream", got)
+	}
+}
+
+func readRequestMethod(t *testing.T, req *http.Request) string {
+	t.Helper()
+	method, _ := readRequestEnvelope(t, req)
+	return method
+}
+
+func readRequestEnvelope(t *testing.T, req *http.Request) (string, json.RawMessage) {
+	t.Helper()
+	if req.Body == nil {
+		return "", nil
+	}
+	data, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("read request body: %v", err)
+	}
+	req.Body = io.NopCloser(bytes.NewReader(data))
+	if len(data) == 0 {
+		return "", nil
+	}
+	var envelope struct {
+		Method string          `json:"method"`
+		ID     json.RawMessage `json:"id"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	return envelope.Method, envelope.ID
 }
 
 func TestListTools_AndCallTool(t *testing.T) {

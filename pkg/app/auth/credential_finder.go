@@ -71,7 +71,7 @@ func (f *credentialFinder) OAuth2Auths(ctx context.Context) ([]*domain.Auth, err
 	if f.defaultIdP == nil {
 		return auths, nil
 	}
-	out := make([]*domain.Auth, 0, len(auths)+1)
+	out := make([]*domain.Auth, 0, len(auths))
 	out = append(out, auths...)
 	out = append(out, f.defaultIdP)
 	return out, nil

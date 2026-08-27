@@ -106,7 +106,11 @@ type geminiTokenDetail struct {
 }
 
 func geminiUsageToCanonical(u geminiUsage) *CanonicalUsage {
-	cu := newCanonicalUsage(u.PromptTokenCount, u.CandidatesTokenCount, u.TotalTokenCount)
+	cu := newCanonicalUsage(
+		u.PromptTokenCount+u.ToolUsePromptTokenCount,
+		u.CandidatesTokenCount+u.ThoughtsTokenCount,
+		u.TotalTokenCount,
+	)
 	if cu == nil {
 		return nil
 	}
@@ -114,6 +118,17 @@ func geminiUsageToCanonical(u geminiUsage) *CanonicalUsage {
 	cu.ReasoningOutputTokens = u.ThoughtsTokenCount
 	cu.ToolUseInputTokens = u.ToolUsePromptTokenCount
 	return cu
+}
+
+func geminiUsageFromCanonical(u *CanonicalUsage) *geminiUsage {
+	return &geminiUsage{
+		PromptTokenCount:        u.InputTokens - u.ToolUseInputTokens,
+		CandidatesTokenCount:    u.OutputTokens - u.ReasoningOutputTokens,
+		TotalTokenCount:         u.TotalTokens,
+		CachedContentTokenCount: u.CachedInputTokens,
+		ThoughtsTokenCount:      u.ReasoningOutputTokens,
+		ToolUsePromptTokenCount: u.ToolUseInputTokens,
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -440,11 +455,7 @@ func (a *GeminiAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) 
 	}
 
 	if resp.Usage != nil {
-		out.UsageMetadata = &geminiUsage{
-			PromptTokenCount:     resp.Usage.InputTokens,
-			CandidatesTokenCount: resp.Usage.OutputTokens,
-			TotalTokenCount:      resp.Usage.TotalTokens,
-		}
+		out.UsageMetadata = geminiUsageFromCanonical(resp.Usage)
 	}
 
 	return json.Marshal(out)
@@ -567,11 +578,7 @@ func (a *GeminiAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte
 	}
 
 	if chunk.Usage != nil {
-		out.UsageMetadata = &geminiUsage{
-			PromptTokenCount:     chunk.Usage.InputTokens,
-			CandidatesTokenCount: chunk.Usage.OutputTokens,
-			TotalTokenCount:      chunk.Usage.TotalTokens,
-		}
+		out.UsageMetadata = geminiUsageFromCanonical(chunk.Usage)
 	}
 
 	data, err := json.Marshal(out)

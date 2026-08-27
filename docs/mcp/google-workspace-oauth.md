@@ -1,13 +1,13 @@
 # Google Workspace MCP OAuth (Gmail, Calendar, …)
 
-How TrustGate connects to Google’s remote MCP servers (Gmail, Calendar, and
-future Workspace MCP products), why the UI asks for a **client ID and secret**,
+How TrustGate connects to Google’s remote MCP servers (Gmail, Calendar, Drive,
+and future Workspace MCP products), why the UI asks for a **client ID and secret**,
 how that differs from Claude, and how to register a **shared TrustGate OAuth
 app** so end users get a Claude-like one-click connect.
 
 ## 1. Mental model
 
-Connecting Gmail or Calendar MCP is always **OAuth 2.0**. Someone’s application
+Connecting Gmail, Calendar, or Drive MCP is always **OAuth 2.0**. Someone’s application
 must be registered with Google as “the thing asking for access.” That
 registration produces a **client ID** and **client secret**.
 
@@ -16,9 +16,9 @@ sequenceDiagram
   participant User
   participant TrustGate
   participant GoogleAuth as Google OAuth
-  participant GoogleMCP as Gmail/Calendar MCP
+  participant GoogleMCP as Gmail/Calendar/Drive MCP
 
-  User->>TrustGate: Connect Gmail/Calendar
+  User->>TrustGate: Connect Gmail/Calendar/Drive
   TrustGate->>GoogleAuth: Authorize (client_id, redirect_uri, scopes, PKCE)
   User->>GoogleAuth: Sign in + consent
   GoogleAuth->>TrustGate: Redirect with code (/oauth/callback)
@@ -31,7 +31,7 @@ sequenceDiagram
 |------|-----|
 | OAuth **client** (the registered app) | Whoever owns the GCP OAuth client — customer (BYO) or NeuralTrust (shared) |
 | OAuth **authorization server** | Google (`accounts.google.com` / `oauth2.googleapis.com`) |
-| Resource / MCP server | e.g. `https://gmailmcp.googleapis.com/mcp/v1`, `https://calendarmcp.googleapis.com/mcp/v1` |
+| Resource / MCP server | e.g. `https://gmailmcp.googleapis.com/mcp/v1`, `https://calendarmcp.googleapis.com/mcp/v1`, `https://drivemcp.googleapis.com/mcp/v1` |
 | Token broker + vault | TrustGate (`forwarded` MCP auth) |
 
 Catalog entries for these servers use:
@@ -67,6 +67,7 @@ Seeded in `seed/mcp-catalog/enterprise-servers.json`:
 |--------------|--------|------------|
 | `com.google.workspace/gmail` | Gmail | `https://gmailmcp.googleapis.com/mcp/v1` |
 | `com.google.workspace/calendar` | Google Calendar | `https://calendarmcp.googleapis.com/mcp/v1` |
+| `com.google.workspace/drive` | Google Drive | `https://drivemcp.googleapis.com/mcp/v1` |
 
 Shared OAuth endpoints:
 
@@ -87,19 +88,37 @@ write access. Catalog uses:
 - `https://www.googleapis.com/auth/calendar.events` (read + write)
 - `https://www.googleapis.com/auth/calendar.events.freebusy`
 
+### Drive scopes (catalog)
+
+Google’s [Drive MCP setup](https://developers.google.com/workspace/drive/api/guides/configure-mcp-server)
+lists:
+
+- `https://www.googleapis.com/auth/drive.readonly`
+- `https://www.googleapis.com/auth/drive.file` (files the app creates or the user
+  opens with the app — needed for upload / write tools)
+
+Do **not** request the full `drive` scope unless a tool actually needs it; it is
+restricted and slows OAuth verification.
+
 ### Calendar tools (preview in catalog)
 
 `list_calendars`, `list_events`, `search_events`, `get_event`, `suggest_time`,
 `create_event`, `update_event`, `delete_event`, `respond_to_event`.
-
 Authoritative tool set is discovered at runtime after connect. Official setup:
 [Configure the Calendar MCP server](https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server).
+
+### Drive tools (preview in catalog)
+
+Google’s own test prompts use `search_files` and `read_file_content`. Catalog
+preview lists those two. Authoritative tool set is discovered at runtime after
+connect. Official setup:
+[Configure the Drive MCP server](https://developers.google.com/workspace/drive/api/guides/configure-mcp-server).
 
 ---
 
 ## 4. Current path: BYO Google OAuth client (per customer / env)
 
-Use this today when connecting Gmail or Calendar from the Registry UI.
+Use this today when connecting Gmail, Calendar, or Drive from the Registry UI.
 
 ### 4.1 Prerequisites
 
@@ -122,6 +141,13 @@ gcloud services enable calendarmcp.googleapis.com --project=PROJECT_ID
 **Gmail** (enable the Gmail API and Gmail MCP API for your project — same
 pattern as Calendar; see Google Workspace MCP product docs for the exact MCP
 service name for Gmail).
+
+**Drive**
+
+```bash
+gcloud services enable drive.googleapis.com --project=PROJECT_ID
+gcloud services enable drivemcp.googleapis.com --project=PROJECT_ID
+```
 
 ### 4.3 Configure the OAuth consent screen
 
@@ -154,6 +180,7 @@ OAuth consent screen):
    ```text
    https://gateway-mcp.dev.neuraltrust.ai/oauth/callback/com.google.workspace/calendar
    https://gateway-mcp.dev.neuraltrust.ai/oauth/callback/com.google.workspace/gmail
+   https://gateway-mcp.dev.neuraltrust.ai/oauth/callback/com.google.workspace/drive
    ```
 
    Local / BYO (no `MCP_OAUTH_PUBLIC_BASE_URL`) uses the gateway request host:
@@ -161,6 +188,7 @@ OAuth consent screen):
    ```text
    http://localhost:8082/oauth/callback/com.google.workspace/calendar
    https://gw-xxxxx.mcp.example.com/oauth/callback/com.google.workspace/gmail
+   https://gw-xxxxx.mcp.example.com/oauth/callback/com.google.workspace/drive
    ```
 
    Path shape is `{base}/oauth/callback/{provider}` from `connectCallbackURL`
@@ -172,12 +200,12 @@ OAuth consent screen):
 
 ### 4.5 Connect in TrustGate / App Registry
 
-1. Open the MCP catalog → Gmail or Google Calendar.
+1. Open the MCP catalog → Gmail, Google Calendar, or Google Drive.
 2. When prompted for manual OAuth, paste:
    - **Client ID**
    - **Client secret** (if the panel asks for it)
 3. Complete the browser consent for the Google account that owns the mailbox /
-   calendar.
+   calendar / Drive files.
 4. Tokens are stored in TrustGate’s credential vault; later tool calls use
    `forwarded` auth with that user’s access token. TrustGate requests Google
    **offline** access (`access_type=offline` + `prompt=consent` on
@@ -191,7 +219,7 @@ OAuth consent screen):
 | `redirect_uri_mismatch` | Callback URL not exactly allowlisted on the OAuth client |
 | Access blocked / app not verified | External app + user not in Test users |
 | Tools fail with insufficient scope | Consent screen missing write scopes (e.g. Calendar `calendar.events`) |
-| API not enabled | Forgot `calendarmcp.googleapis.com` / Calendar API (or Gmail equivalents) |
+| API not enabled | Forgot `calendarmcp.googleapis.com` / Calendar API (or Gmail / Drive equivalents) |
 | Works once, fails ~1h later / “reconnect” | Grant has no `refresh_token` (pre-offline build, or user must **Reconnect** once after deploy so Google re-issues offline access) |
 
 ---
@@ -204,7 +232,7 @@ Google OAuth client the same way Claude injects Anthropic’s.
 ### 5.1 What you register (one-time, platform)
 
 1. Create a dedicated GCP project, e.g. `neuraltrust-trustgate-mcp`.
-2. Enable Gmail + Calendar APIs and their MCP services (§4.2).
+2. Enable Gmail + Calendar + Drive APIs and their MCP services (§4.2).
 3. Consent screen branded as **TrustGate** / **NeuralTrust**:
    - Homepage, privacy policy, support email (required for verification).
    - Audience **External** for multi-tenant cloud.
@@ -226,8 +254,10 @@ Google OAuth client the same way Claude injects Anthropic’s.
    ```text
    https://gateway-mcp.dev.neuraltrust.ai/oauth/callback/com.google.workspace/calendar
    https://gateway-mcp.dev.neuraltrust.ai/oauth/callback/com.google.workspace/gmail
+   https://gateway-mcp.dev.neuraltrust.ai/oauth/callback/com.google.workspace/drive
    https://gateway-mcp.neuraltrust.ai/oauth/callback/com.google.workspace/calendar
    https://gateway-mcp.neuraltrust.ai/oauth/callback/com.google.workspace/gmail
+   https://gateway-mcp.neuraltrust.ai/oauth/callback/com.google.workspace/drive
    ```
 
    Self-hosted / BYO: leave `MCP_OAUTH_PUBLIC_BASE_URL` empty so `redirect_uri`
@@ -252,14 +282,14 @@ Claude-like UX is **inject + hide fields**, not DCR.
    Both must be non-empty. Client ID is non-secret (`overlays/*/config.env`);
    secret lives in the agentgateway `.env` blob.
 
-2. On create/update of `com.google.workspace/gmail` and
-   `com.google.workspace/calendar`, TrustGate injects those credentials into
+2. On create/update of `com.google.workspace/gmail`,
+   `com.google.workspace/calendar`, and `com.google.workspace/drive`, TrustGate injects those credentials into
    `forwarded` auth when the request did not send a different `client_id`.
    OAuth start/refresh re-reads the platform secret so rotation does not
    require rewriting stored registries.
 
 3. `GET /v1/mcp-servers-catalog` then reports `requires_config: false` and
-   `platform_client: true` for those two entries. The App Connect button skips
+   `platform_client: true` for those three entries. The App Connect button skips
    the config panel (same as DCR auto). TrustGate’s Registry UI hides Client
    ID / Secret.
 
@@ -282,7 +312,7 @@ Until the OAuth app is **verified**:
 - Only **test users** listed on the consent screen can complete OAuth.
 - Fine for dogfooding; not fine for open signup.
 
-For External apps with Calendar / Gmail scopes expect:
+For External apps with Calendar / Gmail / Drive scopes expect:
 
 - OAuth verification in Google Cloud
 - Privacy policy + homepage
@@ -307,7 +337,7 @@ production.
 
 ## 6. Operator checklist (shared app launch)
 
-- [ ] GCP project created; Gmail/Calendar (+ MCP) APIs enabled
+- [ ] GCP project created; Gmail/Calendar/Drive (+ MCP) APIs enabled
 - [ ] Consent screen branded; scopes match catalog (and write tools)
 - [ ] Web client created; per-provider `/oauth/callback/{provider}` URIs allowlisted
 - [ ] `MCP_OAUTH_PUBLIC_BASE_URL` set on cloud MCP plane; DNS points at that plane
@@ -335,6 +365,7 @@ production.
 | Registry UI (manual client fields) | App `McpServerConfigPanel` / `mcpCatalog.ts`; TrustGate `mcp-registries-view.tsx` |
 | Local MCP plane testing | `docs/mcp/testing-guide.md` |
 | Google Calendar MCP setup | https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server |
+| Google Drive MCP setup | https://developers.google.com/workspace/drive/api/guides/configure-mcp-server |
 
 ---
 

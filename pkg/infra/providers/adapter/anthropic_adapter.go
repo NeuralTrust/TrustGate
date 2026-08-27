@@ -81,16 +81,16 @@ type anthropicResponse struct {
 }
 
 type anthropicContentBlock struct {
-	Type         string          `json:"type"`
-	Text         string          `json:"text,omitempty"`
-	Thinking     string          `json:"thinking,omitempty"`  // extended thinking block content
-	Signature    string          `json:"signature,omitempty"` // thinking block signature
-	ID           string          `json:"id,omitempty"`
-	Name         string          `json:"name,omitempty"`
-	Input        json.RawMessage `json:"input,omitempty"`
-	ToolUseID    string          `json:"tool_use_id,omitempty"` // user message: tool_result block
-	Content      json.RawMessage `json:"content,omitempty"`     // tool_result content: string or blocks
-	IsError      bool            `json:"is_error,omitempty"`
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	Thinking  string          `json:"thinking,omitempty"`  // extended thinking block content
+	Signature string          `json:"signature,omitempty"` // thinking block signature
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	ToolUseID string          `json:"tool_use_id,omitempty"` // user message: tool_result block
+	Content   json.RawMessage `json:"content,omitempty"`     // tool_result content: string or blocks
+	IsError   bool            `json:"is_error,omitempty"`
 }
 
 type anthropicUsage struct {
@@ -112,14 +112,25 @@ type anthropicCacheCreation struct {
 // both DecodeResponse and stream events) into the canonical view. Anthropic
 // does not emit a total — the factory synthesizes in+out.
 func anthropicUsageToCanonical(u anthropicUsage) *CanonicalUsage {
-	cu := newCanonicalUsage(u.InputTokens, u.OutputTokens, 0)
+	cu := newCanonicalUsage(
+		u.InputTokens+u.CacheReadInputTokens+u.CacheCreationInputTokens,
+		u.OutputTokens,
+		0,
+	)
 	if cu == nil {
 		return nil
 	}
-	cu.CacheCreationInputTokens = u.CacheCreationInputTokens
-	cu.CacheReadInputTokens = u.CacheReadInputTokens
+	cu.CachedInputTokens = u.CacheReadInputTokens
+	cu.CacheWriteInputTokens = u.CacheCreationInputTokens
+	if u.CacheCreation != nil {
+		cu.CacheWrite1hInputTokens = u.CacheCreation.Ephemeral1hInputTokens
+	}
 	cu.ServiceTier = u.ServiceTier
 	return cu
+}
+
+func anthropicWireInputTokens(u *CanonicalUsage) int {
+	return u.PlainInputTokens()
 }
 
 // anthropicSSEUsageFrom builds the on-wire usage block for a stream chunk.
@@ -129,10 +140,10 @@ func anthropicSSEUsageFrom(u *CanonicalUsage) anthropicSSEUsage {
 		return anthropicSSEUsage{}
 	}
 	return anthropicSSEUsage{
-		InputTokens:              u.InputTokens,
+		InputTokens:              anthropicWireInputTokens(u),
 		OutputTokens:             u.OutputTokens,
-		CacheCreationInputTokens: u.CacheCreationInputTokens,
-		CacheReadInputTokens:     u.CacheReadInputTokens,
+		CacheCreationInputTokens: u.CacheWriteInputTokens,
+		CacheReadInputTokens:     u.CachedInputTokens,
 	}
 }
 
@@ -564,10 +575,10 @@ func (a *AnthropicAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, erro
 
 	if resp.Usage != nil {
 		out.Usage = &anthropicUsage{
-			InputTokens:              resp.Usage.InputTokens,
+			InputTokens:              anthropicWireInputTokens(resp.Usage),
 			OutputTokens:             resp.Usage.OutputTokens,
-			CacheCreationInputTokens: resp.Usage.CacheCreationInputTokens,
-			CacheReadInputTokens:     resp.Usage.CacheReadInputTokens,
+			CacheCreationInputTokens: resp.Usage.CacheWriteInputTokens,
+			CacheReadInputTokens:     resp.Usage.CachedInputTokens,
 			ServiceTier:              resp.Usage.ServiceTier,
 		}
 	}

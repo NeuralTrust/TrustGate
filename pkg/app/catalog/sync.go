@@ -204,6 +204,8 @@ func (s *syncer) Sync(ctx context.Context) error {
 			MaxOutput:        m.MaxOutput,
 			InputPrice:       m.InputPrice,
 			OutputPrice:      m.OutputPrice,
+			CacheReadPrice:   m.CacheReadPrice,
+			CacheWritePrice:  m.CacheWritePrice,
 			ReleaseDate:      parseReleaseDate(m.ReleaseDate),
 			InputModalities:  m.InputModalities,
 			OutputModalities: m.OutputModalities,
@@ -256,13 +258,13 @@ func (s *syncer) seedManualModels(ctx context.Context, codeToProvider map[string
 	}
 	for _, m := range cohereSeedModels {
 		entity := &domain.Model{
-			ProviderID:    provider.ID,
-			Slug:          m.slug,
-			ExternalID:    m.externalID,
-			DisplayName:   m.displayName,
-			Capabilities:  m.capabilities,
-			Enabled:       true,
-			Source:        sourceManualSeed,
+			ProviderID:   provider.ID,
+			Slug:         m.slug,
+			ExternalID:   m.externalID,
+			DisplayName:  m.displayName,
+			Capabilities: m.capabilities,
+			Enabled:      true,
+			Source:       sourceManualSeed,
 		}
 		if err := s.repo.UpsertModel(ctx, entity); err != nil {
 			return err

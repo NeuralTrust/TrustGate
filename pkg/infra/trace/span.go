@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/logredact"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/google/uuid"
@@ -31,6 +32,12 @@ const (
 	SpanA2A    SpanType = "a2a"
 	SpanPlugin SpanType = "plugin"
 )
+
+type RouteBaseline struct {
+	Provider string
+	Model    string
+	Pricing  *registrydomain.Pricing
+}
 
 type LLMAttrs struct {
 	RegistryID string
@@ -51,6 +58,9 @@ type LLMAttrs struct {
 	Route          string
 	Outcome        string
 	Usage          *adapter.CanonicalUsage
+	TierApplied    bool
+	Baseline       *RouteBaseline
+	ServedPricing  *registrydomain.Pricing
 }
 
 type PluginAttrs struct {
@@ -182,7 +192,7 @@ func (s *Span) ObserveUsage(u *adapter.CanonicalUsage) {
 	if s.LLM == nil {
 		s.LLM = &LLMAttrs{}
 	}
-	s.LLM.Usage = u
+	s.LLM.Usage = adapter.MergeUsage(s.LLM.Usage, u)
 }
 
 func (s *Span) Usage() *adapter.CanonicalUsage {

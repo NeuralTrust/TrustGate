@@ -40,11 +40,17 @@ type RegistryResponse struct {
 }
 
 type MCPTargetResponse struct {
-	Code      string            `json:"code,omitempty"`
-	URL       string            `json:"url"`
-	Transport string            `json:"transport,omitempty"`
-	Headers   map[string]string `json:"headers,omitempty"`
-	Auth      *MCPAuthResponse  `json:"auth,omitempty"`
+	Code      string                 `json:"code,omitempty"`
+	Source    string                 `json:"source,omitempty"`
+	URL       string                 `json:"url,omitempty"`
+	Transport string                 `json:"transport,omitempty"`
+	Headers   map[string]string      `json:"headers,omitempty"`
+	Auth      *MCPAuthResponse       `json:"auth,omitempty"`
+	OpenAPI   *OpenAPITargetResponse `json:"openapi,omitempty"`
+}
+
+type OpenAPITargetResponse struct {
+	SpecURL string `json:"spec_url"`
 }
 
 type MCPAuthResponse struct {
@@ -84,8 +90,11 @@ type PricingResponse struct {
 }
 
 type PriceOverrideResponse struct {
-	Input  float64 `json:"input"`
-	Output float64 `json:"output"`
+	Input        float64  `json:"input"`
+	Output       float64  `json:"output"`
+	CacheRead    *float64 `json:"cache_read,omitempty"`
+	CacheWrite   *float64 `json:"cache_write,omitempty"`
+	CacheWrite1h *float64 `json:"cache_write_1h,omitempty"`
 }
 
 type TargetAuthResponse struct {
@@ -180,7 +189,11 @@ func fromPricing(p *domain.Pricing) *PricingResponse {
 	}
 	out.Overrides = make(map[string]PriceOverrideResponse, len(p.Overrides))
 	for slug, rate := range p.Overrides {
-		out.Overrides[slug] = PriceOverrideResponse{Input: rate.Input, Output: rate.Output}
+		out.Overrides[slug] = PriceOverrideResponse{
+			Input: rate.Input, Output: rate.Output,
+			CacheRead: rate.CacheRead, CacheWrite: rate.CacheWrite,
+			CacheWrite1h: rate.CacheWrite1h,
+		}
 	}
 	return out
 }
@@ -191,9 +204,13 @@ func fromMCPTarget(t *domain.MCPTarget) *MCPTargetResponse {
 	}
 	out := &MCPTargetResponse{
 		Code:      t.Code,
+		Source:    string(t.Source),
 		URL:       t.URL,
 		Transport: string(t.Transport),
 		Headers:   t.Headers,
+	}
+	if t.OpenAPI != nil {
+		out.OpenAPI = &OpenAPITargetResponse{SpecURL: t.OpenAPI.SpecURL}
 	}
 	if t.Auth != nil {
 		out.Auth = &MCPAuthResponse{
