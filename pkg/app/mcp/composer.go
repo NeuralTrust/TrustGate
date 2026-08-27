@@ -77,7 +77,7 @@ func (c *composer) ListTools(ctx context.Context, rc *appconsumer.RoutableConsum
 	}
 	out := make([]Tool, 0, len(comp.bindings))
 	for _, b := range comp.bindings {
-		t := b.tool
+		t := attributeTool(b.tool, b.registry)
 		t.Name = b.exposed
 		out = append(out, t)
 	}
