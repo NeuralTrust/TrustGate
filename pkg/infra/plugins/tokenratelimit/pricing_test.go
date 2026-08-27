@@ -22,7 +22,7 @@ import (
 )
 
 func TestBillableInputTokens(t *testing.T) {
-	usage := &adapter.CanonicalUsage{InputTokens: 100, CacheReadInputTokens: 30}
+	usage := &adapter.CanonicalUsage{InputTokens: 130, CachedInputTokens: 30}
 	t.Run("excludes cache reads by default", func(t *testing.T) {
 		assert.Equal(t, 100, billableInputTokens(&config{}, usage))
 	})
