@@ -63,18 +63,19 @@ func (b *Builder) Build(
 	}
 
 	evt := &events.Event{
-		SchemaVersion: events.SchemaVersion,
-		Kind:          events.KindLLM,
-		TraceID:       traceID,
-		GatewayID:     meta.GatewayID,
-		TenantID:      meta.TenantID,
-		Timestamp:     startTime.UTC().Format(time.RFC3339),
-		OccurredOn:    startTime.UnixMilli(),
-		EndTimestamp:  endTime.UnixMilli(),
-		Consumer:      events.Consumer{ID: meta.ConsumerID, Name: meta.ConsumerName},
-		SessionID:     meta.SessionID,
-		IP:            meta.IP,
-		Retention:     retention(meta, startTime),
+		SchemaVersion:    events.SchemaVersion,
+		Kind:             events.KindLLM,
+		TraceID:          traceID,
+		GatewayID:        meta.GatewayID,
+		TenantID:         meta.TenantID,
+		Timestamp:        startTime.UTC().Format(time.RFC3339),
+		OccurredOn:       startTime.UnixMilli(),
+		EndTimestamp:     endTime.UnixMilli(),
+		Consumer:         events.Consumer{ID: meta.ConsumerID, Name: meta.ConsumerName},
+		SessionID:        meta.SessionID,
+		IP:               meta.IP,
+		PrincipalSubject: meta.PrincipalSubject,
+		Retention:        retention(meta, startTime),
 	}
 
 	if meta.Kind == events.KindMCP {
@@ -325,6 +326,7 @@ func (b *Builder) foldMCPSpans(requestTrace *trace.RequestTrace) (*events.MCP, i
 			Targets:        attrs.Targets,
 			UpstreamStatus: attrs.UpstreamStatus,
 			RPCErrorCode:   attrs.RPCErrorCode,
+			AccountRef:     attrs.AccountRef,
 		}
 	}
 	return mcp, upstreamMs

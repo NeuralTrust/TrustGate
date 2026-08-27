@@ -76,6 +76,8 @@ Shared OAuth endpoints:
 
 ### Gmail scopes (catalog)
 
+- `openid`
+- `email`
 - `https://www.googleapis.com/auth/gmail.readonly`
 - `https://www.googleapis.com/auth/gmail.compose`
 
@@ -84,6 +86,8 @@ Shared OAuth endpoints:
 Configure-screen docs list mostly readonly scopes; write tools require events
 write access. Catalog uses:
 
+- `openid`
+- `email`
 - `https://www.googleapis.com/auth/calendar.calendarlist.readonly`
 - `https://www.googleapis.com/auth/calendar.events` (read + write)
 - `https://www.googleapis.com/auth/calendar.events.freebusy`
@@ -93,6 +97,8 @@ write access. Catalog uses:
 Google’s [Drive MCP setup](https://developers.google.com/workspace/drive/api/guides/configure-mcp-server)
 lists:
 
+- `openid`
+- `email`
 - `https://www.googleapis.com/auth/drive.readonly`
 - `https://www.googleapis.com/auth/drive.file` (files the app creates or the user
   opens with the app — needed for upload / write tools)

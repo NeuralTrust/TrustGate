@@ -46,6 +46,12 @@ func TestSetConsumer_StampsMetadata(t *testing.T) {
 	assert.Equal(t, "gw", meta.GatewayID)
 }
 
+func TestSetPrincipal_StampsMetadata(t *testing.T) {
+	rt := trace.New("t", trace.Metadata{GatewayID: "gw"})
+	rt.SetPrincipal("alice")
+	assert.Equal(t, "alice", rt.Metadata().PrincipalSubject)
+}
+
 func TestStartSpan_RecordsTypedSpansInOrder(t *testing.T) {
 	rt := trace.New("t", trace.Metadata{})
 	llm := rt.StartSpan(trace.SpanLLM, "openai")
