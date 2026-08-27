@@ -1,0 +1,48 @@
+{
+  "_comment": "Sink 3 — metadata OTLP exporter for an MCP tools/call. Schema-accurate representative record, not a live capture. Display: principal.email (or subject), mcp.server_name, mcp.tool.",
+  "_destination": "OTEL_EXPORTER_OTLP_ENDPOINT → OpenTelemetry Collector",
+  "_trace_id": "c2d9b82e-46e9-5b00-b9eb-edc89e16dbd0",
+  "resource": {
+    "service.name": "trustgate",
+    "schema_url": "https://opentelemetry.io/schemas/1.41.0"
+  },
+  "scope": "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/otlp",
+  "logRecord": {
+    "eventName": "trustgate.3.metadata",
+    "severity": "Info",
+    "body": "",
+    "attributes": {
+      "http.request.method": "POST",
+      "http.response.status_code": 200,
+      "url.path": "/virtual/mcp",
+      "trustgate.schema_version": 3,
+      "trustgate.kind": "mcp",
+      "trustgate.trace_id": "c2d9b82e-46e9-5b00-b9eb-edc89e16dbd0",
+      "trustgate.gateway_id": "gw-support-chat",
+      "trustgate.tenant_id": "00000000-0000-0000-0000-000000000001",
+      "trustgate.consumer.id": "consumer-42",
+      "trustgate.consumer.name": "claude-desktop",
+      "trustgate.principal.subject": "dogfood-key",
+      "trustgate.principal.method": "api_key",
+      "trustgate.principal.email": "ada@neuraltrust.ai",
+      "trustgate.mcp.method": "tools/call",
+      "trustgate.mcp.operation": "tool",
+      "trustgate.mcp.server_name": "Gmail",
+      "trustgate.mcp.registry_id": "reg-gmail",
+      "trustgate.mcp.host": "gmail.googleapis.com",
+      "trustgate.mcp.catalog_code": "com.google/gmail",
+      "trustgate.mcp.transport": "streamable-http",
+      "trustgate.mcp.tool": "send_email",
+      "trustgate.mcp.upstream_tool": "send_email",
+      "trustgate.mcp.account_ref": "ada@neuraltrust.ai",
+      "trustgate.mcp.upstream_status": 200,
+      "trustgate.mcp.upstream_latency_ms": 240,
+      "trustgate.status.outcome": "",
+      "trustgate.latency.total_ms": 280,
+      "trustgate.latency.provider_ms": 240,
+      "trustgate.latency.policies_ms": 12,
+      "trustgate.latency.gateway_ms": 28,
+      "trustgate.is_flagged": false
+    }
+  }
+}

@@ -5545,6 +5545,8 @@
         "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
         "token_url": "https://oauth2.googleapis.com/token",
         "scopes": [
+          "openid",
+          "email",
           "https://www.googleapis.com/auth/gmail.readonly",
           "https://www.googleapis.com/auth/gmail.compose"
         ],
@@ -5607,6 +5609,8 @@
         "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
         "token_url": "https://oauth2.googleapis.com/token",
         "scopes": [
+          "openid",
+          "email",
           "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
           "https://www.googleapis.com/auth/calendar.events",
           "https://www.googleapis.com/auth/calendar.events.freebusy"
@@ -5670,6 +5674,8 @@
         "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
         "token_url": "https://oauth2.googleapis.com/token",
         "scopes": [
+          "openid",
+          "email",
           "https://www.googleapis.com/auth/drive.readonly",
           "https://www.googleapis.com/auth/drive.file"
         ],

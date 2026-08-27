@@ -320,6 +320,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 				Name:     in.Request.RequestedModel,
 				Provider: in.Request.Provider,
 			},
+			User: principalUser(ctx),
 		},
 	}
 
@@ -471,6 +472,20 @@ func gatewayTraceID(ctx context.Context) string {
 		return ""
 	}
 	return rt.TraceID()
+}
+
+func principalUser(ctx context.Context) *GuardUser {
+	rt := trace.FromContext(ctx)
+	if rt == nil {
+		return nil
+	}
+	meta := rt.Metadata()
+	id := strings.TrimSpace(meta.PrincipalSubject)
+	email := strings.TrimSpace(meta.PrincipalEmail)
+	if id == "" && email == "" {
+		return nil
+	}
+	return &GuardUser{ID: id, Email: email}
 }
 
 func requestHasPlaygroundToken(req *infracontext.RequestContext) bool {

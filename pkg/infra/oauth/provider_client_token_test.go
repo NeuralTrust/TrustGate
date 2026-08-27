@@ -73,6 +73,27 @@ func TestProviderClient_SlackTokenResponse(t *testing.T) {
 		}
 	})
 
+	t.Run("captures id_token", func(t *testing.T) {
+		t.Parallel()
+		srv := tokenServer(t, map[string]any{
+			"access_token": "access",
+			"id_token":     "header.payload.sig",
+			"token_type":   "Bearer",
+			"expires_in":   3600,
+		})
+		token, err := NewProviderClient(srv.Client()).Refresh(
+			context.Background(),
+			&registrydomain.MCPAuth{ClientID: "id", TokenURL: srv.URL},
+			"refresh",
+		)
+		if err != nil {
+			t.Fatalf("Refresh: %v", err)
+		}
+		if token.IDToken != "header.payload.sig" {
+			t.Fatalf("IDToken = %q", token.IDToken)
+		}
+	})
+
 	t.Run("invalid refresh token requires consent", func(t *testing.T) {
 		t.Parallel()
 		srv := tokenServer(t, map[string]any{

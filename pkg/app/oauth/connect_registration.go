@@ -30,7 +30,7 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 		return nil, ErrProviderNotFound
 	}
 	if cfg.Registration != registrydomain.RegistrationAuto {
-		return applySharedOAuth(cfg, reg, s.sharedOAuth), nil
+		return withIdentityScopes(applySharedOAuth(cfg, reg, s.sharedOAuth)), nil
 	}
 	meta, err := s.registrar.Discover(ctx, reg.MCPTarget.URL)
 	if err != nil {
@@ -40,7 +40,7 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 	if err != nil {
 		return nil, err
 	}
-	return autoAuth(cfg, meta, client), nil
+	return withIdentityScopes(autoAuth(cfg, meta, client)), nil
 }
 
 func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) (*registrydomain.MCPAuth, error) {
@@ -49,7 +49,7 @@ func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayI
 		return nil, ErrProviderNotFound
 	}
 	if cfg.Registration != registrydomain.RegistrationAuto {
-		return applySharedOAuth(cfg, reg, s.sharedOAuth), nil
+		return withIdentityScopes(applySharedOAuth(cfg, reg, s.sharedOAuth)), nil
 	}
 	meta, err := s.registrar.Discover(ctx, reg.MCPTarget.URL)
 	if err != nil {
@@ -62,7 +62,7 @@ func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayI
 	if client == nil {
 		return nil, fmt.Errorf("%w: provider %q", ErrNoRegisteredClient, cfg.Provider)
 	}
-	return autoAuth(cfg, meta, client), nil
+	return withIdentityScopes(autoAuth(cfg, meta, client)), nil
 }
 
 func applySharedOAuth(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, shared mcpoauth.Provider) *registrydomain.MCPAuth {

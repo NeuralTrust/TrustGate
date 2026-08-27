@@ -218,7 +218,8 @@ var connectPageTmpl = template.Must(template.New("connect").Parse(`<!doctype htm
     <span class="badge red">Expired</span>
     <a class="btn secondary" href="/oauth/connect/{{.Provider}}?ticket={{$.Ticket}}">Reconnect</a>
   {{else if .Linked}}
-    <span class="badge green">` + badgeCheck + `Connected</span>
+    <div>{{if .AccountRef}}<span class="reg">{{.AccountRef}}</span>{{end}}
+    <span class="badge green">` + badgeCheck + `Connected</span></div>
     <form method="post" action="/oauth/disconnect/{{.Provider}}?ticket={{$.Ticket}}"><button class="btn ghost-danger" type="submit">Revoke</button></form>
   {{else}}
     <span></span>
@@ -303,6 +304,7 @@ type providerView struct {
 	Description    string
 	LogoURL        template.URL
 	Linked         bool
+	AccountRef     string
 	NeedsReconnect bool
 }
 
@@ -362,6 +364,7 @@ func decorateProvider(catalog appcatalog.MCPServerCatalog, p appoauth.ProviderSt
 		Description:    desc,
 		LogoURL:        template.URL(appcatalog.BrandIconURL(vendor, display, p.Provider, p.Registry, p.Code)), // #nosec G203 -- path is chosen from the bundled brand map
 		Linked:         p.Linked,
+		AccountRef:     p.AccountRef,
 		NeedsReconnect: p.NeedsReconnect,
 	}
 }

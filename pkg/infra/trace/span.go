@@ -87,6 +87,7 @@ type MCPAttrs struct {
 	Targets        int
 	UpstreamStatus int
 	RPCErrorCode   int
+	AccountRef     string
 }
 
 type Span struct {
@@ -323,6 +324,16 @@ func (s *Span) SetMCPUpstream(serverName, registryID, host, catalogCode, transpo
 	s.MCP.CatalogCode = catalogCode
 	s.MCP.Transport = transport
 	s.MCP.UpstreamTool = upstreamTool
+}
+
+func (s *Span) SetMCPAccountRef(accountRef string) {
+	if accountRef == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureMCP()
+	s.MCP.AccountRef = accountRef
 }
 
 func (s *Span) SetMCPTargets(targets int) {

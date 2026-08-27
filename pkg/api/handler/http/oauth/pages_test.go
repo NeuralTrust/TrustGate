@@ -95,7 +95,7 @@ func TestConnectPage_RendersCustomSchemeResume(t *testing.T) {
 	body := renderToString(t, func(c *fiber.Ctx) error {
 		return renderConnectPage(c, &appoauth.ConnectPage{
 			ConsumerPath: "/v1/mcp/dev",
-			Providers:    []appoauth.ProviderStatus{{Provider: "linear", Registry: "linear-mcp", Linked: true}},
+			Providers:    []appoauth.ProviderStatus{{Provider: "linear", Registry: "linear-mcp", Linked: true, AccountRef: "ada@linear.app"}},
 			ResumeURL:    "cursor://anysphere.cursor-mcp/oauth/callback?code=abc&state=s",
 		}, "tk", "", nil)
 	})
@@ -107,6 +107,9 @@ func TestConnectPage_RendersCustomSchemeResume(t *testing.T) {
 	}
 	if !strings.Contains(body, "Connected") || !strings.Contains(body, "/oauth/disconnect/linear?ticket=tk") {
 		t.Fatal("linked provider must render status and revoke action")
+	}
+	if !strings.Contains(body, "ada@linear.app") {
+		t.Fatal("linked provider must render the stored account identity")
 	}
 }
 
