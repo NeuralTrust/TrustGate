@@ -48,7 +48,7 @@ func (a *VertexEmbedAdapter) DecodeRequest(body []byte) (*CanonicalRequest, erro
 	if err := json.Unmarshal(body, &batch); err != nil {
 		return nil, err
 	}
-	inputs := make([]string, 0, len(batch.Requests)+1)
+	inputs := make([]string, 0, len(batch.Requests))
 	if len(batch.Requests) > 0 {
 		for _, req := range batch.Requests {
 			inputs = append(inputs, textsFromVertexContent(req.Content)...)
