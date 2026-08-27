@@ -54,10 +54,38 @@ type Session struct {
 var _ appmcp.Upstream = (*Session)(nil)
 
 func (c *Client) Connect(ctx context.Context, target appmcp.Target) (*Session, error) {
+	cs, attempt, err := c.connect(ctx, target, false)
+	if err == nil {
+		return &Session{cs: cs, url: target.URL}, nil
+	}
+	if ctx.Err() != nil ||
+		!attempt.discoverLegacyCandidate.Load() ||
+		!attempt.initializeBadRequest.Load() {
+		return nil, wrapUnreachable(target.URL, err)
+	}
+
+	cs, _, legacyErr := c.connect(ctx, target, true)
+	if legacyErr != nil {
+		return nil, wrapUnreachable(target.URL, fmt.Errorf("legacy handshake fallback: %w", legacyErr))
+	}
+	return &Session{cs: cs, url: target.URL}, nil
+}
+
+func (c *Client) connect(
+	ctx context.Context,
+	target appmcp.Target,
+	legacyFallback bool,
+) (*sdk.ClientSession, *handshakeRoundTripper, error) {
+	attempt := &handshakeRoundTripper{
+		headers:        target.Headers,
+		transport:      upstreamTransport,
+		legacyFallback: legacyFallback,
+	}
 	transport := &sdk.StreamableClientTransport{
 		Endpoint: target.URL,
 		HTTPClient: &http.Client{
-			Transport: &headerRoundTripper{headers: target.Headers},
+			Transport:     attempt,
+			CheckRedirect: rejectRedirect,
 		},
 		DisableStandaloneSSE: true,
 	}
@@ -67,20 +95,9 @@ func (c *Client) Connect(ctx context.Context, target appmcp.Target) (*Session, e
 	)
 	cs, err := cli.Connect(ctx, transport, nil)
 	if err != nil {
-		return nil, wrapUnreachable(target.URL, err)
+		return nil, attempt, err
 	}
-	return &Session{cs: cs, url: target.URL}, nil
-}
-
-type headerRoundTripper struct {
-	headers map[string]string
-}
-
-func (t *headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	for k, v := range t.headers {
-		req.Header.Set(k, v)
-	}
-	return upstreamTransport.RoundTrip(req)
+	return cs, attempt, nil
 }
 
 func (s *Session) capabilities() *sdk.ServerCapabilities {
