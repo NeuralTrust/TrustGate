@@ -158,11 +158,32 @@ func (r *Repository) ListProviders(ctx context.Context) ([]domain.Provider, erro
 	return scanProviders(rows)
 }
 
+// modelColumns is the projection both model reads share, kept in one place so
+// the two column lists cannot drift out of step with scanModels.
+//
+// The nullable columns are coalesced because scanModels reads them into value
+// types, and pgx fails a scan rather than zeroing a NULL. Every one of them
+// predates a writer that only ever sends a Go string or int, so a NULL can only
+// come from an ADD COLUMN backfilling existing rows — which is exactly how the
+// cache price columns broke this listing once already. cache_read_price and
+// cache_write_price are absent here on purpose: 20260827120000 made them
+// NOT NULL, so the schema now carries the guarantee and a COALESCE would only
+// suggest it does not.
+const modelColumns = `
+		       m.id, m.provider_id, m.slug,
+		       COALESCE(m.external_id, '')   AS external_id,
+		       COALESCE(m.display_name, '')  AS display_name,
+		       COALESCE(m.context_window, 0) AS context_window,
+		       COALESCE(m.max_output, 0)     AS max_output,
+		       COALESCE(m.input_price, '')   AS input_price,
+		       COALESCE(m.output_price, '')  AS output_price,
+		       m.cache_read_price, m.cache_write_price,
+		       m.capabilities, m.enabled, m.source, m.release_date,
+		       m.input_modalities, m.output_modalities, m.created_at, m.updated_at`
+
 func (r *Repository) ListModelsByProviderCode(ctx context.Context, providerCode string) ([]domain.Model, error) {
 	const query = `
-		SELECT m.id, m.provider_id, m.slug, m.external_id, m.display_name, m.context_window, m.max_output,
-		       m.input_price, m.output_price, m.cache_read_price, m.cache_write_price, m.capabilities, m.enabled, m.source, m.release_date,
-		       m.input_modalities, m.output_modalities, m.created_at, m.updated_at
+		SELECT` + modelColumns + `
 		  FROM models_catalog m
 		  JOIN providers_catalog p ON p.id = m.provider_id
 		 WHERE ($1 = '' OR p.code = $1)
@@ -177,9 +198,7 @@ func (r *Repository) ListModelsByProviderCode(ctx context.Context, providerCode 
 
 func (r *Repository) FindModel(ctx context.Context, providerCode, slug string) (*domain.Model, error) {
 	const query = `
-		SELECT m.id, m.provider_id, m.slug, m.external_id, m.display_name, m.context_window, m.max_output,
-		       m.input_price, m.output_price, m.cache_read_price, m.cache_write_price, m.capabilities, m.enabled, m.source, m.release_date,
-		       m.input_modalities, m.output_modalities, m.created_at, m.updated_at
+		SELECT` + modelColumns + `
 		  FROM models_catalog m
 		  JOIN providers_catalog p ON p.id = m.provider_id
 		 WHERE p.code = $1 AND m.slug = $2`
