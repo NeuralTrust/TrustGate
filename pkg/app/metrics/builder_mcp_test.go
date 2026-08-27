@@ -41,6 +41,8 @@ func TestBuilder_MCPFoldsUpstreamAndLatency(t *testing.T) {
 		ConsumerID:       "c-1",
 		ConsumerName:     "agent",
 		PrincipalSubject: "alice",
+		PrincipalMethod:  "jwt",
+		PrincipalEmail:   "alice@example.com",
 		Kind:             events.KindMCP,
 	})
 	_ = rt.AddSpan(mcpSpan("tools/call", &trace.MCPAttrs{
@@ -68,6 +70,8 @@ func TestBuilder_MCPFoldsUpstreamAndLatency(t *testing.T) {
 	assert.Equal(t, "team-9", evt.TenantID)
 	assert.Equal(t, "c-1", evt.Consumer.ID)
 	assert.Equal(t, "alice", evt.PrincipalSubject)
+	assert.Equal(t, "jwt", evt.PrincipalMethod)
+	assert.Equal(t, "alice@example.com", evt.PrincipalEmail)
 	require.NotNil(t, evt.MCP)
 	assert.Equal(t, "tools/call", evt.MCP.Method)
 	assert.Equal(t, "tool", evt.MCP.Operation)
@@ -90,6 +94,36 @@ func TestBuilder_MCPFoldsUpstreamAndLatency(t *testing.T) {
 	assert.Empty(t, evt.PolicyChain)
 	assert.False(t, evt.IsFlagged)
 	assert.Empty(t, evt.Security)
+}
+
+func TestBuilder_MCPCopiesAccountRefToPrincipalEmail(t *testing.T) {
+	rt := trace.New("trace-mcp-email", trace.Metadata{
+		GatewayID:        "gw-1",
+		PrincipalSubject: "my-api-key",
+		PrincipalMethod:  "api_key",
+		Kind:             events.KindMCP,
+	})
+	_ = rt.AddSpan(mcpSpan("tools/call", &trace.MCPAttrs{
+		Method:     "tools/call",
+		Operation:  "tool",
+		Tool:       "search",
+		ServerName: "gmail",
+		AccountRef: "ada@gmail.com",
+	}, 10*time.Millisecond))
+
+	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/mcp"}
+	resp := &infracontext.ResponseContext{StatusCode: 200}
+	start := time.UnixMilli(2_000_000)
+
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(time.Millisecond))
+
+	assert.Equal(t, "my-api-key", evt.PrincipalSubject)
+	assert.Equal(t, "api_key", evt.PrincipalMethod)
+	assert.Equal(t, "ada@gmail.com", evt.PrincipalEmail)
+	require.NotNil(t, evt.MCP)
+	assert.Equal(t, "gmail", evt.MCP.ServerName)
+	assert.Equal(t, "search", evt.MCP.Tool)
+	assert.Equal(t, "ada@gmail.com", evt.MCP.AccountRef)
 }
 
 func TestBuilder_MCPFoldsPolicyChain(t *testing.T) {

@@ -17,9 +17,11 @@ package metrics
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -75,6 +77,8 @@ func (b *Builder) Build(
 		SessionID:        meta.SessionID,
 		IP:               meta.IP,
 		PrincipalSubject: meta.PrincipalSubject,
+		PrincipalMethod:  meta.PrincipalMethod,
+		PrincipalEmail:   meta.PrincipalEmail,
 		Retention:        retention(meta, startTime),
 	}
 
@@ -268,6 +272,11 @@ func (b *Builder) buildMCP(
 		mcp.UpstreamLatencyMs = upstreamMs
 	}
 	evt.MCP = mcp
+	if evt.PrincipalEmail == "" && mcp != nil {
+		if ref := strings.TrimSpace(mcp.AccountRef); identity.LooksLikeEmail(ref) {
+			evt.PrincipalEmail = ref
+		}
+	}
 
 	policies := b.foldPluginSpans(requestTrace)
 	evt.PolicyChain = policies.chain

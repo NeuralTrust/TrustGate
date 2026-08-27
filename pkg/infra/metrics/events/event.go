@@ -28,6 +28,8 @@ type Event struct {
 	GatewayID        string `json:"gateway_id"`
 	TenantID         string `json:"tenant_id,omitempty"`
 	PrincipalSubject string `json:"principal_subject,omitempty"`
+	PrincipalMethod  string `json:"principal_method,omitempty"`
+	PrincipalEmail   string `json:"principal_email,omitempty"`
 
 	Timestamp    string `json:"timestamp"`
 	OccurredOn   int64  `json:"occurred_on"`

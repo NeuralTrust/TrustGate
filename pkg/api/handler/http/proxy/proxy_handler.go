@@ -300,7 +300,7 @@ func stampConsumerTrace(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) {
 	}
 	rt.SetConsumer(rc.Consumer.ID.String(), rc.Consumer.Name)
 	if p := identity.PrincipalFromContext(c.UserContext()); p != nil {
-		rt.SetPrincipal(p.Subject)
+		rt.SetPrincipalIdentity(p.Subject, string(p.Method), p.Email())
 	}
 }
 

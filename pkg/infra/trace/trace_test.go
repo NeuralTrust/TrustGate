@@ -52,6 +52,25 @@ func TestSetPrincipal_StampsMetadata(t *testing.T) {
 	assert.Equal(t, "alice", rt.Metadata().PrincipalSubject)
 }
 
+func TestSetPrincipalIdentity_StampsSubjectMethodAndEmail(t *testing.T) {
+	rt := trace.New("t", trace.Metadata{GatewayID: "gw"})
+	rt.SetPrincipalIdentity("alice", "jwt", "ada@example.com")
+	meta := rt.Metadata()
+	assert.Equal(t, "alice", meta.PrincipalSubject)
+	assert.Equal(t, "jwt", meta.PrincipalMethod)
+	assert.Equal(t, "ada@example.com", meta.PrincipalEmail)
+}
+
+func TestSetPrincipalIdentity_DoesNotClearExistingFields(t *testing.T) {
+	rt := trace.New("t", trace.Metadata{GatewayID: "gw"})
+	rt.SetPrincipalIdentity("alice", "api_key", "")
+	rt.SetPrincipalIdentity("", "", "ada@example.com")
+	meta := rt.Metadata()
+	assert.Equal(t, "alice", meta.PrincipalSubject)
+	assert.Equal(t, "api_key", meta.PrincipalMethod)
+	assert.Equal(t, "ada@example.com", meta.PrincipalEmail)
+}
+
 func TestStartSpan_RecordsTypedSpansInOrder(t *testing.T) {
 	rt := trace.New("t", trace.Metadata{})
 	llm := rt.StartSpan(trace.SpanLLM, "openai")

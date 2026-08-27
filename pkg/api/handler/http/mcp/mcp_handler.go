@@ -33,6 +33,7 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
@@ -84,10 +85,11 @@ const (
 type Handler struct {
 	gateway    *RPCGateway
 	roleScoper appmcp.RoleScoper
+	vault      vaultdomain.Repository
 }
 
-func NewHandler(gateway *RPCGateway, roleScoper appmcp.RoleScoper) *Handler {
-	return &Handler{gateway: gateway, roleScoper: roleScoper}
+func NewHandler(gateway *RPCGateway, roleScoper appmcp.RoleScoper, vault vaultdomain.Repository) *Handler {
+	return &Handler{gateway: gateway, roleScoper: roleScoper, vault: vault}
 }
 
 type rpcRequest struct {
@@ -129,9 +131,7 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 
 	if rt := trace.FromContext(c.UserContext()); rt != nil {
 		rt.SetConsumer(rc.Consumer.ID.String(), rc.Consumer.Name)
-		if p := identity.PrincipalFromContext(c.UserContext()); p != nil {
-			rt.SetPrincipal(p.Subject)
-		}
+		stampRequestIdentity(c, rt, rc, nil)
 	}
 
 	var req rpcRequest
@@ -147,6 +147,12 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 	if isNotification(req) {
 		skipMetrics(c)
 		return c.SendStatus(fiber.StatusAccepted)
+	}
+
+	if req.Method != "ping" {
+		if rt := trace.FromContext(c.UserContext()); rt != nil {
+			stampRequestIdentity(c, rt, rc, h.vault)
+		}
 	}
 
 	switch req.Method {
@@ -175,6 +181,21 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 // current request (ping, notifications, or pre-dispatch failures).
 func skipMetrics(c *fiber.Ctx) {
 	c.Locals(string(infracontext.MCPSkipMetricsKey), true)
+}
+
+func stampRequestIdentity(c *fiber.Ctx, rt *trace.RequestTrace, rc *appconsumer.RoutableConsumer, vault vaultdomain.Repository) {
+	if rt == nil {
+		return
+	}
+	p := identity.PrincipalFromContext(c.UserContext())
+	if p == nil {
+		return
+	}
+	email := p.Email()
+	if email == "" && vault != nil && rc != nil && rc.Consumer != nil {
+		email = appmcp.ConnectedAccountEmail(c.UserContext(), vault, rc.Consumer.GatewayID, p.Subject)
+	}
+	rt.SetPrincipalIdentity(p.Subject, string(p.Method), email)
 }
 
 func (h *Handler) recordInitialize(c *fiber.Ctx) {
