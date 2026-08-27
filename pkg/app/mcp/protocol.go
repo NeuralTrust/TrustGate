@@ -190,6 +190,8 @@ func IsRPCError(err error) bool {
 
 var ErrUnreachable = errors.New("mcp upstream unreachable")
 
+var ErrUpstreamUnauthorized = errors.New("mcp upstream rejected its credential")
+
 var ErrNotSupported = errors.New("mcp upstream does not support this method")
 
 type Upstream interface {

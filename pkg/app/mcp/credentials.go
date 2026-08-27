@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -60,6 +61,7 @@ type credentialResolver struct {
 	provider  appoauth.ProviderClient
 	logger    *slog.Logger
 	refresh   singleflight.Group
+	attempts  sync.Map // gateway|subject|provider → time.Time
 	ccFlight  singleflight.Group
 	ccCache   sync.Map // key → *ccCacheEntry
 }
@@ -92,6 +94,8 @@ func NewCredentialResolver(
 }
 
 const vaultRefreshSkew = 60 * time.Second
+
+const rejectedCredentialRefreshCooldown = 30 * time.Second
 
 func (r *credentialResolver) Apply(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, target *Target) error {
 	cfg := reg.MCPTarget.Auth
@@ -165,10 +169,42 @@ func (r *credentialResolver) forwarded(ctx context.Context, rc *appconsumer.Rout
 		return err
 	}
 	if cred.Expired(vaultRefreshSkew) {
-		cred, err = r.refreshCredential(ctx, rc, reg, gatewayID, principal.Subject, cfg.Provider)
+		cred, err = r.refreshCredential(ctx, rc, reg, gatewayID, principal.Subject, cfg.Provider, "")
 		if err != nil {
 			return err
 		}
+	}
+	setAuthorization(target, "Bearer "+cred.AccessToken)
+	return nil
+}
+
+// Refresh replaces a forwarded OAuth credential rejected by an upstream.
+func (r *credentialResolver) Refresh(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	reg *registrydomain.Registry,
+	target *Target,
+) error {
+	cfg := reg.MCPTarget.Auth
+	if cfg == nil || cfg.Mode != registrydomain.MCPAuthModeForwarded {
+		return errCredentialRefreshUnsupported
+	}
+	principal := identity.PrincipalFromContext(ctx)
+	if principal == nil {
+		return ErrNoPrincipal
+	}
+	rejected := bearerToken(target.Headers["Authorization"])
+	cred, err := r.refreshCredential(
+		ctx,
+		rc,
+		reg,
+		rc.Consumer.GatewayID,
+		principal.Subject,
+		cfg.Provider,
+		rejected,
+	)
+	if err != nil {
+		return err
 	}
 	setAuthorization(target, "Bearer "+cred.AccessToken)
 	return nil
@@ -179,7 +215,7 @@ func (r *credentialResolver) refreshCredential(
 	rc *appconsumer.RoutableConsumer,
 	reg *registrydomain.Registry,
 	gatewayID ids.GatewayID,
-	subject, provider string,
+	subject, provider, rejectedAccessToken string,
 ) (*vaultdomain.Credential, error) {
 	key := gatewayID.String() + "|" + subject + "|" + provider
 	v, err, _ := r.refresh.Do(key, func() (any, error) {
@@ -187,11 +223,23 @@ func (r *credentialResolver) refreshCredential(
 		if err != nil {
 			return nil, err
 		}
-		if !cred.Expired(vaultRefreshSkew) {
+		if rejectedAccessToken == "" && !cred.Expired(vaultRefreshSkew) {
+			return cred, nil
+		}
+		if rejectedAccessToken != "" && cred.AccessToken != rejectedAccessToken {
 			return cred, nil
 		}
 		if cred.RefreshToken == "" {
 			return nil, errGrantExhausted
+		}
+		if rejectedAccessToken != "" {
+			if value, ok := r.attempts.Load(key); ok {
+				attemptedAt, valid := value.(time.Time)
+				if valid && time.Since(attemptedAt) < rejectedCredentialRefreshCooldown {
+					return nil, errCredentialRefreshThrottled
+				}
+				r.attempts.Delete(key)
+			}
 		}
 		refreshCfg, err := r.connect.RefreshAuth(ctx, gatewayID, reg)
 		if err != nil {
@@ -208,7 +256,10 @@ func (r *credentialResolver) refreshCredential(
 			// refresh succeeded and there is nothing for the user to consent to.
 			if errors.Is(err, appoauth.ErrInvalidGrant) {
 				latest, findErr := r.vault.Find(ctx, gatewayID, subject, provider)
-				if findErr == nil && !latest.Expired(vaultRefreshSkew) {
+				peerRefreshed := findErr == nil && ((rejectedAccessToken != "" &&
+					latest.AccessToken != rejectedAccessToken) ||
+					(rejectedAccessToken == "" && !latest.Expired(vaultRefreshSkew)))
+				if peerRefreshed {
 					r.logger.Info("mcp credentials: refresh raced a concurrent rotation; reusing the credential stored by the peer",
 						"provider", provider, "subject", subject, "gateway_id", gatewayID.String())
 					return latest, nil
@@ -224,6 +275,9 @@ func (r *credentialResolver) refreshCredential(
 		if err := r.vault.Upsert(ctx, cred); err != nil {
 			return nil, err
 		}
+		if rejectedAccessToken != "" {
+			r.attempts.Store(key, time.Now())
+		}
 		return cred, nil
 	})
 	if err != nil {
@@ -233,7 +287,7 @@ func (r *credentialResolver) refreshCredential(
 				"stored grant carries no refresh token and the access token expired")
 		case errors.Is(err, appoauth.ErrInvalidGrant):
 			return nil, r.consentRequired(ctx, rc, provider, subject,
-				"provider rejected the stored refresh token (invalid_grant)")
+				"provider rejected the stored refresh token")
 		case errors.Is(err, vaultdomain.ErrNotFound):
 			return nil, r.consentRequired(ctx, rc, provider, subject,
 				"stored credential vanished while refreshing")
@@ -255,6 +309,10 @@ func (r *credentialResolver) refreshCredential(
 }
 
 var errGrantExhausted = errors.New("mcp credentials: stored grant cannot be refreshed")
+
+var errCredentialRefreshUnsupported = errors.New("mcp credentials: auth mode cannot refresh after an upstream rejection")
+
+var errCredentialRefreshThrottled = errors.New("mcp credentials: rejected credential was refreshed too recently")
 
 // consentRequired is the single funnel through which a downstream call asks the
 // user to (re)connect a provider. The reason is logged so an unexpected consent
@@ -347,4 +405,12 @@ func setAuthorization(target *Target, value string) {
 		target.Headers = map[string]string{}
 	}
 	target.Headers["Authorization"] = value
+}
+
+func bearerToken(authorization string) string {
+	scheme, token, ok := strings.Cut(strings.TrimSpace(authorization), " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
+		return ""
+	}
+	return strings.TrimSpace(token)
 }

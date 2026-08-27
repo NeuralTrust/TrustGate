@@ -237,6 +237,9 @@ func (u *cachedUpstream) refresh(ctx context.Context, err error) bool {
 		return false
 	}
 	u.dialer.drop(ctx, u.key, u.sess())
+	if errors.Is(err, appmcp.ErrUpstreamUnauthorized) {
+		return false
+	}
 	sess, connErr := u.dialer.connectAndStore(ctx, u.key, u.target)
 	if connErr != nil {
 		u.dialer.logger.Warn("mcp cached dialer: session refresh failed",

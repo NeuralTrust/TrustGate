@@ -17,10 +17,12 @@ package oauth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,8 +31,6 @@ import (
 )
 
 var _ appoauth.ProviderClient = (*providerClient)(nil)
-
-const defaultProviderTokenTTL = time.Hour
 
 type providerClient struct {
 	client *http.Client
@@ -195,37 +195,73 @@ func (p *providerClient) tokenCall(ctx context.Context, endpoint string, form ur
 		return nil, fmt.Errorf("oauth provider: read response: %w", err)
 	}
 	var doc struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		TokenType    string `json:"token_type"`
-		ExpiresIn    int    `json:"expires_in"`
-		Scope        string `json:"scope"`
-		Error        string `json:"error"`
-		ErrorDesc    string `json:"error_description"`
+		AccessToken  string          `json:"access_token"`
+		RefreshToken string          `json:"refresh_token"`
+		TokenType    string          `json:"token_type"`
+		ExpiresIn    json.RawMessage `json:"expires_in"`
+		Scope        string          `json:"scope"`
+		Error        string          `json:"error"`
+		ErrorDesc    string          `json:"error_description"`
 	}
 	if err := json.Unmarshal(body, &doc); err != nil {
 		return nil, fmt.Errorf("oauth provider: non-JSON token response (status %d)", res.StatusCode)
 	}
 	if res.StatusCode != http.StatusOK || doc.Error != "" || doc.AccessToken == "" {
-		if doc.Error == "invalid_grant" {
-			return nil, fmt.Errorf("%w: %s", appoauth.ErrInvalidGrant, doc.ErrorDesc)
+		if grantIsInvalid(doc.Error) {
+			return nil, appoauth.ErrInvalidGrant
 		}
 		return nil, fmt.Errorf("oauth provider: token exchange failed (%s): %s", doc.Error, doc.ErrorDesc)
 	}
-	if doc.TokenType != "" && !strings.EqualFold(doc.TokenType, "Bearer") {
+	if doc.TokenType != "" &&
+		!strings.EqualFold(doc.TokenType, "Bearer") &&
+		!strings.EqualFold(doc.TokenType, "user") {
 		return nil, fmt.Errorf("oauth provider: unsupported token_type %q", doc.TokenType)
 	}
 	out := &appoauth.ProviderToken{AccessToken: doc.AccessToken, RefreshToken: doc.RefreshToken}
-	switch {
-	case doc.ExpiresIn > 0:
-		out.ExpiresAt = time.Now().Add(time.Duration(doc.ExpiresIn) * time.Second)
-	case doc.RefreshToken != "":
-		out.ExpiresAt = time.Now().Add(defaultProviderTokenTTL)
-	default:
-		out.ExpiresAt = time.Now().Add(defaultProviderTokenTTL)
+	expiresIn, err := parseExpiresIn(doc.ExpiresIn)
+	if err != nil {
+		return nil, fmt.Errorf("oauth provider: invalid expires_in: %w", err)
+	}
+	if expiresIn > 0 {
+		out.ExpiresAt = time.Now().Add(expiresIn)
 	}
 	if doc.Scope != "" {
 		out.Scopes = strings.FieldsFunc(doc.Scope, func(r rune) bool { return r == ' ' || r == ',' })
 	}
 	return out, nil
+}
+
+func grantIsInvalid(code string) bool {
+	switch code {
+	case "invalid_grant", "invalid_refresh_token", "refresh_token_expired", "token_revoked":
+		return true
+	default:
+		return false
+	}
+}
+
+func parseExpiresIn(raw json.RawMessage) (time.Duration, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0, nil
+	}
+	var seconds int64
+	if err := json.Unmarshal(raw, &seconds); err != nil {
+		var text string
+		if stringErr := json.Unmarshal(raw, &text); stringErr != nil {
+			return 0, err
+		}
+		parsed, parseErr := strconv.ParseInt(text, 10, 64)
+		if parseErr != nil {
+			return 0, parseErr
+		}
+		seconds = parsed
+	}
+	if seconds <= 0 {
+		return 0, nil
+	}
+	const maxSeconds = int64(^uint64(0)>>1) / int64(time.Second)
+	if seconds > maxSeconds {
+		return 0, errors.New("duration overflows time.Duration")
+	}
+	return time.Duration(seconds) * time.Second, nil
 }

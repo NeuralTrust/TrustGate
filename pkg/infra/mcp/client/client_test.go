@@ -195,6 +195,9 @@ func TestConnect_DoesNotRetryAuthFailures(t *testing.T) {
 			if !errors.Is(err, appmcp.ErrUnreachable) {
 				t.Fatalf("error = %v, want ErrUnreachable", err)
 			}
+			if status == http.StatusUnauthorized && !errors.Is(err, appmcp.ErrUpstreamUnauthorized) {
+				t.Fatalf("error = %v, want ErrUpstreamUnauthorized", err)
+			}
 			if got := requests.Load(); got != 2 {
 				t.Fatalf("requests = %d, want 2 from the SDK's normal discover and initialize flow", got)
 			}
@@ -318,6 +321,25 @@ func TestConnect_ModernUpstreamUsesNormalDiscoverOnly(t *testing.T) {
 	}
 	if got := initializeRequests.Load(); got != 0 {
 		t.Fatalf("initialize requests = %d, want 0 for a modern upstream", got)
+	}
+}
+
+func TestSession_ExposesUpstreamUnauthorized(t *testing.T) {
+	t.Parallel()
+	srv := newUpstream(t, addEchoTool, func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if readRequestMethod(t, req) == "tools/list" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			next.ServeHTTP(w, req)
+		})
+	})
+	sess := connect(t, appmcp.Target{URL: srv.URL})
+
+	_, err := sess.ListTools(context.Background())
+	if !errors.Is(err, appmcp.ErrUpstreamUnauthorized) {
+		t.Fatalf("error = %v, want ErrUpstreamUnauthorized", err)
 	}
 }
 

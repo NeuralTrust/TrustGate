@@ -212,16 +212,9 @@ func askUpstream[T any](
 	reg *registrydomain.Registry,
 	list func(context.Context, Upstream) ([]T, error),
 ) ([]T, error) {
-	target, err := c.target(ctx, rc, reg)
-	if err != nil {
-		return nil, err
-	}
-	up, err := c.dialer.Connect(ctx, target)
-	if err != nil {
-		return nil, err
-	}
-	defer up.Close(ctx)
-	return list(ctx, up)
+	return invokeUpstream(c, ctx, rc, reg, func(up Upstream) ([]T, error) {
+		return list(ctx, up)
+	})
 }
 
 // cachedDiscovery reports a hit, which is either the tools an upstream served
