@@ -38,6 +38,7 @@ const (
 	maxSpecBytes          = 5 << 20
 	maxToolName           = 64
 	maxCompiledOperations = 500
+	maxListedSkips        = 5
 )
 
 var invalidToolName = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
@@ -176,7 +177,9 @@ func compileOperations(doc *openapi3.T) ([]appopenapi.Operation, []appopenapi.Wa
 		)
 	}
 	var operations []appopenapi.Operation
-	var warnings []appopenapi.Warning
+	var skipped []string
+	syntheticCount := 0
+	syntheticExample := ""
 	taken := make(map[string]int)
 	for _, path := range paths {
 		item := doc.Paths.Value(path)
@@ -189,10 +192,10 @@ func compileOperations(doc *openapi3.T) ([]appopenapi.Operation, []appopenapi.Wa
 			op := item.GetOperation(method)
 			name, synthetic := operationName(method, path, op.OperationID)
 			if synthetic {
-				warnings = append(warnings, appopenapi.Warning{
-					Code:    "synthetic_tool_name",
-					Message: fmt.Sprintf("%s %s has no operationId; generated tool name %q", strings.ToUpper(method), path, name),
-				})
+				syntheticCount++
+				if syntheticExample == "" {
+					syntheticExample = name
+				}
 			}
 			taken[name]++
 			if taken[name] > 1 {
@@ -203,10 +206,7 @@ func compileOperations(doc *openapi3.T) ([]appopenapi.Operation, []appopenapi.Wa
 			if err != nil {
 				var unsupported *unsupportedOperationError
 				if errors.As(err, &unsupported) {
-					warnings = append(warnings, appopenapi.Warning{
-						Code:    "unsupported_operation",
-						Message: fmt.Sprintf("%s %s was skipped: %s", strings.ToUpper(method), path, unsupported.reason),
-					})
+					skipped = append(skipped, fmt.Sprintf("%s %s (%s)", strings.ToUpper(method), path, unsupported.reason))
 					continue
 				}
 				return nil, nil, fmt.Errorf("%s %s: %w", strings.ToUpper(method), path, err)
@@ -214,7 +214,49 @@ func compileOperations(doc *openapi3.T) ([]appopenapi.Operation, []appopenapi.Wa
 			operations = append(operations, compiled)
 		}
 	}
-	return operations, warnings, nil
+	return operations, summarize(syntheticCount, syntheticExample, skipped), nil
+}
+
+// summarize folds per-operation findings into one warning each. A document
+// without operationIds would otherwise emit a warning per operation and bury
+// the tool preview.
+func summarize(syntheticCount int, syntheticExample string, skipped []string) []appopenapi.Warning {
+	var warnings []appopenapi.Warning
+	if syntheticCount > 0 {
+		warnings = append(warnings, appopenapi.Warning{
+			Code: "synthetic_tool_name",
+			Message: fmt.Sprintf(
+				"%s without operationId; tool names come from the method and path (e.g. %q)",
+				pluralize(syntheticCount, "operation"),
+				syntheticExample,
+			),
+		})
+	}
+	if len(skipped) > 0 {
+		listed := skipped
+		suffix := ""
+		if len(listed) > maxListedSkips {
+			suffix = fmt.Sprintf(" and %d more", len(listed)-maxListedSkips)
+			listed = listed[:maxListedSkips]
+		}
+		warnings = append(warnings, appopenapi.Warning{
+			Code: "unsupported_operation",
+			Message: fmt.Sprintf(
+				"%s skipped: %s%s",
+				pluralize(len(skipped), "operation"),
+				strings.Join(listed, "; "),
+				suffix,
+			),
+		})
+	}
+	return warnings
+}
+
+func pluralize(count int, noun string) string {
+	if count == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", count, noun)
 }
 
 func compileOperation(
@@ -444,7 +486,7 @@ func operationName(method, path, operationID string) (string, bool) {
 	name := strings.TrimSpace(operationID)
 	synthetic := name == ""
 	if synthetic {
-		name = strings.ToLower(method) + "_" + strings.Trim(path, "/")
+		name = strings.ToLower(method) + "_" + strings.ReplaceAll(strings.Trim(path, "/"), "-", "_")
 	}
 	name = invalidToolName.ReplaceAllString(name, "_")
 	name = strings.Trim(name, "_")

@@ -652,20 +652,46 @@ function AddMcpDialog({
                           {openapiValidation.title}
                         </p>
                       )}
-                      <div className="mt-2 max-h-40 space-y-1 overflow-y-auto">
+                      {openapiValidation.base_url && (
+                        <p className="mt-1 truncate text-[12px] text-muted">
+                          Base URL <span className="font-mono">{openapiValidation.base_url}</span>
+                        </p>
+                      )}
+                      <div className="mt-2 max-h-56 space-y-1 overflow-y-auto pr-1">
                         {openapiValidation.tools.map((tool) => (
-                          <div key={`${tool.method}:${tool.path}`} className="flex gap-2 text-[12px]">
+                          <div
+                            key={`${tool.method}:${tool.path}`}
+                            className="grid grid-cols-[3.25rem_minmax(0,1fr)_minmax(0,1fr)] items-baseline gap-2 text-[12px]"
+                          >
                             <Mono>{tool.method}</Mono>
-                            <span className="font-mono text-muted">{tool.path}</span>
-                            <span className="text-fg">{tool.name}</span>
+                            <span className="truncate font-mono text-muted" title={tool.path}>
+                              {tool.path}
+                            </span>
+                            <span className="truncate text-fg" title={tool.name}>
+                              {tool.name}
+                            </span>
                           </div>
                         ))}
                       </div>
-                      {openapiValidation.warnings.map((warning) => (
-                        <p key={`${warning.code}:${warning.message}`} className="mt-2 text-[12px] text-warning">
-                          {warning.message}
-                        </p>
-                      ))}
+                      {openapiValidation.warnings.length > 0 && (
+                        <details className="mt-2">
+                          <summary className="cursor-pointer text-[12px] text-warning">
+                            {openapiValidation.warnings.length === 1
+                              ? "1 warning"
+                              : `${openapiValidation.warnings.length} warnings`}
+                          </summary>
+                          <div className="mt-1 space-y-1">
+                            {openapiValidation.warnings.map((warning) => (
+                              <p
+                                key={`${warning.code}:${warning.message}`}
+                                className="text-[12px] text-muted"
+                              >
+                                {warning.message}
+                              </p>
+                            ))}
+                          </div>
+                        </details>
+                      )}
                     </div>
                   )}
                 </>
