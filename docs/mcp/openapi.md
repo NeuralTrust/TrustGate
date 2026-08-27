@@ -150,13 +150,17 @@ export endpoint) rather than asking the gateway to spider the list.
 | Path styles `matrix` / `label` | Operation skipped. |
 | External `$ref` (other URLs) | **Parse error**. The document must be self-contained. |
 | Callbacks, webhooks, links | Ignored (not tools). |
-| Missing `operationId` | Tool still created with a synthetic name (`get_healthz`); warning `synthetic_tool_name`. |
+| Missing `operationId` | Tool still created, named from method and path with underscores (`GET /v1/models-catalog` → `get_v1_models_catalog`). One `synthetic_tool_name` warning reports the count for the whole document. |
 
 **How we cover it**
 
 - Prefer JSON APIs. Split file uploads to a dedicated MCP or a pre-signed URL
   flow instead of OpenAPI tools.
-- Run **Validate OpenAPI** and read `warnings` before connecting.
+- Run **Validate OpenAPI** and read `warnings` before connecting. Warnings are
+  aggregated per document (one line per kind with a count), so a long list
+  means several distinct problems, not one repeated across operations.
+- Give operations an `operationId` when you control the spec: it is the only
+  way to choose the tool name the agent sees.
 - Curate with toolkit / `expose_as` when flattened names are ugly.
 - Keep the spec under **5 MiB** and **500** operations (hard compile limits).
   More than **80** tools emits `large_toolset` — trim with toolkit so the
