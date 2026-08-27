@@ -22,7 +22,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -80,11 +82,16 @@ func TestConnect_UnreachableUpstream(t *testing.T) {
 	}
 }
 
-func TestConnect_RetriesLegacyAfterInitializeBadRequest(t *testing.T) {
-	t.Parallel()
-	var discoverRequests atomic.Int64
-	var initializeRequests atomic.Int64
-
+// newLegacyUpstream serves a pre-2026 upstream that rejects server/discover and
+// only completes the handshake for the given protocol revision, recording every
+// revision it was offered. An empty accepted revision rejects all of them.
+func newLegacyUpstream(
+	t *testing.T,
+	accepted string,
+	offered *offeredVersions,
+	discoverRequests *atomic.Int64,
+) *httptest.Server {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		method, id := readRequestEnvelope(t, req)
 		switch method {
@@ -92,14 +99,17 @@ func TestConnect_RetriesLegacyAfterInitializeBadRequest(t *testing.T) {
 			discoverRequests.Add(1)
 			w.WriteHeader(http.StatusBadRequest)
 		case "initialize":
-			attempt := initializeRequests.Add(1)
-			if attempt == 1 {
+			version := readInitializeVersion(t, req)
+			offered.add(version)
+			if accepted == "" || version != accepted {
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Mcp-Session-Id", "legacy-session")
-			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":` + string(id) + `,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"legacy","version":"1"}}}`))
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":` + string(id) +
+				`,"result":{"protocolVersion":"` + accepted +
+				`","capabilities":{"tools":{}},"serverInfo":{"name":"legacy","version":"1"}}}`))
 		case "notifications/initialized":
 			w.WriteHeader(http.StatusAccepted)
 		default:
@@ -107,6 +117,14 @@ func TestConnect_RetriesLegacyAfterInitializeBadRequest(t *testing.T) {
 		}
 	}))
 	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestConnect_RetriesLegacyAfterInitializeBadRequest(t *testing.T) {
+	t.Parallel()
+	var discoverRequests atomic.Int64
+	var offered offeredVersions
+	srv := newLegacyUpstream(t, "2025-06-18", &offered, &discoverRequests)
 
 	sess, err := mcpclient.New().Connect(context.Background(), appmcp.Target{URL: srv.URL})
 	if err != nil {
@@ -117,8 +135,46 @@ func TestConnect_RetriesLegacyAfterInitializeBadRequest(t *testing.T) {
 	if got := discoverRequests.Load(); got != 1 {
 		t.Fatalf("server/discover requests = %d, want 1; fallback probe must stay local", got)
 	}
-	if got := initializeRequests.Load(); got != 2 {
-		t.Fatalf("initialize requests = %d, want 2", got)
+	want := []string{"2025-11-25", "2025-06-18"}
+	if got := offered.snapshot(); !slices.Equal(got, want) {
+		t.Fatalf("offered protocol versions = %v, want %v", got, want)
+	}
+}
+
+func TestConnect_WalksLegacyProtocolVersionsUntilAccepted(t *testing.T) {
+	t.Parallel()
+	var discoverRequests atomic.Int64
+	var offered offeredVersions
+	srv := newLegacyUpstream(t, "2024-11-05", &offered, &discoverRequests)
+
+	sess, err := mcpclient.New().Connect(context.Background(), appmcp.Target{URL: srv.URL})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(func() { sess.Close(context.Background()) })
+
+	want := []string{"2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"}
+	if got := offered.snapshot(); !slices.Equal(got, want) {
+		t.Fatalf("offered protocol versions = %v, want %v", got, want)
+	}
+}
+
+func TestConnect_ExhaustsLegacyProtocolVersions(t *testing.T) {
+	t.Parallel()
+	var discoverRequests atomic.Int64
+	var offered offeredVersions
+	srv := newLegacyUpstream(t, "", &offered, &discoverRequests)
+
+	_, err := mcpclient.New().Connect(context.Background(), appmcp.Target{URL: srv.URL})
+	if !errors.Is(err, appmcp.ErrUnreachable) {
+		t.Fatalf("error = %v, want ErrUnreachable", err)
+	}
+	if !strings.Contains(err.Error(), "2024-11-05") {
+		t.Fatalf("error = %v, want it to name the last protocol version offered", err)
+	}
+	want := []string{"2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"}
+	if got := offered.snapshot(); !slices.Equal(got, want) {
+		t.Fatalf("offered protocol versions = %v, want %v", got, want)
 	}
 }
 
@@ -263,6 +319,44 @@ func TestConnect_ModernUpstreamUsesNormalDiscoverOnly(t *testing.T) {
 	if got := initializeRequests.Load(); got != 0 {
 		t.Fatalf("initialize requests = %d, want 0 for a modern upstream", got)
 	}
+}
+
+type offeredVersions struct {
+	mu       sync.Mutex
+	versions []string
+}
+
+func (o *offeredVersions) add(version string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.versions = append(o.versions, version)
+}
+
+func (o *offeredVersions) snapshot() []string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return slices.Clone(o.versions)
+}
+
+func readInitializeVersion(t *testing.T, req *http.Request) string {
+	t.Helper()
+	if req.Body == nil {
+		return ""
+	}
+	data, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("read request body: %v", err)
+	}
+	req.Body = io.NopCloser(bytes.NewReader(data))
+	var envelope struct {
+		Params struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	return envelope.Params.ProtocolVersion
 }
 
 func readRequestMethod(t *testing.T, req *http.Request) string {
