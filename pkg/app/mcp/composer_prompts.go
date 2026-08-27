@@ -36,7 +36,7 @@ func (c *composer) ListPrompts(ctx context.Context, rc *appconsumer.RoutableCons
 	}
 	out := make([]Prompt, 0, len(bindings))
 	for _, b := range bindings {
-		p := b.prompt
+		p := attributePrompt(b.prompt, b.registry)
 		p.Name = b.exposed
 		out = append(out, p)
 	}

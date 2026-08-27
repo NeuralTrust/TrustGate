@@ -31,6 +31,7 @@ import (
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	appmetricsmocks "github.com/NeuralTrust/TrustGate/pkg/app/metrics/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	telemetrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -93,6 +94,7 @@ func TestMCPPipeline_ToolsCallBuildsMCPEvent(t *testing.T) {
 	app.Post("/mcp", func(c *fiber.Ctx) error {
 		if rt := trace.FromContext(c.UserContext()); rt != nil {
 			rt.SetConsumer("consumer-1", "agent")
+			rt.SetPrincipalIdentity("dogfood-key", string(identity.MethodAPIKey), "ada@gmail.com")
 		}
 		_, err := gateway.Dispatch(c.UserContext(), &appconsumer.RoutableConsumer{}, "tools/call", json.RawMessage(`{"name":"echo"}`))
 		require.NoError(t, err)
@@ -117,4 +119,7 @@ func TestMCPPipeline_ToolsCallBuildsMCPEvent(t *testing.T) {
 	assert.Equal(t, "echo", evt.MCP.Tool)
 	assert.Equal(t, 200, evt.MCP.UpstreamStatus)
 	assert.Equal(t, "consumer-1", evt.Consumer.ID)
+	assert.Equal(t, "dogfood-key", evt.PrincipalSubject)
+	assert.Equal(t, string(identity.MethodAPIKey), evt.PrincipalMethod)
+	assert.Equal(t, "ada@gmail.com", evt.PrincipalEmail)
 }

@@ -60,6 +60,7 @@ type CodeGrant struct {
 	CodeChallenge string         `json:"code_challenge"`
 	Token         map[string]any `json:"token"`
 	Subject       string         `json:"subject,omitempty"`
+	Email         string         `json:"email,omitempty"`
 	AuthID        string         `json:"auth_id,omitempty"`
 	GatewayID     string         `json:"gateway_id,omitempty"`
 	Audiences     []string       `json:"audiences,omitempty"`
@@ -69,6 +70,7 @@ type CodeGrant struct {
 
 type SessionRecord struct {
 	Subject   string   `json:"subject"`
+	Email     string   `json:"email,omitempty"`
 	Scopes    []string `json:"scopes,omitempty"`
 	GatewayID string   `json:"gateway_id"`
 	AuthID    string   `json:"auth_id"`
