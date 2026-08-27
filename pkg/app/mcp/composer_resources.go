@@ -111,16 +111,9 @@ func (c *composer) ReadResource(ctx context.Context, rc *appconsumer.RoutableCon
 }
 
 func (c *composer) readFrom(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, uri string) (json.RawMessage, error) {
-	target, err := c.target(ctx, rc, reg)
-	if err != nil {
-		return nil, err
-	}
 	stop := annotateUpstream(ctx, reg, "")
 	defer stop()
-	up, err := c.dialer.Connect(ctx, target)
-	if err != nil {
-		return nil, err
-	}
-	defer up.Close(ctx)
-	return up.ReadResource(ctx, uri)
+	return invokeUpstream(c, ctx, rc, reg, func(up Upstream) (json.RawMessage, error) {
+		return up.ReadResource(ctx, uri)
+	})
 }
