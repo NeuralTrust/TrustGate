@@ -33,6 +33,9 @@ func TestBrandIconURL_ResolvesVendorAndFallsBack(t *testing.T) {
 	if got := BrandIconURL("GitHub"); got != "/oauth/brands/github.svg" {
 		t.Fatalf("GitHub vendor = %q", got)
 	}
+	if got := BrandIconURL("Google Drive"); got != "/oauth/brands/mcp/googledrive.svg" {
+		t.Fatalf("Google Drive vendor = %q", got)
+	}
 	if got := BrandIconURL("unknown-custom"); got != "/oauth/brands/mcp.svg" {
 		t.Fatalf("unknown vendor = %q", got)
 	}
