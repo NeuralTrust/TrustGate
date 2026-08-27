@@ -31,6 +31,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appsts "github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -220,6 +221,7 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 		}
 		capturedSubject = sub
 		grant.Subject = sub
+		grant.Email = emailFromToken(token)
 		grant.AuthID = auth.ID.String()
 		grant.GatewayID = effectiveGatewayID.String()
 		grant.Audiences = cfg.Audiences
@@ -257,6 +259,27 @@ func (p *authProxy) consentDetour(ctx context.Context, baseURL string, gatewayID
 		slog.Info("oauth: detouring to downstream consent page", "sub", sub, "resource", resource)
 	}
 	return detour
+}
+
+func emailFromToken(token map[string]any) string {
+	for _, key := range []string{"id_token", "access_token"} {
+		raw, _ := token[key].(string)
+		if raw == "" {
+			continue
+		}
+		if email := emailFromJWT(raw); email != "" {
+			return email
+		}
+	}
+	return ""
+}
+
+func emailFromJWT(raw string) string {
+	claims := jwt.MapClaims{}
+	if _, _, err := jwt.NewParser().ParseUnverified(raw, claims); err != nil {
+		return ""
+	}
+	return identity.EmailFromClaims(claims)
 }
 
 func subjectFromToken(token map[string]any) string {
@@ -388,6 +411,7 @@ func (p *authProxy) exchangeCode(ctx context.Context, req TokenRequest) (map[str
 		refresh := gatewayRefreshPrefix + token
 		rec := SessionRecord{
 			Subject:   grant.Subject,
+			Email:     grant.Email,
 			Scopes:    grant.Scopes,
 			GatewayID: grant.GatewayID,
 			AuthID:    grant.AuthID,
@@ -417,6 +441,9 @@ func (p *authProxy) mintSession(grant CodeGrant) (map[string]any, error) {
 	}
 	if len(grant.Audiences) > 0 {
 		claims["aud"] = grant.Audiences
+	}
+	if identity.LooksLikeEmail(grant.Email) {
+		claims["email"] = grant.Email
 	}
 	signed, err := p.signer.MintClaims(claims, time.Hour)
 	if err != nil {
@@ -486,6 +513,7 @@ func (p *authProxy) refresh(ctx context.Context, req TokenRequest) (map[string]a
 func (p *authProxy) refreshSession(ctx context.Context, rec SessionRecord) (map[string]any, error) {
 	resp, err := p.mintSession(CodeGrant{
 		Subject:   rec.Subject,
+		Email:     rec.Email,
 		Scopes:    rec.Scopes,
 		AuthID:    rec.AuthID,
 		GatewayID: rec.GatewayID,
