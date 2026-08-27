@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
@@ -95,6 +96,9 @@ func (c *Client) connect(
 	)
 	cs, err := cli.Connect(ctx, transport, nil)
 	if err != nil {
+		if attempt.unauthorizedResponses.Load() > 0 {
+			err = fmt.Errorf("%w: %v", appmcp.ErrUpstreamUnauthorized, err)
+		}
 		return nil, attempt, err
 	}
 	return cs, attempt, nil
@@ -112,10 +116,11 @@ func (s *Session) SupportsResources() bool { return s.capabilities().Resources !
 func (s *Session) SupportsPrompts() bool { return s.capabilities().Prompts != nil }
 
 func (s *Session) ListTools(ctx context.Context) ([]appmcp.Tool, error) {
+	ctx, unauthorized := trackUnauthorized(ctx)
 	var items []*sdk.Tool
 	for t, err := range s.cs.Tools(ctx, nil) {
 		if err != nil {
-			return nil, fmt.Errorf("mcp client: tools/list: %w", mapRPCError(err))
+			return nil, fmt.Errorf("mcp client: tools/list: %w", mapSessionError(err, unauthorized))
 		}
 		items = append(items, t)
 	}
@@ -123,13 +128,14 @@ func (s *Session) ListTools(ctx context.Context) ([]appmcp.Tool, error) {
 }
 
 func (s *Session) CallTool(ctx context.Context, name string, arguments json.RawMessage) (json.RawMessage, error) {
+	ctx, unauthorized := trackUnauthorized(ctx)
 	params := &sdk.CallToolParams{Name: name}
 	if len(arguments) > 0 {
 		params.Arguments = arguments
 	}
 	res, err := s.cs.CallTool(ctx, params)
 	if err != nil {
-		return nil, mapRPCError(err)
+		return nil, mapSessionError(err, unauthorized)
 	}
 	return marshalResult("tools/call", res)
 }
@@ -138,10 +144,11 @@ func (s *Session) ListResources(ctx context.Context) ([]appmcp.Resource, error) 
 	if !s.SupportsResources() {
 		return nil, nil
 	}
+	ctx, unauthorized := trackUnauthorized(ctx)
 	var items []*sdk.Resource
 	for r, err := range s.cs.Resources(ctx, nil) {
 		if err != nil {
-			return nil, fmt.Errorf("mcp client: resources/list: %w", mapRPCError(err))
+			return nil, fmt.Errorf("mcp client: resources/list: %w", mapSessionError(err, unauthorized))
 		}
 		items = append(items, r)
 	}
@@ -152,10 +159,11 @@ func (s *Session) ListResourceTemplates(ctx context.Context) ([]appmcp.ResourceT
 	if !s.SupportsResources() {
 		return nil, nil
 	}
+	ctx, unauthorized := trackUnauthorized(ctx)
 	var items []*sdk.ResourceTemplate
 	for t, err := range s.cs.ResourceTemplates(ctx, nil) {
 		if err != nil {
-			return nil, fmt.Errorf("mcp client: resources/templates/list: %w", mapRPCError(err))
+			return nil, fmt.Errorf("mcp client: resources/templates/list: %w", mapSessionError(err, unauthorized))
 		}
 		items = append(items, t)
 	}
@@ -166,9 +174,10 @@ func (s *Session) ReadResource(ctx context.Context, uri string) (json.RawMessage
 	if !s.SupportsResources() {
 		return nil, fmt.Errorf("%w: resources/read: %s", appmcp.ErrNotSupported, s.url)
 	}
+	ctx, unauthorized := trackUnauthorized(ctx)
 	res, err := s.cs.ReadResource(ctx, &sdk.ReadResourceParams{URI: uri})
 	if err != nil {
-		return nil, mapRPCError(err)
+		return nil, mapSessionError(err, unauthorized)
 	}
 	return marshalResult("resources/read", res)
 }
@@ -177,10 +186,11 @@ func (s *Session) ListPrompts(ctx context.Context) ([]appmcp.Prompt, error) {
 	if !s.SupportsPrompts() {
 		return nil, nil
 	}
+	ctx, unauthorized := trackUnauthorized(ctx)
 	var items []*sdk.Prompt
 	for p, err := range s.cs.Prompts(ctx, nil) {
 		if err != nil {
-			return nil, fmt.Errorf("mcp client: prompts/list: %w", mapRPCError(err))
+			return nil, fmt.Errorf("mcp client: prompts/list: %w", mapSessionError(err, unauthorized))
 		}
 		items = append(items, p)
 	}
@@ -191,15 +201,31 @@ func (s *Session) GetPrompt(ctx context.Context, name string, arguments map[stri
 	if !s.SupportsPrompts() {
 		return nil, fmt.Errorf("%w: prompts/get: %s", appmcp.ErrNotSupported, s.url)
 	}
+	ctx, unauthorized := trackUnauthorized(ctx)
 	res, err := s.cs.GetPrompt(ctx, &sdk.GetPromptParams{Name: name, Arguments: arguments})
 	if err != nil {
-		return nil, mapRPCError(err)
+		return nil, mapSessionError(err, unauthorized)
 	}
 	return marshalResult("prompts/get", res)
 }
 
 func (s *Session) Ping(ctx context.Context) error {
-	return s.cs.Ping(ctx, nil)
+	ctx, unauthorized := trackUnauthorized(ctx)
+	return mapSessionError(s.cs.Ping(ctx, nil), unauthorized)
+}
+
+type unauthorizedTrackerKey struct{}
+
+func trackUnauthorized(ctx context.Context) (context.Context, *atomic.Bool) {
+	tracker := &atomic.Bool{}
+	return context.WithValue(ctx, unauthorizedTrackerKey{}, tracker), tracker
+}
+
+func mapSessionError(err error, unauthorized *atomic.Bool) error {
+	if err != nil && unauthorized.Load() {
+		return fmt.Errorf("%w: %v", appmcp.ErrUpstreamUnauthorized, err)
+	}
+	return mapRPCError(err)
 }
 
 func (s *Session) Close(context.Context) {
