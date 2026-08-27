@@ -16,6 +16,7 @@ package registry
 
 import (
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strings"
 
@@ -100,6 +101,13 @@ func (h *ValidateOpenAPIHandler) Handle(c *fiber.Ctx) error {
 			Path:        tool.Path,
 		})
 	}
+	slog.Info("openapi validation",
+		slog.Bool("ok", result.OK),
+		slog.String("stage", string(result.Stage)),
+		slog.String("spec_url", req.SpecURL),
+		slog.Int("tool_count", len(tools)),
+		slog.String("message", result.Message),
+	)
 	return httpio.WriteOK(c, ValidateOpenAPIResponse{
 		OK:             result.OK,
 		Stage:          string(result.Stage),
