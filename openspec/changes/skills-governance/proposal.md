@@ -29,8 +29,8 @@ the full investigation.
    `rejected`. Approved content can never be mutated — only superseded.
 3. **Enable & pin**: enabling a skill on a gateway pins exactly one approved version.
    Updates repoint the pin after the new version passes review; rollback repoints back.
-4. **Scope**: add `skill` entries to consumer/role toolkits (wildcards supported, as
-   with tools/prompts/resources). No entry, no exposure — same closed-by-default
+4. **Scope**: attach skills to consumers/roles via `SkillPolicy` grants (explicit
+   IDs or wildcard `all`). No grant, no exposure — same closed-by-default
    semantics the MCP toolkit already has.
 
 ### Agent / developer (data plane, `:8082`, existing consumer auth)
@@ -116,8 +116,11 @@ Risks).
 
 ### Modified Capabilities
 
-- `mcp-toolkit`: toolkit entries gain a fourth kind, `skill`, with existing wildcard
-  and role-union semantics.
+- `mcp-consumer-policy`: `MCPPolicy` gains a `SkillPolicy` (explicit grants +
+  optional wildcard, closed by default) with the same role-union semantics the
+  toolkit has. A separate struct rather than a fourth toolkit entry kind because
+  toolkit entries are keyed by `RegistryID` (upstream-owned) while skills are
+  gateway-owned — see `design.md` §6.
 
 ## Approach
 
