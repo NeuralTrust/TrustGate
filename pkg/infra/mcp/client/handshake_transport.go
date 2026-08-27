@@ -18,10 +18,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"sync/atomic"
+
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 )
 
 const (
@@ -42,6 +45,7 @@ type handshakeRoundTripper struct {
 	protocolVersion         string
 	discoverLegacyCandidate atomic.Bool
 	initializeBadRequest    atomic.Bool
+	unauthorizedResponses   atomic.Uint64
 }
 
 func (t *handshakeRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -66,6 +70,17 @@ func (t *handshakeRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 	}
 
 	resp, err := t.transport.RoundTrip(req)
+	if err == nil && resp.StatusCode == http.StatusUnauthorized {
+		t.unauthorizedResponses.Add(1)
+		if tracker, ok := req.Context().Value(unauthorizedTrackerKey{}).(*atomic.Bool); ok {
+			tracker.Store(true)
+		}
+		if resp.Body != nil {
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxHandshakeBody))
+			_ = resp.Body.Close()
+		}
+		return nil, fmt.Errorf("%w: HTTP %d", appmcp.ErrUpstreamUnauthorized, resp.StatusCode)
+	}
 	if err == nil && ok && method == methodServerDiscover && isLegacyDiscoverResponse(resp) {
 		t.discoverLegacyCandidate.Store(true)
 	}

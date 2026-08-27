@@ -93,18 +93,11 @@ func (c *composer) CallTool(ctx context.Context, rc *appconsumer.RoutableConsume
 		if b.exposed != name {
 			continue
 		}
-		target, err := c.target(ctx, rc, b.registry)
-		if err != nil {
-			return nil, err
-		}
 		stop := annotateUpstream(ctx, b.registry, b.tool.Name)
 		defer stop()
-		up, err := c.dialer.Connect(ctx, target)
-		if err != nil {
-			return nil, err
-		}
-		defer up.Close(ctx)
-		return up.CallTool(ctx, b.tool.Name, arguments)
+		return invokeUpstream(c, ctx, rc, b.registry, func(up Upstream) (json.RawMessage, error) {
+			return up.CallTool(ctx, b.tool.Name, arguments)
+		})
 	}
 	// The upstream offers this tool but the consumer's toolkit excludes it: a
 	// policy denial, and the answer must say so. Connecting an account would not
