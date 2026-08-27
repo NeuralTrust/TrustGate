@@ -199,8 +199,9 @@ curl -s "$ADMIN/docs/openapi.json" | jq '{openapi, title: .info.title}'
 
 Note `/docs/*` (Swagger UI) publishes **Swagger 2.0**, which the compiler rejects
 at the `parse` stage — use `/docs/openapi.json`. OpenAPI registries expose
-**tools only** (empty prompts/resources). See
-https://docs.neuraltrust.ai/trustgate/mcp/openapi.
+**tools only** (empty prompts/resources). Supported versions, authentication,
+pagination, complex types, and how TrustGate covers the usual market gaps:
+[OpenAPI → MCP tools](openapi.md).
 
 ### 3.3 MCP consumer + API key
 

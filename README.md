@@ -40,7 +40,7 @@ TrustGate is purpose-built for teams that need **enterprise-grade governance** o
 **TrustGate differentiators:**
 
 1. **Security-first architecture** — API-key auth, per-consumer policies, plugin stages (rate limit, token rate limit, request size, semantic cache) that run before traffic hits providers.
-2. **MCP aggregation plane** — A dedicated `:8082` plane that aggregates upstream MCP servers, so AI agents connect to one gateway instead of many tools. See the [MCP testing guide](docs/mcp/testing-guide.md).
+2. **MCP aggregation plane** — A dedicated `:8082` plane that aggregates upstream MCP servers, so AI agents connect to one gateway instead of many tools. See the [MCP testing guide](docs/mcp/testing-guide.md) and [OpenAPI → MCP limits](docs/mcp/openapi.md).
 3. **Single static binary** — No Python, no Node, no runtime dependencies. Deploy anywhere: Docker, Kubernetes, bare metal.
 
 ---
@@ -223,7 +223,7 @@ flowchart LR
 |-------|------|------------------|
 | **Admin** | `8080` | Gateway, registry, consumer, auth, policy management. DB migrations. |
 | **Proxy** | `8081` | Request routing, load balancing, plugin execution, provider forwarding. |
-| **MCP** | `8082` | Model Context Protocol server for AI agents. See [MCP Guide](docs/mcp/testing-guide.md). |
+| **MCP** | `8082` | Model Context Protocol server for AI agents. See [MCP Guide](docs/mcp/testing-guide.md) and [OpenAPI → MCP](docs/mcp/openapi.md). |
 
 ---
 
@@ -245,7 +245,7 @@ TrustGate's MCP plane (`:8082`) lets AI agents like **Cursor** and **Claude** co
 }
 ```
 
-See [examples/mcp-cursor/](examples/mcp-cursor/) for setup instructions and [docs/mcp/testing-guide.md](docs/mcp/testing-guide.md) for the full guide.
+See [examples/mcp-cursor/](examples/mcp-cursor/) for setup instructions, [docs/mcp/testing-guide.md](docs/mcp/testing-guide.md) for the full guide, and [docs/mcp/openapi.md](docs/mcp/openapi.md) for OpenAPI→MCP limits.
 
 ---
 
