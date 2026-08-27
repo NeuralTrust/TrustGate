@@ -187,10 +187,19 @@ REG=$(curl -s -X POST "$ADMIN/v1/gateways/$GW_ID/registries" \
 REG_ID=$(echo "$REG" | jq -r .id)
 ```
 
-The Admin spec in this repo (`docs/openapi.json`) is a good compile target: serve it
-over HTTP, set `base_url` to Admin, and expect tools such as `get_healthz` and
-gateway/registry CRUD. Operations without `operationId` get synthetic names.
-OpenAPI registries expose **tools only** (empty prompts/resources). See
+Admin serves its own OpenAPI 3 document at **`GET /docs/openapi.json`** (public,
+same as Swagger UI). It is a good compile target: point `spec_url` at it and omit
+`base_url` — the spec declares `servers: [{"url": "/"}]`, so the base resolves to
+the host that served it. Expect tools such as `get_healthz` and gateway/registry
+CRUD; operations without `operationId` get synthetic names.
+
+```bash
+curl -s "$ADMIN/docs/openapi.json" | jq '{openapi, title: .info.title}'
+```
+
+Note `/docs/*` (Swagger UI) publishes **Swagger 2.0**, which the compiler rejects
+at the `parse` stage — use `/docs/openapi.json`. OpenAPI registries expose
+**tools only** (empty prompts/resources). See
 https://docs.neuraltrust.ai/trustgate/mcp/openapi.
 
 ### 3.3 MCP consumer + API key
