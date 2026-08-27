@@ -599,7 +599,10 @@ function AddMcpDialog({
                 </Field>
               ) : (
                 <>
-                  <Field label="OpenAPI spec URL" hint="required, OpenAPI 3.x">
+                  <Field
+                    label="OpenAPI spec URL"
+                    hint="required, link to the raw OpenAPI 3 file"
+                  >
                     <Input
                       value={openapiSpecUrl}
                       onChange={(e) => {
@@ -609,7 +612,10 @@ function AddMcpDialog({
                       placeholder="https://api.example.com/openapi.json"
                     />
                   </Field>
-                  <Field label="API base URL" hint="optional, overrides servers[0]">
+                  <Field
+                    label="API base URL"
+                    hint="optional, leave empty to use the address in the document"
+                  >
                     <Input
                       value={openapiBaseUrl}
                       onChange={(e) => {
