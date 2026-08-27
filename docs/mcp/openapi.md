@@ -1,5 +1,10 @@
 # OpenAPI → MCP tools
 
+This page is for engineers working on the integration: field names, limits,
+and the reasons behind them. Users configuring an API from the console should
+read https://docs.neuraltrust.ai/trustgate/mcp/openapi instead, which covers
+the same limits without the payload shapes.
+
 TrustGate can turn an **OpenAPI 3** document into an MCP registry
 (`mcp_target.source: openapi`). Each HTTP operation becomes a tool. Agents
 talk MCP to TrustGate; TrustGate calls the REST API.
@@ -12,7 +17,8 @@ TrustGate supports today, and how to work around the rest.
 Related:
 
 - [MCP testing guide](testing-guide.md) (configure a registry and call tools)
-- Public copy: https://docs.neuraltrust.ai/trustgate/mcp/openapi
+- [OpenAPI tools](https://docs.neuraltrust.ai/trustgate/mcp/openapi) (the
+  user-facing page; keep the two in step when behaviour changes)
 
 ---
 
