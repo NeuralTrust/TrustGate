@@ -20,6 +20,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/stretchr/testify/require"
 )
 
@@ -65,7 +66,7 @@ func TestServerDiscoveryResultCapabilities(t *testing.T) {
 			require.Equal(t, advertisedProtocolVersions, result["supportedVersions"])
 			require.Equal(t, "complete", result["resultType"])
 			require.Equal(t, "private", result["cacheScope"])
-			require.Equal(t, discoverCacheTTLMs, result["ttlMs"])
+			require.Zero(t, result["ttlMs"])
 			capabilities := result["capabilities"].(map[string]any)
 			require.Len(t, capabilities, len(tc.want))
 			for _, kind := range tc.want {
@@ -77,4 +78,35 @@ func TestServerDiscoveryResultCapabilities(t *testing.T) {
 			require.Contains(t, serverInfo["version"], serverVersion+"+")
 		})
 	}
+}
+
+func TestServerDiscoveryResultChangesAfterRegistryAttachment(t *testing.T) {
+	t.Parallel()
+	gatewayID := ids.New[ids.GatewayKind]()
+	registry := func(name string) *registrydomain.Registry {
+		result, err := registrydomain.NewMCPRegistry(
+			gatewayID,
+			name,
+			"",
+			&registrydomain.MCPTarget{URL: "https://" + name + ".example.com/mcp"},
+		)
+		require.NoError(t, err)
+		return result
+	}
+	consumer := &consumerdomain.Consumer{ID: ids.New[ids.ConsumerKind]()}
+	notion := registry("notion")
+	one := serverDiscoveryResult(&appconsumer.RoutableConsumer{
+		Consumer:   consumer,
+		Registries: []*registrydomain.Registry{notion},
+	})
+	two := serverDiscoveryResult(&appconsumer.RoutableConsumer{
+		Consumer:   consumer,
+		Registries: []*registrydomain.Registry{notion, registry("linear")},
+	})
+
+	require.Zero(t, one["ttlMs"])
+	require.Zero(t, two["ttlMs"])
+	oneInfo := one["_meta"].(map[string]any)[modernServerInfoMetaKey].(map[string]any)
+	twoInfo := two["_meta"].(map[string]any)[modernServerInfoMetaKey].(map[string]any)
+	require.NotEqual(t, oneInfo["version"], twoInfo["version"])
 }
