@@ -314,7 +314,12 @@ Example shape for Cursor `mcp.json` (adjust to your client’s schema):
 Checklist:
 
 1. Client completes `initialize` against TrustGate (not the upstream).
-2. `tools/list` shows only toolkit-/role-allowed tools (and aliases).
+2. `tools/list` shows only toolkit-/role-allowed tools (and aliases). Each
+   tool's `title` (and `description`, when present) is prefixed with the
+   bound registry name so hosts that flatten every upstream under one
+   connector — Claude Desktop Connectors, for example — still show which
+   MCP server the tool came from. RPC `name` stays the upstream name
+   unless there is a collision or an `expose_as` alias.
 3. `tools/call` returns upstream content; blocked tools get an RPC error
    (e.g. `-32602` for toolkit miss).
 
