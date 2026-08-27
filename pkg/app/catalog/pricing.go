@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"strconv"
 	"strings"
 
@@ -141,6 +142,14 @@ func parsePrice(raw string) float64 {
 	}
 	v, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
+		return 0
+	}
+	// ParseFloat accepts "NaN", "Inf" and "Infinity" without error, so the check
+	// above does not catch them. A non-finite rate would price every request
+	// against it as NaN and, once the figure is rendered into the events cost
+	// object, void that object for every reader.
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		slog.Warn("catalog: discarding a non-finite price", slog.String("raw", raw))
 		return 0
 	}
 	return v
