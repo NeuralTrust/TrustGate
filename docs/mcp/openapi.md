@@ -146,6 +146,14 @@ export endpoint) rather than asking the gateway to spider the list.
   `requestBody`) argument
 - JSON Schema passed through to the model (`oneOf` / `anyOf` / `allOf` as
   written). Quality then depends on the client model, not on TrustGate.
+- Internal `$ref` into `components/schemas`: **inlined** into the tool schema.
+  A tool leaves the gateway on its own, without the document it was cut from,
+  so a schema that still pointed at `#/components/schemas/...` would dangle.
+  Clients compile tool schemas up front and reject the whole `tools/list`
+  response when one does not resolve — the failure looks like a server that
+  advertises no tools at all. A schema that contains itself cannot be expanded
+  to the end; the branch that closes the loop becomes `{}`, which accepts
+  anything.
 
 ### Skipped or rejected
 
@@ -207,6 +215,12 @@ Each `tools/call`:
 4. Returns text content; JSON bodies also appear as `structuredContent`.
 5. HTTP status outside 2xx sets `isError: true` (the tool result, not an MCP
    transport failure).
+
+A tool advertises `outputSchema` only when the documented 2xx response is a
+JSON object. MCP carries a structured result as an object, so a tool that
+announced an array would owe the client something it can never send, and
+clients that check the contract fail every call. Those operations keep their
+text content and say nothing about their output shape.
 
 Compiled documents are cached for 5 minutes (max 256 entries).
 

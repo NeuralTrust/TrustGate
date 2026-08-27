@@ -137,6 +137,212 @@ func TestCompilerCompilesTrustGateAdminOpenAPI(t *testing.T) {
 	require.Contains(t, byRoute, "POST /v1/gateways/{gateway_id}/registries/validate-openapi")
 	require.NotEmpty(t, byRoute["GET /healthz"].Name)
 	require.NotEmpty(t, byRoute["GET /healthz"].OutputSchema)
+
+	// The admin document describes most of its payloads through components, so
+	// it is the case that first surfaced tools shipping a "$ref" no client can
+	// resolve. Every schema has to stand on its own.
+	for _, operation := range document.Operations {
+		requireSelfContainedSchema(t, operation.Name+" input", operation.InputSchema)
+		requireSelfContainedSchema(t, operation.Name+" output", operation.OutputSchema)
+	}
+}
+
+// requireSelfContainedSchema fails when a compiled schema still points at the
+// document it came from. A tool schema travels alone: the client sees it
+// without "components", so any "$ref" left in it dangles.
+func requireSelfContainedSchema(t *testing.T, label string, schema json.RawMessage) {
+	t.Helper()
+	if len(schema) == 0 {
+		return
+	}
+	var decoded any
+	require.NoError(t, json.Unmarshal(schema, &decoded), label)
+	require.Empty(t, collectRefs(decoded), "%s carries unresolvable references", label)
+}
+
+func collectRefs(node any) []string {
+	var found []string
+	switch typed := node.(type) {
+	case map[string]any:
+		for key, value := range typed {
+			if key == "$ref" {
+				if ref, ok := value.(string); ok {
+					found = append(found, ref)
+				}
+				continue
+			}
+			found = append(found, collectRefs(value)...)
+		}
+	case []any:
+		for _, value := range typed {
+			found = append(found, collectRefs(value)...)
+		}
+	}
+	return found
+}
+
+func TestCompilerInlinesComponentReferences(t *testing.T) {
+	t.Parallel()
+	document := compileSpec(t, `{
+		"openapi": "3.0.3",
+		"info": {"title": "Pet API", "version": "1.0"},
+		"paths": {
+			"/pets": {
+				"post": {
+					"operationId": "createPet",
+					"parameters": [
+						{"name": "tag", "in": "query", "schema": {"$ref": "#/components/schemas/Tag"}}
+					],
+					"requestBody": {
+						"required": true,
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Pet"}}}
+					},
+					"responses": {"201": {
+						"description": "created",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Pet"}}}
+					}}
+				}
+			}
+		},
+		"components": {"schemas": {
+			"Tag": {"type": "string", "enum": ["cat", "dog"]},
+			"Breed": {"type": "object", "properties": {"label": {"type": "string"}}},
+			"Pet": {
+				"type": "object",
+				"required": ["name"],
+				"properties": {
+					"name": {"type": "string"},
+					"breed": {"$ref": "#/components/schemas/Breed"},
+					"litter": {"type": "array", "items": {"$ref": "#/components/schemas/Breed"}}
+				}
+			}
+		}}
+	}`)
+	require.Len(t, document.Operations, 1)
+	operation := document.Operations[0]
+	requireSelfContainedSchema(t, "input", operation.InputSchema)
+	requireSelfContainedSchema(t, "output", operation.OutputSchema)
+
+	var input map[string]any
+	require.NoError(t, json.Unmarshal(operation.InputSchema, &input))
+	properties, ok := input["properties"].(map[string]any)
+	require.True(t, ok)
+
+	tag, ok := properties["tag"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, []any{"cat", "dog"}, tag["enum"])
+
+	// The referenced schemas have to arrive with their own contents, nested
+	// references included, not as a pointer the client cannot follow.
+	breed, ok := properties["breed"].(map[string]any)
+	require.True(t, ok)
+	require.Contains(t, breed["properties"], "label")
+
+	litter, ok := properties["litter"].(map[string]any)
+	require.True(t, ok)
+	items, ok := litter["items"].(map[string]any)
+	require.True(t, ok)
+	require.Contains(t, items["properties"], "label")
+}
+
+func TestCompilerCutsSelfReferencingSchemas(t *testing.T) {
+	t.Parallel()
+	document := compileSpec(t, `{
+		"openapi": "3.0.3",
+		"info": {"title": "Tree API", "version": "1.0"},
+		"paths": {
+			"/nodes": {
+				"post": {
+					"operationId": "createNode",
+					"requestBody": {
+						"required": true,
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Node"}}}
+					},
+					"responses": {"201": {"description": "created"}}
+				}
+			}
+		},
+		"components": {"schemas": {"Node": {
+			"type": "object",
+			"properties": {
+				"label": {"type": "string"},
+				"children": {"type": "array", "items": {"$ref": "#/components/schemas/Node"}}
+			}
+		}}}
+	}`)
+	require.Len(t, document.Operations, 1)
+	// A schema that contains itself cannot be expanded forever. Compilation has
+	// to end, and what it produces still cannot carry a reference.
+	requireSelfContainedSchema(t, "input", document.Operations[0].InputSchema)
+
+	var input map[string]any
+	require.NoError(t, json.Unmarshal(document.Operations[0].InputSchema, &input))
+	properties := input["properties"].(map[string]any)
+	require.Contains(t, properties, "label")
+	children, ok := properties["children"].(map[string]any)
+	require.True(t, ok)
+	// The recursive branch is cut with a schema that accepts anything, so the
+	// surrounding fields keep their meaning.
+	require.Equal(t, map[string]any{}, children["items"])
+}
+
+func TestCompilerOmitsOutputSchemaForNonObjectResponses(t *testing.T) {
+	t.Parallel()
+	document := compileSpec(t, `{
+		"openapi": "3.0.3",
+		"info": {"title": "Pet API", "version": "1.0"},
+		"paths": {
+			"/pets": {
+				"get": {
+					"operationId": "listPets",
+					"responses": {"200": {
+						"description": "ok",
+						"content": {"application/json": {"schema": {
+							"type": "array",
+							"items": {"type": "object", "properties": {"name": {"type": "string"}}}
+						}}}
+					}}
+				}
+			},
+			"/pets/{petId}": {
+				"get": {
+					"operationId": "getPet",
+					"parameters": [{"name": "petId", "in": "path", "required": true, "schema": {"type": "string"}}],
+					"responses": {"200": {
+						"description": "ok",
+						"content": {"application/json": {"schema": {
+							"type": "object",
+							"properties": {"name": {"type": "string"}}
+						}}}
+					}}
+				}
+			}
+		}
+	}`)
+	operations := make(map[string]appopenapi.Operation, len(document.Operations))
+	for _, operation := range document.Operations {
+		operations[operation.Name] = operation
+	}
+	// A tool that announces an output schema owes the client a structured
+	// result, and MCP only carries those as objects. A list endpoint would
+	// promise something it cannot deliver, so it says nothing instead.
+	require.Empty(t, operations["listPets"].OutputSchema)
+	require.NotEmpty(t, operations["getPet"].OutputSchema)
+}
+
+func compileSpec(t *testing.T, spec string) *appopenapi.Document {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(spec))
+	}))
+	t.Cleanup(server.Close)
+	document, err := NewCompilerWithClient(server.Client()).Compile(context.Background(), appopenapi.Source{
+		SpecURL: server.URL,
+		BaseURL: server.URL,
+	})
+	require.NoError(t, err)
+	return document
 }
 
 func readTrustGateAdminOpenAPI(t *testing.T) []byte {
