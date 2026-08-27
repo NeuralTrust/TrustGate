@@ -139,6 +139,18 @@ func NewProvider(cfg *config.Config, sdk *SDK) (*Provider, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Both instruments above are request-driven, so an idle gateway emits
+	// nothing at all and "no traffic is reaching this" becomes indistinguishable
+	// from "the exporter is broken". An observable gauge is collected on every
+	// export regardless of traffic, and is what watchdog's telemetry-emission
+	// inventory keys on (AUT-625). Uptime rather than a constant 1: a flat gauge
+	// cannot tell "still running" from "restarted ten seconds ago".
+	//
+	// Safe here because NewProvider already runs after the global MeterProvider
+	// is installed — see the doc comment above.
+	if err := registerUptimeGauge(meter); err != nil {
+		return nil, err
+	}
 	p.duration = duration
 	p.outcomes = outcomes
 	return p, nil
