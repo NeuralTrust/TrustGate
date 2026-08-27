@@ -25,16 +25,19 @@ import (
 func TestEventToRecord_MCPAttributes(t *testing.T) {
 	t.Parallel()
 	evt := &events.Event{
-		SchemaVersion: events.SchemaVersion,
-		Kind:          events.KindMCP,
-		TraceID:       "trace-mcp",
-		GatewayID:     "gw-1",
-		TenantID:        "team-1",
-		Consumer:      events.Consumer{ID: "c-1", Name: "agent"},
-		Status:        events.Status{Code: 200},
-		Request:       events.Request{Method: "POST", Path: "/mcp"},
-		Response:      events.Response{StatusCode: 200},
-		Latency:       events.Latency{TotalMs: 200, ProviderMs: 120, GatewayMs: 80},
+		SchemaVersion:    events.SchemaVersion,
+		Kind:             events.KindMCP,
+		TraceID:          "trace-mcp",
+		GatewayID:        "gw-1",
+		TenantID:         "team-1",
+		Consumer:         events.Consumer{ID: "c-1", Name: "agent"},
+		PrincipalSubject: "my-api-key",
+		PrincipalMethod:  "api_key",
+		PrincipalEmail:   "ada@asana.com",
+		Status:           events.Status{Code: 200},
+		Request:          events.Request{Method: "POST", Path: "/mcp"},
+		Response:         events.Response{StatusCode: 200},
+		Latency:          events.Latency{TotalMs: 200, ProviderMs: 120, GatewayMs: 80},
 		MCP: &events.MCP{
 			Method:            "tools/call",
 			Operation:         "tool",
@@ -48,6 +51,7 @@ func TestEventToRecord_MCPAttributes(t *testing.T) {
 			Targets:           3,
 			UpstreamStatus:    http.StatusOK,
 			UpstreamLatencyMs: 120,
+			AccountRef:        "ada@asana.com",
 		},
 	}
 
@@ -55,6 +59,9 @@ func TestEventToRecord_MCPAttributes(t *testing.T) {
 	attrs := attrsOf(rec)
 
 	assert.Equal(t, events.KindMCP, attrs[attrKind].AsString())
+	assert.Equal(t, "my-api-key", attrs[attrPrincipalSubject].AsString())
+	assert.Equal(t, "api_key", attrs[attrPrincipalMethod].AsString())
+	assert.Equal(t, "ada@asana.com", attrs[attrPrincipalEmail].AsString())
 	assert.Equal(t, "tools/call", attrs[attrMCPMethod].AsString())
 	assert.Equal(t, "tool", attrs[attrMCPOperation].AsString())
 	assert.Equal(t, "asana", attrs[attrMCPServerName].AsString())
@@ -65,6 +72,7 @@ func TestEventToRecord_MCPAttributes(t *testing.T) {
 	assert.Equal(t, int64(http.StatusOK), attrs[attrMCPUpstreamStatus].AsInt64())
 	assert.Equal(t, int64(3), attrs[attrMCPTargets].AsInt64())
 	assert.Equal(t, int64(120), attrs[attrMCPUpstreamLatencyMs].AsInt64())
+	assert.Equal(t, "ada@asana.com", attrs[attrMCPAccountRef].AsString())
 }
 
 func TestEventToRecord_LLMKindNoMCP(t *testing.T) {

@@ -30,6 +30,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -175,6 +176,7 @@ func (r *credentialResolver) forwarded(ctx context.Context, rc *appconsumer.Rout
 		}
 	}
 	setAuthorization(target, "Bearer "+cred.AccessToken)
+	stampAccountRef(ctx, cred.AccountRef)
 	return nil
 }
 
@@ -207,6 +209,7 @@ func (r *credentialResolver) Refresh(
 		return err
 	}
 	setAuthorization(target, "Bearer "+cred.AccessToken)
+	stampAccountRef(ctx, cred.AccountRef)
 	return nil
 }
 
@@ -405,6 +408,15 @@ func setAuthorization(target *Target, value string) {
 		target.Headers = map[string]string{}
 	}
 	target.Headers["Authorization"] = value
+}
+
+func stampAccountRef(ctx context.Context, accountRef string) {
+	if accountRef == "" {
+		return
+	}
+	if span := trace.SpanFromContext(ctx); span != nil {
+		span.SetMCPAccountRef(accountRef)
+	}
 }
 
 func bearerToken(authorization string) string {

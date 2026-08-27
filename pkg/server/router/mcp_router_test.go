@@ -105,7 +105,7 @@ func TestMCPRouterDispatch(t *testing.T) {
 		func(string, string) string { return "127.0.0.1" },
 	)
 	connectHandler := oauthhttp.NewConnectHandler(connect, nil, "")
-	mcpHandler := mcphttp.NewHandler(nil, nil)
+	mcpHandler := mcphttp.NewHandler(nil, nil, nil)
 	ops := &routerOpsRecorder{}
 	mcpRouter := router.NewMCPRouter(
 		middleware.NewTransport(
