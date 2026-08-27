@@ -98,3 +98,29 @@ func PrincipalFromContext(ctx context.Context) *Principal {
 	p, _ := ctx.Value(contextKey{}).(*Principal)
 	return p
 }
+
+func (p *Principal) Email() string {
+	if p == nil {
+		return ""
+	}
+	return EmailFromClaims(p.Claims)
+}
+
+func EmailFromClaims(claims map[string]any) string {
+	if len(claims) == 0 {
+		return ""
+	}
+	for _, key := range []string{"email", "emailAddress", "preferred_username", "upn", "unique_name"} {
+		raw, _ := claims[key].(string)
+		raw = strings.TrimSpace(raw)
+		if LooksLikeEmail(raw) {
+			return raw
+		}
+	}
+	return ""
+}
+
+func LooksLikeEmail(s string) bool {
+	at := strings.IndexByte(s, '@')
+	return at > 0 && at < len(s)-1 && !strings.ContainsAny(s, " \t\n")
+}

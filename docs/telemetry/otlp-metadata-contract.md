@@ -51,6 +51,8 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.consumer.id` | `consumer.id` |
 | `trustgate.consumer.name` | `consumer.name` |
 | `trustgate.principal.subject` | `principal_subject` (inbound identity: OIDC `sub`, or the API key name) |
+| `trustgate.principal.method` | `principal_method` (`api_key`, `jwt`, `introspection`, `mtls`) |
+| `trustgate.principal.email` | `principal_email` (display identity: inbound JWT `email` / `upn` / email-shaped `preferred_username`, or the unique vault `account_ref` when that is an email) |
 | `trustgate.session_id` | `session_id` |
 | `trustgate.turn_id` | `turn_id` |
 | `trustgate.ip` | `ip` |
@@ -76,7 +78,22 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.policy_chain` | `policy_chain[]` as JSON string (when non-empty) |
 | `trustgate.attempts` | `attempts[]` as JSON string (when non-empty) |
 | `trustgate.attempts.count` | `len(attempts)` (when non-empty) |
-| `trustgate.mcp.*` | `mcp.*` fields (when the request is an MCP call), including `trustgate.mcp.account_ref` when the vault stored an upstream account identity |
+| `trustgate.mcp.method` | `mcp.method` (JSON-RPC method, e.g. `tools/call`) |
+| `trustgate.mcp.operation` | `mcp.operation` (`tool`, `discovery`, `prompt`, `resource`, `initialize`) |
+| `trustgate.mcp.server_name` | `mcp.server_name` (federated MCP registry name the call was routed to) |
+| `trustgate.mcp.registry_id` | `mcp.registry_id` |
+| `trustgate.mcp.host` | `mcp.host` |
+| `trustgate.mcp.catalog_code` | `mcp.catalog_code` |
+| `trustgate.mcp.transport` | `mcp.transport` |
+| `trustgate.mcp.tool` | `mcp.tool` (exposed tool name as the client called it) |
+| `trustgate.mcp.upstream_tool` | `mcp.upstream_tool` (upstream tool name when it differs) |
+| `trustgate.mcp.prompt` | `mcp.prompt` |
+| `trustgate.mcp.resource_uri` | `mcp.resource_uri` |
+| `trustgate.mcp.targets` | `mcp.targets` |
+| `trustgate.mcp.upstream_status` | `mcp.upstream_status` |
+| `trustgate.mcp.upstream_latency_ms` | `mcp.upstream_latency_ms` |
+| `trustgate.mcp.rpc_error_code` | `mcp.rpc_error_code` |
+| `trustgate.mcp.account_ref` | `mcp.account_ref` (connected upstream account for this call, typically the OAuth email stored in the vault) |
 | `trustgate.retention.expires_at` | `retention.expires_at` (epoch millis, int64; only when the gateway carries a stamped plan retention) |
 | `trustgate.retention.plan` | `retention.plan` (the plan label the window came from; omitted when empty) |
 
@@ -227,7 +244,11 @@ Two properties downstream storage can rely on:
 ## Examples
 
 Per-sink example records: [`examples/`](./examples/). These are schema-accurate
-representative records (an OpenAI chat completion flagged by a DLP policy), not a live capture.
+representative records, not a live capture:
+
+- [`sink-1-metadata-otlp.json`](./examples/sink-1-metadata-otlp.json) — OpenAI chat completion flagged by a DLP policy
+- [`sink-2-raw-otlp.json`](./examples/sink-2-raw-otlp.json) — raw body class
+- [`sink-3-mcp-metadata-otlp.json`](./examples/sink-3-mcp-metadata-otlp.json) — MCP `tools/call` with request identity, server, and tool
 
 ## Out of scope
 

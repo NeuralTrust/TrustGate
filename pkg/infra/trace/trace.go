@@ -40,6 +40,8 @@ type Metadata struct {
 	RetentionWindow  time.Duration
 	RetentionPlan    string
 	PrincipalSubject string
+	PrincipalMethod  string
+	PrincipalEmail   string
 }
 
 type RequestTrace struct {
@@ -123,12 +125,24 @@ func (t *RequestTrace) SetConsumer(id, name string) {
 }
 
 func (t *RequestTrace) SetPrincipal(subject string) {
-	if subject == "" {
+	t.SetPrincipalIdentity(subject, "", "")
+}
+
+func (t *RequestTrace) SetPrincipalIdentity(subject, method, email string) {
+	if subject == "" && method == "" && email == "" {
 		return
 	}
 	t.mu.Lock()
-	t.meta.PrincipalSubject = subject
-	t.mu.Unlock()
+	defer t.mu.Unlock()
+	if subject != "" {
+		t.meta.PrincipalSubject = subject
+	}
+	if method != "" {
+		t.meta.PrincipalMethod = method
+	}
+	if email != "" {
+		t.meta.PrincipalEmail = email
+	}
 }
 
 func (t *RequestTrace) StartedAt() time.Time { return t.startedAt }
