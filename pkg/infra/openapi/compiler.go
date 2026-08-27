@@ -42,8 +42,11 @@ const (
 
 var invalidToolName = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
 
+// blockedNetworkPrefixes are destinations that are never safe to dial, even
+// via a public DNS name (documentation, benchmarking, and reserved ranges).
+// RFC1918 and CGNAT (100.64/10) are not listed: cluster-internal names such as
+// agentgateway-admin.dev.neuraltrust.ai often resolve to those ranges.
 var blockedNetworkPrefixes = []netip.Prefix{
-	netip.MustParsePrefix("100.64.0.0/10"),
 	netip.MustParsePrefix("192.0.0.0/24"),
 	netip.MustParsePrefix("192.0.2.0/24"),
 	netip.MustParsePrefix("198.18.0.0/15"),
@@ -52,6 +55,8 @@ var blockedNetworkPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("240.0.0.0/4"),
 	netip.MustParsePrefix("2001:db8::/32"),
 }
+
+var cgnatPrefix = netip.MustParsePrefix("100.64.0.0/10")
 
 type unsupportedOperationError struct {
 	reason string
@@ -138,6 +143,7 @@ func (c *Compiler) fetch(ctx context.Context, rawURL string) ([]byte, error) {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json, application/yaml, text/yaml, */*")
+	req.Header.Set("User-Agent", "TrustGate-OpenAPI/1.0")
 	res, err := c.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch document: %w", err)
@@ -493,15 +499,19 @@ func validatePublicURL(ctx context.Context, rawURL string) error {
 	if len(addresses) == 0 {
 		return errors.New("host has no addresses")
 	}
+	host := parsed.Hostname()
 	for _, address := range addresses {
-		if unsafeIP(address.IP) {
-			return fmt.Errorf("host resolves to private or reserved address %s", address.IP)
+		if blockedDestination(host, address.IP) {
+			return fmt.Errorf("host resolves to a blocked address %s", address.IP)
 		}
 	}
 	return nil
 }
 
-// NewSafeHTTPClient returns an HTTP client that rejects private and reserved destinations.
+// NewSafeHTTPClient returns an HTTP client that rejects loopback, link-local,
+// and reserved destinations. RFC1918 and CGNAT addresses are allowed when the
+// URL host is a DNS name (cluster-internal FQDNs) and blocked when it is a
+// literal IP.
 func NewSafeHTTPClient(timeout time.Duration) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
@@ -515,12 +525,12 @@ func NewSafeHTTPClient(timeout time.Duration) *http.Client {
 			return nil, err
 		}
 		for _, resolved := range ips {
-			if unsafeIP(resolved.IP) {
+			if blockedDestination(host, resolved.IP) {
 				continue
 			}
 			return dialer.DialContext(ctx, network, net.JoinHostPort(resolved.IP.String(), port))
 		}
-		return nil, fmt.Errorf("host %q resolves only to private or reserved addresses", host)
+		return nil, fmt.Errorf("host %q resolves only to blocked addresses", host)
 	}
 	return &http.Client{
 		Transport: transport,
@@ -537,9 +547,19 @@ func NewSafeHTTPClient(timeout time.Duration) *http.Client {
 	}
 }
 
-func unsafeIP(ip net.IP) bool {
-	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+func blockedDestination(host string, ip net.IP) bool {
+	if ipAlwaysBlocked(ip) {
+		return true
+	}
+	if net.ParseIP(host) == nil {
+		return false
+	}
+	return ip.IsPrivate() || cgnatIP(ip)
+}
+
+func ipAlwaysBlocked(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsUnspecified() || ip.IsMulticast() {
 		return true
 	}
 	address, ok := netip.AddrFromSlice(ip)
@@ -553,6 +573,14 @@ func unsafeIP(ip net.IP) bool {
 		}
 	}
 	return false
+}
+
+func cgnatIP(ip net.IP) bool {
+	address, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return false
+	}
+	return cgnatPrefix.Contains(address.Unmap())
 }
 
 func compileError(stage appopenapi.Stage, err error) error {
