@@ -39,6 +39,7 @@ const (
 	maxToolName           = 64
 	maxCompiledOperations = 500
 	maxListedSkips        = 5
+	maxInlinedRefs        = 2000
 )
 
 var invalidToolName = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
@@ -390,9 +391,38 @@ func compileOutputSchema(responses *openapi3.Responses) (json.RawMessage, error)
 		if err != nil {
 			return nil, fmt.Errorf("response %s: %w", status, err)
 		}
+		// MCP carries a structured result as a JSON object, so a tool that
+		// announces any other shape promises something it can never deliver and
+		// fails on every call. Endpoints answering with an array — a plain list
+		// endpoint, typically — keep working by staying unstructured.
+		if !isObjectSchema(schema) {
+			return nil, nil
+		}
 		return json.Marshal(schema)
 	}
 	return nil, nil
+}
+
+func isObjectSchema(schema map[string]any) bool {
+	declared, ok := schema["type"]
+	if !ok {
+		// A response described only by its composition (allOf, oneOf) or left
+		// open says nothing that rules an object out.
+		return true
+	}
+	if single, ok := declared.(string); ok {
+		return single == "object"
+	}
+	alternatives, ok := declared.([]any)
+	if !ok {
+		return false
+	}
+	for _, alternative := range alternatives {
+		if alternative == "object" {
+			return true
+		}
+	}
+	return false
 }
 
 func compileRequestBody(
@@ -471,7 +501,7 @@ func schemaMap(ref *openapi3.SchemaRef) (map[string]any, error) {
 	if ref == nil || ref.Value == nil {
 		return map[string]any{}, nil
 	}
-	data, err := json.Marshal(ref.Value)
+	data, err := json.Marshal(newInliner().inline(ref))
 	if err != nil {
 		return nil, err
 	}
@@ -480,6 +510,73 @@ func schemaMap(ref *openapi3.SchemaRef) (map[string]any, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// inliner rewrites a schema so it carries no "$ref". The loader resolves every
+// reference into SchemaRef.Value but keeps the pointer, and marshalling a
+// SchemaRef that still holds one emits {"$ref": "#/components/schemas/..."}.
+// That pointer resolves inside the document and nowhere else, so a tool schema
+// carrying it is unusable: MCP clients compile the schema on its own and fail
+// on the dangling reference, dropping the tool or the whole listing.
+type inliner struct {
+	// open holds the schemas on the current path. A schema that reaches itself
+	// has no finite expansion, so the branch that closes the loop is cut.
+	open      map[*openapi3.Schema]struct{}
+	remaining int
+}
+
+func newInliner() *inliner {
+	return &inliner{open: make(map[*openapi3.Schema]struct{}), remaining: maxInlinedRefs}
+}
+
+// unconstrained stands in for a branch that was cut: it validates anything,
+// which keeps the rest of the schema meaningful instead of dropping it.
+func unconstrained() *openapi3.SchemaRef {
+	return &openapi3.SchemaRef{Value: &openapi3.Schema{}}
+}
+
+func (i *inliner) inline(ref *openapi3.SchemaRef) *openapi3.SchemaRef {
+	if ref == nil {
+		return nil
+	}
+	if ref.Value == nil {
+		return unconstrained()
+	}
+	// A reference shared by sibling branches is expanded once per branch, so a
+	// document with many of them can grow far beyond its own size.
+	if _, looping := i.open[ref.Value]; looping || i.remaining <= 0 {
+		return unconstrained()
+	}
+	i.remaining--
+	i.open[ref.Value] = struct{}{}
+	defer delete(i.open, ref.Value)
+
+	value := *ref.Value
+	value.OneOf = i.inlineList(value.OneOf)
+	value.AnyOf = i.inlineList(value.AnyOf)
+	value.AllOf = i.inlineList(value.AllOf)
+	value.Not = i.inline(value.Not)
+	value.Items = i.inline(value.Items)
+	if len(value.Properties) > 0 {
+		properties := make(openapi3.Schemas, len(value.Properties))
+		for name, property := range value.Properties {
+			properties[name] = i.inline(property)
+		}
+		value.Properties = properties
+	}
+	value.AdditionalProperties.Schema = i.inline(value.AdditionalProperties.Schema)
+	return &openapi3.SchemaRef{Value: &value}
+}
+
+func (i *inliner) inlineList(refs openapi3.SchemaRefs) openapi3.SchemaRefs {
+	if len(refs) == 0 {
+		return refs
+	}
+	out := make(openapi3.SchemaRefs, len(refs))
+	for index, ref := range refs {
+		out[index] = i.inline(ref)
+	}
+	return out
 }
 
 func operationName(method, path, operationID string) (string, bool) {
