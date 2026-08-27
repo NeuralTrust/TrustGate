@@ -32,6 +32,16 @@ const (
 	responseHeaderTimeout = 30 * time.Second
 )
 
+// legacyProtocolVersions are offered, newest first, when an upstream rejects
+// the initialize handshake with HTTP 400. The SDK only ever offers 2025-11-25
+// on its own legacy path, so that revision is already covered by the first
+// attempt and is absent here.
+var legacyProtocolVersions = []string{
+	"2025-06-18",
+	"2025-03-26",
+	"2024-11-05",
+}
+
 var upstreamTransport = func() http.RoundTripper {
 	t, ok := http.DefaultTransport.(*http.Transport)
 	if !ok {
@@ -54,7 +64,7 @@ type Session struct {
 var _ appmcp.Upstream = (*Session)(nil)
 
 func (c *Client) Connect(ctx context.Context, target appmcp.Target) (*Session, error) {
-	cs, attempt, err := c.connect(ctx, target, false)
+	cs, attempt, err := c.connect(ctx, target, false, "")
 	if err == nil {
 		return &Session{cs: cs, url: target.URL}, nil
 	}
@@ -64,22 +74,31 @@ func (c *Client) Connect(ctx context.Context, target appmcp.Target) (*Session, e
 		return nil, wrapUnreachable(target.URL, err)
 	}
 
-	cs, _, legacyErr := c.connect(ctx, target, true)
-	if legacyErr != nil {
-		return nil, wrapUnreachable(target.URL, fmt.Errorf("legacy handshake fallback: %w", legacyErr))
+	legacyErr := err
+	for _, protocolVersion := range legacyProtocolVersions {
+		cs, attempt, err = c.connect(ctx, target, true, protocolVersion)
+		if err == nil {
+			return &Session{cs: cs, url: target.URL}, nil
+		}
+		legacyErr = fmt.Errorf("legacy handshake fallback (protocolVersion %s): %w", protocolVersion, err)
+		if ctx.Err() != nil || !attempt.initializeBadRequest.Load() {
+			break
+		}
 	}
-	return &Session{cs: cs, url: target.URL}, nil
+	return nil, wrapUnreachable(target.URL, legacyErr)
 }
 
 func (c *Client) connect(
 	ctx context.Context,
 	target appmcp.Target,
 	legacyFallback bool,
+	protocolVersion string,
 ) (*sdk.ClientSession, *handshakeRoundTripper, error) {
 	attempt := &handshakeRoundTripper{
-		headers:        target.Headers,
-		transport:      upstreamTransport,
-		legacyFallback: legacyFallback,
+		headers:         target.Headers,
+		transport:       upstreamTransport,
+		legacyFallback:  legacyFallback,
+		protocolVersion: protocolVersion,
 	}
 	transport := &sdk.StreamableClientTransport{
 		Endpoint: target.URL,
