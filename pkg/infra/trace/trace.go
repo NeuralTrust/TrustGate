@@ -25,7 +25,7 @@ import (
 
 type Metadata struct {
 	GatewayID    string
-	TenantID       string
+	TenantID     string
 	ConsumerID   string
 	ConsumerName string
 	Path         string
@@ -37,8 +37,9 @@ type Metadata struct {
 	// gateway carries no stamp. The window travels rather than a computed
 	// expiry so the builder derives the expiry from the same timestamp it
 	// records as the event's, keeping the two from drifting apart.
-	RetentionWindow time.Duration
-	RetentionPlan   string
+	RetentionWindow  time.Duration
+	RetentionPlan    string
+	PrincipalSubject string
 }
 
 type RequestTrace struct {
@@ -118,6 +119,15 @@ func (t *RequestTrace) SetConsumer(id, name string) {
 	t.mu.Lock()
 	t.meta.ConsumerID = id
 	t.meta.ConsumerName = name
+	t.mu.Unlock()
+}
+
+func (t *RequestTrace) SetPrincipal(subject string) {
+	if subject == "" {
+		return
+	}
+	t.mu.Lock()
+	t.meta.PrincipalSubject = subject
 	t.mu.Unlock()
 }
 

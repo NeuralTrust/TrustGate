@@ -50,6 +50,7 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.tenant_id` | `tenant_id` |
 | `trustgate.consumer.id` | `consumer.id` |
 | `trustgate.consumer.name` | `consumer.name` |
+| `trustgate.principal.subject` | `principal_subject` (inbound identity: OIDC `sub`, or the API key name) |
 | `trustgate.session_id` | `session_id` |
 | `trustgate.turn_id` | `turn_id` |
 | `trustgate.ip` | `ip` |
@@ -75,7 +76,7 @@ and — when an `otlp` exporter is declared under `exporters.raw[]` — also emi
 | `trustgate.policy_chain` | `policy_chain[]` as JSON string (when non-empty) |
 | `trustgate.attempts` | `attempts[]` as JSON string (when non-empty) |
 | `trustgate.attempts.count` | `len(attempts)` (when non-empty) |
-| `trustgate.mcp.*` | `mcp.*` fields (when the request is an MCP call) |
+| `trustgate.mcp.*` | `mcp.*` fields (when the request is an MCP call), including `trustgate.mcp.account_ref` when the vault stored an upstream account identity |
 | `trustgate.retention.expires_at` | `retention.expires_at` (epoch millis, int64; only when the gateway carries a stamped plan retention) |
 | `trustgate.retention.plan` | `retention.plan` (the plan label the window came from; omitted when empty) |
 

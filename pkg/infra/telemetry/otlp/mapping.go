@@ -59,6 +59,7 @@ const (
 	attrMCPUpstreamStatus    = "trustgate.mcp.upstream_status"
 	attrMCPUpstreamLatencyMs = "trustgate.mcp.upstream_latency_ms"
 	attrMCPRPCErrorCode      = "trustgate.mcp.rpc_error_code"
+	attrMCPAccountRef        = "trustgate.mcp.account_ref"
 	attrStatusOutcome        = "trustgate.status.outcome"
 	attrStatusReason         = "trustgate.status.reason"
 	attrStatusIsTimeout      = "trustgate.status.is_timeout"
@@ -67,6 +68,7 @@ const (
 	attrTenantID             = "trustgate.tenant_id"
 	attrConsumerID           = "trustgate.consumer.id"
 	attrConsumerName         = "trustgate.consumer.name"
+	attrPrincipalSubject     = "trustgate.principal.subject"
 	attrSessionID            = "trustgate.session_id"
 	attrTurnID               = "trustgate.turn_id"
 	attrIP                   = "trustgate.ip"
@@ -174,12 +176,14 @@ func eventToRecord(evt *events.Event) otellog.Record {
 		if evt.MCP.RPCErrorCode != 0 {
 			attrs = append(attrs, attribute.Int(attrMCPRPCErrorCode, evt.MCP.RPCErrorCode))
 		}
+		appendStr(attrMCPAccountRef, evt.MCP.AccountRef)
 	}
 	appendStr(attrTraceID, evt.TraceID)
 	appendStr(attrGatewayID, evt.GatewayID)
 	appendStr(attrTenantID, evt.TenantID)
 	appendStr(attrConsumerID, evt.Consumer.ID)
 	appendStr(attrConsumerName, evt.Consumer.Name)
+	appendStr(attrPrincipalSubject, evt.PrincipalSubject)
 	appendStr(attrSessionID, evt.SessionID)
 	appendStr(attrTurnID, evt.TurnID)
 	appendStr(attrIP, evt.IP)

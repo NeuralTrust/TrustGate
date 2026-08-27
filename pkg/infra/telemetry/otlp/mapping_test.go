@@ -39,14 +39,15 @@ var savingsUsd = events.DecimalFloat(0.02)
 
 func fullEvent() *events.Event {
 	return &events.Event{
-		SchemaVersion: events.SchemaVersion,
-		TraceID:       "trace-123",
-		GatewayID:     "gw-1",
-		TenantID:      "team-1",
-		OccurredOn:    1_700_000_000_000,
-		Consumer:      events.Consumer{ID: "c-1", Name: "alice"},
-		SessionID:     "sess-1",
-		Status:        events.Status{Code: 200},
+		SchemaVersion:    events.SchemaVersion,
+		TraceID:          "trace-123",
+		GatewayID:        "gw-1",
+		TenantID:         "team-1",
+		OccurredOn:       1_700_000_000_000,
+		Consumer:         events.Consumer{ID: "c-1", Name: "alice"},
+		PrincipalSubject: "user-42",
+		SessionID:        "sess-1",
+		Status:           events.Status{Code: 200},
 		Request: events.Request{
 			Method:         "POST",
 			Path:           "/v1/chat/completions",
@@ -106,6 +107,7 @@ func TestEventToRecord_StandardAndProprietaryCoexist(t *testing.T) {
 	assert.Equal(t, "team-1", attrs["trustgate.tenant_id"].AsString())
 	assert.Equal(t, "c-1", attrs["trustgate.consumer.id"].AsString())
 	assert.Equal(t, "alice", attrs["trustgate.consumer.name"].AsString())
+	assert.Equal(t, "user-42", attrs["trustgate.principal.subject"].AsString())
 	assert.InDelta(t, 0.01, attrs["trustgate.cost.total_usd"].AsFloat64(), 1e-9)
 	assert.Equal(t, "USD", attrs["trustgate.cost.currency"].AsString())
 	assert.InDelta(t, 0.02, attrs["trustgate.cost.savings_usd"].AsFloat64(), 1e-9)

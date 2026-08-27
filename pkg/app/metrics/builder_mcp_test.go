@@ -36,11 +36,12 @@ func mcpSpan(name string, attrs *trace.MCPAttrs, latency time.Duration) *trace.S
 
 func TestBuilder_MCPFoldsUpstreamAndLatency(t *testing.T) {
 	rt := trace.New("trace-mcp", trace.Metadata{
-		GatewayID:    "gw-1",
-		TenantID:     "team-9",
-		ConsumerID:   "c-1",
-		ConsumerName: "agent",
-		Kind:         events.KindMCP,
+		GatewayID:        "gw-1",
+		TenantID:         "team-9",
+		ConsumerID:       "c-1",
+		ConsumerName:     "agent",
+		PrincipalSubject: "alice",
+		Kind:             events.KindMCP,
 	})
 	_ = rt.AddSpan(mcpSpan("tools/call", &trace.MCPAttrs{
 		Method:         "tools/call",
@@ -53,6 +54,7 @@ func TestBuilder_MCPFoldsUpstreamAndLatency(t *testing.T) {
 		CatalogCode:    "com.asana/mcp",
 		Transport:      "streamable-http",
 		UpstreamStatus: http.StatusOK,
+		AccountRef:     "ada@asana.com",
 	}, 120*time.Millisecond))
 
 	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/mcp", Body: []byte(`{"jsonrpc":"2.0"}`)}
@@ -65,6 +67,7 @@ func TestBuilder_MCPFoldsUpstreamAndLatency(t *testing.T) {
 	assert.Equal(t, events.KindMCP, evt.Kind)
 	assert.Equal(t, "team-9", evt.TenantID)
 	assert.Equal(t, "c-1", evt.Consumer.ID)
+	assert.Equal(t, "alice", evt.PrincipalSubject)
 	require.NotNil(t, evt.MCP)
 	assert.Equal(t, "tools/call", evt.MCP.Method)
 	assert.Equal(t, "tool", evt.MCP.Operation)
@@ -73,6 +76,7 @@ func TestBuilder_MCPFoldsUpstreamAndLatency(t *testing.T) {
 	assert.Equal(t, "asana", evt.MCP.ServerName)
 	assert.Equal(t, "com.asana/mcp", evt.MCP.CatalogCode)
 	assert.Equal(t, http.StatusOK, evt.MCP.UpstreamStatus)
+	assert.Equal(t, "ada@asana.com", evt.MCP.AccountRef)
 	assert.Equal(t, int64(120), evt.MCP.UpstreamLatencyMs)
 
 	assert.Equal(t, int64(200), evt.Latency.TotalMs)

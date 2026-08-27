@@ -29,7 +29,7 @@ func TestEventToRecord_MCPAttributes(t *testing.T) {
 		Kind:          events.KindMCP,
 		TraceID:       "trace-mcp",
 		GatewayID:     "gw-1",
-		TenantID:        "team-1",
+		TenantID:      "team-1",
 		Consumer:      events.Consumer{ID: "c-1", Name: "agent"},
 		Status:        events.Status{Code: 200},
 		Request:       events.Request{Method: "POST", Path: "/mcp"},
@@ -48,6 +48,7 @@ func TestEventToRecord_MCPAttributes(t *testing.T) {
 			Targets:           3,
 			UpstreamStatus:    http.StatusOK,
 			UpstreamLatencyMs: 120,
+			AccountRef:        "ada@asana.com",
 		},
 	}
 
@@ -65,6 +66,7 @@ func TestEventToRecord_MCPAttributes(t *testing.T) {
 	assert.Equal(t, int64(http.StatusOK), attrs[attrMCPUpstreamStatus].AsInt64())
 	assert.Equal(t, int64(3), attrs[attrMCPTargets].AsInt64())
 	assert.Equal(t, int64(120), attrs[attrMCPUpstreamLatencyMs].AsInt64())
+	assert.Equal(t, "ada@asana.com", attrs[attrMCPAccountRef].AsString())
 }
 
 func TestEventToRecord_LLMKindNoMCP(t *testing.T) {

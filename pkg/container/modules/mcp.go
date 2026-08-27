@@ -112,8 +112,9 @@ func MCP(c *container.Container) error {
 		registrar appoauth.UpstreamRegistrar,
 		auditor appoauth.ConnectAuditor,
 		shared mcpoauth.Provider,
+		userinfo appoauth.UserInfoClient,
 	) appoauth.ConnectService {
-		return appoauth.NewConnectService(store, vault, consumers, provider, registrar, auditor, shared)
+		return appoauth.NewConnectService(store, vault, consumers, provider, registrar, auditor, shared, userinfo)
 	}); err != nil {
 		return err
 	}

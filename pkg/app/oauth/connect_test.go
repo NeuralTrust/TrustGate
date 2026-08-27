@@ -35,6 +35,7 @@ import (
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 type memConnectStore struct {
@@ -192,6 +193,7 @@ func connectFixture(t *testing.T, providerTokenURL string) (oauth.ConnectService
 		infraoauth.NewUpstreamRegistrar(store, nil),
 		discardConnectAuditor(),
 		nil,
+		nil,
 	)
 	return svc, vault, gw
 }
@@ -242,6 +244,7 @@ func TestConnectService_SharedGoogleWorkspaceClient(t *testing.T) {
 		infraoauth.NewUpstreamRegistrar(store, nil),
 		discardConnectAuditor(),
 		mcpoauth.NewGoogleWorkspace("nt-client", "nt-secret"),
+		nil,
 	)
 	ctx := context.Background()
 	ticket, err := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
@@ -310,6 +313,7 @@ func TestConnectService_SharedGoogleWorkspacePreservesBYO(t *testing.T) {
 		infraoauth.NewUpstreamRegistrar(newMemConnectStore(), nil),
 		discardConnectAuditor(),
 		mcpoauth.NewGoogleWorkspace("nt-client", "nt-secret"),
+		nil,
 	)
 	refreshCfg, err := svc.RefreshAuth(context.Background(), gw, reg)
 	if err != nil {
@@ -329,6 +333,7 @@ func TestConnectService_FullConsentFlow(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"access_token": "gh-access", "refresh_token": "gh-refresh",
 			"expires_in": 3600, "scope": "repo",
+			"id_token": unsignedConnectJWT(t, jwt.MapClaims{"email": "octocat@github.com", "sub": "1"}),
 		})
 	}))
 	defer provider.Close()
@@ -383,10 +388,16 @@ func TestConnectService_FullConsentFlow(t *testing.T) {
 	if cred.AccessToken != "gh-access" || cred.RefreshToken != "gh-refresh" {
 		t.Fatalf("vaulted credential = %+v", cred)
 	}
+	if cred.AccountRef != "octocat@github.com" {
+		t.Fatalf("AccountRef = %q, want the id_token email", cred.AccountRef)
+	}
 
 	page, _ = svc.Page(ctx, ticket)
 	if !page.Providers[0].Linked {
 		t.Fatal("provider not reported linked after callback")
+	}
+	if page.Providers[0].AccountRef != "octocat@github.com" {
+		t.Fatalf("page AccountRef = %q", page.Providers[0].AccountRef)
 	}
 
 	if err := svc.Disconnect(ctx, ticket, "github"); err != nil {
@@ -474,6 +485,7 @@ func TestConnectService_AutoRegistrationFlow(t *testing.T) {
 		infraoauth.NewProviderClient(nil),
 		registrar,
 		discardConnectAuditor(),
+		nil,
 		nil,
 	)
 	ctx := context.Background()
@@ -570,6 +582,7 @@ func TestConnectService_AutoRegistrationUpstreamNotDiscoverable(t *testing.T) {
 		infraoauth.NewProviderClient(nil),
 		infraoauth.NewUpstreamRegistrar(store, nil),
 		discardConnectAuditor(),
+		nil,
 		nil,
 	)
 	ctx := context.Background()
@@ -720,4 +733,14 @@ func TestConnectService_ProviderDenialRelaysTicket(t *testing.T) {
 	if len(vault.creds) != 0 {
 		t.Fatal("denied consent stored a credential")
 	}
+}
+
+func unsignedConnectJWT(t *testing.T, claims jwt.MapClaims) string {
+	t.Helper()
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	raw, err := tok.SignedString([]byte("test-secret"))
+	if err != nil {
+		t.Fatalf("sign jwt: %v", err)
+	}
+	return raw
 }

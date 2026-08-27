@@ -197,6 +197,7 @@ func (p *providerClient) tokenCall(ctx context.Context, endpoint string, form ur
 	var doc struct {
 		AccessToken  string          `json:"access_token"`
 		RefreshToken string          `json:"refresh_token"`
+		IDToken      string          `json:"id_token"`
 		TokenType    string          `json:"token_type"`
 		ExpiresIn    json.RawMessage `json:"expires_in"`
 		Scope        string          `json:"scope"`
@@ -217,7 +218,11 @@ func (p *providerClient) tokenCall(ctx context.Context, endpoint string, form ur
 		!strings.EqualFold(doc.TokenType, "user") {
 		return nil, fmt.Errorf("oauth provider: unsupported token_type %q", doc.TokenType)
 	}
-	out := &appoauth.ProviderToken{AccessToken: doc.AccessToken, RefreshToken: doc.RefreshToken}
+	out := &appoauth.ProviderToken{
+		AccessToken:  doc.AccessToken,
+		RefreshToken: doc.RefreshToken,
+		IDToken:      doc.IDToken,
+	}
 	expiresIn, err := parseExpiresIn(doc.ExpiresIn)
 	if err != nil {
 		return nil, fmt.Errorf("oauth provider: invalid expires_in: %w", err)

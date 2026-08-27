@@ -38,6 +38,7 @@ type connectService struct {
 	registrar   UpstreamRegistrar
 	auditor     ConnectAuditor
 	sharedOAuth mcpoauth.Provider
+	userinfo    UserInfoClient
 }
 
 func NewConnectService(
@@ -48,6 +49,7 @@ func NewConnectService(
 	registrar UpstreamRegistrar,
 	auditor ConnectAuditor,
 	sharedOAuth mcpoauth.Provider,
+	userinfo UserInfoClient,
 ) ConnectService {
 	return &connectService{
 		store:       store,
@@ -57,6 +59,7 @@ func NewConnectService(
 		registrar:   registrar,
 		auditor:     auditor,
 		sharedOAuth: sharedOAuth,
+		userinfo:    userinfo,
 	}
 }
 
@@ -212,7 +215,8 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 		return st.TicketID, err
 	}
 	cred, err := vaultdomain.NewCredential(
-		gatewayID, st.Ticket.PrincipalSub, cfg.Provider, "",
+		gatewayID, st.Ticket.PrincipalSub, cfg.Provider,
+		resolveAccountRef(ctx, s.userinfo, cfg, token),
 		token.AccessToken, token.RefreshToken, token.Scopes, token.ExpiresAt,
 	)
 	if err != nil {

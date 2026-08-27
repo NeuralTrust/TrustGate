@@ -31,6 +31,7 @@ import (
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
@@ -128,6 +129,9 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 
 	if rt := trace.FromContext(c.UserContext()); rt != nil {
 		rt.SetConsumer(rc.Consumer.ID.String(), rc.Consumer.Name)
+		if p := identity.PrincipalFromContext(c.UserContext()); p != nil {
+			rt.SetPrincipal(p.Subject)
+		}
 	}
 
 	var req rpcRequest

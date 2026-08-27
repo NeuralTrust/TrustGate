@@ -31,6 +31,7 @@ import (
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	domainconsumer "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/TrustGate/pkg/domain/routing"
@@ -298,6 +299,9 @@ func stampConsumerTrace(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) {
 		return
 	}
 	rt.SetConsumer(rc.Consumer.ID.String(), rc.Consumer.Name)
+	if p := identity.PrincipalFromContext(c.UserContext()); p != nil {
+		rt.SetPrincipal(p.Subject)
+	}
 }
 
 func isAuthorizedForConsumer(rc *appconsumer.RoutableConsumer, authCtx *appauth.AuthContext) bool {
