@@ -86,6 +86,16 @@ func (s *memFlowStore) peekSession(refreshToken string) *SessionRecord {
 	return &rec
 }
 
+func (s *memFlowStore) peekFirstGrant() *CodeGrant {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, g := range s.codes {
+		g := g
+		return &g
+	}
+	return nil
+}
+
 func (s *memFlowStore) SaveGatewayClient(_ context.Context, c RegisteredGatewayClient) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
