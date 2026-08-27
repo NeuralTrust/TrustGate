@@ -629,6 +629,16 @@ function AddMcpDialog({
                       Validate OpenAPI
                     </Button>
                   </div>
+                  {openapiValidation && !openapiValidation.ok && (
+                    <div className="rounded-(--radius-md) border border-danger/25 bg-danger/5 p-3">
+                      <p className="text-[13px] font-medium text-danger">
+                        OpenAPI validation failed during {openapiValidation.stage}
+                      </p>
+                      {openapiValidation.message && (
+                        <p className="mt-1 text-[12px] text-muted">{openapiValidation.message}</p>
+                      )}
+                    </div>
+                  )}
                   {openapiValidation?.ok && (
                     <div className="rounded-(--radius-md) border border-success/25 bg-success/5 p-3">
                       <div className="flex flex-wrap items-center gap-2">
