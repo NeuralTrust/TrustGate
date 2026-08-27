@@ -29,7 +29,7 @@ func fullEvent() events.Event {
 		Kind:          events.KindLLM,
 		TraceID:       "trace-1",
 		GatewayID:     "gw-1",
-		TenantID:        "team-1",
+		TenantID:      "team-1",
 		Timestamp:     "2026-07-06T00:00:00Z",
 		OccurredOn:    1751760000,
 		EndTimestamp:  1751760001,

@@ -25,6 +25,7 @@ import (
 	policyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy"
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
 	rolehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/role"
+	tenanthttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/tenant"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/gofiber/fiber/v2"
 	fiberSwagger "github.com/gofiber/swagger"
@@ -35,11 +36,16 @@ const (
 	HealthPath = "/healthz"
 	// HealthPathAlias is registered for load balancers that probe /health
 	// (e.g. platform ALB defaults). Same handler as HealthPath.
-	HealthPathAlias       = "/health"
-	ReadyPath             = "/readyz"
-	VersionPath           = "/__/version"
-	DocsPath              = "/docs/*"
-	GatewaysPath          = "/v1/gateways"
+	HealthPathAlias = "/health"
+	ReadyPath       = "/readyz"
+	VersionPath     = "/__/version"
+	DocsPath        = "/docs/*"
+	// OpenAPIPath serves the OpenAPI 3 document. Swagger UI publishes Swagger
+	// 2.0, which OpenAPI 3 consumers cannot parse.
+	OpenAPIPath = "/docs/openapi.json"
+	GatewaysPath    = "/v1/gateways"
+	// TenantsPath carries admin operations that span every gateway of a tenant.
+	TenantsPath           = "/v1/tenants"
 	ProvidersCatalog      = "/v1/providers-catalog"
 	ModelsCatalogPath     = "/v1/models-catalog"
 	PoliciesCatalogPath   = "/v1/policies-catalog"
@@ -65,12 +71,15 @@ type AdminRouterDeps struct {
 	UpdateGateway *gatewayhttp.UpdateGatewayHandler
 	DeleteGateway *gatewayhttp.DeleteGatewayHandler
 
+	RestampTenantEntitlements *tenanthttp.RestampEntitlementsHandler
+
 	CreateRegistry         *registryhttp.CreateRegistryHandler
 	GetRegistry            *registryhttp.GetRegistryHandler
 	ListRegistry           *registryhttp.ListRegistryHandler
 	UpdateRegistry         *registryhttp.UpdateRegistryHandler
 	DeleteRegistry         *registryhttp.DeleteRegistryHandler
 	TestRegistryConnection *registryhttp.TestConnectionHandler
+	ValidateOpenAPI        *registryhttp.ValidateOpenAPIHandler
 	ListRegistryTools      *registryhttp.ListRegistryToolsHandler
 
 	CreatePolicy    *policyhttp.CreatePolicyHandler
@@ -133,7 +142,15 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	// Interactive API docs (Swagger UI + spec) served from the generated
 	// `docs` package. Public on purpose so the contract is browsable without
 	// an admin token; the documented endpoints stay behind AdminAuth below.
+	// The OpenAPI 3 route is registered first so the Swagger UI wildcard does
+	// not swallow it.
+	app.Get(OpenAPIPath, apihandler.NewOpenAPIHandler().Handle)
 	app.Get(DocsPath, fiberSwagger.HandlerDefault)
+
+	if r.deps.RestampTenantEntitlements != nil {
+		tenants := app.Group(TenantsPath, r.deps.AdminAuth.Middleware())
+		tenants.Put("/:tenant_id/entitlements", r.deps.RestampTenantEntitlements.Handle)
+	}
 
 	gw := app.Group(GatewaysPath, r.deps.AdminAuth.Middleware())
 
@@ -150,6 +167,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	registries := gw.Group("/:gateway_id/registries", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceRegistries))
 	registries.Post("", r.deps.CreateRegistry.Handle)
 	registries.Post("/test-connection", r.deps.TestRegistryConnection.Handle)
+	registries.Post("/validate-openapi", r.deps.ValidateOpenAPI.Handle)
 	registries.Get("", r.deps.ListRegistry.Handle)
 	registries.Get("/:id", r.deps.GetRegistry.Handle)
 	registries.Get("/:id/tools", r.deps.ListRegistryTools.Handle)

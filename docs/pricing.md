@@ -60,3 +60,90 @@ same as summing `cost.total_usd` on telemetry events.
 Those estimates match the customer invoice only when registry `pricing`
 matches the contract (enterprise list discount and/or committed per-model
 rates). List prices from models.dev diverge from reserved/committed deals.
+
+## Cache tokens
+
+Prompt tokens served from, or written to, a provider's cache bill at their own
+rate. The catalog carries `cache_read_price` and `cache_write_price` alongside
+the input and output rates, synced from models.dev, and a registry
+`pricing.overrides` entry may set `cache_read` / `cache_write` to a negotiated
+rate.
+
+```
+prompt_usd = (prompt - cached - cache_written) * input
+           + cached        * cache_read
+           + cache_written * cache_write
+```
+
+`InputTokens` is the **whole prompt**, and the cache counts are subsets of it.
+Providers that report their cache counts beside the prompt rather than inside it
+— Anthropic does, where `input_tokens` is only the uncached remainder — are
+normalised by their adapter, so this one expression is correct everywhere.
+
+**An unset cache rate bills at the plain input rate**, which is what the gateway
+charged for those tokens before cache rates existed. That applies to a model
+models.dev publishes no cache rate for, and to a registry override that names
+only `input` and `output`. Reading unset as zero would silently make most of a
+cached prompt free, which is the worse way to be wrong. An explicit
+`"cache_read": 0` is honoured as a real "free under my contract".
+
+Rates differ sharply by provider, so they are never derived from a ratio: on
+current list prices Anthropic reads at 0.1x input, OpenAI's `gpt-4o` at 0.5x,
+`gpt-5` at 0.1x, xAI Grok at 0.25x.
+
+Anthropic's one-hour cache TTL bills above its five-minute default, and no
+catalog publishes a rate for it. The one-hour share is reported separately on the
+usage view and priced from `cache_write_1h` when an override sets it, falling
+back to the five-minute rate otherwise. Set it explicitly on any registry whose
+traffic uses the long TTL — without it those writes are under-billed, and the
+multiplier is deliberately not inferred, because it is an Anthropic fact rather
+than a universal one.
+
+Streaming providers report usage in pieces: Anthropic sends the prompt and both
+cache buckets on the first event and the completion on the last. Usage is merged
+field-wise across events, keeping the larger of each count, so an event that
+omits a field cannot erase it.
+
+If the sub-counts ever exceed the prompt they claim to be part of — which is what
+a provider silently changing its wire shape looks like — the whole prompt is
+billed at the plain input rate and a warning is logged. That is the safe
+direction for money, and it is no longer silent.
+
+## Smart-routing savings
+
+When a consumer's pool uses the `smart-routing` algorithm and the tier table
+chose the route, the event's `cost` object also carries `savings_usd`: the same
+token counts repriced at the **highest configured tier**, minus the actual cost.
+It lives inside `cost` rather than in a block of its own, so the counterfactual
+total is `cost.total_usd + cost.savings_usd`.
+
+The full emission rules — when the field is absent rather than zero, and why —
+live in [the OTLP metadata contract](./telemetry/otlp-metadata-contract.md#savings-semantics).
+What matters for pricing:
+
+- The baseline resolves through the same `llmcost.Resolve` ladder as the actual
+  cost, but with the **baseline tier's own registry** overlay, which is not
+  necessarily the served registry's — a tier can point anywhere in the pool.
+- `discount` applies only to catalog-resolved prices, while explicit `overrides`
+  return before it. If one leg is priced by an override and the other by a
+  discounted catalog rate, the two follow different rules.
+- "Highest tier" means the greatest `min_score`, not the highest price. Nothing
+  validates that the top tier is the most expensive model, so a ladder that puts
+  a premium model at a low threshold produces a negative `savings_usd`. That is
+  left unclamped: it surfaces the misconfiguration instead of hiding it.
+- The baseline prices the whole prompt at the plain input rate, including the
+  share the served request billed as a cache read or write. This is deliberate:
+  the baseline is a route that was never taken, so it had no warm cache to read
+  from. Pricing the counterfactual as if it inherited the served route's cache
+  would credit it a discount it could not have earned.
+- That assumption biases the figure **upward**, and how far depends on the
+  token mix. On a prompt-dominated request that is mostly a cache hit it is worth
+  roughly 10x the reported saving; on an output-dominated one it barely moves.
+  The gap is exactly the cached share repriced from the plain input rate down to
+  the baseline's cache read rate. It is the honest reading of a cold
+  counterfactual, not a conservative one, and it should be read as such.
+
+It is a modelled counterfactual, not a measurement: it assumes the premium model
+would have consumed the same tokens. It will not reconcile against a provider
+invoice, and it does not cover cost-cap model downgrades, which are a different
+mechanism.

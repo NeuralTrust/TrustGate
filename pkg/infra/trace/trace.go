@@ -33,6 +33,12 @@ type Metadata struct {
 	IP           string
 	SessionID    string
 	Kind         string
+	// RetentionWindow is the plan's trace-retention window, zero when the
+	// gateway carries no stamp. The window travels rather than a computed
+	// expiry so the builder derives the expiry from the same timestamp it
+	// records as the event's, keeping the two from drifting apart.
+	RetentionWindow time.Duration
+	RetentionPlan   string
 }
 
 type RequestTrace struct {

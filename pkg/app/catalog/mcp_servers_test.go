@@ -268,6 +268,11 @@ func TestNewMCPServerCatalog_GoogleWorkspacePlatformClient(t *testing.T) {
 	require.True(t, ok)
 	require.True(t, calendar.RequiresConfig)
 	require.False(t, calendar.PlatformClient)
+	drive, ok := without.GetByCode("com.google.workspace/drive")
+	require.True(t, ok)
+	require.True(t, drive.RequiresConfig)
+	require.False(t, drive.PlatformClient)
+	require.Equal(t, "https://drivemcp.googleapis.com/mcp/v1", drive.URL)
 
 	with, err := NewMCPServerCatalog(mcpoauth.NewGoogleWorkspace("nt-client", "nt-secret"))
 	require.NoError(t, err)
@@ -279,6 +284,10 @@ func TestNewMCPServerCatalog_GoogleWorkspacePlatformClient(t *testing.T) {
 	require.True(t, ok)
 	require.False(t, calendar.RequiresConfig)
 	require.True(t, calendar.PlatformClient)
+	drive, ok = with.GetByCode("com.google.workspace/drive")
+	require.True(t, ok)
+	require.False(t, drive.RequiresConfig)
+	require.True(t, drive.PlatformClient)
 
 	linear, ok := with.GetByCode("app.linear/mcp")
 	require.True(t, ok)

@@ -19,7 +19,14 @@ import {
   DialogClose,
 } from "@/components/ui/dialog";
 import { Field, Input, Select } from "@/components/ui/field";
-import type { MCPAuth, MCPAuthMode, MCPServer, MCPTarget, Registry } from "@/lib/types";
+import type {
+  MCPAuth,
+  MCPAuthMode,
+  MCPServer,
+  MCPTarget,
+  OpenAPIValidationResult,
+  Registry,
+} from "@/lib/types";
 
 const CUSTOM = "__custom__";
 const DEFAULT_TRANSPORT = "streamable-http";
@@ -32,6 +39,7 @@ const CUSTOM_AUTH_MODES: { value: MCPAuthMode; label: string }[] = [
   { value: "forwarded", label: "OAuth (forwarded)" },
   { value: "passthrough", label: "Passthrough" },
   { value: "exchange", label: "Token exchange" },
+  { value: "client_credentials", label: "Client credentials" },
 ];
 
 const EXCHANGE_PATTERNS: { value: ExchangePattern; label: string }[] = [
@@ -181,7 +189,9 @@ export function McpRegistriesView({ registries }: { registries: Registry[] }) {
                 </TD>
                 <TD>
                   <span className="text-[12px] text-muted">
-                    {r.mcp_target?.transport ?? DEFAULT_TRANSPORT}
+                    {r.mcp_target?.source === "openapi"
+                      ? "OpenAPI"
+                      : (r.mcp_target?.transport ?? DEFAULT_TRANSPORT)}
                   </span>
                 </TD>
                 <TD>
@@ -274,7 +284,12 @@ function AddMcpDialog({
   const [headerValues, setHeaderValues] = useState<Record<string, string>>({});
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
+  const [customSource, setCustomSource] = useState<"mcp" | "openapi">("mcp");
   const [customUrl, setCustomUrl] = useState("");
+  const [openapiSpecUrl, setOpenapiSpecUrl] = useState("");
+  const [openapiBaseUrl, setOpenapiBaseUrl] = useState("");
+  const [openapiValidation, setOpenapiValidation] = useState<OpenAPIValidationResult | null>(null);
+  const [validatingOpenAPI, setValidatingOpenAPI] = useState(false);
   const [customAuthMode, setCustomAuthMode] = useState<MCPAuthMode>("none");
   const [customHeader, setCustomHeader] = useState("Authorization");
   const [customValue, setCustomValue] = useState("");
@@ -291,6 +306,12 @@ function AddMcpDialog({
   const [fwdTokenUrl, setFwdTokenUrl] = useState("");
   const [fwdScopes, setFwdScopes] = useState("");
   const [fwdResource, setFwdResource] = useState("");
+  const [ccClientId, setCcClientId] = useState("");
+  const [ccClientSecret, setCcClientSecret] = useState("");
+  const [ccTokenUrl, setCcTokenUrl] = useState("");
+  const [ccAuthMethod, setCcAuthMethod] = useState<
+    "client_secret_basic" | "client_secret_post"
+  >("client_secret_basic");
   const [submitting, setSubmitting] = useState(false);
 
   const server = useMemo(
@@ -304,8 +325,49 @@ function AddMcpDialog({
     setHeaderValues({});
     setClientId("");
     setClientSecret("");
+    setCustomSource("mcp");
+    setOpenapiValidation(null);
     const entry = (catalog ?? []).find((s) => s.code === code);
     setName(entry ? entry.display_name : "");
+  }
+
+  function selectCustomSource(source: "mcp" | "openapi") {
+    setCustomSource(source);
+    setCustomAuthMode("none");
+    setOpenapiValidation(null);
+  }
+
+  async function validateOpenAPI() {
+    const specUrl = openapiSpecUrl.trim();
+    const baseUrl = openapiBaseUrl.trim();
+    if (!/^https?:\/\//i.test(specUrl)) {
+      toast({ variant: "error", title: "A valid OpenAPI spec URL is required" });
+      return;
+    }
+    if (baseUrl && !/^https?:\/\//i.test(baseUrl)) {
+      toast({ variant: "error", title: "Base URL must be a valid http(s) URL" });
+      return;
+    }
+    setValidatingOpenAPI(true);
+    try {
+      const result = await api.post<OpenAPIValidationResult>(
+        `${gatewayScope(gatewayId)}/registries/validate-openapi`,
+        { spec_url: specUrl, ...(baseUrl ? { base_url: baseUrl } : {}) },
+      );
+      setOpenapiValidation(result);
+      if (!result.ok) {
+        toast({
+          variant: "error",
+          title: `OpenAPI validation failed at ${result.stage}`,
+          description: result.message,
+        });
+      }
+    } catch (err) {
+      setOpenapiValidation(null);
+      toast({ variant: "error", title: "OpenAPI validation failed", description: errorMessage(err) });
+    } finally {
+      setValidatingOpenAPI(false);
+    }
   }
 
   function buildCustomAuth(): { auth: MCPAuth } | { error: string } {
@@ -367,6 +429,19 @@ function AddMcpDialog({
           },
         };
       }
+      case "client_credentials":
+        if (!ccClientId.trim() || !ccClientSecret.trim() || !/^https?:\/\//i.test(ccTokenUrl.trim())) {
+          return { error: "Client credentials needs a client ID, secret, and valid token URL" };
+        }
+        return {
+          auth: {
+            mode: "client_credentials",
+            client_id: ccClientId.trim(),
+            client_secret: ccClientSecret.trim(),
+            token_url: ccTokenUrl.trim(),
+            token_endpoint_auth_method: ccAuthMethod,
+          },
+        };
       default: {
         const _exhaustive: never = customAuthMode;
         return _exhaustive;
@@ -382,14 +457,27 @@ function AddMcpDialog({
     }
 
     if (selected === CUSTOM) {
-      const url = customUrl.trim();
-      if (!/^https?:\/\//i.test(url)) {
-        toast({ variant: "error", title: "A valid http(s) URL is required" });
-        return null;
-      }
       const result = buildCustomAuth();
       if ("error" in result) {
         toast({ variant: "error", title: result.error });
+        return null;
+      }
+      if (customSource === "openapi") {
+        if (!openapiValidation?.ok) {
+          toast({ variant: "error", title: "Validate the OpenAPI document before connecting" });
+          return null;
+        }
+        const target: MCPTarget = {
+          source: "openapi",
+          url: openapiValidation.base_url,
+          openapi: { spec_url: openapiSpecUrl.trim() },
+          auth: result.auth,
+        };
+        return { name: trimmedName, type: "MCP", mcp_target: target };
+      }
+      const url = customUrl.trim();
+      if (!/^https?:\/\//i.test(url)) {
+        toast({ variant: "error", title: "A valid http(s) URL is required" });
         return null;
       }
       const target: MCPTarget = { url, transport: DEFAULT_TRANSPORT, auth: result.auth };
@@ -492,19 +580,156 @@ function AddMcpDialog({
 
           {selected === CUSTOM ? (
             <>
-              <Field label="URL" hint="required">
-                <Input
-                  value={customUrl}
-                  onChange={(e) => setCustomUrl(e.target.value)}
-                  placeholder="https://mcp.example.com/mcp"
-                />
+              <Field label="Source">
+                <Select
+                  value={customSource}
+                  onChange={(e) => selectCustomSource(e.target.value as "mcp" | "openapi")}
+                >
+                  <option value="mcp">MCP server URL</option>
+                  <option value="openapi">OpenAPI document</option>
+                </Select>
               </Field>
+              {customSource === "openapi" && (
+                <p className="text-[12px] text-muted">
+                  OpenAPI 3.x JSON. Auth is a static header or OAuth client
+                  credentials (not per-user login). List endpoints expose page
+                  or cursor as tool arguments; the gateway does not walk every
+                  page.{" "}
+                  <a
+                    className="underline"
+                    href="https://docs.neuraltrust.ai/trustgate/mcp/openapi"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Known limits
+                  </a>
+                </p>
+              )}
+              {customSource === "mcp" ? (
+                <Field label="URL" hint="required">
+                  <Input
+                    value={customUrl}
+                    onChange={(e) => setCustomUrl(e.target.value)}
+                    placeholder="https://mcp.example.com/mcp"
+                  />
+                </Field>
+              ) : (
+                <>
+                  <Field
+                    label="OpenAPI spec URL"
+                    hint="required, link to the raw OpenAPI 3 file"
+                  >
+                    <Input
+                      value={openapiSpecUrl}
+                      onChange={(e) => {
+                        setOpenapiSpecUrl(e.target.value);
+                        setOpenapiValidation(null);
+                      }}
+                      placeholder="https://api.example.com/openapi.json"
+                    />
+                  </Field>
+                  <Field
+                    label="API base URL"
+                    hint="optional, leave empty to use the address in the document"
+                  >
+                    <Input
+                      value={openapiBaseUrl}
+                      onChange={(e) => {
+                        setOpenapiBaseUrl(e.target.value);
+                        setOpenapiValidation(null);
+                      }}
+                      placeholder="https://api.example.com/v1"
+                    />
+                  </Field>
+                  <div className="flex justify-start">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={validateOpenAPI}
+                      loading={validatingOpenAPI}
+                    >
+                      Validate OpenAPI
+                    </Button>
+                  </div>
+                  {openapiValidation && !openapiValidation.ok && (
+                    <div className="rounded-(--radius-md) border border-danger/25 bg-danger/5 p-3">
+                      <p className="text-[13px] font-medium text-danger">
+                        OpenAPI validation failed during {openapiValidation.stage}
+                      </p>
+                      {openapiValidation.message && (
+                        <p className="mt-1 text-[12px] text-muted">{openapiValidation.message}</p>
+                      )}
+                    </div>
+                  )}
+                  {openapiValidation?.ok && (
+                    <div className="rounded-(--radius-md) border border-success/25 bg-success/5 p-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge tone="success">Valid OpenAPI {openapiValidation.openapi_version}</Badge>
+                        <span className="text-[12px] text-muted">
+                          {openapiValidation.tool_count} tools
+                        </span>
+                      </div>
+                      {openapiValidation.title && (
+                        <p className="mt-2 text-[13px] font-medium text-fg">
+                          {openapiValidation.title}
+                        </p>
+                      )}
+                      {openapiValidation.base_url && (
+                        <p className="mt-1 truncate text-[12px] text-muted">
+                          Base URL <span className="font-mono">{openapiValidation.base_url}</span>
+                        </p>
+                      )}
+                      <div className="mt-2 max-h-56 space-y-1 overflow-y-auto pr-1">
+                        {openapiValidation.tools.map((tool) => (
+                          <div
+                            key={`${tool.method}:${tool.path}`}
+                            className="grid grid-cols-[3.25rem_minmax(0,1fr)_minmax(0,1fr)] items-baseline gap-2 text-[12px]"
+                          >
+                            <Mono>{tool.method}</Mono>
+                            <span className="truncate font-mono text-muted" title={tool.path}>
+                              {tool.path}
+                            </span>
+                            <span className="truncate text-fg" title={tool.name}>
+                              {tool.name}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                      {openapiValidation.warnings.length > 0 && (
+                        <details className="mt-2">
+                          <summary className="cursor-pointer text-[12px] text-warning">
+                            {openapiValidation.warnings.length === 1
+                              ? "1 warning"
+                              : `${openapiValidation.warnings.length} warnings`}
+                          </summary>
+                          <div className="mt-1 space-y-1">
+                            {openapiValidation.warnings.map((warning) => (
+                              <p
+                                key={`${warning.code}:${warning.message}`}
+                                className="text-[12px] text-muted"
+                              >
+                                {warning.message}
+                              </p>
+                            ))}
+                          </div>
+                        </details>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
               <Field label="Authentication">
                 <Select
                   value={customAuthMode}
                   onChange={(e) => setCustomAuthMode(e.target.value as MCPAuthMode)}
                 >
-                  {CUSTOM_AUTH_MODES.map((m) => (
+                  {CUSTOM_AUTH_MODES.filter(
+                    (mode) =>
+                      customSource === "mcp" ||
+                      mode.value === "none" ||
+                      mode.value === "static" ||
+                      mode.value === "client_credentials",
+                  ).map((m) => (
                     <option key={m.value} value={m.value}>
                       {m.label}
                     </option>
@@ -530,6 +755,41 @@ function AddMcpDialog({
                     />
                   </Field>
                 </div>
+              )}
+
+              {customAuthMode === "client_credentials" && (
+                <>
+                  <Field label="Client ID" hint="required">
+                    <Input value={ccClientId} onChange={(e) => setCcClientId(e.target.value)} />
+                  </Field>
+                  <Field label="Client secret" hint="required">
+                    <Input
+                      type="password"
+                      value={ccClientSecret}
+                      onChange={(e) => setCcClientSecret(e.target.value)}
+                    />
+                  </Field>
+                  <Field label="Token URL" hint="required">
+                    <Input
+                      value={ccTokenUrl}
+                      onChange={(e) => setCcTokenUrl(e.target.value)}
+                      placeholder="https://idp.example.com/oauth/token"
+                    />
+                  </Field>
+                  <Field label="Token endpoint auth method">
+                    <Select
+                      value={ccAuthMethod}
+                      onChange={(e) =>
+                        setCcAuthMethod(
+                          e.target.value as "client_secret_basic" | "client_secret_post",
+                        )
+                      }
+                    >
+                      <option value="client_secret_basic">Client secret basic</option>
+                      <option value="client_secret_post">Client secret post</option>
+                    </Select>
+                  </Field>
+                </>
               )}
 
               {customAuthMode === "passthrough" && (

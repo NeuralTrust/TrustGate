@@ -28,6 +28,10 @@ type Attachment struct {
 	Data        []byte
 }
 
+type RoutingDecision struct {
+	TierApplied bool
+}
+
 type RequestContext struct {
 	GatewayID          string
 	ConsumerID         string
@@ -53,6 +57,7 @@ type RequestContext struct {
 	AllowedModels      []string
 	DefaultModel       string
 	RequestedModel     string
+	RoutingDecision    *RoutingDecision
 	// MCP marks a native MCP tools/call payload so protocol-aware plugins
 	// inspect it via the MCP text path instead of the LLM canonical decoders.
 	MCP bool

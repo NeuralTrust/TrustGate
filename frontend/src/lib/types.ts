@@ -104,7 +104,13 @@ export interface HealthChecks {
 
 export type RegistryType = "LLM" | "MCP";
 
-export type MCPAuthMode = "none" | "static" | "passthrough" | "exchange" | "forwarded";
+export type MCPAuthMode =
+  | "none"
+  | "static"
+  | "passthrough"
+  | "exchange"
+  | "forwarded"
+  | "client_credentials";
 
 export interface MCPAuth {
   mode: MCPAuthMode;
@@ -123,15 +129,20 @@ export interface MCPAuth {
   token_url?: string;
   scopes?: string[];
   resource?: string;
+  token_endpoint_auth_method?: "client_secret_basic" | "client_secret_post";
 }
 
 export interface MCPTarget {
   /** Catalog server code this connection was created from (empty for custom servers). */
   code?: string;
-  url: string;
+  source?: "mcp" | "openapi";
+  url?: string;
   transport?: string;
   headers?: Record<string, string>;
   auth?: MCPAuth | null;
+  openapi?: {
+    spec_url: string;
+  };
 }
 
 // A tool as the upstream MCP server advertised it: `name` plus whatever else it
@@ -144,6 +155,23 @@ export interface McpTool {
 
 export interface McpToolsResponse {
   tools: McpTool[];
+}
+
+export interface OpenAPIValidationResult {
+  ok: boolean;
+  stage: "fetch" | "parse" | "compile";
+  openapi_version?: string;
+  title?: string;
+  base_url?: string;
+  tool_count: number;
+  tools: Array<{
+    name: string;
+    description?: string;
+    method: string;
+    path: string;
+  }>;
+  warnings: Array<{ code: string; message: string }>;
+  message?: string;
 }
 
 export interface PriceOverride {

@@ -294,6 +294,47 @@ func TestUpdater_Update_MCPTargetAuthClearedExplicitly(t *testing.T) {
 	}
 }
 
+func TestUpdater_Update_OpenAPISourceCanSwitchToRemoteMCP(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing, err := domain.NewMCPRegistry(ids.New[ids.GatewayKind](), "api", "", &domain.MCPTarget{
+		Source:  domain.MCPSourceOpenAPI,
+		URL:     "https://api.example.com",
+		OpenAPI: &domain.OpenAPITarget{SpecURL: "https://api.example.com/openapi.json"},
+	})
+	if err != nil {
+		t.Fatalf("NewMCPRegistry error: %v", err)
+	}
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Once()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateRegistryCacheEvent{
+			GatewayID:  existing.GatewayID.String(),
+			RegistryID: existing.ID.String(),
+		}).
+		Return(nil).
+		Once()
+	updater := appregistry.NewUpdater(repo, newCacheManager(), publisher, newTestLogger(), nil, nil)
+
+	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
+		ID: existing.ID,
+		MCPTarget: &domain.MCPTarget{
+			Source: domain.MCPSourceRemote,
+			URL:    "https://mcp.example.com/mcp",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.MCPTarget.OpenAPI != nil {
+		t.Fatalf("OpenAPI config was not cleared: %+v", got.MCPTarget.OpenAPI)
+	}
+	if got.MCPTarget.Transport != domain.MCPTransportStreamableHTTP {
+		t.Fatalf("Transport = %q", got.MCPTarget.Transport)
+	}
+}
+
 func TestUpdater_Update_PreservesRedactedSecret(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)

@@ -116,11 +116,10 @@ func billableInputTokens(cfg *config, usage *adapter.CanonicalUsage) int {
 	if usage == nil {
 		return 0
 	}
-	in := usage.InputTokens
 	if cfg.CountCacheReads {
-		in += usage.CacheReadInputTokens
+		return usage.InputTokens
 	}
-	return in
+	return usage.InputTokens - usage.CachedInputTokens
 }
 
 func primaryWindowIndex(windows []budgetWindow) int {
@@ -144,17 +143,17 @@ func countedTokens(cfg *config, usage *adapter.CanonicalUsage) int {
 	if usage == nil {
 		return 0
 	}
-	cacheReads := 0
-	if cfg.CountCacheReads {
-		cacheReads = usage.CacheReadInputTokens
+	discount := 0
+	if !cfg.CountCacheReads {
+		discount = usage.CachedInputTokens
 	}
 	switch cfg.Counting {
 	case countingInput:
-		return usage.InputTokens + cacheReads
+		return usage.InputTokens - discount
 	case countingOutput:
 		return usage.OutputTokens
 	default:
-		return usage.TotalTokens + cacheReads
+		return usage.TotalTokens - discount
 	}
 }
 
@@ -376,7 +375,7 @@ func (p *Plugin) accrueDollars(
 	if req != nil {
 		overlay = llmcost.RatesFromDomain(req.RegistryPricing)
 	}
-	inputRate, outputRate, found := llmcost.Resolve(ctx, p.pricing, cfg.CustomPricing, overlay, provider, model, servedModel, requested)
+	rates, found := llmcost.Resolve(ctx, p.pricing, cfg.CustomPricing, overlay, provider, model, servedModel, requested)
 	if !found {
 		slog.Warn("token_rate_limiter: unpriced model in dollar budget, accruing zero",
 			slog.String("provider", provider),
@@ -395,7 +394,8 @@ func (p *Plugin) accrueDollars(
 	if usage == nil {
 		return &appplugins.Result{}, nil
 	}
-	cost := float64(billableInputTokens(cfg, usage))*inputRate + float64(usage.OutputTokens)*outputRate
+	prompt, completion := rates.CostUSD(usage)
+	cost := prompt + completion
 	micros := llmcost.MicroUSD(cost)
 	if micros <= 0 {
 		return &appplugins.Result{}, nil
