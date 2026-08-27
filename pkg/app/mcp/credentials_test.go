@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -290,6 +291,79 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		}
 	})
 
+	t.Run("upstream rejection refreshes a credential before its recorded expiry", func(t *testing.T) {
+		t.Parallel()
+		idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token":  "fresh",
+				"refresh_token": "rotated",
+				"expires_in":    3600,
+			})
+		}))
+		defer idp.Close()
+		vault := &memVault{}
+		cred, _ := vaultdomain.NewCredential(
+			gw, "alice", "github", "", "rejected", "refresh-me", nil, time.Now().Add(time.Hour),
+		)
+		_ = vault.Upsert(context.Background(), cred)
+		connect := &stubConnect{refreshCfg: &registrydomain.MCPAuth{
+			Provider: "github", ClientID: "id", TokenURL: idp.URL,
+		}}
+		resolver := NewCredentialResolver(nil, vault, connect, infraoauth.NewProviderClient(nil), discardLogger())
+		refresher := resolver.(credentialRefresher)
+		ctx := principalCtx(&identity.Principal{Subject: "alice"})
+		target := Target{Headers: map[string]string{"Authorization": "Bearer rejected"}}
+
+		if err := refresher.Refresh(ctx, mcpConsumer(gw), reg, &target); err != nil {
+			t.Fatalf("Refresh: %v", err)
+		}
+		if target.Headers["Authorization"] != "Bearer fresh" {
+			t.Fatalf("Authorization = %q, want refreshed token", target.Headers["Authorization"])
+		}
+		stored, err := vault.Find(ctx, gw, "alice", "github")
+		if err != nil {
+			t.Fatalf("find refreshed credential: %v", err)
+		}
+		if stored.AccessToken != "fresh" || stored.RefreshToken != "rotated" {
+			t.Fatalf("stored credential = %+v, want rotated tokens", stored)
+		}
+	})
+
+	t.Run("recent successful reactive refresh is throttled", func(t *testing.T) {
+		t.Parallel()
+		var requests atomic.Int64
+		idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			requests.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "fresh", "refresh_token": "rotated", "expires_in": 3600,
+			})
+		}))
+		defer idp.Close()
+		vault := &memVault{}
+		cred, _ := vaultdomain.NewCredential(
+			gw, "alice", "github", "", "rejected", "refresh-me", nil, time.Now().Add(time.Hour),
+		)
+		_ = vault.Upsert(context.Background(), cred)
+		connect := &stubConnect{refreshCfg: &registrydomain.MCPAuth{
+			Provider: "github", ClientID: "id", TokenURL: idp.URL,
+		}}
+		resolver := NewCredentialResolver(nil, vault, connect, infraoauth.NewProviderClient(nil), discardLogger())
+		refresher := resolver.(credentialRefresher)
+		ctx := principalCtx(&identity.Principal{Subject: "alice"})
+		target := Target{Headers: map[string]string{"Authorization": "Bearer rejected"}}
+		if err := refresher.Refresh(ctx, mcpConsumer(gw), reg, &target); err != nil {
+			t.Fatalf("first Refresh: %v", err)
+		}
+
+		err := refresher.Refresh(ctx, mcpConsumer(gw), reg, &target)
+		if !errors.Is(err, errCredentialRefreshThrottled) {
+			t.Fatalf("second Refresh error = %v, want errCredentialRefreshThrottled", err)
+		}
+		if got := requests.Load(); got != 1 {
+			t.Fatalf("token endpoint requests = %d, want 1", got)
+		}
+	})
+
 	t.Run("transient RefreshAuth failure propagates without consent", func(t *testing.T) {
 		t.Parallel()
 		vault := &memVault{}
@@ -352,6 +426,31 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		var consent *ConsentRequiredError
 		if !errors.As(err, &consent) || consent.Ticket != "t5" {
 			t.Fatalf("error = %v, want consent fallback on invalid_grant", err)
+		}
+	})
+
+	t.Run("invalid_grant with unknown expiry does not reuse the rejected token", func(t *testing.T) {
+		t.Parallel()
+		idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": false, "error": "invalid_refresh_token",
+			})
+		}))
+		defer idp.Close()
+		vault := &memVault{}
+		cred, _ := vaultdomain.NewCredential(gw, "alice", "github", "", "rejected", "dead-refresh", nil, time.Time{})
+		_ = vault.Upsert(context.Background(), cred)
+		connect := &stubConnect{ticket: "reconnect", refreshCfg: &registrydomain.MCPAuth{
+			Provider: "github", ClientID: "id", TokenURL: idp.URL,
+		}}
+		resolver := NewCredentialResolver(nil, vault, connect, infraoauth.NewProviderClient(nil), discardLogger())
+		ctx := principalCtx(&identity.Principal{Subject: "alice"})
+		target := Target{Headers: map[string]string{"Authorization": "Bearer rejected"}}
+
+		err := resolver.(credentialRefresher).Refresh(ctx, mcpConsumer(gw), reg, &target)
+		var consent *ConsentRequiredError
+		if !errors.As(err, &consent) || consent.Ticket != "reconnect" {
+			t.Fatalf("error = %v, want consent instead of rejected token reuse", err)
 		}
 	})
 

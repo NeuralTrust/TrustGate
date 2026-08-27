@@ -52,18 +52,11 @@ func (c *composer) GetPrompt(ctx context.Context, rc *appconsumer.RoutableConsum
 		if b.exposed != name {
 			continue
 		}
-		target, err := c.target(ctx, rc, b.registry)
-		if err != nil {
-			return nil, err
-		}
 		stop := annotateUpstream(ctx, b.registry, b.prompt.Name)
 		defer stop()
-		up, err := c.dialer.Connect(ctx, target)
-		if err != nil {
-			return nil, err
-		}
-		defer up.Close(ctx)
-		return up.GetPrompt(ctx, b.prompt.Name, arguments)
+		return invokeUpstream(c, ctx, rc, b.registry, func(up Upstream) (json.RawMessage, error) {
+			return up.GetPrompt(ctx, b.prompt.Name, arguments)
+		})
 	}
 	// Mirror CallTool: an upstream still awaiting consent may be the one that
 	// owns this prompt, so the consent requirement is the useful answer.
