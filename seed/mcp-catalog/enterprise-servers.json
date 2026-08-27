@@ -5654,6 +5654,40 @@
       ]
     },
     {
+      "name": "com.google.workspace/drive",
+      "vendor": "Google Drive",
+      "category": "Productivity & Docs",
+      "description": "Google Drive remote MCP: search files and read content (Google Workspace, OAuth).",
+      "transport": "streamable-http",
+      "server_url": "https://drivemcp.googleapis.com/mcp/v1",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "scopes": [
+          "https://www.googleapis.com/auth/drive.readonly",
+          "https://www.googleapis.com/auth/drive.file"
+        ],
+        "resource": "https://drivemcp.googleapis.com/mcp/v1"
+      },
+      "relevance": 91,
+      "tools": [
+        {
+          "name": "search_files",
+          "description": "Search Drive files matching a query."
+        },
+        {
+          "name": "read_file_content",
+          "description": "Read the content of a Drive file."
+        }
+      ]
+    },
+    {
       "name": "com.google.cloud/androidmanagement",
       "vendor": "Google Cloud Android Management",
       "category": "Cloud Platform",
