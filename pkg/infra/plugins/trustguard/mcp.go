@@ -68,7 +68,7 @@ func mcpOutputText(body []byte) string {
 	if err := json.Unmarshal(body, &result); err != nil {
 		return ""
 	}
-	parts := make([]string, 0, len(result.Content)+1)
+	parts := make([]string, 0, len(result.Content))
 	for _, block := range result.Content {
 		if !blockIsText(block) || strings.TrimSpace(block.Text) == "" {
 			continue
