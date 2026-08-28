@@ -22,6 +22,7 @@ import (
 	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
@@ -40,6 +41,7 @@ import (
 	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/ratelimit"
 	vaultrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/vault"
+	"go.uber.org/dig"
 )
 
 func MCP(c *container.Container) error {
@@ -105,18 +107,7 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(appoauth.NewConnectAuditor); err != nil {
 		return err
 	}
-	if err := c.Provide(func(
-		store appoauth.ConnectStore,
-		vault vaultdomain.Repository,
-		consumers appconsumer.DataFinder,
-		provider appoauth.ProviderClient,
-		registrar appoauth.UpstreamRegistrar,
-		auditor appoauth.ConnectAuditor,
-		shared mcpoauth.Provider,
-		userinfo appoauth.UserInfoClient,
-	) appoauth.ConnectService {
-		return appoauth.NewConnectService(store, vault, consumers, provider, registrar, auditor, shared, userinfo)
-	}); err != nil {
+	if err := c.Provide(provideConnectService); err != nil {
 		return err
 	}
 	if err := c.Provide(provideAPIKeyConnectService); err != nil {
@@ -174,6 +165,42 @@ func MCP(c *container.Container) error {
 		return err
 	}
 	return c.Provide(mcphttp.NewHandler)
+}
+
+type connectServiceParams struct {
+	dig.In
+
+	Store     appoauth.ConnectStore
+	Vault     vaultdomain.Repository
+	Consumers appconsumer.DataFinder
+	Provider  appoauth.ProviderClient
+	Registrar appoauth.UpstreamRegistrar
+	Auditor   appoauth.ConnectAuditor
+	Shared    mcpoauth.Provider
+	Userinfo  appoauth.UserInfoClient
+	Catalog   appcatalog.MCPServerCatalog `optional:"true"`
+}
+
+func provideConnectService(p connectServiceParams) (appoauth.ConnectService, error) {
+	catalog := p.Catalog
+	if catalog == nil {
+		loaded, err := appcatalog.NewMCPServerCatalog(p.Shared)
+		if err != nil {
+			return nil, err
+		}
+		catalog = loaded
+	}
+	return appoauth.NewConnectService(
+		p.Store,
+		p.Vault,
+		p.Consumers,
+		p.Provider,
+		p.Registrar,
+		p.Auditor,
+		p.Shared,
+		p.Userinfo,
+		catalog,
+	), nil
 }
 
 func provideAPIKeyConnectService(
