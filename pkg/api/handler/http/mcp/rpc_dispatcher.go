@@ -208,9 +208,6 @@ func (g *RPCGateway) dispatch(
 		if tools == nil {
 			tools = []appmcp.Tool{}
 		}
-		if g.connections != nil {
-			tools = appendGatewayTool(tools, g.connections.Definition())
-		}
 		result := map[string]any{"tools": tools}
 		raw, err := json.Marshal(result)
 		if err != nil {
@@ -223,6 +220,9 @@ func (g *RPCGateway) dispatch(
 		if err := g.plugins.PreResponseDiscovery(ctx, rc, raw); err != nil {
 			return nil, err
 		}
+		if g.connections != nil {
+			result["tools"] = appendGatewayTool(tools, g.connections.Definition())
+		}
 		return result, nil
 	case "tools/call":
 		var p struct {
@@ -234,6 +234,9 @@ func (g *RPCGateway) dispatch(
 		}
 		if err := g.checkRateLimit(ctx, rc); err != nil {
 			return nil, err
+		}
+		if g.connections != nil && p.Name == g.connections.Name() {
+			return g.connections.Call(ctx, rc, baseURL)
 		}
 		pre, err := g.plugins.PreRequest(ctx, rc, p.Name, p.Arguments)
 		if err != nil {
@@ -251,12 +254,7 @@ func (g *RPCGateway) dispatch(
 				arguments = pre.Arguments
 			}
 		}
-		var result json.RawMessage
-		if g.connections != nil && p.Name == g.connections.Name() {
-			result, err = g.connections.Call(ctx, rc, baseURL)
-		} else {
-			result, err = g.composer.CallTool(ctx, rc, p.Name, arguments)
-		}
+		result, err := g.composer.CallTool(ctx, rc, p.Name, arguments)
 		if err != nil {
 			return nil, err
 		}
