@@ -189,6 +189,20 @@ func TestHandler_Initialize_EchoesSupportedVersion(t *testing.T) {
 	}
 }
 
+// Claude drops notifications/tools/list_changed from a server that did not
+// declare the capability, so advertising it is what makes the push stream
+// usable at all.
+func TestHandler_Initialize_AdvertisesToolListChanged(t *testing.T) {
+	t.Parallel()
+	app := newApp(t, mocks.NewComposer(t), consumerdomain.TypeMCP, true)
+	_, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+	capabilities := body["result"].(map[string]any)["capabilities"].(map[string]any)
+	tools := capabilities["tools"].(map[string]any)
+	if tools["listChanged"] != true {
+		t.Fatalf("tools.listChanged = %v, want true", tools["listChanged"])
+	}
+}
+
 func TestHandler_Initialize_UnknownVersionFallsBackToLatest(t *testing.T) {
 	t.Parallel()
 	app := newApp(t, mocks.NewComposer(t), consumerdomain.TypeMCP, true)

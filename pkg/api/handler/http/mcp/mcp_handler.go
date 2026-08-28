@@ -15,6 +15,7 @@
 package mcp
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -87,10 +88,16 @@ type Handler struct {
 	gateway    *RPCGateway
 	roleScoper appmcp.RoleScoper
 	vault      vaultdomain.Repository
+	timings    streamTimings
 }
 
 func NewHandler(gateway *RPCGateway, roleScoper appmcp.RoleScoper, vault vaultdomain.Repository) *Handler {
-	return &Handler{gateway: gateway, roleScoper: roleScoper, vault: vault}
+	return &Handler{
+		gateway:    gateway,
+		roleScoper: roleScoper,
+		vault:      vault,
+		timings:    defaultStreamTimings,
+	}
 }
 
 type rpcRequest struct {
@@ -223,8 +230,12 @@ func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer
 	}
 	return writeRPCResult(c, req.ID, fiber.Map{
 		"protocolVersion": version,
+		// tools.listChanged has to be advertised for clients to act on the
+		// notification at all — Claude drops notifications/tools/list_changed
+		// from a server that did not declare the capability. The gateway backs
+		// it with the SSE stream served on GET.
 		"capabilities": fiber.Map{
-			"tools":     fiber.Map{"listChanged": false},
+			"tools":     fiber.Map{"listChanged": true},
 			"resources": fiber.Map{"subscribe": false, "listChanged": false},
 			"prompts":   fiber.Map{"listChanged": false},
 		},
@@ -244,10 +255,21 @@ func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer
 // consumer does not federate are left out so an unrelated connection elsewhere
 // on the gateway does not invalidate this surface.
 func (h *Handler) connectedProviders(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) []string {
+	ctx := c.UserContext()
+	return h.connectionSnapshot(ctx, rc, identity.PrincipalFromContext(ctx))
+}
+
+// connectionSnapshot takes its context and principal as arguments because the
+// notification stream keeps polling it long after the request context that
+// opened the stream is gone.
+func (h *Handler) connectionSnapshot(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	principal *identity.Principal,
+) []string {
 	if h.vault == nil || rc == nil || rc.Consumer == nil {
 		return nil
 	}
-	principal := identity.PrincipalFromContext(c.UserContext())
 	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
 		return nil
 	}
@@ -255,7 +277,7 @@ func (h *Handler) connectedProviders(c *fiber.Ctx, rc *appconsumer.RoutableConsu
 	if len(federated) == 0 {
 		return nil
 	}
-	creds, err := h.vault.ListByPrincipal(c.UserContext(), rc.Consumer.GatewayID, principal.Subject)
+	creds, err := h.vault.ListByPrincipal(ctx, rc.Consumer.GatewayID, principal.Subject)
 	if err != nil {
 		return nil
 	}
