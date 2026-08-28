@@ -6996,6 +6996,26 @@
       ]
     },
     {
+      "name": "com.holded/mcp",
+      "vendor": "Holded",
+      "category": "Finance",
+      "description": "Create and manage invoices, contacts, products, payments, balances, and stock in Holded.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.holded.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://app.holded.com/api/v2/mcp/oauth/authorize",
+        "token_url": "https://app.holded.com/api/v2/mcp/oauth/token",
+        "resource": "https://mcp.holded.com/mcp"
+      },
+      "relevance": 60
+    },
+    {
       "name": "io.honeycomb/mcp",
       "vendor": "Honeycomb",
       "category": "Observability",
@@ -7905,6 +7925,51 @@
         {
           "name": "extract_pdf",
           "description": "Extract figures, tables, and equations from PDF documents using layout detection. Perfect for extracting visual elements from academic papers on arXiv or any PDF URL. Returns base64-encoded images of detected elements with metadata."
+        }
+      ]
+    },
+    {
+      "name": "com.jotform/mcp",
+      "vendor": "Jotform",
+      "category": "Productivity & Docs",
+      "description": "Create and edit forms, list forms, and create or retrieve form submissions.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.jotform.com",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://oauth2.jotform.com/authorize",
+        "token_url": "https://oauth2.jotform.com/token",
+        "scopes": [
+          "full"
+        ],
+        "resource": "https://mcp.jotform.com/mcp"
+      },
+      "relevance": 60,
+      "tools": [
+        {
+          "name": "form_list",
+          "description": "List forms"
+        },
+        {
+          "name": "create_form",
+          "description": "Create a form"
+        },
+        {
+          "name": "edit_form",
+          "description": "Edit an existing form"
+        },
+        {
+          "name": "create_submission",
+          "description": "Create a submission for an existing form"
+        },
+        {
+          "name": "get_submissions",
+          "description": "Retrieve submissions for a form"
         }
       ]
     },
@@ -13416,6 +13481,56 @@
         "resource": "https://api.statsig.com/v1/mcp"
       },
       "relevance": 55
+    },
+    {
+      "name": "com.storyblok/mcp",
+      "vendor": "Storyblok",
+      "category": "Web & CMS",
+      "description": "Search and manage Storyblok Management API content, spaces, components, assets, workflows, and releases.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.storyblok.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.storyblok.com/oauth/authorize",
+        "token_url": "https://mcp.storyblok.com/oauth/token",
+        "resource": "https://mcp.storyblok.com/mcp"
+      },
+      "relevance": 60,
+      "tools": [
+        {
+          "name": "search",
+          "description": "Find Management API operations by keyword"
+        },
+        {
+          "name": "describe",
+          "description": "Get parameters and schemas for a Management API operation"
+        },
+        {
+          "name": "execute_readonly",
+          "description": "Execute read-only Management API operations"
+        },
+        {
+          "name": "execute_mutating",
+          "description": "Execute create and update Management API operations"
+        },
+        {
+          "name": "execute_destructive",
+          "description": "Execute destructive Management API operations with explicit confirmation"
+        },
+        {
+          "name": "upload_asset",
+          "description": "Create an asset record and obtain a signed upload URL"
+        },
+        {
+          "name": "upload_asset_finish",
+          "description": "Finalize and validate an asset upload"
+        }
+      ]
     },
     {
       "name": "com.stripe/mcp",
