@@ -138,6 +138,32 @@ func TestRPCGateway_ConnectionToolDefinitionWinsNameCollision(t *testing.T) {
 	require.Contains(t, string(raw), "only when the user explicitly asks")
 }
 
+func TestRPCGateway_ConnectionToolRespectsEmptyToolkit(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().ListTools(mock.Anything, mock.Anything).Return(nil, nil).Once()
+	connections, err := appmcp.NewConnectionTool(&dispatcherTicketCreator{})
+	require.NoError(t, err)
+	g := mcphttp.NewRPCGatewayWithConnections(composer, noopRunner(), nil, connections)
+	rc := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{
+		MCP: &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{}},
+	}}
+
+	listed, err := g.Dispatch(context.Background(), rc, "tools/list", nil)
+	require.NoError(t, err)
+	require.Empty(t, listed.(map[string]any)["tools"].([]appmcp.Tool))
+
+	_, err = g.DispatchWithBaseURL(
+		context.Background(),
+		rc,
+		"https://mcp.example.com",
+		"tools/call",
+		json.RawMessage(`{"name":"trustgate_manage_connections","arguments":{}}`),
+	)
+	var denied *appmcp.ToolNotPermittedError
+	require.ErrorAs(t, err, &denied)
+}
+
 func TestRPCGateway_ToolsCall_RequiresName(t *testing.T) {
 	t.Parallel()
 	g := mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil)

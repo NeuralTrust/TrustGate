@@ -220,7 +220,7 @@ func (g *RPCGateway) dispatch(
 		if err := g.plugins.PreResponseDiscovery(ctx, rc, raw); err != nil {
 			return nil, err
 		}
-		if g.connections != nil {
+		if g.connections != nil && connectionToolPermitted(rc) {
 			result["tools"] = appendGatewayTool(tools, g.connections.Definition())
 		}
 		return result, nil
@@ -236,6 +236,9 @@ func (g *RPCGateway) dispatch(
 			return nil, err
 		}
 		if g.connections != nil && p.Name == g.connections.Name() {
+			if !connectionToolPermitted(rc) {
+				return nil, &appmcp.ToolNotPermittedError{Tool: p.Name}
+			}
 			return g.connections.Call(ctx, rc, baseURL)
 		}
 		pre, err := g.plugins.PreRequest(ctx, rc, p.Name, p.Arguments)
@@ -338,4 +341,20 @@ func appendGatewayTool(tools []appmcp.Tool, gatewayTool appmcp.Tool) []appmcp.To
 		}
 	}
 	return append(tools, gatewayTool)
+}
+
+func connectionToolPermitted(rc *appconsumer.RoutableConsumer) bool {
+	if rc == nil || rc.Consumer == nil {
+		return false
+	}
+	toolkit := rc.Consumer.Toolkit()
+	if toolkit == nil {
+		return true
+	}
+	for _, entry := range toolkit {
+		if entry.Tool != "" {
+			return true
+		}
+	}
+	return false
 }
