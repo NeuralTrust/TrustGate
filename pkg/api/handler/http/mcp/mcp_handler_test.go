@@ -464,9 +464,18 @@ func TestHandler_ServerDiscover_ReturnsModernResult(t *testing.T) {
 	if result["resultType"] != "complete" {
 		t.Fatalf("resultType = %v, want complete", result["resultType"])
 	}
+	// A client probing with 2026-07-28 must still get a discovery answer rather
+	// than a method-not-found, but it must be told only what the gateway can
+	// actually negotiate: advertising the probed revision downgraded the client
+	// silently and made it reject every tools/call result as malformed.
 	versions, _ := result["supportedVersions"].([]any)
-	if len(versions) == 0 || versions[0] != "2026-07-28" {
-		t.Fatalf("supportedVersions = %v, want 2026-07-28 first", versions)
+	if len(versions) == 0 || versions[0] != "2025-06-18" {
+		t.Fatalf("supportedVersions = %v, want the negotiable revision first", versions)
+	}
+	for _, version := range versions {
+		if version == "2026-07-28" {
+			t.Fatalf("supportedVersions advertises a revision initialize refuses: %v", versions)
+		}
 	}
 	capabilities := result["capabilities"].(map[string]any)
 	for _, kind := range []string{"tools", "prompts", "resources"} {
