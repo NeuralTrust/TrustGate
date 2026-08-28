@@ -42,6 +42,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type dispatcherTicketCreator struct {
+	gatewayID    ids.GatewayID
+	principalSub string
+	consumerPath string
+	ticket       string
+}
+
+func (c *dispatcherTicketCreator) CreateTicket(
+	_ context.Context,
+	gatewayID ids.GatewayID,
+	principalSub,
+	consumerPath string,
+) (string, error) {
+	c.gatewayID = gatewayID
+	c.principalSub = principalSub
+	c.consumerPath = consumerPath
+	return c.ticket, nil
+}
+
 func TestRPCGateway_ToolsList_DefaultsToEmptySlice(t *testing.T) {
 	t.Parallel()
 	composer := mocks.NewComposer(t)
@@ -63,7 +82,7 @@ func TestRPCGateway_ConnectionToolIsListedAndCalledWithoutUpstream(t *testing.T)
 	composer := mocks.NewComposer(t)
 	composer.EXPECT().ListTools(mock.Anything, mock.Anything).
 		Return([]appmcp.Tool{{Name: "search"}}, nil).Once()
-	creator := &recordingTicketCreator{ticket: "ticket"}
+	creator := &dispatcherTicketCreator{ticket: "ticket"}
 	connections, err := appmcp.NewConnectionTool(creator)
 	require.NoError(t, err)
 	g := mcphttp.NewRPCGatewayWithConnections(composer, noopRunner(), nil, connections)
@@ -105,7 +124,7 @@ func TestRPCGateway_ConnectionToolDefinitionWinsNameCollision(t *testing.T) {
 	composer := mocks.NewComposer(t)
 	composer.EXPECT().ListTools(mock.Anything, mock.Anything).
 		Return([]appmcp.Tool{colliding}, nil).Once()
-	connections, err := appmcp.NewConnectionTool(&recordingTicketCreator{})
+	connections, err := appmcp.NewConnectionTool(&dispatcherTicketCreator{})
 	require.NoError(t, err)
 	g := mcphttp.NewRPCGatewayWithConnections(composer, noopRunner(), nil, connections)
 
