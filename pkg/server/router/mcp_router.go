@@ -102,7 +102,11 @@ func (r *mcpRouter) BuildRoutes(app *fiber.App) error {
 	app.Post("/:slug/connect", r.apiKeyConnectHandler.Post)
 	app.Get("/+/connect", r.connectHandler.Page)
 
-	app.Get("/*", r.mcpHandler.MethodNotAllowed)
+	// The streamable-HTTP notification stream is a GET, so it has to be
+	// registered before the catch-all 405 and carry authentication as route
+	// middleware: a GET that is not asking for the event stream still answers
+	// 405 without authenticating.
+	app.Get("/*", r.mcpHandler.StreamRoute(r.authTransport.GetMiddlewares())...)
 	app.Delete("/*", r.mcpHandler.MethodNotAllowed)
 
 	installMiddlewares(app, r.authTransport)
