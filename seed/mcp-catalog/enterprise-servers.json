@@ -5548,7 +5548,8 @@
           "openid",
           "email",
           "https://www.googleapis.com/auth/gmail.readonly",
-          "https://www.googleapis.com/auth/gmail.compose"
+          "https://www.googleapis.com/auth/gmail.compose",
+          "https://www.googleapis.com/auth/gmail.modify"
         ],
         "resource": "https://gmailmcp.googleapis.com/mcp/v1"
       },
@@ -5581,6 +5582,10 @@
         {
           "name": "unlabel_thread",
           "description": "Remove a label from a thread."
+        },
+        {
+          "name": "create_label",
+          "description": "Create a new Gmail label."
         },
         {
           "name": "create_draft",

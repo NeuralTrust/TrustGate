@@ -23,6 +23,7 @@ import (
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
+	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
@@ -39,6 +40,11 @@ type connectService struct {
 	auditor     ConnectAuditor
 	sharedOAuth mcpoauth.Provider
 	userinfo    UserInfoClient
+	catalog     authCatalog
+}
+
+type authCatalog interface {
+	GetByCode(code string) (catalogdomain.MCPServer, bool)
 }
 
 func NewConnectService(
@@ -50,6 +56,7 @@ func NewConnectService(
 	auditor ConnectAuditor,
 	sharedOAuth mcpoauth.Provider,
 	userinfo UserInfoClient,
+	catalog authCatalog,
 ) ConnectService {
 	return &connectService{
 		store:       store,
@@ -60,6 +67,7 @@ func NewConnectService(
 		auditor:     auditor,
 		sharedOAuth: sharedOAuth,
 		userinfo:    userinfo,
+		catalog:     catalog,
 	}
 }
 

@@ -76,10 +76,19 @@ Shared OAuth endpoints:
 
 ### Gmail scopes (catalog)
 
+Google’s configure-MCP page lists `gmail.readonly` and `gmail.compose` (search,
+read, drafts). Label tools (`label_thread`, `unlabel_thread`, `label_message`,
+`create_label`) require [`gmail.modify`](https://developers.google.com/workspace/gmail/api/reference/mcp/tools_list/label_thread):
+
 - `openid`
 - `email`
 - `https://www.googleapis.com/auth/gmail.readonly`
 - `https://www.googleapis.com/auth/gmail.compose`
+- `https://www.googleapis.com/auth/gmail.modify`
+
+Do **not** request `https://mail.google.com/` (permanent delete). After adding
+`gmail.modify`, add it on the GCP consent screen Data Access list and
+**Reconnect** Gmail so Google re-issues the grant.
 
 ### Calendar scopes (catalog)
 
@@ -224,7 +233,8 @@ OAuth consent screen):
 |---------|----------------|
 | `redirect_uri_mismatch` | Callback URL not exactly allowlisted on the OAuth client |
 | Access blocked / app not verified | External app + user not in Test users |
-| Tools fail with insufficient scope | Consent screen missing write scopes (e.g. Calendar `calendar.events`) |
+| Tools fail with insufficient scope | Consent screen missing write scopes (e.g. Calendar `calendar.events`, Gmail `gmail.modify`) |
+| Gmail `label_thread` / `create_label` returns Forbidden | Token was issued with `gmail.readonly` + `gmail.compose` only. Catalog now requests `gmail.modify`. Add that scope on the GCP consent screen and Reconnect Gmail |
 | API not enabled | Forgot `calendarmcp.googleapis.com` / Calendar API (or Gmail / Drive equivalents) |
 | Works once, fails ~1h later / “reconnect” | Grant has no `refresh_token` (pre-offline build, or user must **Reconnect** once after deploy so Google re-issues offline access) |
 
