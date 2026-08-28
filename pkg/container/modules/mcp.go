@@ -28,6 +28,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
+	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
@@ -151,7 +152,22 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(appmcp.NewPluginRunner); err != nil {
 		return err
 	}
-	if err := c.Provide(mcphttp.NewRPCGateway); err != nil {
+	if err := c.Provide(func(connect appoauth.ConnectService) appmcp.ConnectTicketCreator {
+		return connect
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(appmcp.NewConnectionTool); err != nil {
+		return err
+	}
+	if err := c.Provide(func(
+		composer appmcp.Composer,
+		plugins *appmcp.PluginRunner,
+		limiter ratelimitapp.Checker,
+		connections appmcp.ConnectionTool,
+	) *mcphttp.RPCGateway {
+		return mcphttp.NewRPCGatewayWithConnections(composer, plugins, limiter, connections)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(appmcp.NewRoleScoper); err != nil {
