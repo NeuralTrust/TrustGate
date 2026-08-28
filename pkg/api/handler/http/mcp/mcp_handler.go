@@ -33,6 +33,7 @@ import (
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
@@ -161,7 +162,7 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 		return h.handleInitialize(c, req, rc)
 	case "server/discover":
 		recordServerDiscovery(c)
-		return writeRPCResult(c, req.ID, serverDiscoveryResult(rc))
+		return writeRPCResult(c, req.ID, serverDiscoveryResult(rc, h.connectedProviders(c, rc)))
 	case "ping":
 		skipMetrics(c)
 		return writeRPCResult(c, req.ID, struct{}{})
@@ -229,19 +230,71 @@ func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer
 		},
 		"serverInfo": fiber.Map{
 			"name":    serverName,
-			"version": serverVersion + "+" + surfaceFingerprint(rc),
+			"version": serverVersion + "+" + surfaceFingerprint(rc, h.connectedProviders(c, rc)),
 		},
 	})
 }
 
+// connectedProviders describes, for the calling principal, which of this
+// consumer's forwarded-auth providers currently hold a credential and when it
+// last changed. Federation skips upstreams pending consent, so connecting an
+// account on the connect page changes the tool surface without touching any
+// registry or toolkit — the configuration-only fingerprint stayed identical and
+// a version-keyed client kept serving its stale tool list. Providers this
+// consumer does not federate are left out so an unrelated connection elsewhere
+// on the gateway does not invalidate this surface.
+func (h *Handler) connectedProviders(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) []string {
+	if h.vault == nil || rc == nil || rc.Consumer == nil {
+		return nil
+	}
+	principal := identity.PrincipalFromContext(c.UserContext())
+	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
+		return nil
+	}
+	federated := forwardedProviders(rc)
+	if len(federated) == 0 {
+		return nil
+	}
+	creds, err := h.vault.ListByPrincipal(c.UserContext(), rc.Consumer.GatewayID, principal.Subject)
+	if err != nil {
+		return nil
+	}
+	parts := make([]string, 0, len(creds))
+	for _, cred := range creds {
+		if cred == nil {
+			continue
+		}
+		if _, ok := federated[cred.Provider]; !ok {
+			continue
+		}
+		parts = append(parts, "cx:"+cred.Provider+"@"+cred.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	}
+	return parts
+}
+
+func forwardedProviders(rc *appconsumer.RoutableConsumer) map[string]struct{} {
+	providers := make(map[string]struct{})
+	for _, reg := range rc.Registries {
+		if reg == nil || !reg.IsMCP() || reg.MCPTarget == nil || reg.MCPTarget.Auth == nil {
+			continue
+		}
+		if reg.MCPTarget.Auth.Mode != registrydomain.MCPAuthModeForwarded {
+			continue
+		}
+		providers[reg.MCPTarget.Auth.Provider] = struct{}{}
+	}
+	return providers
+}
+
 // surfaceFingerprint summarises everything that decides which tools a virtual
-// MCP exposes: the bound MCP registries, when each was last changed, and the
-// toolkit that filters them. It rides in serverInfo.version as semver build
-// metadata, so a client that caches a server's tool list keyed on its reported
-// version re-lists after the consumer is reconfigured. Without it every virtual
-// MCP reports a constant "1.0" forever and a newly attached registry stays
+// MCP exposes: the bound MCP registries, when each was last changed, the
+// toolkit that filters them, and the caller's connected accounts. It rides in
+// serverInfo.version as semver build metadata, so a client that caches a
+// server's tool list keyed on its reported version re-lists after the consumer
+// is reconfigured or the user connects an account. Without it every virtual MCP
+// reports a constant "1.0" forever and a newly attached registry stays
 // invisible until the client is reinstalled.
-func surfaceFingerprint(rc *appconsumer.RoutableConsumer) string {
+func surfaceFingerprint(rc *appconsumer.RoutableConsumer, connections []string) string {
 	if rc == nil || rc.Consumer == nil {
 		return "0"
 	}
@@ -256,12 +309,15 @@ func surfaceFingerprint(rc *appconsumer.RoutableConsumer) string {
 	for _, e := range rc.Consumer.Toolkit() {
 		entries = append(entries, "tk:"+e.RegistryID.String()+"/"+e.Tool+"/"+e.Prompt+"/"+e.Resource+"/"+e.ExposeAs)
 	}
-	// Neither list has a guaranteed order across replicas or reloads — the
-	// role-derived toolkit is a union — so sort both: the same configuration
-	// must always fingerprint the same.
+	// None of these lists has a guaranteed order across replicas or reloads —
+	// the role-derived toolkit is a union, the vault answers in its own order —
+	// so sort them all: the same configuration must always fingerprint the same.
 	sort.Strings(parts)
 	sort.Strings(entries)
-	sum := sha256.Sum256([]byte(strings.Join(append(parts, entries...), "|")))
+	linked := append([]string(nil), connections...)
+	sort.Strings(linked)
+	material := append(append(parts, entries...), linked...)
+	sum := sha256.Sum256([]byte(strings.Join(material, "|")))
 	return hex.EncodeToString(sum[:6])
 }
 

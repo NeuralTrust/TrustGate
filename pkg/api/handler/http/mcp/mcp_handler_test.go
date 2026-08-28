@@ -21,6 +21,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
@@ -326,6 +327,96 @@ func TestHandler_Initialize_VersionTracksTheToolSurface(t *testing.T) {
 	if two := versionFor(notion, linear); two == one {
 		t.Fatalf("version %q did not change after attaching a registry", two)
 	}
+}
+
+// Federation skips upstreams pending consent, so connecting an account on the
+// connect page adds tools without changing any registry. The reported version
+// has to move with the caller's credentials too, or Claude keeps replaying the
+// tool list it cached against the previous version.
+func TestHandler_Initialize_VersionTracksConnectedAccounts(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	linear, err := registrydomain.NewMCPRegistry(gwID, "linear", "", &registrydomain.MCPTarget{
+		URL: "https://linear.example.com/mcp",
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     "linear",
+			ClientID:     "cid",
+			AuthorizeURL: "https://linear.example.com/authorize",
+			TokenURL:     "https://linear.example.com/token",
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	linkedAt := time.Date(2026, 8, 28, 9, 0, 0, 0, time.UTC)
+
+	versionWith := func(creds []*vaultdomain.Credential) string {
+		vault := vaultmocks.NewRepository(t)
+		vault.EXPECT().ListByPrincipal(mock.Anything, gwID, "alice").Return(creds, nil)
+		app := newAppWithVault(t, gwID, linear, vault)
+		_, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+		return body["result"].(map[string]any)["serverInfo"].(map[string]any)["version"].(string)
+	}
+
+	pending := versionWith(nil)
+	linked := versionWith([]*vaultdomain.Credential{{Provider: "linear", UpdatedAt: linkedAt}})
+	reconnected := versionWith([]*vaultdomain.Credential{{Provider: "linear", UpdatedAt: linkedAt.Add(time.Hour)}})
+	unrelated := versionWith([]*vaultdomain.Credential{{Provider: "notion", UpdatedAt: linkedAt}})
+
+	if linked == pending {
+		t.Fatalf("version %q did not change after connecting the provider", linked)
+	}
+	if reconnected == linked {
+		t.Fatalf("version %q did not change after reconnecting the provider", reconnected)
+	}
+	if unrelated != pending {
+		t.Fatalf("version changed for a provider this consumer does not federate: %q vs %q", unrelated, pending)
+	}
+}
+
+// newAppWithVault builds an MCP consumer bound to one registry and authenticated
+// as a fixed principal, so a test can observe how the caller's stored
+// credentials reach the initialize response.
+func newAppWithVault(
+	t *testing.T,
+	gwID ids.GatewayID,
+	registry *registrydomain.Registry,
+	vault vaultdomain.Repository,
+) *fiber.App {
+	t.Helper()
+	authID := ids.New[ids.AuthKind]()
+	cons := &consumerdomain.Consumer{
+		ID:        ids.New[ids.ConsumerKind](),
+		GatewayID: gwID,
+		Name:      "virtual",
+		Type:      consumerdomain.TypeMCP,
+		Slug:      "virtual",
+		Active:    true,
+		AuthIDs:   []ids.AuthID{authID},
+	}
+	data := appconsumer.NewData(gwID, []appconsumer.RoutableConsumer{
+		{Consumer: cons, Registries: []*registrydomain.Registry{registry}},
+	})
+
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		ctx := appconsumer.WithAuthID(c.UserContext(), authID)
+		ctx = appconsumer.WithData(ctx, data)
+		ctx = identity.WithPrincipal(ctx, &identity.Principal{
+			Subject: "alice",
+			Method:  identity.MethodJWT,
+		})
+		c.SetUserContext(ctx)
+		return c.Next()
+	})
+	handler := mcphttp.NewHandler(
+		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
+		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
+		vault,
+	)
+	app.Post(mcpPath, handler.Handle)
+	return app
 }
 
 func TestHandler_ServerDiscover_ReturnsModernResult(t *testing.T) {
