@@ -46,26 +46,32 @@ const (
 	serverName              = "trustgate"
 	serverVersion           = "1.0"
 	latestProtocolVersion   = "2025-06-18"
-	modernProtocolVersion   = "2026-07-28"
 	discoverCacheTTLMs      = 0
 	modernServerInfoMetaKey = "io.modelcontextprotocol/serverInfo"
 )
 
-var supportedProtocolVersions = map[string]bool{
-	"2024-11-05": true,
-	"2025-03-26": true,
-	"2025-06-18": true,
-}
-
-// advertisedProtocolVersions is the ordered list returned by server/discover.
-// Modern Claude clients probe with 2026-07-28 first; the gateway is already
-// stateless per request, so that revision is safe to advertise alongside the
-// legacy initialize handshake versions.
+// advertisedProtocolVersions is the ordered list returned by server/discover,
+// newest first, and the single source of truth for what initialize negotiates.
+// The two must not be allowed to drift: server/discover once advertised
+// 2026-07-28 while initialize refused to negotiate it, so a client probing with
+// that revision was silently downgraded, kept applying the newer revision's
+// rules, and rejected every tools/call result as malformed. A revision belongs
+// here only once the whole response path implements it — tools/call relays the
+// upstream's bytes verbatim, so that is not a one-line change.
 var advertisedProtocolVersions = []string{
-	modernProtocolVersion,
 	latestProtocolVersion,
 	"2025-03-26",
 	"2024-11-05",
+}
+
+var supportedProtocolVersions = negotiableVersions(advertisedProtocolVersions)
+
+func negotiableVersions(advertised []string) map[string]bool {
+	versions := make(map[string]bool, len(advertised))
+	for _, version := range advertised {
+		versions[version] = true
+	}
+	return versions
 }
 
 const (
