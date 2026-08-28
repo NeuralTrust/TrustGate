@@ -143,7 +143,7 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(appmcp.NewPluginRunner); err != nil {
 		return err
 	}
-	if err := c.Provide(func(connect appoauth.ConnectService) appmcp.ConnectTicketCreator {
+	if err := c.Provide(func(connect appoauth.ConnectService) appmcp.ConnectionGateway {
 		return connect
 	}); err != nil {
 		return err

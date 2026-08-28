@@ -21,82 +21,111 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"unicode"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
-// ManageConnectionsToolName is the reserved name of TrustGate's connection-management tool.
-const ManageConnectionsToolName = "trustgate_manage_connections"
+const (
+	ConnectToolNamePrefix = "trustgate_connect_"
+	maxConnectToolName    = 64
+)
 
-// ErrConnectionToolUnavailable reports that TrustGate could not create a connection-management link.
 var ErrConnectionToolUnavailable = errors.New("mcp: connection management unavailable")
 
-// ConnectTicketCreator creates a short-lived ticket for the existing connection screen.
-type ConnectTicketCreator interface {
+type ConnectionGateway interface {
 	CreateTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) (string, error)
+	Statuses(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) ([]appoauth.ProviderStatus, error)
 }
 
-// ConnectionTool exposes the connection screen as an explicitly invoked MCP tool.
 type ConnectionTool interface {
-	Name() string
-	Definition() Tool
-	Call(ctx context.Context, rc *appconsumer.RoutableConsumer, baseURL string) (json.RawMessage, error)
+	Definitions(ctx context.Context, rc *appconsumer.RoutableConsumer) []Tool
+	Handles(name string) bool
+	Call(ctx context.Context, rc *appconsumer.RoutableConsumer, baseURL, name string) (json.RawMessage, error)
 }
 
 type connectionTool struct {
-	connect    ConnectTicketCreator
-	definition Tool
+	connect ConnectionGateway
 }
 
-// NewConnectionTool builds TrustGate's connection-management tool.
-func NewConnectionTool(connect ConnectTicketCreator) (ConnectionTool, error) {
-	var definition Tool
-	if err := json.Unmarshal([]byte(`{
-		"name": "trustgate_manage_connections",
-		"title": "Manage MCP connections",
-		"description": "Use only when the user explicitly asks to view, connect, reconnect, or disconnect external MCP accounts. Never call this tool automatically after an unrelated request or merely because available integrations changed. It returns a secure link that the user may choose to open; it does not open the connection screen.",
-		"inputSchema": {
-			"type": "object",
-			"properties": {},
-			"additionalProperties": false
-		},
-		"outputSchema": {
-			"type": "object",
-			"properties": {
-				"connect_url": {"type": "string", "format": "uri"},
-				"action": {"type": "string", "const": "user_confirmation_required"}
-			},
-			"required": ["connect_url", "action"],
-			"additionalProperties": false
-		},
-		"annotations": {
-			"readOnlyHint": true,
-			"destructiveHint": false,
-			"idempotentHint": false,
-			"openWorldHint": false
-		}
-	}`), &definition); err != nil {
-		return nil, fmt.Errorf("%w: build tool definition: %w", ErrConnectionToolUnavailable, err)
+func NewConnectionTool(connect ConnectionGateway) (ConnectionTool, error) {
+	if connect == nil {
+		return nil, ErrConnectionToolUnavailable
 	}
-	return &connectionTool{connect: connect, definition: definition}, nil
+	return &connectionTool{connect: connect}, nil
 }
 
-func (t *connectionTool) Name() string {
-	return ManageConnectionsToolName
+func ConnectToolName(provider string) string {
+	slug := sanitizeConnectToolSlug(provider)
+	if slug == "" {
+		slug = "provider"
+	}
+	name := ConnectToolNamePrefix + slug
+	if len(name) > maxConnectToolName {
+		return name[:maxConnectToolName]
+	}
+	return name
 }
 
-func (t *connectionTool) Definition() Tool {
-	return t.definition
+func (t *connectionTool) Handles(name string) bool {
+	return strings.HasPrefix(name, ConnectToolNamePrefix)
+}
+
+func (t *connectionTool) Definitions(ctx context.Context, rc *appconsumer.RoutableConsumer) []Tool {
+	if t == nil || t.connect == nil || rc == nil || rc.Consumer == nil {
+		return nil
+	}
+	principal := identity.PrincipalFromContext(ctx)
+	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
+		return nil
+	}
+	statuses, err := t.connect.Statuses(
+		ctx,
+		rc.Consumer.GatewayID,
+		principal.Subject,
+		appconsumer.MCPPath(rc.Consumer.Slug),
+	)
+	if err != nil {
+		return nil
+	}
+	usedNames := make(map[string]struct{})
+	seenProviders := make(map[string]struct{})
+	var tools []Tool
+	for _, status := range statuses {
+		if !connectionPending(status) {
+			continue
+		}
+		provider := strings.TrimSpace(status.Provider)
+		if provider == "" {
+			continue
+		}
+		if _, dup := seenProviders[provider]; dup {
+			continue
+		}
+		seenProviders[provider] = struct{}{}
+		name := uniqueConnectToolName(ConnectToolName(provider), usedNames)
+		def, err := pendingConnectionDefinition(name, status)
+		if err != nil {
+			continue
+		}
+		tools = append(tools, def)
+	}
+	return tools
 }
 
 func (t *connectionTool) Call(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
-	baseURL string,
+	baseURL,
+	name string,
 ) (json.RawMessage, error) {
 	if t == nil || t.connect == nil || rc == nil || rc.Consumer == nil {
+		return nil, ErrConnectionToolUnavailable
+	}
+	if !t.Handles(name) {
 		return nil, ErrConnectionToolUnavailable
 	}
 	principal := identity.PrincipalFromContext(ctx)
@@ -112,15 +141,17 @@ func (t *connectionTool) Call(
 	if err != nil {
 		return nil, err
 	}
+	label := connectionToolLabel(name)
 	result := map[string]any{
 		"content": []map[string]string{{
 			"type": "text",
-			"text": "The connection screen is available at " + connectURL +
+			"text": label + " can be connected at " + connectURL +
 				". Present this link to the user and let them decide whether to open it. Do not claim that it opened automatically.",
 		}},
 		"structuredContent": map[string]string{
 			"connect_url": connectURL,
 			"action":      "user_confirmation_required",
+			"tool":        name,
 		},
 	}
 	raw, err := json.Marshal(result)
@@ -128,6 +159,110 @@ func (t *connectionTool) Call(
 		return nil, fmt.Errorf("%w: encode result: %w", ErrConnectionToolUnavailable, err)
 	}
 	return raw, nil
+}
+
+func connectionPending(status appoauth.ProviderStatus) bool {
+	return !status.Linked || status.NeedsReconnect
+}
+
+func pendingConnectionDefinition(name string, status appoauth.ProviderStatus) (Tool, error) {
+	display := connectionDisplayName(status)
+	description := display + " is not connected for this TrustGate MCP user. Call this tool when the user asks about " +
+		display + " (its issues, projects, or data) or wants to connect that account. It returns a link the user may open; it does not start OAuth or open the connection screen by itself."
+	if status.NeedsReconnect {
+		description = display + " is connected but needs to be reconnected for this TrustGate MCP user. Call this tool when the user asks about " +
+			display + " or wants to reconnect that account. It returns a link the user may open; it does not start OAuth or open the connection screen by itself."
+	}
+	raw, err := json.Marshal(map[string]any{
+		"name":        name,
+		"title":       "Connect " + display,
+		"description": description,
+		"inputSchema": map[string]any{
+			"type":                 "object",
+			"properties":           map[string]any{},
+			"additionalProperties": false,
+		},
+		"outputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"connect_url": map[string]any{"type": "string", "format": "uri"},
+				"action":      map[string]any{"type": "string", "const": "user_confirmation_required"},
+				"tool":        map[string]any{"type": "string"},
+			},
+			"required":             []string{"connect_url", "action"},
+			"additionalProperties": false,
+		},
+		"annotations": map[string]any{
+			"readOnlyHint":    true,
+			"destructiveHint": false,
+			"idempotentHint":  false,
+			"openWorldHint":   false,
+		},
+	})
+	if err != nil {
+		return Tool{}, err
+	}
+	var definition Tool
+	if err := json.Unmarshal(raw, &definition); err != nil {
+		return Tool{}, err
+	}
+	return definition, nil
+}
+
+func connectionDisplayName(status appoauth.ProviderStatus) string {
+	if name := strings.TrimSpace(status.Provider); name != "" {
+		return name
+	}
+	if name := strings.TrimSpace(status.Registry); name != "" {
+		return name
+	}
+	return "this MCP provider"
+}
+
+func connectionToolLabel(name string) string {
+	slug := strings.TrimPrefix(name, ConnectToolNamePrefix)
+	slug = strings.ReplaceAll(slug, "_", " ")
+	slug = strings.TrimSpace(slug)
+	if slug == "" {
+		return "This MCP provider"
+	}
+	return slug
+}
+
+func uniqueConnectToolName(name string, used map[string]struct{}) string {
+	if _, exists := used[name]; !exists {
+		used[name] = struct{}{}
+		return name
+	}
+	base := name
+	for i := 2; ; i++ {
+		candidate := fmt.Sprintf("%s_%d", base, i)
+		if len(candidate) > maxConnectToolName {
+			candidate = candidate[:maxConnectToolName]
+		}
+		if _, exists := used[candidate]; !exists {
+			used[candidate] = struct{}{}
+			return candidate
+		}
+	}
+}
+
+func sanitizeConnectToolSlug(provider string) string {
+	var b strings.Builder
+	lastUnderscore := false
+	for _, r := range strings.ToLower(strings.TrimSpace(provider)) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+			lastUnderscore = false
+			continue
+		}
+		if b.Len() == 0 || lastUnderscore {
+			continue
+		}
+		b.WriteByte('_')
+		lastUnderscore = true
+	}
+	return strings.Trim(b.String(), "_")
 }
 
 func buildConnectionURL(baseURL, consumerPath, ticket string) (string, error) {

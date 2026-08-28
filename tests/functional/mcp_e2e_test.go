@@ -258,13 +258,7 @@ func TestMCPServer_ToolsListAndCallWithFullAccess(t *testing.T) {
 
 	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
-	require.ElementsMatch(t, []string{"echo", "search", appmcp.ManageConnectionsToolName}, names)
-
-	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
-		map[string]any{"name": appmcp.ManageConnectionsToolName, "arguments": map[string]any{}})
-	connections := rpcResult(t, status, body)["structuredContent"].(map[string]any)
-	require.Equal(t, "user_confirmation_required", connections["action"])
-	require.Contains(t, connections["connect_url"], "/mcp/connect?ticket=")
+	require.ElementsMatch(t, []string{"echo", "search"}, names)
 
 	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
 		map[string]any{"name": "echo", "arguments": map[string]any{"message": "hola"}})
@@ -272,6 +266,30 @@ func TestMCPServer_ToolsListAndCallWithFullAccess(t *testing.T) {
 	raw, err := json.Marshal(result)
 	require.NoError(t, err)
 	require.Contains(t, string(raw), "echo:hola")
+}
+
+func TestMCPServer_ListsPendingProviderConnectTools(t *testing.T) {
+	live := startMCPUpstream(t, func(s *sdk.Server) { addTool(s, "echo") })
+	pending := startMCPUpstream(t, func(s *sdk.Server) { addTool(s, "list_issues") })
+	idp := newOAuthProviderStub(t)
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
+	liveID := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-live"), live.URL))
+	pendingID := CreateRegistry(t, gatewayID, mcpForwardedRegistryPayload(
+		uniqueName("mcp-linear"), pending.URL, "linear", idp))
+	consumerID, key := createMCPConsumer(t, gatewayID, []string{liveID, pendingID}, nil, "")
+
+	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
+	names := listedNames(t, rpcResult(t, status, body), "tools")
+	require.Contains(t, names, "echo")
+	require.Contains(t, names, appmcp.ConnectToolName("linear"))
+	require.NotContains(t, names, "list_issues")
+
+	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
+		map[string]any{"name": appmcp.ConnectToolName("linear"), "arguments": map[string]any{}})
+	connections := rpcResult(t, status, body)["structuredContent"].(map[string]any)
+	require.Equal(t, "user_confirmation_required", connections["action"])
+	require.Contains(t, connections["connect_url"], "/mcp/connect?ticket=")
+	require.Nil(t, body["error"])
 }
 
 func TestMCPServer_ToolkitFiltersAndAliasesTools(t *testing.T) {
@@ -286,7 +304,7 @@ func TestMCPServer_ToolkitFiltersAndAliasesTools(t *testing.T) {
 
 	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
-	require.Equal(t, []string{"alias-echo", appmcp.ManageConnectionsToolName}, names)
+	require.Equal(t, []string{"alias-echo"}, names)
 
 	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
 		map[string]any{"name": "alias-echo", "arguments": map[string]any{"message": "hola"}})
@@ -364,7 +382,7 @@ func TestMCPServer_FailModeOpenSkipsDeadUpstream(t *testing.T) {
 
 	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
-	require.Equal(t, []string{"echo", appmcp.ManageConnectionsToolName}, names)
+	require.Equal(t, []string{"echo"}, names)
 }
 
 func TestMCPServer_CredentialOfAnotherConsumerIsRejected(t *testing.T) {
@@ -495,8 +513,8 @@ func TestMCPServer_RoleBasedConsumerAppliesRoleMCPPolicies(t *testing.T) {
 	granted := stub.sign(t, audience, []string{"mcp-users"})
 	status, body := mcpRPC(t, gatewayID, consumerID, bearerHeaders(granted), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
-	require.Equal(t, []string{"echo", appmcp.ManageConnectionsToolName}, names,
-		"role toolkit must filter upstream tools while retaining TrustGate connection management")
+	require.Equal(t, []string{"echo"}, names,
+		"role toolkit must filter upstream tools")
 
 	status, body = mcpRPC(t, gatewayID, consumerID, bearerHeaders(granted), "tools/call",
 		map[string]any{"name": "echo", "arguments": map[string]any{"message": "hola"}})
@@ -671,6 +689,6 @@ func TestMCPServer_RoleBasedConsumerMergesMultipleRoles(t *testing.T) {
 	granted := stub.sign(t, audience, []string{"mcp-users"})
 	status, body := mcpRPC(t, gatewayID, consumerID, bearerHeaders(granted), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
-	require.ElementsMatch(t, []string{"alpha", "beta", appmcp.ManageConnectionsToolName}, names,
+	require.ElementsMatch(t, []string{"alpha", "beta"}, names,
 		"explicit grant from role A plus full grant from role B must merge")
 }
