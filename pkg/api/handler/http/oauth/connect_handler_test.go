@@ -54,6 +54,10 @@ func (s *stubConnectService) Page(context.Context, string) (*appoauth.ConnectPag
 	return s.page, s.err
 }
 
+func (s *stubConnectService) Statuses(context.Context, ids.GatewayID, string, string) ([]appoauth.ProviderStatus, error) {
+	return nil, nil
+}
+
 func (s *stubConnectService) Start(_ context.Context, baseURL, _, provider string) (string, error) {
 	s.gotBaseURL = baseURL
 	s.gotProvider = provider

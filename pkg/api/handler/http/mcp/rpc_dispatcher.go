@@ -221,7 +221,7 @@ func (g *RPCGateway) dispatch(
 			return nil, err
 		}
 		if g.connections != nil && connectionToolPermitted(rc) {
-			result["tools"] = appendGatewayTool(tools, g.connections.Definition())
+			result["tools"] = appendGatewayTools(tools, g.connections.Definitions(ctx, rc))
 		}
 		return result, nil
 	case "tools/call":
@@ -235,11 +235,11 @@ func (g *RPCGateway) dispatch(
 		if err := g.checkRateLimit(ctx, rc); err != nil {
 			return nil, err
 		}
-		if g.connections != nil && p.Name == g.connections.Name() {
+		if g.connections != nil && g.connections.Handles(p.Name) {
 			if !connectionToolPermitted(rc) {
 				return nil, &appmcp.ToolNotPermittedError{Tool: p.Name}
 			}
-			return g.connections.Call(ctx, rc, baseURL)
+			return g.connections.Call(ctx, rc, baseURL, p.Name)
 		}
 		pre, err := g.plugins.PreRequest(ctx, rc, p.Name, p.Arguments)
 		if err != nil {
@@ -331,6 +331,13 @@ func (g *RPCGateway) dispatch(
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrMethodNotFound, method)
 	}
+}
+
+func appendGatewayTools(tools []appmcp.Tool, gatewayTools []appmcp.Tool) []appmcp.Tool {
+	for _, gatewayTool := range gatewayTools {
+		tools = appendGatewayTool(tools, gatewayTool)
+	}
+	return tools
 }
 
 func appendGatewayTool(tools []appmcp.Tool, gatewayTool appmcp.Tool) []appmcp.Tool {

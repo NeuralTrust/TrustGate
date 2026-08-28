@@ -346,6 +346,14 @@ func TestConnectService_FullConsentFlow(t *testing.T) {
 		t.Fatalf("CreateTicket: %v", err)
 	}
 
+	statuses, err := svc.Statuses(ctx, gw, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("Statuses: %v", err)
+	}
+	if len(statuses) != 1 || statuses[0].Provider != "github" || statuses[0].Linked {
+		t.Fatalf("statuses = %+v, want one unlinked github provider", statuses)
+	}
+
 	page, err := svc.Page(ctx, ticket)
 	if err != nil {
 		t.Fatalf("Page: %v", err)
