@@ -36,6 +36,7 @@ const (
 	ProviderCerebras         = provider.Cerebras
 	ProviderOpenRouter       = provider.OpenRouter
 	ProviderCohere           = provider.Cohere
+	ProviderMoonshot         = provider.Moonshot
 )
 
 type Config struct {
