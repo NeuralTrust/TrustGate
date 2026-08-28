@@ -20,7 +20,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-func serverDiscoveryResult(rc *appconsumer.RoutableConsumer) map[string]any {
+func serverDiscoveryResult(rc *appconsumer.RoutableConsumer, connections []string) map[string]any {
 	return map[string]any{
 		"resultType":        "complete",
 		"supportedVersions": append([]string(nil), advertisedProtocolVersions...),
@@ -31,7 +31,7 @@ func serverDiscoveryResult(rc *appconsumer.RoutableConsumer) map[string]any {
 		"_meta": map[string]any{
 			modernServerInfoMetaKey: map[string]any{
 				"name":    serverName,
-				"version": serverVersion + "+" + surfaceFingerprint(rc),
+				"version": serverVersion + "+" + surfaceFingerprint(rc, connections),
 			},
 		},
 	}

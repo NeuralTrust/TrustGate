@@ -16,6 +16,7 @@ package mcp
 
 import (
 	"testing"
+	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -62,7 +63,7 @@ func TestServerDiscoveryResultCapabilities(t *testing.T) {
 			rc := &appconsumer.RoutableConsumer{
 				Consumer: &consumerdomain.Consumer{MCP: tc.policy},
 			}
-			result := serverDiscoveryResult(rc)
+			result := serverDiscoveryResult(rc, nil)
 			require.Equal(t, advertisedProtocolVersions, result["supportedVersions"])
 			require.Equal(t, "complete", result["resultType"])
 			require.Equal(t, "private", result["cacheScope"])
@@ -98,15 +99,54 @@ func TestServerDiscoveryResultChangesAfterRegistryAttachment(t *testing.T) {
 	one := serverDiscoveryResult(&appconsumer.RoutableConsumer{
 		Consumer:   consumer,
 		Registries: []*registrydomain.Registry{notion},
-	})
+	}, nil)
 	two := serverDiscoveryResult(&appconsumer.RoutableConsumer{
 		Consumer:   consumer,
 		Registries: []*registrydomain.Registry{notion, registry("linear")},
-	})
+	}, nil)
 
 	require.Zero(t, one["ttlMs"])
 	require.Zero(t, two["ttlMs"])
 	oneInfo := one["_meta"].(map[string]any)[modernServerInfoMetaKey].(map[string]any)
 	twoInfo := two["_meta"].(map[string]any)[modernServerInfoMetaKey].(map[string]any)
 	require.NotEqual(t, oneInfo["version"], twoInfo["version"])
+}
+
+// Connecting an account on the connect page changes which upstreams federate
+// without touching any registry, so the reported version has to move with it or
+// a version-keyed client keeps replaying its cached tool list.
+func TestServerDiscoveryResultChangesAfterConnectingAnAccount(t *testing.T) {
+	t.Parallel()
+	gatewayID := ids.New[ids.GatewayKind]()
+	linear, err := registrydomain.NewMCPRegistry(
+		gatewayID,
+		"linear",
+		"",
+		&registrydomain.MCPTarget{
+			URL: "https://linear.example.com/mcp",
+			Auth: &registrydomain.MCPAuth{
+				Mode:         registrydomain.MCPAuthModeForwarded,
+				Provider:     "linear",
+				ClientID:     "cid",
+				AuthorizeURL: "https://linear.example.com/authorize",
+				TokenURL:     "https://linear.example.com/token",
+			},
+		},
+	)
+	require.NoError(t, err)
+	rc := &appconsumer.RoutableConsumer{
+		Consumer:   &consumerdomain.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gatewayID},
+		Registries: []*registrydomain.Registry{linear},
+	}
+	linkedAt := time.Date(2026, 8, 28, 9, 0, 0, 0, time.UTC)
+
+	pending := serverDiscoveryResult(rc, nil)
+	linked := serverDiscoveryResult(rc, []string{"cx:linear@" + linkedAt.Format(time.RFC3339Nano)})
+	reconnected := serverDiscoveryResult(rc, []string{"cx:linear@" + linkedAt.Add(time.Hour).Format(time.RFC3339Nano)})
+
+	versionOf := func(result map[string]any) string {
+		return result["_meta"].(map[string]any)[modernServerInfoMetaKey].(map[string]any)["version"].(string)
+	}
+	require.NotEqual(t, versionOf(pending), versionOf(linked))
+	require.NotEqual(t, versionOf(linked), versionOf(reconnected))
 }
