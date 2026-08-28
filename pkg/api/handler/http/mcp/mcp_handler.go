@@ -167,7 +167,7 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 		return writeRPCResult(c, req.ID, struct{}{})
 	}
 
-	result, err := h.gateway.Dispatch(c.UserContext(), rc, req.Method, req.Params)
+	result, err := h.gateway.DispatchWithBaseURL(c.UserContext(), rc, c.BaseURL(), req.Method, req.Params)
 	if err != nil {
 		return writeAppError(c, req.ID, err)
 	}

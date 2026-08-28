@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	"github.com/golang-jwt/jwt/v5"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
@@ -257,7 +258,13 @@ func TestMCPServer_ToolsListAndCallWithFullAccess(t *testing.T) {
 
 	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
-	require.ElementsMatch(t, []string{"echo", "search"}, names)
+	require.ElementsMatch(t, []string{"echo", "search", appmcp.ManageConnectionsToolName}, names)
+
+	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
+		map[string]any{"name": appmcp.ManageConnectionsToolName, "arguments": map[string]any{}})
+	connections := rpcResult(t, status, body)["structuredContent"].(map[string]any)
+	require.Equal(t, "user_confirmation_required", connections["action"])
+	require.Contains(t, connections["connect_url"], "/mcp/connect?ticket=")
 
 	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
 		map[string]any{"name": "echo", "arguments": map[string]any{"message": "hola"}})
@@ -279,7 +286,7 @@ func TestMCPServer_ToolkitFiltersAndAliasesTools(t *testing.T) {
 
 	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
-	require.Equal(t, []string{"alias-echo"}, names)
+	require.Equal(t, []string{"alias-echo", appmcp.ManageConnectionsToolName}, names)
 
 	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
 		map[string]any{"name": "alias-echo", "arguments": map[string]any{"message": "hola"}})
@@ -357,7 +364,7 @@ func TestMCPServer_FailModeOpenSkipsDeadUpstream(t *testing.T) {
 
 	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
-	require.Equal(t, []string{"echo"}, names)
+	require.Equal(t, []string{"echo", appmcp.ManageConnectionsToolName}, names)
 }
 
 func TestMCPServer_CredentialOfAnotherConsumerIsRejected(t *testing.T) {
@@ -488,7 +495,8 @@ func TestMCPServer_RoleBasedConsumerAppliesRoleMCPPolicies(t *testing.T) {
 	granted := stub.sign(t, audience, []string{"mcp-users"})
 	status, body := mcpRPC(t, gatewayID, consumerID, bearerHeaders(granted), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
-	require.Equal(t, []string{"echo"}, names, "role toolkit must filter upstream tools")
+	require.Equal(t, []string{"echo", appmcp.ManageConnectionsToolName}, names,
+		"role toolkit must filter upstream tools while retaining TrustGate connection management")
 
 	status, body = mcpRPC(t, gatewayID, consumerID, bearerHeaders(granted), "tools/call",
 		map[string]any{"name": "echo", "arguments": map[string]any{"message": "hola"}})
@@ -663,6 +671,6 @@ func TestMCPServer_RoleBasedConsumerMergesMultipleRoles(t *testing.T) {
 	granted := stub.sign(t, audience, []string{"mcp-users"})
 	status, body := mcpRPC(t, gatewayID, consumerID, bearerHeaders(granted), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
-	require.ElementsMatch(t, []string{"alpha", "beta"}, names,
+	require.ElementsMatch(t, []string{"alpha", "beta", appmcp.ManageConnectionsToolName}, names,
 		"explicit grant from role A plus full grant from role B must merge")
 }

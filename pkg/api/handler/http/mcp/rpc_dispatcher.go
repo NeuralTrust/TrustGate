@@ -36,9 +36,10 @@ type InvalidParamsError struct {
 func (e *InvalidParamsError) Error() string { return "mcp: invalid params: " + e.Reason }
 
 type RPCGateway struct {
-	composer appmcp.Composer
-	plugins  *appmcp.PluginRunner
-	limiter  ratelimitapp.Checker
+	composer    appmcp.Composer
+	plugins     *appmcp.PluginRunner
+	limiter     ratelimitapp.Checker
+	connections appmcp.ConnectionTool
 }
 
 // NewRPCGateway wires MCP dispatch; nil limiter defaults to noop.
@@ -49,9 +50,32 @@ func NewRPCGateway(composer appmcp.Composer, plugins *appmcp.PluginRunner, limit
 	return &RPCGateway{composer: composer, plugins: plugins, limiter: limiter}
 }
 
+// NewRPCGatewayWithConnections wires the optional TrustGate connection-management tool.
+func NewRPCGatewayWithConnections(
+	composer appmcp.Composer,
+	plugins *appmcp.PluginRunner,
+	limiter ratelimitapp.Checker,
+	connections appmcp.ConnectionTool,
+) *RPCGateway {
+	gateway := NewRPCGateway(composer, plugins, limiter)
+	gateway.connections = connections
+	return gateway
+}
+
 func (g *RPCGateway) Dispatch(ctx context.Context, rc *appconsumer.RoutableConsumer, method string, params json.RawMessage) (any, error) {
+	return g.DispatchWithBaseURL(ctx, rc, "", method, params)
+}
+
+// DispatchWithBaseURL dispatches an MCP request with the public origin used for user-facing links.
+func (g *RPCGateway) DispatchWithBaseURL(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	baseURL,
+	method string,
+	params json.RawMessage,
+) (any, error) {
 	span, ctx := g.startSpan(ctx, method, params)
-	result, err := g.dispatch(ctx, rc, method, params)
+	result, err := g.dispatch(ctx, rc, baseURL, method, params)
 	g.finishSpan(span, err)
 	return result, err
 }
@@ -165,7 +189,13 @@ func (g *RPCGateway) checkRateLimit(ctx context.Context, rc *appconsumer.Routabl
 	return err
 }
 
-func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsumer, method string, params json.RawMessage) (any, error) {
+func (g *RPCGateway) dispatch(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	baseURL,
+	method string,
+	params json.RawMessage,
+) (any, error) {
 	switch method {
 	case "tools/list":
 		if err := g.checkRateLimit(ctx, rc); err != nil {
@@ -190,6 +220,9 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		if err := g.plugins.PreResponseDiscovery(ctx, rc, raw); err != nil {
 			return nil, err
 		}
+		if g.connections != nil && connectionToolPermitted(rc) {
+			result["tools"] = appendGatewayTool(tools, g.connections.Definition())
+		}
 		return result, nil
 	case "tools/call":
 		var p struct {
@@ -201,6 +234,12 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 		}
 		if err := g.checkRateLimit(ctx, rc); err != nil {
 			return nil, err
+		}
+		if g.connections != nil && p.Name == g.connections.Name() {
+			if !connectionToolPermitted(rc) {
+				return nil, &appmcp.ToolNotPermittedError{Tool: p.Name}
+			}
+			return g.connections.Call(ctx, rc, baseURL)
 		}
 		pre, err := g.plugins.PreRequest(ctx, rc, p.Name, p.Arguments)
 		if err != nil {
@@ -292,4 +331,30 @@ func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrMethodNotFound, method)
 	}
+}
+
+func appendGatewayTool(tools []appmcp.Tool, gatewayTool appmcp.Tool) []appmcp.Tool {
+	for i := range tools {
+		if tools[i].Name == gatewayTool.Name {
+			tools[i] = gatewayTool
+			return tools
+		}
+	}
+	return append(tools, gatewayTool)
+}
+
+func connectionToolPermitted(rc *appconsumer.RoutableConsumer) bool {
+	if rc == nil || rc.Consumer == nil {
+		return false
+	}
+	toolkit := rc.Consumer.Toolkit()
+	if toolkit == nil {
+		return true
+	}
+	for _, entry := range toolkit {
+		if entry.Tool != "" {
+			return true
+		}
+	}
+	return false
 }
