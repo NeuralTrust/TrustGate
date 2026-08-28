@@ -33,6 +33,7 @@ import (
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	ratelimitmocks "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit/mocks"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	"github.com/gofiber/fiber/v2"
@@ -40,6 +41,25 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+type dispatcherTicketCreator struct {
+	gatewayID    ids.GatewayID
+	principalSub string
+	consumerPath string
+	ticket       string
+}
+
+func (c *dispatcherTicketCreator) CreateTicket(
+	_ context.Context,
+	gatewayID ids.GatewayID,
+	principalSub,
+	consumerPath string,
+) (string, error) {
+	c.gatewayID = gatewayID
+	c.principalSub = principalSub
+	c.consumerPath = consumerPath
+	return c.ticket, nil
+}
 
 func TestRPCGateway_ToolsList_DefaultsToEmptySlice(t *testing.T) {
 	t.Parallel()
@@ -55,6 +75,93 @@ func TestRPCGateway_ToolsList_DefaultsToEmptySlice(t *testing.T) {
 	if string(body) != `{"tools":[]}` {
 		t.Fatalf("tools/list = %s, want empty array (clients reject null)", body)
 	}
+}
+
+func TestRPCGateway_ConnectionToolIsListedAndCalledWithoutUpstream(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().ListTools(mock.Anything, mock.Anything).
+		Return([]appmcp.Tool{{Name: "search"}}, nil).Once()
+	creator := &dispatcherTicketCreator{ticket: "ticket"}
+	connections, err := appmcp.NewConnectionTool(creator)
+	require.NoError(t, err)
+	g := mcphttp.NewRPCGatewayWithConnections(composer, noopRunner(), nil, connections)
+	gatewayID := ids.New[ids.GatewayKind]()
+	rc := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{
+		ID:        ids.New[ids.ConsumerKind](),
+		GatewayID: gatewayID,
+		Slug:      "research",
+		Type:      consumerdomain.TypeMCP,
+	}}
+	ctx := identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "alice"})
+
+	listed, err := g.Dispatch(ctx, rc, "tools/list", nil)
+	require.NoError(t, err)
+	tools := listed.(map[string]any)["tools"].([]appmcp.Tool)
+	require.Equal(t, []string{"search", appmcp.ManageConnectionsToolName}, []string{tools[0].Name, tools[1].Name})
+
+	called, err := g.DispatchWithBaseURL(
+		ctx,
+		rc,
+		"https://mcp.example.com",
+		"tools/call",
+		json.RawMessage(`{"name":"trustgate_manage_connections","arguments":{}}`),
+	)
+	require.NoError(t, err)
+	raw := called.(json.RawMessage)
+	require.Contains(t, string(raw), "https://mcp.example.com/research/mcp/connect?ticket=ticket")
+	require.Equal(t, gatewayID, creator.gatewayID)
+}
+
+func TestRPCGateway_ConnectionToolDefinitionWinsNameCollision(t *testing.T) {
+	t.Parallel()
+	var colliding appmcp.Tool
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"name":"trustgate_manage_connections",
+		"description":"untrusted upstream definition",
+		"inputSchema":{"type":"object"}
+	}`), &colliding))
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().ListTools(mock.Anything, mock.Anything).
+		Return([]appmcp.Tool{colliding}, nil).Once()
+	connections, err := appmcp.NewConnectionTool(&dispatcherTicketCreator{})
+	require.NoError(t, err)
+	g := mcphttp.NewRPCGatewayWithConnections(composer, noopRunner(), nil, connections)
+
+	listed, err := g.Dispatch(context.Background(), mcpRoutableConsumer(), "tools/list", nil)
+	require.NoError(t, err)
+	tools := listed.(map[string]any)["tools"].([]appmcp.Tool)
+	require.Len(t, tools, 1)
+	raw, err := json.Marshal(tools[0])
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "untrusted upstream definition")
+	require.Contains(t, string(raw), "only when the user explicitly asks")
+}
+
+func TestRPCGateway_ConnectionToolRespectsEmptyToolkit(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().ListTools(mock.Anything, mock.Anything).Return(nil, nil).Once()
+	connections, err := appmcp.NewConnectionTool(&dispatcherTicketCreator{})
+	require.NoError(t, err)
+	g := mcphttp.NewRPCGatewayWithConnections(composer, noopRunner(), nil, connections)
+	rc := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{
+		MCP: &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{}},
+	}}
+
+	listed, err := g.Dispatch(context.Background(), rc, "tools/list", nil)
+	require.NoError(t, err)
+	require.Empty(t, listed.(map[string]any)["tools"].([]appmcp.Tool))
+
+	_, err = g.DispatchWithBaseURL(
+		context.Background(),
+		rc,
+		"https://mcp.example.com",
+		"tools/call",
+		json.RawMessage(`{"name":"trustgate_manage_connections","arguments":{}}`),
+	)
+	var denied *appmcp.ToolNotPermittedError
+	require.ErrorAs(t, err, &denied)
 }
 
 func TestRPCGateway_ToolsCall_RequiresName(t *testing.T) {

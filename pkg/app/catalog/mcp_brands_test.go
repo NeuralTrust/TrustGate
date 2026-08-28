@@ -64,6 +64,19 @@ func TestReadBrandIcon_ServesMappedAssets(t *testing.T) {
 		t.Fatal("linear logo is not an SVG")
 	}
 
+	drive, _, err := ReadBrandIcon("mcp/googledrive.svg")
+	if err != nil {
+		t.Fatalf("read googledrive: %v", err)
+	}
+	if strings.Contains(string(drive), `fill="#1FA463"`) {
+		t.Fatal("Drive logo must not be the monochrome Simple Icons green")
+	}
+	for _, color := range []string{"#0066da", "#00ac47", "#ffba00"} {
+		if !strings.Contains(string(drive), color) {
+			t.Fatalf("Drive logo missing official color %s", color)
+		}
+	}
+
 	for _, name := range []string{"mcp/holded.png", "mcp/jotform.svg", "mcp/storyblok.png"} {
 		data, contentType, err := ReadBrandIcon(name)
 		if err != nil {
