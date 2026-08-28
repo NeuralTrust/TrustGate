@@ -327,6 +327,60 @@ func (_c *ConnectService_Page_Call) RunAndReturn(run func(context.Context, strin
 	return _c
 }
 
+func (_m *ConnectService) Statuses(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], principalSub string, consumerPath string) ([]oauth.ProviderStatus, error) {
+	ret := _m.Called(ctx, gatewayID, principalSub, consumerPath)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Statuses")
+	}
+
+	var r0 []oauth.ProviderStatus
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, string) ([]oauth.ProviderStatus, error)); ok {
+		return rf(ctx, gatewayID, principalSub, consumerPath)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, string) []oauth.ProviderStatus); ok {
+		r0 = rf(ctx, gatewayID, principalSub, consumerPath)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]oauth.ProviderStatus)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], string, string) error); ok {
+		r1 = rf(ctx, gatewayID, principalSub, consumerPath)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+type ConnectService_Statuses_Call struct {
+	*mock.Call
+}
+
+func (_e *ConnectService_Expecter) Statuses(ctx interface{}, gatewayID interface{}, principalSub interface{}, consumerPath interface{}) *ConnectService_Statuses_Call {
+	return &ConnectService_Statuses_Call{Call: _e.mock.On("Statuses", ctx, gatewayID, principalSub, consumerPath)}
+}
+
+func (_c *ConnectService_Statuses_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], principalSub string, consumerPath string)) *ConnectService_Statuses_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(string), args[3].(string))
+	})
+	return _c
+}
+
+func (_c *ConnectService_Statuses_Call) Return(_a0 []oauth.ProviderStatus, _a1 error) *ConnectService_Statuses_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *ConnectService_Statuses_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], string, string) ([]oauth.ProviderStatus, error)) *ConnectService_Statuses_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 func (_m *ConnectService) RefreshAuth(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], reg *registry.Registry) (*registry.MCPAuth, error) {
 	ret := _m.Called(ctx, gatewayID, reg)
 

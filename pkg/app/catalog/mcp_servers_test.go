@@ -255,6 +255,92 @@ func TestNewMCPServerCatalog_IncludesSectigoN8nHalo(t *testing.T) {
 	require.NotEmpty(t, halo.AuthHeaders)
 }
 
+func TestNewMCPServerCatalog_IncludesJotformStoryblokAndHolded(t *testing.T) {
+	t.Parallel()
+
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+
+	tests := []struct {
+		code           string
+		url            string
+		authorizeURL   string
+		tokenURL       string
+		resource       string
+		registration   string
+		dcr            bool
+		requiresConfig bool
+		scopes         []string
+		tools          []string
+		assertTools    bool
+	}{
+		{
+			code:           "com.jotform/mcp",
+			url:            "https://mcp.jotform.com",
+			authorizeURL:   "https://oauth2.jotform.com/authorize",
+			tokenURL:       "https://oauth2.jotform.com/token",
+			resource:       "https://mcp.jotform.com/mcp",
+			registration:   "manual",
+			dcr:            false,
+			requiresConfig: true,
+			scopes:         []string{"full"},
+			tools:          []string{"form_list", "create_form", "edit_form", "create_submission", "get_submissions"},
+			assertTools:    true,
+		},
+		{
+			code:         "com.storyblok/mcp",
+			url:          "https://mcp.storyblok.com/mcp",
+			authorizeURL: "https://mcp.storyblok.com/oauth/authorize",
+			tokenURL:     "https://mcp.storyblok.com/oauth/token",
+			resource:     "https://mcp.storyblok.com/mcp",
+			registration: "auto",
+			dcr:          true,
+			tools:        []string{"search", "describe", "execute_readonly", "execute_mutating", "execute_destructive", "upload_asset", "upload_asset_finish"},
+			assertTools:  true,
+		},
+		{
+			code:         "com.holded/mcp",
+			url:          "https://mcp.holded.com/mcp",
+			authorizeURL: "https://app.holded.com/api/v2/mcp/oauth/authorize",
+			tokenURL:     "https://app.holded.com/api/v2/mcp/oauth/token",
+			resource:     "https://mcp.holded.com/mcp",
+			registration: "auto",
+			dcr:          true,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.code, func(t *testing.T) {
+			t.Parallel()
+
+			server, ok := cat.GetByCode(tc.code)
+			require.True(t, ok)
+			require.Equal(t, tc.url, server.URL)
+			require.Equal(t, authHintOAuth, server.AuthHint)
+			require.Equal(t, tc.requiresConfig, server.RequiresConfig)
+			require.NotNil(t, server.OAuth)
+			require.Equal(t, tc.registration, server.OAuth.Registration)
+			require.NotNil(t, server.OAuth.DCR)
+			require.Equal(t, tc.dcr, *server.OAuth.DCR)
+			require.NotNil(t, server.OAuth.PKCE)
+			require.True(t, *server.OAuth.PKCE)
+			require.Equal(t, tc.authorizeURL, server.OAuth.AuthorizeURL)
+			require.Equal(t, tc.tokenURL, server.OAuth.TokenURL)
+			require.Equal(t, tc.resource, server.OAuth.Resource)
+			require.Equal(t, tc.scopes, server.OAuth.Scopes)
+
+			toolNames := make([]string, 0, len(server.Tools))
+			for _, tool := range server.Tools {
+				toolNames = append(toolNames, tool.Name)
+			}
+			if tc.assertTools {
+				require.Equal(t, tc.tools, toolNames)
+			}
+		})
+	}
+}
+
 func TestNewMCPServerCatalog_GoogleWorkspacePlatformClient(t *testing.T) {
 	t.Parallel()
 
@@ -298,4 +384,24 @@ func TestNewMCPServerCatalog_GoogleWorkspacePlatformClient(t *testing.T) {
 	require.Equal(t, "nt-secret", secret)
 	_, _, ok = with.SharedOAuthCredentials("app.linear/mcp")
 	require.False(t, ok)
+}
+
+func TestNewMCPServerCatalog_GmailIncludesModifyScope(t *testing.T) {
+	t.Parallel()
+
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+	gmail, ok := cat.GetByCode("com.google.workspace/gmail")
+	require.True(t, ok)
+	require.NotNil(t, gmail.OAuth)
+	require.Contains(t, gmail.OAuth.Scopes, "https://www.googleapis.com/auth/gmail.readonly")
+	require.Contains(t, gmail.OAuth.Scopes, "https://www.googleapis.com/auth/gmail.compose")
+	require.Contains(t, gmail.OAuth.Scopes, "https://www.googleapis.com/auth/gmail.modify")
+
+	tools := make([]string, 0, len(gmail.Tools))
+	for _, tool := range gmail.Tools {
+		tools = append(tools, tool.Name)
+	}
+	require.Contains(t, tools, "label_thread")
+	require.Contains(t, tools, "create_label")
 }

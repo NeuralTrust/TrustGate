@@ -82,6 +82,7 @@ type ConnectService interface {
 		providers []string,
 	) (string, error)
 	Page(ctx context.Context, ticketID string) (*ConnectPage, error)
+	Statuses(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) ([]ProviderStatus, error)
 	Start(ctx context.Context, baseURL, ticketID, provider string) (string, error)
 	Callback(ctx context.Context, baseURL, provider, state, code, errCode, errDesc string) (string, error)
 	Disconnect(ctx context.Context, ticketID, provider string) error

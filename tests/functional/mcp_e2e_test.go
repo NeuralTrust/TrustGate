@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	"github.com/golang-jwt/jwt/v5"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
@@ -267,6 +268,30 @@ func TestMCPServer_ToolsListAndCallWithFullAccess(t *testing.T) {
 	require.Contains(t, string(raw), "echo:hola")
 }
 
+func TestMCPServer_ListsPendingProviderConnectTools(t *testing.T) {
+	live := startMCPUpstream(t, func(s *sdk.Server) { addTool(s, "echo") })
+	pending := startMCPUpstream(t, func(s *sdk.Server) { addTool(s, "list_issues") })
+	idp := newOAuthProviderStub(t)
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
+	liveID := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-live"), live.URL))
+	pendingID := CreateRegistry(t, gatewayID, mcpForwardedRegistryPayload(
+		uniqueName("mcp-linear"), pending.URL, "linear", idp))
+	consumerID, key := createMCPConsumer(t, gatewayID, []string{liveID, pendingID}, nil, "")
+
+	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
+	names := listedNames(t, rpcResult(t, status, body), "tools")
+	require.Contains(t, names, "echo")
+	require.Contains(t, names, appmcp.ConnectToolName("linear"))
+	require.NotContains(t, names, "list_issues")
+
+	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
+		map[string]any{"name": appmcp.ConnectToolName("linear"), "arguments": map[string]any{}})
+	connections := rpcResult(t, status, body)["structuredContent"].(map[string]any)
+	require.Equal(t, "user_confirmation_required", connections["action"])
+	require.Contains(t, connections["connect_url"], "/mcp/connect?ticket=")
+	require.Nil(t, body["error"])
+}
+
 func TestMCPServer_ToolkitFiltersAndAliasesTools(t *testing.T) {
 	upstream := startMCPUpstream(t, func(s *sdk.Server) {
 		addTool(s, "echo")
@@ -488,7 +513,8 @@ func TestMCPServer_RoleBasedConsumerAppliesRoleMCPPolicies(t *testing.T) {
 	granted := stub.sign(t, audience, []string{"mcp-users"})
 	status, body := mcpRPC(t, gatewayID, consumerID, bearerHeaders(granted), "tools/list", nil)
 	names := listedNames(t, rpcResult(t, status, body), "tools")
-	require.Equal(t, []string{"echo"}, names, "role toolkit must filter upstream tools")
+	require.Equal(t, []string{"echo"}, names,
+		"role toolkit must filter upstream tools")
 
 	status, body = mcpRPC(t, gatewayID, consumerID, bearerHeaders(granted), "tools/call",
 		map[string]any{"name": "echo", "arguments": map[string]any{"message": "hola"}})

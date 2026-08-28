@@ -23,6 +23,7 @@ import (
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
+	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
@@ -39,6 +40,11 @@ type connectService struct {
 	auditor     ConnectAuditor
 	sharedOAuth mcpoauth.Provider
 	userinfo    UserInfoClient
+	catalog     authCatalog
+}
+
+type authCatalog interface {
+	GetByCode(code string) (catalogdomain.MCPServer, bool)
 }
 
 func NewConnectService(
@@ -50,6 +56,7 @@ func NewConnectService(
 	auditor ConnectAuditor,
 	sharedOAuth mcpoauth.Provider,
 	userinfo UserInfoClient,
+	catalog authCatalog,
 ) ConnectService {
 	return &connectService{
 		store:       store,
@@ -60,6 +67,7 @@ func NewConnectService(
 		auditor:     auditor,
 		sharedOAuth: sharedOAuth,
 		userinfo:    userinfo,
+		catalog:     catalog,
 	}
 }
 
@@ -118,7 +126,43 @@ func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPag
 	if err != nil {
 		return nil, err
 	}
-	page := &ConnectPage{ConsumerPath: ticket.ConsumerPath, ResumeURL: ticket.ResumeURL}
+	providers, err := s.providerStatuses(ctx, gatewayID, ticket, data, rc)
+	if err != nil {
+		return nil, err
+	}
+	return &ConnectPage{ConsumerPath: ticket.ConsumerPath, ResumeURL: ticket.ResumeURL, Providers: providers}, nil
+}
+
+func (s *connectService) Statuses(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub,
+	consumerPath string,
+) ([]ProviderStatus, error) {
+	data, err := s.consumers.FindByGateway(ctx, gatewayID)
+	if err != nil {
+		return nil, err
+	}
+	rc, ok := data.MatchPath(consumerPath)
+	if !ok {
+		return nil, fmt.Errorf("oauth connect: consumer path %s no longer exists", consumerPath)
+	}
+	ticket := &ConnectTicket{
+		GatewayID:    gatewayID.String(),
+		PrincipalSub: principalSub,
+		ConsumerPath: consumerPath,
+	}
+	return s.providerStatuses(ctx, gatewayID, ticket, data, rc)
+}
+
+func (s *connectService) providerStatuses(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	ticket *ConnectTicket,
+	data *appconsumer.Data,
+	rc *appconsumer.RoutableConsumer,
+) ([]ProviderStatus, error) {
+	var providers []ProviderStatus
 	for _, reg := range data.EffectiveRegistries(rc) {
 		cfg := forwardedAuth(reg)
 		if cfg == nil {
@@ -144,9 +188,9 @@ func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPag
 		case !errors.Is(err, vaultdomain.ErrNotFound):
 			return nil, fmt.Errorf("oauth connect: check linked credential: %w", err)
 		}
-		page.Providers = append(page.Providers, status)
+		providers = append(providers, status)
 	}
-	return page, nil
+	return providers, nil
 }
 
 func (s *connectService) Start(ctx context.Context, baseURL, ticketID, provider string) (string, error) {

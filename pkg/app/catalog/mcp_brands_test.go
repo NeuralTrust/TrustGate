@@ -36,6 +36,15 @@ func TestBrandIconURL_ResolvesVendorAndFallsBack(t *testing.T) {
 	if got := BrandIconURL("Google Drive"); got != "/oauth/brands/mcp/googledrive.svg" {
 		t.Fatalf("Google Drive vendor = %q", got)
 	}
+	for vendor, want := range map[string]string{
+		"Holded":    "/oauth/brands/mcp/holded.png",
+		"Jotform":   "/oauth/brands/mcp/jotform.svg",
+		"Storyblok": "/oauth/brands/mcp/storyblok.png",
+	} {
+		if got := BrandIconURL(vendor); got != want {
+			t.Fatalf("%s vendor = %q, want %q", vendor, got, want)
+		}
+	}
 	if got := BrandIconURL("unknown-custom"); got != "/oauth/brands/mcp.svg" {
 		t.Fatalf("unknown vendor = %q", got)
 	}
@@ -53,6 +62,32 @@ func TestReadBrandIcon_ServesMappedAssets(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "<svg") {
 		t.Fatal("linear logo is not an SVG")
+	}
+
+	drive, _, err := ReadBrandIcon("mcp/googledrive.svg")
+	if err != nil {
+		t.Fatalf("read googledrive: %v", err)
+	}
+	if strings.Contains(string(drive), `fill="#1FA463"`) {
+		t.Fatal("Drive logo must not be the monochrome Simple Icons green")
+	}
+	for _, color := range []string{"#0066da", "#00ac47", "#ffba00"} {
+		if !strings.Contains(string(drive), color) {
+			t.Fatalf("Drive logo missing official color %s", color)
+		}
+	}
+
+	for _, name := range []string{"mcp/holded.png", "mcp/jotform.svg", "mcp/storyblok.png"} {
+		data, contentType, err := ReadBrandIcon(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if len(data) == 0 {
+			t.Fatalf("%s is empty", name)
+		}
+		if !strings.HasPrefix(contentType, "image/") {
+			t.Fatalf("%s content type = %q", name, contentType)
+		}
 	}
 
 	if _, _, err := ReadBrandIcon("../mcp_brands.go"); err == nil {
