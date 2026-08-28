@@ -30,7 +30,7 @@ func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gate
 		return nil, ErrProviderNotFound
 	}
 	if cfg.Registration != registrydomain.RegistrationAuto {
-		return withIdentityScopes(applySharedOAuth(cfg, reg, s.sharedOAuth)), nil
+		return withIdentityScopes(applyCatalogScopes(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog)), nil
 	}
 	meta, err := s.registrar.Discover(ctx, reg.MCPTarget.URL)
 	if err != nil {
@@ -49,7 +49,7 @@ func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayI
 		return nil, ErrProviderNotFound
 	}
 	if cfg.Registration != registrydomain.RegistrationAuto {
-		return withIdentityScopes(applySharedOAuth(cfg, reg, s.sharedOAuth)), nil
+		return withIdentityScopes(applyCatalogScopes(applySharedOAuth(cfg, reg, s.sharedOAuth), reg, s.catalog)), nil
 	}
 	meta, err := s.registrar.Discover(ctx, reg.MCPTarget.URL)
 	if err != nil {
@@ -86,6 +86,26 @@ func applySharedOAuth(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry,
 	out := *cfg
 	out.ClientID = creds.ClientID
 	out.ClientSecret = creds.ClientSecret
+	return &out
+}
+
+func applyCatalogScopes(cfg *registrydomain.MCPAuth, reg *registrydomain.Registry, cat authCatalog) *registrydomain.MCPAuth {
+	if cfg == nil || cat == nil {
+		return cfg
+	}
+	code := ""
+	if reg != nil && reg.MCPTarget != nil {
+		code = strings.TrimSpace(reg.MCPTarget.Code)
+	}
+	if code == "" {
+		code = strings.TrimSpace(cfg.Provider)
+	}
+	entry, ok := cat.GetByCode(code)
+	if !ok || entry.OAuth == nil || len(entry.OAuth.Scopes) == 0 {
+		return cfg
+	}
+	out := *cfg
+	out.Scopes = append([]string(nil), entry.OAuth.Scopes...)
 	return &out
 }
 
