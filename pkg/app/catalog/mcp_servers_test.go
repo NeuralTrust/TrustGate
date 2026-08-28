@@ -385,3 +385,23 @@ func TestNewMCPServerCatalog_GoogleWorkspacePlatformClient(t *testing.T) {
 	_, _, ok = with.SharedOAuthCredentials("app.linear/mcp")
 	require.False(t, ok)
 }
+
+func TestNewMCPServerCatalog_GmailIncludesModifyScope(t *testing.T) {
+	t.Parallel()
+
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+	gmail, ok := cat.GetByCode("com.google.workspace/gmail")
+	require.True(t, ok)
+	require.NotNil(t, gmail.OAuth)
+	require.Contains(t, gmail.OAuth.Scopes, "https://www.googleapis.com/auth/gmail.readonly")
+	require.Contains(t, gmail.OAuth.Scopes, "https://www.googleapis.com/auth/gmail.compose")
+	require.Contains(t, gmail.OAuth.Scopes, "https://www.googleapis.com/auth/gmail.modify")
+
+	tools := make([]string, 0, len(gmail.Tools))
+	for _, tool := range gmail.Tools {
+		tools = append(tools, tool.Name)
+	}
+	require.Contains(t, tools, "label_thread")
+	require.Contains(t, tools, "create_label")
+}
