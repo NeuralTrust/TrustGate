@@ -30,8 +30,12 @@ import (
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
+	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
+	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
@@ -183,6 +187,12 @@ type rpcGatewayParams struct {
 	Connections appmcp.ConnectionTool
 	Shared      mcpoauth.Provider
 	Catalog     appcatalog.MCPServerCatalog `optional:"true"`
+	// Install path — present on the full/control plane only. When any is absent
+	// the Store offers SEARCH but not INSTALL (e.g. the Redis data plane, which
+	// has no installation store yet).
+	Registries      registrydomain.Repository     `optional:"true"`
+	RegistryCreator appregistry.Creator           `optional:"true"`
+	Installs        installationdomain.Repository `optional:"true"`
 }
 
 func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
@@ -194,7 +204,17 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 		}
 		catalog = loaded
 	}
-	store, err := appmcp.NewStoreTool(catalog)
+
+	var installer appstore.Installer
+	if p.Registries != nil && p.RegistryCreator != nil && p.Installs != nil {
+		made, err := appstore.NewInstaller(catalog, p.Registries, p.RegistryCreator, p.Installs)
+		if err != nil {
+			return nil, err
+		}
+		installer = made
+	}
+
+	store, err := appmcp.NewStoreToolWithInstaller(catalog, installer)
 	if err != nil {
 		return nil, err
 	}
