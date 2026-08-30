@@ -218,7 +218,16 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 	if err != nil {
 		return nil, err
 	}
-	return mcphttp.NewRPCGatewayWithMetaTools(p.Composer, p.Plugins, p.Limiter, p.Connections, store), nil
+	gateway := mcphttp.NewRPCGatewayWithMetaTools(p.Composer, p.Plugins, p.Limiter, p.Connections, store)
+
+	if p.Installs != nil && p.Registries != nil {
+		scoper, err := appstore.NewScoper(p.Installs, p.Registries)
+		if err != nil {
+			return nil, err
+		}
+		gateway = gateway.WithStoreScoper(scoper)
+	}
+	return gateway, nil
 }
 
 func provideConnectService(p connectServiceParams) (appoauth.ConnectService, error) {

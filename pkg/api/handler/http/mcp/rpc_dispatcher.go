@@ -24,6 +24,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
+	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
@@ -42,6 +43,7 @@ type RPCGateway struct {
 	limiter     ratelimitapp.Checker
 	connections appmcp.ConnectionTool
 	store       appmcp.StoreTool
+	storeScoper appstore.Scoper
 }
 
 // NewRPCGateway wires MCP dispatch; nil limiter defaults to noop.
@@ -76,6 +78,13 @@ func NewRPCGatewayWithMetaTools(
 	gateway := NewRPCGatewayWithConnections(composer, plugins, limiter, connections)
 	gateway.store = store
 	return gateway
+}
+
+// WithStoreScoper attaches the CatalogScoper so the Store surfaces the calling
+// principal's installed servers. Returns the gateway for chaining.
+func (g *RPCGateway) WithStoreScoper(scoper appstore.Scoper) *RPCGateway {
+	g.storeScoper = scoper
+	return g
 }
 
 func (g *RPCGateway) Dispatch(ctx context.Context, rc *appconsumer.RoutableConsumer, method string, params json.RawMessage) (any, error) {
@@ -212,6 +221,14 @@ func (g *RPCGateway) dispatch(
 	method string,
 	params json.RawMessage,
 ) (any, error) {
+	// Scope the Store to the caller's installed servers. The scoper no-ops for
+	// any non-Store consumer; on a transient error we proceed with the meta-tools
+	// only rather than failing the request.
+	if g.storeScoper != nil {
+		if scoped, err := g.storeScoper.Scope(ctx, rc); err == nil {
+			rc = scoped
+		}
+	}
 	switch method {
 	case "tools/list":
 		if err := g.checkRateLimit(ctx, rc); err != nil {
