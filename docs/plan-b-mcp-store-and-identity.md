@@ -104,20 +104,50 @@ Security preconditions to assert for prod (both have PoC-friendly insecure defau
 - `MCP_OAUTH_CLIENT_SECRET` set (else `/token` skips secret check → public client).
 - `MCP_OAUTH_ALLOWED_REDIRECT_HOSTS` set (else any https redirect_uri accepted).
 
-## 5. The Store (later slices, unchanged in intent)
+## 5. The Store — the four-layer model
 
-- **Fixed catalog URL** via idempotent bootstrap of a "store" consumer (stable URL, like Composio).
-- **`SEARCH` over the whole catalog** (198 entries), not only installed.
-- **`installation`** — durable per-principal entity, stored outside the config-snapshot (like the
-  vault).
-- **CatalogScoper** — per-principal surface filter layered on `mcp_policies` / RoleScoper.
-- **4 meta-tools** — search / install / manage-connections / approvals.
-- Policy, auto-approve and "required" live in the **consumer**, not the gateway. Top-down and
-  bottom-up coexist via bootstrap defaults; `role_based` and `inline` both supported.
+The Store is not one concept but four layers, each owned by a different actor. Keeping them
+separate is what lets top-down governance and bottom-up self-service coexist.
+
+| Layer | What | Owner | Where it lives |
+|---|---|---|---|
+| 1. **Catalog** | The ~198 curated MCP servers | NeuralTrust | embed (`seed/mcp-catalog`), global |
+| 2. **Store policy** | Which catalog entries are enabled for this org, and for which roles | Admin (top-down) | per-gateway/tenant policy, in the config-snapshot |
+| 3. **Installation** | What each user installed | User (bottom-up) | per-principal, durable, **outside** the snapshot (like the vault) |
+| 4. **Registry + vault** | The real upstream connection + each user's own credentials | Gateway | registry in the snapshot; credentials per-principal in the vault |
+
+Fixed decisions:
+
+- **Shared registry within the gateway.** Installing a catalog entry resolves to a *single* shared
+  registry per catalog code per gateway (created on first install, or pre-seeded), never one per
+  user. Per-user auth stays per-principal in the vault (`vault.Find(gatewayID, principalSub,
+  provider)`), so sharing the registry never shares credentials. A per-user endpoint override (URL
+  variables) rides on the installation, not a separate registry. This keeps the registry count at
+  ~one-per-MCP and the config-snapshot small; installations scale outside it.
+- **Role toolkits show up inside the Store.** The Store surface for a principal is
+  `(role_provisioned ∪ self_installed) ∩ store_policy_enabled`, so a user's department toolkit
+  appears in the one Store URL automatically (top-down) alongside what they installed themselves
+  (bottom-up). This is what makes "connect one URL" real. Dedicated curated consumers
+  (`/eng/mcp`, service accounts, headless clients) still coexist as separate URLs for locked-down
+  cases.
+- **Installations are queryable for admin visibility.** `installation` is a real, indexed table
+  keyed by `(principal, gatewayId, catalogCode, status, installedAt, installedBy)`, so an admin can
+  list "who installed what". Every install/uninstall emits an audit event. The Store's sentinel
+  identity records that an action originated in the Store.
+
+Meta-tools (gateway-implemented, on the synthetic-tool hook), gated to the Store consumer:
+`search` (whole catalog, respects store policy) · `install` / `uninstall` · `manage-connections`
+(connect links) · `approvals`.
 
 ## 6. Phasing
 
-1. Slice 1 — identity bridge (Gap A + Gap B together). ← next
-2. Store bootstrap + fixed URL.
-3. `installation` entity + CatalogScoper.
-4. Meta-tools + approvals.
+1. Slice 1 — identity bridge (Gap A + Gap B together). ✅
+2. Store bootstrap + fixed URL. ✅
+3. Store SEARCH meta-tool (whole catalog). ✅
+4. Phase 3 — the four-layer state:
+   1. `installation` entity + repository + migration (per-principal, queryable).
+   2. Store policy (admin enable/disable per catalog entry, per role); SEARCH/INSTALL honour it.
+   3. CatalogScoper — Store surface = `(role_provisioned ∪ self_installed) ∩ enabled`.
+   4. Admin visibility — list installations + audit events.
+5. Phase 4 — INSTALL / UNINSTALL meta-tools (shared registry resolution) + approvals for
+   sensitive entries.
