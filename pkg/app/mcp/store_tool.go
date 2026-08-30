@@ -22,7 +22,9 @@ import (
 	"strings"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 )
 
 const (
@@ -33,6 +35,10 @@ const (
 	// StoreSearchToolName is the catalog-search meta-tool: it searches the whole
 	// MCP catalog, not just what the caller has installed.
 	StoreSearchToolName = StoreToolNamePrefix + "search"
+	// StoreInstallToolName installs a catalog entry for the calling principal.
+	StoreInstallToolName = StoreToolNamePrefix + "install"
+	// StoreUninstallToolName removes a catalog entry the principal installed.
+	StoreUninstallToolName = StoreToolNamePrefix + "uninstall"
 
 	defaultStoreSearchLimit = 20
 	maxStoreSearchLimit     = 50
@@ -58,15 +64,22 @@ type StoreTool interface {
 }
 
 type storeTool struct {
-	catalog MCPServerCatalog
+	catalog   MCPServerCatalog
+	installer appstore.Installer
 }
 
-// NewStoreTool wires the Store meta-tools over the catalog service.
+// NewStoreTool wires the catalog-search meta-tool (SEARCH only).
 func NewStoreTool(catalog MCPServerCatalog) (StoreTool, error) {
+	return NewStoreToolWithInstaller(catalog, nil)
+}
+
+// NewStoreToolWithInstaller wires the Store meta-tools. When installer is nil
+// only SEARCH is offered (e.g. on a plane without the installation store).
+func NewStoreToolWithInstaller(catalog MCPServerCatalog, installer appstore.Installer) (StoreTool, error) {
 	if catalog == nil {
 		return nil, ErrStoreToolUnavailable
 	}
-	return &storeTool{catalog: catalog}, nil
+	return &storeTool{catalog: catalog, installer: installer}, nil
 }
 
 func (t *storeTool) Handles(name string) bool {
@@ -77,28 +90,124 @@ func (t *storeTool) Definitions(_ context.Context, rc *appconsumer.RoutableConsu
 	if t == nil || t.catalog == nil || rc == nil {
 		return nil
 	}
-	def, err := storeSearchDefinition()
+	search, err := storeSearchDefinition()
 	if err != nil {
 		return nil
 	}
-	return []Tool{def}
+	tools := []Tool{search}
+	if t.installer != nil {
+		if install, err := storeInstallDefinition(); err == nil {
+			tools = append(tools, install)
+		}
+		if uninstall, err := storeUninstallDefinition(); err == nil {
+			tools = append(tools, uninstall)
+		}
+	}
+	return tools
 }
 
 func (t *storeTool) Call(
-	_ context.Context,
+	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
 	name string,
 	arguments json.RawMessage,
 ) (json.RawMessage, error) {
-	if t == nil || t.catalog == nil || rc == nil {
+	if t == nil || t.catalog == nil || rc == nil || rc.Consumer == nil {
 		return nil, ErrStoreToolUnavailable
 	}
 	switch name {
 	case StoreSearchToolName:
 		return t.search(arguments)
+	case StoreInstallToolName:
+		return t.install(ctx, rc, arguments)
+	case StoreUninstallToolName:
+		return t.uninstall(ctx, rc, arguments)
 	default:
 		return nil, fmt.Errorf("%w: unknown tool %q", ErrStoreToolUnavailable, name)
 	}
+}
+
+type storeCodeArgs struct {
+	Code string `json:"code"`
+}
+
+func (t *storeTool) principalSubject(ctx context.Context) (string, error) {
+	principal := identity.PrincipalFromContext(ctx)
+	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
+		return "", ErrNoPrincipal
+	}
+	return principal.Subject, nil
+}
+
+func (t *storeTool) install(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	arguments json.RawMessage,
+) (json.RawMessage, error) {
+	if t.installer == nil {
+		return nil, fmt.Errorf("%w: install is not available here", ErrStoreToolUnavailable)
+	}
+	var args storeCodeArgs
+	if err := json.Unmarshal(arguments, &args); err != nil || strings.TrimSpace(args.Code) == "" {
+		return nil, fmt.Errorf("%w: install requires a catalog code", ErrStoreToolUnavailable)
+	}
+	sub, err := t.principalSubject(ctx)
+	if err != nil {
+		return nil, err
+	}
+	res, err := t.installer.Install(ctx, rc.Consumer.GatewayID, sub, args.Code, sub)
+	if err != nil {
+		return nil, err
+	}
+	text := fmt.Sprintf("Installed %s.", res.Name)
+	if res.AlreadyInstalled {
+		text = fmt.Sprintf("%s was already installed.", res.Name)
+	}
+	if res.RequiresAuth {
+		text += " It needs your account connected before its tools can be used."
+	}
+	return marshalToolResult(text, map[string]any{
+		"code":              res.Code,
+		"name":              res.Name,
+		"requires_auth":     res.RequiresAuth,
+		"already_installed": res.AlreadyInstalled,
+	})
+}
+
+func (t *storeTool) uninstall(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	arguments json.RawMessage,
+) (json.RawMessage, error) {
+	if t.installer == nil {
+		return nil, fmt.Errorf("%w: uninstall is not available here", ErrStoreToolUnavailable)
+	}
+	var args storeCodeArgs
+	if err := json.Unmarshal(arguments, &args); err != nil || strings.TrimSpace(args.Code) == "" {
+		return nil, fmt.Errorf("%w: uninstall requires a catalog code", ErrStoreToolUnavailable)
+	}
+	sub, err := t.principalSubject(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := t.installer.Uninstall(ctx, rc.Consumer.GatewayID, sub, args.Code); err != nil {
+		return nil, err
+	}
+	return marshalToolResult(
+		fmt.Sprintf("Uninstalled %s.", strings.TrimSpace(args.Code)),
+		map[string]any{"code": strings.TrimSpace(args.Code), "uninstalled": true},
+	)
+}
+
+func marshalToolResult(text string, structured map[string]any) (json.RawMessage, error) {
+	raw, err := json.Marshal(map[string]any{
+		"content":           []map[string]string{{"type": "text", "text": text}},
+		"structuredContent": structured,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%w: encode result: %w", ErrStoreToolUnavailable, err)
+	}
+	return raw, nil
 }
 
 type storeSearchArgs struct {
@@ -247,6 +356,57 @@ func storeSearchDefinition() (Tool, error) {
 			"readOnlyHint":    true,
 			"destructiveHint": false,
 			"idempotentHint":  true,
+			"openWorldHint":   false,
+		},
+	})
+	if err != nil {
+		return Tool{}, err
+	}
+	var def Tool
+	if err := json.Unmarshal(raw, &def); err != nil {
+		return Tool{}, err
+	}
+	return def, nil
+}
+
+func storeInstallDefinition() (Tool, error) {
+	return codeArgTool(
+		StoreInstallToolName,
+		"Install an MCP server",
+		"Install a catalog MCP server for the current user so its tools appear on this Store. Takes the catalog `code` returned by "+StoreSearchToolName+". Governed by the user's role; a server that needs the user's own account will ask them to connect it before its tools work.",
+		false,
+	)
+}
+
+func storeUninstallDefinition() (Tool, error) {
+	return codeArgTool(
+		StoreUninstallToolName,
+		"Uninstall an MCP server",
+		"Remove a catalog MCP server the current user installed, taking its tools off this Store. Takes the catalog `code`.",
+		true,
+	)
+}
+
+func codeArgTool(name, title, description string, idempotent bool) (Tool, error) {
+	raw, err := json.Marshal(map[string]any{
+		"name":        name,
+		"title":       title,
+		"description": description,
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"code": map[string]any{
+					"type":        "string",
+					"description": "Catalog code of the MCP server.",
+				},
+			},
+			"required":             []string{"code"},
+			"additionalProperties": false,
+		},
+		"annotations": map[string]any{
+			"readOnlyHint":    false,
+			"destructiveHint": idempotent,
+			"idempotentHint":  idempotent,
 			"openWorldHint":   false,
 		},
 	})

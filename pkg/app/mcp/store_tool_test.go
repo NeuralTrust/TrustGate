@@ -20,8 +20,10 @@ import (
 	"testing"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
@@ -145,5 +147,93 @@ func TestStoreToolCallRejectsUnknownTool(t *testing.T) {
 	tool := newStoreToolForTest(t)
 	if _, err := tool.Call(context.Background(), storeRC(), "trustgate_store_bogus", nil); err == nil {
 		t.Fatal("unknown store tool must error")
+	}
+}
+
+type fakeInstaller struct {
+	installed   []string
+	uninstalled []string
+	result      *appstore.InstallResult
+}
+
+func (f *fakeInstaller) Install(_ context.Context, _ ids.GatewayID, _, code, _ string) (*appstore.InstallResult, error) {
+	f.installed = append(f.installed, code)
+	if f.result != nil {
+		return f.result, nil
+	}
+	return &appstore.InstallResult{Code: code, Name: code}, nil
+}
+
+func (f *fakeInstaller) Uninstall(_ context.Context, _ ids.GatewayID, _, code string) error {
+	f.uninstalled = append(f.uninstalled, code)
+	return nil
+}
+
+func storeToolWithInstaller(t *testing.T, installer appstore.Installer) StoreTool {
+	t.Helper()
+	tool, err := NewStoreToolWithInstaller(sampleCatalog(), installer)
+	if err != nil {
+		t.Fatalf("NewStoreToolWithInstaller: %v", err)
+	}
+	return tool
+}
+
+func ctxWithPrincipal() context.Context {
+	return identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "ana"})
+}
+
+func TestStoreDefinitionsIncludeInstallOnlyWithInstaller(t *testing.T) {
+	searchOnly := newStoreToolForTest(t)
+	if got := len(searchOnly.Definitions(context.Background(), storeRC())); got != 1 {
+		t.Fatalf("without an installer only SEARCH is offered, got %d tools", got)
+	}
+	withInstaller := storeToolWithInstaller(t, &fakeInstaller{})
+	names := map[string]bool{}
+	for _, d := range withInstaller.Definitions(context.Background(), storeRC()) {
+		names[d.Name] = true
+	}
+	if !names[StoreSearchToolName] || !names[StoreInstallToolName] || !names[StoreUninstallToolName] {
+		t.Fatalf("expected search+install+uninstall, got %v", names)
+	}
+}
+
+func TestStoreInstallCall(t *testing.T) {
+	installer := &fakeInstaller{result: &appstore.InstallResult{Code: "github", Name: "GitHub", RequiresAuth: true}}
+	tool := storeToolWithInstaller(t, installer)
+	raw, err := tool.Call(ctxWithPrincipal(), storeRC(), StoreInstallToolName, json.RawMessage(`{"code":"github"}`))
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if len(installer.installed) != 1 || installer.installed[0] != "github" {
+		t.Fatalf("installer must be called with the code, got %v", installer.installed)
+	}
+	sc := decodeStructured(t, raw)
+	if sc["code"] != "github" || sc["requires_auth"] != true {
+		t.Fatalf("unexpected install result: %+v", sc)
+	}
+}
+
+func TestStoreInstallRequiresPrincipal(t *testing.T) {
+	tool := storeToolWithInstaller(t, &fakeInstaller{})
+	if _, err := tool.Call(context.Background(), storeRC(), StoreInstallToolName, json.RawMessage(`{"code":"github"}`)); err == nil {
+		t.Fatal("install without an authenticated principal must error")
+	}
+}
+
+func TestStoreInstallUnavailableWithoutInstaller(t *testing.T) {
+	tool := newStoreToolForTest(t)
+	if _, err := tool.Call(ctxWithPrincipal(), storeRC(), StoreInstallToolName, json.RawMessage(`{"code":"github"}`)); err == nil {
+		t.Fatal("install must be unavailable when no installer is wired")
+	}
+}
+
+func TestStoreUninstallCall(t *testing.T) {
+	installer := &fakeInstaller{}
+	tool := storeToolWithInstaller(t, installer)
+	if _, err := tool.Call(ctxWithPrincipal(), storeRC(), StoreUninstallToolName, json.RawMessage(`{"code":"github"}`)); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	if len(installer.uninstalled) != 1 || installer.uninstalled[0] != "github" {
+		t.Fatalf("uninstall must call the installer, got %v", installer.uninstalled)
 	}
 }
