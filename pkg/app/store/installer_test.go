@@ -55,10 +55,11 @@ func (f *fakeCreator) Create(_ context.Context, in appregistry.CreateInput) (*re
 }
 
 type fakeInstalls struct {
-	upserts   []*installationdomain.Installation
-	deletes   int
-	findErr   error
-	findValue *installationdomain.Installation
+	upserts     []*installationdomain.Installation
+	deletes     int
+	findErr     error
+	findValue   *installationdomain.Installation
+	byPrincipal []*installationdomain.Installation
 }
 
 func (f *fakeInstalls) Upsert(_ context.Context, in *installationdomain.Installation) error {
@@ -77,7 +78,7 @@ func (f *fakeInstalls) Find(_ context.Context, _ ids.GatewayID, _, _ string) (*i
 }
 
 func (f *fakeInstalls) ListByPrincipal(context.Context, ids.GatewayID, string) ([]*installationdomain.Installation, error) {
-	return nil, nil
+	return f.byPrincipal, nil
 }
 
 func (f *fakeInstalls) ListByCatalogCode(context.Context, ids.GatewayID, string) ([]*installationdomain.Installation, error) {

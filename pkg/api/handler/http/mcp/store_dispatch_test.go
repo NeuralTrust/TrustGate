@@ -27,9 +27,23 @@ import (
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+// stubScoper adds a fixed set of registries to the Store consumer, standing in
+// for the real CatalogScoper.
+type stubScoper struct{ regs []*registrydomain.Registry }
+
+func (s stubScoper) Scope(_ context.Context, rc *appconsumer.RoutableConsumer) (*appconsumer.RoutableConsumer, error) {
+	if rc == nil || rc.Consumer == nil || !consumerdomain.IsStoreConsumer(rc.Consumer) {
+		return rc, nil
+	}
+	scoped := *rc
+	scoped.Registries = s.regs
+	return &scoped, nil
+}
 
 type stubCatalog struct{ servers []catalogdomain.MCPServer }
 
@@ -76,6 +90,33 @@ func TestRPCGateway_Store_ListsAndCallsSearch(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Contains(t, string(called.(json.RawMessage)), `"github"`)
+}
+
+func TestRPCGateway_Store_ScoperSurfacesInstalledTools(t *testing.T) {
+	t.Parallel()
+	installedReg := &registrydomain.Registry{
+		ID:        ids.New[ids.RegistryKind](),
+		MCPTarget: &registrydomain.MCPTarget{Code: "github"},
+	}
+	composer := mocks.NewComposer(t)
+	// ListTools must be called with the SCOPED consumer: the Store consumer now
+	// carries the installed registry.
+	composer.EXPECT().
+		ListTools(mock.Anything, mock.MatchedBy(func(rc *appconsumer.RoutableConsumer) bool {
+			return rc != nil && len(rc.Registries) == 1 && rc.Registries[0].ID == installedReg.ID
+		})).
+		Return([]appmcp.Tool{{Name: "github_create_issue"}}, nil).Once()
+
+	g := mcphttp.NewRPCGatewayWithMetaTools(composer, noopRunner(), nil, nil, storeToolForDispatch(t)).
+		WithStoreScoper(stubScoper{regs: []*registrydomain.Registry{installedReg}})
+
+	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]())}
+
+	listed, err := g.Dispatch(context.Background(), rc, "tools/list", nil)
+	require.NoError(t, err)
+	names := toolNames(listed.(map[string]any)["tools"].([]appmcp.Tool))
+	require.Contains(t, names, "github_create_issue")      // an installed upstream tool
+	require.Contains(t, names, appmcp.StoreSearchToolName) // and the Store meta-tools alongside
 }
 
 func TestRPCGateway_Store_NotOfferedOnRegularConsumer(t *testing.T) {
