@@ -20,12 +20,28 @@ import (
 	"testing"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
+
+type fakeRegistryLister struct{ items []*registrydomain.Registry }
+
+func (f fakeRegistryLister) List(context.Context, registrydomain.ListFilter) ([]*registrydomain.Registry, int, error) {
+	return f.items, len(f.items), nil
+}
+
+func shelfReg(code string, store *registrydomain.MCPStoreConfig) *registrydomain.Registry {
+	return &registrydomain.Registry{
+		ID:        ids.New[ids.RegistryKind](),
+		MCPTarget: &registrydomain.MCPTarget{Code: code, Store: store},
+	}
+}
 
 type fakeCatalog struct{ servers []catalogdomain.MCPServer }
 
@@ -150,6 +166,67 @@ func TestStoreToolCallRejectsUnknownTool(t *testing.T) {
 	}
 }
 
+func storeToolWithShelf(t *testing.T, items ...*registrydomain.Registry) StoreTool {
+	t.Helper()
+	tool, err := NewStoreToolWithInstaller(sampleCatalog(), nil, fakeRegistryLister{items: items})
+	if err != nil {
+		t.Fatalf("NewStoreToolWithInstaller: %v", err)
+	}
+	return tool
+}
+
+func resultsByCode(t *testing.T, raw json.RawMessage) map[string]map[string]any {
+	t.Helper()
+	sc := decodeStructured(t, raw)
+	out := map[string]map[string]any{}
+	for _, r := range sc["results"].([]any) {
+		m := r.(map[string]any)
+		out[m["code"].(string)] = m
+	}
+	return out
+}
+
+func TestStoreSearchTagsShelfState(t *testing.T) {
+	tool := storeToolWithShelf(t,
+		shelfReg("github", &registrydomain.MCPStoreConfig{Available: true}),
+		shelfReg("gitlab", &registrydomain.MCPStoreConfig{Available: true, RequiresApproval: true}),
+		// salesforce not on the shelf
+	)
+	raw, err := tool.Call(context.Background(), storeRC(), StoreSearchToolName, nil)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	got := resultsByCode(t, raw)
+	if got["github"]["store_state"] != storeStateAvailable {
+		t.Fatalf("github should be available, got %v", got["github"]["store_state"])
+	}
+	if got["gitlab"]["store_state"] != storeStateApproval {
+		t.Fatalf("gitlab should be approval, got %v", got["gitlab"]["store_state"])
+	}
+	if got["salesforce"]["store_state"] != storeStateRequest {
+		t.Fatalf("salesforce should be request, got %v", got["salesforce"]["store_state"])
+	}
+}
+
+func TestStoreSearchCuratedModeHidesNonShelf(t *testing.T) {
+	tool := storeToolWithShelf(t, shelfReg("github", &registrydomain.MCPStoreConfig{Available: true}))
+	// A gateway in curated mode.
+	gw := &gatewaydomain.Gateway{Metadata: gatewaydomain.WithStoreMode(nil, gatewaydomain.StoreModeCurated)}
+	ctx := appgateway.WithGateway(context.Background(), gw)
+
+	raw, err := tool.Call(ctx, storeRC(), StoreSearchToolName, nil)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	got := resultsByCode(t, raw)
+	if _, ok := got["github"]; !ok {
+		t.Fatal("curated mode must still show the shelf server github")
+	}
+	if _, ok := got["salesforce"]; ok {
+		t.Fatal("curated mode must hide non-shelf servers")
+	}
+}
+
 type fakeInstaller struct {
 	installed   []string
 	lastGroups  []string
@@ -173,7 +250,7 @@ func (f *fakeInstaller) Uninstall(_ context.Context, _ ids.GatewayID, _, code st
 
 func storeToolWithInstaller(t *testing.T, installer appstore.Installer) StoreTool {
 	t.Helper()
-	tool, err := NewStoreToolWithInstaller(sampleCatalog(), installer)
+	tool, err := NewStoreToolWithInstaller(sampleCatalog(), installer, nil)
 	if err != nil {
 		t.Fatalf("NewStoreToolWithInstaller: %v", err)
 	}
