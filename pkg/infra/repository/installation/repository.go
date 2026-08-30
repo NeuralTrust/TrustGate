@@ -112,6 +112,16 @@ func (r *Repository) ListByCatalogCode(
 	return r.queryList(ctx, query, gatewayID, catalogCode)
 }
 
+func (r *Repository) ListPendingByGateway(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+) ([]*domain.Installation, error) {
+	const query = selectColumns + `
+		WHERE gateway_id = $1 AND status = $2
+		ORDER BY created_at`
+	return r.queryList(ctx, query, gatewayID, string(domain.StatusPendingApproval))
+}
+
 func (r *Repository) Delete(
 	ctx context.Context,
 	gatewayID ids.GatewayID,

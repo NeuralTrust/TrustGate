@@ -34,10 +34,18 @@ func (f fakeCatalog) GetByCode(code string) (catalogdomain.MCPServer, bool) {
 	return e, ok
 }
 
-type fakeRegistries struct{ items []*registrydomain.Registry }
+type fakeRegistries struct {
+	items   []*registrydomain.Registry
+	updated []*registrydomain.Registry
+}
 
 func (f *fakeRegistries) List(context.Context, registrydomain.ListFilter) ([]*registrydomain.Registry, int, error) {
 	return f.items, len(f.items), nil
+}
+
+func (f *fakeRegistries) Update(_ context.Context, b *registrydomain.Registry) error {
+	f.updated = append(f.updated, b)
+	return nil
 }
 
 type fakeInstalls struct {
@@ -45,6 +53,7 @@ type fakeInstalls struct {
 	deletes     int
 	findValue   *installationdomain.Installation
 	byPrincipal []*installationdomain.Installation
+	pending     []*installationdomain.Installation
 }
 
 func (f *fakeInstalls) Upsert(_ context.Context, in *installationdomain.Installation) error {
@@ -65,6 +74,10 @@ func (f *fakeInstalls) ListByPrincipal(context.Context, ids.GatewayID, string) (
 
 func (f *fakeInstalls) ListByCatalogCode(context.Context, ids.GatewayID, string) ([]*installationdomain.Installation, error) {
 	return nil, nil
+}
+
+func (f *fakeInstalls) ListPendingByGateway(context.Context, ids.GatewayID) ([]*installationdomain.Installation, error) {
+	return f.pending, nil
 }
 
 func (f *fakeInstalls) Delete(context.Context, ids.GatewayID, string, string) error {
