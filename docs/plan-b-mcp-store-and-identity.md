@@ -112,12 +112,22 @@ separate is what lets top-down governance and bottom-up self-service coexist.
 | Layer | What | Owner | Where it lives |
 |---|---|---|---|
 | 1. **Catalog** | The ~198 curated MCP servers | NeuralTrust | embed (`seed/mcp-catalog`), global |
-| 2. **Store policy** | Which catalog entries are enabled for this org, and for which roles | Admin (top-down) | per-gateway/tenant policy, in the config-snapshot |
-| 3. **Installation** | What each user installed | User (bottom-up) | per-principal, durable, **outside** the snapshot (like the vault) |
-| 4. **Registry + vault** | The real upstream connection + each user's own credentials | Gateway | registry in the snapshot; credentials per-principal in the vault |
+| 2. **Store governance** | Which servers are on the shelf (available / approval / roles) + the gateway open\|curated mode | Admin (top-down) | **fields on the registry** (`mcp_target.store`, JSONB) + gateway metadata — no separate entity |
+| 3. **Installation** | What each user installed / requested | User (bottom-up) | per-principal, durable, **outside** the snapshot (like the vault) |
+| 4. **Registry + vault** | The real upstream connection + each user's own credentials | Gateway | registry (the shelf); credentials per-principal in the vault |
+
+Store governance is **not a separate concept or tab** — it is properties of the registry, edited from
+the registry side panel. The registry IS the Store's admin surface.
 
 Fixed decisions:
 
+- **Managed from the registry (the shelf model).** Store governance rides on the registry
+  (`mcp_target.store`: available / requires_approval / roles) plus a gateway `store_mode`
+  (open|curated). The admin curates on the registry side panel — which also becomes the place to
+  edit the upstream MCP auth. No Store tab, no store-policy entity. SEARCH browses the whole catalog
+  and tags each result available/approval/request; INSTALL references the shelf (install /
+  request-on-approval); a server not on the shelf, or one the caller's role gate fails, becomes a
+  pending request the admin shelves+approves. In curated mode SEARCH hides non-shelf servers.
 - **Shared registry within the gateway.** Installing a catalog entry resolves to a *single* shared
   registry per catalog code per gateway (created on first install, or pre-seeded), never one per
   user. Per-user auth stays per-principal in the vault (`vault.Find(gatewayID, principalSub,
