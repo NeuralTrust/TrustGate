@@ -212,7 +212,11 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 		installer = made
 	}
 
-	store, err := appmcp.NewStoreToolWithInstaller(catalog, installer)
+	var registries appstore.RegistryLister
+	if p.Registries != nil {
+		registries = p.Registries
+	}
+	store, err := appmcp.NewStoreToolWithInstaller(catalog, installer, registries)
 	if err != nil {
 		return nil, err
 	}

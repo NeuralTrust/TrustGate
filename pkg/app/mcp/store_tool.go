@@ -22,9 +22,12 @@ import (
 	"strings"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 const (
@@ -64,22 +67,28 @@ type StoreTool interface {
 }
 
 type storeTool struct {
-	catalog   MCPServerCatalog
-	installer appstore.Installer
+	catalog    MCPServerCatalog
+	installer  appstore.Installer
+	registries appstore.RegistryLister
 }
 
 // NewStoreTool wires the catalog-search meta-tool (SEARCH only).
 func NewStoreTool(catalog MCPServerCatalog) (StoreTool, error) {
-	return NewStoreToolWithInstaller(catalog, nil)
+	return NewStoreToolWithInstaller(catalog, nil, nil)
 }
 
 // NewStoreToolWithInstaller wires the Store meta-tools. When installer is nil
-// only SEARCH is offered (e.g. on a plane without the installation store).
-func NewStoreToolWithInstaller(catalog MCPServerCatalog, installer appstore.Installer) (StoreTool, error) {
+// only SEARCH is offered (e.g. a plane without the installation store); when
+// registries is nil SEARCH does not tag results with their shelf state.
+func NewStoreToolWithInstaller(
+	catalog MCPServerCatalog,
+	installer appstore.Installer,
+	registries appstore.RegistryLister,
+) (StoreTool, error) {
 	if catalog == nil {
 		return nil, ErrStoreToolUnavailable
 	}
-	return &storeTool{catalog: catalog, installer: installer}, nil
+	return &storeTool{catalog: catalog, installer: installer, registries: registries}, nil
 }
 
 func (t *storeTool) Handles(name string) bool {
@@ -117,7 +126,7 @@ func (t *storeTool) Call(
 	}
 	switch name {
 	case StoreSearchToolName:
-		return t.search(arguments)
+		return t.search(ctx, rc, arguments)
 	case StoreInstallToolName:
 		return t.install(ctx, rc, arguments)
 	case StoreUninstallToolName:
@@ -260,9 +269,28 @@ type storeSearchResult struct {
 	Description  string `json:"description,omitempty"`
 	ToolCount    int    `json:"tool_count"`
 	RequiresAuth bool   `json:"requires_auth"`
+	// StoreState is how the caller can obtain this server: "available" (installs
+	// immediately), "approval" (install needs approval), or "request" (not on the
+	// admin's shelf yet — installing files a request).
+	StoreState string `json:"store_state"`
 }
 
-func (t *storeTool) search(arguments json.RawMessage) (json.RawMessage, error) {
+const (
+	storeStateAvailable = "available"
+	storeStateApproval  = "approval"
+	storeStateRequest   = "request"
+)
+
+type shelfEntry struct {
+	available        bool
+	requiresApproval bool
+}
+
+func (t *storeTool) search(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	arguments json.RawMessage,
+) (json.RawMessage, error) {
 	var args storeSearchArgs
 	if len(arguments) > 0 {
 		// Be lenient: a malformed argument object browses the catalog rather than
@@ -279,6 +307,9 @@ func (t *storeTool) search(arguments json.RawMessage) (json.RawMessage, error) {
 	query := strings.ToLower(strings.TrimSpace(args.Query))
 	category := strings.ToLower(strings.TrimSpace(args.Category))
 
+	shelf := t.shelfIndex(ctx, rc)
+	curated := t.storeMode(ctx) == gatewaydomain.StoreModeCurated
+
 	// The catalog is served in relevance order; a query narrows it, an empty
 	// query browses the top of the whole catalog.
 	all := t.catalog.ListMCPServers()
@@ -292,9 +323,14 @@ func (t *storeTool) search(arguments json.RawMessage) (json.RawMessage, error) {
 		if !matchesQuery(entry, query) {
 			continue
 		}
+		state := shelfState(shelf, entry.Code)
+		// In curated mode only shelf (available) servers are browsable.
+		if curated && state == storeStateRequest {
+			continue
+		}
 		total++
 		if len(matched) < limit {
-			matched = append(matched, toSearchResult(entry))
+			matched = append(matched, toSearchResult(entry, state))
 		}
 	}
 
@@ -303,6 +339,7 @@ func (t *storeTool) search(arguments json.RawMessage) (json.RawMessage, error) {
 		"total":     total,
 		"returned":  len(matched),
 		"truncated": total > len(matched),
+		"mode":      t.storeMode(ctx),
 	}
 	result := map[string]any{
 		"content": []map[string]string{{
@@ -316,6 +353,53 @@ func (t *storeTool) search(arguments json.RawMessage) (json.RawMessage, error) {
 		return nil, fmt.Errorf("%w: encode result: %w", ErrStoreToolUnavailable, err)
 	}
 	return raw, nil
+}
+
+// shelfIndex maps catalog codes the admin has put on this gateway's shelf to
+// their Store governance. Empty when registries are not wired (data plane).
+func (t *storeTool) shelfIndex(ctx context.Context, rc *appconsumer.RoutableConsumer) map[string]shelfEntry {
+	if t.registries == nil || rc == nil || rc.Consumer == nil {
+		return nil
+	}
+	items, _, err := t.registries.List(ctx, registrydomain.ListFilter{
+		GatewayID: rc.Consumer.GatewayID,
+		Page:      1,
+		Size:      storeShelfPageSize,
+	})
+	if err != nil {
+		return nil
+	}
+	shelf := make(map[string]shelfEntry, len(items))
+	for _, reg := range items {
+		if reg == nil || reg.MCPTarget == nil || reg.MCPTarget.Code == "" {
+			continue
+		}
+		shelf[reg.MCPTarget.Code] = shelfEntry{
+			available:        reg.MCPTarget.StoreAvailable(),
+			requiresApproval: reg.MCPTarget.StoreRequiresApproval(),
+		}
+	}
+	return shelf
+}
+
+func (t *storeTool) storeMode(ctx context.Context) string {
+	if gw, ok := appgateway.FromContext(ctx); ok {
+		return gw.StoreMode()
+	}
+	return gatewaydomain.StoreModeOpen
+}
+
+const storeShelfPageSize = 500
+
+func shelfState(shelf map[string]shelfEntry, code string) string {
+	entry, ok := shelf[code]
+	if !ok || !entry.available {
+		return storeStateRequest
+	}
+	if entry.requiresApproval {
+		return storeStateApproval
+	}
+	return storeStateAvailable
 }
 
 func matchesQuery(entry catalogdomain.MCPServer, query string) bool {
@@ -332,7 +416,7 @@ func matchesQuery(entry catalogdomain.MCPServer, query string) bool {
 	return false
 }
 
-func toSearchResult(entry catalogdomain.MCPServer) storeSearchResult {
+func toSearchResult(entry catalogdomain.MCPServer, state string) storeSearchResult {
 	return storeSearchResult{
 		Code:         entry.Code,
 		Name:         entry.DisplayName,
@@ -341,6 +425,7 @@ func toSearchResult(entry catalogdomain.MCPServer) storeSearchResult {
 		Description:  entry.Description,
 		ToolCount:    len(entry.Tools),
 		RequiresAuth: entry.RequiresAuth,
+		StoreState:   state,
 	}
 }
 
