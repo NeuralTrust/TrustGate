@@ -151,24 +151,26 @@ func (t *storeTool) install(
 	if err := json.Unmarshal(arguments, &args); err != nil || strings.TrimSpace(args.Code) == "" {
 		return nil, fmt.Errorf("%w: install requires a catalog code", ErrStoreToolUnavailable)
 	}
-	sub, err := t.principalSubject(ctx)
+	principal := identity.PrincipalFromContext(ctx)
+	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
+		return nil, ErrNoPrincipal
+	}
+	res, err := t.installer.Install(ctx, appstore.InstallRequest{
+		GatewayID:    rc.Consumer.GatewayID,
+		PrincipalSub: principal.Subject,
+		Code:         args.Code,
+		InstalledBy:  principal.Subject,
+		Groups:       principalGroups(principal),
+	})
 	if err != nil {
 		return nil, err
 	}
-	res, err := t.installer.Install(ctx, rc.Consumer.GatewayID, sub, args.Code, sub)
-	if err != nil {
-		return nil, err
-	}
-	text := fmt.Sprintf("Installed %s.", res.Name)
-	if res.AlreadyInstalled {
-		text = fmt.Sprintf("%s was already installed.", res.Name)
-	}
-	if res.RequiresAuth {
-		text += " It needs your account connected before its tools can be used."
-	}
+	text := installMessage(res)
 	return marshalToolResult(text, map[string]any{
 		"code":              res.Code,
 		"name":              res.Name,
+		"status":            string(res.Status),
+		"pending":           res.Pending,
 		"requires_auth":     res.RequiresAuth,
 		"already_installed": res.AlreadyInstalled,
 	})
@@ -197,6 +199,40 @@ func (t *storeTool) uninstall(
 		fmt.Sprintf("Uninstalled %s.", strings.TrimSpace(args.Code)),
 		map[string]any{"code": strings.TrimSpace(args.Code), "uninstalled": true},
 	)
+}
+
+func principalGroups(principal *identity.Principal) []string {
+	if principal == nil {
+		return nil
+	}
+	switch v := principal.Claims[identity.ClaimGroups].(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func installMessage(res *appstore.InstallResult) string {
+	if res.AlreadyInstalled {
+		return fmt.Sprintf("%s was already installed.", res.Name)
+	}
+	if res.Pending {
+		return fmt.Sprintf("%s has been requested and is awaiting approval; you'll get its tools once an admin approves it.", res.Name)
+	}
+	text := fmt.Sprintf("Installed %s.", res.Name)
+	if res.RequiresAuth {
+		text += " It needs your account connected before its tools can be used."
+	}
+	return text
 }
 
 func marshalToolResult(text string, structured map[string]any) (json.RawMessage, error) {
