@@ -22,21 +22,22 @@ import (
 	"fmt"
 	"strings"
 
-	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
-// registryListPageSize bounds the per-gateway registry scan used to find an
-// already-provisioned shared registry for a catalog code. Registries per gateway
-// are few (tens), so a single large page covers them.
+// registryListPageSize bounds the per-gateway registry scan used to find the
+// shelf registry for a catalog code. Registries per gateway are few (tens).
 const registryListPageSize = 500
 
 var (
 	ErrUnavailable          = errors.New("store: installer unavailable")
 	ErrCatalogEntryNotFound = errors.New("store: catalog entry not found")
+	// ErrRoleNotAllowed is returned when a server is on the shelf but the
+	// principal's roles are not permitted to install it.
+	ErrRoleNotAllowed = errors.New("store: your role is not allowed to install this server")
 )
 
 // CatalogReader is the catalog lookup the installer needs.
@@ -44,78 +45,86 @@ type CatalogReader interface {
 	GetByCode(code string) (catalogdomain.MCPServer, bool)
 }
 
-// RegistryLister lists a gateway's registries so the installer can find an
-// already-provisioned shared registry by catalog code.
+// RegistryLister lists a gateway's registries so the installer/scoper can find
+// the shelf registry for a catalog code.
 type RegistryLister interface {
 	List(ctx context.Context, filter registrydomain.ListFilter) ([]*registrydomain.Registry, int, error)
 }
 
 // InstallResult reports the outcome of an install to the caller (the meta-tool).
 type InstallResult struct {
-	Code             string
-	Name             string
-	RegistryID       string
+	Code   string
+	Name   string
+	Status installationdomain.Status
+	// Pending is true when the install was recorded as a request awaiting
+	// approval (server needs approval, or is not on the shelf yet).
+	Pending          bool
 	RequiresAuth     bool
 	AlreadyInstalled bool
 }
 
 //go:generate mockery --name=Installer --dir=. --output=./mocks --filename=store_installer_mock.go --case=underscore --with-expecter
 type Installer interface {
-	Install(ctx context.Context, gatewayID ids.GatewayID, principalSub, code, installedBy string) (*InstallResult, error)
+	Install(ctx context.Context, in InstallRequest) (*InstallResult, error)
 	Uninstall(ctx context.Context, gatewayID ids.GatewayID, principalSub, code string) error
 }
 
-type installer struct {
-	catalog       CatalogReader
-	registries    RegistryLister
-	registryMaker appregistry.Creator
-	installs      installationdomain.Repository
+// InstallRequest carries everything an install decision needs. Groups are the
+// caller's IdP groups (from the token), used for role-gated servers.
+type InstallRequest struct {
+	GatewayID    ids.GatewayID
+	PrincipalSub string
+	Code         string
+	InstalledBy  string
+	Groups       []string
 }
 
-// NewInstaller wires the Store installer. The shared registry per catalog code
-// is created on first install and reused by every subsequent installer of that
-// code (auth stays per-principal in the vault), so a gateway holds ~one registry
-// per MCP rather than one per user.
+type installer struct {
+	catalog    CatalogReader
+	registries RegistryLister
+	installs   installationdomain.Repository
+}
+
+// NewInstaller wires the Store installer. Installing references a shelf registry
+// the admin curated (store.available); a server that is not available, or is
+// available but marked requires-approval, is recorded as a pending request
+// rather than granted. The shared registry is never created here — that is the
+// admin's activate/approve path.
 func NewInstaller(
 	catalog CatalogReader,
 	registries RegistryLister,
-	registryMaker appregistry.Creator,
 	installs installationdomain.Repository,
 ) (Installer, error) {
-	if catalog == nil || registries == nil || registryMaker == nil || installs == nil {
+	if catalog == nil || registries == nil || installs == nil {
 		return nil, ErrUnavailable
 	}
-	return &installer{
-		catalog:       catalog,
-		registries:    registries,
-		registryMaker: registryMaker,
-		installs:      installs,
-	}, nil
+	return &installer{catalog: catalog, registries: registries, installs: installs}, nil
 }
 
-func (i *installer) Install(
-	ctx context.Context,
-	gatewayID ids.GatewayID,
-	principalSub, code, installedBy string,
-) (*InstallResult, error) {
-	code = strings.TrimSpace(code)
+func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallResult, error) {
+	code := strings.TrimSpace(in.Code)
 	entry, ok := i.catalog.GetByCode(code)
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrCatalogEntryNotFound, code)
 	}
 
-	reg, err := i.ensureSharedRegistry(ctx, gatewayID, entry)
+	reg, err := i.findRegistryByCode(ctx, in.GatewayID, code)
 	if err != nil {
 		return nil, err
 	}
 
-	existing, err := i.installs.Find(ctx, gatewayID, principalSub, code)
-	alreadyInstalled := err == nil && existing.IsActive()
-	if err != nil && !errors.Is(err, installationdomain.ErrNotFound) {
+	status, err := i.decideStatus(reg, in.Groups)
+	if err != nil {
 		return nil, err
 	}
 
-	record, err := installationdomain.New(gatewayID, principalSub, code, installedBy, nil)
+	existing, err := i.installs.Find(ctx, in.GatewayID, in.PrincipalSub, code)
+	if err != nil && !errors.Is(err, installationdomain.ErrNotFound) {
+		return nil, err
+	}
+	alreadyInstalled := err == nil && existing.IsActive()
+
+	record, err := installationForStatus(in.GatewayID, in.PrincipalSub, code, in.InstalledBy, status)
 	if err != nil {
 		return nil, err
 	}
@@ -126,10 +135,30 @@ func (i *installer) Install(
 	return &InstallResult{
 		Code:             code,
 		Name:             displayName(entry, code),
-		RegistryID:       reg.ID.String(),
+		Status:           status,
+		Pending:          status == installationdomain.StatusPendingApproval,
 		RequiresAuth:     entry.RequiresAuth,
 		AlreadyInstalled: alreadyInstalled,
 	}, nil
+}
+
+// decideStatus applies the shelf governance: available + role-allowed installs
+// immediately unless it needs approval; anything else becomes a pending request.
+func (i *installer) decideStatus(
+	reg *registrydomain.Registry,
+	groups []string,
+) (installationdomain.Status, error) {
+	if reg == nil || reg.MCPTarget == nil || !reg.MCPTarget.StoreAvailable() {
+		// Not on the shelf (or hidden): a request for the admin to shelve+approve.
+		return installationdomain.StatusPendingApproval, nil
+	}
+	if !rolesAllow(reg.MCPTarget.StoreRoles(), groups) {
+		return "", ErrRoleNotAllowed
+	}
+	if reg.MCPTarget.StoreRequiresApproval() {
+		return installationdomain.StatusPendingApproval, nil
+	}
+	return installationdomain.StatusInstalled, nil
 }
 
 func (i *installer) Uninstall(
@@ -137,40 +166,7 @@ func (i *installer) Uninstall(
 	gatewayID ids.GatewayID,
 	principalSub, code string,
 ) error {
-	// Remove only the per-principal installation; the shared registry stays for
-	// other installers and is an admin-managed resource.
 	return i.installs.Delete(ctx, gatewayID, principalSub, strings.TrimSpace(code))
-}
-
-// ensureSharedRegistry returns the gateway's registry for the catalog code,
-// creating it on first install. Best-effort idempotent: it scans existing
-// registries first; a concurrent first-install of the same code could create a
-// second registry, which is harmless (both point at the same upstream).
-func (i *installer) ensureSharedRegistry(
-	ctx context.Context,
-	gatewayID ids.GatewayID,
-	entry catalogdomain.MCPServer,
-) (*registrydomain.Registry, error) {
-	if found, err := i.findRegistryByCode(ctx, gatewayID, entry.Code); err != nil {
-		return nil, err
-	} else if found != nil {
-		return found, nil
-	}
-
-	created, err := i.registryMaker.Create(ctx, appregistry.CreateInput{
-		GatewayID: gatewayID,
-		Name:      displayName(entry, entry.Code),
-		Type:      registrydomain.TypeMCP,
-		MCPTarget: &registrydomain.MCPTarget{
-			Code:      entry.Code,
-			URL:       entry.URL,
-			Transport: registrydomain.MCPTransport(strings.TrimSpace(entry.Transport)),
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("store: provision shared registry for %q: %w", entry.Code, err)
-	}
-	return created, nil
 }
 
 func (i *installer) findRegistryByCode(
@@ -192,6 +188,37 @@ func (i *installer) findRegistryByCode(
 		}
 	}
 	return nil, nil
+}
+
+// rolesAllow reports whether the caller may install a role-gated server. An
+// empty allow-list means any Store-admitted principal.
+func rolesAllow(allowed, groups []string) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	set := make(map[string]struct{}, len(groups))
+	for _, g := range groups {
+		set[g] = struct{}{}
+	}
+	for _, a := range allowed {
+		if _, ok := set[a]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func installationForStatus(
+	gatewayID ids.GatewayID,
+	principalSub, code, installedBy string,
+	status installationdomain.Status,
+) (*installationdomain.Installation, error) {
+	in, err := installationdomain.New(gatewayID, principalSub, code, installedBy, nil)
+	if err != nil {
+		return nil, err
+	}
+	in.Status = status
+	return in, nil
 }
 
 func displayName(entry catalogdomain.MCPServer, code string) string {

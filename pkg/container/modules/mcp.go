@@ -30,7 +30,6 @@ import (
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
-	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
@@ -190,9 +189,8 @@ type rpcGatewayParams struct {
 	// Install path — present on the full/control plane only. When any is absent
 	// the Store offers SEARCH but not INSTALL (e.g. the Redis data plane, which
 	// has no installation store yet).
-	Registries      registrydomain.Repository     `optional:"true"`
-	RegistryCreator appregistry.Creator           `optional:"true"`
-	Installs        installationdomain.Repository `optional:"true"`
+	Registries registrydomain.Repository     `optional:"true"`
+	Installs   installationdomain.Repository `optional:"true"`
 }
 
 func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
@@ -206,8 +204,8 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 	}
 
 	var installer appstore.Installer
-	if p.Registries != nil && p.RegistryCreator != nil && p.Installs != nil {
-		made, err := appstore.NewInstaller(catalog, p.Registries, p.RegistryCreator, p.Installs)
+	if p.Registries != nil && p.Installs != nil {
+		made, err := appstore.NewInstaller(catalog, p.Registries, p.Installs)
 		if err != nil {
 			return nil, err
 		}

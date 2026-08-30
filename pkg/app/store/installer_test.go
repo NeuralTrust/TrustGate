@@ -19,7 +19,6 @@ import (
 	"errors"
 	"testing"
 
-	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
@@ -41,23 +40,9 @@ func (f *fakeRegistries) List(context.Context, registrydomain.ListFilter) ([]*re
 	return f.items, len(f.items), nil
 }
 
-type fakeCreator struct {
-	created []appregistry.CreateInput
-	ret     *registrydomain.Registry
-}
-
-func (f *fakeCreator) Create(_ context.Context, in appregistry.CreateInput) (*registrydomain.Registry, error) {
-	f.created = append(f.created, in)
-	if f.ret != nil {
-		return f.ret, nil
-	}
-	return &registrydomain.Registry{ID: ids.New[ids.RegistryKind]()}, nil
-}
-
 type fakeInstalls struct {
 	upserts     []*installationdomain.Installation
 	deletes     int
-	findErr     error
 	findValue   *installationdomain.Installation
 	byPrincipal []*installationdomain.Installation
 }
@@ -68,9 +53,6 @@ func (f *fakeInstalls) Upsert(_ context.Context, in *installationdomain.Installa
 }
 
 func (f *fakeInstalls) Find(_ context.Context, _ ids.GatewayID, _, _ string) (*installationdomain.Installation, error) {
-	if f.findErr != nil {
-		return nil, f.findErr
-	}
 	if f.findValue != nil {
 		return f.findValue, nil
 	}
@@ -90,79 +72,107 @@ func (f *fakeInstalls) Delete(context.Context, ids.GatewayID, string, string) er
 	return nil
 }
 
-func newInstaller(t *testing.T, regs *fakeRegistries, creator *fakeCreator, installs *fakeInstalls) Installer {
+// shelfRegistry builds a gateway registry for a catalog code with the given
+// Store governance.
+func shelfRegistry(code string, store *registrydomain.MCPStoreConfig) *registrydomain.Registry {
+	return &registrydomain.Registry{
+		ID:        ids.New[ids.RegistryKind](),
+		MCPTarget: &registrydomain.MCPTarget{Code: code, Store: store},
+	}
+}
+
+func newInstaller(t *testing.T, regs *fakeRegistries, installs *fakeInstalls) Installer {
 	t.Helper()
 	catalog := fakeCatalog{entries: map[string]catalogdomain.MCPServer{
-		"github": {Code: "github", DisplayName: "GitHub", URL: "https://mcp.github.com", Transport: "streamable-http", RequiresAuth: true},
+		"github": {Code: "github", DisplayName: "GitHub", URL: "https://mcp.github.com", RequiresAuth: true},
 	}}
-	inst, err := NewInstaller(catalog, regs, creator, installs)
+	inst, err := NewInstaller(catalog, regs, installs)
 	if err != nil {
 		t.Fatalf("NewInstaller: %v", err)
 	}
 	return inst
 }
 
+func req(gw ids.GatewayID, code string, groups ...string) InstallRequest {
+	return InstallRequest{GatewayID: gw, PrincipalSub: "ana", Code: code, InstalledBy: "ana", Groups: groups}
+}
+
 func TestNewInstallerRejectsNilDeps(t *testing.T) {
-	if _, err := NewInstaller(nil, &fakeRegistries{}, &fakeCreator{}, &fakeInstalls{}); err == nil {
+	if _, err := NewInstaller(nil, &fakeRegistries{}, &fakeInstalls{}); err == nil {
 		t.Fatal("nil catalog must error")
 	}
 }
 
-func TestInstallProvisionsSharedRegistryWhenAbsent(t *testing.T) {
-	regs := &fakeRegistries{}
-	creator := &fakeCreator{}
-	installs := &fakeInstalls{}
-	inst := newInstaller(t, regs, creator, installs)
-
+func TestInstallAvailableServerInstallsImmediately(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
-	res, err := inst.Install(context.Background(), gw, "ana", "github", "ana")
+	regs := &fakeRegistries{items: []*registrydomain.Registry{
+		shelfRegistry("github", &registrydomain.MCPStoreConfig{Available: true}),
+	}}
+	installs := &fakeInstalls{}
+	res, err := newInstaller(t, regs, installs).Install(context.Background(), req(gw, "github"))
 	if err != nil {
 		t.Fatalf("Install: %v", err)
 	}
-	if len(creator.created) != 1 {
-		t.Fatalf("expected one registry created, got %d", len(creator.created))
+	if res.Status != installationdomain.StatusInstalled || res.Pending {
+		t.Fatalf("available server must install immediately, got %+v", res)
 	}
-	if creator.created[0].MCPTarget == nil || creator.created[0].MCPTarget.Code != "github" {
-		t.Fatalf("created registry must carry the catalog code, got %+v", creator.created[0].MCPTarget)
-	}
-	if len(installs.upserts) != 1 || installs.upserts[0].CatalogCode != "github" {
-		t.Fatalf("install must be recorded, got %+v", installs.upserts)
-	}
-	if !res.RequiresAuth || res.AlreadyInstalled {
-		t.Fatalf("unexpected result: %+v", res)
+	if len(installs.upserts) != 1 || installs.upserts[0].Status != installationdomain.StatusInstalled {
+		t.Fatalf("must record an installed row, got %+v", installs.upserts)
 	}
 }
 
-func TestInstallReusesExistingSharedRegistry(t *testing.T) {
-	existing := &registrydomain.Registry{
-		ID:        ids.New[ids.RegistryKind](),
-		MCPTarget: &registrydomain.MCPTarget{Code: "github"},
-	}
-	regs := &fakeRegistries{items: []*registrydomain.Registry{existing}}
-	creator := &fakeCreator{}
-	installs := &fakeInstalls{}
-	inst := newInstaller(t, regs, creator, installs)
-
-	res, err := inst.Install(context.Background(), ids.New[ids.GatewayKind](), "bob", "github", "bob")
+func TestInstallNotOnShelfBecomesPendingRequest(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	// No registry for the code — a request the admin must shelve+approve.
+	res, err := newInstaller(t, &fakeRegistries{}, &fakeInstalls{}).Install(context.Background(), req(gw, "github"))
 	if err != nil {
 		t.Fatalf("Install: %v", err)
 	}
-	if len(creator.created) != 0 {
-		t.Fatal("must not create a second registry when one already exists for the code")
+	if !res.Pending || res.Status != installationdomain.StatusPendingApproval {
+		t.Fatalf("a server not on the shelf must become a pending request, got %+v", res)
 	}
-	if res.RegistryID != existing.ID.String() {
-		t.Fatalf("must reuse the existing registry id, got %s", res.RegistryID)
+}
+
+func TestInstallAvailableButRequiresApprovalIsPending(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	regs := &fakeRegistries{items: []*registrydomain.Registry{
+		shelfRegistry("github", &registrydomain.MCPStoreConfig{Available: true, RequiresApproval: true}),
+	}}
+	res, err := newInstaller(t, regs, &fakeInstalls{}).Install(context.Background(), req(gw, "github"))
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if !res.Pending {
+		t.Fatal("a requires-approval server must be pending")
+	}
+}
+
+func TestInstallRoleGating(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	regs := &fakeRegistries{items: []*registrydomain.Registry{
+		shelfRegistry("github", &registrydomain.MCPStoreConfig{Available: true, Roles: []string{"sre"}}),
+	}}
+	inst := newInstaller(t, regs, &fakeInstalls{})
+
+	if _, err := inst.Install(context.Background(), req(gw, "github", "eng")); !errors.Is(err, ErrRoleNotAllowed) {
+		t.Fatalf("a principal without the allowed role must be denied, got %v", err)
+	}
+	res, err := inst.Install(context.Background(), req(gw, "github", "sre"))
+	if err != nil {
+		t.Fatalf("allowed role Install: %v", err)
+	}
+	if res.Status != installationdomain.StatusInstalled {
+		t.Fatalf("allowed role must install, got %+v", res)
 	}
 }
 
 func TestInstallReportsAlreadyInstalled(t *testing.T) {
-	regs := &fakeRegistries{items: []*registrydomain.Registry{{
-		ID: ids.New[ids.RegistryKind](), MCPTarget: &registrydomain.MCPTarget{Code: "github"},
-	}}}
+	gw := ids.New[ids.GatewayKind]()
+	regs := &fakeRegistries{items: []*registrydomain.Registry{
+		shelfRegistry("github", &registrydomain.MCPStoreConfig{Available: true}),
+	}}
 	installs := &fakeInstalls{findValue: &installationdomain.Installation{Status: installationdomain.StatusInstalled}}
-	inst := newInstaller(t, regs, &fakeCreator{}, installs)
-
-	res, err := inst.Install(context.Background(), ids.New[ids.GatewayKind](), "ana", "github", "ana")
+	res, err := newInstaller(t, regs, installs).Install(context.Background(), req(gw, "github"))
 	if err != nil {
 		t.Fatalf("Install: %v", err)
 	}
@@ -172,8 +182,8 @@ func TestInstallReportsAlreadyInstalled(t *testing.T) {
 }
 
 func TestInstallUnknownCatalogCode(t *testing.T) {
-	inst := newInstaller(t, &fakeRegistries{}, &fakeCreator{}, &fakeInstalls{})
-	_, err := inst.Install(context.Background(), ids.New[ids.GatewayKind](), "ana", "does-not-exist", "ana")
+	inst := newInstaller(t, &fakeRegistries{}, &fakeInstalls{})
+	_, err := inst.Install(context.Background(), req(ids.New[ids.GatewayKind](), "does-not-exist"))
 	if !errors.Is(err, ErrCatalogEntryNotFound) {
 		t.Fatalf("expected ErrCatalogEntryNotFound, got %v", err)
 	}
@@ -181,7 +191,7 @@ func TestInstallUnknownCatalogCode(t *testing.T) {
 
 func TestUninstallDeletesInstallationOnly(t *testing.T) {
 	installs := &fakeInstalls{}
-	inst := newInstaller(t, &fakeRegistries{}, &fakeCreator{}, installs)
+	inst := newInstaller(t, &fakeRegistries{}, installs)
 	if err := inst.Uninstall(context.Background(), ids.New[ids.GatewayKind](), "ana", "github"); err != nil {
 		t.Fatalf("Uninstall: %v", err)
 	}

@@ -152,16 +152,18 @@ func TestStoreToolCallRejectsUnknownTool(t *testing.T) {
 
 type fakeInstaller struct {
 	installed   []string
+	lastGroups  []string
 	uninstalled []string
 	result      *appstore.InstallResult
 }
 
-func (f *fakeInstaller) Install(_ context.Context, _ ids.GatewayID, _, code, _ string) (*appstore.InstallResult, error) {
-	f.installed = append(f.installed, code)
+func (f *fakeInstaller) Install(_ context.Context, in appstore.InstallRequest) (*appstore.InstallResult, error) {
+	f.installed = append(f.installed, in.Code)
+	f.lastGroups = in.Groups
 	if f.result != nil {
 		return f.result, nil
 	}
-	return &appstore.InstallResult{Code: code, Name: code}, nil
+	return &appstore.InstallResult{Code: in.Code, Name: in.Code}, nil
 }
 
 func (f *fakeInstaller) Uninstall(_ context.Context, _ ids.GatewayID, _, code string) error {
