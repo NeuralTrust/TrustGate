@@ -141,6 +141,9 @@ type Repository interface {
 	// ListByCatalogCode returns every principal who installed a catalog entry on a
 	// gateway — the admin "who installed X" read side.
 	ListByCatalogCode(ctx context.Context, gatewayID ids.GatewayID, catalogCode string) ([]*Installation, error)
+	// ListPendingByGateway returns every pending-approval request on a gateway,
+	// oldest first — the admin approval queue.
+	ListPendingByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*Installation, error)
 	// Delete removes the installation for (gateway, principal, code).
 	Delete(ctx context.Context, gatewayID ids.GatewayID, principalSub, catalogCode string) error
 }

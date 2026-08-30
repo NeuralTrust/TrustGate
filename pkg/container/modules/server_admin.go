@@ -28,6 +28,7 @@ import (
 	policyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy"
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
 	rolehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/role"
+	storehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store"
 	tenanthttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/tenant"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
@@ -119,6 +120,8 @@ type adminRouterParams struct {
 	GetTrace *playgroundhttp.GetTraceHandler
 
 	ListConfigSyncConnections *configsynchttp.ListConnectionsHandler
+
+	StoreRequests *storehttp.RequestsHandler
 }
 
 type adminServerParams struct {
@@ -193,6 +196,7 @@ func ServerAdmin(c *container.Container) error {
 				GetTrace: p.GetTrace,
 
 				ListConfigSyncConnections: p.ListConfigSyncConnections,
+				StoreRequests:             p.StoreRequests,
 			})
 		},
 		dig.Name("admin"),

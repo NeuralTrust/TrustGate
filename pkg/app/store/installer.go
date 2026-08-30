@@ -108,7 +108,7 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		return nil, fmt.Errorf("%w: %q", ErrCatalogEntryNotFound, code)
 	}
 
-	reg, err := i.findRegistryByCode(ctx, in.GatewayID, code)
+	reg, err := findRegistryByCode(ctx, i.registries, in.GatewayID, code)
 	if err != nil {
 		return nil, err
 	}
@@ -169,12 +169,15 @@ func (i *installer) Uninstall(
 	return i.installs.Delete(ctx, gatewayID, principalSub, strings.TrimSpace(code))
 }
 
-func (i *installer) findRegistryByCode(
+// findRegistryByCode scans a gateway's registries for the shelf registry whose
+// mcp_target carries the given catalog code. Returns (nil, nil) when none match.
+func findRegistryByCode(
 	ctx context.Context,
+	lister RegistryLister,
 	gatewayID ids.GatewayID,
 	code string,
 ) (*registrydomain.Registry, error) {
-	items, _, err := i.registries.List(ctx, registrydomain.ListFilter{
+	items, _, err := lister.List(ctx, registrydomain.ListFilter{
 		GatewayID: gatewayID,
 		Page:      1,
 		Size:      registryListPageSize,
