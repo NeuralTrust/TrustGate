@@ -179,6 +179,36 @@ func TestInstallRoleGating(t *testing.T) {
 	}
 }
 
+// TestInstallRoleGatedNotYetShelvedDeniesExcludedPrincipal guards the M1 fix:
+// the role gate must be enforced as soon as a shelf registry exists, even before
+// it is marked available. Otherwise a role-excluded principal could file a
+// pending request that the (role-blind) approve path would later grant.
+func TestInstallRoleGatedNotYetShelvedDeniesExcludedPrincipal(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	// Registry exists with a role list but is NOT available (not shelved yet).
+	regs := &fakeRegistries{items: []*registrydomain.Registry{
+		shelfRegistry("github", &registrydomain.MCPStoreConfig{Available: false, Roles: []string{"sre"}}),
+	}}
+	installs := &fakeInstalls{}
+	inst := newInstaller(t, regs, installs)
+
+	if _, err := inst.Install(context.Background(), req(gw, "github", "eng")); !errors.Is(err, ErrRoleNotAllowed) {
+		t.Fatalf("role-excluded principal must be denied before queueing, got %v", err)
+	}
+	if len(installs.upserts) != 0 {
+		t.Fatalf("a denied install must not record a pending request, got %+v", installs.upserts)
+	}
+
+	// A principal in the role list still queues for approval (not available yet).
+	res, err := inst.Install(context.Background(), req(gw, "github", "sre"))
+	if err != nil {
+		t.Fatalf("allowed role Install: %v", err)
+	}
+	if !res.Pending || res.Status != installationdomain.StatusPendingApproval {
+		t.Fatalf("allowed role on a not-yet-shelved server must be pending, got %+v", res)
+	}
+}
+
 func TestInstallReportsAlreadyInstalled(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	regs := &fakeRegistries{items: []*registrydomain.Registry{

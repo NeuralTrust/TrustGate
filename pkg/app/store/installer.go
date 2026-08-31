@@ -144,16 +144,28 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 
 // decideStatus applies the shelf governance: available + role-allowed installs
 // immediately unless it needs approval; anything else becomes a pending request.
+//
+// The role gate is evaluated as soon as a shelf registry exists, before the
+// availability check. Otherwise a role-excluded principal could file a pending
+// request against a not-yet-available role-gated server (the role list never
+// checked), and the approve path — which does not re-evaluate roles — would
+// silently grant it. Checking here means such a request is rejected up front and
+// never reaches the approval queue.
 func (i *installer) decideStatus(
 	reg *registrydomain.Registry,
 	groups []string,
 ) (installationdomain.Status, error) {
-	if reg == nil || reg.MCPTarget == nil || !reg.MCPTarget.StoreAvailable() {
-		// Not on the shelf (or hidden): a request for the admin to shelve+approve.
+	if reg == nil || reg.MCPTarget == nil {
+		// No shelf registry at all: a request for the admin to shelve+approve.
+		// There is no role list to enforce until the admin connects the server.
 		return installationdomain.StatusPendingApproval, nil
 	}
 	if !rolesAllow(reg.MCPTarget.StoreRoles(), groups) {
 		return "", ErrRoleNotAllowed
+	}
+	if !reg.MCPTarget.StoreAvailable() {
+		// On record but hidden: a request for the admin to shelve+approve.
+		return installationdomain.StatusPendingApproval, nil
 	}
 	if reg.MCPTarget.StoreRequiresApproval() {
 		return installationdomain.StatusPendingApproval, nil
