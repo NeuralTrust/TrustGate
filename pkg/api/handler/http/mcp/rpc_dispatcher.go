@@ -24,8 +24,6 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
-	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
-	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
@@ -42,8 +40,6 @@ type RPCGateway struct {
 	plugins     *appmcp.PluginRunner
 	limiter     ratelimitapp.Checker
 	connections appmcp.ConnectionTool
-	store       appmcp.StoreTool
-	storeScoper appstore.Scoper
 }
 
 // NewRPCGateway wires MCP dispatch; nil limiter defaults to noop.
@@ -64,27 +60,6 @@ func NewRPCGatewayWithConnections(
 	gateway := NewRPCGateway(composer, plugins, limiter)
 	gateway.connections = connections
 	return gateway
-}
-
-// NewRPCGatewayWithMetaTools wires both the connection-management tool and the
-// MCP Store meta-tools (search / install / …).
-func NewRPCGatewayWithMetaTools(
-	composer appmcp.Composer,
-	plugins *appmcp.PluginRunner,
-	limiter ratelimitapp.Checker,
-	connections appmcp.ConnectionTool,
-	store appmcp.StoreTool,
-) *RPCGateway {
-	gateway := NewRPCGatewayWithConnections(composer, plugins, limiter, connections)
-	gateway.store = store
-	return gateway
-}
-
-// WithStoreScoper attaches the CatalogScoper so the Store surfaces the calling
-// principal's installed servers. Returns the gateway for chaining.
-func (g *RPCGateway) WithStoreScoper(scoper appstore.Scoper) *RPCGateway {
-	g.storeScoper = scoper
-	return g
 }
 
 func (g *RPCGateway) Dispatch(ctx context.Context, rc *appconsumer.RoutableConsumer, method string, params json.RawMessage) (any, error) {
@@ -221,14 +196,6 @@ func (g *RPCGateway) dispatch(
 	method string,
 	params json.RawMessage,
 ) (any, error) {
-	// Scope the Store to the caller's installed servers. The scoper no-ops for
-	// any non-Store consumer; on a transient error we proceed with the meta-tools
-	// only rather than failing the request.
-	if g.storeScoper != nil {
-		if scoped, err := g.storeScoper.Scope(ctx, rc); err == nil {
-			rc = scoped
-		}
-	}
 	switch method {
 	case "tools/list":
 		if err := g.checkRateLimit(ctx, rc); err != nil {
@@ -254,12 +221,8 @@ func (g *RPCGateway) dispatch(
 			return nil, err
 		}
 		if g.connections != nil && connectionToolPermitted(rc) {
-			tools = appendGatewayTools(tools, g.connections.Definitions(ctx, rc))
+			result["tools"] = appendGatewayTools(tools, g.connections.Definitions(ctx, rc))
 		}
-		if g.store != nil && rc != nil && consumerdomain.IsStoreConsumer(rc.Consumer) {
-			tools = appendGatewayTools(tools, g.store.Definitions(ctx, rc))
-		}
-		result["tools"] = tools
 		return result, nil
 	case "tools/call":
 		var p struct {
@@ -277,12 +240,6 @@ func (g *RPCGateway) dispatch(
 				return nil, &appmcp.ToolNotPermittedError{Tool: p.Name}
 			}
 			return g.connections.Call(ctx, rc, baseURL, p.Name)
-		}
-		if g.store != nil && g.store.Handles(p.Name) {
-			if rc == nil || !consumerdomain.IsStoreConsumer(rc.Consumer) {
-				return nil, &appmcp.ToolNotPermittedError{Tool: p.Name}
-			}
-			return g.store.Call(ctx, rc, p.Name, p.Arguments)
 		}
 		pre, err := g.plugins.PreRequest(ctx, rc, p.Name, p.Arguments)
 		if err != nil {

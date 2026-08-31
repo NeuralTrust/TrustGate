@@ -49,22 +49,13 @@ type PriceOverrideRequest struct {
 }
 
 type MCPTargetRequest struct {
-	Code      string                 `json:"code,omitempty"`
-	Source    string                 `json:"source,omitempty"`
-	URL       string                 `json:"url,omitempty"`
-	Transport string                 `json:"transport,omitempty"`
-	Headers   map[string]string      `json:"headers,omitempty"`
-	Auth      *MCPAuthRequest        `json:"auth,omitempty"`
-	OpenAPI   *OpenAPITargetRequest  `json:"openapi,omitempty"`
-	Store     *MCPStoreConfigRequest `json:"store,omitempty"`
-}
-
-// MCPStoreConfigRequest is the admin's Store curation for an MCP server, set
-// from the registry side panel.
-type MCPStoreConfigRequest struct {
-	Available        bool     `json:"available,omitempty"`
-	RequiresApproval bool     `json:"requires_approval,omitempty"`
-	Roles            []string `json:"roles,omitempty"`
+	Code      string                `json:"code,omitempty"`
+	Source    string                `json:"source,omitempty"`
+	URL       string                `json:"url,omitempty"`
+	Transport string                `json:"transport,omitempty"`
+	Headers   map[string]string     `json:"headers,omitempty"`
+	Auth      *MCPAuthRequest       `json:"auth,omitempty"`
+	OpenAPI   *OpenAPITargetRequest `json:"openapi,omitempty"`
 }
 
 type OpenAPITargetRequest struct {
@@ -249,13 +240,6 @@ func (t *MCPTargetRequest) ToDomain() *domain.MCPTarget {
 	}
 	if t.OpenAPI != nil {
 		out.OpenAPI = &domain.OpenAPITarget{SpecURL: t.OpenAPI.SpecURL}
-	}
-	if t.Store != nil {
-		out.Store = &domain.MCPStoreConfig{
-			Available:        t.Store.Available,
-			RequiresApproval: t.Store.RequiresApproval,
-			Roles:            t.Store.Roles,
-		}
 	}
 	if t.Auth != nil {
 		out.Auth = &domain.MCPAuth{
