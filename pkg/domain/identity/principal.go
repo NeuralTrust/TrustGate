@@ -28,17 +28,6 @@ const (
 	MethodMTLS          Method = "mtls"
 )
 
-const (
-	// ClaimOrg is the claim carrying the platform tenant (team) the principal
-	// belongs to. For built-in default-IdP sessions it is authoritative for the
-	// tenant-binding check that stops a user of one org reaching another org's
-	// gateway.
-	ClaimOrg = "org"
-	// ClaimGroups is the claim carrying the principal's IdP group memberships,
-	// which role oidc_mapping rules are authored against.
-	ClaimGroups = "groups"
-)
-
 type Principal struct {
 	Subject  string         `json:"subject"`
 	Method   Method         `json:"method"`
@@ -115,15 +104,6 @@ func (p *Principal) Email() string {
 		return ""
 	}
 	return EmailFromClaims(p.Claims)
-}
-
-// Org returns the platform tenant (team) claim, or "" when absent.
-func (p *Principal) Org() string {
-	if p == nil {
-		return ""
-	}
-	org, _ := p.Claims[ClaimOrg].(string)
-	return strings.TrimSpace(org)
 }
 
 func EmailFromClaims(claims map[string]any) string {

@@ -527,19 +527,6 @@ func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 	if !ok || data == nil {
 		return nil, fiber.NewError(fiber.StatusUnauthorized, "not authenticated")
 	}
-	// The MCP Store is synthetic: it is not in the gateway's persisted consumer
-	// data. The auth chain has already restricted its path to the built-in
-	// default identity provider, so any authenticated caller that reaches here is
-	// admitted. Stamp it with the addressed gateway from the request context.
-	if consumerdomain.IsStoreSlug(appconsumer.SlugFromMCPPath(c.Path())) {
-		gatewayID, ok := appconsumer.GatewayIDFromContext(c.UserContext())
-		if !ok {
-			return nil, fiber.NewError(fiber.StatusUnauthorized, "not authenticated")
-		}
-		return &appconsumer.RoutableConsumer{
-			Consumer: consumerdomain.BuildStoreConsumer(gatewayID),
-		}, nil
-	}
 	rc, ok := data.MatchPath(c.Path())
 	if !ok {
 		return nil, fiber.NewError(fiber.StatusNotFound, "no virtual MCP configured for this path")

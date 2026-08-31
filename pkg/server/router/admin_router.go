@@ -25,7 +25,6 @@ import (
 	policyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/policy"
 	registryhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/registry"
 	rolehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/role"
-	storehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store"
 	tenanthttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/tenant"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/gofiber/fiber/v2"
@@ -119,10 +118,6 @@ type AdminRouterDeps struct {
 	GetTrace *playgroundhttp.GetTraceHandler
 
 	ListConfigSyncConnections *configsynchttp.ListConnectionsHandler
-
-	// StoreRequests serves the MCP Store install-approval queue. Present only on
-	// the full plane; nil-guarded when absent.
-	StoreRequests *storehttp.RequestsHandler
 }
 
 type adminRouter struct {
@@ -212,16 +207,6 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	roles.Delete("/:id", r.deps.DeleteRole.Handle)
 	roles.Post("/:role_id/registries/:registry_id", r.deps.RoleAssociation.AttachRegistry)
 	roles.Delete("/:role_id/registries/:registry_id", r.deps.RoleAssociation.DetachRegistry)
-
-	// Store install-approval queue. Curating the Store is a registry-admin
-	// concern (it edits mcp_target.store), so it reuses the registries access
-	// guard. Registered only when the handler is wired (full plane).
-	if r.deps.StoreRequests != nil {
-		store := gw.Group("/:gateway_id/store", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceRegistries))
-		store.Get("/requests", r.deps.StoreRequests.List)
-		store.Post("/requests/approve", r.deps.StoreRequests.Approve)
-		store.Post("/requests/deny", r.deps.StoreRequests.Deny)
-	}
 
 	auths := gw.Group("/:gateway_id/auths", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceAuths))
 	auths.Post("", r.deps.CreateAuth.Handle)

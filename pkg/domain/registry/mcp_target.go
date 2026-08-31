@@ -115,42 +115,6 @@ type MCPTarget struct {
 	Headers   map[string]string `json:"headers,omitempty"`
 	Auth      *MCPAuth          `json:"auth,omitempty"`
 	OpenAPI   *OpenAPITarget    `json:"openapi,omitempty"`
-	// Store is the MCP Store governance for this server: whether users may
-	// self-install it, whether that needs approval, and which roles may. It rides
-	// in the mcp_target JSONB, so it needs no schema change and is read wherever
-	// the registry is loaded. Nil means "not offered in the Store".
-	Store *MCPStoreConfig `json:"store,omitempty"`
-}
-
-// MCPStoreConfig is the admin's Store curation for one MCP server, edited from
-// the registry side panel.
-type MCPStoreConfig struct {
-	// Available exposes the server for self-service install in the Store.
-	Available bool `json:"available,omitempty"`
-	// RequiresApproval routes an install through an approver instead of granting
-	// it immediately.
-	RequiresApproval bool `json:"requires_approval,omitempty"`
-	// Roles, when non-empty, restricts self-install to principals carrying one of
-	// these IdP groups. Empty means any role admitted to the Store.
-	Roles []string `json:"roles,omitempty"`
-}
-
-// StoreAvailable reports whether the server is offered for self-install.
-func (t *MCPTarget) StoreAvailable() bool {
-	return t != nil && t.Store != nil && t.Store.Available
-}
-
-// StoreRequiresApproval reports whether self-install needs approval.
-func (t *MCPTarget) StoreRequiresApproval() bool {
-	return t != nil && t.Store != nil && t.Store.RequiresApproval
-}
-
-// StoreRoles returns the roles allowed to self-install, or nil for "any".
-func (t *MCPTarget) StoreRoles() []string {
-	if t == nil || t.Store == nil {
-		return nil
-	}
-	return t.Store.Roles
 }
 
 func (t *MCPTarget) Normalize() {

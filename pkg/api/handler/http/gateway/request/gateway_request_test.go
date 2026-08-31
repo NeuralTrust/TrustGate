@@ -156,31 +156,3 @@ func TestUpdateGatewayRequest_ValidateEntitlements(t *testing.T) {
 }
 
 func ptr(e domain.Entitlements) *domain.Entitlements { return &e }
-
-func TestUpdateGatewayRequest_ValidateStoreMode(t *testing.T) {
-	t.Parallel()
-	open := "open"
-	curated := "curated"
-	bad := "half-open"
-	mixedCase := "Curated"
-
-	for _, mode := range []string{open, curated, mixedCase} {
-		m := mode
-		req := UpdateGatewayRequest{StoreMode: &m}
-		if err := req.Validate(); err != nil {
-			t.Fatalf("store_mode %q rejected: %v", mode, err)
-		}
-	}
-	// Normalization: mixed case lowercased in place.
-	m := mixedCase
-	req := UpdateGatewayRequest{StoreMode: &m}
-	_ = req.Validate()
-	if *req.StoreMode != curated {
-		t.Fatalf("store_mode not normalized: got %q", *req.StoreMode)
-	}
-
-	reqBad := UpdateGatewayRequest{StoreMode: &bad}
-	if err := reqBad.Validate(); err == nil {
-		t.Fatal("expected invalid store_mode error, got nil")
-	}
-}

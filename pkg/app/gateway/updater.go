@@ -43,9 +43,6 @@ type UpdateInput struct {
 	ClientTLSConfig *domain.ClientTLSConfig
 	SessionConfig   *domain.SessionConfig
 	Entitlements    *domain.Entitlements
-	// StoreMode, when set, curates the MCP Store (open|curated). It is stamped as
-	// a reserved metadata key server-side, so it survives client metadata replacement.
-	StoreMode *string
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=gateway_updater_mock.go --case=underscore --with-expecter
@@ -111,18 +108,6 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 		g.Metadata = domain.WithTenantID(domain.SanitizeClientMetadata(in.Metadata), tenantID)
 	} else if old.TenantID() == "" {
 		g.Metadata = domain.WithTenantID(g.Metadata, tenantID)
-	}
-	// store_mode is a reserved key stripped from client metadata, so re-stamp it
-	// after the metadata block. Preserve the existing mode unless it is being set.
-	// open is the default, so it is represented by the absence of the key.
-	storeMode := old.StoreMode()
-	if in.StoreMode != nil {
-		storeMode = *in.StoreMode
-	}
-	if storeMode == domain.StoreModeCurated {
-		g.Metadata = domain.WithStoreMode(g.Metadata, storeMode)
-	} else if g.Metadata != nil {
-		delete(g.Metadata, domain.MetadataStoreModeKey)
 	}
 	if in.Telemetry != nil {
 		g.Telemetry = in.Telemetry
