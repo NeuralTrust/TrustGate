@@ -222,6 +222,8 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 		capturedSubject = sub
 		grant.Subject = sub
 		grant.Email = emailFromToken(token)
+		grant.Org = orgFromToken(token)
+		grant.Groups = groupsFromToken(token)
 		grant.AuthID = auth.ID.String()
 		grant.GatewayID = effectiveGatewayID.String()
 		grant.Audiences = cfg.Audiences
@@ -280,6 +282,83 @@ func emailFromJWT(raw string) string {
 		return ""
 	}
 	return identity.EmailFromClaims(claims)
+}
+
+// orgFromToken reads the platform tenant (team) claim from the identity
+// provider's token. Parsing is unverified, consistent with emailFromToken and
+// subjectFromToken: the token was just returned over TLS by the trusted IdP
+// token endpoint, and the value is re-signed into the gateway session before it
+// is ever trusted for authorization.
+func orgFromToken(token map[string]any) string {
+	for _, key := range []string{"id_token", "access_token"} {
+		raw, _ := token[key].(string)
+		if raw == "" {
+			continue
+		}
+		claims := jwt.MapClaims{}
+		if _, _, err := jwt.NewParser().ParseUnverified(raw, claims); err != nil {
+			continue
+		}
+		if org, ok := claims[identity.ClaimOrg].(string); ok {
+			if org = strings.TrimSpace(org); org != "" {
+				return org
+			}
+		}
+	}
+	return ""
+}
+
+// groupsFromToken reads the principal's IdP group memberships from the token so
+// role oidc_mapping rules can match against them.
+func groupsFromToken(token map[string]any) []string {
+	for _, key := range []string{"id_token", "access_token"} {
+		raw, _ := token[key].(string)
+		if raw == "" {
+			continue
+		}
+		claims := jwt.MapClaims{}
+		if _, _, err := jwt.NewParser().ParseUnverified(raw, claims); err != nil {
+			continue
+		}
+		if groups := stringSliceClaim(claims[identity.ClaimGroups]); len(groups) > 0 {
+			return groups
+		}
+	}
+	return nil
+}
+
+// stringSliceClaim coerces a claim that may be a JSON array of strings or a
+// single space-delimited string into a slice, dropping blanks.
+func stringSliceClaim(v any) []string {
+	switch t := v.(type) {
+	case []string:
+		return trimmedStrings(t)
+	case []any:
+		out := make([]string, 0, len(t))
+		for _, item := range t {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return trimmedStrings(out)
+	case string:
+		return trimmedStrings(strings.Fields(t))
+	default:
+		return nil
+	}
+}
+
+func trimmedStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func subjectFromToken(token map[string]any) string {
@@ -415,6 +494,8 @@ func (p *authProxy) exchangeCode(ctx context.Context, req TokenRequest) (map[str
 			Scopes:    grant.Scopes,
 			GatewayID: grant.GatewayID,
 			AuthID:    grant.AuthID,
+			Org:       grant.Org,
+			Groups:    grant.Groups,
 			Audiences: grant.Audiences,
 		}
 		if err := p.store.SaveSession(ctx, refresh, rec); err != nil {
@@ -444,6 +525,15 @@ func (p *authProxy) mintSession(grant CodeGrant) (map[string]any, error) {
 	}
 	if identity.LooksLikeEmail(grant.Email) {
 		claims["email"] = grant.Email
+	}
+	// org binds the session to the user's platform tenant; the MCP plane rejects
+	// a default-IdP session whose org does not match the addressed gateway's
+	// tenant. groups carry the IdP memberships role oidc_mapping matches on.
+	if grant.Org != "" {
+		claims[identity.ClaimOrg] = grant.Org
+	}
+	if len(grant.Groups) > 0 {
+		claims[identity.ClaimGroups] = grant.Groups
 	}
 	signed, err := p.signer.MintClaims(claims, time.Hour)
 	if err != nil {
@@ -517,6 +607,8 @@ func (p *authProxy) refreshSession(ctx context.Context, rec SessionRecord) (map[
 		Scopes:    rec.Scopes,
 		AuthID:    rec.AuthID,
 		GatewayID: rec.GatewayID,
+		Org:       rec.Org,
+		Groups:    rec.Groups,
 		Audiences: rec.Audiences,
 	})
 	if err != nil {
