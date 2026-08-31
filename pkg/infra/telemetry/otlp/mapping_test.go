@@ -66,11 +66,14 @@ func fullEvent() *events.Event {
 			Body:         strptr("hello world"),
 		},
 		Usage: &events.Usage{
-			PromptTokens:          10,
-			CompletionTokens:      5,
-			TotalTokens:           15,
-			CachedInputTokens:     2,
-			ReasoningOutputTokens: 1,
+			PromptTokens:            10,
+			CompletionTokens:        5,
+			TotalTokens:             15,
+			CachedInputTokens:       2,
+			CacheWriteInputTokens:   3,
+			CacheWrite1hInputTokens: 4,
+			ToolUseInputTokens:      6,
+			ReasoningOutputTokens:   1,
 		},
 		Cost:    &events.Cost{PromptUsd: events.DecimalFloat(0.002), CompletionUsd: events.DecimalFloat(0.008), TotalUsd: events.DecimalFloat(0.01), SavingsUsd: &savingsUsd, Currency: "USD"},
 		Latency: events.Latency{TotalMs: 120, ProviderMs: 100, PoliciesMs: 14, GatewayMs: 6},
@@ -116,6 +119,11 @@ func TestEventToRecord_StandardAndProprietaryCoexist(t *testing.T) {
 	assert.Equal(t, "USD", attrs["trustgate.cost.currency"].AsString())
 	assert.InDelta(t, 0.02, attrs["trustgate.cost.savings_usd"].AsFloat64(), 1e-9)
 	assert.Equal(t, int64(15), attrs["trustgate.usage.total_tokens"].AsInt64())
+	assert.Equal(t, int64(2), attrs["trustgate.usage.cached_input_tokens"].AsInt64())
+	assert.Equal(t, int64(3), attrs["trustgate.usage.cache_write_input_tokens"].AsInt64())
+	assert.Equal(t, int64(4), attrs["trustgate.usage.cache_write_1h_input_tokens"].AsInt64())
+	assert.Equal(t, int64(6), attrs["trustgate.usage.tool_use_input_tokens"].AsInt64())
+	assert.Equal(t, int64(1), attrs["trustgate.usage.reasoning_output_tokens"].AsInt64())
 	assert.Equal(t, int64(120), attrs["trustgate.latency.total_ms"].AsInt64())
 	assert.Equal(t, int64(100), attrs["trustgate.latency.provider_ms"].AsInt64())
 	assert.Equal(t, int64(14), attrs["trustgate.latency.policies_ms"].AsInt64())
