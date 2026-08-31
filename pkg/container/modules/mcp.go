@@ -30,11 +30,8 @@ import (
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
-	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
-	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
-	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
@@ -154,7 +151,14 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(appmcp.NewConnectionTool); err != nil {
 		return err
 	}
-	if err := c.Provide(provideRPCGateway); err != nil {
+	if err := c.Provide(func(
+		composer appmcp.Composer,
+		plugins *appmcp.PluginRunner,
+		limiter ratelimitapp.Checker,
+		connections appmcp.ConnectionTool,
+	) *mcphttp.RPCGateway {
+		return mcphttp.NewRPCGatewayWithConnections(composer, plugins, limiter, connections)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(appmcp.NewRoleScoper); err != nil {
@@ -175,61 +179,6 @@ type connectServiceParams struct {
 	Shared    mcpoauth.Provider
 	Userinfo  appoauth.UserInfoClient
 	Catalog   appcatalog.MCPServerCatalog `optional:"true"`
-}
-
-type rpcGatewayParams struct {
-	dig.In
-
-	Composer    appmcp.Composer
-	Plugins     *appmcp.PluginRunner
-	Limiter     ratelimitapp.Checker
-	Connections appmcp.ConnectionTool
-	Shared      mcpoauth.Provider
-	Catalog     appcatalog.MCPServerCatalog `optional:"true"`
-	// Install path — present on the full/control plane only. When any is absent
-	// the Store offers SEARCH but not INSTALL (e.g. the Redis data plane, which
-	// has no installation store yet).
-	Registries registrydomain.Repository     `optional:"true"`
-	Installs   installationdomain.Repository `optional:"true"`
-}
-
-func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
-	catalog := p.Catalog
-	if catalog == nil {
-		loaded, err := appcatalog.NewMCPServerCatalog(p.Shared)
-		if err != nil {
-			return nil, err
-		}
-		catalog = loaded
-	}
-
-	var installer appstore.Installer
-	if p.Registries != nil && p.Installs != nil {
-		made, err := appstore.NewInstaller(catalog, p.Registries, p.Installs)
-		if err != nil {
-			return nil, err
-		}
-		installer = made
-	}
-
-	var registries appstore.RegistryLister
-	if p.Registries != nil {
-		registries = p.Registries
-	}
-	store, err := appmcp.NewStoreToolWithInstaller(catalog, installer, registries)
-	if err != nil {
-		return nil, err
-	}
-	gateway := mcphttp.NewRPCGatewayWithMetaTools(p.Composer, p.Plugins, p.Limiter, p.Connections, store)
-
-	if p.Installs != nil && p.Registries != nil {
-		scoper, err := appstore.NewScoper(p.Installs, p.Registries)
-		if err != nil {
-			return nil, err
-		}
-		gateway = gateway.WithStoreScoper(scoper)
-	}
-	return gateway, nil
 }
 
 func provideConnectService(p connectServiceParams) (appoauth.ConnectService, error) {

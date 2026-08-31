@@ -176,46 +176,6 @@ func TestHandler_DefaultIdP_AllowedWithoutAttachedAuth(t *testing.T) {
 	}
 }
 
-func TestHandler_Store_SyntheticConsumerServesFixedURL(t *testing.T) {
-	t.Parallel()
-	// The MCP Store is not in the gateway's persisted consumer data; the handler
-	// synthesises it from the reserved /store/mcp path and serves it, so the
-	// fixed catalog URL initializes on any gateway.
-	const storePath = "/store/mcp"
-	gwID := ids.New[ids.GatewayKind]()
-	data := appconsumer.NewData(gwID, nil)
-
-	app := fiber.New()
-	app.Use(func(c *fiber.Ctx) error {
-		ctx := appconsumer.WithAuthID(c.UserContext(), appauth.DefaultIdPAuthID())
-		ctx = appconsumer.WithGatewayID(ctx, gwID)
-		ctx = appconsumer.WithData(ctx, data)
-		c.SetUserContext(ctx)
-		return c.Next()
-	})
-	handler := mcphttp.NewHandler(
-		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
-		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
-		nil,
-	)
-	app.Post(storePath, handler.Handle)
-
-	req := httptest.NewRequest(
-		fiber.MethodPost,
-		storePath,
-		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}`),
-	)
-	req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
-	res, err := app.Test(req, -1)
-	if err != nil {
-		t.Fatalf("request: %v", err)
-	}
-	defer func() { _ = res.Body.Close() }()
-	if res.StatusCode != fiber.StatusOK {
-		t.Fatalf("status = %d, want 200 (the synthetic Store must initialize at its fixed URL)", res.StatusCode)
-	}
-}
-
 func TestHandler_Initialize_EchoesSupportedVersion(t *testing.T) {
 	t.Parallel()
 	app := newApp(t, mocks.NewComposer(t), consumerdomain.TypeMCP, true)
