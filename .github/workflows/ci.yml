@@ -180,11 +180,12 @@ jobs:
         run: bash .github/scripts/next-metrics-version.test.sh
 
   security:
-    uses: NeuralTrust/workflows/.github/workflows/sast.yml@main
+    uses: NeuralTrust/workflows/.github/workflows/sast.yml@codex/shared-govulncheck
     with:
       gitleaks_enabled: true
       gosec_enabled: true
       gosec_args: "-severity high ./..."
+      govulncheck_enabled: true
 
   image-scan:
     if: github.base_ref == 'main' && github.head_ref == 'develop'
