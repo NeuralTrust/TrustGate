@@ -21,33 +21,35 @@ import (
 )
 
 type Kind interface {
-	GatewayKind | RegistryKind | ConsumerKind | PolicyKind | AuthKind | ProviderKind | ModelKind | VaultKind | RoleKind
+	GatewayKind | RegistryKind | ConsumerKind | PolicyKind | AuthKind | ProviderKind | ModelKind | VaultKind | RoleKind | InstallationKind
 }
 
 type (
-	GatewayKind  struct{}
-	RegistryKind struct{}
-	ConsumerKind struct{}
-	PolicyKind   struct{}
-	AuthKind     struct{}
-	ProviderKind struct{}
-	ModelKind    struct{}
-	VaultKind    struct{}
-	RoleKind     struct{}
+	GatewayKind      struct{}
+	RegistryKind     struct{}
+	ConsumerKind     struct{}
+	PolicyKind       struct{}
+	AuthKind         struct{}
+	ProviderKind     struct{}
+	ModelKind        struct{}
+	VaultKind        struct{}
+	RoleKind         struct{}
+	InstallationKind struct{}
 )
 
 type ID[K Kind] uuid.UUID
 
 type (
-	GatewayID  = ID[GatewayKind]
-	RegistryID = ID[RegistryKind]
-	ConsumerID = ID[ConsumerKind]
-	PolicyID   = ID[PolicyKind]
-	AuthID     = ID[AuthKind]
-	ProviderID = ID[ProviderKind]
-	ModelID    = ID[ModelKind]
-	VaultID    = ID[VaultKind]
-	RoleID     = ID[RoleKind]
+	GatewayID      = ID[GatewayKind]
+	RegistryID     = ID[RegistryKind]
+	ConsumerID     = ID[ConsumerKind]
+	PolicyID       = ID[PolicyKind]
+	AuthID         = ID[AuthKind]
+	ProviderID     = ID[ProviderKind]
+	ModelID        = ID[ModelKind]
+	VaultID        = ID[VaultKind]
+	RoleID         = ID[RoleKind]
+	InstallationID = ID[InstallationKind]
 )
 
 // New returns a random (v4) identifier of the requested kind.
