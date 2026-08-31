@@ -40,20 +40,13 @@ type RegistryResponse struct {
 }
 
 type MCPTargetResponse struct {
-	Code      string                  `json:"code,omitempty"`
-	Source    string                  `json:"source,omitempty"`
-	URL       string                  `json:"url,omitempty"`
-	Transport string                  `json:"transport,omitempty"`
-	Headers   map[string]string       `json:"headers,omitempty"`
-	Auth      *MCPAuthResponse        `json:"auth,omitempty"`
-	OpenAPI   *OpenAPITargetResponse  `json:"openapi,omitempty"`
-	Store     *MCPStoreConfigResponse `json:"store,omitempty"`
-}
-
-type MCPStoreConfigResponse struct {
-	Available        bool     `json:"available"`
-	RequiresApproval bool     `json:"requires_approval"`
-	Roles            []string `json:"roles,omitempty"`
+	Code      string                 `json:"code,omitempty"`
+	Source    string                 `json:"source,omitempty"`
+	URL       string                 `json:"url,omitempty"`
+	Transport string                 `json:"transport,omitempty"`
+	Headers   map[string]string      `json:"headers,omitempty"`
+	Auth      *MCPAuthResponse       `json:"auth,omitempty"`
+	OpenAPI   *OpenAPITargetResponse `json:"openapi,omitempty"`
 }
 
 type OpenAPITargetResponse struct {
@@ -218,13 +211,6 @@ func fromMCPTarget(t *domain.MCPTarget) *MCPTargetResponse {
 	}
 	if t.OpenAPI != nil {
 		out.OpenAPI = &OpenAPITargetResponse{SpecURL: t.OpenAPI.SpecURL}
-	}
-	if t.Store != nil {
-		out.Store = &MCPStoreConfigResponse{
-			Available:        t.Store.Available,
-			RequiresApproval: t.Store.RequiresApproval,
-			Roles:            t.Store.Roles,
-		}
 	}
 	if t.Auth != nil {
 		out.Auth = &MCPAuthResponse{

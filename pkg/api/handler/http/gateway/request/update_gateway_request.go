@@ -35,9 +35,6 @@ type UpdateGatewayRequest struct {
 	// When omitted the gateway's entitlements are left unchanged. Downgrading when the tenant already
 	// has more gateways than the new MaxInstances returns 409 — delete excess first.
 	Entitlements *domain.Entitlements `json:"entitlements,omitempty"`
-	// StoreMode curates the MCP Store: "open" (whole catalog browsable) or
-	// "curated" (only shelf servers). Omitted leaves the current mode unchanged.
-	StoreMode *string `json:"store_mode,omitempty"`
 }
 
 func (r *UpdateGatewayRequest) Validate() error {
@@ -55,13 +52,6 @@ func (r *UpdateGatewayRequest) Validate() error {
 			return err
 		}
 		r.Entitlements = &normalized
-	}
-	if r.StoreMode != nil {
-		mode := strings.ToLower(strings.TrimSpace(*r.StoreMode))
-		if mode != domain.StoreModeOpen && mode != domain.StoreModeCurated {
-			return fmt.Errorf("store_mode must be %q or %q: %w", domain.StoreModeOpen, domain.StoreModeCurated, commonerrors.ErrValidation)
-		}
-		r.StoreMode = &mode
 	}
 	return nil
 }

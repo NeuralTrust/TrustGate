@@ -54,41 +54,6 @@ func (g *Gateway) TenantID() string {
 	return g.Metadata[MetadataTenantIDKey]
 }
 
-// MetadataStoreModeKey holds the MCP Store curation mode for the gateway.
-const MetadataStoreModeKey = "store_mode"
-
-// Store curation modes.
-const (
-	// StoreModeOpen: the whole catalog is browsable; servers not on the shelf can
-	// be requested. This is the default.
-	StoreModeOpen = "open"
-	// StoreModeCurated: only shelf (store.available) servers are shown.
-	StoreModeCurated = "curated"
-)
-
-// StoreMode returns the gateway's Store curation mode, defaulting to open.
-func (g *Gateway) StoreMode() string {
-	if g == nil || g.Metadata == nil {
-		return StoreModeOpen
-	}
-	if g.Metadata[MetadataStoreModeKey] == StoreModeCurated {
-		return StoreModeCurated
-	}
-	return StoreModeOpen
-}
-
-// WithStoreMode stamps the Store curation mode into gateway metadata.
-func WithStoreMode(metadata map[string]string, mode string) map[string]string {
-	if mode != StoreModeCurated {
-		mode = StoreModeOpen
-	}
-	if metadata == nil {
-		metadata = make(map[string]string, 1)
-	}
-	metadata[MetadataStoreModeKey] = mode
-	return metadata
-}
-
 // RetentionWindow is the stamped trace-retention window for this gateway, and
 // whether one was stamped at all. Nil-safe like TenantID: the metrics middleware
 // runs on requests where the gateway never resolved.
@@ -100,7 +65,7 @@ func (g *Gateway) RetentionWindow() (time.Duration, bool) {
 }
 
 func isReservedMetadataKey(key string) bool {
-	return key == MetadataTenantIDKey || key == MetadataLegacyTeamIDKey || key == MetadataStoreModeKey
+	return key == MetadataTenantIDKey || key == MetadataLegacyTeamIDKey
 }
 
 func SanitizeClientMetadata(metadata map[string]string) map[string]string {
