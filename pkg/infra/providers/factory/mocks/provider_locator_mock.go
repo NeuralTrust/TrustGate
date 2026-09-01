@@ -78,6 +78,64 @@ func (_c *ProviderLocator_Get_Call) RunAndReturn(run func(string) (providers.Cli
 	return _c
 }
 
+// GetModelLister provides a mock function with given fields: provider
+func (_m *ProviderLocator) GetModelLister(provider string) (providers.ModelLister, error) {
+	ret := _m.Called(provider)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetModelLister")
+	}
+
+	var r0 providers.ModelLister
+	var r1 error
+	if rf, ok := ret.Get(0).(func(string) (providers.ModelLister, error)); ok {
+		return rf(provider)
+	}
+	if rf, ok := ret.Get(0).(func(string) providers.ModelLister); ok {
+		r0 = rf(provider)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(providers.ModelLister)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(string) error); ok {
+		r1 = rf(provider)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// ProviderLocator_GetModelLister_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetModelLister'
+type ProviderLocator_GetModelLister_Call struct {
+	*mock.Call
+}
+
+// GetModelLister is a helper method to define mock.On call
+//   - provider string
+func (_e *ProviderLocator_Expecter) GetModelLister(provider interface{}) *ProviderLocator_GetModelLister_Call {
+	return &ProviderLocator_GetModelLister_Call{Call: _e.mock.On("GetModelLister", provider)}
+}
+
+func (_c *ProviderLocator_GetModelLister_Call) Run(run func(provider string)) *ProviderLocator_GetModelLister_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(string))
+	})
+	return _c
+}
+
+func (_c *ProviderLocator_GetModelLister_Call) Return(_a0 providers.ModelLister, _a1 error) *ProviderLocator_GetModelLister_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *ProviderLocator_GetModelLister_Call) RunAndReturn(run func(string) (providers.ModelLister, error)) *ProviderLocator_GetModelLister_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetTester provides a mock function with given fields: provider
 func (_m *ProviderLocator) GetTester(provider string) (providers.ConnectionTester, error) {
 	ret := _m.Called(provider)
