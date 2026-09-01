@@ -1,4 +1,7 @@
 # TrustGate
+TrustGate is an open-source AI gateway that routes, secures, and observes
+traffic between applications, AI agents, and LLM providers.
+
 
 <div align="center">
 
@@ -25,6 +28,7 @@ Route, govern, and observe all LLM and MCP traffic through a single control poin
 </div>
 
 ---
+
 
 ## Why TrustGate?
 
@@ -429,6 +433,79 @@ make openapi   # convert to docs/openapi.json
 
 ---
 
+
+## FAQ
+ 
+**How is TrustGate different from LiteLLM and other AI gateways?**
+TrustGate is the only AI gateway built by a security company — every
+design choice assumes the gateway is the substrate for security
+enforcement, not just an operational convenience. See the full
+comparison with [LiteLLM](https://neuraltrust.ai/blog/neuraltrust-vs-litellm),
+[Kong](https://neuraltrust.ai/blog/neuraltrust-vs-kong), and
+[others](https://neuraltrust.ai/blog/best-ai-gateways).
+ 
+**Is TrustGate free to use?**
+Yes. The multi-protocol gateway engine (LLM, MCP, A2A routing,
+failover, retries, caching) and the control plane are open source
+under Apache 2.0. A team can run this in real production at no
+license cost. Paid tiers add SSO/RBAC, audit logging, long-term
+retention, and managed/hybrid deployment for organizations governing
+AI traffic across many teams.
+ 
+**What license is TrustGate released under?**
+Apache 2.0.
+ 
+**What's the difference between TrustGate and TrustGuard?**
+TrustGate is the gateway — routing, policy, and observability across
+LLM, MCP, and agent-to-agent traffic. TrustGuard is the security
+detection engine that attaches to a Route and inspects requests before
+they reach their target. TrustGate works standalone as an operational
+gateway; adding TrustGuard turns it into an enforcement point for
+runtime AI security.
+ 
+**Does it support OpenAI-compatible endpoints?**
+Yes. Point any OpenAI SDK at the proxy with no client changes beyond
+the base URL and two headers — see Quick Start.
+ 
+**Does TrustGate govern MCP and agent-to-agent (A2A) traffic, or only LLM calls?**
+All three. A model call, the MCP tool calls it triggers, and any A2A
+delegation resolve into one unified trace tree — not separate logs in
+separate systems.
+ 
+**Does TrustGate replace my existing API gateway (Kong, Apigee, AWS API Gateway)?**
+No. TrustGate governs AI-specific traffic and is built to layer
+alongside an existing gateway, not replace it. General microservice
+traffic stays where it already is.
+ 
+**Is it production-ready?**
+Yes. TrustGate holds
+[ISO 27001 certification](https://neuraltrust.ai/news/neuraltrust-is-now-iso-27001-certified)
+via NeuralTrust and is recognized in Gartner's 2025 Market Guide for
+[AI Gateways](https://neuraltrust.ai/news/gartner-market-guide-for-ai-gateways).
+ 
+**Can I self-host it fully air-gapped?**
+Yes. TrustGate deploys on-premises with no external calls required;
+all data stays within your infrastructure.
+
+
+---
+
+## How TrustGate Compares
+ 
+- [The 10 Best AI Gateways for Enterprise AI Security in 2026](https://neuraltrust.ai/blog/best-ai-gateways)
+- [vs. Kong](https://neuraltrust.ai/blog/neuraltrust-vs-kong)
+- [vs. LiteLLM](https://neuraltrust.ai/blog/neuraltrust-vs-litellm)
+- [vs. Portkey](https://neuraltrust.ai/blog/neuraltrust-vs-portkey)
+- [vs. Apache APISIX](https://neuraltrust.ai/blog/neuraltrust-vs-apache-apisix)
+- [vs. Solo.io agentgateway](https://neuraltrust.ai/blog/neuraltrust-vs-soloio-agentgateway)
+- [vs. HAProxy](https://neuraltrust.ai/blog/neuraltrust-vs-haproxy)
+- [vs. MLflow](https://neuraltrust.ai/blog/neuraltrust-vs-mlflow)
+- [vs. TrueFoundry](https://neuraltrust.ai/blog/neuraltrust-vs-truefoundry)
+- [vs. Google](https://neuraltrust.ai/blog/neuraltrust-vs-google)
+
+
+---
+
 ## Contributing
 
 We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
@@ -436,6 +513,7 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 **Good first issues:** Check [`.github/GOOD_FIRST_ISSUES.md`](.github/GOOD_FIRST_ISSUES.md) for curated starter tasks.
 
 **Examples:** Help us add more examples in [`examples/`](examples/).
+
 
 ---
 
