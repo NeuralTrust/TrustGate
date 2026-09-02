@@ -37,6 +37,7 @@ const (
 	ProviderOpenRouter       = provider.OpenRouter
 	ProviderCohere           = provider.Cohere
 	ProviderMoonshot         = provider.Moonshot
+	ProviderTogether         = provider.Together
 )
 
 type Config struct {
