@@ -89,6 +89,7 @@ func TestProviderMatchesFilesID(t *testing.T) {
 		providers.ProviderSambaNova,
 		providers.ProviderFireworks,
 		providers.ProviderZAI,
+		providers.ProviderDashScope,
 	} {
 		hasFiles := providers.SupportsCapability(provider, providers.CapabilityFiles)
 		if !hasFiles {
