@@ -83,6 +83,7 @@ func TestProviderMatchesFilesID(t *testing.T) {
 		providers.ProviderMoonshot,
 		providers.ProviderTogether,
 		providers.ProviderDeepInfra,
+		providers.ProviderNovita,
 	} {
 		hasFiles := providers.SupportsCapability(provider, providers.CapabilityFiles)
 		if !hasFiles {
