@@ -81,6 +81,7 @@ var seedProviders = []seedProvider{
 	{providers.ProviderNebius, "Nebius AI Studio", "openai"},
 	{providers.ProviderSiliconFlow, "SiliconFlow", "openai"},
 	{providers.ProviderSambaNova, "SambaNova", "openai"},
+	{providers.ProviderFireworks, "Fireworks AI", "openai"},
 }
 
 var cohereSeedModels = []seedModel{
@@ -134,6 +135,7 @@ var modelsDevProviderToCode = map[string]string{
 	"nebius":         providers.ProviderNebius,
 	"siliconflow":    providers.ProviderSiliconFlow,
 	"sambanova":      providers.ProviderSambaNova,
+	"fireworks-ai":   providers.ProviderFireworks,
 }
 
 // skipModel drops catalog entries the gateway could never invoke as published.
