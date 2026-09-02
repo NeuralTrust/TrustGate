@@ -40,6 +40,7 @@ const (
 	ProviderTogether         = provider.Together
 	ProviderDeepInfra        = provider.DeepInfra
 	ProviderNovita           = provider.Novita
+	ProviderNebius           = provider.Nebius
 )
 
 type Config struct {
