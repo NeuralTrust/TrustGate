@@ -34,16 +34,25 @@ type CatalogModel struct {
 	Model        catalogdomain.Model
 }
 
+// VerificationKey is one public key data planes use to verify RS256 playground
+// tokens minted by the control plane. Verification material only: distributing
+// it grants the ability to check signatures, never to produce them.
+type VerificationKey struct {
+	KID string
+	PEM string
+}
+
 type Data struct {
-	Version       string
-	Gateways      []gatewaydomain.Gateway
-	Consumers     []consumerdomain.Consumer
-	Registries    []registrydomain.Registry
-	Policies      []policydomain.Policy
-	Auths         []authdomain.Auth
-	Roles         []roledomain.Role
-	Providers     []catalogdomain.Provider
-	CatalogModels []CatalogModel
+	Version             string
+	Gateways            []gatewaydomain.Gateway
+	Consumers           []consumerdomain.Consumer
+	Registries          []registrydomain.Registry
+	Policies            []policydomain.Policy
+	Auths               []authdomain.Auth
+	Roles               []roledomain.Role
+	Providers           []catalogdomain.Provider
+	CatalogModels       []CatalogModel
+	PlaygroundTokenKeys []VerificationKey
 }
 
 type Snapshot struct {
@@ -294,6 +303,10 @@ func recencyAscIDAsc(at time.Time, id string, bt time.Time, bid string) bool {
 }
 
 func (s *Snapshot) Version() string { return s.data.Version }
+
+// PlaygroundTokenKeys returns the verification keys for RS256 playground
+// tokens carried by this snapshot.
+func (s *Snapshot) PlaygroundTokenKeys() []VerificationKey { return s.data.PlaygroundTokenKeys }
 
 func (s *Snapshot) Data() Data { return s.data }
 

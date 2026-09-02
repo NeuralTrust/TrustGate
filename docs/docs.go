@@ -119,11 +119,6 @@ const docTemplate = `{
         },
         "/v1/config-sync/connections": {
             "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
                 "description": "Returns the observed data-plane Sync connections, optionally filtered by opaque scope. Answers \"is this data plane online?\".",
                 "produces": [
                     "application/json"
@@ -159,16 +154,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/gateways": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/gateways": {
+            "get": {
                 "description": "Returns a paginated list of gateways.",
                 "produces": [
                     "application/json"
@@ -216,14 +211,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Creates a new gateway. Ownership tenant_id is required (JWT claim, or body for platform admins). The slug is optional: when omitted the server generates a unique random slug. If provided it must be a lowercase DNS label and unique. Platform JWT create requires stamped entitlements (tier + caps); tenant JWTs must omit entitlements (422 if sent). With RATE_LIMIT_ENABLED, create returns 409 when the tenant is already at MaxInstances for the effective tier.",
                 "consumes": [
                     "application/json"
@@ -277,16 +272,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/gateways/{gateway_id}/auths": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/auths": {
+            "get": {
                 "description": "Returns a paginated list of auths in a gateway.",
                 "produces": [
                     "application/json"
@@ -378,14 +373,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Creates a new auth in a gateway.",
                 "consumes": [
                     "application/json"
@@ -447,16 +442,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/gateways/{gateway_id}/auths/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/auths/{id}": {
+            "get": {
                 "description": "Returns a single auth by id.",
                 "produces": [
                     "application/json"
@@ -508,14 +503,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Updates an existing auth.",
                 "consumes": [
                     "application/json"
@@ -585,14 +580,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Deletes an auth from a gateway.",
                 "produces": [
                     "application/json"
@@ -647,16 +642,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/gateways/{gateway_id}/consumers": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/consumers": {
+            "get": {
                 "description": "Returns a paginated list of consumers in a gateway.",
                 "produces": [
                     "application/json"
@@ -755,14 +750,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Creates a new consumer in a gateway.",
                 "consumes": [
                     "application/json"
@@ -824,16 +819,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/gateways/{gateway_id}/consumers/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/consumers/{id}": {
+            "get": {
                 "description": "Returns a single consumer by id.",
                 "produces": [
                     "application/json"
@@ -885,14 +880,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Updates an existing consumer. The optional ` + "`" + `registries` + "`" + ` field replaces the whole registry association set, so switching a role_based consumer to inline routing and attaching its registries happens in a single atomic request.",
                 "consumes": [
                     "application/json"
@@ -962,14 +957,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Deletes a consumer from a gateway.",
                 "produces": [
                     "application/json"
@@ -1024,16 +1019,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/gateways/{gateway_id}/consumers/{id}/auths/{auth_id}": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/consumers/{id}/auths/{auth_id}": {
+            "post": {
                 "description": "Associates an auth credential with a consumer (idempotent).",
                 "produces": [
                     "application/json"
@@ -1090,14 +1085,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Removes the association between an auth credential and a consumer (idempotent).",
                 "produces": [
                     "application/json"
@@ -1154,16 +1149,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/gateways/{gateway_id}/consumers/{id}/policies/{policy_id}": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/consumers/{id}/policies/{policy_id}": {
+            "post": {
                 "description": "Associates a policy with a consumer (idempotent). Editing the policy later affects every consumer it is attached to.",
                 "produces": [
                     "application/json"
@@ -1220,14 +1215,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Removes the association between a policy and a consumer (idempotent).",
                 "produces": [
                     "application/json"
@@ -1284,16 +1279,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/gateways/{gateway_id}/consumers/{id}/registries/{registry_id}": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/consumers/{id}/registries/{registry_id}": {
+            "post": {
                 "description": "Associates a registry with a consumer (idempotent). The optional body sets the registry weight for weighted load balancing.",
                 "consumes": [
                     "application/json"
@@ -1361,14 +1356,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Removes the association between a registry and a consumer (idempotent).",
                 "produces": [
                     "application/json"
@@ -1425,16 +1420,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/gateways/{gateway_id}/consumers/{id}/roles/{role_id}": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/consumers/{id}/roles/{role_id}": {
+            "post": {
                 "description": "Associates a role with a role_based consumer (idempotent). Returns 409 for inline consumers.",
                 "produces": [
                     "application/json"
@@ -1497,14 +1492,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Removes the association between a role and a consumer (idempotent).",
                 "produces": [
                     "application/json"
@@ -1561,16 +1556,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/gateways/{gateway_id}/policies": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/policies": {
+            "get": {
                 "description": "Returns a paginated list of policies in a gateway.",
                 "produces": [
                     "application/json"
@@ -1680,14 +1675,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Creates a new policy in a gateway.",
                 "consumes": [
                     "application/json"
@@ -1749,16 +1744,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/gateways/{gateway_id}/policies/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/policies/{id}": {
+            "get": {
                 "description": "Returns a single policy by id.",
                 "produces": [
                     "application/json"
@@ -1810,14 +1805,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Updates an existing policy.",
                 "consumes": [
                     "application/json"
@@ -1887,14 +1882,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Deletes a policy from a gateway.",
                 "produces": [
                     "application/json"
@@ -1949,16 +1944,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/gateways/{gateway_id}/policies/{id}/duplicate": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/policies/{id}/duplicate": {
+            "post": {
                 "description": "Creates a copy of an existing policy. The new policy reuses the plugin configuration (slug, settings, stages, enabled, priority, parallel) with a fresh id and an auto-generated name (suffix 2, 3, 4...). The copy has no consumer associations and is not global.",
                 "produces": [
                     "application/json"
@@ -2016,16 +2011,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/gateways/{gateway_id}/policies/{id}/global": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/policies/{id}/global": {
+            "post": {
                 "description": "Promotes a policy to gateway-wide scope (applies to every consumer).",
                 "produces": [
                     "application/json"
@@ -2077,14 +2072,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Demotes a global policy back to consumer-scoped (applies only to linked consumers).",
                 "produces": [
                     "application/json"
@@ -2136,16 +2131,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/gateways/{gateway_id}/registries": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/registries": {
+            "get": {
                 "description": "Returns one of two mutually exclusive variants: flat (items/page/size/total) when view and type are omitted, or grouped (view/groups/total_groups/total_instances) with view=grouped\u0026type=LLM. Grouped requests require at most 200 total registries and must omit name, page, and size.",
                 "produces": [
                     "application/json"
@@ -2225,14 +2220,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Creates a new backend in a gateway.",
                 "consumes": [
                     "application/json"
@@ -2294,16 +2289,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/gateways/{gateway_id}/registries/test-connection": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/registries/test-connection": {
+            "post": {
                 "description": "Validates connectivity and credentials against the provider's API with a lightweight, auth-only request. Test either a stored registry (registry_id) or an inline candidate configuration (provider + auth). Always returns 200; inspect \"ok\" and \"stage\" for the outcome.",
                 "consumes": [
                     "application/json"
@@ -2365,16 +2360,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/gateways/{gateway_id}/registries/validate-openapi": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/registries/validate-openapi": {
+            "post": {
                 "description": "Fetches and compiles an OpenAPI 3 document into an MCP tool preview without creating a registry. Always returns 200 for validation outcomes; inspect ok and stage.",
                 "consumes": [
                     "application/json"
@@ -2424,16 +2419,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/gateways/{gateway_id}/registries/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/registries/{id}": {
+            "get": {
                 "description": "Returns a single backend by id.",
                 "produces": [
                     "application/json"
@@ -2485,14 +2480,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Updates an existing registry.",
                 "consumes": [
                     "application/json"
@@ -2562,14 +2557,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Deletes a backend from a gateway.",
                 "produces": [
                     "application/json"
@@ -2624,16 +2619,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/gateways/{gateway_id}/registries/{id}/tools": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/registries/{id}/tools": {
+            "get": {
                 "description": "Introspects the MCP server behind the registry and returns its advertised tools. Each tool is passed through as the server declared it (name plus whatever else it exposes, e.g. description and inputSchema). Returns 502 when the upstream MCP server is unreachable.",
                 "produces": [
                     "application/json"
@@ -2691,16 +2686,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/gateways/{gateway_id}/roles": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/roles": {
+            "get": {
                 "description": "Returns a paginated list of roles in a gateway.",
                 "produces": [
                     "application/json"
@@ -2780,14 +2775,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Creates a new role in a gateway. model_policies cannot be set on create; bind registries first, then update the role.",
                 "consumes": [
                     "application/json"
@@ -2849,16 +2844,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/gateways/{gateway_id}/roles/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/roles/{id}": {
+            "get": {
                 "description": "Returns a role by id within a gateway.",
                 "produces": [
                     "application/json"
@@ -2910,14 +2905,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Updates a role. model_policies may only reference registries already attached to the role.",
                 "consumes": [
                     "application/json"
@@ -2987,14 +2982,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Deletes a role from a gateway.",
                 "produces": [
                     "application/json"
@@ -3049,16 +3044,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/gateways/{gateway_id}/roles/{role_id}/registries/{registry_id}": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/gateways/{gateway_id}/roles/{role_id}/registries/{registry_id}": {
+            "post": {
                 "description": "Associates a registry with a role (idempotent).",
                 "produces": [
                     "application/json"
@@ -3115,14 +3110,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Removes the association between a registry and a role (idempotent).",
                 "produces": [
                     "application/json"
@@ -3185,16 +3180,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/gateways/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/gateways/{id}": {
+            "get": {
                 "description": "Returns a single gateway by id.",
                 "produces": [
                     "application/json"
@@ -3238,14 +3233,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Updates an existing gateway. Tenant JWTs may not send entitlements (422). Platform tier downgrades that would leave the tenant over the new MaxInstances return 409 — delete excess gateways first.",
                 "consumes": [
                     "application/json"
@@ -3313,14 +3308,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Deletes a gateway and cascades the deletion to every resource that belongs to it (consumers, roles, policies, auths, registries and vault credentials).",
                 "produces": [
                     "application/json"
@@ -3361,16 +3356,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/mcp-servers-catalog": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/mcp-servers-catalog": {
+            "get": {
                 "description": "Returns the curated catalog of well-known remote MCP servers, used to prefill MCP registry creation.",
                 "produces": [
                     "application/json"
@@ -3392,16 +3387,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/models-catalog": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/models-catalog": {
+            "get": {
                 "description": "Returns the catalog of supported models, optionally filtered by provider. When gateway_id and registry_id are supplied for an AWS Bedrock registry, the list is narrowed to the models those credentials can invoke serverless (on-demand base models and system-defined inference profiles), excluding Bedrock Marketplace, Provisioned Throughput and custom models. Malformed ids and unreachable AWS endpoints are ignored and yield the full catalog.",
                 "produces": [
                     "application/json"
@@ -3451,16 +3446,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/playground/traces/{trace_id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/playground/traces/{trace_id}": {
+            "get": {
                 "description": "Returns the metrics Event captured for a playground request, keyed by the X-AG-Trace-Id returned in the proxy response. Traces expire after a short TTL.",
                 "produces": [
                     "application/json"
@@ -3503,16 +3498,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/policies-catalog": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/policies-catalog": {
+            "get": {
                 "description": "Returns the catalog of available policies grouped by type. Each entry includes the settings schema needed to render its configuration form dynamically.",
                 "produces": [
                     "application/json"
@@ -3534,16 +3529,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/providers-catalog": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/providers-catalog": {
+            "get": {
                 "description": "Returns the catalog of supported LLM providers.",
                 "produces": [
                     "application/json"
@@ -3571,16 +3566,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
                     }
-                }
-            }
-        },
-        "/v1/tenants/{tenant_id}/entitlements": {
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/v1/tenants/{tenant_id}/entitlements": {
+            "put": {
                 "description": "Applies one entitlements stamp to every gateway of the tenant, for the control plane to call after a plan change. Platform JWT only (no tenant claim); a tenant JWT receives 422. Only the entitlements block is written — slug, metadata and telemetry are left untouched, so a re-stamp can never revert an edit made in the runtime. A downgrade is applied even when the tenant already has more gateways than the new MaxInstances: the response reports over_cap so the caller can warn, but the stamp is not refused, since refusing would strand every gateway of the tenant on the old plan. Idempotent.",
                 "consumes": [
                     "application/json"
@@ -3631,7 +3626,12 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     }
-                }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
             }
         },
         "/{consumer_slug}/v1/chat/completions": {
@@ -5406,6 +5406,15 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PriceOverrideRequest": {
             "type": "object",
             "properties": {
+                "cache_read": {
+                    "type": "number"
+                },
+                "cache_write": {
+                    "type": "number"
+                },
+                "cache_write_1h": {
+                    "type": "number"
+                },
                 "input": {
                     "type": "number"
                 },
@@ -5794,6 +5803,15 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PriceOverrideResponse": {
             "type": "object",
             "properties": {
+                "cache_read": {
+                    "type": "number"
+                },
+                "cache_write": {
+                    "type": "number"
+                },
+                "cache_write_1h": {
+                    "type": "number"
+                },
                 "input": {
                     "type": "number"
                 },
@@ -6676,6 +6694,10 @@ const docTemplate = `{
                 "burst_per_min": {
                     "type": "integer"
                 },
+                "data_plane": {
+                    "description": "DataPlane says which data plane serves this gateway's traffic: hosted\n(empty, the default) means the SaaS proxy, hybrid means a customer-run\ndata plane. Proxies that are not hybrid data planes refuse to serve\nhybrid gateways so payloads never cross the customer boundary through a\nhosted proxy (its deployment-level exporters, TrustGuard calls and\nplayground trace store all live outside that boundary).",
+                    "type": "string"
+                },
                 "max_instances": {
                     "type": "integer"
                 },
@@ -6912,6 +6934,15 @@ const docTemplate = `{
                         "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.PolicyEntry"
                     }
                 },
+                "principal_email": {
+                    "type": "string"
+                },
+                "principal_method": {
+                    "type": "string"
+                },
+                "principal_subject": {
+                    "type": "string"
+                },
                 "request": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Request"
                 },
@@ -6973,6 +7004,9 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.MCP": {
             "type": "object",
             "properties": {
+                "account_ref": {
+                    "type": "string"
+                },
                 "catalog_code": {
                     "type": "string"
                 },
@@ -7166,6 +7200,12 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Usage": {
             "type": "object",
             "properties": {
+                "cache_write_1h_input_tokens": {
+                    "type": "integer"
+                },
+                "cache_write_input_tokens": {
+                    "type": "integer"
+                },
                 "cached_input_tokens": {
                     "type": "integer"
                 },
@@ -7176,6 +7216,9 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "reasoning_output_tokens": {
+                    "type": "integer"
+                },
+                "tool_use_input_tokens": {
                     "type": "integer"
                 },
                 "total_tokens": {

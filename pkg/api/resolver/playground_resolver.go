@@ -28,15 +28,17 @@ import (
 // the same as the admin API.
 const HeaderPlaygroundToken = "X-AG-Playground-Token" // #nosec G101 -- HTTP header name, not a credential
 
-// PlaygroundIdentityResolver authenticates playground tokens: JWTs signed with
-// the server secret, tagged with purpose "playground" and bound to a single
-// consumer slug.
+// PlaygroundIdentityResolver authenticates playground tokens: JWTs tagged with
+// purpose "playground" and bound to a single consumer slug. Signatures are
+// checked by the PlaygroundVerifier — RS256 against the control-plane issuer
+// keys (env or config-sync snapshot) or HS256 with this deployment's server
+// secret.
 type PlaygroundIdentityResolver struct {
-	jwtManager jwt.Manager
+	verifier jwt.PlaygroundVerifier
 }
 
-func NewPlaygroundIdentityResolver(jwtManager jwt.Manager) *PlaygroundIdentityResolver {
-	return &PlaygroundIdentityResolver{jwtManager: jwtManager}
+func NewPlaygroundIdentityResolver(verifier jwt.PlaygroundVerifier) *PlaygroundIdentityResolver {
+	return &PlaygroundIdentityResolver{verifier: verifier}
 }
 
 func (r *PlaygroundIdentityResolver) Resolve(
@@ -51,10 +53,7 @@ func (r *PlaygroundIdentityResolver) Resolve(
 	if rc == nil || rc.Consumer == nil {
 		return nil, ErrForbidden
 	}
-	if err := r.jwtManager.ValidateToken(token); err != nil {
-		return nil, ErrUnauthenticated
-	}
-	claims, err := r.jwtManager.DecodeToken(token)
+	claims, err := r.verifier.Verify(token)
 	if err != nil {
 		return nil, ErrUnauthenticated
 	}

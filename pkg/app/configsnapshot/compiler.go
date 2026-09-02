@@ -57,6 +57,20 @@ type Compiler struct {
 	roles      RoleReader
 	catalog    CatalogReader
 	logger     *slog.Logger
+	// playgroundTokenKeys are stamped into every compiled snapshot so data
+	// planes can verify RS256 playground tokens without any local key config.
+	playgroundTokenKeys []readmodel.VerificationKey
+}
+
+// CompilerOption customizes an optional compiler input.
+type CompilerOption func(*Compiler)
+
+// WithPlaygroundTokenKeys sets the verification keys every compiled snapshot
+// carries for RS256 playground tokens.
+func WithPlaygroundTokenKeys(keys []readmodel.VerificationKey) CompilerOption {
+	return func(c *Compiler) {
+		c.playgroundTokenKeys = keys
+	}
 }
 
 func NewCompiler(
@@ -68,11 +82,12 @@ func NewCompiler(
 	roles RoleReader,
 	catalog CatalogReader,
 	logger *slog.Logger,
+	opts ...CompilerOption,
 ) *Compiler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Compiler{
+	c := &Compiler{
 		gateways:   gateways,
 		consumers:  consumers,
 		registries: registries,
@@ -82,6 +97,10 @@ func NewCompiler(
 		catalog:    catalog,
 		logger:     logger,
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 func (c *Compiler) Compile(ctx context.Context) (*readmodel.Snapshot, error) {
@@ -101,6 +120,11 @@ func (c *Compiler) CompileFor(ctx context.Context, scope string) (*readmodel.Sna
 			}
 		}
 		gateways = scoped
+	} else {
+		// The global snapshot feeds hosted data planes; gateways bound to a
+		// customer-run (hybrid) data plane only travel in their own scoped
+		// snapshot, so a hosted plane cannot even resolve them.
+		gateways = withoutHybridGateways(gateways)
 	}
 
 	collected, err := c.collectGateways(ctx, gateways)
@@ -127,6 +151,7 @@ func (c *Compiler) CompileFor(ctx context.Context, scope string) (*readmodel.Sna
 		return nil, err
 	}
 	mergeCatalog(&data, cat)
+	data.PlaygroundTokenKeys = c.playgroundTokenKeys
 
 	sortData(&data)
 	return readmodel.Build(data), nil
@@ -157,7 +182,12 @@ func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[str
 			skipped++
 			continue
 		}
-		appendGatewayData(&global, gateways[i], *collected[i])
+		// Hybrid gateways stay out of the global snapshot (hosted data planes
+		// must not serve them) but keep their scoped snapshot, which is what
+		// their own data plane subscribes to.
+		if !gateways[i].ServedByHybridDataPlane() {
+			appendGatewayData(&global, gateways[i], *collected[i])
+		}
 		if scope := gateways[i].ID.String(); scope != "" {
 			bucket, ok := buckets[scope]
 			if !ok {
@@ -168,8 +198,15 @@ func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[str
 		}
 	}
 
-	if skipped > 0 && len(global.Gateways) == 0 {
+	if skipped > 0 && skipped == len(gateways) {
 		return nil, nil, nil, fmt.Errorf("configsnapshot: every gateway (%d) skipped due to corrupt persisted config; refusing to publish empty snapshot: %w", skipped, commonerrors.ErrCorruptData)
+	}
+
+	// Every snapshot flavor carries the playground verification keys: the
+	// global one for hosted planes and each scoped one for its data plane.
+	global.PlaygroundTokenKeys = c.playgroundTokenKeys
+	for _, bucket := range buckets {
+		bucket.PlaygroundTokenKeys = c.playgroundTokenKeys
 	}
 
 	cat, err := c.collectCatalogData(ctx)
@@ -188,6 +225,19 @@ func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[str
 		scoped[scope] = readmodel.Build(*bucket)
 	}
 	return readmodel.Build(global), scoped, readmodel.Build(catData), nil
+}
+
+// withoutHybridGateways drops gateways whose entitlements bind them to a
+// customer-run data plane.
+func withoutHybridGateways(gateways []gatewaydomain.Gateway) []gatewaydomain.Gateway {
+	hosted := make([]gatewaydomain.Gateway, 0, len(gateways))
+	for i := range gateways {
+		if gateways[i].ServedByHybridDataPlane() {
+			continue
+		}
+		hosted = append(hosted, gateways[i])
+	}
+	return hosted
 }
 
 func appendGatewayData(dst *readmodel.Data, gateway gatewaydomain.Gateway, gwData readmodel.Data) {
@@ -550,5 +600,11 @@ func sortData(data *readmodel.Data) {
 			return data.CatalogModels[i].Model.Slug < data.CatalogModels[j].Model.Slug
 		}
 		return data.CatalogModels[i].Model.ID.String() < data.CatalogModels[j].Model.ID.String()
+	})
+	sort.SliceStable(data.PlaygroundTokenKeys, func(i, j int) bool {
+		if data.PlaygroundTokenKeys[i].KID != data.PlaygroundTokenKeys[j].KID {
+			return data.PlaygroundTokenKeys[i].KID < data.PlaygroundTokenKeys[j].KID
+		}
+		return data.PlaygroundTokenKeys[i].PEM < data.PlaygroundTokenKeys[j].PEM
 	})
 }

@@ -30,6 +30,14 @@ message Snapshot {
   repeated Role roles = 7;
   repeated Provider providers = 8;
   repeated CatalogModel catalog_models = 9;
+  // Public keys data planes use to verify RS256 playground tokens minted by
+  // the control plane. Verification material only — nothing here can sign.
+  repeated VerificationKey playground_token_keys = 10;
+}
+
+message VerificationKey {
+  string kid = 1;
+  string pem = 2;
 }
 
 message Gateway {
