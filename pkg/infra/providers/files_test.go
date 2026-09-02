@@ -91,6 +91,7 @@ func TestProviderMatchesFilesID(t *testing.T) {
 		providers.ProviderZAI,
 		providers.ProviderDashScope,
 		providers.ProviderNvidia,
+		providers.ProviderMiniMax,
 	} {
 		hasFiles := providers.SupportsCapability(provider, providers.CapabilityFiles)
 		if !hasFiles {

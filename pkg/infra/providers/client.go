@@ -47,6 +47,7 @@ const (
 	ProviderZAI              = provider.ZAI
 	ProviderDashScope        = provider.DashScope
 	ProviderNvidia           = provider.Nvidia
+	ProviderMiniMax          = provider.MiniMax
 )
 
 type Config struct {
