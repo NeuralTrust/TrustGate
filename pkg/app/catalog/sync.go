@@ -74,6 +74,20 @@ var seedProviders = []seedProvider{
 	{providers.ProviderCerebras, "Cerebras", "openai"},
 	{providers.ProviderOpenRouter, "OpenRouter", "openai"},
 	{providers.ProviderCohere, "Cohere", "cohere"},
+	{providers.ProviderMoonshot, "Moonshot AI", "openai"},
+	{providers.ProviderTogether, "Together AI", "openai"},
+	{providers.ProviderDeepInfra, "DeepInfra", "openai"},
+	{providers.ProviderNovita, "Novita AI", "openai"},
+	{providers.ProviderNebius, "Nebius AI Studio", "openai"},
+	{providers.ProviderSiliconFlow, "SiliconFlow", "openai"},
+	{providers.ProviderSambaNova, "SambaNova", "openai"},
+	{providers.ProviderFireworks, "Fireworks AI", "openai"},
+	{providers.ProviderZAI, "Z.AI", "openai"},
+	{providers.ProviderDashScope, "Alibaba Cloud Model Studio", "openai"},
+	{providers.ProviderNvidia, "NVIDIA NIM", "openai"},
+	{providers.ProviderMiniMax, "MiniMax", "openai"},
+	{providers.ProviderPerplexity, "Perplexity", "openai"},
+	{providers.ProviderDatabricks, "Databricks", "openai"},
 }
 
 var cohereSeedModels = []seedModel{
@@ -120,6 +134,19 @@ var modelsDevProviderToCode = map[string]string{
 	"cerebras":       providers.ProviderCerebras,
 	"openrouter":     providers.ProviderOpenRouter,
 	"cohere":         providers.ProviderCohere,
+	"moonshotai":     providers.ProviderMoonshot,
+	"togetherai":     providers.ProviderTogether,
+	"deepinfra":      providers.ProviderDeepInfra,
+	"novita":         providers.ProviderNovita,
+	"nebius":         providers.ProviderNebius,
+	"siliconflow":    providers.ProviderSiliconFlow,
+	"sambanova":      providers.ProviderSambaNova,
+	"fireworks-ai":   providers.ProviderFireworks,
+	"zhipuai":        providers.ProviderZAI,
+	"alibaba":        providers.ProviderDashScope,
+	"nvidia":         providers.ProviderNvidia,
+	"minimax":        providers.ProviderMiniMax,
+	"perplexity":     providers.ProviderPerplexity,
 }
 
 // skipModel drops catalog entries the gateway could never invoke as published.

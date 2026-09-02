@@ -32,6 +32,20 @@ const (
 	Cerebras         = "cerebras"
 	OpenRouter       = "openrouter"
 	Cohere           = "cohere"
+	Moonshot         = "moonshot"
+	Together         = "together"
+	DeepInfra        = "deepinfra"
+	Novita           = "novita"
+	Nebius           = "nebius"
+	SiliconFlow      = "siliconflow"
+	SambaNova        = "sambanova"
+	Fireworks        = "fireworks"
+	ZAI              = "zai"
+	DashScope        = "dashscope"
+	Nvidia           = "nvidia"
+	MiniMax          = "minimax"
+	Perplexity       = "perplexity"
+	Databricks       = "databricks"
 )
 
 // Supported returns every provider name the gateway can route to.
@@ -51,6 +65,20 @@ func Supported() []string {
 		Cerebras,
 		OpenRouter,
 		Cohere,
+		Moonshot,
+		Together,
+		DeepInfra,
+		Novita,
+		Nebius,
+		SiliconFlow,
+		SambaNova,
+		Fireworks,
+		ZAI,
+		DashScope,
+		Nvidia,
+		MiniMax,
+		Perplexity,
+		Databricks,
 	}
 }
 
@@ -70,7 +98,21 @@ func IsValid(name string) bool {
 		XAI,
 		Cerebras,
 		OpenRouter,
-		Cohere:
+		Cohere,
+		Moonshot,
+		Together,
+		DeepInfra,
+		Novita,
+		Nebius,
+		SiliconFlow,
+		SambaNova,
+		Fireworks,
+		ZAI,
+		DashScope,
+		Nvidia,
+		MiniMax,
+		Perplexity,
+		Databricks:
 		return true
 	default:
 		return false

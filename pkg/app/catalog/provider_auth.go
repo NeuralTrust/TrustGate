@@ -257,6 +257,20 @@ var providerAuthCatalog = map[string][]AuthTypeOption{
 	providers.ProviderCerebras:         {apiKeyAuthOption},
 	providers.ProviderOpenRouter:       {apiKeyAuthOption},
 	providers.ProviderCohere:           {apiKeyAuthOption},
+	providers.ProviderMoonshot:         {apiKeyAuthOption},
+	providers.ProviderTogether:         {apiKeyAuthOption},
+	providers.ProviderDeepInfra:        {apiKeyAuthOption},
+	providers.ProviderNovita:           {apiKeyAuthOption},
+	providers.ProviderNebius:           {apiKeyAuthOption},
+	providers.ProviderSiliconFlow:      {apiKeyAuthOption},
+	providers.ProviderSambaNova:        {apiKeyAuthOption},
+	providers.ProviderFireworks:        {apiKeyAuthOption},
+	providers.ProviderZAI:              {apiKeyAuthOption},
+	providers.ProviderDashScope:        {apiKeyAuthOption},
+	providers.ProviderNvidia:           {apiKeyAuthOption},
+	providers.ProviderMiniMax:          {apiKeyAuthOption},
+	providers.ProviderPerplexity:       {apiKeyAuthOption},
+	providers.ProviderDatabricks:       {apiKeyAuthOption},
 }
 
 func ProviderAuthOptions(code string) []AuthTypeOption {

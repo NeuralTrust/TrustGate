@@ -36,6 +36,20 @@ const (
 	ProviderCerebras         = provider.Cerebras
 	ProviderOpenRouter       = provider.OpenRouter
 	ProviderCohere           = provider.Cohere
+	ProviderMoonshot         = provider.Moonshot
+	ProviderTogether         = provider.Together
+	ProviderDeepInfra        = provider.DeepInfra
+	ProviderNovita           = provider.Novita
+	ProviderNebius           = provider.Nebius
+	ProviderSiliconFlow      = provider.SiliconFlow
+	ProviderSambaNova        = provider.SambaNova
+	ProviderFireworks        = provider.Fireworks
+	ProviderZAI              = provider.ZAI
+	ProviderDashScope        = provider.DashScope
+	ProviderNvidia           = provider.Nvidia
+	ProviderMiniMax          = provider.MiniMax
+	ProviderPerplexity       = provider.Perplexity
+	ProviderDatabricks       = provider.Databricks
 )
 
 type Config struct {

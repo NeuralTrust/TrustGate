@@ -53,6 +53,33 @@ func DecodeOpenAICompatibleOptions(options map[string]any) (OpenAICompatibleOpti
 	return opts, nil
 }
 
+type DatabricksOptions struct {
+	BaseURL string            `mapstructure:"base_url"`
+	Headers map[string]string `mapstructure:"headers"`
+}
+
+// DecodeDatabricksOptions requires base_url because Databricks has no shared
+// host: every workspace serves its models from its own domain, and a model is
+// addressed by serving-endpoint name under that workspace.
+func DecodeDatabricksOptions(options map[string]any) (DatabricksOptions, error) {
+	var opts DatabricksOptions
+	if len(options) > 0 {
+		if err := mapstructure.Decode(options, &opts); err != nil {
+			return DatabricksOptions{}, fmt.Errorf("databricks: invalid provider_options: %w", err)
+		}
+	}
+
+	opts.BaseURL = strings.TrimSpace(opts.BaseURL)
+	if opts.BaseURL == "" {
+		return DatabricksOptions{}, fmt.Errorf("databricks: base_url is required")
+	}
+	if err := validateHTTPBaseURL(opts.BaseURL); err != nil {
+		return DatabricksOptions{}, fmt.Errorf("databricks: %w", err)
+	}
+
+	return opts, nil
+}
+
 type OpenAIOptions struct {
 	API     string `mapstructure:"api"`
 	BaseURL string `mapstructure:"base_url"`

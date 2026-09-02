@@ -23,15 +23,29 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/bedrock"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/cerebras"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/cohere"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/dashscope"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/databricks"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/deepinfra"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/deepseek"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/fireworks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/google"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/groq"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/minimax"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/mistral"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/moonshot"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/nebius"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/novita"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/nvidia"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openrouter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openaicompat"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openrouter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/perplexity"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/sambanova"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/siliconflow"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/together"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/vertex"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/xai"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/zai"
 )
 
 // Provider name constants — aliased from the providers package so callers that
@@ -51,6 +65,20 @@ const (
 	ProviderCerebras         = providers.ProviderCerebras
 	ProviderOpenRouter       = providers.ProviderOpenRouter
 	ProviderCohere           = providers.ProviderCohere
+	ProviderMoonshot         = providers.ProviderMoonshot
+	ProviderTogether         = providers.ProviderTogether
+	ProviderDeepInfra        = providers.ProviderDeepInfra
+	ProviderNovita           = providers.ProviderNovita
+	ProviderNebius           = providers.ProviderNebius
+	ProviderSiliconFlow      = providers.ProviderSiliconFlow
+	ProviderSambaNova        = providers.ProviderSambaNova
+	ProviderFireworks        = providers.ProviderFireworks
+	ProviderZAI              = providers.ProviderZAI
+	ProviderDashScope        = providers.ProviderDashScope
+	ProviderNvidia           = providers.ProviderNvidia
+	ProviderMiniMax          = providers.ProviderMiniMax
+	ProviderPerplexity       = providers.ProviderPerplexity
+	ProviderDatabricks       = providers.ProviderDatabricks
 )
 
 //go:generate mockery --name=ProviderLocator --dir=. --output=./mocks --filename=provider_locator_mock.go --case=underscore --with-expecter
@@ -90,6 +118,20 @@ func NewProviderLocator() ProviderLocator {
 			ProviderOpenRouter:       openrouter.NewOpenRouterClient(),
 			ProviderVertex:           vertex.NewVertexClient(),
 			ProviderCohere:           cohere.NewCohereClient(),
+			ProviderMoonshot:         moonshot.NewMoonshotClient(),
+			ProviderTogether:         together.NewTogetherClient(),
+			ProviderDeepInfra:        deepinfra.NewDeepInfraClient(),
+			ProviderNovita:           novita.NewNovitaClient(),
+			ProviderNebius:           nebius.NewNebiusClient(),
+			ProviderSiliconFlow:      siliconflow.NewSiliconFlowClient(),
+			ProviderSambaNova:        sambanova.NewSambaNovaClient(),
+			ProviderFireworks:        fireworks.NewFireworksClient(),
+			ProviderZAI:              zai.NewZAIClient(),
+			ProviderDashScope:        dashscope.NewDashScopeClient(),
+			ProviderNvidia:           nvidia.NewNvidiaClient(),
+			ProviderMiniMax:          minimax.NewMiniMaxClient(),
+			ProviderPerplexity:       perplexity.NewPerplexityClient(),
+			ProviderDatabricks:       databricks.NewDatabricksClient(),
 		},
 	}
 }
