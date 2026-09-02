@@ -78,6 +78,9 @@ func provideCatalogServices(c *container.Container) error {
 	if err := c.Provide(appcatalog.NewServerlessFilter); err != nil {
 		return err
 	}
+	if err := c.Provide(appcatalog.NewLiveAvailabilityFilter); err != nil {
+		return err
+	}
 	if err := c.Provide(cataloghttp.NewListMCPServersHandler); err != nil {
 		return err
 	}
