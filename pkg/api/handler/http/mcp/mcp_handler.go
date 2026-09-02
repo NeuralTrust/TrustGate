@@ -15,6 +15,7 @@
 package mcp
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -45,26 +46,32 @@ const (
 	serverName              = "trustgate"
 	serverVersion           = "1.0"
 	latestProtocolVersion   = "2025-06-18"
-	modernProtocolVersion   = "2026-07-28"
 	discoverCacheTTLMs      = 0
 	modernServerInfoMetaKey = "io.modelcontextprotocol/serverInfo"
 )
 
-var supportedProtocolVersions = map[string]bool{
-	"2024-11-05": true,
-	"2025-03-26": true,
-	"2025-06-18": true,
-}
-
-// advertisedProtocolVersions is the ordered list returned by server/discover.
-// Modern Claude clients probe with 2026-07-28 first; the gateway is already
-// stateless per request, so that revision is safe to advertise alongside the
-// legacy initialize handshake versions.
+// advertisedProtocolVersions is the ordered list returned by server/discover,
+// newest first, and the single source of truth for what initialize negotiates.
+// The two must not be allowed to drift: server/discover once advertised
+// 2026-07-28 while initialize refused to negotiate it, so a client probing with
+// that revision was silently downgraded, kept applying the newer revision's
+// rules, and rejected every tools/call result as malformed. A revision belongs
+// here only once the whole response path implements it — tools/call relays the
+// upstream's bytes verbatim, so that is not a one-line change.
 var advertisedProtocolVersions = []string{
-	modernProtocolVersion,
 	latestProtocolVersion,
 	"2025-03-26",
 	"2024-11-05",
+}
+
+var supportedProtocolVersions = negotiableVersions(advertisedProtocolVersions)
+
+func negotiableVersions(advertised []string) map[string]bool {
+	versions := make(map[string]bool, len(advertised))
+	for _, version := range advertised {
+		versions[version] = true
+	}
+	return versions
 }
 
 const (
@@ -87,10 +94,16 @@ type Handler struct {
 	gateway    *RPCGateway
 	roleScoper appmcp.RoleScoper
 	vault      vaultdomain.Repository
+	timings    streamTimings
 }
 
 func NewHandler(gateway *RPCGateway, roleScoper appmcp.RoleScoper, vault vaultdomain.Repository) *Handler {
-	return &Handler{gateway: gateway, roleScoper: roleScoper, vault: vault}
+	return &Handler{
+		gateway:    gateway,
+		roleScoper: roleScoper,
+		vault:      vault,
+		timings:    defaultStreamTimings,
+	}
 }
 
 type rpcRequest struct {
@@ -223,8 +236,12 @@ func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer
 	}
 	return writeRPCResult(c, req.ID, fiber.Map{
 		"protocolVersion": version,
+		// tools.listChanged has to be advertised for clients to act on the
+		// notification at all — Claude drops notifications/tools/list_changed
+		// from a server that did not declare the capability. The gateway backs
+		// it with the SSE stream served on GET.
 		"capabilities": fiber.Map{
-			"tools":     fiber.Map{"listChanged": false},
+			"tools":     fiber.Map{"listChanged": true},
 			"resources": fiber.Map{"subscribe": false, "listChanged": false},
 			"prompts":   fiber.Map{"listChanged": false},
 		},
@@ -244,10 +261,21 @@ func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer
 // consumer does not federate are left out so an unrelated connection elsewhere
 // on the gateway does not invalidate this surface.
 func (h *Handler) connectedProviders(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) []string {
+	ctx := c.UserContext()
+	return h.connectionSnapshot(ctx, rc, identity.PrincipalFromContext(ctx))
+}
+
+// connectionSnapshot takes its context and principal as arguments because the
+// notification stream keeps polling it long after the request context that
+// opened the stream is gone.
+func (h *Handler) connectionSnapshot(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	principal *identity.Principal,
+) []string {
 	if h.vault == nil || rc == nil || rc.Consumer == nil {
 		return nil
 	}
-	principal := identity.PrincipalFromContext(c.UserContext())
 	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
 		return nil
 	}
@@ -255,7 +283,7 @@ func (h *Handler) connectedProviders(c *fiber.Ctx, rc *appconsumer.RoutableConsu
 	if len(federated) == 0 {
 		return nil
 	}
-	creds, err := h.vault.ListByPrincipal(c.UserContext(), rc.Consumer.GatewayID, principal.Subject)
+	creds, err := h.vault.ListByPrincipal(ctx, rc.Consumer.GatewayID, principal.Subject)
 	if err != nil {
 		return nil
 	}
@@ -498,6 +526,19 @@ func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 	data, ok := appconsumer.DataFromContext(c.UserContext())
 	if !ok || data == nil {
 		return nil, fiber.NewError(fiber.StatusUnauthorized, "not authenticated")
+	}
+	// The MCP Store is synthetic: it is not in the gateway's persisted consumer
+	// data. The auth chain has already restricted its path to the built-in
+	// default identity provider, so any authenticated caller that reaches here is
+	// admitted. Stamp it with the addressed gateway from the request context.
+	if consumerdomain.IsStoreSlug(appconsumer.SlugFromMCPPath(c.Path())) {
+		gatewayID, ok := appconsumer.GatewayIDFromContext(c.UserContext())
+		if !ok {
+			return nil, fiber.NewError(fiber.StatusUnauthorized, "not authenticated")
+		}
+		return &appconsumer.RoutableConsumer{
+			Consumer: consumerdomain.BuildStoreConsumer(gatewayID),
+		}, nil
 	}
 	rc, ok := data.MatchPath(c.Path())
 	if !ok {

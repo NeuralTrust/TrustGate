@@ -63,9 +63,17 @@ type CodeGrant struct {
 	Email         string         `json:"email,omitempty"`
 	AuthID        string         `json:"auth_id,omitempty"`
 	GatewayID     string         `json:"gateway_id,omitempty"`
-	Audiences     []string       `json:"audiences,omitempty"`
-	Scopes        []string       `json:"scopes,omitempty"`
-	SessionMode   bool           `json:"session_mode,omitempty"`
+	// Org is the platform tenant (team) the authenticated user belongs to,
+	// captured from the identity provider token. It is bound into the minted
+	// session so the MCP plane can enforce that a default-IdP login only reaches
+	// gateways of that tenant.
+	Org string `json:"org,omitempty"`
+	// Groups are the user's IdP group memberships, propagated so role
+	// oidc_mapping rules can match against them.
+	Groups      []string `json:"groups,omitempty"`
+	Audiences   []string `json:"audiences,omitempty"`
+	Scopes      []string `json:"scopes,omitempty"`
+	SessionMode bool     `json:"session_mode,omitempty"`
 }
 
 type SessionRecord struct {
@@ -74,6 +82,8 @@ type SessionRecord struct {
 	Scopes    []string `json:"scopes,omitempty"`
 	GatewayID string   `json:"gateway_id"`
 	AuthID    string   `json:"auth_id"`
+	Org       string   `json:"org,omitempty"`
+	Groups    []string `json:"groups,omitempty"`
 	Audiences []string `json:"audiences,omitempty"`
 }
 
