@@ -37,7 +37,7 @@ func TestBrandIconURL_ResolvesVendorAndFallsBack(t *testing.T) {
 		t.Fatalf("Google Drive vendor = %q", got)
 	}
 	for vendor, want := range map[string]string{
-		"AWS":       "/oauth/brands/mcp/aws.svg",
+		"AWS":       "/oauth/brands/aws.svg",
 		"Holded":    "/oauth/brands/mcp/holded.png",
 		"Jotform":   "/oauth/brands/mcp/jotform.svg",
 		"Storyblok": "/oauth/brands/mcp/storyblok.png",
@@ -78,7 +78,7 @@ func TestReadBrandIcon_ServesMappedAssets(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"mcp/aws.svg", "mcp/holded.png", "mcp/jotform.svg", "mcp/storyblok.png"} {
+	for _, name := range []string{"aws.svg", "mcp/holded.png", "mcp/jotform.svg", "mcp/storyblok.png"} {
 		data, contentType, err := ReadBrandIcon(name)
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

@@ -1056,7 +1056,7 @@
       ]
     },
     {
-      "name": "com.amazon.aws/mcp",
+      "name": "com.aws/mcp",
       "vendor": "AWS",
       "category": "Cloud Platform",
       "description": "Search AWS documentation and securely operate AWS services, including Amazon S3 buckets, through IAM-authorized APIs.",
@@ -1075,10 +1075,7 @@
         "resource_metadata": true,
         "registration": "auto",
         "dcr": true,
-        "pkce": true,
-        "authorize_url": "https://{region}.oauth.signin.aws/v1/authorize",
-        "token_url": "https://{region}.oauth.signin.aws/v1/token",
-        "resource": "https://aws-mcp.{region}.api.aws/mcp"
+        "pkce": true
       },
       "relevance": 95
     },

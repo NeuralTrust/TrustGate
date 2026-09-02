@@ -261,7 +261,7 @@ func TestNewMCPServerCatalog_IncludesAWSManagedServer(t *testing.T) {
 	cat, err := NewMCPServerCatalog(nil)
 	require.NoError(t, err)
 
-	server, ok := cat.GetByCode("com.amazon.aws/mcp")
+	server, ok := cat.GetByCode("com.aws/mcp")
 	require.True(t, ok)
 	require.Equal(t, "https://aws-mcp.{region}.api.aws/mcp", server.URL)
 	require.Equal(t, "AWS", server.Vendor)
@@ -276,9 +276,9 @@ func TestNewMCPServerCatalog_IncludesAWSManagedServer(t *testing.T) {
 	require.True(t, *server.OAuth.DCR)
 	require.NotNil(t, server.OAuth.PKCE)
 	require.True(t, *server.OAuth.PKCE)
-	require.Equal(t, "https://{region}.oauth.signin.aws/v1/authorize", server.OAuth.AuthorizeURL)
-	require.Equal(t, "https://{region}.oauth.signin.aws/v1/token", server.OAuth.TokenURL)
-	require.Equal(t, "https://aws-mcp.{region}.api.aws/mcp", server.OAuth.Resource)
+	require.Empty(t, server.OAuth.AuthorizeURL)
+	require.Empty(t, server.OAuth.TokenURL)
+	require.Empty(t, server.OAuth.Resource)
 }
 
 func TestNewMCPServerCatalog_IncludesJotformStoryblokAndHolded(t *testing.T) {
