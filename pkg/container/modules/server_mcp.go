@@ -32,13 +32,14 @@ import (
 
 type mcpMiddlewares struct {
 	dig.In
-	RequestID       *middleware.RequestIDMiddleware
-	PanicRecover    *middleware.PanicRecoverMiddleware
-	AccessLog       *middleware.AccessLogMiddleware
-	SecurityHeaders *middleware.SecurityHeadersMiddleware
-	OAuthChallenge  *middleware.OAuthChallengeMiddleware
-	Auth            *middleware.MCPAuthMiddleware
-	Metrics         *middleware.MCPMetricsMiddleware
+	RequestID          *middleware.RequestIDMiddleware
+	PanicRecover       *middleware.PanicRecoverMiddleware
+	AccessLog          *middleware.AccessLogMiddleware
+	SecurityHeaders    *middleware.SecurityHeadersMiddleware
+	OAuthChallenge     *middleware.OAuthChallengeMiddleware
+	Auth               *middleware.MCPAuthMiddleware
+	HybridGatewayGuard *middleware.HybridGatewayGuardMiddleware
+	Metrics            *middleware.MCPMetricsMiddleware
 }
 
 func mcpBaseTransport(m mcpMiddlewares) *middleware.Transport {
@@ -51,9 +52,13 @@ func mcpBaseTransport(m mcpMiddlewares) *middleware.Transport {
 }
 
 func mcpAuthTransport(m mcpMiddlewares) *middleware.Transport {
+	// HybridGatewayGuard runs after Auth (gateway resolved) and before Metrics,
+	// mirroring the proxy plane: a hosted deployment must not process traffic of
+	// a gateway bound to a customer-run data plane.
 	return middleware.NewTransport(
 		m.OAuthChallenge,
 		m.Auth,
+		m.HybridGatewayGuard,
 		m.Metrics,
 	)
 }

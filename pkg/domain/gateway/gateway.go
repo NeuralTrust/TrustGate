@@ -64,6 +64,16 @@ func (g *Gateway) RetentionWindow() (time.Duration, bool) {
 	return g.Entitlements.ResolveRetention()
 }
 
+// ServedByHybridDataPlane reports whether this gateway's traffic belongs on a
+// customer-run data plane. Nil-safe like TenantID so guards can run before the
+// gateway is known to have resolved.
+func (g *Gateway) ServedByHybridDataPlane() bool {
+	if g == nil {
+		return false
+	}
+	return g.Entitlements.IsHybridDataPlane()
+}
+
 func isReservedMetadataKey(key string) bool {
 	return key == MetadataTenantIDKey || key == MetadataLegacyTeamIDKey
 }

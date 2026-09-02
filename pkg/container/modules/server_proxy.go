@@ -31,20 +31,25 @@ import (
 
 type proxyMiddlewares struct {
 	dig.In
-	PanicRecover    *middleware.PanicRecoverMiddleware
-	AccessLog       *middleware.AccessLogMiddleware
-	SecurityHeaders *middleware.SecurityHeadersMiddleware
-	Session         *middleware.SessionMiddleware
-	Auth            *middleware.AuthMiddleware
-	Metrics         *middleware.MetricsMiddleware
+	PanicRecover       *middleware.PanicRecoverMiddleware
+	AccessLog          *middleware.AccessLogMiddleware
+	SecurityHeaders    *middleware.SecurityHeadersMiddleware
+	Session            *middleware.SessionMiddleware
+	Auth               *middleware.AuthMiddleware
+	HybridGatewayGuard *middleware.HybridGatewayGuardMiddleware
+	Metrics            *middleware.MetricsMiddleware
 }
 
 func proxyTransport(m proxyMiddlewares) *middleware.Transport {
+	// HybridGatewayGuard sits right after Auth (which resolves the gateway) and
+	// before Metrics so a refused hybrid gateway emits no telemetry event and no
+	// plugin or forwarder ever sees its payload.
 	return middleware.NewTransport(
 		m.SecurityHeaders,
 		m.PanicRecover,
 		m.AccessLog,
 		m.Auth,
+		m.HybridGatewayGuard,
 		m.Session,
 		m.Metrics,
 	)

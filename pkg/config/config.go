@@ -261,6 +261,13 @@ type ServerConfig struct {
 	TrustXFCCFrom         []string
 	MCPDefaultIdP         MCPDefaultIdPConfig
 	GoogleWorkspaceMCP    GoogleWorkspaceMCPConfig
+	// ServeHybridGateways marks a proxy deployment as allowed to serve gateways
+	// whose entitlements say data_plane=hybrid. Defaults to true only on
+	// config-sync data planes (the customer-run deployment those gateways belong
+	// to); the hosted SaaS proxy refuses them so payloads never leave the
+	// customer boundary through it. PROXY_SERVE_HYBRID_GATEWAYS overrides for
+	// non-dbless customer data planes.
+	ServeHybridGateways bool
 }
 
 type MCPDefaultIdPConfig struct {
@@ -368,6 +375,13 @@ type MetricsConfig struct {
 type PlaygroundConfig struct {
 	TraceStoreEnabled bool
 	TraceStoreTTL     time.Duration
+	// TokenPublicKeys verify RS256 playground tokens minted by the control
+	// plane (PLAYGROUND_TOKEN_PUBLIC_KEYS, same format as
+	// ADMIN_M2M_PUBLIC_KEYS, which it falls back to when unset). Data planes
+	// also pick keys up from the config-sync snapshot, so hybrid installs can
+	// leave this empty. HS256 tokens signed with SERVER_SECRET_KEY keep
+	// working either way.
+	TokenPublicKeys []AdminM2MPublicKey
 }
 
 type UpstreamConfig struct {
@@ -460,6 +474,11 @@ func LoadConfig() (*Config, error) {
 		MCPConnectRateLimit: mcpConnectRateLimit,
 		AdminM2M:            getAdminM2MConfig(),
 	}
+	// The playground verifier trusts the admin M2M issuer keys by default, so
+	// a SaaS deployment that already mints M2M tokens needs no extra config.
+	if len(cfg.Playground.TokenPublicKeys) == 0 {
+		cfg.Playground.TokenPublicKeys = cfg.AdminM2M.PublicKeys
+	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -487,6 +506,7 @@ func getServerConfig() ServerConfig {
 		STSIssuer:             getEnv("STS_ISSUER", "trustgate"),
 		STSSigningKey:         getEnv("STS_SIGNING_KEY", ""),
 		TrustXFCCFrom:         splitCSV(getEnv("TRUST_XFCC_FROM", "")),
+		ServeHybridGateways:   getEnvBool("PROXY_SERVE_HYBRID_GATEWAYS", DBLessDataPlaneEnabled()),
 		MCPDefaultIdP: MCPDefaultIdPConfig{
 			Issuer:       getEnv("MCP_DEFAULT_IDP_ISSUER", ""),
 			AuthorizeURL: getEnv("MCP_DEFAULT_IDP_AUTHORIZE_URL", ""),
@@ -681,6 +701,7 @@ func getPlaygroundConfig() PlaygroundConfig {
 	return PlaygroundConfig{
 		TraceStoreEnabled: getEnvBool("PLAYGROUND_TRACE_STORE_ENABLED", defaultPlaygroundTraceStoreEnabled),
 		TraceStoreTTL:     ttl,
+		TokenPublicKeys:   parseAdminM2MPublicKeys(getEnv("PLAYGROUND_TOKEN_PUBLIC_KEYS", "")),
 	}
 }
 

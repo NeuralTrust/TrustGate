@@ -37,7 +37,20 @@ type Entitlements struct {
 	QuotaPerMonth *int   `json:"quota_per_month,omitempty"`
 	MaxInstances  *int   `json:"max_instances,omitempty"`
 	RetentionDays *int   `json:"retention_days,omitempty"`
+	// DataPlane says which data plane serves this gateway's traffic: hosted
+	// (empty, the default) means the SaaS proxy, hybrid means a customer-run
+	// data plane. Proxies that are not hybrid data planes refuse to serve
+	// hybrid gateways so payloads never cross the customer boundary through a
+	// hosted proxy (its deployment-level exporters, TrustGuard calls and
+	// playground trace store all live outside that boundary).
+	DataPlane string `json:"data_plane,omitempty"`
 }
+
+// DataPlane values. Empty is equivalent to DataPlaneHosted.
+const (
+	DataPlaneHosted = "hosted"
+	DataPlaneHybrid = "hybrid"
+)
 
 func DefaultEntitlements() Entitlements {
 	return Entitlements{Tier: TierFree}
@@ -89,6 +102,23 @@ func (e Entitlements) ResolveLimits() (ratelimit.Limits, bool) {
 	}, true
 }
 
+// IsHybridDataPlane reports whether this gateway is served by a customer-run
+// data plane rather than the hosted proxy.
+func (e Entitlements) IsHybridDataPlane() bool {
+	return strings.EqualFold(strings.TrimSpace(e.DataPlane), DataPlaneHybrid)
+}
+
+// ValidateDataPlane normalizes the data-plane label; empty means hosted.
+func ValidateDataPlane(dataPlane string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(dataPlane))
+	switch normalized {
+	case "", DataPlaneHosted, DataPlaneHybrid:
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("gateway: entitlements.data_plane must be %q or %q: %w", DataPlaneHosted, DataPlaneHybrid, commonerrors.ErrValidation)
+	}
+}
+
 // ValidateTier normalizes tier and rejects unknown plan labels; empty means free.
 func ValidateTier(tier string) (string, error) {
 	normalized := strings.ToLower(strings.TrimSpace(tier))
@@ -109,6 +139,12 @@ func NormalizeEntitlements(e Entitlements) (Entitlements, error) {
 		return Entitlements{}, err
 	}
 	e.Tier = tier
+
+	dataPlane, err := ValidateDataPlane(e.DataPlane)
+	if err != nil {
+		return Entitlements{}, err
+	}
+	e.DataPlane = dataPlane
 
 	if e.RetentionDays != nil && *e.RetentionDays < 0 {
 		return Entitlements{}, fmt.Errorf("gateway: entitlements.retention_days must be >= 0 (0 means unlimited): %w", commonerrors.ErrValidation)

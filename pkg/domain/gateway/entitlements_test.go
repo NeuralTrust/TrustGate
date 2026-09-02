@@ -222,3 +222,53 @@ func TestRequireStampedEntitlements_CarriesRetentionAlongsideCaps(t *testing.T) 
 		t.Fatalf("retention_days = %v", got.RetentionDays)
 	}
 }
+
+func TestNormalizeEntitlements_DataPlaneNormalizedAndValidated(t *testing.T) {
+	t.Parallel()
+	for input, want := range map[string]string{
+		"":         "",
+		"hosted":   DataPlaneHosted,
+		"hybrid":   DataPlaneHybrid,
+		" Hybrid ": DataPlaneHybrid,
+	} {
+		got, err := NormalizeEntitlements(Entitlements{Tier: "free", DataPlane: input})
+		if err != nil {
+			t.Fatalf("unexpected error for %q: %v", input, err)
+		}
+		if got.DataPlane != want {
+			t.Fatalf("data_plane for %q = %q, want %q", input, got.DataPlane, want)
+		}
+	}
+}
+
+func TestNormalizeEntitlements_UnknownDataPlaneRejected(t *testing.T) {
+	t.Parallel()
+	_, err := NormalizeEntitlements(Entitlements{Tier: "free", DataPlane: "on-prem"})
+	if !errors.Is(err, commonerrors.ErrValidation) {
+		t.Fatalf("expected validation error, got %v", err)
+	}
+}
+
+func TestIsHybridDataPlane(t *testing.T) {
+	t.Parallel()
+	if (Entitlements{DataPlane: DataPlaneHosted}).IsHybridDataPlane() {
+		t.Fatal("hosted must not report hybrid")
+	}
+	if (Entitlements{}).IsHybridDataPlane() {
+		t.Fatal("empty must not report hybrid")
+	}
+	if !(Entitlements{DataPlane: "HYBRID"}).IsHybridDataPlane() {
+		t.Fatal("hybrid stamp (any case) must report hybrid")
+	}
+}
+
+func TestGateway_ServedByHybridDataPlane_NilSafe(t *testing.T) {
+	t.Parallel()
+	var g *Gateway
+	if g.ServedByHybridDataPlane() {
+		t.Fatal("nil gateway must not report hybrid")
+	}
+	if !(&Gateway{Entitlements: Entitlements{DataPlane: DataPlaneHybrid}}).ServedByHybridDataPlane() {
+		t.Fatal("hybrid gateway must report hybrid")
+	}
+}
