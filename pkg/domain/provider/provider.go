@@ -35,6 +35,7 @@ const (
 	Moonshot         = "moonshot"
 	Together         = "together"
 	DeepInfra        = "deepinfra"
+	Novita           = "novita"
 )
 
 // Supported returns every provider name the gateway can route to.
@@ -57,6 +58,7 @@ func Supported() []string {
 		Moonshot,
 		Together,
 		DeepInfra,
+		Novita,
 	}
 }
 
@@ -79,7 +81,8 @@ func IsValid(name string) bool {
 		Cohere,
 		Moonshot,
 		Together,
-		DeepInfra:
+		DeepInfra,
+		Novita:
 		return true
 	default:
 		return false

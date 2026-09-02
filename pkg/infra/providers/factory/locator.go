@@ -29,6 +29,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/groq"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/mistral"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/moonshot"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/novita"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openaicompat"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openrouter"
@@ -57,6 +58,7 @@ const (
 	ProviderMoonshot         = providers.ProviderMoonshot
 	ProviderTogether         = providers.ProviderTogether
 	ProviderDeepInfra        = providers.ProviderDeepInfra
+	ProviderNovita           = providers.ProviderNovita
 )
 
 //go:generate mockery --name=ProviderLocator --dir=. --output=./mocks --filename=provider_locator_mock.go --case=underscore --with-expecter
@@ -95,6 +97,7 @@ func NewProviderLocator() ProviderLocator {
 			ProviderMoonshot:         moonshot.NewMoonshotClient(),
 			ProviderTogether:         together.NewTogetherClient(),
 			ProviderDeepInfra:        deepinfra.NewDeepInfraClient(),
+			ProviderNovita:           novita.NewNovitaClient(),
 		},
 	}
 }
