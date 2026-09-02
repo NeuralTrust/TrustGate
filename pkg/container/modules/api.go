@@ -40,6 +40,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/o11y"
 	infraoauth "github.com/NeuralTrust/TrustGate/pkg/infra/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/ratelimit"
+	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/adapters"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 	"go.uber.org/dig"
@@ -47,6 +48,14 @@ import (
 
 type healthParams struct {
 	dig.In
+	Store configsync.ConfigStore[*readmodel.Snapshot] `optional:"true"`
+}
+
+type playgroundVerifierParams struct {
+	dig.In
+	Cfg *config.Config
+	// Store is only bound on DB-less data planes, where the snapshot carries
+	// the playground verification keys published by the control plane.
 	Store configsync.ConfigStore[*readmodel.Snapshot] `optional:"true"`
 }
 
@@ -166,7 +175,21 @@ func API(c *container.Container) error {
 	if err := c.Provide(resolver.NewAPIKeyIdentityResolver); err != nil {
 		return err
 	}
-	if err := c.Provide(resolver.NewPlaygroundIdentityResolver); err != nil {
+	if err := c.Provide(func(p playgroundVerifierParams) (*resolver.PlaygroundIdentityResolver, error) {
+		static, err := jwt.StaticPlaygroundKeys(p.Cfg.Playground.TokenPublicKeys)
+		if err != nil {
+			return nil, err
+		}
+		// On DB-less data planes the config-sync snapshot is a second, live key
+		// source, so the control plane can introduce or rotate keys without the
+		// customer touching any config.
+		var snapshotKeys jwt.PlaygroundKeySource
+		if p.Store != nil {
+			snapshotKeys = adapters.NewPlaygroundKeySource(p.Store)
+		}
+		verifier := jwt.NewPlaygroundVerifier(&p.Cfg.Server, jwt.CombinePlaygroundKeys(static, snapshotKeys))
+		return resolver.NewPlaygroundIdentityResolver(verifier), nil
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(resolver.NewOAuth2IdentityResolver); err != nil {

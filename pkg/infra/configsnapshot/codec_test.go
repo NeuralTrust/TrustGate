@@ -135,3 +135,21 @@ func TestDecodeDefaultsEmptyEntitlementsToFree(t *testing.T) {
 	require.Len(t, snap.Data().Gateways, 1)
 	assert.Equal(t, gatewaydomain.TierFree, snap.Data().Gateways[0].Entitlements.Tier)
 }
+
+func TestCodecRoundTripPlaygroundTokenKeys(t *testing.T) {
+	codec := configsnapshot.NewCodec()
+	raw, err := codec.Encode(readmodel.Build(readmodel.Data{
+		Version: "v1",
+		PlaygroundTokenKeys: []readmodel.VerificationKey{
+			{KID: "2026-09", PEM: "-----BEGIN PUBLIC KEY-----\nabc\n-----END PUBLIC KEY-----\n"},
+		},
+	}))
+	require.NoError(t, err)
+
+	snap, err := codec.Decode(raw)
+	require.NoError(t, err)
+	keys := snap.PlaygroundTokenKeys()
+	require.Len(t, keys, 1)
+	assert.Equal(t, "2026-09", keys[0].KID)
+	assert.Contains(t, keys[0].PEM, "BEGIN PUBLIC KEY")
+}

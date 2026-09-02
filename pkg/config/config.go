@@ -375,6 +375,13 @@ type MetricsConfig struct {
 type PlaygroundConfig struct {
 	TraceStoreEnabled bool
 	TraceStoreTTL     time.Duration
+	// TokenPublicKeys verify RS256 playground tokens minted by the control
+	// plane (PLAYGROUND_TOKEN_PUBLIC_KEYS, same format as
+	// ADMIN_M2M_PUBLIC_KEYS, which it falls back to when unset). Data planes
+	// also pick keys up from the config-sync snapshot, so hybrid installs can
+	// leave this empty. HS256 tokens signed with SERVER_SECRET_KEY keep
+	// working either way.
+	TokenPublicKeys []AdminM2MPublicKey
 }
 
 type UpstreamConfig struct {
@@ -466,6 +473,11 @@ func LoadConfig() (*Config, error) {
 		RateLimit:           getRateLimitConfig(),
 		MCPConnectRateLimit: mcpConnectRateLimit,
 		AdminM2M:            getAdminM2MConfig(),
+	}
+	// The playground verifier trusts the admin M2M issuer keys by default, so
+	// a SaaS deployment that already mints M2M tokens needs no extra config.
+	if len(cfg.Playground.TokenPublicKeys) == 0 {
+		cfg.Playground.TokenPublicKeys = cfg.AdminM2M.PublicKeys
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -689,6 +701,7 @@ func getPlaygroundConfig() PlaygroundConfig {
 	return PlaygroundConfig{
 		TraceStoreEnabled: getEnvBool("PLAYGROUND_TRACE_STORE_ENABLED", defaultPlaygroundTraceStoreEnabled),
 		TraceStoreTTL:     ttl,
+		TokenPublicKeys:   parseAdminM2MPublicKeys(getEnv("PLAYGROUND_TOKEN_PUBLIC_KEYS", "")),
 	}
 }
 
