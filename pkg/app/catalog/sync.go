@@ -86,6 +86,7 @@ var seedProviders = []seedProvider{
 	{providers.ProviderDashScope, "Alibaba Cloud Model Studio", "openai"},
 	{providers.ProviderNvidia, "NVIDIA NIM", "openai"},
 	{providers.ProviderMiniMax, "MiniMax", "openai"},
+	{providers.ProviderPerplexity, "Perplexity", "openai"},
 }
 
 var cohereSeedModels = []seedModel{
@@ -144,6 +145,7 @@ var modelsDevProviderToCode = map[string]string{
 	"alibaba":        providers.ProviderDashScope,
 	"nvidia":         providers.ProviderNvidia,
 	"minimax":        providers.ProviderMiniMax,
+	"perplexity":     providers.ProviderPerplexity,
 }
 
 // skipModel drops catalog entries the gateway could never invoke as published.
