@@ -29,51 +29,67 @@ const testCollectorID = "11111111-1111-4111-8111-111111111111"
 
 func TestParseConfig(t *testing.T) {
 	tests := []struct {
-		name        string
-		settings    map[string]any
-		wantErr     bool
-		wantInspect string
-		wantOnError string
+		name          string
+		settings      map[string]any
+		wantErr       bool
+		wantDirection string
+		wantOnError   string
 	}{
 		{
-			name:        "valid minimal config defaults inspect",
-			settings:    map[string]any{"collector_id": testCollectorID},
-			wantInspect: inspectRequestResponse,
-			wantOnError: onErrorFailOpen,
+			name:          "valid minimal config defaults direction",
+			settings:      map[string]any{"collector_id": testCollectorID},
+			wantDirection: legRequestResponse,
+			wantOnError:   onErrorFailOpen,
 		},
 		{
-			name:        "inspect request accepted",
-			settings:    map[string]any{"inspect": inspectRequest, "collector_id": testCollectorID},
-			wantInspect: inspectRequest,
-			wantOnError: onErrorFailOpen,
+			name:          "direction request accepted",
+			settings:      map[string]any{"direction": legRequest, "collector_id": testCollectorID},
+			wantDirection: legRequest,
+			wantOnError:   onErrorFailOpen,
 		},
 		{
-			name:        "catalog direction alias maps to inspect",
-			settings:    map[string]any{"direction": inspectRequest, "collector_id": testCollectorID},
-			wantInspect: inspectRequest,
-			wantOnError: onErrorFailOpen,
+			// The legacy key is no longer read at all. It used to be resolved
+			// ahead of direction, which silently disabled response-leg
+			// inspection on any policy holding both.
+			name: "legacy inspect key is ignored when direction is set",
+			settings: map[string]any{
+				"direction":    legRequestResponse,
+				"inspect":      legRequest,
+				"collector_id": testCollectorID,
+			},
+			wantDirection: legRequestResponse,
+			wantOnError:   onErrorFailOpen,
 		},
 		{
-			name:        "inspect response accepted",
-			settings:    map[string]any{"inspect": inspectResponse, "collector_id": testCollectorID},
-			wantInspect: inspectResponse,
-			wantOnError: onErrorFailOpen,
+			// Nothing reads the legacy key, so a policy that stores only it
+			// falls back to the default. The accompanying migration is what
+			// keeps that from changing behaviour on deploy.
+			name:          "legacy inspect key alone falls back to the default",
+			settings:      map[string]any{"inspect": legRequest, "collector_id": testCollectorID},
+			wantDirection: legRequestResponse,
+			wantOnError:   onErrorFailOpen,
 		},
 		{
-			name:        "inspect request_response accepted",
-			settings:    map[string]any{"inspect": inspectRequestResponse, "collector_id": testCollectorID},
-			wantInspect: inspectRequestResponse,
-			wantOnError: onErrorFailOpen,
+			name:          "direction response accepted",
+			settings:      map[string]any{"direction": legResponse, "collector_id": testCollectorID},
+			wantDirection: legResponse,
+			wantOnError:   onErrorFailOpen,
 		},
 		{
-			name:        "on_error fail_closed accepted",
-			settings:    map[string]any{"collector_id": testCollectorID, "on_error": onErrorFailClosed},
-			wantInspect: inspectRequestResponse,
-			wantOnError: onErrorFailClosed,
+			name:          "direction request_response accepted",
+			settings:      map[string]any{"direction": legRequestResponse, "collector_id": testCollectorID},
+			wantDirection: legRequestResponse,
+			wantOnError:   onErrorFailOpen,
 		},
 		{
-			name:     "invalid inspect",
-			settings: map[string]any{"inspect": "both", "collector_id": testCollectorID},
+			name:          "on_error fail_closed accepted",
+			settings:      map[string]any{"collector_id": testCollectorID, "on_error": onErrorFailClosed},
+			wantDirection: legRequestResponse,
+			wantOnError:   onErrorFailClosed,
+		},
+		{
+			name:     "invalid direction",
+			settings: map[string]any{"direction": "both", "collector_id": testCollectorID},
 			wantErr:  true,
 		},
 		{
@@ -82,14 +98,14 @@ func TestParseConfig(t *testing.T) {
 			wantErr:  true,
 		},
 		{
-			name:        "legacy base_url in settings ignored",
-			settings:    map[string]any{"base_url": "http://guard.local", "collector_id": testCollectorID},
-			wantInspect: inspectRequestResponse,
-			wantOnError: onErrorFailOpen,
+			name:          "legacy base_url in settings ignored",
+			settings:      map[string]any{"base_url": "http://guard.local", "collector_id": testCollectorID},
+			wantDirection: legRequestResponse,
+			wantOnError:   onErrorFailOpen,
 		},
 		{
 			name:     "missing collector_id rejected",
-			settings: map[string]any{"inspect": inspectRequest},
+			settings: map[string]any{"direction": legRequest},
 			wantErr:  true,
 		},
 		{
@@ -106,45 +122,48 @@ func TestParseConfig(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			assert.Equal(t, tt.wantInspect, cfg.Inspect)
+			assert.Equal(t, tt.wantDirection, cfg.Direction)
 			assert.Equal(t, tt.wantOnError, cfg.OnError)
 		})
 	}
 }
 
-func TestConfigCacheKeepsDirectionAndInspectApart(t *testing.T) {
+// TestConfigCacheKeepsDirectionsApart guards configCacheKey: it must name every
+// setting parseConfig reads, or two policies differing only in one of them share
+// a cache entry and the first parsed decides the resolved config for both.
+func TestConfigCacheKeepsDirectionsApart(t *testing.T) {
 	p := New(adapter.NewRegistry(), "http://guard.local", time.Second, "id", "secret", nil)
 
-	legacy, err := p.config(map[string]any{"direction": inspectRequest, "collector_id": testCollectorID})
+	set, err := p.config(map[string]any{"direction": legRequest, "collector_id": testCollectorID})
 	require.NoError(t, err)
-	assert.Equal(t, inspectRequest, legacy.Inspect)
+	assert.Equal(t, legRequest, set.Direction)
 
 	unset, err := p.config(map[string]any{"collector_id": testCollectorID})
 	require.NoError(t, err)
-	assert.Equal(t, inspectRequestResponse, unset.Inspect,
-		"a policy that sets neither key must not inherit the cached config of one that sets direction")
+	assert.Equal(t, legRequestResponse, unset.Direction,
+		"a policy that leaves direction unset must not inherit the cached config of one that sets it")
 
-	again, err := p.config(map[string]any{"direction": inspectRequest, "collector_id": testCollectorID})
+	again, err := p.config(map[string]any{"direction": legRequest, "collector_id": testCollectorID})
 	require.NoError(t, err)
-	assert.Equal(t, inspectRequest, again.Inspect,
-		"the cached entry for direction must survive a policy that leaves it unset")
+	assert.Equal(t, legRequest, again.Direction,
+		"the cached entry for an explicit direction must survive a policy that leaves it unset")
 }
 
 func TestSelectsStage(t *testing.T) {
 	tests := []struct {
 		name             string
-		inspect          string
+		direction        string
 		wantPreRequest   bool
 		wantPreResponse  bool
 		wantPostResponse bool
 	}{
-		{name: "request", inspect: inspectRequest, wantPreRequest: true, wantPreResponse: false, wantPostResponse: false},
-		{name: "response", inspect: inspectResponse, wantPreRequest: false, wantPreResponse: true, wantPostResponse: true},
-		{name: "request_response", inspect: inspectRequestResponse, wantPreRequest: true, wantPreResponse: true, wantPostResponse: true},
+		{name: "request", direction: legRequest, wantPreRequest: true, wantPreResponse: false, wantPostResponse: false},
+		{name: "response", direction: legResponse, wantPreRequest: false, wantPreResponse: true, wantPostResponse: true},
+		{name: "request_response", direction: legRequestResponse, wantPreRequest: true, wantPreResponse: true, wantPostResponse: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := Settings{Inspect: tt.inspect}
+			s := Settings{Direction: tt.direction}
 			assert.Equal(t, tt.wantPreRequest, s.selectsStage(policy.StagePreRequest))
 			assert.Equal(t, tt.wantPreResponse, s.selectsStage(policy.StagePreResponse))
 			assert.Equal(t, tt.wantPostResponse, s.selectsStage(policy.StagePostResponse))

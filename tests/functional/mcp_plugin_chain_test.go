@@ -44,7 +44,7 @@ func addCountingFixedTool(server *sdk.Server, name, text string, calls *int64) {
 	)
 }
 
-func attachTrustGuardMCPPolicy(t *testing.T, gatewayID, consumerID, inspect, mode string) {
+func attachTrustGuardMCPPolicy(t *testing.T, gatewayID, consumerID, direction, mode string) {
 	t.Helper()
 	payload := map[string]any{
 		"name":     uniqueName("mcp-tg-pol"),
@@ -53,7 +53,7 @@ func attachTrustGuardMCPPolicy(t *testing.T, gatewayID, consumerID, inspect, mod
 		"priority": 0,
 		"settings": map[string]any{
 			"collector_id": trustGuardFunctionalCollectorID,
-			"inspect":      inspect,
+			"direction":    direction,
 		},
 	}
 	if mode != "" {
@@ -63,13 +63,13 @@ func attachTrustGuardMCPPolicy(t *testing.T, gatewayID, consumerID, inspect, mod
 	AttachPolicy(t, gatewayID, consumerID, policyID)
 }
 
-func setupMCPPluginChain(t *testing.T, configure func(*sdk.Server), inspect, mode string) (string, string, map[string]string) {
+func setupMCPPluginChain(t *testing.T, configure func(*sdk.Server), direction, mode string) (string, string, map[string]string) {
 	t.Helper()
 	upstream := startMCPUpstream(t, configure)
 	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
 	registryID := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-reg"), upstream.URL))
 	consumerID, key := createMCPConsumer(t, gatewayID, []string{registryID}, nil, "")
-	attachTrustGuardMCPPolicy(t, gatewayID, consumerID, inspect, mode)
+	attachTrustGuardMCPPolicy(t, gatewayID, consumerID, direction, mode)
 	return gatewayID, consumerID, apiKeyHeaders(key)
 }
 
@@ -112,7 +112,7 @@ func TestMCPPluginChain_ObserveModeNeverBlocks(t *testing.T) {
 
 	cases := []struct {
 		name         string
-		inspect      string
+		direction    string
 		toolName     string
 		configure    func(*sdk.Server, *int64)
 		arguments    map[string]any
@@ -120,7 +120,7 @@ func TestMCPPluginChain_ObserveModeNeverBlocks(t *testing.T) {
 	}{
 		{
 			name:         "input direction",
-			inspect:      "request",
+			direction:    "request",
 			toolName:     "echo",
 			configure:    func(s *sdk.Server, c *int64) { addCountingEchoTool(s, "echo", c) },
 			arguments:    map[string]any{"message": trustGuardBlockWord},
@@ -128,7 +128,7 @@ func TestMCPPluginChain_ObserveModeNeverBlocks(t *testing.T) {
 		},
 		{
 			name:         "output direction",
-			inspect:      "response",
+			direction:    "response",
 			toolName:     "leak",
 			configure:    func(s *sdk.Server, c *int64) { addCountingFixedTool(s, "leak", "leaked "+trustGuardBlockWord, c) },
 			arguments:    map[string]any{"message": "benign"},
@@ -143,7 +143,7 @@ func TestMCPPluginChain_ObserveModeNeverBlocks(t *testing.T) {
 			var calls int64
 			gatewayID, consumerID, headers := setupMCPPluginChain(t,
 				func(s *sdk.Server) { tc.configure(s, &calls) },
-				tc.inspect, "observe")
+				tc.direction, "observe")
 
 			status, body := mcpRPC(t, gatewayID, consumerID, headers, "tools/call",
 				map[string]any{"name": tc.toolName, "arguments": tc.arguments})

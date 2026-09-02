@@ -181,7 +181,7 @@ func TestTransformedInputPrefersInputThenMessages(t *testing.T) {
 func TestLLMResponsePayloadSkipsPureThinking(t *testing.T) {
 	t.Parallel()
 	raw, err := llmResponsePayload(&adapter.CanonicalResponse{
-		Content: "private thought",
+		Content:   "private thought",
 		Reasoning: &adapter.CanonicalReasoning{ThinkingText: "private thought"},
 	}, nil)
 	if err != nil {
@@ -208,7 +208,7 @@ func TestLLMResponsePayloadContentReasoningToolCalls(t *testing.T) {
 	t.Parallel()
 
 	raw, err := llmResponsePayload(&adapter.CanonicalResponse{
-		Content: "answer",
+		Content:   "answer",
 		Reasoning: &adapter.CanonicalReasoning{ThinkingText: "plan first"},
 		ToolCalls: []adapter.CanonicalToolCall{{ID: "1", Name: "search", Arguments: `{"q":"x"}`}},
 	}, nil)
