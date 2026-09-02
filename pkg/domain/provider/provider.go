@@ -43,6 +43,7 @@ const (
 	ZAI              = "zai"
 	DashScope        = "dashscope"
 	Nvidia           = "nvidia"
+	MiniMax          = "minimax"
 )
 
 // Supported returns every provider name the gateway can route to.
@@ -73,6 +74,7 @@ func Supported() []string {
 		ZAI,
 		DashScope,
 		Nvidia,
+		MiniMax,
 	}
 }
 
@@ -103,7 +105,8 @@ func IsValid(name string) bool {
 		Fireworks,
 		ZAI,
 		DashScope,
-		Nvidia:
+		Nvidia,
+		MiniMax:
 		return true
 	default:
 		return false
