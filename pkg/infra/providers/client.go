@@ -46,6 +46,7 @@ const (
 	ProviderFireworks        = provider.Fireworks
 	ProviderZAI              = provider.ZAI
 	ProviderDashScope        = provider.DashScope
+	ProviderNvidia           = provider.Nvidia
 )
 
 type Config struct {
