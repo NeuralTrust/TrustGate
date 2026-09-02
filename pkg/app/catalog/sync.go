@@ -75,6 +75,7 @@ var seedProviders = []seedProvider{
 	{providers.ProviderOpenRouter, "OpenRouter", "openai"},
 	{providers.ProviderCohere, "Cohere", "cohere"},
 	{providers.ProviderMoonshot, "Moonshot AI", "openai"},
+	{providers.ProviderTogether, "Together AI", "openai"},
 }
 
 var cohereSeedModels = []seedModel{
@@ -122,6 +123,7 @@ var modelsDevProviderToCode = map[string]string{
 	"openrouter":     providers.ProviderOpenRouter,
 	"cohere":         providers.ProviderCohere,
 	"moonshotai":     providers.ProviderMoonshot,
+	"togetherai":     providers.ProviderTogether,
 }
 
 // skipModel drops catalog entries the gateway could never invoke as published.
