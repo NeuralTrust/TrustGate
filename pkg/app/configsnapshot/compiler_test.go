@@ -572,3 +572,43 @@ func scopeKeys(scoped map[string]*readmodel.Snapshot) []string {
 	sort.Strings(keys)
 	return keys
 }
+
+func TestCompilerStampsPlaygroundTokenKeysEverywhere(t *testing.T) {
+	hosted := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
+	keys := []readmodel.VerificationKey{{KID: "2026-09", PEM: "pem"}}
+
+	compiler := appsnapshot.NewCompiler(
+		fakeGateways{items: []*gatewaydomain.Gateway{{ID: hosted}}},
+		fakeConsumers{byGateway: map[string][]*consumerdomain.Consumer{}},
+		fakeRegistries{byGateway: map[string][]*registrydomain.Registry{}},
+		fakePolicies{byGateway: map[string][]*policydomain.Policy{}},
+		fakeAuths{byGateway: map[string][]*authdomain.Auth{}},
+		fakeRoles{byGateway: map[string][]*roledomain.Role{}},
+		fakeCatalog{},
+		nil,
+		appsnapshot.WithPlaygroundTokenKeys(keys),
+	)
+
+	global, scoped, _, err := compiler.CompileAll(context.Background())
+	if err != nil {
+		t.Fatalf("compile all: %v", err)
+	}
+	if got := global.PlaygroundTokenKeys(); len(got) != 1 || got[0].KID != "2026-09" {
+		t.Fatalf("global snapshot keys = %+v", got)
+	}
+	hostedSnap, ok := scoped[hosted.String()]
+	if !ok {
+		t.Fatalf("missing scoped snapshot for %s", hosted)
+	}
+	if got := hostedSnap.PlaygroundTokenKeys(); len(got) != 1 || got[0].KID != "2026-09" {
+		t.Fatalf("scoped snapshot keys = %+v", got)
+	}
+
+	single, err := compiler.Compile(context.Background())
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if got := single.PlaygroundTokenKeys(); len(got) != 1 {
+		t.Fatalf("single snapshot keys = %+v", got)
+	}
+}

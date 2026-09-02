@@ -142,6 +142,13 @@ func toProto(data readmodel.Data) (*snapshotpb.Snapshot, error) {
 		})
 	}
 
+	for i := range data.PlaygroundTokenKeys {
+		msg.PlaygroundTokenKeys = append(msg.PlaygroundTokenKeys, &snapshotpb.VerificationKey{
+			Kid: data.PlaygroundTokenKeys[i].KID,
+			Pem: data.PlaygroundTokenKeys[i].PEM,
+		})
+	}
+
 	return msg, nil
 }
 
@@ -216,6 +223,13 @@ func fromProto(msg *snapshotpb.Snapshot) (readmodel.Data, error) {
 		data.CatalogModels = append(data.CatalogModels, readmodel.CatalogModel{
 			ProviderCode: m.GetProviderCode(),
 			Model:        model,
+		})
+	}
+
+	for _, m := range msg.GetPlaygroundTokenKeys() {
+		data.PlaygroundTokenKeys = append(data.PlaygroundTokenKeys, readmodel.VerificationKey{
+			KID: m.GetKid(),
+			PEM: m.GetPem(),
 		})
 	}
 
