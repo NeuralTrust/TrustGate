@@ -102,10 +102,10 @@ func requestContext() *infracontext.RequestContext {
 	}
 }
 
-func settings(inspect string) map[string]any {
+func settings(direction string) map[string]any {
 	s := map[string]any{"collector_id": testCollectorID}
-	if inspect != "" {
-		s["inspect"] = inspect
+	if direction != "" {
+		s["direction"] = direction
 	}
 	return s
 }
@@ -853,7 +853,7 @@ func TestExecuteStageNotSelectedPassThrough(t *testing.T) {
 	srv := newServer(t, f)
 	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(inspectResponse), requestContext(), nil)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(legResponse), requestContext(), nil)
 	res, err := p.Execute(context.Background(), in)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1058,17 +1058,17 @@ func TestExecuteConsumerIDComesFromRequestNotSettings(t *testing.T) {
 	}
 }
 
-func TestExecuteInspectModeDirections(t *testing.T) {
+func TestExecuteDirectionSelectsLegs(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
 		name       string
-		inspect    string
+		direction  string
 		directions []string
 	}{
-		{name: "request only", inspect: inspectRequest, directions: []string{directionInput}},
-		{name: "response only", inspect: inspectResponse, directions: []string{directionOutput}},
-		{name: "request_response", inspect: inspectRequestResponse, directions: []string{directionInput, directionOutput}},
+		{name: "request only", direction: legRequest, directions: []string{directionInput}},
+		{name: "response only", direction: legResponse, directions: []string{directionOutput}},
+		{name: "request_response", direction: legRequestResponse, directions: []string{directionInput, directionOutput}},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -1080,7 +1080,7 @@ func TestExecuteInspectModeDirections(t *testing.T) {
 
 			resp := &infracontext.ResponseContext{StatusCode: 200, Body: openAIResponseBody()}
 			for _, stage := range []policy.Stage{policy.StagePreRequest, policy.StagePreResponse} {
-				in := execInput(stage, policy.ModeEnforce, settings(tc.inspect), requestContext(), resp)
+				in := execInput(stage, policy.ModeEnforce, settings(tc.direction), requestContext(), resp)
 				if _, err := p.Execute(context.Background(), in); err != nil {
 					t.Fatalf("stage %s: unexpected error: %v", stage, err)
 				}
