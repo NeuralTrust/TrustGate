@@ -87,6 +87,7 @@ var seedProviders = []seedProvider{
 	{providers.ProviderNvidia, "NVIDIA NIM", "openai"},
 	{providers.ProviderMiniMax, "MiniMax", "openai"},
 	{providers.ProviderPerplexity, "Perplexity", "openai"},
+	{providers.ProviderDatabricks, "Databricks", "openai"},
 }
 
 var cohereSeedModels = []seedModel{

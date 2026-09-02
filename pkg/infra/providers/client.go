@@ -49,6 +49,7 @@ const (
 	ProviderNvidia           = provider.Nvidia
 	ProviderMiniMax          = provider.MiniMax
 	ProviderPerplexity       = provider.Perplexity
+	ProviderDatabricks       = provider.Databricks
 )
 
 type Config struct {
