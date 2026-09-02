@@ -130,3 +130,31 @@ func TestMCPPluginChain_DirectionWinsOverStaleInspect(t *testing.T) {
 			"only %d evaluate call(s) reached the guard", TrustGuardFunctionalStub.GuardHits())
 	require.Equal(t, "output", TrustGuardFunctionalStub.lastGuard().Direction)
 }
+
+// TestMCPPluginChain_LegacyInspectKeyAloneStillHonoured covers the reason the
+// legacy key is still accepted on input at all: a policy provisioned before the
+// catalog settled on `direction` carries only `inspect`, and it has to keep
+// selecting the same legs until the migration has collapsed every stored pair.
+func TestMCPPluginChain_LegacyInspectKeyAloneStillHonoured(t *testing.T) {
+	require.NotNil(t, TrustGuardFunctionalStub, "TrustGuard stub must be started in TestMain")
+	TrustGuardFunctionalStub.Reset()
+
+	var calls int64
+	upstream := startMCPUpstream(t, func(s *sdk.Server) {
+		addCountingFixedTool(s, "notion-fetch", notionShapedResult, &calls)
+	})
+	gatewayID := CreateGateway(t, map[string]any{"slug": uniqueName("mcp-gw")})
+	registryID := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-reg"), upstream.URL))
+	consumerID, key := createMCPConsumer(t, gatewayID, []string{registryID}, nil, "")
+	attachTrustGuardMCPPolicyWithSettings(t, gatewayID, consumerID, map[string]any{
+		"inspect": "request_response",
+	})
+
+	status, body := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/call",
+		map[string]any{"name": "notion-fetch", "arguments": map[string]any{"id": "page-id"}})
+
+	require.Equal(t, http.StatusOK, status, "tools/call must succeed: %v", body)
+	require.Equal(t, 2, TrustGuardFunctionalStub.GuardHits(),
+		"a policy carrying only the legacy inspect key must still evaluate both legs")
+	require.Equal(t, "output", TrustGuardFunctionalStub.lastGuard().Direction)
+}
