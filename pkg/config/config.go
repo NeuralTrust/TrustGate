@@ -375,6 +375,14 @@ type MetricsConfig struct {
 type PlaygroundConfig struct {
 	TraceStoreEnabled bool
 	TraceStoreTTL     time.Duration
+	// TracePushURL is the control-plane admin base URL a hybrid data plane
+	// pushes playground traces to (PUT /v1/playground/traces/{trace_id}), so the
+	// dashboard's info panel can read them from the control-plane store. Empty
+	// disables the push.
+	TracePushURL string
+	// TracePushToken is the bearer the push authenticates with; the control
+	// plane validates it like any admin token.
+	TracePushToken string // #nosec G117 -- config struct field, not a hardcoded credential
 }
 
 type UpstreamConfig struct {
@@ -689,6 +697,8 @@ func getPlaygroundConfig() PlaygroundConfig {
 	return PlaygroundConfig{
 		TraceStoreEnabled: getEnvBool("PLAYGROUND_TRACE_STORE_ENABLED", defaultPlaygroundTraceStoreEnabled),
 		TraceStoreTTL:     ttl,
+		TracePushURL:      strings.TrimRight(strings.TrimSpace(getEnv("PLAYGROUND_TRACE_PUSH_URL", "")), "/"),
+		TracePushToken:    strings.TrimSpace(getEnv("PLAYGROUND_TRACE_PUSH_TOKEN", "")),
 	}
 }
 

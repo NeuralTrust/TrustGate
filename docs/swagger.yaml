@@ -4901,6 +4901,47 @@ paths:
       summary: Get a playground trace
       tags:
       - playground
+    put:
+      consumes:
+      - application/json
+      description: Ingests the metrics Event of a playground request served by an
+        external (hybrid) data plane, keyed by its trace id, so the dashboard can
+        fetch it from GET /v1/playground/traces/{trace_id}. The stored trace expires
+        after the store TTL.
+      parameters:
+      - description: Trace id (X-AG-Trace-Id of the playground request)
+        in: path
+        name: trace_id
+        required: true
+        type: string
+      - description: Metrics event captured for the playground request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Event'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: stored
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Store a playground trace
+      tags:
+      - playground
   /v1/policies-catalog:
     get:
       description: Returns the catalog of available policies grouped by type. Each
