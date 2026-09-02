@@ -45,6 +45,7 @@ const (
 	ProviderSambaNova        = provider.SambaNova
 	ProviderFireworks        = provider.Fireworks
 	ProviderZAI              = provider.ZAI
+	ProviderDashScope        = provider.DashScope
 )
 
 type Config struct {

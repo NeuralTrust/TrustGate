@@ -266,6 +266,7 @@ var providerAuthCatalog = map[string][]AuthTypeOption{
 	providers.ProviderSambaNova:        {apiKeyAuthOption},
 	providers.ProviderFireworks:        {apiKeyAuthOption},
 	providers.ProviderZAI:              {apiKeyAuthOption},
+	providers.ProviderDashScope:        {apiKeyAuthOption},
 }
 
 func ProviderAuthOptions(code string) []AuthTypeOption {
