@@ -220,6 +220,16 @@ func TestMCPRouterDispatch(t *testing.T) {
 		assert.Equal(t, fiber.StatusMethodNotAllowed, deleteResponse.StatusCode)
 		assert.Equal(t, fiber.MethodPost, deleteResponse.Header.Get(fiber.HeaderAllow))
 
+		// The notification stream is a GET too, so it must reach authentication
+		// instead of the blanket 405 that plain GETs still get.
+		streamRequest := httptest.NewRequest(fiber.MethodGet, "/tools/mcp", nil)
+		streamRequest.Host = "tenant.mcp.test"
+		streamRequest.Header.Set(fiber.HeaderAccept, "text/event-stream")
+		streamResponse, err := app.Test(streamRequest, -1)
+		require.NoError(t, err)
+		require.NoError(t, streamResponse.Body.Close())
+		assert.Equal(t, fiber.StatusUnauthorized, streamResponse.StatusCode)
+
 		postResponse, _ := dispatchMCPRequest(t, app, fiber.MethodPost, "/tools/mcp", `{}`, fiber.MIMEApplicationJSON)
 		assert.Equal(t, fiber.StatusUnauthorized, postResponse.StatusCode)
 		assert.Equal(t, "DENY", postResponse.Header.Get("X-Frame-Options"))
@@ -236,7 +246,7 @@ func TestMCPRouterDispatch(t *testing.T) {
 		assert.Contains(t, unknownResponse.Header.Get(fiber.HeaderWWWAuthenticate), "Bearer ")
 	})
 
-	assert.Equal(t, 10, ops.count)
+	assert.Equal(t, 11, ops.count)
 }
 
 func assertMCPResponsePolicies(t *testing.T, response *http.Response) {

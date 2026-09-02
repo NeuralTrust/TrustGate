@@ -176,6 +176,46 @@ func TestHandler_DefaultIdP_AllowedWithoutAttachedAuth(t *testing.T) {
 	}
 }
 
+func TestHandler_Store_SyntheticConsumerServesFixedURL(t *testing.T) {
+	t.Parallel()
+	// The MCP Store is not in the gateway's persisted consumer data; the handler
+	// synthesises it from the reserved /store/mcp path and serves it, so the
+	// fixed catalog URL initializes on any gateway.
+	const storePath = "/store/mcp"
+	gwID := ids.New[ids.GatewayKind]()
+	data := appconsumer.NewData(gwID, nil)
+
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		ctx := appconsumer.WithAuthID(c.UserContext(), appauth.DefaultIdPAuthID())
+		ctx = appconsumer.WithGatewayID(ctx, gwID)
+		ctx = appconsumer.WithData(ctx, data)
+		c.SetUserContext(ctx)
+		return c.Next()
+	})
+	handler := mcphttp.NewHandler(
+		mcphttp.NewRPCGateway(mocks.NewComposer(t), noopRunner(), nil),
+		appmcp.NewRoleScoper(approle.NewOIDCResolver()),
+		nil,
+	)
+	app.Post(storePath, handler.Handle)
+
+	req := httptest.NewRequest(
+		fiber.MethodPost,
+		storePath,
+		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}`),
+	)
+	req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+	res, err := app.Test(req, -1)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200 (the synthetic Store must initialize at its fixed URL)", res.StatusCode)
+	}
+}
+
 func TestHandler_Initialize_EchoesSupportedVersion(t *testing.T) {
 	t.Parallel()
 	app := newApp(t, mocks.NewComposer(t), consumerdomain.TypeMCP, true)
@@ -186,6 +226,20 @@ func TestHandler_Initialize_EchoesSupportedVersion(t *testing.T) {
 	result := body["result"].(map[string]any)
 	if result["protocolVersion"] != "2025-03-26" {
 		t.Fatalf("protocolVersion = %v, want echo of requested", result["protocolVersion"])
+	}
+}
+
+// Claude drops notifications/tools/list_changed from a server that did not
+// declare the capability, so advertising it is what makes the push stream
+// usable at all.
+func TestHandler_Initialize_AdvertisesToolListChanged(t *testing.T) {
+	t.Parallel()
+	app := newApp(t, mocks.NewComposer(t), consumerdomain.TypeMCP, true)
+	_, body := rpcCall(t, app, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+	capabilities := body["result"].(map[string]any)["capabilities"].(map[string]any)
+	tools := capabilities["tools"].(map[string]any)
+	if tools["listChanged"] != true {
+		t.Fatalf("tools.listChanged = %v, want true", tools["listChanged"])
 	}
 }
 
@@ -450,9 +504,18 @@ func TestHandler_ServerDiscover_ReturnsModernResult(t *testing.T) {
 	if result["resultType"] != "complete" {
 		t.Fatalf("resultType = %v, want complete", result["resultType"])
 	}
+	// A client probing with 2026-07-28 must still get a discovery answer rather
+	// than a method-not-found, but it must be told only what the gateway can
+	// actually negotiate: advertising the probed revision downgraded the client
+	// silently and made it reject every tools/call result as malformed.
 	versions, _ := result["supportedVersions"].([]any)
-	if len(versions) == 0 || versions[0] != "2026-07-28" {
-		t.Fatalf("supportedVersions = %v, want 2026-07-28 first", versions)
+	if len(versions) == 0 || versions[0] != "2025-06-18" {
+		t.Fatalf("supportedVersions = %v, want the negotiable revision first", versions)
+	}
+	for _, version := range versions {
+		if version == "2026-07-28" {
+			t.Fatalf("supportedVersions advertises a revision initialize refuses: %v", versions)
+		}
 	}
 	capabilities := result["capabilities"].(map[string]any)
 	for _, kind := range []string{"tools", "prompts", "resources"} {

@@ -25,6 +25,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// A revision advertised by server/discover but refused by initialize downgrades
+// the client silently: it keeps applying the newer revision's rules to responses
+// the gateway builds under an older one, and rejects them as malformed.
+func TestAdvertisedProtocolVersionsAreAllNegotiable(t *testing.T) {
+	t.Parallel()
+	// Pinned rather than derived: adding a revision here has to be a deliberate
+	// edit, because advertising one obliges every response the gateway emits —
+	// including the tools/call results it relays verbatim from upstreams — to
+	// satisfy that revision's envelope.
+	require.Equal(t, []string{"2025-06-18", "2025-03-26", "2024-11-05"}, advertisedProtocolVersions)
+	require.Equal(t, latestProtocolVersion, advertisedProtocolVersions[0],
+		"the preferred revision must be the one initialize falls back to")
+	for _, version := range advertisedProtocolVersions {
+		require.Truef(t, supportedProtocolVersions[version],
+			"server/discover advertises %q but initialize cannot negotiate it", version)
+	}
+	require.Len(t, supportedProtocolVersions, len(advertisedProtocolVersions),
+		"initialize must not negotiate a revision server/discover does not advertise")
+}
+
 func TestServerDiscoveryResultCapabilities(t *testing.T) {
 	t.Parallel()
 	registryID := ids.New[ids.RegistryKind]()
