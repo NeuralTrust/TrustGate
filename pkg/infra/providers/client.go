@@ -48,6 +48,7 @@ const (
 	ProviderDashScope        = provider.DashScope
 	ProviderNvidia           = provider.Nvidia
 	ProviderMiniMax          = provider.MiniMax
+	ProviderPerplexity       = provider.Perplexity
 )
 
 type Config struct {
