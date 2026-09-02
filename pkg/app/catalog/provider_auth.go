@@ -261,6 +261,7 @@ var providerAuthCatalog = map[string][]AuthTypeOption{
 	providers.ProviderTogether:         {apiKeyAuthOption},
 	providers.ProviderDeepInfra:        {apiKeyAuthOption},
 	providers.ProviderNovita:           {apiKeyAuthOption},
+	providers.ProviderNebius:           {apiKeyAuthOption},
 }
 
 func ProviderAuthOptions(code string) []AuthTypeOption {
