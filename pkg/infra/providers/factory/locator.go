@@ -29,6 +29,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/fireworks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/google"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/groq"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/minimax"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/mistral"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/moonshot"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/nebius"
@@ -73,6 +74,7 @@ const (
 	ProviderZAI              = providers.ProviderZAI
 	ProviderDashScope        = providers.ProviderDashScope
 	ProviderNvidia           = providers.ProviderNvidia
+	ProviderMiniMax          = providers.ProviderMiniMax
 )
 
 //go:generate mockery --name=ProviderLocator --dir=. --output=./mocks --filename=provider_locator_mock.go --case=underscore --with-expecter
@@ -119,6 +121,7 @@ func NewProviderLocator() ProviderLocator {
 			ProviderZAI:              zai.NewZAIClient(),
 			ProviderDashScope:        dashscope.NewDashScopeClient(),
 			ProviderNvidia:           nvidia.NewNvidiaClient(),
+			ProviderMiniMax:          minimax.NewMiniMaxClient(),
 		},
 	}
 }
