@@ -276,9 +276,33 @@ func TestNewMCPServerCatalog_IncludesAWSManagedServer(t *testing.T) {
 	require.True(t, *server.OAuth.DCR)
 	require.NotNil(t, server.OAuth.PKCE)
 	require.True(t, *server.OAuth.PKCE)
-	require.Equal(t, "https://{region}.oauth.signin.aws/v1/authorize", server.OAuth.AuthorizeURL)
-	require.Equal(t, "https://{region}.oauth.signin.aws/v1/token", server.OAuth.TokenURL)
-	require.Equal(t, "https://aws-mcp.{region}.api.aws/mcp", server.OAuth.Resource)
+	// AWS publishes region-specific OAuth endpoints through protected-resource
+	// metadata, so the seed leaves them out and lets discovery resolve them
+	// against the region the operator picked.
+	require.Empty(t, server.OAuth.AuthorizeURL)
+	require.Empty(t, server.OAuth.TokenURL)
+	require.Empty(t, server.OAuth.Resource)
+}
+
+// A templated oauth.resource never reaches substitution: the registry
+// canonicalizer copies it verbatim and the provider client sends it as the
+// RFC 8707 resource indicator, so the authorization server would receive a
+// literal "{placeholder}" and reject the grant. Entries that need a
+// per-instance audience set resource_metadata instead, which resolves to the
+// registry's own URL after URL variables are applied.
+func TestCuratedCatalog_HasNoTemplatedOAuthResource(t *testing.T) {
+	t.Parallel()
+
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+
+	for _, server := range cat.ListMCPServers() {
+		if server.OAuth == nil {
+			continue
+		}
+		require.NotContains(t, server.OAuth.Resource, "{",
+			"catalog entry %q declares a templated oauth.resource", server.Code)
+	}
 }
 
 func TestNewMCPServerCatalog_IncludesJotformStoryblokAndHolded(t *testing.T) {
