@@ -38,6 +38,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openaicompat"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openrouter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/perplexity"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/sambanova"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/siliconflow"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/together"
@@ -75,6 +76,7 @@ const (
 	ProviderDashScope        = providers.ProviderDashScope
 	ProviderNvidia           = providers.ProviderNvidia
 	ProviderMiniMax          = providers.ProviderMiniMax
+	ProviderPerplexity       = providers.ProviderPerplexity
 )
 
 //go:generate mockery --name=ProviderLocator --dir=. --output=./mocks --filename=provider_locator_mock.go --case=underscore --with-expecter
@@ -122,6 +124,7 @@ func NewProviderLocator() ProviderLocator {
 			ProviderDashScope:        dashscope.NewDashScopeClient(),
 			ProviderNvidia:           nvidia.NewNvidiaClient(),
 			ProviderMiniMax:          minimax.NewMiniMaxClient(),
+			ProviderPerplexity:       perplexity.NewPerplexityClient(),
 		},
 	}
 }

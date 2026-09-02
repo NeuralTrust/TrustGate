@@ -92,6 +92,7 @@ func TestProviderMatchesFilesID(t *testing.T) {
 		providers.ProviderDashScope,
 		providers.ProviderNvidia,
 		providers.ProviderMiniMax,
+		providers.ProviderPerplexity,
 	} {
 		hasFiles := providers.SupportsCapability(provider, providers.CapabilityFiles)
 		if !hasFiles {
