@@ -43,16 +43,25 @@ type Settings struct {
 	OnError string `mapstructure:"on_error"`
 }
 
+// parseConfig resolves the two settings keys that select which legs the plugin
+// inspects. "direction" is the key the policy catalog declares and the console
+// form edits; "inspect" is this plugin's own, older name for the same axis. A
+// policy can carry both, and when they disagree "direction" wins: a value the
+// operator cannot see or edit must never override the one they can.
+//
+// The previous precedence was the other way round, and it silently disabled
+// response-leg inspection. A policy edited to direction=request_response while
+// a stale inspect=request remained resolved to request, so the plugin returned
+// early on pre_response, the guard was never called on tool results or model
+// responses, and the console still showed "Request & Response".
 func parseConfig(settings map[string]any) (Settings, error) {
 	normalized := settings
-	if _, hasInspect := settings["inspect"]; !hasInspect {
-		if dir, ok := settings["direction"].(string); ok && strings.TrimSpace(dir) != "" {
-			normalized = make(map[string]any, len(settings)+1)
-			for k, v := range settings {
-				normalized[k] = v
-			}
-			normalized["inspect"] = dir
+	if dir, ok := settings["direction"].(string); ok && strings.TrimSpace(dir) != "" {
+		normalized = make(map[string]any, len(settings)+1)
+		for k, v := range settings {
+			normalized[k] = v
 		}
+		normalized["inspect"] = strings.TrimSpace(dir)
 	}
 	cfg, err := pluginutil.Parse[Settings](normalized)
 	if err != nil {
@@ -63,6 +72,21 @@ func parseConfig(settings map[string]any) (Settings, error) {
 		return Settings{}, err
 	}
 	return cfg, nil
+}
+
+// legKeysDisagree reports a policy carrying both leg keys with different values,
+// which means "direction" was edited while a stale "inspect" stayed behind.
+// parseConfig resolves that in favour of "direction"; callers log it so the
+// policy still gets cleaned up instead of drifting silently.
+func legKeysDisagree(settings map[string]any) (direction, inspect string, disagree bool) {
+	direction, _ = settings["direction"].(string)
+	inspect, _ = settings["inspect"].(string)
+	direction = strings.TrimSpace(direction)
+	inspect = strings.TrimSpace(inspect)
+	if direction == "" || inspect == "" {
+		return direction, inspect, false
+	}
+	return direction, inspect, direction != inspect
 }
 
 func (s *Settings) applyDefaults() {

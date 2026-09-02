@@ -131,12 +131,20 @@ func (p *Plugin) ValidateConfig(settings map[string]any) error {
 }
 
 func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
-	cfg, err := p.config(in.Config.Settings)
+	cfg, err := p.config(ctx, in.Config.Settings)
 	if err != nil {
 		return nil, fmt.Errorf("trustguard: %w", err)
 	}
 
 	if !cfg.selectsStage(in.Stage) {
+		// A leg the policy excludes. Logged because "not inspected" and
+		// "inspected, nothing found" are otherwise indistinguishable from the
+		// outside: no event, no finding, no trace of the decision anywhere.
+		p.debug(ctx, "trustguard leg not selected by policy, skipping",
+			slog.String("plugin", PluginName),
+			slog.String("stage", string(in.Stage)),
+			slog.String("inspect", cfg.Inspect),
+		)
 		return passThrough(), nil
 	}
 
@@ -439,7 +447,7 @@ func guardOutcomeDecision(status string, mode policy.Mode) string {
 	}
 }
 
-func (p *Plugin) config(settings map[string]any) (Settings, error) {
+func (p *Plugin) config(ctx context.Context, settings map[string]any) (Settings, error) {
 	key := configCacheKey(settings)
 	if v, ok := p.cfgCache.Load(key); ok {
 		return v.(Settings), nil
@@ -447,6 +455,16 @@ func (p *Plugin) config(settings map[string]any) (Settings, error) {
 	cfg, err := parseConfig(settings)
 	if err != nil {
 		return Settings{}, err
+	}
+	// Warned on a cache miss, so a misconfigured policy is reported once per
+	// distinct settings rather than on every request.
+	if direction, inspect, disagree := legKeysDisagree(settings); disagree {
+		p.warn(ctx, "trustguard policy sets direction and inspect to different legs; direction wins",
+			slog.String("plugin", PluginName),
+			slog.String("direction", direction),
+			slog.String("inspect", inspect),
+			slog.String("resolved", cfg.Inspect),
+		)
 	}
 	p.cfgCache.Store(key, cfg)
 	return cfg, nil
@@ -592,6 +610,13 @@ func (p *Plugin) warn(ctx context.Context, msg string, attrs ...any) {
 		return
 	}
 	p.logger.WarnContext(ctx, msg, attrs...)
+}
+
+func (p *Plugin) debug(ctx context.Context, msg string, attrs ...any) {
+	if p.logger == nil {
+		return
+	}
+	p.logger.DebugContext(ctx, msg, attrs...)
 }
 
 func (p *Plugin) error(ctx context.Context, msg string, attrs ...any) {

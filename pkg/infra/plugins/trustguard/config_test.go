@@ -15,6 +15,7 @@
 package trustguard
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -115,16 +116,16 @@ func TestParseConfig(t *testing.T) {
 func TestConfigCacheKeepsDirectionAndInspectApart(t *testing.T) {
 	p := New(adapter.NewRegistry(), "http://guard.local", time.Second, "id", "secret", nil)
 
-	legacy, err := p.config(map[string]any{"direction": inspectRequest, "collector_id": testCollectorID})
+	legacy, err := p.config(context.Background(), map[string]any{"direction": inspectRequest, "collector_id": testCollectorID})
 	require.NoError(t, err)
 	assert.Equal(t, inspectRequest, legacy.Inspect)
 
-	unset, err := p.config(map[string]any{"collector_id": testCollectorID})
+	unset, err := p.config(context.Background(), map[string]any{"collector_id": testCollectorID})
 	require.NoError(t, err)
 	assert.Equal(t, inspectRequestResponse, unset.Inspect,
 		"a policy that sets neither key must not inherit the cached config of one that sets direction")
 
-	again, err := p.config(map[string]any{"direction": inspectRequest, "collector_id": testCollectorID})
+	again, err := p.config(context.Background(), map[string]any{"direction": inspectRequest, "collector_id": testCollectorID})
 	require.NoError(t, err)
 	assert.Equal(t, inspectRequest, again.Inspect,
 		"the cached entry for direction must survive a policy that leaves it unset")
@@ -148,6 +149,78 @@ func TestSelectsStage(t *testing.T) {
 			assert.Equal(t, tt.wantPreRequest, s.selectsStage(policy.StagePreRequest))
 			assert.Equal(t, tt.wantPreResponse, s.selectsStage(policy.StagePreResponse))
 			assert.Equal(t, tt.wantPostResponse, s.selectsStage(policy.StagePostResponse))
+		})
+	}
+}
+
+// TestParseConfigDirectionWinsOverStaleInspect pins the precedence that a
+// production policy depended on and did not get. Its settings carried
+// direction=request_response — what the catalog declares and the console form
+// edits — next to a stale inspect=request. The old precedence let the invisible
+// key win, so pre_response returned early, no evaluate ever reached the guard on
+// the response leg, and DLP rules bound to the output direction never saw a tool
+// result while the console still showed "Request & Response".
+func TestParseConfigDirectionWinsOverStaleInspect(t *testing.T) {
+	cfg, err := parseConfig(map[string]any{
+		"collector_id": testCollectorID,
+		"direction":    inspectRequestResponse,
+		"inspect":      inspectRequest,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, inspectRequestResponse, cfg.Inspect,
+		"direction is the operator-visible key and must win over a stale inspect")
+	assert.True(t, cfg.selectsStage(policy.StagePreResponse),
+		"the response leg must be inspected when direction says request_response")
+}
+
+// TestParseConfigInspectAloneStillHonoured keeps the older key working for
+// policies provisioned before the catalog settled on direction.
+func TestParseConfigInspectAloneStillHonoured(t *testing.T) {
+	cfg, err := parseConfig(map[string]any{
+		"collector_id": testCollectorID,
+		"inspect":      inspectRequest,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, inspectRequest, cfg.Inspect)
+	assert.False(t, cfg.selectsStage(policy.StagePreResponse))
+}
+
+func TestLegKeysDisagree(t *testing.T) {
+	tests := []struct {
+		name         string
+		settings     map[string]any
+		wantDisagree bool
+	}{
+		{
+			name:         "both set and different",
+			settings:     map[string]any{"direction": inspectRequestResponse, "inspect": inspectRequest},
+			wantDisagree: true,
+		},
+		{
+			name:         "both set and equal",
+			settings:     map[string]any{"direction": inspectRequest, "inspect": inspectRequest},
+			wantDisagree: false,
+		},
+		{
+			name:         "only direction",
+			settings:     map[string]any{"direction": inspectRequestResponse},
+			wantDisagree: false,
+		},
+		{
+			name:         "only inspect",
+			settings:     map[string]any{"inspect": inspectRequest},
+			wantDisagree: false,
+		},
+		{
+			name:         "neither",
+			settings:     map[string]any{"collector_id": testCollectorID},
+			wantDisagree: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, disagree := legKeysDisagree(tt.settings)
+			assert.Equal(t, tt.wantDisagree, disagree)
 		})
 	}
 }
