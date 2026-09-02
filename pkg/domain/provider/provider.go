@@ -45,6 +45,7 @@ const (
 	Nvidia           = "nvidia"
 	MiniMax          = "minimax"
 	Perplexity       = "perplexity"
+	Databricks       = "databricks"
 )
 
 // Supported returns every provider name the gateway can route to.
@@ -77,6 +78,7 @@ func Supported() []string {
 		Nvidia,
 		MiniMax,
 		Perplexity,
+		Databricks,
 	}
 }
 
@@ -109,7 +111,8 @@ func IsValid(name string) bool {
 		DashScope,
 		Nvidia,
 		MiniMax,
-		Perplexity:
+		Perplexity,
+		Databricks:
 		return true
 	default:
 		return false

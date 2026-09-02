@@ -270,6 +270,7 @@ var providerAuthCatalog = map[string][]AuthTypeOption{
 	providers.ProviderNvidia:           {apiKeyAuthOption},
 	providers.ProviderMiniMax:          {apiKeyAuthOption},
 	providers.ProviderPerplexity:       {apiKeyAuthOption},
+	providers.ProviderDatabricks:       {apiKeyAuthOption},
 }
 
 func ProviderAuthOptions(code string) []AuthTypeOption {

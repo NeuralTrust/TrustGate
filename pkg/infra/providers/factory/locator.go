@@ -24,6 +24,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/cerebras"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/cohere"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/dashscope"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/databricks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/deepinfra"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/deepseek"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/fireworks"
@@ -77,6 +78,7 @@ const (
 	ProviderNvidia           = providers.ProviderNvidia
 	ProviderMiniMax          = providers.ProviderMiniMax
 	ProviderPerplexity       = providers.ProviderPerplexity
+	ProviderDatabricks       = providers.ProviderDatabricks
 )
 
 //go:generate mockery --name=ProviderLocator --dir=. --output=./mocks --filename=provider_locator_mock.go --case=underscore --with-expecter
@@ -125,6 +127,7 @@ func NewProviderLocator() ProviderLocator {
 			ProviderNvidia:           nvidia.NewNvidiaClient(),
 			ProviderMiniMax:          minimax.NewMiniMaxClient(),
 			ProviderPerplexity:       perplexity.NewPerplexityClient(),
+			ProviderDatabricks:       databricks.NewDatabricksClient(),
 		},
 	}
 }
