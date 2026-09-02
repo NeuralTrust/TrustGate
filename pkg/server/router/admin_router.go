@@ -116,7 +116,6 @@ type AdminRouterDeps struct {
 	ListMCPServersCatalog *cataloghttp.ListMCPServersHandler
 
 	GetTrace *playgroundhttp.GetTraceHandler
-	PutTrace *playgroundhttp.PutTraceHandler
 
 	ListConfigSyncConnections *configsynchttp.ListConnectionsHandler
 }
@@ -225,7 +224,6 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	app.Get(MCPServersCatalogPath, r.deps.AdminAuth.Middleware(), interactive, r.deps.ListMCPServersCatalog.Handle)
 
 	app.Get(PlaygroundTracePath, r.deps.AdminAuth.Middleware(), interactive, r.deps.GetTrace.Handle)
-	app.Put(PlaygroundTracePath, r.deps.AdminAuth.Middleware(), interactive, r.deps.PutTrace.Handle)
 
 	app.Get(ConfigSyncConnPath, r.deps.AdminAuth.Middleware(), interactive, r.deps.ListConfigSyncConnections.Handle)
 
