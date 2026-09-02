@@ -25,10 +25,10 @@ import (
 )
 
 const (
-	directionRequest         = "request"
-	directionResponse        = "response"
-	directionRequestResponse = "request_response"
-	defaultDirection         = directionRequestResponse
+	legRequest         = "request"
+	legResponse        = "response"
+	legRequestResponse = "request_response"
+	defaultLegs        = legRequestResponse
 
 	onErrorFailOpen   = "fail_open"
 	onErrorFailClosed = "fail_closed"
@@ -37,10 +37,13 @@ const (
 
 type Settings struct {
 	// Direction selects which legs to inspect: the request, the response, or
-	// both. It is the only key for this axis. An older name, "inspect", carried
-	// the same values and was resolved ahead of this one, which silently disabled
-	// response-leg inspection on policies holding both; it is gone, and the
-	// accompanying migration collapses whatever policies still store it.
+	// both. It is the only key for this axis — an older name, "inspect", carried
+	// the same values and was resolved ahead of this one, which silently
+	// disabled response-leg inspection on policies holding both. It is gone, and
+	// the accompanying migration collapses whatever policies still store it.
+	//
+	// The key name is fixed by the policy catalog. Its values are legs, not the
+	// input/output direction reported to TrustGuard per evaluate call.
 	Direction   string `mapstructure:"direction"`
 	CollectorID string `mapstructure:"collector_id"`
 	// OnError controls transport / 5xx failure behaviour. Auth/config
@@ -62,7 +65,7 @@ func parseConfig(settings map[string]any) (Settings, error) {
 
 func (s *Settings) applyDefaults() {
 	if s.Direction == "" {
-		s.Direction = defaultDirection
+		s.Direction = defaultLegs
 	}
 	if s.OnError == "" {
 		s.OnError = defaultOnError
@@ -71,7 +74,7 @@ func (s *Settings) applyDefaults() {
 
 func (s *Settings) validate() error {
 	switch s.Direction {
-	case directionRequest, directionResponse, directionRequestResponse:
+	case legRequest, legResponse, legRequestResponse:
 	default:
 		return fmt.Errorf("trustguard: direction must be one of request, response, request_response")
 	}
@@ -95,11 +98,11 @@ func (s Settings) failClosedOnTransport() bool {
 
 func (s Settings) selectsStage(stage policy.Stage) bool {
 	switch s.Direction {
-	case directionRequest:
+	case legRequest:
 		return stage == policy.StagePreRequest
-	case directionResponse:
+	case legResponse:
 		return stage == policy.StagePreResponse || stage == policy.StagePostResponse
-	case directionRequestResponse:
+	case legRequestResponse:
 		return stage == policy.StagePreRequest ||
 			stage == policy.StagePreResponse ||
 			stage == policy.StagePostResponse
