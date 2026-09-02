@@ -1056,6 +1056,33 @@
       ]
     },
     {
+      "name": "com.amazon.aws/mcp",
+      "vendor": "AWS",
+      "category": "Cloud Platform",
+      "description": "Search AWS documentation and securely operate AWS services, including Amazon S3 buckets, through IAM-authorized APIs.",
+      "transport": "streamable-http",
+      "server_url": "https://aws-mcp.{region}.api.aws/mcp",
+      "url_variables": [
+        {
+          "name": "region",
+          "description": "AWS MCP endpoint region: us-east-1 or eu-central-1.",
+          "required": true
+        }
+      ],
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://{region}.oauth.signin.aws/v1/authorize",
+        "token_url": "https://{region}.oauth.signin.aws/v1/token",
+        "resource": "https://aws-mcp.{region}.api.aws/mcp"
+      },
+      "relevance": 95
+    },
+    {
       "name": "co.axiom/mcp",
       "vendor": "Axiom",
       "category": "Observability",

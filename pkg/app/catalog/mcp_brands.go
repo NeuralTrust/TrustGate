@@ -46,6 +46,7 @@ var vendorBrandIcons = map[string]string{
 	"atlan":                         "mcp/atlan.png",
 	"atlassian":                     "mcp/atlassian.svg",
 	"attio":                         "mcp/attio.ico",
+	"aws":                           "mcp/aws.svg",
 	"axiom":                         "mcp/axiom.ico",
 	"azuredevops":                   "azure_devops.svg",
 	"betterstack":                   "mcp/betterstack.svg",
