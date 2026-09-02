@@ -42,6 +42,7 @@ const (
 	Fireworks        = "fireworks"
 	ZAI              = "zai"
 	DashScope        = "dashscope"
+	Nvidia           = "nvidia"
 )
 
 // Supported returns every provider name the gateway can route to.
@@ -71,6 +72,7 @@ func Supported() []string {
 		Fireworks,
 		ZAI,
 		DashScope,
+		Nvidia,
 	}
 }
 
@@ -100,7 +102,8 @@ func IsValid(name string) bool {
 		SambaNova,
 		Fireworks,
 		ZAI,
-		DashScope:
+		DashScope,
+		Nvidia:
 		return true
 	default:
 		return false

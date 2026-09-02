@@ -50,6 +50,7 @@ func TestSupportsCapability_MatchesLocatorClients(t *testing.T) {
 		factory.ProviderFireworks,
 		factory.ProviderZAI,
 		factory.ProviderDashScope,
+		factory.ProviderNvidia,
 	} {
 		t.Run(provider, func(t *testing.T) {
 			client, err := locator.Get(provider)
