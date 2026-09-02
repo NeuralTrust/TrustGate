@@ -51,6 +51,7 @@ func TestSupportsCapability_MatchesLocatorClients(t *testing.T) {
 		factory.ProviderZAI,
 		factory.ProviderDashScope,
 		factory.ProviderNvidia,
+		factory.ProviderMiniMax,
 	} {
 		t.Run(provider, func(t *testing.T) {
 			client, err := locator.Get(provider)
