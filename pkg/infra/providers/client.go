@@ -38,6 +38,7 @@ const (
 	ProviderCohere           = provider.Cohere
 	ProviderMoonshot         = provider.Moonshot
 	ProviderTogether         = provider.Together
+	ProviderDeepInfra        = provider.DeepInfra
 )
 
 type Config struct {

@@ -34,6 +34,7 @@ const (
 	Cohere           = "cohere"
 	Moonshot         = "moonshot"
 	Together         = "together"
+	DeepInfra        = "deepinfra"
 )
 
 // Supported returns every provider name the gateway can route to.
@@ -55,6 +56,7 @@ func Supported() []string {
 		Cohere,
 		Moonshot,
 		Together,
+		DeepInfra,
 	}
 }
 
@@ -76,7 +78,8 @@ func IsValid(name string) bool {
 		OpenRouter,
 		Cohere,
 		Moonshot,
-		Together:
+		Together,
+		DeepInfra:
 		return true
 	default:
 		return false

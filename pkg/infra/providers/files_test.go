@@ -82,6 +82,7 @@ func TestProviderMatchesFilesID(t *testing.T) {
 		providers.ProviderCohere,
 		providers.ProviderMoonshot,
 		providers.ProviderTogether,
+		providers.ProviderDeepInfra,
 	} {
 		hasFiles := providers.SupportsCapability(provider, providers.CapabilityFiles)
 		if !hasFiles {
