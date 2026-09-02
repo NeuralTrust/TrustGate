@@ -25,10 +25,10 @@ import (
 )
 
 const (
-	inspectRequest         = "request"
-	inspectResponse        = "response"
-	inspectRequestResponse = "request_response"
-	defaultInspect         = inspectRequestResponse
+	directionRequest         = "request"
+	directionResponse        = "response"
+	directionRequestResponse = "request_response"
+	defaultDirection         = directionRequestResponse
 
 	onErrorFailOpen   = "fail_open"
 	onErrorFailClosed = "fail_closed"
@@ -36,32 +36,41 @@ const (
 )
 
 type Settings struct {
-	Inspect     string `mapstructure:"inspect"`
+	// Direction selects which legs to inspect. It is the canonical key: the one
+	// the policy catalog declares and the console form edits. The plugin's older
+	// name for the same axis, "inspect", is still accepted on input by
+	// parseConfig, but nothing reads it past that point.
+	Direction   string `mapstructure:"direction"`
 	CollectorID string `mapstructure:"collector_id"`
 	// OnError controls transport / 5xx failure behaviour. Auth/config
 	// rejections (401/403) always fail closed regardless of this setting.
 	OnError string `mapstructure:"on_error"`
 }
 
-// parseConfig resolves the two settings keys that select which legs the plugin
-// inspects. "direction" is the key the policy catalog declares and the console
-// form edits; "inspect" is this plugin's own, older name for the same axis. A
-// policy can carry both, and when they disagree "direction" wins: a value the
-// operator cannot see or edit must never override the one they can.
+// parseConfig resolves which legs the plugin inspects. "direction" is the
+// canonical key — declared by the policy catalog, edited by the console form,
+// and the only one the Settings struct decodes. "inspect" is this plugin's
+// older name for the same axis with the same value space; it is accepted on
+// input so policies provisioned before the catalog settled on "direction" keep
+// working, and it is normalized into "direction" here.
 //
-// The previous precedence was the other way round, and it silently disabled
-// response-leg inspection. A policy edited to direction=request_response while
-// a stale inspect=request remained resolved to request, so the plugin returned
-// early on pre_response, the guard was never called on tool results or model
-// responses, and the console still showed "Request & Response".
+// When both are present, "direction" wins. The precedence used to run the other
+// way and that silently disabled response-leg inspection: a policy edited to
+// direction=request_response while a stale inspect=request remained resolved to
+// request, so Execute returned early on pre_response, the guard was never called
+// on tool results or model responses, and the console still showed
+// "Request & Response". A value the operator cannot see or edit must never
+// override the one they can.
 func parseConfig(settings map[string]any) (Settings, error) {
 	normalized := settings
-	if dir, ok := settings["direction"].(string); ok && strings.TrimSpace(dir) != "" {
-		normalized = make(map[string]any, len(settings)+1)
-		for k, v := range settings {
-			normalized[k] = v
+	if legacy, ok := settings["inspect"].(string); ok && strings.TrimSpace(legacy) != "" {
+		if dir, ok := settings["direction"].(string); !ok || strings.TrimSpace(dir) == "" {
+			normalized = make(map[string]any, len(settings)+1)
+			for k, v := range settings {
+				normalized[k] = v
+			}
+			normalized["direction"] = strings.TrimSpace(legacy)
 		}
-		normalized["inspect"] = strings.TrimSpace(dir)
 	}
 	cfg, err := pluginutil.Parse[Settings](normalized)
 	if err != nil {
@@ -90,8 +99,8 @@ func legKeysDisagree(settings map[string]any) (direction, inspect string, disagr
 }
 
 func (s *Settings) applyDefaults() {
-	if s.Inspect == "" {
-		s.Inspect = defaultInspect
+	if s.Direction == "" {
+		s.Direction = defaultDirection
 	}
 	if s.OnError == "" {
 		s.OnError = defaultOnError
@@ -99,10 +108,10 @@ func (s *Settings) applyDefaults() {
 }
 
 func (s *Settings) validate() error {
-	switch s.Inspect {
-	case inspectRequest, inspectResponse, inspectRequestResponse:
+	switch s.Direction {
+	case directionRequest, directionResponse, directionRequestResponse:
 	default:
-		return fmt.Errorf("trustguard: inspect must be one of request, response, request_response")
+		return fmt.Errorf("trustguard: direction must be one of request, response, request_response")
 	}
 	switch s.OnError {
 	case onErrorFailOpen, onErrorFailClosed:
@@ -123,12 +132,12 @@ func (s Settings) failClosedOnTransport() bool {
 }
 
 func (s Settings) selectsStage(stage policy.Stage) bool {
-	switch s.Inspect {
-	case inspectRequest:
+	switch s.Direction {
+	case directionRequest:
 		return stage == policy.StagePreRequest
-	case inspectResponse:
+	case directionResponse:
 		return stage == policy.StagePreResponse || stage == policy.StagePostResponse
-	case inspectRequestResponse:
+	case directionRequestResponse:
 		return stage == policy.StagePreRequest ||
 			stage == policy.StagePreResponse ||
 			stage == policy.StagePostResponse

@@ -888,12 +888,19 @@ var pluginCatalogMeta = map[string]catalogMeta{
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
-					Key:         "direction",
-					Label:       "Direction",
-					Type:        FieldTypeEnum,
+					Key:   "direction",
+					Label: "Direction",
+					Type:  FieldTypeEnum,
+					// The canonical key for this axis. The plugin also accepts an
+					// older "inspect" key on input and normalizes it into this one.
 					Description: "Which legs to inspect: the request, the response, or both.",
 					Enum:        enumOptions("request", "response", "request_response"),
-					Default:     "request",
+					// Matches the plugin's own default. The two disagreed — the
+					// catalog prefilled "request" while defaultDirection was
+					// request_response — so a guardrail policy created through the
+					// console inspected the request only, leaving every
+					// response-side detector off with nothing saying so.
+					Default: "request_response",
 				},
 				{
 					Key:         "collector_id",

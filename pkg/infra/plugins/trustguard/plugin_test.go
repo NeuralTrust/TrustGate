@@ -853,7 +853,7 @@ func TestExecuteStageNotSelectedPassThrough(t *testing.T) {
 	srv := newServer(t, f)
 	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
-	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(inspectResponse), requestContext(), nil)
+	in := execInput(policy.StagePreRequest, policy.ModeEnforce, settings(directionResponse), requestContext(), nil)
 	res, err := p.Execute(context.Background(), in)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1066,9 +1066,9 @@ func TestExecuteInspectModeDirections(t *testing.T) {
 		inspect    string
 		directions []string
 	}{
-		{name: "request only", inspect: inspectRequest, directions: []string{directionInput}},
-		{name: "response only", inspect: inspectResponse, directions: []string{directionOutput}},
-		{name: "request_response", inspect: inspectRequestResponse, directions: []string{directionInput, directionOutput}},
+		{name: "request only", inspect: directionRequest, directions: []string{directionInput}},
+		{name: "response only", inspect: directionResponse, directions: []string{directionOutput}},
+		{name: "request_response", inspect: directionRequestResponse, directions: []string{directionInput, directionOutput}},
 	}
 	for _, tc := range cases {
 		tc := tc

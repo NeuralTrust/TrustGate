@@ -143,7 +143,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		p.debug(ctx, "trustguard leg not selected by policy, skipping",
 			slog.String("plugin", PluginName),
 			slog.String("stage", string(in.Stage)),
-			slog.String("inspect", cfg.Inspect),
+			slog.String("direction", cfg.Direction),
 		)
 		return passThrough(), nil
 	}
@@ -459,11 +459,11 @@ func (p *Plugin) config(ctx context.Context, settings map[string]any) (Settings,
 	// Warned on a cache miss, so a misconfigured policy is reported once per
 	// distinct settings rather than on every request.
 	if direction, inspect, disagree := legKeysDisagree(settings); disagree {
-		p.warn(ctx, "trustguard policy sets direction and inspect to different legs; direction wins",
+		p.warn(ctx, "trustguard policy sets both direction and the legacy inspect key to different legs; direction wins",
 			slog.String("plugin", PluginName),
 			slog.String("direction", direction),
-			slog.String("inspect", inspect),
-			slog.String("resolved", cfg.Inspect),
+			slog.String("legacy_inspect", inspect),
+			slog.String("resolved", cfg.Direction),
 		)
 	}
 	p.cfgCache.Store(key, cfg)

@@ -30,47 +30,47 @@ const testCollectorID = "11111111-1111-4111-8111-111111111111"
 
 func TestParseConfig(t *testing.T) {
 	tests := []struct {
-		name        string
-		settings    map[string]any
-		wantErr     bool
-		wantInspect string
-		wantOnError string
+		name          string
+		settings      map[string]any
+		wantErr       bool
+		wantDirection string
+		wantOnError   string
 	}{
 		{
-			name:        "valid minimal config defaults inspect",
-			settings:    map[string]any{"collector_id": testCollectorID},
-			wantInspect: inspectRequestResponse,
-			wantOnError: onErrorFailOpen,
+			name:          "valid minimal config defaults direction",
+			settings:      map[string]any{"collector_id": testCollectorID},
+			wantDirection: directionRequestResponse,
+			wantOnError:   onErrorFailOpen,
 		},
 		{
-			name:        "inspect request accepted",
-			settings:    map[string]any{"inspect": inspectRequest, "collector_id": testCollectorID},
-			wantInspect: inspectRequest,
-			wantOnError: onErrorFailOpen,
+			name:          "direction request accepted",
+			settings:      map[string]any{"inspect": directionRequest, "collector_id": testCollectorID},
+			wantDirection: directionRequest,
+			wantOnError:   onErrorFailOpen,
 		},
 		{
-			name:        "catalog direction alias maps to inspect",
-			settings:    map[string]any{"direction": inspectRequest, "collector_id": testCollectorID},
-			wantInspect: inspectRequest,
-			wantOnError: onErrorFailOpen,
+			name:          "legacy inspect key normalizes into direction",
+			settings:      map[string]any{"direction": directionRequest, "collector_id": testCollectorID},
+			wantDirection: directionRequest,
+			wantOnError:   onErrorFailOpen,
 		},
 		{
-			name:        "inspect response accepted",
-			settings:    map[string]any{"inspect": inspectResponse, "collector_id": testCollectorID},
-			wantInspect: inspectResponse,
-			wantOnError: onErrorFailOpen,
+			name:          "direction response accepted",
+			settings:      map[string]any{"inspect": directionResponse, "collector_id": testCollectorID},
+			wantDirection: directionResponse,
+			wantOnError:   onErrorFailOpen,
 		},
 		{
-			name:        "inspect request_response accepted",
-			settings:    map[string]any{"inspect": inspectRequestResponse, "collector_id": testCollectorID},
-			wantInspect: inspectRequestResponse,
-			wantOnError: onErrorFailOpen,
+			name:          "direction request_response accepted",
+			settings:      map[string]any{"inspect": directionRequestResponse, "collector_id": testCollectorID},
+			wantDirection: directionRequestResponse,
+			wantOnError:   onErrorFailOpen,
 		},
 		{
-			name:        "on_error fail_closed accepted",
-			settings:    map[string]any{"collector_id": testCollectorID, "on_error": onErrorFailClosed},
-			wantInspect: inspectRequestResponse,
-			wantOnError: onErrorFailClosed,
+			name:          "on_error fail_closed accepted",
+			settings:      map[string]any{"collector_id": testCollectorID, "on_error": onErrorFailClosed},
+			wantDirection: directionRequestResponse,
+			wantOnError:   onErrorFailClosed,
 		},
 		{
 			name:     "invalid inspect",
@@ -83,14 +83,14 @@ func TestParseConfig(t *testing.T) {
 			wantErr:  true,
 		},
 		{
-			name:        "legacy base_url in settings ignored",
-			settings:    map[string]any{"base_url": "http://guard.local", "collector_id": testCollectorID},
-			wantInspect: inspectRequestResponse,
-			wantOnError: onErrorFailOpen,
+			name:          "legacy base_url in settings ignored",
+			settings:      map[string]any{"base_url": "http://guard.local", "collector_id": testCollectorID},
+			wantDirection: directionRequestResponse,
+			wantOnError:   onErrorFailOpen,
 		},
 		{
 			name:     "missing collector_id rejected",
-			settings: map[string]any{"inspect": inspectRequest},
+			settings: map[string]any{"inspect": directionRequest},
 			wantErr:  true,
 		},
 		{
@@ -107,7 +107,7 @@ func TestParseConfig(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			assert.Equal(t, tt.wantInspect, cfg.Inspect)
+			assert.Equal(t, tt.wantDirection, cfg.Direction)
 			assert.Equal(t, tt.wantOnError, cfg.OnError)
 		})
 	}
@@ -116,36 +116,36 @@ func TestParseConfig(t *testing.T) {
 func TestConfigCacheKeepsDirectionAndInspectApart(t *testing.T) {
 	p := New(adapter.NewRegistry(), "http://guard.local", time.Second, "id", "secret", nil)
 
-	legacy, err := p.config(context.Background(), map[string]any{"direction": inspectRequest, "collector_id": testCollectorID})
+	legacy, err := p.config(context.Background(), map[string]any{"direction": directionRequest, "collector_id": testCollectorID})
 	require.NoError(t, err)
-	assert.Equal(t, inspectRequest, legacy.Inspect)
+	assert.Equal(t, directionRequest, legacy.Direction)
 
 	unset, err := p.config(context.Background(), map[string]any{"collector_id": testCollectorID})
 	require.NoError(t, err)
-	assert.Equal(t, inspectRequestResponse, unset.Inspect,
+	assert.Equal(t, directionRequestResponse, unset.Direction,
 		"a policy that sets neither key must not inherit the cached config of one that sets direction")
 
-	again, err := p.config(context.Background(), map[string]any{"direction": inspectRequest, "collector_id": testCollectorID})
+	again, err := p.config(context.Background(), map[string]any{"direction": directionRequest, "collector_id": testCollectorID})
 	require.NoError(t, err)
-	assert.Equal(t, inspectRequest, again.Inspect,
+	assert.Equal(t, directionRequest, again.Direction,
 		"the cached entry for direction must survive a policy that leaves it unset")
 }
 
 func TestSelectsStage(t *testing.T) {
 	tests := []struct {
 		name             string
-		inspect          string
+		direction        string
 		wantPreRequest   bool
 		wantPreResponse  bool
 		wantPostResponse bool
 	}{
-		{name: "request", inspect: inspectRequest, wantPreRequest: true, wantPreResponse: false, wantPostResponse: false},
-		{name: "response", inspect: inspectResponse, wantPreRequest: false, wantPreResponse: true, wantPostResponse: true},
-		{name: "request_response", inspect: inspectRequestResponse, wantPreRequest: true, wantPreResponse: true, wantPostResponse: true},
+		{name: "request", direction: directionRequest, wantPreRequest: true, wantPreResponse: false, wantPostResponse: false},
+		{name: "response", direction: directionResponse, wantPreRequest: false, wantPreResponse: true, wantPostResponse: true},
+		{name: "request_response", direction: directionRequestResponse, wantPreRequest: true, wantPreResponse: true, wantPostResponse: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := Settings{Inspect: tt.inspect}
+			s := Settings{Direction: tt.direction}
 			assert.Equal(t, tt.wantPreRequest, s.selectsStage(policy.StagePreRequest))
 			assert.Equal(t, tt.wantPreResponse, s.selectsStage(policy.StagePreResponse))
 			assert.Equal(t, tt.wantPostResponse, s.selectsStage(policy.StagePostResponse))
@@ -163,11 +163,11 @@ func TestSelectsStage(t *testing.T) {
 func TestParseConfigDirectionWinsOverStaleInspect(t *testing.T) {
 	cfg, err := parseConfig(map[string]any{
 		"collector_id": testCollectorID,
-		"direction":    inspectRequestResponse,
-		"inspect":      inspectRequest,
+		"direction":    directionRequestResponse,
+		"inspect":      directionRequest,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, inspectRequestResponse, cfg.Inspect,
+	assert.Equal(t, directionRequestResponse, cfg.Direction,
 		"direction is the operator-visible key and must win over a stale inspect")
 	assert.True(t, cfg.selectsStage(policy.StagePreResponse),
 		"the response leg must be inspected when direction says request_response")
@@ -178,10 +178,10 @@ func TestParseConfigDirectionWinsOverStaleInspect(t *testing.T) {
 func TestParseConfigInspectAloneStillHonoured(t *testing.T) {
 	cfg, err := parseConfig(map[string]any{
 		"collector_id": testCollectorID,
-		"inspect":      inspectRequest,
+		"inspect":      directionRequest,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, inspectRequest, cfg.Inspect)
+	assert.Equal(t, directionRequest, cfg.Direction)
 	assert.False(t, cfg.selectsStage(policy.StagePreResponse))
 }
 
@@ -193,22 +193,22 @@ func TestLegKeysDisagree(t *testing.T) {
 	}{
 		{
 			name:         "both set and different",
-			settings:     map[string]any{"direction": inspectRequestResponse, "inspect": inspectRequest},
+			settings:     map[string]any{"direction": directionRequestResponse, "inspect": directionRequest},
 			wantDisagree: true,
 		},
 		{
 			name:         "both set and equal",
-			settings:     map[string]any{"direction": inspectRequest, "inspect": inspectRequest},
+			settings:     map[string]any{"direction": directionRequest, "inspect": directionRequest},
 			wantDisagree: false,
 		},
 		{
 			name:         "only direction",
-			settings:     map[string]any{"direction": inspectRequestResponse},
+			settings:     map[string]any{"direction": directionRequestResponse},
 			wantDisagree: false,
 		},
 		{
 			name:         "only inspect",
-			settings:     map[string]any{"inspect": inspectRequest},
+			settings:     map[string]any{"inspect": directionRequest},
 			wantDisagree: false,
 		},
 		{

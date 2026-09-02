@@ -420,7 +420,9 @@ func TestTrustGuardSchema(t *testing.T) {
 	assert.Equal(t, FieldTypeEnum, direction.Type)
 	assert.Equal(t, []string{"request", "response", "request_response"}, enumValues(direction.Enum))
 	assert.Equal(t, []string{"Request", "Response", "Request & Response"}, enumLabels(direction.Enum))
-	assert.Equal(t, "request", direction.Default)
+	// Must match the plugin's own defaultDirection. The two disagreed, so a
+	// policy created through the console inspected the request only.
+	assert.Equal(t, "request_response", direction.Default)
 
 	if _, ok := fieldByKey(fields, "base_url"); ok {
 		t.Fatal("trustguard schema must not expose base_url; use gateway TRUSTGUARD_BASE_URL")
