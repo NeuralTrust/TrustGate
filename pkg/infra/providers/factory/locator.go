@@ -40,6 +40,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/together"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/vertex"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/xai"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/zai"
 )
 
 // Provider name constants — aliased from the providers package so callers that
@@ -67,6 +68,7 @@ const (
 	ProviderSiliconFlow      = providers.ProviderSiliconFlow
 	ProviderSambaNova        = providers.ProviderSambaNova
 	ProviderFireworks        = providers.ProviderFireworks
+	ProviderZAI              = providers.ProviderZAI
 )
 
 //go:generate mockery --name=ProviderLocator --dir=. --output=./mocks --filename=provider_locator_mock.go --case=underscore --with-expecter
@@ -110,6 +112,7 @@ func NewProviderLocator() ProviderLocator {
 			ProviderSiliconFlow:      siliconflow.NewSiliconFlowClient(),
 			ProviderSambaNova:        sambanova.NewSambaNovaClient(),
 			ProviderFireworks:        fireworks.NewFireworksClient(),
+			ProviderZAI:              zai.NewZAIClient(),
 		},
 	}
 }

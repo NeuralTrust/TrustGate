@@ -40,6 +40,7 @@ const (
 	SiliconFlow      = "siliconflow"
 	SambaNova        = "sambanova"
 	Fireworks        = "fireworks"
+	ZAI              = "zai"
 )
 
 // Supported returns every provider name the gateway can route to.
@@ -67,6 +68,7 @@ func Supported() []string {
 		SiliconFlow,
 		SambaNova,
 		Fireworks,
+		ZAI,
 	}
 }
 
@@ -94,7 +96,8 @@ func IsValid(name string) bool {
 		Nebius,
 		SiliconFlow,
 		SambaNova,
-		Fireworks:
+		Fireworks,
+		ZAI:
 		return true
 	default:
 		return false
