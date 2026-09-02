@@ -31,6 +31,7 @@ import (
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 )
 
 func mustGatewayID(t *testing.T, s string) ids.GatewayID {
@@ -448,4 +449,126 @@ func TestCompilerPropagatesNonCorruptErrors(t *testing.T) {
 	} else if !errors.Is(err, boom) {
 		t.Fatalf("expected wrapped boom error, got: %v", err)
 	}
+}
+
+func hybridEntitlements() gatewaydomain.Entitlements {
+	return gatewaydomain.Entitlements{Tier: "enterprise", DataPlane: gatewaydomain.DataPlaneHybrid}
+}
+
+func TestCompilerGlobalSnapshotExcludesHybridGateways(t *testing.T) {
+	hosted := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
+	hybrid := mustGatewayID(t, "22222222-2222-2222-2222-222222222222")
+
+	compiler := appsnapshot.NewCompiler(
+		fakeGateways{items: []*gatewaydomain.Gateway{
+			{ID: hosted},
+			{ID: hybrid, Entitlements: hybridEntitlements()},
+		}},
+		fakeConsumers{byGateway: map[string][]*consumerdomain.Consumer{
+			hybrid.String(): {
+				{ID: mustConsumerID(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), GatewayID: hybrid},
+			},
+		}},
+		fakeRegistries{byGateway: map[string][]*registrydomain.Registry{}},
+		fakePolicies{byGateway: map[string][]*policydomain.Policy{}},
+		fakeAuths{byGateway: map[string][]*authdomain.Auth{}},
+		fakeRoles{byGateway: map[string][]*roledomain.Role{}},
+		fakeCatalog{},
+		nil,
+	)
+
+	snapshot, err := compiler.Compile(context.Background())
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	data := snapshot.Data()
+	if len(data.Gateways) != 1 || data.Gateways[0].ID != hosted {
+		t.Fatalf("global snapshot must only carry hosted gateways, got %+v", data.Gateways)
+	}
+	if len(data.Consumers) != 0 {
+		t.Fatalf("global snapshot must not carry hybrid gateway consumers, got %+v", data.Consumers)
+	}
+}
+
+func TestCompilerScopedSnapshotKeepsHybridGateway(t *testing.T) {
+	hybrid := mustGatewayID(t, "22222222-2222-2222-2222-222222222222")
+
+	compiler := appsnapshot.NewCompiler(
+		fakeGateways{items: []*gatewaydomain.Gateway{
+			{ID: hybrid, Entitlements: hybridEntitlements()},
+		}},
+		fakeConsumers{byGateway: map[string][]*consumerdomain.Consumer{
+			hybrid.String(): {
+				{ID: mustConsumerID(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), GatewayID: hybrid},
+			},
+		}},
+		fakeRegistries{byGateway: map[string][]*registrydomain.Registry{}},
+		fakePolicies{byGateway: map[string][]*policydomain.Policy{}},
+		fakeAuths{byGateway: map[string][]*authdomain.Auth{}},
+		fakeRoles{byGateway: map[string][]*roledomain.Role{}},
+		fakeCatalog{},
+		nil,
+	)
+
+	snapshot, err := compiler.CompileFor(context.Background(), hybrid.String())
+	if err != nil {
+		t.Fatalf("compile for scope: %v", err)
+	}
+	data := snapshot.Data()
+	if len(data.Gateways) != 1 || data.Gateways[0].ID != hybrid {
+		t.Fatalf("scoped snapshot must carry its hybrid gateway, got %+v", data.Gateways)
+	}
+	if len(data.Consumers) != 1 {
+		t.Fatalf("scoped snapshot must carry the hybrid gateway's consumers, got %+v", data.Consumers)
+	}
+}
+
+func TestCompileAllPartitionsHybridGateways(t *testing.T) {
+	hosted := mustGatewayID(t, "11111111-1111-1111-1111-111111111111")
+	hybrid := mustGatewayID(t, "22222222-2222-2222-2222-222222222222")
+
+	compiler := appsnapshot.NewCompiler(
+		fakeGateways{items: []*gatewaydomain.Gateway{
+			{ID: hosted},
+			{ID: hybrid, Entitlements: hybridEntitlements()},
+		}},
+		fakeConsumers{byGateway: map[string][]*consumerdomain.Consumer{
+			hybrid.String(): {
+				{ID: mustConsumerID(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), GatewayID: hybrid},
+			},
+		}},
+		fakeRegistries{byGateway: map[string][]*registrydomain.Registry{}},
+		fakePolicies{byGateway: map[string][]*policydomain.Policy{}},
+		fakeAuths{byGateway: map[string][]*authdomain.Auth{}},
+		fakeRoles{byGateway: map[string][]*roledomain.Role{}},
+		fakeCatalog{},
+		nil,
+	)
+
+	global, scoped, _, err := compiler.CompileAll(context.Background())
+	if err != nil {
+		t.Fatalf("compile all: %v", err)
+	}
+	if len(global.Data().Gateways) != 1 || global.Data().Gateways[0].ID != hosted {
+		t.Fatalf("global must exclude hybrid gateways, got %+v", global.Data().Gateways)
+	}
+	hybridSnap, ok := scoped[hybrid.String()]
+	if !ok {
+		t.Fatalf("hybrid gateway must keep its scoped snapshot, scopes: %v", scopeKeys(scoped))
+	}
+	if len(hybridSnap.Data().Gateways) != 1 || hybridSnap.Data().Gateways[0].ID != hybrid {
+		t.Fatalf("scoped snapshot must carry the hybrid gateway, got %+v", hybridSnap.Data().Gateways)
+	}
+	if len(hybridSnap.Data().Consumers) != 1 {
+		t.Fatalf("scoped snapshot must carry the hybrid gateway's consumers, got %+v", hybridSnap.Data().Consumers)
+	}
+}
+
+func scopeKeys(scoped map[string]*readmodel.Snapshot) []string {
+	keys := make([]string, 0, len(scoped))
+	for k := range scoped {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }

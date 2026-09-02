@@ -101,6 +101,11 @@ func (c *Compiler) CompileFor(ctx context.Context, scope string) (*readmodel.Sna
 			}
 		}
 		gateways = scoped
+	} else {
+		// The global snapshot feeds hosted data planes; gateways bound to a
+		// customer-run (hybrid) data plane only travel in their own scoped
+		// snapshot, so a hosted plane cannot even resolve them.
+		gateways = withoutHybridGateways(gateways)
 	}
 
 	collected, err := c.collectGateways(ctx, gateways)
@@ -157,7 +162,12 @@ func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[str
 			skipped++
 			continue
 		}
-		appendGatewayData(&global, gateways[i], *collected[i])
+		// Hybrid gateways stay out of the global snapshot (hosted data planes
+		// must not serve them) but keep their scoped snapshot, which is what
+		// their own data plane subscribes to.
+		if !gateways[i].ServedByHybridDataPlane() {
+			appendGatewayData(&global, gateways[i], *collected[i])
+		}
 		if scope := gateways[i].ID.String(); scope != "" {
 			bucket, ok := buckets[scope]
 			if !ok {
@@ -168,7 +178,7 @@ func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[str
 		}
 	}
 
-	if skipped > 0 && len(global.Gateways) == 0 {
+	if skipped > 0 && skipped == len(gateways) {
 		return nil, nil, nil, fmt.Errorf("configsnapshot: every gateway (%d) skipped due to corrupt persisted config; refusing to publish empty snapshot: %w", skipped, commonerrors.ErrCorruptData)
 	}
 
@@ -188,6 +198,19 @@ func (c *Compiler) CompileAll(ctx context.Context) (*readmodel.Snapshot, map[str
 		scoped[scope] = readmodel.Build(*bucket)
 	}
 	return readmodel.Build(global), scoped, readmodel.Build(catData), nil
+}
+
+// withoutHybridGateways drops gateways whose entitlements bind them to a
+// customer-run data plane.
+func withoutHybridGateways(gateways []gatewaydomain.Gateway) []gatewaydomain.Gateway {
+	hosted := make([]gatewaydomain.Gateway, 0, len(gateways))
+	for i := range gateways {
+		if gateways[i].ServedByHybridDataPlane() {
+			continue
+		}
+		hosted = append(hosted, gateways[i])
+	}
+	return hosted
 }
 
 func appendGatewayData(dst *readmodel.Data, gateway gatewaydomain.Gateway, gwData readmodel.Data) {
