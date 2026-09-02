@@ -25,10 +25,10 @@ import (
 )
 
 const (
-	inspectRequest         = "request"
-	inspectResponse        = "response"
-	inspectRequestResponse = "request_response"
-	defaultInspect         = inspectRequestResponse
+	directionRequest         = "request"
+	directionResponse        = "response"
+	directionRequestResponse = "request_response"
+	defaultDirection         = directionRequestResponse
 
 	onErrorFailOpen   = "fail_open"
 	onErrorFailClosed = "fail_closed"
@@ -36,7 +36,12 @@ const (
 )
 
 type Settings struct {
-	Inspect     string `mapstructure:"inspect"`
+	// Direction selects which legs to inspect: the request, the response, or
+	// both. It is the only key for this axis. An older name, "inspect", carried
+	// the same values and was resolved ahead of this one, which silently disabled
+	// response-leg inspection on policies holding both; it is gone, and the
+	// accompanying migration collapses whatever policies still store it.
+	Direction   string `mapstructure:"direction"`
 	CollectorID string `mapstructure:"collector_id"`
 	// OnError controls transport / 5xx failure behaviour. Auth/config
 	// rejections (401/403) always fail closed regardless of this setting.
@@ -44,17 +49,7 @@ type Settings struct {
 }
 
 func parseConfig(settings map[string]any) (Settings, error) {
-	normalized := settings
-	if _, hasInspect := settings["inspect"]; !hasInspect {
-		if dir, ok := settings["direction"].(string); ok && strings.TrimSpace(dir) != "" {
-			normalized = make(map[string]any, len(settings)+1)
-			for k, v := range settings {
-				normalized[k] = v
-			}
-			normalized["inspect"] = dir
-		}
-	}
-	cfg, err := pluginutil.Parse[Settings](normalized)
+	cfg, err := pluginutil.Parse[Settings](settings)
 	if err != nil {
 		return Settings{}, err
 	}
@@ -66,8 +61,8 @@ func parseConfig(settings map[string]any) (Settings, error) {
 }
 
 func (s *Settings) applyDefaults() {
-	if s.Inspect == "" {
-		s.Inspect = defaultInspect
+	if s.Direction == "" {
+		s.Direction = defaultDirection
 	}
 	if s.OnError == "" {
 		s.OnError = defaultOnError
@@ -75,10 +70,10 @@ func (s *Settings) applyDefaults() {
 }
 
 func (s *Settings) validate() error {
-	switch s.Inspect {
-	case inspectRequest, inspectResponse, inspectRequestResponse:
+	switch s.Direction {
+	case directionRequest, directionResponse, directionRequestResponse:
 	default:
-		return fmt.Errorf("trustguard: inspect must be one of request, response, request_response")
+		return fmt.Errorf("trustguard: direction must be one of request, response, request_response")
 	}
 	switch s.OnError {
 	case onErrorFailOpen, onErrorFailClosed:
@@ -99,12 +94,12 @@ func (s Settings) failClosedOnTransport() bool {
 }
 
 func (s Settings) selectsStage(stage policy.Stage) bool {
-	switch s.Inspect {
-	case inspectRequest:
+	switch s.Direction {
+	case directionRequest:
 		return stage == policy.StagePreRequest
-	case inspectResponse:
+	case directionResponse:
 		return stage == policy.StagePreResponse || stage == policy.StagePostResponse
-	case inspectRequestResponse:
+	case directionRequestResponse:
 		return stage == policy.StagePreRequest ||
 			stage == policy.StagePreResponse ||
 			stage == policy.StagePostResponse

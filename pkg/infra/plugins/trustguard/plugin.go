@@ -137,6 +137,14 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	}
 
 	if !cfg.selectsStage(in.Stage) {
+		// A leg the policy excludes. Logged because "not inspected" and
+		// "inspected, nothing found" are otherwise indistinguishable from the
+		// outside: no event, no finding, no trace of the decision anywhere.
+		p.debug(ctx, "trustguard leg not selected by policy, skipping",
+			slog.String("plugin", PluginName),
+			slog.String("stage", string(in.Stage)),
+			slog.String("direction", cfg.Direction),
+		)
 		return passThrough(), nil
 	}
 
@@ -452,14 +460,12 @@ func (p *Plugin) config(settings map[string]any) (Settings, error) {
 	return cfg, nil
 }
 
-// configCacheKey must name every setting parseConfig reads, direction included:
-// it is an alias for inspect, so omitting it gives a policy that sets only
-// direction the same key as one that sets neither, and the first of the two to
-// be parsed decides which legs both of them inspect.
+// configCacheKey must name every setting parseConfig reads. Omitting one gives
+// two policies that differ only in it the same key, and the first of them to be
+// parsed then decides the resolved config for both.
 func configCacheKey(settings map[string]any) string {
 	return fmt.Sprintf(
-		"%v\x00%v\x00%v\x00%v",
-		settings["inspect"],
+		"%v\x00%v\x00%v",
 		settings["direction"],
 		settings["collector_id"],
 		settings["on_error"],
@@ -592,6 +598,13 @@ func (p *Plugin) warn(ctx context.Context, msg string, attrs ...any) {
 		return
 	}
 	p.logger.WarnContext(ctx, msg, attrs...)
+}
+
+func (p *Plugin) debug(ctx context.Context, msg string, attrs ...any) {
+	if p.logger == nil {
+		return
+	}
+	p.logger.DebugContext(ctx, msg, attrs...)
 }
 
 func (p *Plugin) error(ctx context.Context, msg string, attrs ...any) {
