@@ -37,6 +37,7 @@ const (
 	DeepInfra        = "deepinfra"
 	Novita           = "novita"
 	Nebius           = "nebius"
+	SiliconFlow      = "siliconflow"
 )
 
 // Supported returns every provider name the gateway can route to.
@@ -61,6 +62,7 @@ func Supported() []string {
 		DeepInfra,
 		Novita,
 		Nebius,
+		SiliconFlow,
 	}
 }
 
@@ -85,7 +87,8 @@ func IsValid(name string) bool {
 		Together,
 		DeepInfra,
 		Novita,
-		Nebius:
+		Nebius,
+		SiliconFlow:
 		return true
 	default:
 		return false

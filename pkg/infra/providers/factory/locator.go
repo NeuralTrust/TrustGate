@@ -34,6 +34,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openaicompat"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openrouter"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/siliconflow"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/together"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/vertex"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/xai"
@@ -61,6 +62,7 @@ const (
 	ProviderDeepInfra        = providers.ProviderDeepInfra
 	ProviderNovita           = providers.ProviderNovita
 	ProviderNebius           = providers.ProviderNebius
+	ProviderSiliconFlow      = providers.ProviderSiliconFlow
 )
 
 //go:generate mockery --name=ProviderLocator --dir=. --output=./mocks --filename=provider_locator_mock.go --case=underscore --with-expecter
@@ -101,6 +103,7 @@ func NewProviderLocator() ProviderLocator {
 			ProviderDeepInfra:        deepinfra.NewDeepInfraClient(),
 			ProviderNovita:           novita.NewNovitaClient(),
 			ProviderNebius:           nebius.NewNebiusClient(),
+			ProviderSiliconFlow:      siliconflow.NewSiliconFlowClient(),
 		},
 	}
 }

@@ -41,6 +41,7 @@ const (
 	ProviderDeepInfra        = provider.DeepInfra
 	ProviderNovita           = provider.Novita
 	ProviderNebius           = provider.Nebius
+	ProviderSiliconFlow      = provider.SiliconFlow
 )
 
 type Config struct {
