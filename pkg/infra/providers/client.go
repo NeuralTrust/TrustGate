@@ -44,6 +44,7 @@ const (
 	ProviderSiliconFlow      = provider.SiliconFlow
 	ProviderSambaNova        = provider.SambaNova
 	ProviderFireworks        = provider.Fireworks
+	ProviderZAI              = provider.ZAI
 )
 
 type Config struct {
