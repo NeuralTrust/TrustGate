@@ -262,6 +262,7 @@ var providerAuthCatalog = map[string][]AuthTypeOption{
 	providers.ProviderDeepInfra:        {apiKeyAuthOption},
 	providers.ProviderNovita:           {apiKeyAuthOption},
 	providers.ProviderNebius:           {apiKeyAuthOption},
+	providers.ProviderSiliconFlow:      {apiKeyAuthOption},
 }
 
 func ProviderAuthOptions(code string) []AuthTypeOption {
