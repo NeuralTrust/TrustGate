@@ -117,6 +117,7 @@ type adminRouterParams struct {
 	ListMCPServersCatalog *cataloghttp.ListMCPServersHandler
 
 	GetTrace *playgroundhttp.GetTraceHandler
+	PutTrace *playgroundhttp.PutTraceHandler
 
 	ListConfigSyncConnections *configsynchttp.ListConnectionsHandler
 }
@@ -191,6 +192,7 @@ func ServerAdmin(c *container.Container) error {
 				ListMCPServersCatalog: p.ListMCPServersCatalog,
 
 				GetTrace: p.GetTrace,
+				PutTrace: p.PutTrace,
 
 				ListConfigSyncConnections: p.ListConfigSyncConnections,
 			})

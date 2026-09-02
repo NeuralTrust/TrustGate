@@ -98,6 +98,11 @@ func API(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	if err := c.Provide(func(store *playgroundstore.Store) *playgroundhttp.PutTraceHandler {
+		return playgroundhttp.NewPutTraceHandler(store)
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(func(cfg *config.Config) jwt.Manager {
 		return jwt.NewJwtManager(&cfg.Server)
 	}); err != nil {

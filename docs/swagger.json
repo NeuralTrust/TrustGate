@@ -3497,6 +3497,65 @@
                         "BearerAuth": []
                     }
                 ]
+            },
+            "put": {
+                "description": "Ingests the metrics Event of a playground request served by an external (hybrid) data plane, keyed by its trace id, so the dashboard can fetch it from GET /v1/playground/traces/{trace_id}. The stored trace expires after the store TTL.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "playground"
+                ],
+                "summary": "Store a playground trace",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Trace id (X-AG-Trace-Id of the playground request)",
+                        "name": "trace_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Metrics event captured for the playground request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Event"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "stored"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
             }
         },
         "/v1/policies-catalog": {
