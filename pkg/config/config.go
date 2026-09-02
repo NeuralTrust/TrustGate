@@ -261,6 +261,13 @@ type ServerConfig struct {
 	TrustXFCCFrom         []string
 	MCPDefaultIdP         MCPDefaultIdPConfig
 	GoogleWorkspaceMCP    GoogleWorkspaceMCPConfig
+	// ServeHybridGateways marks a proxy deployment as allowed to serve gateways
+	// whose entitlements say data_plane=hybrid. Defaults to true only on
+	// config-sync data planes (the customer-run deployment those gateways belong
+	// to); the hosted SaaS proxy refuses them so payloads never leave the
+	// customer boundary through it. PROXY_SERVE_HYBRID_GATEWAYS overrides for
+	// non-dbless customer data planes.
+	ServeHybridGateways bool
 }
 
 type MCPDefaultIdPConfig struct {
@@ -487,6 +494,7 @@ func getServerConfig() ServerConfig {
 		STSIssuer:             getEnv("STS_ISSUER", "trustgate"),
 		STSSigningKey:         getEnv("STS_SIGNING_KEY", ""),
 		TrustXFCCFrom:         splitCSV(getEnv("TRUST_XFCC_FROM", "")),
+		ServeHybridGateways:   getEnvBool("PROXY_SERVE_HYBRID_GATEWAYS", DBLessDataPlaneEnabled()),
 		MCPDefaultIdP: MCPDefaultIdPConfig{
 			Issuer:       getEnv("MCP_DEFAULT_IDP_ISSUER", ""),
 			AuthorizeURL: getEnv("MCP_DEFAULT_IDP_AUTHORIZE_URL", ""),
