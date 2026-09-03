@@ -29,6 +29,7 @@ import (
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	appsts "github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
@@ -92,6 +93,20 @@ func (p *authProxy) Authorize(ctx context.Context, baseURL string, req Authorize
 	auth, err := p.authForResource(ctx, req.Resource)
 	if err != nil {
 		return authorizeFailure(req, err)
+	}
+	// The platform-wide default identity provider — the one that fronts the
+	// synthetic MCP Store and any consumer with no oauth2 of its own — carries no
+	// gateway of its own, so it arrives with a nil GatewayID. Bind it to the
+	// addressed gateway (resolved from the request host) so the session minted at
+	// callback stamps that gateway into its gwid claim; otherwise gwid is the zero
+	// id and the MCP plane rejects the token (401), which the client retries
+	// forever. Clone to avoid mutating the shared singleton auth record.
+	if auth.GatewayID.IsNil() {
+		if gw, ok := appgateway.FromContext(ctx); ok {
+			bound := *auth
+			bound.GatewayID = gw.ID
+			auth = &bound
+		}
 	}
 	cfg := auth.Config.OAuth2
 	endpoints, err := p.idp.endpoints(ctx, cfg)
