@@ -148,6 +148,18 @@ func (p *authProxy) Authorize(ctx context.Context, baseURL string, req Authorize
 	if scope := mergeScopes(req.Scope, cfg.RequiredScopes); scope != "" {
 		q.Set("scope", scope)
 	}
+	// For the platform-wide default IdP, tell the app which tenant this login is
+	// for — the addressed gateway's owning team — so it mints the session's org
+	// claim for that tenant instead of the user's active org. The app verifies the
+	// user's membership before honouring it. An operator's own oauth2 IdP is
+	// already gateway-scoped and needs no hint.
+	if appauth.IsDefaultIdP(auth) {
+		if gw, ok := appgateway.FromContext(ctx); ok {
+			if tenant := gw.TenantID(); tenant != "" {
+				q.Set("org", tenant)
+			}
+		}
+	}
 	return endpoints.authorize + "?" + q.Encode(), nil
 }
 
