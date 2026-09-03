@@ -161,7 +161,8 @@ ladder that puts an expensive model at a low threshold yields a **negative**
 
 The attribute is emitted only when the tier table itself chose the route. Smart
 routing silently falls back to round-robin whenever the scorer is unconfigured,
-the score is unavailable, or no tier matches — those requests emit nothing rather
+the score is unavailable, or the mapped tier has no available candidate — those
+requests emit nothing rather
 than crediting a decision smart routing never made. A baseline whose model has no
 resolvable price likewise emits nothing, because a zero would be
 indistinguishable from "the top tier was already served". A request that *was*
