@@ -40,6 +40,7 @@ func TestBrandIconURL_ResolvesVendorAndFallsBack(t *testing.T) {
 		"AWS":       "/oauth/brands/mcp/aws.svg",
 		"Holded":    "/oauth/brands/mcp/holded.png",
 		"Jotform":   "/oauth/brands/mcp/jotform.svg",
+		"Outlook":   "/oauth/brands/mcp/microsoft.ico",
 		"Storyblok": "/oauth/brands/mcp/storyblok.png",
 	} {
 		if got := BrandIconURL(vendor); got != want {
