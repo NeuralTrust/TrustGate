@@ -25,6 +25,9 @@ go.work
 go.work.sum
 
 bin/
+
+# Local git worktrees, when created inside the repo
+.worktrees/
 var/
 
 # env files
