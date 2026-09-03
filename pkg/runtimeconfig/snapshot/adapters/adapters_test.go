@@ -204,6 +204,50 @@ func TestRegistryAdapterScopingAndSecrets(t *testing.T) {
 	assert.ErrorIs(t, repo.Delete(ctx, f.gateway.ID, f.reg.ID), configsync.ErrReadOnly)
 }
 
+func TestRegistryAdapterList(t *testing.T) {
+	t.Parallel()
+	f := newFixture()
+	repo := adapters.NewRegistryRepository(f.store)
+	ctx := context.Background()
+
+	items, total, err := repo.List(ctx, registrydomain.ListFilter{GatewayID: f.gateway.ID, Page: 1, Size: 100})
+	require.NoError(t, err)
+	assert.Equal(t, 1, total)
+	require.Len(t, items, 1)
+	assert.Equal(t, f.reg.ID, items[0].ID)
+	require.NotNil(t, items[0].LLMTarget)
+	require.NotNil(t, items[0].LLMTarget.Auth.APIKey)
+	assert.Equal(t, "sk-secret-value", items[0].LLMTarget.Auth.APIKey.APIKey, "List returns fully-hydrated registries")
+
+	other, total, err := repo.List(ctx, registrydomain.ListFilter{GatewayID: f.other, Page: 1, Size: 100})
+	require.NoError(t, err)
+	assert.Zero(t, total)
+	assert.Empty(t, other, "registries are scoped to their gateway")
+
+	byName, total, err := repo.List(ctx, registrydomain.ListFilter{GatewayID: f.gateway.ID, NameContains: "PEN"})
+	require.NoError(t, err)
+	assert.Equal(t, 1, total, "NameContains is case-insensitive")
+	assert.Len(t, byName, 1)
+
+	none, total, err := repo.List(ctx, registrydomain.ListFilter{GatewayID: f.gateway.ID, NameContains: "nomatch"})
+	require.NoError(t, err)
+	assert.Zero(t, total)
+	assert.Empty(t, none)
+
+	// A second page past the end is empty, but the total still reflects the match.
+	page2, total, err := repo.List(ctx, registrydomain.ListFilter{GatewayID: f.gateway.ID, Page: 2, Size: 100})
+	require.NoError(t, err)
+	assert.Equal(t, 1, total)
+	assert.Empty(t, page2)
+
+	// A not-yet-ready store lists nothing rather than erroring.
+	emptyRepo := adapters.NewRegistryRepository(emptyStore())
+	items, total, err = emptyRepo.List(ctx, registrydomain.ListFilter{GatewayID: f.gateway.ID})
+	require.NoError(t, err)
+	assert.Zero(t, total)
+	assert.Empty(t, items)
+}
+
 func TestPolicyAdapter(t *testing.T) {
 	t.Parallel()
 	f := newFixture()
