@@ -147,3 +147,44 @@ func TestRPCGateway_Store_NotOfferedOnRegularConsumer(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, strings.Contains(err.Error(), "not permitted") || strings.Contains(err.Error(), appmcp.StoreSearchToolName))
 }
+
+// The synthetic Store consumer has no registries of its own, so the composer
+// rejects tools/list with ErrNoMCPRegistries. That must not fail the listing:
+// the Store's tools are the gateway meta-tools, so an empty upstream listing is
+// tolerated and the meta-tools are still advertised. (Regression: the Store
+// connected but surfaced 0 tools because this error propagated to the client.)
+func TestRPCGateway_Store_ToleratesNoRegistries(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().ListTools(mock.Anything, mock.Anything).
+		Return(nil, appmcp.ErrNoMCPRegistries).Once()
+	g := mcphttp.NewRPCGatewayWithMetaTools(composer, noopRunner(), nil, nil, storeToolForDispatch(t))
+
+	rc := &appconsumer.RoutableConsumer{
+		Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]()),
+	}
+
+	listed, err := g.Dispatch(context.Background(), rc, "tools/list", nil)
+	require.NoError(t, err)
+	tools := listed.(map[string]any)["tools"].([]appmcp.Tool)
+	require.Contains(t, toolNames(tools), appmcp.StoreSearchToolName)
+}
+
+// The no-registries tolerance is Store-only: a regular MCP consumer that has no
+// registries still gets the validation error (there is nothing else to serve).
+func TestRPCGateway_RegularConsumer_NoRegistriesStillErrors(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().ListTools(mock.Anything, mock.Anything).
+		Return(nil, appmcp.ErrNoMCPRegistries).Once()
+	g := mcphttp.NewRPCGatewayWithMetaTools(composer, noopRunner(), nil, nil, storeToolForDispatch(t))
+
+	rc := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{
+		ID:   ids.New[ids.ConsumerKind](),
+		Slug: "regular",
+		Type: consumerdomain.TypeMCP,
+	}}
+
+	_, err := g.Dispatch(context.Background(), rc, "tools/list", nil)
+	require.ErrorIs(t, err, appmcp.ErrNoMCPRegistries)
+}
