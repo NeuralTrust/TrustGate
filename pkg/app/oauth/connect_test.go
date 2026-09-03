@@ -643,6 +643,74 @@ func TestConnectService_AutoRegistrationFlow(t *testing.T) {
 	}
 }
 
+func TestConnectService_ManualClientDiscoversEndpoints(t *testing.T) {
+	t.Parallel()
+	registrations := 0
+	var tokenForm url.Values
+	upstream := fakeSpecUpstream(t, &registrations, &tokenForm)
+
+	gw := ids.New[ids.GatewayKind]()
+	reg, err := registrydomain.NewMCPRegistry(gw, "snowflake-mcp", "", &registrydomain.MCPTarget{
+		URL: upstream.URL + "/mcp",
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     "com.snowflake/mcp",
+			Registration: registrydomain.RegistrationManual,
+			ClientID:     "manual-client",
+			ClientSecret: "manual-secret",
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
+		Consumer: &consumerdomain.Consumer{
+			ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
+			Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
+		},
+		Registries: []*registrydomain.Registry{reg},
+	}})
+	store := newMemConnectStore()
+	svc := oauth.NewConnectService(
+		store,
+		&memVaultRepo{},
+		&stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil),
+		infraoauth.NewUpstreamRegistrar(store, nil),
+		discardConnectAuditor(),
+		nil,
+		nil,
+		nil,
+	)
+
+	ticket, err := svc.CreateTicket(context.Background(), gw, "alice", "/dev/mcp")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+	location, err := svc.Start(context.Background(), "https://gw.example.com", ticket, "com.snowflake/mcp")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	u, _ := url.Parse(location)
+	if !strings.HasPrefix(location, upstream.URL+"/authorize?") {
+		t.Fatalf("redirect = %q, want discovered authorize endpoint", location)
+	}
+	if got := u.Query().Get("client_id"); got != "manual-client" {
+		t.Fatalf("client_id = %q, want manual client", got)
+	}
+	if registrations != 0 {
+		t.Fatalf("registrations = %d, manual client must not call DCR", registrations)
+	}
+
+	refreshCfg, err := svc.RefreshAuth(context.Background(), gw, reg)
+	if err != nil {
+		t.Fatalf("RefreshAuth: %v", err)
+	}
+	if refreshCfg.AuthorizeURL != upstream.URL+"/authorize" || refreshCfg.TokenURL != upstream.URL+"/token" {
+		t.Fatalf("refresh cfg = %+v", refreshCfg)
+	}
+}
+
 func TestConnectService_AutoRegistrationUpstreamNotDiscoverable(t *testing.T) {
 	t.Parallel()
 	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

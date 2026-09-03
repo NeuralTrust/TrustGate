@@ -5526,7 +5526,17 @@
         ],
         "resource": "https://mcp.slack.com/mcp"
       },
-      "relevance": 95
+      "relevance": 95,
+      "config_guide": {
+        "summary": "Create and install a Slack app for the Slack MCP server.",
+        "steps": [
+          "Create a directory or internal Slack app and enable Slack MCP access.",
+          "Add the catalogued user scopes and register {gatewayBaseUrl}/oauth/callback/com.slack/mcp.",
+          "Enter the app client ID and secret, then complete Slack user consent."
+        ],
+        "docs_url": "https://docs.slack.dev/ai/slack-mcp-server/",
+        "note": "Slack MCP access is gated per app; ordinary Slack apps receive an enablement error."
+      }
     },
     {
       "name": "com.google.workspace/gmail",
@@ -10526,9 +10536,23 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true
       },
-      "relevance": 75
+      "relevance": 75,
+      "config_guide": {
+        "summary": "Enable NetSuite AI Connector and create a public OAuth integration.",
+        "steps": [
+          "Enable SuiteScript, OAuth 2.0 and REST Web Services; install or publish the required MCP tools.",
+          "Create a non-Administrator role with MCP Server Connection and OAuth token permissions.",
+          "Create/enable a public integration for TrustGate and enter the account ID and client ID.",
+          "Connect with the permitted NetSuite role."
+        ],
+        "docs_url": "https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/section_0714082142.html",
+        "note": "NetSuite does not allow the Administrator role for this connection."
+      }
     },
     {
       "name": "com.newrelic/mcp",
@@ -10913,7 +10937,16 @@
         "dcr": true,
         "pkce": true
       },
-      "relevance": 75
+      "relevance": 75,
+      "config_guide": {
+        "summary": "Enable the instance-level MCP server in n8n.",
+        "steps": [
+          "As owner/admin, enable Settings → Instance-level MCP and expose the required workflows.",
+          "Enter the n8n host only, without a path.",
+          "Select Connect and complete n8n OAuth."
+        ],
+        "docs_url": "https://docs.n8n.io/advanced-ai/accessing-n8n-mcp-server/overview/"
+      }
     },
     {
       "name": "com.paddle/mcp",
@@ -10946,7 +10979,16 @@
           "name": "report_missing_tool",
           "description": "Flag a missing capability to Paddle"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a Paddle API key for the live MCP server.",
+        "steps": [
+          "In Developer tools → Authentication, create an API key with only the required permissions.",
+          "Enter the raw key below; TrustGate adds the Bearer prefix."
+        ],
+        "docs_url": "https://developer.paddle.com/mcp/overview",
+        "note": "Sandbox requires a Custom MCP entry at https://sandbox-mcp.paddle.com/mcp and a sandbox key."
+      }
     },
     {
       "name": "com.pagerduty/mcp",
@@ -11081,7 +11123,16 @@
           "name": "list_status_page_statuses",
           "description": "List status page statuses"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Register a PagerDuty OAuth app for TrustGate.",
+        "steps": [
+          "In Integrations → App Registration, create an OAuth 2.0 app.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.pagerduty/mcp and choose the required scopes.",
+          "Enter the client ID and secret, then complete PagerDuty consent."
+        ],
+        "docs_url": "https://pagerduty.github.io/pagerduty-mcp-server/docs/remote-server/setup"
+      }
     },
     {
       "name": "com.pandadoc/mcp",
@@ -11392,7 +11443,16 @@
           "name": "assistant_context",
           "description": "Retrieve relevant document snippets from a Pinecone Assistant knowledge base"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Copy the endpoint and API key for a Pinecone Assistant.",
+        "steps": [
+          "Open the Assistant in Pinecone and copy its Host and exact assistant name.",
+          "Create a project API key with access to that Assistant.",
+          "Enter both endpoint values and the raw key; TrustGate adds the Bearer prefix."
+        ],
+        "docs_url": "https://docs.pinecone.io/guides/assistant/mcp-server"
+      }
     },
     {
       "name": "com.pipedream/mcp",
@@ -11439,7 +11499,17 @@
           "scheme": "raw"
         }
       ],
-      "relevance": 60
+      "relevance": 60,
+      "config_guide": {
+        "summary": "Prepare Pipedream Connect credentials and user routing values.",
+        "steps": [
+          "Create a Pipedream Connect OAuth client and obtain a current developer access token.",
+          "Copy the project ID and choose development or production.",
+          "Enter the external user ID and target app slug, then paste the raw access token."
+        ],
+        "docs_url": "https://pipedream.com/docs/connect/mcp/developers",
+        "note": "Pipedream access tokens expire; replace the stored token when it is rotated."
+      }
     },
     {
       "name": "com.plaid/mcp",
@@ -11449,15 +11519,6 @@
       "transport": "streamable-http",
       "server_url": "https://api.dashboard.plaid.com/mcp",
       "requires_auth": true,
-      "auth_headers": [
-        {
-          "name": "Authorization",
-          "description": "Bearer <OAuth2 client_credentials access token; scope mcp:dashboard>.",
-          "required": true,
-          "secret": true,
-          "scheme": "Bearer"
-        }
-      ],
       "relevance": 75,
       "tools": [
         {
@@ -11476,7 +11537,31 @@
           "name": "plaid_list_teams",
           "description": "List teams associated with the OAuth token"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create Plaid Dashboard MCP OAuth credentials.",
+        "steps": [
+          "Use a Plaid Production account approved for at least one product.",
+          "Enter the Plaid client ID and Production secret.",
+          "TrustGate requests and refreshes an mcp:dashboard access token automatically."
+        ],
+        "docs_url": "https://plaid.com/docs/resources/mcp/",
+        "note": "This is Plaid Dashboard access, not end-user bank Link authentication."
+      },
+      "oauth": {
+        "required": true,
+        "resource_metadata": false,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": false,
+        "token_url": "https://production.plaid.com/oauth/token",
+        "scopes": [
+          "mcp:dashboard"
+        ],
+        "resource": "https://api.dashboard.plaid.com/mcp/",
+        "grant_type": "client_credentials",
+        "token_endpoint_auth_method": "client_secret_post"
+      }
     },
     {
       "name": "dev.pscale/planetscale",
@@ -12178,7 +12263,16 @@
           "name": "fetch_tokens",
           "description": "Get saved payment methods by customer/contact"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a Razorpay merchant API key pair.",
+        "steps": [
+          "In Account & Settings → API Keys, create a Key ID and Secret.",
+          "Base64-encode key_id:key_secret.",
+          "Paste the encoded value below; TrustGate adds the Basic prefix."
+        ],
+        "docs_url": "https://razorpay.com/docs/mcp-server/remote/"
+      }
     },
     {
       "name": "com.render/mcp",
@@ -12295,7 +12389,15 @@
           "name": "update_web_service",
           "description": "Update an existing web service in your Render account."
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a workspace-scoped Render API key.",
+        "steps": [
+          "In Render Dashboard → Account Settings, create an API key.",
+          "Enter the raw key below; TrustGate adds the Bearer prefix."
+        ],
+        "docs_url": "https://render.com/docs/mcp-server"
+      }
     },
     {
       "name": "com.replicate/mcp",
@@ -12476,9 +12578,22 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true
       },
-      "relevance": 100
+      "relevance": 100,
+      "config_guide": {
+        "summary": "Enable a Salesforce Hosted MCP server and create an External Client App.",
+        "steps": [
+          "Enable the required Hosted MCP server in Salesforce API Catalog.",
+          "Create an External Client App with mcp_api, refresh_token and PKCE; Connected Apps are unsupported.",
+          "Enter the hosted server path and the External Client App consumer key.",
+          "Connect and complete Salesforce sign-in."
+        ],
+        "docs_url": "https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/client-connection-overview.html"
+      }
     },
     {
       "name": "io.sanity/mcp",
@@ -12635,7 +12750,15 @@
           "name": "get_web_page_text",
           "description": "Fetch (scrape) a URL using ScrapingAnt and return the web page content as plain text. Args: url: The URL of the page to extract (scrape). browser: Whether to use browser rendering. Default: True. proxy_type: Type of proxy to use. Default: 'datacenter'. Use 'residential' if you encounter anti-bot ..."
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a ScrapingAnt API key.",
+        "steps": [
+          "Copy an API key from the ScrapingAnt dashboard.",
+          "Enter it below as x-api-key."
+        ],
+        "docs_url": "https://docs.scrapingant.com/mcp-server"
+      }
     },
     {
       "name": "ai.semgrep/mcp",
@@ -12766,7 +12889,17 @@
         "token_url": "https://auth.sso.sectigo.com/auth/realms/apiclients/protocol/openid-connect/token",
         "token_endpoint_auth_method": "client_secret_basic"
       },
-      "relevance": 72
+      "relevance": 72,
+      "config_guide": {
+        "summary": "Create Sectigo SCM machine-to-machine credentials.",
+        "steps": [
+          "Ask an SCM admin to enable MCP and create an MCP API client.",
+          "Enter the SCM environment or instance value.",
+          "Enter the OAuth client ID and client secret."
+        ],
+        "docs_url": "https://docs.sectigo.com/scm/mcp-server-scm/configuring-your-client.html",
+        "note": "This connection uses client credentials; no per-user browser login occurs."
+      }
     },
     {
       "name": "dev.sentry/mcp",
@@ -12898,7 +13031,15 @@
           "name": "search",
           "description": "Unified search across all SerpApi engines (Google, Bing, Yahoo, DuckDuckGo, YouTube, eBay, etc.)"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a SerpApi API key.",
+        "steps": [
+          "Copy the API key from the SerpApi dashboard.",
+          "Enter the raw key below; TrustGate adds the Bearer prefix."
+        ],
+        "docs_url": "https://serpapi.com/mcp"
+      }
     },
     {
       "name": "com.servicenow/mcp",
@@ -12922,18 +13063,21 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true
       },
       "config_guide": {
         "summary": "Enable and register an MCP server inside your ServiceNow instance.",
         "steps": [
-          "Use a Zurich-or-later ServiceNow instance with the MCP Server application enabled.",
-          "Copy the instance prefix from <instance>.service-now.com.",
-          "Copy the server name from the sn_mcp_server_registry record.",
-          "Connect and complete the instance's discovered OAuth flow."
+          "Use Zurich or later and activate the MCP Server application.",
+          "Create and activate a server in sn_mcp_server_registry.",
+          "Configure an OAuth client for TrustGate and copy its client ID.",
+          "Enter the instance prefix, server registry name and OAuth client credentials."
         ],
         "docs_url": "https://www.servicenow.com/docs/bundle/zurich-intelligent-experiences/page/administer/now-assist-platform/concept/model-context-protocol.html",
-        "note": "The MCP server must be active and available to the signing-in ServiceNow user."
+        "note": "OAuth authorize/token endpoints are discovered from the resolved instance URL."
       },
       "relevance": 85
     },
@@ -12941,13 +13085,13 @@
       "name": "com.shopify/storefront",
       "vendor": "Shopify",
       "category": "E-commerce",
-      "description": "Per-store Storefront MCP: product search, cart, and policy tools (public storefront, no auth).",
+      "description": "Per-store UCP catalog MCP: product search and lookup tools (public storefront, no auth).",
       "transport": "streamable-http",
-      "server_url": "https://{shop}.myshopify.com/api/mcp",
+      "server_url": "https://{shop}.myshopify.com/api/ucp/mcp",
       "url_variables": [
         {
           "name": "shop",
-          "description": "Store domain, e.g. example.myshopify.com (use the full host).",
+          "description": "Store subdomain only, e.g. example (not example.myshopify.com).",
           "required": true
         }
       ],
@@ -12966,7 +13110,16 @@
           "name": "get_product",
           "description": "Get full product detail with variant selection"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Enter the Shopify store subdomain for its public UCP catalog MCP.",
+        "steps": [
+          "Copy only the subdomain before .myshopify.com, not the full host.",
+          "No API key or OAuth configuration is required."
+        ],
+        "docs_url": "https://shopify.dev/docs/apps/build/storefront-mcp/servers/storefront",
+        "note": "This entry exposes search_catalog, lookup_catalog and get_product from /api/ucp/mcp."
+      }
     },
     {
       "name": "com.shortcut/mcp",
@@ -13385,7 +13538,16 @@
           "name": "list_shares",
           "description": "List groups/users shared to an asset"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a Smartsheet personal access token.",
+        "steps": [
+          "Use a Business or Enterprise account and create a token in Personal Settings → API Access.",
+          "Enter the raw token below; TrustGate adds the Bearer prefix."
+        ],
+        "docs_url": "https://developers.smartsheet.com/ai-mcp/smartsheet/install-the-smartsheet-mcp-server",
+        "note": "This tile uses the US endpoint. EU/AU regions require Custom MCP and region-local tokens."
+      }
     },
     {
       "name": "com.snowflake/mcp",
@@ -13419,18 +13581,21 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true
       },
       "config_guide": {
-        "summary": "Create a Cortex MCP server object and copy its fully qualified location.",
+        "summary": "Create a Cortex MCP server and a custom OAuth security integration.",
         "steps": [
-          "Create the MCP server in Snowflake and grant the user USAGE on its database, schema, and server.",
-          "Copy the account host only, without https:// or a trailing slash.",
-          "Enter the database, schema, and MCP server object names exactly as created.",
-          "Connect and sign in with the Snowflake identity that has access."
+          "CREATE MCP SERVER and grant USAGE on its database, schema and server object.",
+          "Create a CUSTOM OAuth security integration with PKCE and TrustGate’s callback URL.",
+          "Copy the account host, database, schema and server object names exactly.",
+          "Enter the OAuth client ID and secret, then complete Snowflake sign-in."
         ],
         "docs_url": "https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp",
-        "note": "Names can be case-sensitive when they were created with quoted identifiers."
+        "note": "OAuth endpoints are discovered from the resolved Snowflake server URL; DCR is not used."
       },
       "relevance": 95
     },
@@ -13582,7 +13747,16 @@
           "name": "change_security_hotspot_status",
           "description": "Review/change a hotspot status"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a SonarQube Cloud user token and copy the organization key.",
+        "steps": [
+          "In My Account → Security, create a user token.",
+          "Enter the raw token and SONARQUBE_ORG organization key."
+        ],
+        "docs_url": "https://docs.sonarsource.com/sonarqube-mcp-server/setup/sonarqube-cloud-hosted",
+        "note": "US-region organizations need Custom MCP at https://api.sonarqube.us/mcp."
+      }
     },
     {
       "name": "com.sonatype/mcp",
@@ -13615,7 +13789,15 @@
           "name": "getRecommendedComponentVersions",
           "description": "Returns top dependency version recommendations ranked by Developer Trust Score with security, licensing, and quality analysis. Developer Trust Score is a measure of quality, security, licensing, and maintainability. Use this when selecting a new component to add to a project (without version) or ..."
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a Sonatype Guide personal API token.",
+        "steps": [
+          "Generate a token at guide.sonatype.com/settings/tokens.",
+          "Enter the raw token below; TrustGate adds the Bearer prefix."
+        ],
+        "docs_url": "https://guide.sonatype.com/mcp"
+      }
     },
     {
       "name": "com.squareup/mcp",
