@@ -15,8 +15,6 @@
 package middleware
 
 import (
-	"log/slog"
-
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
@@ -102,16 +100,6 @@ func enforceDefaultIdPTenant(identity Identity, gw *gatewaydomain.Gateway) error
 		return nil
 	}
 	if identity.Principal == nil || identity.Principal.Org() != tenant {
-		// TEMP DEBUG (store tenant): surface both sides of the mismatch so we can
-		// tell a wrong-org login from a gateway stamped with the wrong tenant_id.
-		principalOrg := ""
-		if identity.Principal != nil {
-			principalOrg = identity.Principal.Org()
-		}
-		slog.Warn("TEMP DEBUG store-tenant: default-IdP tenant mismatch",
-			slog.String("principal_org", principalOrg),
-			slog.String("gateway_tenant_id", tenant),
-			slog.String("gateway_id", gw.ID.String()))
 		return fiber.NewError(fiber.StatusForbidden, "identity does not belong to this gateway's tenant")
 	}
 	return nil
