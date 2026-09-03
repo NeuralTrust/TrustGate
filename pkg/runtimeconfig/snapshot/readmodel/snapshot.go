@@ -357,6 +357,24 @@ func (s *Snapshot) RegistriesByIDs(gatewayID ids.GatewayID, registryIDs []ids.Re
 	return out
 }
 
+// RegistriesByGateway returns every registry attached to a gateway, in snapshot
+// order (the compiled read side for the Store installer/scoper's List). The
+// returned pointers alias the snapshot; callers that mutate must clone first.
+func (s *Snapshot) RegistriesByGateway(gatewayID ids.GatewayID) []*registrydomain.Registry {
+	if len(s.registriesByGateway[gatewayID]) == 0 {
+		return nil
+	}
+	byID := s.registriesByGateway[gatewayID]
+	out := make([]*registrydomain.Registry, 0, len(byID))
+	for i := range s.data.Registries {
+		r := &s.data.Registries[i]
+		if r.GatewayID == gatewayID {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 func (s *Snapshot) PolicyByID(id ids.PolicyID) (*policydomain.Policy, bool) {
 	p, ok := s.policiesByID[id]
 	return p, ok
