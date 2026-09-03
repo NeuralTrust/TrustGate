@@ -5595,7 +5595,16 @@
           "name": "list_drafts",
           "description": "List draft emails in the mailbox."
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Enable Gmail MCP APIs and create a Google OAuth client.",
+        "steps": [
+          "In a Google Cloud project, enable gmail.googleapis.com and gmailmcp.googleapis.com.",
+          "Configure the OAuth consent screen and register {gatewayBaseUrl}/oauth/callback/com.google.workspace/gmail.",
+          "Enter the OAuth client ID and secret, then complete Google consent."
+        ],
+        "docs_url": "https://developers.google.com/workspace/gmail/api/guides/configure-mcp-server"
+      }
     },
     {
       "name": "com.google.workspace/calendar",
@@ -5660,7 +5669,16 @@
           "name": "respond_to_event",
           "description": "RSVP to an event invitation"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Enable Calendar MCP APIs and create a Google OAuth client.",
+        "steps": [
+          "Enable calendar.googleapis.com and calendarmcp.googleapis.com in the Google Cloud project.",
+          "Configure consent and register {gatewayBaseUrl}/oauth/callback/com.google.workspace/calendar.",
+          "Enter the OAuth client ID and secret, then complete Google consent."
+        ],
+        "docs_url": "https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server"
+      }
     },
     {
       "name": "com.google.workspace/drive",
@@ -5696,7 +5714,16 @@
           "name": "read_file_content",
           "description": "Read the content of a Drive file."
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Enable Drive MCP APIs and create a Google OAuth client.",
+        "steps": [
+          "Enable drive.googleapis.com and drivemcp.googleapis.com in the Google Cloud project.",
+          "Configure consent and register {gatewayBaseUrl}/oauth/callback/com.google.workspace/drive.",
+          "Enter the OAuth client ID and secret, then complete Google consent."
+        ],
+        "docs_url": "https://developers.google.com/workspace/guides/configure-mcp-servers"
+      }
     },
     {
       "name": "com.google.cloud/androidmanagement",
@@ -5906,7 +5933,16 @@
           "name": "list_failed_task_instances",
           "description": "List failed task instances of a DAG run"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Prepare a Google OAuth client for the regional Composer MCP endpoint.",
+        "steps": [
+          "Enable the required Composer/MCP APIs and grant the user access to the target environment.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.google.cloud/composer in the Google OAuth client.",
+          "Enter the Composer region and OAuth client credentials, then sign in."
+        ],
+        "docs_url": "https://docs.cloud.google.com/mcp/set-up-authentication-mcp-servers"
+      }
     },
     {
       "name": "com.google.cloud/compute",
@@ -7250,7 +7286,17 @@
           "name": "submit_feedback",
           "description": "Send feedback about the MCP server"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a HubSpot MCP Auth App for TrustGate.",
+        "steps": [
+          "In HubSpot, open Development → MCP Auth Apps and create an app.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.hubspot/mcp as its redirect URL.",
+          "Enter the generated client ID and secret, then select the HubSpot account during sign-in."
+        ],
+        "docs_url": "https://developers.hubspot.com/docs/apps/developer-platform/build-apps/integrate-with-the-remote-hubspot-mcp-server",
+        "note": "PKCE is required. Available tools follow the permissions of the signing-in HubSpot user."
+      }
     },
     {
       "name": "com.haloitsm/mcp",
@@ -7276,7 +7322,17 @@
           "scheme": "Bearer"
         }
       ],
-      "relevance": 70
+      "relevance": 70,
+      "config_guide": {
+        "summary": "Enable Halo MCP and create a Halo API application.",
+        "steps": [
+          "In Configuration → AI, enable the MCP endpoint and copy your Halo host.",
+          "Create a Halo API application and obtain a token with only the required tool permissions.",
+          "Enter the host without https:// and paste the raw bearer token below."
+        ],
+        "docs_url": "https://www.usehalo.com/guides/2798",
+        "note": "Requires Halo v2.236+. This tile accepts a pre-issued bearer token; use Custom MCP for Halo authorization-code credentials."
+      }
     },
     {
       "name": "co.huggingface/mcp",
@@ -7474,7 +7530,16 @@
           "scheme": "App"
         }
       ],
-      "relevance": 50
+      "relevance": 50,
+      "config_guide": {
+        "summary": "Create an Infobip API key for the SMS MCP endpoint.",
+        "steps": [
+          "Create an API key with the SMS permissions required by your agents.",
+          "Enter the raw key below; TrustGate sends it with the required App scheme."
+        ],
+        "docs_url": "https://www.infobip.com/docs/mcp/using-mcp",
+        "note": "This tile connects the /sms product endpoint; add other Infobip MCP products as Custom MCP servers."
+      }
     },
     {
       "name": "com.intercom/mcp",
@@ -7826,7 +7891,17 @@
           "name": "worker_get_specific",
           "description": "Get a specific Worker"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Enable the JFrog MCP server on your platform deployment.",
+        "steps": [
+          "Ask a Platform Admin to enable MCP on the JFrog Platform Deployment.",
+          "Enter the JFrog Cloud instance subdomain.",
+          "Select Connect and complete JFrog browser sign-in."
+        ],
+        "docs_url": "https://docs.jfrog.com/integrations/docs/add-the-jfrog-mcp-server-to-an-mcp-client",
+        "note": "This tile targets JFrog Cloud. Self-managed deployments should use Custom MCP with https://<host>/mcp."
+      }
     },
     {
       "name": "ai.jina/mcp",
@@ -7835,16 +7910,7 @@
       "description": "Web reading, search, and grounding via Jina AI.",
       "transport": "streamable-http",
       "server_url": "https://mcp.jina.ai/v1",
-      "requires_auth": true,
-      "auth_headers": [
-        {
-          "name": "Authorization",
-          "description": "Bearer <API key>",
-          "required": true,
-          "secret": true,
-          "scheme": "Bearer"
-        }
-      ],
+      "requires_auth": false,
       "relevance": 50,
       "tools": [
         {
@@ -7976,7 +8042,17 @@
           "name": "get_submissions",
           "description": "Retrieve submissions for a form"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Register an OAuth client that Jotform accepts for its MCP server.",
+        "steps": [
+          "Create or obtain a Jotform OAuth client with the full scope.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.jotform/mcp as the exact callback URL.",
+          "Enter the client ID and secret, then complete Jotform consent."
+        ],
+        "docs_url": "https://www.jotform.com/developers/mcp/?tab=mcp",
+        "note": "Jotform rejects unapproved DCR callbacks, so TrustGate uses manual OAuth registration."
+      }
     },
     {
       "name": "com.jumpcloud/genai",
@@ -8100,7 +8176,17 @@
           "name": "search_api",
           "description": "Search JumpCloud API"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Enable JumpCloud MCP and create an admin API key.",
+        "steps": [
+          "In Admin Portal → Settings → Features, enable MCP Server under JumpCloud AI.",
+          "Create an admin API key whose role has only the required permissions.",
+          "Enter the raw key below; TrustGate adds the Bearer prefix."
+        ],
+        "docs_url": "https://jumpcloud.com/support/get-started-jumpcloud-mcp-server",
+        "note": "This tile uses the US endpoint. EU and MSP organization-specific URLs require Custom MCP."
+      }
     },
     {
       "name": "com.klaviyo/mcp",
@@ -8514,7 +8600,17 @@
           "name": "getHealth",
           "description": "Health check"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create project-scoped Langfuse API credentials.",
+        "steps": [
+          "In project settings, create a public key and secret key; organization keys do not work.",
+          "Base64-encode public_key:secret_key.",
+          "Paste the encoded value below; TrustGate adds the Basic prefix."
+        ],
+        "docs_url": "https://langfuse.com/docs/api-and-data-platform/features/mcp-server",
+        "note": "This tile uses Langfuse EU Cloud. US, JP, HIPAA and self-hosted instances require Custom MCP."
+      }
     },
     {
       "name": "com.launchdarkly/mcp",
@@ -8831,7 +8927,16 @@
           "name": "submit_feedback",
           "description": "Submit feedback"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a Mailchimp Transactional (Mandrill) API key.",
+        "steps": [
+          "Create an API key in Mailchimp Transactional with the AI Agents permissions needed.",
+          "Enter the raw key below; TrustGate adds the Bearer prefix."
+        ],
+        "docs_url": "https://mailchimp.com/developer/transactional/guides/how-to-use-mailchimps-transactional-messaging-mcp/",
+        "note": "This server covers Transactional/Mandrill, not Mailchimp Marketing campaigns."
+      }
     },
     {
       "name": "com.make/mcp",
@@ -8861,15 +8966,6 @@
       "transport": "streamable-http",
       "server_url": "https://mcp.mem0.ai/mcp",
       "requires_auth": true,
-      "auth_headers": [
-        {
-          "name": "Authorization",
-          "description": "Token <Mem0 API key>",
-          "required": true,
-          "secret": true,
-          "scheme": "Token"
-        }
-      ],
       "tools": [
         {
           "name": "add_memory",
@@ -8915,7 +9011,21 @@
           "name": "get_event_status",
           "description": "Check async operation status by event_id"
         }
-      ]
+      ],
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.mem0.ai/authorize",
+        "token_url": "https://mcp.mem0.ai/token",
+        "scopes": [
+          "read",
+          "write"
+        ],
+        "resource": "https://mcp.mem0.ai/"
+      }
     },
     {
       "name": "com.mercury/mcp",
@@ -9196,7 +9306,17 @@
           "name": "get_entity_analysis",
           "description": "Retrieve entity analysis results by ID"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Register an Entra OAuth app for Microsoft Sentinel data exploration.",
+        "steps": [
+          "Ensure the user can access an eligible Sentinel data lake workspace.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.microsoft/sentinel in an Entra app.",
+          "Grant the Sentinel MCP delegated permission and admin consent.",
+          "Enter the client ID and secret, then sign in with a Security Reader-or-higher user."
+        ],
+        "docs_url": "https://learn.microsoft.com/en-us/azure/sentinel/datalake/sentinel-mcp-overview"
+      }
     },
     {
       "name": "com.miro/mcp",
@@ -9738,7 +9858,17 @@
           "name": "fetch_docs",
           "description": "Fetch and parse documentation from a given URL or local file. Use this tool after list_doc_sources to: 1. First fetch the llms.txt file from a documentation source 2. Analyze the URLs listed in the llms.txt file 3. Then fetch specific documentation pages relevant to the user's question Args: url:..."
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a Mollie Advanced access token.",
+        "steps": [
+          "In Mollie Admin → Developers → API access tokens, create an Advanced token.",
+          "Grant profile.read plus only the scopes needed by your agents.",
+          "Enter the raw token below; TrustGate adds the Bearer prefix."
+        ],
+        "docs_url": "https://docs.mollie.com/docs/mollie-mcp-server",
+        "note": "Standard Mollie API keys do not authenticate this MCP server."
+      }
     },
     {
       "name": "com.monday/mcp",

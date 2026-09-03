@@ -309,6 +309,29 @@ func TestCuratedCatalog_ConfigurableServersHaveSetupGuides(t *testing.T) {
 	}
 }
 
+func TestCuratedCatalog_JinaAndMem0UseTheirZeroConfigAuthPaths(t *testing.T) {
+	t.Parallel()
+
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+
+	jina, ok := cat.GetByCode("ai.jina/mcp")
+	require.True(t, ok)
+	require.False(t, jina.RequiresAuth)
+	require.False(t, jina.RequiresConfig)
+	require.Empty(t, jina.AuthHeaders)
+
+	mem0, ok := cat.GetByCode("ai.mem0/mcp")
+	require.True(t, ok)
+	require.True(t, mem0.RequiresAuth)
+	require.False(t, mem0.RequiresConfig)
+	require.NotNil(t, mem0.OAuth)
+	require.Equal(t, "auto", mem0.OAuth.Registration)
+	require.NotNil(t, mem0.OAuth.DCR)
+	require.True(t, *mem0.OAuth.DCR)
+	require.Equal(t, []string{"read", "write"}, mem0.OAuth.Scopes)
+}
+
 func TestNewMCPServerCatalog_IncludesOutlookMail(t *testing.T) {
 	t.Parallel()
 
