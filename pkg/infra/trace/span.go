@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/common/valuecopy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/logredact"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
@@ -258,11 +259,20 @@ func (s *Span) HasDecision() bool {
 	return s.Plugin != nil && s.Plugin.Decision != ""
 }
 
+// SetExtras records a plugin's own metadata on the span, taking ownership of it.
+//
+// The copy is the point. What arrives here is the very struct or map the plugin
+// built, and the span outlives the request: the metrics worker marshals these
+// extras later, from events.SanitizeExtras. Keeping the plugin's map would mean
+// the encoder walking something the request path can still mutate, which under
+// Go 1.27 is a process-level panic rather than a garbled field — see the
+// valuecopy package and RUN-1261.
 func (s *Span) SetExtras(extras any) {
+	owned := valuecopy.Deep(extras)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ensurePlugin()
-	s.Plugin.Extras = extras
+	s.Plugin.Extras = owned
 }
 
 func (s *Span) SetScore(score float64, label string) {
