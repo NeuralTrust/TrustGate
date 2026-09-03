@@ -31,7 +31,7 @@ const (
 
 // vendorBrandIcons maps a normalized catalog vendor (or provider name) to a
 // file under seed/mcp-catalog/brands. Keys match NeuralTrust/app mcpBrands.ts.
-var vendorBrandIcons = map[string]string{
+var vendorBrandIcons = map[string]string{ // #nosec G101 -- static brand icon asset filenames, not credentials
 	"aha":                           "mcp/aha.png",
 	"ahrefs":                        "mcp/ahrefs.png",
 	"airbyte":                       "mcp/airbyte.svg",
