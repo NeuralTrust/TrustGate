@@ -72,6 +72,45 @@ func TestAuthorizeDefaultIdPBindsAddressedGatewayIntoPending(t *testing.T) {
 		"authorize must bind the addressed gateway into pending, not the default IdP's zero id")
 }
 
+// The default IdP login must carry the addressed gateway's owning tenant to the
+// app as an `org` hint, so the app mints the session for that tenant (after
+// verifying membership) rather than the user's active org — otherwise the
+// cross-tenant guard rejects the session at the MCP plane.
+func TestAuthorizeDefaultIdPPassesGatewayTenantAsOrgHint(t *testing.T) {
+	def := appauth.BuildDefaultIdP(appauth.DefaultIdPConfig{
+		Issuer: "https://idp.example.com", ClientID: "trustgate",
+	})
+	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
+		"/store/mcp": {{GatewayID: ids.GatewayID{}}},
+	}}
+	store := newMemFlowStore()
+	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{def}, defaultIdP: def}
+	proxy := NewAuthProxy(finder, paths, http.DefaultClient, store, nil, nil, nil)
+
+	const tenant = "3b6c66f8-3841-459f-8846-45e47c98056e"
+	gw := &gatewaydomain.Gateway{
+		ID:       ids.New[ids.GatewayKind](),
+		Metadata: gatewaydomain.WithTenantID(nil, tenant),
+	}
+	ctx := appgateway.WithGateway(context.Background(), gw)
+
+	loc, err := proxy.Authorize(ctx, "http://gw.example.com", AuthorizeRequest{
+		ResponseType:        "code",
+		ClientID:            "trustgate",
+		RedirectURI:         "cursor://anysphere.cursor-mcp/oauth/callback",
+		State:               "client-state",
+		CodeChallenge:       s256("client-verifier"),
+		CodeChallengeMethod: "S256",
+		Resource:            "http://gw.example.com/store/mcp",
+	})
+	require.NoError(t, err)
+
+	parsed, err := url.Parse(loc)
+	require.NoError(t, err)
+	require.Equal(t, tenant, parsed.Query().Get("org"),
+		"authorize must pass the gateway's tenant as the org hint to the app")
+}
+
 // Without a routed gateway in context there is nothing to bind, so the parked
 // authorization keeps the default IdP's zero gateway (unchanged behaviour).
 func TestAuthorizeDefaultIdPNoContextGatewayKeepsZero(t *testing.T) {
