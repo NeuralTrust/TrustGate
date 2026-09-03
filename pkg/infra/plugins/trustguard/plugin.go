@@ -56,6 +56,8 @@ const (
 	statusBlock          = "block"
 	statusReport         = "report"
 	statusTransform      = "transform"
+	statusAsk            = "ask"
+	statusAllow          = "allow"
 )
 
 const (
@@ -425,17 +427,30 @@ func (p *Plugin) transformDegraded(in appplugins.ExecInput, data guardData, resp
 	return nil, blockError(resp)
 }
 
+// guardOutcomeDecision maps a guard verdict onto the outcome TrustGate records
+// and enforces. statusTransform never reaches here: applyTransform handles it
+// before this point.
+//
+// ask asks a person to confirm, and a gateway has nobody to ask. TrustGuard's
+// own reducer ranks it above transform, which TrustGate does honour, so
+// resolving it to a pass made an ask gate weaker than a report gate rather than
+// stronger. It is enforced like a block — which also means observe mode records
+// it instead of stopping the request.
 func guardOutcomeDecision(status string, mode policy.Mode) string {
 	switch status {
-	case statusBlock:
+	case statusBlock, statusAsk:
 		if appplugins.Blocks(mode) {
 			return decisionBlocked
 		}
 		return decisionReported
 	case statusReport:
 		return decisionReported
-	default:
+	case statusAllow, "":
 		return decisionAllowed
+	default:
+		// An unrecognised verdict is recorded, not passed silently. Resolving
+		// the unknown to decisionAllowed is what kept ask invisible.
+		return decisionReported
 	}
 }
 

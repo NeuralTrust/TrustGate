@@ -607,7 +607,7 @@ func TestExecuteAllowStatusesPassThrough(t *testing.T) {
 func TestExecuteAllowedRecordsAllowedSpanDecision(t *testing.T) {
 	t.Parallel()
 
-	f := &fakeGuard{response: GuardResponse{Status: "allowed", TraceID: "trace-allowed"}}
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow, TraceID: "trace-allowed"}}
 	srv := newServer(t, f)
 	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
@@ -693,7 +693,7 @@ func TestExecuteStreamingResponsePassThrough(t *testing.T) {
 func TestExecutePostResponseStreamingInspects(t *testing.T) {
 	t.Parallel()
 
-	f := &fakeGuard{response: GuardResponse{Status: "allowed", TraceID: "trace-stream"}}
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow, TraceID: "trace-stream"}}
 	srv := newServer(t, f)
 	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
@@ -722,7 +722,7 @@ func TestExecutePostResponseStreamingInspects(t *testing.T) {
 func TestExecutePostResponseStreamingInspectsReasoningAndToolCalls(t *testing.T) {
 	t.Parallel()
 
-	f := &fakeGuard{response: GuardResponse{Status: "allowed", TraceID: "trace-stream-rich"}}
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow, TraceID: "trace-stream-rich"}}
 	srv := newServer(t, f)
 	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
@@ -883,7 +883,7 @@ func TestExecuteProtocolFromConsumerType(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
+			f := &fakeGuard{response: GuardResponse{Status: statusAllow}}
 			srv := newServer(t, f)
 			p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
@@ -923,7 +923,7 @@ func TestExecutePropagatesGatewayTraceID(t *testing.T) {
 	t.Parallel()
 
 	const wantTraceID = "gate-trace-xyz789"
-	f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow}}
 	srv := newServer(t, f)
 	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
@@ -941,7 +941,7 @@ func TestExecutePropagatesGatewayTraceID(t *testing.T) {
 func TestExecuteOmitsTraceIDWithoutRequestTrace(t *testing.T) {
 	t.Parallel()
 
-	f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow}}
 	srv := newServer(t, f)
 	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
@@ -957,7 +957,7 @@ func TestExecuteOmitsTraceIDWithoutRequestTrace(t *testing.T) {
 func TestExecuteForwardsFullGuardRequest(t *testing.T) {
 	t.Parallel()
 
-	f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow}}
 	srv := newServer(t, f)
 	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
@@ -1014,7 +1014,7 @@ func TestExecuteForwardsFullGuardRequest(t *testing.T) {
 func TestExecuteSendsPrincipalOnAttributesUser(t *testing.T) {
 	t.Parallel()
 
-	f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow}}
 	srv := newServer(t, f)
 	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
@@ -1041,7 +1041,7 @@ func TestExecuteSendsPrincipalOnAttributesUser(t *testing.T) {
 func TestExecuteConsumerIDComesFromRequestNotSettings(t *testing.T) {
 	t.Parallel()
 
-	f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow}}
 	srv := newServer(t, f)
 	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
@@ -1074,7 +1074,7 @@ func TestExecuteInspectModeDirections(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
+			f := &fakeGuard{response: GuardResponse{Status: statusAllow}}
 			srv := newServer(t, f)
 			p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
@@ -1116,7 +1116,7 @@ func TestExecuteRetriesOnceOn401(t *testing.T) {
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(GuardResponse{Status: "allowed"})
+			_ = json.NewEncoder(w).Encode(GuardResponse{Status: statusAllow})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -1388,7 +1388,7 @@ func TestExecuteMCPTransformObservePassesThrough(t *testing.T) {
 func TestExecutePreRequestSendsOpenAIToolMessages(t *testing.T) {
 	t.Parallel()
 
-	f := &fakeGuard{response: GuardResponse{Status: "allowed"}}
+	f := &fakeGuard{response: GuardResponse{Status: statusAllow}}
 	srv := newServer(t, f)
 	p := New(adapter.NewRegistry(), srv.URL, testTimeout, "test-client", "test-secret", nil)
 
@@ -1723,7 +1723,7 @@ func TestExecuteBlocksOnlyOnFlaggedLeg(t *testing.T) {
 	t.Parallel()
 
 	f := &fakeGuard{responseFor: map[string]GuardResponse{
-		directionInput:  {Status: "allowed"},
+		directionInput:  {Status: statusAllow},
 		directionOutput: {Status: statusBlock, TraceID: "trace-out"},
 	}}
 	srv := newServer(t, f)
