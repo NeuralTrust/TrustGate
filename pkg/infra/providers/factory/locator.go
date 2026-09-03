@@ -29,8 +29,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/mistral"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/moonshot"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openrouter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openaicompat"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openrouter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/vertex"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/xai"
 )
