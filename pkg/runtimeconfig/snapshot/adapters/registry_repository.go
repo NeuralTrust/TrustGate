@@ -16,6 +16,7 @@ package adapters
 
 import (
 	"context"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -66,8 +67,53 @@ func (r *registryRepository) Delete(_ context.Context, _ ids.GatewayID, _ ids.Re
 	return configsync.ErrReadOnly
 }
 
-func (r *registryRepository) List(_ context.Context, _ domain.ListFilter) ([]*domain.Registry, int, error) {
-	return nil, 0, configsync.ErrReadOnly
+// List returns a gateway's registries from the compiled snapshot. It is a read,
+// so — unlike the write methods — it is served rather than rejected: the MCP
+// Store's installer and scoper scan a gateway's registries by catalog code
+// through it. The NameContains, Page and Size filter fields are honored;
+// gateway id is required (a zero filter yields nothing).
+func (r *registryRepository) List(_ context.Context, filter domain.ListFilter) ([]*domain.Registry, int, error) {
+	snap, ok := snapshotFrom(r.store)
+	if !ok {
+		return nil, 0, nil
+	}
+	all := snap.RegistriesByGateway(filter.GatewayID)
+	if name := strings.ToLower(strings.TrimSpace(filter.NameContains)); name != "" {
+		filtered := all[:0:0]
+		for _, reg := range all {
+			if reg != nil && strings.Contains(strings.ToLower(reg.Name), name) {
+				filtered = append(filtered, reg)
+			}
+		}
+		all = filtered
+	}
+	total := len(all)
+	page := paginate(all, filter.Page, filter.Size)
+	cloned, err := cloneSlice(page)
+	if err != nil {
+		return nil, 0, err
+	}
+	return cloned, total, nil
+}
+
+// paginate returns the 1-based Page window of size Size. A non-positive size
+// returns everything (the installer/scoper ask for a single large page).
+func paginate(items []*domain.Registry, page, size int) []*domain.Registry {
+	if size <= 0 {
+		return items
+	}
+	if page <= 0 {
+		page = 1
+	}
+	start := (page - 1) * size
+	if start >= len(items) {
+		return nil
+	}
+	end := start + size
+	if end > len(items) {
+		end = len(items)
+	}
+	return items[start:end]
 }
 
 var _ domain.Repository = (*registryRepository)(nil)
