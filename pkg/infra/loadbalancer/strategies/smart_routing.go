@@ -110,7 +110,16 @@ func (s *SmartRouting) record(req *infracontext.RequestContext, tierApplied bool
 func (s *SmartRouting) routeForScore(score float64, candidates []routingdomain.Route) *routingdomain.Route {
 	tier, ok := s.config.TierForScore(score)
 	if !ok {
-		return nil
+		// A ladder whose cheapest tier sits above 0 matches no tier at all for
+		// scores under that floor. Those are the easiest requests in the pool,
+		// so they belong on the lowest tier: rounding them to round-robin would
+		// let the cheapest traffic land on the priciest model. A tier that did
+		// match but has no candidate left still falls through to round-robin
+		// below - that case is the fail-open, not this one.
+		tier, ok = s.config.LowestTier()
+		if !ok {
+			return nil
+		}
 	}
 	model := tier.RouteModel()
 	for _, route := range candidates {
