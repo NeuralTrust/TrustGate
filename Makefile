@@ -107,6 +107,14 @@ test-repositories: ## Run repository integration tests (requires PG_TEST_URL poi
 
 lint: ## Run golangci-lint
 	@$(info $(M) Running golangci-lint ...)
+	@PATH="$$HOME/go/bin:$$PATH" command -v golangci-lint >/dev/null 2>&1 || { \
+	  echo "golangci-lint not found in PATH; run 'make tools' first" >&2; exit 1; \
+	}
+	@PATH="$$HOME/go/bin:$$PATH" golangci-lint --version 2>/dev/null \
+	  | grep -q "$(patsubst v%,%,$(GOLANGCI_LINT_VERSION))" || { \
+	  echo "golangci-lint is not $(GOLANGCI_LINT_VERSION); run 'make tools' to install the pinned version" >&2; \
+	  echo "  a build compiled with an older Go toolchain cannot load this module's config" >&2; exit 1; \
+	}
 	@PATH="$$HOME/go/bin:$$PATH" golangci-lint run ./...
 	@cd pkg/metrics && PATH="$$HOME/go/bin:$$PATH" golangci-lint run ./...
 
