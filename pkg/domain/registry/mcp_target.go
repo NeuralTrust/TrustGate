@@ -233,11 +233,16 @@ func (a *MCPAuth) Validate() error {
 				return fmt.Errorf("%w: registration auto does not accept client_id/client_secret", ErrInvalidMCPTarget)
 			}
 		case RegistrationManual, "":
-			if strings.TrimSpace(a.ClientID) == "" || strings.TrimSpace(a.AuthorizeURL) == "" || strings.TrimSpace(a.TokenURL) == "" {
-				return fmt.Errorf("%w: forwarded with manual registration requires client_id, authorize_url and token_url (or set registration: auto)",
+			if strings.TrimSpace(a.ClientID) == "" {
+				return fmt.Errorf("%w: forwarded with manual registration requires client_id", ErrInvalidMCPTarget)
+			}
+			hasAuthorizeURL := strings.TrimSpace(a.AuthorizeURL) != ""
+			hasTokenURL := strings.TrimSpace(a.TokenURL) != ""
+			if hasAuthorizeURL != hasTokenURL {
+				return fmt.Errorf("%w: manual registration must provide both authorize_url and token_url or neither for discovery",
 					ErrInvalidMCPTarget)
 			}
-			if !isHTTPURL(a.AuthorizeURL) || !isHTTPURL(a.TokenURL) {
+			if hasAuthorizeURL && (!isHTTPURL(a.AuthorizeURL) || !isHTTPURL(a.TokenURL)) {
 				return fmt.Errorf("%w: authorize_url and token_url must be valid http(s) URLs", ErrInvalidMCPTarget)
 			}
 			if secret.IsMasked(a.ClientSecret) {
