@@ -193,9 +193,20 @@ func (r *chainIdentityResolver) resolveBearer(ctx context.Context, token string,
 		return Identity{}, resolver.ErrUnauthenticated
 	}
 	if isJWT(token) {
-		if r.session != nil && unverifiedIssuer(token) == r.session.Issuer() {
+		sessIss := ""
+		if r.session != nil {
+			sessIss = r.session.Issuer()
+		}
+		if r.session != nil && unverifiedIssuer(token) == sessIss {
 			return r.resolveSession(ctx, token, candidates, scope)
 		}
+		// TEMP DEBUG (store 401): a JWT that isn't routed to the session verifier
+		// means its iss doesn't match the gateway signer — it'll be treated as an
+		// upstream IdP token and almost certainly rejected.
+		slog.Warn("TEMP DEBUG store401: bearer not routed to session verifier",
+			slog.String("token_iss", unverifiedIssuer(token)),
+			slog.String("session_iss", sessIss),
+			slog.Bool("session_nil", r.session == nil))
 		return r.resolveJWT(ctx, token, candidates, scope)
 	}
 	return r.resolveOpaque(ctx, token, candidates, scope)
@@ -203,45 +214,75 @@ func (r *chainIdentityResolver) resolveBearer(ctx context.Context, token string,
 
 func (r *chainIdentityResolver) resolveSession(ctx context.Context, token string, candidates []*authdomain.Auth, scope authScope) (Identity, error) {
 	if scope == nil && r.paths != nil {
+		slog.Warn("TEMP DEBUG store401: nil scope for path (no consumer match)")
 		return Identity{}, resolver.ErrUnauthenticated
 	}
 	principal, err := r.session.Verify(ctx, token)
 	if err != nil {
+		slog.Warn("TEMP DEBUG store401: session.Verify failed", slog.String("error", err.Error()))
 		return Identity{}, resolver.ErrUnauthenticated
 	}
 	if principal.Subject == "" {
+		slog.Warn("TEMP DEBUG store401: empty subject")
 		return Identity{}, resolver.ErrUnauthenticated
 	}
 	if use, _ := principal.Claims["token_use"].(string); use != "mcp_session" {
+		slog.Warn("TEMP DEBUG store401: token_use not mcp_session", slog.Any("token_use", principal.Claims["token_use"]))
 		return Identity{}, resolver.ErrUnauthenticated
 	}
 	authID, _ := principal.Claims["authid"].(string)
 	if authID == "" {
+		slog.Warn("TEMP DEBUG store401: empty authid claim")
 		return Identity{}, resolver.ErrUnauthenticated
 	}
+	// TEMP DEBUG (store 401): dump the discriminating claims + scope once.
+	scopeIDs := make([]string, 0, len(scope))
+	for id := range scope {
+		scopeIDs = append(scopeIDs, id.String())
+	}
+	slog.Warn("TEMP DEBUG store401: session claims",
+		slog.String("authid", authID),
+		slog.Any("aud", principal.Claims["aud"]),
+		slog.Any("scope_claim", principal.Claims["scope"]),
+		slog.Any("gwid", principal.Claims["gwid"]),
+		slog.Any("org", principal.Claims["org"]),
+		slog.Any("path_scope_auth_ids", scopeIDs),
+		slog.Int("candidate_count", len(candidates)))
+	matchedCandidate := false
 	for _, a := range candidates {
 		if a.ID.String() != authID || !scope.allows(a.ID) {
 			continue
 		}
+		matchedCandidate = true
 		cfg := a.Config.OAuth2
 		if cfg == nil {
+			slog.Warn("TEMP DEBUG store401: candidate has no oauth2 config", slog.String("authid", a.ID.String()))
 			return Identity{}, resolver.ErrUnauthenticated
 		}
 		if !identity.AudienceMatches(identity.AudiencesFromClaim(principal.Claims["aud"]), cfg.Audiences) {
+			slog.Warn("TEMP DEBUG store401: audience mismatch",
+				slog.Any("token_aud", principal.Claims["aud"]), slog.Any("cfg_audiences", cfg.Audiences))
 			return Identity{}, resolver.ErrUnauthenticated
 		}
 		if !principal.HasScopes(cfg.RequiredScopes) {
+			slog.Warn("TEMP DEBUG store401: required scopes not met",
+				slog.Any("token_scope", principal.Claims["scope"]), slog.Any("required_scopes", cfg.RequiredScopes))
 			return Identity{}, resolver.ErrUnauthenticated
 		}
 		gatewayID := a.GatewayID
 		if appauth.IsDefaultIdP(a) {
 			gw, err := gatewayFromClaim(principal.Claims["gwid"])
 			if err != nil {
+				slog.Warn("TEMP DEBUG store401: gwid claim unusable", slog.Any("gwid", principal.Claims["gwid"]))
 				return Identity{}, resolver.ErrUnauthenticated
 			}
 			gatewayID = gw
 		}
 		return Identity{GatewayID: gatewayID, AuthID: a.ID, Principal: principal}, nil
+	}
+	if !matchedCandidate {
+		slog.Warn("TEMP DEBUG store401: no candidate matched authid within path scope",
+			slog.String("authid", authID))
 	}
 	return Identity{}, resolver.ErrUnauthenticated
 }
