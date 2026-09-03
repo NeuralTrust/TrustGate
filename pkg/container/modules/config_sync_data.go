@@ -22,6 +22,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	infrasnapshot "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
 	configsyncgrpc "github.com/NeuralTrust/TrustGate/pkg/infra/configsync/grpc"
@@ -65,6 +66,15 @@ func ConfigSyncData(c *container.Container) error {
 	}
 	if err := c.Provide(func(client *configsyncgrpc.Client) configsync.StreamTransport {
 		return client
+	}); err != nil {
+		return err
+	}
+	// The DB-less data plane persists MCP Store installs through the control
+	// plane over the same egress-only connection. Providing this installation
+	// repository lights up the Store install/uninstall meta-tools and the
+	// per-principal scoper (see provideRPCGateway), which stay dark without it.
+	if err := c.Provide(func(client *configsyncgrpc.Client) installationdomain.Repository {
+		return configsyncgrpc.NewInstallationsClient(client.ClientConn())
 	}); err != nil {
 		return err
 	}

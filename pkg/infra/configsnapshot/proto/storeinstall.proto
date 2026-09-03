@@ -1,0 +1,88 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package snapshotpb;
+
+option go_package = "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto;snapshotpb";
+
+// StoreInstallations is the DP-initiated persistence channel for the MCP Store's
+// per-principal install state. The data plane runs DB-less, so it computes the
+// install decision locally (against the config snapshot's catalog + registries)
+// and delegates only the durable read/write of store_installations to the
+// control plane, which owns the database. It rides the same egress-only
+// connection the data plane already opens for ConfigSync: the data plane is
+// always the client, so no inbound port is added to the data plane.
+service StoreInstallations {
+  // Upsert persists (creates or updates) one installation record.
+  rpc Upsert(UpsertInstallationRequest) returns (UpsertInstallationResponse);
+  // Find returns the installation for (gateway, principal, code); found=false
+  // when there is no such row (the wire form of installation.ErrNotFound).
+  rpc Find(FindInstallationRequest) returns (FindInstallationResponse);
+  // ListByPrincipal returns everything a principal has installed on a gateway —
+  // the CatalogScoper's read side.
+  rpc ListByPrincipal(ListByPrincipalRequest) returns (ListInstallationsResponse);
+  // Delete removes the installation for (gateway, principal, code); a missing
+  // row surfaces as a NotFound status.
+  rpc Delete(DeleteInstallationRequest) returns (DeleteInstallationResponse);
+}
+
+// Installation mirrors installation.Installation on the wire. Timestamps are Unix
+// seconds; an unset id/created/updated is filled by the control-plane repository.
+message Installation {
+  string id = 1;
+  string gateway_id = 2;
+  string principal_sub = 3;
+  string catalog_code = 4;
+  string status = 5;
+  string installed_by = 6;
+  map<string, string> config = 7;
+  int64 created_at_unix = 8;
+  int64 updated_at_unix = 9;
+}
+
+message UpsertInstallationRequest {
+  Installation installation = 1;
+}
+
+message UpsertInstallationResponse {}
+
+message FindInstallationRequest {
+  string gateway_id = 1;
+  string principal_sub = 2;
+  string catalog_code = 3;
+}
+
+message FindInstallationResponse {
+  bool found = 1;
+  Installation installation = 2;
+}
+
+message ListByPrincipalRequest {
+  string gateway_id = 1;
+  string principal_sub = 2;
+}
+
+message ListInstallationsResponse {
+  repeated Installation installations = 1;
+}
+
+message DeleteInstallationRequest {
+  string gateway_id = 1;
+  string principal_sub = 2;
+  string catalog_code = 3;
+}
+
+message DeleteInstallationResponse {}
