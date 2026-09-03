@@ -293,6 +293,33 @@ func TestCuratedCatalog_HasNoTemplatedOAuthResource(t *testing.T) {
 	}
 }
 
+func TestNewMCPServerCatalog_IncludesOutlookMail(t *testing.T) {
+	t.Parallel()
+
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+
+	server, ok := cat.GetByCode("com.microsoft/outlook")
+	require.True(t, ok)
+	require.Equal(t, "https://agent365.svc.cloud.microsoft/agents/tenants/{tenantId}/servers/mcp_MailTools", server.URL)
+	require.Equal(t, "Outlook", server.Vendor)
+	require.Equal(t, authHintOAuth, server.AuthHint)
+	require.True(t, server.RequiresConfig)
+	require.Len(t, server.URLVariables, 1)
+	require.Equal(t, "tenantId", server.URLVariables[0].Name)
+	require.True(t, server.URLVariables[0].Required)
+	require.NotNil(t, server.OAuth)
+	require.Equal(t, "manual", server.OAuth.Registration)
+	require.NotNil(t, server.OAuth.DCR)
+	require.False(t, *server.OAuth.DCR)
+	require.NotNil(t, server.OAuth.PKCE)
+	require.True(t, *server.OAuth.PKCE)
+	require.Equal(t, "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize", server.OAuth.AuthorizeURL)
+	require.Equal(t, "https://login.microsoftonline.com/organizations/oauth2/v2.0/token", server.OAuth.TokenURL)
+	require.Contains(t, server.OAuth.Scopes, "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/McpServers.Mail.All")
+	require.Empty(t, server.OAuth.Resource)
+}
+
 func TestNewMCPServerCatalog_IncludesJotformStoryblokAndHolded(t *testing.T) {
 	t.Parallel()
 

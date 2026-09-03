@@ -9108,6 +9108,37 @@
       ]
     },
     {
+      "name": "com.microsoft/outlook",
+      "vendor": "Outlook",
+      "category": "Productivity & Docs",
+      "description": "Microsoft Outlook mail via Agent 365 Work IQ: search, send, reply, and manage messages (Entra OAuth; tenant needs Microsoft 365 Copilot).",
+      "transport": "streamable-http",
+      "server_url": "https://agent365.svc.cloud.microsoft/agents/tenants/{tenantId}/servers/mcp_MailTools",
+      "url_variables": [
+        {
+          "name": "tenantId",
+          "description": "Microsoft Entra tenant ID (Directory ID) that hosts the mailbox.",
+          "required": true
+        }
+      ],
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize",
+        "token_url": "https://login.microsoftonline.com/organizations/oauth2/v2.0/token",
+        "scopes": [
+          "offline_access",
+          "openid",
+          "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/McpServers.Mail.All"
+        ]
+      },
+      "relevance": 92
+    },
+    {
       "name": "com.microsoft/sentinel",
       "vendor": "Microsoft Sentinel",
       "category": "Security",
