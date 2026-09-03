@@ -9136,6 +9136,17 @@
           "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/McpServers.Mail.All"
         ]
       },
+      "config_guide": {
+        "summary": "Create a public Entra app for the Work IQ Mail server.",
+        "steps": [
+          "Copy the Directory (tenant) ID from Entra ID → Overview.",
+          "Add the Agent 365 Tools delegated permission McpServers.Mail.All and grant admin consent.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.microsoft/outlook as a SPA redirect URI.",
+          "Enter the app's client ID; no client secret is required."
+        ],
+        "docs_url": "https://learn.microsoft.com/en-us/microsoft-agent-365/tooling-servers-overview",
+        "note": "Requires Microsoft 365 Copilot and an enabled Work IQ/Agent 365 tenant."
+      },
       "relevance": 92
     },
     {
@@ -12783,6 +12794,17 @@
         "required": true,
         "resource_metadata": true
       },
+      "config_guide": {
+        "summary": "Enable and register an MCP server inside your ServiceNow instance.",
+        "steps": [
+          "Use a Zurich-or-later ServiceNow instance with the MCP Server application enabled.",
+          "Copy the instance prefix from <instance>.service-now.com.",
+          "Copy the server name from the sn_mcp_server_registry record.",
+          "Connect and complete the instance's discovered OAuth flow."
+        ],
+        "docs_url": "https://www.servicenow.com/docs/bundle/zurich-intelligent-experiences/page/administer/now-assist-platform/concept/model-context-protocol.html",
+        "note": "The MCP server must be active and available to the signing-in ServiceNow user."
+      },
       "relevance": 85
     },
     {
@@ -13268,6 +13290,17 @@
       "oauth": {
         "required": true,
         "resource_metadata": true
+      },
+      "config_guide": {
+        "summary": "Create a Cortex MCP server object and copy its fully qualified location.",
+        "steps": [
+          "Create the MCP server in Snowflake and grant the user USAGE on its database, schema, and server.",
+          "Copy the account host only, without https:// or a trailing slash.",
+          "Enter the database, schema, and MCP server object names exactly as created.",
+          "Connect and sign in with the Snowflake identity that has access."
+        ],
+        "docs_url": "https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp",
+        "note": "Names can be case-sensitive when they were created with quoted identifiers."
       },
       "relevance": 95
     },

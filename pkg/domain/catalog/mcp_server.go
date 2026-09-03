@@ -41,6 +41,7 @@ type MCPServer struct {
 	URLVariables []MCPURLVariable `json:"url_variables,omitempty"`
 	AuthHeaders  []MCPAuthHeader  `json:"auth_headers,omitempty"`
 	OAuth        *MCPOAuth        `json:"oauth,omitempty"`
+	ConfigGuide  *MCPConfigGuide  `json:"config_guide,omitempty"`
 	// Tools is a snapshot of the server's advertised tools, captured by an
 	// unauthenticated tools/list where the server allows it. It is a preview for
 	// the catalog UI; the authoritative per-connection tool set is discovered at
@@ -49,6 +50,14 @@ type MCPServer struct {
 	Tools    []MCPTool      `json:"tools,omitempty"`
 	Metadata map[string]any `json:"metadata,omitempty"`
 	Source   string         `json:"source"`
+}
+
+// MCPConfigGuide contains concise operator setup help for a catalog server.
+type MCPConfigGuide struct {
+	Summary string   `json:"summary,omitempty"`
+	Steps   []string `json:"steps,omitempty"`
+	DocsURL string   `json:"docs_url,omitempty"`
+	Note    string   `json:"note,omitempty"`
 }
 
 // MCPTool is a single tool advertised by an MCP server (name + description),
