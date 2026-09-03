@@ -417,6 +417,21 @@ Figma (`com.figma/mcp`) may return **401** (keep; OAuth) or **403** (vendor
 allowlist) depending on network — only hide when the probe reports
 `broken_forbidden`.
 
+### Setup guide documentation links
+
+Entries that need operator input carry a `config_guide`, and its optional
+`docs_url` must keep pointing at the page the guide refers to. Vendors
+regularly move MCP docs and redirect the old path to a generic landing page,
+which still answers `200` while silently losing the content:
+
+```bash
+make mcp-catalog-probe ARGS='-check-docs'
+```
+
+The check fails on any link that 404s or redirects, and reports which catalog
+entries use it. `403`/`429` are treated as bot protection rather than a dead
+link, so verify those by hand.
+
 ## 7. Appendix: TrustGuard on the MCP chain
 
 When a gateway policy runs the TrustGuard plugin on MCP `tools/call`
