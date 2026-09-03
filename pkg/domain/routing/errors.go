@@ -27,5 +27,5 @@ var (
 	// ErrAmbiguousModel is retained for source compatibility.
 	// Deprecated: short model references now pin the first eligible registry.
 	ErrAmbiguousModel = fmt.Errorf("routing: ambiguous model: %w", commonerrors.ErrValidation)
-	ErrModelDenied      = errors.New("routing: model denied")
+	ErrModelDenied    = errors.New("routing: model denied")
 )

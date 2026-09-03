@@ -19,8 +19,8 @@ import (
 	"errors"
 	"testing"
 
-	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	apppolicy "github.com/NeuralTrust/TrustGate/pkg/app/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	repomocks "github.com/NeuralTrust/TrustGate/pkg/domain/policy/mocks"
