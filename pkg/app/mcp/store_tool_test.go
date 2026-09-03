@@ -17,6 +17,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -70,6 +71,22 @@ func decodeStructured(t *testing.T, raw json.RawMessage) map[string]any {
 	return out.StructuredContent
 }
 
+func decodeText(t *testing.T, raw json.RawMessage) string {
+	t.Helper()
+	var out struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	if len(out.Content) == 0 {
+		return ""
+	}
+	return out.Content[0].Text
+}
+
 func newStoreToolForTest(t *testing.T) StoreTool {
 	t.Helper()
 	tool, err := NewStoreTool(sampleCatalog())
@@ -120,6 +137,11 @@ func TestStoreSearchByQuery(t *testing.T) {
 	first := results[0].(map[string]any)
 	if first["code"] != "github" || first["tool_count"].(float64) != 2 || first["requires_auth"] != true {
 		t.Fatalf("unexpected first result: %+v", first)
+	}
+	// The exact install code must also appear in the text body, so clients that
+	// surface only the text (not structuredContent) still pass the right code.
+	if text := decodeText(t, raw); !strings.Contains(text, `code "github"`) {
+		t.Fatalf("search text must carry the exact code; got: %q", text)
 	}
 }
 
