@@ -43,8 +43,8 @@ const (
 	DocsPath        = "/docs/*"
 	// OpenAPIPath serves the OpenAPI 3 document. Swagger UI publishes Swagger
 	// 2.0, which OpenAPI 3 consumers cannot parse.
-	OpenAPIPath = "/docs/openapi.json"
-	GatewaysPath    = "/v1/gateways"
+	OpenAPIPath  = "/docs/openapi.json"
+	GatewaysPath = "/v1/gateways"
 	// TenantsPath carries admin operations that span every gateway of a tenant.
 	TenantsPath           = "/v1/tenants"
 	ProvidersCatalog      = "/v1/providers-catalog"
