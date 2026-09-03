@@ -33,7 +33,7 @@
           "Copy only the subdomain from company.aha.io.",
           "Select Connect and complete Aha! OAuth; no manual OAuth app is needed."
         ],
-        "docs_url": "https://support.aha.io/aha-develop/integrations/mcp-server/remote-mcp-server-connection~7611250482619899159",
+        "docs_url": "https://support.aha.io/aha-software/elle-ai-assistant/remote-mcp-server-connection~7676632615369054131",
         "note": "An Aha! admin may need to enable AI controls first."
       }
     },
@@ -1676,7 +1676,7 @@
           "Copy the API token from Bright Data user settings.",
           "Enter the token below; it is stored as a secret and sent as a query parameter."
         ],
-        "docs_url": "https://docs.brightdata.com/ai/mcp-server/overview"
+        "docs_url": "https://docs.brightdata.com/products/mcp-server/overview"
       }
     },
     {
@@ -11356,7 +11356,7 @@
           "In Developer tools → Authentication, create an API key with only the required permissions.",
           "Enter the raw key below; TrustGate adds the Bearer prefix."
         ],
-        "docs_url": "https://developer.paddle.com/mcp/overview",
+        "docs_url": "https://developer.paddle.com/sdks/ai/paddle-mcp/",
         "note": "Sandbox requires a Custom MCP entry at https://sandbox-mcp.paddle.com/mcp and a sandbox key."
       }
     },
@@ -11501,7 +11501,7 @@
           "Register {gatewayBaseUrl}/oauth/callback/com.pagerduty/mcp and choose the required scopes.",
           "Enter the client ID and secret, then complete PagerDuty consent."
         ],
-        "docs_url": "https://pagerduty.github.io/pagerduty-mcp-server/docs/remote-server/setup"
+        "docs_url": "https://support.pagerduty.com/main/docs/pagerduty-mcp-server"
       }
     },
     {
@@ -12641,7 +12641,7 @@
           "Base64-encode key_id:key_secret.",
           "Paste the encoded value below; TrustGate adds the Basic prefix."
         ],
-        "docs_url": "https://razorpay.com/docs/mcp-server/remote/"
+        "docs_url": "https://github.com/razorpay/razorpay-mcp-server"
       }
     },
     {
@@ -13267,7 +13267,7 @@
           "Enter the SCM environment or instance value.",
           "Enter the OAuth client ID and client secret."
         ],
-        "docs_url": "https://docs.sectigo.com/scm/mcp-server-scm/configuring-your-client.html",
+        "docs_url": "https://docs.sectigo.com/scm/mcp-server-scm/configuring-your-client",
         "note": "This connection uses client credentials; no per-user browser login occurs."
       }
     },
@@ -13408,7 +13408,7 @@
           "Copy the API key from the SerpApi dashboard.",
           "Enter the raw key below; TrustGate adds the Bearer prefix."
         ],
-        "docs_url": "https://serpapi.com/mcp"
+        "docs_url": "https://serpapi.com/integrations/mcp"
       }
     },
     {
@@ -13446,7 +13446,7 @@
           "Configure an OAuth client for TrustGate and copy its client ID.",
           "Enter the instance prefix, server registry name and OAuth client credentials."
         ],
-        "docs_url": "https://www.servicenow.com/docs/bundle/zurich-intelligent-experiences/page/administer/now-assist-platform/concept/model-context-protocol.html",
+        "docs_url": "https://www.servicenow.com/docs/r/intelligent-experiences/mcp-platform-manager-landing.html",
         "note": "OAuth authorize/token endpoints are discovered from the resolved instance URL."
       },
       "relevance": 85
@@ -15472,7 +15472,7 @@
           "Open Mission Control → API Keys and create or copy an API key.",
           "Enter the raw key below; TrustGate adds the Bearer prefix."
         ],
-        "docs_url": "https://developers.telnyx.com/development/mcp/remote-mcp"
+        "docs_url": "https://developers.telnyx.com/docs/development/mcp/remote-mcp"
       }
     },
     {
