@@ -332,6 +332,56 @@ func TestCuratedCatalog_JinaAndMem0UseTheirZeroConfigAuthPaths(t *testing.T) {
 	require.Equal(t, []string{"read", "write"}, mem0.OAuth.Scopes)
 }
 
+func TestCuratedCatalog_UsesCurrentBuilderCubeExaAndBrowserbaseAuth(t *testing.T) {
+	t.Parallel()
+
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+
+	for code, url := range map[string]string{
+		"io.builder/cms-mcp": "https://mcp.builder.io/mcp/publish",
+		"dev.cube/mcp":       "https://cubecloud.dev/mcp",
+	} {
+		server, ok := cat.GetByCode(code)
+		require.True(t, ok)
+		require.Equal(t, url, server.URL)
+		require.False(t, server.RequiresConfig)
+		require.NotNil(t, server.OAuth)
+		require.Equal(t, "auto", server.OAuth.Registration)
+		require.NotNil(t, server.OAuth.DCR)
+		require.True(t, *server.OAuth.DCR)
+	}
+
+	exa, ok := cat.GetByCode("ai.exa/exa")
+	require.True(t, ok)
+	require.False(t, exa.RequiresAuth)
+	require.False(t, exa.RequiresConfig)
+
+	browserbase, ok := cat.GetByCode("com.browserbase/mcp")
+	require.True(t, ok)
+	require.Equal(t, "https://mcp.browserbase.com/mcp", browserbase.URL)
+	require.Equal(t, authHintStatic, browserbase.AuthHint)
+	require.Len(t, browserbase.AuthHeaders, 1)
+	require.Equal(t, "Bearer", browserbase.AuthHeaders[0].Scheme)
+}
+
+func TestCuratedCatalog_QueryVariablesAreNotDuplicatedInURLTemplates(t *testing.T) {
+	t.Parallel()
+
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+
+	for _, server := range cat.ListMCPServers() {
+		for _, variable := range server.URLVariables {
+			if variable.In != "query" {
+				continue
+			}
+			require.NotContains(t, server.URL, "{"+variable.Name+"}",
+				"catalog entry %q embeds query variable %q; clients append query variables", server.Code, variable.Name)
+		}
+	}
+}
+
 func TestNewMCPServerCatalog_IncludesOutlookMail(t *testing.T) {
 	t.Parallel()
 

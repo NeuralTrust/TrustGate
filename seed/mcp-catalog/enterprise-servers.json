@@ -26,6 +26,15 @@
         "scopes": [
           "full"
         ]
+      },
+      "config_guide": {
+        "summary": "Enter your Aha! account domain, then sign in.",
+        "steps": [
+          "Copy only the subdomain from company.aha.io.",
+          "Select Connect and complete Aha! OAuth; no manual OAuth app is needed."
+        ],
+        "docs_url": "https://support.aha.io/aha-develop/integrations/mcp-server/remote-mcp-server-connection~7611250482619899159",
+        "note": "An Aha! admin may need to enable AI controls first."
       }
     },
     {
@@ -205,7 +214,16 @@
           "secret": true,
           "scheme": "Bearer"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Copy the connection details from an Algolia Agent Studio MCP server.",
+        "steps": [
+          "Create an MCP server in Agent Studio and copy its App ID and unique ID.",
+          "Create a Search API key; never use an Admin API key.",
+          "Enter the raw APP_ID:SEARCH_API_KEY value for Authorization."
+        ],
+        "docs_url": "https://www.algolia.com/doc/guides/algolia-ai/agent-studio/how-to/tools/mcp-tools"
+      }
     },
     {
       "name": "com.amplitude/mcp",
@@ -432,7 +450,16 @@
           "scheme": "raw"
         }
       ],
-      "relevance": 55
+      "relevance": 55,
+      "config_guide": {
+        "summary": "Create an Arcade MCP Gateway and API key.",
+        "steps": [
+          "Copy the gateway slug from Arcade.",
+          "Create an API key and enter it without the Bearer prefix.",
+          "Set Arcade-User-ID to the stable ID of the represented end user."
+        ],
+        "docs_url": "https://docs.arcade.dev/en/operate/governance/mcp-gateways/create-via-dashboard"
+      }
     },
     {
       "name": "com.asana/mcp",
@@ -565,7 +592,17 @@
           "name": "search_tasks_preview",
           "description": "Search tasks and show results in interactive UI"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Register TrustGate as an Asana OAuth app.",
+        "steps": [
+          "Create an OAuth app in the Asana developer console.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.asana/mcp.",
+          "Enter its client ID and secret, then complete Asana consent."
+        ],
+        "docs_url": "https://developers.asana.com/docs/integrating-with-asanas-mcp-server",
+        "note": "Asana MCP v2 does not support DCR or personal access tokens."
+      }
     },
     {
       "name": "com.assemblyai/docs",
@@ -1408,7 +1445,17 @@
           "name": "create_docgen_template",
           "description": "Mark a file as a Doc Gen template"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Ask a Box admin to enable and register the MCP integration.",
+        "steps": [
+          "Enable Custom Box MCP Server in Admin Console → Integrations.",
+          "Add {gatewayBaseUrl}/oauth/callback/com.box/mcp and the required Box scopes.",
+          "Enter the client ID and secret, then sign in to Box."
+        ],
+        "docs_url": "https://developer.box.com/guides/box-mcp/setup",
+        "note": "Some capabilities require Box Enterprise Advanced."
+      }
     },
     {
       "name": "dev.braintrust/mcp",
@@ -1456,7 +1503,16 @@
           "name": "generate_permalink",
           "description": "Generate a direct web link to a Braintrust object"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a narrowly scoped Braintrust API key.",
+        "steps": [
+          "In Braintrust Settings → API keys, create a key.",
+          "Enter the raw key below; TrustGate adds the Bearer prefix."
+        ],
+        "docs_url": "https://www.braintrust.dev/docs/integrations/developer-tools/mcp",
+        "note": "EU data-plane accounts need Custom MCP at https://api-eu.braintrust.dev/mcp."
+      }
     },
     {
       "name": "com.brex/mcp",
@@ -1568,7 +1624,7 @@
       "category": "Web Scraping & Data",
       "description": "Web search, scraping, and Web Unlocker; token passed as query parameter.",
       "transport": "streamable-http",
-      "server_url": "https://mcp.brightdata.com/mcp?token={token}",
+      "server_url": "https://mcp.brightdata.com/mcp",
       "url_variables": [
         {
           "name": "token",
@@ -1613,7 +1669,15 @@
           "name": "session_stats",
           "description": "Monitor tool usage during the session"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a Bright Data API token.",
+        "steps": [
+          "Copy the API token from Bright Data user settings.",
+          "Enter the token below; it is stored as a secret and sent as a query parameter."
+        ],
+        "docs_url": "https://docs.brightdata.com/ai/mcp-server/overview"
+      }
     },
     {
       "name": "com.browserbase/mcp",
@@ -1621,16 +1685,7 @@
       "category": "Browser Automation",
       "description": "Hosted cloud browser runtime for agents; API key is passed as a query parameter.",
       "transport": "streamable-http",
-      "server_url": "https://mcp.browserbase.com/mcp?browserbaseApiKey={browserbaseApiKey}",
-      "url_variables": [
-        {
-          "name": "browserbaseApiKey",
-          "description": "Browserbase API key, passed as the browserbaseApiKey query parameter.",
-          "required": true,
-          "secret": true,
-          "in": "query"
-        }
-      ],
+      "server_url": "https://mcp.browserbase.com/mcp",
       "requires_auth": true,
       "relevance": 55,
       "tools": [
@@ -1690,6 +1745,23 @@
           "name": "multi_browserbase_stagehand_observe_session",
           "description": "Observe within a given session"
         }
+      ],
+      "config_guide": {
+        "summary": "Create a Browserbase API key.",
+        "steps": [
+          "Copy an API key from the Browserbase dashboard.",
+          "Enter the raw key below; TrustGate adds the Bearer prefix."
+        ],
+        "docs_url": "https://docs.browserbase.com/integrations/mcp/introduction"
+      },
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "Browserbase API key.",
+          "required": true,
+          "secret": true,
+          "scheme": "Bearer"
+        }
       ]
     },
     {
@@ -1698,17 +1770,20 @@
       "category": "Web & CMS",
       "description": "Builder Publish/Hybrid Space content (Private API key).",
       "transport": "streamable-http",
-      "server_url": "https://cdn.builder.io/api/v1/mcp/builder-content",
+      "server_url": "https://mcp.builder.io/mcp/publish",
       "requires_auth": true,
-      "auth_headers": [
-        {
-          "name": "Authorization",
-          "description": "Bearer <Builder Private API key>.",
-          "required": true,
-          "secret": true,
-          "scheme": "Bearer"
-        }
-      ]
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "scopes": [
+          "mcp:publish:read",
+          "mcp:publish:write"
+        ],
+        "resource": "https://mcp.builder.io/mcp/publish"
+      }
     },
     {
       "name": "com.buildkite/mcp",
@@ -2365,7 +2440,17 @@
           "name": "chargebee_code_planner",
           "description": "Generate code outlines/samples for integrating Chargebee APIs"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Enable a Chargebee MCP agent for your site.",
+        "steps": [
+          "In Settings → Agentic AI → MCP Servers, enable MCP Access.",
+          "Enter the site subdomain and agent name shown by Chargebee.",
+          "Select Connect and complete Chargebee OAuth."
+        ],
+        "docs_url": "https://www.chargebee.com/docs/billing/2.0/ai-in-chargebee/chargebee-mcp",
+        "note": "EU/AU data centers use different hosts and currently require Custom MCP."
+      }
     },
     {
       "name": "com.checkr/mcp",
@@ -3383,7 +3468,15 @@
           "name": "transform-asset",
           "description": "Apply transformations to an existing asset"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create Cloudinary Asset Management credentials.",
+        "steps": [
+          "Build cloudinary://api_key:api_secret@cloud_name from your product environment credentials.",
+          "Paste the complete value into the cloudinary-url field."
+        ],
+        "docs_url": "https://github.com/cloudinary/mcp-servers"
+      }
     },
     {
       "name": "io.coda/mcp",
@@ -3628,18 +3721,18 @@
       "category": "Data & Analytics",
       "description": "Semantic layer queries via Cube Cloud (OAuth + PKCE; per-tenant host).",
       "transport": "streamable-http",
-      "server_url": "https://{cube_host}/api/mcp",
-      "url_variables": [
-        {
-          "name": "cube_host",
-          "description": "Your Cube MCP server host.",
-          "required": true
-        }
-      ],
+      "server_url": "https://cubecloud.dev/mcp",
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "scopes": [
+          "mcp-agent-access"
+        ],
+        "resource": "https://cubecloud.dev/mcp"
       }
     },
     {
@@ -3739,7 +3832,15 @@
           "name": "search_documents",
           "description": "Keyword search across filings, transcripts, presentations"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Obtain a Daloopa MCP/API token.",
+        "steps": [
+          "Request or create a Daloopa API credential.",
+          "Enter the raw key below; TrustGate adds the Bearer prefix."
+        ],
+        "docs_url": "https://docs.daloopa.com/docs/mcp-integrations"
+      }
     },
     {
       "name": "com.databricks/mcp",
@@ -3775,7 +3876,17 @@
           "name": "genie_poll_response",
           "description": "Poll for the Genie response until complete"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Copy the managed MCP path from your Databricks workspace.",
+        "steps": [
+          "Enter the workspace hostname without https://.",
+          "Enter the MCP path, such as genie/<space-id>, sql, functions/<name> or ai-search/<index>.",
+          "Select Connect and complete Databricks OAuth."
+        ],
+        "docs_url": "https://docs.databricks.com/aws/en/agents/mcp-tools/managed-mcp",
+        "note": "Unity Catalog permissions still apply to every tool call."
+      }
     },
     {
       "name": "com.datadoghq/mcp",
@@ -4104,7 +4215,17 @@
           "name": "search",
           "description": "[Alpha] cross-project resource search"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Copy the remote MCP endpoint from dbt account settings.",
+        "steps": [
+          "Copy the Access URL host from dbt Account settings.",
+          "Enter the host only, without a path.",
+          "Select Connect and complete dbt OAuth."
+        ],
+        "docs_url": "https://docs.getdbt.com/docs/dbt-ai/setup-remote-mcp",
+        "note": "Requires eligible dbt AI features; some execute_sql setups need extra environment IDs."
+      }
     },
     {
       "name": "com.deepwiki/mcp",
@@ -4215,7 +4336,15 @@
           "name": "region-list",
           "description": "List all available regions with features and droplet size availability. Supports pagination."
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a DigitalOcean API token scoped for Accounts.",
+        "steps": [
+          "Create a personal access token with only the permissions required by this MCP.",
+          "Enter the raw token below; TrustGate adds the Bearer prefix."
+        ],
+        "docs_url": "https://docs.digitalocean.com/reference/mcp/configure-mcp/"
+      }
     },
     {
       "name": "com.digitalocean/apps",
@@ -4268,7 +4397,15 @@
           "name": "region-list",
           "description": "List all available regions with features and droplet size availability. Supports pagination."
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a DigitalOcean API token scoped for App Platform.",
+        "steps": [
+          "Create a personal access token with only the permissions required by this MCP.",
+          "Enter the raw token below; TrustGate adds the Bearer prefix."
+        ],
+        "docs_url": "https://docs.digitalocean.com/reference/mcp/configure-mcp/"
+      }
     },
     {
       "name": "com.digitalocean/databases",
@@ -4445,7 +4582,15 @@
           "name": "region-list",
           "description": "List all available regions with features and droplet size availability. Supports pagination."
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a DigitalOcean API token scoped for Databases.",
+        "steps": [
+          "Create a personal access token with only the permissions required by this MCP.",
+          "Enter the raw token below; TrustGate adds the Bearer prefix."
+        ],
+        "docs_url": "https://docs.digitalocean.com/reference/mcp/configure-mcp/"
+      }
     },
     {
       "name": "com.digitalocean/droplets",
@@ -4638,7 +4783,15 @@
           "name": "snapshot-droplets-tag",
           "description": "Take a snapshot of droplets by tag"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a DigitalOcean API token scoped for Droplets.",
+        "steps": [
+          "Create a personal access token with only the permissions required by this MCP.",
+          "Enter the raw token below; TrustGate adds the Bearer prefix."
+        ],
+        "docs_url": "https://docs.digitalocean.com/reference/mcp/configure-mcp/"
+      }
     },
     {
       "name": "com.digitalocean/kubernetes",
@@ -4731,7 +4884,15 @@
           "name": "region-list",
           "description": "List all available regions with features and droplet size availability. Supports pagination."
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a DigitalOcean API token scoped for Kubernetes.",
+        "steps": [
+          "Create a personal access token with only the permissions required by this MCP.",
+          "Enter the raw token below; TrustGate adds the Bearer prefix."
+        ],
+        "docs_url": "https://docs.digitalocean.com/reference/mcp/configure-mcp/"
+      }
     },
     {
       "name": "com.dropbox/mcp",
@@ -4858,7 +5019,16 @@
           "name": "get_environment_info",
           "description": "Verify tenant connection"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a Dynatrace Platform Token for MCP Gateway.",
+        "steps": [
+          "Copy the environment ID from your Dynatrace tenant.",
+          "Create a Platform Token with mcp-gateway:servers:read, mcp-gateway:servers:invoke and required tool scopes.",
+          "Enter the environment ID and raw token."
+        ],
+        "docs_url": "https://docs.dynatrace.com/docs/dynatrace-intelligence/dynatrace-mcp"
+      }
     },
     {
       "name": "com.egnyte/mcp",
@@ -4903,7 +5073,17 @@
           "scheme": "ApiKey"
         }
       ],
-      "relevance": 80
+      "relevance": 80,
+      "config_guide": {
+        "summary": "Create an Elastic API key with Agent Builder privileges.",
+        "steps": [
+          "Enter the Kibana host only, without https://.",
+          "Create an API key with access to Agent Builder and the required indices.",
+          "Enter the raw API key; TrustGate adds the ApiKey prefix."
+        ],
+        "docs_url": "https://www.elastic.co/docs/explore-analyze/ai-features/agent-builder/mcp-server",
+        "note": "Custom Kibana spaces need a Custom MCP URL containing /s/<space>."
+      }
     },
     {
       "name": "com.endorlabs/docs-mcp",
@@ -4931,16 +5111,7 @@
       "description": "Fast web search and crawling for agents.",
       "transport": "streamable-http",
       "server_url": "https://mcp.exa.ai/mcp",
-      "requires_auth": true,
-      "auth_headers": [
-        {
-          "name": "x-api-key",
-          "description": "API key",
-          "required": true,
-          "secret": true,
-          "scheme": "raw"
-        }
-      ],
+      "requires_auth": false,
       "relevance": 55,
       "tools": [
         {
@@ -5170,7 +5341,15 @@
           "name": "fireflies_get_rule_executions",
           "description": "Automation logs (Enterprise)"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a Fireflies API key.",
+        "steps": [
+          "Copy an API key from Fireflies Developer Settings.",
+          "Enter the raw key below; TrustGate adds the Bearer prefix."
+        ],
+        "docs_url": "https://guide.fireflies.ai/articles/8272956938-learn-about-the-fireflies-mcp-server-model-context-protocol"
+      }
     },
     {
       "name": "com.freshworks/mcp",
@@ -5191,7 +5370,16 @@
         "required": true,
         "resource_metadata": true
       },
-      "relevance": 60
+      "relevance": 60,
+      "config_guide": {
+        "summary": "Enable Freshservice MCP for your tenant.",
+        "steps": [
+          "Ask an admin to enable the MCP EAP/integration.",
+          "Enter the complete Freshservice host, such as company.freshservice.com.",
+          "Select Connect and complete Freshworks OAuth."
+        ],
+        "docs_url": "https://support.freshservice.com/support/solutions/articles/50000012678-model-context-protocol-mcp-integration-in-freshservice-eap-"
+      }
     },
     {
       "name": "com.frontapp/mcp",
@@ -5252,7 +5440,17 @@
           "name": "read_account",
           "description": "Linked account (company) record"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a Front OAuth app for TrustGate.",
+        "steps": [
+          "Create an OAuth app in Front developer settings.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.frontapp/mcp and enable feature:mcp.",
+          "Enter the client ID and secret, then complete Front consent."
+        ],
+        "docs_url": "https://dev.frontapp.com/docs/mcp-server",
+        "note": "Front does not support DCR."
+      }
     },
     {
       "name": "com.github/copilot-mcp",
@@ -5292,7 +5490,17 @@
           "name": "assign_copilot_to_issue",
           "description": "Assign Copilot"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Register OAuth credentials for the GitHub Copilot MCP endpoint.",
+        "steps": [
+          "Create or choose a GitHub OAuth/GitHub App accepted by your organization.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.github/copilot-mcp.",
+          "Enter the client ID and secret, then authorize GitHub."
+        ],
+        "docs_url": "https://github.com/github/github-mcp-server/blob/main/docs/remote-server.md",
+        "note": "Organization MCP policy can block this server even when OAuth succeeds."
+      }
     },
     {
       "name": "com.gitlab/mcp",
@@ -5373,7 +5581,16 @@
           "name": "read_documents",
           "description": "Retrieve documents by ID or URL"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Ask a Glean admin to enable MCP and copy the configured endpoint.",
+        "steps": [
+          "Enable Glean MCP and third-party OAuth in the admin configurator.",
+          "Enter the backend tenant prefix and MCP server path shown by Glean.",
+          "Select Connect and complete organization SSO."
+        ],
+        "docs_url": "https://docs.glean.com/user-guide/mcp/end-user-configuration"
+      }
     },
     {
       "name": "io.globalping/mcp",
@@ -5492,7 +5709,16 @@
           "name": "create_scheduled_export",
           "description": "Recurring dashboard/visualization exports"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Copy a GoodData workspace endpoint and API token.",
+        "steps": [
+          "Enter the GoodData Cloud hostname and workspace ID.",
+          "Create an API token with access to that workspace.",
+          "Enter the raw token; TrustGate adds the Bearer prefix."
+        ],
+        "docs_url": "https://www.gooddata.ai/docs/cloud/ai/mcp-server/"
+      }
     },
     {
       "name": "com.slack/mcp",
@@ -5794,7 +6020,16 @@
           "name": "list_web_apps",
           "description": "Lists web apps for a given enterprise. Requires the enterprise resource name in the parent field (e.g., enterprises/{enterpriseId})."
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Enable Android Management MCP and create a Google OAuth client.",
+        "steps": [
+          "Enable the product MCP API and grant mcp.toolUser plus required resource roles.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.google.cloud/androidmanagement in the Google OAuth client.",
+          "Enter the client ID and secret, then complete Google consent."
+        ],
+        "docs_url": "https://docs.cloud.google.com/mcp/set-up-authentication-mcp-servers"
+      }
     },
     {
       "name": "com.google.cloud/bigtableadmin",
@@ -5871,7 +6106,16 @@
           "name": "delete_logical_view",
           "description": "Deletes a Bigtable logical view within a specified instance. The request requires the `name` field to be set in the format 'projects/{project}/instances/{instance}/logicalViews/{logical_view}'. Example: { \"name\": \"projects/my-project/instances/my-instance/logicalViews/my-logical-view\" } Before ex..."
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Enable Bigtable Admin MCP and create a Google OAuth client.",
+        "steps": [
+          "Enable the product MCP API and grant mcp.toolUser plus required resource roles.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.google.cloud/bigtableadmin in the Google OAuth client.",
+          "Enter the client ID and secret, then complete Google consent."
+        ],
+        "docs_url": "https://docs.cloud.google.com/mcp/set-up-authentication-mcp-servers"
+      }
     },
     {
       "name": "com.google.cloud/composer",
@@ -6093,7 +6337,16 @@
           "name": "list_snapshots",
           "description": "Lists snapshots in a project providing basic information per snapshot including name, id, status, creation time, disk size, storage bytes, source disk, and source disk id. Requires project as input."
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Enable Compute Engine MCP and create a Google OAuth client.",
+        "steps": [
+          "Enable the product MCP API and grant mcp.toolUser plus required resource roles.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.google.cloud/compute in the Google OAuth client.",
+          "Enter the client ID and secret, then complete Google consent."
+        ],
+        "docs_url": "https://docs.cloud.google.com/mcp/set-up-authentication-mcp-servers"
+      }
     },
     {
       "name": "com.google.cloud/container",
@@ -6210,7 +6463,16 @@
           "name": "patch_k8s_resource",
           "description": "Patches a Kubernetes resource. This is similar to running `kubectl patch`."
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Enable Google Kubernetes Engine MCP and create a Google OAuth client.",
+        "steps": [
+          "Enable the product MCP API and grant mcp.toolUser plus required resource roles.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.google.cloud/container in the Google OAuth client.",
+          "Enter the client ID and secret, then complete Google consent."
+        ],
+        "docs_url": "https://docs.cloud.google.com/mcp/set-up-authentication-mcp-servers"
+      }
     },
     {
       "name": "com.google.cloud/datastream",
@@ -6275,7 +6537,16 @@
           "name": "list_static_ips",
           "description": "Lists static IP addresses of the provided resource name that need to be allowlisted by the customer when using the static-IP connectivity method. Returns up to 100 IP addresses. * The resource 'name' parameter is in the form 'projects/{project name}/locations/{location}', for example: 'projects/m..."
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Enable Datastream MCP and create a Google OAuth client.",
+        "steps": [
+          "Enable the product MCP API and grant mcp.toolUser plus required resource roles.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.google.cloud/datastream in the Google OAuth client.",
+          "Enter the client ID and secret, then complete Google consent."
+        ],
+        "docs_url": "https://docs.cloud.google.com/mcp/set-up-authentication-mcp-servers"
+      }
     },
     {
       "name": "com.google.cloud/design",
@@ -6321,7 +6592,16 @@
           "name": "typeset",
           "description": "CRITICAL: You MUST call this tool on every UI design or HTML/CSS code generation task to obtain the mandatory layout, modular scale, multi-vibe font selection, and proximity grouping blueprints required to pass design system evaluations."
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Enable Design MCP and create a Google OAuth client.",
+        "steps": [
+          "Enable the product MCP API and grant mcp.toolUser plus required resource roles.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.google.cloud/design in the Google OAuth client.",
+          "Enter the client ID and secret, then complete Google consent."
+        ],
+        "docs_url": "https://docs.cloud.google.com/mcp/set-up-authentication-mcp-servers"
+      }
     },
     {
       "name": "com.google.cloud/developerknowledge",
@@ -6358,7 +6638,16 @@
           "name": "get_documents",
           "description": "Use this tool to retrieve the full content of a single document or up to 20 documents in a single call. The document names should be obtained from the `parent` field of results from a call to the `search_documents` tool. Set the `names` parameter to a list of document names."
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Enable Developer Knowledge MCP and create a Google OAuth client.",
+        "steps": [
+          "Enable the product MCP API and grant mcp.toolUser plus required resource roles.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.google.cloud/developerknowledge in the Google OAuth client.",
+          "Enter the client ID and secret, then complete Google consent."
+        ],
+        "docs_url": "https://docs.cloud.google.com/mcp/set-up-authentication-mcp-servers"
+      }
     },
     {
       "name": "com.google.cloud/firestore",
@@ -6443,7 +6732,16 @@
           "name": "delete_index",
           "description": "Delete a Firestore index."
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Enable Firestore MCP and create a Google OAuth client.",
+        "steps": [
+          "Enable the product MCP API and grant mcp.toolUser plus required resource roles.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.google.cloud/firestore in the Google OAuth client.",
+          "Enter the client ID and secret, then complete Google consent."
+        ],
+        "docs_url": "https://docs.cloud.google.com/mcp/set-up-authentication-mcp-servers"
+      }
     },
     {
       "name": "com.google.cloud/mapstools",
@@ -6488,7 +6786,16 @@
           "name": "resolve_maps_urls",
           "description": "Resolves a list of Google Maps URLs into canonical Google Maps Place IDs. **When to call this tool (CRITICAL):** * Use this tool when the user provides one or more Google Maps sharing links or URLs (e.g. 'https://maps.app.goo.gl/...', 'https://www.google.com/maps/place/...', or 'https://maps.goog..."
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Enable Maps Tools MCP and create a Google OAuth client.",
+        "steps": [
+          "Enable the product MCP API and grant mcp.toolUser plus required resource roles.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.google.cloud/mapstools in the Google OAuth client.",
+          "Enter the client ID and secret, then complete Google consent."
+        ],
+        "docs_url": "https://docs.cloud.google.com/mcp/set-up-authentication-mcp-servers"
+      }
     },
     {
       "name": "com.google.cloud/memorystore",
@@ -6569,7 +6876,16 @@
           "name": "backup_instance",
           "description": "Back up a Memorystore for Valkey instance."
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Enable Memorystore for Valkey MCP and create a Google OAuth client.",
+        "steps": [
+          "Enable the product MCP API and grant mcp.toolUser plus required resource roles.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.google.cloud/memorystore in the Google OAuth client.",
+          "Enter the client ID and secret, then complete Google consent."
+        ],
+        "docs_url": "https://docs.cloud.google.com/mcp/set-up-authentication-mcp-servers"
+      }
     },
     {
       "name": "com.google.cloud/monitoring",
@@ -6630,7 +6946,16 @@
           "name": "get_dashboard",
           "description": "Use this as the primary tool to retrieve a single specific custom monitoring dashboard from a Google Cloud project using the resource name of the requested dashboard. Custom monitoring dashboards let users view and analyze data from different sources in the same context. This is often used as a f..."
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Enable Cloud Monitoring MCP and create a Google OAuth client.",
+        "steps": [
+          "Enable the product MCP API and grant mcp.toolUser plus required resource roles.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.google.cloud/monitoring in the Google OAuth client.",
+          "Enter the client ID and secret, then complete Google consent."
+        ],
+        "docs_url": "https://docs.cloud.google.com/mcp/set-up-authentication-mcp-servers"
+      }
     },
     {
       "name": "com.google.cloud/run",
@@ -6675,7 +7000,16 @@
           "name": "deploy_service_from_file_contents",
           "description": "Deploys a Cloud Run service directly from local source files. This method is suitable for scripting languages like Python and Node.js, of which the source code can be embedded in the request. This is ideal for quick tests and development feedback loops. You must include all necessary dependencies..."
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Enable Cloud Run MCP and create a Google OAuth client.",
+        "steps": [
+          "Enable the product MCP API and grant mcp.toolUser plus required resource roles.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.google.cloud/run in the Google OAuth client.",
+          "Enter the client ID and secret, then complete Google consent."
+        ],
+        "docs_url": "https://docs.cloud.google.com/mcp/set-up-authentication-mcp-servers"
+      }
     },
     {
       "name": "com.google.cloud/sqladmin",
@@ -6760,7 +7094,16 @@
           "name": "postgres_upgrade_precheck",
           "description": "Checks if a Cloud SQL for PostgreSQL instance is ready for a major version upgrade to the specified target version. The `target_database_version` MUST be provided in the request (e.g., `POSTGRES_15`). This tool helps identify potential issues *before* attempting the actual upgrade, reducing the r..."
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Enable Cloud SQL Admin MCP and create a Google OAuth client.",
+        "steps": [
+          "Enable the product MCP API and grant mcp.toolUser plus required resource roles.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.google.cloud/sqladmin in the Google OAuth client.",
+          "Enter the client ID and secret, then complete Google consent."
+        ],
+        "docs_url": "https://docs.cloud.google.com/mcp/set-up-authentication-mcp-servers"
+      }
     },
     {
       "name": "com.google.cloud/stitch",
@@ -6842,7 +7185,16 @@
           "name": "apply_design_system",
           "description": "Applies a design system to a list of screens. Use this tool when the user wants to update one or more screens to match the style of a design system. This tool applies the selected design system's foundational design tokens (colors, fonts, shapes, etc.) to the chosen screens, modifying their appea..."
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Enable Stitch MCP and create a Google OAuth client.",
+        "steps": [
+          "Enable the product MCP API and grant mcp.toolUser plus required resource roles.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.google.cloud/stitch in the Google OAuth client.",
+          "Enter the client ID and secret, then complete Google consent."
+        ],
+        "docs_url": "https://docs.cloud.google.com/mcp/set-up-authentication-mcp-servers"
+      }
     },
     {
       "name": "com.gorgias/mcp",
@@ -6850,7 +7202,7 @@
       "category": "Customer Support",
       "description": "Helpdesk tickets and customers; subdomain passed as query parameter.",
       "transport": "streamable-http",
-      "server_url": "https://mcp.gorgias.com/mcp?gorgias_subdomain={subdomain}",
+      "server_url": "https://mcp.gorgias.com/mcp",
       "url_variables": [
         {
           "name": "subdomain",
@@ -6880,7 +7232,15 @@
         ],
         "resource": "https://mcp.gorgias.com/mcp"
       },
-      "relevance": 50
+      "relevance": 50,
+      "config_guide": {
+        "summary": "Enter the Gorgias helpdesk subdomain, then sign in.",
+        "steps": [
+          "Copy only the subdomain from company.gorgias.com.",
+          "Select Connect and complete Gorgias OAuth."
+        ],
+        "docs_url": "https://docs.gorgias.com/en-US/connect-your-ai-assistant-to-the-gorgias-mcp-6310546"
+      }
     },
     {
       "name": "com.grafana/mcp",
@@ -9201,7 +9561,17 @@
           "name": "work",
           "description": "List iterations and team capacity"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Register an Entra OAuth client and choose the Azure DevOps organization.",
+        "steps": [
+          "Enter the organization slug, not its full URL.",
+          "Register {gatewayBaseUrl}/oauth/callback/com.microsoft/azure-devops in Entra.",
+          "Enter the client ID and secret, then complete Microsoft sign-in."
+        ],
+        "docs_url": "https://learn.microsoft.com/en-us/azure/devops/mcp-server/remote-mcp-server?view=azure-devops",
+        "note": "The Azure DevOps organization must be backed by Microsoft Entra ID."
+      }
     },
     {
       "name": "com.microsoft/learn",
@@ -10945,7 +11315,7 @@
           "Enter the n8n host only, without a path.",
           "Select Connect and complete n8n OAuth."
         ],
-        "docs_url": "https://docs.n8n.io/advanced-ai/accessing-n8n-mcp-server/overview/"
+        "docs_url": "https://docs.n8n.io/connect/connect-to-n8n-mcp-server"
       }
     },
     {
