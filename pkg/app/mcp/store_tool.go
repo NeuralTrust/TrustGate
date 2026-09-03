@@ -344,7 +344,7 @@ func (t *storeTool) search(
 	result := map[string]any{
 		"content": []map[string]string{{
 			"type": "text",
-			"text": searchSummary(query, category, total, len(matched)),
+			"text": searchSummary(query, category, total, matched),
 		}},
 		"structuredContent": structured,
 	}
@@ -429,8 +429,9 @@ func toSearchResult(entry catalogdomain.MCPServer, state string) storeSearchResu
 	}
 }
 
-func searchSummary(query, category string, total, returned int) string {
+func searchSummary(query, category string, total int, matched []storeSearchResult) string {
 	var b strings.Builder
+	returned := len(matched)
 	if returned == 0 {
 		b.WriteString("No MCP servers in the catalog match")
 	} else if returned < total {
@@ -445,6 +446,20 @@ func searchSummary(query, category string, total, returned int) string {
 		fmt.Fprintf(&b, " in category %q", category)
 	}
 	b.WriteString(".")
+	// List each result's exact install code in the text body, not only in
+	// structuredContent: many MCP clients surface only the text to the model, so
+	// omitting the code here makes callers guess it (e.g. "linear" instead of
+	// "app.linear/mcp"). trustgate_store_install takes this code verbatim.
+	if returned > 0 {
+		b.WriteString(" Install with the exact code:")
+		for _, r := range matched {
+			name := r.Name
+			if name == "" {
+				name = r.Code
+			}
+			fmt.Fprintf(&b, "\n• %s — code \"%s\" (%s)", name, r.Code, r.StoreState)
+		}
+	}
 	return b.String()
 }
 
