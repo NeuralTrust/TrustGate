@@ -156,6 +156,7 @@ var vendorBrandIcons = map[string]string{
 	"mem0":                          "mcp/mem0.png",
 	"mercury":                       "mcp/mercury.ico",
 	"microsoft":                     "mcp/microsoft.ico",
+	"outlook":                       "mcp/microsoft.ico",
 	"microsoftsentinel":             "mcp/microsoftsentinel.ico",
 	"miro":                          "mcp/miro.svg",
 	"mixpanel":                      "mcp/mixpanel.svg",
