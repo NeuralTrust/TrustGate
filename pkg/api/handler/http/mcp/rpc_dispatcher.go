@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -256,9 +257,26 @@ func (g *RPCGateway) dispatch(
 		if g.connections != nil && connectionToolPermitted(rc) {
 			tools = appendGatewayTools(tools, g.connections.Definitions(ctx, rc))
 		}
-		if g.store != nil && rc != nil && consumerdomain.IsStoreConsumer(rc.Consumer) {
-			tools = appendGatewayTools(tools, g.store.Definitions(ctx, rc))
+		isStore := rc != nil && rc.Consumer != nil && consumerdomain.IsStoreConsumer(rc.Consumer)
+		var storeDefCount int
+		if g.store != nil && isStore {
+			defs := g.store.Definitions(ctx, rc)
+			storeDefCount = len(defs)
+			tools = appendGatewayTools(tools, defs)
 		}
+		// TEMP DEBUG (store tools): why the Store advertises 0 tools.
+		cid, rmode := "", ""
+		if rc != nil && rc.Consumer != nil {
+			cid = rc.Consumer.ID.String()
+			rmode = string(rc.Consumer.RoutingMode)
+		}
+		slog.Warn("TEMP DEBUG store-tools: tools/list",
+			slog.Bool("store_nil", g.store == nil),
+			slog.Bool("is_store_consumer", isStore),
+			slog.String("consumer_id", cid),
+			slog.String("routing_mode", rmode),
+			slog.Int("store_def_count", storeDefCount),
+			slog.Int("total_tools", len(tools)))
 		result["tools"] = tools
 		return result, nil
 	case "tools/call":
