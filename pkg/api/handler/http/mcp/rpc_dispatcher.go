@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -232,27 +231,21 @@ func (g *RPCGateway) dispatch(
 	}
 	switch method {
 	case "tools/list":
-		// TEMP DEBUG (store tools): entry log so we always get a line, wherever the
-		// handler exits.
-		{
-			cid, rmode := "", ""
-			if rc != nil && rc.Consumer != nil {
-				cid = rc.Consumer.ID.String()
-				rmode = string(rc.Consumer.RoutingMode)
-			}
-			slog.Warn("TEMP DEBUG store-tools: tools/list ENTER",
-				slog.Bool("store_nil", g.store == nil),
-				slog.Bool("is_store_consumer", rc != nil && rc.Consumer != nil && consumerdomain.IsStoreConsumer(rc.Consumer)),
-				slog.String("consumer_id", cid),
-				slog.String("routing_mode", rmode))
-		}
 		if err := g.checkRateLimit(ctx, rc); err != nil {
 			return nil, err
 		}
+		isStore := rc != nil && rc.Consumer != nil && consumerdomain.IsStoreConsumer(rc.Consumer)
 		tools, err := g.composer.ListTools(ctx, rc)
 		if err != nil {
-			slog.Warn("TEMP DEBUG store-tools: ListTools error", slog.String("error", err.Error()))
-			return nil, err
+			// The synthetic Store consumer carries no registries of its own — its
+			// tools are the gateway-implemented meta-tools appended below — so a
+			// registry-less listing is empty for it, not an error. (Once servers are
+			// installed the scoper attaches their registries and this no longer fires.)
+			if isStore && errors.Is(err, appmcp.ErrNoMCPRegistries) {
+				tools = nil
+			} else {
+				return nil, err
+			}
 		}
 		if tools == nil {
 			tools = []appmcp.Tool{}
@@ -267,32 +260,14 @@ func (g *RPCGateway) dispatch(
 		// injection): a genuine block stops discovery, while a data-masking
 		// transform is ignored — the listing is never redacted or rewritten.
 		if err := g.plugins.PreResponseDiscovery(ctx, rc, raw); err != nil {
-			slog.Warn("TEMP DEBUG store-tools: PreResponseDiscovery error", slog.String("error", err.Error()))
 			return nil, err
 		}
 		if g.connections != nil && connectionToolPermitted(rc) {
 			tools = appendGatewayTools(tools, g.connections.Definitions(ctx, rc))
 		}
-		isStore := rc != nil && rc.Consumer != nil && consumerdomain.IsStoreConsumer(rc.Consumer)
-		var storeDefCount int
 		if g.store != nil && isStore {
-			defs := g.store.Definitions(ctx, rc)
-			storeDefCount = len(defs)
-			tools = appendGatewayTools(tools, defs)
+			tools = appendGatewayTools(tools, g.store.Definitions(ctx, rc))
 		}
-		// TEMP DEBUG (store tools): why the Store advertises 0 tools.
-		cid, rmode := "", ""
-		if rc != nil && rc.Consumer != nil {
-			cid = rc.Consumer.ID.String()
-			rmode = string(rc.Consumer.RoutingMode)
-		}
-		slog.Warn("TEMP DEBUG store-tools: tools/list",
-			slog.Bool("store_nil", g.store == nil),
-			slog.Bool("is_store_consumer", isStore),
-			slog.String("consumer_id", cid),
-			slog.String("routing_mode", rmode),
-			slog.Int("store_def_count", storeDefCount),
-			slog.Int("total_tools", len(tools)))
 		result["tools"] = tools
 		return result, nil
 	case "tools/call":
