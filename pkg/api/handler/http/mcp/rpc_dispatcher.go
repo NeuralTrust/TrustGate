@@ -232,11 +232,26 @@ func (g *RPCGateway) dispatch(
 	}
 	switch method {
 	case "tools/list":
+		// TEMP DEBUG (store tools): entry log so we always get a line, wherever the
+		// handler exits.
+		{
+			cid, rmode := "", ""
+			if rc != nil && rc.Consumer != nil {
+				cid = rc.Consumer.ID.String()
+				rmode = string(rc.Consumer.RoutingMode)
+			}
+			slog.Warn("TEMP DEBUG store-tools: tools/list ENTER",
+				slog.Bool("store_nil", g.store == nil),
+				slog.Bool("is_store_consumer", rc != nil && rc.Consumer != nil && consumerdomain.IsStoreConsumer(rc.Consumer)),
+				slog.String("consumer_id", cid),
+				slog.String("routing_mode", rmode))
+		}
 		if err := g.checkRateLimit(ctx, rc); err != nil {
 			return nil, err
 		}
 		tools, err := g.composer.ListTools(ctx, rc)
 		if err != nil {
+			slog.Warn("TEMP DEBUG store-tools: ListTools error", slog.String("error", err.Error()))
 			return nil, err
 		}
 		if tools == nil {
@@ -252,6 +267,7 @@ func (g *RPCGateway) dispatch(
 		// injection): a genuine block stops discovery, while a data-masking
 		// transform is ignored — the listing is never redacted or rewritten.
 		if err := g.plugins.PreResponseDiscovery(ctx, rc, raw); err != nil {
+			slog.Warn("TEMP DEBUG store-tools: PreResponseDiscovery error", slog.String("error", err.Error()))
 			return nil, err
 		}
 		if g.connections != nil && connectionToolPermitted(rc) {
