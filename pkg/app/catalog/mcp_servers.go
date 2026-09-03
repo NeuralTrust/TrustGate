@@ -103,6 +103,7 @@ type rawServer struct {
 	RequiresAuth bool                    `json:"requires_auth"`
 	AuthHeaders  []domain.MCPAuthHeader  `json:"auth_headers"`
 	OAuth        *domain.MCPOAuth        `json:"oauth"`
+	ConfigGuide  *domain.MCPConfigGuide  `json:"config_guide,omitempty"`
 	Tools        []domain.MCPTool        `json:"tools"`
 	Relevance    int                     `json:"relevance"`
 	// Hidden keeps the entry in the seed for audit/re-probe but omits it from
@@ -151,6 +152,7 @@ func parseCuratedMCPServers(data []byte) ([]domain.MCPServer, error) {
 			URLVariables:   s.URLVariables,
 			AuthHeaders:    s.AuthHeaders,
 			OAuth:          s.OAuth,
+			ConfigGuide:    configGuide(s),
 			Tools:          s.Tools,
 			Source:         curatedSource,
 		})
@@ -166,6 +168,53 @@ func parseCuratedMCPServers(data []byte) ([]domain.MCPServer, error) {
 		return servers[i].Code < servers[j].Code
 	})
 	return servers, nil
+}
+
+func configGuide(s rawServer) *domain.MCPConfigGuide {
+	if !requiresConfig(s) {
+		return nil
+	}
+	if s.ConfigGuide != nil {
+		return s.ConfigGuide
+	}
+
+	steps := make([]string, 0, len(s.URLVariables)+len(s.AuthHeaders)+1)
+	for _, variable := range s.URLVariables {
+		if !variable.Required {
+			continue
+		}
+		step := variable.Description
+		if step == "" {
+			step = "Enter " + variable.Name + "."
+		}
+		steps = append(steps, step)
+	}
+	for _, header := range s.AuthHeaders {
+		if !header.Required {
+			continue
+		}
+		step := header.Description
+		if step == "" {
+			step = "Create and enter the required " + header.Name + " credential."
+		}
+		steps = append(steps, step)
+	}
+
+	summary := "Prepare the required " + s.Vendor + " connection details."
+	if s.OAuth != nil && s.OAuth.Required {
+		switch {
+		case s.OAuth.GrantType == grantTypeClientCredentials:
+			summary = "Create machine-to-machine OAuth credentials in " + s.Vendor + "."
+			steps = append(steps, "Enter the OAuth client ID and client secret.")
+		case s.OAuth.Registration == registrationAuto || s.OAuth.Registration == "":
+			steps = append(steps, "Select Connect and complete the "+s.Vendor+" sign-in.")
+		default:
+			summary = "Register TrustGate as an OAuth app in " + s.Vendor + "."
+			steps = append(steps, "Add TrustGate's OAuth callback URL, then enter the client ID.")
+		}
+	}
+
+	return &domain.MCPConfigGuide{Summary: summary, Steps: steps}
 }
 
 // authHint classifies the upstream's auth model so the UI can prefill the
