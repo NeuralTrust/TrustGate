@@ -14728,7 +14728,17 @@
           "name": "twspaces-update_tag",
           "description": "Update Spaces tag."
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Enable Teamwork AI and create credentials for the hosted MCP server.",
+        "steps": [
+          "Ask a Teamwork admin to enable MCP under Settings → AI.",
+          "Create a personal API key in Profile → API Keys.",
+          "Enter the key below; TrustGate adds the Bearer prefix."
+        ],
+        "docs_url": "https://support.teamwork.com/projects/TeamworkAI/use-ai-assistants-teamwork-mcp",
+        "note": "The API key inherits the permissions of the Teamwork user who created it."
+      }
     },
     {
       "name": "com.telnyx/mcp",
@@ -14773,7 +14783,15 @@
           "name": "open_voice_monitor",
           "description": "Open the Telnyx Voice Monitor MCP App for observing and troubleshooting voice traffic."
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a Telnyx API key in Mission Control.",
+        "steps": [
+          "Open Mission Control → API Keys and create or copy an API key.",
+          "Enter the raw key below; TrustGate adds the Bearer prefix."
+        ],
+        "docs_url": "https://developers.telnyx.com/development/mcp/remote-mcp"
+      }
     },
     {
       "name": "app.thoughtspot/mcp",
@@ -14834,13 +14852,19 @@
       "category": "Data & Analytics",
       "description": "Query workspaces and published API endpoints; token passed as query parameter.",
       "transport": "streamable-http",
-      "server_url": "https://mcp.tinybird.co?token={token}",
+      "server_url": "https://mcp.tinybird.co",
       "url_variables": [
         {
           "name": "token",
-          "description": "Tinybird token (includes API host for new tokens).",
+          "description": "Tinybird token.",
           "required": true,
           "secret": true,
+          "in": "query"
+        },
+        {
+          "name": "host",
+          "description": "Optional regional API host, e.g. https://api.eu-central-1.aws.tinybird.co.",
+          "required": false,
           "in": "query"
         }
       ],
@@ -14870,7 +14894,17 @@
           "name": "list_endpoints",
           "description": "List published API endpoints"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a scoped Tinybird token for the data this MCP may access.",
+        "steps": [
+          "Create a resource-scoped token in Tinybird; avoid admin tokens when possible.",
+          "Enter the raw token below.",
+          "For JWT or older regional tokens, also enter the regional API host."
+        ],
+        "docs_url": "https://www.tinybird.co/docs/forward/query-data/mcp",
+        "note": "The credential is sent as a query parameter; TrustGate stores it as a secret."
+      }
     },
     {
       "name": "net.todoist/mcp",
@@ -15567,7 +15601,16 @@
           "name": "search_wandb_docs_tool",
           "description": "Search W&B documentation"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a W&B API key for the hosted MCP server.",
+        "steps": [
+          "Create or copy an API key at wandb.ai/authorize.",
+          "Enter the raw key below; TrustGate adds the Bearer prefix."
+        ],
+        "docs_url": "https://docs.wandb.ai/platform/mcp-server",
+        "note": "Dedicated or self-managed W&B instances need a Custom MCP entry using https://<instance>/mcp."
+      }
     },
     {
       "name": "com.wix/mcp",
@@ -15659,7 +15702,17 @@
           "scheme": "Bearer"
         }
       ],
-      "relevance": 60
+      "relevance": 60,
+      "config_guide": {
+        "summary": "Create a Workato API client with only the roles this MCP needs.",
+        "steps": [
+          "In Workspace admin → API clients, create a role with the required Developer API permissions.",
+          "Create an API client and copy its token.",
+          "Enter the raw token below; TrustGate adds the Bearer prefix."
+        ],
+        "docs_url": "https://docs.workato.com/en/mcp/developer-api-mcp",
+        "note": "This tile uses the US data center. Other regions need a Custom MCP URL such as app.eu.workato.com/mcp."
+      }
     },
     {
       "name": "us.zoom/docs",
@@ -15680,7 +15733,8 @@
           "docs:write:import",
           "docs:read:export"
         ],
-        "resource": "https://mcp.zoom.us"
+        "resource": "https://mcp.zoom.us",
+        "pkce": true
       },
       "relevance": 90,
       "tools": [
@@ -15692,7 +15746,16 @@
           "name": "get_file_content",
           "description": "Retrieve a Zoom Docs document as Markdown"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a Zoom Marketplace General app for Zoom Docs.",
+        "steps": [
+          "Create a General app and register TrustGate’s OAuth callback URL.",
+          "Add docs:write:import and docs:read:export scopes.",
+          "Enter the app client ID and secret, then sign in to Zoom."
+        ],
+        "docs_url": "https://developers.zoom.us/docs/mcp/servers/connect-to-zoom-mcp-servers/"
+      }
     },
     {
       "name": "us.zoom/revenue-accelerator",
@@ -15713,15 +15776,22 @@
           "zra:read:team",
           "zra:read:conversations",
           "zra:read:list_deals",
-          "zra:read:deal",
-          "iq_conversation:read",
-          "iq_deal:read",
-          "iq_comment:read",
-          "iq_coaching:read"
+          "zra:read:deal"
         ],
-        "resource": "https://mcp.zoom.us"
+        "resource": "https://mcp.zoom.us",
+        "pkce": true
       },
-      "relevance": 90
+      "relevance": 90,
+      "config_guide": {
+        "summary": "Create a Zoom General app with Revenue Accelerator access.",
+        "steps": [
+          "Enable Zoom Revenue Accelerator for the account and app.",
+          "Register TrustGate’s OAuth callback and add the required zra:read:* scopes.",
+          "Enter the client ID and secret, then sign in to Zoom."
+        ],
+        "docs_url": "https://developers.zoom.us/docs/mcp/zoom-revenue-accelerator-mcp-server/",
+        "note": "The signing-in user also needs a Zoom Revenue Accelerator license."
+      }
     },
     {
       "name": "us.zoom/team-chat",
@@ -15747,7 +15817,8 @@
           "team_chat:write:user_message",
           "team_chat:read:list_members"
         ],
-        "resource": "https://mcp.zoom.us"
+        "resource": "https://mcp.zoom.us",
+        "pkce": true
       },
       "relevance": 90,
       "tools": [
@@ -15775,7 +15846,16 @@
           "name": "zoom_chat_channel_members_add",
           "description": "Add members to a channel"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a Zoom General app with Team Chat permissions.",
+        "steps": [
+          "Create a General app and register TrustGate’s OAuth callback URL.",
+          "Add only the Team Chat read/write scopes needed by your agents.",
+          "Enter the app client ID and secret, then sign in to Zoom."
+        ],
+        "docs_url": "https://developers.zoom.us/docs/mcp/zoom-chat-mcp-server/"
+      }
     },
     {
       "name": "us.zoom/whiteboard",
@@ -15801,7 +15881,8 @@
           "whiteboard:delete:collaborator",
           "whiteboard:read:list_collaborators"
         ],
-        "resource": "https://mcp.zoom.us"
+        "resource": "https://mcp.zoom.us",
+        "pkce": true
       },
       "relevance": 90,
       "tools": [
@@ -15849,7 +15930,17 @@
           "name": "delete_a_whiteboard_collaborator",
           "description": "Remove a collaborator"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a Zoom General app with Whiteboard permissions.",
+        "steps": [
+          "Create a General app and register TrustGate’s OAuth callback URL.",
+          "Add the Whiteboard read/write and collaborator scopes needed by your agents.",
+          "Enter the app client ID and secret, then sign in to Zoom."
+        ],
+        "docs_url": "https://developers.zoom.us/docs/mcp/zoom-whiteboard-mcp-server/",
+        "note": "The signing-in user needs access to Zoom Whiteboard."
+      }
     },
     {
       "name": "us.zoom/workspace",
@@ -15873,9 +15964,10 @@
           "cloud_recording:read:list_user_recordings",
           "docs:read:export",
           "docs:write:import",
-          "ai_companion:read:search"
+          "agentic_search:read:search"
         ],
-        "resource": "https://mcp.zoom.us"
+        "resource": "https://mcp.zoom.us",
+        "pkce": true
       },
       "relevance": 90,
       "tools": [
@@ -15907,7 +15999,16 @@
           "name": "get_file_content",
           "description": "Retrieve a Zoom Doc as Markdown"
         }
-      ]
+      ],
+      "config_guide": {
+        "summary": "Create a Zoom General app for meetings, recordings, Docs and search.",
+        "steps": [
+          "Create a General app and register TrustGate’s OAuth callback URL.",
+          "Add the meeting, cloud_recording, docs and agentic_search scopes required by your agents.",
+          "Enter the app client ID and secret, then sign in to Zoom."
+        ],
+        "docs_url": "https://developers.zoom.us/docs/mcp/zoom/"
+      }
     }
   ]
 }
