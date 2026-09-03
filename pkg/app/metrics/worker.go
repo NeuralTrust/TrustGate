@@ -17,6 +17,7 @@ package metrics
 import (
 	"context"
 	"log/slog"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -79,7 +80,7 @@ func (w *worker) StartWorkers(n int) {
 			for {
 				select {
 				case task := <-w.taskChan:
-					task()
+					w.runTask(task)
 				case <-w.ctx.Done():
 					return
 				}
@@ -122,13 +123,40 @@ func (w *worker) waitForWorkers(timeout time.Duration) bool {
 	}
 }
 
+// runTask runs one telemetry task and contains a panic to that task.
+//
+// Tasks run on a goroutine this worker started, so a panic inside one is not the
+// request's problem, it is the process's: every in-flight request dies with it.
+// A metrics pipeline must not be able to kill the thing it measures, whatever
+// the encoder does next, so the event is dropped and the panic logged with its
+// stack rather than swallowed.
+//
+// Go 1.27 made this more than theoretical. encoding/json now routes through
+// encoding/json/v2, which panics rather than mis-encoding when a map changes
+// under it — see the ownership fix in NeuralTrust/TrustGuard for the mechanism
+// (RUN-1261). This guard is worth having regardless of that cause.
+func (w *worker) runTask(task func()) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		w.logger.Error("metrics task panicked, dropping event",
+			slog.String("component", "metrics"),
+			slog.Any("panic", r),
+			slog.String("stack", string(debug.Stack())),
+		)
+	}()
+	task()
+}
+
 // drainPendingTasks runs any tasks still buffered in the channel so events
 // enqueued by in-flight requests are not silently dropped on shutdown.
 func (w *worker) drainPendingTasks() {
 	for {
 		select {
 		case task := <-w.taskChan:
-			task()
+			w.runTask(task)
 		default:
 			return
 		}
