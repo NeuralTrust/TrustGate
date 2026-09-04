@@ -140,6 +140,14 @@ type storeCodeArgs struct {
 	Code string `json:"code"`
 }
 
+// storeInstallArgs is the install meta-tool's input: the catalog code plus the
+// per-user URL-variable values (config), collected from the user for servers that
+// declare them (e.g. Snowflake's account_url/database).
+type storeInstallArgs struct {
+	Code   string            `json:"code"`
+	Config map[string]string `json:"config,omitempty"`
+}
+
 func (t *storeTool) principalSubject(ctx context.Context) (string, error) {
 	principal := identity.PrincipalFromContext(ctx)
 	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
@@ -156,7 +164,7 @@ func (t *storeTool) install(
 	if t.installer == nil {
 		return nil, fmt.Errorf("%w: install is not available here", ErrStoreToolUnavailable)
 	}
-	var args storeCodeArgs
+	var args storeInstallArgs
 	if err := json.Unmarshal(arguments, &args); err != nil || strings.TrimSpace(args.Code) == "" {
 		return nil, fmt.Errorf("%w: install requires a catalog code", ErrStoreToolUnavailable)
 	}
@@ -171,6 +179,7 @@ func (t *storeTool) install(
 		InstalledBy:  principal.Subject,
 		Groups:       principalGroups(principal),
 		OpenMode:     t.storeMode(ctx) == gatewaydomain.StoreModeOpen,
+		Config:       args.Config,
 	})
 	if err != nil {
 		return nil, err
@@ -183,7 +192,27 @@ func (t *storeTool) install(
 		"pending":           res.Pending,
 		"requires_auth":     res.RequiresAuth,
 		"already_installed": res.AlreadyInstalled,
+		"requires_config":   res.RequiresConfig,
+		"config_variables":  configVariablesJSON(res.ConfigVariables),
 	})
+}
+
+// configVariablesJSON renders the required-config variables for the tool result
+// so the caller (the model) knows exactly what to collect and re-submit.
+func configVariablesJSON(vars []registrydomain.MCPURLVariable) []map[string]any {
+	if len(vars) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(vars))
+	for _, v := range vars {
+		out = append(out, map[string]any{
+			"name":        v.Name,
+			"description": v.Description,
+			"required":    v.Required,
+			"secret":      v.Secret,
+		})
+	}
+	return out
 }
 
 func (t *storeTool) uninstall(
@@ -235,6 +264,9 @@ func installMessage(res *appstore.InstallResult) string {
 	if res.AlreadyInstalled {
 		return fmt.Sprintf("%s was already installed.", res.Name)
 	}
+	if res.RequiresConfig {
+		return requiresConfigMessage(res)
+	}
 	if res.Pending {
 		return fmt.Sprintf("%s has been requested and is awaiting approval; you'll get its tools once an admin approves it.", res.Name)
 	}
@@ -243,6 +275,32 @@ func installMessage(res *appstore.InstallResult) string {
 		text += " It needs your account connected before its tools can be used."
 	}
 	return text
+}
+
+// requiresConfigMessage tells the caller which values the server needs before it
+// can be installed, and how to supply them: plain values inline via `config`,
+// secrets through the connect link. It names each variable so the model can ask
+// the user for exactly what is missing and re-run install.
+func requiresConfigMessage(res *appstore.InstallResult) string {
+	var plain, secret []string
+	for _, v := range res.ConfigVariables {
+		if v.Secret {
+			secret = append(secret, v.Name)
+		} else {
+			plain = append(plain, v.Name)
+		}
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s needs some configuration before it can be installed.", res.Name)
+	if len(plain) > 0 {
+		fmt.Fprintf(&b, " Ask the user for %s, then call install again with them in `config` (e.g. {\"code\":%q,\"config\":{%q:\"…\"}}).",
+			strings.Join(plain, ", "), res.Code, plain[0])
+	}
+	if len(secret) > 0 {
+		fmt.Fprintf(&b, " It also needs a secret value (%s) which must be entered through the connect link, not here.",
+			strings.Join(secret, ", "))
+	}
+	return b.String()
 }
 
 func marshalToolResult(text string, structured map[string]any) (json.RawMessage, error) {
@@ -507,12 +565,43 @@ func storeSearchDefinition() (Tool, error) {
 }
 
 func storeInstallDefinition() (Tool, error) {
-	return codeArgTool(
-		StoreInstallToolName,
-		"Install an MCP server",
-		"Install a catalog MCP server for the current user so its tools appear on this Store. Takes the catalog `code` returned by "+StoreSearchToolName+". Governed by the user's role; a server that needs the user's own account will ask them to connect it before its tools work.",
-		false,
-	)
+	raw, err := json.Marshal(map[string]any{
+		"name":  StoreInstallToolName,
+		"title": "Install an MCP server",
+		"description": "Install a catalog MCP server for the current user so its tools appear on this Store. Takes the catalog `code` returned by " + StoreSearchToolName + ". " +
+			"Some servers need per-user setup values (e.g. a Snowflake account URL, a ServiceNow instance): if so, this returns requires_config with the list of variables to collect — ask the user for them and call install again with them in `config`. " +
+			"Governed by the user's role; a server that needs the user's own account will ask them to connect it before its tools work.",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"code": map[string]any{
+					"type":        "string",
+					"description": "Catalog code of the MCP server.",
+				},
+				"config": map[string]any{
+					"type":                 "object",
+					"description":          "Per-user setup values for servers that declare them (from a prior requires_config response), e.g. {\"instance\":\"acme\"}. Non-secret values only; secrets are entered through the connect link.",
+					"additionalProperties": map[string]any{"type": "string"},
+				},
+			},
+			"required":             []string{"code"},
+			"additionalProperties": false,
+		},
+		"annotations": map[string]any{
+			"readOnlyHint":    false,
+			"destructiveHint": false,
+			"idempotentHint":  false,
+			"openWorldHint":   false,
+		},
+	})
+	if err != nil {
+		return Tool{}, err
+	}
+	var def Tool
+	if err := json.Unmarshal(raw, &def); err != nil {
+		return Tool{}, err
+	}
+	return def, nil
 }
 
 func storeUninstallDefinition() (Tool, error) {

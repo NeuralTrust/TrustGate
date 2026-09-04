@@ -16,6 +16,8 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -26,12 +28,50 @@ import (
 
 func (c *composer) target(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry) (Target, error) {
 	t := targetFor(ctx, rc, reg)
+	if err := c.resolveURLVariables(ctx, rc, reg, &t); err != nil {
+		return Target{}, err
+	}
 	if c.creds != nil {
 		if err := c.creds.Apply(ctx, rc, reg, &t); err != nil {
 			return Target{}, err
 		}
 	}
 	return t, nil
+}
+
+// resolveURLVariables substitutes a registry's per-user URL placeholders into the
+// dial target from the calling principal's install. It is a no-op for the common
+// case (no placeholders). The resolved URL is folded into the session pin key so
+// one principal's connection is never reused for another's — the placeholders are
+// exactly what makes the upstream per-user — and so a changed value re-pins.
+func (c *composer) resolveURLVariables(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	reg *registrydomain.Registry,
+	t *Target,
+) error {
+	if reg.MCPTarget == nil || !reg.MCPTarget.HasURLVariables() {
+		return nil
+	}
+	var values map[string]string
+	if c.urlvars != nil {
+		v, err := c.urlvars.Resolve(ctx, rc, reg)
+		if err != nil {
+			return err
+		}
+		values = v
+	}
+	resolved, err := registrydomain.ResolveURL(reg.MCPTarget.URL, reg.MCPTarget.URLVariables, values)
+	if err != nil {
+		return err
+	}
+	t.URL = resolved
+	if t.OpenAPI != nil {
+		t.OpenAPI.BaseURL = resolved
+	}
+	sum := sha256.Sum256([]byte(resolved))
+	t.PinKey += ":u:" + hex.EncodeToString(sum[:8])
+	return nil
 }
 
 func targetFor(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry) Target {

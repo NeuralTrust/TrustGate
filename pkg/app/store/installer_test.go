@@ -123,6 +123,23 @@ func newInstallerWithEnsurer(t *testing.T, regs *fakeRegistries, installs *fakeI
 	t.Helper()
 	catalog := fakeCatalog{entries: map[string]catalogdomain.MCPServer{
 		"github": {Code: "github", DisplayName: "GitHub", URL: "https://mcp.github.com", RequiresAuth: true},
+		"snowflake": {
+			Code:        "snowflake",
+			DisplayName: "Snowflake",
+			URL:         "https://{account_url}/api/v2/databases/{database}/mcp",
+			URLVariables: []catalogdomain.MCPURLVariable{
+				{Name: "account_url", Required: true},
+				{Name: "database", Required: true},
+			},
+		},
+		"brightdata": {
+			Code:        "brightdata",
+			DisplayName: "Bright Data",
+			URL:         "https://mcp.brightdata.com/mcp?token={token}",
+			URLVariables: []catalogdomain.MCPURLVariable{
+				{Name: "token", Required: true, Secret: true, In: "query"},
+			},
+		},
 	}}
 	inst, err := NewInstaller(catalog, regs, installs, ensurer)
 	if err != nil {
@@ -340,6 +357,87 @@ func TestInstallUnknownCatalogCode(t *testing.T) {
 	_, err := inst.Install(context.Background(), req(ids.New[ids.GatewayKind](), "does-not-exist"))
 	if !errors.Is(err, ErrCatalogEntryNotFound) {
 		t.Fatalf("expected ErrCatalogEntryNotFound, got %v", err)
+	}
+}
+
+func TestInstallRequiresConfigWhenVariablesMissing(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	regs := &fakeRegistries{}
+	installs := &fakeInstalls{}
+	res, err := newInstallerWithEnsurer(t, regs, installs, &fakeEnsurer{addTo: regs}).
+		Install(context.Background(), openReq(gw, "snowflake"))
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if !res.RequiresConfig || len(res.ConfigVariables) != 2 {
+		t.Fatalf("must ask for the two required variables, got %+v", res)
+	}
+	if len(installs.upserts) != 0 {
+		t.Fatalf("a requires-config result must not record an install, got %+v", installs.upserts)
+	}
+}
+
+func TestInstallWithConfigStoresAndInstalls(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	regs := &fakeRegistries{}
+	installs := &fakeInstalls{}
+	in := openReq(gw, "snowflake")
+	in.Config = map[string]string{"account_url": "acme.snowflakecomputing.com", "database": "ANALYTICS"}
+	res, err := newInstallerWithEnsurer(t, regs, installs, &fakeEnsurer{addTo: regs}).
+		Install(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if res.RequiresConfig || res.Status != installationdomain.StatusInstalled {
+		t.Fatalf("a fully-configured install must proceed, got %+v", res)
+	}
+	if len(installs.upserts) != 1 {
+		t.Fatalf("expected one install row, got %+v", installs.upserts)
+	}
+	cfg := installs.upserts[0].Config
+	if cfg["account_url"] != "acme.snowflakecomputing.com" || cfg["database"] != "ANALYTICS" {
+		t.Fatalf("config not persisted on the installation: %+v", cfg)
+	}
+}
+
+func TestInstallRejectsUnsafeConfigValue(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	in := openReq(gw, "snowflake")
+	in.Config = map[string]string{"account_url": "evil.com/../x", "database": "ANALYTICS"}
+	_, err := newInstallerWithEnsurer(t, &fakeRegistries{}, &fakeInstalls{}, &fakeEnsurer{}).
+		Install(context.Background(), in)
+	if !errors.Is(err, ErrConfigInvalid) {
+		t.Fatalf("an unsafe host value must be rejected, got %v", err)
+	}
+}
+
+func TestInstallRejectsSecretSuppliedInline(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	in := openReq(gw, "brightdata")
+	in.Config = map[string]string{"token": "sk-secret"}
+	_, err := newInstallerWithEnsurer(t, &fakeRegistries{}, &fakeInstalls{}, &fakeEnsurer{}).
+		Install(context.Background(), in)
+	if !errors.Is(err, ErrConfigInvalid) {
+		t.Fatalf("a secret supplied inline must be rejected, got %v", err)
+	}
+}
+
+func TestInstallSecretVariableRequiresConnect(t *testing.T) {
+	// A server whose only required variable is a secret cannot be completed via
+	// inline config: it is reported as requires-config (to be set via the connect
+	// link), never installed half-configured.
+	gw := ids.New[ids.GatewayKind]()
+	installs := &fakeInstalls{}
+	res, err := newInstallerWithEnsurer(t, &fakeRegistries{}, installs, &fakeEnsurer{}).
+		Install(context.Background(), openReq(gw, "brightdata"))
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if !res.RequiresConfig || len(res.ConfigVariables) != 1 || !res.ConfigVariables[0].Secret {
+		t.Fatalf("a required secret variable must be reported for connect-link setup, got %+v", res)
+	}
+	if len(installs.upserts) != 0 {
+		t.Fatalf("must not install before the secret is provided, got %+v", installs.upserts)
 	}
 }
 

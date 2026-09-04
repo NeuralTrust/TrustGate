@@ -120,6 +120,60 @@ type MCPTarget struct {
 	// in the mcp_target JSONB, so it needs no schema change and is read wherever
 	// the registry is loaded. Nil means "not offered in the Store".
 	Store *MCPStoreConfig `json:"store,omitempty"`
+	// URLVariables declares the per-user placeholders in URL (e.g. {account_url},
+	// {instance}) that each principal fills at install time. It is copied verbatim
+	// from the catalog entry when a registry is materialised, so the dial path is
+	// self-contained: it knows which placeholders to substitute, which are
+	// required, and which are secret (vault) vs plain (installation config) —
+	// without re-reading the catalog. Empty for servers whose URL is fully
+	// determined (the common case). See ResolveURL.
+	URLVariables []MCPURLVariable `json:"url_variables,omitempty"`
+}
+
+// MCPURLVariable declares one per-user placeholder in an MCPTarget URL template.
+// It is the registry-side mirror of the catalog's url_variable: the shared
+// registry carries the declaration, each principal's installation carries the
+// value (a plain value in installation.Config, or a secret in the vault).
+type MCPURLVariable struct {
+	// Name is the placeholder token: {Name} in the URL template.
+	Name string `json:"name"`
+	// Description is human help shown when collecting the value.
+	Description string `json:"description,omitempty"`
+	// Required fails the install if the principal does not supply the value.
+	Required bool `json:"required,omitempty"`
+	// Secret routes the value to the vault instead of installation config, and
+	// keeps it out of the model context (collected via the connect link, never as
+	// a chat argument).
+	Secret bool `json:"secret,omitempty"`
+	// In is where the placeholder sits: "" (a host or path segment, validated to a
+	// structure-safe charset) or "query" (a query-string value, percent-escaped).
+	In string `json:"in,omitempty"`
+}
+
+// URLVariableIn values.
+const (
+	URLVariableInQuery = "query"
+)
+
+// HasURLVariables reports whether this target's URL carries per-user
+// placeholders that must be resolved from a principal's install before dialing.
+func (t *MCPTarget) HasURLVariables() bool {
+	return t != nil && len(t.URLVariables) > 0
+}
+
+// RequiredURLVariables returns the names of the placeholders a principal must
+// supply. SecretURLVariables returns those that route to the vault.
+func (t *MCPTarget) RequiredURLVariables() []string {
+	if t == nil {
+		return nil
+	}
+	var out []string
+	for _, v := range t.URLVariables {
+		if v.Required {
+			out = append(out, v.Name)
+		}
+	}
+	return out
 }
 
 // MCPStoreConfig is the admin's Store curation for one MCP server, edited from
@@ -168,6 +222,20 @@ func (t *MCPTarget) Normalize() {
 	}
 }
 
+// targetURLValid reports whether the target URL is a valid http(s) URL, treating
+// declared URL-variable placeholders as already filled. A template such as
+// https://{instance}.service-now.com/mcp is legitimate even though "{" is not a
+// legal host character until a principal's value replaces it at dial time, so the
+// placeholders are substituted with a benign sentinel before the check. Servers
+// with no URL variables are validated verbatim, unchanged from before.
+func (t *MCPTarget) targetURLValid() bool {
+	u := t.URL
+	if len(t.URLVariables) > 0 {
+		u = urlTemplateToken.ReplaceAllString(u, "x")
+	}
+	return isHTTPURL(u)
+}
+
 func (t *MCPTarget) Validate() error {
 	if t == nil {
 		return fmt.Errorf("%w: mcp_target is required", ErrInvalidMCPTarget)
@@ -181,7 +249,7 @@ func (t *MCPTarget) Validate() error {
 		if strings.TrimSpace(t.URL) == "" {
 			return fmt.Errorf("%w: url is required", ErrInvalidMCPTarget)
 		}
-		if !isHTTPURL(t.URL) {
+		if !t.targetURLValid() {
 			return fmt.Errorf("%w: url must be a valid http(s) URL", ErrInvalidMCPTarget)
 		}
 		if t.Transport != "" && t.Transport != MCPTransportStreamableHTTP {
@@ -194,7 +262,7 @@ func (t *MCPTarget) Validate() error {
 		if t.OpenAPI == nil || !isHTTPURL(t.OpenAPI.SpecURL) {
 			return fmt.Errorf("%w: openapi.spec_url must be a valid http(s) URL", ErrInvalidMCPTarget)
 		}
-		if t.URL != "" && !isHTTPURL(t.URL) {
+		if t.URL != "" && !t.targetURLValid() {
 			return fmt.Errorf("%w: url must be a valid http(s) URL", ErrInvalidMCPTarget)
 		}
 		if t.Transport != "" {
