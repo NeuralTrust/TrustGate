@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -27,6 +28,7 @@ import (
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
@@ -57,38 +59,50 @@ type MCPServerCatalog interface {
 	ListMCPServers() []catalogdomain.MCPServer
 }
 
+// ConfigureGateway mints a ticket for the hosted "configure" form where a user
+// enters a server's per-user URL variables (e.g. a Snowflake account URL, a
+// secret token). appoauth.ConfigureService satisfies it. Optional: without it the
+// install tool still works but returns no configure link.
+type ConfigureGateway interface {
+	CreateTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code string) (string, error)
+}
+
 // StoreTool implements the MCP Store's gateway-side meta-tools (SEARCH today;
 // INSTALL and friends later). It mirrors ConnectionTool but its Call takes
 // arguments, since a search carries a query.
 type StoreTool interface {
 	Definitions(ctx context.Context, rc *appconsumer.RoutableConsumer) []Tool
 	Handles(name string) bool
-	Call(ctx context.Context, rc *appconsumer.RoutableConsumer, name string, arguments json.RawMessage) (json.RawMessage, error)
+	Call(ctx context.Context, rc *appconsumer.RoutableConsumer, baseURL, name string, arguments json.RawMessage) (json.RawMessage, error)
 }
 
 type storeTool struct {
 	catalog    MCPServerCatalog
 	installer  appstore.Installer
 	registries appstore.RegistryLister
+	configure  ConfigureGateway
 }
 
 // NewStoreTool wires the catalog-search meta-tool (SEARCH only).
 func NewStoreTool(catalog MCPServerCatalog) (StoreTool, error) {
-	return NewStoreToolWithInstaller(catalog, nil, nil)
+	return NewStoreToolWithInstaller(catalog, nil, nil, nil)
 }
 
 // NewStoreToolWithInstaller wires the Store meta-tools. When installer is nil
 // only SEARCH is offered (e.g. a plane without the installation store); when
-// registries is nil SEARCH does not tag results with their shelf state.
+// registries is nil SEARCH does not tag results with their shelf state; when
+// configure is nil an install that needs per-user setup returns the variable list
+// but no hosted-form link.
 func NewStoreToolWithInstaller(
 	catalog MCPServerCatalog,
 	installer appstore.Installer,
 	registries appstore.RegistryLister,
+	configure ConfigureGateway,
 ) (StoreTool, error) {
 	if catalog == nil {
 		return nil, ErrStoreToolUnavailable
 	}
-	return &storeTool{catalog: catalog, installer: installer, registries: registries}, nil
+	return &storeTool{catalog: catalog, installer: installer, registries: registries, configure: configure}, nil
 }
 
 func (t *storeTool) Handles(name string) bool {
@@ -118,6 +132,7 @@ func (t *storeTool) Definitions(_ context.Context, rc *appconsumer.RoutableConsu
 func (t *storeTool) Call(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
+	baseURL,
 	name string,
 	arguments json.RawMessage,
 ) (json.RawMessage, error) {
@@ -128,7 +143,7 @@ func (t *storeTool) Call(
 	case StoreSearchToolName:
 		return t.search(ctx, rc, arguments)
 	case StoreInstallToolName:
-		return t.install(ctx, rc, arguments)
+		return t.install(ctx, rc, baseURL, arguments)
 	case StoreUninstallToolName:
 		return t.uninstall(ctx, rc, arguments)
 	default:
@@ -138,6 +153,14 @@ func (t *storeTool) Call(
 
 type storeCodeArgs struct {
 	Code string `json:"code"`
+}
+
+// storeInstallArgs is the install meta-tool's input: the catalog code plus the
+// per-user URL-variable values (config), collected from the user for servers that
+// declare them (e.g. Snowflake's account_url/database).
+type storeInstallArgs struct {
+	Code   string            `json:"code"`
+	Config map[string]string `json:"config,omitempty"`
 }
 
 func (t *storeTool) principalSubject(ctx context.Context) (string, error) {
@@ -151,12 +174,13 @@ func (t *storeTool) principalSubject(ctx context.Context) (string, error) {
 func (t *storeTool) install(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
+	baseURL string,
 	arguments json.RawMessage,
 ) (json.RawMessage, error) {
 	if t.installer == nil {
 		return nil, fmt.Errorf("%w: install is not available here", ErrStoreToolUnavailable)
 	}
-	var args storeCodeArgs
+	var args storeInstallArgs
 	if err := json.Unmarshal(arguments, &args); err != nil || strings.TrimSpace(args.Code) == "" {
 		return nil, fmt.Errorf("%w: install requires a catalog code", ErrStoreToolUnavailable)
 	}
@@ -170,19 +194,77 @@ func (t *storeTool) install(
 		Code:         args.Code,
 		InstalledBy:  principal.Subject,
 		Groups:       principalGroups(principal),
+		OpenMode:     t.storeMode(ctx) == gatewaydomain.StoreModeOpen,
+		Config:       args.Config,
 	})
 	if err != nil {
 		return nil, err
 	}
-	text := installMessage(res)
-	return marshalToolResult(text, map[string]any{
+	// A server that needs per-user setup gets a hosted-form link the user opens to
+	// enter their values (the only path for secrets, and a nicer one for the rest).
+	configureURL := ""
+	if res.RequiresConfig {
+		configureURL = t.configureLink(ctx, rc, baseURL, res.Code)
+	}
+	structured := map[string]any{
 		"code":              res.Code,
 		"name":              res.Name,
 		"status":            string(res.Status),
 		"pending":           res.Pending,
 		"requires_auth":     res.RequiresAuth,
 		"already_installed": res.AlreadyInstalled,
-	})
+		"requires_config":   res.RequiresConfig,
+		"config_variables":  configVariablesJSON(res.ConfigVariables),
+	}
+	if configureURL != "" {
+		structured["configure_url"] = configureURL
+	}
+	return marshalToolResult(installMessage(res, configureURL), structured)
+}
+
+// configureLink mints a configure ticket and builds the hosted-form URL, or
+// returns "" when no configure gateway is wired (the caller then falls back to
+// inline config only). A failure to mint is non-fatal: the install still stands.
+func (t *storeTool) configureLink(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	baseURL, code string,
+) string {
+	if t.configure == nil || strings.TrimSpace(baseURL) == "" {
+		return ""
+	}
+	principal := identity.PrincipalFromContext(ctx)
+	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
+		return ""
+	}
+	consumerPath := appconsumer.MCPPath(rc.Consumer.Slug)
+	ticket, err := t.configure.CreateTicket(ctx, rc.Consumer.GatewayID, principal.Subject, consumerPath, code)
+	if err != nil {
+		return ""
+	}
+	url, err := buildConfigureURL(baseURL, consumerPath, ticket)
+	if err != nil {
+		return ""
+	}
+	return url
+}
+
+// configVariablesJSON renders the required-config variables for the tool result
+// so the caller (the model) knows exactly what to collect and re-submit.
+func configVariablesJSON(vars []registrydomain.MCPURLVariable) []map[string]any {
+	if len(vars) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(vars))
+	for _, v := range vars {
+		out = append(out, map[string]any{
+			"name":        v.Name,
+			"description": v.Description,
+			"required":    v.Required,
+			"secret":      v.Secret,
+		})
+	}
+	return out
 }
 
 func (t *storeTool) uninstall(
@@ -230,9 +312,12 @@ func principalGroups(principal *identity.Principal) []string {
 	}
 }
 
-func installMessage(res *appstore.InstallResult) string {
+func installMessage(res *appstore.InstallResult, configureURL string) string {
 	if res.AlreadyInstalled {
 		return fmt.Sprintf("%s was already installed.", res.Name)
+	}
+	if res.RequiresConfig {
+		return requiresConfigMessage(res, configureURL)
 	}
 	if res.Pending {
 		return fmt.Sprintf("%s has been requested and is awaiting approval; you'll get its tools once an admin approves it.", res.Name)
@@ -242,6 +327,49 @@ func installMessage(res *appstore.InstallResult) string {
 		text += " It needs your account connected before its tools can be used."
 	}
 	return text
+}
+
+// requiresConfigMessage tells the caller which values the server needs before its
+// tools work and how to supply them: plain values inline via `config` or through
+// the hosted form, secrets only through the form. It names each variable and,
+// when available, hands over the configure link for the user to open.
+func requiresConfigMessage(res *appstore.InstallResult, configureURL string) string {
+	var plain, secret []string
+	for _, v := range res.ConfigVariables {
+		if v.Secret {
+			secret = append(secret, v.Name)
+		} else {
+			plain = append(plain, v.Name)
+		}
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s needs some setup before its tools can be used.", res.Name)
+	if len(plain) > 0 {
+		fmt.Fprintf(&b, " It needs %s — ask the user, then either call install again with them in `config` (e.g. {\"code\":%q,\"config\":{%q:\"…\"}}) or have the user enter them at the link below.",
+			strings.Join(plain, ", "), res.Code, plain[0])
+	}
+	if len(secret) > 0 {
+		fmt.Fprintf(&b, " It needs a secret value (%s) that must be entered at the link below, never here.",
+			strings.Join(secret, ", "))
+	}
+	if configureURL != "" {
+		fmt.Fprintf(&b, " Configure it at %s — present this link to the user and let them decide whether to open it.", configureURL)
+	}
+	return b.String()
+}
+
+// buildConfigureURL builds the hosted configure-form URL for a ticket, mirroring
+// buildConnectionURL but ending in /configure.
+func buildConfigureURL(baseURL, consumerPath, ticket string) (string, error) {
+	base, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil {
+		return "", fmt.Errorf("%w: parse base url: %w", ErrStoreToolUnavailable, err)
+	}
+	base.Path = strings.TrimRight(consumerPath, "/") + "/configure"
+	q := base.Query()
+	q.Set("ticket", ticket)
+	base.RawQuery = q.Encode()
+	return base.String(), nil
 }
 
 func marshalToolResult(text string, structured map[string]any) (json.RawMessage, error) {
@@ -506,12 +634,43 @@ func storeSearchDefinition() (Tool, error) {
 }
 
 func storeInstallDefinition() (Tool, error) {
-	return codeArgTool(
-		StoreInstallToolName,
-		"Install an MCP server",
-		"Install a catalog MCP server for the current user so its tools appear on this Store. Takes the catalog `code` returned by "+StoreSearchToolName+". Governed by the user's role; a server that needs the user's own account will ask them to connect it before its tools work.",
-		false,
-	)
+	raw, err := json.Marshal(map[string]any{
+		"name":  StoreInstallToolName,
+		"title": "Install an MCP server",
+		"description": "Install a catalog MCP server for the current user so its tools appear on this Store. Takes the catalog `code` returned by " + StoreSearchToolName + ". " +
+			"Some servers need per-user setup values (e.g. a Snowflake account URL, a ServiceNow instance): if so, this returns requires_config with the list of variables to collect — ask the user for them and call install again with them in `config`. " +
+			"Governed by the user's role; a server that needs the user's own account will ask them to connect it before its tools work.",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"code": map[string]any{
+					"type":        "string",
+					"description": "Catalog code of the MCP server.",
+				},
+				"config": map[string]any{
+					"type":                 "object",
+					"description":          "Per-user setup values for servers that declare them (from a prior requires_config response), e.g. {\"instance\":\"acme\"}. Non-secret values only; secrets are entered through the connect link.",
+					"additionalProperties": map[string]any{"type": "string"},
+				},
+			},
+			"required":             []string{"code"},
+			"additionalProperties": false,
+		},
+		"annotations": map[string]any{
+			"readOnlyHint":    false,
+			"destructiveHint": false,
+			"idempotentHint":  false,
+			"openWorldHint":   false,
+		},
+	})
+	if err != nil {
+		return Tool{}, err
+	}
+	var def Tool
+	if err := json.Unmarshal(raw, &def); err != nil {
+		return Tool{}, err
+	}
+	return def, nil
 }
 
 func storeUninstallDefinition() (Tool, error) {

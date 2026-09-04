@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
@@ -39,6 +38,10 @@ var (
 	// ErrRoleNotAllowed is returned when a server is on the shelf but the
 	// principal's roles are not permitted to install it.
 	ErrRoleNotAllowed = errors.New("store: your role is not allowed to install this server")
+	// ErrConfigInvalid is returned when the per-user configuration supplied with an
+	// install is malformed: an unknown variable, an unsafe value, or a secret
+	// passed inline (secrets must go through the connect link).
+	ErrConfigInvalid = errors.New("store: invalid install configuration")
 )
 
 // CatalogReader is the catalog lookup the installer needs.
@@ -62,6 +65,11 @@ type InstallResult struct {
 	Pending          bool
 	RequiresAuth     bool
 	AlreadyInstalled bool
+	// RequiresConfig is true when the server declares required per-user URL
+	// variables the caller has not yet supplied. No install is recorded; the
+	// caller collects ConfigVariables and re-invokes with them.
+	RequiresConfig  bool
+	ConfigVariables []registrydomain.MCPURLVariable
 }
 
 //go:generate mockery --name=Installer --dir=. --output=./mocks --filename=store_installer_mock.go --case=underscore --with-expecter
@@ -71,35 +79,50 @@ type Installer interface {
 }
 
 // InstallRequest carries everything an install decision needs. Groups are the
-// caller's IdP groups (from the token), used for role-gated servers.
+// caller's IdP groups (from the token), used for role-gated servers. OpenMode is
+// true when the gateway's Store is open (self-service): a catalog server that is
+// not yet on the shelf is materialised and installed immediately rather than
+// queued for an admin.
 type InstallRequest struct {
 	GatewayID    ids.GatewayID
 	PrincipalSub string
 	Code         string
 	InstalledBy  string
 	Groups       []string
+	OpenMode     bool
+	// Config carries the per-user URL variable values the caller supplied (e.g.
+	// {"instance":"acme","database":"analytics"}). Non-secret only — secrets are
+	// collected through the connect link, never inline. Validated against the
+	// catalog entry's declaration; missing required values yield a RequiresConfig
+	// result rather than an install.
+	Config map[string]string
 }
 
 type installer struct {
 	catalog    CatalogReader
 	registries RegistryLister
 	installs   installationdomain.Repository
+	ensurer    RegistryEnsurer
 }
 
-// NewInstaller wires the Store installer. Installing references a shelf registry
-// the admin curated (store.available); a server that is not available, or is
-// available but marked requires-approval, is recorded as a pending request
-// rather than granted. The shared registry is never created here — that is the
-// admin's activate/approve path.
+// NewInstaller wires the Store installer. In open (self-service) mode a catalog
+// server that is not yet on the shelf is materialised through the ensurer and
+// installed immediately — the "created on first install" path. In curated mode,
+// or when no ensurer is wired, a server that is not on the shelf is recorded as
+// a pending request for the admin instead. An on-shelf registry marked
+// requires-approval, or one the principal's role excludes, is governed as
+// before. ensurer may be nil (SEARCH-only planes, or where materialisation is
+// not available); its absence downgrades a self-service install to a request.
 func NewInstaller(
 	catalog CatalogReader,
 	registries RegistryLister,
 	installs installationdomain.Repository,
+	ensurer RegistryEnsurer,
 ) (Installer, error) {
 	if catalog == nil || registries == nil || installs == nil {
 		return nil, ErrUnavailable
 	}
-	return &installer{catalog: catalog, registries: registries, installs: installs}, nil
+	return &installer{catalog: catalog, registries: registries, installs: installs, ensurer: ensurer}, nil
 }
 
 func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallResult, error) {
@@ -109,41 +132,32 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		return nil, fmt.Errorf("%w: %q", ErrCatalogEntryNotFound, code)
 	}
 
+	// Per-user endpoint configuration (URL variables). Reject malformed input.
+	// Plain values can be supplied inline; missing required plain values stop the
+	// install and are reported for the caller to collect (inline or via the form).
+	// Secret values are never inline — they are entered through the hosted form —
+	// so their presence does not block recording the install; the install stands
+	// and the dial fails closed until the secret is provided.
+	config, missingPlain, secretRequired, err := planInstallConfig(entry, in.Config)
+	if err != nil {
+		return nil, err
+	}
+	if len(missingPlain) > 0 {
+		return &InstallResult{
+			Code:            code,
+			Name:            displayName(entry, code),
+			RequiresConfig:  true,
+			RequiresAuth:    entry.RequiresAuth,
+			ConfigVariables: missingPlain,
+		}, nil
+	}
+
 	reg, err := findRegistryByCode(ctx, i.registries, in.GatewayID, code)
 	if err != nil {
 		return nil, err
 	}
 
-	// TEMP DEBUG: why does an install resolve to pending? Logs the gateway the
-	// install runs against, every registry code visible on it in the data-plane
-	// snapshot, and the matched registry's Store shelf state.
-	if items, _, lerr := i.registries.List(ctx, registrydomain.ListFilter{
-		GatewayID: in.GatewayID, Page: 1, Size: registryListPageSize,
-	}); lerr == nil {
-		codes := make([]string, 0, len(items))
-		for _, r := range items {
-			if r != nil && r.MCPTarget != nil {
-				codes = append(codes, r.MCPTarget.Code)
-			}
-		}
-		var matchedAvailable, matchedApproval bool
-		if reg != nil && reg.MCPTarget != nil {
-			matchedAvailable = reg.MCPTarget.StoreAvailable()
-			matchedApproval = reg.MCPTarget.StoreRequiresApproval()
-		}
-		slog.Default().Info("TEMP store-install debug",
-			slog.String("gateway_id", in.GatewayID.String()),
-			slog.String("install_code", code),
-			slog.Int("registry_count", len(items)),
-			slog.String("registry_codes", strings.Join(codes, ",")),
-			slog.Bool("matched", reg != nil),
-			slog.Bool("matched_available", matchedAvailable),
-			slog.Bool("matched_requires_approval", matchedApproval),
-			slog.String("principal_groups", strings.Join(in.Groups, ",")),
-		)
-	}
-
-	status, err := i.decideStatus(reg, in.Groups)
+	status, err := i.decideStatus(ctx, in, reg)
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +168,7 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 	}
 	alreadyInstalled := err == nil && existing.IsActive()
 
-	record, err := installationForStatus(in.GatewayID, in.PrincipalSub, code, in.InstalledBy, status)
+	record, err := installationForStatus(in.GatewayID, in.PrincipalSub, code, in.InstalledBy, status, config)
 	if err != nil {
 		return nil, err
 	}
@@ -162,18 +176,87 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		return nil, err
 	}
 
-	return &InstallResult{
+	result := &InstallResult{
 		Code:             code,
 		Name:             displayName(entry, code),
 		Status:           status,
 		Pending:          status == installationdomain.StatusPendingApproval,
 		RequiresAuth:     entry.RequiresAuth,
 		AlreadyInstalled: alreadyInstalled,
-	}, nil
+	}
+	// The install is recorded, but its tools stay dark until the user enters the
+	// required secret(s) at the hosted form.
+	if len(secretRequired) > 0 {
+		result.RequiresConfig = true
+		result.ConfigVariables = secretRequired
+	}
+	return result, nil
+}
+
+// planInstallConfig validates the caller's supplied URL-variable values against
+// the catalog entry's declaration and partitions what is still needed. It rejects
+// malformed input (unknown variable, unsafe value, or a secret supplied inline).
+// It returns: the plain values to persist on the installation; the required plain
+// variables still missing (which block the install until supplied); and the
+// required secret variables (collected out-of-band through the hosted form, so
+// they do not block recording the install).
+func planInstallConfig(
+	entry catalogdomain.MCPServer,
+	provided map[string]string,
+) (config map[string]string, missingPlain, secretRequired []registrydomain.MCPURLVariable, err error) {
+	declared := catalogURLVariables(entry.URLVariables)
+	if len(declared) == 0 {
+		return nil, nil, nil, nil
+	}
+	byName := make(map[string]registrydomain.MCPURLVariable, len(declared))
+	for _, v := range declared {
+		byName[v.Name] = v
+	}
+	stored := make(map[string]string, len(provided))
+	for k, raw := range provided {
+		val := strings.TrimSpace(raw)
+		if val == "" {
+			continue
+		}
+		v, known := byName[k]
+		if !known {
+			return nil, nil, nil, fmt.Errorf("%w: unknown variable %q", ErrConfigInvalid, k)
+		}
+		if v.Secret {
+			return nil, nil, nil, fmt.Errorf("%w: %q is a secret and must be set through the configure form, not inline", ErrConfigInvalid, k)
+		}
+		if err := registrydomain.ValidateURLValue(v, val); err != nil {
+			return nil, nil, nil, fmt.Errorf("%w: %w", ErrConfigInvalid, err)
+		}
+		stored[k] = val
+	}
+	for _, v := range declared {
+		if !v.Required {
+			continue
+		}
+		switch {
+		case v.Secret:
+			secretRequired = append(secretRequired, v)
+		case strings.TrimSpace(stored[v.Name]) == "":
+			missingPlain = append(missingPlain, v)
+		}
+	}
+	if len(stored) == 0 {
+		stored = nil
+	}
+	return stored, missingPlain, secretRequired, nil
 }
 
 // decideStatus applies the shelf governance: available + role-allowed installs
 // immediately unless it needs approval; anything else becomes a pending request.
+//
+// When no shelf registry exists yet the decision splits on the Store mode. In
+// open (self-service) mode the shared registry is materialised from the catalog
+// here and the install proceeds immediately — the "created on first install"
+// path; the fresh registry is available with no roles or approval, so it is
+// governed identically on the next install. In curated mode (or when no ensurer
+// is wired) the same missing-registry case is a pending request for the admin to
+// shelve+approve, exactly as before.
 //
 // The role gate is evaluated as soon as a shelf registry exists, before the
 // availability check. Otherwise a role-excluded principal could file a pending
@@ -182,15 +265,23 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 // silently grant it. Checking here means such a request is rejected up front and
 // never reaches the approval queue.
 func (i *installer) decideStatus(
+	ctx context.Context,
+	in InstallRequest,
 	reg *registrydomain.Registry,
-	groups []string,
 ) (installationdomain.Status, error) {
 	if reg == nil || reg.MCPTarget == nil {
-		// No shelf registry at all: a request for the admin to shelve+approve.
-		// There is no role list to enforce until the admin connects the server.
+		// No shelf registry at all. Self-service materialises it on first
+		// install; otherwise it is a request for the admin to shelve+approve.
+		// There is no role list to enforce until the registry exists.
+		if in.OpenMode && i.ensurer != nil {
+			if err := i.ensurer.Ensure(ctx, in.GatewayID, in.Code); err != nil {
+				return "", err
+			}
+			return installationdomain.StatusInstalled, nil
+		}
 		return installationdomain.StatusPendingApproval, nil
 	}
-	if !rolesAllow(reg.MCPTarget.StoreRoles(), groups) {
+	if !rolesAllow(reg.MCPTarget.StoreRoles(), in.Groups) {
 		return "", ErrRoleNotAllowed
 	}
 	if !reg.MCPTarget.StoreAvailable() {
@@ -257,8 +348,9 @@ func installationForStatus(
 	gatewayID ids.GatewayID,
 	principalSub, code, installedBy string,
 	status installationdomain.Status,
+	config map[string]string,
 ) (*installationdomain.Installation, error) {
-	in, err := installationdomain.New(gatewayID, principalSub, code, installedBy, nil)
+	in, err := installationdomain.New(gatewayID, principalSub, code, installedBy, config)
 	if err != nil {
 		return nil, err
 	}

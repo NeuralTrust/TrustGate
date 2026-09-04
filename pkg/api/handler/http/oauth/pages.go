@@ -252,6 +252,23 @@ var connectPageTmpl = template.Must(template.New("connect").Parse(`<!doctype htm
 </script>
 </div></body></html>`))
 
+var configurePageTmpl = template.Must(template.New("configure").Parse(`<!doctype html>
+<html lang="en" class="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+` + pageFonts + `
+<title>Configure {{.ServerName}} - NeuralTrust TrustGate</title><style>` + pageCSS + `</style></head>
+<body><div class="card">` + brandHeader + `
+<h1>Configure {{.ServerName}}</h1>
+<p class="sub">Enter your setup values for {{.ServerName}}. These are stored for your account only — secret values are kept encrypted in the gateway vault and are never exposed to the agent.</p>
+{{if .Saved}}<div class="flash" role="status"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg><div>Saved. You can return to your application.</div></div>{{end}}
+<form class="connect-form" method="post">
+  {{range .Variables}}<div class="input">
+    <input id="{{.Name}}" name="{{.Name}}" type="{{if .Secret}}password{{else}}text{{end}}" autocomplete="off"{{if and .Required (not .Set)}} required{{end}} placeholder=" ">
+    <label for="{{.Name}}">{{.Name}}{{if .Set}} (set — leave blank to keep){{else if not .Required}} (optional){{end}}</label>
+  </div>{{end}}
+  <button class="btn primary" type="submit">Save</button>
+</form>
+</div></body></html>`))
+
 var apiKeyConnectPageTmpl = template.Must(template.New("api-key-connect").Parse(`<!doctype html>
 <html lang="en" class="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 ` + pageFonts + `
@@ -379,6 +396,38 @@ func lookupCatalogServer(catalog appcatalog.MCPServerCatalog, keys ...string) (d
 		}
 	}
 	return domaincatalog.MCPServer{}, false
+}
+
+type configureVarView struct {
+	Name        string
+	Description string
+	Required    bool
+	Secret      bool
+	Set         bool
+}
+
+type configurePageView struct {
+	ServerName string
+	Variables  []configureVarView
+	Saved      bool
+}
+
+func renderConfigurePage(c *fiber.Ctx, page *appoauth.ConfigurePage) error {
+	vars := make([]configureVarView, 0, len(page.Variables))
+	for _, v := range page.Variables {
+		vars = append(vars, configureVarView{
+			Name:        v.Name,
+			Description: v.Description,
+			Required:    v.Required,
+			Secret:      v.Secret,
+			Set:         v.Set,
+		})
+	}
+	return renderHTML(c, configurePageTmpl, configurePageView{
+		ServerName: page.ServerName,
+		Variables:  vars,
+		Saved:      page.Saved,
+	})
 }
 
 type apiKeyConnectPageView struct {

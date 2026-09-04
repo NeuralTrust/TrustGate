@@ -122,7 +122,7 @@ func TestStoreToolDefinitionsExposeSearch(t *testing.T) {
 
 func TestStoreSearchByQuery(t *testing.T) {
 	tool := newStoreToolForTest(t)
-	raw, err := tool.Call(context.Background(), storeRC(), StoreSearchToolName, json.RawMessage(`{"query":"git"}`))
+	raw, err := tool.Call(context.Background(), storeRC(), "", StoreSearchToolName, json.RawMessage(`{"query":"git"}`))
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestStoreSearchByQuery(t *testing.T) {
 
 func TestStoreSearchByCategory(t *testing.T) {
 	tool := newStoreToolForTest(t)
-	raw, err := tool.Call(context.Background(), storeRC(), StoreSearchToolName, json.RawMessage(`{"category":"crm"}`))
+	raw, err := tool.Call(context.Background(), storeRC(), "", StoreSearchToolName, json.RawMessage(`{"category":"crm"}`))
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestStoreSearchByCategory(t *testing.T) {
 
 func TestStoreSearchEmptyBrowsesAll(t *testing.T) {
 	tool := newStoreToolForTest(t)
-	raw, err := tool.Call(context.Background(), storeRC(), StoreSearchToolName, nil)
+	raw, err := tool.Call(context.Background(), storeRC(), "", StoreSearchToolName, nil)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestStoreSearchEmptyBrowsesAll(t *testing.T) {
 
 func TestStoreSearchRespectsLimitAndReportsTruncation(t *testing.T) {
 	tool := newStoreToolForTest(t)
-	raw, err := tool.Call(context.Background(), storeRC(), StoreSearchToolName, json.RawMessage(`{"limit":1}`))
+	raw, err := tool.Call(context.Background(), storeRC(), "", StoreSearchToolName, json.RawMessage(`{"limit":1}`))
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -183,14 +183,14 @@ func TestStoreSearchRespectsLimitAndReportsTruncation(t *testing.T) {
 
 func TestStoreToolCallRejectsUnknownTool(t *testing.T) {
 	tool := newStoreToolForTest(t)
-	if _, err := tool.Call(context.Background(), storeRC(), "trustgate_store_bogus", nil); err == nil {
+	if _, err := tool.Call(context.Background(), storeRC(), "", "trustgate_store_bogus", nil); err == nil {
 		t.Fatal("unknown store tool must error")
 	}
 }
 
 func storeToolWithShelf(t *testing.T, items ...*registrydomain.Registry) StoreTool {
 	t.Helper()
-	tool, err := NewStoreToolWithInstaller(sampleCatalog(), nil, fakeRegistryLister{items: items})
+	tool, err := NewStoreToolWithInstaller(sampleCatalog(), nil, fakeRegistryLister{items: items}, nil)
 	if err != nil {
 		t.Fatalf("NewStoreToolWithInstaller: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestStoreSearchTagsShelfState(t *testing.T) {
 		shelfReg("gitlab", &registrydomain.MCPStoreConfig{Available: true, RequiresApproval: true}),
 		// salesforce not on the shelf
 	)
-	raw, err := tool.Call(context.Background(), storeRC(), StoreSearchToolName, nil)
+	raw, err := tool.Call(context.Background(), storeRC(), "", StoreSearchToolName, nil)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestStoreSearchCuratedModeHidesNonShelf(t *testing.T) {
 	gw := &gatewaydomain.Gateway{Metadata: gatewaydomain.WithStoreMode(nil, gatewaydomain.StoreModeCurated)}
 	ctx := appgateway.WithGateway(context.Background(), gw)
 
-	raw, err := tool.Call(ctx, storeRC(), StoreSearchToolName, nil)
+	raw, err := tool.Call(ctx, storeRC(), "", StoreSearchToolName, nil)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -272,7 +272,7 @@ func (f *fakeInstaller) Uninstall(_ context.Context, _ ids.GatewayID, _, code st
 
 func storeToolWithInstaller(t *testing.T, installer appstore.Installer) StoreTool {
 	t.Helper()
-	tool, err := NewStoreToolWithInstaller(sampleCatalog(), installer, nil)
+	tool, err := NewStoreToolWithInstaller(sampleCatalog(), installer, nil, nil)
 	if err != nil {
 		t.Fatalf("NewStoreToolWithInstaller: %v", err)
 	}
@@ -301,7 +301,7 @@ func TestStoreDefinitionsIncludeInstallOnlyWithInstaller(t *testing.T) {
 func TestStoreInstallCall(t *testing.T) {
 	installer := &fakeInstaller{result: &appstore.InstallResult{Code: "github", Name: "GitHub", RequiresAuth: true}}
 	tool := storeToolWithInstaller(t, installer)
-	raw, err := tool.Call(ctxWithPrincipal(), storeRC(), StoreInstallToolName, json.RawMessage(`{"code":"github"}`))
+	raw, err := tool.Call(ctxWithPrincipal(), storeRC(), "", StoreInstallToolName, json.RawMessage(`{"code":"github"}`))
 	if err != nil {
 		t.Fatalf("install: %v", err)
 	}
@@ -316,14 +316,14 @@ func TestStoreInstallCall(t *testing.T) {
 
 func TestStoreInstallRequiresPrincipal(t *testing.T) {
 	tool := storeToolWithInstaller(t, &fakeInstaller{})
-	if _, err := tool.Call(context.Background(), storeRC(), StoreInstallToolName, json.RawMessage(`{"code":"github"}`)); err == nil {
+	if _, err := tool.Call(context.Background(), storeRC(), "", StoreInstallToolName, json.RawMessage(`{"code":"github"}`)); err == nil {
 		t.Fatal("install without an authenticated principal must error")
 	}
 }
 
 func TestStoreInstallUnavailableWithoutInstaller(t *testing.T) {
 	tool := newStoreToolForTest(t)
-	if _, err := tool.Call(ctxWithPrincipal(), storeRC(), StoreInstallToolName, json.RawMessage(`{"code":"github"}`)); err == nil {
+	if _, err := tool.Call(ctxWithPrincipal(), storeRC(), "", StoreInstallToolName, json.RawMessage(`{"code":"github"}`)); err == nil {
 		t.Fatal("install must be unavailable when no installer is wired")
 	}
 }
@@ -331,7 +331,7 @@ func TestStoreInstallUnavailableWithoutInstaller(t *testing.T) {
 func TestStoreUninstallCall(t *testing.T) {
 	installer := &fakeInstaller{}
 	tool := storeToolWithInstaller(t, installer)
-	if _, err := tool.Call(ctxWithPrincipal(), storeRC(), StoreUninstallToolName, json.RawMessage(`{"code":"github"}`)); err != nil {
+	if _, err := tool.Call(ctxWithPrincipal(), storeRC(), "", StoreUninstallToolName, json.RawMessage(`{"code":"github"}`)); err != nil {
 		t.Fatalf("uninstall: %v", err)
 	}
 	if len(installer.uninstalled) != 1 || installer.uninstalled[0] != "github" {

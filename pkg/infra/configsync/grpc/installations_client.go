@@ -117,6 +117,24 @@ func (c *InstallationsClient) Delete(
 	return nil
 }
 
+// Ensure asks the control plane to materialise the shared registry for a catalog
+// code (the self-service "created on first install" path). It forwards over the
+// same egress-only connection; the new registry syncs back through the normal
+// ConfigSync snapshot. This makes the client an appstore.RegistryEnsurer.
+func (c *InstallationsClient) Ensure(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	code string,
+) error {
+	if _, err := c.cli.EnsureRegistry(ctx, &snapshotpb.EnsureRegistryRequest{
+		GatewayId:   gatewayID.String(),
+		CatalogCode: code,
+	}); err != nil {
+		return fmt.Errorf("installations: ensure registry: %w", err)
+	}
+	return nil
+}
+
 // ListByCatalogCode is an admin read served only on the control plane.
 func (c *InstallationsClient) ListByCatalogCode(
 	context.Context, ids.GatewayID, string,

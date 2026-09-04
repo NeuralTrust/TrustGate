@@ -244,6 +244,11 @@ func API(c *container.Container) error {
 	if err := c.Provide(provideAPIKeyConnectHandler); err != nil {
 		return err
 	}
+	if err := c.Provide(func(configure appoauth.ConfigureService) *oauthhttp.ConfigureHandler {
+		return oauthhttp.NewConfigureHandler(configure)
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(oauthhttp.NewJWKSHandler); err != nil {
 		return err
 	}

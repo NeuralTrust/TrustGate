@@ -17,6 +17,7 @@ package modules
 import (
 	storehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store"
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
@@ -33,6 +34,19 @@ import (
 func Store(c *container.Container) error {
 	if err := c.Provide(func(conn *database.Connection) installationdomain.Repository {
 		return installationrepo.NewRepository(conn)
+	}); err != nil {
+		return err
+	}
+	// The control-plane registry materialiser: self-service installs create the
+	// shared registry from the catalog through the same Creator the admin's
+	// connect-from-catalog path uses. On the data plane this port is served by
+	// the gRPC client instead (see ConfigSyncData); here it writes directly.
+	if err := c.Provide(func(
+		catalog appcatalog.MCPServerCatalog,
+		registries registrydomain.Repository,
+		creator appregistry.Creator,
+	) (appstore.RegistryEnsurer, error) {
+		return appstore.NewRegistryEnsurer(catalog, registries, creator)
 	}); err != nil {
 		return err
 	}

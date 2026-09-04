@@ -307,18 +307,33 @@ func (s *connectService) resolve(ctx context.Context, ticketID string) (*Connect
 	return ticket, gatewayID, data, rc, nil
 }
 
-func (s *connectService) routable(ctx context.Context, ticket *ConnectTicket) (ids.GatewayID, *appconsumer.Data, *appconsumer.RoutableConsumer, error) {
+// baseRoutable recovers the gateway and routable consumer a ticket points at,
+// with no ticket-kind-specific checks. It is shared by the OAuth connect routable
+// (which adds api-key checks) and the configure flow (which needs only this).
+func baseRoutable(
+	ctx context.Context,
+	consumers appconsumer.DataFinder,
+	ticket *ConnectTicket,
+) (ids.GatewayID, *appconsumer.Data, *appconsumer.RoutableConsumer, error) {
 	gatewayID, err := ids.Parse[ids.GatewayKind](ticket.GatewayID)
 	if err != nil {
 		return ids.GatewayID{}, nil, nil, fmt.Errorf("oauth connect: bad gateway id in ticket: %w", err)
 	}
-	data, err := s.consumers.FindByGateway(ctx, gatewayID)
+	data, err := consumers.FindByGateway(ctx, gatewayID)
 	if err != nil {
 		return ids.GatewayID{}, nil, nil, err
 	}
 	rc, ok := data.MatchPath(ticket.ConsumerPath)
 	if !ok {
 		return ids.GatewayID{}, nil, nil, fmt.Errorf("oauth connect: consumer path %s no longer exists", ticket.ConsumerPath)
+	}
+	return gatewayID, data, rc, nil
+}
+
+func (s *connectService) routable(ctx context.Context, ticket *ConnectTicket) (ids.GatewayID, *appconsumer.Data, *appconsumer.RoutableConsumer, error) {
+	gatewayID, data, rc, err := baseRoutable(ctx, s.consumers, ticket)
+	if err != nil {
+		return ids.GatewayID{}, nil, nil, err
 	}
 	if apiKeyConnectTicket(ticket) &&
 		(ticket.Providers == nil ||

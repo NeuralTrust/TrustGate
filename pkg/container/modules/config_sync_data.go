@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
@@ -74,6 +75,16 @@ func ConfigSyncData(c *container.Container) error {
 	// repository lights up the Store install/uninstall meta-tools and the
 	// per-principal scoper (see provideRPCGateway), which stay dark without it.
 	if err := c.Provide(func(client *configsyncgrpc.Client) installationdomain.Repository {
+		return configsyncgrpc.NewInstallationsClient(client.ClientConn())
+	}); err != nil {
+		return err
+	}
+	// The same channel materialises the shared registry on a self-service
+	// install: the data plane cannot write registries, so it forwards to the
+	// control plane and the new registry syncs back through the snapshot. This
+	// gRPC-client ensurer is the data-plane implementation of the port the Store
+	// module serves directly on the full plane.
+	if err := c.Provide(func(client *configsyncgrpc.Client) appstore.RegistryEnsurer {
 		return configsyncgrpc.NewInstallationsClient(client.ClientConn())
 	}); err != nil {
 		return err

@@ -24,7 +24,9 @@ import (
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 )
 
@@ -89,11 +91,30 @@ func (m *memInstallations) Delete(_ context.Context, g ids.GatewayID, sub, code 
 	return nil
 }
 
+// fakeRegistryEnsurer records the codes EnsureRegistry was asked to materialise.
+type fakeRegistryEnsurer struct {
+	ensured []string
+	err     error
+}
+
+func (f *fakeRegistryEnsurer) Ensure(_ context.Context, _ ids.GatewayID, code string) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.ensured = append(f.ensured, code)
+	return nil
+}
+
 func dialInstallations(t *testing.T, repo installationdomain.Repository) *InstallationsClient {
+	t.Helper()
+	return dialInstallationsWithEnsurer(t, repo, nil)
+}
+
+func dialInstallationsWithEnsurer(t *testing.T, repo installationdomain.Repository, ensurer RegistryEnsurer) *InstallationsClient {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
 	gsrv := grpc.NewServer()
-	snapshotpb.RegisterStoreInstallationsServer(gsrv, NewInstallationsService(repo, discardLogger()))
+	snapshotpb.RegisterStoreInstallationsServer(gsrv, NewInstallationsService(repo, ensurer, discardLogger()))
 	go func() { _ = gsrv.Serve(lis) }()
 	t.Cleanup(gsrv.Stop)
 
@@ -166,6 +187,30 @@ func TestInstallationsClient_DeleteMissingIsNotFound(t *testing.T) {
 	gatewayID, _ := ids.NewV7[ids.GatewayKind]()
 	if err := client.Delete(context.Background(), gatewayID, "nobody", "ghost"); !errors.Is(err, installationdomain.ErrNotFound) {
 		t.Fatalf("Delete err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestInstallationsClient_EnsureRegistryForwards(t *testing.T) {
+	ensurer := &fakeRegistryEnsurer{}
+	client := dialInstallationsWithEnsurer(t, newMemInstallations(), ensurer)
+	gatewayID, _ := ids.NewV7[ids.GatewayKind]()
+	if err := client.Ensure(context.Background(), gatewayID, "app.linear/mcp"); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if len(ensurer.ensured) != 1 || ensurer.ensured[0] != "app.linear/mcp" {
+		t.Fatalf("EnsureRegistry did not reach the control-plane ensurer, got %+v", ensurer.ensured)
+	}
+}
+
+func TestInstallationsClient_EnsureRegistryUnimplementedWithoutEnsurer(t *testing.T) {
+	client := dialInstallations(t, newMemInstallations())
+	gatewayID, _ := ids.NewV7[ids.GatewayKind]()
+	err := client.Ensure(context.Background(), gatewayID, "app.linear/mcp")
+	if err == nil {
+		t.Fatal("Ensure without a control-plane ensurer must error")
+	}
+	if status.Code(err) != codes.Unimplemented {
+		t.Fatalf("Ensure err code = %v, want Unimplemented", status.Code(err))
 	}
 }
 
