@@ -16,7 +16,6 @@ package adapters
 
 import (
 	"context"
-	"log/slog"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -79,13 +78,6 @@ func (r *registryRepository) List(_ context.Context, filter domain.ListFilter) (
 		return nil, 0, nil
 	}
 	all := snap.RegistriesByGateway(filter.GatewayID)
-	// TEMP DEBUG: reveal where registries actually live in the snapshot so we can
-	// tell a gateway mismatch apart from an empty/unsynced registry set.
-	slog.Default().Info("TEMP registry-list debug",
-		slog.String("requested_gateway_id", filter.GatewayID.String()),
-		slog.Int("returned_for_gateway", len(all)),
-		slog.Any("registries_by_gateway", snap.RegistryGatewayCounts()),
-	)
 	if name := strings.ToLower(strings.TrimSpace(filter.NameContains)); name != "" {
 		filtered := all[:0:0]
 		for _, reg := range all {
