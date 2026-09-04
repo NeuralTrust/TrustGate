@@ -18,6 +18,7 @@ import (
 	"log/slog"
 
 	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
+	diagnosticshttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/diagnostics"
 	oauthhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/oauth"
 	playgroundhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/playground"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
@@ -28,6 +29,7 @@ import (
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/introspection"
@@ -189,6 +191,20 @@ func API(c *container.Container) error {
 		}
 		verifier := jwt.NewPlaygroundVerifier(&p.Cfg.Server, jwt.CombinePlaygroundKeys(static, snapshotKeys))
 		return resolver.NewPlaygroundIdentityResolver(verifier), nil
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(p playgroundVerifierParams, tester appregistry.ConnectionTester) (*diagnosticshttp.TestConnectionHandler, error) {
+		static, err := jwt.StaticPlaygroundKeys(p.Cfg.Playground.TokenPublicKeys)
+		if err != nil {
+			return nil, err
+		}
+		var snapshotKeys jwt.PlaygroundKeySource
+		if p.Store != nil {
+			snapshotKeys = adapters.NewPlaygroundKeySource(p.Store)
+		}
+		verifier := jwt.NewDiagnosticsVerifier(&p.Cfg.Server, jwt.CombinePlaygroundKeys(static, snapshotKeys))
+		return diagnosticshttp.NewTestConnectionHandler(verifier, tester), nil
 	}); err != nil {
 		return err
 	}
