@@ -47,17 +47,33 @@ type composer struct {
 	dialer    Dialer
 	creds     CredentialResolver
 	discovery DiscoveryCache
+	urlvars   URLValueResolver
 	flight    singleflight.Group
 	logger    *slog.Logger
 }
 
-func NewComposer(dialer Dialer, creds CredentialResolver, discovery DiscoveryCache, logger *slog.Logger) Composer {
-	return &composer{
+// ComposerOption configures optional composer collaborators without widening the
+// constructor for the common case.
+type ComposerOption func(*composer)
+
+// WithURLValues wires the resolver that fills a registry's per-user URL
+// placeholders (e.g. {account_url}) from the calling principal's install before
+// dialing. Omitted, servers that declare URL variables cannot be reached.
+func WithURLValues(r URLValueResolver) ComposerOption {
+	return func(c *composer) { c.urlvars = r }
+}
+
+func NewComposer(dialer Dialer, creds CredentialResolver, discovery DiscoveryCache, logger *slog.Logger, opts ...ComposerOption) Composer {
+	c := &composer{
 		dialer:    dialer,
 		creds:     creds,
 		discovery: discovery,
 		logger:    logger,
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 type binding struct {

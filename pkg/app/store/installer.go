@@ -38,6 +38,10 @@ var (
 	// ErrRoleNotAllowed is returned when a server is on the shelf but the
 	// principal's roles are not permitted to install it.
 	ErrRoleNotAllowed = errors.New("store: your role is not allowed to install this server")
+	// ErrConfigInvalid is returned when the per-user configuration supplied with an
+	// install is malformed: an unknown variable, an unsafe value, or a secret
+	// passed inline (secrets must go through the connect link).
+	ErrConfigInvalid = errors.New("store: invalid install configuration")
 )
 
 // CatalogReader is the catalog lookup the installer needs.
@@ -61,6 +65,11 @@ type InstallResult struct {
 	Pending          bool
 	RequiresAuth     bool
 	AlreadyInstalled bool
+	// RequiresConfig is true when the server declares required per-user URL
+	// variables the caller has not yet supplied. No install is recorded; the
+	// caller collects ConfigVariables and re-invokes with them.
+	RequiresConfig  bool
+	ConfigVariables []registrydomain.MCPURLVariable
 }
 
 //go:generate mockery --name=Installer --dir=. --output=./mocks --filename=store_installer_mock.go --case=underscore --with-expecter
@@ -81,6 +90,12 @@ type InstallRequest struct {
 	InstalledBy  string
 	Groups       []string
 	OpenMode     bool
+	// Config carries the per-user URL variable values the caller supplied (e.g.
+	// {"instance":"acme","database":"analytics"}). Non-secret only — secrets are
+	// collected through the connect link, never inline. Validated against the
+	// catalog entry's declaration; missing required values yield a RequiresConfig
+	// result rather than an install.
+	Config map[string]string
 }
 
 type installer struct {
@@ -117,6 +132,23 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		return nil, fmt.Errorf("%w: %q", ErrCatalogEntryNotFound, code)
 	}
 
+	// Per-user endpoint configuration (URL variables). Reject malformed input; a
+	// server still missing a required value is reported back for the caller to
+	// collect rather than installed half-configured.
+	config, missing, err := planInstallConfig(entry, in.Config)
+	if err != nil {
+		return nil, err
+	}
+	if len(missing) > 0 {
+		return &InstallResult{
+			Code:            code,
+			Name:            displayName(entry, code),
+			RequiresConfig:  true,
+			RequiresAuth:    entry.RequiresAuth,
+			ConfigVariables: missing,
+		}, nil
+	}
+
 	reg, err := findRegistryByCode(ctx, i.registries, in.GatewayID, code)
 	if err != nil {
 		return nil, err
@@ -133,7 +165,7 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 	}
 	alreadyInstalled := err == nil && existing.IsActive()
 
-	record, err := installationForStatus(in.GatewayID, in.PrincipalSub, code, in.InstalledBy, status)
+	record, err := installationForStatus(in.GatewayID, in.PrincipalSub, code, in.InstalledBy, status, config)
 	if err != nil {
 		return nil, err
 	}
@@ -149,6 +181,58 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		RequiresAuth:     entry.RequiresAuth,
 		AlreadyInstalled: alreadyInstalled,
 	}, nil
+}
+
+// planInstallConfig validates the caller's supplied URL-variable values against
+// the catalog entry's declaration and reports which required values are still
+// missing. It rejects malformed input (unknown variable, unsafe value, or a
+// secret supplied inline). The returned map is what to persist on the
+// installation (non-secret values only); missing holds the required variables
+// the caller must still provide — non-secret ones via config, and any secret
+// ones via the connect link, which self-service install does not collect inline.
+func planInstallConfig(
+	entry catalogdomain.MCPServer,
+	provided map[string]string,
+) (map[string]string, []registrydomain.MCPURLVariable, error) {
+	declared := catalogURLVariables(entry.URLVariables)
+	if len(declared) == 0 {
+		return nil, nil, nil
+	}
+	byName := make(map[string]registrydomain.MCPURLVariable, len(declared))
+	for _, v := range declared {
+		byName[v.Name] = v
+	}
+	stored := make(map[string]string, len(provided))
+	for k, raw := range provided {
+		val := strings.TrimSpace(raw)
+		if val == "" {
+			continue
+		}
+		v, known := byName[k]
+		if !known {
+			return nil, nil, fmt.Errorf("%w: unknown variable %q", ErrConfigInvalid, k)
+		}
+		if v.Secret {
+			return nil, nil, fmt.Errorf("%w: %q is a secret and must be set through the connect link, not inline", ErrConfigInvalid, k)
+		}
+		if err := registrydomain.ValidateURLValue(v, val); err != nil {
+			return nil, nil, fmt.Errorf("%w: %w", ErrConfigInvalid, err)
+		}
+		stored[k] = val
+	}
+	var missing []registrydomain.MCPURLVariable
+	for _, v := range declared {
+		if !v.Required {
+			continue
+		}
+		if v.Secret || strings.TrimSpace(stored[v.Name]) == "" {
+			missing = append(missing, v)
+		}
+	}
+	if len(stored) == 0 {
+		stored = nil
+	}
+	return stored, missing, nil
 }
 
 // decideStatus applies the shelf governance: available + role-allowed installs
@@ -252,8 +336,9 @@ func installationForStatus(
 	gatewayID ids.GatewayID,
 	principalSub, code, installedBy string,
 	status installationdomain.Status,
+	config map[string]string,
 ) (*installationdomain.Installation, error) {
-	in, err := installationdomain.New(gatewayID, principalSub, code, installedBy, nil)
+	in, err := installationdomain.New(gatewayID, principalSub, code, installedBy, config)
 	if err != nil {
 		return nil, err
 	}

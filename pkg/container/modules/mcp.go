@@ -127,14 +127,7 @@ func MCP(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(
-		dialer appmcp.Dialer,
-		creds appmcp.CredentialResolver,
-		manager *cache.TTLMapManager,
-		logger *slog.Logger,
-	) appmcp.Composer {
-		return appmcp.NewComposer(dialer, creds, manager.GetTTLMap(cache.MCPToolsTTLName), logger)
-	}); err != nil {
+	if err := c.Provide(provideComposer); err != nil {
 		return err
 	}
 	if err := c.Provide(appmcp.NewIntrospector); err != nil {
@@ -161,6 +154,29 @@ func MCP(c *container.Container) error {
 		return err
 	}
 	return c.Provide(mcphttp.NewHandler)
+}
+
+// composerParams wires the MCP composer. Installs is optional: present on the
+// full plane (Postgres) and the DB-less data plane (gRPC channel), absent on a
+// SEARCH-only plane. When present it powers the per-user URL-variable resolver so
+// catalog servers whose URL carries placeholders (Snowflake, ServiceNow, …) dial
+// each principal's own upstream.
+type composerParams struct {
+	dig.In
+
+	Dialer   appmcp.Dialer
+	Creds    appmcp.CredentialResolver
+	Manager  *cache.TTLMapManager
+	Logger   *slog.Logger
+	Installs installationdomain.Repository `optional:"true"`
+}
+
+func provideComposer(p composerParams) appmcp.Composer {
+	var opts []appmcp.ComposerOption
+	if p.Installs != nil {
+		opts = append(opts, appmcp.WithURLValues(appmcp.NewURLValueResolver(p.Installs)))
+	}
+	return appmcp.NewComposer(p.Dialer, p.Creds, p.Manager.GetTTLMap(cache.MCPToolsTTLName), p.Logger, opts...)
 }
 
 type connectServiceParams struct {

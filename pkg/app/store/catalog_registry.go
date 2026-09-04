@@ -59,15 +59,38 @@ func catalogMCPTarget(entry catalogdomain.MCPServer) *registrydomain.MCPTarget {
 		transport = registrydomain.MCPTransportStreamableHTTP
 	}
 	target := &registrydomain.MCPTarget{
-		Code:      entry.Code,
-		Source:    registrydomain.MCPSourceRemote,
-		URL:       entry.URL,
-		Transport: transport,
-		Auth:      catalogAuth(entry),
-		Store:     &registrydomain.MCPStoreConfig{Available: true},
+		Code:         entry.Code,
+		Source:       registrydomain.MCPSourceRemote,
+		URL:          entry.URL,
+		Transport:    transport,
+		Auth:         catalogAuth(entry),
+		Store:        &registrydomain.MCPStoreConfig{Available: true},
+		URLVariables: catalogURLVariables(entry.URLVariables),
 	}
 	target.Normalize()
 	return target
+}
+
+// catalogURLVariables copies the catalog entry's per-user URL placeholder
+// declarations onto the registry, so the dial path knows which values to
+// substitute (and which are secret) without re-reading the catalog. The value of
+// each variable is never in the catalog — it is supplied per principal at
+// install time — so only the declaration is carried.
+func catalogURLVariables(vars []catalogdomain.MCPURLVariable) []registrydomain.MCPURLVariable {
+	if len(vars) == 0 {
+		return nil
+	}
+	out := make([]registrydomain.MCPURLVariable, 0, len(vars))
+	for _, v := range vars {
+		out = append(out, registrydomain.MCPURLVariable{
+			Name:        strings.TrimSpace(v.Name),
+			Description: v.Description,
+			Required:    v.Required,
+			Secret:      v.Secret,
+			In:          strings.TrimSpace(v.In),
+		})
+	}
+	return out
 }
 
 // catalogAuth maps a catalog entry's auth hint onto the registry's upstream auth
