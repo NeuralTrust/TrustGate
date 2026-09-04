@@ -145,13 +145,14 @@ func (t *connectionTool) Call(
 	result := map[string]any{
 		"content": []map[string]string{{
 			"type": "text",
-			"text": label + " can be connected at " + connectURL +
-				". Present this link to the user and let them decide whether to open it. Do not claim that it opened automatically.",
+			"text": "Present this link to the user to connect " + label + ": " + linkMarkdown("Connect "+label, connectURL) +
+				". Let them decide whether to open it. Do not claim that it opened automatically.",
 		}},
 		"structuredContent": map[string]string{
-			"connect_url": connectURL,
-			"action":      "user_confirmation_required",
-			"tool":        name,
+			"connect_url":   connectURL,
+			"connect_label": "Connect " + label,
+			"action":        "user_confirmation_required",
+			"tool":          name,
 		},
 	}
 	raw, err := json.Marshal(result)

@@ -243,11 +243,19 @@ func (t *storeTool) install(
 	}
 	if configureURL != "" {
 		structured["configure_url"] = configureURL
+		structured["configure_label"] = "Configure " + res.Name
 	}
 	if connectURL != "" {
 		structured["connect_url"] = connectURL
+		structured["connect_label"] = "Connect " + res.Name
 	}
 	return marshalToolResult(installMessage(res, configureURL, connectURL), structured)
+}
+
+// linkMarkdown renders a URL as a labeled markdown link so the client shows the
+// label (e.g. "Connect Linear") rather than the raw URL.
+func linkMarkdown(label, url string) string {
+	return "[" + label + "](" + url + ")"
 }
 
 // connectLink mints an OAuth connect ticket and builds the hosted connect-page
@@ -371,7 +379,7 @@ func installMessage(res *appstore.InstallResult, configureURL, connectURL string
 	if res.AlreadyInstalled {
 		text := fmt.Sprintf("%s was already installed.", res.Name)
 		if res.RequiresAuth && connectURL != "" {
-			text += fmt.Sprintf(" If its tools aren't working yet, connect your account: %s — present this link to the user.", connectURL)
+			text += fmt.Sprintf(" If its tools aren't working yet, present this link to the user to connect their account: %s", linkMarkdown("Connect "+res.Name, connectURL))
 		}
 		return text
 	}
@@ -385,8 +393,9 @@ func installMessage(res *appstore.InstallResult, configureURL, connectURL string
 	if res.RequiresAuth {
 		if connectURL != "" {
 			// The connect link is the second install step; the tools appear once the
-			// user authorizes their account.
-			text += fmt.Sprintf(" Connect your account to finish: %s — present this link to the user and let them open it. Once they authorize, its tools become available (they may need to refresh the tool list).", connectURL)
+			// user authorizes their account. Present it as a labeled link, not a raw
+			// URL, so the user sees "Connect <server>".
+			text += fmt.Sprintf(" To finish, present this link to the user to connect their account: %s. Once they authorize, its tools become available (they may need to refresh the tool list).", linkMarkdown("Connect "+res.Name, connectURL))
 		} else {
 			text += " It needs your account connected before its tools can be used."
 		}
@@ -418,7 +427,7 @@ func requiresConfigMessage(res *appstore.InstallResult, configureURL string) str
 			strings.Join(secret, ", "))
 	}
 	if configureURL != "" {
-		fmt.Fprintf(&b, " Configure it at %s — present this link to the user and let them decide whether to open it.", configureURL)
+		fmt.Fprintf(&b, " Present this link to the user to enter the values: %s.", linkMarkdown("Configure "+res.Name, configureURL))
 	}
 	return b.String()
 }
