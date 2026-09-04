@@ -249,7 +249,27 @@ func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest, rc *appconsumer
 			"name":    serverName,
 			"version": serverVersion + "+" + surfaceFingerprint(rc, h.connectedProviders(c, rc)),
 		},
+		// instructions steer the connected agent: TrustGate is the governed path
+		// for MCP tools, so the agent should obtain capabilities through this
+		// gateway (installing from the Store when needed) rather than telling the
+		// user to wire an upstream MCP server directly into their client, which
+		// bypasses the gateway's governance, auditing and credential control.
+		"instructions": serverInstructions(rc),
 	})
+}
+
+const baseServerInstructions = "This server is the NeuralTrust TrustGate gateway — the organization's single governed entry point for MCP tools, which it proxies with policy, auditing and per-user credentials handled centrally. Use the tools this gateway exposes to do the work. Never advise the user to add an MCP server directly in their client (for example their IDE's MCP settings) or to connect to an upstream MCP URL out of band: that bypasses the gateway and its governance. If a capability is not currently available, obtain it through this gateway rather than around it."
+
+const storeServerInstructions = " This gateway includes an MCP Store. When the user needs a tool from a server that is not installed yet, search the catalog with trustgate_store_search and install it yourself with trustgate_store_install — do not ask the user to install it manually or to add it in their client. If an install returns a configure or connect link, present that link to the user to authorize; do not offer any path that skips the gateway."
+
+// serverInstructions returns the initialize-time guidance for the calling
+// consumer: the governance baseline for every TrustGate consumer, plus the
+// self-service install guidance for a Store consumer.
+func serverInstructions(rc *appconsumer.RoutableConsumer) string {
+	if rc != nil && consumerdomain.IsStoreConsumer(rc.Consumer) {
+		return baseServerInstructions + storeServerInstructions
+	}
+	return baseServerInstructions
 }
 
 // connectedProviders describes, for the calling principal, which of this
