@@ -269,6 +269,45 @@ var configurePageTmpl = template.Must(template.New("configure").Parse(`<!doctype
 </form>
 </div></body></html>`))
 
+var singleConnectPageTmpl = template.Must(template.New("single-connect").Parse(`<!doctype html>
+<html lang="en" class="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+` + pageFonts + `
+<title>Connect {{.ServerName}} - NeuralTrust TrustGate</title><style>` + pageCSS + `
+.duo{display:flex;align-items:center;justify-content:center;gap:14px;margin:8px 0 20px}
+.duo .logo{width:64px;height:64px;background:var(--bg-surface-hover)}
+.duo .arrow{color:var(--fg-disabled);flex:none}
+.single-actions{display:flex;flex-direction:column;gap:12px;align-items:center;margin-top:4px}
+.single-actions .btn{min-width:220px;height:40px}
+.single-actions form{width:100%;display:flex;justify-content:center}
+</style></head>
+<body><div class="card center">` + brandHeader + `
+<div class="duo">
+  <div class="logo"><img src="/oauth/brands/mcp.svg" alt="" width="40" height="40"></div>
+  <svg class="arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+  <div class="logo"><img src="{{.LogoURL}}" alt="" width="44" height="44" onerror="this.onerror=null;this.src='/oauth/brands/mcp.svg'"></div>
+</div>
+<h1>Connect your {{.ServerName}} account</h1>
+{{if .Found}}
+<p class="sub">TrustGate will connect to {{.ServerName}} on your behalf. Your credentials are stored encrypted in the gateway vault and are never exposed to the agent.</p>
+{{if .Flash}}<div class="flash" role="status"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg><div>{{.Flash}}</div></div>{{end}}
+<div class="single-actions">
+  {{if .NeedsReconnect}}
+    <span class="badge red">Expired</span>
+    <a class="btn primary" href="/oauth/connect/{{.Provider}}?ticket={{.Ticket}}">Reconnect {{.ServerName}}</a>
+  {{else if .Linked}}
+    <span class="badge green">` + badgeCheck + `Connected{{if .AccountRef}} — {{.AccountRef}}{{end}}</span>
+    <form method="post" action="/oauth/disconnect/{{.Provider}}?ticket={{.Ticket}}"><button class="btn ghost-danger" type="submit">Disconnect</button></form>
+  {{else}}
+    <a class="btn primary" href="/oauth/connect/{{.Provider}}?ticket={{.Ticket}}">Connect {{.ServerName}}</a>
+  {{end}}
+  {{if .ResumeURL}}<a class="btn secondary" href="{{.ResumeURL}}">Return to your app</a>{{end}}
+</div>
+{{else}}
+<p class="sub">This server does not need an account connection, or it is not available on this virtual MCP.</p>
+{{if .ResumeURL}}<div class="single-actions"><a class="btn secondary" href="{{.ResumeURL}}">Return to your app</a></div>{{end}}
+{{end}}
+</div></body></html>`))
+
 var apiKeyConnectPageTmpl = template.Must(template.New("api-key-connect").Parse(`<!doctype html>
 <html lang="en" class="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 ` + pageFonts + `
@@ -334,6 +373,11 @@ type connectPageView struct {
 }
 
 func renderConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, flash string, catalog appcatalog.MCPServerCatalog) error {
+	// A ticket minted for one server (e.g. a Store install) shows the focused
+	// single-server page instead of the full provider grid.
+	if strings.TrimSpace(page.Code) != "" {
+		return renderSingleConnectPage(c, page, ticket, flash, catalog)
+	}
 	return renderHTML(c, connectPageTmpl, connectPageView{
 		ConsumerPath: page.ConsumerPath,
 		Flash:        flash,
@@ -341,6 +385,60 @@ func renderConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, flash s
 		Providers:    decorateProviders(catalog, page.Providers),
 		ResumeURL:    template.URL(page.ResumeURL), // #nosec G203 -- gateway-built from the registered redirect_uri, never user input
 	})
+}
+
+type singleConnectView struct {
+	ServerName     string
+	Provider       string
+	Ticket         string
+	Flash          string
+	LogoURL        template.URL
+	Linked         bool
+	AccountRef     string
+	NeedsReconnect bool
+	Found          bool
+	ResumeURL      template.URL
+}
+
+// renderSingleConnectPage renders the focused, one-server connect page. It picks
+// the provider the ticket is scoped to (by catalog code) out of the consumer's
+// providers; if none matches, the server needs no connection (or is not on this
+// consumer) and the page says so.
+func renderSingleConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, flash string, catalog appcatalog.MCPServerCatalog) error {
+	view := singleConnectView{
+		Ticket:    ticket,
+		Flash:     flash,
+		ResumeURL: template.URL(page.ResumeURL), // #nosec G203 -- gateway-built from the registered redirect_uri, never user input
+	}
+	for _, p := range page.Providers {
+		if p.Code != page.Code {
+			continue
+		}
+		decorated := decorateProvider(catalog, p)
+		view.ServerName = decorated.DisplayName
+		view.Provider = p.Provider
+		view.LogoURL = decorated.LogoURL
+		view.Linked = p.Linked
+		view.AccountRef = p.AccountRef
+		view.NeedsReconnect = p.NeedsReconnect
+		view.Found = true
+		break
+	}
+	if view.ServerName == "" {
+		view.ServerName = serverDisplayName(catalog, page.Code)
+	}
+	return renderHTML(c, singleConnectPageTmpl, view)
+}
+
+// serverDisplayName resolves a friendly name for a catalog code for the header
+// when the server is not among the connectable providers.
+func serverDisplayName(catalog appcatalog.MCPServerCatalog, code string) string {
+	if catalog != nil {
+		if server, ok := catalog.GetByCode(code); ok && strings.TrimSpace(server.DisplayName) != "" {
+			return server.DisplayName
+		}
+	}
+	return code
 }
 
 func decorateProviders(catalog appcatalog.MCPServerCatalog, providers []appoauth.ProviderStatus) []providerView {

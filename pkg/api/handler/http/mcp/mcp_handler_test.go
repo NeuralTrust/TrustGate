@@ -227,6 +227,12 @@ func TestHandler_Initialize_EchoesSupportedVersion(t *testing.T) {
 	if result["protocolVersion"] != "2025-03-26" {
 		t.Fatalf("protocolVersion = %v, want echo of requested", result["protocolVersion"])
 	}
+	// The gateway steers the agent to route through TrustGate rather than wiring
+	// upstream MCP servers directly into the client.
+	instructions, _ := result["instructions"].(string)
+	if !strings.Contains(instructions, "TrustGate") || !strings.Contains(instructions, "bypass") {
+		t.Fatalf("initialize must carry governance instructions, got %q", instructions)
+	}
 }
 
 // Claude drops notifications/tools/list_changed from a server that did not

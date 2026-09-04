@@ -156,7 +156,27 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(appmcp.NewRoleScoper); err != nil {
 		return err
 	}
-	return c.Provide(mcphttp.NewHandler)
+	return c.Provide(provideMCPHandler)
+}
+
+// mcpHandlerParams wires the MCP HTTP handler. Installs is optional: when present
+// the notification stream also watches the caller's Store installations, so a
+// self-service install pushes tools/list_changed like connecting an account does.
+type mcpHandlerParams struct {
+	dig.In
+
+	Gateway    *mcphttp.RPCGateway
+	RoleScoper appmcp.RoleScoper
+	Vault      vaultdomain.Repository
+	Installs   installationdomain.Repository `optional:"true"`
+}
+
+func provideMCPHandler(p mcpHandlerParams) *mcphttp.Handler {
+	var opts []mcphttp.HandlerOption
+	if p.Installs != nil {
+		opts = append(opts, mcphttp.WithInstallations(p.Installs))
+	}
+	return mcphttp.NewHandler(p.Gateway, p.RoleScoper, p.Vault, opts...)
 }
 
 // composerParams wires the MCP composer. Installs is optional: present on the
@@ -220,6 +240,9 @@ type rpcGatewayParams struct {
 	// URL variables. Nil on planes without the installation/vault stores; then the
 	// install tool reports the needed variables but offers no link.
 	Configure appoauth.ConfigureService `optional:"true"`
+	// Connect mints the OAuth connect link the install returns for a server that
+	// needs the user's own account (the install's second step).
+	Connect appoauth.ConnectService `optional:"true"`
 }
 
 func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
@@ -249,7 +272,11 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 	if p.Configure != nil {
 		configure = p.Configure
 	}
-	store, err := appmcp.NewStoreToolWithInstaller(catalog, installer, registries, configure)
+	var connect appmcp.ServerConnectGateway
+	if p.Connect != nil {
+		connect = p.Connect
+	}
+	store, err := appmcp.NewStoreToolWithInstaller(catalog, installer, registries, configure, connect)
 	if err != nil {
 		return nil, err
 	}

@@ -82,7 +82,11 @@ func (h *Handler) Stream(c *fiber.Ctx) error {
 	snapshot := func() string {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		return strings.Join(h.connectionSnapshot(ctx, rc, principal), "|")
+		// Watch both the caller's connected accounts and their Store installations,
+		// so connecting an account and installing a server each push a refresh.
+		parts := h.connectionSnapshot(ctx, rc, principal)
+		parts = append(parts, h.installSnapshot(ctx, rc, principal)...)
+		return strings.Join(parts, "|")
 	}
 
 	c.Set(fiber.HeaderContentType, eventStreamContentType)
