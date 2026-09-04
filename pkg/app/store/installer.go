@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
@@ -112,35 +111,6 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 	reg, err := findRegistryByCode(ctx, i.registries, in.GatewayID, code)
 	if err != nil {
 		return nil, err
-	}
-
-	// TEMP DEBUG: why does an install resolve to pending? Logs the gateway the
-	// install runs against, every registry code visible on it in the data-plane
-	// snapshot, and the matched registry's Store shelf state.
-	if items, _, lerr := i.registries.List(ctx, registrydomain.ListFilter{
-		GatewayID: in.GatewayID, Page: 1, Size: registryListPageSize,
-	}); lerr == nil {
-		codes := make([]string, 0, len(items))
-		for _, r := range items {
-			if r != nil && r.MCPTarget != nil {
-				codes = append(codes, r.MCPTarget.Code)
-			}
-		}
-		var matchedAvailable, matchedApproval bool
-		if reg != nil && reg.MCPTarget != nil {
-			matchedAvailable = reg.MCPTarget.StoreAvailable()
-			matchedApproval = reg.MCPTarget.StoreRequiresApproval()
-		}
-		slog.Default().Info("TEMP store-install debug",
-			slog.String("gateway_id", in.GatewayID.String()),
-			slog.String("install_code", code),
-			slog.Int("registry_count", len(items)),
-			slog.String("registry_codes", strings.Join(codes, ",")),
-			slog.Bool("matched", reg != nil),
-			slog.Bool("matched_available", matchedAvailable),
-			slog.Bool("matched_requires_approval", matchedApproval),
-			slog.String("principal_groups", strings.Join(in.Groups, ",")),
-		)
 	}
 
 	status, err := i.decideStatus(reg, in.Groups)
