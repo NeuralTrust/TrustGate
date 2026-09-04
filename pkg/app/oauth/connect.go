@@ -25,12 +25,23 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 )
 
 var _ ConnectService = (*connectService)(nil)
+
+// registryLister finds a gateway's registries so the connect flow can attach the
+// installed registry a Store-scoped ticket points at (the synthetic Store
+// consumer carries no registries of its own). registrydomain.Repository satisfies
+// it. May be nil, in which case Store-scoped connect is unavailable.
+type RegistryLister interface {
+	List(ctx context.Context, filter registrydomain.ListFilter) ([]*registrydomain.Registry, int, error)
+}
+
+const storeRegistryScanPageSize = 500
 
 type connectService struct {
 	store       ConnectStore
@@ -42,6 +53,7 @@ type connectService struct {
 	sharedOAuth mcpoauth.Provider
 	userinfo    UserInfoClient
 	catalog     authCatalog
+	registries  RegistryLister
 }
 
 type authCatalog interface {
@@ -58,6 +70,7 @@ func NewConnectService(
 	sharedOAuth mcpoauth.Provider,
 	userinfo UserInfoClient,
 	catalog authCatalog,
+	registries RegistryLister,
 ) ConnectService {
 	return &connectService{
 		store:       store,
@@ -69,6 +82,7 @@ func NewConnectService(
 		sharedOAuth: sharedOAuth,
 		userinfo:    userinfo,
 		catalog:     catalog,
+		registries:  registries,
 	}
 }
 
@@ -338,6 +352,14 @@ func baseRoutable(
 	if err != nil {
 		return ids.GatewayID{}, nil, nil, err
 	}
+	// The MCP Store consumer is synthetic (never persisted), so it is not in the
+	// consumer data and MatchPath would report it "no longer exists". Build it the
+	// same way the request path does; its installed registries are attached by the
+	// caller (see connectService.routable) since the persisted data has none.
+	if consumerdomain.IsStoreSlug(appconsumer.SlugFromMCPPath(ticket.ConsumerPath)) {
+		rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gatewayID)}
+		return gatewayID, data, rc, nil
+	}
 	rc, ok := data.MatchPath(ticket.ConsumerPath)
 	if !ok {
 		return ids.GatewayID{}, nil, nil, fmt.Errorf("oauth connect: consumer path %s no longer exists", ticket.ConsumerPath)
@@ -350,6 +372,14 @@ func (s *connectService) routable(ctx context.Context, ticket *ConnectTicket) (i
 	if err != nil {
 		return ids.GatewayID{}, nil, nil, err
 	}
+	// A Store-scoped ticket points at one installed server by catalog code, but the
+	// synthetic Store consumer carries no registries — attach the materialised
+	// registry for that code so the forwarded-auth (OAuth) provider resolves.
+	if consumerdomain.IsStoreConsumer(rc.Consumer) && strings.TrimSpace(ticket.Code) != "" {
+		if reg := s.storeRegistry(ctx, gatewayID, ticket.Code); reg != nil {
+			rc.Registries = []*registrydomain.Registry{reg}
+		}
+	}
 	if apiKeyConnectTicket(ticket) &&
 		(ticket.Providers == nil ||
 			ticket.ConsumerID == "" ||
@@ -358,6 +388,30 @@ func (s *connectService) routable(ctx context.Context, ticket *ConnectTicket) (i
 		return ids.GatewayID{}, nil, nil, ErrTicketNotFound
 	}
 	return gatewayID, data, rc, nil
+}
+
+// storeRegistry finds the materialised registry for a catalog code on a gateway,
+// so a Store-scoped connect can resolve the one server it targets. Returns nil
+// when no registry lister is wired or none matches.
+func (s *connectService) storeRegistry(ctx context.Context, gatewayID ids.GatewayID, code string) *registrydomain.Registry {
+	if s.registries == nil {
+		return nil
+	}
+	items, _, err := s.registries.List(ctx, registrydomain.ListFilter{
+		GatewayID: gatewayID,
+		Page:      1,
+		Size:      storeRegistryScanPageSize,
+	})
+	if err != nil {
+		return nil
+	}
+	code = strings.TrimSpace(code)
+	for _, reg := range items {
+		if reg != nil && reg.MCPTarget != nil && reg.MCPTarget.Code == code {
+			return reg
+		}
+	}
+	return nil
 }
 
 func apiKeyConnectTicket(ticket *ConnectTicket) bool {
