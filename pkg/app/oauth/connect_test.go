@@ -196,6 +196,7 @@ func connectFixture(t *testing.T, providerTokenURL string) (oauth.ConnectService
 		nil,
 		nil,
 		nil,
+		nil,
 	)
 	return svc, vault, gw
 }
@@ -246,6 +247,7 @@ func TestConnectService_SharedGoogleWorkspaceClient(t *testing.T) {
 		infraoauth.NewUpstreamRegistrar(store, nil),
 		discardConnectAuditor(),
 		mcpoauth.NewGoogleWorkspace("nt-client", "nt-secret"),
+		nil,
 		nil,
 		nil,
 	)
@@ -318,6 +320,7 @@ func TestConnectService_SharedGoogleWorkspacePreservesBYO(t *testing.T) {
 		mcpoauth.NewGoogleWorkspace("nt-client", "nt-secret"),
 		nil,
 		nil,
+		nil,
 	)
 	refreshCfg, err := svc.RefreshAuth(context.Background(), gw, reg)
 	if err != nil {
@@ -371,6 +374,7 @@ func TestConnectService_OverlaysCatalogGmailModifyScope(t *testing.T) {
 		nil,
 		nil,
 		catalog,
+		nil,
 	)
 	ctx := context.Background()
 	ticket, err := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
@@ -578,6 +582,7 @@ func TestConnectService_AutoRegistrationFlow(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 	)
 	ctx := context.Background()
 
@@ -673,6 +678,7 @@ func TestConnectService_AutoRegistrationUpstreamNotDiscoverable(t *testing.T) {
 		infraoauth.NewProviderClient(nil),
 		infraoauth.NewUpstreamRegistrar(store, nil),
 		discardConnectAuditor(),
+		nil,
 		nil,
 		nil,
 		nil,
@@ -824,6 +830,89 @@ func TestConnectService_ProviderDenialRelaysTicket(t *testing.T) {
 	}
 	if len(vault.creds) != 0 {
 		t.Fatal("denied consent stored a credential")
+	}
+}
+
+// stubRegistryLister returns a fixed set of registries for List, standing in for
+// registrydomain.Repository so the Store-scoped connect flow can find the
+// installed registry a ticket's catalog code points at.
+type stubRegistryLister struct {
+	items []*registrydomain.Registry
+}
+
+func (s *stubRegistryLister) List(
+	context.Context,
+	registrydomain.ListFilter,
+) ([]*registrydomain.Registry, int, error) {
+	return s.items, len(s.items), nil
+}
+
+// A Store-scoped connect ticket carries only the catalog code; the synthetic
+// Store consumer is never persisted and holds no registries. The connect flow
+// must rebuild that consumer and attach the materialised registry for the code,
+// so forwarded-auth (OAuth) resolves instead of failing with
+// "consumer path /store/mcp no longer exists".
+func TestConnectService_StoreScopedTicketResolvesMaterialisedRegistry(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	reg, err := registrydomain.NewMCPRegistry(gw, "notion-mcp", "", &registrydomain.MCPTarget{
+		Code: "com.notion/mcp",
+		URL:  "https://mcp.notion.com/mcp",
+		Auth: &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     "com.notion/mcp",
+			Registration: registrydomain.RegistrationManual,
+			ClientID:     "cid",
+			ClientSecret: "csecret",
+			AuthorizeURL: "https://mcp.notion.com/authorize",
+			TokenURL:     "https://mcp.notion.com/token",
+			Scopes:       []string{"read"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	// The persisted consumer data holds no Store consumer: the Store is synthetic.
+	data := appconsumer.NewData(gw, nil)
+	store := newMemConnectStore()
+	svc := oauth.NewConnectService(
+		store,
+		&memVaultRepo{},
+		&stubDataFinder{data: data},
+		infraoauth.NewProviderClient(nil),
+		infraoauth.NewUpstreamRegistrar(store, nil),
+		discardConnectAuditor(),
+		nil,
+		nil,
+		nil,
+		&stubRegistryLister{items: []*registrydomain.Registry{reg}},
+	)
+	ctx := context.Background()
+	storePath := appconsumer.MCPPath(consumerdomain.StoreSlug)
+	ticket, err := svc.CreateServerTicket(ctx, gw, "alice", storePath, "com.notion/mcp")
+	if err != nil {
+		t.Fatalf("CreateServerTicket: %v", err)
+	}
+
+	// Page resolves the synthetic Store consumer and surfaces the code's provider.
+	page, err := svc.Page(ctx, ticket)
+	if err != nil {
+		t.Fatalf("Page: %v", err)
+	}
+	if page.Code != "com.notion/mcp" {
+		t.Fatalf("page code = %q, want com.notion/mcp", page.Code)
+	}
+	if len(page.Providers) != 1 || page.Providers[0].Provider != "com.notion/mcp" {
+		t.Fatalf("page providers = %+v, want single com.notion/mcp", page.Providers)
+	}
+
+	// Start mints an authorize URL, proving forwarded auth resolves end to end.
+	location, err := svc.Start(ctx, "https://gw.example.com", ticket, "com.notion/mcp")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if !strings.HasPrefix(location, "https://mcp.notion.com/authorize") {
+		t.Fatalf("authorize url = %q, want notion authorize", location)
 	}
 }
 
