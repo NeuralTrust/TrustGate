@@ -84,7 +84,10 @@ func (h *Handler) Stream(c *fiber.Ctx) error {
 		defer cancel()
 		// Watch both the caller's connected accounts and their Store installations,
 		// so connecting an account and installing a server each push a refresh.
-		parts := h.connectionSnapshot(ctx, rc, principal)
+		// connectionWatchSnapshot (not connectionSnapshot) is used deliberately: it
+		// does not filter by the frozen consumer's forwarded providers, so a server
+		// installed after the stream opened still pushes a refresh when connected.
+		parts := h.connectionWatchSnapshot(ctx, rc, principal)
 		parts = append(parts, h.installSnapshot(ctx, rc, principal)...)
 		return strings.Join(parts, "|")
 	}
