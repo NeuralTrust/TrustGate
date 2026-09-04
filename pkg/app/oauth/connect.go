@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -79,6 +80,15 @@ func (s *connectService) CreateTicket(ctx context.Context, gatewayID ids.Gateway
 	})
 }
 
+func (s *connectService) CreateServerTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code string) (string, error) {
+	return s.mintTicket(ctx, ConnectTicket{
+		GatewayID:    gatewayID.String(),
+		PrincipalSub: principalSub,
+		ConsumerPath: consumerPath,
+		Code:         strings.TrimSpace(code),
+	})
+}
+
 func (s *connectService) CreateAPIKeyTicket(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
@@ -130,7 +140,12 @@ func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPag
 	if err != nil {
 		return nil, err
 	}
-	return &ConnectPage{ConsumerPath: ticket.ConsumerPath, ResumeURL: ticket.ResumeURL, Providers: providers}, nil
+	return &ConnectPage{
+		ConsumerPath: ticket.ConsumerPath,
+		ResumeURL:    ticket.ResumeURL,
+		Providers:    providers,
+		Code:         ticket.Code,
+	}, nil
 }
 
 func (s *connectService) Statuses(
