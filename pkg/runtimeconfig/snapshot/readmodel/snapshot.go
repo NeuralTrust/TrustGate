@@ -357,6 +357,16 @@ func (s *Snapshot) RegistriesByIDs(gatewayID ids.GatewayID, registryIDs []ids.Re
 	return out
 }
 
+// RegistryGatewayCounts returns, for debugging, how many registries each gateway
+// has in the snapshot (gateway id string → count). TEMP.
+func (s *Snapshot) RegistryGatewayCounts() map[string]int {
+	out := make(map[string]int)
+	for i := range s.data.Registries {
+		out[s.data.Registries[i].GatewayID.String()]++
+	}
+	return out
+}
+
 // RegistriesByGateway returns every registry attached to a gateway, in snapshot
 // order (the compiled read side for the Store installer/scoper's List). The
 // returned pointers alias the snapshot; callers that mutate must clone first.
