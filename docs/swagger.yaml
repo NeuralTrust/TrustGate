@@ -2513,6 +2513,52 @@ paths:
       summary: Build version
       tags:
       - system
+  /__diagnostics/gateways/{gateway_id}/registries/test-connection:
+    post:
+      consumes:
+      - application/json
+      description: 'Runs the registry connection probe from this data plane''s own
+        network, so the result reflects what serving traffic will actually reach.
+        Authorized by a control-plane-minted diagnostics token bound to the gateway.
+        Accepts the same body as the admin test-connection endpoint: a stored registry
+        (registry_id, which must have synced to this plane — stage "not_synced" means
+        retry) or an inline candidate (provider + auth).'
+      parameters:
+      - description: Control-plane-minted diagnostics JWT
+        in: header
+        name: X-AG-Diagnostics-Token
+        required: true
+        type: string
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Connection to test
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.TestConnectionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.TestConnectionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      summary: Test a backend connection from the data plane
+      tags:
+      - diagnostics
   /{consumer_slug}/v1/chat/completions:
     post:
       consumes:

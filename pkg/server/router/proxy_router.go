@@ -16,16 +16,22 @@ package router
 
 import (
 	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
+	diagnosticshttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/diagnostics"
 	proxyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/proxy"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/gofiber/fiber/v2"
 )
+
+// DiagnosticsTestConnectionPath runs the registry connection probe from this
+// data plane's own network, authorized by a control-plane diagnostics token.
+const DiagnosticsTestConnectionPath = "/__diagnostics/gateways/:gateway_id/registries/test-connection"
 
 type proxyRouter struct {
 	middlewareTransport *middleware.Transport
 	opsMetrics          *middleware.OpsMetricsMiddleware
 	healthHandler       *apihandler.HealthHandler
 	proxyHandler        *proxyhttp.ForwardedHandler
+	diagnostics         *diagnosticshttp.TestConnectionHandler
 }
 
 func NewProxyRouter(
@@ -33,12 +39,14 @@ func NewProxyRouter(
 	healthHandler *apihandler.HealthHandler,
 	proxyHandler *proxyhttp.ForwardedHandler,
 	opsMetrics *middleware.OpsMetricsMiddleware,
+	diagnostics *diagnosticshttp.TestConnectionHandler,
 ) ServerRouter {
 	return &proxyRouter{
 		middlewareTransport: middlewareTransport,
 		opsMetrics:          opsMetrics,
 		healthHandler:       healthHandler,
 		proxyHandler:        proxyHandler,
+		diagnostics:         diagnostics,
 	}
 }
 
@@ -50,6 +58,9 @@ func (r *proxyRouter) BuildRoutes(app *fiber.App) error {
 	app.Get(HealthPath, r.healthHandler.Liveness)
 	app.Get(HealthPathAlias, r.healthHandler.Liveness)
 	app.Get(ReadyPath, r.healthHandler.Readiness)
+	// Registered before the transport like the probes: the handler carries its
+	// own token auth, and the consumer auth chain would reject it otherwise.
+	app.Post(DiagnosticsTestConnectionPath, r.diagnostics.Handle)
 
 	installMiddlewares(app, r.middlewareTransport)
 	app.All("/*", r.proxyHandler.Handle)
