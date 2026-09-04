@@ -92,6 +92,25 @@ func TestRPCGateway_Store_ListsAndCallsSearch(t *testing.T) {
 	require.Contains(t, string(called.(json.RawMessage)), `"github"`)
 }
 
+// TestRPCGateway_Store_ConsentPendingStillListsMetaTools guards the regression:
+// an installed-but-unconnected server makes ListTools return a consent-required
+// error, which must NOT hide the Store meta-tools — otherwise the user cannot
+// even reach install/search to fix it.
+func TestRPCGateway_Store_ConsentPendingStillListsMetaTools(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().ListTools(mock.Anything, mock.Anything).
+		Return(nil, &appmcp.ConsentRequiredError{Provider: "com.notion/mcp", Ticket: "abc", Path: "/store/mcp"}).Once()
+	g := mcphttp.NewRPCGatewayWithMetaTools(composer, noopRunner(), nil, nil, storeToolForDispatch(t))
+
+	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]())}
+
+	listed, err := g.Dispatch(context.Background(), rc, "tools/list", nil)
+	require.NoError(t, err) // the consent error must not fail the whole listing
+	names := toolNames(listed.(map[string]any)["tools"].([]appmcp.Tool))
+	require.Contains(t, names, appmcp.StoreSearchToolName)
+}
+
 func TestRPCGateway_Store_ScoperSurfacesInstalledTools(t *testing.T) {
 	t.Parallel()
 	installedReg := &registrydomain.Registry{
