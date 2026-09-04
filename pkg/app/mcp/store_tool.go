@@ -224,9 +224,11 @@ func (t *storeTool) install(
 	}
 	// A server that needs the user's own account gets the OAuth connect link right
 	// in the install result — the second step of the install, so the user does not
-	// have to hunt for it in their client.
+	// have to hunt for it in their client. Offered even when the server was already
+	// installed: "installed" is not "connected", so a re-install of an unconnected
+	// server must still surface the link.
 	connectURL := ""
-	if res.RequiresAuth && !res.AlreadyInstalled {
+	if res.RequiresAuth {
 		connectURL = t.connectLink(ctx, rc, baseURL, res.Code)
 	}
 	structured := map[string]any{
@@ -367,7 +369,11 @@ func principalGroups(principal *identity.Principal) []string {
 
 func installMessage(res *appstore.InstallResult, configureURL, connectURL string) string {
 	if res.AlreadyInstalled {
-		return fmt.Sprintf("%s was already installed.", res.Name)
+		text := fmt.Sprintf("%s was already installed.", res.Name)
+		if res.RequiresAuth && connectURL != "" {
+			text += fmt.Sprintf(" If its tools aren't working yet, connect your account: %s — present this link to the user.", connectURL)
+		}
+		return text
 	}
 	if res.RequiresConfig {
 		return requiresConfigMessage(res, configureURL)
