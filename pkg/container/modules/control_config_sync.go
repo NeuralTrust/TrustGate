@@ -20,6 +20,7 @@ import (
 
 	appsnapshot "github.com/NeuralTrust/TrustGate/pkg/app/configsnapshot"
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
+	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
@@ -109,8 +110,8 @@ func ControlConfigSync(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo installationdomain.Repository, logger *slog.Logger) snapshotpb.StoreInstallationsServer {
-		return configsyncgrpc.NewInstallationsService(repo, logger)
+	if err := c.Provide(func(repo installationdomain.Repository, ensurer appstore.RegistryEnsurer, logger *slog.Logger) snapshotpb.StoreInstallationsServer {
+		return configsyncgrpc.NewInstallationsService(repo, ensurer, logger)
 	}); err != nil {
 		return err
 	}

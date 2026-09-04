@@ -170,6 +170,7 @@ func (t *storeTool) install(
 		Code:         args.Code,
 		InstalledBy:  principal.Subject,
 		Groups:       principalGroups(principal),
+		OpenMode:     t.storeMode(ctx) == gatewaydomain.StoreModeOpen,
 	})
 	if err != nil {
 		return nil, err

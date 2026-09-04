@@ -37,6 +37,23 @@ func catalogRegistry(entry catalogdomain.MCPServer, gatewayID ids.GatewayID) (*r
 	if err != nil {
 		return nil, err
 	}
+	now := time.Now().UTC()
+	return &registrydomain.Registry{
+		ID:        id,
+		GatewayID: gatewayID,
+		Name:      displayName(entry, entry.Code),
+		Type:      registrydomain.TypeMCP,
+		Enabled:   true,
+		MCPTarget: catalogMCPTarget(entry),
+		CreatedAt: now,
+		UpdatedAt: now,
+	}, nil
+}
+
+// catalogMCPTarget builds the shared mcp_target for a catalog entry: URL (or its
+// template), transport, auth mode, and an available Store shelf. Secrets and
+// per-user URL variable values are never in the catalog, so they stay empty.
+func catalogMCPTarget(entry catalogdomain.MCPServer) *registrydomain.MCPTarget {
 	transport := registrydomain.MCPTransport(strings.TrimSpace(entry.Transport))
 	if transport == "" {
 		transport = registrydomain.MCPTransportStreamableHTTP
@@ -50,17 +67,7 @@ func catalogRegistry(entry catalogdomain.MCPServer, gatewayID ids.GatewayID) (*r
 		Store:     &registrydomain.MCPStoreConfig{Available: true},
 	}
 	target.Normalize()
-	now := time.Now().UTC()
-	return &registrydomain.Registry{
-		ID:        id,
-		GatewayID: gatewayID,
-		Name:      displayName(entry, entry.Code),
-		Type:      registrydomain.TypeMCP,
-		Enabled:   true,
-		MCPTarget: target,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}, nil
+	return target
 }
 
 // catalogAuth maps a catalog entry's auth hint onto the registry's upstream auth

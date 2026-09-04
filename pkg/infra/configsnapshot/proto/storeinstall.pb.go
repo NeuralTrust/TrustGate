@@ -529,6 +529,94 @@ func (*DeleteInstallationResponse) Descriptor() ([]byte, []int) {
 	return file_storeinstall_proto_rawDescGZIP(), []int{8}
 }
 
+type EnsureRegistryRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	GatewayId     string                 `protobuf:"bytes,1,opt,name=gateway_id,json=gatewayId,proto3" json:"gateway_id,omitempty"`
+	CatalogCode   string                 `protobuf:"bytes,2,opt,name=catalog_code,json=catalogCode,proto3" json:"catalog_code,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EnsureRegistryRequest) Reset() {
+	*x = EnsureRegistryRequest{}
+	mi := &file_storeinstall_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EnsureRegistryRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EnsureRegistryRequest) ProtoMessage() {}
+
+func (x *EnsureRegistryRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_storeinstall_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EnsureRegistryRequest.ProtoReflect.Descriptor instead.
+func (*EnsureRegistryRequest) Descriptor() ([]byte, []int) {
+	return file_storeinstall_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *EnsureRegistryRequest) GetGatewayId() string {
+	if x != nil {
+		return x.GatewayId
+	}
+	return ""
+}
+
+func (x *EnsureRegistryRequest) GetCatalogCode() string {
+	if x != nil {
+		return x.CatalogCode
+	}
+	return ""
+}
+
+type EnsureRegistryResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EnsureRegistryResponse) Reset() {
+	*x = EnsureRegistryResponse{}
+	mi := &file_storeinstall_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EnsureRegistryResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EnsureRegistryResponse) ProtoMessage() {}
+
+func (x *EnsureRegistryResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_storeinstall_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EnsureRegistryResponse.ProtoReflect.Descriptor instead.
+func (*EnsureRegistryResponse) Descriptor() ([]byte, []int) {
+	return file_storeinstall_proto_rawDescGZIP(), []int{10}
+}
+
 var File_storeinstall_proto protoreflect.FileDescriptor
 
 const file_storeinstall_proto_rawDesc = "" +
@@ -571,12 +659,18 @@ const file_storeinstall_proto_rawDesc = "" +
 	"gateway_id\x18\x01 \x01(\tR\tgatewayId\x12#\n" +
 	"\rprincipal_sub\x18\x02 \x01(\tR\fprincipalSub\x12!\n" +
 	"\fcatalog_code\x18\x03 \x01(\tR\vcatalogCode\"\x1c\n" +
-	"\x1aDeleteInstallationResponse2\xf7\x02\n" +
+	"\x1aDeleteInstallationResponse\"Y\n" +
+	"\x15EnsureRegistryRequest\x12\x1d\n" +
+	"\n" +
+	"gateway_id\x18\x01 \x01(\tR\tgatewayId\x12!\n" +
+	"\fcatalog_code\x18\x02 \x01(\tR\vcatalogCode\"\x18\n" +
+	"\x16EnsureRegistryResponse2\xd0\x03\n" +
 	"\x12StoreInstallations\x12W\n" +
 	"\x06Upsert\x12%.snapshotpb.UpsertInstallationRequest\x1a&.snapshotpb.UpsertInstallationResponse\x12Q\n" +
 	"\x04Find\x12#.snapshotpb.FindInstallationRequest\x1a$.snapshotpb.FindInstallationResponse\x12\\\n" +
 	"\x0fListByPrincipal\x12\".snapshotpb.ListByPrincipalRequest\x1a%.snapshotpb.ListInstallationsResponse\x12W\n" +
-	"\x06Delete\x12%.snapshotpb.DeleteInstallationRequest\x1a&.snapshotpb.DeleteInstallationResponseBLZJgithub.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto;snapshotpbb\x06proto3"
+	"\x06Delete\x12%.snapshotpb.DeleteInstallationRequest\x1a&.snapshotpb.DeleteInstallationResponse\x12W\n" +
+	"\x0eEnsureRegistry\x12!.snapshotpb.EnsureRegistryRequest\x1a\".snapshotpb.EnsureRegistryResponseBLZJgithub.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto;snapshotpbb\x06proto3"
 
 var (
 	file_storeinstall_proto_rawDescOnce sync.Once
@@ -590,7 +684,7 @@ func file_storeinstall_proto_rawDescGZIP() []byte {
 	return file_storeinstall_proto_rawDescData
 }
 
-var file_storeinstall_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_storeinstall_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_storeinstall_proto_goTypes = []any{
 	(*Installation)(nil),               // 0: snapshotpb.Installation
 	(*UpsertInstallationRequest)(nil),  // 1: snapshotpb.UpsertInstallationRequest
@@ -601,26 +695,30 @@ var file_storeinstall_proto_goTypes = []any{
 	(*ListInstallationsResponse)(nil),  // 6: snapshotpb.ListInstallationsResponse
 	(*DeleteInstallationRequest)(nil),  // 7: snapshotpb.DeleteInstallationRequest
 	(*DeleteInstallationResponse)(nil), // 8: snapshotpb.DeleteInstallationResponse
-	nil,                                // 9: snapshotpb.Installation.ConfigEntry
+	(*EnsureRegistryRequest)(nil),      // 9: snapshotpb.EnsureRegistryRequest
+	(*EnsureRegistryResponse)(nil),     // 10: snapshotpb.EnsureRegistryResponse
+	nil,                                // 11: snapshotpb.Installation.ConfigEntry
 }
 var file_storeinstall_proto_depIdxs = []int32{
-	9, // 0: snapshotpb.Installation.config:type_name -> snapshotpb.Installation.ConfigEntry
-	0, // 1: snapshotpb.UpsertInstallationRequest.installation:type_name -> snapshotpb.Installation
-	0, // 2: snapshotpb.FindInstallationResponse.installation:type_name -> snapshotpb.Installation
-	0, // 3: snapshotpb.ListInstallationsResponse.installations:type_name -> snapshotpb.Installation
-	1, // 4: snapshotpb.StoreInstallations.Upsert:input_type -> snapshotpb.UpsertInstallationRequest
-	3, // 5: snapshotpb.StoreInstallations.Find:input_type -> snapshotpb.FindInstallationRequest
-	5, // 6: snapshotpb.StoreInstallations.ListByPrincipal:input_type -> snapshotpb.ListByPrincipalRequest
-	7, // 7: snapshotpb.StoreInstallations.Delete:input_type -> snapshotpb.DeleteInstallationRequest
-	2, // 8: snapshotpb.StoreInstallations.Upsert:output_type -> snapshotpb.UpsertInstallationResponse
-	4, // 9: snapshotpb.StoreInstallations.Find:output_type -> snapshotpb.FindInstallationResponse
-	6, // 10: snapshotpb.StoreInstallations.ListByPrincipal:output_type -> snapshotpb.ListInstallationsResponse
-	8, // 11: snapshotpb.StoreInstallations.Delete:output_type -> snapshotpb.DeleteInstallationResponse
-	8, // [8:12] is the sub-list for method output_type
-	4, // [4:8] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	11, // 0: snapshotpb.Installation.config:type_name -> snapshotpb.Installation.ConfigEntry
+	0,  // 1: snapshotpb.UpsertInstallationRequest.installation:type_name -> snapshotpb.Installation
+	0,  // 2: snapshotpb.FindInstallationResponse.installation:type_name -> snapshotpb.Installation
+	0,  // 3: snapshotpb.ListInstallationsResponse.installations:type_name -> snapshotpb.Installation
+	1,  // 4: snapshotpb.StoreInstallations.Upsert:input_type -> snapshotpb.UpsertInstallationRequest
+	3,  // 5: snapshotpb.StoreInstallations.Find:input_type -> snapshotpb.FindInstallationRequest
+	5,  // 6: snapshotpb.StoreInstallations.ListByPrincipal:input_type -> snapshotpb.ListByPrincipalRequest
+	7,  // 7: snapshotpb.StoreInstallations.Delete:input_type -> snapshotpb.DeleteInstallationRequest
+	9,  // 8: snapshotpb.StoreInstallations.EnsureRegistry:input_type -> snapshotpb.EnsureRegistryRequest
+	2,  // 9: snapshotpb.StoreInstallations.Upsert:output_type -> snapshotpb.UpsertInstallationResponse
+	4,  // 10: snapshotpb.StoreInstallations.Find:output_type -> snapshotpb.FindInstallationResponse
+	6,  // 11: snapshotpb.StoreInstallations.ListByPrincipal:output_type -> snapshotpb.ListInstallationsResponse
+	8,  // 12: snapshotpb.StoreInstallations.Delete:output_type -> snapshotpb.DeleteInstallationResponse
+	10, // 13: snapshotpb.StoreInstallations.EnsureRegistry:output_type -> snapshotpb.EnsureRegistryResponse
+	9,  // [9:14] is the sub-list for method output_type
+	4,  // [4:9] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_storeinstall_proto_init() }
@@ -634,7 +732,7 @@ func file_storeinstall_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_storeinstall_proto_rawDesc), len(file_storeinstall_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   10,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

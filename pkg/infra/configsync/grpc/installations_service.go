@@ -26,24 +26,37 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// RegistryEnsurer materialises the shared registry for a catalog code on the
+// control plane. It is defined here (rather than imported from the app layer) so
+// this infra package depends only on the domain; the app-layer ensurer satisfies
+// it structurally. May be nil, in which case EnsureRegistry reports Unimplemented.
+type RegistryEnsurer interface {
+	Ensure(ctx context.Context, gatewayID ids.GatewayID, code string) error
+}
+
 // InstallationsService is the control-plane end of the StoreInstallations
-// channel: it persists the per-principal Store install state on behalf of the
-// DB-less data plane, delegating to the same installation repository the admin
-// plane writes through. The data plane computes the install decision (catalog +
-// registry governance) locally; only the durable write/read crosses to here.
+// channel: it persists the Store's durable state on behalf of the DB-less data
+// plane — the per-principal install rows (through the same installation
+// repository the admin plane writes through) and, for self-service, the shared
+// registry materialised from the catalog (through the ensurer). The data plane
+// computes the install decision (catalog + registry governance) locally; only
+// the writes it cannot make itself cross to here.
 type InstallationsService struct {
 	snapshotpb.UnimplementedStoreInstallationsServer
-	repo   installationdomain.Repository
-	logger *slog.Logger
+	repo    installationdomain.Repository
+	ensurer RegistryEnsurer
+	logger  *slog.Logger
 }
 
 // NewInstallationsService builds the StoreInstallations server over the live
-// installation repository.
-func NewInstallationsService(repo installationdomain.Repository, logger *slog.Logger) *InstallationsService {
+// installation repository and the registry ensurer. ensurer may be nil (a
+// deployment without self-service materialisation), in which case EnsureRegistry
+// reports Unimplemented rather than materialising a registry.
+func NewInstallationsService(repo installationdomain.Repository, ensurer RegistryEnsurer, logger *slog.Logger) *InstallationsService {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &InstallationsService{repo: repo, logger: logger}
+	return &InstallationsService{repo: repo, ensurer: ensurer, logger: logger}
 }
 
 // Upsert persists one installation record minted by the data plane.
@@ -118,4 +131,26 @@ func (s *InstallationsService) Delete(
 		return nil, status.Errorf(codes.Internal, "store installations: delete: %v", err)
 	}
 	return &snapshotpb.DeleteInstallationResponse{}, nil
+}
+
+// EnsureRegistry materialises the shared registry for a catalog code on the
+// control plane's database, on behalf of a self-service install on the data
+// plane. It is idempotent: the ensurer returns cleanly when the registry already
+// exists. The new registry propagates back to the data plane through the normal
+// ConfigSync snapshot.
+func (s *InstallationsService) EnsureRegistry(
+	ctx context.Context,
+	req *snapshotpb.EnsureRegistryRequest,
+) (*snapshotpb.EnsureRegistryResponse, error) {
+	if s.ensurer == nil {
+		return nil, status.Error(codes.Unimplemented, "store installations: registry materialisation is not available here")
+	}
+	gatewayID, err := ids.Parse[ids.GatewayKind](req.GetGatewayId())
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "store installations: ensure registry: parse gateway id: %v", err)
+	}
+	if err := s.ensurer.Ensure(ctx, gatewayID, req.GetCatalogCode()); err != nil {
+		return nil, status.Errorf(codes.Internal, "store installations: ensure registry: %v", err)
+	}
+	return &snapshotpb.EnsureRegistryResponse{}, nil
 }

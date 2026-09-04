@@ -70,35 +70,44 @@ type Installer interface {
 }
 
 // InstallRequest carries everything an install decision needs. Groups are the
-// caller's IdP groups (from the token), used for role-gated servers.
+// caller's IdP groups (from the token), used for role-gated servers. OpenMode is
+// true when the gateway's Store is open (self-service): a catalog server that is
+// not yet on the shelf is materialised and installed immediately rather than
+// queued for an admin.
 type InstallRequest struct {
 	GatewayID    ids.GatewayID
 	PrincipalSub string
 	Code         string
 	InstalledBy  string
 	Groups       []string
+	OpenMode     bool
 }
 
 type installer struct {
 	catalog    CatalogReader
 	registries RegistryLister
 	installs   installationdomain.Repository
+	ensurer    RegistryEnsurer
 }
 
-// NewInstaller wires the Store installer. Installing references a shelf registry
-// the admin curated (store.available); a server that is not available, or is
-// available but marked requires-approval, is recorded as a pending request
-// rather than granted. The shared registry is never created here — that is the
-// admin's activate/approve path.
+// NewInstaller wires the Store installer. In open (self-service) mode a catalog
+// server that is not yet on the shelf is materialised through the ensurer and
+// installed immediately — the "created on first install" path. In curated mode,
+// or when no ensurer is wired, a server that is not on the shelf is recorded as
+// a pending request for the admin instead. An on-shelf registry marked
+// requires-approval, or one the principal's role excludes, is governed as
+// before. ensurer may be nil (SEARCH-only planes, or where materialisation is
+// not available); its absence downgrades a self-service install to a request.
 func NewInstaller(
 	catalog CatalogReader,
 	registries RegistryLister,
 	installs installationdomain.Repository,
+	ensurer RegistryEnsurer,
 ) (Installer, error) {
 	if catalog == nil || registries == nil || installs == nil {
 		return nil, ErrUnavailable
 	}
-	return &installer{catalog: catalog, registries: registries, installs: installs}, nil
+	return &installer{catalog: catalog, registries: registries, installs: installs, ensurer: ensurer}, nil
 }
 
 func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallResult, error) {
@@ -113,7 +122,7 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		return nil, err
 	}
 
-	status, err := i.decideStatus(reg, in.Groups)
+	status, err := i.decideStatus(ctx, in, reg)
 	if err != nil {
 		return nil, err
 	}
@@ -145,6 +154,14 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 // decideStatus applies the shelf governance: available + role-allowed installs
 // immediately unless it needs approval; anything else becomes a pending request.
 //
+// When no shelf registry exists yet the decision splits on the Store mode. In
+// open (self-service) mode the shared registry is materialised from the catalog
+// here and the install proceeds immediately — the "created on first install"
+// path; the fresh registry is available with no roles or approval, so it is
+// governed identically on the next install. In curated mode (or when no ensurer
+// is wired) the same missing-registry case is a pending request for the admin to
+// shelve+approve, exactly as before.
+//
 // The role gate is evaluated as soon as a shelf registry exists, before the
 // availability check. Otherwise a role-excluded principal could file a pending
 // request against a not-yet-available role-gated server (the role list never
@@ -152,15 +169,23 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 // silently grant it. Checking here means such a request is rejected up front and
 // never reaches the approval queue.
 func (i *installer) decideStatus(
+	ctx context.Context,
+	in InstallRequest,
 	reg *registrydomain.Registry,
-	groups []string,
 ) (installationdomain.Status, error) {
 	if reg == nil || reg.MCPTarget == nil {
-		// No shelf registry at all: a request for the admin to shelve+approve.
-		// There is no role list to enforce until the admin connects the server.
+		// No shelf registry at all. Self-service materialises it on first
+		// install; otherwise it is a request for the admin to shelve+approve.
+		// There is no role list to enforce until the registry exists.
+		if in.OpenMode && i.ensurer != nil {
+			if err := i.ensurer.Ensure(ctx, in.GatewayID, in.Code); err != nil {
+				return "", err
+			}
+			return installationdomain.StatusInstalled, nil
+		}
 		return installationdomain.StatusPendingApproval, nil
 	}
-	if !rolesAllow(reg.MCPTarget.StoreRoles(), groups) {
+	if !rolesAllow(reg.MCPTarget.StoreRoles(), in.Groups) {
 		return "", ErrRoleNotAllowed
 	}
 	if !reg.MCPTarget.StoreAvailable() {
