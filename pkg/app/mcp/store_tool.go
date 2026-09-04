@@ -81,28 +81,37 @@ type storeTool struct {
 	installer  appstore.Installer
 	registries appstore.RegistryLister
 	configure  ConfigureGateway
+	connect    ConnectionGateway
 }
 
 // NewStoreTool wires the catalog-search meta-tool (SEARCH only).
 func NewStoreTool(catalog MCPServerCatalog) (StoreTool, error) {
-	return NewStoreToolWithInstaller(catalog, nil, nil, nil)
+	return NewStoreToolWithInstaller(catalog, nil, nil, nil, nil)
 }
 
 // NewStoreToolWithInstaller wires the Store meta-tools. When installer is nil
 // only SEARCH is offered (e.g. a plane without the installation store); when
 // registries is nil SEARCH does not tag results with their shelf state; when
 // configure is nil an install that needs per-user setup returns the variable list
-// but no hosted-form link.
+// but no hosted-form link; when connect is nil an install that needs the user's
+// account returns requires_auth but no OAuth connect link.
 func NewStoreToolWithInstaller(
 	catalog MCPServerCatalog,
 	installer appstore.Installer,
 	registries appstore.RegistryLister,
 	configure ConfigureGateway,
+	connect ConnectionGateway,
 ) (StoreTool, error) {
 	if catalog == nil {
 		return nil, ErrStoreToolUnavailable
 	}
-	return &storeTool{catalog: catalog, installer: installer, registries: registries, configure: configure}, nil
+	return &storeTool{
+		catalog:    catalog,
+		installer:  installer,
+		registries: registries,
+		configure:  configure,
+		connect:    connect,
+	}, nil
 }
 
 func (t *storeTool) Handles(name string) bool {
@@ -206,6 +215,13 @@ func (t *storeTool) install(
 	if res.RequiresConfig {
 		configureURL = t.configureLink(ctx, rc, baseURL, res.Code)
 	}
+	// A server that needs the user's own account gets the OAuth connect link right
+	// in the install result — the second step of the install, so the user does not
+	// have to hunt for it in their client.
+	connectURL := ""
+	if res.RequiresAuth && !res.AlreadyInstalled {
+		connectURL = t.connectLink(ctx, rc, baseURL)
+	}
 	structured := map[string]any{
 		"code":              res.Code,
 		"name":              res.Name,
@@ -219,7 +235,37 @@ func (t *storeTool) install(
 	if configureURL != "" {
 		structured["configure_url"] = configureURL
 	}
-	return marshalToolResult(installMessage(res, configureURL), structured)
+	if connectURL != "" {
+		structured["connect_url"] = connectURL
+	}
+	return marshalToolResult(installMessage(res, configureURL, connectURL), structured)
+}
+
+// connectLink mints an OAuth connect ticket and builds the hosted connect-page
+// URL, or "" when no connect gateway is wired. Non-fatal on failure: the install
+// still stands and the user can connect later.
+func (t *storeTool) connectLink(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	baseURL string,
+) string {
+	if t.connect == nil || strings.TrimSpace(baseURL) == "" {
+		return ""
+	}
+	principal := identity.PrincipalFromContext(ctx)
+	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
+		return ""
+	}
+	consumerPath := appconsumer.MCPPath(rc.Consumer.Slug)
+	ticket, err := t.connect.CreateTicket(ctx, rc.Consumer.GatewayID, principal.Subject, consumerPath)
+	if err != nil {
+		return ""
+	}
+	url, err := buildConnectionURL(baseURL, consumerPath, ticket)
+	if err != nil {
+		return ""
+	}
+	return url
 }
 
 // configureLink mints a configure ticket and builds the hosted-form URL, or
@@ -312,7 +358,7 @@ func principalGroups(principal *identity.Principal) []string {
 	}
 }
 
-func installMessage(res *appstore.InstallResult, configureURL string) string {
+func installMessage(res *appstore.InstallResult, configureURL, connectURL string) string {
 	if res.AlreadyInstalled {
 		return fmt.Sprintf("%s was already installed.", res.Name)
 	}
@@ -324,7 +370,13 @@ func installMessage(res *appstore.InstallResult, configureURL string) string {
 	}
 	text := fmt.Sprintf("Installed %s.", res.Name)
 	if res.RequiresAuth {
-		text += " It needs your account connected before its tools can be used."
+		if connectURL != "" {
+			// The connect link is the second install step; the tools appear once the
+			// user authorizes their account.
+			text += fmt.Sprintf(" Connect your account to finish: %s — present this link to the user and let them open it. Once they authorize, its tools become available (they may need to refresh the tool list).", connectURL)
+		} else {
+			text += " It needs your account connected before its tools can be used."
+		}
 	}
 	return text
 }
