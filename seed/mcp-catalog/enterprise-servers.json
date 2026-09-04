@@ -1093,6 +1093,40 @@
       ]
     },
     {
+      "name": "com.amazon.aws/mcp",
+      "vendor": "AWS",
+      "category": "Cloud Platform",
+      "description": "Search AWS documentation and securely operate AWS services, including Amazon S3 buckets, through IAM-authorized APIs.",
+      "transport": "streamable-http",
+      "server_url": "https://aws-mcp.{region}.api.aws/mcp",
+      "url_variables": [
+        {
+          "name": "region",
+          "description": "AWS MCP endpoint region: us-east-1 or eu-central-1.",
+          "required": true
+        }
+      ],
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true
+      },
+      "config_guide": {
+        "summary": "Grant your AWS identity OAuth access to AWS MCP Server.",
+        "steps": [
+          "Attach arn:aws:iam::aws:policy/AWSMCPSignInOAuthAccessPolicy to the IAM role or user that will sign in.",
+          "Enter the endpoint region: us-east-1 or eu-central-1.",
+          "Select Connect and complete AWS Sign-In; TrustGate registers its own OAuth client."
+        ],
+        "docs_url": "https://docs.aws.amazon.com/signin/latest/userguide/aws-mcp-server.html",
+        "note": "AWS Sign-In only issues DCR clients for allowlisted redirect URIs, so this gateway's callback must be approved by AWS."
+      },
+      "relevance": 95
+    },
+    {
       "name": "co.axiom/mcp",
       "vendor": "Axiom",
       "category": "Observability",
