@@ -28,7 +28,9 @@ import (
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
-type fakeConfigCatalog struct{ byCode map[string]catalogdomain.MCPServer }
+type fakeConfigCatalog struct {
+	byCode map[string]catalogdomain.MCPServer
+}
 
 func (f fakeConfigCatalog) GetByCode(code string) (catalogdomain.MCPServer, bool) {
 	s, ok := f.byCode[code]

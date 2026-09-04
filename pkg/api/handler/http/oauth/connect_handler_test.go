@@ -38,6 +38,10 @@ func (s *stubConnectService) CreateTicket(context.Context, ids.GatewayID, string
 	return "t", nil
 }
 
+func (s *stubConnectService) CreateServerTicket(context.Context, ids.GatewayID, string, string, string) (string, error) {
+	return "t", nil
+}
+
 func (s *stubConnectService) CreateAPIKeyTicket(
 	context.Context,
 	ids.GatewayID,
@@ -98,6 +102,36 @@ func TestConnectPage_RouteMatchesNestedConsumerPaths(t *testing.T) {
 	body, _ := io.ReadAll(res.Body)
 	if !strings.Contains(string(body), "github") || !strings.Contains(string(body), "/oauth/connect/github?ticket=abc") {
 		t.Fatalf("page body missing provider button: %s", body)
+	}
+}
+
+func TestConnectPage_ScopedToOneServerRendersSingleCard(t *testing.T) {
+	t.Parallel()
+	// A ticket scoped to a catalog code (Code set) renders the focused
+	// single-server connect page, not the full provider grid.
+	h := NewConnectHandler(&stubConnectService{page: &appoauth.ConnectPage{
+		ConsumerPath: "/dev",
+		Code:         "com.notion/mcp",
+		Providers: []appoauth.ProviderStatus{
+			{Provider: "com.notion/mcp", Code: "com.notion/mcp", Registry: "Notion"},
+			{Provider: "app.linear/mcp", Code: "app.linear/mcp", Registry: "Linear"},
+		},
+	}}, nil, "")
+	app := fiber.New()
+	app.Get("/+/connect", h.Page)
+
+	res, err := app.Test(httptest.NewRequest("GET", "/dev/connect?ticket=abc", nil))
+	if err != nil {
+		t.Fatalf("route test: %v", err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	s := string(body)
+	// Focused on Notion, with its connect button, and NOT showing Linear.
+	if !strings.Contains(s, "Connect your") || !strings.Contains(s, "/oauth/connect/com.notion/mcp?ticket=abc") {
+		t.Fatalf("single-server page missing focused connect button: %s", s)
+	}
+	if strings.Contains(s, "Linear") {
+		t.Fatalf("single-server page must not list other providers: %s", s)
 	}
 }
 

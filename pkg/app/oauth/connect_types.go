@@ -70,11 +70,18 @@ type ConnectPage struct {
 	ConsumerPath string
 	Providers    []ProviderStatus
 	ResumeURL    string
+	// Code, when set, scopes the page to a single catalog server (the ticket was
+	// minted for one server, e.g. from a Store install) so the connect page shows
+	// just that server rather than every provider.
+	Code string
 }
 
 //go:generate mockery --name=ConnectService --dir=. --output=./mocks --filename=oauth_connect_service_mock.go --case=underscore --with-expecter
 type ConnectService interface {
 	CreateTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) (string, error)
+	// CreateServerTicket mints a connect ticket scoped to one catalog server, so
+	// the connect page opens focused on that server (e.g. from a Store install).
+	CreateServerTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code string) (string, error)
 	CreateAPIKeyTicket(
 		ctx context.Context,
 		gatewayID ids.GatewayID,

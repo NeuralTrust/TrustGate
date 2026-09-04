@@ -67,6 +67,13 @@ type ConfigureGateway interface {
 	CreateTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code string) (string, error)
 }
 
+// ServerConnectGateway mints a connect ticket scoped to one catalog server, so
+// the install's OAuth connect link opens the focused single-server connect page.
+// appoauth.ConnectService satisfies it.
+type ServerConnectGateway interface {
+	CreateServerTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code string) (string, error)
+}
+
 // StoreTool implements the MCP Store's gateway-side meta-tools (SEARCH today;
 // INSTALL and friends later). It mirrors ConnectionTool but its Call takes
 // arguments, since a search carries a query.
@@ -81,28 +88,37 @@ type storeTool struct {
 	installer  appstore.Installer
 	registries appstore.RegistryLister
 	configure  ConfigureGateway
+	connect    ServerConnectGateway
 }
 
 // NewStoreTool wires the catalog-search meta-tool (SEARCH only).
 func NewStoreTool(catalog MCPServerCatalog) (StoreTool, error) {
-	return NewStoreToolWithInstaller(catalog, nil, nil, nil)
+	return NewStoreToolWithInstaller(catalog, nil, nil, nil, nil)
 }
 
 // NewStoreToolWithInstaller wires the Store meta-tools. When installer is nil
 // only SEARCH is offered (e.g. a plane without the installation store); when
 // registries is nil SEARCH does not tag results with their shelf state; when
 // configure is nil an install that needs per-user setup returns the variable list
-// but no hosted-form link.
+// but no hosted-form link; when connect is nil an install that needs the user's
+// account returns requires_auth but no OAuth connect link.
 func NewStoreToolWithInstaller(
 	catalog MCPServerCatalog,
 	installer appstore.Installer,
 	registries appstore.RegistryLister,
 	configure ConfigureGateway,
+	connect ServerConnectGateway,
 ) (StoreTool, error) {
 	if catalog == nil {
 		return nil, ErrStoreToolUnavailable
 	}
-	return &storeTool{catalog: catalog, installer: installer, registries: registries, configure: configure}, nil
+	return &storeTool{
+		catalog:    catalog,
+		installer:  installer,
+		registries: registries,
+		configure:  configure,
+		connect:    connect,
+	}, nil
 }
 
 func (t *storeTool) Handles(name string) bool {
@@ -206,6 +222,13 @@ func (t *storeTool) install(
 	if res.RequiresConfig {
 		configureURL = t.configureLink(ctx, rc, baseURL, res.Code)
 	}
+	// A server that needs the user's own account gets the OAuth connect link right
+	// in the install result — the second step of the install, so the user does not
+	// have to hunt for it in their client.
+	connectURL := ""
+	if res.RequiresAuth && !res.AlreadyInstalled {
+		connectURL = t.connectLink(ctx, rc, baseURL, res.Code)
+	}
 	structured := map[string]any{
 		"code":              res.Code,
 		"name":              res.Name,
@@ -219,7 +242,37 @@ func (t *storeTool) install(
 	if configureURL != "" {
 		structured["configure_url"] = configureURL
 	}
-	return marshalToolResult(installMessage(res, configureURL), structured)
+	if connectURL != "" {
+		structured["connect_url"] = connectURL
+	}
+	return marshalToolResult(installMessage(res, configureURL, connectURL), structured)
+}
+
+// connectLink mints an OAuth connect ticket and builds the hosted connect-page
+// URL, or "" when no connect gateway is wired. Non-fatal on failure: the install
+// still stands and the user can connect later.
+func (t *storeTool) connectLink(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	baseURL, code string,
+) string {
+	if t.connect == nil || strings.TrimSpace(baseURL) == "" {
+		return ""
+	}
+	principal := identity.PrincipalFromContext(ctx)
+	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
+		return ""
+	}
+	consumerPath := appconsumer.MCPPath(rc.Consumer.Slug)
+	ticket, err := t.connect.CreateServerTicket(ctx, rc.Consumer.GatewayID, principal.Subject, consumerPath, code)
+	if err != nil {
+		return ""
+	}
+	url, err := buildConnectionURL(baseURL, consumerPath, ticket)
+	if err != nil {
+		return ""
+	}
+	return url
 }
 
 // configureLink mints a configure ticket and builds the hosted-form URL, or
@@ -312,7 +365,7 @@ func principalGroups(principal *identity.Principal) []string {
 	}
 }
 
-func installMessage(res *appstore.InstallResult, configureURL string) string {
+func installMessage(res *appstore.InstallResult, configureURL, connectURL string) string {
 	if res.AlreadyInstalled {
 		return fmt.Sprintf("%s was already installed.", res.Name)
 	}
@@ -324,7 +377,13 @@ func installMessage(res *appstore.InstallResult, configureURL string) string {
 	}
 	text := fmt.Sprintf("Installed %s.", res.Name)
 	if res.RequiresAuth {
-		text += " It needs your account connected before its tools can be used."
+		if connectURL != "" {
+			// The connect link is the second install step; the tools appear once the
+			// user authorizes their account.
+			text += fmt.Sprintf(" Connect your account to finish: %s — present this link to the user and let them open it. Once they authorize, its tools become available (they may need to refresh the tool list).", connectURL)
+		} else {
+			text += " It needs your account connected before its tools can be used."
+		}
 	}
 	return text
 }
@@ -595,7 +654,7 @@ func storeSearchDefinition() (Tool, error) {
 	raw, err := json.Marshal(map[string]any{
 		"name":        StoreSearchToolName,
 		"title":       "Search the MCP catalog",
-		"description": "Search the whole NeuralTrust MCP catalog for servers to install (not just the ones already installed). Call this when the user wants to find, browse or discover an MCP integration by name, vendor, category or capability. Returns catalog entries with their code, which INSTALL takes.",
+		"description": "Search the whole NeuralTrust MCP catalog for servers to install (not just the ones already installed). Call this whenever the user needs an integration or capability that is not available in the current tools — this gateway is the governed way to add MCP servers, so look here first and install through it (see " + StoreInstallToolName + ") rather than suggesting the user wire an MCP server into their client or connect to an upstream MCP URL directly, which bypasses the gateway. Search by name, vendor, category or capability. Returns catalog entries with their code, which INSTALL takes.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -637,9 +696,9 @@ func storeInstallDefinition() (Tool, error) {
 	raw, err := json.Marshal(map[string]any{
 		"name":  StoreInstallToolName,
 		"title": "Install an MCP server",
-		"description": "Install a catalog MCP server for the current user so its tools appear on this Store. Takes the catalog `code` returned by " + StoreSearchToolName + ". " +
-			"Some servers need per-user setup values (e.g. a Snowflake account URL, a ServiceNow instance): if so, this returns requires_config with the list of variables to collect — ask the user for them and call install again with them in `config`. " +
-			"Governed by the user's role; a server that needs the user's own account will ask them to connect it before its tools work.",
+		"description": "Install a catalog MCP server for the current user so its tools appear on this Store. When the user needs a server's capabilities, call this yourself to add it through the gateway — do not ask the user to install it manually, add it in their client's MCP settings, or connect to the upstream MCP URL directly, since that bypasses this gateway's governance, auditing and credentials. Takes the catalog `code` returned by " + StoreSearchToolName + ". " +
+			"Some servers need per-user setup values (e.g. a Snowflake account URL, a ServiceNow instance): if so, this returns requires_config with the list of variables to collect — ask the user for them and call install again with them in `config`, or hand them the returned configure_url. " +
+			"Governed by the user's role; a server that needs the user's own account returns a connect link for them to authorize before its tools work.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{

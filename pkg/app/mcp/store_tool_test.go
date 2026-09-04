@@ -190,7 +190,7 @@ func TestStoreToolCallRejectsUnknownTool(t *testing.T) {
 
 func storeToolWithShelf(t *testing.T, items ...*registrydomain.Registry) StoreTool {
 	t.Helper()
-	tool, err := NewStoreToolWithInstaller(sampleCatalog(), nil, fakeRegistryLister{items: items}, nil)
+	tool, err := NewStoreToolWithInstaller(sampleCatalog(), nil, fakeRegistryLister{items: items}, nil, nil)
 	if err != nil {
 		t.Fatalf("NewStoreToolWithInstaller: %v", err)
 	}
@@ -272,7 +272,7 @@ func (f *fakeInstaller) Uninstall(_ context.Context, _ ids.GatewayID, _, code st
 
 func storeToolWithInstaller(t *testing.T, installer appstore.Installer) StoreTool {
 	t.Helper()
-	tool, err := NewStoreToolWithInstaller(sampleCatalog(), installer, nil, nil)
+	tool, err := NewStoreToolWithInstaller(sampleCatalog(), installer, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewStoreToolWithInstaller: %v", err)
 	}
