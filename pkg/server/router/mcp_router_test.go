@@ -128,6 +128,7 @@ func TestMCPRouterDispatch(t *testing.T) {
 		new(oauthhttp.TokenHandler),
 		apiKeyHandler,
 		connectHandler,
+		oauthhttp.NewConfigureHandler(nil),
 		new(oauthhttp.JWKSHandler),
 		middleware.NewOpsMetricsMiddleware(ops, o11y.PlaneMCP),
 	)

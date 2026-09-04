@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
@@ -27,6 +28,7 @@ import (
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
@@ -57,38 +59,50 @@ type MCPServerCatalog interface {
 	ListMCPServers() []catalogdomain.MCPServer
 }
 
+// ConfigureGateway mints a ticket for the hosted "configure" form where a user
+// enters a server's per-user URL variables (e.g. a Snowflake account URL, a
+// secret token). appoauth.ConfigureService satisfies it. Optional: without it the
+// install tool still works but returns no configure link.
+type ConfigureGateway interface {
+	CreateTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code string) (string, error)
+}
+
 // StoreTool implements the MCP Store's gateway-side meta-tools (SEARCH today;
 // INSTALL and friends later). It mirrors ConnectionTool but its Call takes
 // arguments, since a search carries a query.
 type StoreTool interface {
 	Definitions(ctx context.Context, rc *appconsumer.RoutableConsumer) []Tool
 	Handles(name string) bool
-	Call(ctx context.Context, rc *appconsumer.RoutableConsumer, name string, arguments json.RawMessage) (json.RawMessage, error)
+	Call(ctx context.Context, rc *appconsumer.RoutableConsumer, baseURL, name string, arguments json.RawMessage) (json.RawMessage, error)
 }
 
 type storeTool struct {
 	catalog    MCPServerCatalog
 	installer  appstore.Installer
 	registries appstore.RegistryLister
+	configure  ConfigureGateway
 }
 
 // NewStoreTool wires the catalog-search meta-tool (SEARCH only).
 func NewStoreTool(catalog MCPServerCatalog) (StoreTool, error) {
-	return NewStoreToolWithInstaller(catalog, nil, nil)
+	return NewStoreToolWithInstaller(catalog, nil, nil, nil)
 }
 
 // NewStoreToolWithInstaller wires the Store meta-tools. When installer is nil
 // only SEARCH is offered (e.g. a plane without the installation store); when
-// registries is nil SEARCH does not tag results with their shelf state.
+// registries is nil SEARCH does not tag results with their shelf state; when
+// configure is nil an install that needs per-user setup returns the variable list
+// but no hosted-form link.
 func NewStoreToolWithInstaller(
 	catalog MCPServerCatalog,
 	installer appstore.Installer,
 	registries appstore.RegistryLister,
+	configure ConfigureGateway,
 ) (StoreTool, error) {
 	if catalog == nil {
 		return nil, ErrStoreToolUnavailable
 	}
-	return &storeTool{catalog: catalog, installer: installer, registries: registries}, nil
+	return &storeTool{catalog: catalog, installer: installer, registries: registries, configure: configure}, nil
 }
 
 func (t *storeTool) Handles(name string) bool {
@@ -118,6 +132,7 @@ func (t *storeTool) Definitions(_ context.Context, rc *appconsumer.RoutableConsu
 func (t *storeTool) Call(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
+	baseURL,
 	name string,
 	arguments json.RawMessage,
 ) (json.RawMessage, error) {
@@ -128,7 +143,7 @@ func (t *storeTool) Call(
 	case StoreSearchToolName:
 		return t.search(ctx, rc, arguments)
 	case StoreInstallToolName:
-		return t.install(ctx, rc, arguments)
+		return t.install(ctx, rc, baseURL, arguments)
 	case StoreUninstallToolName:
 		return t.uninstall(ctx, rc, arguments)
 	default:
@@ -159,6 +174,7 @@ func (t *storeTool) principalSubject(ctx context.Context) (string, error) {
 func (t *storeTool) install(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
+	baseURL string,
 	arguments json.RawMessage,
 ) (json.RawMessage, error) {
 	if t.installer == nil {
@@ -184,8 +200,13 @@ func (t *storeTool) install(
 	if err != nil {
 		return nil, err
 	}
-	text := installMessage(res)
-	return marshalToolResult(text, map[string]any{
+	// A server that needs per-user setup gets a hosted-form link the user opens to
+	// enter their values (the only path for secrets, and a nicer one for the rest).
+	configureURL := ""
+	if res.RequiresConfig {
+		configureURL = t.configureLink(ctx, rc, baseURL, res.Code)
+	}
+	structured := map[string]any{
 		"code":              res.Code,
 		"name":              res.Name,
 		"status":            string(res.Status),
@@ -194,7 +215,38 @@ func (t *storeTool) install(
 		"already_installed": res.AlreadyInstalled,
 		"requires_config":   res.RequiresConfig,
 		"config_variables":  configVariablesJSON(res.ConfigVariables),
-	})
+	}
+	if configureURL != "" {
+		structured["configure_url"] = configureURL
+	}
+	return marshalToolResult(installMessage(res, configureURL), structured)
+}
+
+// configureLink mints a configure ticket and builds the hosted-form URL, or
+// returns "" when no configure gateway is wired (the caller then falls back to
+// inline config only). A failure to mint is non-fatal: the install still stands.
+func (t *storeTool) configureLink(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	baseURL, code string,
+) string {
+	if t.configure == nil || strings.TrimSpace(baseURL) == "" {
+		return ""
+	}
+	principal := identity.PrincipalFromContext(ctx)
+	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
+		return ""
+	}
+	consumerPath := appconsumer.MCPPath(rc.Consumer.Slug)
+	ticket, err := t.configure.CreateTicket(ctx, rc.Consumer.GatewayID, principal.Subject, consumerPath, code)
+	if err != nil {
+		return ""
+	}
+	url, err := buildConfigureURL(baseURL, consumerPath, ticket)
+	if err != nil {
+		return ""
+	}
+	return url
 }
 
 // configVariablesJSON renders the required-config variables for the tool result
@@ -260,12 +312,12 @@ func principalGroups(principal *identity.Principal) []string {
 	}
 }
 
-func installMessage(res *appstore.InstallResult) string {
+func installMessage(res *appstore.InstallResult, configureURL string) string {
 	if res.AlreadyInstalled {
 		return fmt.Sprintf("%s was already installed.", res.Name)
 	}
 	if res.RequiresConfig {
-		return requiresConfigMessage(res)
+		return requiresConfigMessage(res, configureURL)
 	}
 	if res.Pending {
 		return fmt.Sprintf("%s has been requested and is awaiting approval; you'll get its tools once an admin approves it.", res.Name)
@@ -277,11 +329,11 @@ func installMessage(res *appstore.InstallResult) string {
 	return text
 }
 
-// requiresConfigMessage tells the caller which values the server needs before it
-// can be installed, and how to supply them: plain values inline via `config`,
-// secrets through the connect link. It names each variable so the model can ask
-// the user for exactly what is missing and re-run install.
-func requiresConfigMessage(res *appstore.InstallResult) string {
+// requiresConfigMessage tells the caller which values the server needs before its
+// tools work and how to supply them: plain values inline via `config` or through
+// the hosted form, secrets only through the form. It names each variable and,
+// when available, hands over the configure link for the user to open.
+func requiresConfigMessage(res *appstore.InstallResult, configureURL string) string {
 	var plain, secret []string
 	for _, v := range res.ConfigVariables {
 		if v.Secret {
@@ -291,16 +343,33 @@ func requiresConfigMessage(res *appstore.InstallResult) string {
 		}
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s needs some configuration before it can be installed.", res.Name)
+	fmt.Fprintf(&b, "%s needs some setup before its tools can be used.", res.Name)
 	if len(plain) > 0 {
-		fmt.Fprintf(&b, " Ask the user for %s, then call install again with them in `config` (e.g. {\"code\":%q,\"config\":{%q:\"…\"}}).",
+		fmt.Fprintf(&b, " It needs %s — ask the user, then either call install again with them in `config` (e.g. {\"code\":%q,\"config\":{%q:\"…\"}}) or have the user enter them at the link below.",
 			strings.Join(plain, ", "), res.Code, plain[0])
 	}
 	if len(secret) > 0 {
-		fmt.Fprintf(&b, " It also needs a secret value (%s) which must be entered through the connect link, not here.",
+		fmt.Fprintf(&b, " It needs a secret value (%s) that must be entered at the link below, never here.",
 			strings.Join(secret, ", "))
 	}
+	if configureURL != "" {
+		fmt.Fprintf(&b, " Configure it at %s — present this link to the user and let them decide whether to open it.", configureURL)
+	}
 	return b.String()
+}
+
+// buildConfigureURL builds the hosted configure-form URL for a ticket, mirroring
+// buildConnectionURL but ending in /configure.
+func buildConfigureURL(baseURL, consumerPath, ticket string) (string, error) {
+	base, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil {
+		return "", fmt.Errorf("%w: parse base url: %w", ErrStoreToolUnavailable, err)
+	}
+	base.Path = strings.TrimRight(consumerPath, "/") + "/configure"
+	q := base.Query()
+	q.Set("ticket", ticket)
+	base.RawQuery = q.Encode()
+	return base.String(), nil
 }
 
 func marshalToolResult(text string, structured map[string]any) (json.RawMessage, error) {
