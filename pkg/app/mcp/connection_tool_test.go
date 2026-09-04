@@ -154,7 +154,10 @@ func TestConnectionToolCallReturnsOptionalConnectLink(t *testing.T) {
 		result.StructuredContent["connect_url"],
 	)
 	require.Equal(t, "user_confirmation_required", result.StructuredContent["action"])
-	require.Contains(t, result.Content[0].Text, "let them decide whether to open it")
+	require.Equal(t, "Connect linear", result.StructuredContent["connect_label"])
+	// The link is presented as a labeled markdown link, not a raw URL.
+	require.Contains(t, result.Content[0].Text, "[Connect linear](https://mcp.example.com/research/mcp/connect?ticket=ticket%2B%2F%3F)")
+	require.Contains(t, result.Content[0].Text, "Let them decide whether to open it")
 	require.True(t, tool.Handles("trustgate_connect_linear"))
 	require.False(t, tool.Handles("echo"))
 }

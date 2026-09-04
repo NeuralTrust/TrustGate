@@ -206,15 +206,16 @@ func provideComposer(p composerParams) appmcp.Composer {
 type connectServiceParams struct {
 	dig.In
 
-	Store     appoauth.ConnectStore
-	Vault     vaultdomain.Repository
-	Consumers appconsumer.DataFinder
-	Provider  appoauth.ProviderClient
-	Registrar appoauth.UpstreamRegistrar
-	Auditor   appoauth.ConnectAuditor
-	Shared    mcpoauth.Provider
-	Userinfo  appoauth.UserInfoClient
-	Catalog   appcatalog.MCPServerCatalog `optional:"true"`
+	Store      appoauth.ConnectStore
+	Vault      vaultdomain.Repository
+	Consumers  appconsumer.DataFinder
+	Provider   appoauth.ProviderClient
+	Registrar  appoauth.UpstreamRegistrar
+	Auditor    appoauth.ConnectAuditor
+	Shared     mcpoauth.Provider
+	Userinfo   appoauth.UserInfoClient
+	Catalog    appcatalog.MCPServerCatalog `optional:"true"`
+	Registries registrydomain.Repository   `optional:"true"`
 }
 
 type rpcGatewayParams struct {
@@ -331,6 +332,10 @@ func provideConnectService(p connectServiceParams) (appoauth.ConnectService, err
 		}
 		catalog = loaded
 	}
+	var registries appoauth.RegistryLister
+	if p.Registries != nil {
+		registries = p.Registries
+	}
 	return appoauth.NewConnectService(
 		p.Store,
 		p.Vault,
@@ -341,6 +346,7 @@ func provideConnectService(p connectServiceParams) (appoauth.ConnectService, err
 		p.Shared,
 		p.Userinfo,
 		catalog,
+		registries,
 	), nil
 }
 
