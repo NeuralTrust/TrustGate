@@ -246,7 +246,13 @@ func (c *composer) rememberFailure(key string, err error) {
 
 func discoveryKey(ctx context.Context, reg *registrydomain.Registry, kind string) (string, bool) {
 	key := kind + ":" + reg.ID.String() + ":" + reg.UpdatedAt.UTC().Format("20060102150405.000")
-	if !perPrincipalAuth(reg) {
+	// A server whose URL carries per-user placeholders is dialed at a different
+	// upstream per principal, so its discovered tools must be keyed per principal
+	// too — otherwise one user's discovery (against their own account) would be
+	// served to another. This holds even when the auth mode is not per-principal.
+	perPrincipal := perPrincipalAuth(reg) ||
+		(reg.MCPTarget != nil && reg.MCPTarget.HasURLVariables())
+	if !perPrincipal {
 		return key, true
 	}
 	p := identity.PrincipalFromContext(ctx)

@@ -113,6 +113,9 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(provideConnectService); err != nil {
 		return err
 	}
+	if err := c.Provide(provideConfigureService); err != nil {
+		return err
+	}
 	if err := c.Provide(provideAPIKeyConnectService); err != nil {
 		return err
 	}
@@ -127,14 +130,7 @@ func MCP(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(
-		dialer appmcp.Dialer,
-		creds appmcp.CredentialResolver,
-		manager *cache.TTLMapManager,
-		logger *slog.Logger,
-	) appmcp.Composer {
-		return appmcp.NewComposer(dialer, creds, manager.GetTTLMap(cache.MCPToolsTTLName), logger)
-	}); err != nil {
+	if err := c.Provide(provideComposer); err != nil {
 		return err
 	}
 	if err := c.Provide(appmcp.NewIntrospector); err != nil {
@@ -161,6 +157,30 @@ func MCP(c *container.Container) error {
 		return err
 	}
 	return c.Provide(mcphttp.NewHandler)
+}
+
+// composerParams wires the MCP composer. Installs is optional: present on the
+// full plane (Postgres) and the DB-less data plane (gRPC channel), absent on a
+// SEARCH-only plane. When present it powers the per-user URL-variable resolver so
+// catalog servers whose URL carries placeholders (Snowflake, ServiceNow, …) dial
+// each principal's own upstream.
+type composerParams struct {
+	dig.In
+
+	Dialer   appmcp.Dialer
+	Creds    appmcp.CredentialResolver
+	Manager  *cache.TTLMapManager
+	Logger   *slog.Logger
+	Installs installationdomain.Repository `optional:"true"`
+	Vault    vaultdomain.Repository        `optional:"true"`
+}
+
+func provideComposer(p composerParams) appmcp.Composer {
+	var opts []appmcp.ComposerOption
+	if p.Installs != nil {
+		opts = append(opts, appmcp.WithURLValues(appmcp.NewURLValueResolver(p.Installs, p.Vault)))
+	}
+	return appmcp.NewComposer(p.Dialer, p.Creds, p.Manager.GetTTLMap(cache.MCPToolsTTLName), p.Logger, opts...)
 }
 
 type connectServiceParams struct {
@@ -191,6 +211,15 @@ type rpcGatewayParams struct {
 	// has no installation store yet).
 	Registries registrydomain.Repository     `optional:"true"`
 	Installs   installationdomain.Repository `optional:"true"`
+	// Ensurer materialises the shared registry on a self-service install. The
+	// full plane provides the direct (Creator-backed) implementation; the data
+	// plane provides the gRPC-client one. Absent on SEARCH-only planes, where a
+	// self-service install downgrades to a pending request.
+	Ensurer appstore.RegistryEnsurer `optional:"true"`
+	// Configure mints the hosted-form link where a user enters a server's per-user
+	// URL variables. Nil on planes without the installation/vault stores; then the
+	// install tool reports the needed variables but offers no link.
+	Configure appoauth.ConfigureService `optional:"true"`
 }
 
 func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
@@ -205,7 +234,7 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 
 	var installer appstore.Installer
 	if p.Registries != nil && p.Installs != nil {
-		made, err := appstore.NewInstaller(catalog, p.Registries, p.Installs)
+		made, err := appstore.NewInstaller(catalog, p.Registries, p.Installs, p.Ensurer)
 		if err != nil {
 			return nil, err
 		}
@@ -216,7 +245,11 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 	if p.Registries != nil {
 		registries = p.Registries
 	}
-	store, err := appmcp.NewStoreToolWithInstaller(catalog, installer, registries)
+	var configure appmcp.ConfigureGateway
+	if p.Configure != nil {
+		configure = p.Configure
+	}
+	store, err := appmcp.NewStoreToolWithInstaller(catalog, installer, registries, configure)
 	if err != nil {
 		return nil, err
 	}
@@ -230,6 +263,36 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 		gateway = gateway.WithStoreScoper(scoper)
 	}
 	return gateway, nil
+}
+
+// configureServiceParams wires the MCP-Store per-user configure flow. Every dep
+// is optional so the provider degrades to nil on a plane that lacks the
+// installation or vault stores (e.g. a SEARCH-only proxy); the install tool then
+// simply offers no configure link.
+type configureServiceParams struct {
+	dig.In
+
+	Store     appoauth.ConnectStore         `optional:"true"`
+	Consumers appconsumer.DataFinder        `optional:"true"`
+	Vault     vaultdomain.Repository        `optional:"true"`
+	Installs  installationdomain.Repository `optional:"true"`
+	Catalog   appcatalog.MCPServerCatalog   `optional:"true"`
+	Shared    mcpoauth.Provider
+}
+
+func provideConfigureService(p configureServiceParams) (appoauth.ConfigureService, error) {
+	if p.Store == nil || p.Consumers == nil || p.Vault == nil || p.Installs == nil {
+		return nil, nil
+	}
+	catalog := p.Catalog
+	if catalog == nil {
+		loaded, err := appcatalog.NewMCPServerCatalog(p.Shared)
+		if err != nil {
+			return nil, err
+		}
+		catalog = loaded
+	}
+	return appoauth.NewConfigureService(p.Store, p.Consumers, catalog, p.Installs, p.Vault), nil
 }
 
 func provideConnectService(p connectServiceParams) (appoauth.ConnectService, error) {
