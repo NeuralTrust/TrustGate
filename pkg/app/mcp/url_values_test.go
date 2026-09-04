@@ -25,7 +25,23 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 )
+
+// fakeVault returns a secret keyed by (provider) for any principal.
+type fakeVault struct {
+	byProvider map[string]string
+}
+
+func (f fakeVault) Find(
+	_ context.Context, gw ids.GatewayID, sub, provider string,
+) (*vaultdomain.Credential, error) {
+	v, ok := f.byProvider[provider]
+	if !ok {
+		return nil, vaultdomain.ErrNotFound
+	}
+	return &vaultdomain.Credential{GatewayID: gw, PrincipalSub: sub, Provider: provider, AccessToken: v}, nil
+}
 
 // fakeInstallFinder returns a per-(gateway,subject,code) installation config.
 type fakeInstallFinder struct {
@@ -71,7 +87,7 @@ func TestComposerTarget_ResolvesURLVariablesPerUser(t *testing.T) {
 	finder := fakeInstallFinder{byCode: map[string]map[string]string{
 		"snowflake": {"account_url": "acme.snowflakecomputing.com", "database": "ANALYTICS"},
 	}}
-	c := &composer{logger: slog.New(slog.DiscardHandler), urlvars: NewURLValueResolver(finder)}
+	c := &composer{logger: slog.New(slog.DiscardHandler), urlvars: NewURLValueResolver(finder, nil)}
 	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP})
 
 	tgt, err := c.target(subCtx("ana"), rc, reg)
@@ -96,8 +112,8 @@ func TestComposerTarget_DifferentUsersDifferentPinKeys(t *testing.T) {
 	_ = finder
 	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP})
 
-	ca := &composer{logger: slog.New(slog.DiscardHandler), urlvars: NewURLValueResolver(finderA)}
-	cb := &composer{logger: slog.New(slog.DiscardHandler), urlvars: NewURLValueResolver(finderB)}
+	ca := &composer{logger: slog.New(slog.DiscardHandler), urlvars: NewURLValueResolver(finderA, nil)}
+	cb := &composer{logger: slog.New(slog.DiscardHandler), urlvars: NewURLValueResolver(finderB, nil)}
 	ta, err := ca.target(subCtx("ana"), rc, reg)
 	if err != nil {
 		t.Fatalf("target a: %v", err)
@@ -117,7 +133,7 @@ func TestComposerTarget_DifferentUsersDifferentPinKeys(t *testing.T) {
 func TestComposerTarget_MissingConfigFailsClosed(t *testing.T) {
 	reg := urlVarRegistry(t)
 	// No install config for this principal → required placeholders unfilled.
-	c := &composer{logger: slog.New(slog.DiscardHandler), urlvars: NewURLValueResolver(fakeInstallFinder{byCode: map[string]map[string]string{}})}
+	c := &composer{logger: slog.New(slog.DiscardHandler), urlvars: NewURLValueResolver(fakeInstallFinder{byCode: map[string]map[string]string{}}, nil)}
 	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP})
 	if _, err := c.target(subCtx("ana"), rc, reg); err == nil {
 		t.Fatal("an unconfigured URL-variable server must not dial")
@@ -134,6 +150,51 @@ func TestComposerTarget_NoVariablesUnchanged(t *testing.T) {
 	}
 	if tgt.URL != "https://mcp.linear.app/mcp" || strings.Contains(tgt.PinKey, ":u:") {
 		t.Fatalf("a fully-determined URL must pass through untouched: %q pin %q", tgt.URL, tgt.PinKey)
+	}
+}
+
+func TestComposerTarget_SecretVariableFromVault(t *testing.T) {
+	reg, err := registrydomain.NewMCPRegistry(ids.New[ids.GatewayKind](), "Bright Data", "",
+		&registrydomain.MCPTarget{
+			Code: "com.brightdata/mcp",
+			URL:  "https://mcp.brightdata.com/mcp?token={token}",
+			URLVariables: []registrydomain.MCPURLVariable{
+				{Name: "token", Required: true, Secret: true, In: registrydomain.URLVariableInQuery},
+			},
+		})
+	if err != nil {
+		t.Fatalf("build registry: %v", err)
+	}
+	vault := fakeVault{byProvider: map[string]string{
+		registrydomain.URLVariableVaultProvider("com.brightdata/mcp", "token"): "s3cr3t/xyz",
+	}}
+	// No install config needed — the only variable is a secret from the vault.
+	c := &composer{logger: slog.New(slog.DiscardHandler), urlvars: NewURLValueResolver(fakeInstallFinder{}, vault)}
+	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP})
+
+	tgt, err := c.target(subCtx("ana"), rc, reg)
+	if err != nil {
+		t.Fatalf("target: %v", err)
+	}
+	if tgt.URL != "https://mcp.brightdata.com/mcp?token=s3cr3t%2Fxyz" {
+		t.Fatalf("secret from vault not substituted/escaped into query: %q", tgt.URL)
+	}
+}
+
+func TestComposerTarget_SecretMissingFromVaultFailsClosed(t *testing.T) {
+	reg, err := registrydomain.NewMCPRegistry(ids.New[ids.GatewayKind](), "Bright Data", "",
+		&registrydomain.MCPTarget{
+			Code:         "com.brightdata/mcp",
+			URL:          "https://mcp.brightdata.com/mcp?token={token}",
+			URLVariables: []registrydomain.MCPURLVariable{{Name: "token", Required: true, Secret: true, In: registrydomain.URLVariableInQuery}},
+		})
+	if err != nil {
+		t.Fatalf("build registry: %v", err)
+	}
+	c := &composer{logger: slog.New(slog.DiscardHandler), urlvars: NewURLValueResolver(fakeInstallFinder{}, fakeVault{})}
+	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP})
+	if _, err := c.target(subCtx("ana"), rc, reg); err == nil {
+		t.Fatal("a server whose required secret is not yet connected must not dial")
 	}
 }
 

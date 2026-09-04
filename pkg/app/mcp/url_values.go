@@ -23,6 +23,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 )
 
 // URLValueResolver returns the per-user values for a registry's URL placeholders
@@ -36,21 +37,29 @@ type URLValueResolver interface {
 }
 
 // installationConfigFinder is the read the resolver needs: the calling
-// principal's installation for a catalog code, whose Config carries their URL
-// variable values. installationdomain.Repository satisfies it.
+// principal's installation for a catalog code, whose Config carries their plain
+// URL variable values. installationdomain.Repository satisfies it.
 type installationConfigFinder interface {
 	Find(ctx context.Context, gatewayID ids.GatewayID, principalSub, catalogCode string) (*installationdomain.Installation, error)
 }
 
-type urlValueResolver struct {
-	installs installationConfigFinder
+// urlVarSecretFinder reads a secret URL variable's per-user value from the vault.
+// vaultdomain.Repository satisfies it.
+type urlVarSecretFinder interface {
+	Find(ctx context.Context, gatewayID ids.GatewayID, principalSub, provider string) (*vaultdomain.Credential, error)
 }
 
-// NewURLValueResolver builds the resolver over the installation store. installs
-// is the same per-principal store the Store installer writes to, so a value the
-// user supplied at install time is exactly what fills the URL at dial time.
-func NewURLValueResolver(installs installationConfigFinder) URLValueResolver {
-	return &urlValueResolver{installs: installs}
+type urlValueResolver struct {
+	installs installationConfigFinder
+	vault    urlVarSecretFinder
+}
+
+// NewURLValueResolver builds the resolver over the installation store (plain
+// values the user supplied at install) and the vault (secret values entered
+// through the connect link). vault may be nil, in which case secret variables are
+// left unfilled and ResolveURL fails closed for a server that requires one.
+func NewURLValueResolver(installs installationConfigFinder, vault urlVarSecretFinder) URLValueResolver {
+	return &urlValueResolver{installs: installs, vault: vault}
 }
 
 func (r *urlValueResolver) Resolve(
@@ -65,14 +74,42 @@ func (r *urlValueResolver) Resolve(
 	if principal == nil || principal.Subject == "" {
 		return nil, ErrNoPrincipal
 	}
-	inst, err := r.installs.Find(ctx, rc.Consumer.GatewayID, principal.Subject, reg.MCPTarget.Code)
-	if err != nil {
-		if errors.Is(err, installationdomain.ErrNotFound) {
-			// The principal has not configured this server; leave the values empty
-			// so ResolveURL surfaces the missing required placeholders.
-			return nil, nil
+	gatewayID := rc.Consumer.GatewayID
+	code := reg.MCPTarget.Code
+
+	values := map[string]string{}
+	inst, err := r.installs.Find(ctx, gatewayID, principal.Subject, code)
+	switch {
+	case err == nil:
+		for k, v := range inst.Config {
+			values[k] = v
 		}
+	case errors.Is(err, installationdomain.ErrNotFound):
+		// The principal has not configured this server; leave the plain values
+		// empty so ResolveURL surfaces the missing required placeholders.
+	default:
 		return nil, err
 	}
-	return inst.Config, nil
+
+	// Secret variables never touch the install config; they are read per-user from
+	// the vault, where the connect link stored them. A missing one is left unset so
+	// ResolveURL fails closed rather than dialing a half-formed URL.
+	if r.vault != nil {
+		for _, v := range reg.MCPTarget.URLVariables {
+			if !v.Secret {
+				continue
+			}
+			cred, err := r.vault.Find(ctx, gatewayID, principal.Subject, registrydomain.URLVariableVaultProvider(code, v.Name))
+			if err != nil {
+				if errors.Is(err, vaultdomain.ErrNotFound) {
+					continue
+				}
+				return nil, err
+			}
+			if cred != nil && cred.AccessToken != "" {
+				values[v.Name] = cred.AccessToken
+			}
+		}
+	}
+	return values, nil
 }

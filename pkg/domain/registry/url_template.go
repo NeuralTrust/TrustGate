@@ -38,6 +38,19 @@ var safeURLSegment = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-
 // ErrURLTemplate is the base for URL-template resolution and validation errors.
 var ErrURLTemplate = fmt.Errorf("registry: url template")
 
+// urlVariableVaultPrefix namespaces a secret URL variable's per-user value in the
+// vault, keeping it distinct from OAuth/forwarded provider credentials (keyed by
+// the bare catalog code). Both the writer (the configure flow) and the reader
+// (the dial-time resolver) derive the key through URLVariableVaultProvider so
+// they always agree.
+const urlVariableVaultPrefix = "urlvar:"
+
+// URLVariableVaultProvider is the vault "provider" key under which a secret URL
+// variable's per-user value is stored, e.g. urlvar:com.brightdata/mcp:token.
+func URLVariableVaultProvider(code, name string) string {
+	return urlVariableVaultPrefix + strings.TrimSpace(code) + ":" + strings.TrimSpace(name)
+}
+
 // TemplateVariableNames returns the distinct placeholder names in a URL
 // template, in first-appearance order. A template with no placeholders returns
 // nil — the common (fully-determined URL) case.
