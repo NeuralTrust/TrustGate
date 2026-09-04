@@ -255,21 +255,37 @@ func TestNewMCPServerCatalog_IncludesSectigoN8nHalo(t *testing.T) {
 	require.NotEmpty(t, halo.AuthHeaders)
 }
 
-// AWS Sign-In advertises a registration_endpoint but only mints clients for an
-// allowlist of vendor redirect URIs (loopback, Claude, Cursor, VS Code, ChatGPT
-// and a few more). A gateway callback is not on it, so DCR answers 400
-// invalid_redirect_uri and the entry can never be connected — by this
-// deployment or a self-hosted one. Re-add it once AWS approves a gateway
-// redirect URI, or once the gateway can mint tokens through the non-interactive
-// SigV4 grant (signin:CreateOAuth2TokenWithIAM), which needs no redirect at all.
-func TestNewMCPServerCatalog_OmitsAWSManagedServer(t *testing.T) {
+// AWS publishes region-specific OAuth endpoints through protected-resource
+// metadata, so the seed carries no authorize_url/token_url/resource of its own:
+// discovery resolves them against the region the operator picked. Connecting
+// also depends on AWS Sign-In allowlisting the deployment's redirect URI for
+// dynamic client registration, which is why the guide calls that out.
+func TestNewMCPServerCatalog_IncludesAWSManagedServer(t *testing.T) {
 	t.Parallel()
 
 	cat, err := NewMCPServerCatalog(nil)
 	require.NoError(t, err)
 
-	_, ok := cat.GetByCode("com.amazon.aws/mcp")
-	require.False(t, ok)
+	server, ok := cat.GetByCode("com.amazon.aws/mcp")
+	require.True(t, ok)
+	require.Equal(t, "https://aws-mcp.{region}.api.aws/mcp", server.URL)
+	require.Equal(t, "AWS", server.Vendor)
+	require.Equal(t, authHintOAuth, server.AuthHint)
+	require.True(t, server.RequiresConfig)
+	require.Len(t, server.URLVariables, 1)
+	require.Equal(t, "region", server.URLVariables[0].Name)
+	require.True(t, server.URLVariables[0].Required)
+	require.NotNil(t, server.OAuth)
+	require.Equal(t, "auto", server.OAuth.Registration)
+	require.NotNil(t, server.OAuth.DCR)
+	require.True(t, *server.OAuth.DCR)
+	require.NotNil(t, server.OAuth.PKCE)
+	require.True(t, *server.OAuth.PKCE)
+	require.Empty(t, server.OAuth.AuthorizeURL)
+	require.Empty(t, server.OAuth.TokenURL)
+	require.Empty(t, server.OAuth.Resource)
+	require.NotNil(t, server.ConfigGuide)
+	require.Contains(t, server.ConfigGuide.Steps[0], "AWSMCPSignInOAuthAccessPolicy")
 }
 
 // A templated oauth.resource never reaches substitution: the registry
