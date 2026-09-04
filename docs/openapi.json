@@ -32,6 +32,71 @@
                 }
             }
         },
+        "/__diagnostics/gateways/{gateway_id}/registries/test-connection": {
+            "post": {
+                "description": "Runs the registry connection probe from this data plane's own network, so the result reflects what serving traffic will actually reach. Authorized by a control-plane-minted diagnostics token bound to the gateway. Accepts the same body as the admin test-connection endpoint: a stored registry (registry_id, which must have synced to this plane — stage \"not_synced\" means retry) or an inline candidate (provider + auth).",
+                "tags": [
+                    "diagnostics"
+                ],
+                "summary": "Test a backend connection from the data plane",
+                "parameters": [
+                    {
+                        "description": "Control-plane-minted diagnostics JWT",
+                        "name": "X-AG-Diagnostics-Token",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "$ref": "#/components/requestBodies/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.TestConnectionRequest"
+                },
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.TestConnectionResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/health": {
             "get": {
                 "description": "Reports whether the process is alive. Canonical path is /healthz; /health is an alias for load-balancer defaults.",
@@ -2895,15 +2960,7 @@
                     }
                 ],
                 "requestBody": {
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.TestConnectionRequest"
-                            }
-                        }
-                    },
-                    "description": "Connection to test",
-                    "required": true
+                    "$ref": "#/components/requestBodies/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.TestConnectionRequest"
                 },
                 "responses": {
                     "200": {
@@ -4680,6 +4737,19 @@
         }
     ],
     "components": {
+        "requestBodies": {
+            "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.TestConnectionRequest": {
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.TestConnectionRequest"
+                        }
+                    }
+                },
+                "description": "Connection to test",
+                "required": true
+            }
+        },
         "securitySchemes": {
             "BearerAuth": {
                 "type": "apiKey",

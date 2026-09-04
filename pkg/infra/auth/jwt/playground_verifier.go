@@ -28,6 +28,15 @@ import (
 // (and vice versa: M2M tokens carry aud trustgate-admin and token_use).
 const AudiencePlayground = "trustgate-playground"
 
+// AudienceDiagnostics is the audience RS256 diagnostics tokens must carry.
+// Diagnostics tokens let the control plane run connectivity probes (registry
+// test-connection) on a data plane; the audience keeps them, playground tokens
+// and admin M2M credentials mutually non-replayable.
+const AudienceDiagnostics = "trustgate-diagnostics"
+
+// PurposeDiagnostics marks tokens minted for data-plane diagnostics endpoints.
+const PurposeDiagnostics = "diagnostics"
+
 // PlaygroundKeySource supplies the RSA public keys, by kid, trusted to have
 // signed RS256 playground tokens. Implementations may be static (env config)
 // or live (config-sync snapshot on data planes); the verifier reads it per
@@ -36,23 +45,35 @@ type PlaygroundKeySource interface {
 	PlaygroundTokenKeys() map[string]*rsa.PublicKey
 }
 
-// PlaygroundVerifier authenticates playground tokens. Two signature schemes
-// are accepted: RS256 minted by the control plane and verified against the
-// PlaygroundKeySource (how hybrid data planes validate without sharing any
-// secret), and the legacy HS256 signed with this deployment's own
-// SERVER_SECRET_KEY (self-hosted installs where dashboard and gateway share
-// it). Claim checks (purpose, consumer binding) stay in the identity resolver.
-type PlaygroundVerifier interface {
+// ProxyTokenVerifier authenticates control-plane-minted proxy tokens
+// (playground, diagnostics). Two signature schemes are accepted: RS256 minted
+// by the control plane and verified against the PlaygroundKeySource (how
+// hybrid data planes validate without sharing any secret), and the legacy
+// HS256 signed with this deployment's own SERVER_SECRET_KEY (self-hosted
+// installs where dashboard and gateway share it). Claim checks beyond the
+// audience (purpose, bindings) stay in the caller.
+type ProxyTokenVerifier interface {
 	Verify(tokenString string) (*Claims, error)
 }
+
+// PlaygroundVerifier is kept as the name the playground resolver depends on.
+type PlaygroundVerifier = ProxyTokenVerifier
 
 type playgroundVerifier struct {
 	serverCfg *config.ServerConfig
 	source    PlaygroundKeySource
+	audience  string
 }
 
-func NewPlaygroundVerifier(serverCfg *config.ServerConfig, source PlaygroundKeySource) PlaygroundVerifier {
-	return &playgroundVerifier{serverCfg: serverCfg, source: source}
+// NewPlaygroundVerifier builds the verifier playground tokens go through.
+func NewPlaygroundVerifier(serverCfg *config.ServerConfig, source PlaygroundKeySource) ProxyTokenVerifier {
+	return &playgroundVerifier{serverCfg: serverCfg, source: source, audience: AudiencePlayground}
+}
+
+// NewDiagnosticsVerifier builds the verifier diagnostics tokens go through:
+// same key sources, pinned to the diagnostics audience.
+func NewDiagnosticsVerifier(serverCfg *config.ServerConfig, source PlaygroundKeySource) ProxyTokenVerifier {
+	return &playgroundVerifier{serverCfg: serverCfg, source: source, audience: AudienceDiagnostics}
 }
 
 func (v *playgroundVerifier) Verify(tokenString string) (*Claims, error) {
@@ -68,10 +89,11 @@ func (v *playgroundVerifier) Verify(tokenString string) (*Claims, error) {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidToken, err.Error())
 	}
 	if _, ok := parsed.Method.(*jwt.SigningMethodRSA); ok {
-		// The audience pin is what keeps admin M2M tokens (signed by the same
-		// issuer) from being replayed against the playground resolver.
-		if !hasAudience(claims.Audience, AudiencePlayground) {
-			return nil, fmt.Errorf("%w: audience must be %s", ErrInvalidToken, AudiencePlayground)
+		// The audience pin is what keeps tokens signed by the same issuer for
+		// another surface (admin M2M, playground vs diagnostics) from being
+		// replayed against this verifier.
+		if !hasAudience(claims.Audience, v.audience) {
+			return nil, fmt.Errorf("%w: audience must be %s", ErrInvalidToken, v.audience)
 		}
 	}
 	return claims, nil

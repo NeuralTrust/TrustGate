@@ -19,6 +19,7 @@ import (
 	"log/slog"
 
 	apihandler "github.com/NeuralTrust/TrustGate/pkg/api/handler/http"
+	diagnosticshttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/diagnostics"
 	proxyhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/proxy"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
@@ -60,6 +61,7 @@ type proxyRouterParams struct {
 	Transport     *middleware.Transport `name:"proxy"`
 	HealthHandler *apihandler.HealthHandler
 	ProxyHandler  *proxyhttp.ForwardedHandler
+	Diagnostics   *diagnosticshttp.TestConnectionHandler
 	OpsMetrics    *o11y.Provider
 }
 
@@ -77,7 +79,7 @@ func ServerProxy(c *container.Container) error {
 	if err := c.Provide(
 		func(p proxyRouterParams) router.ServerRouter {
 			ops := middleware.NewOpsMetricsMiddleware(p.OpsMetrics, o11y.PlaneProxy)
-			return router.NewProxyRouter(p.Transport, p.HealthHandler, p.ProxyHandler, ops)
+			return router.NewProxyRouter(p.Transport, p.HealthHandler, p.ProxyHandler, ops, p.Diagnostics)
 		},
 		dig.Name("proxy"),
 	); err != nil {
