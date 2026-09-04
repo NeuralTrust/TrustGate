@@ -57,6 +57,10 @@ const (
 type ProviderLocator interface {
 	Get(provider string) (providers.Client, error)
 	GetTester(provider string) (providers.ConnectionTester, error)
+	// GetModelLister returns the provider's live model listing when the client
+	// supports it; providers without a listing endpoint return an error and the
+	// caller falls back to the static catalog.
+	GetModelLister(provider string) (providers.ModelLister, error)
 }
 
 type providerLocator struct {
@@ -95,6 +99,18 @@ func (f *providerLocator) Get(provider string) (providers.Client, error) {
 		return c, nil
 	}
 	return nil, fmt.Errorf("unsupported provider: %s", provider)
+}
+
+func (f *providerLocator) GetModelLister(provider string) (providers.ModelLister, error) {
+	c, ok := f.clients[provider]
+	if !ok {
+		return nil, fmt.Errorf("unsupported provider: %s", provider)
+	}
+	lister, ok := c.(providers.ModelLister)
+	if !ok {
+		return nil, fmt.Errorf("provider %q does not support live model listing", provider)
+	}
+	return lister, nil
 }
 
 func (f *providerLocator) GetTester(provider string) (providers.ConnectionTester, error) {
