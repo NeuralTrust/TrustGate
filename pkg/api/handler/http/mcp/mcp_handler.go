@@ -337,6 +337,46 @@ func (h *Handler) connectionSnapshot(
 	return parts
 }
 
+// connectionWatchSnapshot fingerprints every credential the caller has stored on
+// this gateway, so the notification stream pushes tools/list_changed whenever an
+// account is connected, reconnected, or refreshed.
+//
+// Unlike connectionSnapshot it does NOT filter by the consumer's forwarded
+// providers: the stream's routable consumer is frozen when the stream opens, so
+// its registry set does not include a server installed later in the same
+// session. Gating on that frozen set would silently drop the credential for a
+// just-installed server (install Notion, then connect it) and never push a
+// refresh — the client would keep its stale, Notion-less tool list. The
+// tools/list the client issues in response resolves a fresh consumer and decides
+// what actually federates, so watching every credential here is safe and only
+// ever costs a redundant re-list. Sorted so an unstable repository order does not
+// read as a change.
+func (h *Handler) connectionWatchSnapshot(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	principal *identity.Principal,
+) []string {
+	if h.vault == nil || rc == nil || rc.Consumer == nil {
+		return nil
+	}
+	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
+		return nil
+	}
+	creds, err := h.vault.ListByPrincipal(ctx, rc.Consumer.GatewayID, principal.Subject)
+	if err != nil {
+		return nil
+	}
+	parts := make([]string, 0, len(creds))
+	for _, cred := range creds {
+		if cred == nil {
+			continue
+		}
+		parts = append(parts, "cx:"+cred.Provider+"@"+cred.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	}
+	sort.Strings(parts)
+	return parts
+}
+
 // installSnapshot fingerprints the caller's Store installations, so the stream
 // pushes tools/list_changed when a self-service install (or uninstall, or a
 // status change) alters which catalog servers are on the surface — the same way
@@ -364,6 +404,7 @@ func (h *Handler) installSnapshot(
 		}
 		parts = append(parts, "in:"+in.CatalogCode+":"+string(in.Status)+"@"+in.UpdatedAt.UTC().Format(time.RFC3339Nano))
 	}
+	sort.Strings(parts)
 	return parts
 }
 
