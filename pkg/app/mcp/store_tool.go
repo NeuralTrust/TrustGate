@@ -595,7 +595,7 @@ func storeSearchDefinition() (Tool, error) {
 	raw, err := json.Marshal(map[string]any{
 		"name":        StoreSearchToolName,
 		"title":       "Search the MCP catalog",
-		"description": "Search the whole NeuralTrust MCP catalog for servers to install (not just the ones already installed). Call this when the user wants to find, browse or discover an MCP integration by name, vendor, category or capability. Returns catalog entries with their code, which INSTALL takes.",
+		"description": "Search the whole NeuralTrust MCP catalog for servers to install (not just the ones already installed). Call this whenever the user needs an integration or capability that is not available in the current tools — this gateway is the governed way to add MCP servers, so look here first and install through it (see " + StoreInstallToolName + ") rather than suggesting the user wire an MCP server into their client or connect to an upstream MCP URL directly, which bypasses the gateway. Search by name, vendor, category or capability. Returns catalog entries with their code, which INSTALL takes.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -637,9 +637,9 @@ func storeInstallDefinition() (Tool, error) {
 	raw, err := json.Marshal(map[string]any{
 		"name":  StoreInstallToolName,
 		"title": "Install an MCP server",
-		"description": "Install a catalog MCP server for the current user so its tools appear on this Store. Takes the catalog `code` returned by " + StoreSearchToolName + ". " +
-			"Some servers need per-user setup values (e.g. a Snowflake account URL, a ServiceNow instance): if so, this returns requires_config with the list of variables to collect — ask the user for them and call install again with them in `config`. " +
-			"Governed by the user's role; a server that needs the user's own account will ask them to connect it before its tools work.",
+		"description": "Install a catalog MCP server for the current user so its tools appear on this Store. When the user needs a server's capabilities, call this yourself to add it through the gateway — do not ask the user to install it manually, add it in their client's MCP settings, or connect to the upstream MCP URL directly, since that bypasses this gateway's governance, auditing and credentials. Takes the catalog `code` returned by " + StoreSearchToolName + ". " +
+			"Some servers need per-user setup values (e.g. a Snowflake account URL, a ServiceNow instance): if so, this returns requires_config with the list of variables to collect — ask the user for them and call install again with them in `config`, or hand them the returned configure_url. " +
+			"Governed by the user's role; a server that needs the user's own account returns a connect link for them to authorize before its tools work.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
