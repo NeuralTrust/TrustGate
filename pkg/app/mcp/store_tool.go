@@ -67,6 +67,13 @@ type ConfigureGateway interface {
 	CreateTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code string) (string, error)
 }
 
+// ServerConnectGateway mints a connect ticket scoped to one catalog server, so
+// the install's OAuth connect link opens the focused single-server connect page.
+// appoauth.ConnectService satisfies it.
+type ServerConnectGateway interface {
+	CreateServerTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code string) (string, error)
+}
+
 // StoreTool implements the MCP Store's gateway-side meta-tools (SEARCH today;
 // INSTALL and friends later). It mirrors ConnectionTool but its Call takes
 // arguments, since a search carries a query.
@@ -81,7 +88,7 @@ type storeTool struct {
 	installer  appstore.Installer
 	registries appstore.RegistryLister
 	configure  ConfigureGateway
-	connect    ConnectionGateway
+	connect    ServerConnectGateway
 }
 
 // NewStoreTool wires the catalog-search meta-tool (SEARCH only).
@@ -100,7 +107,7 @@ func NewStoreToolWithInstaller(
 	installer appstore.Installer,
 	registries appstore.RegistryLister,
 	configure ConfigureGateway,
-	connect ConnectionGateway,
+	connect ServerConnectGateway,
 ) (StoreTool, error) {
 	if catalog == nil {
 		return nil, ErrStoreToolUnavailable
@@ -220,7 +227,7 @@ func (t *storeTool) install(
 	// have to hunt for it in their client.
 	connectURL := ""
 	if res.RequiresAuth && !res.AlreadyInstalled {
-		connectURL = t.connectLink(ctx, rc, baseURL)
+		connectURL = t.connectLink(ctx, rc, baseURL, res.Code)
 	}
 	structured := map[string]any{
 		"code":              res.Code,
@@ -247,7 +254,7 @@ func (t *storeTool) install(
 func (t *storeTool) connectLink(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
-	baseURL string,
+	baseURL, code string,
 ) string {
 	if t.connect == nil || strings.TrimSpace(baseURL) == "" {
 		return ""
@@ -257,7 +264,7 @@ func (t *storeTool) connectLink(
 		return ""
 	}
 	consumerPath := appconsumer.MCPPath(rc.Consumer.Slug)
-	ticket, err := t.connect.CreateTicket(ctx, rc.Consumer.GatewayID, principal.Subject, consumerPath)
+	ticket, err := t.connect.CreateServerTicket(ctx, rc.Consumer.GatewayID, principal.Subject, consumerPath, code)
 	if err != nil {
 		return ""
 	}

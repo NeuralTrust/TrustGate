@@ -272,7 +272,7 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 	if p.Configure != nil {
 		configure = p.Configure
 	}
-	var connect appmcp.ConnectionGateway
+	var connect appmcp.ServerConnectGateway
 	if p.Connect != nil {
 		connect = p.Connect
 	}

@@ -231,6 +231,58 @@ func (_c *ConnectService_CreateTicket_Call) RunAndReturn(run func(context.Contex
 	return _c
 }
 
+func (_m *ConnectService) CreateServerTicket(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], principalSub string, consumerPath string, code string) (string, error) {
+	ret := _m.Called(ctx, gatewayID, principalSub, consumerPath, code)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CreateServerTicket")
+	}
+
+	var r0 string
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, string, string) (string, error)); ok {
+		return rf(ctx, gatewayID, principalSub, consumerPath, code)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], string, string, string) string); ok {
+		r0 = rf(ctx, gatewayID, principalSub, consumerPath, code)
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], string, string, string) error); ok {
+		r1 = rf(ctx, gatewayID, principalSub, consumerPath, code)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+type ConnectService_CreateServerTicket_Call struct {
+	*mock.Call
+}
+
+func (_e *ConnectService_Expecter) CreateServerTicket(ctx interface{}, gatewayID interface{}, principalSub interface{}, consumerPath interface{}, code interface{}) *ConnectService_CreateServerTicket_Call {
+	return &ConnectService_CreateServerTicket_Call{Call: _e.mock.On("CreateServerTicket", ctx, gatewayID, principalSub, consumerPath, code)}
+}
+
+func (_c *ConnectService_CreateServerTicket_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], principalSub string, consumerPath string, code string)) *ConnectService_CreateServerTicket_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(string), args[3].(string), args[4].(string))
+	})
+	return _c
+}
+
+func (_c *ConnectService_CreateServerTicket_Call) Return(_a0 string, _a1 error) *ConnectService_CreateServerTicket_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *ConnectService_CreateServerTicket_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], string, string, string) (string, error)) *ConnectService_CreateServerTicket_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 func (_m *ConnectService) Disconnect(ctx context.Context, ticketID string, provider string) error {
 	ret := _m.Called(ctx, ticketID, provider)
 
