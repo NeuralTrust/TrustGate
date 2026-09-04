@@ -169,12 +169,13 @@ type composerParams struct {
 	Manager  *cache.TTLMapManager
 	Logger   *slog.Logger
 	Installs installationdomain.Repository `optional:"true"`
+	Vault    vaultdomain.Repository        `optional:"true"`
 }
 
 func provideComposer(p composerParams) appmcp.Composer {
 	var opts []appmcp.ComposerOption
 	if p.Installs != nil {
-		opts = append(opts, appmcp.WithURLValues(appmcp.NewURLValueResolver(p.Installs)))
+		opts = append(opts, appmcp.WithURLValues(appmcp.NewURLValueResolver(p.Installs, p.Vault)))
 	}
 	return appmcp.NewComposer(p.Dialer, p.Creds, p.Manager.GetTTLMap(cache.MCPToolsTTLName), p.Logger, opts...)
 }
