@@ -291,7 +291,7 @@ func (g *RPCGateway) dispatch(
 			if rc == nil || !consumerdomain.IsStoreConsumer(rc.Consumer) {
 				return nil, &appmcp.ToolNotPermittedError{Tool: p.Name}
 			}
-			return g.store.Call(ctx, rc, p.Name, p.Arguments)
+			return g.store.Call(ctx, rc, baseURL, p.Name, p.Arguments)
 		}
 		pre, err := g.plugins.PreRequest(ctx, rc, p.Name, p.Arguments)
 		if err != nil {

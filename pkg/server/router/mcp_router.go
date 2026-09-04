@@ -37,6 +37,7 @@ type mcpRouter struct {
 	tokenHandler               *oauthhttp.TokenHandler
 	apiKeyConnectHandler       *oauthhttp.APIKeyConnectHandler
 	connectHandler             *oauthhttp.ConnectHandler
+	configureHandler           *oauthhttp.ConfigureHandler
 	jwksHandler                *oauthhttp.JWKSHandler
 }
 
@@ -53,6 +54,7 @@ func NewMCPRouter(
 	tokenHandler *oauthhttp.TokenHandler,
 	apiKeyConnectHandler *oauthhttp.APIKeyConnectHandler,
 	connectHandler *oauthhttp.ConnectHandler,
+	configureHandler *oauthhttp.ConfigureHandler,
 	jwksHandler *oauthhttp.JWKSHandler,
 	opsMetrics *middleware.OpsMetricsMiddleware,
 ) ServerRouter {
@@ -70,6 +72,7 @@ func NewMCPRouter(
 		tokenHandler:               tokenHandler,
 		apiKeyConnectHandler:       apiKeyConnectHandler,
 		connectHandler:             connectHandler,
+		configureHandler:           configureHandler,
 		jwksHandler:                jwksHandler,
 	}
 }
@@ -101,6 +104,10 @@ func (r *mcpRouter) BuildRoutes(app *fiber.App) error {
 	app.Get("/:slug/connect", r.apiKeyConnectHandler.Get)
 	app.Post("/:slug/connect", r.apiKeyConnectHandler.Post)
 	app.Get("/+/connect", r.connectHandler.Page)
+	if r.configureHandler != nil {
+		app.Get("/+/configure", r.configureHandler.Page)
+		app.Post("/+/configure", r.configureHandler.Submit)
+	}
 
 	// The streamable-HTTP notification stream is a GET, so it has to be
 	// registered before the catch-all 405 and carry authentication as route

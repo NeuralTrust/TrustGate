@@ -132,20 +132,23 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		return nil, fmt.Errorf("%w: %q", ErrCatalogEntryNotFound, code)
 	}
 
-	// Per-user endpoint configuration (URL variables). Reject malformed input; a
-	// server still missing a required value is reported back for the caller to
-	// collect rather than installed half-configured.
-	config, missing, err := planInstallConfig(entry, in.Config)
+	// Per-user endpoint configuration (URL variables). Reject malformed input.
+	// Plain values can be supplied inline; missing required plain values stop the
+	// install and are reported for the caller to collect (inline or via the form).
+	// Secret values are never inline — they are entered through the hosted form —
+	// so their presence does not block recording the install; the install stands
+	// and the dial fails closed until the secret is provided.
+	config, missingPlain, secretRequired, err := planInstallConfig(entry, in.Config)
 	if err != nil {
 		return nil, err
 	}
-	if len(missing) > 0 {
+	if len(missingPlain) > 0 {
 		return &InstallResult{
 			Code:            code,
 			Name:            displayName(entry, code),
 			RequiresConfig:  true,
 			RequiresAuth:    entry.RequiresAuth,
-			ConfigVariables: missing,
+			ConfigVariables: missingPlain,
 		}, nil
 	}
 
@@ -173,30 +176,37 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		return nil, err
 	}
 
-	return &InstallResult{
+	result := &InstallResult{
 		Code:             code,
 		Name:             displayName(entry, code),
 		Status:           status,
 		Pending:          status == installationdomain.StatusPendingApproval,
 		RequiresAuth:     entry.RequiresAuth,
 		AlreadyInstalled: alreadyInstalled,
-	}, nil
+	}
+	// The install is recorded, but its tools stay dark until the user enters the
+	// required secret(s) at the hosted form.
+	if len(secretRequired) > 0 {
+		result.RequiresConfig = true
+		result.ConfigVariables = secretRequired
+	}
+	return result, nil
 }
 
 // planInstallConfig validates the caller's supplied URL-variable values against
-// the catalog entry's declaration and reports which required values are still
-// missing. It rejects malformed input (unknown variable, unsafe value, or a
-// secret supplied inline). The returned map is what to persist on the
-// installation (non-secret values only); missing holds the required variables
-// the caller must still provide — non-secret ones via config, and any secret
-// ones via the connect link, which self-service install does not collect inline.
+// the catalog entry's declaration and partitions what is still needed. It rejects
+// malformed input (unknown variable, unsafe value, or a secret supplied inline).
+// It returns: the plain values to persist on the installation; the required plain
+// variables still missing (which block the install until supplied); and the
+// required secret variables (collected out-of-band through the hosted form, so
+// they do not block recording the install).
 func planInstallConfig(
 	entry catalogdomain.MCPServer,
 	provided map[string]string,
-) (map[string]string, []registrydomain.MCPURLVariable, error) {
+) (config map[string]string, missingPlain, secretRequired []registrydomain.MCPURLVariable, err error) {
 	declared := catalogURLVariables(entry.URLVariables)
 	if len(declared) == 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	byName := make(map[string]registrydomain.MCPURLVariable, len(declared))
 	for _, v := range declared {
@@ -210,29 +220,31 @@ func planInstallConfig(
 		}
 		v, known := byName[k]
 		if !known {
-			return nil, nil, fmt.Errorf("%w: unknown variable %q", ErrConfigInvalid, k)
+			return nil, nil, nil, fmt.Errorf("%w: unknown variable %q", ErrConfigInvalid, k)
 		}
 		if v.Secret {
-			return nil, nil, fmt.Errorf("%w: %q is a secret and must be set through the connect link, not inline", ErrConfigInvalid, k)
+			return nil, nil, nil, fmt.Errorf("%w: %q is a secret and must be set through the configure form, not inline", ErrConfigInvalid, k)
 		}
 		if err := registrydomain.ValidateURLValue(v, val); err != nil {
-			return nil, nil, fmt.Errorf("%w: %w", ErrConfigInvalid, err)
+			return nil, nil, nil, fmt.Errorf("%w: %w", ErrConfigInvalid, err)
 		}
 		stored[k] = val
 	}
-	var missing []registrydomain.MCPURLVariable
 	for _, v := range declared {
 		if !v.Required {
 			continue
 		}
-		if v.Secret || strings.TrimSpace(stored[v.Name]) == "" {
-			missing = append(missing, v)
+		switch {
+		case v.Secret:
+			secretRequired = append(secretRequired, v)
+		case strings.TrimSpace(stored[v.Name]) == "":
+			missingPlain = append(missingPlain, v)
 		}
 	}
 	if len(stored) == 0 {
 		stored = nil
 	}
-	return stored, missing, nil
+	return stored, missingPlain, secretRequired, nil
 }
 
 // decideStatus applies the shelf governance: available + role-allowed installs

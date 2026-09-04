@@ -37,6 +37,9 @@ type ConnectTicket struct {
 	ConsumerID   string    `json:"consumer_id,omitempty"`
 	AuthID       string    `json:"auth_id,omitempty"`
 	Providers    *[]string `json:"providers,omitempty"`
+	// Code scopes a configure ticket to one catalog server whose per-user URL
+	// variables the hosted form collects. Empty for OAuth/api-key connect tickets.
+	Code string `json:"code,omitempty"`
 }
 
 type ConnectState struct {

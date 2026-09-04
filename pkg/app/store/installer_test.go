@@ -422,13 +422,15 @@ func TestInstallRejectsSecretSuppliedInline(t *testing.T) {
 	}
 }
 
-func TestInstallSecretVariableRequiresConnect(t *testing.T) {
-	// A server whose only required variable is a secret cannot be completed via
-	// inline config: it is reported as requires-config (to be set via the connect
-	// link), never installed half-configured.
+func TestInstallSecretVariableRecordsAndRequiresConnect(t *testing.T) {
+	// A server whose only required variable is a secret is recorded (the secret is
+	// collected out-of-band through the hosted form, not inline) and reported as
+	// requires-config so the caller surfaces the configure link. Its tools stay
+	// dark until the secret is entered, but the install itself is durable.
 	gw := ids.New[ids.GatewayKind]()
+	regs := &fakeRegistries{}
 	installs := &fakeInstalls{}
-	res, err := newInstallerWithEnsurer(t, &fakeRegistries{}, installs, &fakeEnsurer{}).
+	res, err := newInstallerWithEnsurer(t, regs, installs, &fakeEnsurer{addTo: regs}).
 		Install(context.Background(), openReq(gw, "brightdata"))
 	if err != nil {
 		t.Fatalf("Install: %v", err)
@@ -436,8 +438,11 @@ func TestInstallSecretVariableRequiresConnect(t *testing.T) {
 	if !res.RequiresConfig || len(res.ConfigVariables) != 1 || !res.ConfigVariables[0].Secret {
 		t.Fatalf("a required secret variable must be reported for connect-link setup, got %+v", res)
 	}
-	if len(installs.upserts) != 0 {
-		t.Fatalf("must not install before the secret is provided, got %+v", installs.upserts)
+	if res.Status != installationdomain.StatusInstalled {
+		t.Fatalf("the install must be recorded so config can be attached, got %+v", res)
+	}
+	if len(installs.upserts) != 1 {
+		t.Fatalf("the install must be recorded, got %+v", installs.upserts)
 	}
 }
 
