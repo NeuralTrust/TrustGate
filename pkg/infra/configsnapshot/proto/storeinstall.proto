@@ -21,10 +21,12 @@ option go_package = "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/p
 // StoreInstallations is the DP-initiated persistence channel for the MCP Store's
 // per-principal install state. The data plane runs DB-less, so it computes the
 // install decision locally (against the config snapshot's catalog + registries)
-// and delegates only the durable read/write of store_installations to the
-// control plane, which owns the database. It rides the same egress-only
-// connection the data plane already opens for ConfigSync: the data plane is
-// always the client, so no inbound port is added to the data plane.
+// and delegates the durable store writes it cannot make itself to the control
+// plane, which owns the database: the per-principal store_installations rows and
+// — for self-service — materialising the shared registry from the catalog. It
+// rides the same egress-only connection the data plane already opens for
+// ConfigSync: the data plane is always the client, so no inbound port is added
+// to the data plane.
 service StoreInstallations {
   // Upsert persists (creates or updates) one installation record.
   rpc Upsert(UpsertInstallationRequest) returns (UpsertInstallationResponse);
@@ -37,6 +39,12 @@ service StoreInstallations {
   // Delete removes the installation for (gateway, principal, code); a missing
   // row surfaces as a NotFound status.
   rpc Delete(DeleteInstallationRequest) returns (DeleteInstallationResponse);
+  // EnsureRegistry materialises the shared registry for a catalog code on the
+  // control plane's database (the "created on first install" self-service path),
+  // returning cleanly when one already exists. The new registry syncs back to the
+  // data plane through the normal ConfigSync snapshot. The data plane cannot
+  // write registries itself, so it delegates this to the control plane.
+  rpc EnsureRegistry(EnsureRegistryRequest) returns (EnsureRegistryResponse);
 }
 
 // Installation mirrors installation.Installation on the wire. Timestamps are Unix
@@ -86,3 +94,10 @@ message DeleteInstallationRequest {
 }
 
 message DeleteInstallationResponse {}
+
+message EnsureRegistryRequest {
+  string gateway_id = 1;
+  string catalog_code = 2;
+}
+
+message EnsureRegistryResponse {}

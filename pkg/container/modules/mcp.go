@@ -191,6 +191,11 @@ type rpcGatewayParams struct {
 	// has no installation store yet).
 	Registries registrydomain.Repository     `optional:"true"`
 	Installs   installationdomain.Repository `optional:"true"`
+	// Ensurer materialises the shared registry on a self-service install. The
+	// full plane provides the direct (Creator-backed) implementation; the data
+	// plane provides the gRPC-client one. Absent on SEARCH-only planes, where a
+	// self-service install downgrades to a pending request.
+	Ensurer appstore.RegistryEnsurer `optional:"true"`
 }
 
 func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
@@ -205,7 +210,7 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 
 	var installer appstore.Installer
 	if p.Registries != nil && p.Installs != nil {
-		made, err := appstore.NewInstaller(catalog, p.Registries, p.Installs)
+		made, err := appstore.NewInstaller(catalog, p.Registries, p.Installs, p.Ensurer)
 		if err != nil {
 			return nil, err
 		}

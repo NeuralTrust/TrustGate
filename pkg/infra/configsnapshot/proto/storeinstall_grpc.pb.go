@@ -37,6 +37,7 @@ const (
 	StoreInstallations_Find_FullMethodName            = "/snapshotpb.StoreInstallations/Find"
 	StoreInstallations_ListByPrincipal_FullMethodName = "/snapshotpb.StoreInstallations/ListByPrincipal"
 	StoreInstallations_Delete_FullMethodName          = "/snapshotpb.StoreInstallations/Delete"
+	StoreInstallations_EnsureRegistry_FullMethodName  = "/snapshotpb.StoreInstallations/EnsureRegistry"
 )
 
 // StoreInstallationsClient is the client API for StoreInstallations service.
@@ -46,10 +47,12 @@ const (
 // StoreInstallations is the DP-initiated persistence channel for the MCP Store's
 // per-principal install state. The data plane runs DB-less, so it computes the
 // install decision locally (against the config snapshot's catalog + registries)
-// and delegates only the durable read/write of store_installations to the
-// control plane, which owns the database. It rides the same egress-only
-// connection the data plane already opens for ConfigSync: the data plane is
-// always the client, so no inbound port is added to the data plane.
+// and delegates the durable store writes it cannot make itself to the control
+// plane, which owns the database: the per-principal store_installations rows and
+// — for self-service — materialising the shared registry from the catalog. It
+// rides the same egress-only connection the data plane already opens for
+// ConfigSync: the data plane is always the client, so no inbound port is added
+// to the data plane.
 type StoreInstallationsClient interface {
 	// Upsert persists (creates or updates) one installation record.
 	Upsert(ctx context.Context, in *UpsertInstallationRequest, opts ...grpc.CallOption) (*UpsertInstallationResponse, error)
@@ -62,6 +65,12 @@ type StoreInstallationsClient interface {
 	// Delete removes the installation for (gateway, principal, code); a missing
 	// row surfaces as a NotFound status.
 	Delete(ctx context.Context, in *DeleteInstallationRequest, opts ...grpc.CallOption) (*DeleteInstallationResponse, error)
+	// EnsureRegistry materialises the shared registry for a catalog code on the
+	// control plane's database (the "created on first install" self-service path),
+	// returning cleanly when one already exists. The new registry syncs back to the
+	// data plane through the normal ConfigSync snapshot. The data plane cannot
+	// write registries itself, so it delegates this to the control plane.
+	EnsureRegistry(ctx context.Context, in *EnsureRegistryRequest, opts ...grpc.CallOption) (*EnsureRegistryResponse, error)
 }
 
 type storeInstallationsClient struct {
@@ -112,6 +121,16 @@ func (c *storeInstallationsClient) Delete(ctx context.Context, in *DeleteInstall
 	return out, nil
 }
 
+func (c *storeInstallationsClient) EnsureRegistry(ctx context.Context, in *EnsureRegistryRequest, opts ...grpc.CallOption) (*EnsureRegistryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(EnsureRegistryResponse)
+	err := c.cc.Invoke(ctx, StoreInstallations_EnsureRegistry_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // StoreInstallationsServer is the server API for StoreInstallations service.
 // All implementations must embed UnimplementedStoreInstallationsServer
 // for forward compatibility.
@@ -119,10 +138,12 @@ func (c *storeInstallationsClient) Delete(ctx context.Context, in *DeleteInstall
 // StoreInstallations is the DP-initiated persistence channel for the MCP Store's
 // per-principal install state. The data plane runs DB-less, so it computes the
 // install decision locally (against the config snapshot's catalog + registries)
-// and delegates only the durable read/write of store_installations to the
-// control plane, which owns the database. It rides the same egress-only
-// connection the data plane already opens for ConfigSync: the data plane is
-// always the client, so no inbound port is added to the data plane.
+// and delegates the durable store writes it cannot make itself to the control
+// plane, which owns the database: the per-principal store_installations rows and
+// — for self-service — materialising the shared registry from the catalog. It
+// rides the same egress-only connection the data plane already opens for
+// ConfigSync: the data plane is always the client, so no inbound port is added
+// to the data plane.
 type StoreInstallationsServer interface {
 	// Upsert persists (creates or updates) one installation record.
 	Upsert(context.Context, *UpsertInstallationRequest) (*UpsertInstallationResponse, error)
@@ -135,6 +156,12 @@ type StoreInstallationsServer interface {
 	// Delete removes the installation for (gateway, principal, code); a missing
 	// row surfaces as a NotFound status.
 	Delete(context.Context, *DeleteInstallationRequest) (*DeleteInstallationResponse, error)
+	// EnsureRegistry materialises the shared registry for a catalog code on the
+	// control plane's database (the "created on first install" self-service path),
+	// returning cleanly when one already exists. The new registry syncs back to the
+	// data plane through the normal ConfigSync snapshot. The data plane cannot
+	// write registries itself, so it delegates this to the control plane.
+	EnsureRegistry(context.Context, *EnsureRegistryRequest) (*EnsureRegistryResponse, error)
 	mustEmbedUnimplementedStoreInstallationsServer()
 }
 
@@ -156,6 +183,9 @@ func (UnimplementedStoreInstallationsServer) ListByPrincipal(context.Context, *L
 }
 func (UnimplementedStoreInstallationsServer) Delete(context.Context, *DeleteInstallationRequest) (*DeleteInstallationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Delete not implemented")
+}
+func (UnimplementedStoreInstallationsServer) EnsureRegistry(context.Context, *EnsureRegistryRequest) (*EnsureRegistryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method EnsureRegistry not implemented")
 }
 func (UnimplementedStoreInstallationsServer) mustEmbedUnimplementedStoreInstallationsServer() {}
 func (UnimplementedStoreInstallationsServer) testEmbeddedByValue()                            {}
@@ -250,6 +280,24 @@ func _StoreInstallations_Delete_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _StoreInstallations_EnsureRegistry_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EnsureRegistryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StoreInstallationsServer).EnsureRegistry(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StoreInstallations_EnsureRegistry_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StoreInstallationsServer).EnsureRegistry(ctx, req.(*EnsureRegistryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // StoreInstallations_ServiceDesc is the grpc.ServiceDesc for StoreInstallations service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -272,6 +320,10 @@ var StoreInstallations_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Delete",
 			Handler:    _StoreInstallations_Delete_Handler,
+		},
+		{
+			MethodName: "EnsureRegistry",
+			Handler:    _StoreInstallations_EnsureRegistry_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
