@@ -237,13 +237,26 @@ func (g *RPCGateway) dispatch(
 		isStore := rc != nil && rc.Consumer != nil && consumerdomain.IsStoreConsumer(rc.Consumer)
 		tools, err := g.composer.ListTools(ctx, rc)
 		if err != nil {
-			// The synthetic Store consumer carries no registries of its own — its
-			// tools are the gateway-implemented meta-tools appended below — so a
-			// registry-less listing is empty for it, not an error. (Once servers are
-			// installed the scoper attaches their registries and this no longer fires.)
-			if isStore && errors.Is(err, appmcp.ErrNoMCPRegistries) {
+			// The gateway's own tools — the Store meta-tools and the per-provider
+			// connect tools appended below — are exactly how a user installs a
+			// server or connects an account. An upstream problem must never hide
+			// them, so these list-time errors degrade to an empty upstream list
+			// rather than failing the whole listing:
+			//   - the synthetic Store consumer carries no registries of its own
+			//     until servers are installed (ErrNoMCPRegistries), and its installed
+			//     servers may be unreachable — either way its meta-tools still list;
+			//   - any consumer whose bound upstreams are all still pending the user's
+			//     connection (ConsentRequiredError) must still be shown the connect
+			//     tools; a tool call, not the listing, is where consent is reported.
+			var consentErr *appmcp.ConsentRequiredError
+			switch {
+			case isStore && errors.Is(err, appmcp.ErrNoMCPRegistries):
 				tools = nil
-			} else {
+			case isStore && errors.Is(err, appmcp.ErrUpstreamUnavailable):
+				tools = nil
+			case errors.As(err, &consentErr):
+				tools = nil
+			default:
 				return nil, err
 			}
 		}
