@@ -53,7 +53,8 @@ type MCPTargetResponse struct {
 type MCPStoreConfigResponse struct {
 	Available        bool     `json:"available"`
 	RequiresApproval bool     `json:"requires_approval"`
-	Roles            []string `json:"roles,omitempty"`
+	Groups           []string `json:"groups,omitempty"`
+	Users            []string `json:"users,omitempty"`
 }
 
 type OpenAPITargetResponse struct {
@@ -223,7 +224,8 @@ func fromMCPTarget(t *domain.MCPTarget) *MCPTargetResponse {
 		out.Store = &MCPStoreConfigResponse{
 			Available:        t.Store.Available,
 			RequiresApproval: t.Store.RequiresApproval,
-			Roles:            t.Store.Roles,
+			Groups:           t.Store.Groups,
+			Users:            t.Store.Users,
 		}
 	}
 	if t.Auth != nil {

@@ -550,6 +550,43 @@ func TestUpdater_Update_StoreModeCuratedThenOpen(t *testing.T) {
 	}
 }
 
+func TestUpdater_Update_StoreModeNonePersists(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	existing := domain.Rehydrate(id, "gw", "active", "", nil, nil, nil, now, now)
+
+	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+	repo.EXPECT().
+		Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+			return g.StoreMode() == domain.StoreModeNone &&
+				g.Metadata[domain.MetadataStoreModeKey] == domain.StoreModeNone
+		})).
+		Return(nil).
+		Once()
+
+	mgr := newCacheManager()
+	publisher := cachemocks.NewEventPublisher(t)
+	publisher.EXPECT().
+		Publish(mock.Anything, event.InvalidateGatewayDataEvent{GatewayID: id.String()}).
+		Return(nil).
+		Once()
+
+	updater := appgateway.NewUpdater(repo, mgr, publisher, nil, newTestLogger(), nil, false)
+
+	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
+		ID:        id,
+		StoreMode: ptr(domain.StoreModeNone),
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.StoreMode() != domain.StoreModeNone {
+		t.Fatalf("StoreMode = %q, want none", got.StoreMode())
+	}
+}
+
 func TestUpdater_Update_StoreModeOpenClearsCurated(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)

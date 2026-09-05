@@ -59,12 +59,25 @@ type MCPTargetRequest struct {
 	Store     *MCPStoreConfigRequest `json:"store,omitempty"`
 }
 
-// MCPStoreConfigRequest is the admin's Store curation for an MCP server, set
-// from the registry side panel.
+// MCPStoreConfigRequest is the admin's Store access grant for an MCP server, set
+// from the Access side panel. Groups and Users are the two subject axes; "roles"
+// is accepted as a legacy alias for "groups".
 type MCPStoreConfigRequest struct {
 	Available        bool     `json:"available,omitempty"`
 	RequiresApproval bool     `json:"requires_approval,omitempty"`
-	Roles            []string `json:"roles,omitempty"`
+	Groups           []string `json:"groups,omitempty"`
+	Users            []string `json:"users,omitempty"`
+	// LegacyRoles accepts the pre-rename "roles" key; folded into Groups.
+	LegacyRoles []string `json:"roles,omitempty"`
+}
+
+// StoreGroups returns the configured groups, falling back to the legacy "roles"
+// key when "groups" is absent.
+func (r *MCPStoreConfigRequest) StoreGroups() []string {
+	if len(r.Groups) == 0 && len(r.LegacyRoles) > 0 {
+		return r.LegacyRoles
+	}
+	return r.Groups
 }
 
 type OpenAPITargetRequest struct {
@@ -254,7 +267,8 @@ func (t *MCPTargetRequest) ToDomain() *domain.MCPTarget {
 		out.Store = &domain.MCPStoreConfig{
 			Available:        t.Store.Available,
 			RequiresApproval: t.Store.RequiresApproval,
-			Roles:            t.Store.Roles,
+			Groups:           t.Store.StoreGroups(),
+			Users:            t.Store.Users,
 		}
 	}
 	if t.Auth != nil {

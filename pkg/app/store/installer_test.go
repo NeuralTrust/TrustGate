@@ -291,7 +291,7 @@ func TestInstallAvailableButRequiresApprovalIsPending(t *testing.T) {
 func TestInstallRoleGating(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	regs := &fakeRegistries{items: []*registrydomain.Registry{
-		shelfRegistry("github", &registrydomain.MCPStoreConfig{Available: true, Roles: []string{"sre"}}),
+		shelfRegistry("github", &registrydomain.MCPStoreConfig{Available: true, Groups: []string{"sre"}}),
 	}}
 	inst := newInstaller(t, regs, &fakeInstalls{})
 
@@ -307,6 +307,29 @@ func TestInstallRoleGating(t *testing.T) {
 	}
 }
 
+func TestInstallUserGating(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	regs := &fakeRegistries{items: []*registrydomain.Registry{
+		shelfRegistry("github", &registrydomain.MCPStoreConfig{Available: true, Users: []string{"ana"}}),
+	}}
+	inst := newInstaller(t, regs, &fakeInstalls{})
+
+	// "ana" is admitted by the Users allow-list even with no matching group.
+	res, err := inst.Install(context.Background(), req(gw, "github"))
+	if err != nil {
+		t.Fatalf("user-allowed Install: %v", err)
+	}
+	if res.Status != installationdomain.StatusInstalled {
+		t.Fatalf("user-allowed must install, got %+v", res)
+	}
+
+	// A different subject, matching neither Users nor Groups, is denied.
+	other := InstallRequest{GatewayID: gw, PrincipalSub: "bob", Code: "github", InstalledBy: "bob"}
+	if _, err := inst.Install(context.Background(), other); !errors.Is(err, ErrRoleNotAllowed) {
+		t.Fatalf("subject not in Users must be denied, got %v", err)
+	}
+}
+
 // TestInstallRoleGatedNotYetShelvedDeniesExcludedPrincipal guards the M1 fix:
 // the role gate must be enforced as soon as a shelf registry exists, even before
 // it is marked available. Otherwise a role-excluded principal could file a
@@ -315,7 +338,7 @@ func TestInstallRoleGatedNotYetShelvedDeniesExcludedPrincipal(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	// Registry exists with a role list but is NOT available (not shelved yet).
 	regs := &fakeRegistries{items: []*registrydomain.Registry{
-		shelfRegistry("github", &registrydomain.MCPStoreConfig{Available: false, Roles: []string{"sre"}}),
+		shelfRegistry("github", &registrydomain.MCPStoreConfig{Available: false, Groups: []string{"sre"}}),
 	}}
 	installs := &fakeInstalls{}
 	inst := newInstaller(t, regs, installs)
