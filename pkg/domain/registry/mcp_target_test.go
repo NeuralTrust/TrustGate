@@ -15,6 +15,7 @@
 package registry
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -304,5 +305,37 @@ func TestMCPTarget_ResolveSecretsFrom_ClientCredentialsSecret(t *testing.T) {
 	next.ResolveSecretsFrom(prev)
 	if next.Auth.ClientSecret != "s3cret" {
 		t.Fatalf("ClientSecret = %q, want previous secret kept", next.Auth.ClientSecret)
+	}
+}
+
+func TestMCPStoreConfigUnmarshalLegacyRolesAlias(t *testing.T) {
+	// Registries stored before the rename carry "roles"; it must load into Groups.
+	var legacy MCPStoreConfig
+	if err := json.Unmarshal([]byte(`{"available":true,"roles":["sre","eng"]}`), &legacy); err != nil {
+		t.Fatalf("unmarshal legacy: %v", err)
+	}
+	if len(legacy.Groups) != 2 || legacy.Groups[0] != "sre" || legacy.Groups[1] != "eng" {
+		t.Fatalf("legacy roles must fold into Groups, got %+v", legacy.Groups)
+	}
+
+	// The new shape round-trips groups + users, and "groups" wins over "roles".
+	var current MCPStoreConfig
+	if err := json.Unmarshal([]byte(`{"groups":["sre"],"users":["ana"],"roles":["ignored"]}`), &current); err != nil {
+		t.Fatalf("unmarshal current: %v", err)
+	}
+	if len(current.Groups) != 1 || current.Groups[0] != "sre" {
+		t.Fatalf("groups must win over legacy roles, got %+v", current.Groups)
+	}
+	if len(current.Users) != 1 || current.Users[0] != "ana" {
+		t.Fatalf("users must load, got %+v", current.Users)
+	}
+
+	// Marshalling emits only the new keys.
+	raw, err := json.Marshal(&MCPStoreConfig{Available: true, Groups: []string{"sre"}, Users: []string{"ana"}})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if got := string(raw); got != `{"available":true,"groups":["sre"],"users":["ana"]}` {
+		t.Fatalf("marshal shape = %s", got)
 	}
 }

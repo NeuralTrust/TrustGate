@@ -57,13 +57,19 @@ func (g *Gateway) TenantID() string {
 // MetadataStoreModeKey holds the MCP Store curation mode for the gateway.
 const MetadataStoreModeKey = "store_mode"
 
-// Store curation modes.
+// Store curation modes. These are the three access scopes an admin sets for the
+// gateway's MCP Store (surfaced in the Access → Users "default access" control):
+// All, Selected and None.
 const (
-	// StoreModeOpen: the whole catalog is browsable; servers not on the shelf can
-	// be requested. This is the default.
+	// StoreModeOpen ("All"): the whole catalog is browsable; servers not on the
+	// shelf can be requested. This is the default.
 	StoreModeOpen = "open"
-	// StoreModeCurated: only shelf (store.available) servers are shown.
+	// StoreModeCurated ("Selected"): only shelf (store.available) servers are shown.
 	StoreModeCurated = "curated"
+	// StoreModeNone ("None"): the Store offers nothing — nothing new is browsable
+	// and self-service install is disabled. Per-group/per-user grants on a registry
+	// are a separate, additive layer and are unaffected.
+	StoreModeNone = "none"
 )
 
 // StoreMode returns the gateway's Store curation mode, defaulting to open.
@@ -71,15 +77,20 @@ func (g *Gateway) StoreMode() string {
 	if g == nil || g.Metadata == nil {
 		return StoreModeOpen
 	}
-	if g.Metadata[MetadataStoreModeKey] == StoreModeCurated {
+	switch g.Metadata[MetadataStoreModeKey] {
+	case StoreModeCurated:
 		return StoreModeCurated
+	case StoreModeNone:
+		return StoreModeNone
+	default:
+		return StoreModeOpen
 	}
-	return StoreModeOpen
 }
 
-// WithStoreMode stamps the Store curation mode into gateway metadata.
+// WithStoreMode stamps the Store curation mode into gateway metadata. An
+// unrecognised mode falls back to open.
 func WithStoreMode(metadata map[string]string, mode string) map[string]string {
-	if mode != StoreModeCurated {
+	if mode != StoreModeCurated && mode != StoreModeNone {
 		mode = StoreModeOpen
 	}
 	if metadata == nil {

@@ -204,6 +204,9 @@ func (t *storeTool) install(
 	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
 		return nil, ErrNoPrincipal
 	}
+	if t.storeMode(ctx) == gatewaydomain.StoreModeNone {
+		return nil, fmt.Errorf("%w: self-service install is disabled for this gateway", ErrStoreToolUnavailable)
+	}
 	res, err := t.installer.Install(ctx, appstore.InstallRequest{
 		GatewayID:    rc.Consumer.GatewayID,
 		PrincipalSub: principal.Subject,
@@ -510,7 +513,30 @@ func (t *storeTool) search(
 	category := strings.ToLower(strings.TrimSpace(args.Category))
 
 	shelf := t.shelfIndex(ctx, rc)
-	curated := t.storeMode(ctx) == gatewaydomain.StoreModeCurated
+	mode := t.storeMode(ctx)
+	curated := mode == gatewaydomain.StoreModeCurated
+	// None closes the Store: nothing in the catalog is browsable.
+	if mode == gatewaydomain.StoreModeNone {
+		structured := map[string]any{
+			"results":   []storeSearchResult{},
+			"total":     0,
+			"returned":  0,
+			"truncated": false,
+			"mode":      mode,
+		}
+		result := map[string]any{
+			"content": []map[string]string{{
+				"type": "text",
+				"text": "The MCP Store is closed for this gateway; no servers are available to browse or install.",
+			}},
+			"structuredContent": structured,
+		}
+		raw, err := json.Marshal(result)
+		if err != nil {
+			return nil, fmt.Errorf("%w: encode result: %w", ErrStoreToolUnavailable, err)
+		}
+		return raw, nil
+	}
 
 	// The catalog is served in relevance order; a query narrows it, an empty
 	// query browses the top of the whole catalog.

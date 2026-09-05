@@ -161,10 +161,11 @@ func TestUpdateGatewayRequest_ValidateStoreMode(t *testing.T) {
 	t.Parallel()
 	open := "open"
 	curated := "curated"
+	none := "none"
 	bad := "half-open"
 	mixedCase := "Curated"
 
-	for _, mode := range []string{open, curated, mixedCase} {
+	for _, mode := range []string{open, curated, none, mixedCase} {
 		m := mode
 		req := UpdateGatewayRequest{StoreMode: &m}
 		if err := req.Validate(); err != nil {
