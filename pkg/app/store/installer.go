@@ -281,7 +281,7 @@ func (i *installer) decideStatus(
 		}
 		return installationdomain.StatusPendingApproval, nil
 	}
-	if !rolesAllow(reg.MCPTarget.StoreRoles(), in.Groups) {
+	if !storeAccessAllows(reg.MCPTarget.StoreGroups(), reg.MCPTarget.StoreUsers(), in.Groups, in.PrincipalSub) {
 		return "", ErrRoleNotAllowed
 	}
 	if !reg.MCPTarget.StoreAvailable() {
@@ -326,19 +326,31 @@ func findRegistryByCode(
 	return nil, nil
 }
 
-// rolesAllow reports whether the caller may install a role-gated server. An
-// empty allow-list means any Store-admitted principal.
-func rolesAllow(allowed, groups []string) bool {
-	if len(allowed) == 0 {
+// storeAccessAllows reports whether the caller may install a subject-gated
+// server. The grant has two axes: allowedGroups (matched against the caller's
+// group claim) and allowedUsers (matched against the caller's subject). When
+// both are empty the server is open to any Store-admitted principal; otherwise
+// the caller is allowed if their groups intersect allowedGroups OR their subject
+// is in allowedUsers.
+func storeAccessAllows(allowedGroups, allowedUsers, groups []string, subject string) bool {
+	if len(allowedGroups) == 0 && len(allowedUsers) == 0 {
 		return true
 	}
 	set := make(map[string]struct{}, len(groups))
 	for _, g := range groups {
 		set[g] = struct{}{}
 	}
-	for _, a := range allowed {
+	for _, a := range allowedGroups {
 		if _, ok := set[a]; ok {
 			return true
+		}
+	}
+	sub := strings.TrimSpace(subject)
+	if sub != "" {
+		for _, u := range allowedUsers {
+			if strings.TrimSpace(u) == sub {
+				return true
+			}
 		}
 	}
 	return false

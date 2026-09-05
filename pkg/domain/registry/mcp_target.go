@@ -15,6 +15,7 @@
 package registry
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -176,17 +177,41 @@ func (t *MCPTarget) RequiredURLVariables() []string {
 	return out
 }
 
-// MCPStoreConfig is the admin's Store curation for one MCP server, edited from
-// the registry side panel.
+// MCPStoreConfig is the admin's Store access grant for one MCP server, edited
+// from the Access side panel. Groups and Users are the two subject axes matched
+// against the caller's token: Groups against the token's group claim, Users
+// against the token subject.
 type MCPStoreConfig struct {
 	// Available exposes the server for self-service install in the Store.
 	Available bool `json:"available,omitempty"`
 	// RequiresApproval routes an install through an approver instead of granting
 	// it immediately.
 	RequiresApproval bool `json:"requires_approval,omitempty"`
-	// Roles, when non-empty, restricts self-install to principals carrying one of
-	// these IdP groups. Empty means any role admitted to the Store.
-	Roles []string `json:"roles,omitempty"`
+	// Groups, when non-empty, restricts self-install to principals carrying one of
+	// these IdP/NeuralTrust groups (matched against the token's group claim).
+	Groups []string `json:"groups,omitempty"`
+	// Users, when non-empty, additionally admits these individual principals
+	// (matched against the token subject). A caller is allowed if their groups
+	// intersect Groups OR their subject is in Users. Both empty means "any".
+	Users []string `json:"users,omitempty"`
+}
+
+// UnmarshalJSON reads MCPStoreConfig, accepting the legacy "roles" key as an
+// alias for "groups" so registries stored (in the DB or the config-sync
+// snapshot) before the rename keep working. "groups" wins when both are present.
+func (c *MCPStoreConfig) UnmarshalJSON(data []byte) error {
+	type alias MCPStoreConfig
+	aux := struct {
+		*alias
+		LegacyRoles []string `json:"roles,omitempty"`
+	}{alias: (*alias)(c)}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if len(c.Groups) == 0 && len(aux.LegacyRoles) > 0 {
+		c.Groups = aux.LegacyRoles
+	}
+	return nil
 }
 
 // StoreAvailable reports whether the server is offered for self-install.
@@ -199,12 +224,21 @@ func (t *MCPTarget) StoreRequiresApproval() bool {
 	return t != nil && t.Store != nil && t.Store.RequiresApproval
 }
 
-// StoreRoles returns the roles allowed to self-install, or nil for "any".
-func (t *MCPTarget) StoreRoles() []string {
+// StoreGroups returns the groups allowed to self-install, or nil for "any".
+func (t *MCPTarget) StoreGroups() []string {
 	if t == nil || t.Store == nil {
 		return nil
 	}
-	return t.Store.Roles
+	return t.Store.Groups
+}
+
+// StoreUsers returns the individual principal subjects allowed to self-install,
+// or nil for "any".
+func (t *MCPTarget) StoreUsers() []string {
+	if t == nil || t.Store == nil {
+		return nil
+	}
+	return t.Store.Users
 }
 
 func (t *MCPTarget) Normalize() {
