@@ -204,7 +204,8 @@ func (t *storeTool) install(
 	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
 		return nil, ErrNoPrincipal
 	}
-	if t.storeMode(ctx) == gatewaydomain.StoreModeNone {
+	mode := t.effectiveStoreMode(ctx)
+	if mode == gatewaydomain.StoreModeNone {
 		return nil, fmt.Errorf("%w: self-service install is disabled for this gateway", ErrStoreToolUnavailable)
 	}
 	res, err := t.installer.Install(ctx, appstore.InstallRequest{
@@ -213,7 +214,7 @@ func (t *storeTool) install(
 		Code:         args.Code,
 		InstalledBy:  principal.Subject,
 		Groups:       principalGroups(principal),
-		OpenMode:     t.storeMode(ctx) == gatewaydomain.StoreModeOpen,
+		OpenMode:     mode == gatewaydomain.StoreModeOpen,
 		Config:       args.Config,
 	})
 	if err != nil {
@@ -513,7 +514,7 @@ func (t *storeTool) search(
 	category := strings.ToLower(strings.TrimSpace(args.Category))
 
 	shelf := t.shelfIndex(ctx, rc)
-	mode := t.storeMode(ctx)
+	mode := t.effectiveStoreMode(ctx)
 	curated := mode == gatewaydomain.StoreModeCurated
 	// None closes the Store: nothing in the catalog is browsable.
 	if mode == gatewaydomain.StoreModeNone {
@@ -615,6 +616,27 @@ func (t *storeTool) storeMode(ctx context.Context) string {
 		return gw.StoreMode()
 	}
 	return gatewaydomain.StoreModeOpen
+}
+
+// effectiveStoreMode is the Store mode that applies to the calling principal:
+// their per-principal access claim (open/curated/none) when the control plane
+// minted one, otherwise the gateway's own Store default. A per-principal claim
+// is the admin's explicit decision for that user/group, so it overrides the
+// gateway default in both directions (it can open the Store for one user when
+// the default is curated, or close it for one user when the default is open).
+// An absent or unrecognised claim falls back to the gateway default, keeping
+// tokens minted before this claim existed on their current behaviour.
+func (t *storeTool) effectiveStoreMode(ctx context.Context) string {
+	switch identity.PrincipalFromContext(ctx).StoreAccess() {
+	case gatewaydomain.StoreModeOpen:
+		return gatewaydomain.StoreModeOpen
+	case gatewaydomain.StoreModeCurated:
+		return gatewaydomain.StoreModeCurated
+	case gatewaydomain.StoreModeNone:
+		return gatewaydomain.StoreModeNone
+	default:
+		return t.storeMode(ctx)
+	}
 }
 
 const storeShelfPageSize = 500
