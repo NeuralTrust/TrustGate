@@ -230,6 +230,62 @@ func TestStoreSearchTagsShelfState(t *testing.T) {
 	}
 }
 
+// ctxWithStoreAccess builds a context carrying a principal whose token declares
+// a per-principal MCP Store access level ("open" | "curated" | "none").
+func ctxWithStoreAccess(base context.Context, sub, mode string) context.Context {
+	claims := map[string]any{}
+	if mode != "" {
+		claims[identity.ClaimStoreAccess] = mode
+	}
+	return identity.WithPrincipal(base, &identity.Principal{Subject: sub, Claims: claims})
+}
+
+func TestStoreSearchPrincipalOpenOverridesCuratedGateway(t *testing.T) {
+	tool := storeToolWithShelf(t, shelfReg("github", &registrydomain.MCPStoreConfig{Available: true}))
+	// Gateway default is curated (only shelf servers), but this principal's token
+	// carries store_access=open, so the whole catalog is browsable for them.
+	gw := &gatewaydomain.Gateway{Metadata: gatewaydomain.WithStoreMode(nil, gatewaydomain.StoreModeCurated)}
+	ctx := appgateway.WithGateway(
+		ctxWithStoreAccess(context.Background(), "ana", gatewaydomain.StoreModeOpen),
+		gw,
+	)
+	raw, err := tool.Call(ctx, storeRC(), "", StoreSearchToolName, nil)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	got := resultsByCode(t, raw)
+	if _, ok := got["salesforce"]; !ok {
+		t.Fatal("principal store_access=open must reveal non-shelf servers despite a curated gateway")
+	}
+}
+
+func TestStoreSearchPrincipalNoneClosesStore(t *testing.T) {
+	// Gateway default is open, but this principal's token carries
+	// store_access=none, so the Store is closed for them.
+	tool := storeToolWithShelf(t, shelfReg("github", &registrydomain.MCPStoreConfig{Available: true}))
+	ctx := ctxWithStoreAccess(context.Background(), "ana", gatewaydomain.StoreModeNone)
+	raw, err := tool.Call(ctx, storeRC(), "", StoreSearchToolName, nil)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	sc := decodeStructured(t, raw)
+	if total, _ := sc["total"].(float64); total != 0 {
+		t.Fatalf("principal store_access=none must return an empty catalog, got total %v", sc["total"])
+	}
+}
+
+func TestStoreInstallPrincipalNoneRefused(t *testing.T) {
+	inst := &fakeInstaller{}
+	tool := storeToolWithInstaller(t, inst)
+	ctx := ctxWithStoreAccess(context.Background(), "ana", gatewaydomain.StoreModeNone)
+	if _, err := tool.Call(ctx, storeRC(), "", StoreInstallToolName, json.RawMessage(`{"code":"github"}`)); err == nil {
+		t.Fatal("install must be refused when the principal's store_access is none")
+	}
+	if len(inst.installed) != 0 {
+		t.Fatalf("installer must not run when store access is none, got %v", inst.installed)
+	}
+}
+
 func TestStoreSearchCuratedModeHidesNonShelf(t *testing.T) {
 	tool := storeToolWithShelf(t, shelfReg("github", &registrydomain.MCPStoreConfig{Available: true}))
 	// A gateway in curated mode.
