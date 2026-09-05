@@ -119,7 +119,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	if in.StoreMode != nil {
 		storeMode = *in.StoreMode
 	}
-	if storeMode == domain.StoreModeCurated {
+	if storeMode == domain.StoreModeCurated || storeMode == domain.StoreModeNone {
 		g.Metadata = domain.WithStoreMode(g.Metadata, storeMode)
 	} else if g.Metadata != nil {
 		delete(g.Metadata, domain.MetadataStoreModeKey)
