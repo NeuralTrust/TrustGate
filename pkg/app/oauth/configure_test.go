@@ -241,11 +241,12 @@ func TestConfigure_SubmitPlainStoresOnInstallation(t *testing.T) {
 }
 
 // TestConfigure_FirstConfigureOfGovernedServerIsPending guards the governance
-// bypass: configuring a requires-approval server before installing it must end
-// as a pending request, never as an installed row.
+// bypass: configuring a server the principal is not granted (Selected access,
+// shelf granted to another group) before installing it must end as a pending
+// request, never as an installed row.
 func TestConfigure_FirstConfigureOfGovernedServerIsPending(t *testing.T) {
-	f := configureFixture(t, true, shelf("snowflake", &registrydomain.MCPStoreConfig{Available: true, RequiresApproval: true}))
-	id := f.ticket(t, "snowflake", "")
+	f := configureFixture(t, false, shelf("snowflake", &registrydomain.MCPStoreConfig{Available: true, Groups: []string{"data-eng"}}))
+	id := f.ticket(t, "snowflake", "", "marketing")
 
 	page, err := f.svc.Submit(context.Background(), id, map[string]string{
 		"account_url": "acme.snowflakecomputing.com",
@@ -281,27 +282,34 @@ func TestConfigure_FirstConfigureCuratedNotOnShelfIsPending(t *testing.T) {
 	}
 }
 
-// TestConfigure_FirstConfigureGroupGatedRefused: the group gate applies to the
-// form exactly as to the tool — the ticket carries the principal's groups.
-func TestConfigure_FirstConfigureGroupGatedRefused(t *testing.T) {
-	f := configureFixture(t, true, shelf("snowflake", &registrydomain.MCPStoreConfig{Available: true, Groups: []string{"data-eng"}}))
+// TestConfigure_FirstConfigureGroupGatedIsPending: the grant applies to the form
+// exactly as to the tool — the ticket carries the principal's groups. Under
+// Selected, a principal outside the grant files a request; one inside installs.
+func TestConfigure_FirstConfigureGroupGatedIsPending(t *testing.T) {
+	f := configureFixture(t, false, shelf("snowflake", &registrydomain.MCPStoreConfig{Available: true, Groups: []string{"data-eng"}}))
 	values := map[string]string{"account_url": "acme.snowflakecomputing.com", "database": "ANALYTICS"}
 
-	// Not in the group: refused, nothing recorded.
+	// Not in the group: recorded as a pending request, not installed.
 	excluded := f.ticket(t, "snowflake", "", "marketing")
-	if _, err := f.svc.Submit(context.Background(), excluded, values); !errors.Is(err, appstore.ErrRoleNotAllowed) {
-		t.Fatalf("group-excluded principal must be refused, got %v", err)
+	page, err := f.svc.Submit(context.Background(), excluded, values)
+	if err != nil {
+		t.Fatalf("group-excluded Submit: %v", err)
 	}
-	if rows := f.rows(t, "snowflake"); len(rows) != 0 {
-		t.Fatalf("a refused configure must record nothing, got %+v", rows)
+	if !page.Pending {
+		t.Fatalf("group-excluded principal must be pending approval, got %+v", page)
+	}
+	if rows := f.rows(t, "snowflake"); len(rows) != 1 || rows[0].Status != installationdomain.StatusPendingApproval {
+		t.Fatalf("a group-excluded configure must record a pending request, got %+v", rows)
 	}
 
-	// In the group: installs.
-	allowed := f.ticket(t, "snowflake", "", "data-eng")
-	if _, err := f.svc.Submit(context.Background(), allowed, values); err != nil {
+	// In the group (fresh fixture, so the pending request above does not merge):
+	// installs instantly.
+	g := configureFixture(t, false, shelf("snowflake", &registrydomain.MCPStoreConfig{Available: true, Groups: []string{"data-eng"}}))
+	allowed := g.ticket(t, "snowflake", "", "data-eng")
+	if _, err := g.svc.Submit(context.Background(), allowed, values); err != nil {
 		t.Fatalf("group member Submit: %v", err)
 	}
-	if rows := f.rows(t, "snowflake"); len(rows) != 1 || rows[0].Status != installationdomain.StatusInstalled {
+	if rows := g.rows(t, "snowflake"); len(rows) != 1 || rows[0].Status != installationdomain.StatusInstalled {
 		t.Fatalf("group member must install, got %+v", rows)
 	}
 }

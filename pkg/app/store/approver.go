@@ -95,6 +95,18 @@ type approver struct {
 	catalog    CatalogReader
 	registries RegistryShelf
 	installs   installationdomain.Repository
+	ensurer    RegistryEnsurer
+}
+
+// ApproverOption tunes NewApprover.
+type ApproverOption func(*approver)
+
+// WithApproverEnsurer lets Approve materialise the shelf registry for a request
+// whose server was never connected (a Selected principal asked for a catalog
+// server nobody shelved yet). Without it such an approve returns ErrNotShelved
+// and the admin must connect the server first.
+func WithApproverEnsurer(e RegistryEnsurer) ApproverOption {
+	return func(a *approver) { a.ensurer = e }
 }
 
 // NewApprover wires the Store approval service.
@@ -102,11 +114,18 @@ func NewApprover(
 	catalog CatalogReader,
 	registries RegistryShelf,
 	installs installationdomain.Repository,
+	opts ...ApproverOption,
 ) (Approver, error) {
 	if catalog == nil || registries == nil || installs == nil {
 		return nil, ErrUnavailable
 	}
-	return &approver{catalog: catalog, registries: registries, installs: installs}, nil
+	a := &approver{catalog: catalog, registries: registries, installs: installs}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(a)
+		}
+	}
+	return a, nil
 }
 
 func (a *approver) ListPending(ctx context.Context, gatewayID ids.GatewayID) ([]PendingRequest, error) {
@@ -156,14 +175,36 @@ func (a *approver) Approve(ctx context.Context, in ApproveRequest) error {
 		return err
 	}
 	if reg == nil || reg.MCPTarget == nil {
-		return fmt.Errorf("%w: %q", ErrNotShelved, code)
+		// Nobody shelved this server yet: materialise it so the grant has a
+		// registry to land on, when we can.
+		if a.ensurer == nil {
+			return fmt.Errorf("%w: %q", ErrNotShelved, code)
+		}
+		if err := a.ensurer.Ensure(ctx, in.GatewayID, code); err != nil {
+			return fmt.Errorf("store: materialise registry: %w", err)
+		}
+		if reg, err = findRegistryByCode(ctx, a.registries, in.GatewayID, code); err != nil {
+			return err
+		}
+		if reg == nil || reg.MCPTarget == nil {
+			return fmt.Errorf("%w: %q", ErrNotShelved, code)
+		}
 	}
-	// Approving a request shelves the server available. The requires-approval
-	// gate is left untouched so future installs still queue.
+	// Approving a request GRANTS the resource to the requester: the server is
+	// published and, when the shelf names specific groups/users, the requester's
+	// subject is added so their next install is instant and Access reflects it.
+	changed := false
 	if !reg.MCPTarget.StoreAvailable() {
 		reg.MCPTarget.Store = ensureStoreAvailable(reg.MCPTarget.Store)
+		changed = true
+	}
+	if !storeAccessAllows(reg.MCPTarget.StoreGroups(), reg.MCPTarget.StoreUsers(), nil, existing.PrincipalSub) {
+		reg.MCPTarget.Store.Users = append(reg.MCPTarget.Store.Users, existing.PrincipalSub)
+		changed = true
+	}
+	if changed {
 		if err := a.registries.Update(ctx, reg); err != nil {
-			return fmt.Errorf("store: shelve registry: %w", err)
+			return fmt.Errorf("store: grant registry: %w", err)
 		}
 	}
 

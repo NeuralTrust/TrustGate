@@ -225,25 +225,58 @@ func resultsByCode(t *testing.T, raw json.RawMessage) map[string]map[string]any 
 	return out
 }
 
+// TestStoreSearchTagsShelfState: under Selected the whole catalog is browsable
+// and each server's state is the caller's own outcome — "available" when the
+// shelf is published and granted to them, "request" otherwise. The legacy
+// requires_approval flag is not a state any more.
 func TestStoreSearchTagsShelfState(t *testing.T) {
 	tool := storeToolWithShelf(t,
 		shelfReg("github", &registrydomain.MCPStoreConfig{Available: true}),
-		shelfReg("gitlab", &registrydomain.MCPStoreConfig{Available: true, RequiresApproval: true}),
+		shelfReg("gitlab", &registrydomain.MCPStoreConfig{Available: true, RequiresApproval: true, Groups: []string{"sre"}}),
 		// salesforce not on the shelf
 	)
-	raw, err := tool.Call(selfServiceCtx(), storeRC(), "", StoreSearchToolName, nil)
+	curated := appgateway.WithGateway(
+		identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "ana", Claims: map[string]any{identity.ClaimGroups: []string{"eng"}}}),
+		enterpriseGateway(gatewaydomain.StoreModeCurated))
+	raw, err := tool.Call(curated, storeRC(), "", StoreSearchToolName, nil)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
 	got := resultsByCode(t, raw)
-	if got["github"]["store_state"] != storeStateAvailable {
-		t.Fatalf("github should be available, got %v", got["github"]["store_state"])
+	if len(got) != 3 {
+		t.Fatalf("Selected must browse the whole catalog, got %d results", len(got))
 	}
-	if got["gitlab"]["store_state"] != storeStateApproval {
-		t.Fatalf("gitlab should be approval, got %v", got["gitlab"]["store_state"])
+	if got["github"]["store_state"] != storeStateAvailable {
+		t.Fatalf("github (granted to everyone) should be available, got %v", got["github"]["store_state"])
+	}
+	if got["gitlab"]["store_state"] != storeStateRequest {
+		t.Fatalf("gitlab (granted to sre, caller is eng) should be request, got %v", got["gitlab"]["store_state"])
 	}
 	if got["salesforce"]["store_state"] != storeStateRequest {
-		t.Fatalf("salesforce should be request, got %v", got["salesforce"]["store_state"])
+		t.Fatalf("salesforce (not shelved) should be request, got %v", got["salesforce"]["store_state"])
+	}
+
+	// The same caller in the granted group sees gitlab as available.
+	sre := appgateway.WithGateway(
+		identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "ana", Claims: map[string]any{identity.ClaimGroups: []string{"sre"}}}),
+		enterpriseGateway(gatewaydomain.StoreModeCurated))
+	raw, err = tool.Call(sre, storeRC(), "", StoreSearchToolName, nil)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if got := resultsByCode(t, raw); got["gitlab"]["store_state"] != storeStateAvailable {
+		t.Fatalf("gitlab should be available for sre, got %v", got["gitlab"]["store_state"])
+	}
+
+	// Under All everything is available, shelved or not.
+	raw, err = tool.Call(selfServiceCtx(), storeRC(), "", StoreSearchToolName, nil)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	for code, r := range resultsByCode(t, raw) {
+		if r["store_state"] != storeStateAvailable {
+			t.Fatalf("All: %s should be available, got %v", code, r["store_state"])
+		}
 	}
 }
 
@@ -303,9 +336,12 @@ func TestStoreInstallPrincipalNoneRefused(t *testing.T) {
 	}
 }
 
-func TestStoreSearchCuratedModeHidesNonShelf(t *testing.T) {
+// TestStoreSearchCuratedModeShowsNonShelfAsRequest: Selected browses the whole
+// catalog so a user can discover what to ask for; a non-shelf server is tagged
+// "request" (installing it files an approval request) while a granted shelf
+// server is "available" (instant).
+func TestStoreSearchCuratedModeShowsNonShelfAsRequest(t *testing.T) {
 	tool := storeToolWithShelf(t, shelfReg("github", &registrydomain.MCPStoreConfig{Available: true}))
-	// A gateway in curated mode.
 	gw := enterpriseGateway(gatewaydomain.StoreModeCurated)
 	ctx := appgateway.WithGateway(context.Background(), gw)
 
@@ -314,11 +350,11 @@ func TestStoreSearchCuratedModeHidesNonShelf(t *testing.T) {
 		t.Fatalf("search: %v", err)
 	}
 	got := resultsByCode(t, raw)
-	if _, ok := got["github"]; !ok {
-		t.Fatal("curated mode must still show the shelf server github")
+	if got["github"]["store_state"] != storeStateAvailable {
+		t.Fatalf("shelf server github must be available, got %v", got["github"]["store_state"])
 	}
-	if _, ok := got["salesforce"]; ok {
-		t.Fatal("curated mode must hide non-shelf servers")
+	if got["salesforce"]["store_state"] != storeStateRequest {
+		t.Fatalf("non-shelf server must be browsable as a request, got %v", got["salesforce"]["store_state"])
 	}
 }
 

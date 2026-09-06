@@ -289,11 +289,10 @@ func TestInstallSelfServiceEnsurerErrorFailsInstall(t *testing.T) {
 	}
 }
 
-// TestInstallSelfServiceRespectsExistingGovernance confirms open mode does not
-// bypass governance on a registry an admin already curated: an existing
-// requires-approval registry is still pending even in open mode, and the ensurer
-// is never called (the registry already exists).
-func TestInstallSelfServiceRespectsExistingGovernance(t *testing.T) {
+// TestInstallOpenModeInstallsGovernedRegistryInstantly: under All every server
+// installs instantly — a legacy requires-approval flag on the shelf is not a
+// gate any more — and the ensurer never runs when the registry already exists.
+func TestInstallOpenModeInstallsGovernedRegistryInstantly(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	regs := &fakeRegistries{items: []*registrydomain.Registry{
 		shelfRegistry("github", &registrydomain.MCPStoreConfig{Available: true, RequiresApproval: true}),
@@ -304,15 +303,35 @@ func TestInstallSelfServiceRespectsExistingGovernance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Install: %v", err)
 	}
-	if !res.Pending {
-		t.Fatal("an admin-curated requires-approval registry stays pending even in open mode")
+	if res.Pending || res.Status != installationdomain.StatusInstalled {
+		t.Fatalf("All installs instantly, got %+v", res)
 	}
 	if len(ensurer.ensured) != 0 {
 		t.Fatalf("the ensurer must not run when a registry already exists, got %+v", ensurer.ensured)
 	}
 }
 
-func TestInstallAvailableButRequiresApprovalIsPending(t *testing.T) {
+// TestInstallOpenModeInstallsRestrictedRegistryInstantly: a principal with All
+// access is not held back by a shelf grant that names other groups — All means
+// all resources, exactly as the Access page shows for them.
+func TestInstallOpenModeInstallsRestrictedRegistryInstantly(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	regs := &fakeRegistries{items: []*registrydomain.Registry{
+		shelfRegistry("github", &registrydomain.MCPStoreConfig{Available: true, Groups: []string{"sre"}}),
+	}}
+	res, err := newInstaller(t, regs, &fakeInstalls{}).Install(context.Background(), openReq(gw, "github", "eng"))
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if res.Status != installationdomain.StatusInstalled {
+		t.Fatalf("All must install a group-restricted server instantly, got %+v", res)
+	}
+}
+
+// TestInstallRequiresApprovalFlagIsIgnored: the selection is the pre-approval.
+// A published server the principal may use installs instantly even if a legacy
+// requires_approval flag is still stored on the shelf.
+func TestInstallRequiresApprovalFlagIsIgnored(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	regs := &fakeRegistries{items: []*registrydomain.Registry{
 		shelfRegistry("github", &registrydomain.MCPStoreConfig{Available: true, RequiresApproval: true}),
@@ -321,22 +340,33 @@ func TestInstallAvailableButRequiresApprovalIsPending(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Install: %v", err)
 	}
-	if !res.Pending {
-		t.Fatal("a requires-approval server must be pending")
+	if res.Pending || res.Status != installationdomain.StatusInstalled {
+		t.Fatalf("a granted server installs instantly regardless of the legacy flag, got %+v", res)
 	}
 }
 
+// TestInstallRoleGating: under Selected, a server granted to other groups is not
+// refused — it becomes an approval request the admin can grant; a principal in
+// the granted group installs instantly.
 func TestInstallRoleGating(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	regs := &fakeRegistries{items: []*registrydomain.Registry{
 		shelfRegistry("github", &registrydomain.MCPStoreConfig{Available: true, Groups: []string{"sre"}}),
 	}}
-	inst := newInstaller(t, regs, &fakeInstalls{})
+	installs := &fakeInstalls{}
+	inst := newInstaller(t, regs, installs)
 
-	if _, err := inst.Install(context.Background(), req(gw, "github", "eng")); !errors.Is(err, ErrRoleNotAllowed) {
-		t.Fatalf("a principal without the allowed role must be denied, got %v", err)
+	res, err := inst.Install(context.Background(), req(gw, "github", "eng"))
+	if err != nil {
+		t.Fatalf("excluded principal Install: %v", err)
 	}
-	res, err := inst.Install(context.Background(), req(gw, "github", "sre"))
+	if !res.Pending || res.Status != installationdomain.StatusPendingApproval {
+		t.Fatalf("a server granted to other groups must become a request, got %+v", res)
+	}
+	if len(installs.upserts) != 1 || installs.upserts[0].Status != installationdomain.StatusPendingApproval {
+		t.Fatalf("the request must be recorded pending, got %+v", installs.upserts)
+	}
+	res, err = inst.Install(context.Background(), req(gw, "github", "sre"))
 	if err != nil {
 		t.Fatalf("allowed role Install: %v", err)
 	}
@@ -345,6 +375,7 @@ func TestInstallRoleGating(t *testing.T) {
 	}
 }
 
+// TestInstallUserGating mirrors TestInstallRoleGating for the Users axis.
 func TestInstallUserGating(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	regs := &fakeRegistries{items: []*registrydomain.Registry{
@@ -361,40 +392,36 @@ func TestInstallUserGating(t *testing.T) {
 		t.Fatalf("user-allowed must install, got %+v", res)
 	}
 
-	// A different subject, matching neither Users nor Groups, is denied.
+	// A different subject, matching neither Users nor Groups, files a request.
 	other := InstallRequest{GatewayID: gw, PrincipalSub: "bob", Code: "github", InstalledBy: "bob"}
-	if _, err := inst.Install(context.Background(), other); !errors.Is(err, ErrRoleNotAllowed) {
-		t.Fatalf("subject not in Users must be denied, got %v", err)
+	res, err = inst.Install(context.Background(), other)
+	if err != nil {
+		t.Fatalf("other subject Install: %v", err)
+	}
+	if !res.Pending {
+		t.Fatalf("a subject outside the grant must become a request, got %+v", res)
 	}
 }
 
-// TestInstallRoleGatedNotYetShelvedDeniesExcludedPrincipal guards the M1 fix:
-// the role gate must be enforced as soon as a shelf registry exists, even before
-// it is marked available. Otherwise a role-excluded principal could file a
-// pending request that the (role-blind) approve path would later grant.
-func TestInstallRoleGatedNotYetShelvedDeniesExcludedPrincipal(t *testing.T) {
+// TestInstallNotYetShelvedIsPendingForEveryone: a registry that exists but is not
+// published is outside everyone's selection under Selected, so any principal —
+// in the group list or not — files a request rather than installing.
+func TestInstallNotYetShelvedIsPendingForEveryone(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
-	// Registry exists with a role list but is NOT available (not shelved yet).
 	regs := &fakeRegistries{items: []*registrydomain.Registry{
 		shelfRegistry("github", &registrydomain.MCPStoreConfig{Available: false, Groups: []string{"sre"}}),
 	}}
 	installs := &fakeInstalls{}
 	inst := newInstaller(t, regs, installs)
 
-	if _, err := inst.Install(context.Background(), req(gw, "github", "eng")); !errors.Is(err, ErrRoleNotAllowed) {
-		t.Fatalf("role-excluded principal must be denied before queueing, got %v", err)
-	}
-	if len(installs.upserts) != 0 {
-		t.Fatalf("a denied install must not record a pending request, got %+v", installs.upserts)
-	}
-
-	// A principal in the role list still queues for approval (not available yet).
-	res, err := inst.Install(context.Background(), req(gw, "github", "sre"))
-	if err != nil {
-		t.Fatalf("allowed role Install: %v", err)
-	}
-	if !res.Pending || res.Status != installationdomain.StatusPendingApproval {
-		t.Fatalf("allowed role on a not-yet-shelved server must be pending, got %+v", res)
+	for _, group := range []string{"eng", "sre"} {
+		res, err := inst.Install(context.Background(), req(gw, "github", group))
+		if err != nil {
+			t.Fatalf("group %q Install: %v", group, err)
+		}
+		if !res.Pending || res.Status != installationdomain.StatusPendingApproval {
+			t.Fatalf("group %q on a hidden server must be pending, got %+v", group, res)
+		}
 	}
 }
 

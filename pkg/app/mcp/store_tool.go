@@ -547,13 +547,15 @@ type storeSearchResult struct {
 
 const (
 	storeStateAvailable = "available"
-	storeStateApproval  = "approval"
 	storeStateRequest   = "request"
 )
 
+// shelfEntry is one shelf registry's Store grant: whether it is published and
+// which groups/users it is granted to (both empty = everyone).
 type shelfEntry struct {
-	available        bool
-	requiresApproval bool
+	available bool
+	groups    []string
+	users     []string
 }
 
 func (t *storeTool) search(
@@ -579,7 +581,12 @@ func (t *storeTool) search(
 
 	shelf := t.shelfIndex(ctx, rc)
 	mode := t.effectiveStoreMode(ctx)
-	curated := mode == gatewaydomain.StoreModeCurated
+	principal := identity.PrincipalFromContext(ctx)
+	groups := principalGroups(principal)
+	subject := ""
+	if principal != nil {
+		subject = principal.Subject
+	}
 	// None closes the Store: nothing in the catalog is browsable.
 	if mode == gatewaydomain.StoreModeNone {
 		structured := map[string]any{
@@ -616,11 +623,9 @@ func (t *storeTool) search(
 		if !matchesQuery(entry, query) {
 			continue
 		}
-		state := shelfState(shelf, entry.Code)
-		// In curated mode only shelf (available) servers are browsable.
-		if curated && state == storeStateRequest {
-			continue
-		}
+		// The whole catalog is browsable in All and Selected; the state tells the
+		// caller whether install is instant for them or files a request.
+		state := shelfState(shelf, entry.Code, mode, groups, subject)
 		total++
 		if len(matched) < limit {
 			matched = append(matched, toSearchResult(entry, state))
@@ -668,8 +673,9 @@ func (t *storeTool) shelfIndex(ctx context.Context, rc *appconsumer.RoutableCons
 			continue
 		}
 		shelf[reg.MCPTarget.Code] = shelfEntry{
-			available:        reg.MCPTarget.StoreAvailable(),
-			requiresApproval: reg.MCPTarget.StoreRequiresApproval(),
+			available: reg.MCPTarget.StoreAvailable(),
+			groups:    reg.MCPTarget.StoreGroups(),
+			users:     reg.MCPTarget.StoreUsers(),
 		}
 	}
 	return shelf
@@ -701,29 +707,27 @@ func (t *storeTool) storeMode(ctx context.Context) string {
 // context the tier is unknown, so the claim is honoured and the default fails
 // closed (curated).
 func (t *storeTool) effectiveStoreMode(ctx context.Context) string {
-	switch identity.PrincipalFromContext(ctx).StoreAccess() {
-	case gatewaydomain.StoreModeOpen:
-		return gatewaydomain.StoreModeOpen
-	case gatewaydomain.StoreModeCurated:
-		return gatewaydomain.StoreModeCurated
-	case gatewaydomain.StoreModeNone:
-		return gatewaydomain.StoreModeNone
-	default:
-		return t.storeMode(ctx)
-	}
+	return appstore.EffectiveStoreMode(ctx)
 }
 
 const storeShelfPageSize = 500
 
-func shelfState(shelf map[string]shelfEntry, code string) string {
+// shelfState is what installing this server means for the calling principal:
+// "available" when it installs instantly — always under All, or under Selected
+// when the shelf registry is published and granted to them — and "request" when
+// the install would file an approval request instead.
+func shelfState(shelf map[string]shelfEntry, code, mode string, groups []string, subject string) string {
+	if mode == gatewaydomain.StoreModeOpen {
+		return storeStateAvailable
+	}
 	entry, ok := shelf[code]
 	if !ok || !entry.available {
 		return storeStateRequest
 	}
-	if entry.requiresApproval {
-		return storeStateApproval
+	if appstore.StoreAccessAllows(entry.groups, entry.users, groups, subject) {
+		return storeStateAvailable
 	}
-	return storeStateAvailable
+	return storeStateRequest
 }
 
 func matchesQuery(entry catalogdomain.MCPServer, query string) bool {
