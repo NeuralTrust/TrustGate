@@ -70,21 +70,38 @@ type CodeGrant struct {
 	Org string `json:"org,omitempty"`
 	// Groups are the user's IdP group memberships, propagated so role
 	// oidc_mapping rules can match against them.
-	Groups      []string `json:"groups,omitempty"`
+	Groups []string `json:"groups,omitempty"`
+	// StoreAccess is the per-principal MCP Store access level ("open",
+	// "curated" or "none") the control plane minted into the platform token.
+	// It is carried into the gateway session so the Store tool can enforce the
+	// admin's per-user decision; absent means the gateway's own Store default
+	// mode applies.
+	StoreAccess string   `json:"store_access,omitempty"`
 	Audiences   []string `json:"audiences,omitempty"`
 	Scopes      []string `json:"scopes,omitempty"`
 	SessionMode bool     `json:"session_mode,omitempty"`
 }
 
 type SessionRecord struct {
-	Subject   string   `json:"subject"`
-	Email     string   `json:"email,omitempty"`
-	Scopes    []string `json:"scopes,omitempty"`
-	GatewayID string   `json:"gateway_id"`
-	AuthID    string   `json:"auth_id"`
-	Org       string   `json:"org,omitempty"`
-	Groups    []string `json:"groups,omitempty"`
-	Audiences []string `json:"audiences,omitempty"`
+	Subject     string   `json:"subject"`
+	Email       string   `json:"email,omitempty"`
+	Scopes      []string `json:"scopes,omitempty"`
+	GatewayID   string   `json:"gateway_id"`
+	AuthID      string   `json:"auth_id"`
+	Org         string   `json:"org,omitempty"`
+	Groups      []string `json:"groups,omitempty"`
+	StoreAccess string   `json:"store_access,omitempty"`
+	Audiences   []string `json:"audiences,omitempty"`
+	// LoginAt is when the user last authenticated at the identity provider. The
+	// claims above are a snapshot taken at that moment; a refresh re-mints them
+	// without consulting the IdP, so the snapshot must not live forever.
+	LoginAt time.Time `json:"login_at,omitempty"`
+	// ExpiresAt is the absolute end of the session, fixed at login as LoginAt
+	// plus the session lifetime. A refresh past it is refused so the client
+	// re-runs the authorization and the claims are re-derived, and the store
+	// expires the record here instead of sliding its TTL on every rotation. A
+	// zero value (a record written before this field existed) counts as expired.
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
 }
 
 type RegisteredGatewayClient struct {
@@ -100,6 +117,9 @@ type FlowStore interface {
 	TakeCode(ctx context.Context, code string) (*CodeGrant, error)
 	SaveGatewayClient(ctx context.Context, c RegisteredGatewayClient) error
 	GetGatewayClient(ctx context.Context, clientID string) (*RegisteredGatewayClient, error)
+	// SaveSession persists the record until rec.ExpiresAt. Saving a rotated
+	// record again must not extend that deadline: the session's lifetime is
+	// fixed at login, not renewed by use.
 	SaveSession(ctx context.Context, refreshToken string, rec SessionRecord) error
 	GetSession(ctx context.Context, refreshToken string) (*SessionRecord, error)
 	// RetireSession shortens the session's remaining lifetime to the grace

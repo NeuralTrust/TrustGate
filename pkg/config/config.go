@@ -41,6 +41,10 @@ const (
 	defaultServerIdleTimeout  = 120 * time.Second
 	defaultGatewayBaseDomain  = "llm.neuraltrust.ai"
 	defaultMCPBaseDomain      = "mcp.neuraltrust.ai"
+	// defaultMCPDefaultIdPSessionMaxAge bounds a built-in-IdP MCP session: its
+	// org/groups/store_access claims are a login-time snapshot re-minted on
+	// refresh, so the snapshot must expire and force a fresh platform login.
+	defaultMCPDefaultIdPSessionMaxAge = 24 * time.Hour
 
 	defaultDBHost                    = "localhost"
 	defaultDBPort                    = 5432
@@ -272,6 +276,10 @@ type MCPDefaultIdPConfig struct {
 	ClientSecret string // #nosec G117 -- config struct field, not a hardcoded credential
 	Audiences    []string
 	Scopes       []string
+	// SessionMaxAge is the absolute lifetime of an MCP session brokered through
+	// the built-in identity provider. Refreshing past it forces a new platform
+	// login so org, groups and store_access are re-derived.
+	SessionMaxAge time.Duration
 }
 
 type GoogleWorkspaceMCPConfig struct {
@@ -488,14 +496,15 @@ func getServerConfig() ServerConfig {
 		STSSigningKey:         getEnv("STS_SIGNING_KEY", ""),
 		TrustXFCCFrom:         splitCSV(getEnv("TRUST_XFCC_FROM", "")),
 		MCPDefaultIdP: MCPDefaultIdPConfig{
-			Issuer:       getEnv("MCP_DEFAULT_IDP_ISSUER", ""),
-			AuthorizeURL: getEnv("MCP_DEFAULT_IDP_AUTHORIZE_URL", ""),
-			TokenURL:     getEnv("MCP_DEFAULT_IDP_TOKEN_URL", ""),
-			JWKSURL:      getEnv("MCP_DEFAULT_IDP_JWKS_URL", ""),
-			ClientID:     getEnv("MCP_DEFAULT_IDP_CLIENT_ID", ""),
-			ClientSecret: getEnv("MCP_DEFAULT_IDP_CLIENT_SECRET", ""),
-			Audiences:    splitCSV(getEnv("MCP_DEFAULT_IDP_AUDIENCE", "")),
-			Scopes:       splitCSV(getEnv("MCP_DEFAULT_IDP_SCOPES", "")),
+			Issuer:        getEnv("MCP_DEFAULT_IDP_ISSUER", ""),
+			AuthorizeURL:  getEnv("MCP_DEFAULT_IDP_AUTHORIZE_URL", ""),
+			TokenURL:      getEnv("MCP_DEFAULT_IDP_TOKEN_URL", ""),
+			JWKSURL:       getEnv("MCP_DEFAULT_IDP_JWKS_URL", ""),
+			ClientID:      getEnv("MCP_DEFAULT_IDP_CLIENT_ID", ""),
+			ClientSecret:  getEnv("MCP_DEFAULT_IDP_CLIENT_SECRET", ""),
+			Audiences:     splitCSV(getEnv("MCP_DEFAULT_IDP_AUDIENCE", "")),
+			Scopes:        splitCSV(getEnv("MCP_DEFAULT_IDP_SCOPES", "")),
+			SessionMaxAge: getEnvDuration("MCP_DEFAULT_IDP_SESSION_MAX_AGE", defaultMCPDefaultIdPSessionMaxAge),
 		},
 		GoogleWorkspaceMCP: GoogleWorkspaceMCPConfig{
 			ClientID:     getEnv("GOOGLE_WORKSPACE_MCP_CLIENT_ID", ""),
