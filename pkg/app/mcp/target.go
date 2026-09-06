@@ -65,7 +65,17 @@ func (c *composer) resolveURLVariables(
 	if err != nil {
 		return err
 	}
+	// SSRF gate, first layer: a URL assembled from per-user values must point at
+	// a public hostname — never an IP literal, localhost, a cluster zone or a
+	// cloud metadata endpoint. Fixed URLs never come through here, so admin
+	// configuration is unaffected.
+	if err := registrydomain.ValidateResolvedUpstreamHost(resolved); err != nil {
+		return err
+	}
 	t.URL = resolved
+	// Second layer: the dialer re-checks the resolved address at connect time,
+	// which is what defeats a public name that (re)binds to a private address.
+	t.RestrictPrivateNetwork = true
 	if t.OpenAPI != nil {
 		t.OpenAPI.BaseURL = resolved
 	}

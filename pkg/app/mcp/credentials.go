@@ -26,6 +26,7 @@ import (
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -154,7 +155,7 @@ func (r *credentialResolver) forwarded(ctx context.Context, rc *appconsumer.Rout
 	gatewayID := rc.Consumer.GatewayID
 	cred, err := r.vault.Find(ctx, gatewayID, principal.Subject, cfg.Provider)
 	if errors.Is(err, vaultdomain.ErrNotFound) {
-		return r.consentRequired(ctx, rc, cfg.Provider, principal.Subject,
+		return r.consentRequired(ctx, rc, reg, cfg.Provider, principal.Subject,
 			"no stored credential for this user and provider")
 	}
 	if errors.Is(err, vaultdomain.ErrUndecryptable) {
@@ -163,7 +164,7 @@ func (r *credentialResolver) forwarded(ctx context.Context, rc *appconsumer.Rout
 		// them round a reconnect loop that only papers over one provider at a
 		// time. Name the real cause; reconnecting rewrites it under the current
 		// key, but the fix is to stop SERVER_SECRET_KEY from changing.
-		return r.consentRequired(ctx, rc, cfg.Provider, principal.Subject,
+		return r.consentRequired(ctx, rc, reg, cfg.Provider, principal.Subject,
 			"stored credential is undecryptable (SERVER_SECRET_KEY changed since it was saved)")
 	}
 	if err != nil {
@@ -286,20 +287,20 @@ func (r *credentialResolver) refreshCredential(
 	if err != nil {
 		switch {
 		case errors.Is(err, errGrantExhausted):
-			return nil, r.consentRequired(ctx, rc, provider, subject,
+			return nil, r.consentRequired(ctx, rc, reg, provider, subject,
 				"stored grant carries no refresh token and the access token expired")
 		case errors.Is(err, appoauth.ErrInvalidGrant):
-			return nil, r.consentRequired(ctx, rc, provider, subject,
+			return nil, r.consentRequired(ctx, rc, reg, provider, subject,
 				"provider rejected the stored refresh token")
 		case errors.Is(err, vaultdomain.ErrNotFound):
-			return nil, r.consentRequired(ctx, rc, provider, subject,
+			return nil, r.consentRequired(ctx, rc, reg, provider, subject,
 				"stored credential vanished while refreshing")
 		case errors.Is(err, appoauth.ErrNoRegisteredClient):
 			// The DCR client the refresh token was issued to is gone from the
 			// store. The token cannot be redeemed without it, so this is a
 			// consent case — reconnecting re-registers the client — not an
 			// unreachable upstream to be skipped in silence.
-			return nil, r.consentRequired(ctx, rc, provider, subject,
+			return nil, r.consentRequired(ctx, rc, reg, provider, subject,
 				"dynamically registered client was lost (store flushed?); reconnect re-registers it")
 		}
 		return nil, err
@@ -321,18 +322,45 @@ var errCredentialRefreshThrottled = errors.New("mcp credentials: rejected creden
 // user to (re)connect a provider. The reason is logged so an unexpected consent
 // prompt can be traced to the condition that produced it instead of being
 // guessed at from the client-side error alone.
-func (r *credentialResolver) consentRequired(ctx context.Context, rc *appconsumer.RoutableConsumer, provider, principalSub, reason string) error {
+//
+// On the Store the ticket must name the server: the Store connect page only
+// attaches registries for a ticket that carries a catalog code, so a bare
+// consumer ticket would send the user to an empty page. Every other consumer
+// keeps the plain consumer-wide ticket.
+func (r *credentialResolver) consentRequired(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	reg *registrydomain.Registry,
+	provider, principalSub, reason string,
+) error {
 	r.logger.Info("mcp credentials: user consent required",
 		"provider", provider,
 		"subject", principalSub,
 		"gateway_id", rc.Consumer.GatewayID.String(),
 		"reason", reason)
 	consumerPath := appconsumer.MCPPath(rc.Consumer.Slug)
-	ticket, err := r.connect.CreateTicket(ctx, rc.Consumer.GatewayID, principalSub, consumerPath)
+	var (
+		ticket string
+		err    error
+	)
+	if code := storeServerCode(rc, reg); code != "" {
+		ticket, err = r.connect.CreateServerTicket(ctx, rc.Consumer.GatewayID, principalSub, consumerPath, code)
+	} else {
+		ticket, err = r.connect.CreateTicket(ctx, rc.Consumer.GatewayID, principalSub, consumerPath)
+	}
 	if err != nil {
 		return err
 	}
 	return &ConsentRequiredError{Provider: provider, Ticket: ticket, Path: consumerPath}
+}
+
+// storeServerCode returns the catalog code a Store consent ticket must carry,
+// or "" when the caller is not the Store or the registry has no code.
+func storeServerCode(rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry) string {
+	if rc == nil || !consumerdomain.IsStoreConsumer(rc.Consumer) || reg == nil || reg.MCPTarget == nil {
+		return ""
+	}
+	return strings.TrimSpace(reg.MCPTarget.Code)
 }
 
 func (r *credentialResolver) clientCredentials(

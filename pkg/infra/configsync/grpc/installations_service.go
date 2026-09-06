@@ -18,7 +18,10 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
@@ -34,6 +37,13 @@ type RegistryEnsurer interface {
 	Ensure(ctx context.Context, gatewayID ids.GatewayID, code string) error
 }
 
+// GatewayResolver is the slice of the gateway repository the tenant check needs:
+// resolving the gateway a request names so its tenant can be compared with the
+// caller's config-sync scope. The full gatewaydomain.Repository satisfies it.
+type GatewayResolver interface {
+	FindByID(ctx context.Context, id ids.GatewayID) (*gatewaydomain.Gateway, error)
+}
+
 // InstallationsService is the control-plane end of the StoreInstallations
 // channel: it persists the Store's durable state on behalf of the DB-less data
 // plane — the per-principal install rows (through the same installation
@@ -41,22 +51,37 @@ type RegistryEnsurer interface {
 // registry materialised from the catalog (through the ensurer). The data plane
 // computes the install decision (catalog + registry governance) locally; only
 // the writes it cannot make itself cross to here.
+//
+// Every RPC honours the caller's config-sync scope exactly as the snapshot RPCs
+// do: a scoped data plane (a per-instance JWT) may only read and write
+// installations of the gateway it is scoped to — or of a gateway in the tenant
+// it is scoped to — and never those of another tenant, whatever gateway_id it
+// puts on the wire. An unscoped caller (the shared-token deployment) sees every
+// gateway, as its snapshot does.
 type InstallationsService struct {
 	snapshotpb.UnimplementedStoreInstallationsServer
-	repo    installationdomain.Repository
-	ensurer RegistryEnsurer
-	logger  *slog.Logger
+	repo     installationdomain.Repository
+	ensurer  RegistryEnsurer
+	gateways GatewayResolver
+	logger   *slog.Logger
 }
 
 // NewInstallationsService builds the StoreInstallations server over the live
-// installation repository and the registry ensurer. ensurer may be nil (a
-// deployment without self-service materialisation), in which case EnsureRegistry
-// reports Unimplemented rather than materialising a registry.
-func NewInstallationsService(repo installationdomain.Repository, ensurer RegistryEnsurer, logger *slog.Logger) *InstallationsService {
+// installation repository, the registry ensurer and the gateway resolver used
+// for the tenant check. ensurer may be nil (a deployment without self-service
+// materialisation), in which case EnsureRegistry reports Unimplemented rather
+// than materialising a registry. gateways may be nil only in tests: without it a
+// scoped caller is limited to the single gateway its scope names.
+func NewInstallationsService(
+	repo installationdomain.Repository,
+	ensurer RegistryEnsurer,
+	gateways GatewayResolver,
+	logger *slog.Logger,
+) *InstallationsService {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &InstallationsService{repo: repo, ensurer: ensurer, logger: logger}
+	return &InstallationsService{repo: repo, ensurer: ensurer, gateways: gateways, logger: logger}
 }
 
 // Upsert persists one installation record minted by the data plane.
@@ -67,6 +92,12 @@ func (s *InstallationsService) Upsert(
 	in, err := installationFromProto(req.GetInstallation())
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "store installations: upsert: %v", err)
+	}
+	if err := s.authorizeGateway(ctx, "upsert", in.GatewayID); err != nil {
+		return nil, err
+	}
+	if err := validateDataPlaneInstallation(in); err != nil {
+		return nil, err
 	}
 	if err := s.repo.Upsert(ctx, in); err != nil {
 		return nil, status.Errorf(codes.Internal, "store installations: upsert: %v", err)
@@ -83,6 +114,9 @@ func (s *InstallationsService) Find(
 	gatewayID, err := ids.Parse[ids.GatewayKind](req.GetGatewayId())
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "store installations: find: parse gateway id: %v", err)
+	}
+	if err := s.authorizeGateway(ctx, "find", gatewayID); err != nil {
+		return nil, err
 	}
 	found, err := s.repo.Find(ctx, gatewayID, req.GetPrincipalSub(), req.GetCatalogCode())
 	if err != nil {
@@ -102,6 +136,9 @@ func (s *InstallationsService) ListByPrincipal(
 	gatewayID, err := ids.Parse[ids.GatewayKind](req.GetGatewayId())
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "store installations: list: parse gateway id: %v", err)
+	}
+	if err := s.authorizeGateway(ctx, "list", gatewayID); err != nil {
+		return nil, err
 	}
 	items, err := s.repo.ListByPrincipal(ctx, gatewayID, req.GetPrincipalSub())
 	if err != nil {
@@ -123,6 +160,9 @@ func (s *InstallationsService) Delete(
 	gatewayID, err := ids.Parse[ids.GatewayKind](req.GetGatewayId())
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "store installations: delete: parse gateway id: %v", err)
+	}
+	if err := s.authorizeGateway(ctx, "delete", gatewayID); err != nil {
+		return nil, err
 	}
 	if err := s.repo.Delete(ctx, gatewayID, req.GetPrincipalSub(), req.GetCatalogCode()); err != nil {
 		if errors.Is(err, installationdomain.ErrNotFound) {
@@ -149,8 +189,72 @@ func (s *InstallationsService) EnsureRegistry(
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "store installations: ensure registry: parse gateway id: %v", err)
 	}
+	if err := s.authorizeGateway(ctx, "ensure registry", gatewayID); err != nil {
+		return nil, err
+	}
 	if err := s.ensurer.Ensure(ctx, gatewayID, req.GetCatalogCode()); err != nil {
 		return nil, status.Errorf(codes.Internal, "store installations: ensure registry: %v", err)
 	}
 	return &snapshotpb.EnsureRegistryResponse{}, nil
+}
+
+// authorizeGateway enforces the caller's config-sync scope on the gateway a
+// request names. The scope is what the auth interceptor derived from the
+// caller's token — the gateway (instance) id for a per-instance JWT — and is
+// empty for the unscoped shared-token deployment, which is allowed through like
+// its snapshot is. A scoped caller passes when the gateway is the scoped one or,
+// for a tenant-wide scope, when the gateway belongs to that tenant; an unknown
+// gateway is NotFound and any other gateway PermissionDenied. Without a gateway
+// resolver only the exact-gateway match can be honoured.
+func (s *InstallationsService) authorizeGateway(ctx context.Context, op string, gatewayID ids.GatewayID) error {
+	scope := ScopeFromContext(ctx)
+	if scope == "" {
+		return nil
+	}
+	if gatewayID.String() == scope {
+		return nil
+	}
+	if s.gateways != nil {
+		gw, err := s.gateways.FindByID(ctx, gatewayID)
+		switch {
+		case errors.Is(err, gatewaydomain.ErrNotFound), errors.Is(err, commonerrors.ErrNotFound):
+			return status.Errorf(codes.NotFound, "store installations: %s: gateway not found", op)
+		case err != nil:
+			return status.Errorf(codes.Internal, "store installations: %s: resolve gateway: %v", op, err)
+		}
+		if tenant := gw.TenantID(); tenant != "" && tenant == scope {
+			return nil
+		}
+	}
+	s.logger.Warn("store installations: refusing request for a gateway outside the caller's scope",
+		slog.String("component", component),
+		slog.String("op", op),
+		slog.String("scope", scope),
+		slog.String("gateway_id", gatewayID.String()))
+	return status.Errorf(codes.PermissionDenied, "store installations: %s: gateway is outside the caller's scope", op)
+}
+
+// validateDataPlaneInstallation applies the installation domain's invariants to
+// a record that arrived over the wire (installationFromProto builds the struct
+// directly, bypassing the constructor) plus the one rule specific to this
+// channel: the data plane only ever records self-service installs, so the
+// installer is the principal. An installed_by that names someone else would let
+// a data plane forge a provisioned-by-admin row.
+func validateDataPlaneInstallation(in *installationdomain.Installation) error {
+	principal := strings.TrimSpace(in.PrincipalSub)
+	if principal == "" {
+		return status.Error(codes.InvalidArgument, "store installations: upsert: principal subject is required")
+	}
+	if strings.TrimSpace(in.CatalogCode) == "" {
+		return status.Error(codes.InvalidArgument, "store installations: upsert: catalog code is required")
+	}
+	switch in.Status {
+	case installationdomain.StatusInstalled, installationdomain.StatusPendingApproval, installationdomain.StatusRevoked:
+	default:
+		return status.Errorf(codes.InvalidArgument, "store installations: upsert: invalid status %q", in.Status)
+	}
+	if installedBy := strings.TrimSpace(in.InstalledBy); installedBy != "" && installedBy != principal {
+		return status.Error(codes.PermissionDenied, "store installations: upsert: installed_by must be the principal")
+	}
+	return nil
 }

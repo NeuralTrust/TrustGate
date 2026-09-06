@@ -135,7 +135,14 @@ func (i *Installation) IsActive() bool {
 // (e.g. a Snowflake schema). Empty when the install carries no config — the
 // common single-instance case, where the plain catalog name already identifies
 // it. Values are joined in sorted key order so the label is stable.
+//
+// The label ends up in the registry name and from there in tool titles the
+// model reads, so it is not a free-text channel: each value is reduced to the
+// URL-segment charset [A-Za-z0-9._-] (anything else is dropped, so no spaces,
+// quotes, markup or control characters can ride along as a prompt injection)
+// and the whole label is capped at 64 characters.
 func (i *Installation) InstanceLabel() string {
+	const maxLabelLen = 64
 	if i == nil || len(i.Config) == 0 {
 		return ""
 	}
@@ -146,12 +153,22 @@ func (i *Installation) InstanceLabel() string {
 	sort.Strings(keys)
 	parts := make([]string, 0, len(keys))
 	for _, k := range keys {
-		v := strings.TrimSpace(i.Config[k])
+		v := strings.Map(func(r rune) rune {
+			switch {
+			case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+				return r
+			}
+			return -1
+		}, i.Config[k])
 		if v != "" {
 			parts = append(parts, v)
 		}
 	}
-	return strings.Join(parts, " · ")
+	label := strings.Join(parts, " · ")
+	if runes := []rune(label); len(runes) > maxLabelLen {
+		label = strings.TrimRight(string(runes[:maxLabelLen]), " ·")
+	}
+	return label
 }
 
 // SameConfig reports whether two installs carry the identical per-user config,
