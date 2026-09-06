@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
@@ -81,13 +82,15 @@ func (r *Repository) Find(
 	gatewayID ids.GatewayID,
 	principalSub, catalogCode string,
 ) (*domain.Installation, error) {
-	// Several instances of one code may exist; return the earliest deterministically
-	// so single-instance readers (dial-time config resolver, admin reads) are stable.
+	// Several instances of one code may exist. Prefer an ACTIVE (installed) row,
+	// then the earliest, deterministically: single-instance readers (dial-time
+	// config resolver, admin reads) must never pick a revoked or pending row over
+	// a live one.
 	const query = selectColumns + `
 		WHERE gateway_id = $1 AND principal_sub = $2 AND catalog_code = $3
-		ORDER BY created_at, id
+		ORDER BY (status = $4) DESC, created_at, id
 		LIMIT 1`
-	row := r.conn.Pool.QueryRow(ctx, query, gatewayID, principalSub, catalogCode)
+	row := r.conn.Pool.QueryRow(ctx, query, gatewayID, principalSub, catalogCode, string(domain.StatusInstalled))
 	in, err := scanInstallation(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -178,6 +181,12 @@ func (r *Repository) Delete(
 	return nil
 }
 
+// DeleteByID revokes one instance in place (status = revoked) rather than
+// deleting the row: the row is retained for audit, IsActive() drops it from the
+// Store surface, and a later re-install of the same config reactivates it. This
+// mirrors the data-plane client's implementation exactly, so an uninstall
+// behaves identically whichever plane serves it. Delete (by code) stays a hard
+// delete for clearing inactive leftovers.
 func (r *Repository) DeleteByID(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
@@ -185,9 +194,11 @@ func (r *Repository) DeleteByID(
 	id ids.InstallationID,
 ) error {
 	const query = `
-		DELETE FROM store_installations
-		WHERE gateway_id = $1 AND principal_sub = $2 AND id = $3`
-	tag, err := r.conn.Pool.Exec(ctx, query, gatewayID, principalSub, id)
+		UPDATE store_installations
+		   SET status = $4, updated_at = $5
+		 WHERE gateway_id = $1 AND principal_sub = $2 AND id = $3`
+	tag, err := r.conn.Pool.Exec(ctx, query, gatewayID, principalSub, id,
+		string(domain.StatusRevoked), time.Now().UTC())
 	if err != nil {
 		return mapPgError(err)
 	}

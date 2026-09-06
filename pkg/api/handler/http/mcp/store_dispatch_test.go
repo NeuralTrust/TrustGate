@@ -22,10 +22,12 @@ import (
 
 	mcphttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/mcp"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	"github.com/NeuralTrust/TrustGate/pkg/app/mcp/mocks"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/stretchr/testify/mock"
@@ -76,14 +78,19 @@ func TestRPCGateway_Store_ListsAndCallsSearch(t *testing.T) {
 	rc := &appconsumer.RoutableConsumer{
 		Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]()),
 	}
+	// A resolved self-service gateway: without one the Store fails closed to
+	// curated and hides catalog servers that are not on the shelf.
+	ctx := appgateway.WithGateway(context.Background(), &gatewaydomain.Gateway{
+		Entitlements: gatewaydomain.Entitlements{Tier: "free"},
+	})
 
-	listed, err := g.Dispatch(context.Background(), rc, "tools/list", nil)
+	listed, err := g.Dispatch(ctx, rc, "tools/list", nil)
 	require.NoError(t, err)
 	tools := listed.(map[string]any)["tools"].([]appmcp.Tool)
 	require.Contains(t, toolNames(tools), appmcp.StoreSearchToolName)
 
 	called, err := g.Dispatch(
-		context.Background(),
+		ctx,
 		rc,
 		"tools/call",
 		json.RawMessage(`{"name":"`+appmcp.StoreSearchToolName+`","arguments":{"query":"git"}}`),

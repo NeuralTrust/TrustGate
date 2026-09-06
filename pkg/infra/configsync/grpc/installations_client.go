@@ -157,12 +157,12 @@ func (c *InstallationsClient) Delete(
 	return nil
 }
 
-// DeleteByID removes one instance by id. The data-plane channel has no by-id
+// DeleteByID revokes one instance by id. The data-plane channel has no by-id
 // delete RPC, so it revokes the instance in place (Upsert with StatusRevoked):
-// IsActive() then drops it from the Store surface exactly like a delete, the row
-// is retained for audit (the documented purpose of StatusRevoked), and a later
-// re-install of the same config reactivates it. The control plane's DB
-// repository, by contrast, hard-deletes the row; both remove it from the surface.
+// IsActive() then drops it from the Store surface, the row is retained for
+// audit (the documented purpose of StatusRevoked), and a later re-install of the
+// same config reactivates it. The control plane's DB repository implements
+// DeleteByID as the same soft revoke, so both planes behave identically.
 func (c *InstallationsClient) DeleteByID(
 	ctx context.Context,
 	gatewayID ids.GatewayID,

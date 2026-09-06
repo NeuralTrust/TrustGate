@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"strings"
 
+	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
@@ -31,6 +32,19 @@ import (
 // registryListPageSize bounds the per-gateway registry scan used to find the
 // shelf registry for a catalog code. Registries per gateway are few (tens).
 const registryListPageSize = 500
+
+// Instance caps. A principal may legitimately hold a handful of instances of one
+// code (several Snowflake schemas) and a few dozen servers overall; anything
+// beyond is abuse (request spam, surface bloat) and is refused. Revoked rows do
+// not count — they are audit leftovers, not live or queued instances.
+const (
+	// MaxInstancesPerCode caps live+pending instances of one catalog code per
+	// principal on a gateway.
+	MaxInstancesPerCode = 10
+	// MaxInstancesPerPrincipal caps live+pending instances across all codes per
+	// principal on a gateway.
+	MaxInstancesPerPrincipal = 100
+)
 
 var (
 	ErrUnavailable          = errors.New("store: installer unavailable")
@@ -46,6 +60,10 @@ var (
 	// principal holds several instances of without naming which one; the caller
 	// should list the instances (Instances) and re-issue with an instance id.
 	ErrAmbiguousInstance = errors.New("store: multiple instances installed; specify which instance")
+	// ErrTooManyInstances is returned when an install would create a new instance
+	// beyond MaxInstancesPerCode or MaxInstancesPerPrincipal. It wraps
+	// ErrValidation so the HTTP layer maps it to a client error.
+	ErrTooManyInstances = fmt.Errorf("store: too many instances installed: %w", commonerrors.ErrValidation)
 )
 
 // CatalogReader is the catalog lookup the installer needs.
@@ -64,6 +82,11 @@ type InstallResult struct {
 	Code   string
 	Name   string
 	Status installationdomain.Status
+	// InstanceID is the id of the installation row this install recorded or
+	// refreshed, so follow-up operations (configure, connect, approve) can target
+	// this exact instance rather than "whichever row has this code". Empty when no
+	// row was recorded (RequiresConfig / RequiresAdminSetup).
+	InstanceID string
 	// Pending is true when the install was recorded as a request awaiting
 	// approval (server needs approval, or is not on the shelf yet).
 	Pending          bool
@@ -74,6 +97,11 @@ type InstallResult struct {
 	// caller collects ConfigVariables and re-invokes with them.
 	RequiresConfig  bool
 	ConfigVariables []registrydomain.MCPURLVariable
+	// RequiresAdminSetup is true when the server cannot be self-served: its only
+	// authentication is a shared static credential (an API key header) that the
+	// catalog does not carry and only an admin can add on the shelf. No install
+	// is recorded and no registry is materialised.
+	RequiresAdminSetup bool
 }
 
 //go:generate mockery --name=Installer --dir=. --output=./mocks --filename=store_installer_mock.go --case=underscore --with-expecter
@@ -83,8 +111,9 @@ type Installer interface {
 	// caller can present a picker when an operation must target one of several.
 	Instances(ctx context.Context, gatewayID ids.GatewayID, principalSub, code string) ([]*installationdomain.Installation, error)
 	// Uninstall removes an install. When instanceID is set it removes that one
-	// instance; otherwise it removes the sole instance, or returns
-	// ErrAmbiguousInstance when the principal holds several of that code.
+	// instance (which must belong to code); otherwise it removes the sole
+	// instance, or returns ErrAmbiguousInstance when the principal holds several
+	// of that code.
 	Uninstall(ctx context.Context, gatewayID ids.GatewayID, principalSub, code, instanceID string) error
 }
 
@@ -162,19 +191,10 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		}, nil
 	}
 
-	reg, err := findRegistryByCode(ctx, i.registries, in.GatewayID, code)
-	if err != nil {
-		return nil, err
-	}
-
-	status, err := i.decideStatus(ctx, in, reg)
-	if err != nil {
-		return nil, err
-	}
-
 	// A principal may hold several instances of one code. An install with config
 	// identical to an existing instance is that same instance (idempotent: refresh
-	// it in place); a new config is a new instance (a fresh row/id).
+	// it in place); a new config is a new instance (a fresh row/id) — subject to
+	// the instance caps, checked before any side effect (materialisation).
 	existing, err := i.installs.ListByPrincipalAndCode(ctx, in.GatewayID, in.PrincipalSub, code)
 	if err != nil {
 		return nil, err
@@ -186,7 +206,36 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 			break
 		}
 	}
+	if sameInstance == nil {
+		if err := i.checkInstanceCaps(ctx, in.GatewayID, in.PrincipalSub, existing); err != nil {
+			return nil, err
+		}
+	}
 	alreadyInstalled := sameInstance != nil && sameInstance.IsActive()
+
+	reg, err := findRegistryByCode(ctx, i.registries, in.GatewayID, code)
+	if err != nil {
+		return nil, err
+	}
+
+	// Self-service cannot conjure a shared API key: a server whose only auth is a
+	// static header credential has nothing the catalog can materialise (the
+	// registry would fail validation with an empty value). Report it cleanly and
+	// leave both the shelf and the install table untouched — an admin connects it
+	// with the key, after which it installs like any shelved server.
+	if reg == nil && in.OpenMode && i.ensurer != nil && catalogNeedsAdminCredential(entry) {
+		return &InstallResult{
+			Code:               code,
+			Name:               displayName(entry, code),
+			RequiresAuth:       entry.RequiresAuth,
+			RequiresAdminSetup: true,
+		}, nil
+	}
+
+	status, err := i.decideStatus(ctx, in, reg)
+	if err != nil {
+		return nil, err
+	}
 
 	record, err := installationForStatus(in.GatewayID, in.PrincipalSub, code, in.InstalledBy, status, config)
 	if err != nil {
@@ -206,6 +255,7 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		Code:             code,
 		Name:             displayName(entry, code),
 		Status:           status,
+		InstanceID:       record.ID.String(),
 		Pending:          status == installationdomain.StatusPendingApproval,
 		RequiresAuth:     entry.RequiresAuth,
 		AlreadyInstalled: alreadyInstalled,
@@ -217,6 +267,41 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		result.ConfigVariables = secretRequired
 	}
 	return result, nil
+}
+
+// checkInstanceCaps refuses a would-be new instance when the principal already
+// holds MaxInstancesPerCode live-or-pending instances of this code, or
+// MaxInstancesPerPrincipal across the gateway. existing is the principal's rows
+// for the code (already loaded by the caller).
+func (i *installer) checkInstanceCaps(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	existing []*installationdomain.Installation,
+) error {
+	if countLive(existing) >= MaxInstancesPerCode {
+		return fmt.Errorf("%w: at most %d instances of one server", ErrTooManyInstances, MaxInstancesPerCode)
+	}
+	all, err := i.installs.ListByPrincipal(ctx, gatewayID, principalSub)
+	if err != nil {
+		return err
+	}
+	if countLive(all) >= MaxInstancesPerPrincipal {
+		return fmt.Errorf("%w: at most %d installed servers", ErrTooManyInstances, MaxInstancesPerPrincipal)
+	}
+	return nil
+}
+
+// countLive counts rows that occupy a slot: installed or pending. Revoked rows
+// are audit leftovers and do not count.
+func countLive(rows []*installationdomain.Installation) int {
+	n := 0
+	for _, r := range rows {
+		if r != nil && r.Status != installationdomain.StatusRevoked {
+			n++
+		}
+	}
+	return n
 }
 
 // planInstallConfig validates the caller's supplied URL-variable values against
@@ -346,11 +431,20 @@ func (i *installer) Uninstall(
 	principalSub, code, instanceID string,
 ) error {
 	code = strings.TrimSpace(code)
-	// A specific instance was named: remove exactly that one.
+	// A specific instance was named: remove exactly that one — and only if it is
+	// an instance of the named code, so a stray id cannot be used to revoke an
+	// unrelated server.
 	if id := strings.TrimSpace(instanceID); id != "" {
 		installID, err := ids.Parse[ids.InstallationKind](id)
 		if err != nil {
 			return fmt.Errorf("%w: invalid instance id %q", installationdomain.ErrInvalidInstallation, id)
+		}
+		target, err := i.installs.FindByID(ctx, gatewayID, principalSub, installID)
+		if err != nil {
+			return err
+		}
+		if target.CatalogCode != code {
+			return fmt.Errorf("%w: instance %q is not an instance of %q", installationdomain.ErrNotFound, id, code)
 		}
 		return i.installs.DeleteByID(ctx, gatewayID, principalSub, installID)
 	}

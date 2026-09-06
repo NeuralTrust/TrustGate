@@ -24,6 +24,7 @@ import (
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
@@ -64,14 +65,15 @@ type MCPServerCatalog interface {
 // secret token). appoauth.ConfigureService satisfies it. Optional: without it the
 // install tool still works but returns no configure link.
 type ConfigureGateway interface {
-	CreateTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code string) (string, error)
+	CreateTicket(ctx context.Context, in appoauth.ConfigureTicketRequest) (string, error)
 }
 
 // ServerConnectGateway mints a connect ticket scoped to one catalog server, so
 // the install's OAuth connect link opens the focused single-server connect page.
-// appoauth.ConnectService satisfies it.
+// appoauth.ConnectService satisfies it. instanceID pins the ticket to the exact
+// installation instance the install recorded ("" when none was).
 type ServerConnectGateway interface {
-	CreateServerTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code string) (string, error)
+	CreateServerTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code, instanceID string) (string, error)
 }
 
 // StoreTool implements the MCP Store's gateway-side meta-tools (SEARCH today;
@@ -218,28 +220,35 @@ func (t *storeTool) install(
 	}
 	// A server that needs per-user setup gets a hosted-form link the user opens to
 	// enter their values (the only path for secrets, and a nicer one for the rest).
+	// The link is pinned to the instance this install recorded (if any) so the
+	// form writes to that exact instance.
 	configureURL := ""
 	if res.RequiresConfig {
-		configureURL = t.configureLink(ctx, rc, baseURL, res.Code)
+		configureURL = t.configureLink(ctx, rc, baseURL, res.Code, res.InstanceID, principal)
 	}
 	// A server that needs the user's own account gets the OAuth connect link right
 	// in the install result — the second step of the install, so the user does not
 	// have to hunt for it in their client. Offered even when the server was already
 	// installed: "installed" is not "connected", so a re-install of an unconnected
-	// server must still surface the link.
+	// server must still surface the link. Not offered when nothing was installed
+	// (an admin must connect the server first).
 	connectURL := ""
-	if res.RequiresAuth {
-		connectURL = t.connectLink(ctx, rc, baseURL, res.Code)
+	if res.RequiresAuth && !res.RequiresAdminSetup {
+		connectURL = t.connectLink(ctx, rc, baseURL, res.Code, res.InstanceID)
 	}
 	structured := map[string]any{
-		"code":              res.Code,
-		"name":              res.Name,
-		"status":            string(res.Status),
-		"pending":           res.Pending,
-		"requires_auth":     res.RequiresAuth,
-		"already_installed": res.AlreadyInstalled,
-		"requires_config":   res.RequiresConfig,
-		"config_variables":  configVariablesJSON(res.ConfigVariables),
+		"code":                 res.Code,
+		"name":                 res.Name,
+		"status":               string(res.Status),
+		"pending":              res.Pending,
+		"requires_auth":        res.RequiresAuth,
+		"already_installed":    res.AlreadyInstalled,
+		"requires_config":      res.RequiresConfig,
+		"requires_admin_setup": res.RequiresAdminSetup,
+		"config_variables":     configVariablesJSON(res.ConfigVariables),
+	}
+	if res.InstanceID != "" {
+		structured["instance"] = res.InstanceID
 	}
 	if configureURL != "" {
 		structured["configure_url"] = configureURL
@@ -264,7 +273,7 @@ func linkMarkdown(label, url string) string {
 func (t *storeTool) connectLink(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
-	baseURL, code string,
+	baseURL, code, instanceID string,
 ) string {
 	if t.connect == nil || strings.TrimSpace(baseURL) == "" {
 		return ""
@@ -274,7 +283,7 @@ func (t *storeTool) connectLink(
 		return ""
 	}
 	consumerPath := appconsumer.MCPPath(rc.Consumer.Slug)
-	ticket, err := t.connect.CreateServerTicket(ctx, rc.Consumer.GatewayID, principal.Subject, consumerPath, code)
+	ticket, err := t.connect.CreateServerTicket(ctx, rc.Consumer.GatewayID, principal.Subject, consumerPath, code, instanceID)
 	if err != nil {
 		return ""
 	}
@@ -291,17 +300,24 @@ func (t *storeTool) connectLink(
 func (t *storeTool) configureLink(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
-	baseURL, code string,
+	baseURL, code, instanceID string,
+	principal *identity.Principal,
 ) string {
 	if t.configure == nil || strings.TrimSpace(baseURL) == "" {
 		return ""
 	}
-	principal := identity.PrincipalFromContext(ctx)
 	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
 		return ""
 	}
 	consumerPath := appconsumer.MCPPath(rc.Consumer.Slug)
-	ticket, err := t.configure.CreateTicket(ctx, rc.Consumer.GatewayID, principal.Subject, consumerPath, code)
+	ticket, err := t.configure.CreateTicket(ctx, appoauth.ConfigureTicketRequest{
+		GatewayID:    rc.Consumer.GatewayID,
+		PrincipalSub: principal.Subject,
+		ConsumerPath: consumerPath,
+		Code:         code,
+		InstanceID:   instanceID,
+		Groups:       principalGroups(principal),
+	})
 	if err != nil {
 		return ""
 	}
@@ -431,6 +447,9 @@ func installMessage(res *appstore.InstallResult, configureURL, connectURL string
 			text += fmt.Sprintf(" If its tools aren't working yet, present this link to the user to connect their account: %s", linkMarkdown("Connect "+res.Name, connectURL))
 		}
 		return text
+	}
+	if res.RequiresAdminSetup {
+		return fmt.Sprintf("%s cannot be installed by users yet: it needs a credential only an administrator can add (a shared API key or a pre-registered OAuth client). Ask an admin to connect %s on this gateway's registry with that credential; once it is on the shelf, run install again.", res.Name, res.Name)
 	}
 	if res.RequiresConfig {
 		return requiresConfigMessage(res, configureURL)
@@ -656,22 +675,35 @@ func (t *storeTool) shelfIndex(ctx context.Context, rc *appconsumer.RoutableCons
 	return shelf
 }
 
+// storeMode is the gateway's own Store mode. It fails closed: when no gateway
+// resolved into the context there is nothing to say the Store may materialise
+// arbitrary catalog servers, so the answer is curated (shelf-only), never open.
 func (t *storeTool) storeMode(ctx context.Context) string {
-	if gw, ok := appgateway.FromContext(ctx); ok {
+	if gw, ok := appgateway.FromContext(ctx); ok && gw != nil {
 		return gw.StoreMode()
 	}
-	return gatewaydomain.StoreModeOpen
+	return gatewaydomain.StoreModeCurated
 }
 
-// effectiveStoreMode is the Store mode that applies to the calling principal:
-// their per-principal access claim (open/curated/none) when the control plane
-// minted one, otherwise the gateway's own Store default. A per-principal claim
-// is the admin's explicit decision for that user/group, so it overrides the
-// gateway default in both directions (it can open the Store for one user when
-// the default is curated, or close it for one user when the default is open).
-// An absent or unrecognised claim falls back to the gateway default, keeping
-// tokens minted before this claim existed on their current behaviour.
+// effectiveStoreMode is the Store mode that applies to the calling principal.
+//
+// On a self-service gateway (every non-enterprise tier) governance does not
+// exist: the Store is always open and any per-principal store_access claim is
+// ignored — no token can close or curate a self-service Store.
+//
+// On an enterprise gateway the principal's per-principal access claim
+// (open/curated/none), when the control plane minted one, is the admin's
+// explicit decision for that user/group and overrides the gateway default in
+// both directions (it can open the Store for one user when the default is
+// curated, or close it for one user when the default is open). An absent or
+// unrecognised claim falls back to the gateway default, keeping tokens minted
+// before this claim existed on their current behaviour. With no gateway in the
+// context the tier is unknown, so the claim is honoured and the default fails
+// closed (curated).
 func (t *storeTool) effectiveStoreMode(ctx context.Context) string {
+	if gw, ok := appgateway.FromContext(ctx); ok && gw != nil && !gw.StoreGovernanceEnabled() {
+		return gatewaydomain.StoreModeOpen
+	}
 	switch identity.PrincipalFromContext(ctx).StoreAccess() {
 	case gatewaydomain.StoreModeOpen:
 		return gatewaydomain.StoreModeOpen

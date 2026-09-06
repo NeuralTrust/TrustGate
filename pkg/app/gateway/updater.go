@@ -114,8 +114,11 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	}
 	// store_mode is a reserved key stripped from client metadata, so re-stamp it
 	// after the metadata block. Preserve the existing mode unless it is being set.
-	// open is the default, so it is represented by the absence of the key.
-	storeMode := old.StoreMode()
+	// open is the default, so it is represented by the absence of the key. The
+	// configured (stamped) mode is preserved, not the effective one: on a
+	// self-service plan StoreMode() is always open, and an update must not erase
+	// the admin's setting for when the plan includes governance.
+	storeMode := old.ConfiguredStoreMode()
 	if in.StoreMode != nil {
 		storeMode = *in.StoreMode
 	}

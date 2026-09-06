@@ -523,7 +523,7 @@ func TestUpdater_Update_StoreModeCuratedThenOpen(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
 	repo.EXPECT().
 		Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
-			return g.StoreMode() == domain.StoreModeCurated &&
+			return g.ConfiguredStoreMode() == domain.StoreModeCurated &&
 				g.Metadata[domain.MetadataStoreModeKey] == domain.StoreModeCurated
 		})).
 		Return(nil).
@@ -545,8 +545,8 @@ func TestUpdater_Update_StoreModeCuratedThenOpen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
-	if got.StoreMode() != domain.StoreModeCurated {
-		t.Fatalf("StoreMode = %q, want curated", got.StoreMode())
+	if got.ConfiguredStoreMode() != domain.StoreModeCurated {
+		t.Fatalf("StoreMode = %q, want curated", got.ConfiguredStoreMode())
 	}
 }
 
@@ -560,7 +560,7 @@ func TestUpdater_Update_StoreModeNonePersists(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
 	repo.EXPECT().
 		Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
-			return g.StoreMode() == domain.StoreModeNone &&
+			return g.ConfiguredStoreMode() == domain.StoreModeNone &&
 				g.Metadata[domain.MetadataStoreModeKey] == domain.StoreModeNone
 		})).
 		Return(nil).
@@ -582,8 +582,8 @@ func TestUpdater_Update_StoreModeNonePersists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
-	if got.StoreMode() != domain.StoreModeNone {
-		t.Fatalf("StoreMode = %q, want none", got.StoreMode())
+	if got.ConfiguredStoreMode() != domain.StoreModeNone {
+		t.Fatalf("StoreMode = %q, want none", got.ConfiguredStoreMode())
 	}
 }
 
@@ -599,7 +599,7 @@ func TestUpdater_Update_StoreModeOpenClearsCurated(t *testing.T) {
 	repo.EXPECT().
 		Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
 			_, present := g.Metadata[domain.MetadataStoreModeKey]
-			return g.StoreMode() == domain.StoreModeOpen && !present
+			return g.ConfiguredStoreMode() == domain.StoreModeOpen && !present
 		})).
 		Return(nil).
 		Once()
@@ -620,8 +620,8 @@ func TestUpdater_Update_StoreModeOpenClearsCurated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
-	if got.StoreMode() != domain.StoreModeOpen {
-		t.Fatalf("StoreMode = %q, want open", got.StoreMode())
+	if got.ConfiguredStoreMode() != domain.StoreModeOpen {
+		t.Fatalf("StoreMode = %q, want open", got.ConfiguredStoreMode())
 	}
 }
 
@@ -636,7 +636,7 @@ func TestUpdater_Update_StoreModePreservedWhenOmitted(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
 	repo.EXPECT().
 		Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
-			return g.StoreMode() == domain.StoreModeCurated && g.Metadata["env"] == "prod"
+			return g.ConfiguredStoreMode() == domain.StoreModeCurated && g.Metadata["env"] == "prod"
 		})).
 		Return(nil).
 		Once()
@@ -657,7 +657,7 @@ func TestUpdater_Update_StoreModePreservedWhenOmitted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
-	if got.StoreMode() != domain.StoreModeCurated {
-		t.Fatalf("StoreMode = %q, want curated preserved", got.StoreMode())
+	if got.ConfiguredStoreMode() != domain.StoreModeCurated {
+		t.Fatalf("StoreMode = %q, want curated preserved", got.ConfiguredStoreMode())
 	}
 }
