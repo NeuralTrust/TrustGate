@@ -17,7 +17,9 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -43,22 +45,153 @@ var legacyProtocolVersions = []string{
 	"2024-11-05",
 }
 
-var upstreamTransport = func() http.RoundTripper {
+// upstreamTransport dials any address: a fixed registry URL was configured by
+// an admin and is trusted as much as any other admin-set upstream.
+var upstreamTransport = newUpstreamTransport(nil)
+
+// restrictedUpstreamTransport serves targets whose URL came out of per-user
+// variable substitution (Target.RestrictPrivateNetwork). Its dialer resolves the
+// host itself and refuses every non-public address, then connects to the very
+// address it checked — so neither an IP literal that slipped past validation
+// nor a hostname that rebinds to 10.0.0.5 between check and dial can reach the
+// gateway's network.
+var restrictedUpstreamTransport = newUpstreamTransport(dialPublicOnly)
+
+func newUpstreamTransport(dial func(context.Context, string, string) (net.Conn, error)) http.RoundTripper {
 	t, ok := http.DefaultTransport.(*http.Transport)
 	if !ok {
 		return http.DefaultTransport
 	}
 	cloned := t.Clone()
 	cloned.ResponseHeaderTimeout = responseHeaderTimeout
+	if dial != nil {
+		cloned.DialContext = dial
+	}
 	return cloned
-}()
+}
+
+func transportFor(target appmcp.Target) http.RoundTripper {
+	if target.RestrictPrivateNetwork {
+		return restrictedUpstreamTransport
+	}
+	return upstreamTransport
+}
+
+// errPrivateUpstreamAddress is the dial-time refusal for a restricted target.
+// It names the host but never the resolved address, which would map the
+// gateway's own network for the caller.
+var errPrivateUpstreamAddress = errors.New("upstream host resolves to a private, loopback, link-local or otherwise non-public address")
+
+// publicDialer mirrors http.DefaultTransport's dialer settings.
+var publicDialer = &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+
+// dialPublicOnly is the DialContext of restrictedUpstreamTransport. Every
+// address the host resolves to must be public unicast — one private answer in a
+// mixed set refuses the whole dial, since an attacker controls the answer set —
+// and the connection is made to a checked address, never to the name again.
+func dialPublicOnly(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := resolveHost(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	for _, ip := range ips {
+		if !isPublicUnicast(ip) {
+			return nil, fmt.Errorf("%w: %s", errPrivateUpstreamAddress, host)
+		}
+	}
+	var lastErr error
+	for _, ip := range ips {
+		conn, dialErr := publicDialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		if dialErr == nil {
+			return conn, nil
+		}
+		lastErr = dialErr
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	return nil, lastErr
+}
+
+func resolveHost(ctx context.Context, host string) ([]net.IP, error) {
+	if ip := net.ParseIP(host); ip != nil {
+		return []net.IP{ip}, nil
+	}
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("no addresses found for %s", host)
+	}
+	ips := make([]net.IP, 0, len(addrs))
+	for _, a := range addrs {
+		ips = append(ips, a.IP)
+	}
+	return ips, nil
+}
+
+// Address ranges the standard library does not classify but that never denote a
+// public upstream: carrier-grade NAT, "this" network, IETF protocol assignments,
+// the reserved class-E block (which includes the broadcast address), NAT64 and
+// the IPv6 discard prefix.
+var (
+	cgnatV4    = mustCIDR("100.64.0.0/10")
+	thisNetV4  = mustCIDR("0.0.0.0/8")
+	ietfV4     = mustCIDR("192.0.0.0/24")
+	reservedV4 = mustCIDR("240.0.0.0/4")
+	nat64V6    = mustCIDR("64:ff9b::/96")
+	discardV6  = mustCIDR("100::/64")
+)
+
+func mustCIDR(cidr string) *net.IPNet {
+	_, n, err := net.ParseCIDR(cidr)
+	if err != nil {
+		panic(err)
+	}
+	return n
+}
+
+// isPublicUnicast reports whether ip is an address a per-user upstream may
+// legitimately live at: globally routable unicast, nothing else.
+func isPublicUnicast(ip net.IP) bool {
+	if ip == nil ||
+		ip.IsUnspecified() ||
+		ip.IsLoopback() ||
+		ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsInterfaceLocalMulticast() ||
+		ip.IsMulticast() {
+		return false
+	}
+	if ip4 := ip.To4(); ip4 != nil {
+		for _, blocked := range []*net.IPNet{cgnatV4, thisNetV4, ietfV4, reservedV4} {
+			if blocked.Contains(ip4) {
+				return false
+			}
+		}
+		return true
+	}
+	if len(ip) == net.IPv6len && nat64V6.Contains(ip) {
+		// NAT64 embeds the IPv4 target in the low 32 bits; judge that.
+		return isPublicUnicast(net.IP(ip[12:16]))
+	}
+	return !discardV6.Contains(ip)
+}
 
 type Client struct{}
 
 func New() *Client { return &Client{} }
 
 type Session struct {
-	cs  *sdk.ClientSession
+	cs *sdk.ClientSession
+	// url is the redacted form of the target URL (query values masked): it only
+	// ever appears in error text, which must never carry a per-user secret.
 	url string
 }
 
@@ -67,7 +200,7 @@ var _ appmcp.Upstream = (*Session)(nil)
 func (c *Client) Connect(ctx context.Context, target appmcp.Target) (*Session, error) {
 	cs, attempt, err := c.connect(ctx, target, false, "")
 	if err == nil {
-		return &Session{cs: cs, url: target.URL}, nil
+		return &Session{cs: cs, url: redactURL(target.URL)}, nil
 	}
 	if ctx.Err() != nil ||
 		!attempt.discoverLegacyCandidate.Load() ||
@@ -79,7 +212,7 @@ func (c *Client) Connect(ctx context.Context, target appmcp.Target) (*Session, e
 	for _, protocolVersion := range legacyProtocolVersions {
 		cs, attempt, err = c.connect(ctx, target, true, protocolVersion)
 		if err == nil {
-			return &Session{cs: cs, url: target.URL}, nil
+			return &Session{cs: cs, url: redactURL(target.URL)}, nil
 		}
 		legacyErr = fmt.Errorf("legacy handshake fallback (protocolVersion %s): %w", protocolVersion, err)
 		if ctx.Err() != nil || !attempt.initializeBadRequest.Load() {
@@ -97,7 +230,7 @@ func (c *Client) connect(
 ) (*sdk.ClientSession, *handshakeRoundTripper, error) {
 	attempt := &handshakeRoundTripper{
 		headers:         target.Headers,
-		transport:       upstreamTransport,
+		transport:       transportFor(target),
 		legacyFallback:  legacyFallback,
 		protocolVersion: protocolVersion,
 	}

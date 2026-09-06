@@ -20,6 +20,7 @@ import (
 	"net"
 	"testing"
 
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
@@ -146,7 +147,7 @@ func dialInstallationsWithEnsurer(t *testing.T, repo installationdomain.Reposito
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
 	gsrv := grpc.NewServer()
-	snapshotpb.RegisterStoreInstallationsServer(gsrv, NewInstallationsService(repo, ensurer, discardLogger()))
+	snapshotpb.RegisterStoreInstallationsServer(gsrv, NewInstallationsService(repo, ensurer, nil, discardLogger()))
 	go func() { _ = gsrv.Serve(lis) }()
 	t.Cleanup(gsrv.Stop)
 
@@ -254,5 +255,143 @@ func TestInstallationsClient_AdminQueriesUnsupported(t *testing.T) {
 	}
 	if _, err := client.ListPendingByGateway(context.Background(), gatewayID); !errors.Is(err, errDataPlaneAdminUnsupported) {
 		t.Fatalf("ListPendingByGateway err = %v, want errDataPlaneAdminUnsupported", err)
+	}
+}
+
+// fakeGateways resolves gateways by id for the tenant check.
+type fakeGateways struct {
+	byID map[ids.GatewayID]*gatewaydomain.Gateway
+}
+
+func (f *fakeGateways) FindByID(_ context.Context, id ids.GatewayID) (*gatewaydomain.Gateway, error) {
+	if gw, ok := f.byID[id]; ok {
+		return gw, nil
+	}
+	return nil, gatewaydomain.ErrNotFound
+}
+
+func tenantGateway(t *testing.T, tenant string) *gatewaydomain.Gateway {
+	t.Helper()
+	id, err := ids.NewV7[ids.GatewayKind]()
+	if err != nil {
+		t.Fatalf("gateway id: %v", err)
+	}
+	return &gatewaydomain.Gateway{ID: id, Metadata: map[string]string{gatewaydomain.MetadataTenantIDKey: tenant}}
+}
+
+func protoInstall(t *testing.T, gw ids.GatewayID, sub, code string) *snapshotpb.Installation {
+	t.Helper()
+	in, err := installationdomain.New(gw, sub, code, sub, nil)
+	if err != nil {
+		t.Fatalf("new installation: %v", err)
+	}
+	return installationToProto(in)
+}
+
+// A scoped data plane (per-instance token) must not read or write another
+// tenant's installations, whatever gateway_id it puts on the wire — the same
+// isolation the snapshot RPCs enforce through ScopeFromContext.
+func TestInstallationsService_ScopedCallerCannotReachOtherTenant(t *testing.T) {
+	acme := tenantGateway(t, "acme")
+	globex := tenantGateway(t, "globex")
+	repo := newMemInstallations()
+	svc := NewInstallationsService(repo, &fakeRegistryEnsurer{}, &fakeGateways{
+		byID: map[ids.GatewayID]*gatewaydomain.Gateway{acme.ID: acme, globex.ID: globex},
+	}, discardLogger())
+
+	// Seed a globex row directly so a refused Find is provably not "empty".
+	seed, _ := installationdomain.New(globex.ID, "victim", "github", "victim", nil)
+	_ = repo.Upsert(context.Background(), seed)
+
+	scoped := WithScope(context.Background(), acme.ID.String())
+
+	if _, err := svc.Upsert(scoped, &snapshotpb.UpsertInstallationRequest{Installation: protoInstall(t, globex.ID, "mallory", "github")}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("Upsert for another tenant's gateway: code = %v, want PermissionDenied", status.Code(err))
+	}
+	if _, err := svc.Find(scoped, &snapshotpb.FindInstallationRequest{GatewayId: globex.ID.String(), PrincipalSub: "victim", CatalogCode: "github"}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("Find for another tenant's gateway: code = %v, want PermissionDenied", status.Code(err))
+	}
+	if _, err := svc.ListByPrincipal(scoped, &snapshotpb.ListByPrincipalRequest{GatewayId: globex.ID.String(), PrincipalSub: "victim"}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("ListByPrincipal for another tenant's gateway: code = %v, want PermissionDenied", status.Code(err))
+	}
+	if _, err := svc.Delete(scoped, &snapshotpb.DeleteInstallationRequest{GatewayId: globex.ID.String(), PrincipalSub: "victim", CatalogCode: "github"}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("Delete for another tenant's gateway: code = %v, want PermissionDenied", status.Code(err))
+	}
+	if _, err := svc.EnsureRegistry(scoped, &snapshotpb.EnsureRegistryRequest{GatewayId: globex.ID.String(), CatalogCode: "github"}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("EnsureRegistry for another tenant's gateway: code = %v, want PermissionDenied", status.Code(err))
+	}
+	if _, ok := repo.rows[key(globex.ID, "victim", "github")]; !ok {
+		t.Fatal("the refused Delete must not have removed the other tenant's row")
+	}
+
+	unknown, _ := ids.NewV7[ids.GatewayKind]()
+	if _, err := svc.Find(scoped, &snapshotpb.FindInstallationRequest{GatewayId: unknown.String(), PrincipalSub: "x", CatalogCode: "y"}); status.Code(err) != codes.NotFound {
+		t.Fatalf("Find for an unknown gateway: code = %v, want NotFound", status.Code(err))
+	}
+}
+
+func TestInstallationsService_ScopedCallerReachesOwnScope(t *testing.T) {
+	acme := tenantGateway(t, "acme")
+	acme2 := tenantGateway(t, "acme")
+	repo := newMemInstallations()
+	svc := NewInstallationsService(repo, &fakeRegistryEnsurer{}, &fakeGateways{
+		byID: map[ids.GatewayID]*gatewaydomain.Gateway{acme.ID: acme, acme2.ID: acme2},
+	}, discardLogger())
+
+	// Instance scope: the scoped gateway itself.
+	byGateway := WithScope(context.Background(), acme.ID.String())
+	if _, err := svc.Upsert(byGateway, &snapshotpb.UpsertInstallationRequest{Installation: protoInstall(t, acme.ID, "alice", "github")}); err != nil {
+		t.Fatalf("Upsert on the scoped gateway: %v", err)
+	}
+	found, err := svc.Find(byGateway, &snapshotpb.FindInstallationRequest{GatewayId: acme.ID.String(), PrincipalSub: "alice", CatalogCode: "github"})
+	if err != nil || !found.GetFound() {
+		t.Fatalf("Find on the scoped gateway = (%v, %v), want found", found, err)
+	}
+
+	// Tenant scope: another gateway of the same tenant.
+	byTenant := WithScope(context.Background(), "acme")
+	if _, err := svc.Upsert(byTenant, &snapshotpb.UpsertInstallationRequest{Installation: protoInstall(t, acme2.ID, "bob", "github")}); err != nil {
+		t.Fatalf("Upsert on a same-tenant gateway: %v", err)
+	}
+	if _, err := svc.Delete(byTenant, &snapshotpb.DeleteInstallationRequest{GatewayId: acme2.ID.String(), PrincipalSub: "bob", CatalogCode: "github"}); err != nil {
+		t.Fatalf("Delete on a same-tenant gateway: %v", err)
+	}
+
+	// Unscoped (shared token) sees everything, as its snapshot does.
+	if _, err := svc.Find(context.Background(), &snapshotpb.FindInstallationRequest{GatewayId: acme.ID.String(), PrincipalSub: "alice", CatalogCode: "github"}); err != nil {
+		t.Fatalf("unscoped Find: %v", err)
+	}
+}
+
+func TestInstallationsService_UpsertValidatesWireRecord(t *testing.T) {
+	gw := tenantGateway(t, "acme")
+	svc := NewInstallationsService(newMemInstallations(), nil, &fakeGateways{
+		byID: map[ids.GatewayID]*gatewaydomain.Gateway{gw.ID: gw},
+	}, discardLogger())
+	ctx := WithScope(context.Background(), gw.ID.String())
+
+	bogus := protoInstall(t, gw.ID, "alice", "github")
+	bogus.Status = "approved-by-me"
+	if _, err := svc.Upsert(ctx, &snapshotpb.UpsertInstallationRequest{Installation: bogus}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("Upsert with an unknown status: code = %v, want InvalidArgument", status.Code(err))
+	}
+
+	forged := protoInstall(t, gw.ID, "alice", "github")
+	forged.InstalledBy = "admin"
+	if _, err := svc.Upsert(ctx, &snapshotpb.UpsertInstallationRequest{Installation: forged}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("Upsert with installed_by != principal_sub: code = %v, want PermissionDenied", status.Code(err))
+	}
+
+	anonymous := protoInstall(t, gw.ID, "alice", "github")
+	anonymous.PrincipalSub = ""
+	anonymous.InstalledBy = ""
+	if _, err := svc.Upsert(ctx, &snapshotpb.UpsertInstallationRequest{Installation: anonymous}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("Upsert without a principal: code = %v, want InvalidArgument", status.Code(err))
+	}
+
+	ok := protoInstall(t, gw.ID, "alice", "github")
+	ok.Status = string(installationdomain.StatusPendingApproval)
+	if _, err := svc.Upsert(ctx, &snapshotpb.UpsertInstallationRequest{Installation: ok}); err != nil {
+		t.Fatalf("Upsert of a valid pending record: %v", err)
 	}
 }

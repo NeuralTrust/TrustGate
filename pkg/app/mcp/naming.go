@@ -18,12 +18,14 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 func resolveNames(candidates []binding) []binding {
 	items := make([]exposedName, len(candidates))
 	for i, b := range candidates {
-		items[i] = exposedName{name: b.exposed, registry: b.registry.Name, registryID: b.registry.ID.String()}
+		items[i] = exposedNameFor(b.exposed, b.registry)
 	}
 	out := make([]binding, 0, len(candidates))
 	for i, name := range resolveExposedNames(items) {
@@ -38,6 +40,21 @@ type exposedName struct {
 	name       string
 	registry   string
 	registryID string
+	// perInstance marks a name served by a per-instance registry clone: one of
+	// several installs of the same catalog code for this principal (two Snowflake
+	// schemas, say). Such names are always prefixed with the instance's registry
+	// name, whether or not a sibling is currently reachable — otherwise the name
+	// the client sees would flap ("Snowflake_FINANCE_query" one request, "query"
+	// the next) whenever the other instance goes down.
+	perInstance bool
+}
+
+func exposedNameFor(name string, reg *registrydomain.Registry) exposedName {
+	it := exposedName{name: name, registry: reg.Name, registryID: reg.ID.String()}
+	if reg.MCPTarget != nil && len(reg.MCPTarget.InstanceConfig) > 0 {
+		it.perInstance = true
+	}
+	return it
 }
 
 func resolveExposedNames(items []exposedName) []string {
@@ -49,7 +66,7 @@ func resolveExposedNames(items []exposedName) []string {
 	out := make([]string, len(items))
 	for i, it := range items {
 		name := it.name
-		if counts[name] > 1 {
+		if counts[name] > 1 || it.perInstance {
 			name = registryPrefix(it) + "_" + it.name
 		}
 		if _, dup := taken[name]; dup {

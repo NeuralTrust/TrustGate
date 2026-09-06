@@ -110,8 +110,8 @@ func ControlConfigSync(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(repo installationdomain.Repository, ensurer appstore.RegistryEnsurer, logger *slog.Logger) snapshotpb.StoreInstallationsServer {
-		return configsyncgrpc.NewInstallationsService(repo, ensurer, logger)
+	if err := c.Provide(func(repo installationdomain.Repository, ensurer appstore.RegistryEnsurer, gateways gatewaydomain.Repository, logger *slog.Logger) snapshotpb.StoreInstallationsServer {
+		return configsyncgrpc.NewInstallationsService(repo, ensurer, gateways, logger)
 	}); err != nil {
 		return err
 	}

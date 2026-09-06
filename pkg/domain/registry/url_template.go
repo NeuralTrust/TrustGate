@@ -15,7 +15,9 @@
 package registry
 
 import (
+	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"regexp"
 	"sort"
@@ -37,6 +39,45 @@ var safeURLSegment = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-
 
 // ErrURLTemplate is the base for URL-template resolution and validation errors.
 var ErrURLTemplate = fmt.Errorf("registry: url template")
+
+// ErrUnsafeUpstreamHost reports a variable-substituted URL whose host is not a
+// public hostname: an IP literal, a loopback / link-local / cluster-local name
+// or a cloud metadata endpoint. It wraps ErrURLTemplate so callers that already
+// map template failures need no new case.
+var ErrUnsafeUpstreamHost = fmt.Errorf("%w: unsafe upstream host", ErrURLTemplate)
+
+// maxURLValueLen bounds any single per-user URL variable value. A value is at
+// most a hostname, an identifier or an API token; anything longer is not a
+// legitimate configuration and only widens the log / tool-title surface.
+const maxURLValueLen = 256
+
+// blockedUpstreamHosts are hostnames that can never be a per-user upstream: the
+// local machine and the well-known cloud / cluster metadata endpoints. Exact
+// match; blockedUpstreamHostSuffixes covers the internal zones around them.
+var blockedUpstreamHosts = map[string]struct{}{
+	"localhost":                {},
+	"metadata":                 {},
+	"metadata.google.internal": {},
+	"instance-data":            {},
+	"kubernetes.default":       {},
+	"kubernetes.default.svc":   {},
+}
+
+// blockedUpstreamHostSuffixes are DNS zones that only ever resolve inside a
+// host, a LAN or a cluster — never to a SaaS upstream a user could legitimately
+// point a catalog server at.
+var blockedUpstreamHostSuffixes = []string{
+	".localhost",
+	".local",
+	".internal",
+	".svc",
+	".cluster.local",
+}
+
+// numericHost matches hostnames made only of digits and dots (decimal or
+// short-form IPv4 such as "2130706433" or "127.1") that net.ParseIP does not
+// recognise but libc resolvers happily turn into loopback addresses.
+var numericHost = regexp.MustCompile(`^[0-9.]+$`)
 
 // urlVariableVaultPrefix namespaces a secret URL variable's per-user value in the
 // vault, keeping it distinct from OAuth/forwarded provider credentials (keyed by
@@ -153,6 +194,12 @@ func ResolveURL(template string, vars []MCPURLVariable, values map[string]string
 	}
 	parsed, err := url.Parse(resolved)
 	if err != nil {
+		// url.Error echoes the whole URL — including any substituted secret query
+		// value — so only its inner reason is surfaced.
+		var uerr *url.Error
+		if errors.As(err, &uerr) {
+			err = uerr.Err
+		}
 		return "", fmt.Errorf("%w: resolved url is invalid: %w", ErrURLTemplate, err)
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
@@ -162,6 +209,50 @@ func ResolveURL(template string, vars []MCPURLVariable, values map[string]string
 		return "", fmt.Errorf("%w: resolved url has no host", ErrURLTemplate)
 	}
 	return resolved, nil
+}
+
+// ValidateResolvedUpstreamHost is the SSRF gate for a URL produced by per-user
+// variable substitution. Twelve catalog servers template the whole host
+// ({account_url}, {workspace_host}, ...), and the segment charset alone admits
+// "169.254.169.254", "localhost" or "metadata.google.internal": a user could
+// repoint the shared registry at the gateway's own network. The resolved host
+// must therefore be a public-looking DNS name: no IP literal (in any notation),
+// no userinfo, no single-label name, no loopback / link-local / cluster-local
+// zone and no cloud metadata endpoint. It is applied ONLY to URLs that came out
+// of variable substitution — admin-configured fixed URLs (including the loopback
+// ones tests use) are not per-user input and are left alone. The dial-time
+// private-network guard in the MCP client is the second layer: it catches a
+// public name that resolves (or later rebinds) to a private address.
+func ValidateResolvedUpstreamHost(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("%w: unparseable url", ErrUnsafeUpstreamHost)
+	}
+	if parsed.User != nil {
+		return fmt.Errorf("%w: userinfo is not allowed", ErrUnsafeUpstreamHost)
+	}
+	host := strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+	if host == "" {
+		return fmt.Errorf("%w: no host", ErrUnsafeUpstreamHost)
+	}
+	if net.ParseIP(host) != nil ||
+		strings.ContainsAny(host, ":%[]") ||
+		numericHost.MatchString(host) ||
+		strings.HasPrefix(host, "0x") {
+		return fmt.Errorf("%w: %q is an IP literal; a public hostname is required", ErrUnsafeUpstreamHost, host)
+	}
+	if _, blocked := blockedUpstreamHosts[host]; blocked {
+		return fmt.Errorf("%w: %q is a local or metadata endpoint", ErrUnsafeUpstreamHost, host)
+	}
+	for _, suffix := range blockedUpstreamHostSuffixes {
+		if strings.HasSuffix(host, suffix) {
+			return fmt.Errorf("%w: %q is in a local zone (%s)", ErrUnsafeUpstreamHost, host, suffix)
+		}
+	}
+	if !strings.Contains(host, ".") {
+		return fmt.Errorf("%w: %q is a single-label name; a public hostname is required", ErrUnsafeUpstreamHost, host)
+	}
+	return nil
 }
 
 // ValidateURLValue checks one supplied value against its variable declaration —
@@ -177,6 +268,9 @@ func ValidateURLValue(v MCPURLVariable, val string) error {
 // substitution); host/path values must pass the structure-safe charset and carry
 // no ".." path-traversal sequence.
 func validateValue(v MCPURLVariable, val string) error {
+	if len(val) > maxURLValueLen {
+		return fmt.Errorf("%w: variable %q is too long (max %d characters)", ErrURLTemplate, v.Name, maxURLValueLen)
+	}
 	if v.In == URLVariableInQuery {
 		if strings.ContainsAny(val, "\x00\r\n") {
 			return fmt.Errorf("%w: variable %q contains control characters", ErrURLTemplate, v.Name)
