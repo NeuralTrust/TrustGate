@@ -40,8 +40,11 @@ func NewRequestsHandler(approver appstore.Approver) *RequestsHandler {
 	return &RequestsHandler{approver: approver}
 }
 
-// pendingRequestResponse is one row in the admin approval queue.
+// pendingRequestResponse is one row in the admin approval queue. InstanceID is
+// what approve/deny should be called with: it identifies the exact request even
+// when the principal holds other instances of the same code.
 type pendingRequestResponse struct {
+	InstanceID   string    `json:"instance_id"`
 	PrincipalSub string    `json:"principal_sub"`
 	Code         string    `json:"code"`
 	Name         string    `json:"name"`
@@ -55,17 +58,21 @@ type listRequestsResponse struct {
 }
 
 // decideRequest is the shared body of approve/deny: which install request.
+// instance_id targets one exact instance (preferred); code alone is accepted for
+// backward compatibility and resolves only when the principal holds exactly one
+// live instance of it (409 otherwise).
 type decideRequest struct {
 	PrincipalSub string `json:"principal_sub"`
 	Code         string `json:"code"`
+	InstanceID   string `json:"instance_id"`
 }
 
 func (r decideRequest) validate() error {
 	if strings.TrimSpace(r.PrincipalSub) == "" {
 		return fmt.Errorf("principal_sub is required: %w", commonerrors.ErrValidation)
 	}
-	if strings.TrimSpace(r.Code) == "" {
-		return fmt.Errorf("code is required: %w", commonerrors.ErrValidation)
+	if strings.TrimSpace(r.Code) == "" && strings.TrimSpace(r.InstanceID) == "" {
+		return fmt.Errorf("code or instance_id is required: %w", commonerrors.ErrValidation)
 	}
 	return nil
 }
@@ -96,6 +103,7 @@ func (h *RequestsHandler) List(c *fiber.Ctx) error {
 	}
 	for _, p := range pending {
 		out.Items = append(out.Items, pendingRequestResponse{
+			InstanceID:   p.InstanceID,
 			PrincipalSub: p.PrincipalSub,
 			Code:         p.Code,
 			Name:         p.Name,
@@ -129,6 +137,7 @@ func (h *RequestsHandler) Approve(c *fiber.Ctx) error {
 		GatewayID:    gatewayID,
 		PrincipalSub: req.PrincipalSub,
 		Code:         req.Code,
+		InstanceID:   req.InstanceID,
 		ApprovedBy:   callerActor(c),
 	}); err != nil {
 		return httpio.WriteError(c, err)
@@ -158,6 +167,7 @@ func (h *RequestsHandler) Deny(c *fiber.Ctx) error {
 		GatewayID:    gatewayID,
 		PrincipalSub: req.PrincipalSub,
 		Code:         req.Code,
+		InstanceID:   req.InstanceID,
 		DeniedBy:     callerActor(c),
 	}); err != nil {
 		return httpio.WriteError(c, err)

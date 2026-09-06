@@ -18,6 +18,7 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
 
 	infrasts "github.com/NeuralTrust/TrustGate/pkg/infra/identity/sts"
 	"github.com/golang-jwt/jwt/v5"
@@ -185,6 +186,8 @@ func TestRefreshSessionPreservesOrgAndGroups(t *testing.T) {
 		AuthID:    "auth-1",
 		Org:       "team-a",
 		Groups:    []string{"Eng"},
+		LoginAt:   time.Now(),
+		ExpiresAt: time.Now().Add(time.Hour),
 	}); err != nil {
 		t.Fatalf("seed session: %v", err)
 	}

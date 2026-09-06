@@ -39,6 +39,9 @@ func installationToProto(in *installationdomain.Installation) *snapshotpb.Instal
 		Status:       string(in.Status),
 		InstalledBy:  in.InstalledBy,
 	}
+	if !in.RegistryID.IsNil() {
+		msg.RegistryId = in.RegistryID.String()
+	}
 	if len(in.Config) > 0 {
 		msg.Config = make(map[string]string, len(in.Config))
 		for k, v := range in.Config {
@@ -88,6 +91,13 @@ func installationFromProto(msg *snapshotpb.Installation) (*installationdomain.In
 		Status:       installationdomain.Status(msg.GetStatus()),
 		InstalledBy:  msg.GetInstalledBy(),
 		Config:       config,
+	}
+	if raw := msg.GetRegistryId(); raw != "" {
+		registryID, err := ids.Parse[ids.RegistryKind](raw)
+		if err != nil {
+			return nil, fmt.Errorf("parse registry id: %w", err)
+		}
+		out.RegistryID = registryID
 	}
 	if ts := msg.GetCreatedAtUnix(); ts > 0 {
 		out.CreatedAt = time.Unix(ts, 0).UTC()

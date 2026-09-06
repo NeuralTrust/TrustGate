@@ -22,18 +22,47 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	installationrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/installation"
+	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
+	storegrantrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/storegrant"
 	"go.uber.org/dig"
 )
 
-// Store wires the MCP Store's per-principal state. Installations are durable
-// Postgres rows outside the config-snapshot; the data-plane read path (mirroring
-// the vault's Redis path) is added when the CatalogScoper needs it. On the full
-// plane it also wires the admin install-approval queue handler.
+// Store wires the MCP Store's state on the full plane: the per-principal
+// installations (durable Postgres rows outside the config snapshot), the access
+// grants (gateway configuration that rides the snapshot, hence the outbox
+// marker), the admin grant service + handler, the registry materialiser and the
+// install-approval queue handler.
 func Store(c *container.Container) error {
 	if err := c.Provide(func(conn *database.Connection) installationdomain.Repository {
 		return installationrepo.NewRepository(conn)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(conn *database.Connection, appender outboxrepo.Appender) storegrantdomain.Repository {
+		return storegrantrepo.NewRepository(conn, appender)
+	}); err != nil {
+		return err
+	}
+	// The Reader every Store service reads grants through; here the Postgres
+	// repository, on the data plane the snapshot adapter.
+	if err := c.Provide(func(repo storegrantdomain.Repository) storegrantdomain.Reader { return repo }); err != nil {
+		return err
+	}
+	if err := c.Provide(func(
+		repo storegrantdomain.Repository,
+		registries registrydomain.Repository,
+		catalog appcatalog.MCPServerCatalog,
+		sig snapshotSignalParams,
+	) (appstore.GrantService, error) {
+		return appstore.NewGrantService(repo, registries, catalog, sig.Signaler)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(grants appstore.GrantService) *storehttp.GrantsHandler {
+		return storehttp.NewGrantsHandler(grants)
 	}); err != nil {
 		return err
 	}
@@ -58,10 +87,15 @@ type storeApprovalParams struct {
 	Catalog    appcatalog.MCPServerCatalog
 	Registries registrydomain.Repository
 	Installs   installationdomain.Repository
+	// Grants is where an approval lands (the requester is added to the grant);
+	// the service variant also signals the snapshot rebuild.
+	Grants appstore.GrantService
+	// Ensurer lets an approve materialise a server nobody shelved yet.
+	Ensurer appstore.RegistryEnsurer
 }
 
 func provideStoreRequestsHandler(p storeApprovalParams) (*storehttp.RequestsHandler, error) {
-	approver, err := appstore.NewApprover(p.Catalog, p.Registries, p.Installs)
+	approver, err := appstore.NewApprover(p.Catalog, p.Registries, p.Installs, p.Grants, appstore.WithApproverEnsurer(p.Ensurer))
 	if err != nil {
 		return nil, err
 	}

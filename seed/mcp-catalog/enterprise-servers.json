@@ -765,6 +765,19 @@
         ],
         "resource": "https://mcp.atlassian.com/v1/mcp/authv2"
       },
+      "auth_methods": [
+        "static",
+        "oauth"
+      ],
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "Atlassian API token, sent as a Bearer token (must be enabled by an org admin).",
+          "required": true,
+          "secret": true,
+          "scheme": "Bearer"
+        }
+      ],
       "relevance": 100,
       "tools": [
         {
@@ -5282,6 +5295,19 @@
         ],
         "resource": "https://api.githubcopilot.com/mcp/"
       },
+      "auth_methods": [
+        "static",
+        "oauth"
+      ],
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "GitHub personal access token (PAT), sent as a Bearer token.",
+          "required": true,
+          "secret": true,
+          "scheme": "Bearer"
+        }
+      ],
       "relevance": 100,
       "tools": [
         {
@@ -5315,6 +5341,19 @@
         ],
         "resource": "https://gitlab.com/api/v4/mcp"
       },
+      "auth_methods": [
+        "static",
+        "oauth"
+      ],
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "GitLab personal access token (PAT), sent as a Bearer token.",
+          "required": true,
+          "secret": true,
+          "scheme": "Bearer"
+        }
+      ],
       "relevance": 95,
       "tools": [
         {
@@ -8573,6 +8612,19 @@
         ],
         "resource": "https://mcp.linear.app/mcp"
       },
+      "auth_methods": [
+        "static",
+        "oauth"
+      ],
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "Linear personal API key, sent as a Bearer token.",
+          "required": true,
+          "secret": true,
+          "scheme": "Bearer"
+        }
+      ],
       "relevance": 95,
       "tools": [
         {
@@ -13558,6 +13610,19 @@
         ],
         "resource": "https://mcp.stripe.com"
       },
+      "auth_methods": [
+        "static",
+        "oauth"
+      ],
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "Stripe restricted API key (rk_live_…), sent as a Bearer token.",
+          "required": true,
+          "secret": true,
+          "scheme": "Bearer"
+        }
+      ],
       "relevance": 100,
       "tools": [
         {
@@ -13748,6 +13813,19 @@
         ],
         "resource": "https://mcp.supabase.com/mcp"
       },
+      "auth_methods": [
+        "static",
+        "oauth"
+      ],
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "Supabase personal access token (PAT), sent as a Bearer token.",
+          "required": true,
+          "secret": true,
+          "scheme": "Bearer"
+        }
+      ],
       "relevance": 80,
       "tools": [
         {

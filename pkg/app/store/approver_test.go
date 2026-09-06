@@ -32,26 +32,32 @@ func pendingInstall(t *testing.T, gw ids.GatewayID, sub, code string) *installat
 	return in
 }
 
-func shelvedRegistry(code string, available bool) *registrydomain.Registry {
-	return &registrydomain.Registry{
-		ID: ids.New[ids.RegistryKind](),
-		MCPTarget: &registrydomain.MCPTarget{
-			Code:  code,
-			Store: &registrydomain.MCPStoreConfig{Available: available, RequiresApproval: true},
-		},
-	}
+// newApproverT wires an approver over empty grants.
+func newApproverT(t *testing.T, installs *fakeInstalls, regs *fakeRegistries) Approver {
+	t.Helper()
+	return newApproverWith(t, installs, regs, &fakeGrants{}, nil)
 }
 
-func newApproverT(t *testing.T, installs *fakeInstalls, regs *fakeRegistries) Approver {
+func newApproverWith(t *testing.T, installs *fakeInstalls, regs *fakeRegistries, grants *fakeGrants, ensurer RegistryEnsurer) Approver {
 	t.Helper()
 	cat := fakeCatalog{entries: map[string]catalogdomain.MCPServer{
 		"github": {Code: "github", DisplayName: "GitHub"},
 	}}
-	a, err := NewApprover(cat, regs, installs)
+	var opts []ApproverOption
+	if ensurer != nil {
+		opts = append(opts, WithApproverEnsurer(ensurer))
+	}
+	a, err := NewApprover(cat, regs, installs, grants, opts...)
 	if err != nil {
 		t.Fatalf("NewApprover: %v", err)
 	}
 	return a
+}
+
+func TestNewApproverRejectsNilGrants(t *testing.T) {
+	if _, err := NewApprover(fakeCatalog{}, &fakeRegistries{}, &fakeInstalls{}, nil); err == nil {
+		t.Fatal("nil grants must error")
+	}
 }
 
 func TestApprover_ListPending_NamesFromCatalog(t *testing.T) {
@@ -71,11 +77,14 @@ func TestApprover_ListPending_NamesFromCatalog(t *testing.T) {
 	}
 }
 
-func TestApprover_Approve_ShelvedAvailable_FlipsInstalledWithoutRegistryUpdate(t *testing.T) {
+// TestApprover_Approve_AlreadyGranted_NoGrantWrite: approving a request from a
+// principal a grant already covers just installs — no grant write.
+func TestApprover_Approve_AlreadyGranted_NoGrantWrite(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	installs := &fakeInstalls{findValue: pendingInstall(t, gw, "ana", "github")}
-	regs := &fakeRegistries{items: []*registrydomain.Registry{shelvedRegistry("github", true)}}
-	a := newApproverT(t, installs, regs)
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("github")}}
+	grants := grantsOf(codeGrant(gw, "github", nil, []string{"ana"}))
+	a := newApproverWith(t, installs, regs, grants, nil)
 
 	if err := a.Approve(context.Background(), ApproveRequest{GatewayID: gw, PrincipalSub: "ana", Code: "github", ApprovedBy: "admin@acme"}); err != nil {
 		t.Fatalf("Approve: %v", err)
@@ -83,32 +92,38 @@ func TestApprover_Approve_ShelvedAvailable_FlipsInstalledWithoutRegistryUpdate(t
 	if len(installs.upserts) != 1 || installs.upserts[0].Status != installationdomain.StatusInstalled {
 		t.Fatalf("want one installed upsert, got %+v", installs.upserts)
 	}
-	if len(regs.updated) != 0 {
-		t.Fatalf("registry should not be updated when already available, got %d", len(regs.updated))
+	if len(grants.upserts) != 0 {
+		t.Fatalf("no grant write when the requester is already granted, got %d", len(grants.upserts))
 	}
 }
 
-func TestApprover_Approve_ShelvedNotAvailable_ShelvesAndInstalls(t *testing.T) {
+// TestApprover_Approve_Ungranted_GrantsCodeAndInstalls: approving is granting.
+// An unbound request adds the requester to the code-level grant (creating it
+// when absent) and installs.
+func TestApprover_Approve_Ungranted_GrantsCodeAndInstalls(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	installs := &fakeInstalls{findValue: pendingInstall(t, gw, "ana", "github")}
-	regs := &fakeRegistries{items: []*registrydomain.Registry{shelvedRegistry("github", false)}}
-	a := newApproverT(t, installs, regs)
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("github")}}
+	grants := &fakeGrants{}
+	a := newApproverWith(t, installs, regs, grants, nil)
 
 	if err := a.Approve(context.Background(), ApproveRequest{GatewayID: gw, PrincipalSub: "ana", Code: "github"}); err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
-	if len(regs.updated) != 1 || !regs.updated[0].MCPTarget.StoreAvailable() {
-		t.Fatalf("registry should be shelved available, got %+v", regs.updated)
+	if len(grants.upserts) != 1 {
+		t.Fatalf("exactly one grant write expected, got %d", len(grants.upserts))
 	}
-	// RequiresApproval must be preserved so future installs still queue.
-	if !regs.updated[0].MCPTarget.StoreRequiresApproval() {
-		t.Fatalf("requires_approval should be preserved on shelve")
+	g := grants.upserts[0]
+	if g.CatalogCode != "github" || g.IsInstance() || len(g.Users) != 1 || g.Users[0] != "ana" {
+		t.Fatalf("approve must grant the requester on the code, got %+v", g)
 	}
 	if len(installs.upserts) != 1 || installs.upserts[0].Status != installationdomain.StatusInstalled {
 		t.Fatalf("want one installed upsert, got %+v", installs.upserts)
 	}
 }
 
+// TestApprover_Approve_NotShelved_ReturnsErrNotShelved: without a materialiser
+// a request for a never-connected server cannot be approved.
 func TestApprover_Approve_NotShelved_ReturnsErrNotShelved(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	installs := &fakeInstalls{findValue: pendingInstall(t, gw, "ana", "github")}

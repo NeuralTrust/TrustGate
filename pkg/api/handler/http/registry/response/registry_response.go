@@ -15,12 +15,71 @@
 package response
 
 import (
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
+
+// maskSecretURLVariables returns the target URL with the value of every secret
+// URL variable masked, the same way auth secrets are masked in this response.
+// A registry that declares a secret query variable (Bright Data's ?token=,
+// Browserbase's ?browserbaseApiKey=) normally stores the template placeholder
+// — which is not a value and stays visible — but a URL that carries a concrete
+// value in that parameter would otherwise hand the token to anyone with
+// registry read access, including app READ_ONLY users. The query is rewritten
+// pair by pair so the rest of the URL is returned byte-for-byte as stored.
+func maskSecretURLVariables(t *domain.MCPTarget) string {
+	raw := t.URL
+	if raw == "" || len(t.URLVariables) == 0 {
+		return raw
+	}
+	secrets := make(map[string]struct{}, len(t.URLVariables))
+	for _, v := range t.URLVariables {
+		if v.Secret {
+			secrets[v.Name] = struct{}{}
+		}
+	}
+	if len(secrets) == 0 {
+		return raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.RawQuery == "" {
+		return raw
+	}
+	pairs := strings.Split(u.RawQuery, "&")
+	changed := false
+	for i, pair := range pairs {
+		key, rawValue, hasValue := strings.Cut(pair, "=")
+		if !hasValue || rawValue == "" {
+			continue
+		}
+		name, err := url.QueryUnescape(key)
+		if err != nil {
+			continue
+		}
+		if _, isSecret := secrets[name]; !isSecret {
+			continue
+		}
+		value, err := url.QueryUnescape(rawValue)
+		if err != nil {
+			value = rawValue
+		}
+		if value == "{"+name+"}" {
+			continue // the template placeholder, not a value
+		}
+		pairs[i] = key + "=" + secret.Mask(value)
+		changed = true
+	}
+	if !changed {
+		return raw
+	}
+	u.RawQuery = strings.Join(pairs, "&")
+	return u.String()
+}
 
 type RegistryResponse struct {
 	ID              ids.RegistryID        `json:"id"`
@@ -40,21 +99,13 @@ type RegistryResponse struct {
 }
 
 type MCPTargetResponse struct {
-	Code      string                  `json:"code,omitempty"`
-	Source    string                  `json:"source,omitempty"`
-	URL       string                  `json:"url,omitempty"`
-	Transport string                  `json:"transport,omitempty"`
-	Headers   map[string]string       `json:"headers,omitempty"`
-	Auth      *MCPAuthResponse        `json:"auth,omitempty"`
-	OpenAPI   *OpenAPITargetResponse  `json:"openapi,omitempty"`
-	Store     *MCPStoreConfigResponse `json:"store,omitempty"`
-}
-
-type MCPStoreConfigResponse struct {
-	Available        bool     `json:"available"`
-	RequiresApproval bool     `json:"requires_approval"`
-	Groups           []string `json:"groups,omitempty"`
-	Users            []string `json:"users,omitempty"`
+	Code      string                 `json:"code,omitempty"`
+	Source    string                 `json:"source,omitempty"`
+	URL       string                 `json:"url,omitempty"`
+	Transport string                 `json:"transport,omitempty"`
+	Headers   map[string]string      `json:"headers,omitempty"`
+	Auth      *MCPAuthResponse       `json:"auth,omitempty"`
+	OpenAPI   *OpenAPITargetResponse `json:"openapi,omitempty"`
 }
 
 type OpenAPITargetResponse struct {
@@ -213,20 +264,12 @@ func fromMCPTarget(t *domain.MCPTarget) *MCPTargetResponse {
 	out := &MCPTargetResponse{
 		Code:      t.Code,
 		Source:    string(t.Source),
-		URL:       t.URL,
+		URL:       maskSecretURLVariables(t),
 		Transport: string(t.Transport),
 		Headers:   t.Headers,
 	}
 	if t.OpenAPI != nil {
 		out.OpenAPI = &OpenAPITargetResponse{SpecURL: t.OpenAPI.SpecURL}
-	}
-	if t.Store != nil {
-		out.Store = &MCPStoreConfigResponse{
-			Available:        t.Store.Available,
-			RequiresApproval: t.Store.RequiresApproval,
-			Groups:           t.Store.Groups,
-			Users:            t.Store.Users,
-		}
 	}
 	if t.Auth != nil {
 		out.Auth = &MCPAuthResponse{

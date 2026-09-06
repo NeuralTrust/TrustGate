@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
@@ -47,6 +48,47 @@ type authProxy struct {
 	chainer     ConsentChainer
 	signer      appsts.TokenSigner
 	userinfo    UserInfoClient
+	// verifier checks the platform token returned by the built-in default
+	// identity provider before any claim in it is trusted. Nil means the
+	// claims are read unverified (logged once).
+	verifier appauth.OIDCVerifier
+	// defaultIdPSessionMaxAge is the absolute lifetime of a session brokered
+	// through the built-in default identity provider.
+	defaultIdPSessionMaxAge time.Duration
+	now                     func() time.Time
+}
+
+// DefaultIdPSessionMaxAge is the absolute lifetime of a default-IdP session
+// when none is configured. The session claims (org, groups, store_access) are
+// a snapshot taken at login and are re-minted on refresh without consulting
+// the platform, so a session must not outlive the admin's ability to revoke
+// or change them by more than this.
+const DefaultIdPSessionMaxAge = 24 * time.Hour
+
+// operatorSessionLifetime is the absolute lifetime of a session brokered
+// through an operator-configured identity provider. It matches the previous
+// store TTL, but is now fixed at login instead of sliding on every refresh.
+const operatorSessionLifetime = 30 * 24 * time.Hour
+
+// ProxyOption tunes an AuthProxy beyond its required collaborators.
+type ProxyOption func(*authProxy)
+
+// WithIdPTokenVerifier verifies the access token the built-in default identity
+// provider returns at callback (signature against its JWKS, issuer, audience,
+// expiry) before the subject, org, groups or store_access claims are trusted.
+func WithIdPTokenVerifier(v appauth.OIDCVerifier) ProxyOption {
+	return func(p *authProxy) { p.verifier = v }
+}
+
+// WithDefaultIdPSessionMaxAge bounds the absolute lifetime of sessions
+// brokered through the built-in default identity provider. Non-positive
+// values keep DefaultIdPSessionMaxAge.
+func WithDefaultIdPSessionMaxAge(d time.Duration) ProxyOption {
+	return func(p *authProxy) {
+		if d > 0 {
+			p.defaultIdPSessionMaxAge = d
+		}
+	}
 }
 
 func NewAuthProxy(
@@ -57,20 +99,27 @@ func NewAuthProxy(
 	chainer ConsentChainer,
 	signer appsts.TokenSigner,
 	userinfo UserInfoClient,
+	opts ...ProxyOption,
 ) AuthProxy {
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
 	}
 	meta := &metadataService{credentials: credentials, client: client, asCache: map[string]asCacheEntry{}}
-	return &authProxy{
-		credentials: credentials,
-		paths:       paths,
-		store:       store,
-		idp:         newIDPTransport(client, meta),
-		chainer:     chainer,
-		signer:      signer,
-		userinfo:    userinfo,
+	p := &authProxy{
+		credentials:             credentials,
+		paths:                   paths,
+		store:                   store,
+		idp:                     newIDPTransport(client, meta),
+		chainer:                 chainer,
+		signer:                  signer,
+		userinfo:                userinfo,
+		defaultIdPSessionMaxAge: DefaultIdPSessionMaxAge,
+		now:                     time.Now,
 	}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
 }
 
 func (p *authProxy) Authorize(ctx context.Context, baseURL string, req AuthorizeRequest) (string, error) {
@@ -226,6 +275,12 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 	if err != nil {
 		return "", err
 	}
+	// The platform token decides who the session is for and what it may reach
+	// (org, groups, store_access). Verify it before reading a single claim.
+	verified, err := p.verifiedPlatformClaims(ctx, auth, token)
+	if err != nil {
+		return "", err
+	}
 
 	gwCode, err := randomToken()
 	if err != nil {
@@ -239,18 +294,29 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 	}
 	var capturedSubject string
 	if cfg.SessionMode {
-		sub, captureErr := p.captureSubject(ctx, cfg, token)
-		if captureErr != nil {
-			return "", captureErr
+		var sub string
+		if verified != nil {
+			sub = subjectFromClaims(jwt.MapClaims(verified), cfg.SubjectClaim)
+			grant.Email = identity.EmailFromClaims(verified)
+			grant.Org = orgFromClaims(verified)
+			grant.Groups = groupsFromClaims(verified)
+			grant.StoreAccess = storeAccessFromClaims(verified)
+		} else {
+			captured, captureErr := p.captureSubject(ctx, cfg, token)
+			if captureErr != nil {
+				return "", captureErr
+			}
+			sub = captured
+			grant.Email = emailFromToken(token)
+			grant.Org = orgFromToken(token)
+			grant.Groups = groupsFromToken(token)
+			grant.StoreAccess = storeAccessFromToken(token)
 		}
 		if sub == "" {
 			return "", oauthErr("access_denied", "could not determine subject from identity provider")
 		}
 		capturedSubject = sub
 		grant.Subject = sub
-		grant.Email = emailFromToken(token)
-		grant.Org = orgFromToken(token)
-		grant.Groups = groupsFromToken(token)
 		grant.AuthID = auth.ID.String()
 		grant.GatewayID = effectiveGatewayID.String()
 		grant.Audiences = cfg.Audiences
@@ -311,33 +377,100 @@ func emailFromJWT(raw string) string {
 	return identity.EmailFromClaims(claims)
 }
 
+// warnUnverifiedPlatformToken fires once per process when a default-IdP login
+// is brokered without a token verifier, so an operator running the platform
+// login can see the claims are being trusted on transport security alone.
+var warnUnverifiedPlatformToken sync.Once
+
+// verifiedPlatformClaims verifies the access token the built-in default
+// identity provider returned — signature against its JWKS, issuer, audience
+// and expiry — and returns its claims. Only that token is checked here: an
+// operator-configured IdP may hand back an opaque or third-party token that the
+// existing subject capture (id_token, userinfo) already handles. It returns nil
+// claims, and no error, when the auth is not the default IdP or no verifier is
+// wired, in which case the caller falls back to unverified extraction.
+func (p *authProxy) verifiedPlatformClaims(ctx context.Context, auth *authdomain.Auth, token map[string]any) (map[string]any, error) {
+	if !appauth.IsDefaultIdP(auth) {
+		return nil, nil
+	}
+	cfg := auth.Config.OAuth2
+	if p.verifier == nil || strings.TrimSpace(cfg.JWKSURL) == "" {
+		warnUnverifiedPlatformToken.Do(func() {
+			slog.Warn("oauth: no token verifier configured for the default identity provider; "+
+				"platform token claims (sub, org, groups, store_access) are trusted unverified",
+				"issuer", cfg.Issuer)
+		})
+		return nil, nil
+	}
+	raw, _ := token["access_token"].(string)
+	if raw == "" {
+		return nil, oauthErr("access_denied", "identity provider returned no access token")
+	}
+	algorithms := cfg.Algorithms
+	if len(algorithms) == 0 {
+		algorithms = []string{"RS256"}
+	}
+	verified, err := p.verifier.Verify(ctx, raw, authdomain.OIDCConfig{
+		Issuer:            cfg.Issuer,
+		Audiences:         cfg.Audiences,
+		JWKSURL:           cfg.JWKSURL,
+		AllowedAlgorithms: algorithms,
+	})
+	if err != nil {
+		slog.Warn("oauth: platform token failed verification", "issuer", cfg.Issuer, "error", err)
+		return nil, oauthErr("access_denied", "identity provider token failed verification")
+	}
+	return verified.Claims, nil
+}
+
 // orgFromToken reads the platform tenant (team) claim from the identity
 // provider's token. Parsing is unverified, consistent with emailFromToken and
 // subjectFromToken: the token was just returned over TLS by the trusted IdP
 // token endpoint, and the value is re-signed into the gateway session before it
-// is ever trusted for authorization.
+// is ever trusted for authorization. Default-IdP tokens are verified first when
+// a verifier is wired (see verifiedPlatformClaims).
 func orgFromToken(token map[string]any) string {
-	for _, key := range []string{"id_token", "access_token"} {
-		raw, _ := token[key].(string)
-		if raw == "" {
-			continue
-		}
-		claims := jwt.MapClaims{}
-		if _, _, err := jwt.NewParser().ParseUnverified(raw, claims); err != nil {
-			continue
-		}
-		if org, ok := claims[identity.ClaimOrg].(string); ok {
-			if org = strings.TrimSpace(org); org != "" {
-				return org
-			}
-		}
-	}
-	return ""
+	return firstClaimOf(token, func(claims map[string]any) (string, bool) {
+		org := orgFromClaims(claims)
+		return org, org != ""
+	})
+}
+
+func orgFromClaims(claims map[string]any) string {
+	org, _ := claims[identity.ClaimOrg].(string)
+	return strings.TrimSpace(org)
 }
 
 // groupsFromToken reads the principal's IdP group memberships from the token so
 // role oidc_mapping rules can match against them.
 func groupsFromToken(token map[string]any) []string {
+	return firstClaimOf(token, func(claims map[string]any) ([]string, bool) {
+		groups := groupsFromClaims(claims)
+		return groups, len(groups) > 0
+	})
+}
+
+func groupsFromClaims(claims map[string]any) []string {
+	return stringSliceClaim(claims[identity.ClaimGroups])
+}
+
+// storeAccessFromToken reads the per-principal MCP Store access level the
+// control plane minted into the platform token ("open", "curated" or "none").
+func storeAccessFromToken(token map[string]any) string {
+	return firstClaimOf(token, func(claims map[string]any) (string, bool) {
+		v := storeAccessFromClaims(claims)
+		return v, v != ""
+	})
+}
+
+func storeAccessFromClaims(claims map[string]any) string {
+	v, _ := claims[identity.ClaimStoreAccess].(string)
+	return strings.TrimSpace(v)
+}
+
+// firstClaimOf parses the id_token, then the access_token, without
+// verification and returns the first value pick accepts.
+func firstClaimOf[T any](token map[string]any, pick func(claims map[string]any) (T, bool)) T {
 	for _, key := range []string{"id_token", "access_token"} {
 		raw, _ := token[key].(string)
 		if raw == "" {
@@ -347,11 +480,12 @@ func groupsFromToken(token map[string]any) []string {
 		if _, _, err := jwt.NewParser().ParseUnverified(raw, claims); err != nil {
 			continue
 		}
-		if groups := stringSliceClaim(claims[identity.ClaimGroups]); len(groups) > 0 {
-			return groups
+		if v, ok := pick(claims); ok {
+			return v
 		}
 	}
-	return nil
+	var zero T
+	return zero
 }
 
 // stringSliceClaim coerces a claim that may be a JSON array of strings or a
@@ -515,15 +649,19 @@ func (p *authProxy) exchangeCode(ctx context.Context, req TokenRequest) (map[str
 			return nil, err
 		}
 		refresh := gatewayRefreshPrefix + token
+		loginAt := p.now()
 		rec := SessionRecord{
-			Subject:   grant.Subject,
-			Email:     grant.Email,
-			Scopes:    grant.Scopes,
-			GatewayID: grant.GatewayID,
-			AuthID:    grant.AuthID,
-			Org:       grant.Org,
-			Groups:    grant.Groups,
-			Audiences: grant.Audiences,
+			Subject:     grant.Subject,
+			Email:       grant.Email,
+			Scopes:      grant.Scopes,
+			GatewayID:   grant.GatewayID,
+			AuthID:      grant.AuthID,
+			Org:         grant.Org,
+			Groups:      grant.Groups,
+			StoreAccess: grant.StoreAccess,
+			Audiences:   grant.Audiences,
+			LoginAt:     loginAt,
+			ExpiresAt:   loginAt.Add(p.sessionLifetime(grant.AuthID)),
 		}
 		if err := p.store.SaveSession(ctx, refresh, rec); err != nil {
 			return nil, fmt.Errorf("oauth: persist session: %w", err)
@@ -562,6 +700,13 @@ func (p *authProxy) mintSession(grant CodeGrant) (map[string]any, error) {
 	if len(grant.Groups) > 0 {
 		claims[identity.ClaimGroups] = grant.Groups
 	}
+	// store_access carries the admin's per-principal Store decision from the
+	// platform token into the session; without it the Store tool falls back to
+	// the gateway-wide default and a user granted "none" or "curated" access
+	// would browse the whole catalog.
+	if grant.StoreAccess != "" {
+		claims[identity.ClaimStoreAccess] = grant.StoreAccess
+	}
 	signed, err := p.signer.MintClaims(claims, time.Hour)
 	if err != nil {
 		return nil, fmt.Errorf("oauth: mint session token: %w", err)
@@ -591,6 +736,16 @@ func (p *authProxy) refresh(ctx context.Context, req TokenRequest) (map[string]a
 		}
 		if rec == nil {
 			return nil, oauthErr("invalid_grant", "unknown or expired refresh token")
+		}
+		// The session's claims are a login-time snapshot: refreshing re-mints
+		// them without asking the identity provider again, so access revoked or
+		// changed there would otherwise persist for as long as the client keeps
+		// refreshing. Past the absolute deadline the client must re-run the
+		// authorization, which re-derives org, groups and store_access. Records
+		// without a deadline predate it and cannot prove they are still within
+		// one, so they are refused too.
+		if rec.ExpiresAt.IsZero() || !p.now().Before(rec.ExpiresAt) {
+			return nil, oauthErr("invalid_grant", "session expired; sign in again")
 		}
 		resp, err := p.refreshSession(ctx, *rec)
 		if err != nil {
@@ -627,16 +782,28 @@ func (p *authProxy) refresh(ctx context.Context, req TokenRequest) (map[string]a
 	return p.idp.tokenCall(ctx, endpoints.token, form)
 }
 
+// sessionLifetime is the absolute lifetime of a session minted for the given
+// auth. Default-IdP sessions are bounded tightly because their claims stand in
+// for the platform's access decisions; operator-IdP sessions keep the longer
+// lifetime they always had, now fixed at login rather than renewed on refresh.
+func (p *authProxy) sessionLifetime(authID string) time.Duration {
+	if authID == appauth.DefaultIdPAuthID().String() {
+		return p.defaultIdPSessionMaxAge
+	}
+	return operatorSessionLifetime
+}
+
 func (p *authProxy) refreshSession(ctx context.Context, rec SessionRecord) (map[string]any, error) {
 	resp, err := p.mintSession(CodeGrant{
-		Subject:   rec.Subject,
-		Email:     rec.Email,
-		Scopes:    rec.Scopes,
-		AuthID:    rec.AuthID,
-		GatewayID: rec.GatewayID,
-		Org:       rec.Org,
-		Groups:    rec.Groups,
-		Audiences: rec.Audiences,
+		Subject:     rec.Subject,
+		Email:       rec.Email,
+		Scopes:      rec.Scopes,
+		AuthID:      rec.AuthID,
+		GatewayID:   rec.GatewayID,
+		Org:         rec.Org,
+		Groups:      rec.Groups,
+		StoreAccess: rec.StoreAccess,
+		Audiences:   rec.Audiences,
 	})
 	if err != nil {
 		return nil, err
@@ -646,6 +813,8 @@ func (p *authProxy) refreshSession(ctx context.Context, rec SessionRecord) (map[
 		return nil, err
 	}
 	newRefresh := gatewayRefreshPrefix + token
+	// The rotated record keeps LoginAt and ExpiresAt untouched: rotation renews
+	// the token, never the session.
 	if err := p.store.SaveSession(ctx, newRefresh, rec); err != nil {
 		return nil, fmt.Errorf("oauth: rotate session: %w", err)
 	}

@@ -48,6 +48,9 @@ type Installation struct {
 	Config        map[string]string      `protobuf:"bytes,7,rep,name=config,proto3" json:"config,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	CreatedAtUnix int64                  `protobuf:"varint,8,opt,name=created_at_unix,json=createdAtUnix,proto3" json:"created_at_unix,omitempty"`
 	UpdatedAtUnix int64                  `protobuf:"varint,9,opt,name=updated_at_unix,json=updatedAtUnix,proto3" json:"updated_at_unix,omitempty"`
+	// registry_id binds the install to one configured instance (registry) of its
+	// code; empty = the code's canonical instance.
+	RegistryId    string `protobuf:"bytes,10,opt,name=registry_id,json=registryId,proto3" json:"registry_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -143,6 +146,13 @@ func (x *Installation) GetUpdatedAtUnix() int64 {
 		return x.UpdatedAtUnix
 	}
 	return 0
+}
+
+func (x *Installation) GetRegistryId() string {
+	if x != nil {
+		return x.RegistryId
+	}
+	return ""
 }
 
 type UpsertInstallationRequest struct {
@@ -622,7 +632,7 @@ var File_storeinstall_proto protoreflect.FileDescriptor
 const file_storeinstall_proto_rawDesc = "" +
 	"\n" +
 	"\x12storeinstall.proto\x12\n" +
-	"snapshotpb\"\x89\x03\n" +
+	"snapshotpb\"\xaa\x03\n" +
 	"\fInstallation\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -633,7 +643,10 @@ const file_storeinstall_proto_rawDesc = "" +
 	"\finstalled_by\x18\x06 \x01(\tR\vinstalledBy\x12<\n" +
 	"\x06config\x18\a \x03(\v2$.snapshotpb.Installation.ConfigEntryR\x06config\x12&\n" +
 	"\x0fcreated_at_unix\x18\b \x01(\x03R\rcreatedAtUnix\x12&\n" +
-	"\x0fupdated_at_unix\x18\t \x01(\x03R\rupdatedAtUnix\x1a9\n" +
+	"\x0fupdated_at_unix\x18\t \x01(\x03R\rupdatedAtUnix\x12\x1f\n" +
+	"\vregistry_id\x18\n" +
+	" \x01(\tR\n" +
+	"registryId\x1a9\n" +
 	"\vConfigEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"Y\n" +

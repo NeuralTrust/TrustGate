@@ -19,7 +19,9 @@ import (
 	"testing"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
@@ -39,6 +41,13 @@ func withPrincipal(sub string) context.Context {
 	return identity.WithPrincipal(context.Background(), &identity.Principal{Subject: sub})
 }
 
+// withOpenPrincipal is a principal on a gateway whose Store is open (All): every
+// install is exposed regardless of grants. Without a gateway in the context the
+// mode fails closed to Selected, where only granted instances are exposed.
+func withOpenPrincipal(sub string) context.Context {
+	return appgateway.WithGateway(withPrincipal(sub), &gatewaydomain.Gateway{})
+}
+
 func githubRegistry() *registrydomain.Registry {
 	return &registrydomain.Registry{
 		ID:        ids.New[ids.RegistryKind](),
@@ -54,12 +63,12 @@ func TestScoperSurfacesInstalledRegistries(t *testing.T) {
 		ID: ids.New[ids.RegistryKind](), MCPTarget: &registrydomain.MCPTarget{Code: "salesforce"},
 	}}}
 
-	sc, err := NewScoper(installs, regs)
+	sc, err := NewScoper(installs, regs, nil)
 	if err != nil {
 		t.Fatalf("NewScoper: %v", err)
 	}
 	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
-	scoped, err := sc.Scope(withPrincipal("ana"), rc)
+	scoped, err := sc.Scope(withOpenPrincipal("ana"), rc)
 	if err != nil {
 		t.Fatalf("Scope: %v", err)
 	}
@@ -73,7 +82,7 @@ func TestScoperSurfacesInstalledRegistries(t *testing.T) {
 }
 
 func TestScoperLeavesRegularConsumerUntouched(t *testing.T) {
-	sc, _ := NewScoper(&fakeInstalls{}, &fakeRegistries{})
+	sc, _ := NewScoper(&fakeInstalls{}, &fakeRegistries{}, nil)
 	rc := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{
 		ID: ids.New[ids.ConsumerKind](), Slug: "regular", Type: consumerdomain.TypeMCP,
 	}}
@@ -88,7 +97,7 @@ func TestScoperLeavesRegularConsumerUntouched(t *testing.T) {
 
 func TestScoperNoInstallsLeavesStoreEmpty(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
-	sc, _ := NewScoper(&fakeInstalls{}, &fakeRegistries{items: []*registrydomain.Registry{githubRegistry()}})
+	sc, _ := NewScoper(&fakeInstalls{}, &fakeRegistries{items: []*registrydomain.Registry{githubRegistry()}}, nil)
 	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
 	scoped, err := sc.Scope(withPrincipal("ana"), rc)
 	if err != nil {
@@ -102,7 +111,7 @@ func TestScoperNoInstallsLeavesStoreEmpty(t *testing.T) {
 func TestScoperWithoutPrincipalIsNoop(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	sc, _ := NewScoper(&fakeInstalls{byPrincipal: []*installationdomain.Installation{mustInstall(t, gw, "ana", "github")}},
-		&fakeRegistries{items: []*registrydomain.Registry{githubRegistry()}})
+		&fakeRegistries{items: []*registrydomain.Registry{githubRegistry()}}, nil)
 	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
 	scoped, err := sc.Scope(context.Background(), rc)
 	if err != nil {
@@ -113,6 +122,54 @@ func TestScoperWithoutPrincipalIsNoop(t *testing.T) {
 	}
 }
 
+func TestScoperExposesOneRegistryPerInstance(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	shelf := &registrydomain.Registry{
+		ID:   ids.New[ids.RegistryKind](),
+		Name: "Snowflake",
+		MCPTarget: &registrydomain.MCPTarget{
+			Code: "snowflake",
+			URL:  "https://acme/api/v2/databases/{database}/mcp",
+			URLVariables: []registrydomain.MCPURLVariable{
+				{Name: "database", Required: true},
+			},
+		},
+	}
+	analytics, _ := installationdomain.New(gw, "ana", "snowflake", "ana", map[string]string{"database": "analytics"})
+	finance, _ := installationdomain.New(gw, "ana", "snowflake", "ana", map[string]string{"database": "finance"})
+	sc, _ := NewScoper(
+		&fakeInstalls{byPrincipal: []*installationdomain.Installation{analytics, finance}},
+		&fakeRegistries{items: []*registrydomain.Registry{shelf}},
+		nil,
+	)
+	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
+	scoped, err := sc.Scope(withOpenPrincipal("ana"), rc)
+	if err != nil {
+		t.Fatalf("Scope: %v", err)
+	}
+	if len(scoped.Registries) != 2 {
+		t.Fatalf("two instances must surface two registries, got %d", len(scoped.Registries))
+	}
+	names := map[string]bool{}
+	for _, reg := range scoped.Registries {
+		names[reg.Name] = true
+		// Each instance is a distinct clone: its own id and its config overlay.
+		if reg.ID == shelf.ID {
+			t.Fatal("a multi-instance clone must not reuse the shelf registry id")
+		}
+		if len(reg.MCPTarget.InstanceConfig) == 0 {
+			t.Fatalf("instance %q must carry its config overlay", reg.Name)
+		}
+		// The shelf entry itself must never be mutated.
+		if shelf.MCPTarget.InstanceConfig != nil {
+			t.Fatal("the shared shelf registry must not be mutated")
+		}
+	}
+	if !names["Snowflake (analytics)"] || !names["Snowflake (finance)"] {
+		t.Fatalf("instances must be labelled by their config, got %v", names)
+	}
+}
+
 func TestScoperIgnoresRevokedInstalls(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	revoked := mustInstall(t, gw, "ana", "github")
@@ -120,6 +177,7 @@ func TestScoperIgnoresRevokedInstalls(t *testing.T) {
 	sc, _ := NewScoper(
 		&fakeInstalls{byPrincipal: []*installationdomain.Installation{revoked}},
 		&fakeRegistries{items: []*registrydomain.Registry{githubRegistry()}},
+		nil,
 	)
 	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
 	scoped, _ := sc.Scope(withPrincipal("ana"), rc)

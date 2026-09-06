@@ -98,6 +98,46 @@ func (c *InstallationsClient) ListByPrincipal(
 	return installationsFromProto(resp.GetInstallations())
 }
 
+// FindByID returns one instance by id. The data-plane channel has no by-id RPC,
+// so it filters the principal's list — cheap (installs per principal are few).
+func (c *InstallationsClient) FindByID(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	id ids.InstallationID,
+) (*installationdomain.Installation, error) {
+	list, err := c.ListByPrincipal(ctx, gatewayID, principalSub)
+	if err != nil {
+		return nil, err
+	}
+	for _, in := range list {
+		if in.ID == id {
+			return in, nil
+		}
+	}
+	return nil, installationdomain.ErrNotFound
+}
+
+// ListByPrincipalAndCode filters the principal's installs by catalog code, again
+// client-side since the channel exposes only the by-principal list RPC.
+func (c *InstallationsClient) ListByPrincipalAndCode(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub, catalogCode string,
+) ([]*installationdomain.Installation, error) {
+	list, err := c.ListByPrincipal(ctx, gatewayID, principalSub)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*installationdomain.Installation, 0, len(list))
+	for _, in := range list {
+		if in.CatalogCode == catalogCode {
+			out = append(out, in)
+		}
+	}
+	return out, nil
+}
+
 func (c *InstallationsClient) Delete(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
@@ -115,6 +155,26 @@ func (c *InstallationsClient) Delete(
 		return fmt.Errorf("installations: delete: %w", err)
 	}
 	return nil
+}
+
+// DeleteByID revokes one instance by id. The data-plane channel has no by-id
+// delete RPC, so it revokes the instance in place (Upsert with StatusRevoked):
+// IsActive() then drops it from the Store surface, the row is retained for
+// audit (the documented purpose of StatusRevoked), and a later re-install of the
+// same config reactivates it. The control plane's DB repository implements
+// DeleteByID as the same soft revoke, so both planes behave identically.
+func (c *InstallationsClient) DeleteByID(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	id ids.InstallationID,
+) error {
+	in, err := c.FindByID(ctx, gatewayID, principalSub, id)
+	if err != nil {
+		return err
+	}
+	in.Status = installationdomain.StatusRevoked
+	return c.Upsert(ctx, in)
 }
 
 // Ensure asks the control plane to materialise the shared registry for a catalog

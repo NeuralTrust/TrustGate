@@ -17,12 +17,14 @@ package registry
 import (
 	"context"
 	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/app/invalidation"
 	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
+	"github.com/NeuralTrust/TrustGate/pkg/common/secret"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -141,7 +143,11 @@ func applyMCPTargetUpdate(
 		if incoming.Source == "" {
 			incoming.Source = prev.Source
 		}
-		if strings.TrimSpace(incoming.URL) == "" {
+		// A masked URL is the read API's rendering of the stored one (a secret
+		// URL variable shown as ***xxxx), echoed back by a client that edited
+		// other fields — the same round-trip secret.Resolve handles for auth
+		// secrets. Persisting it would replace the real token with the mask.
+		if strings.TrimSpace(incoming.URL) == "" || urlCarriesMaskedSecret(incoming.URL) {
 			incoming.URL = prev.URL
 		}
 		if incoming.Transport == "" {
@@ -170,6 +176,30 @@ func applyMCPTargetUpdate(
 	}
 	existing.MCPTarget = incoming
 	return nil
+}
+
+// urlCarriesMaskedSecret reports whether an mcp_target.url holds a masked
+// secret — the redaction marker as (a prefix of) any query value or path
+// segment — i.e. it is the read API's masked form, not a new value.
+func urlCarriesMaskedSecret(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	u, err := url.Parse(raw)
+	if err != nil {
+		return strings.Contains(raw, secret.Redacted)
+	}
+	for _, values := range u.Query() {
+		for _, v := range values {
+			if secret.IsMasked(v) {
+				return true
+			}
+		}
+	}
+	for _, segment := range strings.Split(u.Path, "/") {
+		if secret.IsMasked(segment) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizedMCPSource(source domain.MCPSource) domain.MCPSource {

@@ -46,6 +46,7 @@ type Snapshot struct {
 	Roles         []*Role                `protobuf:"bytes,7,rep,name=roles,proto3" json:"roles,omitempty"`
 	Providers     []*Provider            `protobuf:"bytes,8,rep,name=providers,proto3" json:"providers,omitempty"`
 	CatalogModels []*CatalogModel        `protobuf:"bytes,9,rep,name=catalog_models,json=catalogModels,proto3" json:"catalog_models,omitempty"`
+	StoreGrants   []*StoreGrant          `protobuf:"bytes,10,rep,name=store_grants,json=storeGrants,proto3" json:"store_grants,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -139,6 +140,13 @@ func (x *Snapshot) GetProviders() []*Provider {
 func (x *Snapshot) GetCatalogModels() []*CatalogModel {
 	if x != nil {
 		return x.CatalogModels
+	}
+	return nil
+}
+
+func (x *Snapshot) GetStoreGrants() []*StoreGrant {
+	if x != nil {
+		return x.StoreGrants
 	}
 	return nil
 }
@@ -275,6 +283,52 @@ func (x *Registry) GetJson() []byte {
 	return nil
 }
 
+// StoreGrant is one MCP Store access grant (storegrant.Grant as JSON): who may
+// use a catalog code, or one configured instance of it, on a gateway.
+type StoreGrant struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Json          []byte                 `protobuf:"bytes,1,opt,name=json,proto3" json:"json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StoreGrant) Reset() {
+	*x = StoreGrant{}
+	mi := &file_snapshot_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StoreGrant) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StoreGrant) ProtoMessage() {}
+
+func (x *StoreGrant) ProtoReflect() protoreflect.Message {
+	mi := &file_snapshot_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StoreGrant.ProtoReflect.Descriptor instead.
+func (*StoreGrant) Descriptor() ([]byte, []int) {
+	return file_snapshot_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *StoreGrant) GetJson() []byte {
+	if x != nil {
+		return x.Json
+	}
+	return nil
+}
+
 type Policy struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Json          []byte                 `protobuf:"bytes,1,opt,name=json,proto3" json:"json,omitempty"`
@@ -284,7 +338,7 @@ type Policy struct {
 
 func (x *Policy) Reset() {
 	*x = Policy{}
-	mi := &file_snapshot_proto_msgTypes[4]
+	mi := &file_snapshot_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -296,7 +350,7 @@ func (x *Policy) String() string {
 func (*Policy) ProtoMessage() {}
 
 func (x *Policy) ProtoReflect() protoreflect.Message {
-	mi := &file_snapshot_proto_msgTypes[4]
+	mi := &file_snapshot_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -309,7 +363,7 @@ func (x *Policy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Policy.ProtoReflect.Descriptor instead.
 func (*Policy) Descriptor() ([]byte, []int) {
-	return file_snapshot_proto_rawDescGZIP(), []int{4}
+	return file_snapshot_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *Policy) GetJson() []byte {
@@ -329,7 +383,7 @@ type Auth struct {
 
 func (x *Auth) Reset() {
 	*x = Auth{}
-	mi := &file_snapshot_proto_msgTypes[5]
+	mi := &file_snapshot_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -341,7 +395,7 @@ func (x *Auth) String() string {
 func (*Auth) ProtoMessage() {}
 
 func (x *Auth) ProtoReflect() protoreflect.Message {
-	mi := &file_snapshot_proto_msgTypes[5]
+	mi := &file_snapshot_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -354,7 +408,7 @@ func (x *Auth) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Auth.ProtoReflect.Descriptor instead.
 func (*Auth) Descriptor() ([]byte, []int) {
-	return file_snapshot_proto_rawDescGZIP(), []int{5}
+	return file_snapshot_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *Auth) GetJson() []byte {
@@ -380,7 +434,7 @@ type Role struct {
 
 func (x *Role) Reset() {
 	*x = Role{}
-	mi := &file_snapshot_proto_msgTypes[6]
+	mi := &file_snapshot_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -392,7 +446,7 @@ func (x *Role) String() string {
 func (*Role) ProtoMessage() {}
 
 func (x *Role) ProtoReflect() protoreflect.Message {
-	mi := &file_snapshot_proto_msgTypes[6]
+	mi := &file_snapshot_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -405,7 +459,7 @@ func (x *Role) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Role.ProtoReflect.Descriptor instead.
 func (*Role) Descriptor() ([]byte, []int) {
-	return file_snapshot_proto_rawDescGZIP(), []int{6}
+	return file_snapshot_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *Role) GetJson() []byte {
@@ -424,7 +478,7 @@ type Provider struct {
 
 func (x *Provider) Reset() {
 	*x = Provider{}
-	mi := &file_snapshot_proto_msgTypes[7]
+	mi := &file_snapshot_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -436,7 +490,7 @@ func (x *Provider) String() string {
 func (*Provider) ProtoMessage() {}
 
 func (x *Provider) ProtoReflect() protoreflect.Message {
-	mi := &file_snapshot_proto_msgTypes[7]
+	mi := &file_snapshot_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -449,7 +503,7 @@ func (x *Provider) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Provider.ProtoReflect.Descriptor instead.
 func (*Provider) Descriptor() ([]byte, []int) {
-	return file_snapshot_proto_rawDescGZIP(), []int{7}
+	return file_snapshot_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Provider) GetJson() []byte {
@@ -469,7 +523,7 @@ type CatalogModel struct {
 
 func (x *CatalogModel) Reset() {
 	*x = CatalogModel{}
-	mi := &file_snapshot_proto_msgTypes[8]
+	mi := &file_snapshot_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -481,7 +535,7 @@ func (x *CatalogModel) String() string {
 func (*CatalogModel) ProtoMessage() {}
 
 func (x *CatalogModel) ProtoReflect() protoreflect.Message {
-	mi := &file_snapshot_proto_msgTypes[8]
+	mi := &file_snapshot_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -494,7 +548,7 @@ func (x *CatalogModel) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CatalogModel.ProtoReflect.Descriptor instead.
 func (*CatalogModel) Descriptor() ([]byte, []int) {
-	return file_snapshot_proto_rawDescGZIP(), []int{8}
+	return file_snapshot_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *CatalogModel) GetJson() []byte {
@@ -516,7 +570,7 @@ var File_snapshot_proto protoreflect.FileDescriptor
 const file_snapshot_proto_rawDesc = "" +
 	"\n" +
 	"\x0esnapshot.proto\x12\n" +
-	"snapshotpb\"\xb4\x03\n" +
+	"snapshotpb\"\xef\x03\n" +
 	"\bSnapshot\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12/\n" +
 	"\bgateways\x18\x02 \x03(\v2\x13.snapshotpb.GatewayR\bgateways\x122\n" +
@@ -528,12 +582,17 @@ const file_snapshot_proto_rawDesc = "" +
 	"\x05auths\x18\x06 \x03(\v2\x10.snapshotpb.AuthR\x05auths\x12&\n" +
 	"\x05roles\x18\a \x03(\v2\x10.snapshotpb.RoleR\x05roles\x122\n" +
 	"\tproviders\x18\b \x03(\v2\x14.snapshotpb.ProviderR\tproviders\x12?\n" +
-	"\x0ecatalog_models\x18\t \x03(\v2\x18.snapshotpb.CatalogModelR\rcatalogModels\"\x1d\n" +
+	"\x0ecatalog_models\x18\t \x03(\v2\x18.snapshotpb.CatalogModelR\rcatalogModels\x129\n" +
+	"\fstore_grants\x18\n" +
+	" \x03(\v2\x16.snapshotpb.StoreGrantR\vstoreGrants\"\x1d\n" +
 	"\aGateway\x12\x12\n" +
 	"\x04json\x18\x01 \x01(\fR\x04json\"\x1e\n" +
 	"\bConsumer\x12\x12\n" +
 	"\x04json\x18\x01 \x01(\fR\x04json\"\x1e\n" +
 	"\bRegistry\x12\x12\n" +
+	"\x04json\x18\x01 \x01(\fR\x04json\" \n" +
+	"\n" +
+	"StoreGrant\x12\x12\n" +
 	"\x04json\x18\x01 \x01(\fR\x04json\"\x1c\n" +
 	"\x06Policy\x12\x12\n" +
 	"\x04json\x18\x01 \x01(\fR\x04json\"5\n" +
@@ -560,32 +619,34 @@ func file_snapshot_proto_rawDescGZIP() []byte {
 	return file_snapshot_proto_rawDescData
 }
 
-var file_snapshot_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_snapshot_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_snapshot_proto_goTypes = []any{
 	(*Snapshot)(nil),     // 0: snapshotpb.Snapshot
 	(*Gateway)(nil),      // 1: snapshotpb.Gateway
 	(*Consumer)(nil),     // 2: snapshotpb.Consumer
 	(*Registry)(nil),     // 3: snapshotpb.Registry
-	(*Policy)(nil),       // 4: snapshotpb.Policy
-	(*Auth)(nil),         // 5: snapshotpb.Auth
-	(*Role)(nil),         // 6: snapshotpb.Role
-	(*Provider)(nil),     // 7: snapshotpb.Provider
-	(*CatalogModel)(nil), // 8: snapshotpb.CatalogModel
+	(*StoreGrant)(nil),   // 4: snapshotpb.StoreGrant
+	(*Policy)(nil),       // 5: snapshotpb.Policy
+	(*Auth)(nil),         // 6: snapshotpb.Auth
+	(*Role)(nil),         // 7: snapshotpb.Role
+	(*Provider)(nil),     // 8: snapshotpb.Provider
+	(*CatalogModel)(nil), // 9: snapshotpb.CatalogModel
 }
 var file_snapshot_proto_depIdxs = []int32{
 	1, // 0: snapshotpb.Snapshot.gateways:type_name -> snapshotpb.Gateway
 	2, // 1: snapshotpb.Snapshot.consumers:type_name -> snapshotpb.Consumer
 	3, // 2: snapshotpb.Snapshot.registries:type_name -> snapshotpb.Registry
-	4, // 3: snapshotpb.Snapshot.policies:type_name -> snapshotpb.Policy
-	5, // 4: snapshotpb.Snapshot.auths:type_name -> snapshotpb.Auth
-	6, // 5: snapshotpb.Snapshot.roles:type_name -> snapshotpb.Role
-	7, // 6: snapshotpb.Snapshot.providers:type_name -> snapshotpb.Provider
-	8, // 7: snapshotpb.Snapshot.catalog_models:type_name -> snapshotpb.CatalogModel
-	8, // [8:8] is the sub-list for method output_type
-	8, // [8:8] is the sub-list for method input_type
-	8, // [8:8] is the sub-list for extension type_name
-	8, // [8:8] is the sub-list for extension extendee
-	0, // [0:8] is the sub-list for field type_name
+	5, // 3: snapshotpb.Snapshot.policies:type_name -> snapshotpb.Policy
+	6, // 4: snapshotpb.Snapshot.auths:type_name -> snapshotpb.Auth
+	7, // 5: snapshotpb.Snapshot.roles:type_name -> snapshotpb.Role
+	8, // 6: snapshotpb.Snapshot.providers:type_name -> snapshotpb.Provider
+	9, // 7: snapshotpb.Snapshot.catalog_models:type_name -> snapshotpb.CatalogModel
+	4, // 8: snapshotpb.Snapshot.store_grants:type_name -> snapshotpb.StoreGrant
+	9, // [9:9] is the sub-list for method output_type
+	9, // [9:9] is the sub-list for method input_type
+	9, // [9:9] is the sub-list for extension type_name
+	9, // [9:9] is the sub-list for extension extendee
+	0, // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_snapshot_proto_init() }
@@ -599,7 +660,7 @@ func file_snapshot_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_snapshot_proto_rawDesc), len(file_snapshot_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

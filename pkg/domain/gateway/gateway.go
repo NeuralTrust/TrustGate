@@ -72,7 +72,10 @@ const (
 	StoreModeNone = "none"
 )
 
-// StoreMode returns the gateway's Store curation mode, defaulting to open.
+// StoreMode returns the gateway's Store curation mode as stamped by its admin,
+// defaulting to open. Governance is available on every plan: a fresh gateway
+// starts open with no policies (zero-friction default), and any tier may narrow
+// it to curated or none once its admin configures Access.
 func (g *Gateway) StoreMode() string {
 	if g == nil || g.Metadata == nil {
 		return StoreModeOpen

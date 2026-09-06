@@ -889,7 +889,7 @@ func TestConnectService_StoreScopedTicketResolvesMaterialisedRegistry(t *testing
 	)
 	ctx := context.Background()
 	storePath := appconsumer.MCPPath(consumerdomain.StoreSlug)
-	ticket, err := svc.CreateServerTicket(ctx, gw, "alice", storePath, "com.notion/mcp")
+	ticket, err := svc.CreateServerTicket(ctx, gw, "alice", storePath, "com.notion/mcp", "")
 	if err != nil {
 		t.Fatalf("CreateServerTicket: %v", err)
 	}

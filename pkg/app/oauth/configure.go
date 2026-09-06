@@ -22,6 +22,7 @@ import (
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
@@ -32,6 +33,22 @@ import (
 // ErrConfigureInvalid is returned when submitted configuration is malformed (an
 // unknown variable, or a value that fails its structure/charset rules).
 var ErrConfigureInvalid = errors.New("oauth configure: invalid configuration")
+
+// ErrConfigureIncomplete is returned when a first-time configuration (no
+// installation exists yet) omits a required plain value: the install cannot be
+// recorded half-configured, so nothing is saved and the form is re-shown.
+var ErrConfigureIncomplete = fmt.Errorf("%w: all required values must be provided together", ErrConfigureInvalid)
+
+// ErrConfigureAmbiguous is returned when the ticket names only a catalog code and
+// the principal holds several instances of it, so the form cannot tell which one
+// to write to. The install tool pins tickets to an instance; this guards tickets
+// that were not.
+var ErrConfigureAmbiguous = fmt.Errorf("%w: several instances installed; configure from the install result", ErrConfigureInvalid)
+
+// ErrConfigureInstallUnavailable is returned when a configure-before-install
+// would need to record the installation but no installer is wired, so the
+// governed install path cannot run. The user installs first, then configures.
+var ErrConfigureInstallUnavailable = fmt.Errorf("%w: install the server first, then configure it", ErrConfigureInvalid)
 
 // ConfigureVariable is one per-user URL variable shown on the hosted form.
 type ConfigureVariable struct {
@@ -53,13 +70,39 @@ type ConfigurePage struct {
 	Variables    []ConfigureVariable
 	// Saved is true after a successful submit, so the page can confirm.
 	Saved bool
+	// Pending is true when the submit recorded the install as a request awaiting
+	// admin approval (the server is governed), so the page can say so rather than
+	// implying the tools are live.
+	Pending bool
+}
+
+// ConfigureTicketRequest scopes a configure ticket: the (gateway, principal,
+// consumer, catalog code) the hosted form writes for, optionally pinned to one
+// installation instance, plus the principal's groups so a form-driven install is
+// governed exactly like a tool-driven one.
+type ConfigureTicketRequest struct {
+	GatewayID    ids.GatewayID
+	PrincipalSub string
+	ConsumerPath string
+	Code         string
+	// InstanceID pins the ticket to one installation instance of Code. Empty when
+	// the install recorded no row yet (requires-config before install).
+	InstanceID string
+	// Groups are the principal's IdP groups at mint time (from their token).
+	Groups []string
+}
+
+// ConfigureInstaller is the governed install path the configure flow records a
+// first-time configuration through. appstore.Installer satisfies it.
+type ConfigureInstaller interface {
+	Install(ctx context.Context, in appstore.InstallRequest) (*appstore.InstallResult, error)
 }
 
 //go:generate mockery --name=ConfigureService --dir=. --output=./mocks --filename=oauth_configure_service_mock.go --case=underscore --with-expecter
 type ConfigureService interface {
 	// CreateTicket mints a short-lived ticket scoping the hosted form to one
-	// (gateway, principal, consumer, catalog code).
-	CreateTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code string) (string, error)
+	// (gateway, principal, consumer, catalog code[, instance]).
+	CreateTicket(ctx context.Context, in ConfigureTicketRequest) (string, error)
 	// Page returns the variables to render for a ticket and whether each is set.
 	Page(ctx context.Context, ticketID string) (*ConfigurePage, error)
 	// Submit validates and stores the submitted values (plain to the installation
@@ -75,29 +118,58 @@ type configureService struct {
 	catalog   authCatalog
 	installs  installationdomain.Repository
 	vault     vaultdomain.Repository
+	installer ConfigureInstaller
+	// openMode reports whether the gateway's Store is open (self-service) for a
+	// form-driven first install. Nil means "not open": the install is governed as
+	// a request unless the shelf says otherwise.
+	openMode func(ctx context.Context, gatewayID ids.GatewayID) bool
+}
+
+// ConfigureOption tunes the configure service.
+type ConfigureOption func(*configureService)
+
+// WithConfigureInstaller wires the governed installer a configure-before-install
+// submission is recorded through. Without it, configuring a server that has no
+// installation yet is refused (ErrConfigureInstallUnavailable) — the form never
+// creates an installation row on its own.
+func WithConfigureInstaller(installer ConfigureInstaller) ConfigureOption {
+	return func(s *configureService) { s.installer = installer }
+}
+
+// WithConfigureOpenMode supplies how the service decides whether the gateway's
+// Store is open (self-service) when it must record a first install from the
+// form. Without it, form-driven installs are always treated as curated.
+func WithConfigureOpenMode(fn func(ctx context.Context, gatewayID ids.GatewayID) bool) ConfigureOption {
+	return func(s *configureService) { s.openMode = fn }
 }
 
 // NewConfigureService wires the MCP-Store per-user configuration flow: it collects
 // the URL variables a catalog server declares (e.g. a Snowflake account URL, a
 // Bright Data token) from the user through a hosted form, storing plain values on
 // their installation and secret values in the vault — the same places the dial
-// path reads them from.
+// path reads them from. The form never creates an installation itself: a
+// configure-before-install submission is routed through the governed installer
+// so shelf availability, approval and group gates apply exactly as they do to the
+// install tool.
 func NewConfigureService(
 	store ConnectStore,
 	consumers appconsumer.DataFinder,
 	catalog authCatalog,
 	installs installationdomain.Repository,
 	vault vaultdomain.Repository,
+	opts ...ConfigureOption,
 ) ConfigureService {
-	return &configureService{store: store, consumers: consumers, catalog: catalog, installs: installs, vault: vault}
+	s := &configureService{store: store, consumers: consumers, catalog: catalog, installs: installs, vault: vault}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(s)
+		}
+	}
+	return s
 }
 
-func (s *configureService) CreateTicket(
-	ctx context.Context,
-	gatewayID ids.GatewayID,
-	principalSub, consumerPath, code string,
-) (string, error) {
-	code = strings.TrimSpace(code)
+func (s *configureService) CreateTicket(ctx context.Context, in ConfigureTicketRequest) (string, error) {
+	code := strings.TrimSpace(in.Code)
 	if code == "" {
 		return "", fmt.Errorf("%w: code is required", ErrConfigureInvalid)
 	}
@@ -106,10 +178,12 @@ func (s *configureService) CreateTicket(
 		return "", err
 	}
 	if err := s.store.SaveTicket(ctx, id, ConnectTicket{
-		GatewayID:    gatewayID.String(),
-		PrincipalSub: principalSub,
-		ConsumerPath: consumerPath,
+		GatewayID:    in.GatewayID.String(),
+		PrincipalSub: in.PrincipalSub,
+		ConsumerPath: in.ConsumerPath,
 		Code:         code,
+		InstanceID:   strings.TrimSpace(in.InstanceID),
+		Groups:       append([]string(nil), in.Groups...),
 	}); err != nil {
 		return "", err
 	}
@@ -121,7 +195,7 @@ func (s *configureService) Page(ctx context.Context, ticketID string) (*Configur
 	if err != nil {
 		return nil, err
 	}
-	return s.page(ctx, gatewayID, ticket, entry, false)
+	return s.page(ctx, gatewayID, ticket, entry, false, false)
 }
 
 func (s *configureService) Submit(
@@ -138,6 +212,7 @@ func (s *configureService) Submit(
 		byName[strings.TrimSpace(v.Name)] = v
 	}
 	plain := map[string]string{}
+	secrets := map[string]string{}
 	for k, raw := range values {
 		val := strings.TrimSpace(raw)
 		if val == "" {
@@ -151,19 +226,26 @@ func (s *configureService) Submit(
 			return nil, fmt.Errorf("%w: %w", ErrConfigureInvalid, err)
 		}
 		if v.Secret {
-			if err := s.storeSecret(ctx, gatewayID, ticket.PrincipalSub, ticket.Code, k, val); err != nil {
-				return nil, err
-			}
+			secrets[k] = val
 			continue
 		}
 		plain[k] = val
 	}
+	// Plain values first: a first-time configuration is a governed install, and
+	// nothing (not even the secrets) is stored if it is refused.
+	pending := false
 	if len(plain) > 0 {
-		if err := s.storePlain(ctx, gatewayID, ticket.PrincipalSub, ticket.Code, plain); err != nil {
+		pending, err = s.storePlain(ctx, gatewayID, ticket, plain)
+		if err != nil {
 			return nil, err
 		}
 	}
-	return s.page(ctx, gatewayID, ticket, entry, true)
+	for k, val := range secrets {
+		if err := s.storeSecret(ctx, gatewayID, ticket.PrincipalSub, ticket.Code, k, val); err != nil {
+			return nil, err
+		}
+	}
+	return s.page(ctx, gatewayID, ticket, entry, true, pending)
 }
 
 // resolve loads a configure ticket and its catalog entry, rejecting a ticket that
@@ -196,9 +278,14 @@ func (s *configureService) page(
 	gatewayID ids.GatewayID,
 	ticket *ConnectTicket,
 	entry catalogdomain.MCPServer,
-	saved bool,
+	saved, pending bool,
 ) (*ConfigurePage, error) {
-	config := s.installConfig(ctx, gatewayID, ticket.PrincipalSub, ticket.Code)
+	inst, _ := s.instance(ctx, gatewayID, ticket)
+	var config map[string]string
+	if inst != nil {
+		config = inst.Config
+		pending = pending || inst.Status == installationdomain.StatusPendingApproval
+	}
 	vars := make([]ConfigureVariable, 0, len(entry.URLVariables))
 	for _, v := range entry.URLVariables {
 		name := strings.TrimSpace(v.Name)
@@ -216,6 +303,7 @@ func (s *configureService) page(
 		ServerName:   serverName(entry),
 		Variables:    vars,
 		Saved:        saved,
+		Pending:      pending,
 	}, nil
 }
 
@@ -236,16 +324,51 @@ func (s *configureService) isSet(
 	return strings.TrimSpace(config[strings.TrimSpace(v.Name)]) != ""
 }
 
-func (s *configureService) installConfig(
+// instance resolves the installation the ticket targets. A ticket pinned to an
+// instance id reads exactly that row (which must belong to the principal and the
+// ticket's code). An unpinned ticket falls back to the code, which is only
+// unambiguous when the principal holds at most one live instance of it; with
+// several, ErrConfigureAmbiguous. (nil, nil) when no installation exists yet.
+func (s *configureService) instance(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
-	principalSub, code string,
-) map[string]string {
-	inst, err := s.installs.Find(ctx, gatewayID, principalSub, code)
-	if err != nil || inst == nil {
-		return nil
+	ticket *ConnectTicket,
+) (*installationdomain.Installation, error) {
+	if id := strings.TrimSpace(ticket.InstanceID); id != "" {
+		installID, err := ids.Parse[ids.InstallationKind](id)
+		if err != nil {
+			return nil, ErrTicketNotFound
+		}
+		inst, err := s.installs.FindByID(ctx, gatewayID, ticket.PrincipalSub, installID)
+		if err != nil {
+			if errors.Is(err, installationdomain.ErrNotFound) {
+				return nil, ErrTicketNotFound
+			}
+			return nil, err
+		}
+		if inst.CatalogCode != ticket.Code {
+			return nil, ErrTicketNotFound
+		}
+		return inst, nil
 	}
-	return inst.Config
+	rows, err := s.installs.ListByPrincipalAndCode(ctx, gatewayID, ticket.PrincipalSub, ticket.Code)
+	if err != nil {
+		return nil, err
+	}
+	var live []*installationdomain.Installation
+	for _, r := range rows {
+		if r != nil && r.Status != installationdomain.StatusRevoked {
+			live = append(live, r)
+		}
+	}
+	switch len(live) {
+	case 0:
+		return nil, nil
+	case 1:
+		return live[0], nil
+	default:
+		return nil, ErrConfigureAmbiguous
+	}
 }
 
 func (s *configureService) storeSecret(
@@ -264,24 +387,25 @@ func (s *configureService) storeSecret(
 	return s.vault.Upsert(ctx, cred)
 }
 
-// storePlain merges plain values into the principal's installation config,
-// creating the installation when the user configures before installing.
+// storePlain applies plain values to the principal's installation. When the
+// ticket targets an existing instance the values are merged into that instance
+// in place (its status — installed or pending — is untouched). When no
+// installation exists yet, the form never creates one itself: the values are
+// handed to the governed installer, so the shelf/approval/group decision that
+// applies to the install tool applies here too, and the result may be a pending
+// request rather than an install. Returns whether the install is pending.
 func (s *configureService) storePlain(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
-	principalSub, code string,
+	ticket *ConnectTicket,
 	plain map[string]string,
-) error {
-	inst, err := s.installs.Find(ctx, gatewayID, principalSub, code)
+) (bool, error) {
+	inst, err := s.instance(ctx, gatewayID, ticket)
 	if err != nil {
-		if !errors.Is(err, installationdomain.ErrNotFound) {
-			return err
-		}
-		created, cerr := installationdomain.New(gatewayID, principalSub, code, principalSub, plain)
-		if cerr != nil {
-			return cerr
-		}
-		return s.installs.Upsert(ctx, created)
+		return false, err
+	}
+	if inst == nil {
+		return s.installConfigured(ctx, gatewayID, ticket, plain)
 	}
 	merged := make(map[string]string, len(inst.Config)+len(plain))
 	for k, v := range inst.Config {
@@ -291,7 +415,58 @@ func (s *configureService) storePlain(
 		merged[k] = v
 	}
 	inst.Config = merged
-	return s.installs.Upsert(ctx, inst)
+	inst.UpdatedAt = time.Now().UTC()
+	if err := s.installs.Upsert(ctx, inst); err != nil {
+		return false, err
+	}
+	return inst.Status == installationdomain.StatusPendingApproval, nil
+}
+
+// installConfigured records a first-time configuration through the governed
+// installer. A refusal (role, caps) surfaces as-is; a requires-config result
+// means a required plain value was omitted and nothing was recorded.
+func (s *configureService) installConfigured(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	ticket *ConnectTicket,
+	plain map[string]string,
+) (bool, error) {
+	if s.installer == nil {
+		return false, ErrConfigureInstallUnavailable
+	}
+	open := false
+	if s.openMode != nil {
+		open = s.openMode(ctx, gatewayID)
+	}
+	res, err := s.installer.Install(ctx, appstore.InstallRequest{
+		GatewayID:    gatewayID,
+		PrincipalSub: ticket.PrincipalSub,
+		Code:         ticket.Code,
+		InstalledBy:  ticket.PrincipalSub,
+		Groups:       ticket.Groups,
+		OpenMode:     open,
+		Config:       plain,
+	})
+	if err != nil {
+		if errors.Is(err, appstore.ErrConfigInvalid) {
+			return false, fmt.Errorf("%w: %w", ErrConfigureInvalid, err)
+		}
+		return false, err
+	}
+	if res.RequiresConfig && res.InstanceID == "" {
+		names := make([]string, 0, len(res.ConfigVariables))
+		for _, v := range res.ConfigVariables {
+			names = append(names, v.Name)
+		}
+		return false, fmt.Errorf("%w: missing %s", ErrConfigureIncomplete, strings.Join(names, ", "))
+	}
+	if res.RequiresAdminSetup {
+		return false, fmt.Errorf("%w: an admin must connect this server first", ErrConfigureInvalid)
+	}
+	// Pin the ticket to the instance just recorded so later submits on the same
+	// form target it even if another instance of the code appears meanwhile.
+	ticket.InstanceID = res.InstanceID
+	return res.Pending, nil
 }
 
 func toRegistryURLVar(v catalogdomain.MCPURLVariable) registrydomain.MCPURLVariable {

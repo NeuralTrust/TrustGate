@@ -23,6 +23,7 @@ import (
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/adapters"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
@@ -77,8 +78,14 @@ func provideSnapshotRepositories(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	return c.Provide(func(store configsync.ConfigStore[*readmodel.Snapshot]) catalogdomain.Repository {
+	if err := c.Provide(func(store configsync.ConfigStore[*readmodel.Snapshot]) catalogdomain.Repository {
 		return adapters.NewCatalogRepository(store)
+	}); err != nil {
+		return err
+	}
+	// MCP Store access grants ride the snapshot; the data plane reads them here.
+	return c.Provide(func(store configsync.ConfigStore[*readmodel.Snapshot]) storegrantdomain.Reader {
+		return adapters.NewStoreGrantReader(store)
 	})
 }
 

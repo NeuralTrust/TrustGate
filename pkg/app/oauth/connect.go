@@ -94,12 +94,13 @@ func (s *connectService) CreateTicket(ctx context.Context, gatewayID ids.Gateway
 	})
 }
 
-func (s *connectService) CreateServerTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code string) (string, error) {
+func (s *connectService) CreateServerTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code, instanceID string) (string, error) {
 	return s.mintTicket(ctx, ConnectTicket{
 		GatewayID:    gatewayID.String(),
 		PrincipalSub: principalSub,
 		ConsumerPath: consumerPath,
 		Code:         strings.TrimSpace(code),
+		InstanceID:   strings.TrimSpace(instanceID),
 	})
 }
 

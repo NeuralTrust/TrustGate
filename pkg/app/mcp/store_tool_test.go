@@ -28,7 +28,9 @@ import (
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
 )
 
 type fakeRegistryLister struct{ items []*registrydomain.Registry }
@@ -37,11 +39,27 @@ func (f fakeRegistryLister) List(context.Context, registrydomain.ListFilter) ([]
 	return f.items, len(f.items), nil
 }
 
-func shelfReg(code string, store *registrydomain.MCPStoreConfig) *registrydomain.Registry {
+type fakeGrantReader struct{ items []*storegrantdomain.Grant }
+
+func (f fakeGrantReader) ListByGateway(context.Context, ids.GatewayID) ([]*storegrantdomain.Grant, error) {
+	return f.items, nil
+}
+
+func shelfReg(code string) *registrydomain.Registry {
 	return &registrydomain.Registry{
 		ID:        ids.New[ids.RegistryKind](),
-		MCPTarget: &registrydomain.MCPTarget{Code: code, Store: store},
+		MCPTarget: &registrydomain.MCPTarget{Code: code},
 	}
+}
+
+// grantFor grants a catalog code (every instance) to groups/users; a non-nil
+// registry id narrows it to that instance.
+func grantFor(code string, registryID ids.RegistryID, groups, users []string) *storegrantdomain.Grant {
+	g, err := storegrantdomain.New(ids.New[ids.GatewayKind](), code, registryID, groups, users)
+	if err != nil {
+		panic(err)
+	}
+	return g
 }
 
 type fakeCatalog struct{ servers []catalogdomain.MCPServer }
@@ -58,6 +76,22 @@ func sampleCatalog() fakeCatalog {
 
 func storeRC() *appconsumer.RoutableConsumer {
 	return &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]())}
+}
+
+// selfServiceCtx carries a self-service (free tier) gateway with nothing
+// stamped: the zero-friction default, where the Store is open.
+func selfServiceCtx() context.Context {
+	return appgateway.WithGateway(context.Background(), &gatewaydomain.Gateway{
+		Entitlements: gatewaydomain.Entitlements{Tier: "free"},
+	})
+}
+
+// enterpriseGateway is a governed gateway with the given configured Store mode.
+func enterpriseGateway(mode string) *gatewaydomain.Gateway {
+	return &gatewaydomain.Gateway{
+		Entitlements: gatewaydomain.Entitlements{Tier: "enterprise"},
+		Metadata:     gatewaydomain.WithStoreMode(nil, mode),
+	}
 }
 
 func decodeStructured(t *testing.T, raw json.RawMessage) map[string]any {
@@ -122,7 +156,7 @@ func TestStoreToolDefinitionsExposeSearch(t *testing.T) {
 
 func TestStoreSearchByQuery(t *testing.T) {
 	tool := newStoreToolForTest(t)
-	raw, err := tool.Call(context.Background(), storeRC(), "", StoreSearchToolName, json.RawMessage(`{"query":"git"}`))
+	raw, err := tool.Call(selfServiceCtx(), storeRC(), "", StoreSearchToolName, json.RawMessage(`{"query":"git"}`))
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -147,7 +181,7 @@ func TestStoreSearchByQuery(t *testing.T) {
 
 func TestStoreSearchByCategory(t *testing.T) {
 	tool := newStoreToolForTest(t)
-	raw, err := tool.Call(context.Background(), storeRC(), "", StoreSearchToolName, json.RawMessage(`{"category":"crm"}`))
+	raw, err := tool.Call(selfServiceCtx(), storeRC(), "", StoreSearchToolName, json.RawMessage(`{"category":"crm"}`))
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -159,7 +193,7 @@ func TestStoreSearchByCategory(t *testing.T) {
 
 func TestStoreSearchEmptyBrowsesAll(t *testing.T) {
 	tool := newStoreToolForTest(t)
-	raw, err := tool.Call(context.Background(), storeRC(), "", StoreSearchToolName, nil)
+	raw, err := tool.Call(selfServiceCtx(), storeRC(), "", StoreSearchToolName, nil)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -171,7 +205,7 @@ func TestStoreSearchEmptyBrowsesAll(t *testing.T) {
 
 func TestStoreSearchRespectsLimitAndReportsTruncation(t *testing.T) {
 	tool := newStoreToolForTest(t)
-	raw, err := tool.Call(context.Background(), storeRC(), "", StoreSearchToolName, json.RawMessage(`{"limit":1}`))
+	raw, err := tool.Call(selfServiceCtx(), storeRC(), "", StoreSearchToolName, json.RawMessage(`{"limit":1}`))
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -190,7 +224,12 @@ func TestStoreToolCallRejectsUnknownTool(t *testing.T) {
 
 func storeToolWithShelf(t *testing.T, items ...*registrydomain.Registry) StoreTool {
 	t.Helper()
-	tool, err := NewStoreToolWithInstaller(sampleCatalog(), nil, fakeRegistryLister{items: items}, nil, nil)
+	return storeToolWithGrants(t, nil, items...)
+}
+
+func storeToolWithGrants(t *testing.T, grants []*storegrantdomain.Grant, items ...*registrydomain.Registry) StoreTool {
+	t.Helper()
+	tool, err := NewStoreToolWithInstaller(sampleCatalog(), nil, fakeRegistryLister{items: items}, fakeGrantReader{items: grants}, nil, nil)
 	if err != nil {
 		t.Fatalf("NewStoreToolWithInstaller: %v", err)
 	}
@@ -208,71 +247,182 @@ func resultsByCode(t *testing.T, raw json.RawMessage) map[string]map[string]any 
 	return out
 }
 
+// TestStoreSearchTagsShelfState: under Selected the whole catalog is browsable
+// and each server's state is the caller's own outcome — "available" when a
+// grant names them for the code (or one of its instances), "request" otherwise.
 func TestStoreSearchTagsShelfState(t *testing.T) {
-	tool := storeToolWithShelf(t,
-		shelfReg("github", &registrydomain.MCPStoreConfig{Available: true}),
-		shelfReg("gitlab", &registrydomain.MCPStoreConfig{Available: true, RequiresApproval: true}),
-		// salesforce not on the shelf
+	gitlab := shelfReg("gitlab")
+	tool := storeToolWithGrants(t,
+		[]*storegrantdomain.Grant{
+			grantFor("github", ids.RegistryID{}, nil, []string{"ana"}),
+			grantFor("gitlab", gitlab.ID, []string{"sre"}, nil),
+			// salesforce granted to nobody
+		},
+		shelfReg("github"), gitlab,
 	)
-	raw, err := tool.Call(context.Background(), storeRC(), "", StoreSearchToolName, nil)
+	curated := appgateway.WithGateway(
+		identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "ana", Claims: map[string]any{identity.ClaimGroups: []string{"eng"}}}),
+		enterpriseGateway(gatewaydomain.StoreModeCurated))
+	raw, err := tool.Call(curated, storeRC(), "", StoreSearchToolName, nil)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
 	got := resultsByCode(t, raw)
-	if got["github"]["store_state"] != storeStateAvailable {
-		t.Fatalf("github should be available, got %v", got["github"]["store_state"])
+	if len(got) != 3 {
+		t.Fatalf("Selected must browse the whole catalog, got %d results", len(got))
 	}
-	if got["gitlab"]["store_state"] != storeStateApproval {
-		t.Fatalf("gitlab should be approval, got %v", got["gitlab"]["store_state"])
+	if got["github"]["store_state"] != storeStateAvailable {
+		t.Fatalf("github (granted to ana) should be available, got %v", got["github"]["store_state"])
+	}
+	if got["gitlab"]["store_state"] != storeStateRequest {
+		t.Fatalf("gitlab (granted to sre, caller is eng) should be request, got %v", got["gitlab"]["store_state"])
 	}
 	if got["salesforce"]["store_state"] != storeStateRequest {
-		t.Fatalf("salesforce should be request, got %v", got["salesforce"]["store_state"])
+		t.Fatalf("salesforce (granted to nobody) should be request, got %v", got["salesforce"]["store_state"])
+	}
+
+	// The same caller in the granted group sees gitlab as available.
+	sre := appgateway.WithGateway(
+		identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "ana", Claims: map[string]any{identity.ClaimGroups: []string{"sre"}}}),
+		enterpriseGateway(gatewaydomain.StoreModeCurated))
+	raw, err = tool.Call(sre, storeRC(), "", StoreSearchToolName, nil)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if got := resultsByCode(t, raw); got["gitlab"]["store_state"] != storeStateAvailable {
+		t.Fatalf("gitlab should be available for sre, got %v", got["gitlab"]["store_state"])
+	}
+
+	// Under All everything is available, shelved or not.
+	raw, err = tool.Call(selfServiceCtx(), storeRC(), "", StoreSearchToolName, nil)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	for code, r := range resultsByCode(t, raw) {
+		if r["store_state"] != storeStateAvailable {
+			t.Fatalf("All: %s should be available, got %v", code, r["store_state"])
+		}
 	}
 }
 
-func TestStoreSearchCuratedModeHidesNonShelf(t *testing.T) {
-	tool := storeToolWithShelf(t, shelfReg("github", &registrydomain.MCPStoreConfig{Available: true}))
-	// A gateway in curated mode.
-	gw := &gatewaydomain.Gateway{Metadata: gatewaydomain.WithStoreMode(nil, gatewaydomain.StoreModeCurated)}
-	ctx := appgateway.WithGateway(context.Background(), gw)
+// ctxWithStoreAccess builds a context carrying a principal whose token declares
+// a per-principal MCP Store access level ("open" | "curated" | "none").
+func ctxWithStoreAccess(base context.Context, sub, mode string) context.Context {
+	claims := map[string]any{}
+	if mode != "" {
+		claims[identity.ClaimStoreAccess] = mode
+	}
+	return identity.WithPrincipal(base, &identity.Principal{Subject: sub, Claims: claims})
+}
+
+func TestStoreSearchPrincipalOpenOverridesCuratedGateway(t *testing.T) {
+	tool := storeToolWithShelf(t, shelfReg("github"))
+	// Gateway default is curated (only shelf servers), but this principal's token
+	// carries store_access=open, so the whole catalog is browsable for them.
+	gw := enterpriseGateway(gatewaydomain.StoreModeCurated)
+	ctx := appgateway.WithGateway(
+		ctxWithStoreAccess(context.Background(), "ana", gatewaydomain.StoreModeOpen),
+		gw,
+	)
+	raw, err := tool.Call(ctx, storeRC(), "", StoreSearchToolName, nil)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	got := resultsByCode(t, raw)
+	if _, ok := got["salesforce"]; !ok {
+		t.Fatal("principal store_access=open must reveal non-shelf servers despite a curated gateway")
+	}
+}
+
+func TestStoreSearchPrincipalNoneClosesStore(t *testing.T) {
+	// Gateway default is open, but this principal's token carries
+	// store_access=none, so the Store is closed for them.
+	tool := storeToolWithShelf(t, shelfReg("github"))
+	ctx := ctxWithStoreAccess(context.Background(), "ana", gatewaydomain.StoreModeNone)
+	raw, err := tool.Call(ctx, storeRC(), "", StoreSearchToolName, nil)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	sc := decodeStructured(t, raw)
+	if total, _ := sc["total"].(float64); total != 0 {
+		t.Fatalf("principal store_access=none must return an empty catalog, got total %v", sc["total"])
+	}
+}
+
+func TestStoreInstallPrincipalNoneRefused(t *testing.T) {
+	inst := &fakeInstaller{}
+	tool := storeToolWithInstaller(t, inst)
+	ctx := ctxWithStoreAccess(context.Background(), "ana", gatewaydomain.StoreModeNone)
+	if _, err := tool.Call(ctx, storeRC(), "", StoreInstallToolName, json.RawMessage(`{"code":"github"}`)); err == nil {
+		t.Fatal("install must be refused when the principal's store_access is none")
+	}
+	if len(inst.installed) != 0 {
+		t.Fatalf("installer must not run when store access is none, got %v", inst.installed)
+	}
+}
+
+// TestStoreSearchCuratedModeShowsNonShelfAsRequest: Selected browses the whole
+// catalog so a user can discover what to ask for; a non-shelf server is tagged
+// "request" (installing it files an approval request) while a granted shelf
+// server is "available" (instant).
+func TestStoreSearchCuratedModeShowsNonShelfAsRequest(t *testing.T) {
+	tool := storeToolWithGrants(t,
+		[]*storegrantdomain.Grant{grantFor("github", ids.RegistryID{}, nil, []string{"ana"})},
+		shelfReg("github"),
+	)
+	gw := enterpriseGateway(gatewaydomain.StoreModeCurated)
+	ctx := appgateway.WithGateway(identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "ana"}), gw)
 
 	raw, err := tool.Call(ctx, storeRC(), "", StoreSearchToolName, nil)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
 	got := resultsByCode(t, raw)
-	if _, ok := got["github"]; !ok {
-		t.Fatal("curated mode must still show the shelf server github")
+	if got["github"]["store_state"] != storeStateAvailable {
+		t.Fatalf("granted server github must be available, got %v", got["github"]["store_state"])
 	}
-	if _, ok := got["salesforce"]; ok {
-		t.Fatal("curated mode must hide non-shelf servers")
+	if got["salesforce"]["store_state"] != storeStateRequest {
+		t.Fatalf("non-shelf server must be browsable as a request, got %v", got["salesforce"]["store_state"])
 	}
 }
 
 type fakeInstaller struct {
-	installed   []string
-	lastGroups  []string
-	uninstalled []string
-	result      *appstore.InstallResult
+	installed    []string
+	lastGroups   []string
+	lastRegistry ids.RegistryID
+	uninstalled  []string
+	lastInstance string
+	instances    []*installationdomain.Installation
+	uninstallErr error
+	result       *appstore.InstallResult
 }
 
 func (f *fakeInstaller) Install(_ context.Context, in appstore.InstallRequest) (*appstore.InstallResult, error) {
 	f.installed = append(f.installed, in.Code)
 	f.lastGroups = in.Groups
+	f.lastRegistry = in.RegistryID
 	if f.result != nil {
 		return f.result, nil
 	}
 	return &appstore.InstallResult{Code: in.Code, Name: in.Code}, nil
 }
 
-func (f *fakeInstaller) Uninstall(_ context.Context, _ ids.GatewayID, _, code string) error {
+func (f *fakeInstaller) Instances(_ context.Context, _ ids.GatewayID, _, _ string) ([]*installationdomain.Installation, error) {
+	return f.instances, nil
+}
+
+func (f *fakeInstaller) Uninstall(_ context.Context, _ ids.GatewayID, _, code, instance string) error {
+	if f.uninstallErr != nil {
+		return f.uninstallErr
+	}
 	f.uninstalled = append(f.uninstalled, code)
+	f.lastInstance = instance
 	return nil
 }
 
 func storeToolWithInstaller(t *testing.T, installer appstore.Installer) StoreTool {
 	t.Helper()
-	tool, err := NewStoreToolWithInstaller(sampleCatalog(), installer, nil, nil, nil)
+	tool, err := NewStoreToolWithInstaller(sampleCatalog(), installer, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewStoreToolWithInstaller: %v", err)
 	}
@@ -336,5 +486,90 @@ func TestStoreUninstallCall(t *testing.T) {
 	}
 	if len(installer.uninstalled) != 1 || installer.uninstalled[0] != "github" {
 		t.Fatalf("uninstall must call the installer, got %v", installer.uninstalled)
+	}
+}
+
+func TestStoreUninstallPassesInstanceID(t *testing.T) {
+	installer := &fakeInstaller{}
+	tool := storeToolWithInstaller(t, installer)
+	if _, err := tool.Call(ctxWithPrincipal(), storeRC(), "", StoreUninstallToolName,
+		json.RawMessage(`{"code":"snowflake","instance":"018f-abc"}`)); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	if installer.lastInstance != "018f-abc" {
+		t.Fatalf("uninstall must pass the instance id through, got %q", installer.lastInstance)
+	}
+}
+
+func TestStoreUninstallAmbiguousReturnsInstancePicker(t *testing.T) {
+	a, _ := installationdomain.New(ids.New[ids.GatewayKind](), "ana", "snowflake", "ana", map[string]string{"database": "analytics"})
+	f, _ := installationdomain.New(ids.New[ids.GatewayKind](), "ana", "snowflake", "ana", map[string]string{"database": "finance"})
+	installer := &fakeInstaller{
+		uninstallErr: appstore.ErrAmbiguousInstance,
+		instances:    []*installationdomain.Installation{a, f},
+	}
+	tool := storeToolWithInstaller(t, installer)
+	raw, err := tool.Call(ctxWithPrincipal(), storeRC(), "", StoreUninstallToolName, json.RawMessage(`{"code":"snowflake"}`))
+	if err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	var out struct {
+		StructuredContent struct {
+			Ambiguous bool `json:"ambiguous"`
+			Instances []struct {
+				Instance string `json:"instance"`
+				Label    string `json:"label"`
+			} `json:"instances"`
+		} `json:"structuredContent"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !out.StructuredContent.Ambiguous || len(out.StructuredContent.Instances) != 2 {
+		t.Fatalf("expected an ambiguous picker with two instances, got %+v", out.StructuredContent)
+	}
+	if out.StructuredContent.Instances[0].Instance != a.ID.String() {
+		t.Fatalf("picker must carry the instance ids, got %+v", out.StructuredContent.Instances)
+	}
+	if len(installer.uninstalled) != 0 {
+		t.Fatal("an ambiguous uninstall must not remove anything")
+	}
+}
+
+// TestStoreInstallInstanceChoiceRoundTrip: when the installer reports several
+// usable configured instances the tool returns the list (no install recorded)
+// and a follow-up call with `instance` reaches the installer as a registry id.
+func TestStoreInstallInstanceChoiceRoundTrip(t *testing.T) {
+	finance := ids.New[ids.RegistryKind]()
+	analytics := ids.New[ids.RegistryKind]()
+	inst := &fakeInstaller{result: &appstore.InstallResult{
+		Code: "github", Name: "GitHub", RequiresInstanceChoice: true,
+		InstanceChoices: []appstore.InstanceChoice{{RegistryID: finance, Name: "GitHub (finance)"}, {RegistryID: analytics, Name: "GitHub (analytics)"}},
+	}}
+	tool := storeToolWithInstaller(t, inst)
+	raw, err := tool.Call(ctxWithPrincipal(), storeRC(), "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"github"}`))
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	sc := decodeStructured(t, raw)
+	if sc["requires_instance_choice"] != true {
+		t.Fatalf("expected requires_instance_choice, got %+v", sc)
+	}
+	choices, _ := sc["instances"].([]any)
+	if len(choices) != 2 || choices[0].(map[string]any)["instance"] != finance.String() || choices[0].(map[string]any)["name"] != "GitHub (finance)" {
+		t.Fatalf("choices must carry registry id and name, got %+v", sc["instances"])
+	}
+
+	inst.result = nil
+	if _, err := tool.Call(ctxWithPrincipal(), storeRC(), "https://gw.example", StoreInstallToolName,
+		json.RawMessage(`{"code":"github","instance":"`+analytics.String()+`"}`)); err != nil {
+		t.Fatalf("install with instance: %v", err)
+	}
+	if inst.lastRegistry != analytics {
+		t.Fatalf("the chosen instance must reach the installer as RegistryID, got %s", inst.lastRegistry)
+	}
+	if _, err := tool.Call(ctxWithPrincipal(), storeRC(), "https://gw.example", StoreInstallToolName,
+		json.RawMessage(`{"code":"github","instance":"not-a-uuid"}`)); err == nil {
+		t.Fatal("a malformed instance id must be refused")
 	}
 }

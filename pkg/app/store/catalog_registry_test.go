@@ -49,9 +49,6 @@ func TestCatalogRegistry_OAuthAuto(t *testing.T) {
 	if tgt == nil || tgt.Code != "app.linear/mcp" || tgt.URL != "https://mcp.linear.app/mcp" {
 		t.Fatalf("unexpected target: %+v", tgt)
 	}
-	if tgt.Store == nil || !tgt.StoreAvailable() {
-		t.Fatalf("materialised registry must be available on the shelf: %+v", tgt.Store)
-	}
 	if tgt.Auth == nil || tgt.Auth.Mode != registrydomain.MCPAuthModeForwarded {
 		t.Fatalf("oauth-auto must map to forwarded, got %+v", tgt.Auth)
 	}
@@ -95,9 +92,6 @@ func TestCatalogRegistry_NoAuthPublicServer(t *testing.T) {
 	}
 	if reg.MCPTarget.Auth == nil || reg.MCPTarget.Auth.Mode != registrydomain.MCPAuthModeNone {
 		t.Fatalf("public server must map to auth none, got %+v", reg.MCPTarget.Auth)
-	}
-	if !reg.MCPTarget.StoreAvailable() {
-		t.Fatal("public server must be available on the shelf")
 	}
 }
 
