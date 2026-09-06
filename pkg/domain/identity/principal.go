@@ -43,6 +43,12 @@ const (
 	// the admin's per-user/per-group Access decision. Absent means the gateway's
 	// own Store default mode applies.
 	ClaimStoreAccess = "store_access"
+	// ClaimGateway is the claim naming the gateway a platform token was minted
+	// for. The control plane resolves store_access per gateway (Access policies
+	// are gateway-scoped), so the token must not be redeemed at another gateway
+	// of the same tenant: the callback refuses a token whose gateway claim names
+	// a different gateway.
+	ClaimGateway = "gateway"
 )
 
 type Principal struct {
