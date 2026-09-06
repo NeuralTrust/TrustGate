@@ -422,13 +422,20 @@ func TestStoreInstall_NoGatewayInContextFailsClosed(t *testing.T) {
 	if sc := decodeStructured(t, raw); sc["pending"] != true || h.creator.created != 0 {
 		t.Fatalf("missing gateway must fail closed to curated, got %+v (created=%d)", sc, h.creator.created)
 	}
-	// Search without a gateway hides non-shelf servers and reports curated.
+	// Search without a gateway reports curated: the catalog is browsable but a
+	// non-shelf server is a request, never an instant install.
 	raw, err = h.tool.Call(ctxWithPrincipal(), h.rc, "", StoreSearchToolName, nil)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
-	if sc := decodeStructured(t, raw); sc["mode"] != gatewaydomain.StoreModeCurated || sc["total"].(float64) != 0 {
+	sc := decodeStructured(t, raw)
+	if sc["mode"] != gatewaydomain.StoreModeCurated {
 		t.Fatalf("missing gateway must browse as curated, got %+v", sc)
+	}
+	for _, r := range sc["results"].([]any) {
+		if r.(map[string]any)["store_state"] != storeStateRequest {
+			t.Fatalf("under curated a non-shelf server must be a request, got %+v", r)
+		}
 	}
 }
 

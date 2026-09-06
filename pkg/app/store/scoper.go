@@ -22,6 +22,7 @@ import (
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
@@ -147,13 +148,17 @@ func (s *scoper) installedRegistries(
 		}
 	}
 	groups := principalGroups(principal)
+	// Under All every install stands; under Selected an install only stays
+	// exposed while its shelf grant still names the principal, so tightening a
+	// grant later revokes exposure without touching the installation rows.
+	enforceGrants := EffectiveStoreMode(ctx) != gatewaydomain.StoreModeOpen
 	out := make([]*registrydomain.Registry, 0, len(active))
 	for _, in := range active {
 		shelf, ok := byCode[in.CatalogCode]
 		if !ok {
 			continue
 		}
-		if !storeAccessAllows(shelf.MCPTarget.StoreGroups(), shelf.MCPTarget.StoreUsers(), groups, principal.Subject) {
+		if enforceGrants && !storeAccessAllows(shelf.MCPTarget.StoreGroups(), shelf.MCPTarget.StoreUsers(), groups, principal.Subject) {
 			continue
 		}
 		if countByCode[in.CatalogCode] <= 1 {

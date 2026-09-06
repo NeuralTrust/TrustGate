@@ -58,10 +58,12 @@ type storeApprovalParams struct {
 	Catalog    appcatalog.MCPServerCatalog
 	Registries registrydomain.Repository
 	Installs   installationdomain.Repository
+	// Ensurer lets an approve materialise a server nobody shelved yet.
+	Ensurer appstore.RegistryEnsurer
 }
 
 func provideStoreRequestsHandler(p storeApprovalParams) (*storehttp.RequestsHandler, error) {
-	approver, err := appstore.NewApprover(p.Catalog, p.Registries, p.Installs)
+	approver, err := appstore.NewApprover(p.Catalog, p.Registries, p.Installs, appstore.WithApproverEnsurer(p.Ensurer))
 	if err != nil {
 		return nil, err
 	}

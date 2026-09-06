@@ -358,51 +358,43 @@ func planInstallConfig(
 	return stored, missingPlain, secretRequired, nil
 }
 
-// decideStatus applies the shelf governance: available + role-allowed installs
-// immediately unless it needs approval; anything else becomes a pending request.
+// decideStatus applies the Store access model to one install:
 //
-// When no shelf registry exists yet the decision splits on the Store mode. In
-// open (self-service) mode the shared registry is materialised from the catalog
-// here and the install proceeds immediately — the "created on first install"
-// path; the fresh registry is available with no roles or approval, so it is
-// governed identically on the next install. In curated mode (or when no ensurer
-// is wired) the same missing-registry case is a pending request for the admin to
-// shelve+approve, exactly as before.
+//   - All (open): every catalog server installs instantly. A server with no
+//     shelf registry yet is materialised from the catalog on first install (the
+//     "created on first install" path) when an ensurer is wired; without one it
+//     can only be recorded as a request.
+//   - Selected (curated): what is granted to the principal installs instantly —
+//     a shelf registry that is available to them, either open to everyone or
+//     naming one of their groups or their subject. Anything else — no shelf
+//     registry, hidden, or granted to others — becomes an approval request for
+//     the admin, who grants it by approving.
 //
-// The role gate is evaluated as soon as a shelf registry exists, before the
-// availability check. Otherwise a role-excluded principal could file a pending
-// request against a not-yet-available role-gated server (the role list never
-// checked), and the approve path — which does not re-evaluate roles — would
-// silently grant it. Checking here means such a request is rejected up front and
-// never reaches the approval queue.
+// There is deliberately no per-registry "requires approval" gate any more: the
+// selection is the pre-approval, so Approvals only ever holds requests for
+// resources outside a principal's selection.
 func (i *installer) decideStatus(
 	ctx context.Context,
 	in InstallRequest,
 	reg *registrydomain.Registry,
 ) (installationdomain.Status, error) {
-	if reg == nil || reg.MCPTarget == nil {
-		// No shelf registry at all. Self-service materialises it on first
-		// install; otherwise it is a request for the admin to shelve+approve.
-		// There is no role list to enforce until the registry exists.
-		if in.OpenMode && i.ensurer != nil {
+	hasShelf := reg != nil && reg.MCPTarget != nil
+	if in.OpenMode {
+		if !hasShelf {
+			if i.ensurer == nil {
+				return installationdomain.StatusPendingApproval, nil
+			}
 			if err := i.ensurer.Ensure(ctx, in.GatewayID, in.Code); err != nil {
 				return "", err
 			}
-			return installationdomain.StatusInstalled, nil
 		}
-		return installationdomain.StatusPendingApproval, nil
+		return installationdomain.StatusInstalled, nil
 	}
-	if !storeAccessAllows(reg.MCPTarget.StoreGroups(), reg.MCPTarget.StoreUsers(), in.Groups, in.PrincipalSub) {
-		return "", ErrRoleNotAllowed
+	if hasShelf && reg.MCPTarget.StoreAvailable() &&
+		storeAccessAllows(reg.MCPTarget.StoreGroups(), reg.MCPTarget.StoreUsers(), in.Groups, in.PrincipalSub) {
+		return installationdomain.StatusInstalled, nil
 	}
-	if !reg.MCPTarget.StoreAvailable() {
-		// On record but hidden: a request for the admin to shelve+approve.
-		return installationdomain.StatusPendingApproval, nil
-	}
-	if reg.MCPTarget.StoreRequiresApproval() {
-		return installationdomain.StatusPendingApproval, nil
-	}
-	return installationdomain.StatusInstalled, nil
+	return installationdomain.StatusPendingApproval, nil
 }
 
 // Instances returns the principal's active instances of a catalog code, oldest
@@ -486,6 +478,13 @@ func findRegistryByCode(
 		}
 	}
 	return nil, nil
+}
+
+// StoreAccessAllows is the exported form of storeAccessAllows, for callers
+// outside the package (the Store search meta-tool) that must compute the same
+// grant decision the installer applies.
+func StoreAccessAllows(allowedGroups, allowedUsers, groups []string, subject string) bool {
+	return storeAccessAllows(allowedGroups, allowedUsers, groups, subject)
 }
 
 // storeAccessAllows reports whether the caller may install a subject-gated
