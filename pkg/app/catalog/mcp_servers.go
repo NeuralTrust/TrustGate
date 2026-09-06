@@ -189,24 +189,41 @@ func authHint(s rawServer) string {
 }
 
 // authMethods lists every auth method an operator may pick when installing the
-// server. An explicit seed `auth_methods` wins (normalized/deduped); otherwise
-// it is derived additively: "static" when the server exposes auth headers (or
-// is otherwise a static-auth server), "oauth" when it advertises an OAuth spec.
-// A server that carries both an OAuth spec and auth headers therefore offers a
-// choice. Empty derivation (public server) yields nil, and the UI treats a
-// server with no declared methods as none.
+// server, each guaranteed renderable — the catalog never advertises a method the
+// install UI has no field for. An explicit seed `auth_methods` wins (normalized/
+// deduped); otherwise it is derived additively: "static" when the server has a
+// slot for an operator-supplied credential (an auth header or a secret URL
+// variable), "oauth" when it advertises an OAuth spec. A server that carries
+// both therefore offers a choice. Empty derivation (public server) yields nil,
+// and the UI treats a server with no declared methods as none.
 func authMethods(s rawServer) []string {
 	if len(s.AuthMethods) > 0 {
 		return normalizeAuthMethods(s.AuthMethods)
 	}
 	var methods []string
-	if len(s.AuthHeaders) > 0 || authHint(s) == authHintStatic {
+	if hasStaticCredentialSlot(s) {
 		methods = append(methods, authHintStatic)
 	}
 	if s.OAuth != nil {
 		methods = append(methods, authHintOAuth)
 	}
 	return methods
+}
+
+// hasStaticCredentialSlot reports whether the server has somewhere for the
+// operator to put a static credential: an auth header, or a secret URL variable
+// (e.g. a `?token=` query value). Without a slot there is no field to enter an
+// API key, so "static" is not offered even if the server otherwise requires auth.
+func hasStaticCredentialSlot(s rawServer) bool {
+	if len(s.AuthHeaders) > 0 {
+		return true
+	}
+	for _, v := range s.URLVariables {
+		if v.Secret {
+			return true
+		}
+	}
+	return false
 }
 
 // normalizeAuthMethods keeps only recognized method identifiers, in a stable
