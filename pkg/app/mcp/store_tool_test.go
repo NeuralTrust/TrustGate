@@ -61,8 +61,8 @@ func storeRC() *appconsumer.RoutableConsumer {
 	return &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]())}
 }
 
-// selfServiceCtx carries a self-service (free tier) gateway: the Store is open
-// regardless of any stamped mode or per-principal claim.
+// selfServiceCtx carries a self-service (free tier) gateway with nothing
+// stamped: the zero-friction default, where the Store is open.
 func selfServiceCtx() context.Context {
 	return appgateway.WithGateway(context.Background(), &gatewaydomain.Gateway{
 		Entitlements: gatewaydomain.Entitlements{Tier: "free"},

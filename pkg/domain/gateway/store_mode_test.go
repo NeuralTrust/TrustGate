@@ -16,69 +16,37 @@ package gateway
 
 import "testing"
 
-func TestStoreGovernanceEnabled_OnlyEnterprise(t *testing.T) {
+// TestStoreMode_DefaultsToOpenOnEveryTier guards the zero-friction default: a
+// gateway with nothing stamped is open whatever its plan, so a self-service
+// user reaches "install Notion" without configuring anything.
+func TestStoreMode_DefaultsToOpenOnEveryTier(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		tier string
-		want bool
-	}{
-		{tier: "enterprise", want: true},
-		{tier: "Enterprise", want: true},
-		{tier: "free", want: false},
-		{tier: "standard", want: false},
-		{tier: "", want: false},
-	}
-	for _, tc := range cases {
-		g := &Gateway{Entitlements: Entitlements{Tier: tc.tier}}
-		if got := g.StoreGovernanceEnabled(); got != tc.want {
-			t.Fatalf("tier %q: StoreGovernanceEnabled = %v, want %v", tc.tier, got, tc.want)
+	for _, tier := range []string{"free", "standard", "enterprise", ""} {
+		g := &Gateway{Entitlements: Entitlements{Tier: tier}}
+		if got := g.StoreMode(); got != StoreModeOpen {
+			t.Fatalf("tier %q unstamped: StoreMode = %q, want open", tier, got)
 		}
-	}
-	var nilGateway *Gateway
-	if nilGateway.StoreGovernanceEnabled() {
-		t.Fatal("a nil gateway must not report governance")
-	}
-}
-
-// TestStoreMode_SelfServiceIgnoresMetadata guards the product rule: on a
-// non-enterprise gateway the Store is always open, whatever mode is stamped in
-// metadata. The stamped value stays readable through ConfiguredStoreMode so an
-// admin's setting is not lost (it applies once the plan includes governance).
-func TestStoreMode_SelfServiceIgnoresMetadata(t *testing.T) {
-	t.Parallel()
-	for _, tier := range []string{"free", "standard", ""} {
-		for _, mode := range []string{StoreModeCurated, StoreModeNone} {
-			g := &Gateway{
-				Entitlements: Entitlements{Tier: tier},
-				Metadata:     WithStoreMode(nil, mode),
-			}
-			if got := g.StoreMode(); got != StoreModeOpen {
-				t.Fatalf("tier %q with %q stamped: StoreMode = %q, want open", tier, mode, got)
-			}
-			if got := g.ConfiguredStoreMode(); got != mode {
-				t.Fatalf("tier %q: ConfiguredStoreMode = %q, want %q", tier, got, mode)
-			}
-		}
-	}
-}
-
-func TestStoreMode_EnterpriseHonoursMetadata(t *testing.T) {
-	t.Parallel()
-	for _, mode := range []string{StoreModeOpen, StoreModeCurated, StoreModeNone} {
-		g := &Gateway{
-			Entitlements: Entitlements{Tier: "enterprise"},
-			Metadata:     WithStoreMode(nil, mode),
-		}
-		if got := g.StoreMode(); got != mode {
-			t.Fatalf("enterprise with %q stamped: StoreMode = %q", mode, got)
-		}
-	}
-	unstamped := &Gateway{Entitlements: Entitlements{Tier: "enterprise"}}
-	if got := unstamped.StoreMode(); got != StoreModeOpen {
-		t.Fatalf("enterprise without a stamp must default to open, got %q", got)
 	}
 	var nilGateway *Gateway
 	if got := nilGateway.StoreMode(); got != StoreModeOpen {
 		t.Fatalf("nil gateway StoreMode = %q, want open", got)
+	}
+}
+
+// TestStoreMode_HonoursStampedModeOnEveryTier guards the corrected product rule:
+// governance is not a plan entitlement. Once an admin — on any tier, including
+// self-service — narrows the Store, the stamped mode is enforced.
+func TestStoreMode_HonoursStampedModeOnEveryTier(t *testing.T) {
+	t.Parallel()
+	for _, tier := range []string{"free", "standard", "enterprise", ""} {
+		for _, mode := range []string{StoreModeOpen, StoreModeCurated, StoreModeNone} {
+			g := &Gateway{
+				Entitlements: Entitlements{Tier: tier},
+				Metadata:     WithStoreMode(nil, mode),
+			}
+			if got := g.StoreMode(); got != mode {
+				t.Fatalf("tier %q with %q stamped: StoreMode = %q", tier, mode, got)
+			}
+		}
 	}
 }
