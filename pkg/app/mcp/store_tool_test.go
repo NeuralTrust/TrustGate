@@ -30,6 +30,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
 )
 
 type fakeRegistryLister struct{ items []*registrydomain.Registry }
@@ -38,11 +39,27 @@ func (f fakeRegistryLister) List(context.Context, registrydomain.ListFilter) ([]
 	return f.items, len(f.items), nil
 }
 
-func shelfReg(code string, store *registrydomain.MCPStoreConfig) *registrydomain.Registry {
+type fakeGrantReader struct{ items []*storegrantdomain.Grant }
+
+func (f fakeGrantReader) ListByGateway(context.Context, ids.GatewayID) ([]*storegrantdomain.Grant, error) {
+	return f.items, nil
+}
+
+func shelfReg(code string) *registrydomain.Registry {
 	return &registrydomain.Registry{
 		ID:        ids.New[ids.RegistryKind](),
-		MCPTarget: &registrydomain.MCPTarget{Code: code, Store: store},
+		MCPTarget: &registrydomain.MCPTarget{Code: code},
 	}
+}
+
+// grantFor grants a catalog code (every instance) to groups/users; a non-nil
+// registry id narrows it to that instance.
+func grantFor(code string, registryID ids.RegistryID, groups, users []string) *storegrantdomain.Grant {
+	g, err := storegrantdomain.New(ids.New[ids.GatewayKind](), code, registryID, groups, users)
+	if err != nil {
+		panic(err)
+	}
+	return g
 }
 
 type fakeCatalog struct{ servers []catalogdomain.MCPServer }
@@ -207,7 +224,12 @@ func TestStoreToolCallRejectsUnknownTool(t *testing.T) {
 
 func storeToolWithShelf(t *testing.T, items ...*registrydomain.Registry) StoreTool {
 	t.Helper()
-	tool, err := NewStoreToolWithInstaller(sampleCatalog(), nil, fakeRegistryLister{items: items}, nil, nil)
+	return storeToolWithGrants(t, nil, items...)
+}
+
+func storeToolWithGrants(t *testing.T, grants []*storegrantdomain.Grant, items ...*registrydomain.Registry) StoreTool {
+	t.Helper()
+	tool, err := NewStoreToolWithInstaller(sampleCatalog(), nil, fakeRegistryLister{items: items}, fakeGrantReader{items: grants}, nil, nil)
 	if err != nil {
 		t.Fatalf("NewStoreToolWithInstaller: %v", err)
 	}
@@ -226,14 +248,17 @@ func resultsByCode(t *testing.T, raw json.RawMessage) map[string]map[string]any 
 }
 
 // TestStoreSearchTagsShelfState: under Selected the whole catalog is browsable
-// and each server's state is the caller's own outcome — "available" when the
-// shelf is published and granted to them, "request" otherwise. The legacy
-// requires_approval flag is not a state any more.
+// and each server's state is the caller's own outcome — "available" when a
+// grant names them for the code (or one of its instances), "request" otherwise.
 func TestStoreSearchTagsShelfState(t *testing.T) {
-	tool := storeToolWithShelf(t,
-		shelfReg("github", &registrydomain.MCPStoreConfig{Users: []string{"ana"}}),
-		shelfReg("gitlab", &registrydomain.MCPStoreConfig{Available: true, RequiresApproval: true, Groups: []string{"sre"}}),
-		// salesforce not on the shelf
+	gitlab := shelfReg("gitlab")
+	tool := storeToolWithGrants(t,
+		[]*storegrantdomain.Grant{
+			grantFor("github", ids.RegistryID{}, nil, []string{"ana"}),
+			grantFor("gitlab", gitlab.ID, []string{"sre"}, nil),
+			// salesforce granted to nobody
+		},
+		shelfReg("github"), gitlab,
 	)
 	curated := appgateway.WithGateway(
 		identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "ana", Claims: map[string]any{identity.ClaimGroups: []string{"eng"}}}),
@@ -253,7 +278,7 @@ func TestStoreSearchTagsShelfState(t *testing.T) {
 		t.Fatalf("gitlab (granted to sre, caller is eng) should be request, got %v", got["gitlab"]["store_state"])
 	}
 	if got["salesforce"]["store_state"] != storeStateRequest {
-		t.Fatalf("salesforce (not shelved) should be request, got %v", got["salesforce"]["store_state"])
+		t.Fatalf("salesforce (granted to nobody) should be request, got %v", got["salesforce"]["store_state"])
 	}
 
 	// The same caller in the granted group sees gitlab as available.
@@ -291,7 +316,7 @@ func ctxWithStoreAccess(base context.Context, sub, mode string) context.Context 
 }
 
 func TestStoreSearchPrincipalOpenOverridesCuratedGateway(t *testing.T) {
-	tool := storeToolWithShelf(t, shelfReg("github", &registrydomain.MCPStoreConfig{Available: true}))
+	tool := storeToolWithShelf(t, shelfReg("github"))
 	// Gateway default is curated (only shelf servers), but this principal's token
 	// carries store_access=open, so the whole catalog is browsable for them.
 	gw := enterpriseGateway(gatewaydomain.StoreModeCurated)
@@ -312,7 +337,7 @@ func TestStoreSearchPrincipalOpenOverridesCuratedGateway(t *testing.T) {
 func TestStoreSearchPrincipalNoneClosesStore(t *testing.T) {
 	// Gateway default is open, but this principal's token carries
 	// store_access=none, so the Store is closed for them.
-	tool := storeToolWithShelf(t, shelfReg("github", &registrydomain.MCPStoreConfig{Available: true}))
+	tool := storeToolWithShelf(t, shelfReg("github"))
 	ctx := ctxWithStoreAccess(context.Background(), "ana", gatewaydomain.StoreModeNone)
 	raw, err := tool.Call(ctx, storeRC(), "", StoreSearchToolName, nil)
 	if err != nil {
@@ -341,7 +366,10 @@ func TestStoreInstallPrincipalNoneRefused(t *testing.T) {
 // "request" (installing it files an approval request) while a granted shelf
 // server is "available" (instant).
 func TestStoreSearchCuratedModeShowsNonShelfAsRequest(t *testing.T) {
-	tool := storeToolWithShelf(t, shelfReg("github", &registrydomain.MCPStoreConfig{Users: []string{"ana"}}))
+	tool := storeToolWithGrants(t,
+		[]*storegrantdomain.Grant{grantFor("github", ids.RegistryID{}, nil, []string{"ana"})},
+		shelfReg("github"),
+	)
 	gw := enterpriseGateway(gatewaydomain.StoreModeCurated)
 	ctx := appgateway.WithGateway(identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "ana"}), gw)
 
@@ -361,6 +389,7 @@ func TestStoreSearchCuratedModeShowsNonShelfAsRequest(t *testing.T) {
 type fakeInstaller struct {
 	installed    []string
 	lastGroups   []string
+	lastRegistry ids.RegistryID
 	uninstalled  []string
 	lastInstance string
 	instances    []*installationdomain.Installation
@@ -371,6 +400,7 @@ type fakeInstaller struct {
 func (f *fakeInstaller) Install(_ context.Context, in appstore.InstallRequest) (*appstore.InstallResult, error) {
 	f.installed = append(f.installed, in.Code)
 	f.lastGroups = in.Groups
+	f.lastRegistry = in.RegistryID
 	if f.result != nil {
 		return f.result, nil
 	}
@@ -392,7 +422,7 @@ func (f *fakeInstaller) Uninstall(_ context.Context, _ ids.GatewayID, _, code, i
 
 func storeToolWithInstaller(t *testing.T, installer appstore.Installer) StoreTool {
 	t.Helper()
-	tool, err := NewStoreToolWithInstaller(sampleCatalog(), installer, nil, nil, nil)
+	tool, err := NewStoreToolWithInstaller(sampleCatalog(), installer, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewStoreToolWithInstaller: %v", err)
 	}
@@ -503,5 +533,43 @@ func TestStoreUninstallAmbiguousReturnsInstancePicker(t *testing.T) {
 	}
 	if len(installer.uninstalled) != 0 {
 		t.Fatal("an ambiguous uninstall must not remove anything")
+	}
+}
+
+// TestStoreInstallInstanceChoiceRoundTrip: when the installer reports several
+// usable configured instances the tool returns the list (no install recorded)
+// and a follow-up call with `instance` reaches the installer as a registry id.
+func TestStoreInstallInstanceChoiceRoundTrip(t *testing.T) {
+	finance := ids.New[ids.RegistryKind]()
+	analytics := ids.New[ids.RegistryKind]()
+	inst := &fakeInstaller{result: &appstore.InstallResult{
+		Code: "github", Name: "GitHub", RequiresInstanceChoice: true,
+		InstanceChoices: []appstore.InstanceChoice{{RegistryID: finance, Name: "GitHub (finance)"}, {RegistryID: analytics, Name: "GitHub (analytics)"}},
+	}}
+	tool := storeToolWithInstaller(t, inst)
+	raw, err := tool.Call(ctxWithPrincipal(), storeRC(), "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"github"}`))
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	sc := decodeStructured(t, raw)
+	if sc["requires_instance_choice"] != true {
+		t.Fatalf("expected requires_instance_choice, got %+v", sc)
+	}
+	choices, _ := sc["instances"].([]any)
+	if len(choices) != 2 || choices[0].(map[string]any)["instance"] != finance.String() || choices[0].(map[string]any)["name"] != "GitHub (finance)" {
+		t.Fatalf("choices must carry registry id and name, got %+v", sc["instances"])
+	}
+
+	inst.result = nil
+	if _, err := tool.Call(ctxWithPrincipal(), storeRC(), "https://gw.example", StoreInstallToolName,
+		json.RawMessage(`{"code":"github","instance":"`+analytics.String()+`"}`)); err != nil {
+		t.Fatalf("install with instance: %v", err)
+	}
+	if inst.lastRegistry != analytics {
+		t.Fatalf("the chosen instance must reach the installer as RegistryID, got %s", inst.lastRegistry)
+	}
+	if _, err := tool.Call(ctxWithPrincipal(), storeRC(), "https://gw.example", StoreInstallToolName,
+		json.RawMessage(`{"code":"github","instance":"not-a-uuid"}`)); err == nil {
+		t.Fatal("a malformed instance id must be refused")
 	}
 }

@@ -27,6 +27,7 @@ import (
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
 )
 
 type CatalogModel struct {
@@ -44,6 +45,7 @@ type Data struct {
 	Roles         []roledomain.Role
 	Providers     []catalogdomain.Provider
 	CatalogModels []CatalogModel
+	StoreGrants   []storegrantdomain.Grant
 }
 
 type Snapshot struct {
@@ -79,6 +81,8 @@ type Snapshot struct {
 	catalogByProviderSlug map[string]*catalogdomain.Model
 	catalogByProviderCode map[string][]*catalogdomain.Model
 	catalogAll            []*catalogdomain.Model
+
+	storeGrantsByGateway map[ids.GatewayID][]*storegrantdomain.Grant
 }
 
 func Build(data Data) *Snapshot {
@@ -106,6 +110,7 @@ func Build(data Data) *Snapshot {
 		catalogByProviderSlug: make(map[string]*catalogdomain.Model, len(data.CatalogModels)),
 		catalogByProviderCode: make(map[string][]*catalogdomain.Model),
 		catalogAll:            make([]*catalogdomain.Model, 0, len(data.CatalogModels)),
+		storeGrantsByGateway:  make(map[ids.GatewayID][]*storegrantdomain.Grant),
 	}
 
 	s.buildGateways()
@@ -115,8 +120,22 @@ func Build(data Data) *Snapshot {
 	s.buildAuths()
 	s.buildRoles()
 	s.buildCatalog()
+	s.buildStoreGrants()
 
 	return s
+}
+
+func (s *Snapshot) buildStoreGrants() {
+	for i := range s.data.StoreGrants {
+		g := &s.data.StoreGrants[i]
+		s.storeGrantsByGateway[g.GatewayID] = append(s.storeGrantsByGateway[g.GatewayID], g)
+	}
+}
+
+// StoreGrantsByGateway returns a gateway's MCP Store access grants in snapshot
+// order (nil when it has none).
+func (s *Snapshot) StoreGrantsByGateway(gatewayID ids.GatewayID) []*storegrantdomain.Grant {
+	return s.storeGrantsByGateway[gatewayID]
 }
 
 func (s *Snapshot) buildGateways() {

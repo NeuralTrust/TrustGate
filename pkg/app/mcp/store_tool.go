@@ -31,6 +31,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
 )
 
 const (
@@ -89,25 +90,28 @@ type storeTool struct {
 	catalog    MCPServerCatalog
 	installer  appstore.Installer
 	registries appstore.RegistryLister
+	grants     storegrantdomain.Reader
 	configure  ConfigureGateway
 	connect    ServerConnectGateway
 }
 
 // NewStoreTool wires the catalog-search meta-tool (SEARCH only).
 func NewStoreTool(catalog MCPServerCatalog) (StoreTool, error) {
-	return NewStoreToolWithInstaller(catalog, nil, nil, nil, nil)
+	return NewStoreToolWithInstaller(catalog, nil, nil, nil, nil, nil)
 }
 
 // NewStoreToolWithInstaller wires the Store meta-tools. When installer is nil
 // only SEARCH is offered (e.g. a plane without the installation store); when
-// registries is nil SEARCH does not tag results with their shelf state; when
-// configure is nil an install that needs per-user setup returns the variable list
-// but no hosted-form link; when connect is nil an install that needs the user's
-// account returns requires_auth but no OAuth connect link.
+// registries or grants is nil SEARCH cannot tell an instant install from a
+// request under Selected access and reports everything as a request; when
+// configure is nil an install that needs per-user setup returns the variable
+// list but no hosted-form link; when connect is nil an install that needs the
+// user's account returns requires_auth but no OAuth connect link.
 func NewStoreToolWithInstaller(
 	catalog MCPServerCatalog,
 	installer appstore.Installer,
 	registries appstore.RegistryLister,
+	grants storegrantdomain.Reader,
 	configure ConfigureGateway,
 	connect ServerConnectGateway,
 ) (StoreTool, error) {
@@ -118,6 +122,7 @@ func NewStoreToolWithInstaller(
 		catalog:    catalog,
 		installer:  installer,
 		registries: registries,
+		grants:     grants,
 		configure:  configure,
 		connect:    connect,
 	}, nil
@@ -175,6 +180,9 @@ func (t *storeTool) Call(
 type storeInstallArgs struct {
 	Code   string            `json:"code"`
 	Config map[string]string `json:"config,omitempty"`
+	// Instance is the configured instance (registry id) to install when the
+	// server has several, from a prior requires_instance_choice response.
+	Instance string `json:"instance,omitempty"`
 }
 
 func (t *storeTool) principalSubject(ctx context.Context) (string, error) {
@@ -206,6 +214,14 @@ func (t *storeTool) install(
 	if mode == gatewaydomain.StoreModeNone {
 		return nil, fmt.Errorf("%w: self-service install is disabled for this gateway", ErrStoreToolUnavailable)
 	}
+	var registryID ids.RegistryID
+	if raw := strings.TrimSpace(args.Instance); raw != "" {
+		parsed, err := ids.Parse[ids.RegistryKind](raw)
+		if err != nil {
+			return nil, fmt.Errorf("%w: invalid instance id %q", ErrStoreToolUnavailable, raw)
+		}
+		registryID = parsed
+	}
 	res, err := t.installer.Install(ctx, appstore.InstallRequest{
 		GatewayID:    rc.Consumer.GatewayID,
 		PrincipalSub: principal.Subject,
@@ -214,9 +230,15 @@ func (t *storeTool) install(
 		Groups:       principalGroups(principal),
 		OpenMode:     mode == gatewaydomain.StoreModeOpen,
 		Config:       args.Config,
+		RegistryID:   registryID,
 	})
 	if err != nil {
 		return nil, err
+	}
+	// Several configured instances are usable and none was named: hand back the
+	// list so the caller re-issues install with the chosen one.
+	if res.RequiresInstanceChoice {
+		return instanceChoices(res)
 	}
 	// A server that needs per-user setup gets a hosted-form link the user opens to
 	// enter their values (the only path for secrets, and a nicer one for the rest).
@@ -420,6 +442,26 @@ func (t *storeTool) instancePicker(
 	})
 }
 
+// instanceChoices returns a structured "which instance?" result listing the
+// configured instances of a server the principal may install (registry id +
+// name). It is a normal (non-error) result: the caller re-issues install with
+// the chosen id in `instance`.
+func instanceChoices(res *appstore.InstallResult) (json.RawMessage, error) {
+	list := make([]map[string]any, 0, len(res.InstanceChoices))
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s has several configured instances. Ask the user which one they mean, then re-run install with its `instance` id:", res.Name)
+	for _, c := range res.InstanceChoices {
+		list = append(list, map[string]any{"instance": c.RegistryID.String(), "name": c.Name})
+		fmt.Fprintf(&b, "\n• %s — instance \"%s\"", c.Name, c.RegistryID.String())
+	}
+	return marshalToolResult(b.String(), map[string]any{
+		"code":                     res.Code,
+		"name":                     res.Name,
+		"requires_instance_choice": true,
+		"instances":                list,
+	})
+}
+
 func principalGroups(principal *identity.Principal) []string {
 	if principal == nil {
 		return nil
@@ -550,11 +592,12 @@ const (
 	storeStateRequest   = "request"
 )
 
-// shelfEntry is one instance's Store grant: the groups/users it is granted to.
-// Grants are explicit — both empty means granted to nobody (under Selected).
-type shelfEntry struct {
-	groups []string
-	users  []string
+// shelf is what SEARCH needs to tell an instant install from a request under
+// Selected access: the gateway's Store grants and which codes have configured
+// instances (registries), by registry id.
+type shelf struct {
+	grants    *storegrantdomain.Set
+	instances map[string][]ids.RegistryID
 }
 
 func (t *storeTool) search(
@@ -578,7 +621,7 @@ func (t *storeTool) search(
 	query := strings.ToLower(strings.TrimSpace(args.Query))
 	category := strings.ToLower(strings.TrimSpace(args.Category))
 
-	shelf := t.shelfIndex(ctx, rc)
+	sh := t.shelfIndex(ctx, rc)
 	mode := t.effectiveStoreMode(ctx)
 	principal := identity.PrincipalFromContext(ctx)
 	groups := principalGroups(principal)
@@ -624,7 +667,7 @@ func (t *storeTool) search(
 		}
 		// The whole catalog is browsable in All and Selected; the state tells the
 		// caller whether install is instant for them or files a request.
-		state := shelfState(shelf, entry.Code, mode, groups, subject)
+		state := shelfState(sh, entry.Code, mode, groups, subject)
 		total++
 		if len(matched) < limit {
 			matched = append(matched, toSearchResult(entry, state))
@@ -652,31 +695,35 @@ func (t *storeTool) search(
 	return raw, nil
 }
 
-// shelfIndex maps catalog codes the admin has put on this gateway's shelf to
-// their Store governance. Empty when registries are not wired (data plane).
-func (t *storeTool) shelfIndex(ctx context.Context, rc *appconsumer.RoutableConsumer) map[string]shelfEntry {
-	if t.registries == nil || rc == nil || rc.Consumer == nil {
+// shelfIndex loads the gateway's grants and configured instances. Nil when
+// neither registries nor grants are wired (a SEARCH-only plane), in which case
+// every server under Selected reads as a request.
+func (t *storeTool) shelfIndex(ctx context.Context, rc *appconsumer.RoutableConsumer) *shelf {
+	if rc == nil || rc.Consumer == nil || (t.registries == nil && t.grants == nil) {
 		return nil
 	}
-	items, _, err := t.registries.List(ctx, registrydomain.ListFilter{
-		GatewayID: rc.Consumer.GatewayID,
-		Page:      1,
-		Size:      storeShelfPageSize,
-	})
-	if err != nil {
-		return nil
-	}
-	shelf := make(map[string]shelfEntry, len(items))
-	for _, reg := range items {
-		if reg == nil || reg.MCPTarget == nil || reg.MCPTarget.Code == "" {
-			continue
-		}
-		shelf[reg.MCPTarget.Code] = shelfEntry{
-			groups: reg.MCPTarget.StoreGroups(),
-			users:  reg.MCPTarget.StoreUsers(),
+	sh := &shelf{grants: storegrantdomain.Index(nil), instances: map[string][]ids.RegistryID{}}
+	if t.grants != nil {
+		if grants, err := t.grants.ListByGateway(ctx, rc.Consumer.GatewayID); err == nil {
+			sh.grants = storegrantdomain.Index(grants)
 		}
 	}
-	return shelf
+	if t.registries != nil {
+		items, _, err := t.registries.List(ctx, registrydomain.ListFilter{
+			GatewayID: rc.Consumer.GatewayID,
+			Page:      1,
+			Size:      storeShelfPageSize,
+		})
+		if err == nil {
+			for _, reg := range items {
+				if reg == nil || reg.MCPTarget == nil || reg.MCPTarget.Code == "" {
+					continue
+				}
+				sh.instances[reg.MCPTarget.Code] = append(sh.instances[reg.MCPTarget.Code], reg.ID)
+			}
+		}
+	}
+	return sh
 }
 
 // storeMode is the gateway's own Store mode. It fails closed: when no gateway
@@ -712,18 +759,22 @@ const storeShelfPageSize = 500
 
 // shelfState is what installing this server means for the calling principal:
 // "available" when it installs instantly — always under All, or under Selected
-// when an instance exists and is granted to them — and "request" when the
-// install would file an approval request instead.
-func shelfState(shelf map[string]shelfEntry, code, mode string, groups []string, subject string) string {
+// when a grant names them for the code or for one of its configured instances —
+// and "request" when the install would file an approval request instead.
+func shelfState(sh *shelf, code, mode string, groups []string, subject string) string {
 	if mode == gatewaydomain.StoreModeOpen {
 		return storeStateAvailable
 	}
-	entry, ok := shelf[code]
-	if !ok {
+	if sh == nil {
 		return storeStateRequest
 	}
-	if appstore.StoreAccessAllows(entry.groups, entry.users, groups, subject) {
+	if sh.grants.CodeAllows(code, groups, subject) {
 		return storeStateAvailable
+	}
+	for _, id := range sh.instances[code] {
+		if sh.grants.Instance(id).Allows(groups, subject) {
+			return storeStateAvailable
+		}
 	}
 	return storeStateRequest
 }
@@ -837,6 +888,7 @@ func storeInstallDefinition() (Tool, error) {
 		"title": "Install an MCP server",
 		"description": "Install a catalog MCP server for the current user so its tools appear on this Store. When the user needs a server's capabilities, call this yourself to add it through the gateway — do not ask the user to install it manually, add it in their client's MCP settings, or connect to the upstream MCP URL directly, since that bypasses this gateway's governance, auditing and credentials. Takes the catalog `code` returned by " + StoreSearchToolName + ". " +
 			"Some servers need per-user setup values (e.g. a Snowflake account URL, a ServiceNow instance): if so, this returns requires_config with the list of variables to collect — ask the user for them and call install again with them in `config`, or hand them the returned configure_url. " +
+			"When the administrator connected several instances of a server, this returns requires_instance_choice with the list — ask the user which one and call install again with its id in `instance`. " +
 			"Governed by the user's role; a server that needs the user's own account returns a connect link for them to authorize before its tools work.",
 		"inputSchema": map[string]any{
 			"type": "object",
@@ -849,6 +901,10 @@ func storeInstallDefinition() (Tool, error) {
 					"type":                 "object",
 					"description":          "Per-user setup values for servers that declare them (from a prior requires_config response), e.g. {\"instance\":\"acme\"}. Non-secret values only; secrets are entered through the connect link.",
 					"additionalProperties": map[string]any{"type": "string"},
+				},
+				"instance": map[string]any{
+					"type":        "string",
+					"description": "Which configured instance of the server to install, when the administrator connected several (from a prior requires_instance_choice response). Omit otherwise.",
 				},
 			},
 			"required":             []string{"code"},

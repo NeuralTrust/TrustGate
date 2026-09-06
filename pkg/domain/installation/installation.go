@@ -74,9 +74,15 @@ type Installation struct {
 	// Config carries optional per-user overrides (e.g. URL variables) that
 	// specialise the shared registry for this principal. Nil when the shared
 	// registry is used as-is.
-	Config    map[string]string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	Config map[string]string
+	// RegistryID binds the install to one configured instance (registry) of its
+	// catalog code when the admin has connected several (e.g. "Snowflake
+	// (finance)" and "Snowflake (analytics)", each with its own credentials).
+	// The nil id means the code's canonical instance: the sole registry, or the
+	// one materialised from the catalog.
+	RegistryID ids.RegistryID
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // New builds a fresh installation in the installed state.
@@ -169,6 +175,17 @@ func (i *Installation) InstanceLabel() string {
 		label = strings.TrimRight(string(runes[:maxLabelLen]), " ·")
 	}
 	return label
+}
+
+// SameInstance reports whether an install of the same code bound to registryID
+// with config is this very install: same configured instance and identical
+// per-user config. It is the dedupe rule — such an install refreshes this row
+// rather than creating a new instance.
+func (i *Installation) SameInstance(registryID ids.RegistryID, config map[string]string) bool {
+	if i == nil {
+		return false
+	}
+	return i.RegistryID == registryID && i.SameConfig(config)
 }
 
 // SameConfig reports whether two installs carry the identical per-user config,

@@ -31,7 +31,7 @@ import (
 const pgForeignKeyViolation = "23503"
 
 const selectColumns = `
-	SELECT id, gateway_id, principal_sub, catalog_code, status, installed_by, config, created_at, updated_at
+	SELECT id, gateway_id, principal_sub, catalog_code, status, installed_by, config, registry_id, created_at, updated_at
 	  FROM store_installations`
 
 var _ domain.Repository = (*Repository)(nil)
@@ -61,16 +61,17 @@ func (r *Repository) Upsert(ctx context.Context, in *domain.Installation) error 
 	// existing instance carries its id and updates in place.
 	const query = `
 		INSERT INTO store_installations
-			(id, gateway_id, principal_sub, catalog_code, status, installed_by, config, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			(id, gateway_id, principal_sub, catalog_code, status, installed_by, config, registry_id, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT (id) DO UPDATE
 			SET status       = EXCLUDED.status,
 			    installed_by = EXCLUDED.installed_by,
 			    config       = EXCLUDED.config,
+			    registry_id  = EXCLUDED.registry_id,
 			    updated_at   = EXCLUDED.updated_at`
 	if _, err := r.conn.Pool.Exec(ctx, query,
 		in.ID, in.GatewayID, in.PrincipalSub, in.CatalogCode, string(in.Status),
-		in.InstalledBy, configJSON, in.CreatedAt, in.UpdatedAt,
+		in.InstalledBy, configJSON, nullableRegistryID(in.RegistryID), in.CreatedAt, in.UpdatedAt,
 	); err != nil {
 		return mapPgError(err)
 	}
@@ -237,20 +238,33 @@ func scanInstallation(row scannable) (*domain.Installation, error) {
 		in         domain.Installation
 		status     string
 		configJSON []byte
+		registryID *ids.RegistryID
 	)
 	if err := row.Scan(
 		&in.ID, &in.GatewayID, &in.PrincipalSub, &in.CatalogCode, &status,
-		&in.InstalledBy, &configJSON, &in.CreatedAt, &in.UpdatedAt,
+		&in.InstalledBy, &configJSON, &registryID, &in.CreatedAt, &in.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
 	in.Status = domain.Status(status)
+	if registryID != nil {
+		in.RegistryID = *registryID
+	}
 	config, err := unmarshalConfig(configJSON)
 	if err != nil {
 		return nil, fmt.Errorf("installation repository: unmarshal config: %w", err)
 	}
 	in.Config = config
 	return &in, nil
+}
+
+// nullableRegistryID stores the nil id as SQL NULL ("the code's canonical
+// instance") so the column reads naturally in admin queries.
+func nullableRegistryID(id ids.RegistryID) *ids.RegistryID {
+	if id.IsNil() {
+		return nil
+	}
+	return &id
 }
 
 func marshalConfig(config map[string]string) ([]byte, error) {

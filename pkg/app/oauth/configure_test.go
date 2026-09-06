@@ -27,6 +27,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
 )
 
 type fakeConfigCatalog struct {
@@ -116,11 +117,27 @@ func (f *fakeShelf) List(context.Context, registrydomain.ListFilter) ([]*registr
 	return f.items, len(f.items), nil
 }
 
-func shelf(code string, store *registrydomain.MCPStoreConfig) *registrydomain.Registry {
+func shelf(code string) *registrydomain.Registry {
 	return &registrydomain.Registry{
 		ID:        ids.New[ids.RegistryKind](),
-		MCPTarget: &registrydomain.MCPTarget{Code: code, Store: store},
+		MCPTarget: &registrydomain.MCPTarget{Code: code},
 	}
+}
+
+// fakeGrants is the Store access grants the real installer decides against.
+type fakeGrants struct{ items []*storegrantdomain.Grant }
+
+func (f *fakeGrants) ListByGateway(context.Context, ids.GatewayID) ([]*storegrantdomain.Grant, error) {
+	return f.items, nil
+}
+
+// grant grants a catalog code (every instance) to groups/users.
+func grant(code string, groups, users []string) *storegrantdomain.Grant {
+	g, err := storegrantdomain.New(ids.New[ids.GatewayKind](), code, ids.RegistryID{}, groups, users)
+	if err != nil {
+		panic(err)
+	}
+	return g
 }
 
 type configureFixtureT struct {
@@ -150,8 +167,15 @@ func configureCatalog() fakeConfigCatalog {
 
 // configureFixture wires the configure service over the REAL store installer so
 // a configure-before-install submission runs the same governance as the install
-// tool. shelfItems is the gateway's registry shelf; open selects the Store mode.
+// tool. shelfItems is the gateway's registry shelf (no grants); open selects the
+// Store mode.
 func configureFixture(t *testing.T, open bool, shelfItems ...*registrydomain.Registry) configureFixtureT {
+	t.Helper()
+	return configureFixtureGranted(t, open, nil, shelfItems...)
+}
+
+// configureFixtureGranted is configureFixture with Store access grants.
+func configureFixtureGranted(t *testing.T, open bool, grants []*storegrantdomain.Grant, shelfItems ...*registrydomain.Registry) configureFixtureT {
 	t.Helper()
 	gw := ids.New[ids.GatewayKind]()
 	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
@@ -165,7 +189,7 @@ func configureFixture(t *testing.T, open bool, shelfItems ...*registrydomain.Reg
 	installs := &fakeInstalls{}
 	sh := &fakeShelf{items: shelfItems}
 	catalog := configureCatalog()
-	installer, err := appstore.NewInstaller(catalog, sh, installs, nil)
+	installer, err := appstore.NewInstaller(catalog, sh, installs, &fakeGrants{items: grants}, nil)
 	if err != nil {
 		t.Fatalf("NewInstaller: %v", err)
 	}
@@ -214,7 +238,7 @@ func (f configureFixtureT) rows(t *testing.T, code string) []*installationdomain
 func TestConfigure_SubmitPlainStoresOnInstallation(t *testing.T) {
 	// Available shelf server, no install yet: the form-driven first configuration
 	// records the install through the governed installer, which admits it.
-	f := configureFixture(t, false, shelf("snowflake", &registrydomain.MCPStoreConfig{Users: []string{"ana"}}))
+	f := configureFixtureGranted(t, false, []*storegrantdomain.Grant{grant("snowflake", nil, []string{"ana"})}, shelf("snowflake"))
 	id := f.ticket(t, "snowflake", "")
 
 	page, err := f.svc.Submit(context.Background(), id, map[string]string{
@@ -245,7 +269,7 @@ func TestConfigure_SubmitPlainStoresOnInstallation(t *testing.T) {
 // shelf granted to another group) before installing it must end as a pending
 // request, never as an installed row.
 func TestConfigure_FirstConfigureOfGovernedServerIsPending(t *testing.T) {
-	f := configureFixture(t, false, shelf("snowflake", &registrydomain.MCPStoreConfig{Available: true, Groups: []string{"data-eng"}}))
+	f := configureFixtureGranted(t, false, []*storegrantdomain.Grant{grant("snowflake", []string{"data-eng"}, nil)}, shelf("snowflake"))
 	id := f.ticket(t, "snowflake", "", "marketing")
 
 	page, err := f.svc.Submit(context.Background(), id, map[string]string{
@@ -286,7 +310,7 @@ func TestConfigure_FirstConfigureCuratedNotOnShelfIsPending(t *testing.T) {
 // exactly as to the tool — the ticket carries the principal's groups. Under
 // Selected, a principal outside the grant files a request; one inside installs.
 func TestConfigure_FirstConfigureGroupGatedIsPending(t *testing.T) {
-	f := configureFixture(t, false, shelf("snowflake", &registrydomain.MCPStoreConfig{Available: true, Groups: []string{"data-eng"}}))
+	f := configureFixtureGranted(t, false, []*storegrantdomain.Grant{grant("snowflake", []string{"data-eng"}, nil)}, shelf("snowflake"))
 	values := map[string]string{"account_url": "acme.snowflakecomputing.com", "database": "ANALYTICS"}
 
 	// Not in the group: recorded as a pending request, not installed.
@@ -304,7 +328,7 @@ func TestConfigure_FirstConfigureGroupGatedIsPending(t *testing.T) {
 
 	// In the group (fresh fixture, so the pending request above does not merge):
 	// installs instantly.
-	g := configureFixture(t, false, shelf("snowflake", &registrydomain.MCPStoreConfig{Available: true, Groups: []string{"data-eng"}}))
+	g := configureFixtureGranted(t, false, []*storegrantdomain.Grant{grant("snowflake", []string{"data-eng"}, nil)}, shelf("snowflake"))
 	allowed := g.ticket(t, "snowflake", "", "data-eng")
 	if _, err := g.svc.Submit(context.Background(), allowed, values); err != nil {
 		t.Fatalf("group member Submit: %v", err)
@@ -342,7 +366,7 @@ func TestConfigure_FirstConfigureWithoutInstallerRefused(t *testing.T) {
 // TestConfigure_FirstConfigureIncompleteSavesNothing: a first-time submission
 // missing a required plain value cannot be recorded half-configured.
 func TestConfigure_FirstConfigureIncompleteSavesNothing(t *testing.T) {
-	f := configureFixture(t, true, shelf("snowflake", &registrydomain.MCPStoreConfig{Available: true}))
+	f := configureFixture(t, true, shelf("snowflake"))
 	id := f.ticket(t, "snowflake", "")
 	_, err := f.svc.Submit(context.Background(), id, map[string]string{"account_url": "acme.snowflakecomputing.com"})
 	if !errors.Is(err, oauth.ErrConfigureIncomplete) || !errors.Is(err, oauth.ErrConfigureInvalid) {
@@ -356,7 +380,7 @@ func TestConfigure_FirstConfigureIncompleteSavesNothing(t *testing.T) {
 // TestConfigure_ExistingInstanceMergesInPlace: configuring an installed instance
 // merges the values into that row and keeps its status.
 func TestConfigure_ExistingInstanceMergesInPlace(t *testing.T) {
-	f := configureFixture(t, true, shelf("snowflake", &registrydomain.MCPStoreConfig{Available: true, RequiresApproval: true}))
+	f := configureFixture(t, true, shelf("snowflake"))
 	pending := f.seed(t, "snowflake", installationdomain.StatusPendingApproval, map[string]string{"account_url": "acme.snowflakecomputing.com"})
 	id := f.ticket(t, "snowflake", pending.ID.String())
 
@@ -383,7 +407,7 @@ func TestConfigure_ExistingInstanceMergesInPlace(t *testing.T) {
 // TestConfigure_TicketTargetsPinnedInstance: with two instances of one code the
 // pinned ticket writes to the named instance, not to whichever Find returns.
 func TestConfigure_TicketTargetsPinnedInstance(t *testing.T) {
-	f := configureFixture(t, true, shelf("snowflake", &registrydomain.MCPStoreConfig{Available: true}))
+	f := configureFixture(t, true, shelf("snowflake"))
 	a := f.seed(t, "snowflake", installationdomain.StatusInstalled, map[string]string{"account_url": "acme.snowflakecomputing.com", "database": "A"})
 	b := f.seed(t, "snowflake", installationdomain.StatusInstalled, map[string]string{"account_url": "acme.snowflakecomputing.com", "database": "B"})
 
@@ -408,7 +432,7 @@ func TestConfigure_TicketTargetsPinnedInstance(t *testing.T) {
 // TestConfigure_PinnedTicketRejectsForeignInstance: a ticket pinned to an
 // instance of another code (or another principal) is refused.
 func TestConfigure_PinnedTicketRejectsForeignInstance(t *testing.T) {
-	f := configureFixture(t, true, shelf("snowflake", &registrydomain.MCPStoreConfig{Available: true}))
+	f := configureFixture(t, true, shelf("snowflake"))
 	other := f.seed(t, "com.brightdata/mcp", installationdomain.StatusInstalled, nil)
 	id := f.ticket(t, "snowflake", other.ID.String())
 	_, err := f.svc.Submit(context.Background(), id, map[string]string{"database": "X"})
@@ -418,7 +442,7 @@ func TestConfigure_PinnedTicketRejectsForeignInstance(t *testing.T) {
 }
 
 func TestConfigure_SubmitSecretStoresInVault(t *testing.T) {
-	f := configureFixture(t, true, shelf("com.brightdata/mcp", &registrydomain.MCPStoreConfig{Available: true}))
+	f := configureFixture(t, true, shelf("com.brightdata/mcp"))
 	id := f.ticket(t, "com.brightdata/mcp", "")
 
 	if _, err := f.svc.Submit(context.Background(), id, map[string]string{"token": "s3cr3t"}); err != nil {
@@ -435,7 +459,7 @@ func TestConfigure_SubmitSecretStoresInVault(t *testing.T) {
 }
 
 func TestConfigure_SubmitRejectsUnsafeValue(t *testing.T) {
-	f := configureFixture(t, true, shelf("snowflake", &registrydomain.MCPStoreConfig{Available: true}))
+	f := configureFixture(t, true, shelf("snowflake"))
 	id := f.ticket(t, "snowflake", "")
 	_, err := f.svc.Submit(context.Background(), id, map[string]string{"account_url": "evil.com/../x"})
 	if !errors.Is(err, oauth.ErrConfigureInvalid) {
@@ -444,7 +468,7 @@ func TestConfigure_SubmitRejectsUnsafeValue(t *testing.T) {
 }
 
 func TestConfigure_SubmitRejectsUnknownVariable(t *testing.T) {
-	f := configureFixture(t, true, shelf("snowflake", &registrydomain.MCPStoreConfig{Available: true}))
+	f := configureFixture(t, true, shelf("snowflake"))
 	id := f.ticket(t, "snowflake", "")
 	_, err := f.svc.Submit(context.Background(), id, map[string]string{"bogus": "x"})
 	if !errors.Is(err, oauth.ErrConfigureInvalid) {
@@ -453,7 +477,7 @@ func TestConfigure_SubmitRejectsUnknownVariable(t *testing.T) {
 }
 
 func TestConfigure_PageReportsSetState(t *testing.T) {
-	f := configureFixture(t, true, shelf("snowflake", &registrydomain.MCPStoreConfig{Available: true}))
+	f := configureFixture(t, true, shelf("snowflake"))
 	inst := f.seed(t, "snowflake", installationdomain.StatusInstalled, map[string]string{"account_url": "acme.snowflakecomputing.com"})
 	id := f.ticket(t, "snowflake", inst.ID.String())
 	page, err := f.svc.Page(context.Background(), id)

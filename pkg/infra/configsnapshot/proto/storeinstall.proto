@@ -59,6 +59,9 @@ message Installation {
   map<string, string> config = 7;
   int64 created_at_unix = 8;
   int64 updated_at_unix = 9;
+  // registry_id binds the install to one configured instance (registry) of its
+  // code; empty = the code's canonical instance.
+  string registry_id = 10;
 }
 
 message UpsertInstallationRequest {

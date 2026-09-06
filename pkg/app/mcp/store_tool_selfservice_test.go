@@ -32,6 +32,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
 )
 
 // e2eCatalog serves the search catalog, the installer's by-code lookup and the
@@ -90,6 +91,24 @@ func (c *e2eCreator) Create(_ context.Context, in appregistry.CreateInput) (*reg
 	c.created++
 	c.regs.items = append(c.regs.items, reg)
 	return reg, nil
+}
+
+// e2eGrants is an in-memory Store grant store.
+type e2eGrants struct{ items []*storegrantdomain.Grant }
+
+func (g *e2eGrants) ListByGateway(context.Context, ids.GatewayID) ([]*storegrantdomain.Grant, error) {
+	return g.items, nil
+}
+
+func (g *e2eGrants) Upsert(_ context.Context, grant *storegrantdomain.Grant) error {
+	for i, existing := range g.items {
+		if existing.CatalogCode == grant.CatalogCode && existing.RegistryID == grant.RegistryID {
+			g.items[i] = grant
+			return nil
+		}
+	}
+	g.items = append(g.items, grant)
+	return nil
 }
 
 // e2eInstalls is an in-memory installation repository keyed by instance id.
@@ -220,6 +239,7 @@ type e2eHarness struct {
 	regs      *e2eRegistries
 	creator   *e2eCreator
 	installs  *e2eInstalls
+	grants    *e2eGrants
 	connect   *e2eConnect
 	configure *e2eConfigure
 	rc        *appconsumer.RoutableConsumer
@@ -238,19 +258,20 @@ func newE2EHarness(t *testing.T, servers ...catalogdomain.MCPServer) *e2eHarness
 		t.Fatalf("NewRegistryEnsurer: %v", err)
 	}
 	installs := &e2eInstalls{}
-	installer, err := appstore.NewInstaller(catalog, regs, installs, ensurer)
+	grants := &e2eGrants{}
+	installer, err := appstore.NewInstaller(catalog, regs, installs, grants, ensurer)
 	if err != nil {
 		t.Fatalf("NewInstaller: %v", err)
 	}
 	connect := &e2eConnect{}
 	configure := &e2eConfigure{}
-	tool, err := NewStoreToolWithInstaller(catalog, installer, regs, configure, connect)
+	tool, err := NewStoreToolWithInstaller(catalog, installer, regs, grants, configure, connect)
 	if err != nil {
 		t.Fatalf("NewStoreToolWithInstaller: %v", err)
 	}
 	gw := ids.New[ids.GatewayKind]()
 	return &e2eHarness{
-		tool: tool, regs: regs, creator: creator, installs: installs, connect: connect, configure: configure,
+		tool: tool, regs: regs, creator: creator, installs: installs, grants: grants, connect: connect, configure: configure,
 		rc: &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)},
 	}
 }
@@ -300,8 +321,8 @@ func TestStoreInstall_SelfServiceOAuthEndToEnd(t *testing.T) {
 				t.Fatalf("expected exactly one materialised registry, got %d", len(h.regs.items))
 			}
 			reg := h.regs.items[0]
-			if reg.MCPTarget.Code != tc.server.Code || !reg.MCPTarget.StoreAvailable() {
-				t.Fatalf("materialised registry must carry the code and be on the shelf: %+v", reg.MCPTarget)
+			if reg.MCPTarget.Code != tc.server.Code {
+				t.Fatalf("materialised registry must carry the code: %+v", reg.MCPTarget)
 			}
 			if reg.MCPTarget.Auth == nil || reg.MCPTarget.Auth.Mode != registrydomain.MCPAuthModeForwarded {
 				t.Fatalf("OAuth server must materialise with forwarded auth, got %+v", reg.MCPTarget.Auth)
