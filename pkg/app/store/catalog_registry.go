@@ -122,89 +122,16 @@ func catalogAuth(entry catalogdomain.MCPServer) *registrydomain.MCPAuth {
 	}
 }
 
-// catalogAuthMethods reports which auth methods a catalog entry offers. The
-// explicit AuthMethods list is authoritative when present; otherwise the methods
-// are derived from the coarse hint and the entry's shape (an OAuth spec ⇒ oauth,
-// a static hint or an auth header ⇒ static).
+// catalogAuthMethods is the catalog entry's declared install methods.
 func catalogAuthMethods(entry catalogdomain.MCPServer) (static, oauth bool) {
-	if len(entry.AuthMethods) > 0 {
-		for _, m := range entry.AuthMethods {
-			switch strings.ToLower(strings.TrimSpace(m)) {
-			case "static":
-				static = true
-			case "oauth":
-				oauth = true
-			}
-		}
-		return static, oauth
-	}
-	hint := strings.ToLower(strings.TrimSpace(entry.AuthHint))
-	oauth = hint == "oauth" || entry.OAuth != nil
-	static = hint == "static" || len(entry.AuthHeaders) > 0
-	return static, oauth
+	return entry.SupportedAuthMethods()
 }
 
 // catalogNeedsAdminCredential reports whether a catalog entry cannot be
-// self-served because it needs a credential only an admin can add on the shelf:
-//
-//   - a static-only server whose credential is a shared header value (an API
-//     key) the catalog does not carry; or
-//   - an OAuth server whose client cannot be obtained by the gateway itself: a
-//     client_credentials grant (admin-provided client), or a manual registration
-//     with no platform-held client.
-//
-// Self-serviceable, by contrast: OAuth with dynamic client registration (auto)
-// or a platform-held client (the user just logs in), and a static-only server
-// whose credential is a secret URL variable (each user enters their own value
-// through the hosted form).
+// self-served because it needs a credential only an admin can add on the shelf
+// (see catalogdomain.MCPServer.IsSelfService for the rule).
 func catalogNeedsAdminCredential(entry catalogdomain.MCPServer) bool {
-	static, oauth := catalogAuthMethods(entry)
-	if oauth {
-		return !oauthSelfServiceable(entry)
-	}
-	if !static {
-		return false
-	}
-	if len(entry.AuthHeaders) == 0 && hasSecretURLVariable(entry) {
-		return false
-	}
-	return true
-}
-
-// oauthSelfServiceable reports whether the gateway can complete this entry's
-// OAuth flow without an admin: the client is registered dynamically (auto) or
-// held by the platform. A required OAuth with no declared registration is
-// canonicalised to manual by the registry creator, so it needs an admin unless
-// a platform client exists; an optional OAuth with no declared registration
-// keeps the auto mapping.
-func oauthSelfServiceable(entry catalogdomain.MCPServer) bool {
-	o := entry.OAuth
-	if o == nil {
-		return true
-	}
-	if strings.EqualFold(strings.TrimSpace(o.GrantType), "client_credentials") {
-		return false
-	}
-	if entry.PlatformClient {
-		return true
-	}
-	switch strings.ToLower(strings.TrimSpace(o.Registration)) {
-	case "auto":
-		return true
-	case "":
-		return !o.Required
-	default:
-		return false
-	}
-}
-
-func hasSecretURLVariable(entry catalogdomain.MCPServer) bool {
-	for _, v := range entry.URLVariables {
-		if v.Secret {
-			return true
-		}
-	}
-	return false
+	return !entry.IsSelfService()
 }
 
 // catalogOAuth maps a catalog OAuth spec onto the registry's auth. Forwarded auth

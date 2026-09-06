@@ -123,6 +123,7 @@ type adminRouterParams struct {
 
 	StoreRequests *storehttp.RequestsHandler
 	StoreGrants   *storehttp.GrantsHandler
+	StorePolicies *storehttp.PoliciesHandler
 }
 
 type adminServerParams struct {
@@ -199,6 +200,7 @@ func ServerAdmin(c *container.Container) error {
 				ListConfigSyncConnections: p.ListConfigSyncConnections,
 				StoreRequests:             p.StoreRequests,
 				StoreGrants:               p.StoreGrants,
+				StorePolicies:             p.StorePolicies,
 			})
 		},
 		dig.Name("admin"),

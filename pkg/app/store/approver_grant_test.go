@@ -22,7 +22,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
 // TestApprover_Approve_ExtendsExistingCodeGrant: approving a request from a
@@ -49,7 +49,7 @@ func TestApprover_Approve_ExtendsExistingCodeGrant(t *testing.T) {
 		t.Fatalf("existing group grant must be preserved, got %v", g.Groups)
 	}
 	// The grant now admits the requester on the installer's own gate.
-	if !storegrantdomain.Index(grants.items).CodeAllows("github", nil, "ana") {
+	if !storeaccessdomain.Index(grants.items).CodeAllows("github", nil, "ana") {
 		t.Fatal("after approve the requester must pass the grant")
 	}
 }
@@ -74,7 +74,7 @@ func TestApprover_Approve_BoundRequestGrantsThatInstanceOnly(t *testing.T) {
 	if len(grants.upserts) != 1 || grants.upserts[0].RegistryID != finance.ID {
 		t.Fatalf("approve must grant the bound instance, got %+v", grants.upserts)
 	}
-	set := storegrantdomain.Index(grants.items)
+	set := storeaccessdomain.Index(grants.items)
 	if !set.InstanceAllows("github", finance.ID, nil, "ana") {
 		t.Fatal("requester must be allowed on the bound instance")
 	}
@@ -122,7 +122,7 @@ func TestApprover_Approve_NotShelved_MaterialisesWithEnsurer(t *testing.T) {
 	if len(regs.items) != 1 {
 		t.Fatalf("materialised registry must exist, got %+v", regs.items)
 	}
-	if len(grants.upserts) != 1 || grants.upserts[0].IsInstance() || !storegrantdomain.Index(grants.items).CodeAllows("github", nil, "ana") {
+	if len(grants.upserts) != 1 || grants.upserts[0].IsInstance() || !storeaccessdomain.Index(grants.items).CodeAllows("github", nil, "ana") {
 		t.Fatalf("approve must grant the code to the requester, got %+v", grants.upserts)
 	}
 	if len(installs.upserts) != 1 || installs.upserts[0].Status != installationdomain.StatusInstalled {

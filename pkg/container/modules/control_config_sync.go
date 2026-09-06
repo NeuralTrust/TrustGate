@@ -32,7 +32,7 @@ import (
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
-	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/subscriber"
 	infrasnapshot "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
@@ -54,8 +54,10 @@ type compilerReaders struct {
 	Auths      authdomain.Repository
 	Roles      roledomain.Repository
 	Catalog    catalogdomain.Repository
-	// Grants puts the MCP Store access grants into every snapshot.
-	Grants storegrantdomain.Repository
+	// Grants and Policies put the MCP Store access grants and per-principal
+	// levels into every snapshot.
+	Grants        storeaccessdomain.Repository
+	StorePolicies storeaccessdomain.PolicyRepository
 }
 
 // ControlConfigSync registers the control-plane half of the gRPC-based config
@@ -69,7 +71,7 @@ type compilerReaders struct {
 func ControlConfigSync(c *container.Container) error {
 	if err := c.Provide(func(r compilerReaders, logger *slog.Logger) *appsnapshot.Compiler {
 		return appsnapshot.NewCompiler(r.Gateways, r.Consumers, r.Registries, r.Policies, r.Auths, r.Roles, r.Catalog, logger,
-			appsnapshot.WithStoreGrants(r.Grants))
+			appsnapshot.WithStoreGrants(r.Grants), appsnapshot.WithStorePolicies(r.StorePolicies))
 	}); err != nil {
 		return err
 	}

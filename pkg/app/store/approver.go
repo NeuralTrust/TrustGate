@@ -24,7 +24,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
 // ErrNotShelved is returned when an admin approves a request for a server that
@@ -47,8 +47,8 @@ type RegistryShelf interface {
 // GrantStore is the grant access the approver needs: read a gateway's grants
 // and write the one an approval extends.
 type GrantStore interface {
-	storegrantdomain.Reader
-	Upsert(ctx context.Context, g *storegrantdomain.Grant) error
+	storeaccessdomain.Reader
+	Upsert(ctx context.Context, g *storeaccessdomain.Grant) error
 }
 
 // PendingRequest is one row in the admin approval queue.
@@ -231,14 +231,14 @@ func (a *approver) grantRequester(
 	if grants.InstanceAllows(code, registryID, nil, subject) {
 		return nil
 	}
-	var grant *storegrantdomain.Grant
+	var grant *storeaccessdomain.Grant
 	if registryID.IsNil() {
 		grant = grants.Code(code)
 	} else {
 		grant = grants.Instance(registryID)
 	}
 	if grant == nil {
-		if grant, err = storegrantdomain.New(gatewayID, code, registryID, nil, nil); err != nil {
+		if grant, err = storeaccessdomain.New(gatewayID, code, registryID, nil, nil); err != nil {
 			return err
 		}
 	} else {

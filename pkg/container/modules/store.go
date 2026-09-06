@@ -22,11 +22,11 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	installationrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/installation"
 	outboxrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
-	storegrantrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/storegrant"
+	storeaccessrepo "github.com/NeuralTrust/TrustGate/pkg/infra/repository/storeaccess"
 	"go.uber.org/dig"
 )
 
@@ -41,18 +41,18 @@ func Store(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(conn *database.Connection, appender outboxrepo.Appender) storegrantdomain.Repository {
-		return storegrantrepo.NewRepository(conn, appender)
+	if err := c.Provide(func(conn *database.Connection, appender outboxrepo.Appender) storeaccessdomain.Repository {
+		return storeaccessrepo.NewRepository(conn, appender)
 	}); err != nil {
 		return err
 	}
 	// The Reader every Store service reads grants through; here the Postgres
 	// repository, on the data plane the snapshot adapter.
-	if err := c.Provide(func(repo storegrantdomain.Repository) storegrantdomain.Reader { return repo }); err != nil {
+	if err := c.Provide(func(repo storeaccessdomain.Repository) storeaccessdomain.Reader { return repo }); err != nil {
 		return err
 	}
 	if err := c.Provide(func(
-		repo storegrantdomain.Repository,
+		repo storeaccessdomain.Repository,
 		registries registrydomain.Repository,
 		catalog appcatalog.MCPServerCatalog,
 		sig snapshotSignalParams,
@@ -63,6 +63,26 @@ func Store(c *container.Container) error {
 	}
 	if err := c.Provide(func(grants appstore.GrantService) *storehttp.GrantsHandler {
 		return storehttp.NewGrantsHandler(grants)
+	}); err != nil {
+		return err
+	}
+	// Per-principal access levels (All / Selected / None), evaluated live by the
+	// gateway so an Access change applies at once.
+	if err := c.Provide(func(conn *database.Connection, appender outboxrepo.Appender) storeaccessdomain.PolicyRepository {
+		return storeaccessrepo.NewPolicyRepository(conn, appender)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(repo storeaccessdomain.PolicyRepository) storeaccessdomain.PolicyReader { return repo }); err != nil {
+		return err
+	}
+	if err := c.Provide(func(repo storeaccessdomain.PolicyRepository, sig snapshotSignalParams) (appstore.PolicyService, error) {
+		return appstore.NewPolicyService(repo, sig.Signaler)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(policies appstore.PolicyService) *storehttp.PoliciesHandler {
+		return storehttp.NewPoliciesHandler(policies)
 	}); err != nil {
 		return err
 	}

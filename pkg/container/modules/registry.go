@@ -23,7 +23,7 @@ import (
 	appregistry "github.com/NeuralTrust/TrustGate/pkg/app/registry"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
@@ -49,7 +49,7 @@ func provideRegistryRepository(c *container.Container) error {
 // only) so a registry delete can clean its instance-level grants.
 type registryDeleterGrants struct {
 	dig.In
-	Grants storegrantdomain.Repository `optional:"true"`
+	Grants storeaccessdomain.Repository `optional:"true"`
 }
 
 func provideRegistryServices(c *container.Container) error {
