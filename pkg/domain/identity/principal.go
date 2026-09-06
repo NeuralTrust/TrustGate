@@ -37,6 +37,12 @@ const (
 	// ClaimGroups is the claim carrying the principal's IdP group memberships,
 	// which role oidc_mapping rules are authored against.
 	ClaimGroups = "groups"
+	// ClaimStoreAccess is the claim carrying the principal's per-principal MCP
+	// Store access level: "open" (the whole Store), "curated" (only servers the
+	// admin granted them), or "none" (closed). Minted by the control plane from
+	// the admin's per-user/per-group Access decision. Absent means the gateway's
+	// own Store default mode applies.
+	ClaimStoreAccess = "store_access"
 )
 
 type Principal struct {
@@ -124,6 +130,17 @@ func (p *Principal) Org() string {
 	}
 	org, _ := p.Claims[ClaimOrg].(string)
 	return strings.TrimSpace(org)
+}
+
+// StoreAccess returns the per-principal MCP Store access level claim
+// ("open" | "curated" | "none"), or "" when absent — in which case the
+// gateway's own Store default mode applies.
+func (p *Principal) StoreAccess() string {
+	if p == nil {
+		return ""
+	}
+	v, _ := p.Claims[ClaimStoreAccess].(string)
+	return strings.TrimSpace(v)
 }
 
 func EmailFromClaims(claims map[string]any) string {

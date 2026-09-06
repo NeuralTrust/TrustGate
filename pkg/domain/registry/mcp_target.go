@@ -15,7 +15,6 @@
 package registry
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -116,11 +115,6 @@ type MCPTarget struct {
 	Headers   map[string]string `json:"headers,omitempty"`
 	Auth      *MCPAuth          `json:"auth,omitempty"`
 	OpenAPI   *OpenAPITarget    `json:"openapi,omitempty"`
-	// Store is the MCP Store governance for this server: whether users may
-	// self-install it, whether that needs approval, and which roles may. It rides
-	// in the mcp_target JSONB, so it needs no schema change and is read wherever
-	// the registry is loaded. Nil means "not offered in the Store".
-	Store *MCPStoreConfig `json:"store,omitempty"`
 	// URLVariables declares the per-user placeholders in URL (e.g. {account_url},
 	// {instance}) that each principal fills at install time. It is copied verbatim
 	// from the catalog entry when a registry is materialised, so the dial path is
@@ -129,6 +123,14 @@ type MCPTarget struct {
 	// without re-reading the catalog. Empty for servers whose URL is fully
 	// determined (the common case). See ResolveURL.
 	URLVariables []MCPURLVariable `json:"url_variables,omitempty"`
+	// InstanceConfig carries one instance's resolved plain URL-variable values when
+	// the Store scoper exposes several instances of the same catalog code for a
+	// principal (e.g. two Snowflake schemas). It is a request-scoped overlay set on
+	// a per-instance registry clone, never persisted (json:"-") and never part of
+	// the config snapshot; the dial-time resolver prefers it over the by-code
+	// installation lookup, which cannot tell one instance from another. Nil in the
+	// common single-instance case, where the by-code lookup is unambiguous.
+	InstanceConfig map[string]string `json:"-"`
 }
 
 // MCPURLVariable declares one per-user placeholder in an MCPTarget URL template.
@@ -175,70 +177,6 @@ func (t *MCPTarget) RequiredURLVariables() []string {
 		}
 	}
 	return out
-}
-
-// MCPStoreConfig is the admin's Store access grant for one MCP server, edited
-// from the Access side panel. Groups and Users are the two subject axes matched
-// against the caller's token: Groups against the token's group claim, Users
-// against the token subject.
-type MCPStoreConfig struct {
-	// Available exposes the server for self-service install in the Store.
-	Available bool `json:"available,omitempty"`
-	// RequiresApproval routes an install through an approver instead of granting
-	// it immediately.
-	RequiresApproval bool `json:"requires_approval,omitempty"`
-	// Groups, when non-empty, restricts self-install to principals carrying one of
-	// these IdP/NeuralTrust groups (matched against the token's group claim).
-	Groups []string `json:"groups,omitempty"`
-	// Users, when non-empty, additionally admits these individual principals
-	// (matched against the token subject). A caller is allowed if their groups
-	// intersect Groups OR their subject is in Users. Both empty means "any".
-	Users []string `json:"users,omitempty"`
-}
-
-// UnmarshalJSON reads MCPStoreConfig, accepting the legacy "roles" key as an
-// alias for "groups" so registries stored (in the DB or the config-sync
-// snapshot) before the rename keep working. "groups" wins when both are present.
-func (c *MCPStoreConfig) UnmarshalJSON(data []byte) error {
-	type alias MCPStoreConfig
-	aux := struct {
-		*alias
-		LegacyRoles []string `json:"roles,omitempty"`
-	}{alias: (*alias)(c)}
-	if err := json.Unmarshal(data, &aux); err != nil {
-		return err
-	}
-	if len(c.Groups) == 0 && len(aux.LegacyRoles) > 0 {
-		c.Groups = aux.LegacyRoles
-	}
-	return nil
-}
-
-// StoreAvailable reports whether the server is offered for self-install.
-func (t *MCPTarget) StoreAvailable() bool {
-	return t != nil && t.Store != nil && t.Store.Available
-}
-
-// StoreRequiresApproval reports whether self-install needs approval.
-func (t *MCPTarget) StoreRequiresApproval() bool {
-	return t != nil && t.Store != nil && t.Store.RequiresApproval
-}
-
-// StoreGroups returns the groups allowed to self-install, or nil for "any".
-func (t *MCPTarget) StoreGroups() []string {
-	if t == nil || t.Store == nil {
-		return nil
-	}
-	return t.Store.Groups
-}
-
-// StoreUsers returns the individual principal subjects allowed to self-install,
-// or nil for "any".
-func (t *MCPTarget) StoreUsers() []string {
-	if t == nil || t.Store == nil {
-		return nil
-	}
-	return t.Store.Users
 }
 
 func (t *MCPTarget) Normalize() {

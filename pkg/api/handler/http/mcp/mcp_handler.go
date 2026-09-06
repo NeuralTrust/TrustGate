@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -535,6 +536,18 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 			ID:      normalizeID(id),
 			Error:   &rpcError{Code: int(appmcp.CodeUnavailable), Message: err.Error()},
 		})
+	case errors.Is(err, appmcp.ErrUnreachable), errors.Is(err, appmcp.ErrUpstreamUnavailable):
+		// A dial failure names the upstream address, and for a server with
+		// per-user URL variables that address can carry the user's API token
+		// (?token=...). The client gets a fixed message; the detail — already
+		// redacted at source — goes to the server log only.
+		slog.Default().Warn("mcp handler: upstream MCP server unreachable",
+			"method", c.Method(), "path", c.Path(), "error", err)
+		return writeRPCError(c, id, codeInternalError, "upstream MCP server unreachable")
+	case errors.Is(err, registrydomain.ErrURLTemplate):
+		// The caller's own per-user URL configuration is unusable (missing value,
+		// unsafe host, ...). These messages name the variable, never its value.
+		return writeRPCError(c, id, codeInvalidRequest, err.Error())
 	default:
 		return writeRPCError(c, id, codeInternalError, err.Error())
 	}

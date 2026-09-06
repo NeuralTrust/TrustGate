@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
@@ -30,7 +31,7 @@ import (
 const pgForeignKeyViolation = "23503"
 
 const selectColumns = `
-	SELECT id, gateway_id, principal_sub, catalog_code, status, installed_by, config, created_at, updated_at
+	SELECT id, gateway_id, principal_sub, catalog_code, status, installed_by, config, registry_id, created_at, updated_at
 	  FROM store_installations`
 
 var _ domain.Repository = (*Repository)(nil)
@@ -54,18 +55,23 @@ func (r *Repository) Upsert(ctx context.Context, in *domain.Installation) error 
 	if err != nil {
 		return fmt.Errorf("installation repository: marshal config: %w", err)
 	}
+	// Keyed by id: a principal may hold several instances of one catalog code, so
+	// the old (gateway, principal, code) conflict target no longer identifies a
+	// row. A fresh install mints a new id (a new instance); re-touching an
+	// existing instance carries its id and updates in place.
 	const query = `
 		INSERT INTO store_installations
-			(id, gateway_id, principal_sub, catalog_code, status, installed_by, config, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		ON CONFLICT (gateway_id, principal_sub, catalog_code) DO UPDATE
+			(id, gateway_id, principal_sub, catalog_code, status, installed_by, config, registry_id, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		ON CONFLICT (id) DO UPDATE
 			SET status       = EXCLUDED.status,
 			    installed_by = EXCLUDED.installed_by,
 			    config       = EXCLUDED.config,
+			    registry_id  = EXCLUDED.registry_id,
 			    updated_at   = EXCLUDED.updated_at`
 	if _, err := r.conn.Pool.Exec(ctx, query,
 		in.ID, in.GatewayID, in.PrincipalSub, in.CatalogCode, string(in.Status),
-		in.InstalledBy, configJSON, in.CreatedAt, in.UpdatedAt,
+		in.InstalledBy, configJSON, nullableRegistryID(in.RegistryID), in.CreatedAt, in.UpdatedAt,
 	); err != nil {
 		return mapPgError(err)
 	}
@@ -77,9 +83,15 @@ func (r *Repository) Find(
 	gatewayID ids.GatewayID,
 	principalSub, catalogCode string,
 ) (*domain.Installation, error) {
+	// Several instances of one code may exist. Prefer an ACTIVE (installed) row,
+	// then the earliest, deterministically: single-instance readers (dial-time
+	// config resolver, admin reads) must never pick a revoked or pending row over
+	// a live one.
 	const query = selectColumns + `
-		WHERE gateway_id = $1 AND principal_sub = $2 AND catalog_code = $3`
-	row := r.conn.Pool.QueryRow(ctx, query, gatewayID, principalSub, catalogCode)
+		WHERE gateway_id = $1 AND principal_sub = $2 AND catalog_code = $3
+		ORDER BY (status = $4) DESC, created_at, id
+		LIMIT 1`
+	row := r.conn.Pool.QueryRow(ctx, query, gatewayID, principalSub, catalogCode, string(domain.StatusInstalled))
 	in, err := scanInstallation(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -88,6 +100,36 @@ func (r *Repository) Find(
 		return nil, err
 	}
 	return in, nil
+}
+
+func (r *Repository) FindByID(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	id ids.InstallationID,
+) (*domain.Installation, error) {
+	const query = selectColumns + `
+		WHERE gateway_id = $1 AND principal_sub = $2 AND id = $3`
+	row := r.conn.Pool.QueryRow(ctx, query, gatewayID, principalSub, id)
+	in, err := scanInstallation(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, err
+	}
+	return in, nil
+}
+
+func (r *Repository) ListByPrincipalAndCode(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub, catalogCode string,
+) ([]*domain.Installation, error) {
+	const query = selectColumns + `
+		WHERE gateway_id = $1 AND principal_sub = $2 AND catalog_code = $3
+		ORDER BY created_at, id`
+	return r.queryList(ctx, query, gatewayID, principalSub, catalogCode)
 }
 
 func (r *Repository) ListByPrincipal(
@@ -140,6 +182,33 @@ func (r *Repository) Delete(
 	return nil
 }
 
+// DeleteByID revokes one instance in place (status = revoked) rather than
+// deleting the row: the row is retained for audit, IsActive() drops it from the
+// Store surface, and a later re-install of the same config reactivates it. This
+// mirrors the data-plane client's implementation exactly, so an uninstall
+// behaves identically whichever plane serves it. Delete (by code) stays a hard
+// delete for clearing inactive leftovers.
+func (r *Repository) DeleteByID(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	id ids.InstallationID,
+) error {
+	const query = `
+		UPDATE store_installations
+		   SET status = $4, updated_at = $5
+		 WHERE gateway_id = $1 AND principal_sub = $2 AND id = $3`
+	tag, err := r.conn.Pool.Exec(ctx, query, gatewayID, principalSub, id,
+		string(domain.StatusRevoked), time.Now().UTC())
+	if err != nil {
+		return mapPgError(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
 func (r *Repository) queryList(ctx context.Context, query string, args ...any) ([]*domain.Installation, error) {
 	rows, err := r.conn.Pool.Query(ctx, query, args...)
 	if err != nil {
@@ -169,20 +238,33 @@ func scanInstallation(row scannable) (*domain.Installation, error) {
 		in         domain.Installation
 		status     string
 		configJSON []byte
+		registryID *ids.RegistryID
 	)
 	if err := row.Scan(
 		&in.ID, &in.GatewayID, &in.PrincipalSub, &in.CatalogCode, &status,
-		&in.InstalledBy, &configJSON, &in.CreatedAt, &in.UpdatedAt,
+		&in.InstalledBy, &configJSON, &registryID, &in.CreatedAt, &in.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
 	in.Status = domain.Status(status)
+	if registryID != nil {
+		in.RegistryID = *registryID
+	}
 	config, err := unmarshalConfig(configJSON)
 	if err != nil {
 		return nil, fmt.Errorf("installation repository: unmarshal config: %w", err)
 	}
 	in.Config = config
 	return &in, nil
+}
+
+// nullableRegistryID stores the nil id as SQL NULL ("the code's canonical
+// instance") so the column reads naturally in admin queries.
+func nullableRegistryID(id ids.RegistryID) *ids.RegistryID {
+	if id.IsNil() {
+		return nil
+	}
+	return &id
 }
 
 func marshalConfig(config map[string]string) ([]byte, error) {

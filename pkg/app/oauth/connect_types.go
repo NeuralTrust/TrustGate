@@ -40,6 +40,15 @@ type ConnectTicket struct {
 	// Code scopes a configure ticket to one catalog server whose per-user URL
 	// variables the hosted form collects. Empty for OAuth/api-key connect tickets.
 	Code string `json:"code,omitempty"`
+	// InstanceID pins a Store-scoped ticket (configure or single-server connect)
+	// to one exact installation instance of Code, so the form writes to that
+	// instance rather than to "whichever row has this code" when the principal
+	// holds several. Empty when the install recorded no row yet.
+	InstanceID string `json:"instance_id,omitempty"`
+	// Groups snapshots the principal's IdP groups at mint time so a form-driven
+	// install (configure before install) applies the same group gate the install
+	// tool applied — the browser submitting the form carries no token.
+	Groups []string `json:"groups,omitempty"`
 }
 
 type ConnectState struct {
@@ -81,7 +90,9 @@ type ConnectService interface {
 	CreateTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) (string, error)
 	// CreateServerTicket mints a connect ticket scoped to one catalog server, so
 	// the connect page opens focused on that server (e.g. from a Store install).
-	CreateServerTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code string) (string, error)
+	// instanceID optionally pins the ticket to the exact installation instance
+	// the install recorded; empty when none was.
+	CreateServerTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code, instanceID string) (string, error)
 	CreateAPIKeyTicket(
 		ctx context.Context,
 		gatewayID ids.GatewayID,

@@ -78,17 +78,27 @@ func (r *urlValueResolver) Resolve(
 	code := reg.MCPTarget.Code
 
 	values := map[string]string{}
-	inst, err := r.installs.Find(ctx, gatewayID, principal.Subject, code)
-	switch {
-	case err == nil:
-		for k, v := range inst.Config {
+	// A per-instance clone (the scoper's multi-instance exposure) carries this
+	// instance's own plain values as an overlay, since the by-code lookup below
+	// cannot tell two instances of the same code apart. When present it is
+	// authoritative for plain values; otherwise fall back to the single install.
+	if len(reg.MCPTarget.InstanceConfig) > 0 {
+		for k, v := range reg.MCPTarget.InstanceConfig {
 			values[k] = v
 		}
-	case errors.Is(err, installationdomain.ErrNotFound):
-		// The principal has not configured this server; leave the plain values
-		// empty so ResolveURL surfaces the missing required placeholders.
-	default:
-		return nil, err
+	} else {
+		inst, err := r.installs.Find(ctx, gatewayID, principal.Subject, code)
+		switch {
+		case err == nil:
+			for k, v := range inst.Config {
+				values[k] = v
+			}
+		case errors.Is(err, installationdomain.ErrNotFound):
+			// The principal has not configured this server; leave the plain values
+			// empty so ResolveURL surfaces the missing required placeholders.
+		default:
+			return nil, err
+		}
 	}
 
 	// Secret variables never touch the install config; they are read per-user from

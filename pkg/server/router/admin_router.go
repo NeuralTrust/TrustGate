@@ -123,6 +123,9 @@ type AdminRouterDeps struct {
 	// StoreRequests serves the MCP Store install-approval queue. Present only on
 	// the full plane; nil-guarded when absent.
 	StoreRequests *storehttp.RequestsHandler
+	// StoreGrants serves the MCP Store access grants (the Access page's grant
+	// read/write). Present only on the full plane.
+	StoreGrants *storehttp.GrantsHandler
 }
 
 type adminRouter struct {
@@ -213,14 +216,20 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	roles.Post("/:role_id/registries/:registry_id", r.deps.RoleAssociation.AttachRegistry)
 	roles.Delete("/:role_id/registries/:registry_id", r.deps.RoleAssociation.DetachRegistry)
 
-	// Store install-approval queue. Curating the Store is a registry-admin
-	// concern (it edits mcp_target.store), so it reuses the registries access
-	// guard. Registered only when the handler is wired (full plane).
-	if r.deps.StoreRequests != nil {
+	// MCP Store administration: access grants and the install-approval queue.
+	// Curating the Store is a registry-admin concern, so it reuses the
+	// registries access guard. Registered only when wired (full plane).
+	if r.deps.StoreRequests != nil || r.deps.StoreGrants != nil {
 		store := gw.Group("/:gateway_id/store", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceRegistries))
-		store.Get("/requests", r.deps.StoreRequests.List)
-		store.Post("/requests/approve", r.deps.StoreRequests.Approve)
-		store.Post("/requests/deny", r.deps.StoreRequests.Deny)
+		if r.deps.StoreRequests != nil {
+			store.Get("/requests", r.deps.StoreRequests.List)
+			store.Post("/requests/approve", r.deps.StoreRequests.Approve)
+			store.Post("/requests/deny", r.deps.StoreRequests.Deny)
+		}
+		if r.deps.StoreGrants != nil {
+			store.Get("/grants", r.deps.StoreGrants.List)
+			store.Put("/grants", r.deps.StoreGrants.Set)
+		}
 	}
 
 	auths := gw.Group("/:gateway_id/auths", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceAuths))

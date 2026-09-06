@@ -33,8 +33,11 @@ import (
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
@@ -232,6 +235,10 @@ type rpcGatewayParams struct {
 	// has no installation store yet).
 	Registries registrydomain.Repository     `optional:"true"`
 	Installs   installationdomain.Repository `optional:"true"`
+	// Grants is the Store access model (who may use which catalog server or
+	// instance). The full plane reads Postgres, the data plane the snapshot.
+	// Absent, nothing is granted under Selected access (fail closed).
+	Grants storegrantdomain.Reader `optional:"true"`
 	// Ensurer materialises the shared registry on a self-service install. The
 	// full plane provides the direct (Creator-backed) implementation; the data
 	// plane provides the gRPC-client one. Absent on SEARCH-only planes, where a
@@ -258,7 +265,7 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 
 	var installer appstore.Installer
 	if p.Registries != nil && p.Installs != nil {
-		made, err := appstore.NewInstaller(catalog, p.Registries, p.Installs, p.Ensurer)
+		made, err := appstore.NewInstaller(catalog, p.Registries, p.Installs, p.Grants, p.Ensurer)
 		if err != nil {
 			return nil, err
 		}
@@ -269,6 +276,10 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 	if p.Registries != nil {
 		registries = p.Registries
 	}
+	var grants storegrantdomain.Reader
+	if p.Grants != nil {
+		grants = p.Grants
+	}
 	var configure appmcp.ConfigureGateway
 	if p.Configure != nil {
 		configure = p.Configure
@@ -277,14 +288,14 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 	if p.Connect != nil {
 		connect = p.Connect
 	}
-	store, err := appmcp.NewStoreToolWithInstaller(catalog, installer, registries, configure, connect)
+	store, err := appmcp.NewStoreToolWithInstaller(catalog, installer, registries, grants, configure, connect)
 	if err != nil {
 		return nil, err
 	}
 	gateway := mcphttp.NewRPCGatewayWithMetaTools(p.Composer, p.Plugins, p.Limiter, p.Connections, store)
 
 	if p.Installs != nil && p.Registries != nil {
-		scoper, err := appstore.NewScoper(p.Installs, p.Registries)
+		scoper, err := appstore.NewScoper(p.Installs, p.Registries, grants)
 		if err != nil {
 			return nil, err
 		}
@@ -306,6 +317,14 @@ type configureServiceParams struct {
 	Installs  installationdomain.Repository `optional:"true"`
 	Catalog   appcatalog.MCPServerCatalog   `optional:"true"`
 	Shared    mcpoauth.Provider
+	// Registries, Ensurer and Gateways let a configure-before-install submission
+	// run through the same governed installer the install tool uses (shelf,
+	// approval, group gates, self-service materialisation). Without Registries the
+	// form can only update an existing installation, never create one.
+	Registries registrydomain.Repository `optional:"true"`
+	Grants     storegrantdomain.Reader   `optional:"true"`
+	Ensurer    appstore.RegistryEnsurer  `optional:"true"`
+	Gateways   gatewaydomain.Repository  `optional:"true"`
 }
 
 func provideConfigureService(p configureServiceParams) (appoauth.ConfigureService, error) {
@@ -320,7 +339,25 @@ func provideConfigureService(p configureServiceParams) (appoauth.ConfigureServic
 		}
 		catalog = loaded
 	}
-	return appoauth.NewConfigureService(p.Store, p.Consumers, catalog, p.Installs, p.Vault), nil
+	var opts []appoauth.ConfigureOption
+	if p.Registries != nil {
+		installer, err := appstore.NewInstaller(catalog, p.Registries, p.Installs, p.Grants, p.Ensurer)
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, appoauth.WithConfigureInstaller(installer))
+	}
+	if p.Gateways != nil {
+		gateways := p.Gateways
+		opts = append(opts, appoauth.WithConfigureOpenMode(func(ctx context.Context, gatewayID ids.GatewayID) bool {
+			gw, err := gateways.FindByID(ctx, gatewayID)
+			if err != nil || gw == nil {
+				return false // unknown gateway: fail closed to curated
+			}
+			return gw.StoreMode() == gatewaydomain.StoreModeOpen
+		}))
+	}
+	return appoauth.NewConfigureService(p.Store, p.Consumers, catalog, p.Installs, p.Vault, opts...), nil
 }
 
 func provideConnectService(p connectServiceParams) (appoauth.ConnectService, error) {

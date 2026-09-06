@@ -203,8 +203,17 @@ func API(c *container.Container) error {
 		connect appoauth.ConnectService,
 		signer sts.TokenSigner,
 		userinfo appoauth.UserInfoClient,
+		verifier appauth.OIDCVerifier,
+		cfg *config.Config,
 	) appoauth.AuthProxy {
-		return appoauth.NewAuthProxy(credentials, paths, nil, store, connect, signer, userinfo)
+		// The platform token minted by the built-in default IdP is verified
+		// against MCP_DEFAULT_IDP_JWKS_URL / issuer / audience before its
+		// claims are trusted, and the sessions it brokers are bounded by
+		// MCP_DEFAULT_IDP_SESSION_MAX_AGE.
+		return appoauth.NewAuthProxy(credentials, paths, nil, store, connect, signer, userinfo,
+			appoauth.WithIdPTokenVerifier(verifier),
+			appoauth.WithDefaultIdPSessionMaxAge(cfg.Server.MCPDefaultIdP.SessionMaxAge),
+		)
 	}); err != nil {
 		return err
 	}

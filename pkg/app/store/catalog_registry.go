@@ -64,7 +64,6 @@ func catalogMCPTarget(entry catalogdomain.MCPServer) *registrydomain.MCPTarget {
 		URL:          entry.URL,
 		Transport:    transport,
 		Auth:         catalogAuth(entry),
-		Store:        &registrydomain.MCPStoreConfig{Available: true},
 		URLVariables: catalogURLVariables(entry.URLVariables),
 	}
 	target.Normalize()
@@ -93,32 +92,131 @@ func catalogURLVariables(vars []catalogdomain.MCPURLVariable) []registrydomain.M
 	return out
 }
 
-// catalogAuth maps a catalog entry's auth hint onto the registry's upstream auth
-// mode. It sets only the shared shape — secrets (static value, client secret)
-// and per-user tokens are never in the catalog, so they stay empty and are
-// supplied at connect time (vault) or by the admin editing the shelf.
+// catalogAuth maps a catalog entry's auth declaration onto the registry's
+// upstream auth mode. It sets only the shared shape — secrets (static value,
+// client secret) and per-user tokens are never in the catalog, so they stay
+// empty and are supplied at connect time (vault) or by the admin editing the
+// shelf.
+//
+// A server that offers OAuth (alone or alongside an API key) is materialised
+// with forwarded auth: that is the one method a self-service user can complete
+// on their own (they log in), so it is what the shared registry carries. A
+// static-only server with a header credential is mapped to static with the
+// header name and no value — such a registry cannot validate, which is exactly
+// why the installer refuses to self-serve it (catalogNeedsAdminCredential). A
+// static-only server whose credential is a secret URL variable needs no upstream
+// header at all: the per-user value is substituted into the URL from the vault,
+// so it maps to none.
 func catalogAuth(entry catalogdomain.MCPServer) *registrydomain.MCPAuth {
-	switch strings.ToLower(strings.TrimSpace(entry.AuthHint)) {
-	case "", "none":
-		return &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeNone}
-	case "static":
-		auth := &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeStatic}
-		// The header name is catalog metadata; its value is a per-user secret
-		// provided at connect time, so it is left blank here.
-		if len(entry.AuthHeaders) > 0 {
-			auth.Header = strings.TrimSpace(entry.AuthHeaders[0].Name)
+	static, oauth := catalogAuthMethods(entry)
+	switch {
+	case oauth:
+		return catalogOAuth(entry.Code, entry.OAuth)
+	case static && len(entry.AuthHeaders) > 0:
+		return &registrydomain.MCPAuth{
+			Mode:   registrydomain.MCPAuthModeStatic,
+			Header: strings.TrimSpace(entry.AuthHeaders[0].Name),
 		}
-		return auth
-	case "oauth":
-		return catalogOAuth(entry.OAuth)
 	default:
 		return &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeNone}
 	}
 }
 
-func catalogOAuth(o *catalogdomain.MCPOAuth) *registrydomain.MCPAuth {
+// catalogAuthMethods reports which auth methods a catalog entry offers. The
+// explicit AuthMethods list is authoritative when present; otherwise the methods
+// are derived from the coarse hint and the entry's shape (an OAuth spec ⇒ oauth,
+// a static hint or an auth header ⇒ static).
+func catalogAuthMethods(entry catalogdomain.MCPServer) (static, oauth bool) {
+	if len(entry.AuthMethods) > 0 {
+		for _, m := range entry.AuthMethods {
+			switch strings.ToLower(strings.TrimSpace(m)) {
+			case "static":
+				static = true
+			case "oauth":
+				oauth = true
+			}
+		}
+		return static, oauth
+	}
+	hint := strings.ToLower(strings.TrimSpace(entry.AuthHint))
+	oauth = hint == "oauth" || entry.OAuth != nil
+	static = hint == "static" || len(entry.AuthHeaders) > 0
+	return static, oauth
+}
+
+// catalogNeedsAdminCredential reports whether a catalog entry cannot be
+// self-served because it needs a credential only an admin can add on the shelf:
+//
+//   - a static-only server whose credential is a shared header value (an API
+//     key) the catalog does not carry; or
+//   - an OAuth server whose client cannot be obtained by the gateway itself: a
+//     client_credentials grant (admin-provided client), or a manual registration
+//     with no platform-held client.
+//
+// Self-serviceable, by contrast: OAuth with dynamic client registration (auto)
+// or a platform-held client (the user just logs in), and a static-only server
+// whose credential is a secret URL variable (each user enters their own value
+// through the hosted form).
+func catalogNeedsAdminCredential(entry catalogdomain.MCPServer) bool {
+	static, oauth := catalogAuthMethods(entry)
+	if oauth {
+		return !oauthSelfServiceable(entry)
+	}
+	if !static {
+		return false
+	}
+	if len(entry.AuthHeaders) == 0 && hasSecretURLVariable(entry) {
+		return false
+	}
+	return true
+}
+
+// oauthSelfServiceable reports whether the gateway can complete this entry's
+// OAuth flow without an admin: the client is registered dynamically (auto) or
+// held by the platform. A required OAuth with no declared registration is
+// canonicalised to manual by the registry creator, so it needs an admin unless
+// a platform client exists; an optional OAuth with no declared registration
+// keeps the auto mapping.
+func oauthSelfServiceable(entry catalogdomain.MCPServer) bool {
+	o := entry.OAuth
 	if o == nil {
-		return &registrydomain.MCPAuth{Mode: registrydomain.MCPAuthModeForwarded, Registration: registrydomain.RegistrationAuto}
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(o.GrantType), "client_credentials") {
+		return false
+	}
+	if entry.PlatformClient {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(o.Registration)) {
+	case "auto":
+		return true
+	case "":
+		return !o.Required
+	default:
+		return false
+	}
+}
+
+func hasSecretURLVariable(entry catalogdomain.MCPServer) bool {
+	for _, v := range entry.URLVariables {
+		if v.Secret {
+			return true
+		}
+	}
+	return false
+}
+
+// catalogOAuth maps a catalog OAuth spec onto the registry's auth. Forwarded auth
+// carries the catalog code as its provider — the per-user token's vault key — so
+// the materialised target validates and dials exactly like an admin-shelved one.
+func catalogOAuth(code string, o *catalogdomain.MCPOAuth) *registrydomain.MCPAuth {
+	if o == nil {
+		return &registrydomain.MCPAuth{
+			Mode:         registrydomain.MCPAuthModeForwarded,
+			Provider:     strings.TrimSpace(code),
+			Registration: registrydomain.RegistrationAuto,
+		}
 	}
 	if strings.EqualFold(strings.TrimSpace(o.GrantType), "client_credentials") {
 		// Machine-to-machine: client id/secret are admin-provided, not in the
@@ -132,6 +230,7 @@ func catalogOAuth(o *catalogdomain.MCPOAuth) *registrydomain.MCPAuth {
 	}
 	auth := &registrydomain.MCPAuth{
 		Mode:         registrydomain.MCPAuthModeForwarded,
+		Provider:     strings.TrimSpace(code),
 		AuthorizeURL: strings.TrimSpace(o.AuthorizeURL),
 		TokenURL:     strings.TrimSpace(o.TokenURL),
 		Scopes:       o.Scopes,

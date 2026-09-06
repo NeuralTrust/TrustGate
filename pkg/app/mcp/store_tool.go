@@ -24,12 +24,14 @@ import (
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
 )
 
 const (
@@ -64,14 +66,15 @@ type MCPServerCatalog interface {
 // secret token). appoauth.ConfigureService satisfies it. Optional: without it the
 // install tool still works but returns no configure link.
 type ConfigureGateway interface {
-	CreateTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code string) (string, error)
+	CreateTicket(ctx context.Context, in appoauth.ConfigureTicketRequest) (string, error)
 }
 
 // ServerConnectGateway mints a connect ticket scoped to one catalog server, so
 // the install's OAuth connect link opens the focused single-server connect page.
-// appoauth.ConnectService satisfies it.
+// appoauth.ConnectService satisfies it. instanceID pins the ticket to the exact
+// installation instance the install recorded ("" when none was).
 type ServerConnectGateway interface {
-	CreateServerTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code string) (string, error)
+	CreateServerTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code, instanceID string) (string, error)
 }
 
 // StoreTool implements the MCP Store's gateway-side meta-tools (SEARCH today;
@@ -87,25 +90,28 @@ type storeTool struct {
 	catalog    MCPServerCatalog
 	installer  appstore.Installer
 	registries appstore.RegistryLister
+	grants     storegrantdomain.Reader
 	configure  ConfigureGateway
 	connect    ServerConnectGateway
 }
 
 // NewStoreTool wires the catalog-search meta-tool (SEARCH only).
 func NewStoreTool(catalog MCPServerCatalog) (StoreTool, error) {
-	return NewStoreToolWithInstaller(catalog, nil, nil, nil, nil)
+	return NewStoreToolWithInstaller(catalog, nil, nil, nil, nil, nil)
 }
 
 // NewStoreToolWithInstaller wires the Store meta-tools. When installer is nil
 // only SEARCH is offered (e.g. a plane without the installation store); when
-// registries is nil SEARCH does not tag results with their shelf state; when
-// configure is nil an install that needs per-user setup returns the variable list
-// but no hosted-form link; when connect is nil an install that needs the user's
-// account returns requires_auth but no OAuth connect link.
+// registries or grants is nil SEARCH cannot tell an instant install from a
+// request under Selected access and reports everything as a request; when
+// configure is nil an install that needs per-user setup returns the variable
+// list but no hosted-form link; when connect is nil an install that needs the
+// user's account returns requires_auth but no OAuth connect link.
 func NewStoreToolWithInstaller(
 	catalog MCPServerCatalog,
 	installer appstore.Installer,
 	registries appstore.RegistryLister,
+	grants storegrantdomain.Reader,
 	configure ConfigureGateway,
 	connect ServerConnectGateway,
 ) (StoreTool, error) {
@@ -116,6 +122,7 @@ func NewStoreToolWithInstaller(
 		catalog:    catalog,
 		installer:  installer,
 		registries: registries,
+		grants:     grants,
 		configure:  configure,
 		connect:    connect,
 	}, nil
@@ -167,16 +174,15 @@ func (t *storeTool) Call(
 	}
 }
 
-type storeCodeArgs struct {
-	Code string `json:"code"`
-}
-
 // storeInstallArgs is the install meta-tool's input: the catalog code plus the
 // per-user URL-variable values (config), collected from the user for servers that
 // declare them (e.g. Snowflake's account_url/database).
 type storeInstallArgs struct {
 	Code   string            `json:"code"`
 	Config map[string]string `json:"config,omitempty"`
+	// Instance is the configured instance (registry id) to install when the
+	// server has several, from a prior requires_instance_choice response.
+	Instance string `json:"instance,omitempty"`
 }
 
 func (t *storeTool) principalSubject(ctx context.Context) (string, error) {
@@ -204,8 +210,17 @@ func (t *storeTool) install(
 	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
 		return nil, ErrNoPrincipal
 	}
-	if t.storeMode(ctx) == gatewaydomain.StoreModeNone {
+	mode := t.effectiveStoreMode(ctx)
+	if mode == gatewaydomain.StoreModeNone {
 		return nil, fmt.Errorf("%w: self-service install is disabled for this gateway", ErrStoreToolUnavailable)
+	}
+	var registryID ids.RegistryID
+	if raw := strings.TrimSpace(args.Instance); raw != "" {
+		parsed, err := ids.Parse[ids.RegistryKind](raw)
+		if err != nil {
+			return nil, fmt.Errorf("%w: invalid instance id %q", ErrStoreToolUnavailable, raw)
+		}
+		registryID = parsed
 	}
 	res, err := t.installer.Install(ctx, appstore.InstallRequest{
 		GatewayID:    rc.Consumer.GatewayID,
@@ -213,36 +228,49 @@ func (t *storeTool) install(
 		Code:         args.Code,
 		InstalledBy:  principal.Subject,
 		Groups:       principalGroups(principal),
-		OpenMode:     t.storeMode(ctx) == gatewaydomain.StoreModeOpen,
+		OpenMode:     mode == gatewaydomain.StoreModeOpen,
 		Config:       args.Config,
+		RegistryID:   registryID,
 	})
 	if err != nil {
 		return nil, err
 	}
+	// Several configured instances are usable and none was named: hand back the
+	// list so the caller re-issues install with the chosen one.
+	if res.RequiresInstanceChoice {
+		return instanceChoices(res)
+	}
 	// A server that needs per-user setup gets a hosted-form link the user opens to
 	// enter their values (the only path for secrets, and a nicer one for the rest).
+	// The link is pinned to the instance this install recorded (if any) so the
+	// form writes to that exact instance.
 	configureURL := ""
 	if res.RequiresConfig {
-		configureURL = t.configureLink(ctx, rc, baseURL, res.Code)
+		configureURL = t.configureLink(ctx, rc, baseURL, res.Code, res.InstanceID, principal)
 	}
 	// A server that needs the user's own account gets the OAuth connect link right
 	// in the install result — the second step of the install, so the user does not
 	// have to hunt for it in their client. Offered even when the server was already
 	// installed: "installed" is not "connected", so a re-install of an unconnected
-	// server must still surface the link.
+	// server must still surface the link. Not offered when nothing was installed
+	// (an admin must connect the server first).
 	connectURL := ""
-	if res.RequiresAuth {
-		connectURL = t.connectLink(ctx, rc, baseURL, res.Code)
+	if res.RequiresAuth && !res.RequiresAdminSetup {
+		connectURL = t.connectLink(ctx, rc, baseURL, res.Code, res.InstanceID)
 	}
 	structured := map[string]any{
-		"code":              res.Code,
-		"name":              res.Name,
-		"status":            string(res.Status),
-		"pending":           res.Pending,
-		"requires_auth":     res.RequiresAuth,
-		"already_installed": res.AlreadyInstalled,
-		"requires_config":   res.RequiresConfig,
-		"config_variables":  configVariablesJSON(res.ConfigVariables),
+		"code":                 res.Code,
+		"name":                 res.Name,
+		"status":               string(res.Status),
+		"pending":              res.Pending,
+		"requires_auth":        res.RequiresAuth,
+		"already_installed":    res.AlreadyInstalled,
+		"requires_config":      res.RequiresConfig,
+		"requires_admin_setup": res.RequiresAdminSetup,
+		"config_variables":     configVariablesJSON(res.ConfigVariables),
+	}
+	if res.InstanceID != "" {
+		structured["instance"] = res.InstanceID
 	}
 	if configureURL != "" {
 		structured["configure_url"] = configureURL
@@ -267,7 +295,7 @@ func linkMarkdown(label, url string) string {
 func (t *storeTool) connectLink(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
-	baseURL, code string,
+	baseURL, code, instanceID string,
 ) string {
 	if t.connect == nil || strings.TrimSpace(baseURL) == "" {
 		return ""
@@ -277,7 +305,7 @@ func (t *storeTool) connectLink(
 		return ""
 	}
 	consumerPath := appconsumer.MCPPath(rc.Consumer.Slug)
-	ticket, err := t.connect.CreateServerTicket(ctx, rc.Consumer.GatewayID, principal.Subject, consumerPath, code)
+	ticket, err := t.connect.CreateServerTicket(ctx, rc.Consumer.GatewayID, principal.Subject, consumerPath, code, instanceID)
 	if err != nil {
 		return ""
 	}
@@ -294,17 +322,24 @@ func (t *storeTool) connectLink(
 func (t *storeTool) configureLink(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
-	baseURL, code string,
+	baseURL, code, instanceID string,
+	principal *identity.Principal,
 ) string {
 	if t.configure == nil || strings.TrimSpace(baseURL) == "" {
 		return ""
 	}
-	principal := identity.PrincipalFromContext(ctx)
 	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
 		return ""
 	}
 	consumerPath := appconsumer.MCPPath(rc.Consumer.Slug)
-	ticket, err := t.configure.CreateTicket(ctx, rc.Consumer.GatewayID, principal.Subject, consumerPath, code)
+	ticket, err := t.configure.CreateTicket(ctx, appoauth.ConfigureTicketRequest{
+		GatewayID:    rc.Consumer.GatewayID,
+		PrincipalSub: principal.Subject,
+		ConsumerPath: consumerPath,
+		Code:         code,
+		InstanceID:   instanceID,
+		Groups:       principalGroups(principal),
+	})
 	if err != nil {
 		return ""
 	}
@@ -333,6 +368,13 @@ func configVariablesJSON(vars []registrydomain.MCPURLVariable) []map[string]any 
 	return out
 }
 
+// storeUninstallArgs is the uninstall meta-tool's input: the catalog code and,
+// when the principal holds several instances of it, the instance id to remove.
+type storeUninstallArgs struct {
+	Code     string `json:"code"`
+	Instance string `json:"instance,omitempty"`
+}
+
 func (t *storeTool) uninstall(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
@@ -341,21 +383,83 @@ func (t *storeTool) uninstall(
 	if t.installer == nil {
 		return nil, fmt.Errorf("%w: uninstall is not available here", ErrStoreToolUnavailable)
 	}
-	var args storeCodeArgs
+	var args storeUninstallArgs
 	if err := json.Unmarshal(arguments, &args); err != nil || strings.TrimSpace(args.Code) == "" {
 		return nil, fmt.Errorf("%w: uninstall requires a catalog code", ErrStoreToolUnavailable)
 	}
+	code := strings.TrimSpace(args.Code)
 	sub, err := t.principalSubject(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if err := t.installer.Uninstall(ctx, rc.Consumer.GatewayID, sub, args.Code); err != nil {
+	err = t.installer.Uninstall(ctx, rc.Consumer.GatewayID, sub, code, args.Instance)
+	if errors.Is(err, appstore.ErrAmbiguousInstance) {
+		// Several instances of this code are installed; hand back the list so the
+		// caller can re-issue uninstall with the chosen instance id.
+		return t.instancePicker(ctx, rc, code, "uninstall")
+	}
+	if err != nil {
 		return nil, err
 	}
 	return marshalToolResult(
-		fmt.Sprintf("Uninstalled %s.", strings.TrimSpace(args.Code)),
-		map[string]any{"code": strings.TrimSpace(args.Code), "uninstalled": true},
+		fmt.Sprintf("Uninstalled %s.", code),
+		map[string]any{"code": code, "uninstalled": true},
 	)
+}
+
+// instancePicker returns a structured "which instance?" result listing the
+// principal's active instances of a code (id + label), for an operation that
+// must target one of several. It is a normal (non-error) result: the caller
+// re-issues the operation with the chosen instance id.
+func (t *storeTool) instancePicker(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	code, action string,
+) (json.RawMessage, error) {
+	sub, err := t.principalSubject(ctx)
+	if err != nil {
+		return nil, err
+	}
+	instances, err := t.installer.Instances(ctx, rc.Consumer.GatewayID, sub, code)
+	if err != nil {
+		return nil, err
+	}
+	list := make([]map[string]any, 0, len(instances))
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s has several instances installed. Re-run %s with the `instance` id of the one you mean:", code, action)
+	for _, in := range instances {
+		label := in.InstanceLabel()
+		if label == "" {
+			label = code
+		}
+		list = append(list, map[string]any{"instance": in.ID.String(), "label": label})
+		fmt.Fprintf(&b, "\n• %s — instance \"%s\"", label, in.ID.String())
+	}
+	return marshalToolResult(b.String(), map[string]any{
+		"code":      code,
+		"ambiguous": true,
+		"instances": list,
+	})
+}
+
+// instanceChoices returns a structured "which instance?" result listing the
+// configured instances of a server the principal may install (registry id +
+// name). It is a normal (non-error) result: the caller re-issues install with
+// the chosen id in `instance`.
+func instanceChoices(res *appstore.InstallResult) (json.RawMessage, error) {
+	list := make([]map[string]any, 0, len(res.InstanceChoices))
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s has several configured instances. Ask the user which one they mean, then re-run install with its `instance` id:", res.Name)
+	for _, c := range res.InstanceChoices {
+		list = append(list, map[string]any{"instance": c.RegistryID.String(), "name": c.Name})
+		fmt.Fprintf(&b, "\n• %s — instance \"%s\"", c.Name, c.RegistryID.String())
+	}
+	return marshalToolResult(b.String(), map[string]any{
+		"code":                     res.Code,
+		"name":                     res.Name,
+		"requires_instance_choice": true,
+		"instances":                list,
+	})
 }
 
 func principalGroups(principal *identity.Principal) []string {
@@ -385,6 +489,9 @@ func installMessage(res *appstore.InstallResult, configureURL, connectURL string
 			text += fmt.Sprintf(" If its tools aren't working yet, present this link to the user to connect their account: %s", linkMarkdown("Connect "+res.Name, connectURL))
 		}
 		return text
+	}
+	if res.RequiresAdminSetup {
+		return fmt.Sprintf("%s cannot be installed by users yet: it needs a credential only an administrator can add (a shared API key or a pre-registered OAuth client). Ask an admin to connect %s on this gateway's registry with that credential; once it is on the shelf, run install again.", res.Name, res.Name)
 	}
 	if res.RequiresConfig {
 		return requiresConfigMessage(res, configureURL)
@@ -482,13 +589,15 @@ type storeSearchResult struct {
 
 const (
 	storeStateAvailable = "available"
-	storeStateApproval  = "approval"
 	storeStateRequest   = "request"
 )
 
-type shelfEntry struct {
-	available        bool
-	requiresApproval bool
+// shelf is what SEARCH needs to tell an instant install from a request under
+// Selected access: the gateway's Store grants and which codes have configured
+// instances (registries), by registry id.
+type shelf struct {
+	grants    *storegrantdomain.Set
+	instances map[string][]ids.RegistryID
 }
 
 func (t *storeTool) search(
@@ -512,9 +621,14 @@ func (t *storeTool) search(
 	query := strings.ToLower(strings.TrimSpace(args.Query))
 	category := strings.ToLower(strings.TrimSpace(args.Category))
 
-	shelf := t.shelfIndex(ctx, rc)
-	mode := t.storeMode(ctx)
-	curated := mode == gatewaydomain.StoreModeCurated
+	sh := t.shelfIndex(ctx, rc)
+	mode := t.effectiveStoreMode(ctx)
+	principal := identity.PrincipalFromContext(ctx)
+	groups := principalGroups(principal)
+	subject := ""
+	if principal != nil {
+		subject = principal.Subject
+	}
 	// None closes the Store: nothing in the catalog is browsable.
 	if mode == gatewaydomain.StoreModeNone {
 		structured := map[string]any{
@@ -551,11 +665,9 @@ func (t *storeTool) search(
 		if !matchesQuery(entry, query) {
 			continue
 		}
-		state := shelfState(shelf, entry.Code)
-		// In curated mode only shelf (available) servers are browsable.
-		if curated && state == storeStateRequest {
-			continue
-		}
+		// The whole catalog is browsable in All and Selected; the state tells the
+		// caller whether install is instant for them or files a request.
+		state := shelfState(sh, entry.Code, mode, groups, subject)
 		total++
 		if len(matched) < limit {
 			matched = append(matched, toSearchResult(entry, state))
@@ -583,51 +695,88 @@ func (t *storeTool) search(
 	return raw, nil
 }
 
-// shelfIndex maps catalog codes the admin has put on this gateway's shelf to
-// their Store governance. Empty when registries are not wired (data plane).
-func (t *storeTool) shelfIndex(ctx context.Context, rc *appconsumer.RoutableConsumer) map[string]shelfEntry {
-	if t.registries == nil || rc == nil || rc.Consumer == nil {
+// shelfIndex loads the gateway's grants and configured instances. Nil when
+// neither registries nor grants are wired (a SEARCH-only plane), in which case
+// every server under Selected reads as a request.
+func (t *storeTool) shelfIndex(ctx context.Context, rc *appconsumer.RoutableConsumer) *shelf {
+	if rc == nil || rc.Consumer == nil || (t.registries == nil && t.grants == nil) {
 		return nil
 	}
-	items, _, err := t.registries.List(ctx, registrydomain.ListFilter{
-		GatewayID: rc.Consumer.GatewayID,
-		Page:      1,
-		Size:      storeShelfPageSize,
-	})
-	if err != nil {
-		return nil
-	}
-	shelf := make(map[string]shelfEntry, len(items))
-	for _, reg := range items {
-		if reg == nil || reg.MCPTarget == nil || reg.MCPTarget.Code == "" {
-			continue
-		}
-		shelf[reg.MCPTarget.Code] = shelfEntry{
-			available:        reg.MCPTarget.StoreAvailable(),
-			requiresApproval: reg.MCPTarget.StoreRequiresApproval(),
+	sh := &shelf{grants: storegrantdomain.Index(nil), instances: map[string][]ids.RegistryID{}}
+	if t.grants != nil {
+		if grants, err := t.grants.ListByGateway(ctx, rc.Consumer.GatewayID); err == nil {
+			sh.grants = storegrantdomain.Index(grants)
 		}
 	}
-	return shelf
+	if t.registries != nil {
+		items, _, err := t.registries.List(ctx, registrydomain.ListFilter{
+			GatewayID: rc.Consumer.GatewayID,
+			Page:      1,
+			Size:      storeShelfPageSize,
+		})
+		if err == nil {
+			for _, reg := range items {
+				if reg == nil || reg.MCPTarget == nil || reg.MCPTarget.Code == "" {
+					continue
+				}
+				sh.instances[reg.MCPTarget.Code] = append(sh.instances[reg.MCPTarget.Code], reg.ID)
+			}
+		}
+	}
+	return sh
 }
 
+// storeMode is the gateway's own Store mode. It fails closed: when no gateway
+// resolved into the context there is nothing to say the Store may materialise
+// arbitrary catalog servers, so the answer is curated (shelf-only), never open.
 func (t *storeTool) storeMode(ctx context.Context) string {
-	if gw, ok := appgateway.FromContext(ctx); ok {
+	if gw, ok := appgateway.FromContext(ctx); ok && gw != nil {
 		return gw.StoreMode()
 	}
-	return gatewaydomain.StoreModeOpen
+	return gatewaydomain.StoreModeCurated
+}
+
+// effectiveStoreMode is the Store mode that applies to the calling principal.
+//
+// On a self-service gateway (every non-enterprise tier) governance does not
+// exist: the Store is always open and any per-principal store_access claim is
+// ignored — no token can close or curate a self-service Store.
+//
+// On an enterprise gateway the principal's per-principal access claim
+// (open/curated/none), when the control plane minted one, is the admin's
+// explicit decision for that user/group and overrides the gateway default in
+// both directions (it can open the Store for one user when the default is
+// curated, or close it for one user when the default is open). An absent or
+// unrecognised claim falls back to the gateway default, keeping tokens minted
+// before this claim existed on their current behaviour. With no gateway in the
+// context the tier is unknown, so the claim is honoured and the default fails
+// closed (curated).
+func (t *storeTool) effectiveStoreMode(ctx context.Context) string {
+	return appstore.EffectiveStoreMode(ctx)
 }
 
 const storeShelfPageSize = 500
 
-func shelfState(shelf map[string]shelfEntry, code string) string {
-	entry, ok := shelf[code]
-	if !ok || !entry.available {
+// shelfState is what installing this server means for the calling principal:
+// "available" when it installs instantly — always under All, or under Selected
+// when a grant names them for the code or for one of its configured instances —
+// and "request" when the install would file an approval request instead.
+func shelfState(sh *shelf, code, mode string, groups []string, subject string) string {
+	if mode == gatewaydomain.StoreModeOpen {
+		return storeStateAvailable
+	}
+	if sh == nil {
 		return storeStateRequest
 	}
-	if entry.requiresApproval {
-		return storeStateApproval
+	if sh.grants.CodeAllows(code, groups, subject) {
+		return storeStateAvailable
 	}
-	return storeStateAvailable
+	for _, id := range sh.instances[code] {
+		if sh.grants.Instance(id).Allows(groups, subject) {
+			return storeStateAvailable
+		}
+	}
+	return storeStateRequest
 }
 
 func matchesQuery(entry catalogdomain.MCPServer, query string) bool {
@@ -739,6 +888,7 @@ func storeInstallDefinition() (Tool, error) {
 		"title": "Install an MCP server",
 		"description": "Install a catalog MCP server for the current user so its tools appear on this Store. When the user needs a server's capabilities, call this yourself to add it through the gateway — do not ask the user to install it manually, add it in their client's MCP settings, or connect to the upstream MCP URL directly, since that bypasses this gateway's governance, auditing and credentials. Takes the catalog `code` returned by " + StoreSearchToolName + ". " +
 			"Some servers need per-user setup values (e.g. a Snowflake account URL, a ServiceNow instance): if so, this returns requires_config with the list of variables to collect — ask the user for them and call install again with them in `config`, or hand them the returned configure_url. " +
+			"When the administrator connected several instances of a server, this returns requires_instance_choice with the list — ask the user which one and call install again with its id in `instance`. " +
 			"Governed by the user's role; a server that needs the user's own account returns a connect link for them to authorize before its tools work.",
 		"inputSchema": map[string]any{
 			"type": "object",
@@ -751,6 +901,10 @@ func storeInstallDefinition() (Tool, error) {
 					"type":                 "object",
 					"description":          "Per-user setup values for servers that declare them (from a prior requires_config response), e.g. {\"instance\":\"acme\"}. Non-secret values only; secrets are entered through the connect link.",
 					"additionalProperties": map[string]any{"type": "string"},
+				},
+				"instance": map[string]any{
+					"type":        "string",
+					"description": "Which configured instance of the server to install, when the administrator connected several (from a prior requires_instance_choice response). Omit otherwise.",
 				},
 			},
 			"required":             []string{"code"},
@@ -774,19 +928,11 @@ func storeInstallDefinition() (Tool, error) {
 }
 
 func storeUninstallDefinition() (Tool, error) {
-	return codeArgTool(
-		StoreUninstallToolName,
-		"Uninstall an MCP server",
-		"Remove a catalog MCP server the current user installed, taking its tools off this Store. Takes the catalog `code`.",
-		true,
-	)
-}
-
-func codeArgTool(name, title, description string, idempotent bool) (Tool, error) {
 	raw, err := json.Marshal(map[string]any{
-		"name":        name,
-		"title":       title,
-		"description": description,
+		"name":  StoreUninstallToolName,
+		"title": "Uninstall an MCP server",
+		"description": "Remove a catalog MCP server the current user installed, taking its tools off this Store. Takes the catalog `code`. " +
+			"When the user has several instances of that server (e.g. two Snowflake schemas), this returns an `instances` list with an id and label for each — re-run with the chosen `instance` id to remove just that one.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -794,14 +940,18 @@ func codeArgTool(name, title, description string, idempotent bool) (Tool, error)
 					"type":        "string",
 					"description": "Catalog code of the MCP server.",
 				},
+				"instance": map[string]any{
+					"type":        "string",
+					"description": "Instance id to remove when several instances of the code are installed (from a prior ambiguous response). Omit when only one is installed.",
+				},
 			},
 			"required":             []string{"code"},
 			"additionalProperties": false,
 		},
 		"annotations": map[string]any{
 			"readOnlyHint":    false,
-			"destructiveHint": idempotent,
-			"idempotentHint":  idempotent,
+			"destructiveHint": true,
+			"idempotentHint":  true,
 			"openWorldHint":   false,
 		},
 	})

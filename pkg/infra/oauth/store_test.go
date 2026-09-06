@@ -147,3 +147,116 @@ func TestStoreSessionRotation(t *testing.T) {
 		t.Fatalf("preserved record mismatch: %+v", fresh)
 	}
 }
+
+// The session's lifetime is fixed at login: the stored TTL runs out at
+// ExpiresAt, and re-saving a rotated record only ever gets what is left of
+// that window, never a fresh one.
+func TestStoreSessionTTLIsAbsoluteNotSliding(t *testing.T) {
+	store, mr := newSessionStore(t)
+	ctx := context.Background()
+
+	loginAt := time.Now()
+	rec := appoauth.SessionRecord{
+		Subject:   "user-42",
+		LoginAt:   loginAt,
+		ExpiresAt: loginAt.Add(time.Hour),
+	}
+	if err := store.SaveSession(ctx, "refresh-1", rec); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+	first := mr.TTL("oauth:session:refresh-1")
+	if first > time.Hour || first < 59*time.Minute {
+		t.Fatalf("TTL must end at ExpiresAt (~1h), not the legacy 30d, got %v", first)
+	}
+
+	// A rotation later in the session re-saves the record under a new token
+	// with the same deadline: 40 minutes left means a 40 minute TTL.
+	rotated := rec
+	rotated.ExpiresAt = time.Now().Add(40 * time.Minute)
+	if err := store.SaveSession(ctx, "refresh-2", rotated); err != nil {
+		t.Fatalf("save rotated session: %v", err)
+	}
+	second := mr.TTL("oauth:session:refresh-2")
+	if second > 40*time.Minute || second < 39*time.Minute {
+		t.Fatalf("rotated TTL must be the remaining lifetime (~40m), got %v", second)
+	}
+
+	got, err := store.GetSession(ctx, "refresh-2")
+	if err != nil || got == nil {
+		t.Fatalf("get rotated session: rec=%v err=%v", got, err)
+	}
+	if !got.LoginAt.Equal(loginAt) || !got.ExpiresAt.Equal(rotated.ExpiresAt) {
+		t.Fatalf("LoginAt/ExpiresAt must round-trip, got %+v", got)
+	}
+}
+
+func TestStoreSaveSessionRefusesExpiredRecord(t *testing.T) {
+	store, mr := newSessionStore(t)
+	err := store.SaveSession(context.Background(), "refresh-1", appoauth.SessionRecord{
+		Subject:   "user-42",
+		ExpiresAt: time.Now().Add(-time.Second),
+	})
+	if err == nil {
+		t.Fatal("saving a record past its deadline must fail rather than persist it")
+	}
+	if mr.Exists("oauth:session:refresh-1") {
+		t.Fatal("an expired record must not be written")
+	}
+}
+
+func TestStoreSessionRecordRoundTripsStoreAccess(t *testing.T) {
+	store, _ := newSessionStore(t)
+	ctx := context.Background()
+	rec := appoauth.SessionRecord{Subject: "user-42", StoreAccess: "curated", ExpiresAt: time.Now().Add(time.Hour)}
+	if err := store.SaveSession(ctx, "refresh-1", rec); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	got, err := store.GetSession(ctx, "refresh-1")
+	if err != nil || got == nil {
+		t.Fatalf("get: rec=%v err=%v", got, err)
+	}
+	if got.StoreAccess != "curated" {
+		t.Fatalf("store_access must round-trip, got %+v", got)
+	}
+}
+
+// The gateway's own authorization code is single-use: the first redemption
+// removes it atomically (GETDEL), so a replayed or injected code finds nothing.
+func TestStoreTakeCodeIsSingleUse(t *testing.T) {
+	store, _ := newSessionStore(t)
+	ctx := context.Background()
+
+	if err := store.SaveCode(ctx, "gw-code", appoauth.CodeGrant{ClientID: "agw-1", Subject: "user-42"}); err != nil {
+		t.Fatalf("save code: %v", err)
+	}
+	first, err := store.TakeCode(ctx, "gw-code")
+	if err != nil || first == nil || first.Subject != "user-42" {
+		t.Fatalf("first take must return the grant: rec=%v err=%v", first, err)
+	}
+	second, err := store.TakeCode(ctx, "gw-code")
+	if err != nil {
+		t.Fatalf("second take: %v", err)
+	}
+	if second != nil {
+		t.Fatal("a redeemed code must not be redeemable again")
+	}
+}
+
+func TestStoreTakePendingIsSingleUse(t *testing.T) {
+	store, _ := newSessionStore(t)
+	ctx := context.Background()
+
+	if err := store.SavePending(ctx, "gw-state", appoauth.PendingAuthorization{ClientID: "agw-1"}); err != nil {
+		t.Fatalf("save pending: %v", err)
+	}
+	if first, err := store.TakePending(ctx, "gw-state"); err != nil || first == nil {
+		t.Fatalf("first take must return the pending authorization: rec=%v err=%v", first, err)
+	}
+	second, err := store.TakePending(ctx, "gw-state")
+	if err != nil {
+		t.Fatalf("second take: %v", err)
+	}
+	if second != nil {
+		t.Fatal("a consumed state must not be consumable again")
+	}
+}

@@ -48,6 +48,18 @@ func (f *fakeStreamInstalls) ListPendingByGateway(context.Context, ids.GatewayID
 }
 func (f *fakeStreamInstalls) Delete(context.Context, ids.GatewayID, string, string) error { return nil }
 
+func (f *fakeStreamInstalls) FindByID(context.Context, ids.GatewayID, string, ids.InstallationID) (*installationdomain.Installation, error) {
+	return nil, installationdomain.ErrNotFound
+}
+
+func (f *fakeStreamInstalls) ListByPrincipalAndCode(context.Context, ids.GatewayID, string, string) ([]*installationdomain.Installation, error) {
+	return nil, nil
+}
+
+func (f *fakeStreamInstalls) DeleteByID(context.Context, ids.GatewayID, string, ids.InstallationID) error {
+	return nil
+}
+
 func TestInstallSnapshot_ReflectsInstalls(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	now := time.Date(2026, 9, 4, 10, 0, 0, 0, time.UTC)
