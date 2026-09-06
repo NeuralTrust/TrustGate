@@ -68,7 +68,7 @@ func FromDomain(g *domain.Gateway, proxyBaseDomain, mcpBaseDomain string) Gatewa
 		ClientTLSConfig: g.ClientTLSConfig,
 		SessionConfig:   g.SessionConfig,
 		Entitlements:    g.Entitlements,
-		StoreMode:       g.ConfiguredStoreMode(),
+		StoreMode:       g.StoreMode(),
 		CreatedAt:       g.CreatedAt,
 		UpdatedAt:       g.UpdatedAt,
 	}

@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 )
 
@@ -73,33 +72,11 @@ const (
 	StoreModeNone = "none"
 )
 
-// StoreGovernanceEnabled reports whether the gateway's plan includes MCP Store
-// governance (curation modes, per-principal access grants, approval queues).
-// Governance is an enterprise entitlement: every other tier is self-service,
-// where the Store is always open and no per-principal access claim applies.
-// Nil-safe: a missing gateway is treated as self-service.
-func (g *Gateway) StoreGovernanceEnabled() bool {
-	if g == nil {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(g.Entitlements.Tier), ratelimit.TierEnterprise)
-}
-
-// StoreMode returns the gateway's effective Store curation mode. On a
-// self-service (non-enterprise) gateway it is always open regardless of any
-// stamped metadata; on an enterprise gateway it is the configured mode,
-// defaulting to open.
+// StoreMode returns the gateway's Store curation mode as stamped by its admin,
+// defaulting to open. Governance is available on every plan: a fresh gateway
+// starts open with no policies (zero-friction default), and any tier may narrow
+// it to curated or none once its admin configures Access.
 func (g *Gateway) StoreMode() string {
-	if !g.StoreGovernanceEnabled() {
-		return StoreModeOpen
-	}
-	return g.ConfiguredStoreMode()
-}
-
-// ConfiguredStoreMode returns the Store curation mode stamped in the gateway's
-// metadata (defaulting to open), without applying the plan gate. It is what an
-// admin set; StoreMode is what is enforced.
-func (g *Gateway) ConfiguredStoreMode() string {
 	if g == nil || g.Metadata == nil {
 		return StoreModeOpen
 	}

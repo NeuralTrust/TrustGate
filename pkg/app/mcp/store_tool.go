@@ -701,9 +701,6 @@ func (t *storeTool) storeMode(ctx context.Context) string {
 // context the tier is unknown, so the claim is honoured and the default fails
 // closed (curated).
 func (t *storeTool) effectiveStoreMode(ctx context.Context) string {
-	if gw, ok := appgateway.FromContext(ctx); ok && gw != nil && !gw.StoreGovernanceEnabled() {
-		return gatewaydomain.StoreModeOpen
-	}
 	switch identity.PrincipalFromContext(ctx).StoreAccess() {
 	case gatewaydomain.StoreModeOpen:
 		return gatewaydomain.StoreModeOpen

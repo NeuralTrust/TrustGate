@@ -255,17 +255,16 @@ func newE2EHarness(t *testing.T, servers ...catalogdomain.MCPServer) *e2eHarness
 	}
 }
 
-// selfServiceHostileCtx is the least favourable self-service context: a free-tier
-// gateway an admin stamped "curated", and a token carrying store_access=curated.
-// Both must be ignored — self-service is always open.
-func selfServiceHostileCtx(sub string) context.Context {
+// selfServiceDefaultCtx is the zero-friction self-service default: a free-tier
+// gateway with nothing stamped and a token carrying no store_access claim. This
+// is the state a fresh self-service org is in before its admin configures any
+// governance, so the Store is open.
+func selfServiceDefaultCtx(sub string) context.Context {
 	gw := &gatewaydomain.Gateway{
 		Entitlements: gatewaydomain.Entitlements{Tier: "free"},
-		Metadata:     gatewaydomain.WithStoreMode(nil, gatewaydomain.StoreModeCurated),
 	}
 	principal := &identity.Principal{Subject: sub, Claims: map[string]any{
-		identity.ClaimStoreAccess: gatewaydomain.StoreModeCurated,
-		identity.ClaimGroups:      []string{"eng"},
+		identity.ClaimGroups: []string{"eng"},
 	}}
 	return appgateway.WithGateway(identity.WithPrincipal(context.Background(), principal), gw)
 }
@@ -274,8 +273,8 @@ func selfServiceHostileCtx(sub string) context.Context {
 // self-service gateway, trustgate_store_install {code} for an OAuth catalog
 // server (DCR auto, or a platform-held client) with no required URL variables
 // materialises the registry, records the install and returns requires_auth with
-// a connect link pinned to the new instance — whatever the stamped mode or the
-// principal's store_access claim say.
+// a connect link pinned to the new instance — with no admin configuration at
+// all, since an unstamped Store defaults to open.
 func TestStoreInstall_SelfServiceOAuthEndToEnd(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -287,7 +286,7 @@ func TestStoreInstall_SelfServiceOAuthEndToEnd(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newE2EHarness(t, tc.server)
-			ctx := selfServiceHostileCtx("ana")
+			ctx := selfServiceDefaultCtx("ana")
 
 			raw, err := h.tool.Call(ctx, h.rc, "https://gw.example", StoreInstallToolName,
 				json.RawMessage(`{"code":"`+tc.server.Code+`"}`))
@@ -358,26 +357,38 @@ func TestStoreInstall_SelfServiceOAuthEndToEnd(t *testing.T) {
 	}
 }
 
-// TestStoreInstall_SelfServiceIgnoresStoreAccessClaimNone: even a token that
-// says store_access=none cannot close a self-service Store.
-func TestStoreInstall_SelfServiceIgnoresStoreAccessClaimNone(t *testing.T) {
+// TestStoreInstall_SelfServiceHonoursGovernance guards the corrected product
+// rule: governance is not a plan entitlement. Once a self-service admin narrows
+// the Store (stamped none) or a principal's policy says none, the same
+// enforcement applies as on enterprise — the install is refused and the search
+// is closed.
+func TestStoreInstall_SelfServiceHonoursGovernance(t *testing.T) {
 	h := newE2EHarness(t, notionLike())
 	gw := &gatewaydomain.Gateway{Entitlements: gatewaydomain.Entitlements{Tier: "standard"}, Metadata: gatewaydomain.WithStoreMode(nil, gatewaydomain.StoreModeNone)}
 	ctx := appgateway.WithGateway(ctxWithStoreAccess(context.Background(), "ana", gatewaydomain.StoreModeNone), gw)
-	raw, err := h.tool.Call(ctx, h.rc, "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"com.notion/mcp"}`))
-	if err != nil {
-		t.Fatalf("install must succeed on a self-service gateway, got %v", err)
+	if _, err := h.tool.Call(ctx, h.rc, "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"com.notion/mcp"}`)); err == nil {
+		t.Fatal("store_access=none on a self-service gateway must refuse the install")
 	}
-	if sc := decodeStructured(t, raw); sc["status"] != string(installationdomain.StatusInstalled) {
-		t.Fatalf("expected installed, got %+v", sc)
+	if h.creator.created != 0 {
+		t.Fatalf("a refused install must not materialise a registry, created=%d", h.creator.created)
 	}
-	// And search browses the whole catalog.
-	raw, err = h.tool.Call(ctx, h.rc, "", StoreSearchToolName, nil)
+	raw, err := h.tool.Call(ctx, h.rc, "", StoreSearchToolName, nil)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
-	if sc := decodeStructured(t, raw); sc["total"].(float64) != 1 || sc["mode"] != gatewaydomain.StoreModeOpen {
-		t.Fatalf("self-service search must be open over the whole catalog, got %+v", sc)
+	if sc := decodeStructured(t, raw); sc["total"].(float64) != 0 || sc["mode"] != gatewaydomain.StoreModeNone {
+		t.Fatalf("a closed self-service Store must browse nothing, got %+v", sc)
+	}
+	// A stamped curated mode on a free tier is enforced too: a non-shelf server
+	// becomes a pending request instead of being materialised.
+	curated := appgateway.WithGateway(identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "ana"}),
+		&gatewaydomain.Gateway{Entitlements: gatewaydomain.Entitlements{Tier: "free"}, Metadata: gatewaydomain.WithStoreMode(nil, gatewaydomain.StoreModeCurated)})
+	raw, err = h.tool.Call(curated, h.rc, "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"com.notion/mcp"}`))
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if sc := decodeStructured(t, raw); sc["pending"] != true || h.creator.created != 0 {
+		t.Fatalf("curated self-service install of a non-shelf server must be a pending request, got %+v (created=%d)", sc, h.creator.created)
 	}
 }
 
@@ -426,7 +437,7 @@ func TestStoreInstall_NoGatewayInContextFailsClosed(t *testing.T) {
 // registry, no row, no connect link, and a message pointing at the admin.
 func TestStoreInstall_SelfServiceStaticOnlyReportsAdminSetup(t *testing.T) {
 	h := newE2EHarness(t, apiKeyOnlyLike())
-	raw, err := h.tool.Call(selfServiceHostileCtx("ana"), h.rc, "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"com.semrush/mcp"}`))
+	raw, err := h.tool.Call(selfServiceDefaultCtx("ana"), h.rc, "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"com.semrush/mcp"}`))
 	if err != nil {
 		t.Fatalf("install must not error, got %v", err)
 	}
@@ -455,7 +466,7 @@ func TestStoreInstall_ConfigureLinkPinnedToInstanceAndGroups(t *testing.T) {
 		URLVariables: []catalogdomain.MCPURLVariable{{Name: "token", Required: true, Secret: true, In: "query"}},
 	}
 	h := newE2EHarness(t, bright)
-	raw, err := h.tool.Call(selfServiceHostileCtx("ana"), h.rc, "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"com.brightdata/mcp"}`))
+	raw, err := h.tool.Call(selfServiceDefaultCtx("ana"), h.rc, "https://gw.example", StoreInstallToolName, json.RawMessage(`{"code":"com.brightdata/mcp"}`))
 	if err != nil {
 		t.Fatalf("install: %v", err)
 	}
