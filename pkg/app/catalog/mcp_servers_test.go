@@ -188,6 +188,19 @@ func TestAuthMethods_Classification(t *testing.T) {
 			want: []string{authHintOAuth},
 		},
 		{
+			name: "secret url variable => static (the key goes in the url var)",
+			in: rawServer{
+				RequiresAuth: true,
+				URLVariables: []domain.MCPURLVariable{{Name: "token", Required: true, Secret: true, In: "query"}},
+			},
+			want: []string{authHintStatic},
+		},
+		{
+			name: "requires auth but no credential slot => nothing (no field to fill)",
+			in:   rawServer{RequiresAuth: true},
+			want: nil,
+		},
+		{
 			name: "headers + oauth => both, static first",
 			in: rawServer{
 				RequiresAuth: true,
