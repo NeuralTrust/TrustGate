@@ -571,3 +571,44 @@ func TestRefreshSessionWithoutDeadlineRefused(t *testing.T) {
 		t.Fatalf("expected invalid_grant for a record without a deadline, got %v", err)
 	}
 }
+
+// TestCallbackRefusesTokenMintedForAnotherGateway: Access policies are
+// gateway-scoped, so a platform token whose gateway claim names another gateway
+// of the tenant (a user edited the hint mid-login to borrow a laxer policy) is
+// refused; one naming this gateway, or none, is accepted.
+func TestCallbackRefusesTokenMintedForAnotherGateway(t *testing.T) {
+	t.Parallel()
+	platform := newTestSigner(t)
+	foreign := platformToken(t, platform, map[string]any{
+		"sub": "platform-user-1", "aud": "neuraltrust-mcp", "org": "team-a",
+		"gateway": ids.New[ids.GatewayKind]().String(), "store_access": "open",
+	})
+	fx := newDefaultIdPFixture(t, platformIdP(t, foreign, platform.JWKS()), platform.Issuer(), "neuraltrust-mcp",
+		WithIdPTokenVerifier(oidcauth.NewVerifier()))
+	if _, err := fx.login(t); err == nil {
+		t.Fatal("a token minted for another gateway must be refused")
+	}
+	if fx.store.peekFirstGrant() != nil {
+		t.Fatal("no code grant may be parked for a refused token")
+	}
+
+	own := newDefaultIdPFixtureGateway(t, platform, "neuraltrust-mcp")
+	if _, err := own.login(t); err != nil {
+		t.Fatalf("a token minted for this gateway must be accepted: %v", err)
+	}
+}
+
+// newDefaultIdPFixtureGateway builds a fixture whose platform token names the
+// fixture's own gateway (the token has to be minted after the gateway id exists).
+func newDefaultIdPFixtureGateway(t *testing.T, platform *infrasts.Signer, audience string) *defaultIdPFixture {
+	t.Helper()
+	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind]()}
+	token := platformToken(t, platform, map[string]any{
+		"sub": "platform-user-1", "aud": audience, "org": "team-a",
+		"gateway": gw.ID.String(), "store_access": "curated",
+	})
+	idp := platformIdP(t, token, platform.JWKS())
+	fx := newDefaultIdPFixture(t, idp, platform.Issuer(), audience, WithIdPTokenVerifier(oidcauth.NewVerifier()))
+	fx.ctx = appgateway.WithGateway(context.Background(), gw)
+	return fx
+}

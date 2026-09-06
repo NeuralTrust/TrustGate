@@ -109,6 +109,8 @@ func TestAuthorizeDefaultIdPPassesGatewayTenantAsOrgHint(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, tenant, parsed.Query().Get("org"),
 		"authorize must pass the gateway's tenant as the org hint to the app")
+	require.Equal(t, gw.ID.String(), parsed.Query().Get("gateway"),
+		"authorize must pass the gateway id so the app resolves this gateway's Store access policy")
 }
 
 // Without a routed gateway in context there is nothing to bind, so the parked
