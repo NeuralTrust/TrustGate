@@ -344,7 +344,7 @@ func (r *credentialResolver) consentRequired(
 		err    error
 	)
 	if code := storeServerCode(rc, reg); code != "" {
-		ticket, err = r.connect.CreateServerTicket(ctx, rc.Consumer.GatewayID, principalSub, consumerPath, code)
+		ticket, err = r.connect.CreateServerTicket(ctx, rc.Consumer.GatewayID, principalSub, consumerPath, code, "")
 	} else {
 		ticket, err = r.connect.CreateTicket(ctx, rc.Consumer.GatewayID, principalSub, consumerPath)
 	}
