@@ -197,15 +197,21 @@ func (p *authProxy) Authorize(ctx context.Context, baseURL string, req Authorize
 	if scope := mergeScopes(req.Scope, cfg.RequiredScopes); scope != "" {
 		q.Set("scope", scope)
 	}
-	// For the platform-wide default IdP, tell the app which tenant this login is
-	// for — the addressed gateway's owning team — so it mints the session's org
-	// claim for that tenant instead of the user's active org. The app verifies the
-	// user's membership before honouring it. An operator's own oauth2 IdP is
-	// already gateway-scoped and needs no hint.
+	// For the platform-wide default IdP, tell the app which tenant and which
+	// gateway this login is for — the addressed gateway's owning team and its id —
+	// so it mints the session's org claim for that tenant instead of the user's
+	// active org and resolves the per-principal Store access policy for THIS
+	// gateway (policies are gateway-scoped). The app verifies the user's
+	// membership and that the gateway belongs to the tenant before honouring
+	// either; the callback then refuses a token minted for another gateway. An
+	// operator's own oauth2 IdP is already gateway-scoped and needs no hint.
 	if appauth.IsDefaultIdP(auth) {
 		if gw, ok := appgateway.FromContext(ctx); ok {
 			if tenant := gw.TenantID(); tenant != "" {
 				q.Set("org", tenant)
+			}
+			if !gw.ID.IsNil() {
+				q.Set("gateway", gw.ID.String())
 			}
 		}
 	}
@@ -279,6 +285,12 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 	// (org, groups, store_access). Verify it before reading a single claim.
 	verified, err := p.verifiedPlatformClaims(ctx, auth, token)
 	if err != nil {
+		return "", err
+	}
+	// A token minted for another gateway of the same tenant carries that
+	// gateway's Store access decision, not this one's: refuse it. (A user could
+	// otherwise edit the gateway hint mid-login to borrow a laxer policy.)
+	if err := checkTokenGateway(verified, token, effectiveGatewayID); err != nil {
 		return "", err
 	}
 
@@ -452,6 +464,36 @@ func groupsFromToken(token map[string]any) []string {
 
 func groupsFromClaims(claims map[string]any) []string {
 	return stringSliceClaim(claims[identity.ClaimGroups])
+}
+
+// checkTokenGateway refuses a platform token whose gateway claim names a
+// gateway other than the one redeeming it. Verified claims win; without a
+// verifier the unverified token is read like the other claims. A token with no
+// gateway claim passes: the control plane then resolved no per-gateway policy
+// (it fails closed on its side), so nothing gateway-specific rides on it.
+func checkTokenGateway(verified map[string]any, token map[string]any, gatewayID ids.GatewayID) error {
+	var claimed string
+	if verified != nil {
+		claimed = gatewayFromClaims(verified)
+	} else {
+		claimed = firstClaimOf(token, func(claims map[string]any) (string, bool) {
+			v := gatewayFromClaims(claims)
+			return v, v != ""
+		})
+	}
+	if claimed == "" || gatewayID.IsNil() {
+		return nil
+	}
+	if !strings.EqualFold(claimed, gatewayID.String()) {
+		slog.Warn("oauth: platform token minted for another gateway", "token_gateway", claimed, "gateway", gatewayID.String())
+		return oauthErr("access_denied", "identity provider token was issued for another gateway")
+	}
+	return nil
+}
+
+func gatewayFromClaims(claims map[string]any) string {
+	v, _ := claims[identity.ClaimGateway].(string)
+	return strings.TrimSpace(v)
 }
 
 // storeAccessFromToken reads the per-principal MCP Store access level the
