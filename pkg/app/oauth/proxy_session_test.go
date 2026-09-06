@@ -29,6 +29,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
 	infrasts "github.com/NeuralTrust/TrustGate/pkg/infra/identity/sts"
@@ -341,6 +342,8 @@ func TestRefreshSessionReMintsAndRotates(t *testing.T) {
 		GatewayID: "gw-1",
 		AuthID:    "auth-1",
 		Audiences: []string{"api://gw"},
+		LoginAt:   time.Now(),
+		ExpiresAt: time.Now().Add(time.Hour),
 	}); err != nil {
 		t.Fatalf("seed session: %v", err)
 	}
