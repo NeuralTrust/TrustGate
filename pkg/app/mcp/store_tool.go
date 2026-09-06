@@ -550,12 +550,11 @@ const (
 	storeStateRequest   = "request"
 )
 
-// shelfEntry is one shelf registry's Store grant: whether it is published and
-// which groups/users it is granted to (both empty = everyone).
+// shelfEntry is one instance's Store grant: the groups/users it is granted to.
+// Grants are explicit — both empty means granted to nobody (under Selected).
 type shelfEntry struct {
-	available bool
-	groups    []string
-	users     []string
+	groups []string
+	users  []string
 }
 
 func (t *storeTool) search(
@@ -673,9 +672,8 @@ func (t *storeTool) shelfIndex(ctx context.Context, rc *appconsumer.RoutableCons
 			continue
 		}
 		shelf[reg.MCPTarget.Code] = shelfEntry{
-			available: reg.MCPTarget.StoreAvailable(),
-			groups:    reg.MCPTarget.StoreGroups(),
-			users:     reg.MCPTarget.StoreUsers(),
+			groups: reg.MCPTarget.StoreGroups(),
+			users:  reg.MCPTarget.StoreUsers(),
 		}
 	}
 	return shelf
@@ -714,14 +712,14 @@ const storeShelfPageSize = 500
 
 // shelfState is what installing this server means for the calling principal:
 // "available" when it installs instantly — always under All, or under Selected
-// when the shelf registry is published and granted to them — and "request" when
-// the install would file an approval request instead.
+// when an instance exists and is granted to them — and "request" when the
+// install would file an approval request instead.
 func shelfState(shelf map[string]shelfEntry, code, mode string, groups []string, subject string) string {
 	if mode == gatewaydomain.StoreModeOpen {
 		return storeStateAvailable
 	}
 	entry, ok := shelf[code]
-	if !ok || !entry.available {
+	if !ok {
 		return storeStateRequest
 	}
 	if appstore.StoreAccessAllows(entry.groups, entry.users, groups, subject) {

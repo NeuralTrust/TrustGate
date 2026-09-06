@@ -78,7 +78,7 @@ func TestInstallCapsInstancesPerCode(t *testing.T) {
 func TestInstallCapCountsPendingButNotRevoked(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	regs := &fakeRegistries{items: []*registrydomain.Registry{
-		shelfRegistry("snowflake", &registrydomain.MCPStoreConfig{Available: true}),
+		shelfRegistry("snowflake", &registrydomain.MCPStoreConfig{Users: []string{"ana"}}),
 	}}
 	in := req(gw, "snowflake")
 	in.Config = map[string]string{"account_url": "acme", "database": "one-more"}

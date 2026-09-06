@@ -190,19 +190,14 @@ func (a *approver) Approve(ctx context.Context, in ApproveRequest) error {
 			return fmt.Errorf("%w: %q", ErrNotShelved, code)
 		}
 	}
-	// Approving a request GRANTS the resource to the requester: the server is
-	// published and, when the shelf names specific groups/users, the requester's
-	// subject is added so their next install is instant and Access reflects it.
-	changed := false
-	if !reg.MCPTarget.StoreAvailable() {
-		reg.MCPTarget.Store = ensureStoreAvailable(reg.MCPTarget.Store)
-		changed = true
-	}
+	// Approving a request GRANTS the resource to the requester: their subject is
+	// added to the instance's grants so their next install is instant and the
+	// Access page reflects it. Grants are the only governance on an instance.
 	if !storeAccessAllows(reg.MCPTarget.StoreGroups(), reg.MCPTarget.StoreUsers(), nil, existing.PrincipalSub) {
+		if reg.MCPTarget.Store == nil {
+			reg.MCPTarget.Store = &registrydomain.MCPStoreConfig{}
+		}
 		reg.MCPTarget.Store.Users = append(reg.MCPTarget.Store.Users, existing.PrincipalSub)
-		changed = true
-	}
-	if changed {
 		if err := a.registries.Update(ctx, reg); err != nil {
 			return fmt.Errorf("store: grant registry: %w", err)
 		}
@@ -278,14 +273,4 @@ func (a *approver) target(
 	default:
 		return nil, fmt.Errorf("%w: %d live instances of %q", ErrAmbiguousRequest, len(live), code)
 	}
-}
-
-// ensureStoreAvailable returns a store config with Available set, preserving any
-// existing approval/role governance.
-func ensureStoreAvailable(store *registrydomain.MCPStoreConfig) *registrydomain.MCPStoreConfig {
-	if store == nil {
-		return &registrydomain.MCPStoreConfig{Available: true}
-	}
-	store.Available = true
-	return store
 }
