@@ -82,6 +82,26 @@ func (m *memInstallations) ListPendingByGateway(
 	return nil, nil
 }
 
+func (m *memInstallations) FindByID(
+	_ context.Context, g ids.GatewayID, sub string, id ids.InstallationID,
+) (*installationdomain.Installation, error) {
+	for _, in := range m.rows {
+		if in.GatewayID == g && in.PrincipalSub == sub && in.ID == id {
+			return in, nil
+		}
+	}
+	return nil, installationdomain.ErrNotFound
+}
+
+func (m *memInstallations) ListByPrincipalAndCode(
+	_ context.Context, g ids.GatewayID, sub, code string,
+) ([]*installationdomain.Installation, error) {
+	if in, ok := m.rows[key(g, sub, code)]; ok {
+		return []*installationdomain.Installation{in}, nil
+	}
+	return nil, nil
+}
+
 func (m *memInstallations) Delete(_ context.Context, g ids.GatewayID, sub, code string) error {
 	k := key(g, sub, code)
 	if _, ok := m.rows[k]; !ok {
@@ -89,6 +109,18 @@ func (m *memInstallations) Delete(_ context.Context, g ids.GatewayID, sub, code 
 	}
 	delete(m.rows, k)
 	return nil
+}
+
+func (m *memInstallations) DeleteByID(
+	_ context.Context, g ids.GatewayID, sub string, id ids.InstallationID,
+) error {
+	for k, in := range m.rows {
+		if in.GatewayID == g && in.PrincipalSub == sub && in.ID == id {
+			delete(m.rows, k)
+			return nil
+		}
+	}
+	return installationdomain.ErrNotFound
 }
 
 // fakeRegistryEnsurer records the codes EnsureRegistry was asked to materialise.

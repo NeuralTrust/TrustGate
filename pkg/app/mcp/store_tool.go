@@ -167,10 +167,6 @@ func (t *storeTool) Call(
 	}
 }
 
-type storeCodeArgs struct {
-	Code string `json:"code"`
-}
-
 // storeInstallArgs is the install meta-tool's input: the catalog code plus the
 // per-user URL-variable values (config), collected from the user for servers that
 // declare them (e.g. Snowflake's account_url/database).
@@ -334,6 +330,13 @@ func configVariablesJSON(vars []registrydomain.MCPURLVariable) []map[string]any 
 	return out
 }
 
+// storeUninstallArgs is the uninstall meta-tool's input: the catalog code and,
+// when the principal holds several instances of it, the instance id to remove.
+type storeUninstallArgs struct {
+	Code     string `json:"code"`
+	Instance string `json:"instance,omitempty"`
+}
+
 func (t *storeTool) uninstall(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
@@ -342,21 +345,63 @@ func (t *storeTool) uninstall(
 	if t.installer == nil {
 		return nil, fmt.Errorf("%w: uninstall is not available here", ErrStoreToolUnavailable)
 	}
-	var args storeCodeArgs
+	var args storeUninstallArgs
 	if err := json.Unmarshal(arguments, &args); err != nil || strings.TrimSpace(args.Code) == "" {
 		return nil, fmt.Errorf("%w: uninstall requires a catalog code", ErrStoreToolUnavailable)
 	}
+	code := strings.TrimSpace(args.Code)
 	sub, err := t.principalSubject(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if err := t.installer.Uninstall(ctx, rc.Consumer.GatewayID, sub, args.Code); err != nil {
+	err = t.installer.Uninstall(ctx, rc.Consumer.GatewayID, sub, code, args.Instance)
+	if errors.Is(err, appstore.ErrAmbiguousInstance) {
+		// Several instances of this code are installed; hand back the list so the
+		// caller can re-issue uninstall with the chosen instance id.
+		return t.instancePicker(ctx, rc, code, "uninstall")
+	}
+	if err != nil {
 		return nil, err
 	}
 	return marshalToolResult(
-		fmt.Sprintf("Uninstalled %s.", strings.TrimSpace(args.Code)),
-		map[string]any{"code": strings.TrimSpace(args.Code), "uninstalled": true},
+		fmt.Sprintf("Uninstalled %s.", code),
+		map[string]any{"code": code, "uninstalled": true},
 	)
+}
+
+// instancePicker returns a structured "which instance?" result listing the
+// principal's active instances of a code (id + label), for an operation that
+// must target one of several. It is a normal (non-error) result: the caller
+// re-issues the operation with the chosen instance id.
+func (t *storeTool) instancePicker(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	code, action string,
+) (json.RawMessage, error) {
+	sub, err := t.principalSubject(ctx)
+	if err != nil {
+		return nil, err
+	}
+	instances, err := t.installer.Instances(ctx, rc.Consumer.GatewayID, sub, code)
+	if err != nil {
+		return nil, err
+	}
+	list := make([]map[string]any, 0, len(instances))
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s has several instances installed. Re-run %s with the `instance` id of the one you mean:", code, action)
+	for _, in := range instances {
+		label := in.InstanceLabel()
+		if label == "" {
+			label = code
+		}
+		list = append(list, map[string]any{"instance": in.ID.String(), "label": label})
+		fmt.Fprintf(&b, "\n• %s — instance \"%s\"", label, in.ID.String())
+	}
+	return marshalToolResult(b.String(), map[string]any{
+		"code":      code,
+		"ambiguous": true,
+		"instances": list,
+	})
 }
 
 func principalGroups(principal *identity.Principal) []string {
@@ -796,19 +841,11 @@ func storeInstallDefinition() (Tool, error) {
 }
 
 func storeUninstallDefinition() (Tool, error) {
-	return codeArgTool(
-		StoreUninstallToolName,
-		"Uninstall an MCP server",
-		"Remove a catalog MCP server the current user installed, taking its tools off this Store. Takes the catalog `code`.",
-		true,
-	)
-}
-
-func codeArgTool(name, title, description string, idempotent bool) (Tool, error) {
 	raw, err := json.Marshal(map[string]any{
-		"name":        name,
-		"title":       title,
-		"description": description,
+		"name":  StoreUninstallToolName,
+		"title": "Uninstall an MCP server",
+		"description": "Remove a catalog MCP server the current user installed, taking its tools off this Store. Takes the catalog `code`. " +
+			"When the user has several instances of that server (e.g. two Snowflake schemas), this returns an `instances` list with an id and label for each — re-run with the chosen `instance` id to remove just that one.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -816,14 +853,18 @@ func codeArgTool(name, title, description string, idempotent bool) (Tool, error)
 					"type":        "string",
 					"description": "Catalog code of the MCP server.",
 				},
+				"instance": map[string]any{
+					"type":        "string",
+					"description": "Instance id to remove when several instances of the code are installed (from a prior ambiguous response). Omit when only one is installed.",
+				},
 			},
 			"required":             []string{"code"},
 			"additionalProperties": false,
 		},
 		"annotations": map[string]any{
 			"readOnlyHint":    false,
-			"destructiveHint": idempotent,
-			"idempotentHint":  idempotent,
+			"destructiveHint": true,
+			"idempotentHint":  true,
 			"openWorldHint":   false,
 		},
 	})

@@ -17,6 +17,8 @@ package store
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
@@ -71,17 +73,29 @@ func (s *scoper) Scope(
 	if err != nil {
 		return nil, fmt.Errorf("store scoper: list installations: %w", err)
 	}
-	active := make(map[string]struct{}, len(installs))
+	active := make([]*installationdomain.Installation, 0, len(installs))
+	countByCode := make(map[string]int)
 	for _, in := range installs {
 		if in.IsActive() {
-			active[in.CatalogCode] = struct{}{}
+			active = append(active, in)
+			countByCode[in.CatalogCode]++
 		}
 	}
 	if len(active) == 0 {
 		return rc, nil
 	}
+	// Stable exposure order: by code, then install age, then id.
+	sort.Slice(active, func(i, j int) bool {
+		if active[i].CatalogCode != active[j].CatalogCode {
+			return active[i].CatalogCode < active[j].CatalogCode
+		}
+		if !active[i].CreatedAt.Equal(active[j].CreatedAt) {
+			return active[i].CreatedAt.Before(active[j].CreatedAt)
+		}
+		return active[i].ID.String() < active[j].ID.String()
+	})
 
-	regs, err := s.installedRegistries(ctx, rc.Consumer.GatewayID, active)
+	regs, err := s.installedRegistries(ctx, rc.Consumer.GatewayID, active, countByCode)
 	if err != nil {
 		return nil, err
 	}
@@ -93,10 +107,19 @@ func (s *scoper) Scope(
 	return &scoped, nil
 }
 
+// installedRegistries maps a principal's active installs onto the shared shelf
+// registries. A code with a single active install exposes its shelf registry
+// unchanged — byte-for-byte the pre-instances behaviour. A code with several
+// active installs (distinct instances, e.g. two Snowflake schemas) exposes one
+// per-instance clone per install: a distinct registry id and a config-derived
+// label so the composer names and disambiguates their tools apart, with the
+// instance's own plain config carried as a request-scoped overlay for the
+// dial-time URL resolver.
 func (s *scoper) installedRegistries(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
-	activeCodes map[string]struct{},
+	active []*installationdomain.Installation,
+	countByCode map[string]int,
 ) ([]*registrydomain.Registry, error) {
 	items, _, err := s.registries.List(ctx, registrydomain.ListFilter{
 		GatewayID: gatewayID,
@@ -106,14 +129,63 @@ func (s *scoper) installedRegistries(
 	if err != nil {
 		return nil, fmt.Errorf("store scoper: list registries: %w", err)
 	}
-	out := make([]*registrydomain.Registry, 0, len(activeCodes))
+	byCode := make(map[string]*registrydomain.Registry, len(items))
 	for _, reg := range items {
 		if reg == nil || reg.MCPTarget == nil {
 			continue
 		}
-		if _, ok := activeCodes[reg.MCPTarget.Code]; ok {
-			out = append(out, reg)
+		if _, seen := byCode[reg.MCPTarget.Code]; !seen {
+			byCode[reg.MCPTarget.Code] = reg
 		}
 	}
+	out := make([]*registrydomain.Registry, 0, len(active))
+	for _, in := range active {
+		shelf, ok := byCode[in.CatalogCode]
+		if !ok {
+			continue
+		}
+		if countByCode[in.CatalogCode] <= 1 {
+			out = append(out, shelf)
+			continue
+		}
+		out = append(out, instanceRegistry(shelf, in))
+	}
 	return out, nil
+}
+
+// instanceRegistry clones a shelf registry into a per-instance view for one
+// install: a stable per-instance id (re-tagged from the install id), a label
+// suffixed with the install's distinguishing config, and that config as a
+// request-scoped overlay the dial-time resolver reads. It copies the registry
+// and its target so the shared shelf entry is never mutated.
+func instanceRegistry(
+	shelf *registrydomain.Registry,
+	in *installationdomain.Installation,
+) *registrydomain.Registry {
+	clone := *shelf
+	target := *shelf.MCPTarget
+	clone.MCPTarget = &target
+	clone.ID = ids.From[ids.RegistryKind](in.ID.UUID())
+	if label := in.InstanceLabel(); label != "" {
+		clone.Name = instanceName(shelf, label)
+	}
+	if len(in.Config) > 0 {
+		cfg := make(map[string]string, len(in.Config))
+		for k, v := range in.Config {
+			cfg[k] = v
+		}
+		target.InstanceConfig = cfg
+	}
+	return &clone
+}
+
+func instanceName(shelf *registrydomain.Registry, label string) string {
+	base := strings.TrimSpace(shelf.Name)
+	if base == "" && shelf.MCPTarget != nil {
+		base = shelf.MCPTarget.Code
+	}
+	if base == "" {
+		return label
+	}
+	return base + " (" + label + ")"
 }

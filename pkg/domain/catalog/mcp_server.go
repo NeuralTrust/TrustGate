@@ -17,14 +17,14 @@ package catalog
 // MCPServer is a single entry in the curated catalog of remote MCP servers,
 // used to prefill MCP registry creation.
 type MCPServer struct {
-	Code         string `json:"code"`
-	DisplayName  string `json:"display_name"`
-	Vendor       string `json:"vendor,omitempty"`
-	Category     string `json:"category,omitempty"`
-	Description  string `json:"description,omitempty"`
-	URL          string `json:"url"`
-	Transport    string `json:"transport"`
-	AuthHint     string `json:"auth_hint"` // none | static | oauth
+	Code        string `json:"code"`
+	DisplayName string `json:"display_name"`
+	Vendor      string `json:"vendor,omitempty"`
+	Category    string `json:"category,omitempty"`
+	Description string `json:"description,omitempty"`
+	URL         string `json:"url"`
+	Transport   string `json:"transport"`
+	AuthHint    string `json:"auth_hint"` // none | static | oauth
 	// AuthMethods lists every auth method an operator may pick when installing
 	// this server: "static" (API key / header) and/or "oauth". It is the
 	// authoritative declaration the UI uses to decide whether to offer a choice

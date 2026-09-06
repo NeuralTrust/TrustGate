@@ -71,6 +71,26 @@ func (f *fakeInstalls) ListPendingByGateway(context.Context, ids.GatewayID) ([]*
 }
 func (f *fakeInstalls) Delete(context.Context, ids.GatewayID, string, string) error { return nil }
 
+func (f *fakeInstalls) FindByID(_ context.Context, gw ids.GatewayID, sub string, id ids.InstallationID) (*installationdomain.Installation, error) {
+	for _, in := range f.rows {
+		if in != nil && in.GatewayID == gw && in.PrincipalSub == sub && in.ID == id {
+			return in, nil
+		}
+	}
+	return nil, installationdomain.ErrNotFound
+}
+
+func (f *fakeInstalls) ListByPrincipalAndCode(_ context.Context, gw ids.GatewayID, sub, code string) ([]*installationdomain.Installation, error) {
+	if in, ok := f.rows[f.key(gw, sub, code)]; ok {
+		return []*installationdomain.Installation{in}, nil
+	}
+	return nil, nil
+}
+
+func (f *fakeInstalls) DeleteByID(context.Context, ids.GatewayID, string, ids.InstallationID) error {
+	return nil
+}
+
 func configureFixture(t *testing.T) (oauth.ConfigureService, *memConnectStore, *memVaultRepo, *fakeInstalls, ids.GatewayID) {
 	t.Helper()
 	gw := ids.New[ids.GatewayKind]()

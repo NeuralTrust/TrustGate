@@ -113,6 +113,53 @@ func TestScoperWithoutPrincipalIsNoop(t *testing.T) {
 	}
 }
 
+func TestScoperExposesOneRegistryPerInstance(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	shelf := &registrydomain.Registry{
+		ID:   ids.New[ids.RegistryKind](),
+		Name: "Snowflake",
+		MCPTarget: &registrydomain.MCPTarget{
+			Code: "snowflake",
+			URL:  "https://acme/api/v2/databases/{database}/mcp",
+			URLVariables: []registrydomain.MCPURLVariable{
+				{Name: "database", Required: true},
+			},
+		},
+	}
+	analytics, _ := installationdomain.New(gw, "ana", "snowflake", "ana", map[string]string{"database": "analytics"})
+	finance, _ := installationdomain.New(gw, "ana", "snowflake", "ana", map[string]string{"database": "finance"})
+	sc, _ := NewScoper(
+		&fakeInstalls{byPrincipal: []*installationdomain.Installation{analytics, finance}},
+		&fakeRegistries{items: []*registrydomain.Registry{shelf}},
+	)
+	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
+	scoped, err := sc.Scope(withPrincipal("ana"), rc)
+	if err != nil {
+		t.Fatalf("Scope: %v", err)
+	}
+	if len(scoped.Registries) != 2 {
+		t.Fatalf("two instances must surface two registries, got %d", len(scoped.Registries))
+	}
+	names := map[string]bool{}
+	for _, reg := range scoped.Registries {
+		names[reg.Name] = true
+		// Each instance is a distinct clone: its own id and its config overlay.
+		if reg.ID == shelf.ID {
+			t.Fatal("a multi-instance clone must not reuse the shelf registry id")
+		}
+		if len(reg.MCPTarget.InstanceConfig) == 0 {
+			t.Fatalf("instance %q must carry its config overlay", reg.Name)
+		}
+		// The shelf entry itself must never be mutated.
+		if shelf.MCPTarget.InstanceConfig != nil {
+			t.Fatal("the shared shelf registry must not be mutated")
+		}
+	}
+	if !names["Snowflake (analytics)"] || !names["Snowflake (finance)"] {
+		t.Fatalf("instances must be labelled by their config, got %v", names)
+	}
+}
+
 func TestScoperIgnoresRevokedInstalls(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	revoked := mustInstall(t, gw, "ana", "github")

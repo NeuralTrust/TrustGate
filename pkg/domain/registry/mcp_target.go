@@ -129,6 +129,14 @@ type MCPTarget struct {
 	// without re-reading the catalog. Empty for servers whose URL is fully
 	// determined (the common case). See ResolveURL.
 	URLVariables []MCPURLVariable `json:"url_variables,omitempty"`
+	// InstanceConfig carries one instance's resolved plain URL-variable values when
+	// the Store scoper exposes several instances of the same catalog code for a
+	// principal (e.g. two Snowflake schemas). It is a request-scoped overlay set on
+	// a per-instance registry clone, never persisted (json:"-") and never part of
+	// the config snapshot; the dial-time resolver prefers it over the by-code
+	// installation lookup, which cannot tell one instance from another. Nil in the
+	// common single-instance case, where the by-code lookup is unambiguous.
+	InstanceConfig map[string]string `json:"-"`
 }
 
 // MCPURLVariable declares one per-user placeholder in an MCPTarget URL template.

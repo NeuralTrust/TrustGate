@@ -28,6 +28,7 @@ import (
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
@@ -306,10 +307,13 @@ func TestStoreSearchCuratedModeHidesNonShelf(t *testing.T) {
 }
 
 type fakeInstaller struct {
-	installed   []string
-	lastGroups  []string
-	uninstalled []string
-	result      *appstore.InstallResult
+	installed    []string
+	lastGroups   []string
+	uninstalled  []string
+	lastInstance string
+	instances    []*installationdomain.Installation
+	uninstallErr error
+	result       *appstore.InstallResult
 }
 
 func (f *fakeInstaller) Install(_ context.Context, in appstore.InstallRequest) (*appstore.InstallResult, error) {
@@ -321,8 +325,16 @@ func (f *fakeInstaller) Install(_ context.Context, in appstore.InstallRequest) (
 	return &appstore.InstallResult{Code: in.Code, Name: in.Code}, nil
 }
 
-func (f *fakeInstaller) Uninstall(_ context.Context, _ ids.GatewayID, _, code string) error {
+func (f *fakeInstaller) Instances(_ context.Context, _ ids.GatewayID, _, _ string) ([]*installationdomain.Installation, error) {
+	return f.instances, nil
+}
+
+func (f *fakeInstaller) Uninstall(_ context.Context, _ ids.GatewayID, _, code, instance string) error {
+	if f.uninstallErr != nil {
+		return f.uninstallErr
+	}
 	f.uninstalled = append(f.uninstalled, code)
+	f.lastInstance = instance
 	return nil
 }
 
@@ -392,5 +404,52 @@ func TestStoreUninstallCall(t *testing.T) {
 	}
 	if len(installer.uninstalled) != 1 || installer.uninstalled[0] != "github" {
 		t.Fatalf("uninstall must call the installer, got %v", installer.uninstalled)
+	}
+}
+
+func TestStoreUninstallPassesInstanceID(t *testing.T) {
+	installer := &fakeInstaller{}
+	tool := storeToolWithInstaller(t, installer)
+	if _, err := tool.Call(ctxWithPrincipal(), storeRC(), "", StoreUninstallToolName,
+		json.RawMessage(`{"code":"snowflake","instance":"018f-abc"}`)); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	if installer.lastInstance != "018f-abc" {
+		t.Fatalf("uninstall must pass the instance id through, got %q", installer.lastInstance)
+	}
+}
+
+func TestStoreUninstallAmbiguousReturnsInstancePicker(t *testing.T) {
+	a, _ := installationdomain.New(ids.New[ids.GatewayKind](), "ana", "snowflake", "ana", map[string]string{"database": "analytics"})
+	f, _ := installationdomain.New(ids.New[ids.GatewayKind](), "ana", "snowflake", "ana", map[string]string{"database": "finance"})
+	installer := &fakeInstaller{
+		uninstallErr: appstore.ErrAmbiguousInstance,
+		instances:    []*installationdomain.Installation{a, f},
+	}
+	tool := storeToolWithInstaller(t, installer)
+	raw, err := tool.Call(ctxWithPrincipal(), storeRC(), "", StoreUninstallToolName, json.RawMessage(`{"code":"snowflake"}`))
+	if err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	var out struct {
+		StructuredContent struct {
+			Ambiguous bool `json:"ambiguous"`
+			Instances []struct {
+				Instance string `json:"instance"`
+				Label    string `json:"label"`
+			} `json:"instances"`
+		} `json:"structuredContent"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !out.StructuredContent.Ambiguous || len(out.StructuredContent.Instances) != 2 {
+		t.Fatalf("expected an ambiguous picker with two instances, got %+v", out.StructuredContent)
+	}
+	if out.StructuredContent.Instances[0].Instance != a.ID.String() {
+		t.Fatalf("picker must carry the instance ids, got %+v", out.StructuredContent.Instances)
+	}
+	if len(installer.uninstalled) != 0 {
+		t.Fatal("an ambiguous uninstall must not remove anything")
 	}
 }

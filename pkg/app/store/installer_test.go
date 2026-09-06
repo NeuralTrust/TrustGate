@@ -51,9 +51,23 @@ func (f *fakeRegistries) Update(_ context.Context, b *registrydomain.Registry) e
 type fakeInstalls struct {
 	upserts     []*installationdomain.Installation
 	deletes     int
+	deleteByID  int
 	findValue   *installationdomain.Installation
+	byCode      []*installationdomain.Installation
 	byPrincipal []*installationdomain.Installation
 	pending     []*installationdomain.Installation
+}
+
+// installsForCode is the set a code-scoped read returns: an explicit byCode list
+// when set, else the single findValue (the common one-instance fixture), else none.
+func (f *fakeInstalls) installsForCode() []*installationdomain.Installation {
+	if f.byCode != nil {
+		return f.byCode
+	}
+	if f.findValue != nil {
+		return []*installationdomain.Installation{f.findValue}
+	}
+	return nil
 }
 
 func (f *fakeInstalls) Upsert(_ context.Context, in *installationdomain.Installation) error {
@@ -80,8 +94,26 @@ func (f *fakeInstalls) ListPendingByGateway(context.Context, ids.GatewayID) ([]*
 	return f.pending, nil
 }
 
+func (f *fakeInstalls) FindByID(_ context.Context, _ ids.GatewayID, _ string, id ids.InstallationID) (*installationdomain.Installation, error) {
+	for _, in := range f.installsForCode() {
+		if in != nil && in.ID == id {
+			return in, nil
+		}
+	}
+	return nil, installationdomain.ErrNotFound
+}
+
+func (f *fakeInstalls) ListByPrincipalAndCode(context.Context, ids.GatewayID, string, string) ([]*installationdomain.Installation, error) {
+	return f.installsForCode(), nil
+}
+
 func (f *fakeInstalls) Delete(context.Context, ids.GatewayID, string, string) error {
 	f.deletes++
+	return nil
+}
+
+func (f *fakeInstalls) DeleteByID(context.Context, ids.GatewayID, string, ids.InstallationID) error {
+	f.deleteByID++
 	return nil
 }
 
@@ -472,10 +504,82 @@ func TestInstallSecretVariableRecordsAndRequiresConnect(t *testing.T) {
 func TestUninstallDeletesInstallationOnly(t *testing.T) {
 	installs := &fakeInstalls{}
 	inst := newInstaller(t, &fakeRegistries{}, installs)
-	if err := inst.Uninstall(context.Background(), ids.New[ids.GatewayKind](), "ana", "github"); err != nil {
+	// No active instance recorded: falls back to clearing any row for the code.
+	if err := inst.Uninstall(context.Background(), ids.New[ids.GatewayKind](), "ana", "github", ""); err != nil {
 		t.Fatalf("Uninstall: %v", err)
 	}
 	if installs.deletes != 1 {
 		t.Fatalf("expected one delete, got %d", installs.deletes)
+	}
+}
+
+func TestUninstallSingleInstanceDeletesByID(t *testing.T) {
+	one := &installationdomain.Installation{
+		ID:     ids.New[ids.InstallationKind](),
+		Status: installationdomain.StatusInstalled,
+	}
+	installs := &fakeInstalls{byCode: []*installationdomain.Installation{one}}
+	inst := newInstaller(t, &fakeRegistries{}, installs)
+	if err := inst.Uninstall(context.Background(), ids.New[ids.GatewayKind](), "ana", "github", ""); err != nil {
+		t.Fatalf("Uninstall: %v", err)
+	}
+	if installs.deleteByID != 1 || installs.deletes != 0 {
+		t.Fatalf("expected one delete-by-id, got byID=%d byCode=%d", installs.deleteByID, installs.deletes)
+	}
+}
+
+func TestUninstallAmbiguousWithoutInstance(t *testing.T) {
+	installs := &fakeInstalls{byCode: []*installationdomain.Installation{
+		{ID: ids.New[ids.InstallationKind](), Status: installationdomain.StatusInstalled, Config: map[string]string{"schema": "a"}},
+		{ID: ids.New[ids.InstallationKind](), Status: installationdomain.StatusInstalled, Config: map[string]string{"schema": "b"}},
+	}}
+	inst := newInstaller(t, &fakeRegistries{}, installs)
+	err := inst.Uninstall(context.Background(), ids.New[ids.GatewayKind](), "ana", "github", "")
+	if !errors.Is(err, ErrAmbiguousInstance) {
+		t.Fatalf("expected ErrAmbiguousInstance, got %v", err)
+	}
+	if installs.deleteByID != 0 || installs.deletes != 0 {
+		t.Fatal("must not delete anything when the instance is ambiguous")
+	}
+}
+
+func TestUninstallByInstanceID(t *testing.T) {
+	installs := &fakeInstalls{byCode: []*installationdomain.Installation{
+		{ID: ids.New[ids.InstallationKind](), Status: installationdomain.StatusInstalled, Config: map[string]string{"schema": "a"}},
+		{ID: ids.New[ids.InstallationKind](), Status: installationdomain.StatusInstalled, Config: map[string]string{"schema": "b"}},
+	}}
+	inst := newInstaller(t, &fakeRegistries{}, installs)
+	target := installs.byCode[1].ID.String()
+	if err := inst.Uninstall(context.Background(), ids.New[ids.GatewayKind](), "ana", "github", target); err != nil {
+		t.Fatalf("Uninstall: %v", err)
+	}
+	if installs.deleteByID != 1 {
+		t.Fatalf("expected one delete-by-id, got %d", installs.deleteByID)
+	}
+}
+
+func TestInstallDifferentConfigCreatesNewInstance(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	regs := &fakeRegistries{items: []*registrydomain.Registry{
+		shelfRegistry("snowflake", &registrydomain.MCPStoreConfig{Available: true}),
+	}}
+	// An existing instance (schema "a") must not be treated as the same install
+	// when a different config (schema "b") arrives: it is a new instance — a fresh
+	// id, reported not-already-installed.
+	configA := map[string]string{"account_url": "acme", "database": "a"}
+	configB := map[string]string{"account_url": "acme", "database": "b"}
+	installs := &fakeInstalls{byCode: []*installationdomain.Installation{
+		{ID: ids.New[ids.InstallationKind](), Status: installationdomain.StatusInstalled, Config: configA},
+	}}
+	in := InstallRequest{GatewayID: gw, PrincipalSub: "ana", Code: "snowflake", InstalledBy: "ana", Config: configB}
+	res, err := newInstaller(t, regs, installs).Install(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if res.AlreadyInstalled {
+		t.Fatal("a new config must be a new instance, not already-installed")
+	}
+	if len(installs.upserts) != 1 || !installs.upserts[0].SameConfig(configB) {
+		t.Fatal("expected an upsert carrying the new config")
 	}
 }
