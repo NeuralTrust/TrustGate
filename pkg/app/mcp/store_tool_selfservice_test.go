@@ -32,7 +32,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
 // e2eCatalog serves the search catalog, the installer's by-code lookup and the
@@ -94,13 +94,13 @@ func (c *e2eCreator) Create(_ context.Context, in appregistry.CreateInput) (*reg
 }
 
 // e2eGrants is an in-memory Store grant store.
-type e2eGrants struct{ items []*storegrantdomain.Grant }
+type e2eGrants struct{ items []*storeaccessdomain.Grant }
 
-func (g *e2eGrants) ListByGateway(context.Context, ids.GatewayID) ([]*storegrantdomain.Grant, error) {
+func (g *e2eGrants) ListByGateway(context.Context, ids.GatewayID) ([]*storeaccessdomain.Grant, error) {
 	return g.items, nil
 }
 
-func (g *e2eGrants) Upsert(_ context.Context, grant *storegrantdomain.Grant) error {
+func (g *e2eGrants) Upsert(_ context.Context, grant *storeaccessdomain.Grant) error {
 	for i, existing := range g.items {
 		if existing.CatalogCode == grant.CatalogCode && existing.RegistryID == grant.RegistryID {
 			g.items[i] = grant

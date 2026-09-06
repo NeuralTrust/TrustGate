@@ -21,7 +21,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
 // fakeGrantRepo is the control-plane repository the service writes through.
@@ -30,11 +30,11 @@ type fakeGrantRepo struct {
 	deleted []string
 }
 
-func (f *fakeGrantRepo) List(context.Context, int, int) ([]*storegrantdomain.Grant, int, error) {
+func (f *fakeGrantRepo) List(context.Context, int, int) ([]*storeaccessdomain.Grant, int, error) {
 	return f.items, len(f.items), nil
 }
 
-func (f *fakeGrantRepo) Upsert(ctx context.Context, g *storegrantdomain.Grant) error {
+func (f *fakeGrantRepo) Upsert(ctx context.Context, g *storeaccessdomain.Grant) error {
 	if g.IsEmpty() {
 		return f.Delete(ctx, g.GatewayID, g.CatalogCode, g.RegistryID)
 	}
@@ -92,7 +92,7 @@ func TestGrantService_SetCodeGrantWritesAndSignals(t *testing.T) {
 
 func TestGrantService_SetEmptyClearsGrant(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
-	repo := &fakeGrantRepo{fakeGrants: fakeGrants{items: []*storegrantdomain.Grant{codeGrant(gw, "github", nil, []string{"ana"})}}}
+	repo := &fakeGrantRepo{fakeGrants: fakeGrants{items: []*storeaccessdomain.Grant{codeGrant(gw, "github", nil, []string{"ana"})}}}
 	svc := newGrantServiceT(t, repo, &fakeRegistries{}, &countingSignaler{})
 	if _, err := svc.Set(context.Background(), SetGrantRequest{GatewayID: gw, CatalogCode: "github"}); err != nil {
 		t.Fatalf("Set: %v", err)

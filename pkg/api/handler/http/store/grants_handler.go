@@ -22,7 +22,7 @@ import (
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -136,7 +136,7 @@ func (h *GrantsHandler) Set(c *fiber.Ctx) error {
 	return httpio.WriteOK(c, toGrantResponse(grant))
 }
 
-func toGrantResponse(g *storegrantdomain.Grant) grantResponse {
+func toGrantResponse(g *storeaccessdomain.Grant) grantResponse {
 	out := grantResponse{
 		CatalogCode: g.CatalogCode,
 		Groups:      nonNil(g.Groups),

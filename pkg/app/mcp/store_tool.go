@@ -31,7 +31,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
 const (
@@ -90,9 +90,19 @@ type storeTool struct {
 	catalog    MCPServerCatalog
 	installer  appstore.Installer
 	registries appstore.RegistryLister
-	grants     storegrantdomain.Reader
+	grants     storeaccessdomain.Reader
+	modes      appstore.ModeResolver
 	configure  ConfigureGateway
 	connect    ServerConnectGateway
+}
+
+// StoreToolOption tunes NewStoreToolWithInstaller.
+type StoreToolOption func(*storeTool)
+
+// WithStoreToolModes resolves the caller's Store mode live from the gateway's
+// per-principal policies (see appstore.ModeResolver).
+func WithStoreToolModes(r appstore.ModeResolver) StoreToolOption {
+	return func(t *storeTool) { t.modes = r }
 }
 
 // NewStoreTool wires the catalog-search meta-tool (SEARCH only).
@@ -111,21 +121,28 @@ func NewStoreToolWithInstaller(
 	catalog MCPServerCatalog,
 	installer appstore.Installer,
 	registries appstore.RegistryLister,
-	grants storegrantdomain.Reader,
+	grants storeaccessdomain.Reader,
 	configure ConfigureGateway,
 	connect ServerConnectGateway,
+	opts ...StoreToolOption,
 ) (StoreTool, error) {
 	if catalog == nil {
 		return nil, ErrStoreToolUnavailable
 	}
-	return &storeTool{
+	t := &storeTool{
 		catalog:    catalog,
 		installer:  installer,
 		registries: registries,
 		grants:     grants,
 		configure:  configure,
 		connect:    connect,
-	}, nil
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(t)
+		}
+	}
+	return t, nil
 }
 
 func (t *storeTool) Handles(name string) bool {
@@ -210,7 +227,7 @@ func (t *storeTool) install(
 	if principal == nil || strings.TrimSpace(principal.Subject) == "" {
 		return nil, ErrNoPrincipal
 	}
-	mode := t.effectiveStoreMode(ctx)
+	mode := t.effectiveStoreMode(ctx, rc)
 	if mode == gatewaydomain.StoreModeNone {
 		return nil, fmt.Errorf("%w: self-service install is disabled for this gateway", ErrStoreToolUnavailable)
 	}
@@ -596,7 +613,7 @@ const (
 // Selected access: the gateway's Store grants and which codes have configured
 // instances (registries), by registry id.
 type shelf struct {
-	grants    *storegrantdomain.Set
+	grants    *storeaccessdomain.Set
 	instances map[string][]ids.RegistryID
 }
 
@@ -622,7 +639,7 @@ func (t *storeTool) search(
 	category := strings.ToLower(strings.TrimSpace(args.Category))
 
 	sh := t.shelfIndex(ctx, rc)
-	mode := t.effectiveStoreMode(ctx)
+	mode := t.effectiveStoreMode(ctx, rc)
 	principal := identity.PrincipalFromContext(ctx)
 	groups := principalGroups(principal)
 	subject := ""
@@ -702,10 +719,10 @@ func (t *storeTool) shelfIndex(ctx context.Context, rc *appconsumer.RoutableCons
 	if rc == nil || rc.Consumer == nil || (t.registries == nil && t.grants == nil) {
 		return nil
 	}
-	sh := &shelf{grants: storegrantdomain.Index(nil), instances: map[string][]ids.RegistryID{}}
+	sh := &shelf{grants: storeaccessdomain.Index(nil), instances: map[string][]ids.RegistryID{}}
 	if t.grants != nil {
 		if grants, err := t.grants.ListByGateway(ctx, rc.Consumer.GatewayID); err == nil {
-			sh.grants = storegrantdomain.Index(grants)
+			sh.grants = storeaccessdomain.Index(grants)
 		}
 	}
 	if t.registries != nil {
@@ -736,23 +753,16 @@ func (t *storeTool) storeMode(ctx context.Context) string {
 	return gatewaydomain.StoreModeCurated
 }
 
-// effectiveStoreMode is the Store mode that applies to the calling principal.
-//
-// On a self-service gateway (every non-enterprise tier) governance does not
-// exist: the Store is always open and any per-principal store_access claim is
-// ignored — no token can close or curate a self-service Store.
-//
-// On an enterprise gateway the principal's per-principal access claim
-// (open/curated/none), when the control plane minted one, is the admin's
-// explicit decision for that user/group and overrides the gateway default in
-// both directions (it can open the Store for one user when the default is
-// curated, or close it for one user when the default is open). An absent or
-// unrecognised claim falls back to the gateway default, keeping tokens minted
-// before this claim existed on their current behaviour. With no gateway in the
-// context the tier is unknown, so the claim is honoured and the default fails
-// closed (curated).
-func (t *storeTool) effectiveStoreMode(ctx context.Context) string {
-	return appstore.EffectiveStoreMode(ctx)
+// effectiveStoreMode is the Store mode that applies to the calling principal on
+// this Store's gateway: the admin's live per-principal policy (own, else the
+// most permissive of their groups'), then a legacy token claim, then the
+// gateway default. Without a policy resolver wired it falls back to the claim /
+// default rule (appstore.EffectiveStoreMode).
+func (t *storeTool) effectiveStoreMode(ctx context.Context, rc *appconsumer.RoutableConsumer) string {
+	if t.modes == nil || rc == nil || rc.Consumer == nil {
+		return appstore.EffectiveStoreMode(ctx)
+	}
+	return t.modes.Mode(ctx, rc.Consumer.GatewayID)
 }
 
 const storeShelfPageSize = 500

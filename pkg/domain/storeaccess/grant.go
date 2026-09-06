@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package storegrant is the MCP Store's access model: who may use which
+// Package storeaccess is the MCP Store's access model: who may use which
 // catalog server on a gateway. A grant is keyed by catalog code — the whole
 // catalog is grantable, whether or not a registry exists for the code yet — and
 // optionally narrowed to one configured instance (a registry) of that code, so
@@ -22,7 +22,7 @@
 // Grants are gateway configuration, not per-principal state: they ride the
 // config snapshot to the data planes like registries do, and are edited only
 // from the Access page (or by approving a request).
-package storegrant
+package storeaccess
 
 import (
 	"context"

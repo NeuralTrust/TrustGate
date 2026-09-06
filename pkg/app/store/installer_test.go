@@ -24,7 +24,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
 type fakeCatalog struct {
@@ -47,15 +47,15 @@ func (f *fakeRegistries) List(context.Context, registrydomain.ListFilter) ([]*re
 // fakeGrants is the in-memory grant store: a Reader for the installer/scoper and
 // a GrantStore for the approver (Upsert replaces by natural key).
 type fakeGrants struct {
-	items   []*storegrantdomain.Grant
-	upserts []*storegrantdomain.Grant
+	items   []*storeaccessdomain.Grant
+	upserts []*storeaccessdomain.Grant
 }
 
-func (f *fakeGrants) ListByGateway(context.Context, ids.GatewayID) ([]*storegrantdomain.Grant, error) {
+func (f *fakeGrants) ListByGateway(context.Context, ids.GatewayID) ([]*storeaccessdomain.Grant, error) {
 	return f.items, nil
 }
 
-func (f *fakeGrants) Upsert(_ context.Context, g *storegrantdomain.Grant) error {
+func (f *fakeGrants) Upsert(_ context.Context, g *storeaccessdomain.Grant) error {
 	f.upserts = append(f.upserts, g)
 	for i, existing := range f.items {
 		if existing.CatalogCode == g.CatalogCode && existing.RegistryID == g.RegistryID {
@@ -68,8 +68,8 @@ func (f *fakeGrants) Upsert(_ context.Context, g *storegrantdomain.Grant) error 
 }
 
 // codeGrant grants a catalog code (every instance) to groups/users.
-func codeGrant(gw ids.GatewayID, code string, groups, users []string) *storegrantdomain.Grant {
-	g, err := storegrantdomain.New(gw, code, ids.RegistryID{}, groups, users)
+func codeGrant(gw ids.GatewayID, code string, groups, users []string) *storeaccessdomain.Grant {
+	g, err := storeaccessdomain.New(gw, code, ids.RegistryID{}, groups, users)
 	if err != nil {
 		panic(err)
 	}
@@ -77,8 +77,8 @@ func codeGrant(gw ids.GatewayID, code string, groups, users []string) *storegran
 }
 
 // instanceGrant grants one configured instance (registry) of a code.
-func instanceGrant(gw ids.GatewayID, code string, reg ids.RegistryID, groups, users []string) *storegrantdomain.Grant {
-	g, err := storegrantdomain.New(gw, code, reg, groups, users)
+func instanceGrant(gw ids.GatewayID, code string, reg ids.RegistryID, groups, users []string) *storeaccessdomain.Grant {
+	g, err := storeaccessdomain.New(gw, code, reg, groups, users)
 	if err != nil {
 		panic(err)
 	}
@@ -86,7 +86,7 @@ func instanceGrant(gw ids.GatewayID, code string, reg ids.RegistryID, groups, us
 }
 
 // grantsOf builds the grant reader from a list.
-func grantsOf(items ...*storegrantdomain.Grant) *fakeGrants {
+func grantsOf(items ...*storeaccessdomain.Grant) *fakeGrants {
 	return &fakeGrants{items: items}
 }
 
@@ -238,12 +238,12 @@ func newInstallerWithEnsurer(t *testing.T, regs *fakeRegistries, installs *fakeI
 	return newInstallerWith(t, regs, installs, nil, ensurer)
 }
 
-func newInstallerWithGrants(t *testing.T, regs *fakeRegistries, installs *fakeInstalls, grants storegrantdomain.Reader) Installer {
+func newInstallerWithGrants(t *testing.T, regs *fakeRegistries, installs *fakeInstalls, grants storeaccessdomain.Reader) Installer {
 	t.Helper()
 	return newInstallerWith(t, regs, installs, grants, nil)
 }
 
-func newInstallerWith(t *testing.T, regs *fakeRegistries, installs *fakeInstalls, grants storegrantdomain.Reader, ensurer RegistryEnsurer) Installer {
+func newInstallerWith(t *testing.T, regs *fakeRegistries, installs *fakeInstalls, grants storeaccessdomain.Reader, ensurer RegistryEnsurer) Installer {
 	t.Helper()
 	inst, err := NewInstaller(testCatalog(), regs, installs, grants, ensurer)
 	if err != nil {

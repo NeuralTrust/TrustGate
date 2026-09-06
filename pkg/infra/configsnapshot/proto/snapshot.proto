@@ -31,6 +31,7 @@ message Snapshot {
   repeated Provider providers = 8;
   repeated CatalogModel catalog_models = 9;
   repeated StoreGrant store_grants = 10;
+  repeated StorePolicy store_policies = 11;
 }
 
 message Gateway {
@@ -48,6 +49,12 @@ message Registry {
 // StoreGrant is one MCP Store access grant (storegrant.Grant as JSON): who may
 // use a catalog code, or one configured instance of it, on a gateway.
 message StoreGrant {
+  bytes json = 1;
+}
+
+// StorePolicy is one per-principal MCP Store access level on a gateway
+// (storeaccess.Policy as JSON): open | curated | none for a user or a group.
+message StorePolicy {
   bytes json = 1;
 }
 
