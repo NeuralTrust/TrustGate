@@ -21,7 +21,7 @@ import (
 
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	"github.com/stretchr/testify/assert"
@@ -142,12 +142,12 @@ func TestCodecRoundTripsStoreGrants(t *testing.T) {
 	codec := configsnapshot.NewCodec()
 	gw := ids.New[ids.GatewayKind]()
 	reg := ids.New[ids.RegistryKind]()
-	code, err := storegrantdomain.New(gw, "github", ids.RegistryID{}, []string{"eng"}, nil)
+	code, err := storeaccessdomain.New(gw, "github", ids.RegistryID{}, []string{"eng"}, nil)
 	require.NoError(t, err)
-	inst, err := storegrantdomain.New(gw, "snowflake", reg, nil, []string{"ana"})
+	inst, err := storeaccessdomain.New(gw, "snowflake", reg, nil, []string{"ana"})
 	require.NoError(t, err)
 
-	raw, err := codec.Encode(readmodel.Build(readmodel.Data{Version: "v1", StoreGrants: []storegrantdomain.Grant{*code, *inst}}))
+	raw, err := codec.Encode(readmodel.Build(readmodel.Data{Version: "v1", StoreGrants: []storeaccessdomain.Grant{*code, *inst}}))
 	require.NoError(t, err)
 	snap, err := codec.Decode(raw)
 	require.NoError(t, err)

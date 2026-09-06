@@ -26,7 +26,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
 func withPrincipalGroups(sub string, groups ...string) context.Context {
@@ -49,7 +49,7 @@ func snowflakeShelf() *registrydomain.Registry {
 }
 
 // newScoperT wires a scoper over the given installs, registries and grants.
-func newScoperT(t *testing.T, installs *fakeInstalls, regs *fakeRegistries, grants storegrantdomain.Reader) Scoper {
+func newScoperT(t *testing.T, installs *fakeInstalls, regs *fakeRegistries, grants storeaccessdomain.Reader) Scoper {
 	t.Helper()
 	sc, err := NewScoper(installs, regs, grants)
 	if err != nil {

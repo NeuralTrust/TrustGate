@@ -30,7 +30,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
 type fakeRegistryLister struct{ items []*registrydomain.Registry }
@@ -39,9 +39,9 @@ func (f fakeRegistryLister) List(context.Context, registrydomain.ListFilter) ([]
 	return f.items, len(f.items), nil
 }
 
-type fakeGrantReader struct{ items []*storegrantdomain.Grant }
+type fakeGrantReader struct{ items []*storeaccessdomain.Grant }
 
-func (f fakeGrantReader) ListByGateway(context.Context, ids.GatewayID) ([]*storegrantdomain.Grant, error) {
+func (f fakeGrantReader) ListByGateway(context.Context, ids.GatewayID) ([]*storeaccessdomain.Grant, error) {
 	return f.items, nil
 }
 
@@ -54,8 +54,8 @@ func shelfReg(code string) *registrydomain.Registry {
 
 // grantFor grants a catalog code (every instance) to groups/users; a non-nil
 // registry id narrows it to that instance.
-func grantFor(code string, registryID ids.RegistryID, groups, users []string) *storegrantdomain.Grant {
-	g, err := storegrantdomain.New(ids.New[ids.GatewayKind](), code, registryID, groups, users)
+func grantFor(code string, registryID ids.RegistryID, groups, users []string) *storeaccessdomain.Grant {
+	g, err := storeaccessdomain.New(ids.New[ids.GatewayKind](), code, registryID, groups, users)
 	if err != nil {
 		panic(err)
 	}
@@ -227,7 +227,7 @@ func storeToolWithShelf(t *testing.T, items ...*registrydomain.Registry) StoreTo
 	return storeToolWithGrants(t, nil, items...)
 }
 
-func storeToolWithGrants(t *testing.T, grants []*storegrantdomain.Grant, items ...*registrydomain.Registry) StoreTool {
+func storeToolWithGrants(t *testing.T, grants []*storeaccessdomain.Grant, items ...*registrydomain.Registry) StoreTool {
 	t.Helper()
 	tool, err := NewStoreToolWithInstaller(sampleCatalog(), nil, fakeRegistryLister{items: items}, fakeGrantReader{items: grants}, nil, nil)
 	if err != nil {
@@ -253,7 +253,7 @@ func resultsByCode(t *testing.T, raw json.RawMessage) map[string]map[string]any 
 func TestStoreSearchTagsShelfState(t *testing.T) {
 	gitlab := shelfReg("gitlab")
 	tool := storeToolWithGrants(t,
-		[]*storegrantdomain.Grant{
+		[]*storeaccessdomain.Grant{
 			grantFor("github", ids.RegistryID{}, nil, []string{"ana"}),
 			grantFor("gitlab", gitlab.ID, []string{"sre"}, nil),
 			// salesforce granted to nobody
@@ -367,7 +367,7 @@ func TestStoreInstallPrincipalNoneRefused(t *testing.T) {
 // server is "available" (instant).
 func TestStoreSearchCuratedModeShowsNonShelfAsRequest(t *testing.T) {
 	tool := storeToolWithGrants(t,
-		[]*storegrantdomain.Grant{grantFor("github", ids.RegistryID{}, nil, []string{"ana"})},
+		[]*storeaccessdomain.Grant{grantFor("github", ids.RegistryID{}, nil, []string{"ana"})},
 		shelfReg("github"),
 	)
 	gw := enterpriseGateway(gatewaydomain.StoreModeCurated)

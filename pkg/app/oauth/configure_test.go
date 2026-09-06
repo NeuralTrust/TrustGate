@@ -27,7 +27,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
 type fakeConfigCatalog struct {
@@ -125,15 +125,15 @@ func shelf(code string) *registrydomain.Registry {
 }
 
 // fakeGrants is the Store access grants the real installer decides against.
-type fakeGrants struct{ items []*storegrantdomain.Grant }
+type fakeGrants struct{ items []*storeaccessdomain.Grant }
 
-func (f *fakeGrants) ListByGateway(context.Context, ids.GatewayID) ([]*storegrantdomain.Grant, error) {
+func (f *fakeGrants) ListByGateway(context.Context, ids.GatewayID) ([]*storeaccessdomain.Grant, error) {
 	return f.items, nil
 }
 
 // grant grants a catalog code (every instance) to groups/users.
-func grant(code string, groups, users []string) *storegrantdomain.Grant {
-	g, err := storegrantdomain.New(ids.New[ids.GatewayKind](), code, ids.RegistryID{}, groups, users)
+func grant(code string, groups, users []string) *storeaccessdomain.Grant {
+	g, err := storeaccessdomain.New(ids.New[ids.GatewayKind](), code, ids.RegistryID{}, groups, users)
 	if err != nil {
 		panic(err)
 	}
@@ -175,7 +175,7 @@ func configureFixture(t *testing.T, open bool, shelfItems ...*registrydomain.Reg
 }
 
 // configureFixtureGranted is configureFixture with Store access grants.
-func configureFixtureGranted(t *testing.T, open bool, grants []*storegrantdomain.Grant, shelfItems ...*registrydomain.Registry) configureFixtureT {
+func configureFixtureGranted(t *testing.T, open bool, grants []*storeaccessdomain.Grant, shelfItems ...*registrydomain.Registry) configureFixtureT {
 	t.Helper()
 	gw := ids.New[ids.GatewayKind]()
 	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
@@ -238,7 +238,7 @@ func (f configureFixtureT) rows(t *testing.T, code string) []*installationdomain
 func TestConfigure_SubmitPlainStoresOnInstallation(t *testing.T) {
 	// Available shelf server, no install yet: the form-driven first configuration
 	// records the install through the governed installer, which admits it.
-	f := configureFixtureGranted(t, false, []*storegrantdomain.Grant{grant("snowflake", nil, []string{"ana"})}, shelf("snowflake"))
+	f := configureFixtureGranted(t, false, []*storeaccessdomain.Grant{grant("snowflake", nil, []string{"ana"})}, shelf("snowflake"))
 	id := f.ticket(t, "snowflake", "")
 
 	page, err := f.svc.Submit(context.Background(), id, map[string]string{
@@ -269,7 +269,7 @@ func TestConfigure_SubmitPlainStoresOnInstallation(t *testing.T) {
 // shelf granted to another group) before installing it must end as a pending
 // request, never as an installed row.
 func TestConfigure_FirstConfigureOfGovernedServerIsPending(t *testing.T) {
-	f := configureFixtureGranted(t, false, []*storegrantdomain.Grant{grant("snowflake", []string{"data-eng"}, nil)}, shelf("snowflake"))
+	f := configureFixtureGranted(t, false, []*storeaccessdomain.Grant{grant("snowflake", []string{"data-eng"}, nil)}, shelf("snowflake"))
 	id := f.ticket(t, "snowflake", "", "marketing")
 
 	page, err := f.svc.Submit(context.Background(), id, map[string]string{
@@ -310,7 +310,7 @@ func TestConfigure_FirstConfigureCuratedNotOnShelfIsPending(t *testing.T) {
 // exactly as to the tool — the ticket carries the principal's groups. Under
 // Selected, a principal outside the grant files a request; one inside installs.
 func TestConfigure_FirstConfigureGroupGatedIsPending(t *testing.T) {
-	f := configureFixtureGranted(t, false, []*storegrantdomain.Grant{grant("snowflake", []string{"data-eng"}, nil)}, shelf("snowflake"))
+	f := configureFixtureGranted(t, false, []*storeaccessdomain.Grant{grant("snowflake", []string{"data-eng"}, nil)}, shelf("snowflake"))
 	values := map[string]string{"account_url": "acme.snowflakecomputing.com", "database": "ANALYTICS"}
 
 	// Not in the group: recorded as a pending request, not installed.
@@ -328,7 +328,7 @@ func TestConfigure_FirstConfigureGroupGatedIsPending(t *testing.T) {
 
 	// In the group (fresh fixture, so the pending request above does not merge):
 	// installs instantly.
-	g := configureFixtureGranted(t, false, []*storegrantdomain.Grant{grant("snowflake", []string{"data-eng"}, nil)}, shelf("snowflake"))
+	g := configureFixtureGranted(t, false, []*storeaccessdomain.Grant{grant("snowflake", []string{"data-eng"}, nil)}, shelf("snowflake"))
 	allowed := g.ticket(t, "snowflake", "", "data-eng")
 	if _, err := g.svc.Submit(context.Background(), allowed, values); err != nil {
 		t.Fatalf("group member Submit: %v", err)

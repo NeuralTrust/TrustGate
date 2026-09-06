@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package storegrant is the pgx-backed MCP Store grant repository. Grants are
+// Package storeaccess holds the pgx-backed MCP Store access repositories (grants, policies). Grants are
 // gateway configuration that rides the config snapshot, so every write appends
 // a snapshot change marker in the same transaction (like registries / roles).
-package storegrant
+package storeaccess
 
 import (
 	"context"
@@ -25,7 +25,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	domain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository/outbox"
 	"github.com/jackc/pgx/v5"

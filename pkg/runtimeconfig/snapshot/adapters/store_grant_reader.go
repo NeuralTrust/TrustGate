@@ -18,13 +18,14 @@ import (
 	"context"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	domain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
 )
 
-// storeGrantReader serves MCP Store access grants from the config snapshot —
-// the data plane's read side. Grants are edited on the control plane only.
+// storeGrantReader serves MCP Store access grants and per-principal policies
+// from the config snapshot — the data plane's read side. Both are edited on the
+// control plane only.
 type storeGrantReader struct {
 	store configsync.ConfigStore[*readmodel.Snapshot]
 }
@@ -32,6 +33,21 @@ type storeGrantReader struct {
 // NewStoreGrantReader wires the snapshot-backed grant reader.
 func NewStoreGrantReader(store configsync.ConfigStore[*readmodel.Snapshot]) domain.Reader {
 	return &storeGrantReader{store: store}
+}
+
+// NewStorePolicyReader wires the snapshot-backed policy reader.
+func NewStorePolicyReader(store configsync.ConfigStore[*readmodel.Snapshot]) domain.PolicyReader {
+	return &storeGrantReader{store: store}
+}
+
+// ListPoliciesByGateway returns the gateway's policies; an unloaded snapshot
+// yields none, which falls back to the gateway default mode.
+func (r *storeGrantReader) ListPoliciesByGateway(_ context.Context, gatewayID ids.GatewayID) ([]*domain.Policy, error) {
+	snap, ok := snapshotFrom(r.store)
+	if !ok {
+		return nil, nil
+	}
+	return cloneSlice(snap.StorePoliciesByGateway(gatewayID))
 }
 
 // ListByGateway returns the gateway's grants; an unloaded snapshot yields none,

@@ -28,7 +28,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
 // registryListPageSize bounds the per-gateway registry scan used to find the
@@ -165,7 +165,7 @@ type installer struct {
 	catalog    CatalogReader
 	registries RegistryLister
 	installs   installationdomain.Repository
-	grants     storegrantdomain.Reader
+	grants     storeaccessdomain.Reader
 	ensurer    RegistryEnsurer
 }
 
@@ -184,7 +184,7 @@ func NewInstaller(
 	catalog CatalogReader,
 	registries RegistryLister,
 	installs installationdomain.Repository,
-	grants storegrantdomain.Reader,
+	grants storeaccessdomain.Reader,
 	ensurer RegistryEnsurer,
 ) (Installer, error) {
 	if catalog == nil || registries == nil || installs == nil {
@@ -517,21 +517,21 @@ func (i *installer) decide(
 
 // grantSet loads and indexes the gateway's Store grants. A plane without a
 // grant reader has no grants: fail closed.
-func (i *installer) grantSet(ctx context.Context, gatewayID ids.GatewayID) (*storegrantdomain.Set, error) {
+func (i *installer) grantSet(ctx context.Context, gatewayID ids.GatewayID) (*storeaccessdomain.Set, error) {
 	return loadGrantSet(ctx, i.grants, gatewayID)
 }
 
 // loadGrantSet is the shared grant-loading step of the installer, scoper and
 // approver: index the gateway's grants, or an empty set when no reader is wired.
-func loadGrantSet(ctx context.Context, reader storegrantdomain.Reader, gatewayID ids.GatewayID) (*storegrantdomain.Set, error) {
+func loadGrantSet(ctx context.Context, reader storeaccessdomain.Reader, gatewayID ids.GatewayID) (*storeaccessdomain.Set, error) {
 	if reader == nil {
-		return storegrantdomain.Index(nil), nil
+		return storeaccessdomain.Index(nil), nil
 	}
 	grants, err := reader.ListByGateway(ctx, gatewayID)
 	if err != nil {
 		return nil, fmt.Errorf("store: list grants: %w", err)
 	}
-	return storegrantdomain.Index(grants), nil
+	return storeaccessdomain.Index(grants), nil
 }
 
 // Instances returns the principal's active instances of a catalog code, oldest

@@ -44,6 +44,12 @@ func NewMCPServerCatalog(shared mcpoauth.Provider) (MCPServerCatalog, error) {
 		return nil, fmt.Errorf("loading curated mcp catalog: %w", err)
 	}
 	applyPlatformOAuth(servers, shared)
+	// Whether a user can install each entry with nothing configured by an admin —
+	// decided after the platform clients are stamped, since a platform-held
+	// client makes a manual-registration OAuth server self-service.
+	for i := range servers {
+		servers[i].SelfService = servers[i].IsSelfService()
+	}
 	byCode := make(map[string]domain.MCPServer, len(servers))
 	for _, s := range servers {
 		byCode[s.Code] = s
