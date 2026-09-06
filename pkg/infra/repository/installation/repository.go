@@ -54,11 +54,15 @@ func (r *Repository) Upsert(ctx context.Context, in *domain.Installation) error 
 	if err != nil {
 		return fmt.Errorf("installation repository: marshal config: %w", err)
 	}
+	// Keyed by id: a principal may hold several instances of one catalog code, so
+	// the old (gateway, principal, code) conflict target no longer identifies a
+	// row. A fresh install mints a new id (a new instance); re-touching an
+	// existing instance carries its id and updates in place.
 	const query = `
 		INSERT INTO store_installations
 			(id, gateway_id, principal_sub, catalog_code, status, installed_by, config, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		ON CONFLICT (gateway_id, principal_sub, catalog_code) DO UPDATE
+		ON CONFLICT (id) DO UPDATE
 			SET status       = EXCLUDED.status,
 			    installed_by = EXCLUDED.installed_by,
 			    config       = EXCLUDED.config,
@@ -77,8 +81,12 @@ func (r *Repository) Find(
 	gatewayID ids.GatewayID,
 	principalSub, catalogCode string,
 ) (*domain.Installation, error) {
+	// Several instances of one code may exist; return the earliest deterministically
+	// so single-instance readers (dial-time config resolver, admin reads) are stable.
 	const query = selectColumns + `
-		WHERE gateway_id = $1 AND principal_sub = $2 AND catalog_code = $3`
+		WHERE gateway_id = $1 AND principal_sub = $2 AND catalog_code = $3
+		ORDER BY created_at, id
+		LIMIT 1`
 	row := r.conn.Pool.QueryRow(ctx, query, gatewayID, principalSub, catalogCode)
 	in, err := scanInstallation(row)
 	if err != nil {
@@ -88,6 +96,36 @@ func (r *Repository) Find(
 		return nil, err
 	}
 	return in, nil
+}
+
+func (r *Repository) FindByID(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	id ids.InstallationID,
+) (*domain.Installation, error) {
+	const query = selectColumns + `
+		WHERE gateway_id = $1 AND principal_sub = $2 AND id = $3`
+	row := r.conn.Pool.QueryRow(ctx, query, gatewayID, principalSub, id)
+	in, err := scanInstallation(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, err
+	}
+	return in, nil
+}
+
+func (r *Repository) ListByPrincipalAndCode(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub, catalogCode string,
+) ([]*domain.Installation, error) {
+	const query = selectColumns + `
+		WHERE gateway_id = $1 AND principal_sub = $2 AND catalog_code = $3
+		ORDER BY created_at, id`
+	return r.queryList(ctx, query, gatewayID, principalSub, catalogCode)
 }
 
 func (r *Repository) ListByPrincipal(
@@ -131,6 +169,25 @@ func (r *Repository) Delete(
 		DELETE FROM store_installations
 		WHERE gateway_id = $1 AND principal_sub = $2 AND catalog_code = $3`
 	tag, err := r.conn.Pool.Exec(ctx, query, gatewayID, principalSub, catalogCode)
+	if err != nil {
+		return mapPgError(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
+func (r *Repository) DeleteByID(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub string,
+	id ids.InstallationID,
+) error {
+	const query = `
+		DELETE FROM store_installations
+		WHERE gateway_id = $1 AND principal_sub = $2 AND id = $3`
+	tag, err := r.conn.Pool.Exec(ctx, query, gatewayID, principalSub, id)
 	if err != nil {
 		return mapPgError(err)
 	}

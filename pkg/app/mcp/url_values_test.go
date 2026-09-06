@@ -103,6 +103,32 @@ func TestComposerTarget_ResolvesURLVariablesPerUser(t *testing.T) {
 	}
 }
 
+func TestComposerTarget_InstanceConfigOverlayWins(t *testing.T) {
+	// Two instances of one code for the SAME principal: the by-code Find is
+	// ambiguous, so a per-instance clone carries its own config as an overlay,
+	// and the resolver must resolve from the overlay, not the (wrong) Find.
+	reg := urlVarRegistry(t)
+	reg.MCPTarget.InstanceConfig = map[string]string{
+		"account_url": "acme.snowflakecomputing.com",
+		"database":    "FINANCE",
+	}
+	// The by-code finder would (wrongly) return the analytics instance.
+	finder := fakeInstallFinder{byCode: map[string]map[string]string{
+		"snowflake": {"account_url": "acme.snowflakecomputing.com", "database": "ANALYTICS"},
+	}}
+	c := &composer{logger: slog.New(slog.DiscardHandler), urlvars: NewURLValueResolver(finder, nil)}
+	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP})
+
+	tgt, err := c.target(subCtx("ana"), rc, reg)
+	if err != nil {
+		t.Fatalf("target: %v", err)
+	}
+	want := "https://acme.snowflakecomputing.com/api/v2/databases/FINANCE/mcp"
+	if tgt.URL != want {
+		t.Fatalf("instance overlay must win over the by-code lookup: got %q want %q", tgt.URL, want)
+	}
+}
+
 func TestComposerTarget_DifferentUsersDifferentPinKeys(t *testing.T) {
 	reg := urlVarRegistry(t)
 	finder := fakeInstallFinder{byCode: map[string]map[string]string{}}

@@ -21,6 +21,7 @@ package installation
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -129,12 +130,63 @@ func (i *Installation) IsActive() bool {
 	return i != nil && i.Status == StatusInstalled
 }
 
+// InstanceLabel is a short human label distinguishing this install from other
+// instances of the same catalog code, derived from its per-user config values
+// (e.g. a Snowflake schema). Empty when the install carries no config — the
+// common single-instance case, where the plain catalog name already identifies
+// it. Values are joined in sorted key order so the label is stable.
+func (i *Installation) InstanceLabel() string {
+	if i == nil || len(i.Config) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(i.Config))
+	for k := range i.Config {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		v := strings.TrimSpace(i.Config[k])
+		if v != "" {
+			parts = append(parts, v)
+		}
+	}
+	return strings.Join(parts, " · ")
+}
+
+// SameConfig reports whether two installs carry the identical per-user config,
+// used to detect a duplicate install of a catalog code (same instance) versus a
+// genuinely new instance.
+func (i *Installation) SameConfig(other map[string]string) bool {
+	if i == nil {
+		return len(other) == 0
+	}
+	if len(i.Config) != len(other) {
+		return false
+	}
+	for k, v := range i.Config {
+		if other[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
 //go:generate mockery --name=Repository --dir=. --output=./mocks --filename=installation_repository_mock.go --case=underscore --with-expecter
 type Repository interface {
 	// Upsert creates or updates the installation for (gateway, principal, code).
 	Upsert(ctx context.Context, in *Installation) error
-	// Find returns the installation for (gateway, principal, code), or ErrNotFound.
+	// Find returns an installation for (gateway, principal, code), or ErrNotFound.
+	// A principal may now hold several instances of one code; Find returns the
+	// earliest so single-instance callers (the dial-time config resolver, admin
+	// reads) keep a stable, deterministic answer.
 	Find(ctx context.Context, gatewayID ids.GatewayID, principalSub, catalogCode string) (*Installation, error)
+	// FindByID returns one instance by its id, scoped to the owning principal, or
+	// ErrNotFound. It is how a specific instance is targeted (e.g. uninstall).
+	FindByID(ctx context.Context, gatewayID ids.GatewayID, principalSub string, id ids.InstallationID) (*Installation, error)
+	// ListByPrincipalAndCode returns every instance a principal holds of one
+	// catalog code (oldest first) — the install dedupe and disambiguation read.
+	ListByPrincipalAndCode(ctx context.Context, gatewayID ids.GatewayID, principalSub, catalogCode string) ([]*Installation, error)
 	// ListByPrincipal returns everything a principal has installed on a gateway —
 	// the CatalogScoper's read side.
 	ListByPrincipal(ctx context.Context, gatewayID ids.GatewayID, principalSub string) ([]*Installation, error)
@@ -144,6 +196,8 @@ type Repository interface {
 	// ListPendingByGateway returns every pending-approval request on a gateway,
 	// oldest first — the admin approval queue.
 	ListPendingByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*Installation, error)
-	// Delete removes the installation for (gateway, principal, code).
+	// Delete removes every instance for (gateway, principal, code).
 	Delete(ctx context.Context, gatewayID ids.GatewayID, principalSub, catalogCode string) error
+	// DeleteByID removes one instance by its id, scoped to the owning principal.
+	DeleteByID(ctx context.Context, gatewayID ids.GatewayID, principalSub string, id ids.InstallationID) error
 }

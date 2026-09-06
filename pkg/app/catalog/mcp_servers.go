@@ -106,9 +106,9 @@ type rawServer struct {
 	// AuthMethods optionally overrides the derived list of installable auth
 	// methods ("static" and/or "oauth"). Set it to offer a choice (e.g. both)
 	// where the derivation alone would pick a single method.
-	AuthMethods []string `json:"auth_methods"`
-	Tools        []domain.MCPTool        `json:"tools"`
-	Relevance    int                     `json:"relevance"`
+	AuthMethods []string         `json:"auth_methods"`
+	Tools       []domain.MCPTool `json:"tools"`
+	Relevance   int              `json:"relevance"`
 	// Hidden keeps the entry in the seed for audit/re-probe but omits it from
 	// ListMCPServers (Admin UI / product catalog).
 	Hidden       bool   `json:"hidden,omitempty"`

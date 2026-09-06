@@ -42,6 +42,10 @@ var (
 	// install is malformed: an unknown variable, an unsafe value, or a secret
 	// passed inline (secrets must go through the connect link).
 	ErrConfigInvalid = errors.New("store: invalid install configuration")
+	// ErrAmbiguousInstance is returned when an uninstall targets a catalog code the
+	// principal holds several instances of without naming which one; the caller
+	// should list the instances (Instances) and re-issue with an instance id.
+	ErrAmbiguousInstance = errors.New("store: multiple instances installed; specify which instance")
 )
 
 // CatalogReader is the catalog lookup the installer needs.
@@ -75,7 +79,13 @@ type InstallResult struct {
 //go:generate mockery --name=Installer --dir=. --output=./mocks --filename=store_installer_mock.go --case=underscore --with-expecter
 type Installer interface {
 	Install(ctx context.Context, in InstallRequest) (*InstallResult, error)
-	Uninstall(ctx context.Context, gatewayID ids.GatewayID, principalSub, code string) error
+	// Instances returns the principal's active instances of a catalog code, so the
+	// caller can present a picker when an operation must target one of several.
+	Instances(ctx context.Context, gatewayID ids.GatewayID, principalSub, code string) ([]*installationdomain.Installation, error)
+	// Uninstall removes an install. When instanceID is set it removes that one
+	// instance; otherwise it removes the sole instance, or returns
+	// ErrAmbiguousInstance when the principal holds several of that code.
+	Uninstall(ctx context.Context, gatewayID ids.GatewayID, principalSub, code, instanceID string) error
 }
 
 // InstallRequest carries everything an install decision needs. Groups are the
@@ -162,15 +172,31 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		return nil, err
 	}
 
-	existing, err := i.installs.Find(ctx, in.GatewayID, in.PrincipalSub, code)
-	if err != nil && !errors.Is(err, installationdomain.ErrNotFound) {
+	// A principal may hold several instances of one code. An install with config
+	// identical to an existing instance is that same instance (idempotent: refresh
+	// it in place); a new config is a new instance (a fresh row/id).
+	existing, err := i.installs.ListByPrincipalAndCode(ctx, in.GatewayID, in.PrincipalSub, code)
+	if err != nil {
 		return nil, err
 	}
-	alreadyInstalled := err == nil && existing.IsActive()
+	var sameInstance *installationdomain.Installation
+	for _, e := range existing {
+		if e.SameConfig(config) {
+			sameInstance = e
+			break
+		}
+	}
+	alreadyInstalled := sameInstance != nil && sameInstance.IsActive()
 
 	record, err := installationForStatus(in.GatewayID, in.PrincipalSub, code, in.InstalledBy, status, config)
 	if err != nil {
 		return nil, err
+	}
+	// Reuse the existing instance's id so a repeat install updates it in place
+	// rather than inserting a duplicate; a new-config install keeps its fresh id.
+	if sameInstance != nil {
+		record.ID = sameInstance.ID
+		record.CreatedAt = sameInstance.CreatedAt
 	}
 	if err := i.installs.Upsert(ctx, record); err != nil {
 		return nil, err
@@ -294,12 +320,54 @@ func (i *installer) decideStatus(
 	return installationdomain.StatusInstalled, nil
 }
 
-func (i *installer) Uninstall(
+// Instances returns the principal's active instances of a catalog code, oldest
+// first, for a disambiguation picker.
+func (i *installer) Instances(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	principalSub, code string,
+) ([]*installationdomain.Installation, error) {
+	all, err := i.installs.ListByPrincipalAndCode(ctx, gatewayID, principalSub, strings.TrimSpace(code))
+	if err != nil {
+		return nil, err
+	}
+	active := make([]*installationdomain.Installation, 0, len(all))
+	for _, in := range all {
+		if in.IsActive() {
+			active = append(active, in)
+		}
+	}
+	return active, nil
+}
+
+func (i *installer) Uninstall(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub, code, instanceID string,
 ) error {
-	return i.installs.Delete(ctx, gatewayID, principalSub, strings.TrimSpace(code))
+	code = strings.TrimSpace(code)
+	// A specific instance was named: remove exactly that one.
+	if id := strings.TrimSpace(instanceID); id != "" {
+		installID, err := ids.Parse[ids.InstallationKind](id)
+		if err != nil {
+			return fmt.Errorf("%w: invalid instance id %q", installationdomain.ErrInvalidInstallation, id)
+		}
+		return i.installs.DeleteByID(ctx, gatewayID, principalSub, installID)
+	}
+	// Otherwise remove the sole instance; refuse to guess when several exist.
+	active, err := i.Instances(ctx, gatewayID, principalSub, code)
+	if err != nil {
+		return err
+	}
+	switch len(active) {
+	case 0:
+		// Nothing active; fall back to clearing any inactive row for the code.
+		return i.installs.Delete(ctx, gatewayID, principalSub, code)
+	case 1:
+		return i.installs.DeleteByID(ctx, gatewayID, principalSub, active[0].ID)
+	default:
+		return ErrAmbiguousInstance
+	}
 }
 
 // findRegistryByCode scans a gateway's registries for the shelf registry whose
