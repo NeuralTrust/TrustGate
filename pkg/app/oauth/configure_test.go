@@ -214,7 +214,7 @@ func (f configureFixtureT) rows(t *testing.T, code string) []*installationdomain
 func TestConfigure_SubmitPlainStoresOnInstallation(t *testing.T) {
 	// Available shelf server, no install yet: the form-driven first configuration
 	// records the install through the governed installer, which admits it.
-	f := configureFixture(t, false, shelf("snowflake", &registrydomain.MCPStoreConfig{Available: true}))
+	f := configureFixture(t, false, shelf("snowflake", &registrydomain.MCPStoreConfig{Users: []string{"ana"}}))
 	id := f.ticket(t, "snowflake", "")
 
 	page, err := f.svc.Submit(context.Background(), id, map[string]string{

@@ -365,10 +365,10 @@ func planInstallConfig(
 //     "created on first install" path) when an ensurer is wired; without one it
 //     can only be recorded as a request.
 //   - Selected (curated): what is granted to the principal installs instantly —
-//     a shelf registry that is available to them, either open to everyone or
-//     naming one of their groups or their subject. Anything else — no shelf
-//     registry, hidden, or granted to others — becomes an approval request for
-//     the admin, who grants it by approving.
+//     an existing instance whose grants name one of their groups or their
+//     subject (grants are managed on the Access page). Anything else — no
+//     instance yet, or an instance granted to others or to nobody — becomes an
+//     approval request for the admin, who grants it by approving.
 //
 // There is deliberately no per-registry "requires approval" gate any more: the
 // selection is the pre-approval, so Approvals only ever holds requests for
@@ -390,8 +390,7 @@ func (i *installer) decideStatus(
 		}
 		return installationdomain.StatusInstalled, nil
 	}
-	if hasShelf && reg.MCPTarget.StoreAvailable() &&
-		storeAccessAllows(reg.MCPTarget.StoreGroups(), reg.MCPTarget.StoreUsers(), in.Groups, in.PrincipalSub) {
+	if hasShelf && storeAccessAllows(reg.MCPTarget.StoreGroups(), reg.MCPTarget.StoreUsers(), in.Groups, in.PrincipalSub) {
 		return installationdomain.StatusInstalled, nil
 	}
 	return installationdomain.StatusPendingApproval, nil
@@ -487,16 +486,13 @@ func StoreAccessAllows(allowedGroups, allowedUsers, groups []string, subject str
 	return storeAccessAllows(allowedGroups, allowedUsers, groups, subject)
 }
 
-// storeAccessAllows reports whether the caller may install a subject-gated
-// server. The grant has two axes: allowedGroups (matched against the caller's
-// group claim) and allowedUsers (matched against the caller's subject). When
-// both are empty the server is open to any Store-admitted principal; otherwise
-// the caller is allowed if their groups intersect allowedGroups OR their subject
-// is in allowedUsers.
+// storeAccessAllows reports whether the principal is GRANTED a server: their
+// subject is in allowedUsers, or one of their groups is in allowedGroups. Grants
+// are explicit — a server with no groups and no users is granted to nobody —
+// because "granted" here must mean exactly what the Access page shows as a
+// principal's assigned resources. Callers under All never consult this: All
+// means every resource.
 func storeAccessAllows(allowedGroups, allowedUsers, groups []string, subject string) bool {
-	if len(allowedGroups) == 0 && len(allowedUsers) == 0 {
-		return true
-	}
 	set := make(map[string]struct{}, len(groups))
 	for _, g := range groups {
 		set[g] = struct{}{}

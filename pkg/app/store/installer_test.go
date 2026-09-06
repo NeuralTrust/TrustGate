@@ -203,10 +203,12 @@ func TestNewInstallerRejectsNilDeps(t *testing.T) {
 	}
 }
 
-func TestInstallAvailableServerInstallsImmediately(t *testing.T) {
+// TestInstallGrantedServerInstallsImmediately: under Selected an instance granted
+// to the principal installs instantly.
+func TestInstallGrantedServerInstallsImmediately(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	regs := &fakeRegistries{items: []*registrydomain.Registry{
-		shelfRegistry("github", &registrydomain.MCPStoreConfig{Available: true}),
+		shelfRegistry("github", &registrydomain.MCPStoreConfig{Users: []string{"ana"}}),
 	}}
 	installs := &fakeInstalls{}
 	res, err := newInstaller(t, regs, installs).Install(context.Background(), req(gw, "github"))
@@ -214,7 +216,7 @@ func TestInstallAvailableServerInstallsImmediately(t *testing.T) {
 		t.Fatalf("Install: %v", err)
 	}
 	if res.Status != installationdomain.StatusInstalled || res.Pending {
-		t.Fatalf("available server must install immediately, got %+v", res)
+		t.Fatalf("granted server must install immediately, got %+v", res)
 	}
 	if len(installs.upserts) != 1 || installs.upserts[0].Status != installationdomain.StatusInstalled {
 		t.Fatalf("must record an installed row, got %+v", installs.upserts)
@@ -334,7 +336,7 @@ func TestInstallOpenModeInstallsRestrictedRegistryInstantly(t *testing.T) {
 func TestInstallRequiresApprovalFlagIsIgnored(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	regs := &fakeRegistries{items: []*registrydomain.Registry{
-		shelfRegistry("github", &registrydomain.MCPStoreConfig{Available: true, RequiresApproval: true}),
+		shelfRegistry("github", &registrydomain.MCPStoreConfig{Users: []string{"ana"}, RequiresApproval: true}),
 	}}
 	res, err := newInstaller(t, regs, &fakeInstalls{}).Install(context.Background(), req(gw, "github"))
 	if err != nil {
@@ -403,25 +405,29 @@ func TestInstallUserGating(t *testing.T) {
 	}
 }
 
-// TestInstallNotYetShelvedIsPendingForEveryone: a registry that exists but is not
-// published is outside everyone's selection under Selected, so any principal —
-// in the group list or not — files a request rather than installing.
-func TestInstallNotYetShelvedIsPendingForEveryone(t *testing.T) {
+// TestInstallSelectedGrantDecides: under Selected the grant alone decides — there
+// is no separate published/hidden state. A principal in the granted group
+// installs instantly; one outside it files a request.
+func TestInstallSelectedGrantDecides(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	regs := &fakeRegistries{items: []*registrydomain.Registry{
-		shelfRegistry("github", &registrydomain.MCPStoreConfig{Available: false, Groups: []string{"sre"}}),
+		shelfRegistry("github", &registrydomain.MCPStoreConfig{Groups: []string{"sre"}}),
 	}}
-	installs := &fakeInstalls{}
-	inst := newInstaller(t, regs, installs)
+	inst := newInstaller(t, regs, &fakeInstalls{})
 
-	for _, group := range []string{"eng", "sre"} {
-		res, err := inst.Install(context.Background(), req(gw, "github", group))
-		if err != nil {
-			t.Fatalf("group %q Install: %v", group, err)
-		}
-		if !res.Pending || res.Status != installationdomain.StatusPendingApproval {
-			t.Fatalf("group %q on a hidden server must be pending, got %+v", group, res)
-		}
+	res, err := inst.Install(context.Background(), req(gw, "github", "eng"))
+	if err != nil {
+		t.Fatalf("eng Install: %v", err)
+	}
+	if !res.Pending {
+		t.Fatalf("a principal outside the grant must file a request, got %+v", res)
+	}
+	res, err = inst.Install(context.Background(), req(gw, "github", "sre"))
+	if err != nil {
+		t.Fatalf("sre Install: %v", err)
+	}
+	if res.Status != installationdomain.StatusInstalled {
+		t.Fatalf("a principal in the granted group must install, got %+v", res)
 	}
 }
 

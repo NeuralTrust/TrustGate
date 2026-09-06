@@ -59,7 +59,7 @@ func TestScoperSingleConfiguredInstanceCarriesOverlay(t *testing.T) {
 		&fakeRegistries{items: []*registrydomain.Registry{shelf}},
 	)
 	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
-	scoped, err := sc.Scope(withPrincipal("ana"), rc)
+	scoped, err := sc.Scope(withOpenPrincipal("ana"), rc)
 	if err != nil {
 		t.Fatalf("Scope: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestScoperSingleUnconfiguredInstanceExposesShelfAsIs(t *testing.T) {
 		&fakeRegistries{items: []*registrydomain.Registry{shelf}},
 	)
 	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
-	scoped, _ := sc.Scope(withPrincipal("ana"), rc)
+	scoped, _ := sc.Scope(withOpenPrincipal("ana"), rc)
 	if len(scoped.Registries) != 1 || scoped.Registries[0] != shelf {
 		t.Fatal("an install without config exposes the shelf registry pointer unchanged")
 	}

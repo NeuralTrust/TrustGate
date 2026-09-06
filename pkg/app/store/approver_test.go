@@ -71,10 +71,14 @@ func TestApprover_ListPending_NamesFromCatalog(t *testing.T) {
 	}
 }
 
-func TestApprover_Approve_ShelvedAvailable_FlipsInstalledWithoutRegistryUpdate(t *testing.T) {
+// TestApprover_Approve_AlreadyGranted_NoRegistryUpdate: approving a request from
+// a principal the instance already grants just installs — no registry write.
+func TestApprover_Approve_AlreadyGranted_NoRegistryUpdate(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	installs := &fakeInstalls{findValue: pendingInstall(t, gw, "ana", "github")}
-	regs := &fakeRegistries{items: []*registrydomain.Registry{shelvedRegistry("github", true)}}
+	regs := &fakeRegistries{items: []*registrydomain.Registry{
+		shelfRegistry("github", &registrydomain.MCPStoreConfig{Users: []string{"ana"}}),
+	}}
 	a := newApproverT(t, installs, regs)
 
 	if err := a.Approve(context.Background(), ApproveRequest{GatewayID: gw, PrincipalSub: "ana", Code: "github", ApprovedBy: "admin@acme"}); err != nil {
@@ -84,11 +88,15 @@ func TestApprover_Approve_ShelvedAvailable_FlipsInstalledWithoutRegistryUpdate(t
 		t.Fatalf("want one installed upsert, got %+v", installs.upserts)
 	}
 	if len(regs.updated) != 0 {
-		t.Fatalf("registry should not be updated when already available, got %d", len(regs.updated))
+		t.Fatalf("registry should not be updated when the requester is already granted, got %d", len(regs.updated))
 	}
 }
 
-func TestApprover_Approve_ShelvedNotAvailable_ShelvesAndInstalls(t *testing.T) {
+// TestApprover_Approve_UngrantedInstance_GrantsAndInstalls: approving is
+// granting — the requester's subject is added to an instance that granted
+// nobody (or others), and the request is installed. There is no separate
+// "publish" step any more.
+func TestApprover_Approve_UngrantedInstance_GrantsAndInstalls(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	installs := &fakeInstalls{findValue: pendingInstall(t, gw, "ana", "github")}
 	regs := &fakeRegistries{items: []*registrydomain.Registry{shelvedRegistry("github", false)}}
@@ -97,12 +105,11 @@ func TestApprover_Approve_ShelvedNotAvailable_ShelvesAndInstalls(t *testing.T) {
 	if err := a.Approve(context.Background(), ApproveRequest{GatewayID: gw, PrincipalSub: "ana", Code: "github"}); err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
-	if len(regs.updated) != 1 || !regs.updated[0].MCPTarget.StoreAvailable() {
-		t.Fatalf("registry should be shelved available, got %+v", regs.updated)
+	if len(regs.updated) != 1 {
+		t.Fatalf("registry should be updated once with the grant, got %d", len(regs.updated))
 	}
-	// RequiresApproval must be preserved so future installs still queue.
-	if !regs.updated[0].MCPTarget.StoreRequiresApproval() {
-		t.Fatalf("requires_approval should be preserved on shelve")
+	if users := regs.updated[0].MCPTarget.StoreUsers(); len(users) != 1 || users[0] != "ana" {
+		t.Fatalf("approve must grant the requester, got users=%v", users)
 	}
 	if len(installs.upserts) != 1 || installs.upserts[0].Status != installationdomain.StatusInstalled {
 		t.Fatalf("want one installed upsert, got %+v", installs.upserts)

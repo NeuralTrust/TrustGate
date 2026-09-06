@@ -19,7 +19,9 @@ import (
 	"testing"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
@@ -37,6 +39,13 @@ func mustInstall(t *testing.T, gw ids.GatewayID, sub, code string) *installation
 
 func withPrincipal(sub string) context.Context {
 	return identity.WithPrincipal(context.Background(), &identity.Principal{Subject: sub})
+}
+
+// withOpenPrincipal is a principal on a gateway whose Store is open (All): every
+// install is exposed regardless of grants. Without a gateway in the context the
+// mode fails closed to Selected, where only granted instances are exposed.
+func withOpenPrincipal(sub string) context.Context {
+	return appgateway.WithGateway(withPrincipal(sub), &gatewaydomain.Gateway{})
 }
 
 func githubRegistry() *registrydomain.Registry {
@@ -59,7 +68,7 @@ func TestScoperSurfacesInstalledRegistries(t *testing.T) {
 		t.Fatalf("NewScoper: %v", err)
 	}
 	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
-	scoped, err := sc.Scope(withPrincipal("ana"), rc)
+	scoped, err := sc.Scope(withOpenPrincipal("ana"), rc)
 	if err != nil {
 		t.Fatalf("Scope: %v", err)
 	}
@@ -133,7 +142,7 @@ func TestScoperExposesOneRegistryPerInstance(t *testing.T) {
 		&fakeRegistries{items: []*registrydomain.Registry{shelf}},
 	)
 	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
-	scoped, err := sc.Scope(withPrincipal("ana"), rc)
+	scoped, err := sc.Scope(withOpenPrincipal("ana"), rc)
 	if err != nil {
 		t.Fatalf("Scope: %v", err)
 	}

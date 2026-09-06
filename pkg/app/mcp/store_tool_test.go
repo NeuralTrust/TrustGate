@@ -231,7 +231,7 @@ func resultsByCode(t *testing.T, raw json.RawMessage) map[string]map[string]any 
 // requires_approval flag is not a state any more.
 func TestStoreSearchTagsShelfState(t *testing.T) {
 	tool := storeToolWithShelf(t,
-		shelfReg("github", &registrydomain.MCPStoreConfig{Available: true}),
+		shelfReg("github", &registrydomain.MCPStoreConfig{Users: []string{"ana"}}),
 		shelfReg("gitlab", &registrydomain.MCPStoreConfig{Available: true, RequiresApproval: true, Groups: []string{"sre"}}),
 		// salesforce not on the shelf
 	)
@@ -247,7 +247,7 @@ func TestStoreSearchTagsShelfState(t *testing.T) {
 		t.Fatalf("Selected must browse the whole catalog, got %d results", len(got))
 	}
 	if got["github"]["store_state"] != storeStateAvailable {
-		t.Fatalf("github (granted to everyone) should be available, got %v", got["github"]["store_state"])
+		t.Fatalf("github (granted to ana) should be available, got %v", got["github"]["store_state"])
 	}
 	if got["gitlab"]["store_state"] != storeStateRequest {
 		t.Fatalf("gitlab (granted to sre, caller is eng) should be request, got %v", got["gitlab"]["store_state"])
@@ -341,9 +341,9 @@ func TestStoreInstallPrincipalNoneRefused(t *testing.T) {
 // "request" (installing it files an approval request) while a granted shelf
 // server is "available" (instant).
 func TestStoreSearchCuratedModeShowsNonShelfAsRequest(t *testing.T) {
-	tool := storeToolWithShelf(t, shelfReg("github", &registrydomain.MCPStoreConfig{Available: true}))
+	tool := storeToolWithShelf(t, shelfReg("github", &registrydomain.MCPStoreConfig{Users: []string{"ana"}}))
 	gw := enterpriseGateway(gatewaydomain.StoreModeCurated)
-	ctx := appgateway.WithGateway(context.Background(), gw)
+	ctx := appgateway.WithGateway(identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "ana"}), gw)
 
 	raw, err := tool.Call(ctx, storeRC(), "", StoreSearchToolName, nil)
 	if err != nil {
@@ -351,7 +351,7 @@ func TestStoreSearchCuratedModeShowsNonShelfAsRequest(t *testing.T) {
 	}
 	got := resultsByCode(t, raw)
 	if got["github"]["store_state"] != storeStateAvailable {
-		t.Fatalf("shelf server github must be available, got %v", got["github"]["store_state"])
+		t.Fatalf("granted server github must be available, got %v", got["github"]["store_state"])
 	}
 	if got["salesforce"]["store_state"] != storeStateRequest {
 		t.Fatalf("non-shelf server must be browsable as a request, got %v", got["salesforce"]["store_state"])
