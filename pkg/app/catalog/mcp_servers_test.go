@@ -161,6 +161,30 @@ func TestAuthHint_Classification(t *testing.T) {
 	}
 }
 
+func TestNewMCPServerCatalog_DualAuthServers(t *testing.T) {
+	t.Parallel()
+	cat, err := NewMCPServerCatalog(nil)
+	require.NoError(t, err)
+
+	// These servers accept both an OAuth login and a static Authorization: Bearer
+	// token (API key / PAT) on their hosted remote MCP, so the catalog offers both
+	// and carries the header the install UI fills for the API-key path.
+	for _, code := range []string{
+		"com.stripe/mcp", "com.github/copilot-mcp", "app.linear/mcp",
+		"com.atlassian/mcp", "com.supabase/mcp", "com.gitlab/mcp",
+	} {
+		s, ok := cat.GetByCode(code)
+		require.Truef(t, ok, "missing %q", code)
+		require.Equalf(t, []string{authHintStatic, authHintOAuth}, s.AuthMethods, "auth methods for %q", code)
+		// OAuth stays the coarse default/prefill.
+		require.Equalf(t, authHintOAuth, s.AuthHint, "auth hint for %q", code)
+		require.NotEmptyf(t, s.AuthHeaders, "static header for %q", code)
+		require.Equalf(t, "Authorization", s.AuthHeaders[0].Name, "header name for %q", code)
+		require.Equalf(t, "Bearer", s.AuthHeaders[0].Scheme, "header scheme for %q", code)
+		require.NotNilf(t, s.OAuth, "oauth spec for %q", code)
+	}
+}
+
 func TestAuthMethods_Classification(t *testing.T) {
 	t.Parallel()
 
