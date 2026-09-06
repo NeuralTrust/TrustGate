@@ -97,7 +97,7 @@ func (s *stubConnect) CreateTicket(context.Context, ids.GatewayID, string, strin
 	return s.ticket, nil
 }
 
-func (s *stubConnect) CreateServerTicket(_ context.Context, _ ids.GatewayID, _, _, code string) (string, error) {
+func (s *stubConnect) CreateServerTicket(_ context.Context, _ ids.GatewayID, _, _, code, _ string) (string, error) {
 	s.serverTicketCodes = append(s.serverTicketCodes, code)
 	return s.ticket, nil
 }
