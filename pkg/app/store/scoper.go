@@ -95,7 +95,7 @@ func (s *scoper) Scope(
 		return active[i].ID.String() < active[j].ID.String()
 	})
 
-	regs, err := s.installedRegistries(ctx, rc.Consumer.GatewayID, active, countByCode)
+	regs, err := s.installedRegistries(ctx, rc.Consumer.GatewayID, principal, active, countByCode)
 	if err != nil {
 		return nil, err
 	}
@@ -109,15 +109,23 @@ func (s *scoper) Scope(
 
 // installedRegistries maps a principal's active installs onto the shared shelf
 // registries. A code with a single active install exposes its shelf registry
-// unchanged — byte-for-byte the pre-instances behaviour. A code with several
-// active installs (distinct instances, e.g. two Snowflake schemas) exposes one
-// per-instance clone per install: a distinct registry id and a config-derived
-// label so the composer names and disambiguates their tools apart, with the
-// instance's own plain config carried as a request-scoped overlay for the
-// dial-time URL resolver.
+// under its own id and name; when that install carries per-user config the
+// exposure is a shallow clone carrying the config as a request-scoped overlay
+// (MCPTarget.InstanceConfig) so the dial-time URL resolver reads this exact
+// instance's values rather than falling back to an ambiguous by-code lookup. A
+// code with several active installs (distinct instances, e.g. two Snowflake
+// schemas) exposes one per-instance clone per install: a distinct registry id
+// and a config-derived label so the composer names and disambiguates their
+// tools apart, again with the instance's own config as the overlay.
+//
+// Governance is re-checked here, not only at install time: an install whose
+// shelf registry now excludes the principal (the admin tightened the group/user
+// grant after the install) is not exposed, so tightening a grant revokes access
+// immediately rather than only for future installs.
 func (s *scoper) installedRegistries(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
+	principal *identity.Principal,
 	active []*installationdomain.Installation,
 	countByCode map[string]int,
 ) ([]*registrydomain.Registry, error) {
@@ -138,19 +146,76 @@ func (s *scoper) installedRegistries(
 			byCode[reg.MCPTarget.Code] = reg
 		}
 	}
+	groups := principalGroups(principal)
 	out := make([]*registrydomain.Registry, 0, len(active))
 	for _, in := range active {
 		shelf, ok := byCode[in.CatalogCode]
 		if !ok {
 			continue
 		}
+		if !storeAccessAllows(shelf.MCPTarget.StoreGroups(), shelf.MCPTarget.StoreUsers(), groups, principal.Subject) {
+			continue
+		}
 		if countByCode[in.CatalogCode] <= 1 {
-			out = append(out, shelf)
+			if len(in.Config) == 0 {
+				out = append(out, shelf)
+				continue
+			}
+			out = append(out, configuredRegistry(shelf, in))
 			continue
 		}
 		out = append(out, instanceRegistry(shelf, in))
 	}
 	return out, nil
+}
+
+// principalGroups reads the principal's IdP group memberships from its claims
+// (a []string or a JSON-decoded []any), or nil when absent.
+func principalGroups(principal *identity.Principal) []string {
+	if principal == nil || principal.Claims == nil {
+		return nil
+	}
+	switch v := principal.Claims[identity.ClaimGroups].(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+// configuredRegistry is the single-instance exposure of an install that carries
+// per-user config: a shallow clone of the shelf registry (same id, same name — no
+// relabel, since there is nothing to disambiguate) whose target carries the
+// install's config as the dial-time overlay. The shared shelf entry is never
+// mutated.
+func configuredRegistry(
+	shelf *registrydomain.Registry,
+	in *installationdomain.Installation,
+) *registrydomain.Registry {
+	clone := *shelf
+	target := *shelf.MCPTarget
+	target.InstanceConfig = copyConfig(in.Config)
+	clone.MCPTarget = &target
+	return &clone
+}
+
+func copyConfig(config map[string]string) map[string]string {
+	if len(config) == 0 {
+		return nil
+	}
+	cfg := make(map[string]string, len(config))
+	for k, v := range config {
+		cfg[k] = v
+	}
+	return cfg
 }
 
 // instanceRegistry clones a shelf registry into a per-instance view for one
@@ -169,13 +234,7 @@ func instanceRegistry(
 	if label := in.InstanceLabel(); label != "" {
 		clone.Name = instanceName(shelf, label)
 	}
-	if len(in.Config) > 0 {
-		cfg := make(map[string]string, len(in.Config))
-		for k, v := range in.Config {
-			cfg[k] = v
-		}
-		target.InstanceConfig = cfg
-	}
+	target.InstanceConfig = copyConfig(in.Config)
 	return &clone
 }
 

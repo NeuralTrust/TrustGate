@@ -61,6 +61,22 @@ func storeRC() *appconsumer.RoutableConsumer {
 	return &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]())}
 }
 
+// selfServiceCtx carries a self-service (free tier) gateway: the Store is open
+// regardless of any stamped mode or per-principal claim.
+func selfServiceCtx() context.Context {
+	return appgateway.WithGateway(context.Background(), &gatewaydomain.Gateway{
+		Entitlements: gatewaydomain.Entitlements{Tier: "free"},
+	})
+}
+
+// enterpriseGateway is a governed gateway with the given configured Store mode.
+func enterpriseGateway(mode string) *gatewaydomain.Gateway {
+	return &gatewaydomain.Gateway{
+		Entitlements: gatewaydomain.Entitlements{Tier: "enterprise"},
+		Metadata:     gatewaydomain.WithStoreMode(nil, mode),
+	}
+}
+
 func decodeStructured(t *testing.T, raw json.RawMessage) map[string]any {
 	t.Helper()
 	var out struct {
@@ -123,7 +139,7 @@ func TestStoreToolDefinitionsExposeSearch(t *testing.T) {
 
 func TestStoreSearchByQuery(t *testing.T) {
 	tool := newStoreToolForTest(t)
-	raw, err := tool.Call(context.Background(), storeRC(), "", StoreSearchToolName, json.RawMessage(`{"query":"git"}`))
+	raw, err := tool.Call(selfServiceCtx(), storeRC(), "", StoreSearchToolName, json.RawMessage(`{"query":"git"}`))
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -148,7 +164,7 @@ func TestStoreSearchByQuery(t *testing.T) {
 
 func TestStoreSearchByCategory(t *testing.T) {
 	tool := newStoreToolForTest(t)
-	raw, err := tool.Call(context.Background(), storeRC(), "", StoreSearchToolName, json.RawMessage(`{"category":"crm"}`))
+	raw, err := tool.Call(selfServiceCtx(), storeRC(), "", StoreSearchToolName, json.RawMessage(`{"category":"crm"}`))
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -160,7 +176,7 @@ func TestStoreSearchByCategory(t *testing.T) {
 
 func TestStoreSearchEmptyBrowsesAll(t *testing.T) {
 	tool := newStoreToolForTest(t)
-	raw, err := tool.Call(context.Background(), storeRC(), "", StoreSearchToolName, nil)
+	raw, err := tool.Call(selfServiceCtx(), storeRC(), "", StoreSearchToolName, nil)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -172,7 +188,7 @@ func TestStoreSearchEmptyBrowsesAll(t *testing.T) {
 
 func TestStoreSearchRespectsLimitAndReportsTruncation(t *testing.T) {
 	tool := newStoreToolForTest(t)
-	raw, err := tool.Call(context.Background(), storeRC(), "", StoreSearchToolName, json.RawMessage(`{"limit":1}`))
+	raw, err := tool.Call(selfServiceCtx(), storeRC(), "", StoreSearchToolName, json.RawMessage(`{"limit":1}`))
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -215,7 +231,7 @@ func TestStoreSearchTagsShelfState(t *testing.T) {
 		shelfReg("gitlab", &registrydomain.MCPStoreConfig{Available: true, RequiresApproval: true}),
 		// salesforce not on the shelf
 	)
-	raw, err := tool.Call(context.Background(), storeRC(), "", StoreSearchToolName, nil)
+	raw, err := tool.Call(selfServiceCtx(), storeRC(), "", StoreSearchToolName, nil)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -245,7 +261,7 @@ func TestStoreSearchPrincipalOpenOverridesCuratedGateway(t *testing.T) {
 	tool := storeToolWithShelf(t, shelfReg("github", &registrydomain.MCPStoreConfig{Available: true}))
 	// Gateway default is curated (only shelf servers), but this principal's token
 	// carries store_access=open, so the whole catalog is browsable for them.
-	gw := &gatewaydomain.Gateway{Metadata: gatewaydomain.WithStoreMode(nil, gatewaydomain.StoreModeCurated)}
+	gw := enterpriseGateway(gatewaydomain.StoreModeCurated)
 	ctx := appgateway.WithGateway(
 		ctxWithStoreAccess(context.Background(), "ana", gatewaydomain.StoreModeOpen),
 		gw,
@@ -290,7 +306,7 @@ func TestStoreInstallPrincipalNoneRefused(t *testing.T) {
 func TestStoreSearchCuratedModeHidesNonShelf(t *testing.T) {
 	tool := storeToolWithShelf(t, shelfReg("github", &registrydomain.MCPStoreConfig{Available: true}))
 	// A gateway in curated mode.
-	gw := &gatewaydomain.Gateway{Metadata: gatewaydomain.WithStoreMode(nil, gatewaydomain.StoreModeCurated)}
+	gw := enterpriseGateway(gatewaydomain.StoreModeCurated)
 	ctx := appgateway.WithGateway(context.Background(), gw)
 
 	raw, err := tool.Call(ctx, storeRC(), "", StoreSearchToolName, nil)

@@ -194,9 +194,11 @@ type Repository interface {
 	// Upsert creates or updates the installation for (gateway, principal, code).
 	Upsert(ctx context.Context, in *Installation) error
 	// Find returns an installation for (gateway, principal, code), or ErrNotFound.
-	// A principal may now hold several instances of one code; Find returns the
-	// earliest so single-instance callers (the dial-time config resolver, admin
-	// reads) keep a stable, deterministic answer.
+	// A principal may hold several instances of one code; Find prefers an ACTIVE
+	// (installed) row, then the earliest, so single-instance callers (the
+	// dial-time config resolver, admin reads) never pick a revoked or pending row
+	// over a live one. Callers that must target one specific instance use
+	// FindByID.
 	Find(ctx context.Context, gatewayID ids.GatewayID, principalSub, catalogCode string) (*Installation, error)
 	// FindByID returns one instance by its id, scoped to the owning principal, or
 	// ErrNotFound. It is how a specific instance is targeted (e.g. uninstall).
@@ -213,8 +215,10 @@ type Repository interface {
 	// ListPendingByGateway returns every pending-approval request on a gateway,
 	// oldest first — the admin approval queue.
 	ListPendingByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*Installation, error)
-	// Delete removes every instance for (gateway, principal, code).
+	// Delete hard-deletes every instance for (gateway, principal, code).
 	Delete(ctx context.Context, gatewayID ids.GatewayID, principalSub, catalogCode string) error
-	// DeleteByID removes one instance by its id, scoped to the owning principal.
+	// DeleteByID revokes one instance by its id, scoped to the owning principal:
+	// the row is kept (StatusRevoked) for audit and drops off the Store surface.
+	// Both planes implement it as a soft revoke so behaviour is identical.
 	DeleteByID(ctx context.Context, gatewayID ids.GatewayID, principalSub string, id ids.InstallationID) error
 }

@@ -31,6 +31,12 @@ import (
 // the admin connects (shelves) the server first, then approves. It maps to 409.
 var ErrNotShelved = fmt.Errorf("store: server is not on the shelf; connect it first: %w", commonerrors.ErrConflict)
 
+// ErrAmbiguousRequest is returned when an approve/deny names only a catalog code
+// and the principal holds several live (installed or pending) instances of it,
+// so the decision cannot be applied to one without guessing. The caller must
+// pass the instance id (from the pending queue). It maps to 409.
+var ErrAmbiguousRequest = fmt.Errorf("store: several instances match; pass instance_id: %w", commonerrors.ErrConflict)
+
 // RegistryShelf is the registry access the approver needs: find the shelf
 // registry for a catalog code and mark it available when approving.
 type RegistryShelf interface {
@@ -40,7 +46,11 @@ type RegistryShelf interface {
 
 // PendingRequest is one row in the admin approval queue.
 type PendingRequest struct {
-	GatewayID    ids.GatewayID
+	GatewayID ids.GatewayID
+	// InstanceID identifies the exact installation row awaiting a decision; the
+	// admin passes it back on approve/deny so the decision lands on this instance
+	// even when the principal holds others of the same code.
+	InstanceID   string
 	PrincipalSub string
 	Code         string
 	Name         string
@@ -49,11 +59,14 @@ type PendingRequest struct {
 }
 
 // ApproveRequest / DenyRequest identify the install request to decide, plus the
-// admin acting on it (for audit).
+// admin acting on it (for audit). InstanceID targets one exact instance; when
+// empty, Code is used only if the principal holds exactly one live instance of
+// it (backward compatible with single-instance callers).
 type ApproveRequest struct {
 	GatewayID    ids.GatewayID
 	PrincipalSub string
 	Code         string
+	InstanceID   string
 	ApprovedBy   string
 }
 
@@ -61,6 +74,7 @@ type DenyRequest struct {
 	GatewayID    ids.GatewayID
 	PrincipalSub string
 	Code         string
+	InstanceID   string
 	DeniedBy     string
 }
 
@@ -111,6 +125,7 @@ func (a *approver) ListPending(ctx context.Context, gatewayID ids.GatewayID) ([]
 		}
 		out = append(out, PendingRequest{
 			GatewayID:    in.GatewayID,
+			InstanceID:   in.ID.String(),
 			PrincipalSub: in.PrincipalSub,
 			Code:         in.CatalogCode,
 			Name:         name,
@@ -122,14 +137,19 @@ func (a *approver) ListPending(ctx context.Context, gatewayID ids.GatewayID) ([]
 }
 
 func (a *approver) Approve(ctx context.Context, in ApproveRequest) error {
-	code := strings.TrimSpace(in.Code)
-	existing, err := a.installs.Find(ctx, in.GatewayID, in.PrincipalSub, code)
+	existing, err := a.target(ctx, in.GatewayID, in.PrincipalSub, in.Code, in.InstanceID)
 	if err != nil {
 		return err
 	}
 	if existing.Status == installationdomain.StatusInstalled {
 		return nil // already approved — idempotent
 	}
+	// A denied (revoked) request is not silently resurrected by a by-code approve;
+	// re-granting one is an explicit, instance-addressed decision.
+	if existing.Status == installationdomain.StatusRevoked && strings.TrimSpace(in.InstanceID) == "" {
+		return fmt.Errorf("%w: no pending request for %q", installationdomain.ErrNotFound, existing.CatalogCode)
+	}
+	code := existing.CatalogCode
 
 	reg, err := findRegistryByCode(ctx, a.registries, in.GatewayID, code)
 	if err != nil {
@@ -153,7 +173,7 @@ func (a *approver) Approve(ctx context.Context, in ApproveRequest) error {
 }
 
 func (a *approver) Deny(ctx context.Context, in DenyRequest) error {
-	existing, err := a.installs.Find(ctx, in.GatewayID, in.PrincipalSub, strings.TrimSpace(in.Code))
+	existing, err := a.target(ctx, in.GatewayID, in.PrincipalSub, in.Code, in.InstanceID)
 	if err != nil {
 		return err
 	}
@@ -163,6 +183,60 @@ func (a *approver) Deny(ctx context.Context, in DenyRequest) error {
 	existing.Status = installationdomain.StatusRevoked
 	existing.UpdatedAt = time.Now().UTC()
 	return a.installs.Upsert(ctx, existing)
+}
+
+// target resolves the one installation row a decision applies to. An explicit
+// instance id wins (and must belong to the principal, and to code when one is
+// given). Without it, the code alone identifies the row only when the principal
+// holds exactly one live (installed or pending) instance of it: with several, a
+// by-code lookup would silently land on the wrong instance (e.g. deny revoking an
+// installed instance instead of the pending one), so it is refused instead.
+func (a *approver) target(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub, code, instanceID string,
+) (*installationdomain.Installation, error) {
+	code = strings.TrimSpace(code)
+	if id := strings.TrimSpace(instanceID); id != "" {
+		installID, err := ids.Parse[ids.InstallationKind](id)
+		if err != nil {
+			return nil, fmt.Errorf("%w: invalid instance id %q", installationdomain.ErrInvalidInstallation, id)
+		}
+		row, err := a.installs.FindByID(ctx, gatewayID, principalSub, installID)
+		if err != nil {
+			return nil, err
+		}
+		if code != "" && row.CatalogCode != code {
+			return nil, fmt.Errorf("%w: instance %q is not an instance of %q", installationdomain.ErrNotFound, id, code)
+		}
+		return row, nil
+	}
+	if code == "" {
+		return nil, fmt.Errorf("%w: code or instance id is required", installationdomain.ErrInvalidInstallation)
+	}
+	rows, err := a.installs.ListByPrincipalAndCode(ctx, gatewayID, principalSub, code)
+	if err != nil {
+		return nil, err
+	}
+	live := make([]*installationdomain.Installation, 0, len(rows))
+	for _, r := range rows {
+		if r != nil && r.Status != installationdomain.StatusRevoked {
+			live = append(live, r)
+		}
+	}
+	switch len(live) {
+	case 1:
+		return live[0], nil
+	case 0:
+		if len(rows) > 0 {
+			// Only revoked rows remain: hand back the newest so the caller's
+			// idempotency check (deny of an already-denied request) holds.
+			return rows[len(rows)-1], nil
+		}
+		return nil, installationdomain.ErrNotFound
+	default:
+		return nil, fmt.Errorf("%w: %d live instances of %q", ErrAmbiguousRequest, len(live), code)
+	}
 }
 
 // ensureStoreAvailable returns a store config with Available set, preserving any

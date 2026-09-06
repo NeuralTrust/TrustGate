@@ -38,7 +38,7 @@ func (s *stubConnectService) CreateTicket(context.Context, ids.GatewayID, string
 	return "t", nil
 }
 
-func (s *stubConnectService) CreateServerTicket(context.Context, ids.GatewayID, string, string, string) (string, error) {
+func (s *stubConnectService) CreateServerTicket(context.Context, ids.GatewayID, string, string, string, string) (string, error) {
 	return "t", nil
 }
 

@@ -112,8 +112,14 @@ func (f *fakeInstalls) Delete(context.Context, ids.GatewayID, string, string) er
 	return nil
 }
 
-func (f *fakeInstalls) DeleteByID(context.Context, ids.GatewayID, string, ids.InstallationID) error {
+// DeleteByID mirrors the real repositories: a soft revoke of the named row.
+func (f *fakeInstalls) DeleteByID(_ context.Context, _ ids.GatewayID, _ string, id ids.InstallationID) error {
 	f.deleteByID++
+	for _, in := range f.installsForCode() {
+		if in != nil && in.ID == id {
+			in.Status = installationdomain.StatusRevoked
+		}
+	}
 	return nil
 }
 
@@ -545,8 +551,8 @@ func TestUninstallAmbiguousWithoutInstance(t *testing.T) {
 
 func TestUninstallByInstanceID(t *testing.T) {
 	installs := &fakeInstalls{byCode: []*installationdomain.Installation{
-		{ID: ids.New[ids.InstallationKind](), Status: installationdomain.StatusInstalled, Config: map[string]string{"schema": "a"}},
-		{ID: ids.New[ids.InstallationKind](), Status: installationdomain.StatusInstalled, Config: map[string]string{"schema": "b"}},
+		{ID: ids.New[ids.InstallationKind](), CatalogCode: "github", Status: installationdomain.StatusInstalled, Config: map[string]string{"schema": "a"}},
+		{ID: ids.New[ids.InstallationKind](), CatalogCode: "github", Status: installationdomain.StatusInstalled, Config: map[string]string{"schema": "b"}},
 	}}
 	inst := newInstaller(t, &fakeRegistries{}, installs)
 	target := installs.byCode[1].ID.String()
@@ -555,6 +561,29 @@ func TestUninstallByInstanceID(t *testing.T) {
 	}
 	if installs.deleteByID != 1 {
 		t.Fatalf("expected one delete-by-id, got %d", installs.deleteByID)
+	}
+	if installs.byCode[1].Status != installationdomain.StatusRevoked || installs.byCode[0].Status != installationdomain.StatusInstalled {
+		t.Fatalf("only the named instance must be revoked, got %q / %q", installs.byCode[0].Status, installs.byCode[1].Status)
+	}
+}
+
+// TestUninstallByInstanceIDRejectsForeignCode: an instance id names a row of
+// another catalog code (or is unknown) — refused as not found, nothing revoked.
+func TestUninstallByInstanceIDRejectsForeignCode(t *testing.T) {
+	installs := &fakeInstalls{byCode: []*installationdomain.Installation{
+		{ID: ids.New[ids.InstallationKind](), CatalogCode: "snowflake", Status: installationdomain.StatusInstalled},
+	}}
+	inst := newInstaller(t, &fakeRegistries{}, installs)
+	err := inst.Uninstall(context.Background(), ids.New[ids.GatewayKind](), "ana", "github", installs.byCode[0].ID.String())
+	if !errors.Is(err, installationdomain.ErrNotFound) {
+		t.Fatalf("instance of another code must be ErrNotFound, got %v", err)
+	}
+	if installs.deleteByID != 0 {
+		t.Fatal("nothing may be revoked when the instance does not belong to the code")
+	}
+	err = inst.Uninstall(context.Background(), ids.New[ids.GatewayKind](), "ana", "github", ids.New[ids.InstallationKind]().String())
+	if !errors.Is(err, installationdomain.ErrNotFound) {
+		t.Fatalf("unknown instance must be ErrNotFound, got %v", err)
 	}
 }
 

@@ -33,6 +33,8 @@ import (
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
+	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
@@ -306,6 +308,13 @@ type configureServiceParams struct {
 	Installs  installationdomain.Repository `optional:"true"`
 	Catalog   appcatalog.MCPServerCatalog   `optional:"true"`
 	Shared    mcpoauth.Provider
+	// Registries, Ensurer and Gateways let a configure-before-install submission
+	// run through the same governed installer the install tool uses (shelf,
+	// approval, group gates, self-service materialisation). Without Registries the
+	// form can only update an existing installation, never create one.
+	Registries registrydomain.Repository `optional:"true"`
+	Ensurer    appstore.RegistryEnsurer  `optional:"true"`
+	Gateways   gatewaydomain.Repository  `optional:"true"`
 }
 
 func provideConfigureService(p configureServiceParams) (appoauth.ConfigureService, error) {
@@ -320,7 +329,25 @@ func provideConfigureService(p configureServiceParams) (appoauth.ConfigureServic
 		}
 		catalog = loaded
 	}
-	return appoauth.NewConfigureService(p.Store, p.Consumers, catalog, p.Installs, p.Vault), nil
+	var opts []appoauth.ConfigureOption
+	if p.Registries != nil {
+		installer, err := appstore.NewInstaller(catalog, p.Registries, p.Installs, p.Ensurer)
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, appoauth.WithConfigureInstaller(installer))
+	}
+	if p.Gateways != nil {
+		gateways := p.Gateways
+		opts = append(opts, appoauth.WithConfigureOpenMode(func(ctx context.Context, gatewayID ids.GatewayID) bool {
+			gw, err := gateways.FindByID(ctx, gatewayID)
+			if err != nil || gw == nil {
+				return false // unknown gateway: fail closed to curated
+			}
+			return gw.StoreMode() == gatewaydomain.StoreModeOpen
+		}))
+	}
+	return appoauth.NewConfigureService(p.Store, p.Consumers, catalog, p.Installs, p.Vault, opts...), nil
 }
 
 func provideConnectService(p connectServiceParams) (appoauth.ConnectService, error) {
