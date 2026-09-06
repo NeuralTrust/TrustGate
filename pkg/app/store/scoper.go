@@ -27,7 +27,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
-	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
 // InstallLister is the read side the CatalogScoper needs: what a principal has
@@ -48,18 +48,34 @@ type Scoper interface {
 type scoper struct {
 	installs   InstallLister
 	registries RegistryLister
-	grants     storegrantdomain.Reader
+	grants     storeaccessdomain.Reader
+	modes      ModeResolver
+}
+
+// ScoperOption tunes NewScoper.
+type ScoperOption func(*scoper)
+
+// WithScoperModes resolves the principal's Store mode live from the gateway's
+// policies instead of the token claim / gateway default alone.
+func WithScoperModes(r ModeResolver) ScoperOption {
+	return func(s *scoper) { s.modes = r }
 }
 
 // NewScoper wires the CatalogScoper over the installation store, the gateway
 // registry list and the Store access grants. grants may be nil on a plane
 // without them, which fails closed under Selected access (no install is
 // exposed) and is irrelevant under All.
-func NewScoper(installs InstallLister, registries RegistryLister, grants storegrantdomain.Reader) (Scoper, error) {
+func NewScoper(installs InstallLister, registries RegistryLister, grants storeaccessdomain.Reader, opts ...ScoperOption) (Scoper, error) {
 	if installs == nil || registries == nil {
 		return nil, ErrUnavailable
 	}
-	return &scoper{installs: installs, registries: registries, grants: grants}, nil
+	s := &scoper{installs: installs, registries: registries, grants: grants}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(s)
+		}
+	}
+	return s, nil
 }
 
 func (s *scoper) Scope(
@@ -158,8 +174,8 @@ func (s *scoper) installedRegistries(
 	groups := principalGroups(principal)
 	// Under All every install stands; under Selected an install only stays
 	// exposed while a grant still names the principal for its code or instance.
-	enforceGrants := EffectiveStoreMode(ctx) != gatewaydomain.StoreModeOpen
-	var grants *storegrantdomain.Set
+	enforceGrants := resolveMode(ctx, s.modes, gatewayID) != gatewaydomain.StoreModeOpen
+	var grants *storeaccessdomain.Set
 	if enforceGrants {
 		if grants, err = loadGrantSet(ctx, s.grants, gatewayID); err != nil {
 			return nil, fmt.Errorf("store scoper: %w", err)

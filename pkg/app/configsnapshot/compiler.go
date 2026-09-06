@@ -31,7 +31,7 @@ import (
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
-	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	"golang.org/x/sync/errgroup"
 )
@@ -60,15 +60,23 @@ type Compiler struct {
 	// grants is optional: the MCP Store's access grants ride the snapshot when a
 	// reader is wired (WithStoreGrants). Without one the snapshot carries no
 	// grants, which fails closed (nobody is granted under Selected access).
-	grants StoreGrantReader
-	logger *slog.Logger
+	grants        StoreGrantReader
+	storePolicies StorePolicyReader
+	logger        *slog.Logger
 }
 
 // StoreGrantReader is the read side the compiler needs for MCP Store grants.
 type StoreGrantReader interface {
-	ListByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*storegrantdomain.Grant, error)
+	ListByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*storeaccessdomain.Grant, error)
 	// List pages every grant across gateways (bulk collect path).
-	List(ctx context.Context, page, size int) ([]*storegrantdomain.Grant, int, error)
+	List(ctx context.Context, page, size int) ([]*storeaccessdomain.Grant, int, error)
+}
+
+// StorePolicyReader is the read side the compiler needs for per-principal MCP
+// Store access policies.
+type StorePolicyReader interface {
+	ListPoliciesByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*storeaccessdomain.Policy, error)
+	ListPolicies(ctx context.Context, page, size int) ([]*storeaccessdomain.Policy, int, error)
 }
 
 // CompilerOption tunes NewCompiler.
@@ -77,6 +85,12 @@ type CompilerOption func(*Compiler)
 // WithStoreGrants includes the MCP Store access grants in every snapshot.
 func WithStoreGrants(r StoreGrantReader) CompilerOption {
 	return func(c *Compiler) { c.grants = r }
+}
+
+// WithStorePolicies includes the per-principal Store access policies in every
+// snapshot.
+func WithStorePolicies(r StorePolicyReader) CompilerOption {
+	return func(c *Compiler) { c.storePolicies = r }
 }
 
 func NewCompiler(
@@ -225,6 +239,7 @@ func appendGatewayData(dst *readmodel.Data, gateway gatewaydomain.Gateway, gwDat
 	dst.Auths = append(dst.Auths, gwData.Auths...)
 	dst.Roles = append(dst.Roles, gwData.Roles...)
 	dst.StoreGrants = append(dst.StoreGrants, gwData.StoreGrants...)
+	dst.StorePolicies = append(dst.StorePolicies, gwData.StorePolicies...)
 }
 
 func mergeCatalog(dst *readmodel.Data, catalog readmodel.Data) {
@@ -295,12 +310,13 @@ func (c *Compiler) collectGateways(ctx context.Context, gateways []gatewaydomain
 // sorted before encoding, so grouping order never affects version hashes.
 func (c *Compiler) collectAllBulk(ctx context.Context) (map[ids.GatewayID]*readmodel.Data, error) {
 	var (
-		consumers  []*consumerdomain.Consumer
-		registries []*registrydomain.Registry
-		policies   []*policydomain.Policy
-		auths      []*authdomain.Auth
-		roles      []*roledomain.Role
-		grants     []*storegrantdomain.Grant
+		consumers     []*consumerdomain.Consumer
+		registries    []*registrydomain.Registry
+		policies      []*policydomain.Policy
+		auths         []*authdomain.Auth
+		roles         []*roledomain.Role
+		grants        []*storeaccessdomain.Grant
+		storePolicies []*storeaccessdomain.Policy
 	)
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() (err error) {
@@ -335,8 +351,16 @@ func (c *Compiler) collectAllBulk(ctx context.Context) (map[ids.GatewayID]*readm
 	})
 	if c.grants != nil {
 		g.Go(func() (err error) {
-			grants, err = listAll(gctx, "store grants", func(ctx context.Context, page int) ([]*storegrantdomain.Grant, int, error) {
+			grants, err = listAll(gctx, "store grants", func(ctx context.Context, page int) ([]*storeaccessdomain.Grant, int, error) {
 				return c.grants.List(ctx, page, compilerBulkPageSize)
+			})
+			return err
+		})
+	}
+	if c.storePolicies != nil {
+		g.Go(func() (err error) {
+			storePolicies, err = listAll(gctx, "store policies", func(ctx context.Context, page int) ([]*storeaccessdomain.Policy, int, error) {
+				return c.storePolicies.ListPolicies(ctx, page, compilerBulkPageSize)
 			})
 			return err
 		})
@@ -388,6 +412,12 @@ func (c *Compiler) collectAllBulk(ctx context.Context) (map[ids.GatewayID]*readm
 		if x != nil {
 			b := bucket(x.GatewayID)
 			b.StoreGrants = append(b.StoreGrants, *x)
+		}
+	}
+	for _, x := range storePolicies {
+		if x != nil {
+			b := bucket(x.GatewayID)
+			b.StorePolicies = append(b.StorePolicies, *x)
 		}
 	}
 	return byGateway, nil
@@ -501,6 +531,18 @@ func (c *Compiler) collectGateway(ctx context.Context, gatewayID ids.GatewayID, 
 			data.StoreGrants = append(data.StoreGrants, *g)
 		}
 	}
+	if c.storePolicies != nil {
+		storePolicies, err := c.storePolicies.ListPoliciesByGateway(ctx, gatewayID)
+		if err != nil && !errors.Is(err, commonerrors.ErrNotFound) {
+			return fmt.Errorf("configsnapshot: list store policies for gateway %s: %w", gatewayID, err)
+		}
+		for _, p := range storePolicies {
+			if p == nil {
+				continue
+			}
+			data.StorePolicies = append(data.StorePolicies, *p)
+		}
+	}
 	return nil
 }
 
@@ -606,6 +648,16 @@ func sortData(data *readmodel.Data) {
 			return a.CatalogCode < b.CatalogCode
 		}
 		return a.RegistryID.String() < b.RegistryID.String()
+	})
+	sort.SliceStable(data.StorePolicies, func(i, j int) bool {
+		a, b := data.StorePolicies[i], data.StorePolicies[j]
+		if a.GatewayID != b.GatewayID {
+			return a.GatewayID.String() < b.GatewayID.String()
+		}
+		if a.PrincipalType != b.PrincipalType {
+			return a.PrincipalType < b.PrincipalType
+		}
+		return a.PrincipalID < b.PrincipalID
 	})
 	sort.SliceStable(data.Providers, func(i, j int) bool { return data.Providers[i].Code < data.Providers[j].Code })
 	sort.SliceStable(data.CatalogModels, func(i, j int) bool {

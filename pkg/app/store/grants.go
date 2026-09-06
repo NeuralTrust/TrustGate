@@ -20,7 +20,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/configsyncport"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 )
 
 // GrantService is the admin surface over MCP Store access grants: list a
@@ -29,13 +29,13 @@ import (
 //
 //go:generate mockery --name=GrantService --dir=. --output=./mocks --filename=store_grant_service_mock.go --case=underscore --with-expecter
 type GrantService interface {
-	storegrantdomain.Reader
+	storeaccessdomain.Reader
 	// Upsert writes a grant verbatim (the approver's path: add the requester).
-	Upsert(ctx context.Context, g *storegrantdomain.Grant) error
+	Upsert(ctx context.Context, g *storeaccessdomain.Grant) error
 	// Set replaces the grant for (code, registry) with the given members; empty
 	// members clear it. An instance grant must name a registry of this gateway
 	// that carries the code (ErrUnknownInstance otherwise).
-	Set(ctx context.Context, in SetGrantRequest) (*storegrantdomain.Grant, error)
+	Set(ctx context.Context, in SetGrantRequest) (*storeaccessdomain.Grant, error)
 }
 
 // SetGrantRequest is one grant to write. RegistryID nil = code-level.
@@ -48,7 +48,7 @@ type SetGrantRequest struct {
 }
 
 type grantService struct {
-	repo       storegrantdomain.Repository
+	repo       storeaccessdomain.Repository
 	registries RegistryLister
 	catalog    CatalogReader
 	signaler   configsyncport.SnapshotSignaler
@@ -57,7 +57,7 @@ type grantService struct {
 // NewGrantService wires the grant admin service. catalog validates the code
 // (only catalog servers are grantable); signaler may be nil.
 func NewGrantService(
-	repo storegrantdomain.Repository,
+	repo storeaccessdomain.Repository,
 	registries RegistryLister,
 	catalog CatalogReader,
 	signaler configsyncport.SnapshotSignaler,
@@ -68,12 +68,12 @@ func NewGrantService(
 	return &grantService{repo: repo, registries: registries, catalog: catalog, signaler: signaler}, nil
 }
 
-func (s *grantService) ListByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*storegrantdomain.Grant, error) {
+func (s *grantService) ListByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*storeaccessdomain.Grant, error) {
 	return s.repo.ListByGateway(ctx, gatewayID)
 }
 
-func (s *grantService) Set(ctx context.Context, in SetGrantRequest) (*storegrantdomain.Grant, error) {
-	grant, err := storegrantdomain.New(in.GatewayID, in.CatalogCode, in.RegistryID, in.Groups, in.Users)
+func (s *grantService) Set(ctx context.Context, in SetGrantRequest) (*storeaccessdomain.Grant, error) {
+	grant, err := storeaccessdomain.New(in.GatewayID, in.CatalogCode, in.RegistryID, in.Groups, in.Users)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +98,7 @@ func (s *grantService) Set(ctx context.Context, in SetGrantRequest) (*storegrant
 
 // Upsert lets the service stand in as the approver's GrantStore, so an approval
 // also signals the snapshot.
-func (s *grantService) Upsert(ctx context.Context, g *storegrantdomain.Grant) error {
+func (s *grantService) Upsert(ctx context.Context, g *storeaccessdomain.Grant) error {
 	if err := s.repo.Upsert(ctx, g); err != nil {
 		return err
 	}

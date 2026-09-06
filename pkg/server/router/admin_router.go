@@ -126,6 +126,9 @@ type AdminRouterDeps struct {
 	// StoreGrants serves the MCP Store access grants (the Access page's grant
 	// read/write). Present only on the full plane.
 	StoreGrants *storehttp.GrantsHandler
+	// StorePolicies serves the per-principal Store access levels (Access page
+	// All / Selected / None). Present only on the full plane.
+	StorePolicies *storehttp.PoliciesHandler
 }
 
 type adminRouter struct {
@@ -219,7 +222,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	// MCP Store administration: access grants and the install-approval queue.
 	// Curating the Store is a registry-admin concern, so it reuses the
 	// registries access guard. Registered only when wired (full plane).
-	if r.deps.StoreRequests != nil || r.deps.StoreGrants != nil {
+	if r.deps.StoreRequests != nil || r.deps.StoreGrants != nil || r.deps.StorePolicies != nil {
 		store := gw.Group("/:gateway_id/store", r.deps.AdminAuthz.RequireGatewayAccess(middleware.ResourceRegistries))
 		if r.deps.StoreRequests != nil {
 			store.Get("/requests", r.deps.StoreRequests.List)
@@ -229,6 +232,10 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 		if r.deps.StoreGrants != nil {
 			store.Get("/grants", r.deps.StoreGrants.List)
 			store.Put("/grants", r.deps.StoreGrants.Set)
+		}
+		if r.deps.StorePolicies != nil {
+			store.Get("/access-policies", r.deps.StorePolicies.List)
+			store.Put("/access-policies", r.deps.StorePolicies.Set)
 		}
 	}
 

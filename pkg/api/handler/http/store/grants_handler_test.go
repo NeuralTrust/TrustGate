@@ -26,28 +26,28 @@ import (
 	storehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
-	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
+	storeaccessdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storeaccess"
 	"github.com/gofiber/fiber/v2"
 )
 
 type fakeGrantService struct {
-	items []*storegrantdomain.Grant
+	items []*storeaccessdomain.Grant
 	sets  []appstore.SetGrantRequest
 	err   error
 }
 
-func (f *fakeGrantService) ListByGateway(context.Context, ids.GatewayID) ([]*storegrantdomain.Grant, error) {
+func (f *fakeGrantService) ListByGateway(context.Context, ids.GatewayID) ([]*storeaccessdomain.Grant, error) {
 	return f.items, f.err
 }
 
-func (f *fakeGrantService) Upsert(context.Context, *storegrantdomain.Grant) error { return f.err }
+func (f *fakeGrantService) Upsert(context.Context, *storeaccessdomain.Grant) error { return f.err }
 
-func (f *fakeGrantService) Set(_ context.Context, in appstore.SetGrantRequest) (*storegrantdomain.Grant, error) {
+func (f *fakeGrantService) Set(_ context.Context, in appstore.SetGrantRequest) (*storeaccessdomain.Grant, error) {
 	f.sets = append(f.sets, in)
 	if f.err != nil {
 		return nil, f.err
 	}
-	return storegrantdomain.New(in.GatewayID, in.CatalogCode, in.RegistryID, in.Groups, in.Users)
+	return storeaccessdomain.New(in.GatewayID, in.CatalogCode, in.RegistryID, in.Groups, in.Users)
 }
 
 func newGrantsApp(svc appstore.GrantService) *fiber.App {
@@ -72,9 +72,9 @@ func put(t *testing.T, app *fiber.App, path, body string) *http.Response {
 func TestGrantsHandler_ListShapesCodeAndInstanceGrants(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	reg := ids.New[ids.RegistryKind]()
-	code, _ := storegrantdomain.New(gw, "github", ids.RegistryID{}, []string{"eng"}, nil)
-	inst, _ := storegrantdomain.New(gw, "snowflake", reg, nil, []string{"ana"})
-	app := newGrantsApp(&fakeGrantService{items: []*storegrantdomain.Grant{code, inst}})
+	code, _ := storeaccessdomain.New(gw, "github", ids.RegistryID{}, []string{"eng"}, nil)
+	inst, _ := storeaccessdomain.New(gw, "snowflake", reg, nil, []string{"ana"})
+	app := newGrantsApp(&fakeGrantService{items: []*storeaccessdomain.Grant{code, inst}})
 
 	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/v1/gateways/"+gw.String()+"/store/grants", nil))
 	if err != nil {
