@@ -161,6 +161,59 @@ func TestAuthHint_Classification(t *testing.T) {
 	}
 }
 
+func TestAuthMethods_Classification(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   rawServer
+		want []string
+	}{
+		{
+			name: "public => none declared",
+			in:   rawServer{RequiresAuth: false},
+			want: nil,
+		},
+		{
+			name: "auth headers => static only",
+			in: rawServer{
+				RequiresAuth: true,
+				AuthHeaders:  []domain.MCPAuthHeader{{Name: "Authorization", Required: true, Secret: true}},
+			},
+			want: []string{authHintStatic},
+		},
+		{
+			name: "oauth spec => oauth only",
+			in:   rawServer{OAuth: &domain.MCPOAuth{Required: true}},
+			want: []string{authHintOAuth},
+		},
+		{
+			name: "headers + oauth => both, static first",
+			in: rawServer{
+				RequiresAuth: true,
+				AuthHeaders:  []domain.MCPAuthHeader{{Name: "Authorization", Required: true, Secret: true}},
+				OAuth:        &domain.MCPOAuth{Required: true},
+			},
+			want: []string{authHintStatic, authHintOAuth},
+		},
+		{
+			name: "explicit override wins and is normalized",
+			in: rawServer{
+				OAuth:       &domain.MCPOAuth{Required: true},
+				AuthMethods: []string{"oauth", "static", "oauth", "bogus"},
+			},
+			want: []string{authHintStatic, authHintOAuth},
+		},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, authMethods(tc.in))
+		})
+	}
+}
+
 func TestRequiresConfig_Classification(t *testing.T) {
 	t.Parallel()
 

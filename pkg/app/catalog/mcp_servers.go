@@ -103,6 +103,10 @@ type rawServer struct {
 	RequiresAuth bool                    `json:"requires_auth"`
 	AuthHeaders  []domain.MCPAuthHeader  `json:"auth_headers"`
 	OAuth        *domain.MCPOAuth        `json:"oauth"`
+	// AuthMethods optionally overrides the derived list of installable auth
+	// methods ("static" and/or "oauth"). Set it to offer a choice (e.g. both)
+	// where the derivation alone would pick a single method.
+	AuthMethods []string `json:"auth_methods"`
 	Tools        []domain.MCPTool        `json:"tools"`
 	Relevance    int                     `json:"relevance"`
 	// Hidden keeps the entry in the seed for audit/re-probe but omits it from
@@ -145,6 +149,7 @@ func parseCuratedMCPServers(data []byte) ([]domain.MCPServer, error) {
 			URL:            s.ServerURL,
 			Transport:      s.Transport,
 			AuthHint:       authHint(s),
+			AuthMethods:    authMethods(s),
 			RequiresAuth:   s.RequiresAuth,
 			RequiresConfig: requiresConfig(s),
 			Relevance:      s.Relevance,
@@ -181,6 +186,43 @@ func authHint(s rawServer) string {
 	default:
 		return authHintNone
 	}
+}
+
+// authMethods lists every auth method an operator may pick when installing the
+// server. An explicit seed `auth_methods` wins (normalized/deduped); otherwise
+// it is derived additively: "static" when the server exposes auth headers (or
+// is otherwise a static-auth server), "oauth" when it advertises an OAuth spec.
+// A server that carries both an OAuth spec and auth headers therefore offers a
+// choice. Empty derivation (public server) yields nil, and the UI treats a
+// server with no declared methods as none.
+func authMethods(s rawServer) []string {
+	if len(s.AuthMethods) > 0 {
+		return normalizeAuthMethods(s.AuthMethods)
+	}
+	var methods []string
+	if len(s.AuthHeaders) > 0 || authHint(s) == authHintStatic {
+		methods = append(methods, authHintStatic)
+	}
+	if s.OAuth != nil {
+		methods = append(methods, authHintOAuth)
+	}
+	return methods
+}
+
+// normalizeAuthMethods keeps only recognized method identifiers, in a stable
+// order (static before oauth), dropping duplicates and "none".
+func normalizeAuthMethods(raw []string) []string {
+	seen := make(map[string]struct{}, len(raw))
+	for _, m := range raw {
+		seen[m] = struct{}{}
+	}
+	var out []string
+	for _, m := range []string{authHintStatic, authHintOAuth} {
+		if _, ok := seen[m]; ok {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // requiresConfig reports whether the operator must supply input before the
