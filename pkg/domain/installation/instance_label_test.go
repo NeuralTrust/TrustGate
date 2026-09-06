@@ -47,7 +47,7 @@ func TestInstanceLabel_StripsInjectionCharacters(t *testing.T) {
 		if r == '·' || r == ' ' {
 			continue
 		}
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-') {
+		if !isLabelRune(r) {
 			t.Fatalf("label contains %q outside [A-Za-z0-9._-]: %q", r, got)
 		}
 	}
@@ -75,5 +75,17 @@ func TestInstanceLabel_CapsLength(t *testing.T) {
 	}
 	if strings.HasSuffix(got, " ") || strings.HasSuffix(got, "·") {
 		t.Fatalf("truncated label must not end in a dangling separator: %q", got)
+	}
+}
+
+// isLabelRune reports whether r is in the label charset [A-Za-z0-9._-].
+func isLabelRune(r rune) bool {
+	switch {
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		return true
+	case r == '.', r == '_', r == '-':
+		return true
+	default:
+		return false
 	}
 }
