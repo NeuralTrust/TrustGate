@@ -63,7 +63,7 @@ func TestScoperSurfacesInstalledRegistries(t *testing.T) {
 		ID: ids.New[ids.RegistryKind](), MCPTarget: &registrydomain.MCPTarget{Code: "salesforce"},
 	}}}
 
-	sc, err := NewScoper(installs, regs)
+	sc, err := NewScoper(installs, regs, nil)
 	if err != nil {
 		t.Fatalf("NewScoper: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestScoperSurfacesInstalledRegistries(t *testing.T) {
 }
 
 func TestScoperLeavesRegularConsumerUntouched(t *testing.T) {
-	sc, _ := NewScoper(&fakeInstalls{}, &fakeRegistries{})
+	sc, _ := NewScoper(&fakeInstalls{}, &fakeRegistries{}, nil)
 	rc := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{
 		ID: ids.New[ids.ConsumerKind](), Slug: "regular", Type: consumerdomain.TypeMCP,
 	}}
@@ -97,7 +97,7 @@ func TestScoperLeavesRegularConsumerUntouched(t *testing.T) {
 
 func TestScoperNoInstallsLeavesStoreEmpty(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
-	sc, _ := NewScoper(&fakeInstalls{}, &fakeRegistries{items: []*registrydomain.Registry{githubRegistry()}})
+	sc, _ := NewScoper(&fakeInstalls{}, &fakeRegistries{items: []*registrydomain.Registry{githubRegistry()}}, nil)
 	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
 	scoped, err := sc.Scope(withPrincipal("ana"), rc)
 	if err != nil {
@@ -111,7 +111,7 @@ func TestScoperNoInstallsLeavesStoreEmpty(t *testing.T) {
 func TestScoperWithoutPrincipalIsNoop(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	sc, _ := NewScoper(&fakeInstalls{byPrincipal: []*installationdomain.Installation{mustInstall(t, gw, "ana", "github")}},
-		&fakeRegistries{items: []*registrydomain.Registry{githubRegistry()}})
+		&fakeRegistries{items: []*registrydomain.Registry{githubRegistry()}}, nil)
 	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
 	scoped, err := sc.Scope(context.Background(), rc)
 	if err != nil {
@@ -140,6 +140,7 @@ func TestScoperExposesOneRegistryPerInstance(t *testing.T) {
 	sc, _ := NewScoper(
 		&fakeInstalls{byPrincipal: []*installationdomain.Installation{analytics, finance}},
 		&fakeRegistries{items: []*registrydomain.Registry{shelf}},
+		nil,
 	)
 	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
 	scoped, err := sc.Scope(withOpenPrincipal("ana"), rc)
@@ -176,6 +177,7 @@ func TestScoperIgnoresRevokedInstalls(t *testing.T) {
 	sc, _ := NewScoper(
 		&fakeInstalls{byPrincipal: []*installationdomain.Installation{revoked}},
 		&fakeRegistries{items: []*registrydomain.Registry{githubRegistry()}},
+		nil,
 	)
 	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gw)}
 	scoped, _ := sc.Scope(withPrincipal("ana"), rc)

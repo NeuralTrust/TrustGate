@@ -28,6 +28,7 @@ import (
 	policydomain "github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	roledomain "github.com/NeuralTrust/TrustGate/pkg/domain/role"
+	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
 	snapshotpb "github.com/NeuralTrust/TrustGate/pkg/infra/configsnapshot/proto"
 	"github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/snapshot/readmodel"
 	configsync "github.com/NeuralTrust/TrustGate/pkg/runtimeconfig/sync"
@@ -142,6 +143,14 @@ func toProto(data readmodel.Data) (*snapshotpb.Snapshot, error) {
 		})
 	}
 
+	for i := range data.StoreGrants {
+		blob, err := json.Marshal(&data.StoreGrants[i])
+		if err != nil {
+			return nil, fmt.Errorf("configsnapshot: marshal store grant: %w", err)
+		}
+		msg.StoreGrants = append(msg.StoreGrants, &snapshotpb.StoreGrant{Json: blob})
+	}
+
 	return msg, nil
 }
 
@@ -217,6 +226,14 @@ func fromProto(msg *snapshotpb.Snapshot) (readmodel.Data, error) {
 			ProviderCode: m.GetProviderCode(),
 			Model:        model,
 		})
+	}
+
+	for _, m := range msg.GetStoreGrants() {
+		var g storegrantdomain.Grant
+		if err := json.Unmarshal(m.GetJson(), &g); err != nil {
+			return readmodel.Data{}, fmt.Errorf("configsnapshot: unmarshal store grant: %w", err)
+		}
+		data.StoreGrants = append(data.StoreGrants, g)
 	}
 
 	return data, nil

@@ -16,70 +16,102 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 
-	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
 )
 
-func newApproverWithEnsurer(t *testing.T, installs *fakeInstalls, regs *fakeRegistries, ensurer RegistryEnsurer) Approver {
-	t.Helper()
-	cat := fakeCatalog{entries: map[string]catalogdomain.MCPServer{
-		"github": {Code: "github", DisplayName: "GitHub"},
-	}}
-	a, err := NewApprover(cat, regs, installs, WithApproverEnsurer(ensurer))
-	if err != nil {
-		t.Fatalf("NewApprover: %v", err)
-	}
-	return a
-}
-
-// TestApprover_Approve_GrantsRequesterOnRestrictedShelf: approving is granting.
-// A request from a principal outside the shelf's group grant, once approved,
-// adds that principal's subject to store.users so their next install is instant
-// and the Access page shows the grant.
-func TestApprover_Approve_GrantsRequesterOnRestrictedShelf(t *testing.T) {
+// TestApprover_Approve_ExtendsExistingCodeGrant: approving a request from a
+// principal outside a code grant that names other groups adds their subject to
+// that same grant, preserving the groups already on it.
+func TestApprover_Approve_ExtendsExistingCodeGrant(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	installs := &fakeInstalls{findValue: pendingInstall(t, gw, "ana", "github")}
-	regs := &fakeRegistries{items: []*registrydomain.Registry{
-		shelfRegistry("github", &registrydomain.MCPStoreConfig{Available: true, Groups: []string{"sre"}}),
-	}}
-	a := newApproverT(t, installs, regs)
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("github")}}
+	grants := grantsOf(codeGrant(gw, "github", []string{"sre"}, nil))
+	a := newApproverWith(t, installs, regs, grants, nil)
 
 	if err := a.Approve(context.Background(), ApproveRequest{GatewayID: gw, PrincipalSub: "ana", Code: "github"}); err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
-	if len(regs.updated) != 1 {
-		t.Fatalf("approve must update the shelf grant once, got %d updates", len(regs.updated))
+	if len(grants.upserts) != 1 {
+		t.Fatalf("approve must write the grant once, got %d", len(grants.upserts))
 	}
-	users := regs.updated[0].MCPTarget.StoreUsers()
-	if len(users) != 1 || users[0] != "ana" {
-		t.Fatalf("approve must grant the requester, got users=%v", users)
+	g := grants.upserts[0]
+	if len(g.Users) != 1 || g.Users[0] != "ana" {
+		t.Fatalf("approve must grant the requester, got users=%v", g.Users)
 	}
-	if groups := regs.updated[0].MCPTarget.StoreGroups(); len(groups) != 1 || groups[0] != "sre" {
-		t.Fatalf("existing group grant must be preserved, got %v", groups)
-	}
-	if len(installs.upserts) != 1 || installs.upserts[0].Status != installationdomain.StatusInstalled {
-		t.Fatalf("want one installed upsert, got %+v", installs.upserts)
+	if len(g.Groups) != 1 || g.Groups[0] != "sre" {
+		t.Fatalf("existing group grant must be preserved, got %v", g.Groups)
 	}
 	// The grant now admits the requester on the installer's own gate.
-	if !storeAccessAllows(regs.updated[0].MCPTarget.StoreGroups(), regs.updated[0].MCPTarget.StoreUsers(), nil, "ana") {
-		t.Fatal("after approve the requester must pass the store grant")
+	if !storegrantdomain.Index(grants.items).CodeAllows("github", nil, "ana") {
+		t.Fatal("after approve the requester must pass the grant")
+	}
+}
+
+// TestApprover_Approve_BoundRequestGrantsThatInstanceOnly: a request bound to
+// one configured instance is approved for that instance — the code-level grant
+// and the other instances stay untouched.
+func TestApprover_Approve_BoundRequestGrantsThatInstanceOnly(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	finance := namedRegistry("github", "finance")
+	analytics := namedRegistry("github", "analytics")
+	p := pendingInstall(t, gw, "ana", "github")
+	p.RegistryID = finance.ID
+	installs := &fakeInstalls{findValue: p}
+	regs := &fakeRegistries{items: []*registrydomain.Registry{finance, analytics}}
+	grants := &fakeGrants{}
+	a := newApproverWith(t, installs, regs, grants, nil)
+
+	if err := a.Approve(context.Background(), ApproveRequest{GatewayID: gw, PrincipalSub: "ana", InstanceID: p.ID.String()}); err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if len(grants.upserts) != 1 || grants.upserts[0].RegistryID != finance.ID {
+		t.Fatalf("approve must grant the bound instance, got %+v", grants.upserts)
+	}
+	set := storegrantdomain.Index(grants.items)
+	if !set.InstanceAllows("github", finance.ID, nil, "ana") {
+		t.Fatal("requester must be allowed on the bound instance")
+	}
+	if set.InstanceAllows("github", analytics.ID, nil, "ana") || set.CodeAllows("github", nil, "ana") {
+		t.Fatal("approve must not widen the grant beyond the bound instance")
+	}
+}
+
+// TestApprover_Approve_BoundRequestInstanceGone: the bound instance was deleted
+// meanwhile — the request cannot be approved onto nothing.
+func TestApprover_Approve_BoundRequestInstanceGone(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	p := pendingInstall(t, gw, "ana", "github")
+	p.RegistryID = ids.New[ids.RegistryKind]()
+	installs := &fakeInstalls{findValue: p}
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("github")}}
+	a := newApproverT(t, installs, regs)
+	err := a.Approve(context.Background(), ApproveRequest{GatewayID: gw, PrincipalSub: "ana", InstanceID: p.ID.String()})
+	if !errors.Is(err, ErrNotShelved) {
+		t.Fatalf("expected ErrNotShelved, got %v", err)
+	}
+	if len(installs.upserts) != 0 {
+		t.Fatal("nothing may change")
 	}
 }
 
 // TestApprover_Approve_NotShelved_MaterialisesWithEnsurer: a Selected principal
-// may request a catalog server nobody shelved yet; approving it materialises the
-// shelf registry (when an ensurer is wired) and installs, instead of bouncing
-// the admin to "connect it first".
+// may request a catalog server nobody connected yet; approving it materialises
+// the registry (when an ensurer is wired), grants the code and installs, instead
+// of bouncing the admin to "connect it first".
 func TestApprover_Approve_NotShelved_MaterialisesWithEnsurer(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	installs := &fakeInstalls{findValue: pendingInstall(t, gw, "ana", "github")}
 	regs := &fakeRegistries{}
 	ensurer := &fakeEnsurer{addTo: regs}
-	a := newApproverWithEnsurer(t, installs, regs, ensurer)
+	grants := &fakeGrants{}
+	a := newApproverWith(t, installs, regs, grants, ensurer)
 
 	if err := a.Approve(context.Background(), ApproveRequest{GatewayID: gw, PrincipalSub: "ana", Code: "github"}); err != nil {
 		t.Fatalf("Approve: %v", err)
@@ -87,8 +119,11 @@ func TestApprover_Approve_NotShelved_MaterialisesWithEnsurer(t *testing.T) {
 	if len(ensurer.ensured) != 1 || ensurer.ensured[0] != "github" {
 		t.Fatalf("approve must materialise the missing registry, ensured=%v", ensurer.ensured)
 	}
-	if len(regs.items) != 1 || !regs.items[0].MCPTarget.StoreAvailable() {
-		t.Fatalf("materialised registry must be on the shelf, got %+v", regs.items)
+	if len(regs.items) != 1 {
+		t.Fatalf("materialised registry must exist, got %+v", regs.items)
+	}
+	if len(grants.upserts) != 1 || grants.upserts[0].IsInstance() || !storegrantdomain.Index(grants.items).CodeAllows("github", nil, "ana") {
+		t.Fatalf("approve must grant the code to the requester, got %+v", grants.upserts)
 	}
 	if len(installs.upserts) != 1 || installs.upserts[0].Status != installationdomain.StatusInstalled {
 		t.Fatalf("want one installed upsert, got %+v", installs.upserts)

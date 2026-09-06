@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
@@ -27,6 +28,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
 )
 
 // registryListPageSize bounds the per-gateway registry scan used to find the
@@ -64,6 +66,10 @@ var (
 	// beyond MaxInstancesPerCode or MaxInstancesPerPrincipal. It wraps
 	// ErrValidation so the HTTP layer maps it to a client error.
 	ErrTooManyInstances = fmt.Errorf("store: too many instances installed: %w", commonerrors.ErrValidation)
+	// ErrUnknownInstance is returned when an install names a configured instance
+	// (registry) that does not exist on the gateway or is not an instance of the
+	// requested catalog code.
+	ErrUnknownInstance = fmt.Errorf("store: unknown server instance: %w", commonerrors.ErrValidation)
 )
 
 // CatalogReader is the catalog lookup the installer needs.
@@ -102,6 +108,19 @@ type InstallResult struct {
 	// catalog does not carry and only an admin can add on the shelf. No install
 	// is recorded and no registry is materialised.
 	RequiresAdminSetup bool
+	// RequiresInstanceChoice is true when the admin has connected several
+	// instances of this server that the principal may use and the install did not
+	// say which. No install is recorded; the caller picks one of InstanceChoices
+	// and re-invokes with its id.
+	RequiresInstanceChoice bool
+	InstanceChoices        []InstanceChoice
+}
+
+// InstanceChoice is one configured instance (registry) of a catalog code the
+// principal may install.
+type InstanceChoice struct {
+	RegistryID ids.RegistryID
+	Name       string
 }
 
 //go:generate mockery --name=Installer --dir=. --output=./mocks --filename=store_installer_mock.go --case=underscore --with-expecter
@@ -135,33 +154,49 @@ type InstallRequest struct {
 	// catalog entry's declaration; missing required values yield a RequiresConfig
 	// result rather than an install.
 	Config map[string]string
+	// RegistryID names the configured instance to install when the admin has
+	// connected several of this code (from a prior RequiresInstanceChoice
+	// result). Nil lets the installer pick: the sole usable instance, or the one
+	// materialised from the catalog.
+	RegistryID ids.RegistryID
 }
 
 type installer struct {
 	catalog    CatalogReader
 	registries RegistryLister
 	installs   installationdomain.Repository
+	grants     storegrantdomain.Reader
 	ensurer    RegistryEnsurer
 }
 
-// NewInstaller wires the Store installer. In open (self-service) mode a catalog
-// server that is not yet on the shelf is materialised through the ensurer and
-// installed immediately — the "created on first install" path. In curated mode,
-// or when no ensurer is wired, a server that is not on the shelf is recorded as
-// a pending request for the admin instead. An on-shelf registry marked
-// requires-approval, or one the principal's role excludes, is governed as
-// before. ensurer may be nil (SEARCH-only planes, or where materialisation is
-// not available); its absence downgrades a self-service install to a request.
+// NewInstaller wires the Store installer over the catalog, the gateway's
+// registries (its configured instances), the installation rows, the Store
+// access grants and the registry materialiser.
+//
+// grants is the access model: under Selected access a principal installs what
+// the grants name for them (a catalog code, or one instance of it) instantly and
+// requests anything else. It may be nil on a plane without grants, which fails
+// closed (nothing is granted). ensurer materialises a registry from the catalog
+// on the first install of a code nobody connected yet — the self-service path
+// under All, and the lazy path for a code-level grant under Selected; nil
+// downgrades those installs to requests.
 func NewInstaller(
 	catalog CatalogReader,
 	registries RegistryLister,
 	installs installationdomain.Repository,
+	grants storegrantdomain.Reader,
 	ensurer RegistryEnsurer,
 ) (Installer, error) {
 	if catalog == nil || registries == nil || installs == nil {
 		return nil, ErrUnavailable
 	}
-	return &installer{catalog: catalog, registries: registries, installs: installs, ensurer: ensurer}, nil
+	return &installer{
+		catalog:    catalog,
+		registries: registries,
+		installs:   installs,
+		grants:     grants,
+		ensurer:    ensurer,
+	}, nil
 }
 
 func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallResult, error) {
@@ -191,17 +226,42 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 		}, nil
 	}
 
-	// A principal may hold several instances of one code. An install with config
-	// identical to an existing instance is that same instance (idempotent: refresh
-	// it in place); a new config is a new instance (a fresh row/id) — subject to
-	// the instance caps, checked before any side effect (materialisation).
+	// Which configured instance (registry) does this install bind to, and does it
+	// install now or file a request? Decided against the gateway's instances of
+	// the code and the principal's grants, before any row is touched.
+	decision, err := i.decide(ctx, in, entry, code)
+	if err != nil {
+		return nil, err
+	}
+	if decision.requiresAdminSetup {
+		return &InstallResult{
+			Code:               code,
+			Name:               displayName(entry, code),
+			RequiresAuth:       entry.RequiresAuth,
+			RequiresAdminSetup: true,
+		}, nil
+	}
+	if len(decision.choices) > 0 {
+		return &InstallResult{
+			Code:                   code,
+			Name:                   displayName(entry, code),
+			RequiresAuth:           entry.RequiresAuth,
+			RequiresInstanceChoice: true,
+			InstanceChoices:        decision.choices,
+		}, nil
+	}
+
+	// A principal may hold several instances of one code. An install bound to the
+	// same configured instance with identical config is that same instance
+	// (idempotent: refresh it in place); anything else is a new instance (a fresh
+	// row/id) — subject to the instance caps, checked before any side effect.
 	existing, err := i.installs.ListByPrincipalAndCode(ctx, in.GatewayID, in.PrincipalSub, code)
 	if err != nil {
 		return nil, err
 	}
 	var sameInstance *installationdomain.Installation
 	for _, e := range existing {
-		if e.SameConfig(config) {
+		if e.SameInstance(decision.registryID, config) {
 			sameInstance = e
 			break
 		}
@@ -213,34 +273,18 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 	}
 	alreadyInstalled := sameInstance != nil && sameInstance.IsActive()
 
-	reg, err := findRegistryByCode(ctx, i.registries, in.GatewayID, code)
+	// Materialise the registry only once the install is certain to be recorded.
+	if decision.materialise {
+		if err := i.ensurer.Ensure(ctx, in.GatewayID, code); err != nil {
+			return nil, err
+		}
+	}
+
+	record, err := installationForStatus(in.GatewayID, in.PrincipalSub, code, in.InstalledBy, decision.status, config)
 	if err != nil {
 		return nil, err
 	}
-
-	// Self-service cannot conjure a shared API key: a server whose only auth is a
-	// static header credential has nothing the catalog can materialise (the
-	// registry would fail validation with an empty value). Report it cleanly and
-	// leave both the shelf and the install table untouched — an admin connects it
-	// with the key, after which it installs like any shelved server.
-	if reg == nil && in.OpenMode && i.ensurer != nil && catalogNeedsAdminCredential(entry) {
-		return &InstallResult{
-			Code:               code,
-			Name:               displayName(entry, code),
-			RequiresAuth:       entry.RequiresAuth,
-			RequiresAdminSetup: true,
-		}, nil
-	}
-
-	status, err := i.decideStatus(ctx, in, reg)
-	if err != nil {
-		return nil, err
-	}
-
-	record, err := installationForStatus(in.GatewayID, in.PrincipalSub, code, in.InstalledBy, status, config)
-	if err != nil {
-		return nil, err
-	}
+	record.RegistryID = decision.registryID
 	// Reuse the existing instance's id so a repeat install updates it in place
 	// rather than inserting a duplicate; a new-config install keeps its fresh id.
 	if sameInstance != nil {
@@ -254,9 +298,9 @@ func (i *installer) Install(ctx context.Context, in InstallRequest) (*InstallRes
 	result := &InstallResult{
 		Code:             code,
 		Name:             displayName(entry, code),
-		Status:           status,
+		Status:           decision.status,
 		InstanceID:       record.ID.String(),
-		Pending:          status == installationdomain.StatusPendingApproval,
+		Pending:          decision.status == installationdomain.StatusPendingApproval,
 		RequiresAuth:     entry.RequiresAuth,
 		AlreadyInstalled: alreadyInstalled,
 	}
@@ -358,42 +402,136 @@ func planInstallConfig(
 	return stored, missingPlain, secretRequired, nil
 }
 
-// decideStatus applies the Store access model to one install:
+// installDecision is the outcome of applying the Store access model to one
+// install request: which configured instance it binds to (nil = the code's
+// canonical instance), whether it installs now or files a request, whether the
+// registry must first be materialised from the catalog, or — instead of
+// recording anything — that the caller must pick among several instances or
+// that an admin must connect the server first.
+type installDecision struct {
+	registryID         ids.RegistryID
+	status             installationdomain.Status
+	materialise        bool
+	choices            []InstanceChoice
+	requiresAdminSetup bool
+}
+
+// decide applies the Store access model:
 //
-//   - All (open): every catalog server installs instantly. A server with no
-//     shelf registry yet is materialised from the catalog on first install (the
-//     "created on first install" path) when an ensurer is wired; without one it
-//     can only be recorded as a request.
-//   - Selected (curated): what is granted to the principal installs instantly —
-//     an existing instance whose grants name one of their groups or their
-//     subject (grants are managed on the Access page). Anything else — no
-//     instance yet, or an instance granted to others or to nobody — becomes an
-//     approval request for the admin, who grants it by approving.
+//   - All (open): every catalog server installs instantly. With several
+//     configured instances the caller must pick one; with none the registry is
+//     materialised from the catalog on first install (when an ensurer is wired;
+//     otherwise the install can only be recorded as a request).
+//   - Selected (curated): what the grants name for the principal installs
+//     instantly — a code-level grant covers every instance of the code (and
+//     materialises it when none exists yet); an instance-level grant covers that
+//     one registry. Anything else becomes an approval request for the admin, who
+//     grants it by approving. Grants are explicit: nothing named means nothing
+//     granted.
 //
-// There is deliberately no per-registry "requires approval" gate any more: the
-// selection is the pre-approval, so Approvals only ever holds requests for
-// resources outside a principal's selection.
-func (i *installer) decideStatus(
+// A server whose only credential is a shared secret the catalog does not carry
+// (an API key header) cannot be materialised by self-service: an admin connects
+// it first. There is no per-registry "requires approval" gate: the grant is the
+// pre-approval, so Approvals only holds requests for what is not granted.
+func (i *installer) decide(
 	ctx context.Context,
 	in InstallRequest,
-	reg *registrydomain.Registry,
-) (installationdomain.Status, error) {
-	hasShelf := reg != nil && reg.MCPTarget != nil
-	if in.OpenMode {
-		if !hasShelf {
-			if i.ensurer == nil {
-				return installationdomain.StatusPendingApproval, nil
-			}
-			if err := i.ensurer.Ensure(ctx, in.GatewayID, in.Code); err != nil {
-				return "", err
+	entry catalogdomain.MCPServer,
+	code string,
+) (installDecision, error) {
+	instances, err := findRegistriesByCode(ctx, i.registries, in.GatewayID, code)
+	if err != nil {
+		return installDecision{}, err
+	}
+	grants, err := i.grantSet(ctx, in.GatewayID)
+	if err != nil {
+		return installDecision{}, err
+	}
+	codeGranted := in.OpenMode || grants.CodeAllows(code, in.Groups, in.PrincipalSub)
+
+	// An explicitly named instance must exist and be an instance of this code.
+	if !in.RegistryID.IsNil() {
+		reg := pickRegistry(instances, in.RegistryID)
+		if reg == nil {
+			return installDecision{}, fmt.Errorf("%w: %q is not an instance of %q", ErrUnknownInstance, in.RegistryID, code)
+		}
+		if codeGranted || grants.Instance(reg.ID).Allows(in.Groups, in.PrincipalSub) {
+			return installDecision{registryID: reg.ID, status: installationdomain.StatusInstalled}, nil
+		}
+		return installDecision{registryID: reg.ID, status: installationdomain.StatusPendingApproval}, nil
+	}
+
+	// No instance connected yet: materialise it for whoever holds the code (All,
+	// or a code-level grant), otherwise file a code-level request.
+	if len(instances) == 0 {
+		if !codeGranted {
+			return installDecision{status: installationdomain.StatusPendingApproval}, nil
+		}
+		if i.ensurer == nil {
+			return installDecision{status: installationdomain.StatusPendingApproval}, nil
+		}
+		if catalogNeedsAdminCredential(entry) {
+			return installDecision{requiresAdminSetup: true}, nil
+		}
+		return installDecision{status: installationdomain.StatusInstalled, materialise: true}, nil
+	}
+
+	// Instances exist: the usable ones are all of them for a code holder, else
+	// those granted individually.
+	usable := instances
+	if !codeGranted {
+		usable = usable[:0:0]
+		for _, reg := range instances {
+			if grants.Instance(reg.ID).Allows(in.Groups, in.PrincipalSub) {
+				usable = append(usable, reg)
 			}
 		}
-		return installationdomain.StatusInstalled, nil
 	}
-	if hasShelf && storeAccessAllows(reg.MCPTarget.StoreGroups(), reg.MCPTarget.StoreUsers(), in.Groups, in.PrincipalSub) {
-		return installationdomain.StatusInstalled, nil
+	switch len(usable) {
+	case 0:
+		// Nothing usable: request the code (one instance → bind the request to it
+		// so approving grants exactly that instance; several → a code-level
+		// request the admin resolves by granting the code or an instance).
+		d := installDecision{status: installationdomain.StatusPendingApproval}
+		if len(instances) == 1 {
+			d.registryID = instances[0].ID
+		}
+		return d, nil
+	case 1:
+		// The sole usable instance. When it is also the code's only instance it is
+		// the canonical one: leave the binding implicit so the install follows the
+		// registry (a re-materialised one included) rather than a stale id.
+		d := installDecision{status: installationdomain.StatusInstalled}
+		if len(instances) > 1 {
+			d.registryID = usable[0].ID
+		}
+		return d, nil
+	default:
+		choices := make([]InstanceChoice, 0, len(usable))
+		for _, reg := range usable {
+			choices = append(choices, InstanceChoice{RegistryID: reg.ID, Name: registryLabel(reg)})
+		}
+		return installDecision{choices: choices}, nil
 	}
-	return installationdomain.StatusPendingApproval, nil
+}
+
+// grantSet loads and indexes the gateway's Store grants. A plane without a
+// grant reader has no grants: fail closed.
+func (i *installer) grantSet(ctx context.Context, gatewayID ids.GatewayID) (*storegrantdomain.Set, error) {
+	return loadGrantSet(ctx, i.grants, gatewayID)
+}
+
+// loadGrantSet is the shared grant-loading step of the installer, scoper and
+// approver: index the gateway's grants, or an empty set when no reader is wired.
+func loadGrantSet(ctx context.Context, reader storegrantdomain.Reader, gatewayID ids.GatewayID) (*storegrantdomain.Set, error) {
+	if reader == nil {
+		return storegrantdomain.Index(nil), nil
+	}
+	grants, err := reader.ListByGateway(ctx, gatewayID)
+	if err != nil {
+		return nil, fmt.Errorf("store: list grants: %w", err)
+	}
+	return storegrantdomain.Index(grants), nil
 }
 
 // Instances returns the principal's active instances of a catalog code, oldest
@@ -455,14 +593,15 @@ func (i *installer) Uninstall(
 	}
 }
 
-// findRegistryByCode scans a gateway's registries for the shelf registry whose
-// mcp_target carries the given catalog code. Returns (nil, nil) when none match.
-func findRegistryByCode(
+// findRegistriesByCode returns every configured instance (registry) of a
+// catalog code on a gateway, oldest first so the first one is the canonical
+// instance a nil-bound install resolves to. Empty when none exist.
+func findRegistriesByCode(
 	ctx context.Context,
 	lister RegistryLister,
 	gatewayID ids.GatewayID,
 	code string,
-) (*registrydomain.Registry, error) {
+) ([]*registrydomain.Registry, error) {
 	items, _, err := lister.List(ctx, registrydomain.ListFilter{
 		GatewayID: gatewayID,
 		Page:      1,
@@ -471,46 +610,66 @@ func findRegistryByCode(
 	if err != nil {
 		return nil, fmt.Errorf("store: list registries: %w", err)
 	}
+	out := make([]*registrydomain.Registry, 0, 1)
 	for _, reg := range items {
 		if reg != nil && reg.MCPTarget != nil && reg.MCPTarget.Code == code {
-			return reg, nil
+			out = append(out, reg)
 		}
 	}
-	return nil, nil
+	sortRegistries(out)
+	return out, nil
 }
 
-// StoreAccessAllows is the exported form of storeAccessAllows, for callers
-// outside the package (the Store search meta-tool) that must compute the same
-// grant decision the installer applies.
-func StoreAccessAllows(allowedGroups, allowedUsers, groups []string, subject string) bool {
-	return storeAccessAllows(allowedGroups, allowedUsers, groups, subject)
+// findRegistryByCode returns the canonical instance of a catalog code (the
+// oldest registry carrying it), or (nil, nil) when none exists.
+func findRegistryByCode(
+	ctx context.Context,
+	lister RegistryLister,
+	gatewayID ids.GatewayID,
+	code string,
+) (*registrydomain.Registry, error) {
+	all, err := findRegistriesByCode(ctx, lister, gatewayID, code)
+	if err != nil {
+		return nil, err
+	}
+	if len(all) == 0 {
+		return nil, nil
+	}
+	return all[0], nil
 }
 
-// storeAccessAllows reports whether the principal is GRANTED a server: their
-// subject is in allowedUsers, or one of their groups is in allowedGroups. Grants
-// are explicit — a server with no groups and no users is granted to nobody —
-// because "granted" here must mean exactly what the Access page shows as a
-// principal's assigned resources. Callers under All never consult this: All
-// means every resource.
-func storeAccessAllows(allowedGroups, allowedUsers, groups []string, subject string) bool {
-	set := make(map[string]struct{}, len(groups))
-	for _, g := range groups {
-		set[g] = struct{}{}
-	}
-	for _, a := range allowedGroups {
-		if _, ok := set[a]; ok {
-			return true
+// sortRegistries orders instances deterministically: creation time, then id.
+func sortRegistries(regs []*registrydomain.Registry) {
+	sort.SliceStable(regs, func(a, b int) bool {
+		if !regs[a].CreatedAt.Equal(regs[b].CreatedAt) {
+			return regs[a].CreatedAt.Before(regs[b].CreatedAt)
+		}
+		return regs[a].ID.String() < regs[b].ID.String()
+	})
+}
+
+// pickRegistry returns the instance with the given id, or nil.
+func pickRegistry(regs []*registrydomain.Registry, id ids.RegistryID) *registrydomain.Registry {
+	for _, reg := range regs {
+		if reg != nil && reg.ID == id {
+			return reg
 		}
 	}
-	sub := strings.TrimSpace(subject)
-	if sub != "" {
-		for _, u := range allowedUsers {
-			if strings.TrimSpace(u) == sub {
-				return true
-			}
-		}
+	return nil
+}
+
+// registryLabel is the operator-facing name of a configured instance.
+func registryLabel(reg *registrydomain.Registry) string {
+	if reg == nil {
+		return ""
 	}
-	return false
+	if name := strings.TrimSpace(reg.Name); name != "" {
+		return name
+	}
+	if reg.MCPTarget != nil {
+		return reg.MCPTarget.Code
+	}
+	return reg.ID.String()
 }
 
 func installationForStatus(

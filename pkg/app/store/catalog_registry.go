@@ -64,7 +64,6 @@ func catalogMCPTarget(entry catalogdomain.MCPServer) *registrydomain.MCPTarget {
 		URL:          entry.URL,
 		Transport:    transport,
 		Auth:         catalogAuth(entry),
-		Store:        &registrydomain.MCPStoreConfig{Available: true},
 		URLVariables: catalogURLVariables(entry.URLVariables),
 	}
 	target.Normalize()

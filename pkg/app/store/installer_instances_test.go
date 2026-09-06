@@ -42,10 +42,10 @@ func liveRows(code string, n int, status installationdomain.Status) []*installat
 func TestInstallResultCarriesInstanceID(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	regs := &fakeRegistries{items: []*registrydomain.Registry{
-		shelfRegistry("github", &registrydomain.MCPStoreConfig{Available: true}),
+		shelfRegistry("github"),
 	}}
 	installs := &fakeInstalls{}
-	res, err := newInstaller(t, regs, installs).Install(context.Background(), req(gw, "github"))
+	res, err := newInstaller(t, regs, installs).Install(context.Background(), openReq(gw, "github"))
 	if err != nil {
 		t.Fatalf("Install: %v", err)
 	}
@@ -59,10 +59,10 @@ func TestInstallResultCarriesInstanceID(t *testing.T) {
 func TestInstallCapsInstancesPerCode(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	regs := &fakeRegistries{items: []*registrydomain.Registry{
-		shelfRegistry("snowflake", &registrydomain.MCPStoreConfig{Available: true}),
+		shelfRegistry("snowflake"),
 	}}
 	installs := &fakeInstalls{byCode: liveRows("snowflake", MaxInstancesPerCode, installationdomain.StatusInstalled)}
-	in := req(gw, "snowflake")
+	in := openReq(gw, "snowflake")
 	in.Config = map[string]string{"account_url": "acme", "database": "one-more"}
 	_, err := newInstaller(t, regs, installs).Install(context.Background(), in)
 	if !errors.Is(err, ErrTooManyInstances) {
@@ -77,19 +77,18 @@ func TestInstallCapsInstancesPerCode(t *testing.T) {
 // (request spam is the abuse); revoked rows do not.
 func TestInstallCapCountsPendingButNotRevoked(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
-	regs := &fakeRegistries{items: []*registrydomain.Registry{
-		shelfRegistry("snowflake", &registrydomain.MCPStoreConfig{Users: []string{"ana"}}),
-	}}
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("snowflake")}}
+	grants := grantsOf(codeGrant(gw, "snowflake", nil, []string{"ana"}))
 	in := req(gw, "snowflake")
 	in.Config = map[string]string{"account_url": "acme", "database": "one-more"}
 
 	pending := &fakeInstalls{byCode: liveRows("snowflake", MaxInstancesPerCode, installationdomain.StatusPendingApproval)}
-	if _, err := newInstaller(t, regs, pending).Install(context.Background(), in); !errors.Is(err, ErrTooManyInstances) {
+	if _, err := newInstallerWithGrants(t, regs, pending, grants).Install(context.Background(), in); !errors.Is(err, ErrTooManyInstances) {
 		t.Fatalf("pending rows must count toward the cap, got %v", err)
 	}
 
 	revoked := &fakeInstalls{byCode: liveRows("snowflake", MaxInstancesPerCode, installationdomain.StatusRevoked)}
-	res, err := newInstaller(t, regs, revoked).Install(context.Background(), in)
+	res, err := newInstallerWithGrants(t, regs, revoked, grants).Install(context.Background(), in)
 	if err != nil {
 		t.Fatalf("revoked rows must not count toward the cap: %v", err)
 	}
@@ -103,11 +102,11 @@ func TestInstallCapCountsPendingButNotRevoked(t *testing.T) {
 func TestInstallSameConfigNotCapped(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	regs := &fakeRegistries{items: []*registrydomain.Registry{
-		shelfRegistry("snowflake", &registrydomain.MCPStoreConfig{Available: true}),
+		shelfRegistry("snowflake"),
 	}}
 	rows := liveRows("snowflake", MaxInstancesPerCode, installationdomain.StatusInstalled)
 	installs := &fakeInstalls{byCode: rows}
-	in := req(gw, "snowflake")
+	in := openReq(gw, "snowflake")
 	in.Config = map[string]string{"account_url": "acme", "database": "db3"}
 	res, err := newInstaller(t, regs, installs).Install(context.Background(), in)
 	if err != nil {
@@ -122,7 +121,7 @@ func TestInstallSameConfigNotCapped(t *testing.T) {
 func TestInstallCapsInstancesPerPrincipal(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	regs := &fakeRegistries{items: []*registrydomain.Registry{
-		shelfRegistry("github", &registrydomain.MCPStoreConfig{Available: true}),
+		shelfRegistry("github"),
 	}}
 	all := make([]*installationdomain.Installation, 0, MaxInstancesPerPrincipal)
 	for i := 0; i < MaxInstancesPerPrincipal; i++ {
@@ -131,7 +130,7 @@ func TestInstallCapsInstancesPerPrincipal(t *testing.T) {
 		})
 	}
 	installs := &fakeInstalls{byPrincipal: all}
-	_, err := newInstaller(t, regs, installs).Install(context.Background(), req(gw, "github"))
+	_, err := newInstaller(t, regs, installs).Install(context.Background(), openReq(gw, "github"))
 	if !errors.Is(err, ErrTooManyInstances) {
 		t.Fatalf("expected ErrTooManyInstances across codes, got %v", err)
 	}
@@ -181,7 +180,7 @@ func TestInstallOpenModeStaticOnlyRequiresAdminSetup(t *testing.T) {
 	regs := &fakeRegistries{}
 	ensurer := &fakeEnsurer{addTo: regs}
 	installs := &fakeInstalls{}
-	inst, err := NewInstaller(apiKeyOnlyCatalog(), regs, installs, ensurer)
+	inst, err := NewInstaller(apiKeyOnlyCatalog(), regs, installs, nil, ensurer)
 	if err != nil {
 		t.Fatalf("NewInstaller: %v", err)
 	}
@@ -207,7 +206,7 @@ func TestInstallOpenModeDualAuthMaterialises(t *testing.T) {
 	regs := &fakeRegistries{}
 	ensurer := &fakeEnsurer{addTo: regs}
 	installs := &fakeInstalls{}
-	inst, err := NewInstaller(apiKeyOnlyCatalog(), regs, installs, ensurer)
+	inst, err := NewInstaller(apiKeyOnlyCatalog(), regs, installs, nil, ensurer)
 	if err != nil {
 		t.Fatalf("NewInstaller: %v", err)
 	}
@@ -228,10 +227,10 @@ func TestInstallOpenModeDualAuthMaterialises(t *testing.T) {
 func TestInstallStaticOnlyOnShelfInstallsNormally(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	regs := &fakeRegistries{items: []*registrydomain.Registry{
-		shelfRegistry("com.semrush/mcp", &registrydomain.MCPStoreConfig{Available: true}),
+		shelfRegistry("com.semrush/mcp"),
 	}}
 	installs := &fakeInstalls{}
-	inst, err := NewInstaller(apiKeyOnlyCatalog(), regs, installs, &fakeEnsurer{})
+	inst, err := NewInstaller(apiKeyOnlyCatalog(), regs, installs, nil, &fakeEnsurer{})
 	if err != nil {
 		t.Fatalf("NewInstaller: %v", err)
 	}
@@ -249,7 +248,7 @@ func TestInstallStaticOnlyOnShelfInstallsNormally(t *testing.T) {
 func TestInstallCuratedStaticOnlyStaysPendingRequest(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	installs := &fakeInstalls{}
-	inst, err := NewInstaller(apiKeyOnlyCatalog(), &fakeRegistries{}, installs, &fakeEnsurer{})
+	inst, err := NewInstaller(apiKeyOnlyCatalog(), &fakeRegistries{}, installs, nil, &fakeEnsurer{})
 	if err != nil {
 		t.Fatalf("NewInstaller: %v", err)
 	}
@@ -259,5 +258,27 @@ func TestInstallCuratedStaticOnlyStaysPendingRequest(t *testing.T) {
 	}
 	if res.RequiresAdminSetup || !res.Pending {
 		t.Fatalf("curated mode must file a pending request, got %+v", res)
+	}
+}
+
+// TestInstallSelectedCodeGrantStaticOnlyRequiresAdminSetup: the lazy path under
+// Selected obeys the same rule as self-service — a code-granted API-key-only
+// server with no registry cannot be materialised; an admin connects it first.
+func TestInstallSelectedCodeGrantStaticOnlyRequiresAdminSetup(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	regs := &fakeRegistries{}
+	ensurer := &fakeEnsurer{addTo: regs}
+	installs := &fakeInstalls{}
+	grants := grantsOf(codeGrant(gw, "com.semrush/mcp", nil, []string{"ana"}))
+	inst, err := NewInstaller(apiKeyOnlyCatalog(), regs, installs, grants, ensurer)
+	if err != nil {
+		t.Fatalf("NewInstaller: %v", err)
+	}
+	res, err := inst.Install(context.Background(), req(gw, "com.semrush/mcp"))
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if !res.RequiresAdminSetup || len(ensurer.ensured) != 0 || len(installs.upserts) != 0 {
+		t.Fatalf("expected requires-admin-setup with no side effects, got %+v ensured=%v upserts=%d", res, ensurer.ensured, len(installs.upserts))
 	}
 }

@@ -159,12 +159,6 @@ func applyMCPTargetUpdate(
 		if incoming.Auth == nil {
 			incoming.Auth = prev.Auth
 		}
-		// Store grants are managed from the Access page, never from the instance
-		// editor, so a PUT that omits the store block keeps the stored grants; an
-		// explicit (even empty) block replaces them.
-		if incoming.Store == nil {
-			incoming.Store = prev.Store
-		}
 		if strings.TrimSpace(incoming.Code) == "" {
 			incoming.Code = prev.Code
 		}

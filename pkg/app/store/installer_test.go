@@ -18,11 +18,13 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
 )
 
 type fakeCatalog struct {
@@ -35,17 +37,57 @@ func (f fakeCatalog) GetByCode(code string) (catalogdomain.MCPServer, bool) {
 }
 
 type fakeRegistries struct {
-	items   []*registrydomain.Registry
-	updated []*registrydomain.Registry
+	items []*registrydomain.Registry
 }
 
 func (f *fakeRegistries) List(context.Context, registrydomain.ListFilter) ([]*registrydomain.Registry, int, error) {
 	return f.items, len(f.items), nil
 }
 
-func (f *fakeRegistries) Update(_ context.Context, b *registrydomain.Registry) error {
-	f.updated = append(f.updated, b)
+// fakeGrants is the in-memory grant store: a Reader for the installer/scoper and
+// a GrantStore for the approver (Upsert replaces by natural key).
+type fakeGrants struct {
+	items   []*storegrantdomain.Grant
+	upserts []*storegrantdomain.Grant
+}
+
+func (f *fakeGrants) ListByGateway(context.Context, ids.GatewayID) ([]*storegrantdomain.Grant, error) {
+	return f.items, nil
+}
+
+func (f *fakeGrants) Upsert(_ context.Context, g *storegrantdomain.Grant) error {
+	f.upserts = append(f.upserts, g)
+	for i, existing := range f.items {
+		if existing.CatalogCode == g.CatalogCode && existing.RegistryID == g.RegistryID {
+			f.items[i] = g
+			return nil
+		}
+	}
+	f.items = append(f.items, g)
 	return nil
+}
+
+// codeGrant grants a catalog code (every instance) to groups/users.
+func codeGrant(gw ids.GatewayID, code string, groups, users []string) *storegrantdomain.Grant {
+	g, err := storegrantdomain.New(gw, code, ids.RegistryID{}, groups, users)
+	if err != nil {
+		panic(err)
+	}
+	return g
+}
+
+// instanceGrant grants one configured instance (registry) of a code.
+func instanceGrant(gw ids.GatewayID, code string, reg ids.RegistryID, groups, users []string) *storegrantdomain.Grant {
+	g, err := storegrantdomain.New(gw, code, reg, groups, users)
+	if err != nil {
+		panic(err)
+	}
+	return g
+}
+
+// grantsOf builds the grant reader from a list.
+func grantsOf(items ...*storegrantdomain.Grant) *fakeGrants {
+	return &fakeGrants{items: items}
 }
 
 type fakeInstalls struct {
@@ -123,12 +165,21 @@ func (f *fakeInstalls) DeleteByID(_ context.Context, _ ids.GatewayID, _ string, 
 	return nil
 }
 
-// shelfRegistry builds a gateway registry for a catalog code with the given
-// Store governance.
-func shelfRegistry(code string, store *registrydomain.MCPStoreConfig) *registrydomain.Registry {
+// shelfRegistry builds a gateway registry (a configured instance) for a catalog
+// code. Successive calls get later creation times so ordering is deterministic.
+var shelfClock = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+func shelfRegistry(code string) *registrydomain.Registry {
+	return namedRegistry(code, "")
+}
+
+func namedRegistry(code, name string) *registrydomain.Registry {
+	shelfClock = shelfClock.Add(time.Second)
 	return &registrydomain.Registry{
 		ID:        ids.New[ids.RegistryKind](),
-		MCPTarget: &registrydomain.MCPTarget{Code: code, Store: store},
+		Name:      name,
+		CreatedAt: shelfClock,
+		MCPTarget: &registrydomain.MCPTarget{Code: code},
 	}
 }
 
@@ -147,19 +198,13 @@ func (f *fakeEnsurer) Ensure(_ context.Context, _ ids.GatewayID, code string) er
 	}
 	f.ensured = append(f.ensured, code)
 	if f.addTo != nil {
-		f.addTo.items = append(f.addTo.items, shelfRegistry(code, &registrydomain.MCPStoreConfig{Available: true}))
+		f.addTo.items = append(f.addTo.items, shelfRegistry(code))
 	}
 	return nil
 }
 
-func newInstaller(t *testing.T, regs *fakeRegistries, installs *fakeInstalls) Installer {
-	t.Helper()
-	return newInstallerWithEnsurer(t, regs, installs, nil)
-}
-
-func newInstallerWithEnsurer(t *testing.T, regs *fakeRegistries, installs *fakeInstalls, ensurer RegistryEnsurer) Installer {
-	t.Helper()
-	catalog := fakeCatalog{entries: map[string]catalogdomain.MCPServer{
+func testCatalog() fakeCatalog {
+	return fakeCatalog{entries: map[string]catalogdomain.MCPServer{
 		"github": {Code: "github", DisplayName: "GitHub", URL: "https://mcp.github.com", RequiresAuth: true},
 		"snowflake": {
 			Code:        "snowflake",
@@ -179,7 +224,28 @@ func newInstallerWithEnsurer(t *testing.T, regs *fakeRegistries, installs *fakeI
 			},
 		},
 	}}
-	inst, err := NewInstaller(catalog, regs, installs, ensurer)
+}
+
+// newInstaller wires an installer with no grants (nothing granted under
+// Selected) and no ensurer.
+func newInstaller(t *testing.T, regs *fakeRegistries, installs *fakeInstalls) Installer {
+	t.Helper()
+	return newInstallerWith(t, regs, installs, nil, nil)
+}
+
+func newInstallerWithEnsurer(t *testing.T, regs *fakeRegistries, installs *fakeInstalls, ensurer RegistryEnsurer) Installer {
+	t.Helper()
+	return newInstallerWith(t, regs, installs, nil, ensurer)
+}
+
+func newInstallerWithGrants(t *testing.T, regs *fakeRegistries, installs *fakeInstalls, grants storegrantdomain.Reader) Installer {
+	t.Helper()
+	return newInstallerWith(t, regs, installs, grants, nil)
+}
+
+func newInstallerWith(t *testing.T, regs *fakeRegistries, installs *fakeInstalls, grants storegrantdomain.Reader, ensurer RegistryEnsurer) Installer {
+	t.Helper()
+	inst, err := NewInstaller(testCatalog(), regs, installs, grants, ensurer)
 	if err != nil {
 		t.Fatalf("NewInstaller: %v", err)
 	}
@@ -198,20 +264,19 @@ func openReq(gw ids.GatewayID, code string, groups ...string) InstallRequest {
 }
 
 func TestNewInstallerRejectsNilDeps(t *testing.T) {
-	if _, err := NewInstaller(nil, &fakeRegistries{}, &fakeInstalls{}, nil); err == nil {
+	if _, err := NewInstaller(nil, &fakeRegistries{}, &fakeInstalls{}, nil, nil); err == nil {
 		t.Fatal("nil catalog must error")
 	}
 }
 
-// TestInstallGrantedServerInstallsImmediately: under Selected an instance granted
-// to the principal installs instantly.
+// TestInstallGrantedServerInstallsImmediately: under Selected a code granted to
+// the principal, with a configured instance, installs instantly.
 func TestInstallGrantedServerInstallsImmediately(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
-	regs := &fakeRegistries{items: []*registrydomain.Registry{
-		shelfRegistry("github", &registrydomain.MCPStoreConfig{Users: []string{"ana"}}),
-	}}
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("github")}}
 	installs := &fakeInstalls{}
-	res, err := newInstaller(t, regs, installs).Install(context.Background(), req(gw, "github"))
+	grants := grantsOf(codeGrant(gw, "github", nil, []string{"ana"}))
+	res, err := newInstallerWithGrants(t, regs, installs, grants).Install(context.Background(), req(gw, "github"))
 	if err != nil {
 		t.Fatalf("Install: %v", err)
 	}
@@ -221,18 +286,58 @@ func TestInstallGrantedServerInstallsImmediately(t *testing.T) {
 	if len(installs.upserts) != 1 || installs.upserts[0].Status != installationdomain.StatusInstalled {
 		t.Fatalf("must record an installed row, got %+v", installs.upserts)
 	}
+	// The sole instance is the canonical one: the binding stays implicit.
+	if !installs.upserts[0].RegistryID.IsNil() {
+		t.Fatalf("a sole instance must not pin the install to a registry id, got %s", installs.upserts[0].RegistryID)
+	}
 }
 
 func TestInstallNotOnShelfBecomesPendingRequest(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
-	// Curated mode (OpenMode false), no registry for the code — a request the
-	// admin must shelve+approve.
+	// Curated mode (OpenMode false), no grant, no registry for the code — a
+	// request the admin grants by approving.
 	res, err := newInstaller(t, &fakeRegistries{}, &fakeInstalls{}).Install(context.Background(), req(gw, "github"))
 	if err != nil {
 		t.Fatalf("Install: %v", err)
 	}
 	if !res.Pending || res.Status != installationdomain.StatusPendingApproval {
-		t.Fatalf("a server not on the shelf must become a pending request, got %+v", res)
+		t.Fatalf("a server nobody granted must become a pending request, got %+v", res)
+	}
+}
+
+// TestInstallSelectedCodeGrantMaterialisesLazily: the whole catalog is
+// grantable before any registry exists. A principal holding the code-level
+// grant installs a never-connected server: the registry is materialised from
+// the catalog on this first install, exactly like self-service under All.
+func TestInstallSelectedCodeGrantMaterialisesLazily(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	regs := &fakeRegistries{}
+	ensurer := &fakeEnsurer{addTo: regs}
+	installs := &fakeInstalls{}
+	grants := grantsOf(codeGrant(gw, "github", []string{"eng"}, nil))
+	res, err := newInstallerWith(t, regs, installs, grants, ensurer).Install(context.Background(), req(gw, "github", "eng"))
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if res.Pending || res.Status != installationdomain.StatusInstalled {
+		t.Fatalf("a code-granted server must install, got %+v", res)
+	}
+	if len(ensurer.ensured) != 1 || ensurer.ensured[0] != "github" {
+		t.Fatalf("the registry must be materialised on first install, got %+v", ensurer.ensured)
+	}
+}
+
+// TestInstallSelectedCodeGrantWithoutEnsurerStaysPending: a code grant alone
+// cannot conjure the registry on a plane without a materialiser.
+func TestInstallSelectedCodeGrantWithoutEnsurerStaysPending(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	grants := grantsOf(codeGrant(gw, "github", nil, []string{"ana"}))
+	res, err := newInstallerWithGrants(t, &fakeRegistries{}, &fakeInstalls{}, grants).Install(context.Background(), req(gw, "github"))
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if !res.Pending {
+		t.Fatalf("without an ensurer the install must fall back to a request, got %+v", res)
 	}
 }
 
@@ -291,14 +396,11 @@ func TestInstallSelfServiceEnsurerErrorFailsInstall(t *testing.T) {
 	}
 }
 
-// TestInstallOpenModeInstallsGovernedRegistryInstantly: under All every server
-// installs instantly — a legacy requires-approval flag on the shelf is not a
-// gate any more — and the ensurer never runs when the registry already exists.
-func TestInstallOpenModeInstallsGovernedRegistryInstantly(t *testing.T) {
+// TestInstallOpenModeInstallsExistingRegistryInstantly: under All every server
+// installs instantly and the ensurer never runs when the registry exists.
+func TestInstallOpenModeInstallsExistingRegistryInstantly(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
-	regs := &fakeRegistries{items: []*registrydomain.Registry{
-		shelfRegistry("github", &registrydomain.MCPStoreConfig{Available: true, RequiresApproval: true}),
-	}}
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("github")}}
 	ensurer := &fakeEnsurer{addTo: regs}
 	res, err := newInstallerWithEnsurer(t, regs, &fakeInstalls{}, ensurer).
 		Install(context.Background(), openReq(gw, "github"))
@@ -313,15 +415,13 @@ func TestInstallOpenModeInstallsGovernedRegistryInstantly(t *testing.T) {
 	}
 }
 
-// TestInstallOpenModeInstallsRestrictedRegistryInstantly: a principal with All
-// access is not held back by a shelf grant that names other groups — All means
-// all resources, exactly as the Access page shows for them.
-func TestInstallOpenModeInstallsRestrictedRegistryInstantly(t *testing.T) {
+// TestInstallOpenModeIgnoresGrants: a principal with All access is not held
+// back by a grant that names other groups — All means all resources.
+func TestInstallOpenModeIgnoresGrants(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
-	regs := &fakeRegistries{items: []*registrydomain.Registry{
-		shelfRegistry("github", &registrydomain.MCPStoreConfig{Available: true, Groups: []string{"sre"}}),
-	}}
-	res, err := newInstaller(t, regs, &fakeInstalls{}).Install(context.Background(), openReq(gw, "github", "eng"))
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("github")}}
+	grants := grantsOf(codeGrant(gw, "github", []string{"sre"}, nil))
+	res, err := newInstallerWithGrants(t, regs, &fakeInstalls{}, grants).Install(context.Background(), openReq(gw, "github", "eng"))
 	if err != nil {
 		t.Fatalf("Install: %v", err)
 	}
@@ -330,33 +430,14 @@ func TestInstallOpenModeInstallsRestrictedRegistryInstantly(t *testing.T) {
 	}
 }
 
-// TestInstallRequiresApprovalFlagIsIgnored: the selection is the pre-approval.
-// A published server the principal may use installs instantly even if a legacy
-// requires_approval flag is still stored on the shelf.
-func TestInstallRequiresApprovalFlagIsIgnored(t *testing.T) {
-	gw := ids.New[ids.GatewayKind]()
-	regs := &fakeRegistries{items: []*registrydomain.Registry{
-		shelfRegistry("github", &registrydomain.MCPStoreConfig{Users: []string{"ana"}, RequiresApproval: true}),
-	}}
-	res, err := newInstaller(t, regs, &fakeInstalls{}).Install(context.Background(), req(gw, "github"))
-	if err != nil {
-		t.Fatalf("Install: %v", err)
-	}
-	if res.Pending || res.Status != installationdomain.StatusInstalled {
-		t.Fatalf("a granted server installs instantly regardless of the legacy flag, got %+v", res)
-	}
-}
-
 // TestInstallRoleGating: under Selected, a server granted to other groups is not
 // refused — it becomes an approval request the admin can grant; a principal in
 // the granted group installs instantly.
 func TestInstallRoleGating(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
-	regs := &fakeRegistries{items: []*registrydomain.Registry{
-		shelfRegistry("github", &registrydomain.MCPStoreConfig{Available: true, Groups: []string{"sre"}}),
-	}}
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("github")}}
 	installs := &fakeInstalls{}
-	inst := newInstaller(t, regs, installs)
+	inst := newInstallerWithGrants(t, regs, installs, grantsOf(codeGrant(gw, "github", []string{"sre"}, nil)))
 
 	res, err := inst.Install(context.Background(), req(gw, "github", "eng"))
 	if err != nil {
@@ -367,6 +448,11 @@ func TestInstallRoleGating(t *testing.T) {
 	}
 	if len(installs.upserts) != 1 || installs.upserts[0].Status != installationdomain.StatusPendingApproval {
 		t.Fatalf("the request must be recorded pending, got %+v", installs.upserts)
+	}
+	// A request for a code with exactly one instance is bound to that instance,
+	// so approving grants precisely it.
+	if installs.upserts[0].RegistryID != regs.items[0].ID {
+		t.Fatalf("the request must be bound to the sole instance, got %s", installs.upserts[0].RegistryID)
 	}
 	res, err = inst.Install(context.Background(), req(gw, "github", "sre"))
 	if err != nil {
@@ -380,10 +466,8 @@ func TestInstallRoleGating(t *testing.T) {
 // TestInstallUserGating mirrors TestInstallRoleGating for the Users axis.
 func TestInstallUserGating(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
-	regs := &fakeRegistries{items: []*registrydomain.Registry{
-		shelfRegistry("github", &registrydomain.MCPStoreConfig{Available: true, Users: []string{"ana"}}),
-	}}
-	inst := newInstaller(t, regs, &fakeInstalls{})
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("github")}}
+	inst := newInstallerWithGrants(t, regs, &fakeInstalls{}, grantsOf(codeGrant(gw, "github", nil, []string{"ana"})))
 
 	// "ana" is admitted by the Users allow-list even with no matching group.
 	res, err := inst.Install(context.Background(), req(gw, "github"))
@@ -405,39 +489,165 @@ func TestInstallUserGating(t *testing.T) {
 	}
 }
 
-// TestInstallSelectedGrantDecides: under Selected the grant alone decides — there
-// is no separate published/hidden state. A principal in the granted group
-// installs instantly; one outside it files a request.
-func TestInstallSelectedGrantDecides(t *testing.T) {
+// TestInstallNoGrantsMeansNobody: an existing registry with no grant at all is
+// granted to nobody under Selected — it is a request, never an instant install.
+func TestInstallNoGrantsMeansNobody(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
-	regs := &fakeRegistries{items: []*registrydomain.Registry{
-		shelfRegistry("github", &registrydomain.MCPStoreConfig{Groups: []string{"sre"}}),
-	}}
-	inst := newInstaller(t, regs, &fakeInstalls{})
-
-	res, err := inst.Install(context.Background(), req(gw, "github", "eng"))
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("github")}}
+	res, err := newInstaller(t, regs, &fakeInstalls{}).Install(context.Background(), req(gw, "github", "eng"))
 	if err != nil {
-		t.Fatalf("eng Install: %v", err)
+		t.Fatalf("Install: %v", err)
 	}
 	if !res.Pending {
-		t.Fatalf("a principal outside the grant must file a request, got %+v", res)
+		t.Fatalf("an ungranted registry must file a request, got %+v", res)
 	}
-	res, err = inst.Install(context.Background(), req(gw, "github", "sre"))
+}
+
+// TestInstallInstanceGrantBindsToThatInstance: an instance-level grant admits
+// the principal to exactly that configured instance. With two instances of the
+// code and one granted, the install binds to the granted one — no choice needed.
+func TestInstallInstanceGrantBindsToThatInstance(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	finance := namedRegistry("snowflake", "Snowflake (finance)")
+	analytics := namedRegistry("snowflake", "Snowflake (analytics)")
+	regs := &fakeRegistries{items: []*registrydomain.Registry{finance, analytics}}
+	installs := &fakeInstalls{}
+	grants := grantsOf(instanceGrant(gw, "snowflake", finance.ID, []string{"finance"}, nil))
+	in := req(gw, "snowflake", "finance")
+	in.Config = map[string]string{"account_url": "acme", "database": "ledger"}
+	res, err := newInstallerWithGrants(t, regs, installs, grants).Install(context.Background(), in)
 	if err != nil {
-		t.Fatalf("sre Install: %v", err)
+		t.Fatalf("Install: %v", err)
 	}
-	if res.Status != installationdomain.StatusInstalled {
-		t.Fatalf("a principal in the granted group must install, got %+v", res)
+	if res.Status != installationdomain.StatusInstalled || res.RequiresInstanceChoice {
+		t.Fatalf("the sole granted instance must install without a choice, got %+v", res)
+	}
+	if installs.upserts[0].RegistryID != finance.ID {
+		t.Fatalf("install must bind to the granted instance, got %s", installs.upserts[0].RegistryID)
+	}
+}
+
+// TestInstallSeveralUsableInstancesRequiresChoice: with the code granted (or
+// All) and several configured instances, the install must be told which one.
+// Nothing is recorded until then.
+func TestInstallSeveralUsableInstancesRequiresChoice(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	finance := namedRegistry("snowflake", "Snowflake (finance)")
+	analytics := namedRegistry("snowflake", "Snowflake (analytics)")
+	regs := &fakeRegistries{items: []*registrydomain.Registry{finance, analytics}}
+	installs := &fakeInstalls{}
+	in := openReq(gw, "snowflake")
+	in.Config = map[string]string{"account_url": "acme", "database": "ledger"}
+	res, err := newInstaller(t, regs, installs).Install(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if !res.RequiresInstanceChoice || len(res.InstanceChoices) != 2 {
+		t.Fatalf("expected a two-way instance choice, got %+v", res)
+	}
+	if res.InstanceChoices[0].RegistryID != finance.ID || res.InstanceChoices[0].Name != "Snowflake (finance)" {
+		t.Fatalf("choices must carry id and name in creation order, got %+v", res.InstanceChoices)
+	}
+	if len(installs.upserts) != 0 {
+		t.Fatalf("a choice result must record nothing, got %+v", installs.upserts)
+	}
+
+	// Naming the instance installs and binds to it.
+	in.RegistryID = analytics.ID
+	res, err = newInstaller(t, regs, installs).Install(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Install with instance: %v", err)
+	}
+	if res.Status != installationdomain.StatusInstalled || installs.upserts[0].RegistryID != analytics.ID {
+		t.Fatalf("named instance must install bound to it, got %+v / %s", res, installs.upserts[0].RegistryID)
+	}
+}
+
+// TestInstallNamedInstanceMustBelongToCode: a registry id of another code (or
+// an unknown one) is refused as a validation error.
+func TestInstallNamedInstanceMustBelongToCode(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	other := shelfRegistry("github")
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("snowflake"), other}}
+	in := openReq(gw, "snowflake")
+	in.Config = map[string]string{"account_url": "acme", "database": "ledger"}
+	in.RegistryID = other.ID
+	_, err := newInstaller(t, regs, &fakeInstalls{}).Install(context.Background(), in)
+	if !errors.Is(err, ErrUnknownInstance) {
+		t.Fatalf("expected ErrUnknownInstance, got %v", err)
+	}
+	in.RegistryID = ids.New[ids.RegistryKind]()
+	if _, err := newInstaller(t, regs, &fakeInstalls{}).Install(context.Background(), in); !errors.Is(err, ErrUnknownInstance) {
+		t.Fatalf("unknown id: expected ErrUnknownInstance, got %v", err)
+	}
+}
+
+// TestInstallNamedUngrantedInstanceFilesBoundRequest: naming an instance the
+// principal is not granted files a request bound to that instance.
+func TestInstallNamedUngrantedInstanceFilesBoundRequest(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	finance := namedRegistry("snowflake", "finance")
+	analytics := namedRegistry("snowflake", "analytics")
+	regs := &fakeRegistries{items: []*registrydomain.Registry{finance, analytics}}
+	installs := &fakeInstalls{}
+	grants := grantsOf(instanceGrant(gw, "snowflake", finance.ID, nil, []string{"ana"}))
+	in := req(gw, "snowflake")
+	in.Config = map[string]string{"account_url": "acme", "database": "x"}
+	in.RegistryID = analytics.ID
+	res, err := newInstallerWithGrants(t, regs, installs, grants).Install(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if !res.Pending || installs.upserts[0].RegistryID != analytics.ID {
+		t.Fatalf("expected a request bound to the named instance, got %+v / %s", res, installs.upserts[0].RegistryID)
+	}
+}
+
+// TestInstallSeveralInstancesNoneGrantedFilesCodeRequest: with several
+// instances and none usable, the request is code-level (unbound) for the admin
+// to resolve by granting the code or one instance.
+func TestInstallSeveralInstancesNoneGrantedFilesCodeRequest(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("github"), shelfRegistry("github")}}
+	installs := &fakeInstalls{}
+	res, err := newInstaller(t, regs, installs).Install(context.Background(), req(gw, "github"))
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if !res.Pending || !installs.upserts[0].RegistryID.IsNil() {
+		t.Fatalf("expected an unbound code-level request, got %+v / %s", res, installs.upserts[0].RegistryID)
+	}
+}
+
+// TestInstallSameInstanceDifferentRegistryIsNewInstance: identical config on a
+// different configured instance is a different install (its own row).
+func TestInstallSameConfigDifferentRegistryIsNewInstance(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	finance := namedRegistry("snowflake", "finance")
+	analytics := namedRegistry("snowflake", "analytics")
+	regs := &fakeRegistries{items: []*registrydomain.Registry{finance, analytics}}
+	config := map[string]string{"account_url": "acme", "database": "x"}
+	existing := &installationdomain.Installation{
+		ID: ids.New[ids.InstallationKind](), Status: installationdomain.StatusInstalled, Config: config, RegistryID: finance.ID,
+	}
+	installs := &fakeInstalls{byCode: []*installationdomain.Installation{existing}}
+	in := openReq(gw, "snowflake")
+	in.Config = config
+	in.RegistryID = analytics.ID
+	res, err := newInstaller(t, regs, installs).Install(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if res.AlreadyInstalled || installs.upserts[0].ID == existing.ID {
+		t.Fatalf("a different instance must be a new row, got %+v", res)
 	}
 }
 
 func TestInstallReportsAlreadyInstalled(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
-	regs := &fakeRegistries{items: []*registrydomain.Registry{
-		shelfRegistry("github", &registrydomain.MCPStoreConfig{Available: true}),
-	}}
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("github")}}
 	installs := &fakeInstalls{findValue: &installationdomain.Installation{Status: installationdomain.StatusInstalled}}
-	res, err := newInstaller(t, regs, installs).Install(context.Background(), req(gw, "github"))
+	res, err := newInstaller(t, regs, installs).Install(context.Background(), openReq(gw, "github"))
 	if err != nil {
 		t.Fatalf("Install: %v", err)
 	}
@@ -622,9 +832,7 @@ func TestUninstallByInstanceIDRejectsForeignCode(t *testing.T) {
 
 func TestInstallDifferentConfigCreatesNewInstance(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
-	regs := &fakeRegistries{items: []*registrydomain.Registry{
-		shelfRegistry("snowflake", &registrydomain.MCPStoreConfig{Available: true}),
-	}}
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("snowflake")}}
 	// An existing instance (schema "a") must not be treated as the same install
 	// when a different config (schema "b") arrives: it is a new instance — a fresh
 	// id, reported not-already-installed.
@@ -633,7 +841,8 @@ func TestInstallDifferentConfigCreatesNewInstance(t *testing.T) {
 	installs := &fakeInstalls{byCode: []*installationdomain.Installation{
 		{ID: ids.New[ids.InstallationKind](), Status: installationdomain.StatusInstalled, Config: configA},
 	}}
-	in := InstallRequest{GatewayID: gw, PrincipalSub: "ana", Code: "snowflake", InstalledBy: "ana", Config: configB}
+	in := openReq(gw, "snowflake")
+	in.Config = configB
 	res, err := newInstaller(t, regs, installs).Install(context.Background(), in)
 	if err != nil {
 		t.Fatalf("Install: %v", err)

@@ -24,6 +24,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
 )
 
 // ErrNotShelved is returned when an admin approves a request for a server that
@@ -37,11 +38,17 @@ var ErrNotShelved = fmt.Errorf("store: server is not on the shelf; connect it fi
 // pass the instance id (from the pending queue). It maps to 409.
 var ErrAmbiguousRequest = fmt.Errorf("store: several instances match; pass instance_id: %w", commonerrors.ErrConflict)
 
-// RegistryShelf is the registry access the approver needs: find the shelf
-// registry for a catalog code and mark it available when approving.
+// RegistryShelf is the registry access the approver needs: the gateway's
+// configured instances, to resolve which one a request lands on.
 type RegistryShelf interface {
 	List(ctx context.Context, filter registrydomain.ListFilter) ([]*registrydomain.Registry, int, error)
-	Update(ctx context.Context, b *registrydomain.Registry) error
+}
+
+// GrantStore is the grant access the approver needs: read a gateway's grants
+// and write the one an approval extends.
+type GrantStore interface {
+	storegrantdomain.Reader
+	Upsert(ctx context.Context, g *storegrantdomain.Grant) error
 }
 
 // PendingRequest is one row in the admin approval queue.
@@ -82,8 +89,10 @@ type DenyRequest struct {
 type Approver interface {
 	// ListPending returns the gateway's pending install requests, oldest first.
 	ListPending(ctx context.Context, gatewayID ids.GatewayID) ([]PendingRequest, error)
-	// Approve shelves the server available (if not already) and marks the
-	// request installed. ErrNotShelved when no registry exists for the code.
+	// Approve grants the requester the server (its code, or the one instance the
+	// request is bound to), materialising the registry when none exists yet, and
+	// marks the request installed. ErrNotShelved when the server cannot be
+	// materialised here and no registry exists for the code.
 	Approve(ctx context.Context, in ApproveRequest) error
 	// Deny marks the request revoked, keeping the row for audit.
 	Deny(ctx context.Context, in DenyRequest) error
@@ -95,6 +104,7 @@ type approver struct {
 	catalog    CatalogReader
 	registries RegistryShelf
 	installs   installationdomain.Repository
+	grants     GrantStore
 	ensurer    RegistryEnsurer
 }
 
@@ -109,17 +119,20 @@ func WithApproverEnsurer(e RegistryEnsurer) ApproverOption {
 	return func(a *approver) { a.ensurer = e }
 }
 
-// NewApprover wires the Store approval service.
+// NewApprover wires the Store approval service. grants is where an approval
+// lands: approving adds the requester to the grant on the requested code (or
+// instance), so their next install is instant and the Access page shows it.
 func NewApprover(
 	catalog CatalogReader,
 	registries RegistryShelf,
 	installs installationdomain.Repository,
+	grants GrantStore,
 	opts ...ApproverOption,
 ) (Approver, error) {
-	if catalog == nil || registries == nil || installs == nil {
+	if catalog == nil || registries == nil || installs == nil || grants == nil {
 		return nil, ErrUnavailable
 	}
-	a := &approver{catalog: catalog, registries: registries, installs: installs}
+	a := &approver{catalog: catalog, registries: registries, installs: installs, grants: grants}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(a)
@@ -170,12 +183,17 @@ func (a *approver) Approve(ctx context.Context, in ApproveRequest) error {
 	}
 	code := existing.CatalogCode
 
-	reg, err := findRegistryByCode(ctx, a.registries, in.GatewayID, code)
+	instances, err := findRegistriesByCode(ctx, a.registries, in.GatewayID, code)
 	if err != nil {
 		return err
 	}
-	if reg == nil || reg.MCPTarget == nil {
-		// Nobody shelved this server yet: materialise it so the grant has a
+	// A request bound to one configured instance is approved for that instance
+	// only; the instance must still exist and still carry the code.
+	if !existing.RegistryID.IsNil() && pickRegistry(instances, existing.RegistryID) == nil {
+		return fmt.Errorf("%w: instance %s of %q", ErrNotShelved, existing.RegistryID, code)
+	}
+	if len(instances) == 0 {
+		// Nobody connected this server yet: materialise it so the install has a
 		// registry to land on, when we can.
 		if a.ensurer == nil {
 			return fmt.Errorf("%w: %q", ErrNotShelved, code)
@@ -183,29 +201,55 @@ func (a *approver) Approve(ctx context.Context, in ApproveRequest) error {
 		if err := a.ensurer.Ensure(ctx, in.GatewayID, code); err != nil {
 			return fmt.Errorf("store: materialise registry: %w", err)
 		}
-		if reg, err = findRegistryByCode(ctx, a.registries, in.GatewayID, code); err != nil {
-			return err
-		}
-		if reg == nil || reg.MCPTarget == nil {
-			return fmt.Errorf("%w: %q", ErrNotShelved, code)
-		}
 	}
 	// Approving a request GRANTS the resource to the requester: their subject is
-	// added to the instance's grants so their next install is instant and the
-	// Access page reflects it. Grants are the only governance on an instance.
-	if !storeAccessAllows(reg.MCPTarget.StoreGroups(), reg.MCPTarget.StoreUsers(), nil, existing.PrincipalSub) {
-		if reg.MCPTarget.Store == nil {
-			reg.MCPTarget.Store = &registrydomain.MCPStoreConfig{}
-		}
-		reg.MCPTarget.Store.Users = append(reg.MCPTarget.Store.Users, existing.PrincipalSub)
-		if err := a.registries.Update(ctx, reg); err != nil {
-			return fmt.Errorf("store: grant registry: %w", err)
-		}
+	// added to the grant on the requested code (or, for a request bound to one
+	// instance, on that instance) so their next install is instant and the
+	// Access page reflects it. Grants are the only governance there is.
+	if err := a.grantRequester(ctx, in.GatewayID, code, existing.RegistryID, existing.PrincipalSub); err != nil {
+		return err
 	}
 
 	existing.Status = installationdomain.StatusInstalled
 	existing.UpdatedAt = time.Now().UTC()
 	return a.installs.Upsert(ctx, existing)
+}
+
+// grantRequester adds the principal to the grant the request asked for, unless
+// a grant already covers them (the code-level grant, or the instance's own).
+func (a *approver) grantRequester(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	code string,
+	registryID ids.RegistryID,
+	subject string,
+) error {
+	grants, err := loadGrantSet(ctx, a.grants, gatewayID)
+	if err != nil {
+		return err
+	}
+	if grants.InstanceAllows(code, registryID, nil, subject) {
+		return nil
+	}
+	var grant *storegrantdomain.Grant
+	if registryID.IsNil() {
+		grant = grants.Code(code)
+	} else {
+		grant = grants.Instance(registryID)
+	}
+	if grant == nil {
+		if grant, err = storegrantdomain.New(gatewayID, code, registryID, nil, nil); err != nil {
+			return err
+		}
+	} else {
+		copied := *grant
+		grant = &copied
+	}
+	grant.AddUser(subject)
+	if err := a.grants.Upsert(ctx, grant); err != nil {
+		return fmt.Errorf("store: grant requester: %w", err)
+	}
+	return nil
 }
 
 func (a *approver) Deny(ctx context.Context, in DenyRequest) error {

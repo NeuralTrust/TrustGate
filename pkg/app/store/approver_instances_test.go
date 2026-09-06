@@ -88,7 +88,7 @@ func TestApprover_Deny_ByInstanceIDTargetsThatInstanceOnly(t *testing.T) {
 func TestApprover_Approve_ByInstanceIDTargetsThatInstanceOnly(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	_, b, installs := twoInstances(t, gw)
-	regs := &fakeRegistries{items: []*registrydomain.Registry{shelvedRegistry("github", true)}}
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("github")}}
 	ap := newApproverT(t, installs, regs)
 
 	if err := ap.Approve(context.Background(), ApproveRequest{GatewayID: gw, PrincipalSub: "ana", InstanceID: b.ID.String()}); err != nil {
@@ -105,7 +105,7 @@ func TestApprover_Approve_ByInstanceIDTargetsThatInstanceOnly(t *testing.T) {
 func TestApprover_Approve_ByCodeWithSeveralInstancesIsAmbiguous(t *testing.T) {
 	gw := ids.New[ids.GatewayKind]()
 	_, _, installs := twoInstances(t, gw)
-	regs := &fakeRegistries{items: []*registrydomain.Registry{shelvedRegistry("github", true)}}
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("github")}}
 	ap := newApproverT(t, installs, regs)
 	err := ap.Approve(context.Background(), ApproveRequest{GatewayID: gw, PrincipalSub: "ana", Code: "github"})
 	if !errors.Is(err, ErrAmbiguousRequest) {
@@ -159,7 +159,7 @@ func TestApprover_Approve_ByCodeDoesNotResurrectRevoked(t *testing.T) {
 	old := mustInstall(t, gw, "ana", "github")
 	old.Status = installationdomain.StatusRevoked
 	installs := &fakeInstalls{byCode: []*installationdomain.Installation{old}}
-	regs := &fakeRegistries{items: []*registrydomain.Registry{shelvedRegistry("github", true)}}
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("github")}}
 	ap := newApproverT(t, installs, regs)
 
 	err := ap.Approve(context.Background(), ApproveRequest{GatewayID: gw, PrincipalSub: "ana", Code: "github"})

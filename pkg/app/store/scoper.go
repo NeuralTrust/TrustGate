@@ -27,6 +27,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
+	storegrantdomain "github.com/NeuralTrust/TrustGate/pkg/domain/storegrant"
 )
 
 // InstallLister is the read side the CatalogScoper needs: what a principal has
@@ -47,15 +48,18 @@ type Scoper interface {
 type scoper struct {
 	installs   InstallLister
 	registries RegistryLister
+	grants     storegrantdomain.Reader
 }
 
-// NewScoper wires the CatalogScoper over the installation store and the gateway
-// registry list.
-func NewScoper(installs InstallLister, registries RegistryLister) (Scoper, error) {
+// NewScoper wires the CatalogScoper over the installation store, the gateway
+// registry list and the Store access grants. grants may be nil on a plane
+// without them, which fails closed under Selected access (no install is
+// exposed) and is irrelevant under All.
+func NewScoper(installs InstallLister, registries RegistryLister, grants storegrantdomain.Reader) (Scoper, error) {
 	if installs == nil || registries == nil {
 		return nil, ErrUnavailable
 	}
-	return &scoper{installs: installs, registries: registries}, nil
+	return &scoper{installs: installs, registries: registries, grants: grants}, nil
 }
 
 func (s *scoper) Scope(
@@ -108,21 +112,22 @@ func (s *scoper) Scope(
 	return &scoped, nil
 }
 
-// installedRegistries maps a principal's active installs onto the shared shelf
-// registries. A code with a single active install exposes its shelf registry
-// under its own id and name; when that install carries per-user config the
-// exposure is a shallow clone carrying the config as a request-scoped overlay
-// (MCPTarget.InstanceConfig) so the dial-time URL resolver reads this exact
-// instance's values rather than falling back to an ambiguous by-code lookup. A
-// code with several active installs (distinct instances, e.g. two Snowflake
-// schemas) exposes one per-instance clone per install: a distinct registry id
-// and a config-derived label so the composer names and disambiguates their
-// tools apart, again with the instance's own config as the overlay.
+// installedRegistries maps a principal's active installs onto the gateway's
+// configured instances (registries). An install bound to a registry exposes
+// that registry; an unbound one exposes the code's canonical instance (the
+// oldest registry carrying the code). A code with a single active install
+// exposes the registry under its own id and name; when that install carries
+// per-user config the exposure is a shallow clone carrying the config as a
+// request-scoped overlay (MCPTarget.InstanceConfig) so the dial-time URL
+// resolver reads this exact instance's values. A code with several active
+// installs (two Snowflake schemas, or two configured instances) exposes one
+// per-install clone each: a distinct registry id and a disambiguating label so
+// the composer names their tools apart.
 //
-// Governance is re-checked here, not only at install time: an install whose
-// shelf registry now excludes the principal (the admin tightened the group/user
-// grant after the install) is not exposed, so tightening a grant revokes access
-// immediately rather than only for future installs.
+// Access is re-checked here, not only at install time: under Selected an
+// install stays exposed only while a grant still names the principal for its
+// code or its instance, so tightening a grant later revokes access immediately
+// rather than only for future installs.
 func (s *scoper) installedRegistries(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
@@ -138,27 +143,35 @@ func (s *scoper) installedRegistries(
 	if err != nil {
 		return nil, fmt.Errorf("store scoper: list registries: %w", err)
 	}
-	byCode := make(map[string]*registrydomain.Registry, len(items))
+	byID := make(map[ids.RegistryID]*registrydomain.Registry, len(items))
+	byCode := make(map[string][]*registrydomain.Registry)
 	for _, reg := range items {
 		if reg == nil || reg.MCPTarget == nil {
 			continue
 		}
-		if _, seen := byCode[reg.MCPTarget.Code]; !seen {
-			byCode[reg.MCPTarget.Code] = reg
-		}
+		byID[reg.ID] = reg
+		byCode[reg.MCPTarget.Code] = append(byCode[reg.MCPTarget.Code], reg)
+	}
+	for _, regs := range byCode {
+		sortRegistries(regs)
 	}
 	groups := principalGroups(principal)
 	// Under All every install stands; under Selected an install only stays
-	// exposed while its shelf grant still names the principal, so tightening a
-	// grant later revokes exposure without touching the installation rows.
+	// exposed while a grant still names the principal for its code or instance.
 	enforceGrants := EffectiveStoreMode(ctx) != gatewaydomain.StoreModeOpen
+	var grants *storegrantdomain.Set
+	if enforceGrants {
+		if grants, err = loadGrantSet(ctx, s.grants, gatewayID); err != nil {
+			return nil, fmt.Errorf("store scoper: %w", err)
+		}
+	}
 	out := make([]*registrydomain.Registry, 0, len(active))
 	for _, in := range active {
-		shelf, ok := byCode[in.CatalogCode]
-		if !ok {
+		shelf := resolveInstance(in, byID, byCode)
+		if shelf == nil {
 			continue
 		}
-		if enforceGrants && !storeAccessAllows(shelf.MCPTarget.StoreGroups(), shelf.MCPTarget.StoreUsers(), groups, principal.Subject) {
+		if enforceGrants && !grants.InstanceAllows(in.CatalogCode, shelf.ID, groups, principal.Subject) {
 			continue
 		}
 		if countByCode[in.CatalogCode] <= 1 {
@@ -172,6 +185,28 @@ func (s *scoper) installedRegistries(
 		out = append(out, instanceRegistry(shelf, in))
 	}
 	return out, nil
+}
+
+// resolveInstance returns the registry an install exposes: the one it is bound
+// to (which must still exist and still carry the code — a re-pointed registry
+// does not leak another server), else the code's canonical instance. Nil when
+// nothing matches (the registry was deleted; the install is dormant).
+func resolveInstance(
+	in *installationdomain.Installation,
+	byID map[ids.RegistryID]*registrydomain.Registry,
+	byCode map[string][]*registrydomain.Registry,
+) *registrydomain.Registry {
+	if !in.RegistryID.IsNil() {
+		reg, ok := byID[in.RegistryID]
+		if !ok || reg.MCPTarget == nil || reg.MCPTarget.Code != in.CatalogCode {
+			return nil
+		}
+		return reg
+	}
+	if regs := byCode[in.CatalogCode]; len(regs) > 0 {
+		return regs[0]
+	}
+	return nil
 }
 
 // principalGroups reads the principal's IdP group memberships from its claims
