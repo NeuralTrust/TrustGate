@@ -103,8 +103,8 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(func(s *infraoauth.ConnectStore) appoauth.ClientStore { return s }); err != nil {
 		return err
 	}
-	if err := c.Provide(func(clients appoauth.ClientStore) appoauth.UpstreamRegistrar {
-		return infraoauth.NewUpstreamRegistrar(clients, nil)
+	if err := c.Provide(func(clients appoauth.ClientStore, cfg *config.Config) appoauth.UpstreamRegistrar {
+		return infraoauth.NewUpstreamRegistrar(clients, nil, infraoauth.WithClientName(cfg.Server.MCPOAuthClientName))
 	}); err != nil {
 		return err
 	}
