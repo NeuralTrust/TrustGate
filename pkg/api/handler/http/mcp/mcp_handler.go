@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
@@ -483,7 +484,43 @@ func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {
 	if !consumerAdmitsPrincipal(rc.Consumer, identity.PrincipalFromContext(c.UserContext())) {
 		return nil, fiber.NewError(fiber.StatusForbidden, "caller not allowed for this consumer")
 	}
+	if rc.Consumer.Identity.AppUsers() {
+		endUser := c.Get(consumerdomain.EndUserHeader)
+		if err := consumerdomain.ValidateEndUser(endUser); err != nil {
+			return nil, fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
+		ctx := identity.WithPrincipal(c.UserContext(), endUserPrincipal(rc.Consumer, identity.PrincipalFromContext(c.UserContext()), endUser))
+		c.SetUserContext(ctx)
+		if rt := trace.FromContext(ctx); rt != nil {
+			rt.SetEndUser(strings.TrimSpace(endUser))
+		}
+	}
 	return rc, nil
+}
+
+// endUserPrincipal is the principal a request runs as when the application
+// names its end user: the consumer-namespaced subject that keys the user's
+// upstream connections, with the application's own credential kept in the
+// claims for audit. Access rules never see it; the application is the boundary.
+func endUserPrincipal(cons *consumerdomain.Consumer, app *identity.Principal, endUser string) *identity.Principal {
+	endUser = strings.TrimSpace(endUser)
+	p := &identity.Principal{
+		Subject: consumerdomain.EndUserSubject(cons.ID, endUser),
+		Method:  identity.MethodAPIKey,
+		Claims: map[string]any{
+			"end_user":    endUser,
+			"consumer_id": cons.ID.String(),
+		},
+	}
+	if app != nil {
+		if app.Method != "" {
+			p.Method = app.Method
+		}
+		if app.Subject != "" {
+			p.Claims["app_subject"] = app.Subject
+		}
+	}
+	return p
 }
 
 // consumerAdmitsPrincipal applies the consumer's auth binding to the verified

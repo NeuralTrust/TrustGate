@@ -39,6 +39,7 @@ var (
 	ErrInvalidIdentity = fmt.Errorf("consumer: invalid identity: %w", commonerrors.ErrValidation)
 
 	ErrInvalidAuthBinding = fmt.Errorf("consumer: invalid auth_binding: %w", commonerrors.ErrValidation)
+	ErrInvalidEndUser     = fmt.Errorf("consumer: invalid end user: %w", commonerrors.ErrValidation)
 	ErrInvalidFailMode    = fmt.Errorf("consumer: invalid fail_mode: %w", commonerrors.ErrValidation)
 
 	ErrPolicyProtocolMismatch = fmt.Errorf("consumer: policy protocol mismatch: %w", commonerrors.ErrValidation)

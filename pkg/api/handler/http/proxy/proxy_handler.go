@@ -18,8 +18,10 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"fmt"
 	"net/textproto"
 	"net/url"
+	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/api/handler/http/httpio"
 	"github.com/NeuralTrust/TrustGate/pkg/api/middleware"
@@ -119,6 +121,15 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	stampConsumerTrace(c, consumer)
+	endUser, err := endUserAttribution(consumer, c.Get(domainconsumer.EndUserHeader))
+	if err != nil {
+		return writeProxyError(c, err)
+	}
+	if endUser != "" {
+		if rt := trace.FromContext(c.UserContext()); rt != nil {
+			rt.SetEndUser(endUser)
+		}
+	}
 
 	if route.Capability == apiresolver.CapabilityModels {
 		return h.handleModels(c, route, consumer, authCtx)
@@ -300,6 +311,24 @@ func stampConsumerTrace(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) {
 	if p := identity.PrincipalFromContext(c.UserContext()); p != nil {
 		rt.SetPrincipalIdentity(p.Subject, string(p.Method), p.Email())
 	}
+}
+
+// endUserAttribution returns the end-user id an LLM consumer that opted in
+// forwarded, validated; empty when the consumer did not opt in (the header is
+// ignored) or the application sent none. A malformed value on an opted-in
+// consumer is rejected rather than silently dropped from the audit trail.
+func endUserAttribution(rc *appconsumer.RoutableConsumer, header string) (string, error) {
+	if rc == nil || rc.Consumer == nil || !rc.Consumer.Identity.EndUserHeader {
+		return "", nil
+	}
+	endUser := strings.TrimSpace(header)
+	if endUser == "" {
+		return "", nil
+	}
+	if err := domainconsumer.ValidateEndUser(endUser); err != nil {
+		return "", fmt.Errorf("%w: %s", appproxy.ErrInvalidRequestPayload, err.Error())
+	}
+	return endUser, nil
 }
 
 func isAuthorizedForConsumer(rc *appconsumer.RoutableConsumer, authCtx *appauth.AuthContext) bool {

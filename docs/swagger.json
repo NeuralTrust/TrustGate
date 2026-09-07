@@ -3092,6 +3092,125 @@
                     }
                 }
             }
+        },
+        "/{slug}/connections": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "connections"
+                ],
+                "summary": "Read an application's end-user connection states",
+                "description": "For an MCP consumer whose application identifies its end users (identity.source = app). Reports, per connectable server, whether the named end user is connected, needs to reconnect, or has not connected. Authenticated with the consumer's API key.",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Consumer slug",
+                        "name": "slug",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "End-user id the application uses",
+                        "name": "end_user",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_oauth.EndUserConnectionsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/{slug}/connections/links": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "connections"
+                ],
+                "summary": "Mint a connect link for an application's end user",
+                "description": "For an MCP consumer whose application identifies its end users (identity.source = app). Returns the URL the application shows that user to connect their own account on one of the consumer's servers (or on any of them when provider is omitted). Authenticated with the consumer's API key.",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Consumer slug",
+                        "name": "slug",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "End user to link",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_oauth.EndUserLinkRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_oauth.EndUserLinkResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -4457,6 +4576,76 @@
                     "type": "string"
                 },
                 "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_oauth.EndUserConnectionResponse": {
+            "description": "EndUserConnectionResponse is one upstream connection state of an end user.",
+            "type": "object",
+            "properties": {
+                "account_ref": {
+                    "type": "string"
+                },
+                "code": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "registry": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string",
+                    "description": "connected | needs_reconnect | not_connected"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_oauth.EndUserConnectionsResponse": {
+            "description": "EndUserConnectionsResponse lists an end user's connection states.",
+            "type": "object",
+            "properties": {
+                "connections": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_oauth.EndUserConnectionResponse"
+                    }
+                },
+                "end_user": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_oauth.EndUserLinkRequest": {
+            "description": "EndUserLinkRequest names the end user (and optionally the server) to link.",
+            "type": "object",
+            "properties": {
+                "end_user": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_oauth.EndUserLinkResponse": {
+            "description": "EndUserLinkResponse is the link the application shows its user.",
+            "type": "object",
+            "properties": {
+                "connect_url": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "ticket": {
                     "type": "string"
                 }
             }

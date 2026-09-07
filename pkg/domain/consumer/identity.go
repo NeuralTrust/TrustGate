@@ -17,6 +17,9 @@ package consumer
 import (
 	"fmt"
 	"strings"
+	"unicode"
+
+	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 )
 
 // IdentitySource says where the end users of an acts-for-users consumer come
@@ -115,4 +118,36 @@ func (i Identity) AppUsers() bool {
 // ActsForUsers reports whether the consumer acts on behalf of end users.
 func (c *Consumer) ActsForUsers() bool {
 	return c != nil && c.Identity.ActsForUsers
+}
+
+// MaxEndUserLength bounds the opaque end-user id an application may send.
+const MaxEndUserLength = 256
+
+// endUserSubjectPrefix namespaces app-identified end users so their vault
+// subject can never collide with a platform user's token subject.
+const endUserSubjectPrefix = "app:"
+
+// ValidateEndUser checks an end-user id from the end-user header: present,
+// bounded and printable. The gateway never interprets it.
+func ValidateEndUser(id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return fmt.Errorf("%w: %s header is required", ErrInvalidEndUser, EndUserHeader)
+	}
+	if len(id) > MaxEndUserLength {
+		return fmt.Errorf("%w: %s header longer than %d characters", ErrInvalidEndUser, EndUserHeader, MaxEndUserLength)
+	}
+	for _, r := range id {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("%w: %s header contains control characters", ErrInvalidEndUser, EndUserHeader)
+		}
+	}
+	return nil
+}
+
+// EndUserSubject is the principal subject the gateway keys per-user upstream
+// connections by for an end user an application named: namespaced by the
+// consumer so two applications naming "user_123" never share a connection.
+func EndUserSubject(consumerID ids.ConsumerID, endUser string) string {
+	return endUserSubjectPrefix + consumerID.String() + ":" + strings.TrimSpace(endUser)
 }

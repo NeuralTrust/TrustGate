@@ -253,6 +253,9 @@ func API(c *container.Container) error {
 	if err := c.Provide(provideAPIKeyConnectHandler); err != nil {
 		return err
 	}
+	if err := c.Provide(provideEndUserConnectionsHandler); err != nil {
+		return err
+	}
 	if err := c.Provide(func(configure appoauth.ConfigureService) *oauthhttp.ConfigureHandler {
 		return oauthhttp.NewConfigureHandler(configure)
 	}); err != nil {
@@ -279,4 +282,21 @@ func provideAPIKeyConnectHandler(
 		)
 	}
 	return oauthhttp.NewAPIKeyConnectHandler(gateways, connect, limiter, resolveSource)
+}
+
+func provideEndUserConnectionsHandler(
+	finder appgateway.Finder,
+	cfg *config.Config,
+	connections appoauth.EndUserConnectionsService,
+	limiter appoauth.ConnectAttemptLimiter,
+) *oauthhttp.EndUserConnectionsHandler {
+	gateways := resolver.NewSubdomainGatewayResolver(finder, cfg.Server.MCPBaseDomain)
+	resolveSource := func(peer, forwardedFor string) string {
+		return ratelimit.ResolveConnectSource(
+			peer,
+			forwardedFor,
+			cfg.MCPConnectRateLimit.TrustedProxyCIDRs,
+		)
+	}
+	return oauthhttp.NewEndUserConnectionsHandler(gateways, connections, limiter, resolveSource)
 }

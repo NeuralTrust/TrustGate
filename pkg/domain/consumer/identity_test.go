@@ -16,6 +16,7 @@ package consumer
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	commonerrors "github.com/NeuralTrust/TrustGate/pkg/common/errors"
@@ -148,5 +149,36 @@ func TestValidateAuth_IdentityRules(t *testing.T) {
 	}
 	if err := ValidateAuth(nil, authdomain.TypeAPIKey); err != nil {
 		t.Fatalf("nil consumer must be a no-op, got %v", err)
+	}
+}
+
+func TestValidateEndUser(t *testing.T) {
+	t.Parallel()
+	if err := ValidateEndUser(" user_123 "); err != nil {
+		t.Fatalf("a trimmed opaque id is valid, got %v", err)
+	}
+	for name, id := range map[string]string{
+		"empty":    "   ",
+		"too long": strings.Repeat("u", MaxEndUserLength+1),
+		"control":  "user\n123",
+	} {
+		if err := ValidateEndUser(id); !errors.Is(err, ErrInvalidEndUser) || !errors.Is(err, commonerrors.ErrValidation) {
+			t.Fatalf("%s: err = %v, want ErrInvalidEndUser", name, err)
+		}
+	}
+}
+
+func TestEndUserSubject_IsNamespacedByConsumer(t *testing.T) {
+	t.Parallel()
+	a := ids.New[ids.ConsumerKind]()
+	b := ids.New[ids.ConsumerKind]()
+	if EndUserSubject(a, " user_123 ") != "app:"+a.String()+":user_123" {
+		t.Fatalf("unexpected subject %q", EndUserSubject(a, " user_123 "))
+	}
+	if EndUserSubject(a, "user_123") == EndUserSubject(b, "user_123") {
+		t.Fatal("two applications naming the same user must never share a subject")
+	}
+	if !strings.HasPrefix(EndUserSubject(a, "sub-of-a-platform-user"), "app:") {
+		t.Fatal("app-identified subjects carry the app: prefix so they cannot collide with token subjects")
 	}
 }
