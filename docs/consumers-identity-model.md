@@ -62,8 +62,10 @@ What an LLM application needs to configure:
 - **Traffic**: single target, fallback chain, load balancing (weighted / round
   robin), smart routing tiers. Unchanged.
 - **Policies & limits**: guardrails, rate limits, budgets. Unchanged.
-- **Authentication**: API key (the norm) or OAuth client credentials
-  (service-to-service).
+- **Authentication**: API key (the norm), or a bearer JWT issued by the customer's
+  IdP. The gateway does not implement any OAuth grant for machines: how the app
+  obtains its token (client credentials, certificate credentials…) is the IdP's
+  business; the gateway only validates what it receives (§4.4).
 
 The person behind the application does **not** change routing. "Marketing may only
 use the mini model, engineering may use GPT-4" is two applications: two consumers,
@@ -94,9 +96,23 @@ different set of registries. It is needed for exactly two things:
    same scoper applied to the *consumer's* registries instead of the whole catalog.
 
 So an MCP consumer is: **servers + tools, authentication, and one identity switch**
-— *"Acts on behalf of end users"* — which requires OAuth and turns on per-user
-connections and Access rules. No Roles, no claim rules, no per-role registries.
-Groups arrive from the directory exactly as they do for the Store.
+— *"Acts on behalf of end users"* — which turns on per-user connections and, when
+the user is a platform identity, Access rules. No Roles, no claim rules, no
+per-role registries. Groups arrive from the directory exactly as they do for the
+Store.
+
+The end user can be known in two ways, and the switch has a *source*:
+
+- **`platform`** — the consumer authenticates with OAuth (NeuralTrust IdP, or the
+  customer's IdP). The person logs in; `sub` and `groups` come from the token;
+  Access rules apply. This is what the Store does.
+- **`app`** — the consumer authenticates with an **API key** and the application
+  tells the gateway who its end user is on every request
+  (`X-NeuralTrust-End-User: <opaque id>`). This is the Composio model
+  (`user_id`): the app owns the user directory, the gateway owns the per-user
+  upstream connections. Access rules do not apply — the app is the boundary —
+  unless the app-supplied id is a platform user id, in which case they do.
+  See §4.5.
 
 ### 3.3 One engine, two entry points
 
@@ -108,10 +124,10 @@ their own slug, their own IdP and their own policies.
 
 | | LLM | MCP as the app | MCP on behalf of users | Store (built-in) |
 |---|---|---|---|---|
-| Consumer auth | API key / client credentials | API key | OAuth (NeuralTrust IdP or customer IdP) | OAuth (NeuralTrust IdP) |
+| Consumer auth | API key (default) · bearer JWT from the customer's IdP (incl. tokens the app obtained by client credentials) | API key (default) · bearer JWT from the customer's IdP | OAuth (NeuralTrust IdP default, customer IdP advanced) · API key + end-user id | OAuth (NeuralTrust IdP) |
 | Server set | registries + models | registries + toolkit | registries + toolkit | catalog (lazy materialisation) + user installs |
 | Traffic | fallback, LB, smart routing | n/a | n/a | n/a |
-| Person | attribution header (optional) | none | per-user connections + Access rules | per-user connections + Access rules + self-service install / approvals |
+| Person | attribution header (optional) | none | per-user connections; Access rules when the identity is a platform user | per-user connections + Access rules + self-service install / approvals |
 | Who decides the set | admin | admin | admin (servers) + Access (who) | catalog + user (installs) + Access (who) |
 
 ## 4. Behaviour specification
@@ -125,7 +141,8 @@ Consumer
   registry_ids, model_policies, lb_config, fallback   (LLM)
   registry_ids, mcp.toolkit, mcp.fail_mode           (MCP)
   identity:
-    acts_for_users: bool          # MCP only; requires auth = oauth
+    acts_for_users: bool          # MCP only
+    source: platform | app        # platform ⇒ auth must be OAuth; app ⇒ API key + X-NeuralTrust-End-User
     end_user_header: bool         # LLM only; accept X-NeuralTrust-End-User for attribution
 ```
 
@@ -166,6 +183,85 @@ it as an opaque string (≤ 256 chars), stamps it into the request trace and
 telemetry as `end_user`, and exposes it to the rate limiter as an optional key.
 Nothing else reads it. Off by default.
 
+### 4.4 Authentication: what a bearer JWT from an external IdP must satisfy
+
+The gateway is a plain OAuth resource server. For any consumer whose auth is
+"External IdP (JWT)" — LLM, MCP-as-the-app, or MCP-for-users with the customer's
+IdP — a request is accepted when the token passes all of:
+
+1. signature against the issuer's JWKS, with an allowed algorithm;
+2. `iss` equals the configured issuer;
+3. `exp` / `nbf`;
+4. `aud` contains the configured audience;
+5. `scope` includes `required_scopes`, when any are configured;
+6. **`azp` (or `client_id`) is in `allowed_client_ids`**, when configured. *New.*
+   Without it, the only isolation between two applications of the same tenant is
+   the audience, and customers routinely register one audience for the whole
+   gateway; a token minted for app A would then open app B's consumer.
+
+No other claim is read for LLM or MCP-as-the-app: `groups`, `roles` and the like
+never select a registry or a model — that is the consumer's job. `sub` and `azp`
+are kept on the principal for audit, traces and (optionally) rate-limit keys.
+Only the MCP-for-users flavour reads `sub` and the groups claim, and there for
+Access, not routing.
+
+**Configuration, field by field** (what the auth form should ask):
+
+| Field | Recommendation |
+|---|---|
+| Issuer | Required; the only thing the customer types. JWKS, algorithms and endpoints come from `/.well-known/openid-configuration`. |
+| Audience | Required, one value, **proposed by us**: a fixed identifier per gateway (e.g. `https://<slug>.mcp.neuraltrust.ai`, or the default IdP's). Shown pre-filled and copyable: "register this as an API / app registration in your IdP and request tokens for it". |
+| Allowed client IDs | New; list of `azp` / `client_id` values. Required when one auth is shared by several consumers, optional for one-to-one. |
+| Required scopes | Optional, empty by default. A coarse scope only lets the IdP deny; fine-grained scopes would duplicate the consumer config. Note Entra client-credentials tokens for `api://<app>/.default` carry no `scp`, so requiring scopes would break them. |
+| Subject claim | Machines: `azp` / `client_id` when present, else `sub`. Automatic; Advanced only. |
+| Allowed algorithms | From discovery (RS256, ES256). Advanced. |
+| JWKS URL | Override for IdPs without discovery. Advanced. |
+| Session mode, userinfo URL, authorize / token URL, introspection | Interactive-flow fields. Hidden for LLM and MCP-as-the-app; shown only on the "External IdP (users)" flavour used by MCP-for-users, where userinfo and the groups claim mapping feed Access. |
+
+Auth types offered in the UI: **API key** (no config), **External IdP (JWT)**
+(Issuer, Audience, Allowed client IDs; Advanced as above), **External IdP (users)**
+(the same plus userinfo and groups claim; selectable only on MCP consumers with
+`acts_for_users` and `source = platform`), **mTLS** where it exists today. The
+current `oauth2` and `oidc` types are merged behind the first two; they may stay
+as two storage types until the cleanup.
+
+### 4.5 API-key consumers acting for end users (the Composio pattern)
+
+An application that authenticates with an API key can still let *its* users
+connect their own upstream accounts. Composio's quickstart is the reference:
+the developer's app holds one API key, identifies each end user by an opaque
+`user_id`, calls `authorize(user_id, "github")` to get a `redirect_url` it shows
+to that user, waits for the connection, and from then on tool calls made with
+that `user_id` run against that user's connected account.
+
+Mapping onto the gateway:
+
+- **Identity.** `identity.acts_for_users = true, source = app`. Every request
+  carries `X-NeuralTrust-End-User: <id>` (an opaque string, ≤ 256 chars). The
+  principal becomes `sub = app:<consumer_id>:<id>` — namespaced so it can never
+  collide with a platform user's `sub`. A request without the header on such a
+  consumer is rejected with a clear error; without the flag the header is ignored.
+- **Per-user connections.** Nothing new: the vault keys credentials by
+  `(gateway, sub, provider)`, the credential resolver already raises the
+  consent-required error with a connect URL when `sub` has no credential for a
+  forwarded-auth registry, and the connect page completes the upstream OAuth and
+  stores the token under that `sub`. The app forwards the connect URL to its user
+  exactly as Composio's `redirect_url`.
+- **Proactive link, Composio's `authorize()`.** So the app can offer "Connect
+  GitHub" before the first tool call: `POST /v1/gateways/{id}/consumers/{cid}/
+  connections/links {end_user, provider}` → `{connect_url, expires_at}`; and
+  `GET .../connections?end_user=` → per-provider status (`connected`,
+  `needs_reconnect`, `not_connected`), the equivalent of
+  `wait_for_connection()`. Both are authenticated with the consumer's API key.
+  They reuse `CreateServerTicket` / `Statuses` in `pkg/app/oauth/connect.go`.
+- **Access.** Not applied for `source = app`: the gateway cannot know who
+  `user_123` is. The set of servers is the consumer's set; who may use the app is
+  the app's problem. If an app supplies platform user ids (or emails), a later
+  option can map them and turn Access on; not in scope.
+- **Today's API-key MCP consumers.** An API key currently *is* the principal
+  (`sub = auth name`), so "connect" links one shared account per key. That stays
+  the behaviour when `acts_for_users` is off: it is the MCP-as-the-app case.
+
 ## 5. Gateway changes
 
 **Domain (`pkg/domain/consumer`)**
@@ -191,7 +287,15 @@ Nothing else reads it. Off by default.
   for custom consumers too.
 - Delete `pkg/app/mcp/role_scope.go`, `pkg/app/role/*`, `resolveRoleBased` in
   `pkg/app/routing/resolver.go`, `scopeByRoles` in the MCP handler.
-- Proxy: read `X-NeuralTrust-End-User` when enabled (attribution only).
+- Proxy: read `X-NeuralTrust-End-User` when enabled (attribution only on LLM;
+  principal namespace on MCP `source = app` consumers, §4.5).
+- Auth (`pkg/domain/auth`, `pkg/app/auth/oauth2_verifier.go` + OIDC verifier):
+  add `allowed_client_ids` to the OAuth2/OIDC config and check `azp` /
+  `client_id` against it (§4.4). Default subject for machine tokens: `azp` /
+  `client_id` when present.
+- Connections API for API-key consumers: `POST …/consumers/{cid}/connections/links`
+  and `GET …/consumers/{cid}/connections?end_user=` (§4.5), authenticated with the
+  consumer's API key on the MCP plane.
 
 **Admin API**
 - Consumer create/update bodies: drop `routing_mode`, `role_ids`; add
@@ -210,10 +314,16 @@ Nothing else reads it. Off by default.
 
 **Consumers**
 - Create panel and Routing tab: remove the Routing mode switch and the roles
-  multiselect. For MCP, add an **Identity** section with the single switch *Acts on
-  behalf of end users* (disabled with a hint when auth is API key) and a line
-  linking to Access: *"Who may use each server is managed in Access."* For LLM,
-  add *Accept end-user attribution header* with the header name shown.
+  multiselect. For MCP, add an **Identity** section with the switch *Acts on
+  behalf of end users* and, when on, the source: *Users sign in* (OAuth; line
+  linking to Access: *"Who may use each server is managed in Access."*) or *My
+  app identifies its users* (API key; shows the header name and the connections
+  endpoints with a snippet). For LLM, add *Accept end-user attribution header*
+  with the header name shown.
+- Auth forms (`features/identity`): collapse `oauth2` / `oidc` into "External IdP
+  (JWT)" and "External IdP (users)" per §4.4; Issuer with discovery, Audience
+  pre-filled with the gateway convention, Allowed client IDs; the rest under
+  Advanced. Interactive-flow fields only on the users flavour.
 - Connection details: an `acts_for_users` consumer shows the self-service connect
   page link (it already does for API-key MCP consumers) and notes that users sign in
   with their own account.
@@ -270,3 +380,8 @@ App: `features/identity` role components/actions/hooks, `routingMode`/`roleIds` 
   NeuralTrust IdP.
 - **Attribution header name.** `X-NeuralTrust-End-User` proposed; confirm against
   the existing header conventions in the proxy before shipping.
+- **Audience convention.** One fixed audience per gateway is proposed; confirm
+  whether the default IdP's audience can be reused so customers register a single
+  value for both the Store and their own consumers.
+- **App-supplied users and Access.** Left out on purpose; revisit if a customer
+  wants to map its `user_id`s to platform users.
