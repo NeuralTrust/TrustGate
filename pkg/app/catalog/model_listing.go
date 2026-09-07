@@ -29,44 +29,44 @@ type Verdict int
 
 const (
 	VerdictUnknown Verdict = iota
-	VerdictServes
+	VerdictListed
 	VerdictAbsent
 )
 
 const opaqueModelRefPrefix = "arn:"
 
-//go:generate mockery --name=ModelAvailability --dir=. --output=./mocks --filename=catalog_model_availability_mock.go --case=underscore --with-expecter
-type ModelAvailability interface {
-	Serves(ctx context.Context, providerCode, model string) Verdict
+//go:generate mockery --name=ModelListing --dir=. --output=./mocks --filename=catalog_model_listing_mock.go --case=underscore --with-expecter
+type ModelListing interface {
+	Lists(ctx context.Context, providerCode, model string) Verdict
 	InvalidateCache()
 }
 
-var _ ModelAvailability = (*modelAvailability)(nil)
+var _ ModelListing = (*modelListing)(nil)
 
-type providerListing struct {
+type listedModels struct {
 	slugs map[string]struct{}
 }
 
-type modelAvailability struct {
+type modelListing struct {
 	repo        domain.Repository
 	memoryCache *cache.TTLMap
 	sf          singleflight.Group
 	logger      *slog.Logger
 }
 
-func NewModelAvailability(
+func NewModelListing(
 	repo domain.Repository,
 	manager *cache.TTLMapManager,
 	logger *slog.Logger,
-) ModelAvailability {
-	return &modelAvailability{
+) ModelListing {
+	return &modelListing{
 		repo:        repo,
-		memoryCache: manager.GetTTLMap(cache.CatalogAvailabilityTTLName),
+		memoryCache: manager.GetTTLMap(cache.CatalogListingTTLName),
 		logger:      logger,
 	}
 }
 
-func (a *modelAvailability) Serves(ctx context.Context, providerCode, model string) Verdict {
+func (a *modelListing) Lists(ctx context.Context, providerCode, model string) Verdict {
 	if a == nil || a.repo == nil {
 		return VerdictUnknown
 	}
@@ -83,21 +83,21 @@ func (a *modelAvailability) Serves(ctx context.Context, providerCode, model stri
 		return VerdictUnknown
 	}
 	if _, found := listing.slugs[strings.ToLower(model)]; found {
-		return VerdictServes
+		return VerdictListed
 	}
 	for _, slug := range SlugCandidates(model) {
 		if _, found := listing.slugs[strings.ToLower(slug)]; found {
-			return VerdictServes
+			return VerdictListed
 		}
 	}
 	return VerdictAbsent
 }
 
-func (a *modelAvailability) InvalidateCache() {
+func (a *modelListing) InvalidateCache() {
 	a.memoryCache.Clear()
 }
 
-func (a *modelAvailability) listing(ctx context.Context, providerCode string) providerListing {
+func (a *modelListing) listing(ctx context.Context, providerCode string) listedModels {
 	if cached, ok := a.cached(providerCode); ok {
 		return cached
 	}
@@ -109,33 +109,33 @@ func (a *modelAvailability) listing(ctx context.Context, providerCode string) pr
 		a.memoryCache.Set(providerCode, listing)
 		return listing, nil
 	})
-	listing, ok := v.(providerListing)
+	listing, ok := v.(listedModels)
 	if !ok {
-		return providerListing{}
+		return listedModels{}
 	}
 	return listing
 }
 
-func (a *modelAvailability) cached(providerCode string) (providerListing, bool) {
+func (a *modelListing) cached(providerCode string) (listedModels, bool) {
 	cached, ok := a.memoryCache.Get(providerCode)
 	if !ok {
-		return providerListing{}, false
+		return listedModels{}, false
 	}
-	listing, ok := cached.(providerListing)
+	listing, ok := cached.(listedModels)
 	if !ok {
 		a.memoryCache.Delete(providerCode)
-		return providerListing{}, false
+		return listedModels{}, false
 	}
 	return listing, true
 }
 
-func (a *modelAvailability) load(ctx context.Context, providerCode string) providerListing {
+func (a *modelListing) load(ctx context.Context, providerCode string) listedModels {
 	models, err := a.repo.ListModelsByProviderCode(ctx, providerCode)
 	if err != nil {
-		a.logger.Warn("catalog availability lookup failed, routing will probe the registry chain",
+		a.logger.Warn("catalog listing lookup failed, routing will probe the registry chain",
 			slog.String("provider", providerCode),
 			slog.String("error", err.Error()))
-		return providerListing{}
+		return listedModels{}
 	}
 	slugs := make(map[string]struct{}, len(models)*2)
 	for _, model := range models {
@@ -146,7 +146,7 @@ func (a *modelAvailability) load(ctx context.Context, providerCode string) provi
 			slugs[strings.ToLower(slug)] = struct{}{}
 		}
 	}
-	return providerListing{slugs: slugs}
+	return listedModels{slugs: slugs}
 }
 
 func isOpaqueModelRef(model string) bool {

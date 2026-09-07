@@ -24,7 +24,7 @@ cases (Maisa, Noxus), and Noxus cannot inject the `@provider/` prefix workaround
 - Split the two questions the allow-list was answering: `Candidate.PolicyAllowsModel`
   keeps operator policy, `Candidate.DefersModelChoice` reports that no allow-list
   constrains the candidate.
-- Add `appcatalog.ModelAvailability`, a TTL-cached, singleflight-guarded verdict
+- Add `appcatalog.ModelListing`, a TTL-cached, singleflight-guarded verdict
   (`Serves` / `Absent` / `Unknown`) over the provider's catalog listing. Azure
   deployment names, OpenAI-compatible endpoints, Bedrock ARNs, an empty listing and a
   repository error all yield `Unknown`. `openai_compatible` never inherits OpenAI's
