@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -40,10 +41,99 @@ func (f *fakePreview) Preview(_ context.Context, _ ids.GatewayID, sub string) (*
 	return f.state, f.err
 }
 
+type fakePrincipalInstaller struct {
+	got *appstore.OnBehalfInstallRequest
+	res *appstore.InstallResult
+	err error
+}
+
+func (f *fakePrincipalInstaller) InstallFor(_ context.Context, in appstore.OnBehalfInstallRequest) (*appstore.InstallResult, error) {
+	f.got = &in
+	return f.res, f.err
+}
+
 func newPrincipalApp(p appstore.PrincipalPreview) *fiber.App {
+	return newPrincipalAppWith(p, nil)
+}
+
+func newPrincipalAppWith(p appstore.PrincipalPreview, installer appstore.PrincipalInstaller) *fiber.App {
 	app := fiber.New()
-	app.Get("/v1/gateways/:gateway_id/store/principal", storehttp.NewPrincipalHandler(p).Get)
+	h := storehttp.NewPrincipalHandler(p, installer)
+	app.Get("/v1/gateways/:gateway_id/store/principal", h.Get)
+	app.Post("/v1/gateways/:gateway_id/store/principal/installs", h.Install)
 	return app
+}
+
+func postJSON(t *testing.T, app *fiber.App, path, body string) *http.Response {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	return resp
+}
+
+func TestPrincipalHandler_Install_RunsAsThePrincipal(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	reg := ids.New[ids.RegistryKind]()
+	installer := &fakePrincipalInstaller{res: &appstore.InstallResult{
+		Code: "github", Name: "GitHub", Status: installationdomain.StatusPendingApproval, InstanceID: "inst-1", Pending: true,
+	}}
+	app := newPrincipalAppWith(&fakePreview{}, installer)
+	resp := postJSON(t, app, "/v1/gateways/"+gw.String()+"/store/principal/installs",
+		`{"principal_sub":"ana","code":"github","groups":["eng"],"instance_id":"`+reg.String()+`"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	if installer.got == nil || installer.got.PrincipalSub != "ana" || installer.got.Code != "github" || installer.got.RegistryID != reg || len(installer.got.Groups) != 1 {
+		t.Fatalf("request not forwarded: %+v", installer.got)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["pending"] != true || body["status"] != "pending_approval" || body["instance_id"] != "inst-1" || body["name"] != "GitHub" {
+		t.Fatalf("body: %v", body)
+	}
+}
+
+func TestPrincipalHandler_Install_ShapesInstanceChoicesAndErrors(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	reg := ids.New[ids.RegistryKind]()
+	installer := &fakePrincipalInstaller{res: &appstore.InstallResult{
+		Code: "snowflake", Name: "Snowflake", RequiresInstanceChoice: true,
+		InstanceChoices: []appstore.InstanceChoice{{RegistryID: reg, Name: "Snowflake (finance)"}},
+	}}
+	app := newPrincipalAppWith(&fakePreview{}, installer)
+	resp := postJSON(t, app, "/v1/gateways/"+gw.String()+"/store/principal/installs", `{"principal_sub":"ana","code":"snowflake"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	var body map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	choices := body["instance_choices"].([]any)
+	if body["requires_instance_choice"] != true || len(choices) != 1 || choices[0].(map[string]any)["registry_id"] != reg.String() {
+		t.Fatalf("body: %v", body)
+	}
+
+	// Validation: missing code, bad instance id.
+	if resp := postJSON(t, app, "/v1/gateways/"+gw.String()+"/store/principal/installs", `{"principal_sub":"ana"}`); resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("want 422 without code, got %d", resp.StatusCode)
+	}
+	if resp := postJSON(t, app, "/v1/gateways/"+gw.String()+"/store/principal/installs", `{"principal_sub":"ana","code":"x","instance_id":"nope"}`); resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("want 422 for a bad instance id, got %d", resp.StatusCode)
+	}
+	// A closed Store (level None) is a conflict, not a server error.
+	installer.err = appstore.ErrStoreClosed
+	if resp := postJSON(t, app, "/v1/gateways/"+gw.String()+"/store/principal/installs", `{"principal_sub":"ana","code":"x"}`); resp.StatusCode != http.StatusConflict {
+		t.Fatalf("want 409 for a closed store, got %d", resp.StatusCode)
+	}
+	// No installer wired on this plane.
+	if resp := postJSON(t, newPrincipalApp(&fakePreview{}), "/v1/gateways/"+gw.String()+"/store/principal/installs", `{"principal_sub":"ana","code":"x"}`); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("want 404 without an installer, got %d", resp.StatusCode)
+	}
 }
 
 func TestPrincipalHandler_RequiresSub(t *testing.T) {
