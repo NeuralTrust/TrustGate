@@ -112,24 +112,33 @@ func (d *RPCDispatcher) Dispatch(
 	return handler(ctx, dispatchRequest{consumer: consumer, baseURL: baseURL, params: params})
 }
 
+// emptySurfaceInsteadOfError reports whether a list method should answer with an
+// empty surface rather than fail: an upstream still awaiting the user's consent
+// is skipped (the connect page handles it, and the Store meta-tools must stay
+// reachable so the user can fix it), and the Store consumer — whose registries
+// are whatever the caller installed — has nothing to list when none is
+// installed or none is reachable. Every list method (tools, prompts, resources,
+// resource templates) degrades the same way so a client that lists all four
+// during initialization never sees one of them fail on a pending consent.
+func emptySurfaceInsteadOfError(consumer *appconsumer.RoutableConsumer, err error) bool {
+	var consentErr *ConsentRequiredError
+	if errors.As(err, &consentErr) {
+		return true
+	}
+	isStore := consumer != nil && consumer.Consumer != nil && consumerdomain.IsStoreConsumer(consumer.Consumer)
+	return isStore && (errors.Is(err, ErrNoMCPRegistries) || errors.Is(err, ErrUpstreamUnavailable))
+}
+
 func (d *RPCDispatcher) listTools(ctx context.Context, req dispatchRequest) (any, error) {
 	if err := d.checkRateLimit(ctx, req.consumer); err != nil {
 		return nil, err
 	}
-	isStore := req.consumer != nil && req.consumer.Consumer != nil && consumerdomain.IsStoreConsumer(req.consumer.Consumer)
 	tools, err := d.composer.ListTools(ctx, req.consumer)
 	if err != nil {
-		var consentErr *ConsentRequiredError
-		switch {
-		case isStore && errors.Is(err, ErrNoMCPRegistries):
-			tools = nil
-		case isStore && errors.Is(err, ErrUpstreamUnavailable):
-			tools = nil
-		case errors.As(err, &consentErr):
-			tools = nil
-		default:
+		if !emptySurfaceInsteadOfError(req.consumer, err) {
 			return nil, err
 		}
+		tools = nil
 	}
 	if tools == nil {
 		tools = []Tool{}
@@ -145,7 +154,7 @@ func (d *RPCDispatcher) listTools(ctx context.Context, req dispatchRequest) (any
 	if d.connections != nil && connectionToolPermitted(req.consumer) {
 		tools = appendGatewayTools(tools, d.connections.Definitions(ctx, req.consumer))
 	}
-	if d.store != nil && isStore {
+	if d.store != nil && req.consumer != nil && req.consumer.Consumer != nil && consumerdomain.IsStoreConsumer(req.consumer.Consumer) {
 		tools = appendGatewayTools(tools, d.store.Definitions(ctx, req.consumer))
 	}
 	result["tools"] = tools
@@ -208,7 +217,10 @@ func (d *RPCDispatcher) listResources(ctx context.Context, req dispatchRequest) 
 	}
 	resources, err := d.composer.ListResources(ctx, req.consumer)
 	if err != nil {
-		return nil, err
+		if !emptySurfaceInsteadOfError(req.consumer, err) {
+			return nil, err
+		}
+		resources = nil
 	}
 	if resources == nil {
 		resources = []Resource{}
@@ -222,7 +234,10 @@ func (d *RPCDispatcher) listResourceTemplates(ctx context.Context, req dispatchR
 	}
 	templates, err := d.composer.ListResourceTemplates(ctx, req.consumer)
 	if err != nil {
-		return nil, err
+		if !emptySurfaceInsteadOfError(req.consumer, err) {
+			return nil, err
+		}
+		templates = nil
 	}
 	if templates == nil {
 		templates = []ResourceTemplate{}
@@ -249,7 +264,10 @@ func (d *RPCDispatcher) listPrompts(ctx context.Context, req dispatchRequest) (a
 	}
 	prompts, err := d.composer.ListPrompts(ctx, req.consumer)
 	if err != nil {
-		return nil, err
+		if !emptySurfaceInsteadOfError(req.consumer, err) {
+			return nil, err
+		}
+		prompts = nil
 	}
 	if prompts == nil {
 		prompts = []Prompt{}
