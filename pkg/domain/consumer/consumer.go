@@ -74,6 +74,7 @@ type Consumer struct {
 	Fallback        *Fallback              `json:"fallback,omitempty"`
 	ModelPolicies   ModelPolicies          `json:"model_policies,omitempty"`
 	MCP             *MCPPolicy             `json:"mcp,omitempty"`
+	Identity        Identity               `json:"identity"`
 	CreatedAt       time.Time              `json:"created_at"`
 	UpdatedAt       time.Time              `json:"updated_at"`
 }
@@ -115,6 +116,7 @@ type CreateParams struct {
 	Fallback        *Fallback
 	ModelPolicies   ModelPolicies
 	MCP             *MCPPolicy
+	Identity        *Identity
 }
 
 func New(params CreateParams) (*Consumer, error) {
@@ -149,6 +151,9 @@ func New(params CreateParams) (*Consumer, error) {
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
+	if params.Identity != nil {
+		c.Identity = *params.Identity
+	}
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
@@ -170,6 +175,7 @@ type RehydrateParams struct {
 	Fallback        *Fallback
 	ModelPolicies   ModelPolicies
 	MCP             *MCPPolicy
+	Identity        Identity
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
@@ -190,6 +196,7 @@ func Rehydrate(params RehydrateParams) *Consumer {
 		Fallback:        params.Fallback,
 		ModelPolicies:   params.ModelPolicies,
 		MCP:             params.MCP,
+		Identity:        params.Identity,
 		CreatedAt:       params.CreatedAt,
 		UpdatedAt:       params.UpdatedAt,
 	}
@@ -216,6 +223,10 @@ func (c *Consumer) Validate() error {
 	}
 	if c.Type != TypeMCP && c.MCP != nil {
 		return fmt.Errorf("%w: mcp policy is only valid for MCP consumers", ErrInvalidType)
+	}
+	c.Identity.Normalize(c.Type)
+	if err := c.Identity.Validate(c.Type); err != nil {
+		return err
 	}
 	if err := validateUniqueIDs(c.RegistryIDs, ErrInvalidModelPolicy, "registry"); err != nil {
 		return err

@@ -40,6 +40,7 @@ type ConsumerResponse struct {
 	ModelPolicies   []ModelPolicyResponse    `json:"model_policies,omitempty"`
 	Toolkit         []ToolkitEntryResponse   `json:"toolkit,omitempty"`
 	FailMode        string                   `json:"fail_mode,omitempty"`
+	Identity        IdentityResponse         `json:"identity"`
 	CreatedAt       time.Time                `json:"created_at"`
 	UpdatedAt       time.Time                `json:"updated_at"`
 }
@@ -144,6 +145,7 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 		ModelPolicies:   fromModelPolicies(c.ModelPolicies),
 		Toolkit:         fromToolkit(c.Toolkit()),
 		FailMode:        string(c.FailMode()),
+		Identity:        fromIdentity(c.Identity),
 		CreatedAt:       c.CreatedAt,
 		UpdatedAt:       c.UpdatedAt,
 	}
@@ -278,5 +280,20 @@ func fromFallback(f *domain.Fallback) *FallbackResponse {
 			MaxTotalLatencyMs: f.Budget.MaxTotalLatency.Milliseconds(),
 		},
 		Chain: chain,
+	}
+}
+
+// IdentityResponse says who the consumer acts for.
+type IdentityResponse struct {
+	ActsForUsers  bool   `json:"acts_for_users"`
+	Source        string `json:"source,omitempty"`
+	EndUserHeader bool   `json:"end_user_header,omitempty"`
+}
+
+func fromIdentity(i domain.Identity) IdentityResponse {
+	return IdentityResponse{
+		ActsForUsers:  i.ActsForUsers,
+		Source:        string(i.Source),
+		EndUserHeader: i.EndUserHeader,
 	}
 }

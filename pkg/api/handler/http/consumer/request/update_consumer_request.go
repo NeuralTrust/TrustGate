@@ -36,6 +36,8 @@ type UpdateConsumerRequest struct {
 	ModelPolicies *[]ModelPolicyRequest     `json:"model_policies,omitempty"`
 	Toolkit       *[]ToolkitEntryRequest    `json:"toolkit,omitempty"`
 	FailMode      *string                   `json:"fail_mode,omitempty"`
+	// Identity replaces who the consumer acts for. Omit to keep it as it is.
+	Identity *IdentityRequest `json:"identity,omitempty"`
 }
 
 func (r UpdateConsumerRequest) Validate() error {

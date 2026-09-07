@@ -45,6 +45,8 @@ type UpdateInput struct {
 	ModelPolicies *domain.ModelPolicies
 	Toolkit       *domain.Toolkit
 	FailMode      *domain.FailMode
+	// Identity replaces who the consumer acts for. A nil value keeps it.
+	Identity *domain.Identity
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=consumer_updater_mock.go --case=underscore --with-expecter
@@ -100,6 +102,10 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 		existing.Type = *in.Type
 		existing.MCP = nil
 	}
+	previousIdentity := existing.Identity
+	if in.Identity != nil {
+		existing.Identity = *in.Identity
+	}
 	if in.LBConfig != nil {
 		resolveLBConfigSecrets(in.LBConfig, existing.LBConfig)
 		existing.LBConfig = in.LBConfig
@@ -133,7 +139,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 			return nil, err
 		}
 	}
-	if err := u.revalidateAuthsForTransition(ctx, existing, previousType); err != nil {
+	if err := u.revalidateAuthsForTransition(ctx, existing, previousType, previousIdentity); err != nil {
 		return nil, err
 	}
 	if err := u.repo.Update(ctx, existing, requestedRegistryBindings(existing, in.Registries)); err != nil {
@@ -161,9 +167,11 @@ func (u *updater) revalidateAuthsForTransition(
 	ctx context.Context,
 	c *domain.Consumer,
 	previousType domain.Type,
+	previousIdentity domain.Identity,
 ) error {
 	toMCP := c.Type == domain.TypeMCP && previousType != domain.TypeMCP
-	if !toMCP || len(c.AuthIDs) == 0 {
+	identityChanged := c.Identity != previousIdentity
+	if (!toMCP && !identityChanged) || len(c.AuthIDs) == 0 {
 		return nil
 	}
 	auths, err := u.authRepo.FindByIDs(ctx, c.GatewayID, c.AuthIDs)
@@ -175,7 +183,7 @@ func (u *updater) revalidateAuthsForTransition(
 			commonerrors.ErrConflict, len(c.AuthIDs), len(auths))
 	}
 	for _, au := range auths {
-		if err := domain.ValidateAuthType(c.Type, au.Type); err != nil {
+		if err := domain.ValidateAuth(c, au.Type); err != nil {
 			return err
 		}
 	}

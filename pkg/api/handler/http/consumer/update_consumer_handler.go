@@ -98,6 +98,7 @@ func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
 		ModelPolicies: modelPolicies,
 		Toolkit:       toolkit,
 		FailMode:      req.ToFailMode(),
+		Identity:      req.Identity.ToDomain(),
 	})
 	if err != nil {
 		return httpio.WriteError(c, err)
