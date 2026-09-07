@@ -22,6 +22,7 @@ import (
 
 	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
+	domaincatalog "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -204,6 +205,10 @@ func TestSingleConnectPage_UsesFocusedCardChrome(t *testing.T) {
 		`class="mark-tile nt"`,
 		`class="card-body"`,
 		`<h1 class="title">Connect your Linear account</h1>`,
+		`Issues, projects, cycles, and teams in Linear.`,
+		`class="eyebrow">Access requested<`,
+		`class="chip">read<`,
+		`class="note"`,
 		`class="card-foot"`,
 		`class="btn primary block"`,
 		`class="secured"`,
@@ -237,6 +242,41 @@ func TestSingleConnectPage_ConnectedStateLeadsWithStatus(t *testing.T) {
 	}
 	if !strings.Contains(body, `/oauth/disconnect/app.linear/mcp?ticket=tk`) {
 		t.Fatalf("connected page must offer disconnect, body:\n%s", body)
+	}
+	if !strings.Contains(body, `class="eyebrow">Access granted<`) {
+		t.Fatalf("connected page must label the access list as granted, body:\n%s", body)
+	}
+}
+
+func TestAccessSummary(t *testing.T) {
+	t.Parallel()
+	// Scopes are the authorization truth, so they win over the tool preview.
+	label, items, more := accessSummary(domaincatalog.MCPServer{
+		OAuth: &domaincatalog.MCPOAuth{Scopes: []string{"read", "write"}},
+		Tools: []domaincatalog.MCPTool{{Name: "search"}},
+	}, false)
+	if label != "Access requested" || len(items) != 2 || items[0] != "read" || more != 0 {
+		t.Fatalf("scopes must win: %q %v %d", label, items, more)
+	}
+	if label, _, _ := accessSummary(domaincatalog.MCPServer{
+		OAuth: &domaincatalog.MCPOAuth{Scopes: []string{"read"}},
+	}, true); label != "Access granted" {
+		t.Fatalf("a linked server reads as granted, got %q", label)
+	}
+
+	// Without scopes the advertised tools stand in, capped with a remainder.
+	tools := make([]domaincatalog.MCPTool, 0, 7)
+	for _, n := range []string{"a", "b", "c", "d", "e", "f", ""} {
+		tools = append(tools, domaincatalog.MCPTool{Name: n})
+	}
+	label, items, more = accessSummary(domaincatalog.MCPServer{Tools: tools}, false)
+	if label != "Tools the agent can call" || len(items) != maxAccessItems || more != 2 {
+		t.Fatalf("tool fallback must cap and count the rest: %q %v %d", label, items, more)
+	}
+
+	// A server the catalog knows nothing about renders no access block at all.
+	if label, items, more := accessSummary(domaincatalog.MCPServer{}, false); label != "" || items != nil || more != 0 {
+		t.Fatalf("an empty entry must produce no access block: %q %v %d", label, items, more)
 	}
 }
 
