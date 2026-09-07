@@ -90,7 +90,7 @@ func NewMetadataService(credentials appauth.CredentialFinder, paths appconsumer.
 }
 
 func (s *metadataService) ProtectedResource(ctx context.Context, baseURL, resource string) (*ProtectedResourceMetadata, error) {
-	auths, err := s.resourceAuths(ctx, resource)
+	auths, brokers, err := s.resourceAuths(ctx, resource)
 	if err != nil {
 		return nil, err
 	}
@@ -99,35 +99,38 @@ func (s *metadataService) ProtectedResource(ctx context.Context, baseURL, resour
 		BearerMethodsSupported: []string{"header"},
 		ScopesSupported:        scopesOf(auths),
 	}
-	if len(issuersOf(auths)) > 0 {
+	if len(issuersOf(brokers)) > 0 {
 		meta.AuthorizationServers = []string{baseURL}
 	}
 	return meta, nil
 }
 
-func (s *metadataService) resourceAuths(ctx context.Context, resource string) ([]*authdomain.Auth, error) {
+func (s *metadataService) resourceAuths(ctx context.Context, resource string) ([]*authdomain.Auth, []*authdomain.Auth, error) {
 	if s.paths != nil && resource != "" {
-		if u, err := url.Parse(resource); err == nil && u.Path != "" {
-			matches, err := s.paths.Match(ctx, u.Host, u.Path)
-			if err == nil && len(matches) > 0 {
-				providers, protected := pathOAuth2Auths(matches)
-				if len(providers) > 0 {
-					return providers, nil
+		if u, parseErr := url.Parse(resource); parseErr == nil && u.Path != "" {
+			matches, matchErr := s.paths.Match(ctx, u.Host, u.Path)
+			if matchErr == nil && len(matches) > 0 {
+				providers, protected, validateOnly := pathOAuth2Auths(matches)
+				if len(providers) > 0 || len(validateOnly) > 0 {
+					all := make([]*authdomain.Auth, 0, len(providers)+len(validateOnly))
+					all = append(all, providers...)
+					all = append(all, validateOnly...)
+					return all, providers, nil
 				}
 				// The resource pinned a consumer that authenticates with its own
 				// credential. Advertising the gateway's identity provider would
 				// send a client through a login the auth chain cannot honour.
 				if protected {
-					return nil, nil
+					return nil, nil, nil
 				}
 			}
 		}
 	}
 	auths, err := s.credentials.OAuth2Auths(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("oauth: load oauth2 auths: %w", err)
+		return nil, nil, fmt.Errorf("oauth: load oauth2 auths: %w", err)
 	}
-	return auths, nil
+	return auths, brokerCapableOf(auths), nil
 }
 
 func (s *metadataService) AuthorizationServer(ctx context.Context, baseURL string) (map[string]any, error) {
@@ -135,7 +138,7 @@ func (s *metadataService) AuthorizationServer(ctx context.Context, baseURL strin
 	if err != nil {
 		return nil, fmt.Errorf("oauth: load oauth2 auths: %w", err)
 	}
-	if len(issuersOf(auths)) == 0 {
+	if len(issuersOf(brokerCapableOf(auths))) == 0 {
 		return nil, ErrNoAuthorizationServer
 	}
 	doc := map[string]any{
@@ -293,6 +296,16 @@ func (s *metadataService) fetchJSON(ctx context.Context, url string) (map[string
 		return nil, err
 	}
 	return doc, nil
+}
+
+func brokerCapableOf(auths []*authdomain.Auth) []*authdomain.Auth {
+	out := make([]*authdomain.Auth, 0, len(auths))
+	for _, a := range auths {
+		if a.CanBrokerLogin() {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 func issuersOf(auths []*authdomain.Auth) []string {

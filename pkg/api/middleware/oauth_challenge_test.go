@@ -106,17 +106,20 @@ func TestOAuthChallengeOnDirectStatus401(t *testing.T) {
 	}
 }
 
-func TestOAuthChallengeUsesTriStateEligibility(t *testing.T) {
+func TestOAuthChallengeUsesTriStateMode(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name        string
-		eligibility any
-		want        bool
+		name             string
+		mode             any
+		wantResourceMeta bool
+		wantDiagnostic   bool
+		wantNoWWWAuthHdr bool
 	}{
-		{name: "unknown preserves challenge", want: true},
-		{name: "allowed challenges", eligibility: true, want: true},
-		{name: "disallowed suppresses challenge", eligibility: false},
+		{name: "unknown mode advertises", wantResourceMeta: true},
+		{name: "advertise points at resource metadata", mode: OAuthChallengeAdvertise, wantResourceMeta: true},
+		{name: "diagnostic explains the missing client", mode: OAuthChallengeDiagnostic, wantDiagnostic: true},
+		{name: "silent emits no challenge", mode: OAuthChallengeSilent, wantNoWWWAuthHdr: true},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -126,8 +129,8 @@ func TestOAuthChallengeUsesTriStateEligibility(t *testing.T) {
 			app := fiber.New()
 			app.Use(NewOAuthChallengeMiddleware().Middleware())
 			app.Post("/v1/mcp/dev", func(c *fiber.Ctx) error {
-				if tt.eligibility != nil {
-					c.Locals(OAuthChallengeAllowedLocal, tt.eligibility)
+				if tt.mode != nil {
+					c.Locals(OAuthChallengeModeLocal, tt.mode)
 				}
 				return fiber.NewError(fiber.StatusUnauthorized, "unauthenticated")
 			})
@@ -136,9 +139,21 @@ func TestOAuthChallengeUsesTriStateEligibility(t *testing.T) {
 			if err != nil {
 				t.Fatalf("app.Test: %v", err)
 			}
-			got := res.Header.Get(fiber.HeaderWWWAuthenticate) != ""
-			if got != tt.want {
-				t.Fatalf("challenge present = %t, want %t", got, tt.want)
+			if res.StatusCode != fiber.StatusUnauthorized {
+				t.Fatalf("expected 401, got %d", res.StatusCode)
+			}
+			challenge := res.Header.Get(fiber.HeaderWWWAuthenticate)
+			if got := strings.Contains(challenge, "resource_metadata="); got != tt.wantResourceMeta {
+				t.Fatalf("resource_metadata present = %t, want %t (challenge %q)", got, tt.wantResourceMeta, challenge)
+			}
+			if got := strings.Contains(challenge, `error="invalid_request"`); got != tt.wantDiagnostic {
+				t.Fatalf("diagnostic present = %t, want %t (challenge %q)", got, tt.wantDiagnostic, challenge)
+			}
+			if tt.wantDiagnostic && !strings.Contains(challenge, "client_id") {
+				t.Fatalf("expected the diagnostic to name the missing client_id, got %q", challenge)
+			}
+			if got := challenge == ""; got != tt.wantNoWWWAuthHdr {
+				t.Fatalf("empty challenge = %t, want %t (challenge %q)", got, tt.wantNoWWWAuthHdr, challenge)
 			}
 		})
 	}

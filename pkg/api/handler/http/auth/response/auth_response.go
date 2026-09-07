@@ -47,6 +47,7 @@ type OAuth2ConfigResponse struct {
 	Issuer           string   `json:"issuer"`
 	Audiences        []string `json:"audiences,omitempty"`
 	JWKSURL          string   `json:"jwks_url,omitempty"`
+	PublicKeys       []string `json:"public_keys,omitempty"`
 	IntrospectionURL string   `json:"introspection_url,omitempty"`
 	ClientID         string   `json:"client_id,omitempty"`
 	ClientSecret     string   `json:"client_secret,omitempty"`
@@ -104,6 +105,7 @@ func fromConfig(c domain.Config) ConfigResponse {
 			Issuer:           c.OAuth2.Issuer,
 			Audiences:        c.OAuth2.Audiences,
 			JWKSURL:          c.OAuth2.JWKSURL,
+			PublicKeys:       c.OAuth2.PublicKeys,
 			IntrospectionURL: c.OAuth2.IntrospectionURL,
 			ClientID:         c.OAuth2.ClientID,
 			ClientSecret:     secret.Mask(c.OAuth2.ClientSecret),

@@ -295,7 +295,9 @@ function AuthFormDialog({
   const [clientId, setClientId] = useState(o2?.client_id ?? "");
   const [clientSecret, setClientSecret] = useState("");
 
-  const [publicKeys, setPublicKeys] = useState((oidc?.public_keys ?? []).join("\n\n"));
+  const [publicKeys, setPublicKeys] = useState(
+    (o2?.public_keys ?? oidc?.public_keys ?? []).join("\n\n"),
+  );
 
   const [caCert, setCaCert] = useState(auth?.config.mtls?.ca_cert ?? "");
   const [commonNames, setCommonNames] = useState((auth?.config.mtls?.allowed_common_names ?? []).join(", "));
@@ -320,6 +322,7 @@ function AuthFormDialog({
         issuer,
         audiences: splitList(audiences),
         jwks_url: jwksUrl || undefined,
+        public_keys: splitPems(publicKeys),
         introspection_url: introspectionUrl || undefined,
         userinfo_url: userinfoUrl || undefined,
         authorize_url: authorizeUrl || undefined,
@@ -415,13 +418,23 @@ function AuthFormDialog({
                   <Input value={issuer} onChange={(e) => setIssuer(e.target.value)} placeholder="https://issuer.example.com" />
                 </Field>
                 <Grid2>
-                  <Field label="JWKS URL" hint="or introspection">
+                  <Field label="JWKS URL" hint="or introspection, or public keys">
                     <Input value={jwksUrl} onChange={(e) => setJwksUrl(e.target.value)} />
                   </Field>
                   <Field label="Introspection URL" hint="or JWKS">
                     <Input value={introspectionUrl} onChange={(e) => setIntrospectionUrl(e.target.value)} />
                   </Field>
                 </Grid2>
+                <Field label="Public keys (PEM)" hint="one or more, or use JWKS">
+                  <textarea
+                    value={publicKeys}
+                    onChange={(e) => setPublicKeys(e.target.value)}
+                    rows={5}
+                    spellCheck={false}
+                    className="w-full bg-surface-2 border border-border rounded-(--radius) px-3 py-2 text-[12px] font-mono text-fg placeholder:text-faint outline-none focus:border-accent/70 focus:ring-2 focus:ring-accent/20"
+                    placeholder="-----BEGIN PUBLIC KEY-----"
+                  />
+                </Field>
                 <Grid2>
                   <Field label="Audiences" hint="comma-separated">
                     <Input value={audiences} onChange={(e) => setAudiences(e.target.value)} />

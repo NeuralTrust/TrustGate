@@ -22,7 +22,23 @@ import (
 )
 
 const protectedResourceMetadataPath = "/.well-known/oauth-protected-resource"
-const OAuthChallengeAllowedLocal = "trustgate.oauth.challenge.allowed"
+
+// OAuthChallengeModeLocal is the request-local key for OAuthChallengeMode.
+const OAuthChallengeModeLocal = "trustgate.oauth.challenge.mode"
+
+// OAuthChallengeMode selects how a 401 response is challenged.
+type OAuthChallengeMode int
+
+const (
+	// OAuthChallengeAdvertise is the zero value, so a request whose mode was
+	// never recorded keeps advertising protected-resource metadata.
+	OAuthChallengeAdvertise OAuthChallengeMode = iota
+	OAuthChallengeDiagnostic
+	OAuthChallengeSilent
+)
+
+const missingBrokerClientDescription = "the identity provider configured for this resource has no pre-registered client_id, " +
+	"so this gateway cannot broker an interactive login; present an access token obtained directly from that identity provider"
 
 type OAuthChallengeMiddleware struct{}
 
@@ -33,16 +49,31 @@ func NewOAuthChallengeMiddleware() *OAuthChallengeMiddleware {
 func (m *OAuthChallengeMiddleware) Middleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		err := c.Next()
-		if isUnauthorized(c, err) && oauthChallengeAllowed(c) {
+		if !isUnauthorized(c, err) {
+			return err
+		}
+		switch oauthChallengeMode(c) {
+		case OAuthChallengeAdvertise:
 			c.Set(fiber.HeaderWWWAuthenticate, bearerChallenge(c))
+		case OAuthChallengeDiagnostic:
+			c.Set(fiber.HeaderWWWAuthenticate, diagnosticChallenge())
+		case OAuthChallengeSilent:
+			return err
 		}
 		return err
 	}
 }
 
-func oauthChallengeAllowed(c *fiber.Ctx) bool {
-	allowed, known := c.Locals(OAuthChallengeAllowedLocal).(bool)
-	return !known || allowed
+func oauthChallengeMode(c *fiber.Ctx) OAuthChallengeMode {
+	mode, known := c.Locals(OAuthChallengeModeLocal).(OAuthChallengeMode)
+	if !known {
+		return OAuthChallengeAdvertise
+	}
+	return mode
+}
+
+func diagnosticChallenge() string {
+	return `Bearer error="invalid_request", error_description="` + missingBrokerClientDescription + `"`
 }
 
 func bearerChallenge(c *fiber.Ctx) string {

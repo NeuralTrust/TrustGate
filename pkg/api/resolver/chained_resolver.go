@@ -19,8 +19,6 @@ import (
 
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
-	authdomain "github.com/NeuralTrust/TrustGate/pkg/domain/auth"
-	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/gofiber/fiber/v2"
 )
@@ -29,20 +27,17 @@ type ChainedIdentityResolver struct {
 	playground IdentityResolver
 	apiKey     IdentityResolver
 	oauth2     IdentityResolver
-	oidc       IdentityResolver
 }
 
 func NewIdentityResolver(
 	playground *PlaygroundIdentityResolver,
 	apiKey *APIKeyIdentityResolver,
 	oauth2 *OAuth2IdentityResolver,
-	oidc *OIDCIdentityResolver,
 ) IdentityResolver {
 	return ChainedIdentityResolver{
 		playground: playground,
 		apiKey:     apiKey,
 		oauth2:     oauth2,
-		oidc:       oidc,
 	}
 }
 
@@ -60,11 +55,5 @@ func (r ChainedIdentityResolver) Resolve(
 	if strings.TrimSpace(c.Get(fiber.HeaderAuthorization)) == "" {
 		return nil, ErrUnauthenticated
 	}
-	if rc != nil && rc.Consumer != nil && rc.Consumer.RoutingMode == consumerdomain.RoutingModeInline {
-		return r.oauth2.Resolve(c, gw, rc)
-	}
-	if hasAttachedAuthType(rc, authdomain.TypeOAuth2) && !hasAttachedAuthType(rc, authdomain.TypeOIDC) {
-		return nil, ErrForbidden
-	}
-	return r.oidc.Resolve(c, gw, rc)
+	return r.oauth2.Resolve(c, gw, rc)
 }

@@ -83,7 +83,7 @@ func provideAuthServices(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(appauth.NewOIDCFinder); err != nil {
+	if err := c.Provide(appauth.NewIdentityProviderFinder); err != nil {
 		return err
 	}
 	if err := c.Provide(appauth.NewOAuth2Verifier); err != nil {

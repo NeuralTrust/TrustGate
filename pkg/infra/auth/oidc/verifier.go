@@ -258,11 +258,12 @@ func hasAudience(actual []string, allowed []string) bool {
 }
 
 func subjectFromClaims(claims map[string]any, subjectClaim string) (string, error) {
+	subjectClaim = strings.TrimSpace(subjectClaim)
 	if subjectClaim == "" {
 		subjectClaim = "sub"
 	}
 	value, ok := claims[subjectClaim].(string)
-	if !ok || value == "" {
+	if !ok || strings.TrimSpace(value) == "" {
 		return "", fmt.Errorf("%w: subject", ErrInvalidToken)
 	}
 	return value, nil

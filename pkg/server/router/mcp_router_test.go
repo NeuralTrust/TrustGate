@@ -45,12 +45,12 @@ type routerOpsRecorder struct {
 	count   int
 }
 
-type challengeEligibilityMiddleware map[string]bool
+type challengeModeMiddleware map[string]middleware.OAuthChallengeMode
 
-func (m challengeEligibilityMiddleware) Middleware() fiber.Handler {
+func (m challengeModeMiddleware) Middleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		if allowed, ok := m[c.Path()]; ok {
-			c.Locals(middleware.OAuthChallengeAllowedLocal, allowed)
+		if mode, ok := m[c.Path()]; ok {
+			c.Locals(middleware.OAuthChallengeModeLocal, mode)
 		}
 		return c.Next()
 	}
@@ -113,9 +113,9 @@ func TestMCPRouterDispatch(t *testing.T) {
 		),
 		middleware.NewTransport(
 			middleware.NewOAuthChallengeMiddleware(),
-			challengeEligibilityMiddleware{
-				"/tools/mcp":         false,
-				"/oauth-enabled/mcp": true,
+			challengeModeMiddleware{
+				"/tools/mcp":         middleware.OAuthChallengeSilent,
+				"/oauth-enabled/mcp": middleware.OAuthChallengeAdvertise,
 			},
 		),
 		apihandler.NewHealthHandler(),

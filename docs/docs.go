@@ -3822,6 +3822,12 @@ const docTemplate = `{
                 "jwks_url": {
                     "type": "string"
                 },
+                "public_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "required_scopes": {
                     "type": "array",
                     "items": {
@@ -4029,6 +4035,12 @@ const docTemplate = `{
                 },
                 "jwks_url": {
                     "type": "string"
+                },
+                "public_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "required_scopes": {
                     "type": "array",
