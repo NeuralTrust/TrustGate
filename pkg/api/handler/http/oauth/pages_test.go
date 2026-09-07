@@ -232,8 +232,8 @@ func TestSingleConnectPage_ConnectedStateLeadsWithStatus(t *testing.T) {
 	if !strings.Contains(body, `<h1 class="title">Linear is connected</h1>`) {
 		t.Fatalf("connected page must lead with the connected headline, body:\n%s", body)
 	}
-	if !strings.Contains(body, `class="badge green"`) || !strings.Contains(body, "someone@example.com") {
-		t.Fatalf("connected page must show the status badge and account ref, body:\n%s", body)
+	if !strings.Contains(body, `class="account"`) || !strings.Contains(body, "someone@example.com") {
+		t.Fatalf("connected page must show the status chip and account ref, body:\n%s", body)
 	}
 	if !strings.Contains(body, `/oauth/disconnect/app.linear/mcp?ticket=tk`) {
 		t.Fatalf("connected page must offer disconnect, body:\n%s", body)
