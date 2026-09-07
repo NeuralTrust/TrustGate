@@ -40,6 +40,17 @@ const (
 	MCPSourceOpenAPI MCPSource = "openapi"
 )
 
+// MCPOrigin records who put a catalog registry on the shelf. Empty means an
+// admin created it by hand (the connect-from-catalog panel or a raw URL).
+type MCPOrigin string
+
+// MCPOriginStore marks a registry the gateway materialised itself from the
+// catalog — on a user's first self-service install, an approval, or an admin
+// binding the catalog server to a consumer. Such a registry carries only the
+// catalog's shared shape (no admin secrets), so the UI can present it as the
+// server's default instance rather than something an operator configured.
+const MCPOriginStore MCPOrigin = "store"
+
 type OpenAPITarget struct {
 	SpecURL string `json:"spec_url"`
 }
@@ -108,7 +119,11 @@ type MCPTarget struct {
 	// join key the UI uses to tell whether a catalog server is already
 	// connected, mirroring how an LLM registry stores its provider code. Empty
 	// for custom servers added by raw URL.
-	Code      string            `json:"code,omitempty"`
+	Code string `json:"code,omitempty"`
+	// Origin is set by the gateway when it materialises the registry from the
+	// catalog (MCPOriginStore); never accepted from a client and preserved
+	// across admin edits (see appregistry.applyMCPTargetUpdate).
+	Origin    MCPOrigin         `json:"origin,omitempty"`
 	Source    MCPSource         `json:"source,omitempty"`
 	URL       string            `json:"url,omitempty"`
 	Transport MCPTransport      `json:"transport,omitempty"`
