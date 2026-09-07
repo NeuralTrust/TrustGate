@@ -184,6 +184,62 @@ func TestConnectPage_UsesAppDesignTokens(t *testing.T) {
 	}
 }
 
+func TestSingleConnectPage_UsesFocusedCardChrome(t *testing.T) {
+	t.Parallel()
+	body := renderToString(t, func(c *fiber.Ctx) error {
+		return renderConnectPage(c, &appoauth.ConnectPage{
+			ConsumerPath: "/v1/mcp/dev",
+			Code:         "app.linear/mcp",
+			Providers: []appoauth.ProviderStatus{
+				{Provider: "app.linear/mcp", Code: "app.linear/mcp", Registry: "linear-mcp"},
+			},
+			ResumeURL: "cursor://anysphere.cursor-mcp/oauth/callback?code=abc",
+		}, "tk", "", mustMCPCatalog(t))
+	})
+	for _, want := range []string{
+		`<body class="dotted">`,
+		`class="card flush"`,
+		`class="card-hero"`,
+		`class="pair"`,
+		`class="mark-tile nt"`,
+		`class="card-body"`,
+		`<h1 class="title">Connect your Linear account</h1>`,
+		`class="card-foot"`,
+		`class="btn primary block"`,
+		`class="secured"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("focused connect page missing %q, body:\n%s", want, body)
+		}
+	}
+}
+
+func TestSingleConnectPage_ConnectedStateLeadsWithStatus(t *testing.T) {
+	t.Parallel()
+	body := renderToString(t, func(c *fiber.Ctx) error {
+		return renderConnectPage(c, &appoauth.ConnectPage{
+			ConsumerPath: "/v1/mcp/dev",
+			Code:         "app.linear/mcp",
+			Providers: []appoauth.ProviderStatus{{
+				Provider:   "app.linear/mcp",
+				Code:       "app.linear/mcp",
+				Registry:   "linear-mcp",
+				Linked:     true,
+				AccountRef: "someone@example.com",
+			}},
+		}, "tk", "", mustMCPCatalog(t))
+	})
+	if !strings.Contains(body, `<h1 class="title">Linear is connected</h1>`) {
+		t.Fatalf("connected page must lead with the connected headline, body:\n%s", body)
+	}
+	if !strings.Contains(body, `class="badge green"`) || !strings.Contains(body, "someone@example.com") {
+		t.Fatalf("connected page must show the status badge and account ref, body:\n%s", body)
+	}
+	if !strings.Contains(body, `/oauth/disconnect/app.linear/mcp?ticket=tk`) {
+		t.Fatalf("connected page must offer disconnect, body:\n%s", body)
+	}
+}
+
 func TestConnectPage_RendersCatalogLogo(t *testing.T) {
 	t.Parallel()
 	body := renderToString(t, func(c *fiber.Ctx) error {
