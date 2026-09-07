@@ -66,11 +66,15 @@ type ConnectStore interface {
 }
 
 type ProviderStatus struct {
-	Provider       string
-	Registry       string
-	Code           string
-	Linked         bool
-	AccountRef     string
+	Provider   string
+	Registry   string
+	Code       string
+	Linked     bool
+	AccountRef string
+	// Scopes are the scopes the upstream actually granted, as recorded on the
+	// stored credential. Empty when nothing is linked, or when the provider's
+	// token response omitted "scope" — it is never the catalog's declaration.
+	Scopes         []string
 	ExpiresAt      time.Time
 	NeedsReconnect bool
 }
