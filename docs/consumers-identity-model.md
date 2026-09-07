@@ -1,6 +1,6 @@
 # Consumers & identity — target model
 
-Status: design (pre-implementation) · Owner: victor.garcia@neuraltrust.ai · Date: 2026-09-07
+Status: gateway side implemented (see §10) · app side pending · Owner: victor.garcia@neuraltrust.ai · Date: 2026-09-07
 
 Companion to `plan-b-mcp-store-and-identity.md`, which built the Store. This memo
 answers the question that memo left open: now that people are served by the
@@ -385,3 +385,44 @@ App: `features/identity` role components/actions/hooks, `routingMode`/`roleIds` 
   value for both the Store and their own consumers.
 - **App-supplied users and Access.** Left out on purpose; revisit if a customer
   wants to map its `user_id`s to platform users.
+
+## 10. Implementation status (gateway)
+
+Shipped on `claude/composio-mcp-gateway-auth-tyd2z1`, in this order:
+
+1. **Roles removed** (§8). `routing_mode`, `role_ids`, the roles admin API, the
+   role scoper, the roles snapshot slice and the `roles` / `role_registry` /
+   `consumer_role` tables are gone (migration `20260909120000`). Every consumer
+   routes inline. Bearer tokens resolve through OIDC only when the consumer
+   carries OIDC auths and no OAuth2 auth.
+2. **Consumer identity** (§4.1, §4.2). `identity: {acts_for_users, source,
+   end_user_header}` on the consumer (migration `20260909130000`). The Store
+   scoper scopes any `acts_for_users` + `source = platform` consumer over its own
+   registries with the live Access mode (All / Selected / None); a
+   hand-configured server without a catalog code stays exposed under Selected
+   since grants key on the code. `ValidateAuth` enforces the credential shape
+   per identity (platform users → oauth2 or the built-in IdP; app users → api_key
+   or mtls). The Store consumer is `acts_for_users = true, source = platform`.
+3. **Auth binding** (§4.4 item 6, generalised). `auth_binding:
+   {allowed_client_ids, allowed_certificate_subjects}` on the consumer
+   (migration `20260909140000`), enforced after consumer resolution on the proxy
+   plane (oauth2 / oidc: `azp` else `client_id`) and the MCP plane (JWT,
+   introspection, mTLS common name or SAN). This is the per-consumer half of
+   "trust anchors live in gateway Settings, keys stay per consumer": the anchor
+   verifies, the binding says which application may enter.
+4. **App-identified end users** (§4.5) and **LLM attribution** (§4.3). On an
+   MCP consumer with `source = app`, `X-NeuralTrust-End-User` is required; the
+   request runs as `app:<consumer_id>:<end_user>`, so the vault, the connect
+   flow and the surface watcher are per end user without touching Access. The
+   connections API lives on the MCP plane next to the consumer, authenticated
+   with its API key: `POST /{slug}/connections/links {end_user, provider?}` →
+   `{connect_url, ticket, expires_at}` and `GET /{slug}/connections?end_user=`
+   → per-server `connected | needs_reconnect | not_connected`. An LLM consumer
+   with `end_user_header` records the header as `end_user` in traces and
+   telemetry (`trustgate.end_user`).
+
+Not done on the gateway: merging the `oauth2` / `oidc` storage types behind the
+two UI flavours (§4.4), and moving the trust-anchor forms to gateway Settings —
+that is presentation; the gateway already keeps auths at gateway level and
+binds them per consumer. Resolved open questions: the attribution header is
+`X-NeuralTrust-End-User`; app-supplied users stay outside Access.

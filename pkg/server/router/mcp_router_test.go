@@ -127,6 +127,7 @@ func TestMCPRouterDispatch(t *testing.T) {
 		new(oauthhttp.CallbackHandler),
 		new(oauthhttp.TokenHandler),
 		apiKeyHandler,
+		nil,
 		connectHandler,
 		oauthhttp.NewConfigureHandler(nil),
 		new(oauthhttp.JWKSHandler),

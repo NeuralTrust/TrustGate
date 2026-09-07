@@ -940,6 +940,55 @@ definitions:
       message:
         type: string
     type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_oauth.EndUserConnectionResponse:
+    description: EndUserConnectionResponse is one upstream connection state of an
+      end user.
+    properties:
+      account_ref:
+        type: string
+      code:
+        type: string
+      expires_at:
+        type: string
+      provider:
+        type: string
+      registry:
+        type: string
+      status:
+        description: connected | needs_reconnect | not_connected
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_oauth.EndUserConnectionsResponse:
+    description: EndUserConnectionsResponse lists an end user's connection states.
+    properties:
+      connections:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_oauth.EndUserConnectionResponse'
+        type: array
+      end_user:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_oauth.EndUserLinkRequest:
+    description: EndUserLinkRequest names the end user (and optionally the server)
+      to link.
+    properties:
+      end_user:
+        type: string
+      provider:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_api_handler_http_oauth.EndUserLinkResponse:
+    description: EndUserLinkResponse is the link the application shows its user.
+    properties:
+      connect_url:
+        type: string
+      expires_at:
+        type: string
+      provider:
+        type: string
+      ticket:
+        type: string
+    type: object
   github_com_NeuralTrust_TrustGate_pkg_api_handler_http_policy_request.CreatePolicyRequest:
     properties:
       description:
@@ -4480,6 +4529,91 @@ paths:
       summary: Proxy chat completion
       tags:
       - proxy
+  /{slug}/connections:
+    get:
+      description: For an MCP consumer whose application identifies its end users
+        (identity.source = app). Reports, per connectable server, whether the named
+        end user is connected, needs to reconnect, or has not connected. Authenticated
+        with the consumer's API key.
+      parameters:
+      - description: Consumer slug
+        in: path
+        name: slug
+        required: true
+        type: string
+      - description: End-user id the application uses
+        in: query
+        name: end_user
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        '200':
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_oauth.EndUserConnectionsResponse'
+        '400':
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        '401':
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        '409':
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      summary: Read an application's end-user connection states
+      tags:
+      - connections
+  /{slug}/connections/links:
+    post:
+      consumes:
+      - application/json
+      description: For an MCP consumer whose application identifies its end users
+        (identity.source = app). Returns the URL the application shows that user to
+        connect their own account on one of the consumer's servers (or on any of them
+        when provider is omitted). Authenticated with the consumer's API key.
+      parameters:
+      - description: Consumer slug
+        in: path
+        name: slug
+        required: true
+        type: string
+      - description: End user to link
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_oauth.EndUserLinkRequest'
+      produces:
+      - application/json
+      responses:
+        '201':
+          description: Created
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_oauth.EndUserLinkResponse'
+        '400':
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        '401':
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        '409':
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+        '429':
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody'
+      summary: Mint a connect link for an application's end user
+      tags:
+      - connections
 securityDefinitions:
   BearerAuth:
     in: header

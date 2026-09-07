@@ -123,6 +123,9 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(provideAPIKeyConnectService); err != nil {
 		return err
 	}
+	if err := c.Provide(provideEndUserConnectionsService); err != nil {
+		return err
+	}
 	if err := c.Provide(func(
 		exchanger sts.Exchanger,
 		vault vaultdomain.Repository,
@@ -429,4 +432,13 @@ func MCPVaultRedis(c *container.Container) error {
 		vaultrepo.WarnIfVolatile(context.Background(), cc.RedisClient(), logger)
 		return vaultrepo.NewRedisRepository(cc.RedisClient(), cipher)
 	})
+}
+
+func provideEndUserConnectionsService(
+	apiKeys appauth.APIKeyFinder,
+	consumers appconsumer.DataFinder,
+	connect appoauth.ConnectService,
+	limiter appoauth.ConnectAttemptLimiter,
+) appoauth.EndUserConnectionsService {
+	return appoauth.NewEndUserConnectionsService(apiKeys, consumers, connect, limiter)
 }
