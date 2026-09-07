@@ -167,9 +167,9 @@ func TestConnectPage_UsesAppDesignTokens(t *testing.T) {
 	for _, want := range []string{
 		`family=Inter`,
 		`font-family:var(--font-sans)`,
-		`--bg-canvas:#03020f`,
+		`--bg-canvas:#f6f6f9`,
 		`--brand:#9053ff`,
-		`--badge-green:#00fe18`,
+		`--badge-green:#00b211`,
 		`font-size:1.125rem;line-height:1.75rem`,
 		`class="btn secondary"`,
 		`class="btn primary"`,
@@ -185,11 +185,10 @@ func TestConnectPage_UsesAppDesignTokens(t *testing.T) {
 	}
 }
 
-func TestPages_FollowTheSystemTheme(t *testing.T) {
+func TestPages_AreLightOnly(t *testing.T) {
 	t.Parallel()
-	// These are standalone hosted pages, not app surfaces, so they ship both
-	// palettes and let prefers-color-scheme pick — never the app shell's
-	// dark-forced one.
+	// These are standalone hosted pages, not app surfaces: one light palette,
+	// no dark ramp and no forced theme class from the app shell.
 	body := renderToString(t, func(c *fiber.Ctx) error {
 		return renderConnectPage(c, &appoauth.ConnectPage{
 			ConsumerPath: "/v1/mcp/dev",
@@ -202,16 +201,23 @@ func TestPages_FollowTheSystemTheme(t *testing.T) {
 	for _, want := range []string{
 		`color-scheme:light`,
 		`--bg-canvas:#f6f6f9`,
-		`@media (prefers-color-scheme:dark)`,
-		`--bg-canvas:#03020f`,
+		`--card-bg:#fff`,
+		`--fg-title:#1a1d21`,
 		`--brand:#9053ff`,
 	} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("page must ship both palettes, missing %q", want)
+			t.Fatalf("page must use the light palette, missing %q", want)
 		}
 	}
-	if strings.Contains(body, `class="dark"`) {
-		t.Fatalf("pages must not force the dark palette, body:\n%s", body)
+	for _, unwanted := range []string{
+		`prefers-color-scheme`,
+		`color-scheme:dark`,
+		`#03020f`,
+		`class="dark"`,
+	} {
+		if strings.Contains(body, unwanted) {
+			t.Fatalf("page must carry no dark palette, found %q", unwanted)
+		}
 	}
 }
 
