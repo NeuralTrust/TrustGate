@@ -35,16 +35,21 @@ func attrsOf(rec otellog.Record) map[string]attribute.Value {
 	return m
 }
 
+var savingsUsd = events.DecimalFloat(0.02)
+
 func fullEvent() *events.Event {
 	return &events.Event{
-		SchemaVersion: events.SchemaVersion,
-		TraceID:       "trace-123",
-		GatewayID:     "gw-1",
-		TenantID:        "team-1",
-		OccurredOn:    1_700_000_000_000,
-		Consumer:      events.Consumer{ID: "c-1", Name: "alice"},
-		SessionID:     "sess-1",
-		Status:        events.Status{Code: 200},
+		SchemaVersion:    events.SchemaVersion,
+		TraceID:          "trace-123",
+		GatewayID:        "gw-1",
+		TenantID:         "team-1",
+		OccurredOn:       1_700_000_000_000,
+		Consumer:         events.Consumer{ID: "c-1", Name: "alice"},
+		PrincipalSubject: "user-42",
+		PrincipalMethod:  "jwt",
+		PrincipalEmail:   "ada@example.com",
+		SessionID:        "sess-1",
+		Status:           events.Status{Code: 200},
 		Request: events.Request{
 			Method:         "POST",
 			Path:           "/v1/chat/completions",
@@ -61,13 +66,16 @@ func fullEvent() *events.Event {
 			Body:         strptr("hello world"),
 		},
 		Usage: &events.Usage{
-			PromptTokens:          10,
-			CompletionTokens:      5,
-			TotalTokens:           15,
-			CachedInputTokens:     2,
-			ReasoningOutputTokens: 1,
+			PromptTokens:            10,
+			CompletionTokens:        5,
+			TotalTokens:             15,
+			CachedInputTokens:       2,
+			CacheWriteInputTokens:   3,
+			CacheWrite1hInputTokens: 4,
+			ToolUseInputTokens:      6,
+			ReasoningOutputTokens:   1,
 		},
-		Cost:    &events.Cost{PromptUsd: events.DecimalFloat(0.002), CompletionUsd: events.DecimalFloat(0.008), TotalUsd: events.DecimalFloat(0.01), Currency: "USD"},
+		Cost:    &events.Cost{PromptUsd: events.DecimalFloat(0.002), CompletionUsd: events.DecimalFloat(0.008), TotalUsd: events.DecimalFloat(0.01), SavingsUsd: &savingsUsd, Currency: "USD"},
 		Latency: events.Latency{TotalMs: 120, ProviderMs: 100, PoliciesMs: 14, GatewayMs: 6},
 		Attempts: []events.Attempt{
 			{Provider: "openai", Attempt: 1, StatusCode: 200},
@@ -104,9 +112,18 @@ func TestEventToRecord_StandardAndProprietaryCoexist(t *testing.T) {
 	assert.Equal(t, "team-1", attrs["trustgate.tenant_id"].AsString())
 	assert.Equal(t, "c-1", attrs["trustgate.consumer.id"].AsString())
 	assert.Equal(t, "alice", attrs["trustgate.consumer.name"].AsString())
+	assert.Equal(t, "user-42", attrs["trustgate.principal.subject"].AsString())
+	assert.Equal(t, "jwt", attrs["trustgate.principal.method"].AsString())
+	assert.Equal(t, "ada@example.com", attrs["trustgate.principal.email"].AsString())
 	assert.InDelta(t, 0.01, attrs["trustgate.cost.total_usd"].AsFloat64(), 1e-9)
 	assert.Equal(t, "USD", attrs["trustgate.cost.currency"].AsString())
+	assert.InDelta(t, 0.02, attrs["trustgate.cost.savings_usd"].AsFloat64(), 1e-9)
 	assert.Equal(t, int64(15), attrs["trustgate.usage.total_tokens"].AsInt64())
+	assert.Equal(t, int64(2), attrs["trustgate.usage.cached_input_tokens"].AsInt64())
+	assert.Equal(t, int64(3), attrs["trustgate.usage.cache_write_input_tokens"].AsInt64())
+	assert.Equal(t, int64(4), attrs["trustgate.usage.cache_write_1h_input_tokens"].AsInt64())
+	assert.Equal(t, int64(6), attrs["trustgate.usage.tool_use_input_tokens"].AsInt64())
+	assert.Equal(t, int64(1), attrs["trustgate.usage.reasoning_output_tokens"].AsInt64())
 	assert.Equal(t, int64(120), attrs["trustgate.latency.total_ms"].AsInt64())
 	assert.Equal(t, int64(100), attrs["trustgate.latency.provider_ms"].AsInt64())
 	assert.Equal(t, int64(14), attrs["trustgate.latency.policies_ms"].AsInt64())
@@ -214,4 +231,71 @@ func TestEventToRecord_Nil(t *testing.T) {
 	t.Parallel()
 	rec := eventToRecord(nil)
 	assert.Equal(t, "", rec.EventName())
+}
+
+func TestEventToRecord_OmitsSavingsWhenAbsent(t *testing.T) {
+	t.Parallel()
+	evt := fullEvent()
+	evt.Cost.SavingsUsd = nil
+
+	attrs := attrsOf(eventToRecord(evt))
+
+	_, hasSavings := attrs["trustgate.cost.savings_usd"]
+	assert.False(t, hasSavings)
+	_, hasCost := attrs["trustgate.cost.total_usd"]
+	assert.True(t, hasCost)
+}
+
+func TestEventToRecord_EmitsRetentionExpiry(t *testing.T) {
+	evt := fullEvent()
+	evt.Retention = &events.Retention{Plan: "standard", ExpiresAt: 1_702_592_000_000}
+
+	attrs := attrsOf(eventToRecord(evt))
+
+	assert.Equal(t, int64(1_702_592_000_000), attrs["trustgate.retention.expires_at"].AsInt64())
+	assert.Equal(t, "standard", attrs["trustgate.retention.plan"].AsString())
+}
+
+// The raw stream lands in its own table, which needs the same expiry to key a TTL on.
+func TestRawEventToRecord_EmitsRetentionExpiry(t *testing.T) {
+	evt := fullEvent()
+	evt.Retention = &events.Retention{Plan: "free", ExpiresAt: 1_700_604_800_000}
+
+	attrs := attrsOf(rawEventToRecord(evt))
+
+	assert.Equal(t, int64(1_700_604_800_000), attrs["trustgate.retention.expires_at"].AsInt64())
+	assert.Equal(t, "free", attrs["trustgate.retention.plan"].AsString())
+}
+
+// An unstamped gateway must emit nothing rather than an expiry nobody set: the
+// sink's own fallback is the correct authority, and a zero would read as expired.
+func TestEventToRecord_OmitsRetentionWhenUnstamped(t *testing.T) {
+	for name, retention := range map[string]*events.Retention{
+		"absent":      nil,
+		"zero expiry": {Plan: "free", ExpiresAt: 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			evt := fullEvent()
+			evt.Retention = retention
+
+			for class, attrs := range map[string]map[string]attribute.Value{
+				"metadata": attrsOf(eventToRecord(evt)),
+				"raw":      attrsOf(rawEventToRecord(evt)),
+			} {
+				_, hasExpiry := attrs["trustgate.retention.expires_at"]
+				assert.False(t, hasExpiry, "%s class must not carry an expiry", class)
+				_, hasPlan := attrs["trustgate.retention.plan"]
+				assert.False(t, hasPlan, "%s class must not carry a plan", class)
+			}
+		})
+	}
+}
+
+// SensibleView whitelists fields by hand, so retention has to be named there or the
+// raw stream silently loses it.
+func TestSensibleView_CarriesRetention(t *testing.T) {
+	evt := fullEvent()
+	evt.Retention = &events.Retention{Plan: "enterprise", ExpiresAt: 1_731_536_000_000}
+
+	assert.Equal(t, evt.Retention, evt.SensibleView().Retention)
 }

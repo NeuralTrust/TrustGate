@@ -36,8 +36,10 @@ type Server struct {
 }
 
 // NewServer builds the control-plane ConfigSync gRPC listener with TLS (when
-// configured), the auth interceptors, and keepalive enforcement.
-func NewServer(cfg config.ConfigSyncConfig, svc snapshotpb.ConfigSyncServer, auth *AuthInterceptor, logger *slog.Logger) (*Server, error) {
+// configured), the auth interceptors, and keepalive enforcement. The optional
+// installations service, when non-nil, is registered on the same listener so the
+// data plane persists Store installs over the connection it already holds.
+func NewServer(cfg config.ConfigSyncConfig, svc snapshotpb.ConfigSyncServer, installations snapshotpb.StoreInstallationsServer, auth *AuthInterceptor, logger *slog.Logger) (*Server, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -66,6 +68,9 @@ func NewServer(cfg config.ConfigSyncConfig, svc snapshotpb.ConfigSyncServer, aut
 	}
 	gsrv := grpc.NewServer(opts...)
 	snapshotpb.RegisterConfigSyncServer(gsrv, svc)
+	if installations != nil {
+		snapshotpb.RegisterStoreInstallationsServer(gsrv, installations)
+	}
 	return &Server{srv: gsrv, lis: lis, logger: logger}, nil
 }
 

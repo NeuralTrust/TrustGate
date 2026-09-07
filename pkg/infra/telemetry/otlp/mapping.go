@@ -59,14 +59,18 @@ const (
 	attrMCPUpstreamStatus    = "trustgate.mcp.upstream_status"
 	attrMCPUpstreamLatencyMs = "trustgate.mcp.upstream_latency_ms"
 	attrMCPRPCErrorCode      = "trustgate.mcp.rpc_error_code"
+	attrMCPAccountRef        = "trustgate.mcp.account_ref"
 	attrStatusOutcome        = "trustgate.status.outcome"
 	attrStatusReason         = "trustgate.status.reason"
 	attrStatusIsTimeout      = "trustgate.status.is_timeout"
 	attrTraceID              = "trustgate.trace_id"
 	attrGatewayID            = "trustgate.gateway_id"
-	attrTenantID               = "trustgate.tenant_id"
+	attrTenantID             = "trustgate.tenant_id"
 	attrConsumerID           = "trustgate.consumer.id"
 	attrConsumerName         = "trustgate.consumer.name"
+	attrPrincipalSubject     = "trustgate.principal.subject"
+	attrPrincipalMethod      = "trustgate.principal.method"
+	attrPrincipalEmail       = "trustgate.principal.email"
 	attrSessionID            = "trustgate.session_id"
 	attrTurnID               = "trustgate.turn_id"
 	attrIP                   = "trustgate.ip"
@@ -74,11 +78,15 @@ const (
 	attrModelLabel           = "trustgate.model_label"
 	attrUsageTotalTokens     = "trustgate.usage.total_tokens"
 	attrUsageCachedInput     = "trustgate.usage.cached_input_tokens"
+	attrUsageCacheWrite      = "trustgate.usage.cache_write_input_tokens"
+	attrUsageCacheWrite1h    = "trustgate.usage.cache_write_1h_input_tokens"
+	attrUsageToolUseInput    = "trustgate.usage.tool_use_input_tokens"
 	attrUsageReasoningOutput = "trustgate.usage.reasoning_output_tokens"
 	attrCostTotalUsd         = "trustgate.cost.total_usd"
 	attrCostPromptUsd        = "trustgate.cost.prompt_usd"
 	attrCostCompletionUsd    = "trustgate.cost.completion_usd"
 	attrCostCurrency         = "trustgate.cost.currency"
+	attrCostSavingsUsd       = "trustgate.cost.savings_usd"
 	attrLatencyTotalMs       = "trustgate.latency.total_ms"
 	attrLatencyProviderMs    = "trustgate.latency.provider_ms"
 	attrLatencyPoliciesMs    = "trustgate.latency.policies_ms"
@@ -88,6 +96,8 @@ const (
 	attrPolicyChain          = "trustgate.policy_chain"
 	attrAttempts             = "trustgate.attempts"
 	attrAttemptsCount        = "trustgate.attempts.count"
+	attrRetentionExpiresAt   = "trustgate.retention.expires_at"
+	attrRetentionPlan        = "trustgate.retention.plan"
 	attrRequestBody          = "trustgate.request.body"
 	attrResponseBody         = "trustgate.response.body"
 )
@@ -136,6 +146,15 @@ func eventToRecord(evt *events.Event) otellog.Record {
 		if evt.Usage.CachedInputTokens > 0 {
 			attrs = append(attrs, attribute.Int(attrUsageCachedInput, evt.Usage.CachedInputTokens))
 		}
+		if evt.Usage.CacheWriteInputTokens > 0 {
+			attrs = append(attrs, attribute.Int(attrUsageCacheWrite, evt.Usage.CacheWriteInputTokens))
+		}
+		if evt.Usage.CacheWrite1hInputTokens > 0 {
+			attrs = append(attrs, attribute.Int(attrUsageCacheWrite1h, evt.Usage.CacheWrite1hInputTokens))
+		}
+		if evt.Usage.ToolUseInputTokens > 0 {
+			attrs = append(attrs, attribute.Int(attrUsageToolUseInput, evt.Usage.ToolUseInputTokens))
+		}
 		if evt.Usage.ReasoningOutputTokens > 0 {
 			attrs = append(attrs, attribute.Int(attrUsageReasoningOutput, evt.Usage.ReasoningOutputTokens))
 		}
@@ -167,12 +186,16 @@ func eventToRecord(evt *events.Event) otellog.Record {
 		if evt.MCP.RPCErrorCode != 0 {
 			attrs = append(attrs, attribute.Int(attrMCPRPCErrorCode, evt.MCP.RPCErrorCode))
 		}
+		appendStr(attrMCPAccountRef, evt.MCP.AccountRef)
 	}
 	appendStr(attrTraceID, evt.TraceID)
 	appendStr(attrGatewayID, evt.GatewayID)
 	appendStr(attrTenantID, evt.TenantID)
 	appendStr(attrConsumerID, evt.Consumer.ID)
 	appendStr(attrConsumerName, evt.Consumer.Name)
+	appendStr(attrPrincipalSubject, evt.PrincipalSubject)
+	appendStr(attrPrincipalMethod, evt.PrincipalMethod)
+	appendStr(attrPrincipalEmail, evt.PrincipalEmail)
 	appendStr(attrSessionID, evt.SessionID)
 	appendStr(attrTurnID, evt.TurnID)
 	appendStr(attrIP, evt.IP)
@@ -190,6 +213,9 @@ func eventToRecord(evt *events.Event) otellog.Record {
 			attribute.Float64(attrCostCompletionUsd, float64(evt.Cost.CompletionUsd)),
 		)
 		appendStr(attrCostCurrency, evt.Cost.Currency)
+		if evt.Cost.SavingsUsd != nil {
+			attrs = append(attrs, attribute.Float64(attrCostSavingsUsd, float64(*evt.Cost.SavingsUsd)))
+		}
 	}
 	attrs = append(attrs,
 		attribute.Int64(attrLatencyTotalMs, evt.Latency.TotalMs),
@@ -213,6 +239,8 @@ func eventToRecord(evt *events.Event) otellog.Record {
 		attrs = append(attrs, attribute.Int(attrAttemptsCount, len(evt.Attempts)))
 	}
 
+	attrs = appendRetention(attrs, evt)
+
 	rec.AddAttributes(attrs...)
 	return rec
 }
@@ -229,7 +257,7 @@ func rawEventToRecord(evt *events.Event) otellog.Record {
 	}
 	rec.SetObservedTimestamp(time.Now())
 
-	attrs := make([]attribute.KeyValue, 0, 6)
+	attrs := make([]attribute.KeyValue, 0, 8)
 	appendStr := func(key, value string) {
 		if value != "" {
 			attrs = append(attrs, attribute.String(key, value))
@@ -244,9 +272,24 @@ func rawEventToRecord(evt *events.Event) otellog.Record {
 	if evt.Response.Body != nil {
 		appendStr(attrResponseBody, *evt.Response.Body)
 	}
+	attrs = appendRetention(attrs, evt)
 
 	rec.AddAttributes(attrs...)
 	return rec
+}
+
+// appendRetention adds the plan-derived expiry the storage layer keys its TTL on.
+// Nothing is added when the gateway carries no stamp, so the sink falls back to its
+// own policy rather than inheriting an expiry nobody set.
+func appendRetention(attrs []attribute.KeyValue, evt *events.Event) []attribute.KeyValue {
+	if evt.Retention == nil || evt.Retention.ExpiresAt <= 0 {
+		return attrs
+	}
+	attrs = append(attrs, attribute.Int64(attrRetentionExpiresAt, evt.Retention.ExpiresAt))
+	if evt.Retention.Plan != "" {
+		attrs = append(attrs, attribute.String(attrRetentionPlan, evt.Retention.Plan))
+	}
+	return attrs
 }
 
 func severityForStatus(code int) otellog.Severity {

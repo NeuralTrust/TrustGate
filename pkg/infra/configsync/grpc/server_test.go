@@ -40,7 +40,7 @@ func startServer(t *testing.T, token string, src SnapshotSource) *Server {
 		t.Fatalf("NewAuthInterceptor: %v", err)
 	}
 	svc := NewService(NewHub(discardLogger(), nil), src, discardLogger())
-	srv, err := NewServer(cfg, svc, auth, discardLogger())
+	srv, err := NewServer(cfg, svc, nil, auth, discardLogger())
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}

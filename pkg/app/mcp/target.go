@@ -16,21 +16,72 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appopenapi "github.com/NeuralTrust/TrustGate/pkg/app/openapi"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 )
 
 func (c *composer) target(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry) (Target, error) {
 	t := targetFor(ctx, rc, reg)
+	if err := c.resolveURLVariables(ctx, rc, reg, &t); err != nil {
+		return Target{}, err
+	}
 	if c.creds != nil {
 		if err := c.creds.Apply(ctx, rc, reg, &t); err != nil {
 			return Target{}, err
 		}
 	}
 	return t, nil
+}
+
+// resolveURLVariables substitutes a registry's per-user URL placeholders into the
+// dial target from the calling principal's install. It is a no-op for the common
+// case (no placeholders). The resolved URL is folded into the session pin key so
+// one principal's connection is never reused for another's — the placeholders are
+// exactly what makes the upstream per-user — and so a changed value re-pins.
+func (c *composer) resolveURLVariables(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	reg *registrydomain.Registry,
+	t *Target,
+) error {
+	if reg.MCPTarget == nil || !reg.MCPTarget.HasURLVariables() {
+		return nil
+	}
+	var values map[string]string
+	if c.urlvars != nil {
+		v, err := c.urlvars.Resolve(ctx, rc, reg)
+		if err != nil {
+			return err
+		}
+		values = v
+	}
+	resolved, err := registrydomain.ResolveURL(reg.MCPTarget.URL, reg.MCPTarget.URLVariables, values)
+	if err != nil {
+		return err
+	}
+	// SSRF gate, first layer: a URL assembled from per-user values must point at
+	// a public hostname — never an IP literal, localhost, a cluster zone or a
+	// cloud metadata endpoint. Fixed URLs never come through here, so admin
+	// configuration is unaffected.
+	if err := registrydomain.ValidateResolvedUpstreamHost(resolved); err != nil {
+		return err
+	}
+	t.URL = resolved
+	// Second layer: the dialer re-checks the resolved address at connect time,
+	// which is what defeats a public name that (re)binds to a private address.
+	t.RestrictPrivateNetwork = true
+	if t.OpenAPI != nil {
+		t.OpenAPI.BaseURL = resolved
+	}
+	sum := sha256.Sum256([]byte(resolved))
+	t.PinKey += ":u:" + hex.EncodeToString(sum[:8])
+	return nil
 }
 
 func targetFor(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry) Target {
@@ -66,5 +117,13 @@ func StaticTarget(reg *registrydomain.Registry) Target {
 	if t.Auth != nil && t.Auth.Mode == registrydomain.MCPAuthModeStatic {
 		headers[t.Auth.Header] = t.Auth.Value
 	}
-	return Target{URL: t.URL, Headers: headers}
+	target := Target{
+		URL:      t.URL,
+		Headers:  headers,
+		Revision: reg.ID.String() + ":" + reg.UpdatedAt.UTC().Format("20060102150405.000"),
+	}
+	if t.Source == registrydomain.MCPSourceOpenAPI && t.OpenAPI != nil {
+		target.OpenAPI = &appopenapi.Source{SpecURL: t.OpenAPI.SpecURL, BaseURL: t.URL}
+	}
+	return target
 }

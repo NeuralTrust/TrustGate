@@ -32,6 +32,7 @@ const (
 	Cerebras         = "cerebras"
 	OpenRouter       = "openrouter"
 	Cohere           = "cohere"
+	Moonshot         = "moonshot"
 )
 
 // Supported returns every provider name the gateway can route to.
@@ -51,6 +52,7 @@ func Supported() []string {
 		Cerebras,
 		OpenRouter,
 		Cohere,
+		Moonshot,
 	}
 }
 
@@ -70,7 +72,8 @@ func IsValid(name string) bool {
 		XAI,
 		Cerebras,
 		OpenRouter,
-		Cohere:
+		Cohere,
+		Moonshot:
 		return true
 	default:
 		return false

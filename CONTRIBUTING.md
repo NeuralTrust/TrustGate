@@ -1,20 +1,27 @@
 # Contributing to TrustGate
 
-We love your input! We want to make contributing to this project as easy and transparent as possible, whether it's:
+We love your input! Whether it's:
 
 - Reporting a bug
 - Discussing the current state of the code
 - Submitting a fix
 - Proposing new features
-- Becoming a maintainer
+- Adding examples
+- Improving documentation
+
+## Getting Started
+
+**New to TrustGate?** Check out:
+- [`.github/GOOD_FIRST_ISSUES.md`](.github/GOOD_FIRST_ISSUES.md) — Curated starter tasks with clear acceptance criteria
+- [`examples/`](examples/) — Runnable examples you can extend
 
 ## We Develop with GitHub
 
-We use GitHub to host code, to track issues and feature requests, as well as accept pull requests.
+We use GitHub to host code, track issues and feature requests, and accept pull requests.
 
-## We Use [GitHub Flow](https://guides.github.com/introduction/flow/index.html), So All Code Changes Happen Through Pull Requests
+## GitHub Flow
 
-Pull requests are the best way to propose changes to the codebase (we use [GitHub Flow](https://guides.github.com/introduction/flow/index.html)). We actively welcome your pull requests:
+Pull requests are the best way to propose changes. We actively welcome your PRs:
 
 1. Fork the repo and create your branch from `main`.
 2. If you've added code that should be tested, add tests.
@@ -26,6 +33,10 @@ Pull requests are the best way to propose changes to the codebase (we use [GitHu
 ## Development Setup
 
 ```bash
+# Clone your fork
+git clone https://github.com/YOUR_USERNAME/TrustGate.git
+cd TrustGate
+
 # Copy the env template
 cp .env.example .env
 
@@ -35,6 +46,7 @@ make compose-up
 # Run the admin and proxy in two separate terminals
 make run-admin      # admin on :8080
 make run-proxy      # proxy on :8081
+make run-mcp        # mcp on :8082 (optional)
 ```
 
 Before pushing, run the same checks CI runs:
@@ -46,41 +58,64 @@ make test           # unit tests
 make test-race      # unit tests with the race detector
 ```
 
-You can install the git pre-commit hook to run these automatically:
+Install the git pre-commit hook to run these automatically:
 
 ```bash
 make install-pre-commit
 ```
 
-## Coding Conventions
+## Project Architecture
 
-- The codebase follows a **hexagonal architecture**: `domain` (entities, ports), `app` (use cases), `infra` (adapters), `api` (HTTP handlers) and `server` (wiring). Keep dependencies pointing inward.
-- Dependency injection is wired with [`dig`](https://github.com/uber-go/dig) under `pkg/container/modules/`, one module per context.
-- Prefer self-documenting code over comments; only comment non-obvious intent or trade-offs.
-- Regenerate mocks with `make gen-mocks` when you change an interface that has a mock.
+The codebase follows a **hexagonal architecture**:
 
-## Any contributions you make will be under the Apache 2.0 Software License
+```
+pkg/domain/     # entities, value objects, port interfaces
+pkg/app/        # application services (use cases)
+pkg/infra/      # adapters: providers, plugins, database, telemetry
+pkg/api/        # HTTP handlers
+pkg/server/     # Server wiring
+pkg/container/  # dig DI modules
+```
 
-In short, when you submit code changes, your submissions are understood to be under the same [Apache 2.0 License](LICENSE) that covers the project. Feel free to contact the maintainers if that's a concern.
+Key principles:
+- Dependencies point inward (domain has no external deps)
+- Dependency injection via [`dig`](https://github.com/uber-go/dig) under `pkg/container/modules/`
+- Prefer self-documenting code over comments
 
-## Report bugs using GitHub's [issues](https://github.com/NeuralTrust/TrustGate/issues)
+## Adding Examples
 
-We use GitHub issues to track public bugs. Report a bug by [opening a new issue](https://github.com/NeuralTrust/TrustGate/issues/new); it's that easy!
+We especially welcome new examples! Good candidates:
+- Language SDKs (TypeScript, Go, Java, Ruby)
+- Framework integrations (LangChain, LlamaIndex, CrewAI)
+- Specific provider setups (Anthropic, Bedrock, Azure)
 
-## Write bug reports with detail, background, and sample code
+See [`examples/README.md`](examples/README.md) for the existing structure.
 
-**Great Bug Reports** tend to have:
+## Regenerating Mocks
 
-- A quick summary and/or background
-- Steps to reproduce
-  - Be specific!
-  - Give sample code if you can.
-- What you expected would happen
-- What actually happens
-- Notes (possibly including why you think this might be happening, or stuff you tried that didn't work)
+If you change an interface that has a mock:
 
-People *love* thorough bug reports. We're not even kidding.
+```bash
+make gen-mocks
+```
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under its Apache 2.0 License.
+When you submit code changes, your submissions are understood to be under the same [Apache 2.0 License](LICENSE) that covers the project.
+
+## Report Bugs
+
+We use GitHub issues to track bugs. Report one by [opening a new issue](https://github.com/NeuralTrust/TrustGate/issues/new/choose).
+
+**Great bug reports** include:
+- A quick summary
+- Steps to reproduce (be specific!)
+- Sample code or curl commands if possible
+- What you expected vs. what actually happened
+- TrustGate version (`curl localhost:8080/__/version`)
+
+## Community
+
+- [Slack](https://join.slack.com/t/neuraltrustcommunity/shared_invite/zt-2xl47cag6-_HFNpltIULnA3wh4R6AqBg) — Questions, discussions, help
+- [GitHub Issues](https://github.com/NeuralTrust/TrustGate/issues) — Bugs and feature requests
+- [Documentation](https://docs.neuraltrust.ai) — Guides and API reference

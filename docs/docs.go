@@ -2146,7 +2146,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns a paginated list of registries in a gateway.",
+                "description": "Returns one of two mutually exclusive variants: flat (items/page/size/total) when view and type are omitted, or grouped (view/groups/total_groups/total_instances) with view=grouped\u0026type=LLM. Grouped requests require at most 200 total registries and must omit name, page, and size.",
                 "produces": [
                     "application/json"
                 ],
@@ -2165,28 +2165,46 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filter by name (substring match)",
+                        "description": "Flat view only: filter by name (substring match)",
                         "name": "name",
                         "in": "query"
                     },
                     {
                         "type": "integer",
-                        "description": "Page number (1-based)",
+                        "description": "Flat view only: page number (1-based)",
                         "name": "page",
                         "in": "query"
                     },
                     {
                         "type": "integer",
-                        "description": "Page size",
+                        "description": "Flat view only: page size (maximum 200)",
                         "name": "size",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "grouped"
+                        ],
+                        "type": "string",
+                        "description": "Response view",
+                        "name": "view",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "LLM"
+                        ],
+                        "type": "string",
+                        "description": "Grouped view only: required registry type; omit for flat view",
+                        "name": "type",
                         "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "Mutually exclusive variants: flat (items/page/size/total) or grouped (view/groups/total_groups/total_instances)",
                         "schema": {
-                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.ListRegistryResponse"
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.ListRegistryViewResponse"
                         }
                     },
                     "400": {
@@ -2197,6 +2215,12 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -2337,6 +2361,65 @@ const docTemplate = `{
                     },
                     "422": {
                         "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/gateways/{gateway_id}/registries/validate-openapi": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Fetches and compiles an OpenAPI 3 document into an MCP tool preview without creating a registry. Always returns 200 for validation outcomes; inspect ok and stage.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "registries"
+                ],
+                "summary": "Validate an OpenAPI document",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "OpenAPI source",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/pkg_api_handler_http_registry.ValidateOpenAPIRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/pkg_api_handler_http_registry.ValidateOpenAPIResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_httpio.ErrorBody"
                         }
@@ -3491,6 +3574,66 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/tenants/{tenant_id}/entitlements": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Applies one entitlements stamp to every gateway of the tenant, for the control plane to call after a plan change. Platform JWT only (no tenant claim); a tenant JWT receives 422. Only the entitlements block is written — slug, metadata and telemetry are left untouched, so a re-stamp can never revert an edit made in the runtime. A downgrade is applied even when the tenant already has more gateways than the new MaxInstances: the response reports over_cap so the caller can warn, but the stamp is not refused, since refusing would strand every gateway of the tenant on the old plan. Idempotent.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenants"
+                ],
+                "summary": "Re-stamp plan entitlements across a tenant",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Tenant id",
+                        "name": "tenant_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Entitlements stamp",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/pkg_api_handler_http_tenant.RestampEntitlementsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/pkg_api_handler_http_tenant.RestampEntitlementsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/{consumer_slug}/v1/chat/completions": {
             "post": {
                 "description": "Forwards an OpenAI Chat Completions request to the selected provider. Proxy plane route: /{consumer_slug}/v1/chat/completions. Other fixed routes include /v1/messages (Anthropic) and /v1/responses (OpenAI Responses). Inline consumers may authenticate with an api key via X-AG-API-Key, x-api-key, or Authorization: Bearer ag_….",
@@ -3982,6 +4125,12 @@ const docTemplate = `{
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_catalog.AuthTypeOption"
+                    }
+                },
+                "capabilities": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "boolean"
                     }
                 },
                 "code": {
@@ -5089,6 +5238,9 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
+                "pricing": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PricingRequest"
+                },
                 "provider": {
                     "type": "string"
                 },
@@ -5200,11 +5352,50 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "openapi": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.OpenAPITargetRequest"
+                },
+                "source": {
+                    "type": "string"
+                },
                 "transport": {
                     "type": "string"
                 },
                 "url": {
                     "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.OpenAPITargetRequest": {
+            "type": "object",
+            "properties": {
+                "spec_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PriceOverrideRequest": {
+            "type": "object",
+            "properties": {
+                "input": {
+                    "type": "number"
+                },
+                "output": {
+                    "type": "number"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PricingRequest": {
+            "type": "object",
+            "properties": {
+                "discount": {
+                    "type": "number"
+                },
+                "overrides": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PriceOverrideRequest"
+                    }
                 }
             }
         },
@@ -5326,6 +5517,9 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
+                "pricing": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_request.PricingRequest"
+                },
                 "provider": {
                     "type": "string"
                 },
@@ -5435,9 +5629,15 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.ListRegistryResponse": {
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.ListRegistryViewResponse": {
             "type": "object",
             "properties": {
+                "groups": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryProviderGroupResponse"
+                    }
+                },
                 "items": {
                     "type": "array",
                     "items": {
@@ -5452,6 +5652,15 @@ const docTemplate = `{
                 },
                 "total": {
                     "type": "integer"
+                },
+                "total_groups": {
+                    "type": "integer"
+                },
+                "total_instances": {
+                    "type": "integer"
+                },
+                "view": {
+                    "type": "string"
                 }
             }
         },
@@ -5531,10 +5740,69 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "openapi": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.OpenAPITargetResponse"
+                },
+                "source": {
+                    "type": "string"
+                },
                 "transport": {
                     "type": "string"
                 },
                 "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.OpenAPITargetResponse": {
+            "type": "object",
+            "properties": {
+                "spec_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PriceOverrideResponse": {
+            "type": "object",
+            "properties": {
+                "input": {
+                    "type": "number"
+                },
+                "output": {
+                    "type": "number"
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PricingResponse": {
+            "type": "object",
+            "properties": {
+                "discount": {
+                    "type": "number"
+                },
+                "overrides": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PriceOverrideResponse"
+                    }
+                }
+            }
+        },
+        "github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryProviderGroupResponse": {
+            "type": "object",
+            "properties": {
+                "instance_count": {
+                    "type": "integer"
+                },
+                "instances": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.RegistryResponse"
+                    }
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "type": {
                     "type": "string"
                 }
             }
@@ -5568,6 +5836,9 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "pricing": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_api_handler_http_registry_response.PricingResponse"
                 },
                 "provider": {
                     "type": "string"
@@ -5951,6 +6222,17 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_app_openapi.Warning": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_app_plugins.Catalog": {
             "type": "object",
             "properties": {
@@ -6239,6 +6521,9 @@ const docTemplate = `{
                 "oauth": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_catalog.MCPOAuth"
                 },
+                "platform_client": {
+                    "type": "boolean"
+                },
                 "relevance": {
                     "description": "Relevance ranks how broadly relevant a server is for enterprises\n(higher = more relevant). Used to sort the catalog; 0 means unranked.",
                     "type": "integer"
@@ -6366,6 +6651,9 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "quota_per_month": {
+                    "type": "integer"
+                },
+                "retention_days": {
                     "type": "integer"
                 },
                 "tier": {
@@ -6542,6 +6830,9 @@ const docTemplate = `{
                 "prompt_usd": {
                     "type": "number"
                 },
+                "savings_usd": {
+                    "type": "number"
+                },
                 "total_usd": {
                     "type": "number"
                 }
@@ -6597,6 +6888,9 @@ const docTemplate = `{
                 },
                 "response": {
                     "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Response"
+                },
+                "retention": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Retention"
                 },
                 "schema_version": {
                     "type": "integer"
@@ -6812,6 +7106,17 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Retention": {
+            "type": "object",
+            "properties": {
+                "expires_at": {
+                    "type": "integer"
+                },
+                "plan": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_TrustGate_pkg_infra_metrics_events.Status": {
             "type": "object",
             "properties": {
@@ -6902,6 +7207,97 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_mcp.Tool"
                     }
+                }
+            }
+        },
+        "pkg_api_handler_http_registry.ValidateOpenAPIRequest": {
+            "type": "object",
+            "properties": {
+                "base_url": {
+                    "type": "string"
+                },
+                "spec_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "pkg_api_handler_http_registry.ValidateOpenAPIResponse": {
+            "type": "object",
+            "properties": {
+                "base_url": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "ok": {
+                    "type": "boolean"
+                },
+                "openapi_version": {
+                    "type": "string"
+                },
+                "stage": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "tool_count": {
+                    "type": "integer"
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/pkg_api_handler_http_registry.ValidateOpenAPIToolResponse"
+                    }
+                },
+                "warnings": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_app_openapi.Warning"
+                    }
+                }
+            }
+        },
+        "pkg_api_handler_http_registry.ValidateOpenAPIToolResponse": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "method": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                }
+            }
+        },
+        "pkg_api_handler_http_tenant.RestampEntitlementsRequest": {
+            "type": "object",
+            "properties": {
+                "entitlements": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Entitlements"
+                }
+            }
+        },
+        "pkg_api_handler_http_tenant.RestampEntitlementsResponse": {
+            "type": "object",
+            "properties": {
+                "max_instances": {
+                    "type": "integer"
+                },
+                "over_cap": {
+                    "type": "boolean"
+                },
+                "stamped": {
+                    "type": "integer"
+                },
+                "tenant_id": {
+                    "type": "string"
                 }
             }
         }

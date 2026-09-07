@@ -17,6 +17,7 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -67,6 +68,293 @@ func TestResolveURL(t *testing.T) {
 		_, err := c.resolveURL(&providers.Config{Options: map[string]any{"api": "chat"}})
 		require.Error(t, err)
 	})
+}
+
+func TestResolveEmbeddingsURL(t *testing.T) {
+	c := &client{}
+
+	cases := []struct {
+		name    string
+		options map[string]any
+		want    string
+	}{
+		{name: "default host", options: nil, want: embeddingsURL},
+		{name: "base_url", options: map[string]any{"base_url": "http://127.0.0.1:9999"}, want: "http://127.0.0.1:9999/embeddings"},
+		{name: "base_url trailing slash", options: map[string]any{"base_url": "https://host/v1/"}, want: "https://host/v1/embeddings"},
+		{name: "responses api does not change embeddings path", options: map[string]any{"api": "responses", "base_url": "https://host/v1"}, want: "https://host/v1/embeddings"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := c.resolveEmbeddingsURL(&providers.Config{Options: tt.options})
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestResolveFilesBaseURL(t *testing.T) {
+	c := &client{}
+
+	cases := []struct {
+		name    string
+		options map[string]any
+		want    string
+	}{
+		{name: "default host", options: nil, want: filesBaseURL},
+		{name: "base_url", options: map[string]any{"base_url": "http://127.0.0.1:9999"}, want: "http://127.0.0.1:9999"},
+		{name: "base_url trailing slash", options: map[string]any{"base_url": "https://host/v1/"}, want: "https://host/v1"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := c.resolveFilesBaseURL(&providers.Config{Options: tt.options})
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestFiles_MissingAPIKey(t *testing.T) {
+	c := NewOpenaiClient().(providers.FilesClient)
+	_, err := c.Files(context.Background(), &providers.Config{}, providers.FilesRequest{
+		Method: http.MethodGet,
+		Path:   "/v1/files",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "API key is required")
+}
+
+func TestFiles_RoundTrip(t *testing.T) {
+	var gotAuth, gotMethod, gotPath, gotQuery, gotCT string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		gotCT = r.Header.Get("Content-Type")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"file-1","object":"file"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewOpenaiClient().(providers.FilesClient)
+	result, err := c.Files(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{ApiKey: "sk-test"},
+		Options:     map[string]any{"base_url": srv.URL + "/v1"},
+	}, providers.FilesRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/files",
+		Query:       nil,
+		ContentType: "multipart/form-data; boundary=abc",
+		Body:        []byte("file-bytes"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Bearer sk-test", gotAuth)
+	assert.Equal(t, http.MethodPost, gotMethod)
+	assert.Equal(t, "/v1/files", gotPath)
+	assert.Empty(t, gotQuery)
+	assert.Equal(t, "multipart/form-data; boundary=abc", gotCT)
+	assert.JSONEq(t, `{"id":"file-1","object":"file"}`, string(result.Body))
+	assert.Equal(t, "application/json", result.ContentType)
+}
+
+func TestFiles_ContentRoundTrip(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write([]byte("pdf-bytes"))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewOpenaiClient().(providers.FilesClient)
+	result, err := c.Files(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{ApiKey: "sk-test"},
+		Options:     map[string]any{"base_url": srv.URL + "/v1"},
+	}, providers.FilesRequest{
+		Method: http.MethodGet,
+		Path:   "/v1/files/file-1/content",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/v1/files/file-1/content", gotPath)
+	assert.Equal(t, []byte("pdf-bytes"), result.Body)
+	assert.Equal(t, "application/octet-stream", result.ContentType)
+}
+
+func TestAudioSpeech_RoundTrip(t *testing.T) {
+	var gotAuth, gotMethod, gotPath, gotCT string
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotCT = r.Header.Get("Content-Type")
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "audio/mpeg")
+		_, _ = w.Write([]byte("mp3-bytes"))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewOpenaiClient().(providers.AudioSpeechClient)
+	result, err := c.AudioSpeech(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{ApiKey: "sk-test"},
+		Options:     map[string]any{"base_url": srv.URL + "/v1"},
+	}, providers.AudioRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/audio/speech",
+		ContentType: "application/json",
+		Body:        []byte(`{"model":"tts-1","input":"hi","voice":"alloy"}`),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Bearer sk-test", gotAuth)
+	assert.Equal(t, http.MethodPost, gotMethod)
+	assert.Equal(t, "/v1/audio/speech", gotPath)
+	assert.Equal(t, "application/json", gotCT)
+	assert.JSONEq(t, `{"model":"tts-1","input":"hi","voice":"alloy"}`, string(gotBody))
+	assert.Equal(t, []byte("mp3-bytes"), result.Body)
+	assert.Equal(t, "audio/mpeg", result.ContentType)
+}
+
+func TestAudioTranscription_RoundTrip(t *testing.T) {
+	var gotPath, gotCT string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotCT = r.Header.Get("Content-Type")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"text":"hello"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewOpenaiClient().(providers.AudioTranscriptionClient)
+	result, err := c.AudioTranscription(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{ApiKey: "sk-test"},
+		Options:     map[string]any{"base_url": srv.URL + "/v1"},
+	}, providers.AudioRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/audio/transcriptions",
+		ContentType: "multipart/form-data; boundary=abc",
+		Body:        []byte("file-bytes"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/v1/audio/transcriptions", gotPath)
+	assert.Equal(t, "multipart/form-data; boundary=abc", gotCT)
+	assert.JSONEq(t, `{"text":"hello"}`, string(result.Body))
+}
+
+func TestAudioSpeech_MissingAPIKey(t *testing.T) {
+	c := NewOpenaiClient().(providers.AudioSpeechClient)
+	_, err := c.AudioSpeech(context.Background(), &providers.Config{}, providers.AudioRequest{
+		Method: http.MethodPost,
+		Path:   "/v1/audio/speech",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "API key is required")
+}
+
+func TestImages_MissingAPIKey(t *testing.T) {
+	c := NewOpenaiClient().(providers.ImagesClient)
+	_, err := c.Images(context.Background(), &providers.Config{}, providers.ImagesRequest{
+		Method: http.MethodPost,
+		Path:   "/v1/images/generations",
+		Body:   []byte(`{"model":"dall-e-3","prompt":"a cat"}`),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "API key is required")
+}
+
+func TestImages_RoundTrip(t *testing.T) {
+	var gotAuth, gotMethod, gotPath, gotCT string
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotCT = r.Header.Get("Content-Type")
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"created":1,"data":[{"url":"https://img"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewOpenaiClient().(providers.ImagesClient)
+	result, err := c.Images(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{ApiKey: "sk-test"},
+		Options:     map[string]any{"base_url": srv.URL + "/v1"},
+	}, providers.ImagesRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/images/generations",
+		ContentType: "application/json",
+		Body:        []byte(`{"model":"dall-e-3","prompt":"a cat"}`),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Bearer sk-test", gotAuth)
+	assert.Equal(t, http.MethodPost, gotMethod)
+	assert.Equal(t, "/v1/images/generations", gotPath)
+	assert.Equal(t, "application/json", gotCT)
+	assert.JSONEq(t, `{"model":"dall-e-3","prompt":"a cat"}`, string(gotBody))
+	assert.JSONEq(t, `{"created":1,"data":[{"url":"https://img"}]}`, string(result.Body))
+}
+
+func TestImages_EditsRoundTrip(t *testing.T) {
+	var gotPath, gotCT string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotCT = r.Header.Get("Content-Type")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"created":1,"data":[{"b64_json":"abc"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewOpenaiClient().(providers.ImagesClient)
+	result, err := c.Images(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{ApiKey: "sk-test"},
+		Options:     map[string]any{"base_url": srv.URL + "/v1"},
+	}, providers.ImagesRequest{
+		Method:      http.MethodPost,
+		Path:        "/v1/images/edits",
+		ContentType: "multipart/form-data; boundary=abc",
+		Body:        []byte("--abc\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ndall-e-2\r\n--abc--\r\n"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/v1/images/edits", gotPath)
+	assert.Equal(t, "multipart/form-data; boundary=abc", gotCT)
+	assert.JSONEq(t, `{"created":1,"data":[{"b64_json":"abc"}]}`, string(result.Body))
+}
+
+func TestEmbeddings_MissingAPIKey(t *testing.T) {
+	c := NewOpenaiClient().(providers.EmbeddingsClient)
+	_, err := c.Embeddings(context.Background(), &providers.Config{}, []byte(`{"model":"text-embedding-3-small","input":"hi"}`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "API key is required")
+}
+
+func TestEmbeddings_RoundTrip(t *testing.T) {
+	var gotAuth, gotPath string
+	var gotBody map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotPath = r.URL.Path
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotBody))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"index":0,"embedding":[0.1,0.2]}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewOpenaiClient().(providers.EmbeddingsClient)
+	resp, err := c.Embeddings(
+		context.Background(),
+		&providers.Config{
+			Credentials: providers.Credentials{ApiKey: "sk-test"},
+			Options:     map[string]any{"base_url": srv.URL + "/v1"},
+		},
+		[]byte(`{"model":"text-embedding-3-small","input":"hi"}`),
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, "Bearer sk-test", gotAuth)
+	assert.Equal(t, "/v1/embeddings", gotPath)
+	assert.Equal(t, "text-embedding-3-small", gotBody["model"])
+	assert.JSONEq(t, `{"object":"list","data":[{"index":0,"embedding":[0.1,0.2]}]}`, string(resp))
 }
 
 func TestChatCompletions_MissingAPIKey(t *testing.T) {

@@ -22,6 +22,7 @@ import (
 	catalogmocks "github.com/NeuralTrust/TrustGate/pkg/app/catalog/mocks"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -128,6 +129,34 @@ func TestPlugin_DollarBudget_PricesServedModelFromResponse(t *testing.T) {
 
 	_, err = p.Execute(context.Background(), input(policy.StagePreRequest, settings, req, &infracontext.ResponseContext{}))
 	require.Error(t, err, "cost must accrue against the served response model (gpt-4o-2024-08-06), not be treated as unpriced")
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok)
+	assert.Equal(t, 429, pe.StatusCode)
+}
+
+func TestPlugin_DollarBudget_UsesRegistryOverride(t *testing.T) {
+	p := newTestPlugin(t)
+	settings := map[string]any{
+		"unit":      "dollars",
+		"aggregate": map[string]any{"max": 0.005, "time_window": "1m"},
+	}
+	req := &infracontext.RequestContext{
+		Provider:     "openai",
+		SourceFormat: "openai",
+		Body:         []byte(`{"model":"gpt-4o-mini"}`),
+		RegistryPricing: &domain.Pricing{
+			Overrides: map[string]domain.PriceOverride{
+				"gpt-4o-mini": {Input: 0.001, Output: 0},
+			},
+		},
+	}
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: usageResponseBody()}
+
+	_, err := p.Execute(context.Background(), input(policy.StagePostResponse, settings, req, resp))
+	require.NoError(t, err)
+
+	_, err = p.Execute(context.Background(), input(policy.StagePreRequest, settings, req, &infracontext.ResponseContext{}))
+	require.Error(t, err, "10 input tokens * registry $0.001 = $0.01 exceeds the $0.005 dollar budget")
 	pe, ok := appplugins.AsPluginError(err)
 	require.True(t, ok)
 	assert.Equal(t, 429, pe.StatusCode)

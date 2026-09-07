@@ -53,6 +53,23 @@ func TestNewXAIClient(t *testing.T) {
 	assert.NotNil(t, NewXAIClient())
 }
 
+func TestFilesURL(t *testing.T) {
+	assert.Equal(t, "https://api.x.ai/v1/files", providers.JoinOpenAIFilesURL(filesBaseURL, "/v1/files", nil))
+	assert.Equal(t,
+		"https://api.x.ai/v1/files/file-1/content",
+		providers.JoinOpenAIFilesURL(filesBaseURL, "/v1/files/file-1/content", nil),
+	)
+}
+
+func TestFiles_MissingAPIKey(t *testing.T) {
+	_, err := NewXAIClient().(providers.FilesClient).Files(context.Background(), &providers.Config{}, providers.FilesRequest{
+		Method: http.MethodGet,
+		Path:   "/v1/files",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "API key is required")
+}
+
 func TestCompletions_MissingAPIKey(t *testing.T) {
 	_, err := NewXAIClient().Completions(context.Background(), &providers.Config{}, []byte(`{}`))
 	require.Error(t, err)

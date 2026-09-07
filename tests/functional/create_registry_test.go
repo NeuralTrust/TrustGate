@@ -169,3 +169,31 @@ func TestCreateRegistry_WithHealthChecks(t *testing.T) {
 	assert.Equal(t, float64(3), hc["threshold"])
 	assert.Equal(t, float64(30), hc["interval"])
 }
+
+func TestCreateRegistry_WithPricing(t *testing.T) {
+	defer Track(t, "CreateRegistry")()
+	gwID := CreateGateway(t, map[string]any{"slug": uniqueName("be-price-gw")})
+	payload := validRegistryPayload(uniqueName("be-price"))
+	payload["pricing"] = map[string]any{
+		"discount": 0.2,
+		"overrides": map[string]any{
+			"gpt-4o": map[string]any{"input": 0.0000015, "output": 0.000006},
+		},
+	}
+
+	status, body := sendRequest(t, http.MethodPost,
+		fmt.Sprintf("%s/v1/gateways/%s/registries", AdminURL, gwID),
+		nil, payload,
+	)
+	require.Equal(t, http.StatusCreated, status, "body=%v", body)
+
+	pricing, ok := body["pricing"].(map[string]any)
+	require.True(t, ok, "pricing missing: %v", body)
+	assert.Equal(t, 0.2, pricing["discount"])
+	overrides, ok := pricing["overrides"].(map[string]any)
+	require.True(t, ok, "overrides missing: %v", pricing)
+	gpt, ok := overrides["gpt-4o"].(map[string]any)
+	require.True(t, ok, "gpt-4o override missing: %v", overrides)
+	assert.Equal(t, 0.0000015, gpt["input"])
+	assert.Equal(t, 0.000006, gpt["output"])
+}

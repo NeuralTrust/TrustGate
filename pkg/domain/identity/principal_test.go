@@ -46,3 +46,31 @@ func TestHasScopes(t *testing.T) {
 		})
 	}
 }
+
+func TestPrincipalEmail(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		p    *Principal
+		want string
+	}{
+		{"nil principal", nil, ""},
+		{"no claims", &Principal{Subject: "u1"}, ""},
+		{"email claim", &Principal{Claims: map[string]any{"email": "ada@example.com", "sub": "1"}}, "ada@example.com"},
+		{"emailAddress claim", &Principal{Claims: map[string]any{"emailAddress": "ada@example.com"}}, "ada@example.com"},
+		{"preferred_username email", &Principal{Claims: map[string]any{"preferred_username": "ada@example.com"}}, "ada@example.com"},
+		{"preferred_username not email", &Principal{Claims: map[string]any{"preferred_username": "ada"}}, ""},
+		{"upn", &Principal{Claims: map[string]any{"upn": "ada@contoso.com"}}, "ada@contoso.com"},
+		{"whitespace rejected", &Principal{Claims: map[string]any{"email": "ada @example.com"}}, ""},
+		{"non-string ignored", &Principal{Claims: map[string]any{"email": 42}}, ""},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.p.Email(); got != tt.want {
+				t.Fatalf("Email() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

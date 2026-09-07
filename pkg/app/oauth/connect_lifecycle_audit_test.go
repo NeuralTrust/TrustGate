@@ -104,6 +104,10 @@ func newConnectAuditFixture(
 		infraoauth.NewProviderClient(nil),
 		infraoauth.NewUpstreamRegistrar(store, nil),
 		auditor,
+		nil,
+		nil,
+		nil,
+		nil,
 	)
 	return connectAuditFixtureData{
 		service:    service,
@@ -742,6 +746,10 @@ func TestConnectServiceConcurrentDisconnectAuditsExactlyOnce(t *testing.T) {
 		infraoauth.NewProviderClient(nil),
 		infraoauth.NewUpstreamRegistrar(fixture.store, nil),
 		auditor,
+		nil,
+		nil,
+		nil,
+		nil,
 	)
 
 	start := make(chan struct{})
@@ -799,6 +807,10 @@ func TestConnectServiceCorruptCredentialDoesNotAudit(t *testing.T) {
 		infraoauth.NewProviderClient(nil),
 		infraoauth.NewUpstreamRegistrar(fixture.store, nil),
 		auditor,
+		nil,
+		nil,
+		nil,
+		nil,
 	)
 
 	err = service.Disconnect(ctx, "ticket-sentinel", connectAuditProviderID)

@@ -156,5 +156,5 @@ func TestProviderInvoke_CohereEmbeddingsUnsupportedProvider(t *testing.T) {
 	_, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), req)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "does not support embeddings")
+	assert.ErrorIs(t, err, appproxy.ErrCapabilityNotSupported)
 }

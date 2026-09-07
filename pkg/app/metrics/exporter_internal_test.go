@@ -87,9 +87,13 @@ func (f *fakeFactory) Build(cfg telemetrydomain.ExporterConfig) (Exporter, error
 	if f.buildErr != nil {
 		return nil, f.buildErr
 	}
+	class := cfg.Class
+	if mapped, ok := f.classByName[cfg.Name]; ok {
+		class = mapped
+	}
 	return &fakeExporter{
 		name:       cfg.Name,
-		class:      f.classByName[cfg.Name],
+		class:      class,
 		publishErr: f.publishErrByName[cfg.Name],
 	}, nil
 }
@@ -220,6 +224,14 @@ func TestPipeline_MergeMatrix(t *testing.T) {
 		{name: "override same name gateway wins", defaults: []telemetrydomain.ExporterConfig{cfg("otlp-a")}, explicit: []telemetrydomain.ExporterConfig{cfg("otlp-a")}, want: []string{"otlp-a"}},
 		{name: "same type different name both run in file-then-gateway order", defaults: []telemetrydomain.ExporterConfig{cfg("otlp-a")}, explicit: []telemetrydomain.ExporterConfig{cfg("otlp-b")}, want: []string{"otlp-a", "otlp-b"}},
 		{name: "override by name keeps other defaults", defaults: []telemetrydomain.ExporterConfig{cfg("otlp-a"), cfg("kafka-x")}, explicit: []telemetrydomain.ExporterConfig{cfg("otlp-a")}, want: []string{"otlp-a", "kafka-x"}},
+		{
+			name: "same name different data class both run",
+			defaults: []telemetrydomain.ExporterConfig{
+				{Name: "otlp", Type: "otlp", Class: metricsschema.Metadata},
+				{Name: "otlp", Type: "otlp", Class: metricsschema.Raw},
+			},
+			want: []string{"otlp", "otlp"},
+		},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -282,6 +294,46 @@ func TestPipeline_PublishIsolatesExporterErrors(t *testing.T) {
 
 	assert.Equal(t, 1, byName["bad"].publishedCount())
 	assert.Equal(t, 1, byName["good"].publishedCount(), "a failing exporter must not prevent the others from publishing")
+}
+
+func TestPipeline_SameNameDifferentClassPublishesBoth(t *testing.T) {
+	builder := NewBuilder(adapter.NewRegistry(), stubPricing{})
+	factory := &fakeFactory{}
+	cache := NewExporterCache(factory, internalTestLogger())
+	p := NewPipeline(builder, cache, nil, internalTestLogger(),
+		telemetrydomain.ExporterConfig{Name: "otlp", Type: "otlp", Class: metricsschema.Metadata},
+		telemetrydomain.ExporterConfig{Name: "otlp", Type: "otlp", Class: metricsschema.Raw},
+	)
+
+	req := &infracontext.RequestContext{
+		GatewayID: "gw-1", Method: "POST", Path: "/v1/chat/completions",
+		Body: []byte(`{"model":"gpt","messages":[{"role":"user","content":"hi"}]}`),
+	}
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"ok":true}`)}
+
+	targets := p.resolveTargets(nil)
+	require.Len(t, targets, 2)
+
+	p.publish(nil, req, resp, time.Now(), time.Now(), nil)
+
+	var meta, raw *fakeExporter
+	for _, tgt := range targets {
+		exp := tgt.(*fakeExporter)
+		switch exp.DataClass() {
+		case metricsschema.Metadata:
+			meta = exp
+		case metricsschema.Raw:
+			raw = exp
+		}
+	}
+	require.NotNil(t, meta)
+	require.NotNil(t, raw)
+	assert.Equal(t, 1, meta.publishedCount())
+	assert.Equal(t, 1, raw.publishedCount())
+	require.NotNil(t, meta.lastEvent)
+	assert.Empty(t, meta.lastEvent.Request.Body)
+	require.NotNil(t, raw.lastEvent)
+	assert.NotEmpty(t, raw.lastEvent.Request.Body)
 }
 
 func TestPipeline_RoutesByDataClass(t *testing.T) {

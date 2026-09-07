@@ -39,8 +39,9 @@ import (
 )
 
 var (
-	ErrNoBackendAvailable = errors.New("no backend available")
-	ErrNoBackendsInPool   = errors.New("consumer has no registries in pool")
+	ErrNoBackendAvailable     = errors.New("no backend available")
+	ErrNoBackendsInPool       = errors.New("consumer has no registries in pool")
+	ErrCapabilityNotSupported = errors.New("provider does not support this capability")
 )
 
 type ForwardInput struct {
@@ -68,6 +69,8 @@ type forwardRequestDTO struct {
 	policies    []*policydomain.Policy
 	plan        *appplugins.StagePlan
 	baseHeaders map[string][]string
+	baseline    *trace.RouteBaseline
+	tierRouted  bool
 }
 
 //go:generate mockery --name=Forwarder --dir=. --output=./mocks --filename=forwarder_mock.go --case=underscore --with-expecter
@@ -169,6 +172,7 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 		policies:    policies,
 		plan:        plan,
 		baseHeaders: cloneHeaders(resp.Headers),
+		baseline:    route.baseline,
 	}
 	stream := DetectStream(dto.request)
 
@@ -200,6 +204,7 @@ func (f *forwarder) invokeWithFailover(
 		bk := current.Registry
 		f.retarget(dto, bk)
 		f.stampRoutingPolicy(dto, rc, current)
+		dto.tierRouted = takeTierRouted(dto.request)
 		for r := 0; r < attemptsPerBackend; r++ {
 			if budget.exhausted() {
 				return f.relayLast(ctx, dto, last)
@@ -233,6 +238,11 @@ func (f *forwarder) invokeWithFailover(
 			case OutcomeTerminal:
 				if resp == nil {
 					return nil, err
+				}
+				if !route.pinned && filesIDNotFound(dto.request, resp) {
+					last = failoverState{resp: resp}
+					lastKind = failureNone
+					break
 				}
 				reportSuccess(lb, bk)
 				return f.finalizeBody(ctx, dto, resp), nil
@@ -359,6 +369,9 @@ func (f *forwarder) recordSpan(
 			Pinned:         dto.pinned,
 			Route:          dto.routeSource,
 			Outcome:        outcome.String(),
+			Baseline:       dto.baseline,
+			ServedPricing:  bk.Pricing(),
+			TierApplied:    dto.tierRouted,
 		},
 	}
 	if resp != nil {
@@ -461,6 +474,15 @@ func (f *forwarder) invokeOnce(
 	return f.invoker.Invoke(ctx, bk, req)
 }
 
+func takeTierRouted(req *infracontext.RequestContext) bool {
+	if req == nil || req.RoutingDecision == nil {
+		return false
+	}
+	tierRouted := req.RoutingDecision.TierApplied
+	req.RoutingDecision = nil
+	return tierRouted
+}
+
 func (f *forwarder) retarget(dto *forwardRequestDTO, bk *domain.Registry) {
 	dto.backend = bk
 	stampTarget(dto.request, bk)
@@ -472,6 +494,7 @@ func (f *forwarder) retarget(dto *forwardRequestDTO, bk *domain.Registry) {
 func stampTarget(req *infracontext.RequestContext, bk *domain.Registry) {
 	req.RegistryID = bk.ID.String()
 	req.Provider = bk.Provider()
+	req.RegistryPricing = bk.Pricing()
 }
 
 func failureReason(resp *ProviderResponse, err error) error {

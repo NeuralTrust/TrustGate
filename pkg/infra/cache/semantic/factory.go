@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
 // Deps carries the backend handles a Store may need; only the field matching

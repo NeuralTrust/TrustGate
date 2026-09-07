@@ -18,6 +18,7 @@ import (
 	"log/slog"
 
 	gatewayhttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/gateway"
+	tenanthttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/tenant"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	appmetrics "github.com/NeuralTrust/TrustGate/pkg/app/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
@@ -85,6 +86,22 @@ func provideGatewayServices(c *container.Container) error {
 	}
 	if err := c.Provide(func(updater appgateway.Updater, finder appgateway.Finder, cfg *config.Config) *gatewayhttp.UpdateGatewayHandler {
 		return gatewayhttp.NewUpdateGatewayHandler(updater, finder, cfg.Server.GatewayBaseDomain, cfg.Server.MCPBaseDomain)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(
+		repo domain.Repository,
+		manager *cache.TTLMapManager,
+		publisher cache.EventPublisher,
+		logger *slog.Logger,
+		sig snapshotSignalParams,
+	) appgateway.EntitlementsRestamper {
+		return appgateway.NewEntitlementsRestamper(repo, manager, publisher, sig.Signaler, logger)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(restamper appgateway.EntitlementsRestamper) *tenanthttp.RestampEntitlementsHandler {
+		return tenanthttp.NewRestampEntitlementsHandler(restamper)
 	}); err != nil {
 		return err
 	}

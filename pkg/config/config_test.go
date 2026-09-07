@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	stderrors "errors"
 	"log/slog"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -78,6 +79,51 @@ func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	}
 	if cfg.Telemetry.ExportersMetadata != "" || cfg.Telemetry.ExportersRaw != "" {
 		t.Errorf("Telemetry exporters env defaults = %q/%q, want empty", cfg.Telemetry.ExportersMetadata, cfg.Telemetry.ExportersRaw)
+	}
+	if cfg.Server.MCPOAuthPublicBaseURL != "" {
+		t.Errorf("MCPOAuthPublicBaseURL default = %q, want empty", cfg.Server.MCPOAuthPublicBaseURL)
+	}
+}
+
+func TestLoadConfig_MCPOAuthPublicBaseURL(t *testing.T) {
+	minimumEnv(t)
+	t.Setenv("MCP_OAUTH_PUBLIC_BASE_URL", "https://oauth.mcp.example.com/")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Server.MCPOAuthPublicBaseURL != "https://oauth.mcp.example.com" {
+		t.Fatalf("MCPOAuthPublicBaseURL = %q, want normalized origin", cfg.Server.MCPOAuthPublicBaseURL)
+	}
+}
+
+func TestLoadConfig_MCPOAuthPublicBaseURLRejectsPath(t *testing.T) {
+	minimumEnv(t)
+	t.Setenv("MCP_OAUTH_PUBLIC_BASE_URL", "https://oauth.mcp.example.com/oauth")
+
+	_, err := LoadConfig()
+	if err == nil {
+		t.Fatal("LoadConfig: want error for path in public base URL")
+	}
+	if !stderrors.Is(err, errors.ErrInvalidConfig) {
+		t.Fatalf("error = %v, want ErrInvalidConfig", err)
+	}
+	if !strings.Contains(err.Error(), "MCP_OAUTH_PUBLIC_BASE_URL") {
+		t.Fatalf("error = %v, want MCP_OAUTH_PUBLIC_BASE_URL mention", err)
+	}
+}
+
+func TestLoadConfig_MCPOAuthPublicBaseURLRejectsNonHTTP(t *testing.T) {
+	minimumEnv(t)
+	t.Setenv("MCP_OAUTH_PUBLIC_BASE_URL", "ftp://oauth.mcp.example.com")
+
+	_, err := LoadConfig()
+	if err == nil {
+		t.Fatal("LoadConfig: want error for non-http scheme")
+	}
+	if !stderrors.Is(err, errors.ErrInvalidConfig) {
+		t.Fatalf("error = %v, want ErrInvalidConfig", err)
 	}
 }
 
@@ -147,6 +193,25 @@ func TestGetTelemetryConfig_ExportersEnv(t *testing.T) {
 	}
 	if cfg.ExportersRaw != `[{"name":"raw-otlp","type":"otlp"}]` {
 		t.Errorf("ExportersRaw = %q", cfg.ExportersRaw)
+	}
+}
+
+func TestGetTelemetryConfig_EmptyExportersFileDisablesDefault(t *testing.T) {
+	t.Setenv("TELEMETRY_EXPORTERS_FILE", "")
+	cfg := getTelemetryConfig()
+	if cfg.ExportersFile != "" {
+		t.Errorf("ExportersFile = %q, want empty so env tokens are used", cfg.ExportersFile)
+	}
+}
+
+func TestGetTelemetryConfig_UnsetExportersFileUsesDefault(t *testing.T) {
+	t.Setenv("TELEMETRY_EXPORTERS_FILE", defaultTelemetryExportersFile)
+	if err := os.Unsetenv("TELEMETRY_EXPORTERS_FILE"); err != nil {
+		t.Fatalf("unset TELEMETRY_EXPORTERS_FILE: %v", err)
+	}
+	cfg := getTelemetryConfig()
+	if cfg.ExportersFile != defaultTelemetryExportersFile {
+		t.Errorf("ExportersFile = %q, want %q", cfg.ExportersFile, defaultTelemetryExportersFile)
 	}
 }
 
@@ -989,5 +1054,71 @@ func TestValidate_LocalAllowsConfigSyncTLSInsecure(t *testing.T) {
 
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("local data plane should allow CONFIG_SYNC_TLS_INSECURE: %v", err)
+	}
+}
+
+func TestGetAdminM2MConfig_TokenTTLCeiling(t *testing.T) {
+	t.Run("defaults to 24h", func(t *testing.T) {
+		if got := getAdminM2MConfig().MaxTokenTTL; got != 24*time.Hour {
+			t.Errorf("MaxTokenTTL default = %v, want 24h", got)
+		}
+	})
+
+	t.Run("shortens the revocation window when set", func(t *testing.T) {
+		t.Setenv("ADMIN_M2M_MAX_TOKEN_TTL", "5m")
+		if got := getAdminM2MConfig().MaxTokenTTL; got != 5*time.Minute {
+			t.Errorf("MaxTokenTTL = %v, want 5m", got)
+		}
+	})
+}
+
+func TestParseAdminM2MPublicKeys(t *testing.T) {
+	const pemKey = "-----BEGIN PUBLIC KEY-----\nMIIB\n-----END PUBLIC KEY-----"
+	b64 := base64.StdEncoding.EncodeToString([]byte(pemKey))
+
+	tests := []struct {
+		name string
+		raw  string
+		want []AdminM2MPublicKey
+	}{
+		{
+			name: "bare base64 key needs no kid",
+			raw:  b64,
+			want: []AdminM2MPublicKey{{PEM: b64}},
+		},
+		{
+			name: "bare pem with escaped newlines",
+			raw:  strings.ReplaceAll(pemKey, "\n", `\n`),
+			want: []AdminM2MPublicKey{{PEM: pemKey}},
+		},
+		{
+			name: "json array keeps kids for rotation",
+			raw:  `[{"kid":"a","pem":"` + b64 + `"},{"kid":"b","pem":"` + b64 + `"}]`,
+			want: []AdminM2MPublicKey{{KID: "a", PEM: b64}, {KID: "b", PEM: b64}},
+		},
+		{
+			name: "empty disables service tokens",
+			raw:  "   ",
+			want: nil,
+		},
+		{
+			name: "malformed json disables service tokens",
+			raw:  `[{"kid":`,
+			want: nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseAdminM2MPublicKeys(tc.raw)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %d keys, want %d", len(got), len(tc.want))
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Errorf("key %d = %+v, want %+v", i, got[i], tc.want[i])
+				}
+			}
+		})
 	}
 }

@@ -19,9 +19,13 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	"github.com/NeuralTrust/TrustGate/pkg/app/mcpoauth"
+	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
+	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/TrustGate/pkg/domain/vault"
@@ -29,13 +33,31 @@ import (
 
 var _ ConnectService = (*connectService)(nil)
 
+// registryLister finds a gateway's registries so the connect flow can attach the
+// installed registry a Store-scoped ticket points at (the synthetic Store
+// consumer carries no registries of its own). registrydomain.Repository satisfies
+// it. May be nil, in which case Store-scoped connect is unavailable.
+type RegistryLister interface {
+	List(ctx context.Context, filter registrydomain.ListFilter) ([]*registrydomain.Registry, int, error)
+}
+
+const storeRegistryScanPageSize = 500
+
 type connectService struct {
-	store     ConnectStore
-	vault     vaultdomain.Repository
-	consumers appconsumer.DataFinder
-	provider  ProviderClient
-	registrar UpstreamRegistrar
-	auditor   ConnectAuditor
+	store       ConnectStore
+	vault       vaultdomain.Repository
+	consumers   appconsumer.DataFinder
+	provider    ProviderClient
+	registrar   UpstreamRegistrar
+	auditor     ConnectAuditor
+	sharedOAuth mcpoauth.Provider
+	userinfo    UserInfoClient
+	catalog     authCatalog
+	registries  RegistryLister
+}
+
+type authCatalog interface {
+	GetByCode(code string) (catalogdomain.MCPServer, bool)
 }
 
 func NewConnectService(
@@ -45,14 +67,22 @@ func NewConnectService(
 	provider ProviderClient,
 	registrar UpstreamRegistrar,
 	auditor ConnectAuditor,
+	sharedOAuth mcpoauth.Provider,
+	userinfo UserInfoClient,
+	catalog authCatalog,
+	registries RegistryLister,
 ) ConnectService {
 	return &connectService{
-		store:     store,
-		vault:     vault,
-		consumers: consumers,
-		provider:  provider,
-		registrar: registrar,
-		auditor:   auditor,
+		store:       store,
+		vault:       vault,
+		consumers:   consumers,
+		provider:    provider,
+		registrar:   registrar,
+		auditor:     auditor,
+		sharedOAuth: sharedOAuth,
+		userinfo:    userinfo,
+		catalog:     catalog,
+		registries:  registries,
 	}
 }
 
@@ -61,6 +91,16 @@ func (s *connectService) CreateTicket(ctx context.Context, gatewayID ids.Gateway
 		GatewayID:    gatewayID.String(),
 		PrincipalSub: principalSub,
 		ConsumerPath: consumerPath,
+	})
+}
+
+func (s *connectService) CreateServerTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath, code, instanceID string) (string, error) {
+	return s.mintTicket(ctx, ConnectTicket{
+		GatewayID:    gatewayID.String(),
+		PrincipalSub: principalSub,
+		ConsumerPath: consumerPath,
+		Code:         strings.TrimSpace(code),
+		InstanceID:   strings.TrimSpace(instanceID),
 	})
 }
 
@@ -111,7 +151,48 @@ func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPag
 	if err != nil {
 		return nil, err
 	}
-	page := &ConnectPage{ConsumerPath: ticket.ConsumerPath, ResumeURL: ticket.ResumeURL}
+	providers, err := s.providerStatuses(ctx, gatewayID, ticket, data, rc)
+	if err != nil {
+		return nil, err
+	}
+	return &ConnectPage{
+		ConsumerPath: ticket.ConsumerPath,
+		ResumeURL:    ticket.ResumeURL,
+		Providers:    providers,
+		Code:         ticket.Code,
+	}, nil
+}
+
+func (s *connectService) Statuses(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	principalSub,
+	consumerPath string,
+) ([]ProviderStatus, error) {
+	data, err := s.consumers.FindByGateway(ctx, gatewayID)
+	if err != nil {
+		return nil, err
+	}
+	rc, ok := data.MatchPath(consumerPath)
+	if !ok {
+		return nil, fmt.Errorf("oauth connect: consumer path %s no longer exists", consumerPath)
+	}
+	ticket := &ConnectTicket{
+		GatewayID:    gatewayID.String(),
+		PrincipalSub: principalSub,
+		ConsumerPath: consumerPath,
+	}
+	return s.providerStatuses(ctx, gatewayID, ticket, data, rc)
+}
+
+func (s *connectService) providerStatuses(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	ticket *ConnectTicket,
+	data *appconsumer.Data,
+	rc *appconsumer.RoutableConsumer,
+) ([]ProviderStatus, error) {
+	var providers []ProviderStatus
 	for _, reg := range data.EffectiveRegistries(rc) {
 		cfg := forwardedAuth(reg)
 		if cfg == nil {
@@ -121,6 +202,9 @@ func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPag
 			continue
 		}
 		status := ProviderStatus{Provider: cfg.Provider, Registry: reg.Name}
+		if reg.MCPTarget != nil {
+			status.Code = reg.MCPTarget.Code
+		}
 		cred, err := s.vault.Find(ctx, gatewayID, ticket.PrincipalSub, cfg.Provider)
 		switch {
 		case err == nil:
@@ -134,9 +218,9 @@ func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPag
 		case !errors.Is(err, vaultdomain.ErrNotFound):
 			return nil, fmt.Errorf("oauth connect: check linked credential: %w", err)
 		}
-		page.Providers = append(page.Providers, status)
+		providers = append(providers, status)
 	}
-	return page, nil
+	return providers, nil
 }
 
 func (s *connectService) Start(ctx context.Context, baseURL, ticketID, provider string) (string, error) {
@@ -205,7 +289,8 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 		return st.TicketID, err
 	}
 	cred, err := vaultdomain.NewCredential(
-		gatewayID, st.Ticket.PrincipalSub, cfg.Provider, "",
+		gatewayID, st.Ticket.PrincipalSub, cfg.Provider,
+		resolveAccountRef(ctx, s.userinfo, cfg, token),
 		token.AccessToken, token.RefreshToken, token.Scopes, token.ExpiresAt,
 	)
 	if err != nil {
@@ -252,18 +337,49 @@ func (s *connectService) resolve(ctx context.Context, ticketID string) (*Connect
 	return ticket, gatewayID, data, rc, nil
 }
 
-func (s *connectService) routable(ctx context.Context, ticket *ConnectTicket) (ids.GatewayID, *appconsumer.Data, *appconsumer.RoutableConsumer, error) {
+// baseRoutable recovers the gateway and routable consumer a ticket points at,
+// with no ticket-kind-specific checks. It is shared by the OAuth connect routable
+// (which adds api-key checks) and the configure flow (which needs only this).
+func baseRoutable(
+	ctx context.Context,
+	consumers appconsumer.DataFinder,
+	ticket *ConnectTicket,
+) (ids.GatewayID, *appconsumer.Data, *appconsumer.RoutableConsumer, error) {
 	gatewayID, err := ids.Parse[ids.GatewayKind](ticket.GatewayID)
 	if err != nil {
 		return ids.GatewayID{}, nil, nil, fmt.Errorf("oauth connect: bad gateway id in ticket: %w", err)
 	}
-	data, err := s.consumers.FindByGateway(ctx, gatewayID)
+	data, err := consumers.FindByGateway(ctx, gatewayID)
 	if err != nil {
 		return ids.GatewayID{}, nil, nil, err
+	}
+	// The MCP Store consumer is synthetic (never persisted), so it is not in the
+	// consumer data and MatchPath would report it "no longer exists". Build it the
+	// same way the request path does; its installed registries are attached by the
+	// caller (see connectService.routable) since the persisted data has none.
+	if consumerdomain.IsStoreSlug(appconsumer.SlugFromMCPPath(ticket.ConsumerPath)) {
+		rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(gatewayID)}
+		return gatewayID, data, rc, nil
 	}
 	rc, ok := data.MatchPath(ticket.ConsumerPath)
 	if !ok {
 		return ids.GatewayID{}, nil, nil, fmt.Errorf("oauth connect: consumer path %s no longer exists", ticket.ConsumerPath)
+	}
+	return gatewayID, data, rc, nil
+}
+
+func (s *connectService) routable(ctx context.Context, ticket *ConnectTicket) (ids.GatewayID, *appconsumer.Data, *appconsumer.RoutableConsumer, error) {
+	gatewayID, data, rc, err := baseRoutable(ctx, s.consumers, ticket)
+	if err != nil {
+		return ids.GatewayID{}, nil, nil, err
+	}
+	// A Store-scoped ticket points at one installed server by catalog code, but the
+	// synthetic Store consumer carries no registries — attach the materialised
+	// registry for that code so the forwarded-auth (OAuth) provider resolves.
+	if consumerdomain.IsStoreConsumer(rc.Consumer) && strings.TrimSpace(ticket.Code) != "" {
+		if reg := s.storeRegistry(ctx, gatewayID, ticket.Code); reg != nil {
+			rc.Registries = []*registrydomain.Registry{reg}
+		}
 	}
 	if apiKeyConnectTicket(ticket) &&
 		(ticket.Providers == nil ||
@@ -273,6 +389,30 @@ func (s *connectService) routable(ctx context.Context, ticket *ConnectTicket) (i
 		return ids.GatewayID{}, nil, nil, ErrTicketNotFound
 	}
 	return gatewayID, data, rc, nil
+}
+
+// storeRegistry finds the materialised registry for a catalog code on a gateway,
+// so a Store-scoped connect can resolve the one server it targets. Returns nil
+// when no registry lister is wired or none matches.
+func (s *connectService) storeRegistry(ctx context.Context, gatewayID ids.GatewayID, code string) *registrydomain.Registry {
+	if s.registries == nil {
+		return nil
+	}
+	items, _, err := s.registries.List(ctx, registrydomain.ListFilter{
+		GatewayID: gatewayID,
+		Page:      1,
+		Size:      storeRegistryScanPageSize,
+	})
+	if err != nil {
+		return nil
+	}
+	code = strings.TrimSpace(code)
+	for _, reg := range items {
+		if reg != nil && reg.MCPTarget != nil && reg.MCPTarget.Code == code {
+			return reg
+		}
+	}
+	return nil
 }
 
 func apiKeyConnectTicket(ticket *ConnectTicket) bool {

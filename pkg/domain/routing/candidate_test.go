@@ -214,6 +214,37 @@ func TestCandidateSet_ResolveAutoDeniedWithoutDefaults(t *testing.T) {
 	}
 }
 
+func TestCandidateSet_FilterKeepsMatchingRegistries(t *testing.T) {
+	t.Parallel()
+	s := routing.NewCandidateSet()
+	openai := newTestRegistry(t, "openai")
+	anthropic := newTestRegistry(t, "anthropic")
+	s.Add(routing.Candidate{Registry: openai, Default: "text-embedding-3-small"})
+	s.Add(routing.Candidate{Registry: anthropic, Default: "claude-4"})
+
+	out := s.Filter(func(c routing.Candidate) bool {
+		return c.Registry.Provider() == "openai"
+	})
+	if out.Len() != 1 {
+		t.Fatalf("Len = %d, want 1", out.Len())
+	}
+	if !out.HasRegistry(openai.ID) {
+		t.Fatal("expected openai to remain")
+	}
+	if out.HasRegistry(anthropic.ID) {
+		t.Fatal("anthropic must be dropped")
+	}
+}
+
+func TestCandidateSet_FilterNilIsEmpty(t *testing.T) {
+	t.Parallel()
+	var s *routing.CandidateSet
+	out := s.Filter(func(routing.Candidate) bool { return true })
+	if out.Len() != 0 {
+		t.Fatalf("Len = %d, want 0", out.Len())
+	}
+}
+
 func TestCandidateSet_ZeroIntentKeepsSet(t *testing.T) {
 	t.Parallel()
 	s := routing.NewCandidateSet()

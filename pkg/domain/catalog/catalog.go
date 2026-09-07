@@ -33,18 +33,20 @@ type Provider struct {
 }
 
 type Model struct {
-	ID            ids.ModelID
-	ProviderID    ids.ProviderID
-	Slug          string
-	ExternalID    string
-	DisplayName   string
-	ContextWindow int
-	MaxOutput     int
-	InputPrice    string
-	OutputPrice   string
-	Capabilities  map[string]any
-	Enabled       bool
-	Source        string
+	ID              ids.ModelID
+	ProviderID      ids.ProviderID
+	Slug            string
+	ExternalID      string
+	DisplayName     string
+	ContextWindow   int
+	MaxOutput       int
+	InputPrice      string
+	OutputPrice     string
+	CacheReadPrice  string
+	CacheWritePrice string
+	Capabilities    map[string]any
+	Enabled         bool
+	Source          string
 	// ReleaseDate is the provider release date; nil when unknown. Models are
 	// listed most-recent release first, with unknown dates last.
 	ReleaseDate *time.Time

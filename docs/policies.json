@@ -248,7 +248,7 @@
                 "key": "custom_pricing",
                 "label": "Custom Pricing",
                 "type": "map",
-                "description": "Per-token USD rates keyed by model slug or wildcard pattern, consulted before the builtin table. Used for dollar budgets.",
+                "description": "Per-token USD rates keyed by model slug or wildcard pattern, consulted before registry pricing and the models.dev catalog. Used for dollar budgets.",
                 "value": {
                   "key": "price",
                   "label": "Price",

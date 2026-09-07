@@ -180,3 +180,37 @@ func TestCallbackDefaultIdPConsentUsesEffectiveGateway(t *testing.T) {
 	require.Equal(t, gw, chainer.gatewayID, "consent detour must use the addressed gateway, not the default's nil gateway")
 	require.Equal(t, "platform-user-1", chainer.sub)
 }
+
+func TestCallbackDefaultIdPCapturesEmailFromAccessToken(t *testing.T) {
+	accessToken := unsignedJWT(t, map[string]any{
+		"sub":   "fff9c76a-52e8-416f-8b6a-489000000001",
+		"email": "ada@neuraltrust.ai",
+	})
+	idp := fakeIdPWithToken(t, accessToken)
+	def := appauth.BuildDefaultIdP(appauth.DefaultIdPConfig{Issuer: idp.URL, ClientID: "trustgate"})
+	store := newMemFlowStore()
+	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{def}, defaultIdP: def}
+	proxy := NewAuthProxy(finder, nil, http.DefaultClient, store, nil, newTestSigner(t), nil)
+
+	gw := ids.New[ids.GatewayKind]()
+	state := "state-email"
+	require.NoError(t, store.SavePending(context.Background(), state, PendingAuthorization{
+		ClientID:      "trustgate",
+		RedirectURI:   "http://localhost:8082/oauth/callback",
+		State:         "client-state",
+		CodeChallenge: "chal",
+		CodeVerifier:  "verifier",
+		Resource:      "http://localhost:8082/oMTXK0qG/mcp",
+		AuthID:        appauth.DefaultIdPAuthID().String(),
+		GatewayID:     gw.String(),
+	}))
+
+	loc, err := proxy.Callback(context.Background(), "http://localhost:8082", state, "the-code", "", "")
+	require.NoError(t, err)
+	require.Contains(t, loc, "code=")
+
+	grant := store.peekFirstGrant()
+	require.NotNil(t, grant)
+	require.Equal(t, "fff9c76a-52e8-416f-8b6a-489000000001", grant.Subject)
+	require.Equal(t, "ada@neuraltrust.ai", grant.Email)
+}

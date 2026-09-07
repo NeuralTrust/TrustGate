@@ -82,12 +82,16 @@ func (r *Repository) Save(ctx context.Context, b *domain.Registry) error {
 	if err != nil {
 		return fmt.Errorf("registry repository: marshal mcp_target: %w", err)
 	}
+	pricingBytes, err := marshalPricing(b.Pricing())
+	if err != nil {
+		return fmt.Errorf("registry repository: marshal pricing: %w", err)
+	}
 	const query = `
-		INSERT INTO registries (id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
+		INSERT INTO registries (id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
-			b.ID, b.GatewayID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authStored, b.Description, healthChecksBytes, mcpTargetBytes, b.CreatedAt, b.UpdatedAt,
+			b.ID, b.GatewayID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authStored, b.Description, healthChecksBytes, mcpTargetBytes, pricingBytes, b.CreatedAt, b.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -115,6 +119,10 @@ func (r *Repository) Update(ctx context.Context, b *domain.Registry) error {
 	if err != nil {
 		return fmt.Errorf("registry repository: marshal mcp_target: %w", err)
 	}
+	pricingBytes, err := marshalPricing(b.Pricing())
+	if err != nil {
+		return fmt.Errorf("registry repository: marshal pricing: %w", err)
+	}
 	const query = `
 		UPDATE registries
 		   SET name             = $2,
@@ -126,11 +134,12 @@ func (r *Repository) Update(ctx context.Context, b *domain.Registry) error {
 		       description      = $8,
 		       health_checks    = $9,
 		       mcp_target       = $10,
-		       updated_at       = $11
-		 WHERE id = $1 AND gateway_id = $12`
+		       pricing          = $11,
+		       updated_at       = $12
+		 WHERE id = $1 AND gateway_id = $13`
 	return r.withMarkedTx(ctx, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query,
-			b.ID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authStored, b.Description, healthChecksBytes, mcpTargetBytes, b.UpdatedAt, b.GatewayID,
+			b.ID, b.Name, registryType(b), b.Enabled, b.Provider(), providerOptionsBytes, authStored, b.Description, healthChecksBytes, mcpTargetBytes, pricingBytes, b.UpdatedAt, b.GatewayID,
 		)
 		if err != nil {
 			return mapPgError(err)
@@ -181,7 +190,7 @@ func ensureNotInFallbackChain(ctx context.Context, tx pgx.Tx, gatewayID ids.Gate
 
 func (r *Repository) FindByID(ctx context.Context, id ids.RegistryID) (*domain.Registry, error) {
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, created_at, updated_at
+		SELECT id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at
 		  FROM registries
 		 WHERE id = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, id)
@@ -200,7 +209,7 @@ func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, reg
 		return nil, nil
 	}
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, created_at, updated_at
+		SELECT id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at
 		  FROM registries
 		 WHERE gateway_id = $1
 		   AND id = ANY($2::uuid[])`
@@ -247,7 +256,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	}
 
 	const listQuery = `
-		SELECT id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, created_at, updated_at
+		SELECT id, gateway_id, name, type, enabled, provider, provider_options, auth, description, health_checks, mcp_target, pricing, created_at, updated_at
 		  FROM registries
 		 WHERE ($1::uuid IS NULL OR gateway_id = $1)
 		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')
@@ -279,12 +288,12 @@ type rowScanner interface {
 
 func (r *Repository) scanRegistry(s rowScanner) (*domain.Registry, error) {
 	b := &domain.Registry{}
-	var providerOptionsRaw, authRaw, healthChecksRaw, mcpTargetRaw []byte
+	var providerOptionsRaw, authRaw, healthChecksRaw, mcpTargetRaw, pricingRaw []byte
 	var providerRaw *string
 	var typeRaw string
 	if err := s.Scan(
 		&b.ID, &b.GatewayID, &b.Name, &typeRaw, &b.Enabled, &providerRaw,
-		&providerOptionsRaw, &authRaw, &b.Description, &healthChecksRaw, &mcpTargetRaw,
+		&providerOptionsRaw, &authRaw, &b.Description, &healthChecksRaw, &mcpTargetRaw, &pricingRaw,
 		&b.CreatedAt, &b.UpdatedAt,
 	); err != nil {
 		return nil, err
@@ -321,6 +330,15 @@ func (r *Repository) scanRegistry(s rowScanner) (*domain.Registry, error) {
 				return nil, fmt.Errorf("scan health_checks: %w: %w", commonerrors.ErrCorruptData, err)
 			}
 			target.HealthChecks = &hc
+		}
+		if len(pricingRaw) > 0 {
+			var pricing domain.Pricing
+			if err := json.Unmarshal(pricingRaw, &pricing); err != nil {
+				return nil, fmt.Errorf("scan pricing: %w: %w", commonerrors.ErrCorruptData, err)
+			}
+			if !pricing.IsZero() {
+				target.Pricing = &pricing
+			}
 		}
 		b.LLMTarget = target
 	}
@@ -380,6 +398,13 @@ func marshalHealthChecks(h *domain.HealthChecks) ([]byte, error) {
 		return nil, nil
 	}
 	return json.Marshal(h)
+}
+
+func marshalPricing(p *domain.Pricing) ([]byte, error) {
+	if p.IsZero() {
+		return nil, nil
+	}
+	return json.Marshal(p)
 }
 
 func nullableUUID(id uuid.UUID) any {

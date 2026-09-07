@@ -47,17 +47,33 @@ type composer struct {
 	dialer    Dialer
 	creds     CredentialResolver
 	discovery DiscoveryCache
+	urlvars   URLValueResolver
 	flight    singleflight.Group
 	logger    *slog.Logger
 }
 
-func NewComposer(dialer Dialer, creds CredentialResolver, discovery DiscoveryCache, logger *slog.Logger) Composer {
-	return &composer{
+// ComposerOption configures optional composer collaborators without widening the
+// constructor for the common case.
+type ComposerOption func(*composer)
+
+// WithURLValues wires the resolver that fills a registry's per-user URL
+// placeholders (e.g. {account_url}) from the calling principal's install before
+// dialing. Omitted, servers that declare URL variables cannot be reached.
+func WithURLValues(r URLValueResolver) ComposerOption {
+	return func(c *composer) { c.urlvars = r }
+}
+
+func NewComposer(dialer Dialer, creds CredentialResolver, discovery DiscoveryCache, logger *slog.Logger, opts ...ComposerOption) Composer {
+	c := &composer{
 		dialer:    dialer,
 		creds:     creds,
 		discovery: discovery,
 		logger:    logger,
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 type binding struct {
@@ -77,7 +93,7 @@ func (c *composer) ListTools(ctx context.Context, rc *appconsumer.RoutableConsum
 	}
 	out := make([]Tool, 0, len(comp.bindings))
 	for _, b := range comp.bindings {
-		t := b.tool
+		t := attributeTool(b.tool, b.registry)
 		t.Name = b.exposed
 		out = append(out, t)
 	}
@@ -93,18 +109,11 @@ func (c *composer) CallTool(ctx context.Context, rc *appconsumer.RoutableConsume
 		if b.exposed != name {
 			continue
 		}
-		target, err := c.target(ctx, rc, b.registry)
-		if err != nil {
-			return nil, err
-		}
 		stop := annotateUpstream(ctx, b.registry, b.tool.Name)
 		defer stop()
-		up, err := c.dialer.Connect(ctx, target)
-		if err != nil {
-			return nil, err
-		}
-		defer up.Close(ctx)
-		return up.CallTool(ctx, b.tool.Name, arguments)
+		return invokeUpstream(c, ctx, rc, b.registry, func(up Upstream) (json.RawMessage, error) {
+			return up.CallTool(ctx, b.tool.Name, arguments)
+		})
 	}
 	// The upstream offers this tool but the consumer's toolkit excludes it: a
 	// policy denial, and the answer must say so. Connecting an account would not

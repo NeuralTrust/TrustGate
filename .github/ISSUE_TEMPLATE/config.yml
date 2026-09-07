@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://docs.neuraltrust.ai
+    about: Check the official documentation for guides and API reference.
+  - name: Slack Community
+    url: https://join.slack.com/t/neuraltrustcommunity/shared_invite/zt-2xl47cag6-_HFNpltIULnA3wh4R6AqBg
+    about: Join the Slack community for questions and discussions.
+  - name: Examples
+    url: https://github.com/NeuralTrust/TrustGate/tree/main/examples
+    about: Check the examples directory for common use cases.

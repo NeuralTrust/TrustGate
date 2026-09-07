@@ -143,6 +143,53 @@ func TestMCPAuth_ForwardedAutoNeedsNoClient(t *testing.T) {
 	}
 }
 
+func TestNewMCPRegistry_OpenAPISource(t *testing.T) {
+	t.Parallel()
+	target := &MCPTarget{
+		Source: MCPSourceOpenAPI,
+		URL:    "https://api.example.com/v1",
+		OpenAPI: &OpenAPITarget{
+			SpecURL: "https://api.example.com/openapi.json",
+		},
+		Auth: &MCPAuth{Mode: MCPAuthModeStatic, Header: "Authorization", Value: "Bearer token"},
+	}
+	registry, err := NewMCPRegistry(ids.New[ids.GatewayKind](), "api", "", target)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if registry.MCPTarget.Transport != "" {
+		t.Fatalf("OpenAPI transport = %q, want empty", registry.MCPTarget.Transport)
+	}
+}
+
+func TestNewMCPRegistry_OpenAPIRejectsMCPOnlyFields(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		mutate func(*MCPTarget)
+	}{
+		{"missing spec", func(target *MCPTarget) { target.OpenAPI = nil }},
+		{"mcp transport", func(target *MCPTarget) { target.Transport = MCPTransportStreamableHTTP }},
+		{"forwarded auth", func(target *MCPTarget) {
+			target.Auth = &MCPAuth{Mode: MCPAuthModeForwarded, Provider: "x", Registration: RegistrationAuto}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			target := &MCPTarget{
+				Source:  MCPSourceOpenAPI,
+				URL:     "https://api.example.com",
+				OpenAPI: &OpenAPITarget{SpecURL: "https://api.example.com/openapi.json"},
+			}
+			test.mutate(target)
+			_, err := NewMCPRegistry(ids.New[ids.GatewayKind](), "api", "", target)
+			if !errors.Is(err, commonerrors.ErrValidation) {
+				t.Fatalf("error = %v, want validation error", err)
+			}
+		})
+	}
+}
+
 func TestRegistry_Validate_TypeCrossChecks(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()

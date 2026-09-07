@@ -65,6 +65,16 @@ func (r *routerOpsRecorder) RecordRequest(_ context.Context, request o11y.Reques
 	r.count++
 }
 
+func (r *routerOpsRecorder) StartRequestSpan(
+	ctx context.Context, _ string, _ o11y.Route,
+) (context.Context, o11y.RequestSpan) {
+	return ctx, routerOpsSpan{}
+}
+
+type routerOpsSpan struct{}
+
+func (routerOpsSpan) Finish(o11y.SpanOutcome) {}
+
 func TestMCPRouterDispatch(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	gateway := &gatewaydomain.Gateway{ID: gatewayID, Slug: "tenant"}
@@ -94,8 +104,8 @@ func TestMCPRouterDispatch(t *testing.T) {
 		appoauth.NewNoopConnectAttemptLimiter(),
 		func(string, string) string { return "127.0.0.1" },
 	)
-	connectHandler := oauthhttp.NewConnectHandler(connect)
-	mcpHandler := mcphttp.NewHandler(nil, nil)
+	connectHandler := oauthhttp.NewConnectHandler(connect, nil, "")
+	mcpHandler := mcphttp.NewHandler(nil, nil, nil)
 	ops := &routerOpsRecorder{}
 	mcpRouter := router.NewMCPRouter(
 		middleware.NewTransport(
@@ -118,6 +128,7 @@ func TestMCPRouterDispatch(t *testing.T) {
 		new(oauthhttp.TokenHandler),
 		apiKeyHandler,
 		connectHandler,
+		oauthhttp.NewConfigureHandler(nil),
 		new(oauthhttp.JWKSHandler),
 		middleware.NewOpsMetricsMiddleware(ops, o11y.PlaneMCP),
 	)
@@ -210,6 +221,16 @@ func TestMCPRouterDispatch(t *testing.T) {
 		assert.Equal(t, fiber.StatusMethodNotAllowed, deleteResponse.StatusCode)
 		assert.Equal(t, fiber.MethodPost, deleteResponse.Header.Get(fiber.HeaderAllow))
 
+		// The notification stream is a GET too, so it must reach authentication
+		// instead of the blanket 405 that plain GETs still get.
+		streamRequest := httptest.NewRequest(fiber.MethodGet, "/tools/mcp", nil)
+		streamRequest.Host = "tenant.mcp.test"
+		streamRequest.Header.Set(fiber.HeaderAccept, "text/event-stream")
+		streamResponse, err := app.Test(streamRequest, -1)
+		require.NoError(t, err)
+		require.NoError(t, streamResponse.Body.Close())
+		assert.Equal(t, fiber.StatusUnauthorized, streamResponse.StatusCode)
+
 		postResponse, _ := dispatchMCPRequest(t, app, fiber.MethodPost, "/tools/mcp", `{}`, fiber.MIMEApplicationJSON)
 		assert.Equal(t, fiber.StatusUnauthorized, postResponse.StatusCode)
 		assert.Equal(t, "DENY", postResponse.Header.Get("X-Frame-Options"))
@@ -226,7 +247,7 @@ func TestMCPRouterDispatch(t *testing.T) {
 		assert.Contains(t, unknownResponse.Header.Get(fiber.HeaderWWWAuthenticate), "Bearer ")
 	})
 
-	assert.Equal(t, 10, ops.count)
+	assert.Equal(t, 11, ops.count)
 }
 
 func assertMCPResponsePolicies(t *testing.T, response *http.Response) {

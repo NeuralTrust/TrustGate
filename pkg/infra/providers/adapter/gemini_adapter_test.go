@@ -122,8 +122,10 @@ func TestGemini_DecodeResponse_FunctionCall_RealPayload(t *testing.T) {
 	// Usage
 	require.NotNil(t, cr.Usage)
 	assert.Equal(t, 640, cr.Usage.InputTokens)
-	assert.Equal(t, 16, cr.Usage.OutputTokens)
+	assert.Equal(t, 72, cr.Usage.OutputTokens, "candidates 16 + thoughts 56, which is what Gemini bills")
+	assert.Equal(t, 56, cr.Usage.ReasoningOutputTokens)
 	assert.Equal(t, 712, cr.Usage.TotalTokens)
+	assert.Equal(t, cr.Usage.InputTokens+cr.Usage.OutputTokens, cr.Usage.TotalTokens)
 
 	// Cross-format: Gemini → Canonical → OpenAI
 	openaiAdapter := &OpenAIAdapter{}
@@ -297,23 +299,27 @@ func TestUsageExtraction_Gemini_TotalSynthesized(t *testing.T) {
 }
 
 func TestUsageSubCounts_Gemini_CachedAndThoughts(t *testing.T) {
-	body := []byte(`{"candidates":[{"content":{"role":"model","parts":[{"text":"hi"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":40,"candidatesTokenCount":10,"totalTokenCount":50,"cachedContentTokenCount":3,"thoughtsTokenCount":5}}`)
+	body := []byte(`{"candidates":[{"content":{"role":"model","parts":[{"text":"hi"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":40,"candidatesTokenCount":10,"totalTokenCount":55,"cachedContentTokenCount":3,"thoughtsTokenCount":5}}`)
 	cr, err := (&GeminiAdapter{}).DecodeResponse(body)
 	require.NoError(t, err)
 	require.NotNil(t, cr.Usage)
 	assert.Equal(t, 3, cr.Usage.CachedInputTokens)
 	assert.Equal(t, 5, cr.Usage.ReasoningOutputTokens)
-	assert.Equal(t, 40, cr.Usage.InputTokens, "sub-counts are inclusive, not subtracted")
-	assert.Equal(t, 10, cr.Usage.OutputTokens, "sub-counts are inclusive, not subtracted")
+	assert.Equal(t, 40, cr.Usage.InputTokens, "cachedContentTokenCount is already inside promptTokenCount")
+	assert.Equal(t, 15, cr.Usage.OutputTokens, "thoughtsTokenCount is disjoint from candidates and billed as output")
+	assert.Equal(t, 55, cr.Usage.TotalTokens)
 }
 
 func TestUsageExtraction_Gemini_Stream_ToolUseInput(t *testing.T) {
-	body := []byte(`{"candidates":[{"content":{"role":"model","parts":[{"text":""}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":40,"candidatesTokenCount":10,"totalTokenCount":50,"toolUsePromptTokenCount":6}}`)
+	body := []byte(`{"candidates":[{"content":{"role":"model","parts":[{"text":""}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":40,"candidatesTokenCount":10,"totalTokenCount":56,"toolUsePromptTokenCount":6}}`)
 	sc, err := (&GeminiAdapter{}).DecodeStreamChunk(body)
 	require.NoError(t, err)
 	require.NotNil(t, sc)
 	require.NotNil(t, sc.Usage)
 	assert.Equal(t, 6, sc.Usage.ToolUseInputTokens)
+	assert.Equal(t, 46, sc.Usage.InputTokens, "toolUsePromptTokenCount is disjoint from prompt and billed as input")
+	assert.Equal(t, 10, sc.Usage.OutputTokens)
+	assert.Equal(t, 56, sc.Usage.TotalTokens)
 }
 
 func TestGemini_DecodeRequest_SkipsThoughtParts(t *testing.T) {
@@ -340,4 +346,103 @@ func TestGemini_DecodeStreamChunk_SkipsThoughtParts(t *testing.T) {
 	require.NotNil(t, sc)
 	assert.Equal(t, "hello", sc.Delta)
 	assert.NotContains(t, sc.Delta, "secret")
+}
+
+// Gemini reports thoughtsTokenCount and toolUsePromptTokenCount DISJOINT from
+// candidatesTokenCount and promptTokenCount, and bills them at the output and
+// input rate respectively. Cost prices only InputTokens and OutputTokens, so the
+// adapter has to fold them in. This invariant is what makes a fabricated usage
+// fixture impossible to write: any payload that violates it is not real Gemini.
+func TestGeminiUsage_FoldsAdditiveSubCountsAndReconciles(t *testing.T) {
+	cases := []struct {
+		name      string
+		usage     string
+		wantIn    int
+		wantOut   int
+		wantTotal int
+	}{
+		{
+			name:      "thoughts are billed as output",
+			usage:     `{"promptTokenCount":38,"candidatesTokenCount":223,"totalTokenCount":1088,"thoughtsTokenCount":827}`,
+			wantIn:    38,
+			wantOut:   1050,
+			wantTotal: 1088,
+		},
+		{
+			name:      "tool-use prompt tokens are billed as input",
+			usage:     `{"promptTokenCount":40,"candidatesTokenCount":10,"totalTokenCount":56,"toolUsePromptTokenCount":6}`,
+			wantIn:    46,
+			wantOut:   10,
+			wantTotal: 56,
+		},
+		{
+			name:      "cached content is already inside the prompt count",
+			usage:     `{"promptTokenCount":40,"candidatesTokenCount":10,"totalTokenCount":50,"cachedContentTokenCount":30}`,
+			wantIn:    40,
+			wantOut:   10,
+			wantTotal: 50,
+		},
+		{
+			name:      "every additive count at once",
+			usage:     `{"promptTokenCount":26,"candidatesTokenCount":3333,"totalTokenCount":5663,"thoughtsTokenCount":2297,"toolUsePromptTokenCount":7,"cachedContentTokenCount":11}`,
+			wantIn:    33,
+			wantOut:   5630,
+			wantTotal: 5663,
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			body := []byte(`{"candidates":[{"content":{"role":"model","parts":[{"text":"hi"}]},` +
+				`"finishReason":"STOP"}],"usageMetadata":` + tc.usage + `}`)
+			cr, err := (&GeminiAdapter{}).DecodeResponse(body)
+			require.NoError(t, err)
+			require.NotNil(t, cr.Usage)
+
+			assert.Equal(t, tc.wantIn, cr.Usage.InputTokens)
+			assert.Equal(t, tc.wantOut, cr.Usage.OutputTokens)
+			assert.Equal(t, tc.wantTotal, cr.Usage.TotalTokens)
+			assert.Equal(t, cr.Usage.InputTokens+cr.Usage.OutputTokens, cr.Usage.TotalTokens,
+				"a folded usage view must reconcile: anything else is unpriced tokens")
+			assert.LessOrEqual(t, cr.Usage.ReasoningOutputTokens, cr.Usage.OutputTokens)
+			assert.LessOrEqual(t, cr.Usage.CachedInputTokens, cr.Usage.InputTokens)
+			assert.LessOrEqual(t, cr.Usage.ToolUseInputTokens, cr.Usage.InputTokens)
+		})
+	}
+}
+
+// Re-encoding to Gemini must rebuild the disjoint wire counts, or a client
+// metering off the gateway's own response sees a payload whose parts do not sum
+// to its total.
+func TestGeminiUsage_EncodeRebuildsDisjointWireCounts(t *testing.T) {
+	body := []byte(`{"candidates":[{"content":{"role":"model","parts":[{"text":"hi"}]},"finishReason":"STOP"}],` +
+		`"usageMetadata":{"promptTokenCount":38,"candidatesTokenCount":223,"totalTokenCount":1095,` +
+		`"thoughtsTokenCount":827,"toolUsePromptTokenCount":7}}`)
+	a := &GeminiAdapter{}
+	cr, err := a.DecodeResponse(body)
+	require.NoError(t, err)
+
+	out, err := a.EncodeResponse(cr)
+	require.NoError(t, err)
+
+	var got struct {
+		UsageMetadata struct {
+			PromptTokenCount        int `json:"promptTokenCount"`
+			CandidatesTokenCount    int `json:"candidatesTokenCount"`
+			TotalTokenCount         int `json:"totalTokenCount"`
+			ThoughtsTokenCount      int `json:"thoughtsTokenCount"`
+			ToolUsePromptTokenCount int `json:"toolUsePromptTokenCount"`
+		} `json:"usageMetadata"`
+	}
+	require.NoError(t, json.Unmarshal(out, &got))
+	u := got.UsageMetadata
+
+	assert.Equal(t, 38, u.PromptTokenCount)
+	assert.Equal(t, 223, u.CandidatesTokenCount)
+	assert.Equal(t, 827, u.ThoughtsTokenCount)
+	assert.Equal(t, 7, u.ToolUsePromptTokenCount)
+	assert.Equal(t, 1095, u.TotalTokenCount)
+	assert.Equal(t,
+		u.PromptTokenCount+u.CandidatesTokenCount+u.ThoughtsTokenCount+u.ToolUsePromptTokenCount,
+		u.TotalTokenCount, "the re-encoded payload must satisfy Gemini's own arithmetic")
 }

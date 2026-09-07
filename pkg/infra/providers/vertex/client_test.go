@@ -15,8 +15,10 @@
 package vertex
 
 import (
+	"context"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -177,6 +179,96 @@ func TestBuildRequestURL(t *testing.T) {
 			url,
 		)
 	})
+}
+
+func TestEmbeddingsAction(t *testing.T) {
+	assert.Equal(t, embedAction, embeddingsAction([]byte(`{"content":{"parts":[{"text":"hi"}]}}`)))
+	assert.Equal(t, batchEmbedAction, embeddingsAction([]byte(`{"requests":[{"content":{"parts":[{"text":"a"}]}}]}`)))
+	assert.Equal(t, embedAction, embeddingsAction([]byte(`{}`)))
+}
+
+func TestBuildEmbeddingsURL(t *testing.T) {
+	c := &client{}
+	cfg := &providers.Config{
+		Model: "text-embedding-004",
+		Options: map[string]any{
+			"project":  "p",
+			"location": "us-central1",
+		},
+	}
+
+	t.Run("single input uses embedContent and ignores chat action", func(t *testing.T) {
+		cfg.Options["action"] = "generateContent"
+		url, err := c.buildEmbeddingsURL(cfg, []byte(`{"content":{"parts":[{"text":"hi"}]}}`))
+		require.NoError(t, err)
+		assert.Equal(t,
+			"https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/us-central1/publishers/google/models/text-embedding-004:embedContent",
+			url,
+		)
+	})
+
+	t.Run("batch uses batchEmbedContents", func(t *testing.T) {
+		url, err := c.buildEmbeddingsURL(cfg, []byte(`{"requests":[{"content":{"parts":[{"text":"a"}]}}]}`))
+		require.NoError(t, err)
+		assert.True(t, strings.HasSuffix(url, ":batchEmbedContents"))
+	})
+
+	t.Run("optional base_url is embeddings-only", func(t *testing.T) {
+		cfg := &providers.Config{
+			Model: "text-embedding-004",
+			Options: map[string]any{
+				"project":  "p",
+				"location": "us-central1",
+				"base_url": "http://127.0.0.1:9/v1",
+			},
+		}
+		url, err := c.buildEmbeddingsURL(cfg, []byte(`{"content":{"parts":[{"text":"hi"}]}}`))
+		require.NoError(t, err)
+		assert.Equal(t, "http://127.0.0.1:9/v1/text-embedding-004:embedContent", url)
+
+		chatURL, err := c.buildRequestURL(cfg, []byte(`{}`), false)
+		require.NoError(t, err)
+		assert.Contains(t, chatURL, "aiplatform.googleapis.com")
+		assert.Contains(t, chatURL, ":generateContent")
+	})
+}
+
+func TestEmbeddings_RoundTrip(t *testing.T) {
+	var gotAuth, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"embedding":{"values":[0.1,0.2]}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewVertexClient().(providers.EmbeddingsClient)
+	resp, err := c.Embeddings(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{ApiKey: "tok"},
+		Model:       "text-embedding-004",
+		Options: map[string]any{
+			"project":  "p",
+			"location": "us-central1",
+			"base_url": srv.URL,
+			"action":   "generateContent",
+		},
+	}, []byte(`{"content":{"parts":[{"text":"hi"}]}}`))
+	require.NoError(t, err)
+	assert.Equal(t, "Bearer tok", gotAuth)
+	assert.Equal(t, "/text-embedding-004:embedContent", gotPath)
+	assert.JSONEq(t, `{"embedding":{"values":[0.1,0.2]}}`, string(resp))
+}
+
+func TestEmbeddings_MissingProject(t *testing.T) {
+	c := NewVertexClient().(providers.EmbeddingsClient)
+	_, err := c.Embeddings(context.Background(), &providers.Config{
+		Credentials: providers.Credentials{ApiKey: "tok"},
+		Model:       "text-embedding-004",
+		Options:     map[string]any{"location": "us-central1"},
+	}, []byte(`{}`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "project")
 }
 
 func TestReadBackendError(t *testing.T) {

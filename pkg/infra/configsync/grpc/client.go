@@ -83,6 +83,13 @@ func (c *Client) Endpoint() string {
 	return c.endpoint
 }
 
+// ClientConn exposes the underlying connection so sibling services (e.g. the
+// StoreInstallations persistence channel) can be multiplexed over the same
+// egress-only dial instead of opening a second connection.
+func (c *Client) ClientConn() *grpc.ClientConn {
+	return c.conn
+}
+
 func newClient(conn *grpc.ClientConn, instanceID string, logger *slog.Logger) *Client {
 	if logger == nil {
 		logger = slog.Default()

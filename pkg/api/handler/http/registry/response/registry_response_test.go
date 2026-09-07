@@ -41,6 +41,31 @@ func TestFromRegistry_IncludesEnabled(t *testing.T) {
 	}
 }
 
+func TestFromRegistry_IncludesPricing(t *testing.T) {
+	t.Parallel()
+	reg := &domain.Registry{
+		ID:        ids.New[ids.RegistryKind](),
+		GatewayID: ids.New[ids.GatewayKind](),
+		Name:      "r",
+		Type:      domain.TypeLLM,
+		Enabled:   true,
+		LLMTarget: &domain.LLMTarget{
+			Provider: "openai",
+			Pricing: &domain.Pricing{
+				Discount:  0.2,
+				Overrides: map[string]domain.PriceOverride{"gpt-4o": {Input: 0.0000015, Output: 0.000006}},
+			},
+		},
+	}
+	got := FromRegistry(reg)
+	if got.Pricing == nil || got.Pricing.Discount != 0.2 {
+		t.Fatalf("Pricing = %+v, want discount 0.2", got.Pricing)
+	}
+	if got.Pricing.Overrides["gpt-4o"].Input != 0.0000015 {
+		t.Fatalf("override input = %v", got.Pricing.Overrides["gpt-4o"].Input)
+	}
+}
+
 func TestFromAuth_MasksAzureSecretsAndReturnsIdentifiers(t *testing.T) {
 	t.Parallel()
 	got := FromAuth(&domain.TargetAuth{
