@@ -16,6 +16,8 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -66,6 +68,12 @@ type credentialResolver struct {
 	attempts  sync.Map // gateway|subject|provider → time.Time
 	ccFlight  singleflight.Group
 	ccCache   sync.Map // key → *ccCacheEntry
+	dead      sync.Map // gateway|subject|provider → deadGrant
+}
+
+type deadGrant struct {
+	fingerprint string
+	at          time.Time
 }
 
 type ccCacheEntry struct {
@@ -98,6 +106,9 @@ func NewCredentialResolver(
 const vaultRefreshSkew = 60 * time.Second
 
 const rejectedCredentialRefreshCooldown = 30 * time.Second
+
+// Backstop for a provider that answered invalid_grant spuriously.
+const deadGrantRetryInterval = 15 * time.Minute
 
 func (r *credentialResolver) Apply(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, target *Target) error {
 	cfg := reg.MCPTarget.Auth
@@ -245,6 +256,10 @@ func (r *credentialResolver) refreshCredential(
 				r.attempts.Delete(key)
 			}
 		}
+		// A rejected grant recovers on reconnect, never on retry; replaying it only amplifies.
+		if r.grantIsDead(key, cred.RefreshToken) {
+			return nil, errGrantRejected
+		}
 		refreshCfg, err := r.connect.RefreshAuth(ctx, gatewayID, reg)
 		if err != nil {
 			return nil, err
@@ -268,17 +283,36 @@ func (r *credentialResolver) refreshCredential(
 						"provider", provider, "subject", subject, "gateway_id", gatewayID.String())
 					return latest, nil
 				}
+				r.markGrantDead(key, cred.RefreshToken)
 			}
 			return nil, err
 		}
+		previousRefreshToken := cred.RefreshToken
 		cred.AccessToken = fresh.AccessToken
 		if fresh.RefreshToken != "" {
 			cred.RefreshToken = fresh.RefreshToken
 		}
 		cred.ExpiresAt = fresh.ExpiresAt
 		if err := r.vault.Upsert(ctx, cred); err != nil {
+			r.logger.Error("mcp credentials: failed to persist refreshed credential",
+				"provider", provider, "subject", subject, "gateway_id", gatewayID.String(),
+				"from", grantFingerprint(previousRefreshToken), "to", grantFingerprint(cred.RefreshToken),
+				"error", err,
+				"context_error", ctx.Err(),
+				"canceled", errors.Is(err, context.Canceled),
+				"deadline_exceeded", errors.Is(err, context.DeadlineExceeded),
+				"error_type", fmt.Sprintf("%T", err))
 			return nil, err
 		}
+		r.dead.Delete(key)
+		// Divergent outputs for the same input help identify concurrent refreshes.
+		r.logger.Info("mcp credentials: refresh token rotated",
+			"provider", provider,
+			"subject", subject,
+			"gateway_id", gatewayID.String(),
+			"from", grantFingerprint(previousRefreshToken),
+			"to", grantFingerprint(cred.RefreshToken),
+			"rotated", fresh.RefreshToken != "")
 		if rejectedAccessToken != "" {
 			r.attempts.Store(key, time.Now())
 		}
@@ -290,8 +324,16 @@ func (r *credentialResolver) refreshCredential(
 			return nil, r.consentRequired(ctx, rc, reg, provider, subject,
 				"stored grant carries no refresh token and the access token expired")
 		case errors.Is(err, appoauth.ErrInvalidGrant):
+			var diagnostic *appoauth.InvalidGrantError
+			var attrs []any
+			if errors.As(err, &diagnostic) {
+				attrs = append(attrs, "oauth_error", diagnostic.Code, "oauth_error_description", diagnostic.Description)
+			}
 			return nil, r.consentRequired(ctx, rc, reg, provider, subject,
-				"provider rejected the stored refresh token")
+				"provider rejected the stored refresh token", attrs...)
+		case errors.Is(err, errGrantRejected):
+			return nil, r.consentRequired(ctx, rc, reg, provider, subject,
+				"stored refresh token was already rejected; not retried until the user reconnects")
 		case errors.Is(err, vaultdomain.ErrNotFound):
 			return nil, r.consentRequired(ctx, rc, reg, provider, subject,
 				"stored credential vanished while refreshing")
@@ -312,7 +354,43 @@ func (r *credentialResolver) refreshCredential(
 	return cred, nil
 }
 
+func (r *credentialResolver) grantIsDead(key, refreshToken string) bool {
+	value, ok := r.dead.Load(key)
+	if !ok {
+		return false
+	}
+	marker, valid := value.(deadGrant)
+	if !valid {
+		return false
+	}
+	if time.Since(marker.at) >= deadGrantRetryInterval {
+		r.dead.Delete(key)
+		return false
+	}
+	// A different token means the account was reconnected, so the marker is stale.
+	if marker.fingerprint != grantFingerprint(refreshToken) {
+		r.dead.Delete(key)
+		return false
+	}
+	return true
+}
+
+func (r *credentialResolver) markGrantDead(key, refreshToken string) {
+	r.dead.Store(key, deadGrant{fingerprint: grantFingerprint(refreshToken), at: time.Now()})
+}
+
+// Fingerprinted so markers and logs never hold the refresh token itself.
+func grantFingerprint(refreshToken string) string {
+	if refreshToken == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(refreshToken))
+	return hex.EncodeToString(sum[:4])
+}
+
 var errGrantExhausted = errors.New("mcp credentials: stored grant cannot be refreshed")
+
+var errGrantRejected = errors.New("mcp credentials: stored refresh token was already rejected by the provider")
 
 var errCredentialRefreshUnsupported = errors.New("mcp credentials: auth mode cannot refresh after an upstream rejection")
 
@@ -322,27 +400,13 @@ var errCredentialRefreshThrottled = errors.New("mcp credentials: rejected creden
 // user to (re)connect a provider. The reason is logged so an unexpected consent
 // prompt can be traced to the condition that produced it instead of being
 // guessed at from the client-side error alone.
-//
-// On the Store the ticket must name the server: the Store connect page only
-// attaches registries for a ticket that carries a catalog code, so a bare
-// consumer ticket would send the user to an empty page. Every other consumer
-// keeps the plain consumer-wide ticket.
-func (r *credentialResolver) consentRequired(
-	ctx context.Context,
-	rc *appconsumer.RoutableConsumer,
-	reg *registrydomain.Registry,
-	provider, principalSub, reason string,
-) error {
-	r.logger.Info("mcp credentials: user consent required",
-		"provider", provider,
-		"subject", principalSub,
-		"gateway_id", rc.Consumer.GatewayID.String(),
-		"reason", reason)
+func (r *credentialResolver) consentRequired(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, provider, principalSub, reason string, diagnostics ...any) error {
+	attrs := []any{"provider", provider, "subject", principalSub,
+		"gateway_id", rc.Consumer.GatewayID.String(), "reason", reason}
+	r.logger.Info("mcp credentials: user consent required", append(attrs, diagnostics...)...)
 	consumerPath := appconsumer.MCPPath(rc.Consumer.Slug)
-	var (
-		ticket string
-		err    error
-	)
+	var ticket string
+	var err error
 	if code := storeServerCode(rc, reg); code != "" {
 		ticket, err = r.connect.CreateServerTicket(ctx, rc.Consumer.GatewayID, principalSub, consumerPath, code, "")
 	} else {
@@ -354,8 +418,6 @@ func (r *credentialResolver) consentRequired(
 	return &ConsentRequiredError{Provider: provider, Ticket: ticket, Path: consumerPath}
 }
 
-// storeServerCode returns the catalog code a Store consent ticket must carry,
-// or "" when the caller is not the Store or the registry has no code.
 func storeServerCode(rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry) string {
 	if rc == nil || !consumerdomain.IsStoreConsumer(rc.Consumer) || reg == nil || reg.MCPTarget == nil {
 		return ""
