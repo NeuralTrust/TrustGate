@@ -48,8 +48,9 @@ func (b *failoverBudget) exhausted() bool {
 	if b.maxAttempts > 0 && b.attempts >= b.maxAttempts {
 		return true
 	}
-	if b.attempts > 0 && !b.deadline.IsZero() && time.Now().After(b.deadline) {
-		return true
-	}
-	return false
+	return b.deadlineExceeded()
+}
+
+func (b *failoverBudget) deadlineExceeded() bool {
+	return b.attempts > 0 && !b.deadline.IsZero() && time.Now().After(b.deadline)
 }

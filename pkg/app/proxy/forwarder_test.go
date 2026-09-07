@@ -93,7 +93,7 @@ func newTestForwarderWithLimiter(t *testing.T, invoker appproxy.ProviderInvoker,
 	mgr := cache.NewTTLMapManager(time.Minute)
 	return appproxy.NewForwarder(
 		loadbalancer.NewBaseFactory(nil, nil, nil, nil),
-		newPermissiveCache(t), mgr, invoker, nil, nil, approuting.NewResolver(), limiter, nil, newTestLogger(),
+		newPermissiveCache(t), mgr, invoker, nil, nil, approuting.NewResolver(), nil, limiter, nil, newTestLogger(),
 	)
 }
 
@@ -114,7 +114,7 @@ func newTestForwarderWithStore(t *testing.T, invoker appproxy.ProviderInvoker, s
 	mgr := cache.NewTTLMapManager(time.Minute)
 	return appproxy.NewForwarder(
 		loadbalancer.NewBaseFactory(nil, nil, nil, nil),
-		newPermissiveCache(t), mgr, invoker, nil, store, approuting.NewResolver(), nil, nil, newTestLogger(),
+		newPermissiveCache(t), mgr, invoker, nil, store, approuting.NewResolver(), nil, nil, nil, newTestLogger(),
 	)
 }
 
@@ -808,7 +808,7 @@ func newSmartRoutedForwarder(
 	cfg.Provider.MaxRetries = maxRetries
 	return appproxy.NewForwarder(
 		loadbalancer.NewBaseFactory(nil, nil, fixedScorer{score: score}, newTestLogger()),
-		newPermissiveCache(t), mgr, invoker, nil, nil, approuting.NewResolver(), nil, cfg, newTestLogger(),
+		newPermissiveCache(t), mgr, invoker, nil, nil, approuting.NewResolver(), nil, nil, cfg, newTestLogger(),
 	)
 }
 
