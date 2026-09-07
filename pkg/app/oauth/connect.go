@@ -210,6 +210,7 @@ func (s *connectService) providerStatuses(
 		case err == nil:
 			status.Linked = true
 			status.AccountRef = cred.AccountRef
+			status.Scopes = cred.Scopes
 			status.ExpiresAt = cred.ExpiresAt
 			status.NeedsReconnect = cred.RefreshToken == "" && cred.Expired(credentialExpiryGrace)
 		case errors.Is(err, vaultdomain.ErrUndecryptable):
