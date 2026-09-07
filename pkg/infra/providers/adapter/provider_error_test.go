@@ -40,3 +40,57 @@ func TestBodyCarriesRetryableError(t *testing.T) {
 		})
 	}
 }
+
+func TestBodyCarriesModelNotFound(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"empty", "", false},
+		{"not json", "plain text", false},
+		{"no error field", `{"choices":[]}`, false},
+		{
+			"openai model not found",
+			`{"error":{"message":"The model ` + "`gpt-9`" + ` does not exist or you do not have access to it.",` +
+				`"type":"invalid_request_error","param":null,"code":"model_not_found"}}`,
+			true,
+		},
+		{
+			"vertex numeric code and not found status",
+			`{"error":{"code":404,"message":"Publisher Model ` + "`gemini-9`" + ` was not found or your project ` +
+				`does not have access to it.","status":"NOT_FOUND"}}`,
+			true,
+		},
+		{
+			"bedrock validation exception",
+			`{"__type":"ValidationException","message":"The provided model identifier is invalid."}`,
+			true,
+		},
+		{
+			"anthropic not found",
+			`{"type":"error","error":{"type":"not_found_error","message":"model: claude-99 not found"}}`,
+			true,
+		},
+		{"rate limited", `{"error":{"code":"rate_limit_exceeded","message":"slow down"}}`, false},
+		{
+			"model exists but rejects the request",
+			`{"error":{"type":"invalid_request_error","message":"model gpt-4.1 does not support tools"}}`,
+			false,
+		},
+		{"overloaded", `{"error":{"type":"overloaded_error","message":"Overloaded"}}`, false},
+		{
+			"unrelated resource missing",
+			`{"error":{"code":"not_found","message":"file file-123 not found"}}`,
+			false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := BodyCarriesModelNotFound([]byte(tc.body)); got != tc.want {
+				t.Errorf("BodyCarriesModelNotFound(%q) = %v, want %v", tc.body, got, tc.want)
+			}
+		})
+	}
+}

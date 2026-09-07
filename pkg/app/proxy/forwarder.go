@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"time"
 
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
@@ -81,14 +82,15 @@ type Forwarder interface {
 var _ Forwarder = (*forwarder)(nil)
 
 type forwarder struct {
-	balancers  *loadBalancerCache
-	invoker    ProviderInvoker
-	executor   appplugins.Executor
-	sessions   appsession.Store
-	resolver   approuting.Resolver
-	limiter    ratelimitapp.Checker
-	maxRetries int
-	logger     *slog.Logger
+	balancers    *loadBalancerCache
+	invoker      ProviderInvoker
+	executor     appplugins.Executor
+	sessions     appsession.Store
+	resolver     approuting.Resolver
+	availability appcatalog.ModelAvailability
+	limiter      ratelimitapp.Checker
+	maxRetries   int
+	logger       *slog.Logger
 }
 
 // NewForwarder builds the proxy forwarder; nil limiter defaults to noop.
@@ -100,6 +102,7 @@ func NewForwarder(
 	executor appplugins.Executor,
 	sessions appsession.Store,
 	resolver approuting.Resolver,
+	availability appcatalog.ModelAvailability,
 	limiter ratelimitapp.Checker,
 	cfg *config.Config,
 	logger *slog.Logger,
@@ -108,14 +111,15 @@ func NewForwarder(
 		limiter = ratelimitapp.NewNoopChecker()
 	}
 	return &forwarder{
-		balancers:  newLoadBalancerCache(factory, cacheClient, manager.GetTTLMap(cache.LoadBalancerTTLName), logger),
-		invoker:    invoker,
-		executor:   executor,
-		sessions:   sessions,
-		resolver:   resolver,
-		limiter:    limiter,
-		maxRetries: maxRetriesFromConfig(cfg),
-		logger:     logger,
+		balancers:    newLoadBalancerCache(factory, cacheClient, manager.GetTTLMap(cache.LoadBalancerTTLName), logger),
+		invoker:      invoker,
+		executor:     executor,
+		sessions:     sessions,
+		resolver:     resolver,
+		availability: availability,
+		limiter:      limiter,
+		maxRetries:   maxRetriesFromConfig(cfg),
+		logger:       logger,
 	}
 }
 
@@ -135,7 +139,7 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 		return result, err
 	}
 
-	intent, candidates, err := f.resolveRouting(in)
+	intent, candidates, err := f.resolveRouting(ctx, in)
 	if err != nil {
 		return nil, err
 	}
@@ -200,13 +204,19 @@ func (f *forwarder) invokeWithFailover(
 	lastKind := failureNone
 	current := route.route
 	fromFallback := route.fromFallback
+	sequential := len(route.chain) > 0
+	modelMissOnly := sequential
 	for current.Registry != nil {
 		bk := current.Registry
 		f.retarget(dto, bk)
 		f.stampRoutingPolicy(dto, rc, current)
 		dto.tierRouted = takeTierRouted(dto.request)
 		for r := 0; r < attemptsPerBackend; r++ {
-			if budget.exhausted() {
+			selectingRegistry := sequential && modelMissOnly
+			if selectingRegistry && budget.deadlineExceeded() {
+				return f.relayLast(ctx, dto, last)
+			}
+			if !selectingRegistry && budget.exhausted() {
 				return f.relayLast(ctx, dto, last)
 			}
 			budget.recordAttempt()
@@ -232,6 +242,7 @@ func (f *forwarder) invokeWithFailover(
 					return result, nil
 				}
 
+				modelMissOnly = false
 				last = failoverState{rejection: result}
 				lastKind = failurePluginRejection
 				f.logRetry(bk, pe, budget)
@@ -244,9 +255,15 @@ func (f *forwarder) invokeWithFailover(
 					lastKind = failureNone
 					break
 				}
+				if sequential && responseCarriesModelNotFound(resp) {
+					last = failoverState{resp: resp}
+					lastKind = failureNone
+					break
+				}
 				reportSuccess(lb, bk)
 				return f.finalizeBody(ctx, dto, resp), nil
 			case OutcomeRetryable:
+				modelMissOnly = false
 				reason := failureReason(resp, err)
 				reportFailure(ctx, lb, bk, reason)
 				last = failoverState{resp: resp, err: err}
@@ -260,13 +277,17 @@ func (f *forwarder) invokeWithFailover(
 		if route.pinned {
 			break
 		}
-		next, viaFallback := f.nextCandidate(ctx, lb, rc, dto.request, excluded, triggers.allowsFallback(lastKind))
+		next, viaFallback := f.nextCandidate(
+			ctx, lb, rc, dto.request, route.chain, excluded, triggers.allowsFallback(lastKind))
 		if next == nil {
 			break
 		}
 		current, fromFallback = *next, viaFallback
 	}
 
+	if sequential && modelMissOnly && budget.attempts > 0 {
+		return nil, noRegistryServesModelError(dto.request.RequestedModel, route.chain, last)
+	}
 	return f.relayLast(ctx, dto, last)
 }
 
@@ -305,11 +326,15 @@ func (f *forwarder) nextCandidate(
 	lb *loadbalancer.LoadBalancer,
 	rc *appconsumer.RoutableConsumer,
 	req *infracontext.RequestContext,
+	chain []routingdomain.Route,
 	excluded map[routingdomain.RouteKey]struct{},
 	allowChain bool,
 ) (*routingdomain.Route, bool) {
 	if isRoleBased(rc) {
 		return nil, false
+	}
+	if len(chain) > 0 {
+		return nextChainRoute(chain, excluded), false
 	}
 	if lb != nil {
 		if next, err := lb.NextRoute(ctx, req, excluded); err == nil && next != nil {

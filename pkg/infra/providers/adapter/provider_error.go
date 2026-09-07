@@ -31,6 +31,70 @@ var retryableErrorMarkers = []string{
 	"temporarily unavailable",
 }
 
+var modelMissingMarkers = []string{
+	"model_not_found",
+	"not_found",
+	"not found",
+	"does not exist",
+	"unknown model",
+	"unsupported model",
+	"invalid model",
+	"identifier is invalid",
+	"does not have access",
+	"no access",
+}
+
+type modelErrorEnvelope struct {
+	Error   *modelErrorBody `json:"error"`
+	Type    string          `json:"__type"`
+	Message string          `json:"message"`
+}
+
+type modelErrorBody struct {
+	Type    string          `json:"type"`
+	Code    json.RawMessage `json:"code"`
+	Status  string          `json:"status"`
+	Message string          `json:"message"`
+}
+
+func BodyCarriesModelNotFound(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	var env modelErrorEnvelope
+	if err := json.Unmarshal(body, &env); err != nil {
+		return false
+	}
+	parts := []string{env.Type, env.Message}
+	if env.Error != nil {
+		parts = append(parts, env.Error.Type, string(env.Error.Code), env.Error.Status, env.Error.Message)
+	}
+	haystack := strings.ToLower(strings.Join(parts, " "))
+	if !strings.Contains(haystack, "model") {
+		return false
+	}
+	for _, marker := range modelMissingMarkers {
+		if strings.Contains(haystack, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func ProviderErrorMessage(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	var env modelErrorEnvelope
+	if err := json.Unmarshal(body, &env); err != nil {
+		return ""
+	}
+	if env.Error != nil && env.Error.Message != "" {
+		return env.Error.Message
+	}
+	return env.Message
+}
+
 type providerErrorEnvelope struct {
 	Error *providerErrorBody `json:"error"`
 }

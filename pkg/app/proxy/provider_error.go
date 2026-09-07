@@ -22,3 +22,10 @@ func responseCarriesProviderError(resp *ProviderResponse) bool {
 	}
 	return adapter.BodyCarriesRetryableError(resp.Body)
 }
+
+func responseCarriesModelNotFound(resp *ProviderResponse) bool {
+	if resp == nil || len(resp.Body) == 0 {
+		return false
+	}
+	return adapter.BodyCarriesModelNotFound(resp.Body)
+}
