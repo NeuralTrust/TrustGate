@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/routing/modelmatch"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/pluginutil"
 )
 
@@ -95,25 +96,5 @@ func matchAny(model string, patterns []string) (string, bool) {
 }
 
 func matchGlob(pattern, s string) bool {
-	if !strings.Contains(pattern, "*") {
-		return pattern == s
-	}
-	parts := strings.Split(pattern, "*")
-	if !strings.HasPrefix(s, parts[0]) {
-		return false
-	}
-	s = s[len(parts[0]):]
-	for i := 1; i < len(parts)-1; i++ {
-		part := parts[i]
-		if part == "" {
-			continue
-		}
-		idx := strings.Index(s, part)
-		if idx < 0 {
-			return false
-		}
-		s = s[idx+len(part):]
-	}
-	last := parts[len(parts)-1]
-	return strings.HasSuffix(s, last)
+	return modelmatch.Matches(pattern, s)
 }
