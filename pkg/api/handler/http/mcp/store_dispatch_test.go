@@ -214,3 +214,60 @@ func TestRPCGateway_RegularConsumer_NoRegistriesStillErrors(t *testing.T) {
 	_, err := g.Dispatch(context.Background(), rc, "tools/list", nil)
 	require.ErrorIs(t, err, appmcp.ErrNoMCPRegistries)
 }
+
+// TestRPCGateway_Store_ConsentPendingListsEmptyPromptsAndResources guards the
+// sibling regression of the meta-tools one: a client that lists prompts and
+// resources during initialization must get empty lists, not a -32003 consent
+// error, while an installed server is still unconnected. tools/list already
+// degraded this way; prompts/list and resources/list failed with 502.
+func TestRPCGateway_Store_ConsentPendingListsEmptyPromptsAndResources(t *testing.T) {
+	t.Parallel()
+	consent := &appmcp.ConsentRequiredError{Provider: "app.linear/mcp", Ticket: "abc", Path: "/store/mcp"}
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().ListPrompts(mock.Anything, mock.Anything).Return(nil, consent).Once()
+	composer.EXPECT().ListResources(mock.Anything, mock.Anything).Return(nil, consent).Once()
+	composer.EXPECT().ListResourceTemplates(mock.Anything, mock.Anything).Return(nil, consent).Once()
+	g := mcphttp.NewRPCGatewayWithMetaTools(composer, noopRunner(), nil, nil, storeToolForDispatch(t))
+
+	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]())}
+
+	prompts, err := g.Dispatch(context.Background(), rc, "prompts/list", nil)
+	require.NoError(t, err)
+	require.Empty(t, prompts.(map[string]any)["prompts"])
+
+	resources, err := g.Dispatch(context.Background(), rc, "resources/list", nil)
+	require.NoError(t, err)
+	require.Empty(t, resources.(map[string]any)["resources"])
+
+	templates, err := g.Dispatch(context.Background(), rc, "resources/templates/list", nil)
+	require.NoError(t, err)
+	require.Empty(t, templates.(map[string]any)["resourceTemplates"])
+}
+
+// A Store consumer with nothing installed lists empty prompts, like tools.
+func TestRPCGateway_Store_NoRegistriesListsEmptyPrompts(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().ListPrompts(mock.Anything, mock.Anything).Return(nil, appmcp.ErrNoMCPRegistries).Once()
+	g := mcphttp.NewRPCGatewayWithMetaTools(composer, noopRunner(), nil, nil, storeToolForDispatch(t))
+	rc := &appconsumer.RoutableConsumer{Consumer: consumerdomain.BuildStoreConsumer(ids.New[ids.GatewayKind]())}
+
+	prompts, err := g.Dispatch(context.Background(), rc, "prompts/list", nil)
+	require.NoError(t, err)
+	require.Empty(t, prompts.(map[string]any)["prompts"])
+}
+
+// A regular (non-Store) consumer keeps failing loudly when no registry is
+// bound: only the consent case is softened there.
+func TestRPCGateway_RegularConsumer_NoRegistriesStillFailsPrompts(t *testing.T) {
+	t.Parallel()
+	composer := mocks.NewComposer(t)
+	composer.EXPECT().ListPrompts(mock.Anything, mock.Anything).Return(nil, appmcp.ErrNoMCPRegistries).Once()
+	g := mcphttp.NewRPCGatewayWithMetaTools(composer, noopRunner(), nil, nil, storeToolForDispatch(t))
+	rc := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{
+		ID: ids.New[ids.ConsumerKind](), GatewayID: ids.New[ids.GatewayKind](), Type: consumerdomain.TypeMCP,
+	}}
+
+	_, err := g.Dispatch(context.Background(), rc, "prompts/list", nil)
+	require.ErrorIs(t, err, appmcp.ErrNoMCPRegistries)
+}
