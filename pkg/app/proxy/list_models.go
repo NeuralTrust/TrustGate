@@ -101,12 +101,13 @@ func (l *modelsLister) collect(ctx context.Context, in ListModelsInput) ([]Model
 	}
 	seen := make(map[string]struct{})
 	cards := make([]ModelCard, 0)
+	listed := make(map[string][]catalogdomain.Model)
 	for _, candidate := range candidates.Candidates() {
 		if candidate.Registry == nil {
 			continue
 		}
 		provider := candidate.Registry.Provider()
-		modelIDs, err := l.candidateModels(ctx, in.Consumer, candidate)
+		modelIDs, err := l.candidateModels(ctx, in.Consumer, candidate, listed)
 		if err != nil {
 			return nil, err
 		}
@@ -126,6 +127,7 @@ func (l *modelsLister) candidateModels(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,
 	candidate routingdomain.Candidate,
+	listed map[string][]catalogdomain.Model,
 ) ([]string, error) {
 	if candidate.Registry == nil {
 		return nil, nil
@@ -134,7 +136,7 @@ func (l *modelsLister) candidateModels(
 	if provider == "" {
 		return nil, nil
 	}
-	modelIDs, catalogBySlug, err := l.candidateModelSources(ctx, rc, candidate, provider)
+	modelIDs, catalogBySlug, err := l.candidateModelSources(ctx, rc, candidate, provider, listed)
 	if err != nil {
 		return nil, err
 	}
@@ -156,15 +158,28 @@ func (l *modelsLister) candidateModelSources(
 	rc *appconsumer.RoutableConsumer,
 	candidate routingdomain.Candidate,
 	provider string,
+	listed map[string][]catalogdomain.Model,
 ) ([]string, map[string]catalogdomain.Model, error) {
 	catalogBySlug := map[string]catalogdomain.Model{}
 	if candidate.Allowed != nil {
-		return unionModelIDs(candidate.Allowed, poolMemberModels(rc, candidate.Registry.ID)), catalogBySlug, nil
+		literals, patterns := partitionAllowList(candidate.Allowed)
+		explicit := unionModelIDs(literals, poolMemberModels(rc, candidate.Registry.ID))
+		if len(patterns) == 0 {
+			return explicit, catalogBySlug, nil
+		}
+		if l.catalog == nil {
+			return explicit, catalogBySlug, nil
+		}
+		expanded, err := l.expandPatterns(ctx, provider, patterns, catalogBySlug, listed)
+		if err != nil {
+			return nil, nil, err
+		}
+		return unionModelIDs(explicit, expanded), catalogBySlug, nil
 	}
 	if l.catalog == nil {
 		return nil, catalogBySlug, nil
 	}
-	models, err := l.catalog.ListModels(ctx, provider)
+	models, err := l.providerModels(ctx, provider, listed)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -174,6 +189,57 @@ func (l *modelsLister) candidateModelSources(
 		catalogBySlug[model.Slug] = model
 	}
 	return modelIDs, catalogBySlug, nil
+}
+
+func (l *modelsLister) providerModels(
+	ctx context.Context,
+	provider string,
+	listed map[string][]catalogdomain.Model,
+) ([]catalogdomain.Model, error) {
+	if models, ok := listed[provider]; ok {
+		return models, nil
+	}
+	models, err := l.catalog.ListModels(ctx, provider)
+	if err != nil {
+		return nil, err
+	}
+	listed[provider] = models
+	return models, nil
+}
+
+func (l *modelsLister) expandPatterns(
+	ctx context.Context,
+	provider string,
+	patterns []string,
+	catalogBySlug map[string]catalogdomain.Model,
+	listed map[string][]catalogdomain.Model,
+) ([]string, error) {
+	models, err := l.providerModels(ctx, provider, listed)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(models))
+	for _, model := range models {
+		if _, ok := modelmatch.MatchAny(model.Slug, patterns); !ok {
+			continue
+		}
+		out = append(out, model.Slug)
+		catalogBySlug[model.Slug] = model
+	}
+	return out, nil
+}
+
+func partitionAllowList(allowed []string) ([]string, []string) {
+	literals := make([]string, 0, len(allowed))
+	var patterns []string
+	for _, entry := range allowed {
+		if modelmatch.IsPattern(entry) {
+			patterns = append(patterns, entry)
+			continue
+		}
+		literals = append(literals, entry)
+	}
+	return literals, patterns
 }
 
 func poolMemberModels(rc *appconsumer.RoutableConsumer, registryID ids.RegistryID) []string {
