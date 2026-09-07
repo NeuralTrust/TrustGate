@@ -59,7 +59,7 @@ func provideCatalogServices(c *container.Container) error {
 	if err := c.Provide(appcatalog.NewPricingResolver); err != nil {
 		return err
 	}
-	if err := c.Provide(appcatalog.NewModelAvailability); err != nil {
+	if err := c.Provide(appcatalog.NewModelListing); err != nil {
 		return err
 	}
 	if err := c.Provide(func(
@@ -68,9 +68,9 @@ func provideCatalogServices(c *container.Container) error {
 		logger *slog.Logger,
 		sig snapshotSignalParams,
 		pricing appcatalog.PricingResolver,
-		availability appcatalog.ModelAvailability,
+		listing appcatalog.ModelListing,
 	) appcatalog.Syncer {
-		return appcatalog.NewSyncer(repo, client, logger, sig.Signaler, pricing, availability)
+		return appcatalog.NewSyncer(repo, client, logger, sig.Signaler, pricing, listing)
 	}); err != nil {
 		return err
 	}

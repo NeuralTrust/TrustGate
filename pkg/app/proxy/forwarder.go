@@ -82,15 +82,15 @@ type Forwarder interface {
 var _ Forwarder = (*forwarder)(nil)
 
 type forwarder struct {
-	balancers    *loadBalancerCache
-	invoker      ProviderInvoker
-	executor     appplugins.Executor
-	sessions     appsession.Store
-	resolver     approuting.Resolver
-	availability appcatalog.ModelAvailability
-	limiter      ratelimitapp.Checker
-	maxRetries   int
-	logger       *slog.Logger
+	balancers  *loadBalancerCache
+	invoker    ProviderInvoker
+	executor   appplugins.Executor
+	sessions   appsession.Store
+	resolver   approuting.Resolver
+	listing    appcatalog.ModelListing
+	limiter    ratelimitapp.Checker
+	maxRetries int
+	logger     *slog.Logger
 }
 
 // NewForwarder builds the proxy forwarder; nil limiter defaults to noop.
@@ -102,7 +102,7 @@ func NewForwarder(
 	executor appplugins.Executor,
 	sessions appsession.Store,
 	resolver approuting.Resolver,
-	availability appcatalog.ModelAvailability,
+	listing appcatalog.ModelListing,
 	limiter ratelimitapp.Checker,
 	cfg *config.Config,
 	logger *slog.Logger,
@@ -111,15 +111,15 @@ func NewForwarder(
 		limiter = ratelimitapp.NewNoopChecker()
 	}
 	return &forwarder{
-		balancers:    newLoadBalancerCache(factory, cacheClient, manager.GetTTLMap(cache.LoadBalancerTTLName), logger),
-		invoker:      invoker,
-		executor:     executor,
-		sessions:     sessions,
-		resolver:     resolver,
-		availability: availability,
-		limiter:      limiter,
-		maxRetries:   maxRetriesFromConfig(cfg),
-		logger:       logger,
+		balancers:  newLoadBalancerCache(factory, cacheClient, manager.GetTTLMap(cache.LoadBalancerTTLName), logger),
+		invoker:    invoker,
+		executor:   executor,
+		sessions:   sessions,
+		resolver:   resolver,
+		listing:    listing,
+		limiter:    limiter,
+		maxRetries: maxRetriesFromConfig(cfg),
+		logger:     logger,
 	}
 }
 
