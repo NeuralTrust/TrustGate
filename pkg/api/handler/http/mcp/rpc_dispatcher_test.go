@@ -140,9 +140,7 @@ func TestRPCGateway_AppsPolicyFiltersListings(t *testing.T) {
 			Run(func(_ context.Context, in appplugins.StageInput) {
 				discovered = append([]byte(nil), in.Response.Body...)
 			}).Return(&appplugins.StageOutcome{}, nil).Once()
-		g := mcphttp.NewRPCGatewayWithAppsListPolicy(
-			composer, appmcp.NewPluginRunner(exec, discardLogger()), nil, policy, mcphttp.DefaultMaxContinuationBytes,
-		)
+		g := mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(exec, discardLogger()), nil, mcphttp.WithAppsListPolicy(policy))
 		result, err := g.Dispatch(context.Background(), mcpRoutableConsumer(), "tools/list", nil)
 		require.NoError(t, err)
 		want := `{"tools":[{"name":"app","description":"keep","_meta":{"ui":{"resourceUri":"ui://widget/app"}}},{"name":"plain","_meta":{"trace":1}}]}`
@@ -159,9 +157,7 @@ func TestRPCGateway_AppsPolicyFiltersListings(t *testing.T) {
 			mustRPCJSON[appmcp.Resource](t, `{"name":"plain","uri":"https://example.com","_meta":{"trace":1}}`),
 		}, nil).Once()
 		exec := pluginmocks.NewExecutor(t)
-		g := mcphttp.NewRPCGatewayWithAppsListPolicy(
-			composer, appmcp.NewPluginRunner(exec, discardLogger()), nil, policy, mcphttp.DefaultMaxContinuationBytes,
-		)
+		g := mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(exec, discardLogger()), nil, mcphttp.WithAppsListPolicy(policy))
 		result, err := g.Dispatch(context.Background(), mcpRoutableConsumer(), "resources/list", nil)
 		require.NoError(t, err)
 		body, err := json.Marshal(result)
@@ -176,9 +172,7 @@ func TestRPCGateway_AppsPolicyFiltersListings(t *testing.T) {
 			mustRPCJSON[appmcp.Tool](t, `{"name":"plain"}`),
 		}, nil).Once()
 		composer.EXPECT().ListResources(mock.Anything, mock.Anything).Return(nil, errors.New("failed")).Once()
-		g := mcphttp.NewRPCGatewayWithAppsListPolicy(
-			composer, noopRunner(), nil, policy, mcphttp.DefaultMaxContinuationBytes,
-		)
+		g := mcphttp.NewRPCGateway(composer, noopRunner(), nil, mcphttp.WithAppsListPolicy(policy))
 		result, err := g.Dispatch(context.Background(), mcpRoutableConsumer(), "tools/list", nil)
 		require.NoError(t, err)
 		body, _ := json.Marshal(result)
@@ -193,9 +187,7 @@ func TestRPCGateway_AppsPolicyKeepsAllInvalidListNonNull(t *testing.T) {
 		mustRPCJSON[appmcp.Tool](t, `{"name":"one","_meta":{"ui":"bad"}}`),
 		mustRPCJSON[appmcp.Tool](t, `{"name":"two","_meta":{"ui/x":true}}`),
 	}, nil).Once()
-	g := mcphttp.NewRPCGatewayWithAppsListPolicy(
-		composer, noopRunner(), nil, enabledAppsListPolicy(t), mcphttp.DefaultMaxContinuationBytes,
-	)
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), nil, mcphttp.WithAppsListPolicy(enabledAppsListPolicy(t)))
 	result, err := g.Dispatch(context.Background(), mcpRoutableConsumer(), "tools/list", nil)
 	require.NoError(t, err)
 	body, err := json.Marshal(result)
@@ -203,27 +195,31 @@ func TestRPCGateway_AppsPolicyKeepsAllInvalidListNonNull(t *testing.T) {
 	assert.JSONEq(t, `{"tools":[]}`, string(body))
 }
 
-func TestRPCGateway_LegacyConstructorsDisableAppsPolicy(t *testing.T) {
+// Apps enforcement is opt-in: a gateway built without the Apps option relays a
+// listing untouched, marked metadata and all. A deployment that never enables
+// Apps must not start dropping tools because an upstream stamped an _meta.ui it
+// no one asked us to validate.
+func TestRPCGateway_WithoutAppsOptionDoesNotFilterAppsMetadata(t *testing.T) {
 	t.Parallel()
 	constructors := map[string]func(appmcp.Composer) *mcphttp.RPCGateway{
-		"default": func(composer appmcp.Composer) *mcphttp.RPCGateway {
+		"no options": func(composer appmcp.Composer) *mcphttp.RPCGateway {
 			return mcphttp.NewRPCGateway(composer, noopRunner(), nil)
 		},
-		"limits": func(composer appmcp.Composer) *mcphttp.RPCGateway {
-			return mcphttp.NewRPCGatewayWithLimits(composer, noopRunner(), nil, 1024)
+		"an unrelated option": func(composer appmcp.Composer) *mcphttp.RPCGateway {
+			return mcphttp.NewRPCGateway(composer, noopRunner(), nil, mcphttp.WithMaxContinuationBytes(1024))
 		},
 	}
 	for name, construct := range constructors {
 		t.Run(name, func(t *testing.T) {
 			composer := mocks.NewComposer(t)
 			composer.EXPECT().ListTools(mock.Anything, mock.Anything).Return([]appmcp.Tool{
-				mustRPCJSON[appmcp.Tool](t, `{"name":"legacy","_meta":{"ui":"bad"}}`),
+				mustRPCJSON[appmcp.Tool](t, `{"name":"unvalidated","_meta":{"ui":"bad"}}`),
 			}, nil).Once()
 			result, err := construct(composer).Dispatch(context.Background(), mcpRoutableConsumer(), "tools/list", nil)
 			require.NoError(t, err)
 			body, err := json.Marshal(result)
 			require.NoError(t, err)
-			assert.JSONEq(t, `{"tools":[{"name":"legacy","_meta":{"ui":"bad"}}]}`, string(body))
+			assert.JSONEq(t, `{"tools":[{"name":"unvalidated","_meta":{"ui":"bad"}}]}`, string(body))
 		})
 	}
 }
@@ -242,9 +238,7 @@ func TestRPCGateway_AppsPolicyFiltersSubscriptionAdmission(t *testing.T) {
 	exec.EXPECT().RunStage(mock.Anything, mock.MatchedBy(func(in appplugins.StageInput) bool {
 		return in.Response != nil && string(in.Response.Body) == `{"tools":[{"_meta":{"ui":{"resourceUri":"ui://widget/visible"}},"name":"visible"}]}`
 	})).Return(&appplugins.StageOutcome{}, nil).Once()
-	g := mcphttp.NewRPCGatewayWithAppsListPolicy(
-		composer, appmcp.NewPluginRunner(exec, discardLogger()), nil, enabledAppsListPolicy(t), mcphttp.DefaultMaxContinuationBytes,
-	)
+	g := mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(exec, discardLogger()), nil, mcphttp.WithAppsListPolicy(enabledAppsListPolicy(t)))
 	err := g.OpenSubscriptionLease(
 		context.Background(),
 		mcpRoutableConsumer(),
@@ -264,7 +258,7 @@ func TestRPCGateway_ConnectionToolIsListedAndCalledWithoutUpstream(t *testing.T)
 	}
 	connections, err := appmcp.NewConnectionTool(creator)
 	require.NoError(t, err)
-	g := mcphttp.NewRPCGatewayWithConnections(composer, noopRunner(), nil, connections)
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), nil, mcphttp.WithConnections(connections))
 	gatewayID := ids.New[ids.GatewayKind]()
 	rc := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{
 		ID:        ids.New[ids.ConsumerKind](),
@@ -310,7 +304,7 @@ func TestRPCGateway_ConnectionToolDefinitionWinsNameCollision(t *testing.T) {
 		statuses: []appoauth.ProviderStatus{{Provider: "linear"}},
 	})
 	require.NoError(t, err)
-	g := mcphttp.NewRPCGatewayWithConnections(composer, noopRunner(), nil, connections)
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), nil, mcphttp.WithConnections(connections))
 
 	listed, err := g.Dispatch(
 		identity.WithPrincipal(context.Background(), &identity.Principal{Subject: "alice"}),
@@ -335,7 +329,7 @@ func TestRPCGateway_ConnectionToolRespectsEmptyToolkit(t *testing.T) {
 		statuses: []appoauth.ProviderStatus{{Provider: "linear"}},
 	})
 	require.NoError(t, err)
-	g := mcphttp.NewRPCGatewayWithConnections(composer, noopRunner(), nil, connections)
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), nil, mcphttp.WithConnections(connections))
 	rc := &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{
 		MCP: &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{}},
 	}}
@@ -369,7 +363,7 @@ func TestRPCGateway_OmitsConnectionToolsWhenEveryProviderIsLinked(t *testing.T) 
 		statuses: []appoauth.ProviderStatus{{Provider: "linear", Linked: true}},
 	})
 	require.NoError(t, err)
-	g := mcphttp.NewRPCGatewayWithConnections(composer, noopRunner(), nil, connections)
+	g := mcphttp.NewRPCGateway(composer, noopRunner(), nil, mcphttp.WithConnections(connections))
 	rc := mcpRoutableConsumer()
 	rc.Consumer.Slug = "research"
 	listed, err := g.Dispatch(
@@ -422,7 +416,7 @@ func TestRPCGateway_AppsCallRejectsPluginCorruption(t *testing.T) {
 	metadata, err := appmcp.NewAppsMetadataPolicy(1, 1, nil, nil)
 	require.NoError(t, err)
 	recorded := &recordingApps{}
-	gateway := mcphttp.NewRPCGatewayWithAppsPolicies(composer, appmcp.NewPluginRunner(exec, discardLogger()), nil, appmcp.NewAppsListPolicy(true, metadata), appmcp.NewAppsReadPolicy(true, 64*1024, metadata), mcphttp.DefaultMaxContinuationBytes, recorded)
+	gateway := mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(exec, discardLogger()), nil, mcphttp.WithAppsPolicies(appmcp.NewAppsListPolicy(true, metadata), appmcp.NewAppsReadPolicy(true, 64*1024, metadata), recorded))
 	_, err = gateway.Dispatch(context.Background(), mcpRoutableConsumer(), "tools/call", json.RawMessage(`{"name":"app"}`))
 	var rpcErr *appmcp.RPCError
 	require.ErrorAs(t, err, &rpcErr)
@@ -439,9 +433,7 @@ func TestRPCGateway_AppsCallRejectsMalformedPreRequestResult(t *testing.T) {
 	}, nil).Once()
 	metadata, err := appmcp.NewAppsMetadataPolicy(1, 1, nil, nil)
 	require.NoError(t, err)
-	gateway := mcphttp.NewRPCGatewayWithAppsPolicies(composer, appmcp.NewPluginRunner(exec, discardLogger()), nil,
-		appmcp.NewAppsListPolicy(true, metadata), appmcp.NewAppsReadPolicy(true, 64*1024, metadata),
-		mcphttp.DefaultMaxContinuationBytes)
+	gateway := mcphttp.NewRPCGateway(composer, appmcp.NewPluginRunner(exec, discardLogger()), nil, mcphttp.WithAppsPolicies(appmcp.NewAppsListPolicy(true, metadata), appmcp.NewAppsReadPolicy(true, 64*1024, metadata), nil))
 
 	_, err = gateway.Dispatch(context.Background(), mcpRoutableConsumer(), "tools/call", json.RawMessage(`{"name":"app"}`))
 	var rpcErr *appmcp.RPCError
@@ -499,9 +491,7 @@ func TestRPCGateway_AppsReadPolicy(t *testing.T) {
 				composer.EXPECT().ReadResource(mock.Anything, mock.Anything, test.uri).Return(test.raw, test.upstreamErr).Once()
 				limiter.EXPECT().Check(mock.Anything, mock.Anything).Return(nil).Once()
 			}
-			gateway := mcphttp.NewRPCGatewayWithAppsPolicies(
-				composer, noopRunner(), limiter, appmcp.AppsListPolicy{}, policy, mcphttp.DefaultMaxContinuationBytes,
-			)
+			gateway := mcphttp.NewRPCGateway(composer, noopRunner(), limiter, mcphttp.WithAppsPolicies(appmcp.AppsListPolicy{}, policy, nil))
 			request := map[string]any{"uri": test.uri}
 			metadata := map[string]any{}
 			if strings.HasPrefix(test.uri, "ui://") {
@@ -548,9 +538,7 @@ func TestRPCGateway_AppsReadRejectsUnboundBeforeRead(t *testing.T) {
 	limiter.EXPECT().Check(mock.Anything, mock.Anything).Return(nil).Once()
 	metadata, err := appmcp.NewAppsMetadataPolicy(1, 1, nil, nil)
 	require.NoError(t, err)
-	gateway := mcphttp.NewRPCGatewayWithAppsPolicies(composer, noopRunner(), limiter,
-		appmcp.NewAppsListPolicy(true, metadata), appmcp.NewAppsReadPolicy(true, 64*1024, metadata),
-		mcphttp.DefaultMaxContinuationBytes)
+	gateway := mcphttp.NewRPCGateway(composer, noopRunner(), limiter, mcphttp.WithAppsPolicies(appmcp.NewAppsListPolicy(true, metadata), appmcp.NewAppsReadPolicy(true, 64*1024, metadata), nil))
 	params, err := json.Marshal(map[string]any{
 		"uri": "ui://widget",
 		"_meta": map[string]any{
@@ -573,10 +561,10 @@ func TestRPCGateway_DisabledAppsReadPassesThrough(t *testing.T) {
 	constructors := map[string]func(appmcp.Composer) *mcphttp.RPCGateway{
 		"default": func(c appmcp.Composer) *mcphttp.RPCGateway { return mcphttp.NewRPCGateway(c, noopRunner(), nil) },
 		"limits": func(c appmcp.Composer) *mcphttp.RPCGateway {
-			return mcphttp.NewRPCGatewayWithLimits(c, noopRunner(), nil, 1024)
+			return mcphttp.NewRPCGateway(c, noopRunner(), nil, mcphttp.WithMaxContinuationBytes(1024))
 		},
 		"list policy": func(c appmcp.Composer) *mcphttp.RPCGateway {
-			return mcphttp.NewRPCGatewayWithAppsListPolicy(c, noopRunner(), nil, appmcp.AppsListPolicy{}, 1024)
+			return mcphttp.NewRPCGateway(c, noopRunner(), nil, mcphttp.WithAppsListPolicy(appmcp.AppsListPolicy{}), mcphttp.WithMaxContinuationBytes(1024))
 		},
 	}
 	for name, construct := range constructors {
@@ -651,10 +639,7 @@ func newAppsReadGateway(t *testing.T, composer appmcp.Composer, enabled bool) *m
 	t.Helper()
 	metadata, err := appmcp.NewAppsMetadataPolicy(1, 1, nil, nil)
 	require.NoError(t, err)
-	return mcphttp.NewRPCGatewayWithAppsPolicies(
-		composer, noopRunner(), nil, appmcp.AppsListPolicy{},
-		appmcp.NewAppsReadPolicy(enabled, 64*1024, metadata), mcphttp.DefaultMaxContinuationBytes,
-	)
+	return mcphttp.NewRPCGateway(composer, noopRunner(), nil, mcphttp.WithAppsPolicies(appmcp.AppsListPolicy{}, appmcp.NewAppsReadPolicy(enabled, 64*1024, metadata), nil))
 }
 
 func requireWireRPCError(t *testing.T, response *http.Response, status, code int, message string) {

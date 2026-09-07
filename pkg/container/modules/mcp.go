@@ -410,18 +410,22 @@ func provideRPCGateway(p rpcGatewayParams) (*mcphttp.RPCGateway, error) {
 		return nil, err
 	}
 	metrics := p.Config.Telemetry.OpsMetricsEnabled
-	gateway := mcphttp.NewRPCGatewayWithMetaTools(p.Composer, p.Plugins, p.Limiter, p.Connections, store).
-		WithAppsPolicies(p.AppsList, p.AppsRead, mcphttp.NewAppsRecorder(metrics)).
-		WithMaxContinuationBytes(p.Config.Server.MCPMRTR.MaxContinuationBytes)
-
+	opts := []mcphttp.GatewayOption{
+		mcphttp.WithConnections(p.Connections),
+		mcphttp.WithStoreTool(store),
+		mcphttp.WithAppsPolicies(p.AppsList, p.AppsRead, mcphttp.NewAppsRecorder(metrics)),
+		mcphttp.WithMaxContinuationBytes(p.Config.Server.MCPMRTR.MaxContinuationBytes),
+	}
+	// The Store scoper needs both stores; a SEARCH-only plane has neither, and
+	// there the Store lists the catalog without the caller's installed servers.
 	if p.Installs != nil && p.Registries != nil {
 		scoper, err := appstore.NewScoper(p.Installs, p.Registries, grants, appstore.WithScoperModes(modes))
 		if err != nil {
 			return nil, err
 		}
-		gateway = gateway.WithStoreScoper(scoper)
+		opts = append(opts, mcphttp.WithStoreScoper(scoper))
 	}
-	return gateway, nil
+	return mcphttp.NewRPCGateway(p.Composer, p.Plugins, p.Limiter, opts...), nil
 }
 
 // configureServiceParams wires the MCP-Store per-user configure flow. Every dep
