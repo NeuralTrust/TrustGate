@@ -63,6 +63,8 @@ type Snapshot struct {
 
 	registriesByID      map[ids.RegistryID]*registrydomain.Registry
 	registriesByGateway map[ids.GatewayID]map[ids.RegistryID]*registrydomain.Registry
+	registriesOrdered   map[ids.GatewayID][]*registrydomain.Registry
+	registriesByCode    map[ids.GatewayID]map[string][]*registrydomain.Registry
 
 	policiesByID      map[ids.PolicyID]*policydomain.Policy
 	policiesByGateway map[ids.GatewayID]map[ids.PolicyID]*policydomain.Policy
@@ -99,6 +101,8 @@ func Build(data Data) *Snapshot {
 		consumersByAuth:        make(map[ids.AuthID][]*consumerdomain.Consumer),
 		registriesByID:         make(map[ids.RegistryID]*registrydomain.Registry, len(data.Registries)),
 		registriesByGateway:    make(map[ids.GatewayID]map[ids.RegistryID]*registrydomain.Registry),
+		registriesOrdered:      make(map[ids.GatewayID][]*registrydomain.Registry),
+		registriesByCode:       make(map[ids.GatewayID]map[string][]*registrydomain.Registry),
 		policiesByID:           make(map[ids.PolicyID]*policydomain.Policy, len(data.Policies)),
 		policiesByGateway:      make(map[ids.GatewayID]map[ids.PolicyID]*policydomain.Policy),
 		policiesOrdered:        make(map[ids.GatewayID][]*policydomain.Policy),
@@ -194,6 +198,19 @@ func (s *Snapshot) buildRegistries() {
 			s.registriesByGateway[r.GatewayID] = byID
 		}
 		byID[r.ID] = r
+		s.registriesOrdered[r.GatewayID] = append(s.registriesOrdered[r.GatewayID], r)
+		if r.MCPTarget != nil {
+			code := strings.TrimSpace(r.MCPTarget.Code)
+			if code == "" {
+				continue
+			}
+			byCode, ok := s.registriesByCode[r.GatewayID]
+			if !ok {
+				byCode = make(map[string][]*registrydomain.Registry)
+				s.registriesByCode[r.GatewayID] = byCode
+			}
+			byCode[code] = append(byCode[code], r)
+		}
 	}
 }
 
@@ -393,18 +410,12 @@ func (s *Snapshot) RegistriesByIDs(gatewayID ids.GatewayID, registryIDs []ids.Re
 // order (the compiled read side for the Store installer/scoper's List). The
 // returned pointers alias the snapshot; callers that mutate must clone first.
 func (s *Snapshot) RegistriesByGateway(gatewayID ids.GatewayID) []*registrydomain.Registry {
-	if len(s.registriesByGateway[gatewayID]) == 0 {
-		return nil
-	}
-	byID := s.registriesByGateway[gatewayID]
-	out := make([]*registrydomain.Registry, 0, len(byID))
-	for i := range s.data.Registries {
-		r := &s.data.Registries[i]
-		if r.GatewayID == gatewayID {
-			out = append(out, r)
-		}
-	}
-	return out
+	return s.registriesOrdered[gatewayID]
+}
+
+// RegistriesByCatalogCode returns a gateway's registries for one MCP catalog code.
+func (s *Snapshot) RegistriesByCatalogCode(gatewayID ids.GatewayID, code string) []*registrydomain.Registry {
+	return s.registriesByCode[gatewayID][code]
 }
 
 func (s *Snapshot) PolicyByID(id ids.PolicyID) (*policydomain.Policy, bool) {

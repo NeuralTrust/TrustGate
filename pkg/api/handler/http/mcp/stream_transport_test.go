@@ -25,6 +25,7 @@ import (
 	"time"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
+	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/identity"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
@@ -102,7 +103,7 @@ func TestStreamPushesListChangedOverRealConnection(t *testing.T) {
 	})
 	vault := &streamVault{}
 
-	handler := NewHandler(nil, nil, vault)
+	handler := NewHandler(nil, nil, appmcp.NewSurfaceWatcher(vault, nil))
 	handler.timings = streamTimings{
 		poll:      10 * time.Millisecond,
 		keepAlive: 20 * time.Millisecond,

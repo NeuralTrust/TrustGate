@@ -20,6 +20,7 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -236,4 +237,94 @@ func TestWorker_SurvivesAPanickingTask(t *testing.T) {
 		return false
 	}, 2*time.Second, 10*time.Millisecond,
 		"the worker stopped processing after a task panicked")
+}
+
+type blockingExporter struct {
+	started chan struct{}
+	release chan struct{}
+	closed  atomic.Bool
+}
+
+func (e *blockingExporter) Name() string                       { return "blocking" }
+func (e *blockingExporter) DataClass() metricsschema.DataClass { return metricsschema.Metadata }
+func (e *blockingExporter) Publish(context.Context, *events.Event) error {
+	close(e.started)
+	<-e.release
+	return nil
+}
+func (e *blockingExporter) Close() { e.closed.Store(true) }
+
+func TestWorkerShutdownWaitsForPublishingBeforeClosingExporter(t *testing.T) {
+	exporter := &blockingExporter{started: make(chan struct{}), release: make(chan struct{})}
+	builder := appmetrics.NewBuilder(adapter.NewRegistry(), stubPricingResolver{})
+	cache := appmetrics.NewExporterCache(captureFactory{exporter: exporter}, newTestLogger())
+	pipeline := appmetrics.NewPipeline(builder, cache, nil, newTestLogger(), telemetrydomain.ExporterConfig{Name: "blocking"})
+	worker := appmetrics.NewWorker(newTestLogger(), pipeline)
+	worker.StartWorkers(1)
+	worker.Process(nil, &infracontext.RequestContext{GatewayID: "gw"}, &infracontext.ResponseContext{}, time.Now(), time.Now(), nil)
+	select {
+	case <-exporter.started:
+	case <-time.After(time.Second):
+		t.Fatal("export did not start")
+	}
+
+	stopped := make(chan struct{})
+	go func() {
+		worker.Shutdown()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+		t.Fatal("shutdown returned while an exporter was still publishing")
+	case <-time.After(20 * time.Millisecond):
+	}
+	if exporter.closed.Load() {
+		t.Fatal("exporter closed while Publish was active")
+	}
+	close(exporter.release)
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not finish after Publish returned")
+	}
+	if !exporter.closed.Load() {
+		t.Fatal("exporter was not closed")
+	}
+}
+
+type cancellationExporter struct {
+	started  chan struct{}
+	canceled chan struct{}
+}
+
+func (e *cancellationExporter) Name() string                       { return "cancellation" }
+func (e *cancellationExporter) DataClass() metricsschema.DataClass { return metricsschema.Metadata }
+func (e *cancellationExporter) Publish(ctx context.Context, _ *events.Event) error {
+	close(e.started)
+	<-ctx.Done()
+	close(e.canceled)
+	return ctx.Err()
+}
+func (e *cancellationExporter) Close() {}
+
+func TestWorkerShutdownCancelsActivePublishing(t *testing.T) {
+	exporter := &cancellationExporter{started: make(chan struct{}), canceled: make(chan struct{})}
+	builder := appmetrics.NewBuilder(adapter.NewRegistry(), stubPricingResolver{})
+	cache := appmetrics.NewExporterCache(captureFactory{exporter: exporter}, newTestLogger())
+	pipeline := appmetrics.NewPipeline(builder, cache, nil, newTestLogger(), telemetrydomain.ExporterConfig{Name: "cancellation"})
+	worker := appmetrics.NewWorker(newTestLogger(), pipeline)
+	worker.StartWorkers(1)
+	worker.Process(nil, &infracontext.RequestContext{GatewayID: "gw"}, &infracontext.ResponseContext{}, time.Now(), time.Now(), nil)
+
+	select {
+	case <-exporter.started:
+	case <-time.After(time.Second):
+		t.Fatal("export did not start")
+	}
+	worker.Shutdown()
+	select {
+	case <-exporter.canceled:
+	default:
+		t.Fatal("shutdown did not cancel the active publish context")
+	}
 }

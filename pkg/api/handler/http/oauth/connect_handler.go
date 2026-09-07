@@ -15,6 +15,7 @@
 package oauth
 
 import (
+	"context"
 	"errors"
 	"strings"
 
@@ -33,9 +34,16 @@ const (
 )
 
 type ConnectHandler struct {
-	connect            appoauth.ConnectService
+	connect            ConnectFlow
 	catalog            appcatalog.MCPServerCatalog
 	oauthPublicBaseURL string
+}
+
+type ConnectFlow interface {
+	Page(ctx context.Context, ticketID string) (*appoauth.ConnectPage, error)
+	Start(ctx context.Context, baseURL, ticketID, provider string) (string, error)
+	Callback(ctx context.Context, baseURL, provider, state, code, errCode, errDesc string) (string, error)
+	Disconnect(ctx context.Context, ticketID, provider string) error
 }
 
 // NewConnectHandler builds the MCP upstream-connect OAuth handlers.
@@ -43,7 +51,7 @@ type ConnectHandler struct {
 // authorize and code exchange instead of the request Host (see
 // MCP_OAUTH_PUBLIC_BASE_URL). Empty keeps per-request BaseURL behavior.
 func NewConnectHandler(
-	connect appoauth.ConnectService,
+	connect ConnectFlow,
 	catalog appcatalog.MCPServerCatalog,
 	oauthPublicBaseURL string,
 ) *ConnectHandler {

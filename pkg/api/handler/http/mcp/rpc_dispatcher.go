@@ -18,56 +18,36 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appmcp "github.com/NeuralTrust/TrustGate/pkg/app/mcp"
 	ratelimitapp "github.com/NeuralTrust/TrustGate/pkg/app/ratelimit"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
-	consumerdomain "github.com/NeuralTrust/TrustGate/pkg/domain/consumer"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/trace"
 )
 
-var ErrMethodNotFound = errors.New("mcp: method not found")
+var ErrMethodNotFound = appmcp.ErrMethodNotFound
 
-type InvalidParamsError struct {
-	Reason string
-}
-
-func (e *InvalidParamsError) Error() string { return "mcp: invalid params: " + e.Reason }
+type InvalidParamsError = appmcp.InvalidParamsError
 
 type RPCGateway struct {
-	composer    appmcp.Composer
-	plugins     *appmcp.PluginRunner
-	limiter     ratelimitapp.Checker
-	connections appmcp.ConnectionTool
-	store       appmcp.StoreTool
-	storeScoper appstore.Scoper
+	dispatcher *appmcp.RPCDispatcher
 }
 
-// NewRPCGateway wires MCP dispatch; nil limiter defaults to noop.
 func NewRPCGateway(composer appmcp.Composer, plugins *appmcp.PluginRunner, limiter ratelimitapp.Checker) *RPCGateway {
-	if limiter == nil {
-		limiter = ratelimitapp.NewNoopChecker()
-	}
-	return &RPCGateway{composer: composer, plugins: plugins, limiter: limiter}
+	return &RPCGateway{dispatcher: appmcp.NewRPCDispatcher(composer, plugins, limiter, nil, nil)}
 }
 
-// NewRPCGatewayWithConnections wires the optional TrustGate connection-management tool.
 func NewRPCGatewayWithConnections(
 	composer appmcp.Composer,
 	plugins *appmcp.PluginRunner,
 	limiter ratelimitapp.Checker,
 	connections appmcp.ConnectionTool,
 ) *RPCGateway {
-	gateway := NewRPCGateway(composer, plugins, limiter)
-	gateway.connections = connections
-	return gateway
+	return &RPCGateway{dispatcher: appmcp.NewRPCDispatcher(composer, plugins, limiter, connections, nil)}
 }
 
-// NewRPCGatewayWithMetaTools wires both the connection-management tool and the
-// MCP Store meta-tools (search / install / …).
 func NewRPCGatewayWithMetaTools(
 	composer appmcp.Composer,
 	plugins *appmcp.PluginRunner,
@@ -75,32 +55,27 @@ func NewRPCGatewayWithMetaTools(
 	connections appmcp.ConnectionTool,
 	store appmcp.StoreTool,
 ) *RPCGateway {
-	gateway := NewRPCGatewayWithConnections(composer, plugins, limiter, connections)
-	gateway.store = store
-	return gateway
+	return &RPCGateway{dispatcher: appmcp.NewRPCDispatcher(composer, plugins, limiter, connections, store)}
 }
 
-// WithStoreScoper attaches the CatalogScoper so the Store surfaces the calling
-// principal's installed servers. Returns the gateway for chaining.
 func (g *RPCGateway) WithStoreScoper(scoper appstore.Scoper) *RPCGateway {
-	g.storeScoper = scoper
+	g.dispatcher.WithStoreScoper(scoper)
 	return g
 }
 
-func (g *RPCGateway) Dispatch(ctx context.Context, rc *appconsumer.RoutableConsumer, method string, params json.RawMessage) (any, error) {
-	return g.DispatchWithBaseURL(ctx, rc, "", method, params)
+func (g *RPCGateway) Dispatch(ctx context.Context, consumer *appconsumer.RoutableConsumer, method string, params json.RawMessage) (any, error) {
+	return g.DispatchWithBaseURL(ctx, consumer, "", method, params)
 }
 
-// DispatchWithBaseURL dispatches an MCP request with the public origin used for user-facing links.
 func (g *RPCGateway) DispatchWithBaseURL(
 	ctx context.Context,
-	rc *appconsumer.RoutableConsumer,
+	consumer *appconsumer.RoutableConsumer,
 	baseURL,
 	method string,
 	params json.RawMessage,
 ) (any, error) {
 	span, ctx := g.startSpan(ctx, method, params)
-	result, err := g.dispatch(ctx, rc, baseURL, method, params)
+	result, err := g.dispatcher.Dispatch(ctx, consumer, baseURL, method, params)
 	g.finishSpan(span, err)
 	return result, err
 }
@@ -135,11 +110,6 @@ func (g *RPCGateway) finishSpan(span *trace.Span, err error) {
 	case errors.As(err, &rpcErr):
 		span.SetMCPStatus(rpcErr.ResolvedHTTPStatus(), int(rpcErr.Code))
 	case errors.As(err, &consentErr):
-		// Both of these answer HTTP 200 on the wire so MCP clients parse the
-		// JSON-RPC error instead of tearing down the transport. The status the
-		// refusal *means* belongs in telemetry, which is what this records:
-		// otherwise an unconnected upstream showed up as a 502 and buried real
-		// upstream failures among routine consent prompts.
 		span.SetMCPStatus(http.StatusForbidden, codeConsentRequired)
 	case errors.As(err, &notPermitted):
 		span.SetMCPStatus(http.StatusForbidden, codePolicyBlocked)
@@ -153,13 +123,9 @@ func (g *RPCGateway) finishSpan(span *trace.Span, err error) {
 	}
 }
 
-// mcpRequestAttrs derives the operation classification and the parsed
-// tool/prompt/resource identifiers from the JSON-RPC method and params.
 func mcpRequestAttrs(method string, params json.RawMessage) (operation, tool, prompt, resourceURI string) {
 	switch method {
-	case "server/discover":
-		return "discovery", "", "", ""
-	case "tools/list":
+	case "server/discover", "tools/list", "resources/list", "resources/templates/list", "prompts/list":
 		return "discovery", "", "", ""
 	case "tools/call":
 		var p struct {
@@ -167,16 +133,12 @@ func mcpRequestAttrs(method string, params json.RawMessage) (operation, tool, pr
 		}
 		_ = json.Unmarshal(params, &p)
 		return "tool", p.Name, "", ""
-	case "resources/list", "resources/templates/list":
-		return "discovery", "", "", ""
 	case "resources/read":
 		var p struct {
 			URI string `json:"uri"`
 		}
 		_ = json.Unmarshal(params, &p)
 		return "resource", "", "", p.URI
-	case "prompts/list":
-		return "discovery", "", "", ""
 	case "prompts/get":
 		var p struct {
 			Name string `json:"name"`
@@ -186,247 +148,4 @@ func mcpRequestAttrs(method string, params json.RawMessage) (operation, tool, pr
 	default:
 		return "", "", "", ""
 	}
-}
-
-func (g *RPCGateway) checkRateLimit(ctx context.Context, rc *appconsumer.RoutableConsumer) error {
-	if rc == nil || rc.Consumer == nil {
-		return nil
-	}
-	err := g.limiter.Check(ctx, rc.Consumer.GatewayID)
-	if err == nil {
-		return nil
-	}
-	var exceeded *ratelimitapp.Exceeded
-	if errors.As(err, &exceeded) {
-		return &appmcp.RPCError{
-			Code:        appmcp.CodeRateLimited,
-			Message:     exceeded.Error(),
-			Data:        json.RawMessage(exceeded.Body()),
-			HTTPHeaders: exceeded.Headers(),
-		}
-	}
-	if errors.Is(err, ratelimitapp.ErrUnavailable) {
-		return &appmcp.RPCError{
-			Code:    appmcp.CodeUnavailable,
-			Message: err.Error(),
-		}
-	}
-	return err
-}
-
-func (g *RPCGateway) dispatch(
-	ctx context.Context,
-	rc *appconsumer.RoutableConsumer,
-	baseURL,
-	method string,
-	params json.RawMessage,
-) (any, error) {
-	// Scope the Store to the caller's installed servers. The scoper no-ops for
-	// any non-Store consumer; on a transient error we proceed with the meta-tools
-	// only rather than failing the request.
-	if g.storeScoper != nil {
-		if scoped, err := g.storeScoper.Scope(ctx, rc); err == nil {
-			rc = scoped
-		}
-	}
-	switch method {
-	case "tools/list":
-		if err := g.checkRateLimit(ctx, rc); err != nil {
-			return nil, err
-		}
-		isStore := rc != nil && rc.Consumer != nil && consumerdomain.IsStoreConsumer(rc.Consumer)
-		tools, err := g.composer.ListTools(ctx, rc)
-		if err != nil {
-			// The gateway's own tools — the Store meta-tools and the per-provider
-			// connect tools appended below — are exactly how a user installs a
-			// server or connects an account. An upstream problem must never hide
-			// them, so these list-time errors degrade to an empty upstream list
-			// rather than failing the whole listing:
-			//   - the synthetic Store consumer carries no registries of its own
-			//     until servers are installed (ErrNoMCPRegistries), and its installed
-			//     servers may be unreachable — either way its meta-tools still list;
-			//   - any consumer whose bound upstreams are all still pending the user's
-			//     connection (ConsentRequiredError) must still be shown the connect
-			//     tools; a tool call, not the listing, is where consent is reported.
-			var consentErr *appmcp.ConsentRequiredError
-			switch {
-			case isStore && errors.Is(err, appmcp.ErrNoMCPRegistries):
-				tools = nil
-			case isStore && errors.Is(err, appmcp.ErrUpstreamUnavailable):
-				tools = nil
-			case errors.As(err, &consentErr):
-				tools = nil
-			default:
-				return nil, err
-			}
-		}
-		if tools == nil {
-			tools = []appmcp.Tool{}
-		}
-		result := map[string]any{"tools": tools}
-		raw, err := json.Marshal(result)
-		if err != nil {
-			return nil, err
-		}
-		// A tool listing is static server metadata, so it is scanned only for
-		// threats in the tool descriptions (indirect prompt injection, code
-		// injection): a genuine block stops discovery, while a data-masking
-		// transform is ignored — the listing is never redacted or rewritten.
-		if err := g.plugins.PreResponseDiscovery(ctx, rc, raw); err != nil {
-			return nil, err
-		}
-		if g.connections != nil && connectionToolPermitted(rc) {
-			tools = appendGatewayTools(tools, g.connections.Definitions(ctx, rc))
-		}
-		if g.store != nil && isStore {
-			tools = appendGatewayTools(tools, g.store.Definitions(ctx, rc))
-		}
-		result["tools"] = tools
-		return result, nil
-	case "tools/call":
-		var p struct {
-			Name      string          `json:"name"`
-			Arguments json.RawMessage `json:"arguments,omitempty"`
-		}
-		if err := json.Unmarshal(params, &p); err != nil || p.Name == "" {
-			return nil, &InvalidParamsError{Reason: "tools/call requires params.name"}
-		}
-		if err := g.checkRateLimit(ctx, rc); err != nil {
-			return nil, err
-		}
-		if g.connections != nil && g.connections.Handles(p.Name) {
-			if !connectionToolPermitted(rc) {
-				return nil, &appmcp.ToolNotPermittedError{Tool: p.Name}
-			}
-			return g.connections.Call(ctx, rc, baseURL, p.Name)
-		}
-		if g.store != nil && g.store.Handles(p.Name) {
-			if rc == nil || !consumerdomain.IsStoreConsumer(rc.Consumer) {
-				return nil, &appmcp.ToolNotPermittedError{Tool: p.Name}
-			}
-			return g.store.Call(ctx, rc, baseURL, p.Name, p.Arguments)
-		}
-		pre, err := g.plugins.PreRequest(ctx, rc, p.Name, p.Arguments)
-		if err != nil {
-			return nil, err
-		}
-		// The request stage may rewrite the tool input (data-masking) or answer
-		// the call outright. Carry both forward: reusing the original arguments
-		// would send upstream exactly what a plugin just redacted.
-		arguments := p.Arguments
-		if pre != nil {
-			if pre.Result != nil {
-				return pre.Result, nil
-			}
-			if pre.Arguments != nil {
-				arguments = pre.Arguments
-			}
-		}
-		result, err := g.composer.CallTool(ctx, rc, p.Name, arguments)
-		if err != nil {
-			return nil, err
-		}
-		post, err := g.plugins.PreResponse(ctx, rc, p.Name, arguments, result)
-		if err != nil {
-			return nil, err
-		}
-		if post != nil && post.Result != nil {
-			result = post.Result
-		}
-		return result, nil
-	case "resources/list":
-		if err := g.checkRateLimit(ctx, rc); err != nil {
-			return nil, err
-		}
-		resources, err := g.composer.ListResources(ctx, rc)
-		if err != nil {
-			return nil, err
-		}
-		if resources == nil {
-			resources = []appmcp.Resource{}
-		}
-		return map[string]any{"resources": resources}, nil
-	case "resources/templates/list":
-		if err := g.checkRateLimit(ctx, rc); err != nil {
-			return nil, err
-		}
-		templates, err := g.composer.ListResourceTemplates(ctx, rc)
-		if err != nil {
-			return nil, err
-		}
-		if templates == nil {
-			templates = []appmcp.ResourceTemplate{}
-		}
-		return map[string]any{"resourceTemplates": templates}, nil
-	case "resources/read":
-		var p struct {
-			URI string `json:"uri"`
-		}
-		if err := json.Unmarshal(params, &p); err != nil || p.URI == "" {
-			return nil, &InvalidParamsError{Reason: "resources/read requires params.uri"}
-		}
-		if err := g.checkRateLimit(ctx, rc); err != nil {
-			return nil, err
-		}
-		return g.composer.ReadResource(ctx, rc, p.URI)
-	case "prompts/list":
-		if err := g.checkRateLimit(ctx, rc); err != nil {
-			return nil, err
-		}
-		prompts, err := g.composer.ListPrompts(ctx, rc)
-		if err != nil {
-			return nil, err
-		}
-		if prompts == nil {
-			prompts = []appmcp.Prompt{}
-		}
-		return map[string]any{"prompts": prompts}, nil
-	case "prompts/get":
-		var p struct {
-			Name      string            `json:"name"`
-			Arguments map[string]string `json:"arguments,omitempty"`
-		}
-		if err := json.Unmarshal(params, &p); err != nil || p.Name == "" {
-			return nil, &InvalidParamsError{Reason: "prompts/get requires params.name"}
-		}
-		if err := g.checkRateLimit(ctx, rc); err != nil {
-			return nil, err
-		}
-		return g.composer.GetPrompt(ctx, rc, p.Name, p.Arguments)
-	default:
-		return nil, fmt.Errorf("%w: %s", ErrMethodNotFound, method)
-	}
-}
-
-func appendGatewayTools(tools []appmcp.Tool, gatewayTools []appmcp.Tool) []appmcp.Tool {
-	for _, gatewayTool := range gatewayTools {
-		tools = appendGatewayTool(tools, gatewayTool)
-	}
-	return tools
-}
-
-func appendGatewayTool(tools []appmcp.Tool, gatewayTool appmcp.Tool) []appmcp.Tool {
-	for i := range tools {
-		if tools[i].Name == gatewayTool.Name {
-			tools[i] = gatewayTool
-			return tools
-		}
-	}
-	return append(tools, gatewayTool)
-}
-
-func connectionToolPermitted(rc *appconsumer.RoutableConsumer) bool {
-	if rc == nil || rc.Consumer == nil {
-		return false
-	}
-	toolkit := rc.Consumer.Toolkit()
-	if toolkit == nil {
-		return true
-	}
-	for _, entry := range toolkit {
-		if entry.Tool != "" {
-			return true
-		}
-	}
-	return false
 }
