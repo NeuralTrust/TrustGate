@@ -141,7 +141,8 @@ func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) (authScope, error) {
 	}
 	scope := authScope{}
 	hasOAuth2 := false
-	hasEnabledOAuth2 := false
+	hasBrokerCapableOAuth2 := false
+	hasValidateOnlyOAuth2 := false
 	hasEnabledAuth := false
 	for _, m := range matches {
 		for _, a := range m.Auths {
@@ -149,10 +150,14 @@ func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) (authScope, error) {
 			if a.Enabled {
 				hasEnabledAuth = true
 			}
-			if a.Type == authdomain.TypeOAuth2 {
+			if a.Type.IsIdentityProvider() {
 				hasOAuth2 = true
 				if a.Enabled {
-					hasEnabledOAuth2 = true
+					if a.CanBrokerLogin() {
+						hasBrokerCapableOAuth2 = true
+					} else {
+						hasValidateOnlyOAuth2 = true
+					}
 				}
 			}
 		}
@@ -162,11 +167,27 @@ func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) (authScope, error) {
 	// oauth2 IdP — that credential is the only way in: falling back here would
 	// let any platform login reach the consumer without it.
 	defaultIdPUsable := r.defaultIdPEnabled && !hasOAuth2 && !hasEnabledAuth
-	c.Locals(OAuthChallengeAllowedLocal, hasEnabledOAuth2 || defaultIdPUsable)
+	defaultCanBroker := false
+	if defaultIdPUsable {
+		defaultCanBroker = r.credentials.DefaultOAuth2ForGateway(matches[0].GatewayID).CanBrokerLogin()
+		hasValidateOnlyOAuth2 = hasValidateOnlyOAuth2 || !defaultCanBroker
+	}
+	c.Locals(OAuthChallengeModeLocal, challengeMode(hasBrokerCapableOAuth2, hasValidateOnlyOAuth2, defaultCanBroker))
 	if defaultIdPUsable {
 		scope[appauth.DefaultIdPAuthID()] = struct{}{}
 	}
 	return scope, nil
+}
+
+func challengeMode(brokerCapable, validateOnly, defaultIdPUsable bool) OAuthChallengeMode {
+	switch {
+	case brokerCapable || defaultIdPUsable:
+		return OAuthChallengeAdvertise
+	case validateOnly:
+		return OAuthChallengeDiagnostic
+	default:
+		return OAuthChallengeSilent
+	}
 }
 
 func (r *chainIdentityResolver) resolveMTLS(ctx context.Context, cert *x509.Certificate, scope authScope) (Identity, error) {
@@ -266,7 +287,7 @@ func (r *chainIdentityResolver) resolveJWT(ctx context.Context, token string, ca
 		}
 		var principal *identity.Principal
 		var err error
-		if cfg.JWKSURL != "" || cfg.IntrospectionURL == "" {
+		if cfg.JWKSURL != "" || cfg.HasInlineKeys() || cfg.IntrospectionURL == "" {
 			principal, err = r.jwt.Validate(ctx, token, cfg)
 		} else {
 			principal, err = r.intro.Validate(ctx, token, cfg)

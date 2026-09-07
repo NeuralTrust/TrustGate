@@ -59,6 +59,10 @@ definitions:
         type: string
       jwks_url:
         type: string
+      public_keys:
+        items:
+          type: string
+        type: array
       required_scopes:
         items:
           type: string
@@ -197,6 +201,10 @@ definitions:
         type: string
       jwks_url:
         type: string
+      public_keys:
+        items:
+          type: string
+        type: array
       required_scopes:
         items:
           type: string

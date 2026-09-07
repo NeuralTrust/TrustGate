@@ -16,6 +16,7 @@ package auth
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -103,6 +104,127 @@ func TestOAuth2Config_Validate_SessionMode(t *testing.T) {
 	}
 }
 
+func TestOAuth2Config_Validate_KeyMaterial(t *testing.T) {
+	t.Parallel()
+	const pem = "-----BEGIN PUBLIC KEY-----\nMIIB\n-----END PUBLIC KEY-----"
+	tests := []struct {
+		name    string
+		config  OAuth2Config
+		wantErr string
+	}{
+		{
+			name: "inline public keys satisfy the key material rule",
+			config: OAuth2Config{
+				Issuer:     "urn:example:idp",
+				Audiences:  []string{"api"},
+				PublicKeys: []string{pem},
+			},
+		},
+		{
+			name: "http issuer alone satisfies the key material rule",
+			config: OAuth2Config{
+				Issuer:    "https://login.microsoftonline.com/tenant-id/v2.0",
+				Audiences: []string{"api"},
+			},
+		},
+		{
+			name: "introspection url alone satisfies the key material rule",
+			config: OAuth2Config{
+				Issuer:           "urn:example:idp",
+				Audiences:        []string{"api"},
+				IntrospectionURL: "https://issuer.example.com/introspect",
+			},
+		},
+		{
+			name: "jwks url and inline public keys together are accepted",
+			config: OAuth2Config{
+				Issuer:     "urn:example:idp",
+				Audiences:  []string{"api"},
+				JWKSURL:    "https://issuer.example.com/jwks",
+				PublicKeys: []string{pem},
+			},
+		},
+		{
+			name: "no key material and a non http issuer is rejected",
+			config: OAuth2Config{
+				Issuer:    "urn:example:idp",
+				Audiences: []string{"api"},
+			},
+			wantErr: "oauth2 requires jwks_url, introspection_url or public_keys, or an http(s) issuer for OIDC discovery",
+		},
+		{
+			name: "blank public keys entries do not count as key material",
+			config: OAuth2Config{
+				Issuer:     "urn:example:idp",
+				Audiences:  []string{"api"},
+				PublicKeys: []string{"  "},
+			},
+			wantErr: "oauth2 requires jwks_url, introspection_url or public_keys, or an http(s) issuer for OIDC discovery",
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := tt.config
+			err := cfg.validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validate() error = %v, want nil", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrInvalidConfig) {
+				t.Fatalf("validate() error = %v, want ErrInvalidConfig", err)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("validate() error = %q, want it to contain %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestOAuth2Config_Validate_RejectsHMACAlgorithms(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		algorithms []string
+		wantErr    bool
+	}{
+		{name: "hs256", algorithms: []string{"HS256"}, wantErr: true},
+		{name: "lowercase hs384 with padding", algorithms: []string{" hs384 "}, wantErr: true},
+		{name: "hmac among asymmetric algorithms", algorithms: []string{"RS256", "HS512"}, wantErr: true},
+		{name: "asymmetric only", algorithms: []string{"RS256", "ES256"}},
+		{name: "empty allowlist", algorithms: nil},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := OAuth2Config{
+				Issuer:     "https://issuer.example.com",
+				Audiences:  []string{"gateway"},
+				JWKSURL:    "https://issuer.example.com/jwks",
+				Algorithms: tt.algorithms,
+			}
+			err := cfg.validate()
+			if !tt.wantErr {
+				if err != nil {
+					t.Fatalf("validate() error = %v, want nil", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrInvalidConfig) {
+				t.Fatalf("validate() error = %v, want ErrInvalidConfig", err)
+			}
+			const want = "oauth2.allowed_algorithms must not include HMAC algorithms"
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("validate() error = %q, want it to contain %q", err.Error(), want)
+			}
+		})
+	}
+}
+
 func TestOAuth2Config_Validate_ManualAuthorizationEndpoints(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -173,6 +295,61 @@ func TestOAuth2Config_Validate_ManualAuthorizationEndpoints(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatalf("validate() error = %v, want nil", err)
+			}
+		})
+	}
+}
+
+func TestOAuth2Config_CanBrokerLogin(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		config *OAuth2Config
+		want   bool
+	}{
+		{
+			name: "client id with explicit endpoints",
+			config: &OAuth2Config{
+				ClientID:     "gw-client",
+				Issuer:       "urn:example:idp",
+				AuthorizeURL: "https://idp.example.com/authorize",
+				TokenURL:     "https://idp.example.com/token",
+			},
+			want: true,
+		},
+		{
+			name:   "client id with discoverable http issuer",
+			config: &OAuth2Config{ClientID: "gw-client", Issuer: "https://idp.example.com"},
+			want:   true,
+		},
+		{
+			name:   "client id with non http issuer and no endpoints",
+			config: &OAuth2Config{ClientID: "gw-client", Issuer: "urn:example:idp"},
+		},
+		{
+			name:   "blank client id with http issuer",
+			config: &OAuth2Config{Issuer: "https://idp.example.com"},
+		},
+		{
+			name:   "whitespace client id is blank",
+			config: &OAuth2Config{ClientID: "   ", Issuer: "https://idp.example.com"},
+		},
+		{
+			name:   "issuer without host is not discoverable",
+			config: &OAuth2Config{ClientID: "gw-client", Issuer: "https://"},
+		},
+		{
+			name:   "only one endpoint falls back to the issuer",
+			config: &OAuth2Config{ClientID: "gw-client", Issuer: "urn:example:idp", TokenURL: "https://idp.example.com/token"},
+		},
+		{name: "nil config"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.config.CanBrokerLogin(); got != tt.want {
+				t.Fatalf("CanBrokerLogin() = %t, want %t", got, tt.want)
 			}
 		})
 	}

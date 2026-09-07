@@ -225,6 +225,19 @@ func TestNewAuth_Validation(t *testing.T) {
 			wantErr:   ErrInvalidConfig,
 		},
 		{
+			name:      "oauth2 rejects hs algorithms",
+			gatewayID: gwID,
+			authName:  "k",
+			authType:  TypeOAuth2,
+			config: Config{OAuth2: &OAuth2Config{
+				Issuer:     "https://issuer",
+				Audiences:  []string{"gateway"},
+				JWKSURL:    "https://issuer/.well-known/jwks.json",
+				Algorithms: []string{"HS256"},
+			}},
+			wantErr: ErrInvalidConfig,
+		},
+		{
 			name:      "idp missing key material",
 			gatewayID: gwID,
 			authName:  "k",
@@ -286,6 +299,11 @@ func TestNewAuth_ValidPerType(t *testing.T) {
 			Issuer:    "https://login.microsoftonline.com/tenant-id/v2.0",
 			Audiences: []string{"trustgate"},
 		}}},
+		"oauth2 with inline public keys and no jwks url": {TypeOAuth2, Config{OAuth2: &OAuth2Config{
+			Issuer:     "urn:example:idp",
+			Audiences:  []string{"gateway"},
+			PublicKeys: []string{"-----BEGIN PUBLIC KEY-----"},
+		}}},
 		"mtls": {TypeMTLS, Config{MTLS: &MTLSConfig{CACert: "-----BEGIN CERTIFICATE-----"}}},
 		"oidc": {TypeOIDC, Config{OIDC: &OIDCConfig{
 			Issuer:            "https://issuer",
@@ -337,5 +355,48 @@ func TestConfig_ValueRoundTrip(t *testing.T) {
 	}
 	if got.OAuth2 == nil || got.OAuth2.Issuer != original.OAuth2.Issuer {
 		t.Fatalf("round trip mismatch: %+v", got)
+	}
+}
+
+func TestAuth_CanBrokerLogin(t *testing.T) {
+	t.Parallel()
+	brokerCapable := OAuth2Config{ClientID: "gw-client", Issuer: "https://idp.example.com"}
+	validateOnly := OAuth2Config{Issuer: "https://idp.example.com"}
+	tests := []struct {
+		name string
+		auth *Auth
+		want bool
+	}{
+		{
+			name: "enabled oauth2 with a pre-registered client",
+			auth: &Auth{Type: TypeOAuth2, Enabled: true, Config: Config{OAuth2: &brokerCapable}},
+			want: true,
+		},
+		{
+			name: "disabled oauth2",
+			auth: &Auth{Type: TypeOAuth2, Config: Config{OAuth2: &brokerCapable}},
+		},
+		{
+			name: "validate-only oauth2",
+			auth: &Auth{Type: TypeOAuth2, Enabled: true, Config: Config{OAuth2: &validateOnly}},
+		},
+		{
+			name: "oidc type is not yet unified",
+			auth: &Auth{Type: TypeOIDC, Enabled: true, Config: Config{OAuth2: &brokerCapable}},
+		},
+		{
+			name: "oauth2 without payload",
+			auth: &Auth{Type: TypeOAuth2, Enabled: true},
+		},
+		{name: "nil auth"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.auth.CanBrokerLogin(); got != tt.want {
+				t.Fatalf("CanBrokerLogin() = %t, want %t", got, tt.want)
+			}
+		})
 	}
 }
