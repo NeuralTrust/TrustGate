@@ -49,6 +49,15 @@ const (
 	StatusRevoked Status = "revoked"
 )
 
+// Decision is the admin's verdict on an install request, kept on the row so the
+// approval queue has a history: who decided what, and when.
+type Decision string
+
+const (
+	DecisionApproved Decision = "approved"
+	DecisionDenied   Decision = "denied"
+)
+
 func (s Status) valid() bool {
 	switch s {
 	case StatusInstalled, StatusPendingApproval, StatusRevoked:
@@ -81,8 +90,31 @@ type Installation struct {
 	// The nil id means the code's canonical instance: the sole registry, or the
 	// one materialised from the catalog.
 	RegistryID ids.RegistryID
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	// Decision, DecidedBy and DecidedAt record the admin verdict on a request
+	// (empty for a self-service install that never needed one).
+	Decision  Decision
+	DecidedBy string
+	DecidedAt time.Time
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// Decide stamps the admin's verdict and moves the row to the matching status:
+// approved → installed, denied → revoked.
+func (i *Installation) Decide(decision Decision, by string, at time.Time) {
+	if i == nil {
+		return
+	}
+	i.Decision = decision
+	i.DecidedBy = strings.TrimSpace(by)
+	i.DecidedAt = at
+	i.UpdatedAt = at
+	switch decision {
+	case DecisionApproved:
+		i.Status = StatusInstalled
+	case DecisionDenied:
+		i.Status = StatusRevoked
+	}
 }
 
 // New builds a fresh installation in the installed state.
@@ -204,6 +236,13 @@ func (i *Installation) SameConfig(other map[string]string) bool {
 		}
 	}
 	return true
+}
+
+// DecisionHistory is the admin read of decided requests (approved / denied),
+// newest decision first. Served by the durable store only — data planes never
+// need it — so it is a separate capability rather than part of Repository.
+type DecisionHistory interface {
+	ListDecidedByGateway(ctx context.Context, gatewayID ids.GatewayID, limit int) ([]*Installation, error)
 }
 
 //go:generate mockery --name=Repository --dir=. --output=./mocks --filename=installation_repository_mock.go --case=underscore --with-expecter

@@ -27,14 +27,20 @@ import (
 	storehttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/store"
 	appstore "github.com/NeuralTrust/TrustGate/pkg/app/store"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
+	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	"github.com/gofiber/fiber/v2"
 )
 
 type fakeApprover struct {
 	pending  []appstore.PendingRequest
+	decided  []appstore.DecidedRequest
 	approved []appstore.ApproveRequest
 	denied   []appstore.DenyRequest
 	err      error
+}
+
+func (f *fakeApprover) ListDecided(context.Context, ids.GatewayID) ([]appstore.DecidedRequest, error) {
+	return f.decided, f.err
 }
 
 func (f *fakeApprover) ListPending(context.Context, ids.GatewayID) ([]appstore.PendingRequest, error) {
@@ -170,5 +176,65 @@ func TestRequestsHandler_AmbiguousRequestIsConflict(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("an ambiguous by-code decision must be 409, got %d", resp.StatusCode)
+	}
+}
+
+func TestRequestsHandler_ApprovePassesGrantToGroup(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	approver := &fakeApprover{}
+	app := newApp(approver)
+	resp := post(t, app, "/v1/gateways/"+gw.String()+"/store/requests/approve",
+		`{"principal_sub":"ana","code":"github","grant_to_group":"sales"}`)
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	if len(approver.approved) != 1 || approver.approved[0].GrantToGroup != "sales" {
+		t.Fatalf("approve must pass grant_to_group through, got %+v", approver.approved)
+	}
+}
+
+func TestRequestsHandler_HistoryShapesDecisions(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	reg := ids.New[ids.RegistryKind]()
+	at := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	approver := &fakeApprover{decided: []appstore.DecidedRequest{
+		{InstanceID: "i1", PrincipalSub: "ana", Code: "github", Name: "GitHub", Decision: installationdomain.DecisionApproved, DecidedBy: "admin@corp", DecidedAt: at, RequestedAt: at.Add(-time.Hour)},
+		{InstanceID: "i2", PrincipalSub: "bob", Code: "snowflake", Name: "Snowflake", RegistryID: reg, Decision: installationdomain.DecisionDenied, DecidedAt: at},
+	}}
+	app := newApp(approver)
+	app.Get("/v1/gateways/:gateway_id/store/requests/history", storehttp.NewRequestsHandler(approver).History)
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/v1/gateways/"+gw.String()+"/store/requests/history", nil))
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	var body struct {
+		Items []map[string]any `json:"items"`
+		Total int              `json:"total"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Total != 2 || len(body.Items) != 2 {
+		t.Fatalf("body: %+v", body)
+	}
+	if body.Items[0]["decision"] != "approved" || body.Items[0]["decided_by"] != "admin@corp" || body.Items[0]["decided_at"] != "2026-09-07T12:00:00Z" || body.Items[0]["name"] != "GitHub" {
+		t.Fatalf("approved row: %v", body.Items[0])
+	}
+	if _, has := body.Items[0]["registry_id"]; has {
+		t.Fatalf("code-level request must omit registry_id: %v", body.Items[0])
+	}
+	if body.Items[1]["decision"] != "denied" || body.Items[1]["registry_id"] != reg.String() {
+		t.Fatalf("denied row: %v", body.Items[1])
+	}
+
+	approver.err = appstore.ErrHistoryUnavailable
+	resp2, _ := app.Test(httptest.NewRequest(http.MethodGet, "/v1/gateways/"+gw.String()+"/store/requests/history", nil))
+	if resp2.StatusCode != http.StatusNotFound {
+		t.Fatalf("want 404 without a history store, got %d", resp2.StatusCode)
 	}
 }

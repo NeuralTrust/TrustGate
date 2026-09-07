@@ -19,6 +19,7 @@ import (
 	"errors"
 	"testing"
 
+	catalogdomain "github.com/NeuralTrust/TrustGate/pkg/domain/catalog"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/ids"
 	installationdomain "github.com/NeuralTrust/TrustGate/pkg/domain/installation"
 	registrydomain "github.com/NeuralTrust/TrustGate/pkg/domain/registry"
@@ -127,5 +128,112 @@ func TestApprover_Approve_NotShelved_MaterialisesWithEnsurer(t *testing.T) {
 	}
 	if len(installs.upserts) != 1 || installs.upserts[0].Status != installationdomain.StatusInstalled {
 		t.Fatalf("want one installed upsert, got %+v", installs.upserts)
+	}
+}
+
+// fakeHistory serves decided rows to ListDecided.
+type fakeHistory struct {
+	rows  []*installationdomain.Installation
+	limit int
+}
+
+func (f *fakeHistory) ListDecidedByGateway(_ context.Context, _ ids.GatewayID, limit int) ([]*installationdomain.Installation, error) {
+	f.limit = limit
+	return f.rows, nil
+}
+
+func TestApprover_Approve_GrantToGroupGrantsTheGroupNotTheRequester(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	installs := &fakeInstalls{findValue: pendingInstall(t, gw, "ana", "github")}
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("github")}}
+	grants := grantsOf()
+	a := newApproverWith(t, installs, regs, grants, nil)
+
+	if err := a.Approve(context.Background(), ApproveRequest{GatewayID: gw, PrincipalSub: "ana", Code: "github", GrantToGroup: " sales ", ApprovedBy: "admin@corp"}); err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if len(grants.upserts) != 1 {
+		t.Fatalf("approve must write the grant once, got %d", len(grants.upserts))
+	}
+	g := grants.upserts[0]
+	if len(g.Groups) != 1 || g.Groups[0] != "sales" || len(g.Users) != 0 {
+		t.Fatalf("approve with a group grants that group only, got groups=%v users=%v", g.Groups, g.Users)
+	}
+	set := storeaccessdomain.Index(grants.items)
+	if !set.CodeAllows("github", []string{"sales"}, "ana") || set.CodeAllows("github", nil, "ana") {
+		t.Fatal("the requester passes through the group, not on their own")
+	}
+	// The decision is recorded on the row.
+	if len(installs.upserts) != 1 {
+		t.Fatalf("approve must persist the row once, got %d", len(installs.upserts))
+	}
+	row := installs.upserts[0]
+	if row.Status != installationdomain.StatusInstalled || row.Decision != installationdomain.DecisionApproved || row.DecidedBy != "admin@corp" || row.DecidedAt.IsZero() {
+		t.Fatalf("approve must stamp the decision: %+v", row)
+	}
+}
+
+func TestApprover_Approve_GrantToGroupAlreadyCoveredWritesNothing(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	installs := &fakeInstalls{findValue: pendingInstall(t, gw, "ana", "github")}
+	regs := &fakeRegistries{items: []*registrydomain.Registry{shelfRegistry("github")}}
+	grants := grantsOf(codeGrant(gw, "github", []string{"sales"}, nil))
+	a := newApproverWith(t, installs, regs, grants, nil)
+	if err := a.Approve(context.Background(), ApproveRequest{GatewayID: gw, PrincipalSub: "ana", Code: "github", GrantToGroup: "sales"}); err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if len(grants.upserts) != 0 {
+		t.Fatalf("group already granted: no grant write expected, got %d", len(grants.upserts))
+	}
+}
+
+func TestApprover_Deny_StampsTheDecision(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	installs := &fakeInstalls{findValue: pendingInstall(t, gw, "ana", "github")}
+	a := newApproverT(t, installs, &fakeRegistries{})
+	if err := a.Deny(context.Background(), DenyRequest{GatewayID: gw, PrincipalSub: "ana", Code: "github", DeniedBy: "admin@corp"}); err != nil {
+		t.Fatalf("Deny: %v", err)
+	}
+	row := installs.upserts[0]
+	if row.Status != installationdomain.StatusRevoked || row.Decision != installationdomain.DecisionDenied || row.DecidedBy != "admin@corp" {
+		t.Fatalf("deny must stamp the decision: %+v", row)
+	}
+}
+
+func TestApprover_ListDecided(t *testing.T) {
+	gw := ids.New[ids.GatewayKind]()
+	approved := pendingInstall(t, gw, "ana", "github")
+	approved.Decide(installationdomain.DecisionApproved, "admin@corp", approved.CreatedAt)
+	denied := pendingInstall(t, gw, "bob", "unknown")
+	denied.Decide(installationdomain.DecisionDenied, "admin@corp", denied.CreatedAt)
+	undecided := pendingInstall(t, gw, "cid", "github")
+	history := &fakeHistory{rows: []*installationdomain.Installation{approved, denied, undecided}}
+
+	cat := fakeCatalog{entries: map[string]catalogdomain.MCPServer{"github": {Code: "github", DisplayName: "GitHub"}}}
+	a, err := NewApprover(cat, &fakeRegistries{}, &fakeInstalls{}, &fakeGrants{}, WithApproverHistory(history))
+	if err != nil {
+		t.Fatalf("NewApprover: %v", err)
+	}
+	out, err := a.ListDecided(context.Background(), gw)
+	if err != nil {
+		t.Fatalf("ListDecided: %v", err)
+	}
+	if history.limit <= 0 {
+		t.Fatal("history read must be bounded")
+	}
+	if len(out) != 2 {
+		t.Fatalf("undecided rows are not history, got %+v", out)
+	}
+	if out[0].Name != "GitHub" || out[0].Decision != installationdomain.DecisionApproved || out[0].DecidedBy != "admin@corp" || out[0].InstanceID != approved.ID.String() {
+		t.Fatalf("approved row: %+v", out[0])
+	}
+	if out[1].Name != "unknown" || out[1].Decision != installationdomain.DecisionDenied {
+		t.Fatalf("denied row falls back to the code as its name: %+v", out[1])
+	}
+
+	// Without a durable history the read is unavailable, not empty.
+	plain := newApproverT(t, &fakeInstalls{}, &fakeRegistries{})
+	if _, err := plain.ListDecided(context.Background(), gw); !errors.Is(err, ErrHistoryUnavailable) {
+		t.Fatalf("want ErrHistoryUnavailable, got %v", err)
 	}
 }
