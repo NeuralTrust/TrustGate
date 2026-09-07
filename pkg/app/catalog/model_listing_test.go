@@ -61,20 +61,20 @@ func (r *listingRepo) callsFor(providerCode string) int {
 	return r.calls[providerCode]
 }
 
-func newModelAvailability(repo domain.Repository) ModelAvailability {
-	mgr := cache.NewTTLMapManager(cache.CatalogAvailabilityCacheTTL)
-	mgr.CreateTTLMap(cache.CatalogAvailabilityTTLName, cache.CatalogAvailabilityCacheTTL)
-	return NewModelAvailability(repo, mgr, slog.New(slog.NewTextHandler(io.Discard, nil)))
+func newModelListing(repo domain.Repository) ModelListing {
+	mgr := cache.NewTTLMapManager(cache.CatalogListingCacheTTL)
+	mgr.CreateTTLMap(cache.CatalogListingTTLName, cache.CatalogListingCacheTTL)
+	return NewModelListing(repo, mgr, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
 func enabledModel(slug string) domain.Model {
 	return domain.Model{Slug: slug, Enabled: true}
 }
 
-func TestModelAvailability_Serves(t *testing.T) {
+func TestModelListing_Lists(t *testing.T) {
 	t.Parallel()
 
-	listing := map[string][]domain.Model{
+	catalogModels := map[string][]domain.Model{
 		providers.ProviderOpenAI: {enabledModel("gpt-4.1"), enabledModel("gpt-4o-mini")},
 		providers.ProviderVertex: {enabledModel("gemini-3-flash-preview")},
 		providers.ProviderBedrock: {
@@ -91,11 +91,11 @@ func TestModelAvailability_Serves(t *testing.T) {
 		model    string
 		want     Verdict
 	}{
-		{"listed model", providers.ProviderOpenAI, "gpt-4.1", VerdictServes},
+		{"listed model", providers.ProviderOpenAI, "gpt-4.1", VerdictListed},
 		{"model of another provider", providers.ProviderOpenAI, "gemini-3-flash-preview", VerdictAbsent},
-		{"listed on its own provider", providers.ProviderVertex, "gemini-3-flash-preview", VerdictServes},
-		{"cross-region inference profile", providers.ProviderBedrock, "eu.anthropic.claude-sonnet-4", VerdictServes},
-		{"dated deployment suffix", providers.ProviderBedrock, "anthropic.claude-opus-4-2026-05-01", VerdictServes},
+		{"listed on its own provider", providers.ProviderVertex, "gemini-3-flash-preview", VerdictListed},
+		{"cross-region inference profile", providers.ProviderBedrock, "eu.anthropic.claude-sonnet-4", VerdictListed},
+		{"dated deployment suffix", providers.ProviderBedrock, "anthropic.claude-opus-4-2026-05-01", VerdictListed},
 		{"unlisted model on a listed provider", providers.ProviderBedrock, "gpt-4.1", VerdictAbsent},
 		{"provider with no listing", providers.ProviderCohere, "command-r", VerdictUnknown},
 		{"azure deployment names are account specific", providers.ProviderAzure, "my-deployment", VerdictUnknown},
@@ -106,72 +106,72 @@ func TestModelAvailability_Serves(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			availability := newModelAvailability(newListingRepo(listing))
-			assert.Equal(t, tc.want, availability.Serves(context.Background(), tc.provider, tc.model))
+			subject := newModelListing(newListingRepo(catalogModels))
+			assert.Equal(t, tc.want, subject.Lists(context.Background(), tc.provider, tc.model))
 		})
 	}
 }
 
-func TestModelAvailability_DisabledModelsAreNotServed(t *testing.T) {
+func TestModelListing_DisabledModelsAreNotListed(t *testing.T) {
 	t.Parallel()
 	repo := newListingRepo(map[string][]domain.Model{
 		providers.ProviderOpenAI: {enabledModel("gpt-4.1"), {Slug: "gpt-3.5-turbo", Enabled: false}},
 	})
-	availability := newModelAvailability(repo)
+	subject := newModelListing(repo)
 
-	assert.Equal(t, VerdictAbsent, availability.Serves(context.Background(), providers.ProviderOpenAI, "gpt-3.5-turbo"))
+	assert.Equal(t, VerdictAbsent, subject.Lists(context.Background(), providers.ProviderOpenAI, "gpt-3.5-turbo"))
 }
 
-func TestModelAvailability_RepositoryErrorIsUnknown(t *testing.T) {
+func TestModelListing_RepositoryErrorIsUnknown(t *testing.T) {
 	t.Parallel()
 	repo := newListingRepo(nil)
 	repo.err = errors.New("snapshot not loaded")
-	availability := newModelAvailability(repo)
+	subject := newModelListing(repo)
 
-	assert.Equal(t, VerdictUnknown, availability.Serves(context.Background(), providers.ProviderOpenAI, "gpt-4.1"),
+	assert.Equal(t, VerdictUnknown, subject.Lists(context.Background(), providers.ProviderOpenAI, "gpt-4.1"),
 		"a catalog that cannot answer must never be read as a verified absence")
 }
 
-func TestModelAvailability_OpenAICompatibleDoesNotInheritOpenAICatalog(t *testing.T) {
+func TestModelListing_OpenAICompatibleDoesNotInheritOpenAICatalog(t *testing.T) {
 	t.Parallel()
 	repo := newListingRepo(map[string][]domain.Model{
 		providers.ProviderOpenAI: {enabledModel("gpt-4.1")},
 	})
-	availability := newModelAvailability(repo)
+	subject := newModelListing(repo)
 
 	assert.Equal(t, VerdictUnknown,
-		availability.Serves(context.Background(), providers.ProviderOpenAICompatible, "my-private-finetune"),
+		subject.Lists(context.Background(), providers.ProviderOpenAICompatible, "my-private-finetune"),
 		"a self-hosted endpoint serves models OpenAI's catalog knows nothing about")
 }
 
-func TestModelAvailability_CachesTheProviderListing(t *testing.T) {
+func TestModelListing_CachesTheProviderListing(t *testing.T) {
 	t.Parallel()
 	repo := newListingRepo(map[string][]domain.Model{
 		providers.ProviderOpenAI: {enabledModel("gpt-4.1")},
 	})
-	availability := newModelAvailability(repo)
+	subject := newModelListing(repo)
 
-	require.Equal(t, VerdictServes, availability.Serves(context.Background(), providers.ProviderOpenAI, "gpt-4.1"))
-	require.Equal(t, VerdictAbsent, availability.Serves(context.Background(), providers.ProviderOpenAI, "gpt-4o"))
+	require.Equal(t, VerdictListed, subject.Lists(context.Background(), providers.ProviderOpenAI, "gpt-4.1"))
+	require.Equal(t, VerdictAbsent, subject.Lists(context.Background(), providers.ProviderOpenAI, "gpt-4o"))
 
 	assert.Equal(t, 1, repo.callsFor(providers.ProviderOpenAI),
 		"the listing is read once per provider and served from memory afterwards")
 }
 
-func TestModelAvailability_ConcurrentCallersShareOneLookup(t *testing.T) {
+func TestModelListing_ConcurrentCallersShareOneLookup(t *testing.T) {
 	t.Parallel()
 	repo := newListingRepo(map[string][]domain.Model{
 		providers.ProviderVertex: {enabledModel("gemini-3-flash-preview")},
 	})
-	availability := newModelAvailability(repo)
+	subject := newModelListing(repo)
 
 	var wg sync.WaitGroup
 	for i := 0; i < 32; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			assert.Equal(t, VerdictServes,
-				availability.Serves(context.Background(), providers.ProviderVertex, "gemini-3-flash-preview"))
+			assert.Equal(t, VerdictListed,
+				subject.Lists(context.Background(), providers.ProviderVertex, "gemini-3-flash-preview"))
 		}()
 	}
 	wg.Wait()
@@ -179,19 +179,19 @@ func TestModelAvailability_ConcurrentCallersShareOneLookup(t *testing.T) {
 	assert.Equal(t, 1, repo.callsFor(providers.ProviderVertex))
 }
 
-func TestModelAvailability_InvalidateCacheRereadsTheListing(t *testing.T) {
+func TestModelListing_InvalidateCacheRereadsTheListing(t *testing.T) {
 	t.Parallel()
 	repo := newListingRepo(map[string][]domain.Model{
 		providers.ProviderOpenAI: {enabledModel("gpt-4.1")},
 	})
-	availability := newModelAvailability(repo)
+	subject := newModelListing(repo)
 
-	require.Equal(t, VerdictAbsent, availability.Serves(context.Background(), providers.ProviderOpenAI, "gpt-5"))
+	require.Equal(t, VerdictAbsent, subject.Lists(context.Background(), providers.ProviderOpenAI, "gpt-5"))
 	repo.byProvider[providers.ProviderOpenAI] = append(repo.byProvider[providers.ProviderOpenAI], enabledModel("gpt-5"))
 
-	require.Equal(t, VerdictAbsent, availability.Serves(context.Background(), providers.ProviderOpenAI, "gpt-5"))
-	availability.InvalidateCache()
+	require.Equal(t, VerdictAbsent, subject.Lists(context.Background(), providers.ProviderOpenAI, "gpt-5"))
+	subject.InvalidateCache()
 
-	assert.Equal(t, VerdictServes, availability.Serves(context.Background(), providers.ProviderOpenAI, "gpt-5"),
+	assert.Equal(t, VerdictListed, subject.Lists(context.Background(), providers.ProviderOpenAI, "gpt-5"),
 		"a catalog sync must be visible to routing without waiting out the cache TTL")
 }
